@@ -44,6 +44,36 @@ enum PreparedParallelAction {
     },
 }
 
+#[allow(clippy::too_many_arguments)]
+fn push_prepared_parallel_fetch_action<F>(
+    cpu: CpuId,
+    core: &RiscvCore,
+    tick: Tick,
+    transport: &MemoryTransport,
+    fetch_trace: MemoryTrace,
+    fetch_responder: F,
+    prepared_actions: &mut Vec<PreparedParallelAction>,
+    transaction_cpus: &mut Vec<CpuId>,
+    transactions: &mut Vec<ParallelMemoryTransaction>,
+) -> Result<(), RiscvClusterError>
+where
+    F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome + Send + 'static,
+{
+    let (issue, transaction) = core
+        .prepare_fetch_parallel_transaction(tick, transport, fetch_trace, fetch_responder)
+        .map_err(|error| RiscvClusterError::Core { cpu, error })?;
+    let transaction_index = transactions.len();
+    transaction_cpus.push(cpu);
+    transactions.push(transaction);
+    prepared_actions.push(PreparedParallelAction::Fetch {
+        cpu,
+        core: core.clone(),
+        issue,
+        transaction_index,
+    });
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub struct RiscvCluster {
     cores: BTreeMap<CpuId, RiscvCore>,
@@ -348,6 +378,21 @@ impl RiscvCluster {
                 continue;
             }
 
+            if core.should_issue_fetch_ahead_before_retire() {
+                push_prepared_parallel_fetch_action(
+                    *cpu,
+                    core,
+                    scheduler.now(),
+                    transport,
+                    fetch_trace.clone(),
+                    fetch_responder(*cpu),
+                    &mut prepared_actions,
+                    &mut transaction_cpus,
+                    &mut transactions,
+                )?;
+                continue;
+            }
+
             if let Some(event) = core
                 .execute_next_completed_fetch()
                 .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
@@ -359,23 +404,17 @@ impl RiscvCluster {
                 continue;
             }
 
-            let (issue, transaction) = core
-                .prepare_fetch_parallel_transaction(
-                    scheduler.now(),
-                    transport,
-                    fetch_trace.clone(),
-                    fetch_responder(*cpu),
-                )
-                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
-            let transaction_index = transactions.len();
-            transaction_cpus.push(*cpu);
-            transactions.push(transaction);
-            prepared_actions.push(PreparedParallelAction::Fetch {
-                cpu: *cpu,
-                core: core.clone(),
-                issue,
-                transaction_index,
-            });
+            push_prepared_parallel_fetch_action(
+                *cpu,
+                core,
+                scheduler.now(),
+                transport,
+                fetch_trace.clone(),
+                fetch_responder(*cpu),
+                &mut prepared_actions,
+                &mut transaction_cpus,
+                &mut transactions,
+            )?;
         }
 
         self.finish_prepared_parallel_actions(
@@ -416,6 +455,21 @@ impl RiscvCluster {
             }
             if core.has_pending_fetch() || core.has_pending_data_access() || core.has_pending_trap()
             {
+                continue;
+            }
+
+            if core.should_issue_fetch_ahead_before_retire() {
+                push_prepared_parallel_fetch_action(
+                    *cpu,
+                    core,
+                    scheduler.now(),
+                    transport,
+                    fetch_trace.clone(),
+                    fetch_responder(*cpu),
+                    &mut prepared_actions,
+                    &mut transaction_cpus,
+                    &mut transactions,
+                )?;
                 continue;
             }
 
@@ -462,23 +516,17 @@ impl RiscvCluster {
                 continue;
             }
 
-            let (issue, transaction) = core
-                .prepare_fetch_parallel_transaction(
-                    scheduler.now(),
-                    transport,
-                    fetch_trace.clone(),
-                    fetch_responder(*cpu),
-                )
-                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
-            let transaction_index = transactions.len();
-            transaction_cpus.push(*cpu);
-            transactions.push(transaction);
-            prepared_actions.push(PreparedParallelAction::Fetch {
-                cpu: *cpu,
-                core: core.clone(),
-                issue,
-                transaction_index,
-            });
+            push_prepared_parallel_fetch_action(
+                *cpu,
+                core,
+                scheduler.now(),
+                transport,
+                fetch_trace.clone(),
+                fetch_responder(*cpu),
+                &mut prepared_actions,
+                &mut transaction_cpus,
+                &mut transactions,
+            )?;
         }
 
         self.finish_prepared_parallel_actions(
@@ -526,6 +574,21 @@ impl RiscvCluster {
             }
             if core.has_pending_fetch() || core.has_pending_data_access() || core.has_pending_trap()
             {
+                continue;
+            }
+
+            if core.should_issue_fetch_ahead_before_retire() {
+                push_prepared_parallel_fetch_action(
+                    *cpu,
+                    core,
+                    scheduler.now(),
+                    transport,
+                    fetch_trace.clone(),
+                    fetch_responder(*cpu),
+                    &mut prepared_actions,
+                    &mut transaction_cpus,
+                    &mut transactions,
+                )?;
                 continue;
             }
 
@@ -579,23 +642,17 @@ impl RiscvCluster {
                 continue;
             }
 
-            let (issue, transaction) = core
-                .prepare_fetch_parallel_transaction(
-                    scheduler.now(),
-                    transport,
-                    fetch_trace.clone(),
-                    fetch_responder(*cpu),
-                )
-                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
-            let transaction_index = transactions.len();
-            transaction_cpus.push(*cpu);
-            transactions.push(transaction);
-            prepared_actions.push(PreparedParallelAction::Fetch {
-                cpu: *cpu,
-                core: core.clone(),
-                issue,
-                transaction_index,
-            });
+            push_prepared_parallel_fetch_action(
+                *cpu,
+                core,
+                scheduler.now(),
+                transport,
+                fetch_trace.clone(),
+                fetch_responder(*cpu),
+                &mut prepared_actions,
+                &mut transaction_cpus,
+                &mut transactions,
+            )?;
         }
 
         self.finish_prepared_parallel_actions(
@@ -647,6 +704,21 @@ impl RiscvCluster {
                 || core.has_outstanding_data_request()
                 || core.has_pending_trap()
             {
+                continue;
+            }
+
+            if core.should_issue_fetch_ahead_before_retire() {
+                push_prepared_parallel_fetch_action(
+                    *cpu,
+                    core,
+                    scheduler.now(),
+                    transport,
+                    fetch_trace.clone(),
+                    fetch_responder(*cpu),
+                    &mut prepared_actions,
+                    &mut transaction_cpus,
+                    &mut transactions,
+                )?;
                 continue;
             }
 
@@ -704,23 +776,17 @@ impl RiscvCluster {
                 continue;
             }
 
-            let (issue, transaction) = core
-                .prepare_fetch_parallel_transaction(
-                    scheduler.now(),
-                    transport,
-                    fetch_trace.clone(),
-                    fetch_responder(*cpu),
-                )
-                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
-            let transaction_index = transactions.len();
-            transaction_cpus.push(*cpu);
-            transactions.push(transaction);
-            prepared_actions.push(PreparedParallelAction::Fetch {
-                cpu: *cpu,
-                core: core.clone(),
-                issue,
-                transaction_index,
-            });
+            push_prepared_parallel_fetch_action(
+                *cpu,
+                core,
+                scheduler.now(),
+                transport,
+                fetch_trace.clone(),
+                fetch_responder(*cpu),
+                &mut prepared_actions,
+                &mut transaction_cpus,
+                &mut transactions,
+            )?;
         }
 
         self.finish_prepared_parallel_actions(
@@ -773,6 +839,21 @@ impl RiscvCluster {
                 || core.has_outstanding_data_request()
                 || core.has_pending_trap()
             {
+                continue;
+            }
+
+            if core.should_issue_fetch_ahead_before_retire() {
+                push_prepared_parallel_fetch_action(
+                    *cpu,
+                    core,
+                    scheduler.now(),
+                    transport,
+                    fetch_trace.clone(),
+                    fetch_responder(*cpu),
+                    &mut prepared_actions,
+                    &mut transaction_cpus,
+                    &mut transactions,
+                )?;
                 continue;
             }
 
@@ -852,23 +933,17 @@ impl RiscvCluster {
                 continue;
             }
 
-            let (issue, transaction) = core
-                .prepare_fetch_parallel_transaction(
-                    scheduler.now(),
-                    transport,
-                    fetch_trace.clone(),
-                    fetch_responder(*cpu),
-                )
-                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
-            let transaction_index = transactions.len();
-            transaction_cpus.push(*cpu);
-            transactions.push(transaction);
-            prepared_actions.push(PreparedParallelAction::Fetch {
-                cpu: *cpu,
-                core: core.clone(),
-                issue,
-                transaction_index,
-            });
+            push_prepared_parallel_fetch_action(
+                *cpu,
+                core,
+                scheduler.now(),
+                transport,
+                fetch_trace.clone(),
+                fetch_responder(*cpu),
+                &mut prepared_actions,
+                &mut transaction_cpus,
+                &mut transactions,
+            )?;
         }
 
         self.finish_prepared_parallel_actions(
@@ -979,6 +1054,22 @@ impl RiscvCluster {
             }
             if core.has_pending_fetch() || core.has_pending_data_access() || core.has_pending_trap()
             {
+                continue;
+            }
+
+            if core.should_issue_fetch_ahead_before_retire() {
+                let event = core
+                    .issue_next_fetch_parallel(
+                        scheduler,
+                        transport,
+                        fetch_trace.clone(),
+                        fetch_responder(*cpu),
+                    )
+                    .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
+                actions.push(RiscvClusterDriveEvent::new(
+                    *cpu,
+                    RiscvCoreDriveAction::FetchIssued { event },
+                ));
                 continue;
             }
 

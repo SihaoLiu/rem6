@@ -73,13 +73,13 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains(
-        "\"cores\":[{\"cpu\":0,\"pc\":\"0x0\",\"committed_instructions\":2,\"in_order_pipeline\":{\"cycles\":10,\"retired\":2,\"data_wait_cycles\":0}"
+        "\"cores\":[{\"cpu\":0,\"pc\":\"0x0\",\"committed_instructions\":2,\"in_order_pipeline\":{\"cycles\":6,\"retired\":2,\"data_wait_cycles\":0}"
     ));
     assert_stat(
         &stdout,
         "sim.cpu0.pipeline.in_order.cycles",
         "Cycle",
-        10,
+        6,
         "monotonic",
     );
     assert_stat(

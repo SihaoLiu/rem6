@@ -50,7 +50,7 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
     assert!(stdout.contains("\"data_loads\":1"));
     assert!(stdout.contains("\"data_stores\":1"));
     assert!(stdout
-        .contains("\"in_order_pipeline\":{\"cycles\":34,\"retired\":6,\"data_wait_cycles\":4}"));
+        .contains("\"in_order_pipeline\":{\"cycles\":23,\"retired\":6,\"data_wait_cycles\":4}"));
     assert!(stdout.contains("\"address\":\"0x80000020\""));
     assert!(stdout.contains("\"bytes\":8"));
     assert!(stdout.contains("\"hex\":\"8977665544332211\""));
@@ -67,7 +67,7 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
         &stdout,
         "sim.cpu0.pipeline.in_order.cycles",
         "Cycle",
-        34,
+        23,
         "monotonic",
     );
     assert_stat(

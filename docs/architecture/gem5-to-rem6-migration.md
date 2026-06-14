@@ -116,9 +116,9 @@ privileged Linux trap and interrupt smoke tests.
 ### CPU Execution Models - 30% unit-slice
 
 **Score calculation:** 3 of 10 items have executable evidence, or 30% raw. The
-bucket cap is unit-slice because direct RISC-V core timing has a first
-completed-fetch overlap slice but not full top-level stalls/squashes, and O3
-state is not yet an executable cycle-visible engine.
+bucket cap is unit-slice because RISC-V core timing has direct completed-fetch
+overlap and a bounded normal-driver fetch-ahead slice, but not full top-level
+stalls/squashes, and O3 state is not yet an executable cycle-visible engine.
 
 - [x] RISC-V atomic execution and parallel clusters execute real instructions.
 - [x] Data access issue/response and store-conditional progress diagnostics have tests.
@@ -133,10 +133,13 @@ state is not yet an executable cycle-visible engine.
 
 **Migrated:** Atomic RISC-V execution, frontend/data slices, branch predictor
 state and retired training, directly issued completed 4-byte fetches occupying
-the in-order timing state before retire, per-retired-instruction in-order stage
-advancement with runtime stats, data-response wait cycles folded into in-order
-retire timing, per-core data-wait cycle stats, retired branch prediction and
-redirect summaries in normal in-order timing records, and O3 policy helpers.
+the in-order timing state before retire, normal `drive_next_action`, cluster,
+and data-translation drivers issuing a bounded fetch-ahead for completed
+straight-line 4-byte integer instructions before retire, per-retired-instruction
+in-order stage advancement with runtime stats, data-response wait cycles folded
+into in-order retire timing, per-core data-wait cycle stats, retired branch
+prediction and redirect summaries in normal in-order timing records, and O3
+policy helpers.
 
 **Not migrated:** Full Minor-like in-order timing with realistic stalls and
 squashes, executable O3 timing, fetch speculation, checker, and KVM equivalents.
@@ -149,10 +152,12 @@ from executed RISC-V instructions, and CLI data stats show load/store response
 wait changing the in-order pipeline cycle counter and data-wait cycle stat.
 RISC-V in-order timing tests include retired taken and fall-through branch
 prediction redirect evidence from the normal execution path, plus direct
-completed-fetch overlap evidence before retire.
+completed-fetch overlap evidence before retire. CPU frontend and cluster tests
+also cover normal-driver fetch-ahead before retiring straight-line integer
+instructions while preserving trap and data-access ordering.
 
-**Next evidence:** Broader per-cycle in-order stalls/squashes, then a
-ROB/LSQ-backed O3 run test.
+**Next evidence:** Broader per-cycle in-order stalls/squashes, branch-predicted
+fetch with squash/rollback, then a ROB/LSQ-backed O3 run test.
 
 ### Memory, Cache, Coherence, Fabric, and DRAM - 45% single-axis
 
@@ -435,7 +440,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/chi_protocol` | `rem6-coherence`, protocol crates, `rem6-cache` | 40% single-axis | CHI-like line, controller, bank, dirty peer sourcing, reservation, and Evict-hazard tests exist. | Add Ruby-scale CHI transactions, topology networks, directory races, and workload checks. |
 | `tests/gem5/chi_tlm_tests` | future adapter crates, `rem6-coherence` | 0% open | No typed TLM bridge exists. | Add optional adapter tests after an adapter boundary exists. |
 | `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, and text stats output tests exist. | Add config-driven file layouts for full-system manifests and multi-artifact workloads. |
-| `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, per-retired-instruction in-order stage timing stats, and O3 policies exist. | Add broader in-order stalls/squashes and ROB/LSQ-backed O3 execution tests. |
+| `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line fetch-ahead, per-retired-instruction in-order stage timing stats, and O3 policies exist. | Add broader in-order stalls/squashes and ROB/LSQ-backed O3 execution tests. |
 | `tests/gem5/dram_lowp` | `rem6-dram`, `rem6-power` | 40% single-axis | DRAM/NVM profile counters and low-power constants are surfaced. | Add executable low-power state transition tests through routed requests. |
 | `tests/gem5/example_configs`, `tests/gem5/learning_gem5` | `rem6` CLI, `rem6-platform`, `rem6-workload` | 40% single-axis | CLI and TOML tests cover several execution and trace-replay paths. | Add rem6 examples that run from data files without recompilation. |
 | `tests/gem5/fdp_tests` | `rem6-cache` | 35% unit-slice | Fetch-directed prefetcher state and errors have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |

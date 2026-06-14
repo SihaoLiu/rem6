@@ -461,6 +461,13 @@ fn riscv_core_driver_sequences_fetch_execute_load_and_next_fetch() {
     );
     scheduler.run_until_idle_conservative();
 
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(core.read_register(reg(1)), 0);
+    scheduler.run_until_idle_conservative();
+
     let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
     let RiscvCoreDriveAction::InstructionExecuted(first) = action else {
         panic!("expected completed instruction execution");
@@ -472,11 +479,6 @@ fn riscv_core_driver_sequences_fetch_execute_load_and_next_fetch() {
     assert_eq!(core.read_register(reg(1)), 7);
     assert_eq!(core.pc(), Address::new(0x8004));
 
-    assert!(matches!(
-        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
-        Some(RiscvCoreDriveAction::FetchIssued { .. })
-    ));
-    scheduler.run_until_idle_conservative();
     let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
     let RiscvCoreDriveAction::InstructionExecuted(load) = action else {
         panic!("expected completed load execution");
@@ -502,6 +504,150 @@ fn riscv_core_driver_sequences_fetch_execute_load_and_next_fetch() {
         drive_one_action(&core, store, &mut scheduler, &transport),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
+}
+
+#[test]
+fn riscv_core_driver_fetches_ahead_for_straight_line_integer_instruction() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let store = loaded_program_store(0x8000, &[i_type(7, 0, 0x0, 1, 0x13), 0x0010_0073], &[]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::FetchIssued { .. } = action else {
+        panic!("expected next fetch before retiring the completed straight-line instruction");
+    };
+    assert_eq!(core.read_register(reg(1)), 0);
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(first) = action else {
+        panic!("expected first instruction to retire after the fetch-ahead window fills");
+    };
+    assert_eq!(
+        first.instruction(),
+        RiscvInstruction::decode(i_type(7, 0, 0x0, 1, 0x13)).unwrap()
+    );
+    assert_eq!(core.read_register(reg(1)), 7);
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(trap) = action else {
+        panic!("expected ebreak to retire without another fetch-ahead");
+    };
+    assert_eq!(trap.instruction(), RiscvInstruction::Ebreak);
+    assert_eq!(
+        trap.execution().trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::Breakpoint, 0x8004))
+    );
+}
+
+#[test]
+fn riscv_core_driver_fetch_ahead_does_not_reissue_completed_successor_pc() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            i_type(7, 0, 0x0, 1, 0x13),
+            i_type(9, 0, 0x0, 2, 0x13),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    assert_eq!(core.inner().pc(), Address::new(0x8008));
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(second) = action else {
+        panic!("expected second straight-line instruction to retire");
+    };
+    assert_eq!(
+        second.instruction(),
+        RiscvInstruction::decode(i_type(9, 0, 0x0, 2, 0x13)).unwrap()
+    );
+    assert_eq!(core.read_register(reg(2)), 9);
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(trap) = action else {
+        panic!("expected ebreak to retire after second instruction");
+    };
+    assert_eq!(trap.instruction(), RiscvInstruction::Ebreak);
+}
+
+#[test]
+fn riscv_core_driver_does_not_fetch_ahead_across_pending_interrupt() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let interrupt_bit = 1_u64 << 1;
+    core.set_status(RiscvStatusWord::new(0).with_mie(true));
+    core.set_machine_interrupt_pending(interrupt_bit);
+    core.write_register(reg(2), interrupt_bit);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            csr_type(0x304, 2, 0x1, 0),
+            i_type(7, 0, 0x0, 1, 0x13),
+            i_type(9, 0, 0x0, 2, 0x13),
+        ],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::FetchIssued { .. } = action else {
+        panic!("expected fetch before pending interrupt reaches the next instruction");
+    };
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(interrupted) = action else {
+        panic!("expected pending interrupt to retire before successor fetch");
+    };
+    assert_eq!(
+        interrupted.instruction(),
+        RiscvInstruction::decode(i_type(7, 0, 0x0, 1, 0x13)).unwrap()
+    );
+    assert!(matches!(
+        interrupted.execution().trap().map(|trap| trap.kind()),
+        Some(RiscvTrapKind::Interrupt { code: 1 })
+    ));
+    assert_eq!(core.read_register(reg(1)), 0);
+    assert!(core.has_pending_trap());
 }
 
 #[test]
@@ -555,6 +701,12 @@ fn riscv_core_executes_fence_barriers_without_data_requests() {
         drive_one_action(&core, store.clone(), &mut scheduler, &transport),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
+    scheduler.run_until_idle_conservative();
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(core.read_register(reg(6)), 0);
     scheduler.run_until_idle_conservative();
     let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
     let RiscvCoreDriveAction::InstructionExecuted(addi) = action else {

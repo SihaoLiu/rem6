@@ -42,9 +42,11 @@ mod riscv_cluster;
 mod riscv_cluster_run;
 mod riscv_data_access;
 mod riscv_data_issue;
+mod riscv_drive;
 mod riscv_execute;
 mod riscv_execution_event;
 mod riscv_fetch;
+mod riscv_fetch_ahead;
 mod riscv_hart_run_state;
 mod riscv_htm;
 mod riscv_reservation;
@@ -1141,46 +1143,6 @@ impl RiscvCore {
         }
         state.reservation = None;
         Some(reservation)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn drive_next_action<F, D>(
-        &self,
-        scheduler: &mut PartitionedScheduler,
-        transport: &MemoryTransport,
-        fetch_trace: MemoryTrace,
-        data_trace: MemoryTrace,
-        fetch_responder: F,
-        data_responder: D,
-    ) -> Result<Option<RiscvCoreDriveAction>, RiscvCpuError>
-    where
-        F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
-        D: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
-    {
-        if !self.is_hart_started() {
-            return Ok(None);
-        }
-        if self.core.has_pending_fetch() || self.has_pending_data_access() {
-            return Ok(None);
-        }
-        if self.has_pending_trap() {
-            return Ok(None);
-        }
-
-        if let Some(event) = self.execute_next_completed_fetch()? {
-            return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
-                event,
-            ))));
-        }
-
-        if let Some(event) =
-            self.issue_next_data_access(scheduler, transport, data_trace, data_responder)?
-        {
-            return Ok(Some(RiscvCoreDriveAction::DataAccessIssued { event }));
-        }
-
-        let event = self.issue_next_fetch(scheduler, transport, fetch_trace, fetch_responder)?;
-        Ok(Some(RiscvCoreDriveAction::FetchIssued { event }))
     }
 
     fn next_unissued_data_access(&self) -> Option<(MemoryRequestId, MemoryAccessKind)> {

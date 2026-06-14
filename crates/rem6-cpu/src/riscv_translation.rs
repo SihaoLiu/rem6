@@ -878,6 +878,12 @@ impl RiscvCore {
             return Ok(None);
         }
 
+        if self.should_issue_fetch_ahead_before_retire() {
+            let event =
+                self.issue_next_fetch(scheduler, transport, fetch_trace, fetch_responder)?;
+            return Ok(Some(RiscvCoreDriveAction::FetchIssued { event }));
+        }
+
         if let Some(event) = self.execute_next_completed_fetch()? {
             return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
                 event,

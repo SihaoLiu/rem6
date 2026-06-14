@@ -358,6 +358,45 @@ fn riscv_cluster_drives_distinct_cores_without_hidden_scheduler_runs() {
                 responder(store.clone()),
             )
             .unwrap(),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert!(matches!(
+        cluster
+            .drive_core_next_action(
+                CpuId::new(1),
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                responder(store.clone()),
+                responder(store.clone()),
+            )
+            .unwrap(),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(
+        cluster.core(CpuId::new(0)).unwrap().read_register(reg(1)),
+        0
+    );
+    assert_eq!(
+        cluster.core(CpuId::new(1)).unwrap().read_register(reg(1)),
+        0
+    );
+
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        cluster
+            .drive_core_next_action(
+                CpuId::new(0),
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                responder(store.clone()),
+                responder(store.clone()),
+            )
+            .unwrap(),
         Some(RiscvCoreDriveAction::InstructionExecuted(_))
     ));
     assert!(matches!(
@@ -513,6 +552,37 @@ fn riscv_cluster_drives_ready_cores_in_cpu_order() {
         )
         .unwrap()
         .is_empty());
+
+    scheduler.run_until_idle_conservative();
+
+    let executed = cluster
+        .drive_ready_cores(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(store.clone()),
+            |_cpu| responder(store.clone()),
+        )
+        .unwrap();
+    assert_eq!(
+        executed
+            .iter()
+            .map(RiscvClusterDriveEvent::cpu)
+            .collect::<Vec<_>>(),
+        vec![CpuId::new(0), CpuId::new(1)]
+    );
+    assert!(executed
+        .iter()
+        .all(|event| matches!(event.action(), RiscvCoreDriveAction::FetchIssued { .. })));
+    assert_eq!(
+        cluster.core(CpuId::new(0)).unwrap().read_register(reg(1)),
+        0
+    );
+    assert_eq!(
+        cluster.core(CpuId::new(1)).unwrap().read_register(reg(1)),
+        0
+    );
 
     scheduler.run_until_idle_conservative();
 

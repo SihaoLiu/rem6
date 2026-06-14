@@ -133,7 +133,21 @@ impl RiscvCore {
             .execute_decoded(decoded)
             .map_err(RiscvCpuError::Isa)?;
         let next_pc = Address::new(execution.next_pc());
-        self.core.set_pc(next_pc);
+        let sequential_next_pc = fetch
+            .pc()
+            .get()
+            .wrapping_add(u64::from(execution.instruction_bytes()));
+        let redirects_fetch = execution.trap().is_some() || next_pc.get() != sequential_next_pc;
+        let has_completed_successor_fetch = self.core.fetch_events().iter().any(|event| {
+            event.kind() == CpuFetchEventKind::Completed
+                && event.pc() == next_pc
+                && !state.executed_fetches.contains(&event.request_id())
+                && !consumed_requests.contains(&event.request_id())
+        });
+        if redirects_fetch || !has_completed_successor_fetch || self.core.pc().get() < next_pc.get()
+        {
+            self.core.set_pc(next_pc);
+        }
         if let Some(trap) = execution.trap().copied() {
             state.pending_trap = Some(trap);
         }
