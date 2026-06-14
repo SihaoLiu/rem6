@@ -30,6 +30,7 @@ impl RiscvCore {
         if state.pending_trap.is_some() {
             return Ok(None);
         }
+        sync_completed_fetches_to_in_order_pipeline(&mut state, &fetch_events)?;
 
         if let Some(prefix) = state.pending_fetch_prefix.clone() {
             let architectural = Address::new(state.hart.pc());
@@ -185,14 +186,18 @@ pub(crate) fn record_retired_in_order_pipeline_cycle_after_wait(
     branch_prediction: Option<InOrderBranchPrediction>,
     wait_cycles: u64,
 ) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
-    state
-        .in_order_pipeline
-        .replace_in_flight([InOrderPipelineInstruction::new(
-            sequence,
-            InOrderPipelineStage::Fetch1,
-        )])
-        .map_err(RiscvCpuError::InOrderPipeline)?;
-    for _ in 0..InOrderPipelineStage::ALL.len() {
+    if !state.in_order_pipeline.contains_sequence(sequence) {
+        state
+            .in_order_pipeline
+            .replace_in_flight([InOrderPipelineInstruction::new(
+                sequence,
+                InOrderPipelineStage::Fetch1,
+            )])
+            .map_err(RiscvCpuError::InOrderPipeline)?;
+    }
+    let max_retire_cycles =
+        InOrderPipelineStage::ALL.len() + state.in_order_pipeline.in_flight().len();
+    for _ in 0..max_retire_cycles {
         let resolves_branch = branch_prediction.is_some()
             && state
                 .in_order_pipeline
@@ -218,12 +223,43 @@ pub(crate) fn record_retired_in_order_pipeline_cycle_after_wait(
                 .try_stall_cycles(wait_cycles)
                 .map_err(RiscvCpuError::InOrderPipeline)?;
         }
-        if record.summary().retired_count() > 0 {
+        if record_retires_sequence(&record, sequence) {
             return Ok(record);
         }
     }
 
     unreachable!("default in-order pipeline retires an instruction within its stage count")
+}
+
+fn record_retires_sequence(record: &InOrderPipelineCycleRecord, sequence: u64) -> bool {
+    record
+        .plan()
+        .advanced()
+        .iter()
+        .any(|advance| advance.sequence() == sequence && advance.retires())
+}
+
+fn sync_completed_fetches_to_in_order_pipeline(
+    state: &mut RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+) -> Result<(), RiscvCpuError> {
+    let mut completed = fetch_events
+        .iter()
+        .filter(|event| {
+            event.kind() == CpuFetchEventKind::Completed
+                && !state.executed_fetches.contains(&event.request_id())
+                && event.data().is_some_and(|data| data.len() == 4)
+        })
+        .collect::<Vec<_>>();
+    completed.sort_by_key(|event| event.request_id().sequence());
+
+    for fetch in completed {
+        state
+            .in_order_pipeline
+            .enqueue_fetch(fetch.request_id().sequence())
+            .map_err(RiscvCpuError::InOrderPipeline)?;
+    }
+    Ok(())
 }
 
 fn in_order_pipeline_branch_prediction(
@@ -327,4 +363,35 @@ fn retire_branch_predictions(
             tournament_training_update,
         ),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retire_cycle_waits_for_requested_sequence_when_older_work_is_stale() {
+        let mut state = RiscvCoreState::new(0x8000, 0);
+        state
+            .in_order_pipeline
+            .replace_in_flight([
+                InOrderPipelineInstruction::new(0, InOrderPipelineStage::Commit),
+                InOrderPipelineInstruction::new(1, InOrderPipelineStage::Fetch1),
+            ])
+            .unwrap();
+
+        let record =
+            record_retired_in_order_pipeline_cycle_after_wait(&mut state, 1, None, 0).unwrap();
+
+        assert!(record
+            .plan()
+            .advanced()
+            .iter()
+            .any(|advance| advance.sequence() == 1 && advance.retires()));
+        assert!(!record
+            .plan()
+            .advanced()
+            .iter()
+            .any(|advance| advance.sequence() == 0 && advance.retires()));
+    }
 }

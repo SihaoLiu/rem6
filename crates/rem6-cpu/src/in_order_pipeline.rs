@@ -970,6 +970,31 @@ impl InOrderPipelineState {
         Ok(())
     }
 
+    pub fn contains_sequence(&self, sequence: u64) -> bool {
+        self.in_flight
+            .iter()
+            .any(|instruction| instruction.sequence() == sequence)
+    }
+
+    pub fn enqueue_fetch(&mut self, sequence: u64) -> Result<(), InOrderPipelineError> {
+        if self.contains_sequence(sequence) {
+            return Ok(());
+        }
+        let commit_busy = self
+            .in_flight
+            .iter()
+            .any(|instruction| instruction.stage() == InOrderPipelineStage::Commit);
+        if !self.in_flight.is_empty() && !commit_busy {
+            self.try_advance_cycle()?;
+        }
+        self.in_flight.push(InOrderPipelineInstruction::new(
+            sequence,
+            InOrderPipelineStage::Fetch1,
+        ));
+        self.in_flight = canonical_in_flight(self.in_flight.iter().copied())?;
+        Ok(())
+    }
+
     pub fn plan_cycle(&self) -> InOrderPipelinePlan {
         InOrderPipelineScheduler::new(self.config.clone()).plan(self.in_flight.iter().copied())
     }

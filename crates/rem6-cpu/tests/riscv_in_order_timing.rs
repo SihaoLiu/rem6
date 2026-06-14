@@ -89,8 +89,16 @@ fn reg(index: u8) -> Register {
 }
 
 fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStore>> {
+    loaded_program(entry, &[instruction])
+}
+
+fn loaded_program(entry: u64, instructions: &[u32]) -> Arc<Mutex<PartitionedMemoryStore>> {
     let target = MemoryTargetId::new(0);
     let mut store = PartitionedMemoryStore::new();
+    let program = instructions
+        .iter()
+        .flat_map(|instruction| instruction.to_le_bytes())
+        .collect::<Vec<_>>();
     store.add_partition(target, layout()).unwrap();
     store
         .map_region(
@@ -100,7 +108,7 @@ fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStor
         )
         .unwrap();
     BootImage::new(Address::new(entry))
-        .add_segment(Address::new(entry), instruction.to_le_bytes().to_vec())
+        .add_segment(Address::new(entry), program)
         .unwrap()
         .load_into_partitioned_store(&mut store, target)
         .unwrap();
@@ -319,6 +327,138 @@ fn riscv_retired_instruction_records_in_order_pipeline_cycle() {
     let snapshot = core.in_order_pipeline_snapshot();
     assert_eq!(snapshot.cycle(), 5);
     assert!(snapshot.in_flight().is_empty());
+}
+
+#[test]
+fn riscv_completed_fetches_overlap_in_order_pipeline_before_retire() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let first_raw = i_type(5, 0, 0x0, 1, 0x13);
+    let second_raw = i_type(7, 1, 0x0, 2, 0x13);
+    let core = RiscvCore::new(core(route, 0x8000));
+    let store = loaded_program(0x8000, &[first_raw, second_raw]);
+
+    fetch_one(&core, Arc::clone(&store), &mut scheduler, &transport);
+    fetch_one(&core, store, &mut scheduler, &transport);
+
+    let first = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(
+        first.instruction(),
+        RiscvInstruction::decode(first_raw).unwrap()
+    );
+    let first_record = first.in_order_pipeline_cycle().unwrap();
+    assert_eq!(first_record.cycle(), 4);
+    assert_eq!(
+        first_record
+            .after()
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![(1, InOrderPipelineStage::Commit)]
+    );
+
+    let second = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(
+        second.instruction(),
+        RiscvInstruction::decode(second_raw).unwrap()
+    );
+    let second_record = second.in_order_pipeline_cycle().unwrap();
+    assert_eq!(second_record.cycle(), 5);
+    assert_eq!(
+        second_record
+            .before()
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![(1, InOrderPipelineStage::Commit)]
+    );
+    assert!(second_record.after().in_flight().is_empty());
+}
+
+#[test]
+fn riscv_late_completed_fetch_does_not_retire_older_pipeline_work_without_event() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let first_raw = i_type(5, 0, 0x0, 1, 0x13);
+    let second_raw = i_type(7, 1, 0x0, 2, 0x13);
+    let third_raw = i_type(11, 2, 0x0, 3, 0x13);
+    let core = RiscvCore::new(core(route, 0x8000));
+    let store = loaded_program(0x8000, &[first_raw, second_raw, third_raw]);
+
+    fetch_one(&core, Arc::clone(&store), &mut scheduler, &transport);
+    fetch_one(&core, Arc::clone(&store), &mut scheduler, &transport);
+    let first = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(first.in_order_pipeline_cycle().unwrap().cycle(), 4);
+    assert_eq!(
+        first
+            .in_order_pipeline_cycle()
+            .unwrap()
+            .after()
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![(1, InOrderPipelineStage::Commit)]
+    );
+
+    fetch_one(&core, store, &mut scheduler, &transport);
+
+    let second = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(
+        second.instruction(),
+        RiscvInstruction::decode(second_raw).unwrap()
+    );
+    let second_record = second.in_order_pipeline_cycle().unwrap();
+    assert_eq!(second_record.cycle(), 5);
+    assert_eq!(
+        second_record
+            .before()
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![
+            (1, InOrderPipelineStage::Commit),
+            (2, InOrderPipelineStage::Fetch1)
+        ]
+    );
+    assert_eq!(
+        second_record
+            .after()
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![(2, InOrderPipelineStage::Fetch2)]
+    );
 }
 
 #[test]
