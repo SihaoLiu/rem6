@@ -8,6 +8,7 @@ pub enum RiscvHartRunState {
     Started,
     StartPending,
     StopPending,
+    SuspendPending,
     Stopped,
     Suspended,
 }
@@ -52,6 +53,12 @@ impl RiscvCore {
     pub fn set_hart_stop_pending(&self) {
         let mut state = self.state.lock().expect("riscv core lock");
         state.run_state = RiscvHartRunState::StopPending;
+        state.run_state_explicit = true;
+    }
+
+    pub fn set_hart_suspend_pending(&self) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.run_state = RiscvHartRunState::SuspendPending;
         state.run_state_explicit = true;
     }
 
@@ -113,6 +120,20 @@ impl RiscvCore {
             return false;
         }
         state.run_state = RiscvHartRunState::Stopped;
+        state.run_state_explicit = true;
+        true
+    }
+
+    pub fn complete_pending_hart_suspend(&self) -> bool {
+        let mut state = self.state.lock().expect("riscv core lock");
+        if state.run_state != RiscvHartRunState::SuspendPending {
+            return false;
+        }
+        state.run_state = if state.hart.machine_interrupt_pending() != 0 {
+            RiscvHartRunState::Started
+        } else {
+            RiscvHartRunState::Suspended
+        };
         state.run_state_explicit = true;
         true
     }

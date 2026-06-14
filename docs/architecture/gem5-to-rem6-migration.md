@@ -222,8 +222,9 @@ secondary-hart `START_PENDING` reporting before the scheduled entry event,
 secondary-hart release with supervisor entry state, `satp=0`, `sstatus.SIE=0`,
 `a0=hartid`, and `a1=opaque`, current-hart `hart_stop` as a no-return stop
 that does not write `sbiret`, `STOP_PENDING` reporting until the scheduled stop
-event completes, and retentive current-hart `hart_suspend` through the CPU
-execution gate, with the default non-retentive suspend type resuming at
+event completes, and retentive current-hart `hart_suspend` through
+`SUSPEND_PENDING` until the scheduled suspend event reaches the CPU execution
+gate, with the default non-retentive suspend type resuming at
 `resume_addr` with the same supervisor entry-state contract, and SBI IPI pending
 interrupts waking retentive suspended harts; typed
 unknown-syscall records; static smoke coverage; a static newlib
@@ -234,9 +235,9 @@ plus `open` with `O_NOCTTY`, `O_NOFOLLOW`, and `O_SYNC` through the legacy
 
 **Not migrated:** Broad Linux SE parity, process/thread lifecycle, broad SBI
 timer/IPI/reset power-state behavior, remaining HSM wake and pending-state
-semantics beyond the `hart_start` and `hart_stop` pending slices, RFENCE
-hypervisor-fence and completion semantics, full Linux boot, and real benchmark
-workloads.
+semantics beyond the `hart_start`, `hart_stop`, and retentive `hart_suspend`
+pending slices, RFENCE hypervisor-fence and completion semantics, full Linux
+boot, and real benchmark workloads.
 
 **Evidence:** `RiscvSyscallTable::handle_with_guest_memory_io_at_tick`,
 `RiscvSyscallEmulation::handle_pending_core_trap`, CLI static newlib tests,
@@ -267,8 +268,8 @@ workloads.
 `RiscvLinuxBootHandoffConfig`, and RISC-V DTB handoff tests.
 
 **Next evidence:** Broader static libc program coverage, followed by remaining
-HSM suspend and resume pending-state tests, RFENCE completion tests, then a real
-Linux boot smoke.
+HSM non-retentive resume pending-state tests, RFENCE completion tests, then a
+real Linux boot smoke.
 
 ### Devices and Platforms - 50% single-axis
 

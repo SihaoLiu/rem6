@@ -1389,7 +1389,12 @@ impl RiscvCore {
 }
 
 fn wake_suspended_hart_on_pending_interrupt(state: &mut RiscvCoreState, pending: u64) {
-    if pending != 0 && state.run_state == RiscvHartRunState::Suspended {
+    if pending != 0
+        && matches!(
+            state.run_state,
+            RiscvHartRunState::Suspended | RiscvHartRunState::SuspendPending
+        )
+    {
         state.run_state = RiscvHartRunState::Started;
         state.run_state_explicit = true;
     }
