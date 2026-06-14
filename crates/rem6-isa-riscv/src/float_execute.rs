@@ -5,9 +5,6 @@ pub(crate) fn execute_float_register_instruction(
     writes: &mut Vec<FloatRegisterWrite>,
     instruction: RiscvInstruction,
 ) -> Result<(), ()> {
-    if !float::register_rounding_mode_is_supported(instruction, hart.float_status().frm()) {
-        return Err(());
-    }
     match instruction {
         instruction @ (RiscvInstruction::FloatMultiplyAddS { rs1, rs2, rs3, .. }
         | RiscvInstruction::FloatMultiplyAddD { rs1, rs2, rs3, .. }
@@ -24,6 +21,15 @@ pub(crate) fn execute_float_register_instruction(
             let lhs = hart.read_float(rs1);
             let rhs = hart.read_float(rs2);
             let addend = hart.read_float(rs3);
+            if !float::ternary_register_rounding_mode_is_supported(
+                instruction,
+                hart.float_status().frm(),
+                lhs,
+                rhs,
+                addend,
+            ) {
+                return Err(());
+            }
             let flags = float::ternary_exception_flags(instruction, lhs, rhs, addend);
             let (rd, value) = float::float_register_write_ternary(instruction, lhs, rhs, addend);
             hart.raise_float_exception_flags(flags);
@@ -49,6 +55,14 @@ pub(crate) fn execute_float_register_instruction(
         | RiscvInstruction::FloatMaxD { rs1, rs2, .. }) => {
             let lhs = hart.read_float(rs1);
             let rhs = hart.read_float(rs2);
+            if !float::binary_register_rounding_mode_is_supported(
+                instruction,
+                hart.float_status().frm(),
+                lhs,
+                rhs,
+            ) {
+                return Err(());
+            }
             let flags = float::binary_exception_flags(instruction, lhs, rhs);
             let (rd, value) = float::float_register_write(instruction, lhs, rhs);
             hart.raise_float_exception_flags(flags);
@@ -59,6 +73,13 @@ pub(crate) fn execute_float_register_instruction(
         | RiscvInstruction::FloatConvertSFromD { rs1, .. }
         | RiscvInstruction::FloatConvertDFromS { rs1, .. }) => {
             let lhs = hart.read_float(rs1);
+            if !float::unary_register_rounding_mode_is_supported(
+                instruction,
+                hart.float_status().frm(),
+                lhs,
+            ) {
+                return Err(());
+            }
             let flags = float::unary_exception_flags(instruction, lhs);
             let (rd, value) = float::float_register_write(instruction, lhs, 0);
             hart.raise_float_exception_flags(flags);

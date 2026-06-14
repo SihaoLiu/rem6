@@ -1386,6 +1386,70 @@ fn hart_executes_rv64d_arithmetic_dynamic_rounding_with_valid_frm() {
 }
 
 #[test]
+fn hart_executes_rv64d_static_rounding_when_result_is_rounding_insensitive() {
+    let mut hart = RiscvHartState::new(0x8200);
+    hart.write(reg(10), 7 << 5);
+    hart.execute(RiscvInstruction::decode(csr_write_type(0x003, 10, 0)).unwrap())
+        .unwrap();
+    hart.write_float(freg(1), 3.75f64.to_bits());
+    hart.write_float(freg(2), 0.0f64.to_bits());
+    hart.write_float(freg(3), 9.0f64.to_bits());
+    hart.write_float(freg(4), 2.5f64.to_bits());
+    hart.write_float(freg(5), 1.0f64.to_bits());
+    hart.write_float(freg(6), 0.0f64.to_bits());
+
+    let add = hart
+        .execute(RiscvInstruction::decode(r_type(0x01, 2, 1, 0x1, 8, 0x53)).unwrap())
+        .unwrap();
+    assert_eq!(add.trap(), None);
+    assert_eq!(hart.read_float(freg(8)), 3.75f64.to_bits());
+
+    let sqrt = hart
+        .execute(RiscvInstruction::decode(r_type(0x2d, 0, 3, 0x2, 9, 0x53)).unwrap())
+        .unwrap();
+    assert_eq!(sqrt.trap(), None);
+    assert_eq!(hart.read_float(freg(9)), 3.0f64.to_bits());
+
+    let fused = hart
+        .execute(RiscvInstruction::decode(r4_type(6, 0x1, 5, 4, 0x4, 10, 0x43)).unwrap())
+        .unwrap();
+    assert_eq!(fused.trap(), None);
+    assert_eq!(hart.read_float(freg(10)), 2.5f64.to_bits());
+    assert_eq!(hart.float_status().fflags(), 0);
+}
+
+#[test]
+fn hart_traps_rv64d_static_rounding_when_result_may_depend_on_rounding() {
+    let mut sqrt_hart = RiscvHartState::new(0x8300);
+    sqrt_hart.write_float(freg(1), 0x4690_0000_0000_0002);
+    let sqrt = sqrt_hart
+        .execute(RiscvInstruction::decode(r_type(0x2d, 0, 1, 0x2, 2, 0x53)).unwrap())
+        .unwrap();
+    assert!(sqrt.trap().is_some());
+    assert_eq!(sqrt_hart.read_float(freg(2)), 0);
+
+    let mut fused_hart = RiscvHartState::new(0x8400);
+    fused_hart.write_float(freg(1), 1.0f64.to_bits());
+    fused_hart.write_float(freg(2), 0.0f64.to_bits());
+    fused_hart.write_float(freg(3), (-0.0f64).to_bits());
+    let fused = fused_hart
+        .execute(RiscvInstruction::decode(r4_type(3, 0x1, 2, 1, 0x2, 4, 0x43)).unwrap())
+        .unwrap();
+    assert!(fused.trap().is_some());
+    assert_eq!(fused_hart.read_float(freg(4)), 0);
+
+    let mut invalid_hart = RiscvHartState::new(0x8500);
+    invalid_hart.write_float(freg(1), 0x7ff0_0000_0000_0001);
+    invalid_hart.write_float(freg(2), 1.0f64.to_bits());
+    let add = invalid_hart
+        .execute(RiscvInstruction::decode(r_type(0x01, 2, 1, 0x1, 3, 0x53)).unwrap())
+        .unwrap();
+    assert!(add.trap().is_some());
+    assert_eq!(invalid_hart.read_float(freg(3)), 0);
+    assert_eq!(invalid_hart.float_status().fflags(), 0);
+}
+
+#[test]
 fn hart_traps_rv64d_arithmetic_dynamic_rounding_with_reserved_frm() {
     let mut hart = RiscvHartState::new(0x8100);
     hart.set_machine_trap_vector(0x9000);

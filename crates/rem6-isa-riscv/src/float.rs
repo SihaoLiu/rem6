@@ -46,7 +46,62 @@ pub(crate) fn float_register_write(
     }
 }
 
-pub(crate) fn register_rounding_mode_is_supported(instruction: RiscvInstruction, frm: u64) -> bool {
+pub(crate) fn binary_register_rounding_mode_is_supported(
+    instruction: RiscvInstruction,
+    frm: u64,
+    lhs: u64,
+    rhs: u64,
+) -> bool {
+    register_rounding_mode_is_supported(
+        instruction,
+        frm,
+        binary_result_is_rounding_insensitive(instruction, lhs, rhs),
+    )
+}
+
+pub(crate) fn unary_register_rounding_mode_is_supported(
+    instruction: RiscvInstruction,
+    frm: u64,
+    value: u64,
+) -> bool {
+    register_rounding_mode_is_supported(
+        instruction,
+        frm,
+        unary_result_is_rounding_insensitive(instruction, value),
+    )
+}
+
+pub(crate) fn ternary_register_rounding_mode_is_supported(
+    instruction: RiscvInstruction,
+    frm: u64,
+    lhs: u64,
+    rhs: u64,
+    addend: u64,
+) -> bool {
+    register_rounding_mode_is_supported(
+        instruction,
+        frm,
+        ternary_result_is_rounding_insensitive(instruction, lhs, rhs, addend),
+    )
+}
+
+fn register_rounding_mode_is_supported(
+    instruction: RiscvInstruction,
+    frm: u64,
+    rounding_insensitive: bool,
+) -> bool {
+    let Some(rounding_mode) = register_rounding_mode(instruction) else {
+        return true;
+    };
+
+    match rounding_mode.resolve(frm) {
+        Some(RiscvFloatRoundingMode::RoundNearestEven) => true,
+        Some(_) => rounding_insensitive,
+        None => false,
+    }
+}
+
+fn register_rounding_mode(instruction: RiscvInstruction) -> Option<RiscvFloatRoundingMode> {
     let rounding_mode = match instruction {
         RiscvInstruction::FloatAddS { rounding_mode, .. }
         | RiscvInstruction::FloatAddD { rounding_mode, .. }
@@ -66,9 +121,145 @@ pub(crate) fn register_rounding_mode_is_supported(instruction: RiscvInstruction,
         | RiscvInstruction::FloatNegativeMultiplySubtractD { rounding_mode, .. }
         | RiscvInstruction::FloatNegativeMultiplyAddS { rounding_mode, .. }
         | RiscvInstruction::FloatNegativeMultiplyAddD { rounding_mode, .. } => rounding_mode,
-        _ => return true,
+        _ => return None,
     };
-    rounding_mode.resolve(frm) == Some(RiscvFloatRoundingMode::RoundNearestEven)
+    Some(rounding_mode)
+}
+
+fn binary_result_is_rounding_insensitive(
+    instruction: RiscvInstruction,
+    lhs: u64,
+    rhs: u64,
+) -> bool {
+    match instruction {
+        RiscvInstruction::FloatAddS { .. } => add_sub_single_is_identity(lhs, rhs),
+        RiscvInstruction::FloatAddD { .. } => add_sub_double_is_identity(lhs, rhs),
+        RiscvInstruction::FloatSubS { .. } => add_sub_single_is_identity(lhs, rhs),
+        RiscvInstruction::FloatSubD { .. } => add_sub_double_is_identity(lhs, rhs),
+        RiscvInstruction::FloatMulS { .. } => multiply_single_is_identity(lhs, rhs),
+        RiscvInstruction::FloatMulD { .. } => multiply_double_is_identity(lhs, rhs),
+        RiscvInstruction::FloatDivS { .. } => divide_single_is_identity(lhs, rhs),
+        RiscvInstruction::FloatDivD { .. } => divide_double_is_identity(lhs, rhs),
+        _ => false,
+    }
+}
+
+fn unary_result_is_rounding_insensitive(instruction: RiscvInstruction, value: u64) -> bool {
+    match instruction {
+        RiscvInstruction::FloatSqrtS { .. } => sqrt_single_is_exact(value),
+        RiscvInstruction::FloatSqrtD { .. } => sqrt_double_is_exact(value),
+        _ => false,
+    }
+}
+
+fn ternary_result_is_rounding_insensitive(
+    instruction: RiscvInstruction,
+    lhs: u64,
+    rhs: u64,
+    addend: u64,
+) -> bool {
+    match instruction {
+        RiscvInstruction::FloatMultiplyAddS { .. }
+        | RiscvInstruction::FloatMultiplySubtractS { .. }
+        | RiscvInstruction::FloatNegativeMultiplySubtractS { .. }
+        | RiscvInstruction::FloatNegativeMultiplyAddS { .. } => {
+            fused_single_is_identity(lhs, rhs, addend)
+        }
+        RiscvInstruction::FloatMultiplyAddD { .. }
+        | RiscvInstruction::FloatMultiplySubtractD { .. }
+        | RiscvInstruction::FloatNegativeMultiplySubtractD { .. }
+        | RiscvInstruction::FloatNegativeMultiplyAddD { .. } => {
+            fused_double_is_identity(lhs, rhs, addend)
+        }
+        _ => false,
+    }
+}
+
+fn add_sub_single_is_identity(lhs: u64, rhs: u64) -> bool {
+    let lhs = f32::from_bits(unbox_single(lhs));
+    let rhs = f32::from_bits(unbox_single(rhs));
+    lhs.is_finite() && rhs.is_finite() && ((lhs != 0.0 && rhs == 0.0) || (lhs == 0.0 && rhs != 0.0))
+}
+
+fn add_sub_double_is_identity(lhs: u64, rhs: u64) -> bool {
+    let lhs = f64::from_bits(lhs);
+    let rhs = f64::from_bits(rhs);
+    lhs.is_finite() && rhs.is_finite() && ((lhs != 0.0 && rhs == 0.0) || (lhs == 0.0 && rhs != 0.0))
+}
+
+fn multiply_single_is_identity(lhs: u64, rhs: u64) -> bool {
+    let lhs = f32::from_bits(unbox_single(lhs));
+    let rhs = f32::from_bits(unbox_single(rhs));
+    lhs.is_finite() && rhs.is_finite() && (lhs.abs() == 1.0 || rhs.abs() == 1.0)
+}
+
+fn multiply_double_is_identity(lhs: u64, rhs: u64) -> bool {
+    let lhs = f64::from_bits(lhs);
+    let rhs = f64::from_bits(rhs);
+    lhs.is_finite() && rhs.is_finite() && (lhs.abs() == 1.0 || rhs.abs() == 1.0)
+}
+
+fn divide_single_is_identity(lhs: u64, rhs: u64) -> bool {
+    let lhs = f32::from_bits(unbox_single(lhs));
+    let rhs = f32::from_bits(unbox_single(rhs));
+    lhs.is_finite() && rhs.abs() == 1.0
+}
+
+fn divide_double_is_identity(lhs: u64, rhs: u64) -> bool {
+    let lhs = f64::from_bits(lhs);
+    let rhs = f64::from_bits(rhs);
+    lhs.is_finite() && rhs.abs() == 1.0
+}
+
+fn fused_single_is_identity(lhs: u64, rhs: u64, addend: u64) -> bool {
+    let lhs = f32::from_bits(unbox_single(lhs));
+    let rhs = f32::from_bits(unbox_single(rhs));
+    let addend = f32::from_bits(unbox_single(addend));
+    lhs.is_finite()
+        && rhs.is_finite()
+        && addend.is_finite()
+        && lhs != 0.0
+        && rhs != 0.0
+        && addend == 0.0
+        && (lhs.abs() == 1.0 || rhs.abs() == 1.0)
+}
+
+fn fused_double_is_identity(lhs: u64, rhs: u64, addend: u64) -> bool {
+    let lhs = f64::from_bits(lhs);
+    let rhs = f64::from_bits(rhs);
+    let addend = f64::from_bits(addend);
+    lhs.is_finite()
+        && rhs.is_finite()
+        && addend.is_finite()
+        && lhs != 0.0
+        && rhs != 0.0
+        && addend == 0.0
+        && (lhs.abs() == 1.0 || rhs.abs() == 1.0)
+}
+
+fn sqrt_single_is_exact(value: u64) -> bool {
+    let value = f32::from_bits(unbox_single(value));
+    value.is_finite()
+        && value >= 0.0
+        && value.fract() == 0.0
+        && value <= 16_777_216.0
+        && is_square_u64(value as u64)
+}
+
+fn sqrt_double_is_exact(value: u64) -> bool {
+    let value = f64::from_bits(value);
+    value.is_finite()
+        && value >= 0.0
+        && value.fract() == 0.0
+        && value <= 9_007_199_254_740_992.0
+        && is_square_u64(value as u64)
+}
+
+fn is_square_u64(value: u64) -> bool {
+    let root = (value as f64).sqrt() as u64;
+    [root.saturating_sub(1), root, root.saturating_add(1)]
+        .into_iter()
+        .any(|candidate| candidate.checked_mul(candidate) == Some(value))
 }
 
 pub(crate) fn float_register_write_ternary(
