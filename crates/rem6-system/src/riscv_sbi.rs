@@ -34,6 +34,7 @@ const SBI_HSM_DEFAULT_RETENTIVE_SUSPEND: u64 = 0;
 const SBI_HSM_DEFAULT_NON_RETENTIVE_SUSPEND: u64 = 0x8000_0000;
 const SBI_HSM_HART_STARTED: u64 = 0;
 const SBI_HSM_HART_STOPPED: u64 = 1;
+const SBI_HSM_HART_START_PENDING: u64 = 2;
 const SBI_HSM_HART_SUSPENDED: u64 = 4;
 const SBI_IPI_SEND_IPI: u64 = 0;
 const SBI_RFENCE_REMOTE_FENCE_I: u64 = 0;
@@ -276,7 +277,17 @@ impl RiscvSbiFirmware {
                     .map_err(SystemError::Scheduler)?;
                 RiscvSbiOutcome::success(0)
             }
-            (SBI_HSM_EXTENSION, SBI_HSM_HART_START) => self.hart_start(request),
+            (SBI_HSM_EXTENSION, SBI_HSM_HART_START) => {
+                let outcome = self.hart_start(request);
+                if let RiscvSbiOutcome::Return {
+                    error: SBI_SUCCESS, ..
+                } = outcome
+                {
+                    self.schedule_hart_start(scheduler, core, request, parallel)
+                        .map_err(SystemError::Scheduler)?;
+                }
+                outcome
+            }
             (SBI_HSM_EXTENSION, SBI_HSM_HART_STOP) => self.hart_stop(core),
             (SBI_HSM_EXTENSION, SBI_HSM_HART_GET_STATUS) => self.hart_get_status(request),
             (SBI_HSM_EXTENSION, SBI_HSM_HART_SUSPEND) => self.hart_suspend(core, request),
@@ -343,8 +354,48 @@ impl RiscvSbiFirmware {
             return RiscvSbiOutcome::invalid_address();
         }
 
-        target.start_supervisor_hart(Address::new(request.arg1()), request.arg2());
+        target.set_hart_start_pending();
         RiscvSbiOutcome::success(0)
+    }
+
+    fn schedule_hart_start(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        source: &RiscvCore,
+        request: RiscvSbiRequest,
+        parallel: bool,
+    ) -> Result<(), SchedulerError> {
+        let Some(target) = self
+            .cores
+            .lock()
+            .expect("RISC-V SBI core registry lock")
+            .get(&request.arg0())
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let source_now = scheduler.partition_now(source.partition())?;
+        let target_now = scheduler.partition_now(target.partition())?;
+        let delay = scheduler.min_remote_delay();
+        let deadline = source_now
+            .checked_add(delay)
+            .ok_or(SchedulerError::TickOverflow {
+                now: source_now,
+                delay,
+            })?
+            .max(target_now);
+        let entry = Address::new(request.arg1());
+        let opaque = request.arg2();
+        if parallel {
+            scheduler.schedule_parallel_at(target.partition(), deadline, move |_context| {
+                target.complete_pending_supervisor_hart_start(entry, opaque);
+            })?;
+        } else {
+            scheduler.schedule_at(target.partition(), deadline, move |_context| {
+                target.complete_pending_supervisor_hart_start(entry, opaque);
+            })?;
+        }
+        Ok(())
     }
 
     fn hart_stop(&self, core: &RiscvCore) -> RiscvSbiOutcome {
@@ -384,6 +435,7 @@ impl RiscvSbiFirmware {
         };
         RiscvSbiOutcome::success(match target.hart_run_state() {
             RiscvHartRunState::Started => SBI_HSM_HART_STARTED,
+            RiscvHartRunState::StartPending => SBI_HSM_HART_START_PENDING,
             RiscvHartRunState::Stopped => SBI_HSM_HART_STOPPED,
             RiscvHartRunState::Suspended => SBI_HSM_HART_SUSPENDED,
         })
@@ -524,4 +576,240 @@ impl RiscvSystemRunDriver {
 
 fn register(index: u8) -> Register {
     Register::new(index).expect("valid RISC-V integer register")
+}
+
+#[cfg(test)]
+mod tests {
+    use rem6_boot::BootImage;
+    use rem6_cpu::{CpuCore, CpuFetchConfig, CpuResetState};
+    use rem6_kernel::{PartitionId, SchedulerContext};
+    use rem6_memory::{
+        AccessSize, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
+    };
+    use rem6_transport::{
+        MemoryRoute, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
+        TransportEndpointId,
+    };
+
+    use super::*;
+
+    const TEST_HART_START_PENDING: u64 = 2;
+
+    fn endpoint(name: &str) -> TransportEndpointId {
+        TransportEndpointId::new(name).expect("valid test endpoint")
+    }
+
+    fn test_core(
+        cpu: u32,
+        partition: u32,
+        agent: u32,
+        fetch_endpoint: &str,
+        route: rem6_transport::MemoryRouteId,
+        pc: u64,
+    ) -> RiscvCore {
+        RiscvCore::new(
+            CpuCore::new(
+                CpuResetState::new(
+                    CpuId::new(cpu),
+                    PartitionId::new(partition),
+                    AgentId::new(agent),
+                    Address::new(pc),
+                ),
+                CpuFetchConfig::new(
+                    endpoint(fetch_endpoint),
+                    route,
+                    CacheLineLayout::new(16).expect("valid cache line size"),
+                    AccessSize::new(4).expect("valid fetch size"),
+                ),
+            )
+            .expect("valid CPU core"),
+        )
+    }
+
+    fn hsm_request(function: u64, arg0: u64, arg1: u64, arg2: u64) -> RiscvSbiRequest {
+        RiscvSbiRequest {
+            extension: SBI_HSM_EXTENSION,
+            function,
+            arg0,
+            arg1,
+            arg2,
+            arg3: 0,
+            arg4: 0,
+        }
+    }
+
+    fn ecall_store(address: u64) -> Arc<Mutex<PartitionedMemoryStore>> {
+        let target = MemoryTargetId::new(0);
+        let layout = CacheLineLayout::new(16).expect("valid cache line size");
+        let mut store = PartitionedMemoryStore::new();
+        store.add_partition(target, layout).expect("memory target");
+        store
+            .map_region(
+                target,
+                Address::new(0x8000),
+                AccessSize::new(0x2000).expect("valid mapped size"),
+            )
+            .expect("mapped test memory");
+        BootImage::new(Address::new(address))
+            .add_segment(
+                Address::new(address),
+                0x0000_0073_u32.to_le_bytes().to_vec(),
+            )
+            .expect("ecall segment")
+            .load_into_partitioned_store(&mut store, target)
+            .expect("loaded ecall");
+        Arc::new(Mutex::new(store))
+    }
+
+    fn responder(
+        store: Arc<Mutex<PartitionedMemoryStore>>,
+    ) -> impl FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static
+    {
+        move |delivery, _context| {
+            let response = store
+                .lock()
+                .expect("test memory lock")
+                .respond(delivery.request())
+                .expect("memory response")
+                .response()
+                .cloned()
+                .expect("completed memory response");
+            TargetOutcome::Respond(response)
+        }
+    }
+
+    fn registered_hsm_pair() -> (
+        PartitionedScheduler,
+        MemoryTransport,
+        RiscvSbiFirmware,
+        RiscvCore,
+        RiscvCore,
+    ) {
+        let scheduler =
+            PartitionedScheduler::with_min_remote_delay(4, 2).expect("valid test scheduler");
+        let mut transport = MemoryTransport::new();
+        let cpu0_route = transport
+            .add_route(
+                MemoryRoute::new(
+                    endpoint("cpu0.ifetch"),
+                    PartitionId::new(0),
+                    endpoint("l1i"),
+                    PartitionId::new(2),
+                    2,
+                    3,
+                )
+                .expect("valid CPU 0 route"),
+            )
+            .expect("registered CPU 0 route");
+        let cpu1_route = transport
+            .add_route(
+                MemoryRoute::new(
+                    endpoint("cpu1.ifetch"),
+                    PartitionId::new(1),
+                    endpoint("l1i"),
+                    PartitionId::new(2),
+                    2,
+                    3,
+                )
+                .expect("valid CPU 1 route"),
+            )
+            .expect("registered CPU 1 route");
+        let core0 = test_core(0, 0, 7, "cpu0.ifetch", cpu0_route, 0x8000);
+        let core1 = test_core(1, 1, 8, "cpu1.ifetch", cpu1_route, 0x8800);
+        core0.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+        core1.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+        let cluster = RiscvCluster::new([core0.clone(), core1.clone()]).expect("valid cluster");
+        let firmware = RiscvSbiFirmware::new();
+        firmware
+            .register_cluster(&cluster)
+            .expect("cluster registers with SBI firmware");
+        (scheduler, transport, firmware, core0, core1)
+    }
+
+    fn execute_hsm_hart_start_ecall(
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        core: &RiscvCore,
+    ) {
+        core.write_register(register(17), SBI_HSM_EXTENSION);
+        core.write_register(register(16), SBI_HSM_HART_START);
+        core.write_register(register(10), 1);
+        core.write_register(register(11), 0x9000);
+        core.write_register(register(12), 0x55);
+        core.issue_next_fetch(
+            scheduler,
+            transport,
+            MemoryTrace::new(),
+            responder(ecall_store(0x8000)),
+        )
+        .expect("issued ecall fetch");
+        scheduler.run_until_idle_conservative();
+        core.execute_next_completed_fetch()
+            .expect("executed ecall")
+            .expect("ecall execution event");
+        assert!(core.has_pending_trap());
+    }
+
+    #[test]
+    fn hart_start_reports_start_pending_before_entry_event_runs() {
+        let (_scheduler, _transport, firmware, _core0, core1) = registered_hsm_pair();
+
+        let start = firmware.hart_start(hsm_request(SBI_HSM_HART_START, 1, 0x9000, 0x55));
+
+        assert_eq!(start, RiscvSbiOutcome::success(0));
+        assert_eq!(
+            firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 1, 0, 0)),
+            RiscvSbiOutcome::success(TEST_HART_START_PENDING)
+        );
+        assert_eq!(core1.pc(), Address::new(0x8800));
+    }
+
+    #[test]
+    fn handle_pending_core_trap_schedules_hart_start_completion() {
+        let (mut scheduler, transport, firmware, core0, core1) = registered_hsm_pair();
+        execute_hsm_hart_start_ecall(&mut scheduler, &transport, &core0);
+
+        let outcome = firmware
+            .handle_pending_core_trap(&mut scheduler, &core0, false)
+            .expect("handled SBI trap")
+            .expect("SBI outcome");
+
+        assert_eq!(outcome, RiscvSbiOutcome::success(0));
+        assert_eq!(
+            firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 1, 0, 0)),
+            RiscvSbiOutcome::success(TEST_HART_START_PENDING)
+        );
+        assert_eq!(core1.pc(), Address::new(0x8800));
+
+        scheduler.run_until_idle_conservative();
+
+        assert_eq!(
+            firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 1, 0, 0)),
+            RiscvSbiOutcome::success(SBI_HSM_HART_STARTED)
+        );
+        assert_eq!(core1.pc(), Address::new(0x9000));
+        assert_eq!(core1.read_register(register(10)), 1);
+        assert_eq!(core1.read_register(register(11)), 0x55);
+    }
+
+    #[test]
+    fn scheduled_hart_start_does_not_complete_after_state_changes() {
+        let (mut scheduler, transport, firmware, core0, core1) = registered_hsm_pair();
+        execute_hsm_hart_start_ecall(&mut scheduler, &transport, &core0);
+
+        let outcome = firmware
+            .handle_pending_core_trap(&mut scheduler, &core0, false)
+            .expect("handled SBI trap")
+            .expect("SBI outcome");
+
+        assert_eq!(outcome, RiscvSbiOutcome::success(0));
+        core1.set_hart_stopped();
+        scheduler.run_until_idle_conservative();
+
+        assert_eq!(
+            firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 1, 0, 0)),
+            RiscvSbiOutcome::success(SBI_HSM_HART_STOPPED)
+        );
+        assert_eq!(core1.pc(), Address::new(0x8800));
+    }
 }
