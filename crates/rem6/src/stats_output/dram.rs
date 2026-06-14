@@ -186,6 +186,20 @@ pub(super) fn emit_dram_stats(
     emit_dram_constant(
         stats,
         prefix,
+        "profile.timing.refresh_interval",
+        "Tick",
+        summary.profile_timing_refresh_interval,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
+        "profile.timing.refresh_recovery",
+        "Tick",
+        summary.profile_timing_refresh_recovery,
+    )?;
+    emit_dram_constant(
+        stats,
+        prefix,
         "profile.timing.command_window.window_cycles",
         "Tick",
         summary.profile_timing_command_window_cycles,

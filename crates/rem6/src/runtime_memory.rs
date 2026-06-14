@@ -648,6 +648,14 @@ impl Rem6DramSummary {
             profile_timing_same_bank_group_burst_spacing: timing
                 .and_then(|timing| timing.same_bank_group_burst_spacing())
                 .unwrap_or(0),
+            profile_timing_refresh_interval: timing
+                .and_then(|timing| timing.refresh_timing())
+                .map(|refresh| refresh.interval())
+                .unwrap_or(0),
+            profile_timing_refresh_recovery: timing
+                .and_then(|timing| timing.refresh_timing())
+                .map(|refresh| refresh.recovery())
+                .unwrap_or(0),
             profile_timing_command_window_cycles: timing
                 .and_then(|timing| timing.command_window())
                 .map(|window| window.window_cycles())

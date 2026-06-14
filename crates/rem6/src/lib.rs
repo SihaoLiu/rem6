@@ -240,6 +240,8 @@ pub struct Rem6DramSummary {
     profile_timing_bus_turnaround: u64,
     profile_timing_burst_spacing: u64,
     profile_timing_same_bank_group_burst_spacing: u64,
+    profile_timing_refresh_interval: u64,
+    profile_timing_refresh_recovery: u64,
     profile_timing_command_window_cycles: u64,
     profile_timing_command_window_max_commands: u64,
     profile_low_power_precharge_powerdown_entry_delay: u64,

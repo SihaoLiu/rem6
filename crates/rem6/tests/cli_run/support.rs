@@ -242,6 +242,38 @@ pub(crate) fn assert_stat(stdout: &str, path: &str, unit: &str, value: u64, rese
     }
 }
 
+pub(crate) fn assert_stat_greater_than(
+    stdout: &str,
+    path: &str,
+    unit: &str,
+    minimum: u64,
+    reset_policy: &str,
+) {
+    let sample = stat_sample(stdout, path);
+    assert!(
+        sample.contains(&format!("\"unit\":\"{unit}\"")),
+        "missing stat unit {unit} in {sample}"
+    );
+    assert!(
+        sample.contains(&format!("\"reset_policy\":\"{reset_policy}\"")),
+        "missing stat reset policy {reset_policy} in {sample}"
+    );
+    let Some(value_tail) = sample.split("\"value\":").nth(1) else {
+        panic!("missing stat value in {sample}");
+    };
+    let value_end = value_tail
+        .find(',')
+        .or_else(|| value_tail.find('}'))
+        .expect("stat value terminator");
+    let value = value_tail[..value_end]
+        .parse::<u64>()
+        .expect("numeric stat value");
+    assert!(
+        value > minimum,
+        "expected {path} value greater than {minimum}, got {value} in {sample}"
+    );
+}
+
 pub(crate) fn assert_histogram_stat(
     stdout: &str,
     path: &str,

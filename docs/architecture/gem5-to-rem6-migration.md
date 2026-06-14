@@ -163,10 +163,14 @@ trace replay consumers; optional single-core CLI RISC-V data traffic can drive
 MSI-bank, MESI-line, MOESI-line, and CHI-line data-cache runs and emit CPU
 response, directory decision, and DRAM access counters from those runs; optional
 single-core CLI RISC-V instruction fetch traffic can drive an MSI
-instruction-cache run path with separate instruction-cache counters.
+instruction-cache run path with separate instruction-cache counters; volatile
+CLI external-memory profiles carry refresh interval/recovery timing, and a DDR
+CLI RISC-V DRAM execution path emits nonzero refresh counters from real fetch
+traffic.
 
 **Not migrated:** Broad CPU-facing hierarchy, Ruby-scale protocol networks,
-flit-level NoC, and DRAM refresh/preset breadth.
+flit-level NoC, full JEDEC preset validation, and broad DRAM refresh/preset
+breadth.
 
 **Evidence:** `MsiCacheBank`, `MsiCacheController`, protocol directory
 harnesses, `DramController`, `DramMemoryController`, `FabricModel`,
@@ -174,9 +178,12 @@ harnesses, `DramController`, `DramMemoryController`, `FabricModel`,
 `riscv_topology_chi_data`, `memory_controller`, `timing`, `fabric_timing`,
 `system_run_resource_activity`, and CLI `run` data-cache smoke coverage with
 resource-activity stats plus instruction-cache fetch smoke coverage.
+CLI `run` also has DDR profile refresh smoke coverage that exposes refresh
+timing fields and nonzero refresh stats from RISC-V DRAM execution.
 
 **Next evidence:** RISC-V instruction/data execution through a coherent
-multi-level cache and DRAM path with unified resource accounting.
+multi-level cache and DRAM path with unified resource accounting, plus
+validated DDR4/DDR5/HBM refresh presets.
 
 ### RISC-V SE, Workloads, and Linux Boot - 45% single-axis
 
