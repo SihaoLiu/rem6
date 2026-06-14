@@ -647,6 +647,8 @@ fn linux_table_opens_registered_guest_path() {
 
 #[test]
 fn linux_table_legacy_open_uses_registered_guest_path_arguments() {
+    const NEWLIB_O_CLOEXEC: u64 = 0x40000;
+
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
     state.register_guest_path(b"/input.txt");
@@ -665,7 +667,7 @@ fn linux_table_legacy_open_uses_registered_guest_path_arguments() {
             RiscvSyscallRequest::new(
                 0x8000,
                 RISCV_LINUX_OPEN,
-                [0x9000, RISCV_LINUX_O_CLOEXEC, 0o644, 0, 0, 0],
+                [0x9000, NEWLIB_O_CLOEXEC, 0o644, 0, 0, 0],
             ),
             &mut state,
             7,

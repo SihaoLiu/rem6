@@ -4,11 +4,17 @@ const RISCV_LINUX_O_RDWR_FOR_TEST: u64 = 2;
 const RISCV_LINUX_O_WRONLY_FOR_TEST: u64 = 1;
 const RISCV_LINUX_O_CREAT_FOR_TEST: u64 = 0o100;
 const RISCV_LINUX_O_APPEND_FOR_TEST: u64 = 0o2000;
+const RISCV_NEWLIB_O_CREAT_FOR_TEST: u64 = 0x0200;
+const RISCV_NEWLIB_O_TRUNC_FOR_TEST: u64 = 0x0400;
+const RISCV_NEWLIB_O_EXCL_FOR_TEST: u64 = 0x0800;
+const RISCV_NEWLIB_O_DIRECT_FOR_TEST: u64 = 0x80000;
 const RISCV_LINUX_UMASK_FOR_OPEN_TEST: u64 = 166;
 const RISCV_LINUX_LINK_FOR_OPEN_TEST: u64 = 1025;
 const RISCV_LINUX_RENAMEAT2_FOR_OPEN_TEST: u64 = 276;
 const RISCV_LINUX_X_OK_FOR_OPEN_TEST: u64 = 1;
 const RISCV_LINUX_EACCES_FOR_OPEN_TEST: u64 = 13;
+const RISCV_LINUX_EEXIST_FOR_OPEN_TEST: u64 = 17;
+const RISCV_LINUX_EINVAL_FOR_OPEN_TEST: u64 = 22;
 
 #[test]
 fn linux_table_openat_append_writes_at_guest_file_end() {
@@ -196,6 +202,160 @@ fn linux_table_openat_creat_applies_umask_to_regular_file_mode() {
     let fd_stat = collect_guest_writes(&writes_in_range(&writes, 0xa100, 128), 0xa100, 128);
     assert_eq!(read_le_u32(&path_stat, 16), 0o100640);
     assert_eq!(read_le_u32(&fd_stat, 16), 0o100640);
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_legacy_open_accepts_newlib_create_truncate_flags() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let path = b"created.txt\0".to_vec();
+    let payload = b"alpha:17\n".to_vec();
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if bytes == 1 && address >= 0x9000 {
+            return path
+                .get((address - 0x9000) as usize)
+                .copied()
+                .map(|byte| vec![byte]);
+        }
+        if address >= 0xa000 {
+            let start = usize::try_from(address - 0xa000).ok()?;
+            let end = start.checked_add(bytes)?;
+            return payload.get(start..end).map(Vec::from);
+        }
+        None
+    });
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPEN,
+                [
+                    0x9000,
+                    RISCV_LINUX_O_RDWR_FOR_TEST
+                        | RISCV_NEWLIB_O_CREAT_FOR_TEST
+                        | RISCV_NEWLIB_O_TRUNC_FOR_TEST,
+                    0o666,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_WRITE, [3, 0xa000, 9, 0, 0, 0]),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 9 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_LSEEK, [3, 0, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x800c, RISCV_LINUX_READ, [3, 0xb000, 16, 0, 0, 0]),
+            &mut state,
+            9,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 9 })
+    );
+
+    assert_eq!(
+        &*writes.lock().unwrap(),
+        &[(0xb000, b"alpha:17\n".to_vec())]
+    );
+    assert_eq!(state.guest_path_stat(b"created.txt").unwrap().size(), 9);
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_legacy_open_enforces_newlib_exclusive_create() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"created.txt", b"seed\n");
+    let guest_memory_reader = c_string_reader_entries(&[(0x9000, b"created.txt")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPEN,
+                [
+                    0x9000,
+                    RISCV_LINUX_O_RDWR_FOR_TEST
+                        | RISCV_NEWLIB_O_CREAT_FOR_TEST
+                        | RISCV_NEWLIB_O_EXCL_FOR_TEST,
+                    0o666,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EEXIST_FOR_OPEN_TEST)
+        })
+    );
+
+    assert_eq!(state.guest_path_stat(b"created.txt").unwrap().size(), 5);
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_legacy_open_rejects_unimplemented_newlib_direct_flag() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"seed\n");
+    let guest_memory_reader = c_string_reader_entries(&[(0x9000, b"guest.txt")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPEN,
+                [0x9000, RISCV_NEWLIB_O_DIRECT_FOR_TEST, 0o666, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL_FOR_OPEN_TEST)
+        })
+    );
+
+    assert!(state.guest_opens().is_empty());
     assert!(state.unknown_syscalls().is_empty());
 }
 

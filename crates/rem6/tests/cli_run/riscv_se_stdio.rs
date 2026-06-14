@@ -188,6 +188,108 @@ int main(void) {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_newlib_file_create_roundtrip() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static newlib RISC-V SE file-create smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-newlib-file-create");
+    let source = workspace.join("file_create.c");
+    let binary = workspace.join("file_create");
+    fs::write(
+        &source,
+        r#"#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+
+int main(void) {
+    FILE *file = fopen("created.txt", "w+");
+    if (file == NULL) {
+        printf("roundtrip:open:%d\n", errno);
+        return 51;
+    }
+    if (fprintf(file, "alpha:%d\n", 17) < 0) {
+        printf("roundtrip:write:%d\n", errno);
+        fclose(file);
+        return 52;
+    }
+    if (fflush(file) != 0) {
+        printf("roundtrip:flush:%d\n", errno);
+        fclose(file);
+        return 53;
+    }
+    if (fseek(file, 0, SEEK_SET) != 0) {
+        printf("roundtrip:seek:%d\n", errno);
+        fclose(file);
+        return 54;
+    }
+    char buffer[32] = {0};
+    if (fgets(buffer, sizeof(buffer), file) == NULL) {
+        printf("roundtrip:read:%d\n", errno);
+        fclose(file);
+        return 55;
+    }
+    fclose(file);
+    printf("roundtrip:%s", buffer);
+    return strcmp(buffer, "alpha:17\n") == 0 ? 56 : 57;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "400000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":56"));
+    assert!(stdout.contains("\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"roundtrip:alpha:17\\n\""));
+    assert!(!stdout.contains("riscv_unknown_syscalls\":[{"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 56, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_file_write_read_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(

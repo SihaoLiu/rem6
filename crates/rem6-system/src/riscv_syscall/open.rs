@@ -13,8 +13,15 @@ use super::{
 pub(super) const RISCV_LINUX_OPEN: u64 = 1024;
 const RISCV_LINUX_O_DIRECTORY: u64 = 0o200000;
 const RISCV_LINUX_O_CREAT: u64 = 0o100;
+const RISCV_LINUX_O_EXCL: u64 = 0o200;
 const RISCV_LINUX_O_TRUNC: u64 = 0o1000;
 const RISCV_LINUX_O_RDWR: u64 = 2;
+const RISCV_NEWLIB_O_APPEND: u64 = 0x0008;
+const RISCV_NEWLIB_O_CREAT: u64 = 0x0200;
+const RISCV_NEWLIB_O_TRUNC: u64 = 0x0400;
+const RISCV_NEWLIB_O_EXCL: u64 = 0x0800;
+const RISCV_NEWLIB_O_NONBLOCK: u64 = 0x4000;
+const RISCV_NEWLIB_O_CLOEXEC: u64 = 0x40000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvGuestOpenRecord {
@@ -89,14 +96,54 @@ pub(super) fn syscall_open(
     state: &mut RiscvSyscallState,
     guest_memory: &RiscvGuestMemoryReader,
 ) -> u64 {
+    let flags = request.argument(1);
+    if legacy_open_unknown_flags(flags) != 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
     syscall_open_registered_path(
         RISCV_LINUX_AT_FDCWD,
         request.argument(0),
-        request.argument(1),
+        normalize_newlib_legacy_open_flags(flags),
         request.argument(2),
         state,
         guest_memory,
     )
+}
+
+fn normalize_newlib_legacy_open_flags(flags: u64) -> u64 {
+    // RISC-V newlib/libgloss emits syscall 1024 with newlib fcntl flag values.
+    // Linux ABI callers keep Linux flag values on the openat path.
+    let mut normalized = flags & RISCV_LINUX_O_ACCMODE;
+    if flags & RISCV_NEWLIB_O_APPEND != 0 {
+        normalized |= RISCV_LINUX_O_APPEND;
+    }
+    if flags & RISCV_NEWLIB_O_CREAT != 0 {
+        normalized |= RISCV_LINUX_O_CREAT;
+    }
+    if flags & RISCV_NEWLIB_O_TRUNC != 0 {
+        normalized |= RISCV_LINUX_O_TRUNC;
+    }
+    if flags & RISCV_NEWLIB_O_EXCL != 0 {
+        normalized |= RISCV_LINUX_O_EXCL;
+    }
+    if flags & RISCV_NEWLIB_O_NONBLOCK != 0 {
+        normalized |= RISCV_LINUX_O_NONBLOCK;
+    }
+    if flags & RISCV_NEWLIB_O_CLOEXEC != 0 {
+        normalized |= RISCV_LINUX_O_CLOEXEC;
+    }
+    normalized
+}
+
+fn legacy_open_unknown_flags(flags: u64) -> u64 {
+    flags
+        & !(RISCV_LINUX_O_ACCMODE
+            | RISCV_NEWLIB_O_APPEND
+            | RISCV_NEWLIB_O_CREAT
+            | RISCV_NEWLIB_O_TRUNC
+            | RISCV_NEWLIB_O_EXCL
+            | RISCV_NEWLIB_O_NONBLOCK
+            | RISCV_NEWLIB_O_CLOEXEC)
 }
 
 fn syscall_open_registered_path(
@@ -118,6 +165,7 @@ fn syscall_open_registered_path(
             | RISCV_LINUX_O_NONBLOCK
             | RISCV_LINUX_O_DIRECTORY
             | RISCV_LINUX_O_CREAT
+            | RISCV_LINUX_O_EXCL
             | RISCV_LINUX_O_TRUNC)
         != 0
     {
@@ -132,7 +180,11 @@ fn syscall_open_registered_path(
     }
     let writable = access_mode != RISCV_LINUX_O_RDONLY;
     let creates_file = flags & RISCV_LINUX_O_CREAT != 0;
+    let exclusive_create = flags & RISCV_LINUX_O_EXCL != 0;
     let truncates_file = flags & RISCV_LINUX_O_TRUNC != 0;
+    if exclusive_create && !creates_file {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
 
     let path = match read_guest_c_string(guest_memory, path_address, RISCV_LINUX_PATH_MAX) {
         Ok(path) => path,
@@ -175,6 +227,9 @@ fn syscall_open_registered_path(
         let path = state.existing_guest_path_key(&path).unwrap_or(path);
         let path_exists = state.guest_path_registered(&path);
         let existing = state.guest_file_contents(&path).map(Vec::from);
+        if exclusive_create && path_exists {
+            return linux_error(RISCV_LINUX_EEXIST);
+        }
         if existing.is_none() && !path_exists && !creates_file {
             return linux_error(RISCV_LINUX_ENOENT);
         }
