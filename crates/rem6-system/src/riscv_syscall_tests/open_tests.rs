@@ -4,13 +4,18 @@ const RISCV_LINUX_O_RDWR_FOR_TEST: u64 = 2;
 const RISCV_LINUX_O_WRONLY_FOR_TEST: u64 = 1;
 const RISCV_LINUX_O_CREAT_FOR_TEST: u64 = 0o100;
 const RISCV_LINUX_O_APPEND_FOR_TEST: u64 = 0o2000;
+const RISCV_LINUX_O_DSYNC_FOR_TEST: u64 = 0o10000;
 const RISCV_LINUX_O_DIRECTORY_FOR_TEST: u64 = 0o200000;
 const RISCV_LINUX_O_NOCTTY_FOR_TEST: u64 = 0o400;
 const RISCV_LINUX_O_NOFOLLOW_FOR_TEST: u64 = 0o400000;
 const RISCV_LINUX_O_CLOEXEC_FOR_TEST: u64 = 0o2000000;
+const RISCV_LINUX_O_SYNC_INTERNAL_FOR_TEST: u64 = 0o4000000;
+const RISCV_LINUX_O_SYNC_FOR_TEST: u64 =
+    RISCV_LINUX_O_SYNC_INTERNAL_FOR_TEST | RISCV_LINUX_O_DSYNC_FOR_TEST;
 const RISCV_NEWLIB_O_CREAT_FOR_TEST: u64 = 0x0200;
 const RISCV_NEWLIB_O_TRUNC_FOR_TEST: u64 = 0x0400;
 const RISCV_NEWLIB_O_EXCL_FOR_TEST: u64 = 0x0800;
+const RISCV_NEWLIB_O_SYNC_FOR_TEST: u64 = 0x2000;
 const RISCV_NEWLIB_O_NOCTTY_FOR_TEST: u64 = 0x8000;
 const RISCV_NEWLIB_O_DIRECT_FOR_TEST: u64 = 0x80000;
 const RISCV_NEWLIB_O_NOFOLLOW_FOR_TEST: u64 = 0x100000;
@@ -396,6 +401,106 @@ fn linux_table_legacy_open_accepts_newlib_noctty_nofollow_regular_file_flags() {
             | RISCV_LINUX_O_NOFOLLOW_FOR_TEST
             | RISCV_LINUX_O_CLOEXEC_FOR_TEST
     );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_legacy_open_accepts_newlib_sync_regular_file_flag() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"seed\n");
+    let guest_memory_reader = c_string_reader(0x9000, b"guest.txt");
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPEN,
+                [0x9000, RISCV_NEWLIB_O_SYNC_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+
+    let fd = GuestFd::new(3).unwrap();
+    let expected_status = RISCV_LINUX_O_RDONLY | RISCV_LINUX_O_DSYNC_FOR_TEST;
+    assert_eq!(
+        state.guest_fds().status_flags(fd).unwrap(),
+        GuestFileStatusFlags::new(expected_status as u32)
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FCNTL,
+                [3, RISCV_LINUX_F_GETFL, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: expected_status
+        })
+    );
+    assert_eq!(state.guest_opens().len(), 1);
+    let open = &state.guest_opens()[0];
+    assert_eq!(open.fd(), fd);
+    assert_eq!(open.flags(), RISCV_LINUX_O_DSYNC_FOR_TEST);
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_openat_normalizes_raw_sync_bit_to_public_sync_flag() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"seed\n");
+    let guest_memory_reader = c_string_reader(0x9000, b"guest.txt");
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPENAT,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_O_SYNC_INTERNAL_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+
+    let fd = GuestFd::new(3).unwrap();
+    assert_eq!(
+        state.guest_fds().status_flags(fd).unwrap(),
+        GuestFileStatusFlags::new(RISCV_LINUX_O_SYNC_FOR_TEST as u32)
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FCNTL,
+                [3, RISCV_LINUX_F_GETFL, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_O_SYNC_FOR_TEST
+        })
+    );
+    assert_eq!(state.guest_opens().len(), 1);
+    assert_eq!(state.guest_opens()[0].flags(), RISCV_LINUX_O_SYNC_FOR_TEST);
     assert!(state.unknown_syscalls().is_empty());
 }
 

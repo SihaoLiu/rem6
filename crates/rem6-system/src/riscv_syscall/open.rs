@@ -13,8 +13,11 @@ use super::{
 pub(super) const RISCV_LINUX_OPEN: u64 = 1024;
 const RISCV_LINUX_ELOOP: u64 = 40;
 const RISCV_LINUX_O_NOCTTY: u64 = 0o400;
+const RISCV_LINUX_O_DSYNC: u64 = 0o10000;
 const RISCV_LINUX_O_DIRECTORY: u64 = 0o200000;
 const RISCV_LINUX_O_NOFOLLOW: u64 = 0o400000;
+const RISCV_LINUX_O_SYNC: u64 = 0o4010000;
+const RISCV_LINUX_O_SYNC_INTERNAL: u64 = RISCV_LINUX_O_SYNC & !RISCV_LINUX_O_DSYNC;
 const RISCV_LINUX_O_CREAT: u64 = 0o100;
 const RISCV_LINUX_O_EXCL: u64 = 0o200;
 const RISCV_LINUX_O_TRUNC: u64 = 0o1000;
@@ -23,6 +26,7 @@ const RISCV_NEWLIB_O_APPEND: u64 = 0x0008;
 const RISCV_NEWLIB_O_CREAT: u64 = 0x0200;
 const RISCV_NEWLIB_O_TRUNC: u64 = 0x0400;
 const RISCV_NEWLIB_O_EXCL: u64 = 0x0800;
+const RISCV_NEWLIB_O_SYNC: u64 = 0x2000;
 const RISCV_NEWLIB_O_NOCTTY: u64 = 0x8000;
 const RISCV_NEWLIB_O_NONBLOCK: u64 = 0x4000;
 const RISCV_NEWLIB_O_CLOEXEC: u64 = 0x40000;
@@ -132,6 +136,9 @@ fn normalize_newlib_legacy_open_flags(flags: u64) -> u64 {
     if flags & RISCV_NEWLIB_O_EXCL != 0 {
         normalized |= RISCV_LINUX_O_EXCL;
     }
+    if flags & RISCV_NEWLIB_O_SYNC != 0 {
+        normalized |= RISCV_LINUX_O_DSYNC;
+    }
     if flags & RISCV_NEWLIB_O_NONBLOCK != 0 {
         normalized |= RISCV_LINUX_O_NONBLOCK;
     }
@@ -157,11 +164,20 @@ fn legacy_open_unknown_flags(flags: u64) -> u64 {
             | RISCV_NEWLIB_O_CREAT
             | RISCV_NEWLIB_O_TRUNC
             | RISCV_NEWLIB_O_EXCL
+            | RISCV_NEWLIB_O_SYNC
             | RISCV_NEWLIB_O_NONBLOCK
             | RISCV_NEWLIB_O_NOCTTY
             | RISCV_NEWLIB_O_CLOEXEC
             | RISCV_NEWLIB_O_NOFOLLOW
             | RISCV_NEWLIB_O_DIRECTORY)
+}
+
+fn normalize_linux_open_flags(flags: u64) -> u64 {
+    let mut normalized = flags;
+    if flags & RISCV_LINUX_O_SYNC_INTERNAL != 0 {
+        normalized |= RISCV_LINUX_O_DSYNC;
+    }
+    normalized
 }
 
 fn syscall_open_registered_path(
@@ -182,6 +198,8 @@ fn syscall_open_registered_path(
             | RISCV_LINUX_O_APPEND
             | RISCV_LINUX_O_NONBLOCK
             | RISCV_LINUX_O_NOCTTY
+            | RISCV_LINUX_O_DSYNC
+            | RISCV_LINUX_O_SYNC
             | RISCV_LINUX_O_DIRECTORY
             | RISCV_LINUX_O_NOFOLLOW
             | RISCV_LINUX_O_CREAT
@@ -191,6 +209,7 @@ fn syscall_open_registered_path(
     {
         return linux_error(RISCV_LINUX_EINVAL);
     }
+    let flags = normalize_linux_open_flags(flags);
     let access_mode = flags & RISCV_LINUX_O_ACCMODE;
     if !matches!(
         access_mode,

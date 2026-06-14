@@ -225,8 +225,8 @@ hart and SBI IPI pending interrupts waking retentive suspended harts; typed
 unknown-syscall records; static smoke coverage; a static newlib
 `fopen("w+")` create, write, seek, readback, and exit-code roundtrip; and a
 static newlib `open(".", O_DIRECTORY | O_CLOEXEC)` directory traversal smoke
-plus `open` with `O_NOCTTY` and `O_NOFOLLOW` through the legacy `open`
-syscall with newlib/libgloss flags.
+plus `open` with `O_NOCTTY`, `O_NOFOLLOW`, and `O_SYNC` through the legacy
+`open` syscall with newlib/libgloss flags.
 
 **Not migrated:** Broad Linux SE parity, process/thread lifecycle, broad SBI
 timer/IPI/reset power-state behavior, HSM non-retentive resume, wake, and
