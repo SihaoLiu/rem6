@@ -123,6 +123,7 @@ pub struct Rem6RunConfig {
     dram_memory: bool,
     dram_memory_profile: CliDramMemoryProfile,
     data_cache_protocol: Option<RiscvDataCacheProtocol>,
+    instruction_cache_protocol: Option<RiscvDataCacheProtocol>,
     cores: usize,
     parallel_workers: usize,
     memory_dumps: Vec<MemoryDumpRequest>,
@@ -196,6 +197,7 @@ struct Rem6RunFileConfig {
     dram_memory: Option<bool>,
     dram_memory_profile: Option<String>,
     data_cache_protocol: Option<String>,
+    instruction_cache_protocol: Option<String>,
     cores: Option<usize>,
     parallel_workers: Option<usize>,
     memory_dumps: Option<Vec<String>>,
@@ -383,6 +385,17 @@ impl Rem6RunConfig {
                 })
             })
             .transpose()?;
+        let mut instruction_cache_protocol = file_config
+            .instruction_cache_protocol
+            .as_deref()
+            .map(|value| {
+                parse_run_data_cache_protocol(value).ok_or_else(|| {
+                    Rem6CliError::InvalidRunInstructionCacheProtocol {
+                        value: value.to_string(),
+                    }
+                })
+            })
+            .transpose()?;
         let mut cores = file_config.cores.unwrap_or(1);
         if cores == 0 {
             return Err(Rem6CliError::InvalidCoreCount {
@@ -559,6 +572,15 @@ impl Rem6RunConfig {
                             }
                         })?);
                 }
+                "--instruction-cache-protocol" => {
+                    let value = required_value(&flag, args.next())?;
+                    instruction_cache_protocol =
+                        Some(parse_run_data_cache_protocol(&value).ok_or_else(|| {
+                            Rem6CliError::InvalidRunInstructionCacheProtocol {
+                                value: value.clone(),
+                            }
+                        })?);
+                }
                 "--cores" => {
                     let value = required_value(&flag, args.next())?;
                     cores = value
@@ -687,6 +709,7 @@ impl Rem6RunConfig {
             dram_memory,
             dram_memory_profile,
             data_cache_protocol,
+            instruction_cache_protocol,
             cores,
             parallel_workers: parallel_workers.unwrap_or(cores),
             memory_dumps,
@@ -774,6 +797,10 @@ impl Rem6RunConfig {
 
     pub const fn data_cache_protocol(&self) -> Option<RiscvDataCacheProtocol> {
         self.data_cache_protocol
+    }
+
+    pub const fn instruction_cache_protocol(&self) -> Option<RiscvDataCacheProtocol> {
+        self.instruction_cache_protocol
     }
 
     pub const fn cores(&self) -> usize {
@@ -1481,6 +1508,7 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--stats-format",
             "--dram-memory-profile",
             "--data-cache-protocol",
+            "--instruction-cache-protocol",
             "--cores",
             "--parallel-workers",
             "--dump-memory",

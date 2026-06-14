@@ -65,26 +65,39 @@ pub(crate) struct CliDataCacheSummary {
 
 impl CliDataCacheSummary {
     pub(crate) fn from_run(run: &RiscvSystemRun) -> Self {
+        Self::from_records(&run.data_cache_run_records())
+    }
+
+    pub(crate) fn from_records(records: &[RiscvDataCacheRunRecord]) -> Self {
         Self {
-            runs: run.data_cache_run_count() as u64,
-            msi_runs: run.data_cache_run_count_for_protocol(RiscvDataCacheProtocol::Msi) as u64,
-            mesi_runs: run.data_cache_run_count_for_protocol(RiscvDataCacheProtocol::Mesi) as u64,
-            moesi_runs: run.data_cache_run_count_for_protocol(RiscvDataCacheProtocol::Moesi) as u64,
-            chi_runs: run.data_cache_run_count_for_protocol(RiscvDataCacheProtocol::Chi) as u64,
-            cpu_responses: run
-                .data_cache_runs()
+            runs: records.len() as u64,
+            msi_runs: records
                 .iter()
-                .map(|run| run.cpu_response_count() as u64)
+                .filter(|record| record.protocol() == Some(RiscvDataCacheProtocol::Msi))
+                .count() as u64,
+            mesi_runs: records
+                .iter()
+                .filter(|record| record.protocol() == Some(RiscvDataCacheProtocol::Mesi))
+                .count() as u64,
+            moesi_runs: records
+                .iter()
+                .filter(|record| record.protocol() == Some(RiscvDataCacheProtocol::Moesi))
+                .count() as u64,
+            chi_runs: records
+                .iter()
+                .filter(|record| record.protocol() == Some(RiscvDataCacheProtocol::Chi))
+                .count() as u64,
+            cpu_responses: records
+                .iter()
+                .map(|record| record.summary().cpu_response_count() as u64)
                 .sum(),
-            directory_decisions: run
-                .data_cache_runs()
+            directory_decisions: records
                 .iter()
-                .map(|run| run.directory_decision_count() as u64)
+                .map(|record| record.summary().directory_decision_count() as u64)
                 .sum(),
-            dram_accesses: run
-                .data_cache_runs()
+            dram_accesses: records
                 .iter()
-                .map(|run| run.dram_access_count() as u64)
+                .map(|record| record.summary().dram_access_count() as u64)
                 .sum(),
         }
     }

@@ -12,9 +12,7 @@ use rem6_cpu::{
 };
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode};
 use rem6_kernel::{PartitionFrontier, PartitionId, PartitionedScheduler, ReadyPartition};
-use rem6_memory::{
-    AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequestId,
-};
+use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation};
 use rem6_stats::{
     MemFootprintAddressRange, MemFootprintProbeConfig, StackDistProbeConfig, StatsRegistry,
 };
@@ -25,8 +23,7 @@ use rem6_system::{
     RiscvUnknownSyscallRecord, SystemHostController, SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
 };
 use rem6_transport::{
-    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, MemoryTransport,
-    TransportEndpointId,
+    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TransportEndpointId,
 };
 
 mod artifact_json;
@@ -41,6 +38,7 @@ mod parallel_stats;
 mod runtime_memory;
 mod stats_output;
 mod trace_replay_cli;
+mod transport_summary;
 #[cfg(test)]
 mod transport_summary_tests;
 
@@ -55,10 +53,14 @@ use data_cache_runtime::{
 };
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
-use runtime_memory::{cli_memory_response, read_memory_dumps, CliMemoryRuntime};
+use runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use stats_output::{run_stats_output, Rem6StatsInputs};
 pub use trace_replay_cli::{
     run_trace_replay_config, Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary,
+};
+pub(crate) use transport_summary::{
+    memory_transport_summary, Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary,
+    Rem6MemoryTransportSummary,
 };
 
 const DEFAULT_CACHE_LINE_BYTES: u64 = 16;
@@ -124,6 +126,7 @@ pub struct Rem6ExecutionSummary {
     data_load_bytes: u64,
     data_store_bytes: u64,
     data_atomic_bytes: u64,
+    instruction_cache: CliDataCacheSummary,
     data_cache: CliDataCacheSummary,
     data_access_probes: Rem6DataAccessProbeSummary,
     parallel_scheduler_epochs: u64,
@@ -370,34 +373,12 @@ pub struct Rem6ParallelReadyPartitionSummary {
     next_tick: u64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Rem6MemoryTransportSummary {
-    counters: Rem6MemoryTransportCounters,
-    routes: Vec<Rem6MemoryTransportRouteSummary>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Rem6MemoryTransportRouteSummary {
-    route: MemoryRouteId,
-    source: String,
-    counters: Rem6MemoryTransportCounters,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct Rem6MemoryTransportCounters {
-    requests: u64,
-    request_arrivals: u64,
-    responses: u64,
-    response_arrivals: u64,
-    round_trip_ticks: u64,
-    max_round_trip_ticks: u64,
-}
-
 struct ExecutionSummaryInputs<'a> {
     core_count: u32,
     memory: &'a CliMemoryRuntime,
     line_layout: CacheLineLayout,
     config: &'a Rem6RunConfig,
+    instruction_cache: CliDataCacheSummary,
     fetch_trace: &'a MemoryTrace,
     data_trace: &'a MemoryTrace,
     riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
@@ -500,6 +481,9 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         if config.data_cache_protocol().is_some() {
             return Err(Rem6CliError::DataCacheProtocolRequiresExecution);
         }
+        if config.instruction_cache_protocol().is_some() {
+            return Err(Rem6CliError::InstructionCacheProtocolRequiresExecution);
+        }
     }
     if config.data_cache_protocol().is_some() {
         if config.isa() != RequestedIsa::Riscv {
@@ -507,6 +491,16 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         }
         if config.cores() != 1 {
             return Err(Rem6CliError::DataCacheProtocolRequiresSingleCore {
+                cores: config.cores(),
+            });
+        }
+    }
+    if config.instruction_cache_protocol().is_some() {
+        if config.isa() != RequestedIsa::Riscv {
+            return Err(Rem6CliError::InstructionCacheProtocolRequiresRiscv);
+        }
+        if config.cores() != 1 {
+            return Err(Rem6CliError::InstructionCacheProtocolRequiresSingleCore {
                 cores: config.cores(),
             });
         }
@@ -598,25 +592,9 @@ fn execute_riscv(
         config.dram_memory(),
         config.dram_memory_profile(),
     )?;
-    let data_cache = match config.data_cache_protocol() {
-        Some(RiscvDataCacheProtocol::Msi) => Some(CliDataCacheRuntime::new_msi_bank(
-            line_layout,
-            (0..core_count).map(AgentId::new),
-        )?),
-        Some(RiscvDataCacheProtocol::Mesi) => Some(CliDataCacheRuntime::new_mesi_lines(
-            line_layout,
-            (0..core_count).map(AgentId::new),
-        )?),
-        Some(RiscvDataCacheProtocol::Moesi) => Some(CliDataCacheRuntime::new_moesi_lines(
-            line_layout,
-            (0..core_count).map(AgentId::new),
-        )?),
-        Some(RiscvDataCacheProtocol::Chi) => Some(CliDataCacheRuntime::new_chi_lines(
-            line_layout,
-            (0..core_count).map(AgentId::new),
-        )?),
-        None => None,
-    };
+    let instruction_cache =
+        cli_cache_runtime(config.instruction_cache_protocol(), line_layout, core_count)?;
+    let data_cache = cli_cache_runtime(config.data_cache_protocol(), line_layout, core_count)?;
     let riscv_se_startup = if config.riscv_se() {
         let mut startup_config = RiscvSeStartupConfig::new(Address::new(RISCV64_SE_STACK_TOP));
         if config.riscv_se_args().is_empty() {
@@ -794,7 +772,10 @@ fn execute_riscv(
             data_trace.clone(),
             |_cpu| {
                 let memory = memory.clone();
-                move |delivery, _context| cli_memory_response(&memory, &delivery)
+                let instruction_cache = instruction_cache.clone();
+                move |delivery, _context| {
+                    cli_data_memory_response(instruction_cache.as_ref(), &memory, &delivery)
+                }
             },
             |_cpu| {
                 let memory = memory.clone();
@@ -815,7 +796,10 @@ fn execute_riscv(
             data_trace.clone(),
             |_cpu| {
                 let memory = memory.clone();
-                move |delivery, _context| cli_memory_response(&memory, &delivery)
+                let instruction_cache = instruction_cache.clone();
+                move |delivery, _context| {
+                    cli_data_memory_response(instruction_cache.as_ref(), &memory, &delivery)
+                }
             },
             |_cpu| {
                 let memory = memory.clone();
@@ -833,10 +817,19 @@ fn execute_riscv(
             return Err(error);
         }
     }
+    if let Some(instruction_cache) = instruction_cache.as_ref() {
+        if let Some(error) = instruction_cache.take_error() {
+            return Err(error);
+        }
+    }
     let mut run = run_result.map_err(execute_error)?;
     if let Some(data_cache) = data_cache.as_ref() {
         run = run.with_data_cache_run_records(data_cache.records());
     }
+    let instruction_cache_records = instruction_cache
+        .as_ref()
+        .map(CliDataCacheRuntime::records)
+        .unwrap_or_default();
     let (riscv_guest_writes, riscv_unknown_syscalls) = driver
         .riscv_syscall_emulation()
         .map(|emulation| {
@@ -860,6 +853,7 @@ fn execute_riscv(
         memory: &memory,
         line_layout,
         config,
+        instruction_cache: CliDataCacheSummary::from_records(&instruction_cache_records),
         fetch_trace: &fetch_trace,
         data_trace: &data_trace,
         riscv_guest_writes,
@@ -867,6 +861,29 @@ fn execute_riscv(
     };
 
     execution_summary(&cluster, &run, summary_inputs)
+}
+
+fn cli_cache_runtime(
+    protocol: Option<RiscvDataCacheProtocol>,
+    line_layout: CacheLineLayout,
+    core_count: u32,
+) -> Result<Option<CliDataCacheRuntime>, Rem6CliError> {
+    let agents = || (0..core_count).map(AgentId::new);
+    match protocol {
+        Some(RiscvDataCacheProtocol::Msi) => {
+            CliDataCacheRuntime::new_msi_bank(line_layout, agents()).map(Some)
+        }
+        Some(RiscvDataCacheProtocol::Mesi) => {
+            CliDataCacheRuntime::new_mesi_lines(line_layout, agents()).map(Some)
+        }
+        Some(RiscvDataCacheProtocol::Moesi) => {
+            CliDataCacheRuntime::new_moesi_lines(line_layout, agents()).map(Some)
+        }
+        Some(RiscvDataCacheProtocol::Chi) => {
+            CliDataCacheRuntime::new_chi_lines(line_layout, agents()).map(Some)
+        }
+        None => Ok(None),
+    }
 }
 
 fn add_memory_route(
@@ -980,6 +997,7 @@ fn execution_summary(
         data_load_bytes,
         data_store_bytes,
         data_atomic_bytes,
+        instruction_cache: inputs.instruction_cache,
         data_cache: CliDataCacheSummary::from_run(run),
         data_access_probes: data_access_probe_summary(
             run,
@@ -1141,82 +1159,6 @@ fn parallel_ready_partition_summaries(
             next_tick: ready.next_tick,
         })
         .collect()
-}
-
-fn memory_transport_summary(trace: &MemoryTrace) -> Rem6MemoryTransportSummary {
-    let events = trace.snapshot();
-    let mut request_sources: BTreeMap<(MemoryRouteId, MemoryRequestId), (u64, String)> =
-        BTreeMap::new();
-    let mut routes: BTreeMap<(MemoryRouteId, String), Rem6MemoryTransportRouteSummary> =
-        BTreeMap::new();
-    let mut summary = Rem6MemoryTransportSummary {
-        counters: Rem6MemoryTransportCounters::default(),
-        routes: Vec::new(),
-    };
-
-    for event in &events {
-        match event.kind() {
-            MemoryTraceKind::RequestSent => {
-                summary.counters.requests += 1;
-                let source = event.endpoint().as_str().to_string();
-                route_summary(&mut routes, event.route(), &source)
-                    .counters
-                    .requests += 1;
-                request_sources.insert(trace_key(event), (event.tick(), source));
-            }
-            MemoryTraceKind::RequestArrived => {
-                summary.counters.request_arrivals += 1;
-                if let Some((_, source)) = request_sources.get(&trace_key(event)) {
-                    route_summary(&mut routes, event.route(), source)
-                        .counters
-                        .request_arrivals += 1;
-                }
-            }
-            MemoryTraceKind::ResponseArrived => {
-                summary.counters.response_arrivals += 1;
-                let Some((sent_tick, source)) = request_sources.get(&trace_key(event)) else {
-                    continue;
-                };
-                let route = route_summary(&mut routes, event.route(), source);
-                route.counters.response_arrivals += 1;
-                if event.endpoint().as_str() != source {
-                    continue;
-                }
-                let latency = event.tick().saturating_sub(*sent_tick);
-                summary.counters.responses += 1;
-                summary.counters.round_trip_ticks =
-                    summary.counters.round_trip_ticks.saturating_add(latency);
-                summary.counters.max_round_trip_ticks =
-                    summary.counters.max_round_trip_ticks.max(latency);
-                route.counters.responses += 1;
-                route.counters.round_trip_ticks =
-                    route.counters.round_trip_ticks.saturating_add(latency);
-                route.counters.max_round_trip_ticks =
-                    route.counters.max_round_trip_ticks.max(latency);
-            }
-        }
-    }
-
-    summary.routes = routes.into_values().collect();
-    summary
-}
-
-fn route_summary<'a>(
-    routes: &'a mut BTreeMap<(MemoryRouteId, String), Rem6MemoryTransportRouteSummary>,
-    route: MemoryRouteId,
-    source: &str,
-) -> &'a mut Rem6MemoryTransportRouteSummary {
-    routes
-        .entry((route, source.to_string()))
-        .or_insert_with(|| Rem6MemoryTransportRouteSummary {
-            route,
-            source: source.to_string(),
-            counters: Rem6MemoryTransportCounters::default(),
-        })
-}
-
-fn trace_key(event: &MemoryTraceEvent) -> (MemoryRouteId, MemoryRequestId) {
-    (event.route(), event.request_id())
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

@@ -304,6 +304,62 @@ pub(super) fn run_stats_output(
         )?;
         increment_stat(
             &mut stats,
+            "sim.instruction_cache.runs",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.instruction_cache.runs,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.instruction_cache.msi.runs",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.instruction_cache.msi_runs,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.instruction_cache.mesi.runs",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.instruction_cache.mesi_runs,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.instruction_cache.moesi.runs",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.instruction_cache.moesi_runs,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.instruction_cache.chi.runs",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.instruction_cache.chi_runs,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.instruction_cache.cpu_responses",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.instruction_cache.cpu_responses,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.instruction_cache.directory_decisions",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.instruction_cache.directory_decisions,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.instruction_cache.dram_accesses",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.instruction_cache.dram_accesses,
+        )?;
+        increment_stat(
+            &mut stats,
             "sim.data_cache.runs",
             "Count",
             StatResetPolicy::Monotonic,

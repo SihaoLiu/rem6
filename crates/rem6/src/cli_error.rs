@@ -97,6 +97,9 @@ pub enum Rem6CliError {
     InvalidRunDataCacheProtocol {
         value: String,
     },
+    InvalidRunInstructionCacheProtocol {
+        value: String,
+    },
     MemoryRouteDelayBelowMinRemoteDelay {
         memory_route_delay: u64,
         min_remote_delay: u64,
@@ -131,11 +134,16 @@ pub enum Rem6CliError {
     MemoryDumpRequiresExecution,
     RiscvSeRequiresExecution,
     DataCacheProtocolRequiresExecution,
+    InstructionCacheProtocolRequiresExecution,
     RiscvSeInputRequiresRiscvSe {
         input: &'static str,
     },
     DataCacheProtocolRequiresRiscv,
+    InstructionCacheProtocolRequiresRiscv,
     DataCacheProtocolRequiresSingleCore {
+        cores: usize,
+    },
+    InstructionCacheProtocolRequiresSingleCore {
         cores: usize,
     },
     RiscvSeRequiresRiscv,
@@ -277,6 +285,9 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidRunDataCacheProtocol { value } => {
                 write!(formatter, "invalid run data cache protocol {value}")
             }
+            Self::InvalidRunInstructionCacheProtocol { value } => {
+                write!(formatter, "invalid run instruction cache protocol {value}")
+            }
             Self::MemoryRouteDelayBelowMinRemoteDelay {
                 memory_route_delay,
                 min_remote_delay,
@@ -325,16 +336,28 @@ impl fmt::Display for Rem6CliError {
             Self::DataCacheProtocolRequiresExecution => {
                 write!(formatter, "--data-cache-protocol requires --execute")
             }
+            Self::InstructionCacheProtocolRequiresExecution => {
+                write!(formatter, "--instruction-cache-protocol requires --execute")
+            }
             Self::RiscvSeInputRequiresRiscvSe { input } => {
                 write!(formatter, "{input} requires --riscv-se")
             }
             Self::DataCacheProtocolRequiresRiscv => {
                 write!(formatter, "--data-cache-protocol requires --isa riscv")
             }
+            Self::InstructionCacheProtocolRequiresRiscv => {
+                write!(formatter, "--instruction-cache-protocol requires --isa riscv")
+            }
             Self::DataCacheProtocolRequiresSingleCore { cores } => {
                 write!(
                     formatter,
                     "--data-cache-protocol requires --cores 1, got {cores}"
+                )
+            }
+            Self::InstructionCacheProtocolRequiresSingleCore { cores } => {
+                write!(
+                    formatter,
+                    "--instruction-cache-protocol requires --cores 1, got {cores}"
                 )
             }
             Self::RiscvSeRequiresRiscv => {

@@ -617,7 +617,7 @@ impl Rem6ExecutionSummary {
             | Rem6ExecutionStop::TickLimit { .. } => max_instructions,
         };
         let common = format!(
-            "\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{},\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_access_probes\":{}",
+            "\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{},\"instruction_cache_runs\":{},\"instruction_cache_msi_runs\":{},\"instruction_cache_mesi_runs\":{},\"instruction_cache_moesi_runs\":{},\"instruction_cache_chi_runs\":{},\"instruction_cache_cpu_responses\":{},\"instruction_cache_directory_decisions\":{},\"instruction_cache_dram_accesses\":{},\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_access_probes\":{}",
             max_tick,
             optional_count_json(instruction_limit),
             memory_route_delay,
@@ -626,6 +626,14 @@ impl Rem6ExecutionSummary {
             self.final_tick,
             self.cores.len(),
             self.committed_instructions,
+            self.instruction_cache.runs,
+            self.instruction_cache.msi_runs,
+            self.instruction_cache.mesi_runs,
+            self.instruction_cache.moesi_runs,
+            self.instruction_cache.chi_runs,
+            self.instruction_cache.cpu_responses,
+            self.instruction_cache.directory_decisions,
+            self.instruction_cache.dram_accesses,
             self.data_cache.runs,
             self.data_cache.msi_runs,
             self.data_cache.mesi_runs,

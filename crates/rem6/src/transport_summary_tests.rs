@@ -1,4 +1,8 @@
 use super::*;
+use rem6_memory::{AgentId, MemoryRequestId};
+use rem6_transport::{
+    MemoryRouteId, MemoryTrace, MemoryTraceEvent, MemoryTraceKind, TransportEndpointId,
+};
 
 fn endpoint(value: &str) -> TransportEndpointId {
     TransportEndpointId::new(value).unwrap()

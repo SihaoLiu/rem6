@@ -161,7 +161,9 @@ not the default instruction/data path.
 profiles, controller-level refresh timing slices, routed topology slices, and
 trace replay consumers; optional single-core CLI RISC-V data traffic can drive
 MSI-bank, MESI-line, MOESI-line, and CHI-line data-cache runs and emit CPU
-response, directory decision, and DRAM access counters from those runs.
+response, directory decision, and DRAM access counters from those runs; optional
+single-core CLI RISC-V instruction fetch traffic can drive an MSI
+instruction-cache run path with separate instruction-cache counters.
 
 **Not migrated:** Broad CPU-facing hierarchy, Ruby-scale protocol networks,
 flit-level NoC, and DRAM refresh/preset breadth.
@@ -171,7 +173,7 @@ harnesses, `DramController`, `DramMemoryController`, `FabricModel`,
 `MemoryTransport`, and tests `riscv_topology_msi_data`,
 `riscv_topology_chi_data`, `memory_controller`, `timing`, `fabric_timing`,
 `system_run_resource_activity`, and CLI `run` data-cache smoke coverage with
-resource-activity stats.
+resource-activity stats plus instruction-cache fetch smoke coverage.
 
 **Next evidence:** RISC-V instruction/data execution through a coherent
 multi-level cache and DRAM path with unified resource accounting.
@@ -425,7 +427,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/regression_tests` | all rem6 crates | 35% unit-slice | Workspace tests act as the current regression suite. | Add migration tags or per-family regression rows. |
 | `tests/gem5/replacement_policies` | `rem6-cache` | 60% representative | Multiple replacement, indexing, dueling, compressed, and sector tag tests exist. | Add remaining policies and exact trace/reference parity where useful. |
 | `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, RFENCE remote SFENCE.VMA data TLB flushes with finite-range, ASID scope, and scheduled completion events, and HSM start entry-state, `START_PENDING`, status, no-return stop, retentive-suspend, default-non-retentive `RESUME_PENDING`/resume, and IPI-wake slices are tested. | Add broader SBI timer/IPI/reset power-state behavior, remaining HSM wake semantics, RFENCE hypervisor-fence semantics and broader completion coverage, and a real Linux boot smoke. |
-| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 60% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, and CLI output exist. | Add more hierarchy counters and stricter text-stat compatibility. |
+| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 60% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, instruction/data cache counters, and CLI output exist. | Add more hierarchy counters and stricter text-stat compatibility. |
 | `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 35% unit-slice | Workload manifests, resource payloads, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage and ergonomic topology/workload definitions. |
 | `tests/test-progs` | `rem6-system`, `rem6` CLI, ISA crates | 35% unit-slice | Static RISC-V no-libc, newlib, and raw syscall smoke binaries, including `statx`, `sysinfo`, newlib file-create roundtrip, newlib `/proc/self/exe` readlink coverage, newlib pipe2 roundtrip coverage, newlib directory-open coverage, and newlib open-flag coverage, are generated when tools exist. | Add durable generated fixtures for hello, threads, and m5 utility shapes across ISAs. |
 | `tests/gem5/traffic_gen` | `rem6-traffic`, `rem6-system`, `rem6-workload` | 45% single-axis | Text config parsing, GUPS, packet trace replay, flags, maintenance, HTM, responses, and workload summaries exist. | Split generator semantics, cache hierarchy matrix, memory profile matrix, and trusted stats. |
