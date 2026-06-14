@@ -347,9 +347,14 @@ fn riscv_completed_mmio_data_access_records_in_order_pipeline_cycle() {
 
     assert_eq!(core.read_register(reg(5)), 0x0fed_cba9_8765_4321);
     let data_wait_cycles = last_data_wait_cycles(&core, RiscvDataAccessEventKind::Completed);
+    assert!(data_wait_cycles > 0);
     let events = core.execution_events();
     assert_eq!(events.len(), 1);
     let record = events[0].in_order_pipeline_cycle().unwrap();
+    assert_eq!(
+        events[0].in_order_pipeline_data_wait_cycles(),
+        data_wait_cycles
+    );
     assert_eq!(record.cycle(), 4 + data_wait_cycles);
     assert_eq!(record.summary().retired_count(), 1);
     assert_eq!(record.summary().advanced_count(), 1);
@@ -385,9 +390,14 @@ fn riscv_completed_data_access_records_in_order_pipeline_cycle() {
 
     assert_eq!(core.read_register(reg(5)), 0x1122_3344_5566_7788);
     let data_wait_cycles = last_data_wait_cycles(&core, RiscvDataAccessEventKind::Completed);
+    assert!(data_wait_cycles > 0);
     let events = core.execution_events();
     assert_eq!(events.len(), 1);
     let record = events[0].in_order_pipeline_cycle().unwrap();
+    assert_eq!(
+        events[0].in_order_pipeline_data_wait_cycles(),
+        data_wait_cycles
+    );
     assert_eq!(record.cycle(), 4 + data_wait_cycles);
     assert_eq!(record.before().cycle(), 4 + data_wait_cycles);
     assert_eq!(
@@ -498,8 +508,13 @@ fn riscv_response_store_conditional_failure_records_in_order_pipeline_cycle() {
     assert_eq!(core.load_reservation(), None);
     let data_wait_cycles =
         last_data_wait_cycles(&core, RiscvDataAccessEventKind::ConditionalFailed);
+    assert!(data_wait_cycles > 0);
     let events = core.execution_events();
     let record = events[1].in_order_pipeline_cycle().unwrap();
+    assert_eq!(
+        events[1].in_order_pipeline_data_wait_cycles(),
+        data_wait_cycles
+    );
     assert_eq!(
         record.cycle(),
         9 + load_reserved_wait_cycles + data_wait_cycles

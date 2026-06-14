@@ -574,6 +574,7 @@ fn record_data_retire_cycle(
     )
     .expect("completed data access records one in-order retire cycle");
     state.events[index].set_in_order_pipeline_cycle(cycle);
+    state.events[index].set_in_order_pipeline_data_wait_cycles(wait_cycles);
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

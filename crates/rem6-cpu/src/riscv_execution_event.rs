@@ -17,6 +17,7 @@ pub struct RiscvCpuExecutionEvent {
     gshare_branch_update: Option<RiscvGShareBranchUpdate>,
     tournament_branch_update: Option<RiscvTournamentBranchUpdate>,
     in_order_pipeline_cycle: Option<InOrderPipelineCycleRecord>,
+    in_order_pipeline_data_wait_cycles: u64,
     counts_as_retired_instruction: bool,
 }
 
@@ -149,6 +150,7 @@ impl RiscvCpuExecutionEvent {
                 tournament_branch_update: None,
             },
             None,
+            0,
             true,
         )
     }
@@ -209,6 +211,7 @@ impl RiscvCpuExecutionEvent {
                 tournament_branch_update: None,
             },
             in_order_pipeline_cycle,
+            0,
             counts_as_retired_instruction,
         )
     }
@@ -219,6 +222,7 @@ impl RiscvCpuExecutionEvent {
         execution: RiscvExecutionRecord,
         branch_updates: RiscvRetiredBranchUpdates,
         in_order_pipeline_cycle: Option<InOrderPipelineCycleRecord>,
+        in_order_pipeline_data_wait_cycles: u64,
         counts_as_retired_instruction: bool,
     ) -> Self {
         Self {
@@ -229,6 +233,7 @@ impl RiscvCpuExecutionEvent {
             gshare_branch_update: branch_updates.gshare_branch_update,
             tournament_branch_update: branch_updates.tournament_branch_update,
             in_order_pipeline_cycle,
+            in_order_pipeline_data_wait_cycles,
             counts_as_retired_instruction,
         }
     }
@@ -265,8 +270,16 @@ impl RiscvCpuExecutionEvent {
         self.in_order_pipeline_cycle.as_ref()
     }
 
+    pub const fn in_order_pipeline_data_wait_cycles(&self) -> u64 {
+        self.in_order_pipeline_data_wait_cycles
+    }
+
     pub(crate) fn set_in_order_pipeline_cycle(&mut self, cycle: InOrderPipelineCycleRecord) {
         self.in_order_pipeline_cycle = Some(cycle);
+    }
+
+    pub(crate) fn set_in_order_pipeline_data_wait_cycles(&mut self, cycles: u64) {
+        self.in_order_pipeline_data_wait_cycles = cycles;
     }
 
     pub const fn counts_as_retired_instruction(&self) -> bool {

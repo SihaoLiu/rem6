@@ -152,6 +152,7 @@ impl RiscvCore {
             execution,
             retired_branch,
             pipeline_cycle,
+            0,
             true,
         );
         state

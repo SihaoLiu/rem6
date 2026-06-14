@@ -394,6 +394,7 @@ pub struct Rem6CoreSummary {
     committed_instructions: u64,
     in_order_pipeline_cycles: u64,
     in_order_pipeline_retired: u64,
+    in_order_pipeline_data_wait_cycles: u64,
     data_loads: u64,
     data_stores: u64,
     data_atomics: u64,
@@ -979,6 +980,7 @@ fn execution_summary(
             committed_instructions: committed_by_cpu.get(&cpu).copied().unwrap_or(0),
             in_order_pipeline_cycles: core.in_order_pipeline_snapshot().cycle(),
             in_order_pipeline_retired: in_order_pipeline_retired(&core),
+            in_order_pipeline_data_wait_cycles: in_order_pipeline_data_wait_cycles(&core),
             data_loads: data.loads,
             data_stores: data.stores,
             data_atomics: data.atomics,
@@ -1217,6 +1219,13 @@ fn in_order_pipeline_retired(core: &RiscvCore) -> u64 {
         .iter()
         .filter_map(|event| event.in_order_pipeline_cycle())
         .map(|cycle| cycle.summary().retired_count() as u64)
+        .sum()
+}
+
+fn in_order_pipeline_data_wait_cycles(core: &RiscvCore) -> u64 {
+    core.execution_events()
+        .iter()
+        .map(|event| event.in_order_pipeline_data_wait_cycles())
         .sum()
 }
 
