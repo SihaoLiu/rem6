@@ -6,6 +6,7 @@ const RISCV_LINUX_SCHED_SETAFFINITY_FOR_TEST: u64 = 122;
 const RISCV_LINUX_SCHED_GETAFFINITY_FOR_TEST: u64 = 123;
 const RISCV_LINUX_SCHED_GET_PRIORITY_MAX_FOR_TEST: u64 = 125;
 const RISCV_LINUX_SCHED_GET_PRIORITY_MIN_FOR_TEST: u64 = 126;
+const RISCV_LINUX_SCHED_RR_GET_INTERVAL_FOR_TEST: u64 = 127;
 const RISCV_LINUX_ESRCH_FOR_TEST: u64 = 3;
 const RISCV_LINUX_SCHED_OTHER_FOR_TEST: u64 = 0;
 const RISCV_LINUX_SCHED_FIFO_FOR_TEST: u64 = 1;
@@ -14,6 +15,7 @@ const RISCV_LINUX_SCHED_BATCH_FOR_TEST: u64 = 3;
 const RISCV_LINUX_SCHED_IDLE_FOR_TEST: u64 = 5;
 const RISCV_LINUX_SCHED_DEADLINE_FOR_TEST: u64 = 6;
 const RISCV_LINUX_SCHED_PRIORITY_BYTES_FOR_TEST: usize = 4;
+const RISCV_LINUX_SCHED_RR_INTERVAL_NANOSECONDS_FOR_TEST: u64 = 2_000_000;
 const RISCV_LINUX_DEFAULT_AFFINITY_BYTES_FOR_TEST: u64 = 8;
 const RISCV_LINUX_DEFAULT_AFFINITY_MASK_FOR_TEST: u64 = 1;
 
@@ -185,6 +187,204 @@ fn linux_table_sched_get_priority_limits_reject_invalid_policy() {
             })
         );
     }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_rr_get_interval_writes_current_process_interval() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    for (pc, pid, interval_address) in [
+        (0x8000, 0, 0x9000),
+        (0x8004, 41, 0x9020),
+        (0x8008, 42, 0x9040),
+    ] {
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(
+                    pc,
+                    RISCV_LINUX_SCHED_RR_GET_INTERVAL_FOR_TEST,
+                    [pid, interval_address, 0, 0, 0, 0],
+                ),
+                &mut state,
+                10,
+                None,
+                Some(&guest_memory_writer),
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 0 })
+        );
+        let interval = collect_guest_writes(&writes.lock().unwrap(), interval_address, 16);
+        assert_eq!(read_le_u64(&interval, 0), 0);
+        assert_eq!(
+            read_le_u64(&interval, 8),
+            RISCV_LINUX_SCHED_RR_INTERVAL_NANOSECONDS_FOR_TEST
+        );
+        writes.lock().unwrap().clear();
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_rr_get_interval_rejects_unknown_pid_without_writing() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+    let guest_memory_writer =
+        RiscvGuestMemoryWriter::new(|_, _| panic!("unknown pid must not write RR interval"));
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SCHED_RR_GET_INTERVAL_FOR_TEST,
+                [999, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ESRCH_FOR_TEST)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_rr_get_interval_prioritizes_unknown_pid_over_null_interval() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+    let guest_memory_writer =
+        RiscvGuestMemoryWriter::new(|_, _| panic!("unknown pid must not write RR interval"));
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SCHED_RR_GET_INTERVAL_FOR_TEST,
+                [999, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ESRCH_FOR_TEST)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_rr_get_interval_rejects_32_bit_negative_pid_without_writing() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_writer =
+        RiscvGuestMemoryWriter::new(|_, _| panic!("negative pid must not write RR interval"));
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SCHED_RR_GET_INTERVAL_FOR_TEST,
+                [u64::from(u32::MAX), 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_rr_get_interval_rejects_null_interval_without_writing() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_writer =
+        RiscvGuestMemoryWriter::new(|_, _| panic!("null interval must not write"));
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SCHED_RR_GET_INTERVAL_FOR_TEST,
+                [0, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_rr_get_interval_reports_guest_write_fault() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(|address, _bytes| address != 0x9008);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SCHED_RR_GET_INTERVAL_FOR_TEST,
+                [0, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_rr_get_interval_without_guest_writer_stays_unhandled() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SCHED_RR_GET_INTERVAL_FOR_TEST,
+                [0, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            None,
+            None,
+        ),
+        None
+    );
     assert!(state.unknown_syscalls().is_empty());
 }
 

@@ -1,8 +1,9 @@
 use std::{cmp, mem};
 
 use super::{
-    linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallRequest,
-    RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ESRCH,
+    clock::write_riscv_linux_time_pair, linux_error, RiscvGuestMemoryReader,
+    RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EFAULT,
+    RISCV_LINUX_EINVAL, RISCV_LINUX_ESRCH,
 };
 
 pub(super) const RISCV_LINUX_SCHED_GETSCHEDULER: u64 = 120;
@@ -11,8 +12,10 @@ pub(super) const RISCV_LINUX_SCHED_SETAFFINITY: u64 = 122;
 pub(super) const RISCV_LINUX_SCHED_GETAFFINITY: u64 = 123;
 pub(super) const RISCV_LINUX_SCHED_GET_PRIORITY_MAX: u64 = 125;
 pub(super) const RISCV_LINUX_SCHED_GET_PRIORITY_MIN: u64 = 126;
+pub(super) const RISCV_LINUX_SCHED_RR_GET_INTERVAL: u64 = 127;
 
 const RISCV_LINUX_DEFAULT_SCHED_PRIORITY: i32 = 0;
+const RISCV_LINUX_SCHED_RR_INTERVAL_NANOSECONDS: u64 = 2_000_000;
 const RISCV_LINUX_SCHED_OTHER: i32 = 0;
 const RISCV_LINUX_SCHED_FIFO: i32 = 1;
 const RISCV_LINUX_SCHED_RR: i32 = 2;
@@ -52,6 +55,33 @@ pub(super) fn syscall_sched_get_priority_min(request: RiscvSyscallRequest) -> u6
         Some((minimum, _)) => minimum,
         None => linux_error(RISCV_LINUX_EINVAL),
     }
+}
+
+pub(super) fn syscall_sched_rr_get_interval(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> Option<u64> {
+    let requested_pid = linux_int_argument(request.argument(0));
+    if requested_pid < 0 {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+    if !matches_current_process(requested_pid as u64, state) {
+        return Some(linux_error(RISCV_LINUX_ESRCH));
+    }
+    let interval_address = request.argument(1);
+    if interval_address == 0 {
+        return Some(linux_error(RISCV_LINUX_EFAULT));
+    }
+
+    guest_memory_writer.map(|guest_memory_writer| {
+        write_riscv_linux_time_pair(
+            interval_address,
+            0,
+            RISCV_LINUX_SCHED_RR_INTERVAL_NANOSECONDS,
+            guest_memory_writer,
+        )
+    })
 }
 
 pub(super) fn syscall_sched_getparam(

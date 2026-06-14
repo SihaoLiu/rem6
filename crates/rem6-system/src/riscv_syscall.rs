@@ -125,13 +125,6 @@ use readv::{syscall_readv, RISCV_LINUX_READV};
 use rename::{syscall_renameat2, RISCV_LINUX_RENAMEAT2};
 pub use request::RiscvSyscallRequest;
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
-use scheduler::{
-    syscall_sched_get_priority_max, syscall_sched_get_priority_min, syscall_sched_getaffinity,
-    syscall_sched_getparam, syscall_sched_getscheduler, syscall_sched_setaffinity,
-    RISCV_LINUX_SCHED_GETAFFINITY, RISCV_LINUX_SCHED_GETPARAM, RISCV_LINUX_SCHED_GETSCHEDULER,
-    RISCV_LINUX_SCHED_GET_PRIORITY_MAX, RISCV_LINUX_SCHED_GET_PRIORITY_MIN,
-    RISCV_LINUX_SCHED_SETAFFINITY,
-};
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
 use signal::{
     syscall_kill, syscall_rt_sigaction, syscall_rt_sigpending, syscall_rt_sigprocmask,
@@ -1288,25 +1281,31 @@ impl RiscvSyscallTable {
             RISCV_LINUX_UMASK => Some(RiscvSyscallOutcome::Return {
                 value: syscall_umask(request.argument(0), state),
             }),
-            RISCV_LINUX_SCHED_SETAFFINITY => {
-                syscall_sched_setaffinity(request, state, guest_memory_reader)
+            scheduler::RISCV_LINUX_SCHED_SETAFFINITY => {
+                scheduler::syscall_sched_setaffinity(request, state, guest_memory_reader)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
-            RISCV_LINUX_SCHED_GETSCHEDULER => Some(RiscvSyscallOutcome::Return {
-                value: syscall_sched_getscheduler(request, state),
+            scheduler::RISCV_LINUX_SCHED_GETSCHEDULER => Some(RiscvSyscallOutcome::Return {
+                value: scheduler::syscall_sched_getscheduler(request, state),
             }),
-            RISCV_LINUX_SCHED_GETPARAM => syscall_sched_getparam(request, guest_memory_writer)
-                .map(|value| RiscvSyscallOutcome::Return { value }),
-            RISCV_LINUX_SCHED_GETAFFINITY => {
-                syscall_sched_getaffinity(request, state, guest_memory_writer)
+            scheduler::RISCV_LINUX_SCHED_GETPARAM => {
+                scheduler::syscall_sched_getparam(request, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
-            RISCV_LINUX_SCHED_GET_PRIORITY_MAX => Some(RiscvSyscallOutcome::Return {
-                value: syscall_sched_get_priority_max(request),
+            scheduler::RISCV_LINUX_SCHED_GETAFFINITY => {
+                scheduler::syscall_sched_getaffinity(request, state, guest_memory_writer)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
+            scheduler::RISCV_LINUX_SCHED_GET_PRIORITY_MAX => Some(RiscvSyscallOutcome::Return {
+                value: scheduler::syscall_sched_get_priority_max(request),
             }),
-            RISCV_LINUX_SCHED_GET_PRIORITY_MIN => Some(RiscvSyscallOutcome::Return {
-                value: syscall_sched_get_priority_min(request),
+            scheduler::RISCV_LINUX_SCHED_GET_PRIORITY_MIN => Some(RiscvSyscallOutcome::Return {
+                value: scheduler::syscall_sched_get_priority_min(request),
             }),
+            scheduler::RISCV_LINUX_SCHED_RR_GET_INTERVAL => {
+                scheduler::syscall_sched_rr_get_interval(request, state, guest_memory_writer)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
             RISCV_LINUX_KILL => Some(RiscvSyscallOutcome::Return {
                 value: syscall_kill(request, state, tick),
             }),

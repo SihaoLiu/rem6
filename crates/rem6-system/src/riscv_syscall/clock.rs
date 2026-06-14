@@ -126,7 +126,7 @@ fn write_riscv_linux_tms(
     }
 }
 
-fn write_riscv_linux_time_pair(
+pub(super) fn write_riscv_linux_time_pair(
     address: u64,
     seconds: u64,
     fraction: u64,
