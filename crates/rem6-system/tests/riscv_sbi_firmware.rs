@@ -4,6 +4,8 @@ mod support;
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
 use rem6_cpu::RiscvHartRunState;
+use rem6_isa_riscv::RiscvStatusWord;
+use rem6_memory::TranslationAddressSpaceId;
 use rem6_system::RiscvCoreCheckpointPort;
 use rem6_system::{
     GuestEvent, GuestEventDelivery, GuestEventKind, GuestTrap, GuestTrapKind,
@@ -43,6 +45,10 @@ fn bne(rs1: u8, rs2: u8, offset: i32) -> u32 {
         | (((imm >> 1) & 0xf) << 8)
         | (((imm >> 11) & 0x1) << 7)
         | 0x63
+}
+
+fn csr_read(csr: u32, rd: u8) -> u32 {
+    (csr << 20) | (0x2 << 12) | (u32::from(rd) << 7) | 0x73
 }
 
 #[test]
@@ -565,6 +571,8 @@ fn supervisor_sbi_hart_start_releases_secondary_with_entry_and_opaque() {
     let core1 = riscv_core(1, 1, 8, "cpu1.ifetch", cpu1_route, 0x9000);
     core0.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
     core1.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    core1.set_data_translation_address_space(TranslationAddressSpaceId::new(3));
+    core1.set_status(RiscvStatusWord::new(0).with_sie(true));
     let cluster = RiscvCluster::new([core0.clone(), core1.clone()]).unwrap();
     let (hsm_hi, hsm_lo) = lui_addi_parts(SBI_HSM_EXTENSION);
     let (entry_hi, entry_lo) = lui_addi_parts(0x9100);
@@ -587,7 +595,9 @@ fn supervisor_sbi_hart_start_releases_secondary_with_entry_and_opaque() {
         (0x9100, addi(31, 0, 12)),
         (0x9104, addi(30, 10, 0)),
         (0x9108, addi(29, 11, 0)),
-        (0x910c, 0x0010_0073),
+        (0x910c, csr_read(0x180, 28)),
+        (0x9110, csr_read(0x100, 27)),
+        (0x9114, 0x0010_0073),
     ]);
     let controller = Arc::new(Mutex::new(SystemHostController::new(
         HostEventPolicy,
@@ -622,6 +632,8 @@ fn supervisor_sbi_hart_start_releases_secondary_with_entry_and_opaque() {
     assert_eq!(core1.read_register(reg(31)), 12);
     assert_eq!(core1.read_register(reg(30)), 1);
     assert_eq!(core1.read_register(reg(29)), 85);
+    assert_eq!(core1.read_register(reg(28)), 0);
+    assert_eq!(core1.read_register(reg(27)) & (1 << 1), 0);
 }
 
 #[test]

@@ -54,7 +54,7 @@ impl RiscvCore {
     }
 
     pub fn start_supervisor_hart(&self, entry: Address, opaque: u64) {
-        self.enter_supervisor_hart(entry, opaque, false);
+        self.enter_supervisor_hart(entry, opaque, true);
     }
 
     pub fn resume_nonretentive_supervisor_hart(&self, entry: Address, opaque: u64) {
