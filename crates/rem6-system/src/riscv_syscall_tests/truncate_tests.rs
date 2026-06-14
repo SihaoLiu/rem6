@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Arc;
 
 const RISCV_LINUX_FTRUNCATE_FOR_TEST: u64 = 46;
 const RISCV_LINUX_O_DIRECTORY_FOR_TEST: u64 = 0o200000;

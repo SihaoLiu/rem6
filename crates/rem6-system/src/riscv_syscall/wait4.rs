@@ -29,10 +29,7 @@ impl RiscvSyscallState {
 
 impl RiscvSyscallEmulation {
     pub fn push_wait_child(&self, child: crate::GuestChildStatus) {
-        self.state
-            .lock()
-            .expect("RISC-V syscall state lock")
-            .push_wait_child(child);
+        self.with_state_mut(|state| state.push_wait_child(child));
     }
 }
 

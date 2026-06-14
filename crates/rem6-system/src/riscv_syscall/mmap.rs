@@ -12,6 +12,8 @@ pub(super) const RISCV_LINUX_MREMAP: u64 = 216;
 pub(super) const RISCV_LINUX_MMAP: u64 = 222;
 pub(super) const RISCV_LINUX_MPROTECT: u64 = 226;
 pub(super) const RISCV_LINUX_MSYNC: u64 = 227;
+pub(super) const RISCV_LINUX_MLOCK: u64 = 228;
+pub(super) const RISCV_LINUX_MUNLOCK: u64 = 229;
 pub(super) const RISCV_LINUX_MINCORE: u64 = 232;
 pub(super) const RISCV_LINUX_MADVISE: u64 = 233;
 pub(super) const RISCV_LINUX_MAP_SHARED: u64 = 0x01;
@@ -536,6 +538,33 @@ pub(super) fn syscall_msync(request: RiscvSyscallRequest, state: &RiscvSyscallSt
     0
 }
 
+pub(super) fn syscall_memory_lock_range(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+) -> u64 {
+    let start = request.argument(0);
+    let requested_length = request.argument(1);
+    if requested_length == 0 {
+        return 0;
+    }
+    let Some(raw_end) = start.checked_add(requested_length) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    let aligned_start = start & !(RISCV_PAGE_BYTES - 1);
+    let Some(aligned_end) = align_to_page(raw_end) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    let Some(length) = aligned_end.checked_sub(aligned_start) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    if !mmap_range_is_mapped(state, aligned_start, length)
+        && !brk_backed_range_is_mapped(state, aligned_start, length)
+    {
+        return linux_error(RISCV_LINUX_ENOMEM);
+    }
+    0
+}
+
 pub(super) fn syscall_madvise(request: RiscvSyscallRequest, state: &RiscvSyscallState) -> u64 {
     let start = request.argument(0);
     let requested_length = request.argument(1);
@@ -670,6 +699,16 @@ fn mmap_range_is_mapped(state: &RiscvSyscallState, start: u64, length: u64) -> b
         }
     }
     false
+}
+
+fn brk_backed_range_is_mapped(state: &RiscvSyscallState, start: u64, length: u64) -> bool {
+    let Some(heap_start) = align_to_page(state.initial_program_break()) else {
+        return false;
+    };
+    let Some(end) = start.checked_add(length) else {
+        return false;
+    };
+    start >= heap_start && end <= state.program_break_backing_end()
 }
 
 fn align_to_page(value: u64) -> Option<u64> {
