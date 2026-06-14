@@ -5,11 +5,15 @@ const RISCV_LINUX_O_WRONLY_FOR_TEST: u64 = 1;
 const RISCV_LINUX_O_CREAT_FOR_TEST: u64 = 0o100;
 const RISCV_LINUX_O_APPEND_FOR_TEST: u64 = 0o2000;
 const RISCV_LINUX_O_DIRECTORY_FOR_TEST: u64 = 0o200000;
+const RISCV_LINUX_O_NOCTTY_FOR_TEST: u64 = 0o400;
+const RISCV_LINUX_O_NOFOLLOW_FOR_TEST: u64 = 0o400000;
 const RISCV_LINUX_O_CLOEXEC_FOR_TEST: u64 = 0o2000000;
 const RISCV_NEWLIB_O_CREAT_FOR_TEST: u64 = 0x0200;
 const RISCV_NEWLIB_O_TRUNC_FOR_TEST: u64 = 0x0400;
 const RISCV_NEWLIB_O_EXCL_FOR_TEST: u64 = 0x0800;
+const RISCV_NEWLIB_O_NOCTTY_FOR_TEST: u64 = 0x8000;
 const RISCV_NEWLIB_O_DIRECT_FOR_TEST: u64 = 0x80000;
+const RISCV_NEWLIB_O_NOFOLLOW_FOR_TEST: u64 = 0x100000;
 const RISCV_NEWLIB_O_CLOEXEC_FOR_TEST: u64 = 0x40000;
 const RISCV_NEWLIB_O_DIRECTORY_FOR_TEST: u64 = 0x200000;
 const RISCV_LINUX_UMASK_FOR_OPEN_TEST: u64 = 166;
@@ -19,6 +23,7 @@ const RISCV_LINUX_X_OK_FOR_OPEN_TEST: u64 = 1;
 const RISCV_LINUX_EACCES_FOR_OPEN_TEST: u64 = 13;
 const RISCV_LINUX_EEXIST_FOR_OPEN_TEST: u64 = 17;
 const RISCV_LINUX_EINVAL_FOR_OPEN_TEST: u64 = 22;
+const RISCV_LINUX_ELOOP_FOR_OPEN_TEST: u64 = 40;
 
 #[test]
 fn linux_table_openat_append_writes_at_guest_file_end() {
@@ -341,6 +346,83 @@ fn linux_table_legacy_open_accepts_newlib_directory_flag() {
         open.flags(),
         RISCV_LINUX_O_DIRECTORY_FOR_TEST | RISCV_LINUX_O_CLOEXEC_FOR_TEST
     );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_legacy_open_accepts_newlib_noctty_nofollow_regular_file_flags() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"seed\n");
+    let guest_memory_reader = c_string_reader(0x9000, b"guest.txt");
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPEN,
+                [
+                    0x9000,
+                    RISCV_NEWLIB_O_NOCTTY_FOR_TEST
+                        | RISCV_NEWLIB_O_NOFOLLOW_FOR_TEST
+                        | RISCV_NEWLIB_O_CLOEXEC_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+
+    let fd = GuestFd::new(3).unwrap();
+    assert!(state.guest_fds().entry(fd).is_some());
+    assert!(state.guest_fds().close_on_exec(fd).unwrap());
+    assert_eq!(
+        state.guest_fds().status_flags(fd).unwrap(),
+        GuestFileStatusFlags::new(RISCV_LINUX_O_RDONLY as u32)
+    );
+    assert_eq!(state.guest_opens().len(), 1);
+    let open = &state.guest_opens()[0];
+    assert_eq!(open.fd(), fd);
+    assert_eq!(
+        open.flags(),
+        RISCV_LINUX_O_NOCTTY_FOR_TEST
+            | RISCV_LINUX_O_NOFOLLOW_FOR_TEST
+            | RISCV_LINUX_O_CLOEXEC_FOR_TEST
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_legacy_open_rejects_newlib_nofollow_registered_symlink() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_symlink(b"/proc/self/exe", b"/bin/rem6");
+    let guest_memory_reader = c_string_reader(0x9000, b"/proc/self/exe");
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPEN,
+                [0x9000, RISCV_NEWLIB_O_NOFOLLOW_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ELOOP_FOR_OPEN_TEST)
+        })
+    );
+    assert!(state.guest_opens().is_empty());
     assert!(state.unknown_syscalls().is_empty());
 }
 

@@ -11,7 +11,10 @@ use super::{
 };
 
 pub(super) const RISCV_LINUX_OPEN: u64 = 1024;
+const RISCV_LINUX_ELOOP: u64 = 40;
+const RISCV_LINUX_O_NOCTTY: u64 = 0o400;
 const RISCV_LINUX_O_DIRECTORY: u64 = 0o200000;
+const RISCV_LINUX_O_NOFOLLOW: u64 = 0o400000;
 const RISCV_LINUX_O_CREAT: u64 = 0o100;
 const RISCV_LINUX_O_EXCL: u64 = 0o200;
 const RISCV_LINUX_O_TRUNC: u64 = 0o1000;
@@ -20,8 +23,10 @@ const RISCV_NEWLIB_O_APPEND: u64 = 0x0008;
 const RISCV_NEWLIB_O_CREAT: u64 = 0x0200;
 const RISCV_NEWLIB_O_TRUNC: u64 = 0x0400;
 const RISCV_NEWLIB_O_EXCL: u64 = 0x0800;
+const RISCV_NEWLIB_O_NOCTTY: u64 = 0x8000;
 const RISCV_NEWLIB_O_NONBLOCK: u64 = 0x4000;
 const RISCV_NEWLIB_O_CLOEXEC: u64 = 0x40000;
+const RISCV_NEWLIB_O_NOFOLLOW: u64 = 0x100000;
 const RISCV_NEWLIB_O_DIRECTORY: u64 = 0x200000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -130,8 +135,14 @@ fn normalize_newlib_legacy_open_flags(flags: u64) -> u64 {
     if flags & RISCV_NEWLIB_O_NONBLOCK != 0 {
         normalized |= RISCV_LINUX_O_NONBLOCK;
     }
+    if flags & RISCV_NEWLIB_O_NOCTTY != 0 {
+        normalized |= RISCV_LINUX_O_NOCTTY;
+    }
     if flags & RISCV_NEWLIB_O_CLOEXEC != 0 {
         normalized |= RISCV_LINUX_O_CLOEXEC;
+    }
+    if flags & RISCV_NEWLIB_O_NOFOLLOW != 0 {
+        normalized |= RISCV_LINUX_O_NOFOLLOW;
     }
     if flags & RISCV_NEWLIB_O_DIRECTORY != 0 {
         normalized |= RISCV_LINUX_O_DIRECTORY;
@@ -147,7 +158,9 @@ fn legacy_open_unknown_flags(flags: u64) -> u64 {
             | RISCV_NEWLIB_O_TRUNC
             | RISCV_NEWLIB_O_EXCL
             | RISCV_NEWLIB_O_NONBLOCK
+            | RISCV_NEWLIB_O_NOCTTY
             | RISCV_NEWLIB_O_CLOEXEC
+            | RISCV_NEWLIB_O_NOFOLLOW
             | RISCV_NEWLIB_O_DIRECTORY)
 }
 
@@ -168,7 +181,9 @@ fn syscall_open_registered_path(
             | RISCV_LINUX_O_CLOEXEC
             | RISCV_LINUX_O_APPEND
             | RISCV_LINUX_O_NONBLOCK
+            | RISCV_LINUX_O_NOCTTY
             | RISCV_LINUX_O_DIRECTORY
+            | RISCV_LINUX_O_NOFOLLOW
             | RISCV_LINUX_O_CREAT
             | RISCV_LINUX_O_EXCL
             | RISCV_LINUX_O_TRUNC)
@@ -198,6 +213,9 @@ fn syscall_open_registered_path(
     };
     if path.is_empty() {
         return linux_error(RISCV_LINUX_ENOENT);
+    }
+    if flags & RISCV_LINUX_O_NOFOLLOW != 0 && state.guest_link_target(&path).is_some() {
+        return linux_error(RISCV_LINUX_ELOOP);
     }
 
     let open_directory = flags & RISCV_LINUX_O_DIRECTORY != 0;
@@ -262,7 +280,9 @@ fn syscall_open_registered_path(
             None,
         )
     };
-    let status_flags = GuestFileStatusFlags::new((flags & !RISCV_LINUX_O_CLOEXEC) as u32);
+    let status_flags = GuestFileStatusFlags::new(
+        (flags & !(RISCV_LINUX_O_CLOEXEC | RISCV_LINUX_O_NOCTTY | RISCV_LINUX_O_NOFOLLOW)) as u32,
+    );
     let close_on_exec = flags & RISCV_LINUX_O_CLOEXEC != 0;
     match state.open_guest_path(RiscvGuestOpenRequest {
         dirfd,
