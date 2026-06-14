@@ -1,4 +1,4 @@
-use rem6_isa_riscv::{Register, RiscvPrivilegeMode};
+use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvStatusWord};
 use rem6_memory::Address;
 
 use crate::{CpuCore, RiscvCore};
@@ -15,6 +15,7 @@ impl CpuCore {
         let mut state = self.state.lock().expect("cpu core lock");
         state.pc = pc;
         state.outstanding.clear();
+        state.events.clear();
     }
 }
 
@@ -53,6 +54,14 @@ impl RiscvCore {
     }
 
     pub fn start_supervisor_hart(&self, entry: Address, opaque: u64) {
+        self.enter_supervisor_hart(entry, opaque, false);
+    }
+
+    pub fn resume_nonretentive_supervisor_hart(&self, entry: Address, opaque: u64) {
+        self.enter_supervisor_hart(entry, opaque, true);
+    }
+
+    fn enter_supervisor_hart(&self, entry: Address, opaque: u64, reset_supervisor_state: bool) {
         let hart_id = self.hart_id();
         let mut state = self.state.lock().expect("riscv core lock");
         state.run_state = RiscvHartRunState::Started;
@@ -61,6 +70,10 @@ impl RiscvCore {
         state
             .hart
             .set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+        if reset_supervisor_state {
+            state.hart.set_translation_satp(0);
+            state.hart.set_status(RiscvStatusWord::new(0));
+        }
         state.hart.write(
             Register::new(10).expect("valid RISC-V integer register"),
             hart_id,

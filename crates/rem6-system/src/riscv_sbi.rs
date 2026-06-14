@@ -156,6 +156,7 @@ pub enum RiscvSbiOutcome {
         error: u64,
         value: u64,
     },
+    Resumed,
     SystemReset {
         reset_type: u32,
         reset_reason: u32,
@@ -356,7 +357,16 @@ impl RiscvSbiFirmware {
                 core.set_hart_suspended();
                 RiscvSbiOutcome::success(0)
             }
-            SBI_HSM_DEFAULT_NON_RETENTIVE_SUSPEND => RiscvSbiOutcome::not_supported(),
+            SBI_HSM_DEFAULT_NON_RETENTIVE_SUSPEND => {
+                if request.arg1() & 0x1 != 0 {
+                    return RiscvSbiOutcome::invalid_address();
+                }
+                core.resume_nonretentive_supervisor_hart(
+                    Address::new(request.arg1()),
+                    request.arg2(),
+                );
+                RiscvSbiOutcome::Resumed
+            }
             _ => RiscvSbiOutcome::invalid_param(),
         }
     }

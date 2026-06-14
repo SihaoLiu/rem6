@@ -220,8 +220,9 @@ remote SFENCE.VMA finite-range and ASID-scoped data TLB flushes through
 translated execution, plus HSM probe, `hart_get_status`, `hart_start`
 secondary-hart release, current-hart `hart_stop`, and retentive
 current-hart `hart_suspend` through the CPU execution gate, with the default
-non-retentive suspend type reported as unsupported without suspending the
-hart and SBI IPI pending interrupts waking retentive suspended harts; typed
+non-retentive suspend type resuming at `resume_addr` with supervisor
+entry state, `satp=0`, `sstatus.SIE=0`, `a0=hartid`, and `a1=opaque`, and
+SBI IPI pending interrupts waking retentive suspended harts; typed
 unknown-syscall records; static smoke coverage; a static newlib
 `fopen("w+")` create, write, seek, readback, and exit-code roundtrip; and a
 static newlib `open(".", O_DIRECTORY | O_CLOEXEC)` directory traversal smoke
@@ -229,9 +230,9 @@ plus `open` with `O_NOCTTY`, `O_NOFOLLOW`, and `O_SYNC` through the legacy
 `open` syscall with newlib/libgloss flags.
 
 **Not migrated:** Broad Linux SE parity, process/thread lifecycle, broad SBI
-timer/IPI/reset power-state behavior, HSM non-retentive resume, wake, and
-pending-state semantics, RFENCE hypervisor-fence and completion semantics,
-full Linux boot, and real benchmark workloads.
+timer/IPI/reset power-state behavior, remaining HSM wake and pending-state
+semantics, RFENCE hypervisor-fence and completion semantics, full Linux boot,
+and real benchmark workloads.
 
 **Evidence:** `RiscvSyscallTable::handle_with_guest_memory_io_at_tick`,
 `RiscvSyscallEmulation::handle_pending_core_trap`, CLI static newlib tests,
@@ -261,9 +262,8 @@ full Linux boot, and real benchmark workloads.
 `riscv_se_signal`,
 `RiscvLinuxBootHandoffConfig`, and RISC-V DTB handoff tests.
 
-**Next evidence:** Broader static libc program coverage, followed by HSM
-non-retentive resume, wake, pending-state, and RFENCE completion tests, then a
-real Linux boot smoke.
+**Next evidence:** Broader static libc program coverage, followed by HSM wake
+and pending-state tests, RFENCE completion tests, then a real Linux boot smoke.
 
 ### Devices and Platforms - 50% single-axis
 
@@ -400,7 +400,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/pyunit` | `rem6-stats`, `rem6-workload`, future utility owners | 35% unit-slice | Selected pystats and stdlib semantics are covered by typed Rust tests. | Split HDF5, pystats, registry/probes, stdlib helpers, and parsing rows. |
 | `tests/gem5/regression_tests` | all rem6 crates | 35% unit-slice | Workspace tests act as the current regression suite. | Add migration tags or per-family regression rows. |
 | `tests/gem5/replacement_policies` | `rem6-cache` | 60% representative | Multiple replacement, indexing, dueling, compressed, and sector tag tests exist. | Add remaining policies and exact trace/reference parity where useful. |
-| `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, RFENCE remote SFENCE.VMA data TLB flushes with finite-range and ASID scope, and HSM start/status/stop/retentive-suspend/default-non-retentive-unsupported/IPI-wake slices are tested. | Add broader SBI timer/IPI/reset power-state behavior, HSM non-retentive resume, wake, pending-state semantics, RFENCE hypervisor-fence and completion semantics, and a real Linux boot smoke. |
+| `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, RFENCE remote SFENCE.VMA data TLB flushes with finite-range and ASID scope, and HSM start/status/stop/retentive-suspend/default-non-retentive-resume/IPI-wake slices are tested. | Add broader SBI timer/IPI/reset power-state behavior, HSM wake and pending-state semantics, RFENCE hypervisor-fence and completion semantics, and a real Linux boot smoke. |
 | `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 60% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, and CLI output exist. | Add more hierarchy counters and stricter text-stat compatibility. |
 | `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 35% unit-slice | Workload manifests, resource payloads, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage and ergonomic topology/workload definitions. |
 | `tests/test-progs` | `rem6-system`, `rem6` CLI, ISA crates | 35% unit-slice | Static RISC-V no-libc, newlib, and raw syscall smoke binaries, including `statx`, `sysinfo`, newlib file-create roundtrip, newlib directory-open coverage, and newlib open-flag coverage, are generated when tools exist. | Add durable generated fixtures for hello, threads, and m5 utility shapes across ISAs. |

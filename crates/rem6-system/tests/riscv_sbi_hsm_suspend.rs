@@ -3,10 +3,9 @@
 mod support;
 
 use rem6_cpu::RiscvHartRunState;
-use rem6_system::RiscvSystemRunStopReason;
+use rem6_system::{GuestTrap, GuestTrapKind, RiscvSystemRunStopReason};
 use support::*;
 
-const SBI_ERR_NOT_SUPPORTED: u64 = (-2_i64) as u64;
 const SBI_ERR_INVALID_PARAM: u64 = (-3_i64) as u64;
 const SBI_ERR_INVALID_ADDRESS: u64 = (-5_i64) as u64;
 const SBI_ERR_ALREADY_AVAILABLE: u64 = (-6_i64) as u64;
@@ -44,6 +43,10 @@ fn bne(rs1: u8, rs2: u8, offset: i32) -> u32 {
         | ((imm & 0x001e) << 7)
         | ((imm & 0x0800) >> 4)
         | 0x63
+}
+
+fn csr_read(csr: u32, rd: u8) -> u32 {
+    (csr << 20) | (0x2 << 12) | (u32::from(rd) << 7) | 0x73
 }
 
 #[test]
@@ -521,7 +524,7 @@ fn supervisor_sbi_hart_suspend_ignores_resume_addr_for_retentive_suspend() {
 }
 
 #[test]
-fn supervisor_sbi_hart_suspend_reports_not_supported_for_default_non_retentive_suspend() {
+fn supervisor_sbi_hart_suspend_resumes_default_non_retentive_suspend_at_resume_addr() {
     let host = PartitionId::new(3);
     let source = GuestSourceId::new(85);
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 1).unwrap();
@@ -558,8 +561,14 @@ fn supervisor_sbi_hart_suspend_reports_not_supported_for_default_non_retentive_s
         (0x8028, addi(6, 11, 0)),
         (0x802c, addi(31, 0, 9)),
         (0x8030, 0x0010_0073),
-        (0x9000, addi(30, 0, 13)),
-        (0x9004, 0x0010_0073),
+        (0x9000, addi(30, 10, 0)),
+        (0x9004, addi(29, 11, 0)),
+        (0x9008, csr_read(0x180, 28)),
+        (0x900c, csr_read(0x100, 27)),
+        (0x9010, addi(17, 0, 16)),
+        (0x9014, addi(16, 0, 0)),
+        (0x9018, 0x0000_0073),
+        (0x901c, 0x0010_0073),
     ]);
     let controller = Arc::new(Mutex::new(SystemHostController::new(
         HostEventPolicy,
@@ -589,11 +598,19 @@ fn supervisor_sbi_hart_suspend_reports_not_supported_for_default_non_retentive_s
 
     let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(760), source, 1);
     assert_eq!(run.host_stop(), Some(stop));
-    assert_eq!(core.read_register(reg(5)), SBI_ERR_NOT_SUPPORTED);
-    assert_eq!(core.read_register(reg(6)), 0);
-    assert_eq!(core.hart_run_state(), RiscvHartRunState::Started);
-    assert_eq!(core.read_register(reg(31)), 9);
+    assert_eq!(
+        run.scheduled_traps()
+            .iter()
+            .map(|record| record.trap())
+            .collect::<Vec<_>>(),
+        vec![GuestTrap::new(GuestTrapKind::Breakpoint, 0x901c)]
+    );
     assert_eq!(core.read_register(reg(30)), 0);
+    assert_eq!(core.read_register(reg(29)), 91);
+    assert_eq!(core.read_register(reg(28)), 0);
+    assert_eq!(core.read_register(reg(27)) & (1 << 1), 0);
+    assert_eq!(core.hart_run_state(), RiscvHartRunState::Started);
+    assert_eq!(core.read_register(reg(31)), 0);
 }
 
 #[test]
