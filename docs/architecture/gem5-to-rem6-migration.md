@@ -351,9 +351,10 @@ network evidence.
 
 ### Stats, Probes, Debug, Host Actions, and Checkpointing - 59% single-axis
 
-**Score calculation:** 8 of 13 items have executable evidence, or 62% raw. The
-bucket cap is single-axis because probe, debug, power, and checkpoint evidence
-is not yet integrated across CPU pipeline and cache/DRAM runtime state.
+**Score calculation:** 9 of 14 items have executable evidence, or 64% raw,
+capped to 59% by the single-axis bucket. The bucket cap is single-axis because
+probe, debug, power, and checkpoint evidence is not yet integrated across O3
+pipeline and cache/DRAM runtime state.
 
 - [x] Hierarchical stats, reset/dump history, and CLI stats artifacts exist.
 - [x] Probe registry plus real RISC-V retired-instruction and data-access producers exist.
@@ -365,27 +366,29 @@ is not yet integrated across CPU pipeline and cache/DRAM runtime state.
 - [x] First-class histogram stats have registry snapshots, deltas, resets,
   CLI JSON/text bucket output, and real data-access stack-distance producer
   output.
+- [x] RISC-V in-order pipeline timing state is captured and restored by core checkpoints.
 - [ ] Stricter gem5 text-stat compatibility exists.
 - [ ] Cache/bank/fabric/DRAM hierarchy counters are complete.
 - [ ] GDB socket loop, step/resume/break/watch integration, and full FP/vector/CSR register cache exist.
 - [ ] Power and thermal models are calibrated against real component activity.
-- [ ] CPU pipeline and O3 pending-state checkpoints exist.
+- [ ] O3 pending-state checkpoints exist.
 
 **Migrated:** Structured stats, real RISC-V probe producers, checkpoint banks,
 m5ops, host actions, GDB packet/session parsing, RISC-V integer/PC debug
 register paths, RISC-V software breakpoint patch/restore through the system GDB
 memory handler, gem5-style final-tick stat aliases, target/port/bank-level DRAM
-runtime resource counters, and power-analysis exports.
+runtime resource counters, RISC-V in-order pipeline checkpoint capture/restore,
+and power-analysis exports.
 
 **Not migrated:** Complete gem5 text-stat parity, full debug execution control,
-runtime resource counters, runtime-calibrated power/thermal, and pipeline/O3
-checkpoint breadth.
+runtime resource counters, runtime-calibrated power/thermal, and O3 checkpoint
+breadth.
 
 **Evidence:** `StatsRegistry`, `ProbeRegistry`, `RiscvInstructionStats`,
 `RiscvDataAccessStats`, `SystemActionExecutor`, `GdbRemoteSession`,
-checkpoint tests including RISC-V hart run-state restore, power-analysis export
-tests, system GDB software breakpoint patch/restore tests, CLI data-access probe
-tests, and histogram registry/output tests.
+checkpoint tests including RISC-V hart run-state and in-order pipeline restore,
+power-analysis export tests, system GDB software breakpoint patch/restore
+tests, CLI data-access probe tests, and histogram registry/output tests.
 The CLI data-access probe tests include stack-distance histogram stats emitted
 from executed RISC-V loads. CLI DRAM-backed execution tests include
 target/port/bank-level DRAM resource counters emitted from executed RISC-V
@@ -393,7 +396,8 @@ instruction fetches. CLI text stats include gem5-style final-tick aliases
 emitted from an executed RISC-V run.
 
 **Next evidence:** Broader gem5 text-stat compatibility, remaining
-cache/bank/fabric runtime resource counters, and GDB execution-control tests.
+cache/bank/fabric runtime resource counters, GDB execution-control tests, and
+O3 checkpoint capture/restore.
 
 ### Configuration, Resources, Suites, GPU, and Accelerators - 39% unit-slice
 
@@ -436,7 +440,7 @@ checklist-backed component sections above define the auditable percentages.
 | --- | --- | --- | --- | --- |
 | `tests/gem5/arm_boot_tests` | future ARM ISA crate, `rem6-platform` | 0% open | ARM device slices exist, but this row requires Arm ISA boot. | Add Arm ISA, board handoff, device tree, and kernel boot tests. |
 | `tests/gem5/asmtest` | ISA crates, `rem6` CLI | 45% single-axis | RISC-V no-libc and ISA unit tests cover selected instruction and ecall paths. | Split RV32/RV64 and extension families with architectural-state comparison. |
-| `tests/gem5/checkpoint_tests` | `rem6-checkpoint`, subsystem checkpoint banks | 65% representative | Scheduler, memory, devices, storage, VirtIO, timer, interrupt, RISC-V started/stopped/suspended hart run-state, platform, workload, and manifest checkpoints exist. | Add CPU pipeline/O3 and non-quiescent restore evidence. |
+| `tests/gem5/checkpoint_tests` | `rem6-checkpoint`, subsystem checkpoint banks | 65% representative | Scheduler, memory, devices, storage, VirtIO, timer, interrupt, RISC-V started/stopped/suspended hart run-state, RISC-V in-order pipeline state, platform, workload, and manifest checkpoints exist. | Add O3 and non-quiescent restore evidence. |
 | `tests/gem5/chi_protocol` | `rem6-coherence`, protocol crates, `rem6-cache` | 40% single-axis | CHI-like line, controller, bank, dirty peer sourcing, reservation, and Evict-hazard tests exist. | Add Ruby-scale CHI transactions, topology networks, directory races, and workload checks. |
 | `tests/gem5/chi_tlm_tests` | future adapter crates, `rem6-coherence` | 0% open | No typed TLM bridge exists. | Add optional adapter tests after an adapter boundary exists. |
 | `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, and text stats output tests exist. | Add config-driven file layouts for full-system manifests and multi-artifact workloads. |

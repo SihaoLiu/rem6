@@ -1,12 +1,22 @@
 use rem6_checkpoint::{
     CheckpointChunk, CheckpointComponentId, CheckpointRegistry, CheckpointState,
 };
-use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvHartRunState};
+use std::sync::{Arc, Mutex};
+
+use rem6_boot::BootImage;
+use rem6_cpu::{
+    CpuCore, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineSnapshot, RiscvCore,
+    RiscvHartRunState,
+};
 use rem6_isa_riscv::{FloatRegister, Register, RiscvPmpAddressMode, RiscvPmpConfig};
-use rem6_kernel::PartitionId;
-use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
+use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext};
+use rem6_memory::{
+    AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
+};
 use rem6_system::{RiscvCoreCheckpointBank, RiscvCoreCheckpointPort, RiscvCoreCheckpointRecord};
-use rem6_transport::{MemoryRoute, MemoryTransport, TransportEndpointId};
+use rem6_transport::{
+    MemoryRoute, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
+};
 
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()
@@ -22,6 +32,14 @@ fn reg(index: u8) -> Register {
 
 fn freg(index: u8) -> FloatRegister {
     FloatRegister::new(index).unwrap()
+}
+
+fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+    (((imm as u32) & 0x0fff) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | opcode
 }
 
 fn tor_config() -> RiscvPmpConfig {
@@ -62,6 +80,60 @@ fn riscv_core_with(cpu: CpuId, partition: PartitionId, agent: AgentId, entry: u6
         )
         .unwrap(),
     )
+}
+
+fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStore>> {
+    let target = MemoryTargetId::new(0);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(entry),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap();
+    BootImage::new(Address::new(entry))
+        .add_segment(Address::new(entry), instruction.to_le_bytes().to_vec())
+        .unwrap()
+        .load_into_partitioned_store(&mut store, target)
+        .unwrap();
+    Arc::new(Mutex::new(store))
+}
+
+fn responder(
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+) -> impl FnOnce(rem6_transport::RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome
+       + Send
+       + 'static {
+    move |delivery, _context| {
+        let response = store
+            .lock()
+            .unwrap()
+            .respond(delivery.request())
+            .unwrap()
+            .response()
+            .cloned()
+            .unwrap();
+        TargetOutcome::Respond(response)
+    }
+}
+
+fn fetch_and_execute_one(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) {
+    core.issue_next_fetch(
+        scheduler,
+        transport,
+        MemoryTrace::new(),
+        responder(Arc::clone(&store)),
+    )
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+    core.execute_next_completed_fetch().unwrap().unwrap();
 }
 
 #[test]
@@ -144,6 +216,72 @@ fn riscv_core_checkpoint_captures_and_restores_float_registers() {
 }
 
 #[test]
+fn riscv_core_checkpoint_captures_and_restores_in_order_pipeline_state() {
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let mut registry = CheckpointRegistry::new();
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let timed_core = RiscvCore::new(
+        CpuCore::new(
+            CpuResetState::new(
+                CpuId::new(0),
+                PartitionId::new(0),
+                AgentId::new(7),
+                Address::new(0x8000),
+            ),
+            CpuFetchConfig::new(
+                endpoint("cpu0.ifetch"),
+                route,
+                layout(),
+                AccessSize::new(4).unwrap(),
+            ),
+        )
+        .unwrap(),
+    );
+    let timed_port = RiscvCoreCheckpointPort::new(component.clone(), timed_core.clone());
+
+    fetch_and_execute_one(
+        &timed_core,
+        loaded_store(0x8000, i_type(5, 0, 0, 1, 0x13)),
+        &mut scheduler,
+        &transport,
+    );
+    let captured_pipeline = timed_core.in_order_pipeline_snapshot();
+
+    timed_port.register(&mut registry).unwrap();
+    let captured = timed_port.capture_into(&mut registry).unwrap();
+
+    assert_eq!(captured.in_order_pipeline_snapshot(), &captured_pipeline);
+    assert!(registry.chunk(&component, "in-order-pipeline").is_some());
+
+    fetch_and_execute_one(
+        &timed_core,
+        loaded_store(0x8004, i_type(7, 1, 0, 2, 0x13)),
+        &mut scheduler,
+        &transport,
+    );
+    assert_ne!(timed_core.in_order_pipeline_snapshot(), captured_pipeline);
+
+    let restored = timed_port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored, captured);
+    assert_eq!(timed_core.in_order_pipeline_snapshot(), captured_pipeline);
+}
+
+#[test]
 fn riscv_core_checkpoint_captures_and_restores_hart_run_state() {
     let core = riscv_core();
     core.set_hart_stopped();
@@ -213,6 +351,14 @@ fn riscv_core_checkpoint_restore_without_float_register_chunk_zeros_float_regist
         .unwrap();
     core.write_float_register(freg(1), 0x1122);
     core.set_hart_stopped();
+    let default_pipeline = RiscvCore::default_in_order_pipeline_snapshot();
+    core.restore_in_order_pipeline_snapshot(InOrderPipelineSnapshot::with_cycle(
+        default_pipeline.config().clone(),
+        9,
+        [],
+    ))
+    .unwrap();
+    assert_ne!(core.in_order_pipeline_snapshot(), default_pipeline);
 
     let restored = port.restore_from(&registry).unwrap();
 
@@ -221,6 +367,7 @@ fn riscv_core_checkpoint_restore_without_float_register_chunk_zeros_float_regist
     assert_eq!(core.pc(), Address::new(0x8040));
     assert_eq!(core.read_float_register(freg(1)), 0);
     assert_eq!(core.hart_run_state(), RiscvHartRunState::Started);
+    assert_eq!(core.in_order_pipeline_snapshot(), default_pipeline);
 }
 
 #[test]

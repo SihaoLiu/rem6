@@ -888,6 +888,21 @@ impl RiscvCore {
             .restore(snapshot)
     }
 
+    pub fn default_in_order_pipeline_snapshot() -> InOrderPipelineSnapshot {
+        InOrderPipelineState::new(default_riscv_in_order_pipeline_config()).snapshot()
+    }
+
+    pub fn restore_in_order_pipeline_snapshot(
+        &self,
+        snapshot: InOrderPipelineSnapshot,
+    ) -> Result<(), InOrderPipelineError> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .in_order_pipeline = InOrderPipelineState::restore(snapshot)?;
+        Ok(())
+    }
+
     pub fn write_pmp_config(
         &self,
         index: usize,

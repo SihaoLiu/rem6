@@ -3,7 +3,10 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
-use rem6_cpu::{RiscvCore, RiscvHartRunState};
+use rem6_cpu::{
+    InOrderPipelineCheckpointPayload, InOrderPipelineError, InOrderPipelineSnapshot, RiscvCore,
+    RiscvHartRunState,
+};
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot,
     RiscvPmpSnapshotEntry, RiscvPmpTable,
@@ -12,6 +15,7 @@ use rem6_memory::Address;
 
 const FREGS_CHUNK: &str = "fregs";
 const HART_RUN_STATE_CHUNK: &str = "hart-run-state";
+const IN_ORDER_PIPELINE_CHUNK: &str = "in-order-pipeline";
 const PC_CHUNK: &str = "pc";
 const XREGS_CHUNK: &str = "xregs";
 const PMP_CHUNK: &str = "pmp";
@@ -31,6 +35,7 @@ pub struct RiscvCoreCheckpointRecord {
     float_registers: Vec<(FloatRegister, u64)>,
     pmp_snapshot: RiscvPmpSnapshot,
     hart_run_state: RiscvHartRunState,
+    in_order_pipeline_snapshot: InOrderPipelineSnapshot,
 }
 
 impl RiscvCoreCheckpointRecord {
@@ -47,6 +52,7 @@ impl RiscvCoreCheckpointRecord {
             zero_float_register_values(),
             pmp_snapshot,
             RiscvHartRunState::Started,
+            RiscvCore::default_in_order_pipeline_snapshot(),
         )
     }
 
@@ -57,6 +63,7 @@ impl RiscvCoreCheckpointRecord {
         float_registers: Vec<(FloatRegister, u64)>,
         pmp_snapshot: RiscvPmpSnapshot,
         hart_run_state: RiscvHartRunState,
+        in_order_pipeline_snapshot: InOrderPipelineSnapshot,
     ) -> Self {
         Self {
             component,
@@ -65,6 +72,7 @@ impl RiscvCoreCheckpointRecord {
             float_registers,
             pmp_snapshot,
             hart_run_state,
+            in_order_pipeline_snapshot,
         }
     }
 
@@ -90,6 +98,10 @@ impl RiscvCoreCheckpointRecord {
 
     pub const fn hart_run_state(&self) -> RiscvHartRunState {
         self.hart_run_state
+    }
+
+    pub const fn in_order_pipeline_snapshot(&self) -> &InOrderPipelineSnapshot {
+        &self.in_order_pipeline_snapshot
     }
 
     pub fn register(&self, register: Register) -> Option<u64> {
@@ -158,6 +170,11 @@ impl RiscvCoreCheckpointPort {
             PMP_CHUNK,
             encode_pmp_snapshot(record.pmp_snapshot()),
         )?;
+        registry.write_chunk(
+            &self.component,
+            IN_ORDER_PIPELINE_CHUNK,
+            encode_in_order_pipeline_snapshot(record.in_order_pipeline_snapshot()),
+        )?;
         Ok(record)
     }
 
@@ -210,6 +227,11 @@ impl RiscvCoreCheckpointPort {
             Some(payload) => decode_hart_run_state(&self.component, payload)?,
             None => RiscvHartRunState::Started,
         };
+        let in_order_pipeline_snapshot =
+            match registry.chunk(&self.component, IN_ORDER_PIPELINE_CHUNK) {
+                Some(payload) => decode_in_order_pipeline_snapshot(&self.component, payload)?,
+                None => RiscvCore::default_in_order_pipeline_snapshot(),
+            };
 
         Ok(RiscvCoreCheckpointRecord::new_with_float_registers(
             self.component.clone(),
@@ -218,6 +240,7 @@ impl RiscvCoreCheckpointPort {
             float_registers,
             pmp_snapshot,
             hart_run_state,
+            in_order_pipeline_snapshot,
         ))
     }
 
@@ -247,6 +270,14 @@ impl RiscvCoreCheckpointPort {
             RiscvHartRunState::Stopped => self.core.set_hart_stopped(),
             RiscvHartRunState::Suspended => self.core.set_hart_suspended(),
         }
+        self.core
+            .restore_in_order_pipeline_snapshot(record.in_order_pipeline_snapshot().clone())
+            .map_err(
+                |error| RiscvCoreCheckpointError::InvalidInOrderPipelineSnapshot {
+                    component: self.component.clone(),
+                    error,
+                },
+            )?;
         Ok(())
     }
 
@@ -258,6 +289,7 @@ impl RiscvCoreCheckpointPort {
             all_float_register_values(&self.core),
             self.core.pmp_snapshot(),
             self.core.hart_run_state(),
+            self.core.in_order_pipeline_snapshot(),
         )
     }
 }
@@ -365,6 +397,10 @@ pub enum RiscvCoreCheckpointError {
         component: CheckpointComponentId,
         value: u8,
     },
+    InvalidInOrderPipelineSnapshot {
+        component: CheckpointComponentId,
+        error: InOrderPipelineError,
+    },
 }
 
 impl fmt::Display for RiscvCoreCheckpointError {
@@ -403,6 +439,11 @@ impl fmt::Display for RiscvCoreCheckpointError {
             Self::InvalidHartRunState { component, value } => write!(
                 formatter,
                 "RISC-V core checkpoint component {} has invalid hart run-state value {value}",
+                component.as_str()
+            ),
+            Self::InvalidInOrderPipelineSnapshot { component, error } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has invalid in-order pipeline snapshot: {error}",
                 component.as_str()
             ),
         }
@@ -505,6 +546,26 @@ fn encode_pmp_snapshot(snapshot: &RiscvPmpSnapshot) -> Vec<u8> {
         payload.push(entry.config().bits());
     }
     payload
+}
+
+fn encode_in_order_pipeline_snapshot(snapshot: &InOrderPipelineSnapshot) -> Vec<u8> {
+    InOrderPipelineCheckpointPayload::from_snapshot(snapshot.clone())
+        .expect("captured RISC-V core in-order pipeline snapshot is valid")
+        .encode()
+}
+
+fn decode_in_order_pipeline_snapshot(
+    component: &CheckpointComponentId,
+    payload: &[u8],
+) -> Result<InOrderPipelineSnapshot, RiscvCoreCheckpointError> {
+    InOrderPipelineCheckpointPayload::decode(payload)
+        .map(InOrderPipelineCheckpointPayload::into_snapshot)
+        .map_err(
+            |error| RiscvCoreCheckpointError::InvalidInOrderPipelineSnapshot {
+                component: component.clone(),
+                error,
+            },
+        )
 }
 
 fn decode_pc(
