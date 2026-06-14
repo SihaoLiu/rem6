@@ -7,7 +7,7 @@ use rem6_cpu::{
 use rem6_isa_riscv::{Register, RiscvInstruction};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
-    AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryTargetId,
+    AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryResponse, MemoryTargetId,
     PartitionedMemoryStore,
 };
 use rem6_mmio::{MmioAccess, MmioBus, MmioRegisterBank, MmioRoute};
@@ -29,6 +29,17 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
         | (funct3 << 12)
         | (u32::from(rd) << 7)
         | opcode
+}
+
+fn atomic_type(funct5: u32, aq: bool, rl: bool, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    (funct5 << 27)
+        | (u32::from(aq) << 26)
+        | (u32::from(rl) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | 0x2f
 }
 
 fn core(route: rem6_transport::MemoryRouteId, entry: u64) -> CpuCore {
@@ -89,8 +100,21 @@ fn loaded_store_with_data(
     data_address: u64,
     data: Vec<u8>,
 ) -> Arc<Mutex<PartitionedMemoryStore>> {
+    loaded_program_with_data(entry, &[instruction], data_address, data)
+}
+
+fn loaded_program_with_data(
+    entry: u64,
+    instructions: &[u32],
+    data_address: u64,
+    data: Vec<u8>,
+) -> Arc<Mutex<PartitionedMemoryStore>> {
     let target = MemoryTargetId::new(0);
     let mut store = PartitionedMemoryStore::new();
+    let program = instructions
+        .iter()
+        .flat_map(|instruction| instruction.to_le_bytes())
+        .collect::<Vec<_>>();
     store.add_partition(target, layout()).unwrap();
     store
         .map_region(
@@ -100,7 +124,7 @@ fn loaded_store_with_data(
         )
         .unwrap();
     BootImage::new(Address::new(entry))
-        .add_segment(Address::new(entry), instruction.to_le_bytes().to_vec())
+        .add_segment(Address::new(entry), program)
         .unwrap()
         .add_segment(Address::new(data_address), data)
         .unwrap()
@@ -245,8 +269,8 @@ fn riscv_retired_instruction_records_in_order_pipeline_cycle() {
 
     assert_eq!(event.instruction(), RiscvInstruction::decode(raw).unwrap());
     let record = event.in_order_pipeline_cycle().unwrap();
-    assert_eq!(record.cycle(), 0);
-    assert_eq!(record.before().cycle(), 0);
+    assert_eq!(record.cycle(), 4);
+    assert_eq!(record.before().cycle(), 4);
     assert_eq!(
         record
             .before()
@@ -261,7 +285,7 @@ fn riscv_retired_instruction_records_in_order_pipeline_cycle() {
     assert!(record.after().in_flight().is_empty());
 
     let snapshot = core.in_order_pipeline_snapshot();
-    assert_eq!(snapshot.cycle(), 1);
+    assert_eq!(snapshot.cycle(), 5);
     assert!(snapshot.in_flight().is_empty());
 }
 
@@ -305,13 +329,13 @@ fn riscv_completed_mmio_data_access_records_in_order_pipeline_cycle() {
     let events = core.execution_events();
     assert_eq!(events.len(), 1);
     let record = events[0].in_order_pipeline_cycle().unwrap();
-    assert_eq!(record.cycle(), 0);
+    assert_eq!(record.cycle(), 4);
     assert_eq!(record.summary().retired_count(), 1);
     assert_eq!(record.summary().advanced_count(), 1);
     assert!(record.after().in_flight().is_empty());
 
     let snapshot = core.in_order_pipeline_snapshot();
-    assert_eq!(snapshot.cycle(), 1);
+    assert_eq!(snapshot.cycle(), 5);
     assert!(snapshot.in_flight().is_empty());
 }
 
@@ -342,8 +366,8 @@ fn riscv_completed_data_access_records_in_order_pipeline_cycle() {
     let events = core.execution_events();
     assert_eq!(events.len(), 1);
     let record = events[0].in_order_pipeline_cycle().unwrap();
-    assert_eq!(record.cycle(), 0);
-    assert_eq!(record.before().cycle(), 0);
+    assert_eq!(record.cycle(), 4);
+    assert_eq!(record.before().cycle(), 4);
     assert_eq!(
         record
             .before()
@@ -358,6 +382,96 @@ fn riscv_completed_data_access_records_in_order_pipeline_cycle() {
     assert!(record.after().in_flight().is_empty());
 
     let snapshot = core.in_order_pipeline_snapshot();
-    assert_eq!(snapshot.cycle(), 1);
+    assert_eq!(snapshot.cycle(), 5);
     assert!(snapshot.in_flight().is_empty());
+}
+
+#[test]
+fn riscv_local_store_conditional_failure_records_in_order_pipeline_cycle() {
+    let (mut scheduler, transport, fetch_route, data_route) = in_order_routes();
+    let raw = atomic_type(0x03, false, true, 6, 2, 0x3, 7);
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9000);
+    core.write_register(reg(6), 0x1122_3344_5566_7788);
+    let store = loaded_store_with_data(
+        0x8000,
+        raw,
+        0x9000,
+        vec![0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11],
+    );
+
+    fetch_one(&core, store, &mut scheduler, &transport);
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(event.instruction(), RiscvInstruction::decode(raw).unwrap());
+    assert!(event.in_order_pipeline_cycle().is_none());
+    assert_eq!(core.in_order_pipeline_snapshot().cycle(), 0);
+
+    core.issue_next_data_access(&mut scheduler, &transport, MemoryTrace::new(), |_, _| {
+        unreachable!("local store-conditional failure does not issue a memory request")
+    })
+    .unwrap()
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(core.read_register(reg(7)), 1);
+    let events = core.execution_events();
+    let record = events[0].in_order_pipeline_cycle().unwrap();
+    assert_eq!(record.cycle(), 4);
+    assert_eq!(record.summary().retired_count(), 1);
+    assert_eq!(core.in_order_pipeline_snapshot().cycle(), 5);
+}
+
+#[test]
+fn riscv_response_store_conditional_failure_records_in_order_pipeline_cycle() {
+    let (mut scheduler, transport, fetch_route, data_route) = in_order_routes();
+    let load_reserved = atomic_type(0x02, false, false, 0, 2, 0x3, 5);
+    let store_conditional = atomic_type(0x03, false, true, 6, 2, 0x3, 7);
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9000);
+    core.write_register(reg(6), 0x1122_3344_5566_7788);
+    let store = loaded_program_with_data(
+        0x8000,
+        &[load_reserved, store_conditional],
+        0x9000,
+        vec![0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11],
+    );
+
+    fetch_one(&core, store.clone(), &mut scheduler, &transport);
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    issue_one_data_access(&core, store.clone(), &mut scheduler, &transport);
+
+    assert!(core.load_reservation().is_some());
+    assert_eq!(core.in_order_pipeline_snapshot().cycle(), 5);
+
+    fetch_one(&core, store, &mut scheduler, &transport);
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(
+        event.instruction(),
+        RiscvInstruction::decode(store_conditional).unwrap()
+    );
+    assert!(event.in_order_pipeline_cycle().is_none());
+
+    core.issue_next_data_access(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        |delivery, _context| {
+            TargetOutcome::Respond(
+                MemoryResponse::store_conditional_failed(delivery.request()).unwrap(),
+            )
+        },
+    )
+    .unwrap()
+    .unwrap();
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(core.read_register(reg(7)), 1);
+    assert_eq!(core.load_reservation(), None);
+    let events = core.execution_events();
+    let record = events[1].in_order_pipeline_cycle().unwrap();
+    assert_eq!(record.cycle(), 9);
+    assert_eq!(record.summary().retired_count(), 1);
+    assert_eq!(core.in_order_pipeline_snapshot().cycle(), 10);
 }

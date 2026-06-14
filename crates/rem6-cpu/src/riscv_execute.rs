@@ -170,13 +170,20 @@ pub(crate) fn record_retired_in_order_pipeline_cycle(
         .in_order_pipeline
         .replace_in_flight([InOrderPipelineInstruction::new(
             sequence,
-            InOrderPipelineStage::Commit,
+            InOrderPipelineStage::Fetch1,
         )])
         .map_err(RiscvCpuError::InOrderPipeline)?;
-    state
-        .in_order_pipeline
-        .try_advance_cycle_recorded()
-        .map_err(RiscvCpuError::InOrderPipeline)
+    for _ in 0..InOrderPipelineStage::ALL.len() {
+        let record = state
+            .in_order_pipeline
+            .try_advance_cycle_recorded()
+            .map_err(RiscvCpuError::InOrderPipeline)?;
+        if record.summary().retired_count() > 0 {
+            return Ok(record);
+        }
+    }
+
+    unreachable!("default in-order pipeline retires an instruction within its stage count")
 }
 
 fn retire_branch_predictions(

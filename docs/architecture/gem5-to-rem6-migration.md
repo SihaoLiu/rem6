@@ -109,8 +109,8 @@ privileged Linux trap and interrupt smoke tests.
 ### CPU Execution Models - 30% unit-slice
 
 **Score calculation:** 3 of 10 items have executable evidence, or 30% raw. The
-bucket cap is unit-slice because in-order and O3 state are not yet executable
-cycle-visible engines.
+bucket cap is unit-slice because in-order timing has only per-retire stage
+latency evidence, and O3 state is not yet an executable cycle-visible engine.
 
 - [x] RISC-V atomic execution and parallel clusters execute real instructions.
 - [x] Data access issue/response and store-conditional progress diagnostics have tests.
@@ -124,17 +124,20 @@ cycle-visible engines.
 - [ ] CPU instruction/data traffic uses the full cache, NoC, and DRAM hierarchy by default.
 
 **Migrated:** Atomic RISC-V execution, frontend/data slices, branch predictor
-state and retired training, O3 policy helpers.
+state and retired training, per-retired-instruction in-order stage advancement
+with runtime stats, and O3 policy helpers.
 
-**Not migrated:** Executable Minor/O3 timing, speculation, checker, and KVM
-equivalents.
+**Not migrated:** Overlapped Minor-like in-order timing with stalls and
+squashes, executable O3 timing, speculation, checker, and KVM equivalents.
 
 **Evidence:** `RiscvCore::execute_next_completed_fetch`,
 `RiscvClusterRun`, `record_data_retire_cycle`, `InOrderPipelineState`,
 `O3DistributedIssueScheduler`, `O3SourceRenamePlan`, CPU frontend and O3 tests.
+CLI run stats include per-core in-order pipeline cycle and retired counters
+from executed RISC-V instructions.
 
-**Next evidence:** A per-cycle in-order engine with stalls/squashes, then a
-ROB/LSQ-backed O3 run test.
+**Next evidence:** An overlapped per-cycle in-order engine with stalls/squashes,
+then a ROB/LSQ-backed O3 run test.
 
 ### Memory, Cache, Coherence, Fabric, and DRAM - 45% single-axis
 
@@ -388,7 +391,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/chi_protocol` | `rem6-coherence`, protocol crates, `rem6-cache` | 40% single-axis | CHI-like line, controller, bank, dirty peer sourcing, reservation, and Evict-hazard tests exist. | Add Ruby-scale CHI transactions, topology networks, directory races, and workload checks. |
 | `tests/gem5/chi_tlm_tests` | future adapter crates, `rem6-coherence` | 0% open | No typed TLM bridge exists. | Add optional adapter tests after an adapter boundary exists. |
 | `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, and text stats output tests exist. | Add config-driven file layouts for full-system manifests and multi-artifact workloads. |
-| `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, and O3 policies exist. | Add in-order timing and ROB/LSQ-backed O3 execution tests. |
+| `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, per-retired-instruction in-order stage timing stats, and O3 policies exist. | Add overlapped in-order timing and ROB/LSQ-backed O3 execution tests. |
 | `tests/gem5/dram_lowp` | `rem6-dram`, `rem6-power` | 40% single-axis | DRAM/NVM profile counters and low-power constants are surfaced. | Add executable low-power state transition tests through routed requests. |
 | `tests/gem5/example_configs`, `tests/gem5/learning_gem5` | `rem6` CLI, `rem6-platform`, `rem6-workload` | 40% single-axis | CLI and TOML tests cover several execution and trace-replay paths. | Add rem6 examples that run from data files without recompilation. |
 | `tests/gem5/fdp_tests` | `rem6-cache` | 35% unit-slice | Fetch-directed prefetcher state and errors have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |

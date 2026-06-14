@@ -401,6 +401,8 @@ pub struct Rem6CoreSummary {
     cpu: u32,
     pc: u64,
     committed_instructions: u64,
+    in_order_pipeline_cycles: u64,
+    in_order_pipeline_retired: u64,
     data_loads: u64,
     data_stores: u64,
     data_atomics: u64,
@@ -901,6 +903,8 @@ fn execution_summary(
             cpu: cpu_index,
             pc: core.pc().get(),
             committed_instructions: committed_by_cpu.get(&cpu).copied().unwrap_or(0),
+            in_order_pipeline_cycles: core.in_order_pipeline_snapshot().cycle(),
+            in_order_pipeline_retired: in_order_pipeline_retired(&core),
             data_loads: data.loads,
             data_stores: data.stores,
             data_atomics: data.atomics,
@@ -1206,6 +1210,14 @@ fn committed_instructions_by_cpu(run: &RiscvSystemRun) -> BTreeMap<CpuId, u64> {
         }
     }
     committed
+}
+
+fn in_order_pipeline_retired(core: &RiscvCore) -> u64 {
+    core.execution_events()
+        .iter()
+        .filter_map(|event| event.in_order_pipeline_cycle())
+        .map(|cycle| cycle.summary().retired_count() as u64)
+        .sum()
 }
 
 fn guest_trap_name(kind: GuestTrapKind) -> &'static str {

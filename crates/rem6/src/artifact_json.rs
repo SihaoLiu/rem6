@@ -970,10 +970,12 @@ impl Rem6CoreSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{},\"registers\":{{{}}}}}",
+            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"in_order_pipeline\":{{\"cycles\":{},\"retired\":{}}},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{},\"registers\":{{{}}}}}",
             self.cpu,
             self.pc,
             self.committed_instructions,
+            self.in_order_pipeline_cycles,
+            self.in_order_pipeline_retired,
             self.data_loads,
             self.data_stores,
             self.data_atomics,

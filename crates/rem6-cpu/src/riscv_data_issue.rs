@@ -436,6 +436,7 @@ impl RiscvCore {
         state
             .sc_progress
             .record_failure(self.id(), tick, access.physical_address, access.size);
+        record_data_retire_cycle(&mut state, &access);
         state
             .data_events
             .push(RiscvDataAccessEvent::conditional_failed(
@@ -489,6 +490,7 @@ impl RiscvCore {
                     access.physical_address,
                     access.size,
                 );
+                record_data_retire_cycle(&mut state, &access);
                 state
                     .data_events
                     .push(RiscvDataAccessEvent::conditional_failed(

@@ -60,6 +60,20 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
     assert!(stdout.contains("\"path\":\"sim.cpu0.data.stores\""));
     assert_stat(&stdout, "sim.cpu0.data.load_bytes", "Byte", 8, "monotonic");
     assert_stat(&stdout, "sim.cpu0.data.store_bytes", "Byte", 8, "monotonic");
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.cycles",
+        "Cycle",
+        30,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.retired",
+        "Count",
+        6,
+        "monotonic",
+    );
     assert_transport_stats(&stdout, "sim.memory.fetch", 6, 12, 2);
     assert_transport_stats(&stdout, "sim.memory.data", 2, 4, 2);
 }

@@ -415,6 +415,20 @@ pub(super) fn run_stats_output(
             )?;
             increment_stat(
                 &mut stats,
+                &format!("sim.cpu{}.pipeline.in_order.cycles", core.cpu),
+                "Cycle",
+                StatResetPolicy::Monotonic,
+                core.in_order_pipeline_cycles,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!("sim.cpu{}.pipeline.in_order.retired", core.cpu),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.in_order_pipeline_retired,
+            )?;
+            increment_stat(
+                &mut stats,
                 &format!("sim.cpu{}.data.loads", core.cpu),
                 "Count",
                 StatResetPolicy::Monotonic,
