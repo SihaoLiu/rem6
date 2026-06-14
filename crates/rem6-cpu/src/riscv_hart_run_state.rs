@@ -7,6 +7,7 @@ use crate::{CpuCore, RiscvCore};
 pub enum RiscvHartRunState {
     Started,
     StartPending,
+    StopPending,
     Stopped,
     Suspended,
 }
@@ -45,6 +46,12 @@ impl RiscvCore {
     pub fn set_hart_start_pending(&self) {
         let mut state = self.state.lock().expect("riscv core lock");
         state.run_state = RiscvHartRunState::StartPending;
+        state.run_state_explicit = true;
+    }
+
+    pub fn set_hart_stop_pending(&self) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.run_state = RiscvHartRunState::StopPending;
         state.run_state_explicit = true;
     }
 
@@ -97,6 +104,16 @@ impl RiscvCore {
         state.reservation = None;
         drop(state);
         self.core.reset_fetch_to_pc(entry);
+        true
+    }
+
+    pub fn complete_pending_hart_stop(&self) -> bool {
+        let mut state = self.state.lock().expect("riscv core lock");
+        if state.run_state != RiscvHartRunState::StopPending {
+            return false;
+        }
+        state.run_state = RiscvHartRunState::Stopped;
+        state.run_state_explicit = true;
         true
     }
 

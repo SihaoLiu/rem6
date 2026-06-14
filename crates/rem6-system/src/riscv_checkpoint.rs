@@ -241,6 +241,7 @@ impl RiscvCoreCheckpointPort {
         match record.hart_run_state() {
             RiscvHartRunState::Started => self.core.set_hart_started(),
             RiscvHartRunState::StartPending => self.core.set_hart_start_pending(),
+            RiscvHartRunState::StopPending => self.core.set_hart_stop_pending(),
             RiscvHartRunState::Stopped => self.core.set_hart_stopped(),
             RiscvHartRunState::Suspended => self.core.set_hart_suspended(),
         }
@@ -459,6 +460,7 @@ fn encode_hart_run_state(state: RiscvHartRunState) -> Vec<u8> {
         RiscvHartRunState::Stopped => 1,
         RiscvHartRunState::Suspended => 2,
         RiscvHartRunState::StartPending => 3,
+        RiscvHartRunState::StopPending => 4,
     }]
 }
 
@@ -479,6 +481,7 @@ fn decode_hart_run_state(
         1 => Ok(RiscvHartRunState::Stopped),
         2 => Ok(RiscvHartRunState::Suspended),
         3 => Ok(RiscvHartRunState::StartPending),
+        4 => Ok(RiscvHartRunState::StopPending),
         value => Err(RiscvCoreCheckpointError::InvalidHartRunState {
             component: component.clone(),
             value,
