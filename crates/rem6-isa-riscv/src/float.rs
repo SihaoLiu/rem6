@@ -126,6 +126,80 @@ fn register_rounding_mode(instruction: RiscvInstruction) -> Option<RiscvFloatRou
     Some(rounding_mode)
 }
 
+pub(crate) fn integer_to_float_rounding_mode_is_supported(
+    instruction: RiscvInstruction,
+    frm: u64,
+    value: u64,
+) -> bool {
+    let Some(rounding_mode) = integer_to_float_rounding_mode(instruction) else {
+        return true;
+    };
+
+    match rounding_mode.resolve(frm) {
+        Some(RiscvFloatRoundingMode::RoundNearestEven) => true,
+        Some(_) => integer_to_float_is_exact(instruction, value),
+        None => false,
+    }
+}
+
+fn integer_to_float_rounding_mode(instruction: RiscvInstruction) -> Option<RiscvFloatRoundingMode> {
+    let rounding_mode = match instruction {
+        RiscvInstruction::FloatConvertSFromW { rounding_mode, .. }
+        | RiscvInstruction::FloatConvertSFromWu { rounding_mode, .. }
+        | RiscvInstruction::FloatConvertSFromL { rounding_mode, .. }
+        | RiscvInstruction::FloatConvertSFromLu { rounding_mode, .. }
+        | RiscvInstruction::FloatConvertDFromW { rounding_mode, .. }
+        | RiscvInstruction::FloatConvertDFromWu { rounding_mode, .. }
+        | RiscvInstruction::FloatConvertDFromL { rounding_mode, .. }
+        | RiscvInstruction::FloatConvertDFromLu { rounding_mode, .. } => rounding_mode,
+        _ => return None,
+    };
+    Some(rounding_mode)
+}
+
+fn integer_to_float_is_exact(instruction: RiscvInstruction, value: u64) -> bool {
+    match instruction {
+        RiscvInstruction::FloatConvertSFromW { .. } => signed_magnitude_fits_float_exact_bits(
+            i64::from(value as u32 as i32),
+            SINGLE_EXACT_INTEGER_BITS,
+        ),
+        RiscvInstruction::FloatConvertSFromWu { .. } => {
+            u64::from(value as u32) <= max_exact_integer(SINGLE_EXACT_INTEGER_BITS)
+        }
+        RiscvInstruction::FloatConvertSFromL { .. } => {
+            signed_magnitude_fits_float_exact_bits(value as i64, SINGLE_EXACT_INTEGER_BITS)
+        }
+        RiscvInstruction::FloatConvertSFromLu { .. } => {
+            value <= max_exact_integer(SINGLE_EXACT_INTEGER_BITS)
+        }
+        RiscvInstruction::FloatConvertDFromW { .. } => signed_magnitude_fits_float_exact_bits(
+            i64::from(value as u32 as i32),
+            DOUBLE_EXACT_INTEGER_BITS,
+        ),
+        RiscvInstruction::FloatConvertDFromWu { .. } => {
+            u64::from(value as u32) <= max_exact_integer(DOUBLE_EXACT_INTEGER_BITS)
+        }
+        RiscvInstruction::FloatConvertDFromL { .. } => {
+            signed_magnitude_fits_float_exact_bits(value as i64, DOUBLE_EXACT_INTEGER_BITS)
+        }
+        RiscvInstruction::FloatConvertDFromLu { .. } => {
+            value <= max_exact_integer(DOUBLE_EXACT_INTEGER_BITS)
+        }
+        _ => true,
+    }
+}
+
+const SINGLE_EXACT_INTEGER_BITS: u32 = 24;
+const DOUBLE_EXACT_INTEGER_BITS: u32 = 53;
+
+const fn max_exact_integer(bits: u32) -> u64 {
+    1_u64 << bits
+}
+
+fn signed_magnitude_fits_float_exact_bits(value: i64, bits: u32) -> bool {
+    value.unsigned_abs() <= max_exact_integer(bits)
+}
+
 fn binary_result_is_rounding_insensitive(
     instruction: RiscvInstruction,
     lhs: u64,

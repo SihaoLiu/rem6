@@ -193,21 +193,25 @@ pub(crate) fn decode_float_op(raw: u32) -> Result<RiscvInstruction, RiscvError> 
             rd: float_rd(raw),
             rs1: rs1(raw),
         }),
-        (0x68, 0x0) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertSFromW {
+        (0x68, _) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertSFromW {
             rd: float_rd(raw),
             rs1: rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
-        (0x68, 0x0) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertSFromWu {
+        (0x68, _) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertSFromWu {
             rd: float_rd(raw),
             rs1: rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
-        (0x68, 0x0) if rs2(raw).index() == 2 => Ok(RiscvInstruction::FloatConvertSFromL {
+        (0x68, _) if rs2(raw).index() == 2 => Ok(RiscvInstruction::FloatConvertSFromL {
             rd: float_rd(raw),
             rs1: rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
-        (0x68, 0x0) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertSFromLu {
+        (0x68, _) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertSFromLu {
             rd: float_rd(raw),
             rs1: rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
         (0x60, _) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertWFromS {
             rd: rd(raw),
@@ -237,21 +241,25 @@ pub(crate) fn decode_float_op(raw: u32) -> Result<RiscvInstruction, RiscvError> 
             rd: float_rd(raw),
             rs1: rs1(raw),
         }),
-        (0x69, 0x0) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertDFromW {
+        (0x69, _) if rs2(raw).index() == 0 => Ok(RiscvInstruction::FloatConvertDFromW {
             rd: float_rd(raw),
             rs1: rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
-        (0x69, 0x0) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertDFromWu {
+        (0x69, _) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertDFromWu {
             rd: float_rd(raw),
             rs1: rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
-        (0x69, 0x0) if rs2(raw).index() == 2 => Ok(RiscvInstruction::FloatConvertDFromL {
+        (0x69, _) if rs2(raw).index() == 2 => Ok(RiscvInstruction::FloatConvertDFromL {
             rd: float_rd(raw),
             rs1: rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
-        (0x69, 0x0) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertDFromLu {
+        (0x69, _) if rs2(raw).index() == 3 => Ok(RiscvInstruction::FloatConvertDFromLu {
             rd: float_rd(raw),
             rs1: rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
         (0x21, 0x0) if rs2(raw).is_zero() => Ok(RiscvInstruction::FloatConvertDFromS {
             rd: float_rd(raw),

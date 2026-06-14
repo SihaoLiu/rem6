@@ -395,18 +395,22 @@ pub enum RiscvInstruction {
     FloatConvertSFromW {
         rd: FloatRegister,
         rs1: Register,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatConvertSFromWu {
         rd: FloatRegister,
         rs1: Register,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatConvertSFromL {
         rd: FloatRegister,
         rs1: Register,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatConvertSFromLu {
         rd: FloatRegister,
         rs1: Register,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatConvertWFromS {
         rd: Register,
@@ -544,18 +548,22 @@ pub enum RiscvInstruction {
     FloatConvertDFromW {
         rd: FloatRegister,
         rs1: Register,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatConvertDFromWu {
         rd: FloatRegister,
         rs1: Register,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatConvertDFromL {
         rd: FloatRegister,
         rs1: Register,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatConvertDFromLu {
         rd: FloatRegister,
         rs1: Register,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatConvertDFromS {
         rd: FloatRegister,

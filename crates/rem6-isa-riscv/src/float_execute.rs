@@ -95,7 +95,15 @@ pub(crate) fn execute_float_register_instruction(
         | RiscvInstruction::FloatConvertDFromWu { rs1, .. }
         | RiscvInstruction::FloatConvertDFromL { rs1, .. }
         | RiscvInstruction::FloatConvertDFromLu { rs1, .. }) => {
-            let (rd, value) = float::float_register_write_from_integer(instruction, hart.read(rs1));
+            let value = hart.read(rs1);
+            if !float::integer_to_float_rounding_mode_is_supported(
+                instruction,
+                hart.float_status().frm(),
+                value,
+            ) {
+                return Err(());
+            }
+            let (rd, value) = float::float_register_write_from_integer(instruction, value);
             float::write_float_register(hart, writes, rd, value);
         }
         _ => unreachable!("non-float-register instruction dispatched to float register executor"),

@@ -86,7 +86,7 @@ parity are not present.
 
 - [x] RV64 integer, atomic, CSR, trap, counter, WFI, fence, PMP/PMA slices have tests.
 - [x] RV64C integer/load-store/control-flow slices have tests.
-- [x] RV64F/RV64D scalar load/store, arithmetic, comparisons, conversions, legal FP arithmetic rounding-mode decode, rounding-insensitive static arithmetic execution, NaN-boxing, and accrued flag slices have tests.
+- [x] RV64F/RV64D scalar load/store, arithmetic, comparisons, conversions, legal FP arithmetic and integer-to-float rounding-mode decode, exact static non-RNE integer-to-float conversion execution, rounding-insensitive static arithmetic execution, NaN-boxing, and accrued flag slices have tests.
 - [x] RV64C double-precision FP load/store decode and compressed FP load CPU data-access slices have tests.
 - [x] Sv39 helpers and CPU memory-walker paths have tests.
 - [x] RISC-V SE ecalls reach the system syscall table.
@@ -97,9 +97,10 @@ parity are not present.
 
 **Migrated:** RISC-V architectural state, large RV64 scalar slices, FP slices
 including fused multiply-add special-case exception flags and legal static FP
-arithmetic rounding-mode decoding, rounding-insensitive static FP arithmetic
-execution, compressed double FP load/store decoding, compressed FP load CPU data
-access, traps, translation helpers, and SE ecall plumbing.
+arithmetic plus integer-to-float conversion rounding-mode decoding, exact static
+non-RNE integer-to-float conversion execution, rounding-insensitive static FP
+arithmetic execution, compressed double FP load/store decoding, compressed FP
+load CPU data access, traps, translation helpers, and SE ecall plumbing.
 
 **Not migrated:** Full RV64GC/vector breadth, other major ISAs, directed
 rounding breadth, and complete Linux privileged behavior.
