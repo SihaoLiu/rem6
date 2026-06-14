@@ -436,7 +436,7 @@ impl RiscvCore {
         state
             .sc_progress
             .record_failure(self.id(), tick, access.physical_address, access.size);
-        record_data_retire_cycle(&mut state, &access);
+        record_data_retire_cycle(&mut state, &access, tick);
         state
             .data_events
             .push(RiscvDataAccessEvent::conditional_failed(
@@ -463,7 +463,7 @@ impl RiscvCore {
                     data.as_deref(),
                     "load response data",
                 );
-                record_data_retire_cycle(&mut state, &access);
+                record_data_retire_cycle(&mut state, &access, delivery.tick());
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(delivery.tick()),
                     data,
@@ -490,7 +490,7 @@ impl RiscvCore {
                     access.physical_address,
                     access.size,
                 );
-                record_data_retire_cycle(&mut state, &access);
+                record_data_retire_cycle(&mut state, &access, delivery.tick());
                 state
                     .data_events
                     .push(RiscvDataAccessEvent::conditional_failed(
@@ -530,7 +530,7 @@ impl RiscvCore {
                     data.as_deref(),
                     "MMIO load response data",
                 );
-                record_data_retire_cycle(&mut state, &access);
+                record_data_retire_cycle(&mut state, &access, completion.tick());
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(completion.tick()),
                     data,
@@ -545,7 +545,11 @@ impl RiscvCore {
     }
 }
 
-fn record_data_retire_cycle(state: &mut RiscvCoreState, access: &IssuedDataAccess) {
+fn record_data_retire_cycle(
+    state: &mut RiscvCoreState,
+    access: &IssuedDataAccess,
+    completion_tick: Tick,
+) {
     let Some(index) = state
         .events
         .iter()
@@ -562,9 +566,11 @@ fn record_data_retire_cycle(state: &mut RiscvCoreState, access: &IssuedDataAcces
     {
         return;
     }
-    let cycle = riscv_execute::record_retired_in_order_pipeline_cycle(
+    let wait_cycles = completion_tick.saturating_sub(access.tick);
+    let cycle = riscv_execute::record_retired_in_order_pipeline_cycle_after_wait(
         state,
         access.fetch_request.sequence(),
+        wait_cycles,
     )
     .expect("completed data access records one in-order retire cycle");
     state.events[index].set_in_order_pipeline_cycle(cycle);
@@ -665,6 +671,7 @@ impl OutstandingDataAccess {
 
     fn clone_without_layout(&self) -> IssuedDataAccess {
         IssuedDataAccess {
+            tick: self.tick,
             partition: self.partition,
             target: self.target.clone(),
             request: self.request_id,
@@ -682,6 +689,7 @@ impl OutstandingDataAccess {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct IssuedDataAccess {
+    tick: Tick,
     partition: PartitionId,
     target: RiscvDataAccessTarget,
     request: MemoryRequestId,

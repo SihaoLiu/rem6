@@ -65,7 +65,7 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
         &stdout,
         "sim.cpu0.pipeline.in_order.cycles",
         "Cycle",
-        30,
+        34,
         "monotonic",
     );
     assert_stat(

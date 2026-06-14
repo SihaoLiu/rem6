@@ -3,9 +3,10 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineStage, RiscvCore,
+    RiscvDataAccessEventKind,
 };
 use rem6_isa_riscv::{Register, RiscvInstruction};
-use rem6_kernel::{PartitionId, PartitionedScheduler};
+use rem6_kernel::{PartitionId, PartitionedScheduler, Tick};
 use rem6_memory::{
     AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryResponse, MemoryTargetId,
     PartitionedMemoryStore,
@@ -224,6 +225,25 @@ fn issue_one_data_access(
     scheduler.run_until_idle_conservative();
 }
 
+fn last_data_wait_cycles(core: &RiscvCore, completion_kind: RiscvDataAccessEventKind) -> Tick {
+    let data_events = core.data_access_events();
+    let completed_index = data_events
+        .iter()
+        .rposition(|event| event.kind() == completion_kind)
+        .unwrap();
+    let completed_request = data_events[completed_index].request_id();
+    let issued_tick = data_events[..completed_index]
+        .iter()
+        .rfind(|event| {
+            event.kind() == RiscvDataAccessEventKind::Issued
+                && event.request_id() == completed_request
+        })
+        .unwrap()
+        .tick();
+    let completed_tick = data_events[completed_index].tick();
+    completed_tick.saturating_sub(issued_tick)
+}
+
 fn mmio_bus_with_u64(address: u64, bytes: [u8; 8]) -> MmioBus {
     let mut bank =
         MmioRegisterBank::new(Address::new(address), AccessSize::new(0x100).unwrap()).unwrap();
@@ -326,16 +346,17 @@ fn riscv_completed_mmio_data_access_records_in_order_pipeline_cycle() {
     scheduler.run_until_idle_parallel().unwrap();
 
     assert_eq!(core.read_register(reg(5)), 0x0fed_cba9_8765_4321);
+    let data_wait_cycles = last_data_wait_cycles(&core, RiscvDataAccessEventKind::Completed);
     let events = core.execution_events();
     assert_eq!(events.len(), 1);
     let record = events[0].in_order_pipeline_cycle().unwrap();
-    assert_eq!(record.cycle(), 4);
+    assert_eq!(record.cycle(), 4 + data_wait_cycles);
     assert_eq!(record.summary().retired_count(), 1);
     assert_eq!(record.summary().advanced_count(), 1);
     assert!(record.after().in_flight().is_empty());
 
     let snapshot = core.in_order_pipeline_snapshot();
-    assert_eq!(snapshot.cycle(), 5);
+    assert_eq!(snapshot.cycle(), 5 + data_wait_cycles);
     assert!(snapshot.in_flight().is_empty());
 }
 
@@ -363,11 +384,12 @@ fn riscv_completed_data_access_records_in_order_pipeline_cycle() {
     issue_one_data_access(&core, store, &mut scheduler, &transport);
 
     assert_eq!(core.read_register(reg(5)), 0x1122_3344_5566_7788);
+    let data_wait_cycles = last_data_wait_cycles(&core, RiscvDataAccessEventKind::Completed);
     let events = core.execution_events();
     assert_eq!(events.len(), 1);
     let record = events[0].in_order_pipeline_cycle().unwrap();
-    assert_eq!(record.cycle(), 4);
-    assert_eq!(record.before().cycle(), 4);
+    assert_eq!(record.cycle(), 4 + data_wait_cycles);
+    assert_eq!(record.before().cycle(), 4 + data_wait_cycles);
     assert_eq!(
         record
             .before()
@@ -382,7 +404,7 @@ fn riscv_completed_data_access_records_in_order_pipeline_cycle() {
     assert!(record.after().in_flight().is_empty());
 
     let snapshot = core.in_order_pipeline_snapshot();
-    assert_eq!(snapshot.cycle(), 5);
+    assert_eq!(snapshot.cycle(), 5 + data_wait_cycles);
     assert!(snapshot.in_flight().is_empty());
 }
 
@@ -442,7 +464,12 @@ fn riscv_response_store_conditional_failure_records_in_order_pipeline_cycle() {
     issue_one_data_access(&core, store.clone(), &mut scheduler, &transport);
 
     assert!(core.load_reservation().is_some());
-    assert_eq!(core.in_order_pipeline_snapshot().cycle(), 5);
+    let load_reserved_wait_cycles =
+        last_data_wait_cycles(&core, RiscvDataAccessEventKind::Completed);
+    assert_eq!(
+        core.in_order_pipeline_snapshot().cycle(),
+        5 + load_reserved_wait_cycles
+    );
 
     fetch_one(&core, store, &mut scheduler, &transport);
     let event = core.execute_next_completed_fetch().unwrap().unwrap();
@@ -469,9 +496,17 @@ fn riscv_response_store_conditional_failure_records_in_order_pipeline_cycle() {
 
     assert_eq!(core.read_register(reg(7)), 1);
     assert_eq!(core.load_reservation(), None);
+    let data_wait_cycles =
+        last_data_wait_cycles(&core, RiscvDataAccessEventKind::ConditionalFailed);
     let events = core.execution_events();
     let record = events[1].in_order_pipeline_cycle().unwrap();
-    assert_eq!(record.cycle(), 9);
+    assert_eq!(
+        record.cycle(),
+        9 + load_reserved_wait_cycles + data_wait_cycles
+    );
     assert_eq!(record.summary().retired_count(), 1);
-    assert_eq!(core.in_order_pipeline_snapshot().cycle(), 10);
+    assert_eq!(
+        core.in_order_pipeline_snapshot().cycle(),
+        10 + load_reserved_wait_cycles + data_wait_cycles
+    );
 }

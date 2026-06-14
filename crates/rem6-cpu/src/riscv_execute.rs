@@ -166,6 +166,14 @@ pub(crate) fn record_retired_in_order_pipeline_cycle(
     state: &mut RiscvCoreState,
     sequence: u64,
 ) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
+    record_retired_in_order_pipeline_cycle_after_wait(state, sequence, 0)
+}
+
+pub(crate) fn record_retired_in_order_pipeline_cycle_after_wait(
+    state: &mut RiscvCoreState,
+    sequence: u64,
+    wait_cycles: u64,
+) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
     state
         .in_order_pipeline
         .replace_in_flight([InOrderPipelineInstruction::new(
@@ -178,6 +186,15 @@ pub(crate) fn record_retired_in_order_pipeline_cycle(
             .in_order_pipeline
             .try_advance_cycle_recorded()
             .map_err(RiscvCpuError::InOrderPipeline)?;
+        if record.after().in_flight().iter().any(|instruction| {
+            instruction.sequence() == sequence
+                && instruction.stage() == InOrderPipelineStage::Execute
+        }) {
+            state
+                .in_order_pipeline
+                .try_stall_cycles(wait_cycles)
+                .map_err(RiscvCpuError::InOrderPipeline)?;
+        }
         if record.summary().retired_count() > 0 {
             return Ok(record);
         }

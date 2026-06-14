@@ -990,6 +990,14 @@ impl InOrderPipelineState {
         self.try_advance_cycle_recorded_with_redirect(None)
     }
 
+    pub fn try_stall_cycles(&mut self, cycles: u64) -> Result<(), InOrderPipelineError> {
+        self.cycle = self
+            .cycle
+            .checked_add(cycles)
+            .ok_or(InOrderPipelineError::CycleCursorOverflow { cycle: self.cycle })?;
+        Ok(())
+    }
+
     pub fn try_advance_cycle_recorded_with_redirect(
         &mut self,
         redirect: Option<InOrderBranchRedirect>,

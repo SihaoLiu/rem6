@@ -125,16 +125,18 @@ latency evidence, and O3 state is not yet an executable cycle-visible engine.
 
 **Migrated:** Atomic RISC-V execution, frontend/data slices, branch predictor
 state and retired training, per-retired-instruction in-order stage advancement
-with runtime stats, and O3 policy helpers.
+with runtime stats, data-response wait cycles folded into in-order retire timing,
+and O3 policy helpers.
 
 **Not migrated:** Overlapped Minor-like in-order timing with stalls and
-squashes, executable O3 timing, speculation, checker, and KVM equivalents.
+squashes, executable O3 timing, fetch speculation, checker, and KVM equivalents.
 
 **Evidence:** `RiscvCore::execute_next_completed_fetch`,
 `RiscvClusterRun`, `record_data_retire_cycle`, `InOrderPipelineState`,
 `O3DistributedIssueScheduler`, `O3SourceRenamePlan`, CPU frontend and O3 tests.
 CLI run stats include per-core in-order pipeline cycle and retired counters
-from executed RISC-V instructions.
+from executed RISC-V instructions, and CLI data stats show load/store response
+wait changing the in-order pipeline cycle counter.
 
 **Next evidence:** An overlapped per-cycle in-order engine with stalls/squashes,
 then a ROB/LSQ-backed O3 run test.
