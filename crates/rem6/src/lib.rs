@@ -606,11 +606,10 @@ fn execute_riscv(
             line_layout,
             (0..core_count).map(AgentId::new),
         )?),
-        Some(_) => {
-            return Err(Rem6CliError::InvalidRunDataCacheProtocol {
-                value: "unsupported".to_string(),
-            });
-        }
+        Some(RiscvDataCacheProtocol::Chi) => Some(CliDataCacheRuntime::new_chi_lines(
+            line_layout,
+            (0..core_count).map(AgentId::new),
+        )?),
         None => None,
     };
     let riscv_se_startup = if config.riscv_se() {
