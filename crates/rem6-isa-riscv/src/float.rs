@@ -12,6 +12,7 @@ pub(crate) use decode::{
 };
 pub(crate) use int_to_float::{
     exception_flags as integer_to_float_exception_flags,
+    register_write as float_register_write_from_integer,
     rounding_mode_is_supported as integer_to_float_rounding_mode_is_supported,
 };
 
@@ -305,41 +306,6 @@ pub(crate) fn float_register_write_ternary(
             multiply_add_double(sign_negate_double(lhs), rhs, sign_negate_double(addend)),
         ),
         _ => unreachable!("non-fused-float instruction dispatched to ternary float register write"),
-    }
-}
-
-pub(crate) fn float_register_write_from_integer(
-    instruction: RiscvInstruction,
-    value: u64,
-) -> (FloatRegister, u64) {
-    match instruction {
-        RiscvInstruction::FloatMoveSFromX { rd, .. } => (rd, box_single(value as u32)),
-        RiscvInstruction::FloatConvertSFromW { rd, .. } => {
-            (rd, convert_signed_word_to_single(value))
-        }
-        RiscvInstruction::FloatConvertSFromWu { rd, .. } => {
-            (rd, convert_unsigned_word_to_single(value))
-        }
-        RiscvInstruction::FloatConvertSFromL { rd, .. } => {
-            (rd, convert_signed_doubleword_to_single(value))
-        }
-        RiscvInstruction::FloatConvertSFromLu { rd, .. } => {
-            (rd, convert_unsigned_doubleword_to_single(value))
-        }
-        RiscvInstruction::FloatMoveDFromX { rd, .. } => (rd, value),
-        RiscvInstruction::FloatConvertDFromW { rd, .. } => {
-            (rd, convert_signed_word_to_double(value))
-        }
-        RiscvInstruction::FloatConvertDFromWu { rd, .. } => {
-            (rd, convert_unsigned_word_to_double(value))
-        }
-        RiscvInstruction::FloatConvertDFromL { rd, .. } => {
-            (rd, convert_signed_doubleword_to_double(value))
-        }
-        RiscvInstruction::FloatConvertDFromLu { rd, .. } => {
-            (rd, convert_unsigned_doubleword_to_double(value))
-        }
-        _ => unreachable!("non-integer-convert instruction dispatched to float register write"),
     }
 }
 
@@ -748,38 +714,6 @@ fn sign_negate_single(value: u64) -> u64 {
 
 fn sign_negate_double(value: u64) -> u64 {
     value ^ DOUBLE_SIGN_BIT
-}
-
-fn convert_signed_word_to_single(value: u64) -> u64 {
-    box_canonical_single((value as u32) as i32 as f32)
-}
-
-fn convert_unsigned_word_to_single(value: u64) -> u64 {
-    box_canonical_single(value as u32 as f32)
-}
-
-fn convert_signed_doubleword_to_single(value: u64) -> u64 {
-    box_canonical_single(value as i64 as f32)
-}
-
-fn convert_unsigned_doubleword_to_single(value: u64) -> u64 {
-    box_canonical_single(value as f32)
-}
-
-fn convert_signed_word_to_double(value: u64) -> u64 {
-    ((value as u32) as i32 as f64).to_bits()
-}
-
-fn convert_unsigned_word_to_double(value: u64) -> u64 {
-    (value as u32 as f64).to_bits()
-}
-
-fn convert_signed_doubleword_to_double(value: u64) -> u64 {
-    (value as i64 as f64).to_bits()
-}
-
-fn convert_unsigned_doubleword_to_double(value: u64) -> u64 {
-    (value as f64).to_bits()
 }
 
 fn convert_double_to_single(value: u64) -> u64 {

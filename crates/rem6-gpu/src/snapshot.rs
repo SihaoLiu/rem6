@@ -1,8 +1,8 @@
 use rem6_kernel::Tick;
 
 use crate::{
-    GpuDmaCompletion, GpuIsaProgram, GpuKernelId, GpuPendingDmaWrite, GpuTraceEvent,
-    GpuWorkgroupCompletion, GpuWorkgroupId,
+    GpuCoalescedMemoryAccess, GpuDmaCompletion, GpuIsaProgram, GpuKernelId, GpuPendingDmaWrite,
+    GpuTraceEvent, GpuWorkgroupCompletion, GpuWorkgroupId,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -13,6 +13,7 @@ pub struct GpuDeviceSnapshot {
     pending_dma_writes: Vec<GpuPendingDmaWrite>,
     dma_completions: Vec<GpuDmaCompletion>,
     queued_isa_programs: Vec<GpuQueuedIsaProgramSnapshot>,
+    coalesced_memory_accesses: Vec<GpuCoalescedMemoryAccess>,
 }
 
 impl GpuDeviceSnapshot {
@@ -30,6 +31,7 @@ impl GpuDeviceSnapshot {
             pending_dma_writes,
             dma_completions,
             queued_isa_programs: Vec::new(),
+            coalesced_memory_accesses: Vec::new(),
         }
     }
 
@@ -38,6 +40,14 @@ impl GpuDeviceSnapshot {
         queued_isa_programs: Vec<GpuQueuedIsaProgramSnapshot>,
     ) -> Self {
         self.queued_isa_programs = queued_isa_programs;
+        self
+    }
+
+    pub fn with_coalesced_memory_accesses(
+        mut self,
+        coalesced_memory_accesses: Vec<GpuCoalescedMemoryAccess>,
+    ) -> Self {
+        self.coalesced_memory_accesses = coalesced_memory_accesses;
         self
     }
 
@@ -75,6 +85,10 @@ impl GpuDeviceSnapshot {
 
     pub fn queued_isa_programs(&self) -> &[GpuQueuedIsaProgramSnapshot] {
         &self.queued_isa_programs
+    }
+
+    pub fn coalesced_memory_accesses(&self) -> &[GpuCoalescedMemoryAccess] {
+        &self.coalesced_memory_accesses
     }
 }
 

@@ -180,7 +180,10 @@ pub use prefetch_sms::{
     SmsPrefetchCandidate, SmsPrefetcher, SmsPrefetcherConfig, SmsPrefetcherError,
     SmsPrefetcherSnapshot,
 };
-pub use prefetch_stats::QueuedPrefetchStatsSnapshot;
+pub use prefetch_stats::{
+    QueuedPrefetchQueueStatsSnapshot, QueuedPrefetchStatsSnapshot,
+    QueuedPrefetchTranslationQueueStatsSnapshot,
+};
 pub use prefetch_stems::{
     StemsActiveGenerationKeySnapshot, StemsCacheResidency, StemsGenerationEntrySnapshot,
     StemsPatternSequenceEntrySnapshot, StemsPatternSequenceKeySnapshot, StemsPrefetchAccess,

@@ -5,9 +5,14 @@ use std::fmt;
 use rem6_kernel::Tick;
 use rem6_memory::Address;
 
+mod adapter;
 mod frame;
 mod frame_stream;
 
+pub use adapter::{
+    CoSimAdapterBoundary, CoSimAdapterKind, CoSimAdapterSnapshot, CoSimEndpoint, CoSimEndpointId,
+    CoSimEvent, CoSimEventKind, CoSimEventReceipt,
+};
 pub use frame::{TraceFrame, TraceFrameKind};
 pub use frame_stream::{
     TraceFrameStream, TraceFrameStreamCursor, TraceFrameStreamIndex, TraceFrameStreamIndexRecord,
@@ -819,6 +824,36 @@ pub enum ProtoError {
     DuplicateTraceIdString {
         key: u32,
     },
+    EmptyCoSimEndpoint,
+    ZeroCoSimEndpointTickFrequency,
+    DuplicateCoSimEndpoint {
+        endpoint: String,
+    },
+    UnknownCoSimEndpoint {
+        endpoint: String,
+    },
+    ZeroCoSimEventSequence,
+    ZeroCoSimEventSize {
+        sequence: u64,
+    },
+    MissingCoSimEventShape {
+        sequence: u64,
+        kind: CoSimEventKind,
+    },
+    CoSimEventPayloadSizeMismatch {
+        sequence: u64,
+        expected_bytes: usize,
+        actual_bytes: usize,
+    },
+    DuplicateCoSimEvent {
+        sequence: u64,
+    },
+    UnknownCoSimEvent {
+        sequence: u64,
+    },
+    CoSimCheckpointHasPendingEvents {
+        pending: usize,
+    },
     ZeroDependencyWindowSize,
     ZeroDependencySequence,
     InvalidDependencyRecordKind,
@@ -916,6 +951,61 @@ impl fmt::Display for ProtoError {
             }
             Self::DuplicateTraceIdString { key } => {
                 write!(formatter, "trace id string key {key} is duplicated")
+            }
+            Self::EmptyCoSimEndpoint => {
+                write!(formatter, "co-simulation endpoint id must not be empty")
+            }
+            Self::ZeroCoSimEndpointTickFrequency => {
+                write!(
+                    formatter,
+                    "co-simulation endpoint tick frequency must be positive"
+                )
+            }
+            Self::DuplicateCoSimEndpoint { endpoint } => {
+                write!(formatter, "co-simulation endpoint {endpoint} is duplicated")
+            }
+            Self::UnknownCoSimEndpoint { endpoint } => {
+                write!(
+                    formatter,
+                    "co-simulation endpoint {endpoint} is not registered"
+                )
+            }
+            Self::ZeroCoSimEventSequence => {
+                write!(formatter, "co-simulation event sequence must be positive")
+            }
+            Self::ZeroCoSimEventSize { sequence } => {
+                write!(
+                    formatter,
+                    "co-simulation event {sequence} has zero-byte size"
+                )
+            }
+            Self::MissingCoSimEventShape { sequence, kind } => {
+                write!(
+                    formatter,
+                    "co-simulation event {sequence} kind {kind:?} requires address and size"
+                )
+            }
+            Self::CoSimEventPayloadSizeMismatch {
+                sequence,
+                expected_bytes,
+                actual_bytes,
+            } => {
+                write!(
+                    formatter,
+                    "co-simulation event {sequence} payload has {actual_bytes} bytes, expected {expected_bytes}"
+                )
+            }
+            Self::DuplicateCoSimEvent { sequence } => {
+                write!(formatter, "co-simulation event {sequence} is duplicated")
+            }
+            Self::UnknownCoSimEvent { sequence } => {
+                write!(formatter, "co-simulation event {sequence} is not pending")
+            }
+            Self::CoSimCheckpointHasPendingEvents { pending } => {
+                write!(
+                    formatter,
+                    "co-simulation checkpoint has {pending} pending events"
+                )
             }
             Self::ZeroDependencyWindowSize => {
                 write!(formatter, "dependency trace window size must be positive")

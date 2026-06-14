@@ -1,6 +1,7 @@
 use rem6_gpu::{
-    GpuComputeConfig, GpuDevice, GpuDeviceId, GpuDeviceSnapshot, GpuDmaCompletion, GpuDmaCopy,
-    GpuDmaId, GpuError, GpuIsaInstruction, GpuIsaProgram, GpuKernelId, GpuKernelLaunch,
+    GpuCoalescedMemoryAccess, GpuCoalescedMemoryAccessContext, GpuComputeConfig, GpuDevice,
+    GpuDeviceId, GpuDeviceSnapshot, GpuDmaCompletion, GpuDmaCopy, GpuDmaId, GpuError,
+    GpuIsaInstruction, GpuIsaProgram, GpuKernelId, GpuKernelLaunch, GpuMemoryAccessKind,
     GpuPendingDmaWrite, GpuQueuedIsaProgramSnapshot, GpuQueuedWorkgroupSnapshot, GpuScalarRegister,
     GpuSlotSnapshot, GpuTraceEvent, GpuTraceKind, GpuWorkgroupCompletion, GpuWorkgroupId,
     GpuWorkgroupIsaState,
@@ -248,6 +249,178 @@ fn gpu_launch_executes_isa_program_per_workgroup_and_records_register_state() {
             2,
             [(workgroup_register, 1), (result_register, 8)]
         )
+    );
+}
+
+#[test]
+fn gpu_queued_workgroups_record_compute_unit_and_coalesced_memory_accesses() {
+    let cpu_partition = PartitionId::new(0);
+    let gpu_partition = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let gpu =
+        GpuDevice::new(GpuComputeConfig::new(GpuDeviceId::new(21), gpu_partition, 2, 1).unwrap());
+    let layout = line_layout();
+    let program = GpuIsaProgram::new(vec![
+        GpuIsaInstruction::global_load(
+            Address::new(0x1000),
+            4,
+            4,
+            AccessSize::new(4).unwrap(),
+            layout,
+        ),
+        GpuIsaInstruction::global_load(
+            Address::new(0x103f),
+            1,
+            0,
+            AccessSize::new(4).unwrap(),
+            layout,
+        ),
+    ]);
+    let launch = GpuKernelLaunch::new(GpuKernelId::new(60), 3, 3)
+        .unwrap()
+        .with_isa_program(program);
+
+    gpu.submit_kernel_from_partition(&mut scheduler, cpu_partition, 2, launch)
+        .unwrap();
+    let summary = gpu
+        .run_until_idle_parallel_recorded(&mut scheduler)
+        .unwrap();
+
+    assert_eq!(summary.workgroup_completion_count(), 3);
+    assert_eq!(summary.memory_access_count(), 18);
+    assert_eq!(summary.coalesced_memory_access_count(), 9);
+    assert!(summary.has_compute_activity());
+    assert!(summary.has_memory_activity());
+    assert_eq!(
+        gpu.snapshot().coalesced_memory_accesses(),
+        &[
+            GpuCoalescedMemoryAccess::new(
+                GpuCoalescedMemoryAccessContext::new(
+                    GpuKernelId::new(60),
+                    GpuWorkgroupId::new(0),
+                    0,
+                    0,
+                    5,
+                ),
+                0,
+                GpuMemoryAccessKind::Read,
+                Address::new(0x1000),
+                4,
+                16,
+            ),
+            GpuCoalescedMemoryAccess::new(
+                GpuCoalescedMemoryAccessContext::new(
+                    GpuKernelId::new(60),
+                    GpuWorkgroupId::new(0),
+                    0,
+                    0,
+                    5,
+                ),
+                1,
+                GpuMemoryAccessKind::Read,
+                Address::new(0x1000),
+                1,
+                1,
+            ),
+            GpuCoalescedMemoryAccess::new(
+                GpuCoalescedMemoryAccessContext::new(
+                    GpuKernelId::new(60),
+                    GpuWorkgroupId::new(0),
+                    0,
+                    0,
+                    5,
+                ),
+                1,
+                GpuMemoryAccessKind::Read,
+                Address::new(0x1040),
+                1,
+                3,
+            ),
+            GpuCoalescedMemoryAccess::new(
+                GpuCoalescedMemoryAccessContext::new(
+                    GpuKernelId::new(60),
+                    GpuWorkgroupId::new(1),
+                    1,
+                    0,
+                    5,
+                ),
+                0,
+                GpuMemoryAccessKind::Read,
+                Address::new(0x1000),
+                4,
+                16,
+            ),
+            GpuCoalescedMemoryAccess::new(
+                GpuCoalescedMemoryAccessContext::new(
+                    GpuKernelId::new(60),
+                    GpuWorkgroupId::new(1),
+                    1,
+                    0,
+                    5,
+                ),
+                1,
+                GpuMemoryAccessKind::Read,
+                Address::new(0x1000),
+                1,
+                1,
+            ),
+            GpuCoalescedMemoryAccess::new(
+                GpuCoalescedMemoryAccessContext::new(
+                    GpuKernelId::new(60),
+                    GpuWorkgroupId::new(1),
+                    1,
+                    0,
+                    5,
+                ),
+                1,
+                GpuMemoryAccessKind::Read,
+                Address::new(0x1040),
+                1,
+                3,
+            ),
+            GpuCoalescedMemoryAccess::new(
+                GpuCoalescedMemoryAccessContext::new(
+                    GpuKernelId::new(60),
+                    GpuWorkgroupId::new(2),
+                    0,
+                    0,
+                    8,
+                ),
+                0,
+                GpuMemoryAccessKind::Read,
+                Address::new(0x1000),
+                4,
+                16,
+            ),
+            GpuCoalescedMemoryAccess::new(
+                GpuCoalescedMemoryAccessContext::new(
+                    GpuKernelId::new(60),
+                    GpuWorkgroupId::new(2),
+                    0,
+                    0,
+                    8,
+                ),
+                1,
+                GpuMemoryAccessKind::Read,
+                Address::new(0x1000),
+                1,
+                1,
+            ),
+            GpuCoalescedMemoryAccess::new(
+                GpuCoalescedMemoryAccessContext::new(
+                    GpuKernelId::new(60),
+                    GpuWorkgroupId::new(2),
+                    0,
+                    0,
+                    8,
+                ),
+                1,
+                GpuMemoryAccessKind::Read,
+                Address::new(0x1040),
+                1,
+                3,
+            ),
+        ],
     );
 }
 

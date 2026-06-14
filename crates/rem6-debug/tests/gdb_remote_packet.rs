@@ -1,11 +1,11 @@
 use rem6_debug::{
     parse_gdb_remote_frame, GdbRemoteAckMode, GdbRemoteAttachKind, GdbRemoteCommand,
-    GdbRemoteControlState, GdbRemoteDisconnectRequest, GdbRemoteError, GdbRemoteFeature,
-    GdbRemoteFeatureValue, GdbRemoteFrame, GdbRemoteNotification, GdbRemotePacket,
-    GdbRemotePacketConfig, GdbRemoteRegisterBytes, GdbRemoteResumeKind, GdbRemoteResumeRequest,
-    GdbRemoteSession, GdbRemoteStopReply, GdbRemoteThreadId, GdbRemoteThreadInfoQuery,
-    GdbRemoteThreadOperation, GdbRemoteTrapKind, GdbRemoteTrapOperation, GdbRemoteTrapPoint,
-    GdbRemoteTrapRequest, GdbRemoteXferObject, GdbRemoteXferReadRequest,
+    GdbRemoteControlState, GdbRemoteDisconnectRequest, GdbRemoteError, GdbRemoteExecutionControl,
+    GdbRemoteFeature, GdbRemoteFeatureValue, GdbRemoteFrame, GdbRemoteNotification,
+    GdbRemotePacket, GdbRemotePacketConfig, GdbRemoteRegisterBytes, GdbRemoteResumeKind,
+    GdbRemoteResumeRequest, GdbRemoteSession, GdbRemoteStopReply, GdbRemoteThreadId,
+    GdbRemoteThreadInfoQuery, GdbRemoteThreadOperation, GdbRemoteTrapKind, GdbRemoteTrapOperation,
+    GdbRemoteTrapPoint, GdbRemoteTrapRequest, GdbRemoteXferObject, GdbRemoteXferReadRequest,
 };
 
 #[test]
@@ -2252,6 +2252,91 @@ fn gdb_remote_session_handles_multiple_frames_from_byte_stream() {
         )],
     );
     assert_eq!(session.control_state(), &GdbRemoteControlState::Interrupted);
+}
+
+#[test]
+fn gdb_remote_session_exposes_packet_stream_execution_control() {
+    let mut session = GdbRemoteSession::new(vec![GdbRemoteFeature::new(
+        b"vContSupported".to_vec(),
+        GdbRemoteFeatureValue::Supported,
+    )]);
+    let breakpoint = GdbRemoteTrapPoint::new(GdbRemoteTrapKind::SoftwareBreakpoint, 0x1000, 4);
+    let watchpoint = GdbRemoteTrapPoint::new(GdbRemoteTrapKind::WriteWatchpoint, 0x2000, 8);
+
+    let mut first_stream = Vec::new();
+    for payload in [
+        b"Z0,1000,4".as_slice(),
+        b"Z2,2000,8".as_slice(),
+        b"vCont;c:1".as_slice(),
+    ] {
+        first_stream.extend_from_slice(
+            &GdbRemotePacket::new(payload.to_vec())
+                .unwrap()
+                .encode_frame(),
+        );
+    }
+
+    let first_result = session.handle_bytes(&first_stream).unwrap();
+
+    assert_eq!(
+        first_result.frames(),
+        &[
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+            GdbRemoteFrame::Ack,
+        ],
+    );
+    assert_eq!(
+        session.execution_control(),
+        &GdbRemoteExecutionControl::new(
+            GdbRemoteControlState::Continue {
+                requests: vec![GdbRemoteResumeRequest::new(
+                    GdbRemoteResumeKind::Continue,
+                    None,
+                    None,
+                    GdbRemoteThreadId::Id(1),
+                )],
+            },
+            vec![breakpoint, watchpoint],
+        ),
+    );
+
+    session.set_stop_reply(GdbRemoteStopReply::signal(0x05));
+    let mut second_stream = Vec::new();
+    for payload in [b"z0,1000,4".as_slice(), b"s".as_slice()] {
+        second_stream.extend_from_slice(
+            &GdbRemotePacket::new(payload.to_vec())
+                .unwrap()
+                .encode_frame(),
+        );
+    }
+
+    let second_result = session.handle_bytes(&second_stream).unwrap();
+
+    assert_eq!(
+        second_result.frames(),
+        &[
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+            GdbRemoteFrame::Ack,
+        ],
+    );
+    assert_eq!(
+        session.execution_control(),
+        &GdbRemoteExecutionControl::new(
+            GdbRemoteControlState::SingleInstruction {
+                requests: vec![GdbRemoteResumeRequest::new(
+                    GdbRemoteResumeKind::SingleInstruction,
+                    None,
+                    None,
+                    GdbRemoteThreadId::Any,
+                )],
+            },
+            vec![watchpoint],
+        ),
+    );
 }
 
 #[test]

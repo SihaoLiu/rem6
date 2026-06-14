@@ -156,6 +156,71 @@ fn queued_prefetcher_defers_page_crossing_candidates_until_translation_completes
 }
 
 #[test]
+fn queued_prefetcher_records_queue_stats_for_translation_flow() {
+    let candidates = page_crossing_candidates();
+    let queue_config = QueuedPrefetchConfig::with_line_size(4, 3, 4, true, 64)
+        .unwrap()
+        .with_page_size(4096)
+        .unwrap()
+        .with_missing_translation_capacity(4)
+        .unwrap();
+    let mut queue = QueuedPrefetcher::new(queue_config.clone());
+
+    let result = queue
+        .enqueue_candidates_filtered(20, &candidates, &[])
+        .unwrap();
+    assert_eq!(result.pending_translations(), 2);
+    assert_eq!(queue.stats().prefetch_queue().enqueued(), 0);
+    assert_eq!(queue.stats().translation_queue().enqueued(), 2);
+    assert_eq!(queue.stats().translation_queue().issued(), 0);
+    assert_eq!(queue.stats().translation_queue().translated(), 0);
+    assert_eq!(queue.stats().translation_queue().dropped(), 0);
+
+    let started = queue.process_missing_translations(2).unwrap();
+    assert_eq!(started.len(), 2);
+    assert_eq!(queue.stats().translation_queue().issued(), 2);
+
+    let redundant = queue
+        .complete_translation(
+            30,
+            started[0].request().id(),
+            TranslationResolution::mapped(Address::new(0x3008)),
+            &[QueuedPrefetchRedundantLine::in_cache(
+                Address::new(0x3000),
+                false,
+            )],
+        )
+        .unwrap();
+    assert_eq!(redundant, QueuedPrefetchTranslationOutcome::Redundant);
+    assert_eq!(queue.stats().translation_queue().translated(), 1);
+    assert_eq!(queue.stats().prefetch_queue().enqueued(), 0);
+    assert_eq!(queue.stats().prefetch_queue().dropped(), 1);
+
+    let queued = queue
+        .complete_translation(
+            31,
+            started[1].request().id(),
+            TranslationResolution::mapped(Address::new(0x4008)),
+            &[],
+        )
+        .unwrap();
+    assert_eq!(queued, QueuedPrefetchTranslationOutcome::Queued);
+    assert_eq!(queue.stats().translation_queue().translated(), 2);
+    assert_eq!(queue.stats().prefetch_queue().enqueued(), 1);
+    assert_eq!(queue.stats().prefetch_queue().issued(), 0);
+
+    let snapshot = queue.snapshot();
+    let mut restored = QueuedPrefetcher::new(queue_config);
+    restored.restore(&snapshot).unwrap();
+    assert_eq!(restored.stats(), queue.stats());
+    assert_eq!(restored.stats().translation_queue().translated(), 2);
+
+    let issues = restored.issue_ready(34);
+    assert_eq!(issues.len(), 1);
+    assert_eq!(restored.stats().prefetch_queue().issued(), 1);
+}
+
+#[test]
 fn queued_prefetcher_rejects_completion_for_not_started_translation() {
     let candidates = page_crossing_candidates();
     let queue_config = QueuedPrefetchConfig::with_line_size(4, 3, 4, true, 64)

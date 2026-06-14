@@ -12,7 +12,7 @@ mod thread;
 mod trap;
 mod xfer;
 
-pub use control::GdbRemoteControlState;
+pub use control::{GdbRemoteControlState, GdbRemoteExecutionControl};
 pub use disconnect::GdbRemoteDisconnectRequest;
 use feature::encode_supported_features;
 pub use feature::{GdbRemoteFeature, GdbRemoteFeatureValue};
@@ -327,12 +327,11 @@ pub struct GdbRemoteSession {
     general_thread: GdbRemoteThreadId,
     thread_ids: Vec<u64>,
     thread_info_index: usize,
-    control_state: GdbRemoteControlState,
+    execution_control: GdbRemoteExecutionControl,
     last_resume_requests: Vec<GdbRemoteResumeRequest>,
     last_monitor_command: Option<Vec<u8>>,
     last_disconnect_request: Option<GdbRemoteDisconnectRequest>,
     last_trap_request: Option<GdbRemoteTrapRequest>,
-    active_traps: Vec<GdbRemoteTrapPoint>,
     trap_patches: BTreeMap<GdbRemoteTrapPoint, Vec<u8>>,
     disconnected: bool,
     last_response: Option<GdbRemotePacket>,
@@ -365,12 +364,11 @@ impl GdbRemoteSession {
             general_thread: GdbRemoteThreadId::Any,
             thread_ids: vec![1],
             thread_info_index: 0,
-            control_state: GdbRemoteControlState::Stopped,
+            execution_control: GdbRemoteExecutionControl::default(),
             last_resume_requests: Vec::new(),
             last_monitor_command: None,
             last_disconnect_request: None,
             last_trap_request: None,
-            active_traps: Vec::new(),
             trap_patches: BTreeMap::new(),
             disconnected: false,
             last_response: None,
@@ -411,7 +409,7 @@ impl GdbRemoteSession {
     }
 
     pub fn active_traps(&self) -> &[GdbRemoteTrapPoint] {
-        &self.active_traps
+        self.execution_control.active_traps()
     }
 
     pub fn trap_patch(&self, point: GdbRemoteTrapPoint) -> Option<&[u8]> {
@@ -463,7 +461,11 @@ impl GdbRemoteSession {
     }
 
     pub const fn control_state(&self) -> &GdbRemoteControlState {
-        &self.control_state
+        self.execution_control.state()
+    }
+
+    pub const fn execution_control(&self) -> &GdbRemoteExecutionControl {
+        &self.execution_control
     }
 
     pub fn last_resume_request(&self) -> Option<&GdbRemoteResumeRequest> {
@@ -492,7 +494,7 @@ impl GdbRemoteSession {
 
     pub fn set_stop_reply(&mut self, stop_reply: GdbRemoteStopReply) {
         self.stop_reply = stop_reply;
-        self.control_state = GdbRemoteControlState::Stopped;
+        self.execution_control.set_stopped();
     }
 
     pub const fn register_bytes(&self) -> &GdbRemoteRegisterBytes {
@@ -654,7 +656,7 @@ impl GdbRemoteSession {
             GdbRemoteCommand::Disconnect { request } => {
                 self.last_disconnect_request = Some(request);
                 self.disconnected = true;
-                self.control_state = GdbRemoteControlState::Disconnected;
+                self.execution_control.set_disconnected();
                 match request {
                     GdbRemoteDisconnectRequest::Terminate => Ok(self.ack_response()),
                     GdbRemoteDisconnectRequest::Detach { .. }
@@ -683,8 +685,8 @@ impl GdbRemoteSession {
                     address,
                     self.continue_thread,
                 )];
-                self.control_state =
-                    GdbRemoteControlState::from_resume_requests(self.last_resume_requests.clone());
+                self.execution_control
+                    .apply_resume_requests(self.last_resume_requests.clone());
                 Ok(self.ack_response())
             }
             GdbRemoteCommand::ResumeActions { requests } => {
@@ -692,8 +694,8 @@ impl GdbRemoteSession {
                     return self.packet_response(Vec::new());
                 }
                 self.last_resume_requests = requests;
-                self.control_state =
-                    GdbRemoteControlState::from_resume_requests(self.last_resume_requests.clone());
+                self.execution_control
+                    .apply_resume_requests(self.last_resume_requests.clone());
                 Ok(self.ack_response())
             }
             GdbRemoteCommand::SetThread { operation, thread } => {
@@ -771,17 +773,7 @@ impl GdbRemoteSession {
     }
 
     fn apply_trap_request(&mut self, request: GdbRemoteTrapRequest) {
-        let point = request.point();
-        match request.operation() {
-            GdbRemoteTrapOperation::Insert => {
-                if !self.active_traps.contains(&point) {
-                    self.active_traps.push(point);
-                }
-            }
-            GdbRemoteTrapOperation::Remove => {
-                self.active_traps.retain(|active| *active != point);
-            }
-        }
+        self.execution_control.apply_trap_request(request);
         self.last_trap_request = Some(request);
     }
 
@@ -907,7 +899,7 @@ impl GdbRemoteSession {
             GdbRemoteFrame::Packet(packet) => self.handle_packet(packet),
             GdbRemoteFrame::Interrupt => {
                 self.interrupt_requested = true;
-                self.control_state = GdbRemoteControlState::Interrupted;
+                self.execution_control.set_interrupted();
                 Ok(Vec::new())
             }
             GdbRemoteFrame::NegativeAck => Ok(self.retransmit_last_response()),

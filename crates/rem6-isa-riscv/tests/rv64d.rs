@@ -1165,15 +1165,50 @@ fn hart_executes_rv64d_integer_to_double_static_rounding_when_exact() {
 }
 
 #[test]
-fn hart_traps_rv64d_integer_to_double_rounding_modes_when_unsupported() {
-    let mut inexact_hart = RiscvHartState::new(0x8700);
-    inexact_hart.write(reg(1), 9_007_199_254_740_993);
-    let inexact = inexact_hart
+fn hart_executes_rv64d_integer_to_double_directed_rounding_when_inexact() {
+    let mut hart = RiscvHartState::new(0x8700);
+    hart.write(reg(1), 9_007_199_254_740_993);
+    let round_up = hart
         .execute(RiscvInstruction::decode(r_type(0x69, 2, 1, 0x3, 2, 0x53)).unwrap())
         .unwrap();
-    assert!(inexact.trap().is_some());
-    assert_eq!(inexact_hart.read_float(freg(2)), 0);
+    assert_eq!(round_up.trap(), None);
+    assert_eq!(
+        hart.read_float(freg(2)),
+        9_007_199_254_740_994.0f64.to_bits()
+    );
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INEXACT);
 
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
+    hart.write(reg(3), (-9_007_199_254_740_993i64) as u64);
+    let round_down = hart
+        .execute(RiscvInstruction::decode(r_type(0x69, 2, 3, 0x2, 4, 0x53)).unwrap())
+        .unwrap();
+    assert_eq!(round_down.trap(), None);
+    assert_eq!(
+        hart.read_float(freg(4)),
+        (-9_007_199_254_740_994.0f64).to_bits()
+    );
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INEXACT);
+
+    let mut dynamic_hart = RiscvHartState::new(0x8750);
+    dynamic_hart.write(reg(10), 4 << 5);
+    dynamic_hart
+        .execute(RiscvInstruction::decode(csr_write_type(0x003, 10, 0)).unwrap())
+        .unwrap();
+    dynamic_hart.write(reg(1), 9_007_199_254_740_993);
+    let dynamic = dynamic_hart
+        .execute(RiscvInstruction::decode(r_type(0x69, 2, 1, 0x7, 2, 0x53)).unwrap())
+        .unwrap();
+    assert_eq!(dynamic.trap(), None);
+    assert_eq!(
+        dynamic_hart.read_float(freg(2)),
+        9_007_199_254_740_994.0f64.to_bits()
+    );
+    assert_eq!(dynamic_hart.float_status().fflags(), FLOAT_FLAG_INEXACT);
+}
+
+#[test]
+fn hart_traps_rv64d_integer_to_double_dynamic_rounding_with_reserved_frm() {
     let mut dynamic_hart = RiscvHartState::new(0x8800);
     dynamic_hart.write(reg(10), 7 << 5);
     dynamic_hart

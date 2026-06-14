@@ -673,6 +673,7 @@ pub(super) fn gups_stats_output(
         inputs.execution.scheduled_requests,
     )?;
     emit_gups_response_stats(&mut stats, inputs.execution)?;
+    emit_gups_profile_stats(&mut stats, inputs.execution)?;
     emit_transport_stats(&mut stats, "sim.gups.transport", inputs.transport)?;
 
     let snapshot = stats.snapshot(0);
@@ -1207,6 +1208,101 @@ fn emit_gups_response_stats(
         StatResetPolicy::Monotonic,
         response_stats.response_data_byte_count(),
     )
+}
+
+fn emit_gups_profile_stats(
+    stats: &mut StatsRegistry,
+    execution: &Rem6GupsExecutionSummary,
+) -> Result<(), Rem6CliError> {
+    increment_stat(
+        stats,
+        "sim.gups.traffic_profiles",
+        "Count",
+        StatResetPolicy::Constant,
+        execution.profile_summaries.len() as u64,
+    )?;
+
+    for (index, summary) in execution.profile_summaries.iter().enumerate() {
+        let profile = summary.profile();
+        let generator_summary = profile.summary();
+        let prefix = format!("sim.gups.traffic_profile{index}");
+        increment_stat(
+            stats,
+            &format!("{prefix}.state"),
+            "Value",
+            StatResetPolicy::Constant,
+            u64::from(summary.state().get()),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.generator_class"),
+            "Value",
+            StatResetPolicy::Constant,
+            profile.generator_class().stat_code(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.memory_profile"),
+            "Value",
+            StatResetPolicy::Constant,
+            profile.memory_profile().stat_code(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.packets"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            generator_summary.packet_count(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.reads"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            generator_summary.read_count(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.writes"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            generator_summary.write_count(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.bytes_read"),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            generator_summary.bytes_read(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.bytes_written"),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            generator_summary.bytes_written(),
+        )?;
+        if let Some(first_tick) = generator_summary.first_tick() {
+            increment_stat(
+                stats,
+                &format!("{prefix}.first_tick"),
+                "Tick",
+                StatResetPolicy::Monotonic,
+                first_tick,
+            )?;
+        }
+        if let Some(last_tick) = generator_summary.last_tick() {
+            increment_stat(
+                stats,
+                &format!("{prefix}.last_tick"),
+                "Tick",
+                StatResetPolicy::Monotonic,
+                last_tick,
+            )?;
+        }
+    }
+
+    Ok(())
 }
 
 fn stats_snapshot_json(snapshot: &StatSnapshot) -> String {

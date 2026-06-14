@@ -183,6 +183,97 @@ impl PowerAnalysisExport {
         self.total_dynamic_watts + self.total_static_watts
     }
 
+    pub fn to_mcpat_compatible_xml(&self) -> Result<String, PowerError> {
+        self.require_kind(ExternalPowerAnalysisKind::McPat)?;
+
+        let mut output = String::new();
+        writeln!(&mut output, "<mcpat_power tick=\"{}\">", self.tick)
+            .expect("writing to a string cannot fail");
+        for record in &self.records {
+            write!(&mut output, "  <component id=\"").expect("writing to a string cannot fail");
+            push_xml_attribute_value(&mut output, record.target());
+            write!(&mut output, "\" name=\"").expect("writing to a string cannot fail");
+            push_xml_attribute_value(&mut output, record.target());
+            writeln!(&mut output, "\" state=\"{:?}\">", record.current_state(),)
+                .expect("writing to a string cannot fail");
+            writeln!(
+                &mut output,
+                "    <power dynamic_watts=\"{:.6}\" leakage_watts=\"{:.6}\" total_watts=\"{:.6}\"/>",
+                record.dynamic_watts(),
+                record.static_watts(),
+                record.total_watts(),
+            )
+            .expect("writing to a string cannot fail");
+            writeln!(
+                &mut output,
+                "    <thermal temperature_c=\"{:.6}\"/>",
+                record.temperature_c(),
+            )
+            .expect("writing to a string cannot fail");
+            for (state, ticks) in record.residency_entries() {
+                writeln!(
+                    &mut output,
+                    "    <residency state=\"{state:?}\" ticks=\"{ticks}\" ratio=\"{:.6}\"/>",
+                    residency_ratio(record, *ticks),
+                )
+                .expect("writing to a string cannot fail");
+            }
+            writeln!(&mut output, "  </component>").expect("writing to a string cannot fail");
+        }
+        writeln!(
+            &mut output,
+            "  <totals dynamic_watts=\"{:.6}\" leakage_watts=\"{:.6}\" total_watts=\"{:.6}\"/>",
+            self.total_dynamic_watts(),
+            self.total_static_watts(),
+            self.total_watts(),
+        )
+        .expect("writing to a string cannot fail");
+        writeln!(&mut output, "</mcpat_power>").expect("writing to a string cannot fail");
+
+        Ok(output)
+    }
+
+    pub fn to_dsent_compatible_csv(&self) -> Result<String, PowerError> {
+        self.require_kind(ExternalPowerAnalysisKind::Dsent)?;
+
+        let mut output = String::new();
+        writeln!(
+            &mut output,
+            "record_type,tick,target,state,temperature_c,dynamic_watts,static_watts,total_watts,residency_state,residency_ticks,residency_ratio",
+        )
+        .expect("writing to a string cannot fail");
+        for record in &self.records {
+            for (state, ticks) in record.residency_entries() {
+                output.push_str("component,");
+                write!(&mut output, "{},", self.tick).expect("writing to a string cannot fail");
+                push_csv_field(&mut output, record.target());
+                writeln!(
+                    &mut output,
+                    ",{:?},{:.6},{:.6},{:.6},{:.6},{state:?},{ticks},{:.6}",
+                    record.current_state(),
+                    record.temperature_c(),
+                    record.dynamic_watts(),
+                    record.static_watts(),
+                    record.total_watts(),
+                    residency_ratio(record, *ticks),
+                )
+                .expect("writing to a string cannot fail");
+            }
+        }
+        writeln!(
+            &mut output,
+            "total,{},__total__,All,,{:.6},{:.6},{:.6},,{},1.000000",
+            self.tick,
+            self.total_dynamic_watts(),
+            self.total_static_watts(),
+            self.total_watts(),
+            total_residency_ticks(&self.records),
+        )
+        .expect("writing to a string cannot fail");
+
+        Ok(output)
+    }
+
     pub fn to_power_analysis_smoke_xml(&self) -> String {
         let mut output = String::new();
         writeln!(
@@ -225,6 +316,16 @@ impl PowerAnalysisExport {
 
         output
     }
+
+    fn require_kind(&self, expected: ExternalPowerAnalysisKind) -> Result<(), PowerError> {
+        if self.kind != expected {
+            return Err(PowerError::PowerAnalysisKindMismatch {
+                expected,
+                actual: self.kind,
+            });
+        }
+        Ok(())
+    }
 }
 
 fn push_xml_attribute_value(output: &mut String, value: &str) {
@@ -238,4 +339,38 @@ fn push_xml_attribute_value(output: &mut String, value: &str) {
             _ => output.push(character),
         }
     }
+}
+
+fn push_csv_field(output: &mut String, value: &str) {
+    if value
+        .chars()
+        .any(|character| matches!(character, ',' | '"' | '\n' | '\r'))
+    {
+        output.push('"');
+        for character in value.chars() {
+            if character == '"' {
+                output.push('"');
+            }
+            output.push(character);
+        }
+        output.push('"');
+    } else {
+        output.push_str(value);
+    }
+}
+
+fn residency_ratio(record: &PowerAnalysisRecord, ticks: Tick) -> f64 {
+    ticks as f64 / residency_total_ticks(record) as f64
+}
+
+fn residency_total_ticks(record: &PowerAnalysisRecord) -> Tick {
+    record
+        .residency_entries()
+        .iter()
+        .map(|(_, ticks)| *ticks)
+        .sum()
+}
+
+fn total_residency_ticks(records: &[PowerAnalysisRecord]) -> Tick {
+    records.iter().map(residency_total_ticks).sum()
 }

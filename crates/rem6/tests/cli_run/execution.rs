@@ -1157,6 +1157,89 @@ fn rem6_run_can_select_external_memory_profile_for_dram_backed_execution() {
 }
 
 #[test]
+fn rem6_run_accepts_jedec_dram_profile_presets() {
+    struct Case {
+        cli_profile: &'static str,
+        technology: &'static str,
+        refresh_interval: u64,
+        refresh_recovery: u64,
+    }
+
+    let program = riscv64_program(&[
+        i_type(7, 0, 0x0, 5, 0x13), // addi x5, x0, 7
+        0x0000_0073,                // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("dram-memory-jedec-profile", &elf);
+
+    for case in [
+        Case {
+            cli_profile: "ddr4-2400-8gb",
+            technology: "ddr",
+            refresh_interval: 9_360,
+            refresh_recovery: 420,
+        },
+        Case {
+            cli_profile: "ddr5-4800-16gb",
+            technology: "ddr",
+            refresh_interval: 9_360,
+            refresh_recovery: 708,
+        },
+        Case {
+            cli_profile: "hbm2-2000-2gb",
+            technology: "hbm",
+            refresh_interval: 3_900,
+            refresh_recovery: 220,
+        },
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "80",
+                "--stats-format",
+                "json",
+                "--execute",
+                "--cores",
+                "1",
+                "--dram-memory",
+                "--dram-memory-profile",
+                case.cli_profile,
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "stderr for {}: {}",
+            case.cli_profile,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+        assert!(stdout.contains(&format!("\"technology\":\"{}\"", case.technology)));
+        assert_stat(
+            &stdout,
+            "sim.memory.dram.profile.timing.refresh_interval",
+            "Tick",
+            case.refresh_interval,
+            "constant",
+        );
+        assert_stat(
+            &stdout,
+            "sim.memory.dram.profile.timing.refresh_recovery",
+            "Tick",
+            case.refresh_recovery,
+            "constant",
+        );
+    }
+}
+
+#[test]
 fn rem6_run_accepts_host_event_delay_runtime_option() {
     let program = riscv64_program(&[
         i_type(7, 0, 0x0, 5, 0x13), // addi x5, x0, 7

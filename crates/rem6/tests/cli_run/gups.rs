@@ -38,6 +38,11 @@ fn rem6_gups_executes_controller_transport_and_updates_memory() {
     assert!(stdout.contains("\"updates\":2"));
     assert!(stdout.contains("\"scheduled_requests\":4"));
     assert!(stdout.contains("\"final_tick\":12"));
+    assert!(stdout.contains("\"profiles\":[{\"state\":0,\"generator_class\":\"gups\""));
+    assert!(stdout.contains("\"memory_profile\":\"gups_table\""));
+    assert!(stdout.contains("\"packet_count\":4"));
+    assert!(stdout.contains("{\"state\":1,\"generator_class\":\"idle\""));
+    assert!(stdout.contains("\"memory_profile\":\"no_memory\""));
     assert!(stdout.contains(
         "\"response_stats\":{\"responses\":4,\"completed\":4,\"retry\":0,\"store_conditional_failed\":0,\"reads\":2,\"writes\":2,\"data_bytes\":16}"
     ));
@@ -63,6 +68,70 @@ fn rem6_gups_executes_controller_transport_and_updates_memory() {
         "sim.gups.response_data_bytes",
         "Byte",
         16,
+        "monotonic",
+    );
+    assert_stat(&stdout, "sim.gups.traffic_profiles", "Count", 2, "constant");
+    assert_stat(
+        &stdout,
+        "sim.gups.traffic_profile0.generator_class",
+        "Value",
+        9,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gups.traffic_profile0.memory_profile",
+        "Value",
+        5,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gups.traffic_profile0.packets",
+        "Count",
+        4,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gups.traffic_profile0.reads",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gups.traffic_profile0.writes",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gups.traffic_profile0.bytes_read",
+        "Byte",
+        16,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gups.traffic_profile0.bytes_written",
+        "Byte",
+        16,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gups.traffic_profile0.first_tick",
+        "Tick",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gups.traffic_profile0.last_tick",
+        "Tick",
+        10,
         "monotonic",
     );
 }

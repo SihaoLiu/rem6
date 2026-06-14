@@ -8,8 +8,8 @@ use rem6_system::{traffic_gups_controller_transport_run, TrafficGupsTransportRes
 use rem6_traffic::{
     GupsTrafficGenerator, TrafficController, TrafficControllerConfig, TrafficControllerState,
     TrafficGupsConfig, TrafficIdleConfig, TrafficIdleGenerator, TrafficStateGenerator,
-    TrafficStateGraphConfig, TrafficStateId, TrafficStateSpec, TrafficTransition,
-    TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
+    TrafficStateGraphConfig, TrafficStateId, TrafficStateProfileSummary, TrafficStateSpec,
+    TrafficTransition, TrafficTransitionProbability, TRAFFIC_TRANSITION_PROBABILITY_SCALE,
 };
 use rem6_transport::{MemoryRoute, MemoryTrace, MemoryTransport};
 
@@ -46,6 +46,7 @@ pub struct Rem6GupsExecutionSummary {
     pub(crate) final_tick: u64,
     pub(crate) scheduled_requests: u64,
     pub(crate) response_stats: TrafficGupsTransportResponseStats,
+    pub(crate) profile_summaries: Vec<TrafficStateProfileSummary>,
 }
 
 pub(crate) fn run_gups_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
@@ -141,6 +142,12 @@ pub fn run_gups_config(config: Rem6GupsConfig) -> Result<Rem6GupsArtifact, Rem6C
         final_tick: run.final_tick(),
         scheduled_requests: run.scheduled_count() as u64,
         response_stats: *run.response_stats(),
+        profile_summaries: controller
+            .snapshot()
+            .generators()
+            .iter()
+            .map(|entry| entry.profile_summary())
+            .collect(),
     };
     let stats = gups_stats_output(Rem6GupsStatsInputs {
         config: &config,

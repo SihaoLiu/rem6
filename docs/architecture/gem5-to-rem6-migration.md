@@ -79,7 +79,7 @@ from the checklist source.
 
 ### RISC-V ISA and Privileged Substrate - 59% single-axis
 
-**Score calculation:** 6 of 10 items have executable evidence, or 60% raw,
+**Score calculation:** 7 of 11 items have executable evidence, or 64% raw,
 capped to 59% by the single-axis bucket.
 The bucket cap is single-axis because non-RISC-V ISAs and full RV64GC/vector
 parity are not present.
@@ -87,6 +87,7 @@ parity are not present.
 - [x] RV64 integer, atomic, CSR, trap, counter, WFI, fence, PMP/PMA slices have tests.
 - [x] RV64C integer/load-store/control-flow slices have tests.
 - [x] RV64F/RV64D scalar load/store, arithmetic, comparisons, conversions, legal FP arithmetic and integer-to-float rounding-mode decode, exact static non-RNE integer-to-float conversion execution, inexact integer-to-float accrued flag updates, rounding-insensitive static arithmetic execution, NaN-boxing, and accrued flag slices have tests.
+- [x] RV64F/RV64D integer-to-float conversions execute inexact static directed rounding and valid dynamic `frm` modes with accrued inexact flags.
 - [x] RV64C double-precision FP load/store decode and compressed FP load CPU data-access slices have tests.
 - [x] Sv39 helpers and CPU memory-walker paths have tests.
 - [x] RISC-V SE ecalls reach the system syscall table.
@@ -99,12 +100,14 @@ parity are not present.
 including fused multiply-add special-case exception flags and legal static FP
 arithmetic plus integer-to-float conversion rounding-mode decoding, exact static
 non-RNE integer-to-float conversion execution, integer-to-float inexact
-`fflags`/`fcsr` updates, rounding-insensitive static FP arithmetic execution,
-compressed double FP load/store decoding, compressed FP load CPU data access,
-traps, translation helpers, and SE ecall plumbing.
+`fflags`/`fcsr` updates, inexact static directed and valid dynamic `frm`
+integer-to-float execution, rounding-insensitive static FP arithmetic
+execution, compressed double FP load/store decoding, compressed FP load CPU data
+access, traps, translation helpers, and SE ecall plumbing.
 
 **Not migrated:** Full RV64GC/vector breadth, other major ISAs, directed
-rounding breadth, and complete Linux privileged behavior.
+rounding breadth beyond the covered integer-to-float slice, and complete Linux
+privileged behavior.
 
 **Evidence:** `RiscvInstruction::decode_with_length`,
 `decode_float_op`, `decode_compressed`, `walk_sv39_page_table_with_context`,
@@ -160,9 +163,9 @@ instructions while preserving trap and data-access ordering.
 **Next evidence:** Broader per-cycle in-order stalls/squashes, branch-predicted
 fetch with squash/rollback, then a ROB/LSQ-backed O3 run test.
 
-### Memory, Cache, Coherence, Fabric, and DRAM - 45% single-axis
+### Memory, Cache, Coherence, Fabric, and DRAM - 54% single-axis
 
-**Score calculation:** 5 of 11 items have executable evidence, or 45% raw. The
+**Score calculation:** 7 of 13 items have executable evidence, or 54% raw. The
 bucket cap is single-axis because full CPU-facing L1/L2/L3 plus NoC and DRAM is
 not the default instruction/data path.
 
@@ -171,38 +174,44 @@ not the default instruction/data path.
 - [x] MSI/MESI/MOESI/CHI line and bank models have protocol tests.
 - [x] DRAM/NVM profiles expose bank, timing, QoS, low-power, and routed execution slices.
 - [x] Fabric and transport expose multi-hop routing, credits, virtual networks, and activity records.
+- [x] Named DDR4, DDR5, and HBM JEDEC-style refresh presets validate `tREFI`/`tRFC` cycles through profile constructors, controller refresh scheduling, and `rem6 run --dram-memory-profile` stats.
+- [x] Cache-local prefetch queues expose enqueue, issue, drop, and translation counters from queued prefetch and translation flows.
 - [ ] Normal CPU instruction/data traffic uses a complete L1/L2/L3 hierarchy.
 - [ ] Ruby-scale protocol transactions and topology races are migrated.
 - [ ] NoC router, flit, virtual-channel, and routing detail match gem5-class coverage.
-- [ ] DRAM refresh, tREFI/tRFC behavior, and validated JEDEC presets are complete.
+- [ ] Broader DRAM refresh modes and full JEDEC timing tables are complete.
 - [ ] Prefetch translation consumers and queue-level stats are complete.
 - [ ] Bank/cache/fabric/DRAM resource counters are complete enough for full-system studies.
 
 **Migrated:** Typed memory primitives, cache banks, protocol harnesses, DRAM
-profiles, controller-level refresh timing slices, routed topology slices, and
-trace replay consumers; optional single-core CLI RISC-V data traffic can drive
+profiles, controller-level refresh timing slices, routed topology slices,
+CLI-selectable JEDEC refresh presets,
+cache-local queued-prefetch and missing-translation queue counters, and trace
+replay consumers; optional single-core CLI RISC-V data traffic can drive
 MSI-bank, MESI-line, MOESI-line, and CHI-line data-cache runs and emit CPU
 response, directory decision, and DRAM access counters from those runs; optional
 single-core CLI RISC-V instruction fetch traffic can drive an MSI
 instruction-cache run path with separate instruction-cache counters; volatile
-CLI external-memory profiles carry refresh interval/recovery timing, and a DDR
-CLI RISC-V DRAM execution path emits nonzero refresh counters from real fetch
-traffic. DRAM target activity exposes per-bank resource counters for
-access/read/write counts, byte counts, row hits/misses, commands, and refresh
-cycles.
+CLI external-memory profiles carry refresh interval/recovery timing, DDR4,
+DDR5, and HBM preset constructors validate `tREFI`/`tRFC` cycles through
+existing timing checks and controller refresh scheduling, and a DDR CLI RISC-V
+DRAM execution path emits nonzero refresh counters from real fetch traffic.
+DRAM target activity exposes per-bank resource counters for access/read/write
+counts, byte counts, row hits/misses, commands, and refresh cycles.
 
 **Not migrated:** Broad CPU-facing hierarchy, Ruby-scale protocol networks,
-flit-level NoC, full JEDEC preset validation, and broad DRAM refresh/preset
-breadth.
+flit-level NoC, broad JEDEC preset validation, system-level prefetch
+translation consumers, and broad DRAM refresh/preset breadth.
 
 **Evidence:** `MsiCacheBank`, `MsiCacheController`, protocol directory
 harnesses, `DramController`, `DramMemoryController`, `FabricModel`,
 `MemoryTransport`, and tests `riscv_topology_msi_data`,
 `riscv_topology_chi_data`, `memory_controller`, `timing`, `fabric_timing`,
-`system_run_resource_activity`, and CLI `run` data-cache smoke coverage with
-resource-activity stats plus instruction-cache fetch smoke coverage. DRAM
-memory-profile tests cover bank-level resource counters and activity-window
-counter deltas.
+`system_run_resource_activity`, `prefetch_queue_stats`,
+`prefetch_queue_translation`, `refresh_presets`, and CLI `run` data-cache smoke
+coverage with resource-activity stats plus instruction-cache fetch smoke
+coverage. DRAM memory-profile tests cover bank-level resource counters and
+activity-window counter deltas.
 CLI `run` also has DDR profile refresh smoke coverage that exposes refresh
 timing fields and nonzero refresh stats from RISC-V DRAM execution.
 
@@ -356,7 +365,7 @@ network evidence.
 
 ### Stats, Probes, Debug, Host Actions, and Checkpointing - 59% single-axis
 
-**Score calculation:** 9 of 14 items have executable evidence, or 64% raw,
+**Score calculation:** 10 of 15 items have executable evidence, or 67% raw,
 capped to 59% by the single-axis bucket. The bucket cap is single-axis because
 probe, debug, power, and checkpoint evidence is not yet integrated across O3
 pipeline and cache/DRAM runtime state.
@@ -372,6 +381,7 @@ pipeline and cache/DRAM runtime state.
   CLI JSON/text bucket output, and real data-access stack-distance producer
   output.
 - [x] RISC-V in-order pipeline timing state is captured and restored by core checkpoints.
+- [x] GDB packet byte streams drive typed step/resume and break/watch control state in memory-backed sessions.
 - [ ] Stricter gem5 text-stat compatibility exists.
 - [ ] Cache/bank/fabric/DRAM hierarchy counters are complete.
 - [ ] GDB socket loop, step/resume/break/watch integration, and full FP/vector/CSR register cache exist.
@@ -383,9 +393,10 @@ m5ops, host actions, GDB packet/session parsing, RISC-V integer/PC debug
 register paths, RISC-V software breakpoint patch/restore through the system GDB
 memory handler, gem5-style final-tick stat aliases, target/port/bank-level DRAM
 runtime resource counters, RISC-V in-order pipeline checkpoint capture/restore,
-GDB byte-stream packet handling, debug control-state tracking, fixed-width
-register-cache seeding, O3 writeback transfer deferred-completion checkpoint
-payloads, and power-analysis exports.
+GDB byte-stream packet handling, debug execution-control state for packet-stream
+step/resume and break/watch requests, fixed-width register-cache seeding, O3
+writeback transfer deferred-completion checkpoint payloads, and custom plus
+McPAT-shaped and DSENT-shaped power-analysis exports.
 
 **Not migrated:** Complete gem5 text-stat parity, full debug execution control,
 runtime resource counters, runtime-calibrated power/thermal, and broad O3
@@ -395,9 +406,9 @@ ROB/LSQ/rename checkpoint ownership.
 `RiscvDataAccessStats`, `SystemActionExecutor`, `GdbRemoteSession`,
 checkpoint tests including RISC-V hart run-state and in-order pipeline restore,
 O3 writeback transfer deferred-state payload tests, GDB byte-stream and
-control-state tests, power-analysis export tests, system GDB software breakpoint
-patch/restore tests, CLI data-access probe tests, and histogram registry/output
-tests.
+control-state tests, `gdb_remote_packet` execution-control tests,
+power-analysis export tests, system GDB software breakpoint patch/restore
+tests, CLI data-access probe tests, and histogram registry/output tests.
 The CLI data-access probe tests include stack-distance histogram stats emitted
 from executed RISC-V loads. CLI DRAM-backed execution tests include
 target/port/bank-level DRAM resource counters emitted from executed RISC-V
@@ -408,40 +419,50 @@ emitted from an executed RISC-V run.
 cache/bank/fabric runtime resource counters, GDB execution-control tests, and
 O3 checkpoint capture/restore.
 
-### Configuration, Resources, Suites, GPU, and Accelerators - 39% unit-slice
+### Configuration, Resources, Suites, GPU, and Accelerators - 50% single-axis
 
-**Score calculation:** 5 of 10 items have executable evidence, or 50% raw,
-capped to 39% by the unit-slice bucket. The bucket cap is unit-slice because GPU
-ISA evidence is a minimal scalar execution loop and broad resource acquisition
-executors are absent.
+**Score calculation:** 6 of 12 items have executable evidence, or 50% raw. The
+bucket cap is single-axis because GPU memory behavior is visible inside the GPU
+execution path but does not yet drive cache/DRAM, and broad acquisition and
+benchmark orchestration remain absent. The library-level in-memory acquisition
+executor is tracked as scoped evidence but is not counted as top-level
+workload-resource migration until a CLI or runtime workload path consumes it.
 
-- [x] CLI `run`, `gups`, and `trace-replay` plus TOML configuration have tests.
+- [x] CLI `run`, `gups`, and `trace-replay` plus TOML configuration have tests; `gups` emits traffic profile summaries from the executed controller.
 - [x] Workload manifests, resource identity, disk-image construction records, and suite planning exist.
+- [ ] CLI/runtime workload-resource acquisition consumes a resource executor for manifest and suite required artifacts.
 - [x] GPU and accelerator command routing, DMA routes, topology validation, and replay evidence exist.
 - [x] Dispatch plans and execution summaries expose typed parallel evidence.
 - [ ] gem5-style ergonomic experiment definitions cover broad full-system sweeps.
-- [ ] External workload-resource acquisition executors cover more artifact kinds.
+- [ ] External workload-resource acquisition executors cover host, network, archive, and broader artifact kinds.
 - [x] GPU ISA-level execution exists.
+- [x] GPU queued workgroups expose compute-unit assignment and coalesced memory access records from scalar ISA memory intents.
 - [ ] GPU CU scheduling, memory coalescing, and cache/DRAM interactions are representative.
 - [ ] Multi-run simulator orchestration and artifact compatibility are complete.
 - [ ] PARSEC or comparable workload suites run end to end.
 
 **Migrated:** Typed configuration, manifests, suite dispatch, resource identity
-and suite-level required-resource declarations, GPU/accelerator shells, DMA
-routing, and a minimal GPU scalar ISA program execution path with completion and
-queued-workgroup snapshot evidence.
+and suite-level required-resource declarations, library-level in-memory
+acquisition records for declared artifacts, GPU/accelerator shells, DMA routing,
+and a minimal GPU
+scalar ISA program execution path with completion, queued-workgroup snapshot
+evidence, visible compute-unit assignment, coalesced memory access records, and
+top-level GUPS traffic profile JSON/stats output.
 
-**Not migrated:** Full gem5 stdlib ergonomics, acquisition executors, broad GPU
-ISA semantics, representative GPU memory behavior, and broad benchmark
-orchestration.
+**Not migrated:** Full gem5 stdlib ergonomics, host/network/archive resource
+acquisition executors, CLI workload-resource acquisition, broad GPU ISA
+semantics, GPU cache/DRAM interaction, and broad benchmark orchestration.
 
 **Evidence:** `Rem6RunConfig`, `run_from_config`, `WorkloadManifest`,
-`WorkloadResource`, `WorkloadSuiteReplayPlan`, suite tests, GPU and accelerator
-topology tests, and GPU compute tests covering scalar ISA execution and snapshot
-restore of queued ISA programs.
+`WorkloadResource`, `WorkloadSuiteReplayPlan`,
+`WorkloadInMemoryResourceAcquisitionExecutor`, suite tests, resource
+acquisition executor tests, `rem6 gups` profile-summary CLI tests, GPU and
+accelerator topology tests, and GPU compute tests covering scalar ISA execution,
+coalesced memory records, and snapshot restore of queued ISA programs.
 
-**Next evidence:** Data-driven full-system workload declarations and GPU
-memory/coalescing execution tests.
+**Next evidence:** Host-backed and archive-backed workload acquisition,
+data-driven full-system workload declarations, and GPU memory requests through
+cache/DRAM.
 
 ## Test Migration Ledger
 
@@ -453,24 +474,24 @@ checklist-backed component sections above define the auditable percentages.
 | gem5 test anchor | rem6 owner | Row score | Migrated boundary | Next evidence |
 | --- | --- | --- | --- | --- |
 | `tests/gem5/arm_boot_tests` | future ARM ISA crate, `rem6-platform` | 0% open | ARM device slices exist, but this row requires Arm ISA boot. | Add Arm ISA, board handoff, device tree, and kernel boot tests. |
-| `tests/gem5/asmtest` | ISA crates, `rem6` CLI | 45% single-axis | RISC-V no-libc and ISA unit tests cover selected instruction and ecall paths. | Split RV32/RV64 and extension families with architectural-state comparison. |
+| `tests/gem5/asmtest` | ISA crates, `rem6` CLI | 50% single-axis | RISC-V no-libc and ISA unit tests cover selected instruction, ecall, and scalar FP directed integer-to-float paths. | Split RV32/RV64 and extension families with architectural-state comparison. |
 | `tests/gem5/checkpoint_tests` | `rem6-checkpoint`, subsystem checkpoint banks | 65% representative | Scheduler, memory, devices, storage, VirtIO, timer, interrupt, RISC-V started/stopped/suspended hart run-state, RISC-V in-order pipeline state, platform, workload, and manifest checkpoints exist. | Add O3 and non-quiescent restore evidence. |
 | `tests/gem5/chi_protocol` | `rem6-coherence`, protocol crates, `rem6-cache` | 40% single-axis | CHI-like line, controller, bank, dirty peer sourcing, reservation, and Evict-hazard tests exist. | Add Ruby-scale CHI transactions, topology networks, directory races, and workload checks. |
-| `tests/gem5/chi_tlm_tests` | future adapter crates, `rem6-coherence` | 0% open | No typed TLM bridge exists. | Add optional adapter tests after an adapter boundary exists. |
+| `tests/gem5/chi_tlm_tests` | `rem6-proto`, future adapter crates, `rem6-coherence` | 19% scoped | A library-level co-simulation boundary can register TLM endpoints, validate transaction shape, hand off events, and checkpoint clean adapter state in self-tests. | Add runtime TLM bridge tests with coherence traffic. |
 | `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, and text stats output tests exist. | Add config-driven file layouts for full-system manifests and multi-artifact workloads. |
 | `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line fetch-ahead, per-retired-instruction in-order stage timing stats, and O3 policies exist. | Add broader in-order stalls/squashes and ROB/LSQ-backed O3 execution tests. |
 | `tests/gem5/dram_lowp` | `rem6-dram`, `rem6-power` | 40% single-axis | DRAM/NVM profile counters and low-power constants are surfaced. | Add executable low-power state transition tests through routed requests. |
 | `tests/gem5/example_configs`, `tests/gem5/learning_gem5` | `rem6` CLI, `rem6-platform`, `rem6-workload` | 40% single-axis | CLI and TOML tests cover several execution and trace-replay paths. | Add rem6 examples that run from data files without recompilation. |
-| `tests/gem5/fdp_tests` | `rem6-cache` | 35% unit-slice | Fetch-directed prefetcher state and errors have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |
+| `tests/gem5/fdp_tests` | `rem6-cache` | 45% single-axis | Fetch-directed prefetcher state, errors, and cache-local queue/translation counters have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |
 | `tests/gem5/fs` | `rem6-platform`, `rem6-system`, device crates | 15% scoped | Generic device and handoff slices exist, but the gem5 row is mainly full-system boot. | Add full-system Linux boot with SBI, console, storage, network, timer, and shutdown evidence. |
-| `tests/gem5/gem5_resources` | `rem6-workload` | 35% unit-slice | Resource declarations, identity, provenance, and disk-image construction records exist. | Add acquisition executor tests and broader artifact-kind coverage. |
-| `tests/gem5/gpu` | `rem6-gpu`, `rem6-accelerator`, `rem6-transport` | 25% unit-slice | GPU and accelerator topology, command, DMA route, and scalar ISA tests exist. | Add CU scheduling, memory coalescing, and cache/DRAM interactions. |
+| `tests/gem5/gem5_resources` | `rem6-workload` | 35% unit-slice | Resource declarations, identity, provenance, disk-image construction records, and library-level in-memory acquisition executor records exist. | Add CLI/runtime acquisition, host-backed, archive-backed, and broader artifact-kind acquisition coverage. |
+| `tests/gem5/gpu` | `rem6-gpu`, `rem6-accelerator`, `rem6-transport` | 35% unit-slice | GPU and accelerator topology, command, DMA route, scalar ISA, CU assignment, and coalesced memory-record tests exist. | Add representative CU scheduling and cache/DRAM interactions. |
 | `tests/gem5/insttest_se` | future SPARC owner, ISA crates | 10% scoped | Current RISC-V evidence belongs under `asmtest`; this gem5 anchor is SPARC SE focused. | Add SPARC or explicitly retire the row as out of scope. |
 | `tests/gem5/kvm_fork_tests`, `tests/gem5/kvm_switch_tests` | `rem6-system`, future host adapters | 10% scoped | Host-assisted takeover admission rejects unsafe switch shapes. | Add explicit fast-forward adapter and KVM-like switch/fork tests. |
 | `tests/gem5/m5_util`, `tests/test-progs/m5-exit` | `rem6-isa-riscv`, `rem6-system`, `rem6-workload` | 50% single-axis | RISC-V m5 exit, fail, stats, checkpoint, and work markers reach typed host actions. | Add payload breadth, repeat scheduling, other ISA entries, and clock-domain behavior. |
 | `tests/gem5/m5threads_test_atomic` | `rem6-isa-riscv`, `rem6-cpu`, `rem6-coherence` | 40% single-axis | RISC-V LR/SC and AMO plus coherence reservation invalidation tests exist. | Add multi-threaded SE or full-system atomic tests through shared memory. |
 | `tests/gem5/se_mode` | `rem6-system`, `rem6` CLI | 50% single-axis | RISC-V SE startup, ecalls, static newlib smokes including `fopen("w+")` create/write/readback, `/proc/self/exe` readlink through direct `readlinkat` ecall, pipe roundtrip through direct `pipe2`/`write`/`read`/`close` ecalls, `open` directory traversal with `O_DIRECTORY` and `O_CLOEXEC`, and `open` regular-file access with `O_NOCTTY` and `O_NOFOLLOW` through legacy `open` with newlib/libgloss flags, selected syscalls including `statx`, `statfs`/`fstatfs`, `sysinfo`, value-mode `riscv_hwprobe`, `ppoll`, in-place `mremap`, `mprotect`, `madvise` known-advice and mapped-range validation, `msync` flags and mapped-range validation, `mlock`/`munlock` `mmap`/`brk` range validation, `ftruncate`, `pread64`, `pwrite64`, `sched_getscheduler`, `sched_getparam`, `sched_get_priority_max/min`, `sched_rr_get_interval`, single-word `sched_setaffinity`/`sched_getaffinity`, single CPU/node `getcpu`, single-process `membarrier` slice, zero-duration `nanosleep` and `clock_nanosleep` validation, `clock_getres`, `CLOCK_TAI` `clock_gettime`, `kill(..., 0)`, `tkill(..., 0)`, and `tgkill(..., 0)` existence checks, current-process scoped process-group/session `setpgid`/`getpgid`/`getsid`/`setsid` slices, gem5-style advisory `setuid`/`setrlimit` success returns, legacy `getrlimit` stack/data/NPROC limits, basic `rt_sigaction`/`rt_sigprocmask`, empty `rt_sigpending` mask reporting, no-pending zero-timeout `rt_sigtimedwait`, futex mismatch and wake-bitset count/bitset behavior, `umask` masking for `mkdirat` directories and `openat(O_CREAT)` regular files, cwd-aware registered paths, guest-backed file output/readback and open visibility, at-family file and directory mutation, registered-directory enumeration, `ENOSYS` records, and guest writes exist. | Split hello, multicore SE, RVV intrinsic, and other-ISA subrows; add broader libc and lifecycle behavior. |
-| `tests/gem5/memory` | `rem6-memory`, `rem6-cache`, `rem6-dram`, `rem6-fabric` | 45% single-axis | Stores, page maps, cache banks, topology slices, optional single-core CLI RISC-V MSI-bank, MESI-line, MOESI-line, and CHI-line data-cache routing, DRAM/NVM counters, and fabric activity exist. | Add CPU-facing multi-level cache, NoC, DRAM refresh breadth, and preset coverage. |
+| `tests/gem5/memory` | `rem6-memory`, `rem6-cache`, `rem6-dram`, `rem6-fabric` | 56% single-axis | Stores, page maps, cache banks, topology slices, optional single-core CLI RISC-V MSI-bank, MESI-line, MOESI-line, and CHI-line data-cache routing, DRAM/NVM counters, CLI-selectable JEDEC-style refresh presets, prefetch queue counters, and fabric activity exist. | Add CPU-facing multi-level cache, NoC, broader DRAM refresh breadth, and full preset coverage. |
 | `tests/gem5/multisim`, `tests/gem5/suite_tests` | `rem6-workload`, `rem6-kernel` | 45% single-axis | Suite planning, dispatch, execution summaries, and occupancy contracts exist. | Split multisim checkpoint restore from suite dispatch and add multi-run orchestration. |
 | `tests/gem5/parsec_benchmarks` | `rem6-workload`, `rem6-system`, ISA crates | 0% open | Workload suites exist, but PARSEC-class programs do not run. | Add static or dynamic user workload support and ROI/stat hooks. |
 | `tests/gem5/processor_switch_tests` | `rem6-system`, `rem6-cpu` | 20% unit-slice | Host-assisted switch admission and execution-mode metadata exist. | Add executable CPU model switching with quiescence and state transfer. |
@@ -481,63 +502,83 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/regression_tests` | all rem6 crates | 35% unit-slice | Workspace tests act as the current regression suite. | Add migration tags or per-family regression rows. |
 | `tests/gem5/replacement_policies` | `rem6-cache` | 60% representative | Multiple replacement, indexing, dueling, compressed, and sector tag tests exist. | Add remaining policies and exact trace/reference parity where useful. |
 | `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, RFENCE remote SFENCE.VMA data TLB flushes with finite-range, ASID scope, and scheduled completion events, unsupported HFENCE validation, and HSM start entry-state, `START_PENDING`, status, no-return stop, retentive-suspend, default-non-retentive `RESUME_PENDING`/resume, and IPI-wake slices are tested. | Add broader SBI timer/IPI/reset power-state behavior, remaining HSM wake semantics, RFENCE hypervisor-fence execution semantics and broader completion coverage, and a real Linux boot smoke. |
-| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 60% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, instruction/data cache counters, and CLI output exist. | Add more hierarchy counters and stricter text-stat compatibility. |
-| `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 35% unit-slice | Workload manifests, resource payloads, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage and ergonomic topology/workload definitions. |
+| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 62% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, instruction/data cache counters, cache-local prefetch queue counters, CLI stat output, and library-level McPAT/DSENT-shaped export self-tests exist. | Add more hierarchy counters, power-export CLI/runtime wiring, and stricter text-stat compatibility. |
+| `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 40% single-axis | Workload manifests, resource payloads, library-level in-memory resource acquisition records, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage and ergonomic topology/workload definitions. |
 | `tests/test-progs` | `rem6-system`, `rem6` CLI, ISA crates | 35% unit-slice | Static RISC-V no-libc, newlib, and raw syscall smoke binaries, including `statx`, `sysinfo`, newlib file-create roundtrip, newlib `/proc/self/exe` readlink coverage, newlib pipe2 roundtrip coverage, newlib directory-open coverage, and newlib open-flag coverage, are generated when tools exist. | Add durable generated fixtures for hello, threads, and m5 utility shapes across ISAs. |
-| `tests/gem5/traffic_gen` | `rem6-traffic`, `rem6-system`, `rem6-workload` | 45% single-axis | Text config parsing, GUPS, packet trace replay, flags, maintenance, HTM, responses, and workload summaries exist. | Split generator semantics, cache hierarchy matrix, memory profile matrix, and trusted stats. |
+| `tests/gem5/traffic_gen` | `rem6-traffic`, `rem6-system`, `rem6-workload`, `rem6` CLI | 55% single-axis | Text config parsing, GUPS, packet trace replay, flags, maintenance, HTM, responses, workload summaries, typed generator/memory-profile summaries, and top-level GUPS profile JSON/stats output exist. | Add cache hierarchy matrix and broader trusted stats. |
 | `tests/gem5/x86_boot_tests` | `rem6-isa-x86`, future platform work | 0% open | Narrow x86 prefix and interrupt-flag semantics exist, but no x86 boot path exists. | Add x86 ISA execution, paging, interrupt, platform, and boot-image tests. |
 
 ## External Adapter Migration
 
-### SystemC and TLM Adapters - 0% open
-
-**Score calculation:** 0 of 3 items have executable evidence, or 0% raw. The
-bucket cap is open because no typed adapter boundary exists.
-
-- [ ] A typed co-simulation adapter boundary exists.
-- [ ] Adapter event handoff has executable tests.
-- [ ] Adapter checkpoint capture and restore has executable tests.
-
-**Migrated:** No executable rem6 SystemC or TLM adapter boundary.
-
-**Not migrated:** `src/systemc`, `util/tlm`, and `ext/systemc` behavior.
-
-**Next evidence:** Adapter boundary tests before model integration.
-
-### SST Adapter - 0% open
-
-**Score calculation:** 0 of 3 items have executable evidence, or 0% raw. The
-bucket cap is open because no typed adapter boundary exists.
-
-- [ ] A typed SST adapter boundary exists.
-- [ ] SST traffic handoff has executable tests.
-- [ ] SST adapter checkpoint capture and restore has executable tests.
-
-**Migrated:** No executable rem6 SST adapter boundary.
-
-**Not migrated:** `ext/sst` and `configs/example/sst` behavior.
-
-**Next evidence:** Checkpoint-aware adapter contracts.
-
-### Power and Physical-Design Export Adapters - 25% unit-slice
+### SystemC and TLM Adapters - 19% scoped
 
 **Score calculation:** 1 of 4 items have executable evidence, or 25% raw. The
-bucket cap is unit-slice because only typed export records have executable
-evidence.
+bucket cap is scoped because the current code is a library-level typed boundary
+with self-tests; no runtime SystemC/TLM model adapter executes through `rem6`.
+
+- [x] A typed co-simulation adapter boundary exists.
+- [ ] Adapter event handoff executes from a runtime SystemC/TLM bridge.
+- [ ] Adapter checkpoint capture and restore are consumed by a runtime adapter.
+- [ ] Runtime SystemC/TLM model integration executes through the adapter.
+
+**Migrated:** `CoSimAdapterBoundary` registers SystemC/TLM endpoints, hands off
+typed events with required transaction shape, records acknowledgements, rejects
+ambiguous handoff, and snapshots or restores only clean boundaries in
+`rem6-proto` self-tests.
+
+**Not migrated:** Runtime `src/systemc`, `util/tlm`, and `ext/systemc`
+behavior.
+
+**Evidence:** `cosim_adapter` tests in `rem6-proto`.
+
+**Next evidence:** Runtime model integration tests through the adapter.
+
+### SST Adapter - 19% scoped
+
+**Score calculation:** 1 of 4 items have executable evidence, or 25% raw. The
+bucket cap is scoped because SST evidence is the same library-level adapter
+boundary, not a runtime SST execution path.
+
+- [x] A typed SST adapter boundary exists.
+- [ ] SST traffic handoff executes from a runtime SST bridge.
+- [ ] SST adapter checkpoint capture and restore are consumed by runtime SST state.
+- [ ] Runtime SST execution uses the adapter.
+
+**Migrated:** `CoSimAdapterBoundary` registers SST endpoints and accepts typed
+traffic-packet handoff with required transaction shape through the same
+external adapter contract in `rem6-proto` self-tests.
+
+**Not migrated:** SST-specific checkpoint tests and runtime `ext/sst` plus
+`configs/example/sst` behavior.
+
+**Evidence:** `cosim_adapter` tests in `rem6-proto`.
+
+**Next evidence:** SST-specific checkpoint and runtime handoff tests.
+
+### Power and Physical-Design Export Adapters - 50% single-axis
+
+**Score calculation:** 3 of 6 items have executable evidence, or 50% raw. The
+bucket cap is single-axis because McPAT-shaped and DSENT-shaped exports exist,
+but ingestion, full schema parity, and NoMali evidence remain absent.
 
 - [x] rem6-power can export typed power-analysis records.
+- [x] McPAT-shaped XML export serializes power, thermal, and residency records.
+- [x] DSENT-shaped CSV export serializes power, thermal, and residency records.
 - [ ] McPAT-compatible ingestion/export parity is complete.
 - [ ] DSENT-compatible ingestion/export parity is complete.
 - [ ] NoMali-compatible GPU adapter evidence exists.
 
 **Migrated:** Typed power-analysis export records and deterministic custom XML
-smoke coverage for totals, components, and residency entries.
+smoke coverage for totals, components, and residency entries, plus deterministic
+McPAT-shaped XML and DSENT-shaped CSV exports.
 
-**Not migrated:** Complete `ext/nomali`, `ext/mcpat`, and `ext/dsent` parity.
+**Not migrated:** Complete `ext/nomali`, `ext/mcpat`, and `ext/dsent` parity,
+plus top-level CLI/runtime export wiring from real simulation activity.
 
-**Evidence:** rem6-power power-analysis export tests including custom XML output.
+**Evidence:** rem6-power power-analysis export self-tests including custom XML,
+McPAT-shaped XML, and DSENT-shaped CSV output.
 
-**Next evidence:** Adapter ingestion/export parity tests.
+**Next evidence:** Adapter ingestion and stricter external schema parity tests.
 
 ### Native Loader and Math Replacement - 50% single-axis
 

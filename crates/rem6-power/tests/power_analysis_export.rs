@@ -141,6 +141,121 @@ fn power_analysis_smoke_xml_export_records_external_analysis_kind() {
 }
 
 #[test]
+fn mcpat_compatible_xml_export_serializes_adapter_records() {
+    let export = PowerAnalysisExport::new(
+        ExternalPowerAnalysisKind::McPat,
+        42,
+        vec![PowerAnalysisRecord::new(
+            "system.cpu&cluster",
+            PowerStateKind::On,
+            PowerResidency::new(vec![
+                (PowerStateKind::On, 30),
+                (PowerStateKind::ClockGated, 12),
+            ]),
+            41.25,
+            PowerEstimate::new(3.5, 1.25),
+        )
+        .unwrap()],
+    )
+    .unwrap();
+
+    assert_eq!(
+        export.to_mcpat_compatible_xml().unwrap(),
+        concat!(
+            "<mcpat_power tick=\"42\">\n",
+            "  <component id=\"system.cpu&amp;cluster\" name=\"system.cpu&amp;cluster\" state=\"On\">\n",
+            "    <power dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+            "    <thermal temperature_c=\"41.250000\"/>\n",
+            "    <residency state=\"On\" ticks=\"30\" ratio=\"0.714286\"/>\n",
+            "    <residency state=\"ClockGated\" ticks=\"12\" ratio=\"0.285714\"/>\n",
+            "  </component>\n",
+            "  <totals dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+            "</mcpat_power>\n",
+        ),
+    );
+}
+
+#[test]
+fn mcpat_compatible_xml_export_rejects_non_mcpat_kind() {
+    let export = PowerAnalysisExport::new(
+        ExternalPowerAnalysisKind::Dsent,
+        1,
+        vec![PowerAnalysisRecord::new(
+            "system.link",
+            PowerStateKind::On,
+            PowerResidency::new(vec![(PowerStateKind::On, 1)]),
+            30.0,
+            PowerEstimate::new(0.5, 0.25),
+        )
+        .unwrap()],
+    )
+    .unwrap();
+
+    assert_eq!(
+        export.to_mcpat_compatible_xml().unwrap_err(),
+        PowerError::PowerAnalysisKindMismatch {
+            expected: ExternalPowerAnalysisKind::McPat,
+            actual: ExternalPowerAnalysisKind::Dsent,
+        },
+    );
+}
+
+#[test]
+fn dsent_compatible_csv_export_serializes_adapter_records() {
+    let export = PowerAnalysisExport::new(
+        ExternalPowerAnalysisKind::Dsent,
+        42,
+        vec![PowerAnalysisRecord::new(
+            "system.mesh.link0",
+            PowerStateKind::ClockGated,
+            PowerResidency::new(vec![
+                (PowerStateKind::On, 12),
+                (PowerStateKind::ClockGated, 30),
+            ]),
+            41.25,
+            PowerEstimate::new(0.75, 0.125),
+        )
+        .unwrap()],
+    )
+    .unwrap();
+
+    assert_eq!(
+        export.to_dsent_compatible_csv().unwrap(),
+        concat!(
+            "record_type,tick,target,state,temperature_c,dynamic_watts,static_watts,total_watts,residency_state,residency_ticks,residency_ratio\n",
+            "component,42,system.mesh.link0,ClockGated,41.250000,0.750000,0.125000,0.875000,On,12,0.285714\n",
+            "component,42,system.mesh.link0,ClockGated,41.250000,0.750000,0.125000,0.875000,ClockGated,30,0.714286\n",
+            "total,42,__total__,All,,0.750000,0.125000,0.875000,,42,1.000000\n",
+        ),
+    );
+}
+
+#[test]
+fn dsent_compatible_csv_export_rejects_non_dsent_kind() {
+    let export = PowerAnalysisExport::new(
+        ExternalPowerAnalysisKind::McPat,
+        1,
+        vec![PowerAnalysisRecord::new(
+            "system.cpu",
+            PowerStateKind::On,
+            PowerResidency::new(vec![(PowerStateKind::On, 1)]),
+            30.0,
+            PowerEstimate::new(0.5, 0.25),
+        )
+        .unwrap()],
+    )
+    .unwrap();
+
+    assert_eq!(
+        export.to_dsent_compatible_csv().unwrap_err(),
+        PowerError::PowerAnalysisKindMismatch {
+            expected: ExternalPowerAnalysisKind::Dsent,
+            actual: ExternalPowerAnalysisKind::McPat,
+        },
+    );
+}
+
+#[test]
 fn power_analysis_export_rejects_ambiguous_or_invalid_records() {
     let record = PowerAnalysisRecord::new(
         "system.cpu_cluster",

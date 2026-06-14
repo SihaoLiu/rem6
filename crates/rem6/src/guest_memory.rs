@@ -117,12 +117,42 @@ fn build_cli_dram_profile(
             geometry,
             volatile_timing,
         ),
+        CliDramMemoryProfile::Ddr4_2400_8Gb => ExternalMemoryProfile::ddr4_2400_8gb(
+            CLI_MEMORY_TARGET,
+            line_layout,
+            1,
+            1,
+            geometry,
+            timing,
+        ),
+        CliDramMemoryProfile::Ddr5_4800_16Gb => ExternalMemoryProfile::ddr5_4800_16gb(
+            CLI_MEMORY_TARGET,
+            line_layout,
+            1,
+            1,
+            geometry,
+            timing,
+        ),
         CliDramMemoryProfile::Hbm => {
             let geometry = geometry.with_bank_groups(2).map_err(execute_error)?;
             let timing = volatile_timing
                 .with_same_bank_group_burst_spacing(6)
                 .map_err(execute_error)?;
             ExternalMemoryProfile::hbm(CLI_MEMORY_TARGET, line_layout, 2, 2, geometry, timing)
+        }
+        CliDramMemoryProfile::Hbm2_2000_2Gb => {
+            let geometry = geometry.with_bank_groups(2).map_err(execute_error)?;
+            let timing = timing
+                .with_same_bank_group_burst_spacing(6)
+                .map_err(execute_error)?;
+            ExternalMemoryProfile::hbm2_2000_2gb(
+                CLI_MEMORY_TARGET,
+                line_layout,
+                2,
+                2,
+                geometry,
+                timing,
+            )
         }
         CliDramMemoryProfile::Lpddr => ExternalMemoryProfile::lpddr(
             CLI_MEMORY_TARGET,

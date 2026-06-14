@@ -177,6 +177,59 @@ fn queued_prefetcher_records_resource_stats_in_snapshots() {
 }
 
 #[test]
+fn queued_prefetcher_records_queue_stats_for_drop_paths() {
+    let queue_config = QueuedPrefetchConfig::with_line_size(1, 3, 4, true, 64)
+        .unwrap()
+        .with_full_policy(QueuedPrefetchFullPolicy::EvictOldestLowestPriority);
+    let mut queue = QueuedPrefetcher::new(queue_config);
+    let first = QueueCandidate::new(0x1040, 0x1000, 1, false);
+    let second = QueueCandidate::new(0x1080, 0x1000, 1, false);
+
+    assert_eq!(
+        queue
+            .enqueue_candidates_filtered(10, &[first], &[])
+            .unwrap()
+            .accepted(),
+        1
+    );
+    assert_eq!(
+        queue
+            .enqueue_candidates_filtered(11, &[second], &[])
+            .unwrap()
+            .evicted_full(),
+        1
+    );
+    assert_eq!(queue.stats().prefetch_queue().enqueued(), 2);
+    assert_eq!(queue.stats().prefetch_queue().dropped(), 1);
+
+    assert_eq!(
+        queue.squash_demand_access(QueuedPrefetchDemandAccess::new(Address::new(0x1080), false)),
+        1
+    );
+    assert_eq!(queue.stats().prefetch_queue().dropped(), 2);
+
+    let mut tagged = TaggedPrefetcher::new(TaggedPrefetcherConfig::new(64, 2).unwrap());
+    let page_crossing = tagged
+        .observe(tagged_access(4, 0x90, 0x0fc0))
+        .unwrap()
+        .to_vec();
+    let page_queue_config = QueuedPrefetchConfig::with_line_size(4, 3, 4, true, 64)
+        .unwrap()
+        .with_page_size(4096)
+        .unwrap();
+    let mut page_queue = QueuedPrefetcher::new(page_queue_config);
+    assert_eq!(
+        page_queue
+            .enqueue_candidates_filtered(20, &page_crossing, &[])
+            .unwrap()
+            .dropped_page_crossing(),
+        2
+    );
+    assert_eq!(page_queue.stats().translation_queue().enqueued(), 0);
+    assert_eq!(page_queue.stats().translation_queue().dropped(), 2);
+}
+
+#[test]
 fn queued_prefetcher_filters_duplicates_across_requestors_by_line_and_secure_bit() {
     let queue_config = QueuedPrefetchConfig::with_line_size(4, 3, 4, true, 64).unwrap();
     let mut queue = QueuedPrefetcher::new(queue_config);

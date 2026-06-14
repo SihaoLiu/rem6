@@ -6,6 +6,7 @@ mod error;
 mod gups;
 mod hybrid;
 mod linear;
+mod profile;
 mod state;
 mod stream;
 mod text_config;
@@ -45,6 +46,9 @@ pub use linear::{
     LinearTrafficGenerator, RandomTrafficGenerator, StridedTrafficGenerator, TrafficLinearConfig,
     TrafficLinearSnapshot, TrafficRandomConfig, TrafficRandomSnapshot, TrafficStridedConfig,
     TrafficStridedSnapshot,
+};
+pub use profile::{
+    TrafficGeneratorClass, TrafficMemoryProfile, TrafficProfileSummary, TrafficStateProfileSummary,
 };
 pub use state::{
     TrafficStateGraphConfig, TrafficStateId, TrafficStateMachine, TrafficStateSnapshot,

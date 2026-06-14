@@ -141,19 +141,47 @@ impl Rem6GupsArtifact {
             .map(Rem6MemoryDump::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let profiles = gups_profile_summaries_json(&self.execution.profile_summaries);
         format!(
-            "{{\"schema\":\"{}\",\"generator\":\"gups\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"updates\":{},\"rng_state\":\"0x{:x}\",\"simulation\":{},\"memory\":[{}],\"transport\":{{\"gups\":{}}},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"generator\":\"gups\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"updates\":{},\"rng_state\":\"0x{:x}\",\"profiles\":[{}],\"simulation\":{},\"memory\":[{}],\"transport\":{{\"gups\":{}}},\"stats\":{}}}\n",
             self.schema,
             self.config.memory_start(),
             self.config.memory_size(),
             self.config.updates(),
             self.config.rng_state(),
+            profiles,
             self.execution.to_json(self.config.max_tick()),
             memory_dumps,
             self.transport.to_json(),
             self.stats_json,
         )
     }
+}
+
+fn gups_profile_summaries_json(profiles: &[rem6_traffic::TrafficStateProfileSummary]) -> String {
+    profiles
+        .iter()
+        .map(gups_profile_summary_json)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn gups_profile_summary_json(summary: &rem6_traffic::TrafficStateProfileSummary) -> String {
+    let profile = summary.profile();
+    let generator_summary = profile.summary();
+    format!(
+        "{{\"state\":{},\"generator_class\":\"{}\",\"memory_profile\":\"{}\",\"summary\":{{\"packet_count\":{},\"read_count\":{},\"write_count\":{},\"bytes_read\":{},\"bytes_written\":{},\"first_tick\":{},\"last_tick\":{}}}}}",
+        summary.state().get(),
+        profile.generator_class().as_str(),
+        profile.memory_profile().as_str(),
+        generator_summary.packet_count(),
+        generator_summary.read_count(),
+        generator_summary.write_count(),
+        generator_summary.bytes_read(),
+        generator_summary.bytes_written(),
+        optional_tick_json(generator_summary.first_tick()),
+        optional_tick_json(generator_summary.last_tick()),
+    )
 }
 
 impl Rem6TraceReplayArtifact {

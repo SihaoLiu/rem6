@@ -1,4 +1,79 @@
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct QueuedPrefetchQueueStatsSnapshot {
+    enqueued: u64,
+    issued: u64,
+    dropped: u64,
+}
+
+impl QueuedPrefetchQueueStatsSnapshot {
+    pub const fn enqueued(&self) -> u64 {
+        self.enqueued
+    }
+
+    pub const fn issued(&self) -> u64 {
+        self.issued
+    }
+
+    pub const fn dropped(&self) -> u64 {
+        self.dropped
+    }
+
+    pub(crate) fn record_enqueued(&mut self, delta: u64) {
+        self.enqueued = self.enqueued.saturating_add(delta);
+    }
+
+    pub(crate) fn record_issued(&mut self, delta: u64) {
+        self.issued = self.issued.saturating_add(delta);
+    }
+
+    pub(crate) fn record_dropped(&mut self, delta: u64) {
+        self.dropped = self.dropped.saturating_add(delta);
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct QueuedPrefetchTranslationQueueStatsSnapshot {
+    enqueued: u64,
+    issued: u64,
+    dropped: u64,
+    translated: u64,
+}
+
+impl QueuedPrefetchTranslationQueueStatsSnapshot {
+    pub const fn enqueued(&self) -> u64 {
+        self.enqueued
+    }
+
+    pub const fn issued(&self) -> u64 {
+        self.issued
+    }
+
+    pub const fn dropped(&self) -> u64 {
+        self.dropped
+    }
+
+    pub const fn translated(&self) -> u64 {
+        self.translated
+    }
+
+    pub(crate) fn record_enqueued(&mut self, delta: u64) {
+        self.enqueued = self.enqueued.saturating_add(delta);
+    }
+
+    pub(crate) fn record_issued(&mut self, delta: u64) {
+        self.issued = self.issued.saturating_add(delta);
+    }
+
+    pub(crate) fn record_dropped(&mut self, delta: u64) {
+        self.dropped = self.dropped.saturating_add(delta);
+    }
+
+    pub(crate) fn record_translated(&mut self, delta: u64) {
+        self.translated = self.translated.saturating_add(delta);
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct QueuedPrefetchStatsSnapshot {
     issued_prefetches: u64,
     useful_prefetches: u64,
@@ -15,6 +90,8 @@ pub struct QueuedPrefetchStatsSnapshot {
     removed_by_full_queue: u64,
     span_page_prefetches: u64,
     useful_span_page_prefetches: u64,
+    prefetch_queue: QueuedPrefetchQueueStatsSnapshot,
+    translation_queue: QueuedPrefetchTranslationQueueStatsSnapshot,
 }
 
 impl QueuedPrefetchStatsSnapshot {
@@ -108,6 +185,14 @@ impl QueuedPrefetchStatsSnapshot {
         self.useful_span_page_prefetches
     }
 
+    pub const fn prefetch_queue(&self) -> &QueuedPrefetchQueueStatsSnapshot {
+        &self.prefetch_queue
+    }
+
+    pub const fn translation_queue(&self) -> &QueuedPrefetchTranslationQueueStatsSnapshot {
+        &self.translation_queue
+    }
+
     pub(crate) fn record_issued(&mut self, delta: u64) {
         self.issued_prefetches = self.issued_prefetches.saturating_add(delta);
     }
@@ -165,6 +250,34 @@ impl QueuedPrefetchStatsSnapshot {
 
     pub(crate) fn record_useful_span_page(&mut self, delta: u64) {
         self.useful_span_page_prefetches = self.useful_span_page_prefetches.saturating_add(delta);
+    }
+
+    pub(crate) fn record_prefetch_queue_enqueued(&mut self, delta: u64) {
+        self.prefetch_queue.record_enqueued(delta);
+    }
+
+    pub(crate) fn record_prefetch_queue_issued(&mut self, delta: u64) {
+        self.prefetch_queue.record_issued(delta);
+    }
+
+    pub(crate) fn record_prefetch_queue_dropped(&mut self, delta: u64) {
+        self.prefetch_queue.record_dropped(delta);
+    }
+
+    pub(crate) fn record_translation_queue_enqueued(&mut self, delta: u64) {
+        self.translation_queue.record_enqueued(delta);
+    }
+
+    pub(crate) fn record_translation_queue_issued(&mut self, delta: u64) {
+        self.translation_queue.record_issued(delta);
+    }
+
+    pub(crate) fn record_translation_queue_dropped(&mut self, delta: u64) {
+        self.translation_queue.record_dropped(delta);
+    }
+
+    pub(crate) fn record_translation_queue_translated(&mut self, delta: u64) {
+        self.translation_queue.record_translated(delta);
     }
 }
 

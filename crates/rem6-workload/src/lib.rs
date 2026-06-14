@@ -32,6 +32,7 @@ mod qos;
 mod replay_plan;
 mod replay_verify;
 mod resource;
+mod resource_acquisition;
 mod resource_payload;
 mod result;
 mod result_collect;
@@ -124,6 +125,11 @@ pub use resource::{
     WorkloadResourceAcquisition, WorkloadResourceAcquisitionField, WorkloadResourceAcquisitionKind,
     WorkloadResourceConstructionField, WorkloadResourceId, WorkloadResourceKind,
     WorkloadResourceKindField,
+};
+pub use resource_acquisition::{
+    WorkloadAcquiredResource, WorkloadAcquiredSuiteResource,
+    WorkloadInMemoryResourceAcquisitionExecutor, WorkloadResourceAcquisitionError,
+    WorkloadResourceArtifact,
 };
 pub use resource_payload::{WorkloadResolvedResources, WorkloadResourcePayload};
 pub use result::{

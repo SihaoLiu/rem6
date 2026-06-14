@@ -1158,6 +1158,7 @@ impl QueuedPrefetcher {
                 }
                 if self.config.missing_translation_capacity().is_none() {
                     dropped_page_crossing += 1;
+                    self.stats.record_translation_queue_dropped(1);
                     continue;
                 }
                 self.stats.record_identified(1);
@@ -1199,6 +1200,7 @@ impl QueuedPrefetcher {
             insertion_attempts += 1;
             if self.is_redundant(address, candidate.secure(), redundant_lines) {
                 self.stats.record_in_cache_drop(1);
+                self.stats.record_prefetch_queue_dropped(1);
                 dropped_redundant += 1;
                 continue;
             }
@@ -1241,6 +1243,7 @@ impl QueuedPrefetcher {
                         let victim = oldest_lowest_priority_index(&self.pending);
                         self.pending.remove(victim);
                         self.stats.record_removed_by_full_queue(1);
+                        self.stats.record_prefetch_queue_dropped(1);
                         evicted_full += 1;
                     }
                 }
@@ -1255,6 +1258,7 @@ impl QueuedPrefetcher {
             );
             self.next_order = self.next_order.saturating_add(1);
             insert_pending_entry(&mut self.pending, entry);
+            self.stats.record_prefetch_queue_enqueued(1);
             accepted += 1;
         }
         Ok(QueuedPrefetchEnqueueResult {
@@ -1288,6 +1292,8 @@ impl QueuedPrefetcher {
         for (index, _) in &pending {
             self.missing_translations[*index].ongoing_translation = true;
         }
+        self.stats
+            .record_translation_queue_issued(pending.len() as u64);
         Ok(pending.into_iter().map(|(_, request)| request).collect())
     }
 
@@ -1310,11 +1316,14 @@ impl QueuedPrefetcher {
         }
         let entry = self.missing_translations.remove(position);
         let Some(physical_address) = resolution.physical_address() else {
+            self.stats.record_translation_queue_dropped(1);
             return Ok(QueuedPrefetchTranslationOutcome::TranslationFailed);
         };
+        self.stats.record_translation_queue_translated(1);
         let address = self.normalized_address(physical_address);
         if self.is_redundant(address, entry.secure, redundant_lines) {
             self.stats.record_in_cache_drop(1);
+            self.stats.record_prefetch_queue_dropped(1);
             return Ok(QueuedPrefetchTranslationOutcome::Redundant);
         }
         let ready_tick = completion_tick.checked_add(self.config.latency()).ok_or(
@@ -1326,16 +1335,19 @@ impl QueuedPrefetcher {
         if self.pending.len() == self.config.capacity() {
             match self.config.full_policy() {
                 QueuedPrefetchFullPolicy::RejectNew => {
+                    self.stats.record_prefetch_queue_dropped(1);
                     return Ok(QueuedPrefetchTranslationOutcome::PrefetchQueueFull);
                 }
                 QueuedPrefetchFullPolicy::EvictOldestLowestPriority => {
                     let victim = oldest_lowest_priority_index(&self.pending);
                     self.pending.remove(victim);
                     self.stats.record_removed_by_full_queue(1);
+                    self.stats.record_prefetch_queue_dropped(1);
                 }
             }
         }
         insert_pending_entry(&mut self.pending, entry.ready_entry(address, ready_tick));
+        self.stats.record_prefetch_queue_enqueued(1);
         Ok(QueuedPrefetchTranslationOutcome::Queued)
     }
 
@@ -1346,6 +1358,7 @@ impl QueuedPrefetcher {
             .retain(|entry| !(entry.address == line_address && entry.secure == access.secure()));
         let removed = original_len - self.pending.len();
         self.stats.record_removed_by_demand(removed as u64);
+        self.stats.record_prefetch_queue_dropped(removed as u64);
         removed
     }
 
@@ -1366,6 +1379,7 @@ impl QueuedPrefetcher {
         }
         let issue = self.pending.remove(0).issue();
         self.stats.record_issued(1);
+        self.stats.record_prefetch_queue_issued(1);
         if let Some(throttle) = &mut self.throttle {
             throttle.record_issued_saturating(1);
         }
@@ -1504,6 +1518,7 @@ impl QueuedPrefetcher {
                     };
                     self.missing_translations.remove(victim);
                     self.stats.record_removed_by_full_queue(1);
+                    self.stats.record_translation_queue_dropped(1);
                     evicted_full = 1;
                 }
             }
@@ -1516,6 +1531,7 @@ impl QueuedPrefetcher {
         );
         self.next_order = self.next_order.saturating_add(1);
         insert_missing_translation_entry(&mut self.missing_translations, entry);
+        self.stats.record_translation_queue_enqueued(1);
         Ok(evicted_full)
     }
 }

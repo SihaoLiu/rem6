@@ -96,15 +96,12 @@ pub(crate) fn execute_float_register_instruction(
         | RiscvInstruction::FloatConvertDFromL { rs1, .. }
         | RiscvInstruction::FloatConvertDFromLu { rs1, .. }) => {
             let value = hart.read(rs1);
-            if !float::integer_to_float_rounding_mode_is_supported(
-                instruction,
-                hart.float_status().frm(),
-                value,
-            ) {
+            let frm = hart.float_status().frm();
+            if !float::integer_to_float_rounding_mode_is_supported(instruction, frm, value) {
                 return Err(());
             }
             let flags = float::integer_to_float_exception_flags(instruction, value);
-            let (rd, value) = float::float_register_write_from_integer(instruction, value);
+            let (rd, value) = float::float_register_write_from_integer(instruction, value, frm);
             hart.raise_float_exception_flags(flags);
             float::write_float_register(hart, writes, rd, value);
         }

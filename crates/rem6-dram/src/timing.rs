@@ -44,6 +44,14 @@ impl DramRefreshTiming {
     pub const fn recovery(self) -> u64 {
         self.recovery
     }
+
+    pub const fn t_refi_cycles(self) -> u64 {
+        self.interval
+    }
+
+    pub const fn t_rfc_cycles(self) -> u64 {
+        self.recovery
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

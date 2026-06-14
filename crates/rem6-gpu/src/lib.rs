@@ -1,11 +1,13 @@
 mod command;
 mod error;
 mod isa;
+mod memory_access;
 mod snapshot;
+mod summary;
 mod topology;
 mod trace;
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 pub use command::{
@@ -14,11 +16,12 @@ pub use command::{
 };
 pub use error::GpuError;
 pub use isa::{GpuIsaInstruction, GpuIsaProgram, GpuScalarRegister, GpuWorkgroupIsaState};
+pub use memory_access::{
+    GpuCoalescedMemoryAccess, GpuCoalescedMemoryAccessContext, GpuMemoryAccessKind,
+};
 use rem6_kernel::{
-    ConservativeRunSummary, ParallelEpochBatchRecord, ParallelPartitionActivity,
-    ParallelRunProfile, ParallelSchedulerContext, PartitionEventId, PartitionId,
-    PartitionedScheduler, RecordedConservativeRunSummary, RecordedRunSummary,
-    SchedulerDispatchRecord, SchedulerError, Tick, WaitForEdgeKind, WaitForGraph, WaitForNode,
+    ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, SchedulerError,
+    Tick, WaitForEdgeKind, WaitForGraph, WaitForNode,
 };
 use rem6_memory::{Address, ByteMask, MemoryRequest, MemoryRequestId, MemoryResponse};
 use rem6_transport::{
@@ -28,6 +31,7 @@ use rem6_transport::{
 pub use snapshot::{
     GpuDeviceSnapshot, GpuQueuedIsaProgramSnapshot, GpuQueuedWorkgroupSnapshot, GpuSlotSnapshot,
 };
+pub use summary::ParallelGpuRunSummary;
 
 pub use topology::{GpuCommandPath, GpuTopologyConfig, GpuTopologyDevice};
 pub use trace::{GpuTraceEvent, GpuTraceKind, GpuWorkgroupCompletion};
@@ -233,144 +237,6 @@ impl GpuDmaIssueRecord {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ParallelGpuRunSummary {
-    scheduler_run: RecordedConservativeRunSummary,
-    trace_event_count: usize,
-    workgroup_completion_count: usize,
-    pending_dma_write_count: usize,
-    dma_completion_count: usize,
-}
-
-impl ParallelGpuRunSummary {
-    pub const fn new(
-        scheduler_run: RecordedConservativeRunSummary,
-        trace_event_count: usize,
-        workgroup_completion_count: usize,
-        pending_dma_write_count: usize,
-        dma_completion_count: usize,
-    ) -> Self {
-        Self {
-            scheduler_run,
-            trace_event_count,
-            workgroup_completion_count,
-            pending_dma_write_count,
-            dma_completion_count,
-        }
-    }
-
-    pub const fn scheduler_run(&self) -> &RecordedConservativeRunSummary {
-        &self.scheduler_run
-    }
-
-    pub fn scheduler_epochs(&self) -> &[RecordedRunSummary] {
-        self.scheduler_run.epochs()
-    }
-
-    pub fn summary(&self) -> ConservativeRunSummary {
-        self.scheduler_run.summary()
-    }
-
-    pub fn profile(&self) -> ParallelRunProfile {
-        self.scheduler_run.profile()
-    }
-
-    pub fn epoch_count(&self) -> usize {
-        self.scheduler_run.epoch_count()
-    }
-
-    pub fn empty_epoch_count(&self) -> usize {
-        self.scheduler_run.empty_epoch_count()
-    }
-
-    pub fn dispatch_count(&self) -> usize {
-        self.scheduler_run.dispatch_count()
-    }
-
-    pub fn batch_count(&self) -> usize {
-        self.scheduler_run.batch_count()
-    }
-
-    pub fn max_parallel_workers(&self) -> usize {
-        self.scheduler_run.max_parallel_workers()
-    }
-
-    pub fn total_parallel_workers(&self) -> usize {
-        self.scheduler_run.total_parallel_workers()
-    }
-
-    pub fn has_parallel_work(&self) -> bool {
-        self.scheduler_run.has_parallel_work()
-    }
-
-    pub fn partition_activity(&self, partition: PartitionId) -> Option<ParallelPartitionActivity> {
-        self.scheduler_run.partition_activity(partition)
-    }
-
-    pub fn has_partition_activity(&self, partition: PartitionId) -> bool {
-        self.scheduler_run.has_partition_activity(partition)
-    }
-
-    pub fn active_partition_count(&self) -> usize {
-        self.scheduler_run.active_partition_count()
-    }
-
-    pub fn partition_activities(&self) -> BTreeMap<PartitionId, ParallelPartitionActivity> {
-        self.scheduler_run.partition_activities()
-    }
-
-    pub fn dispatches(&self) -> Vec<SchedulerDispatchRecord> {
-        self.scheduler_run.dispatches()
-    }
-
-    pub fn batches(&self) -> Vec<ParallelEpochBatchRecord> {
-        self.scheduler_run.batches()
-    }
-
-    pub fn executed_events(&self) -> usize {
-        self.summary().executed_events()
-    }
-
-    pub fn final_tick(&self) -> Tick {
-        self.summary().final_tick()
-    }
-
-    pub const fn trace_event_count(&self) -> usize {
-        self.trace_event_count
-    }
-
-    pub const fn workgroup_completion_count(&self) -> usize {
-        self.workgroup_completion_count
-    }
-
-    pub const fn pending_dma_write_count(&self) -> usize {
-        self.pending_dma_write_count
-    }
-
-    pub const fn dma_completion_count(&self) -> usize {
-        self.dma_completion_count
-    }
-
-    pub const fn device_activity_count(&self) -> usize {
-        self.trace_event_count
-            + self.workgroup_completion_count
-            + self.pending_dma_write_count
-            + self.dma_completion_count
-    }
-
-    pub const fn has_device_activity(&self) -> bool {
-        self.device_activity_count() != 0
-    }
-
-    pub const fn has_compute_activity(&self) -> bool {
-        self.workgroup_completion_count != 0
-    }
-
-    pub const fn has_dma_activity(&self) -> bool {
-        self.pending_dma_write_count != 0 || self.dma_completion_count != 0
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct GpuDevice {
     config: GpuComputeConfig,
@@ -563,11 +429,13 @@ impl GpuDevice {
         scheduler: &mut PartitionedScheduler,
     ) -> Result<ParallelGpuRunSummary, GpuError> {
         let before = self.snapshot();
+        let before_memory_access_count = snapshot_memory_access_count(&before);
         self.schedule_queued_slots_from_scheduler(scheduler)?;
         let scheduler_run = scheduler
             .run_until_idle_parallel_recorded()
             .map_err(GpuError::Scheduler)?;
         let after = self.snapshot();
+        let after_memory_access_count = snapshot_memory_access_count(&after);
 
         Ok(ParallelGpuRunSummary::new(
             scheduler_run,
@@ -581,6 +449,11 @@ impl GpuDevice {
                 .dma_completions()
                 .len()
                 .saturating_sub(before.dma_completions().len()),
+            after_memory_access_count.saturating_sub(before_memory_access_count),
+            after
+                .coalesced_memory_accesses()
+                .len()
+                .saturating_sub(before.coalesced_memory_accesses().len()),
         ))
     }
 
@@ -906,6 +779,7 @@ impl GpuDevice {
         slot_index: usize,
         workgroup: GpuQueuedWorkgroup,
     ) {
+        let execution = workgroup.isa_program.execute(workgroup.workgroup);
         let completion = GpuWorkgroupCompletion::new(
             workgroup.kernel,
             workgroup.workgroup,
@@ -914,7 +788,28 @@ impl GpuDevice {
             workgroup.started_at,
             context.now(),
         )
-        .with_isa_state(workgroup.isa_program.execute(workgroup.workgroup));
+        .with_isa_state(execution.isa_state().clone());
+        let coalesced_memory_accesses = execution
+            .coalesced_memory_accesses()
+            .iter()
+            .map(|access| {
+                let access_context = GpuCoalescedMemoryAccessContext::new(
+                    workgroup.kernel,
+                    workgroup.workgroup,
+                    workgroup.compute_unit,
+                    workgroup.slot,
+                    context.now(),
+                );
+                GpuCoalescedMemoryAccess::new(
+                    access_context,
+                    access.instruction_index(),
+                    access.kind(),
+                    access.line(),
+                    access.access_count(),
+                    access.byte_count(),
+                )
+            })
+            .collect::<Vec<_>>();
         let mut state = self.state.lock().expect("GPU state lock");
         state.trace.push(GpuTraceEvent::new(
             context.now(),
@@ -926,6 +821,9 @@ impl GpuDevice {
             },
         ));
         state.completions.push(completion);
+        state
+            .coalesced_memory_accesses
+            .extend(coalesced_memory_accesses);
         drop(state);
 
         self.schedule_slot_if_needed(context, slot_index);
@@ -995,6 +893,7 @@ struct GpuDeviceState {
     completions: Vec<GpuWorkgroupCompletion>,
     pending_dma_writes: Vec<GpuPendingDmaWrite>,
     dma_completions: Vec<GpuDmaCompletion>,
+    coalesced_memory_accesses: Vec<GpuCoalescedMemoryAccess>,
     wait_log: Vec<GpuQueuedWorkgroup>,
 }
 
@@ -1006,6 +905,7 @@ impl GpuDeviceState {
             completions: Vec::new(),
             pending_dma_writes: Vec::new(),
             dma_completions: Vec::new(),
+            coalesced_memory_accesses: Vec::new(),
             wait_log: Vec::new(),
         }
     }
@@ -1036,6 +936,7 @@ impl GpuDeviceState {
             self.dma_completions.clone(),
         )
         .with_queued_isa_programs(queued_isa_programs)
+        .with_coalesced_memory_accesses(self.coalesced_memory_accesses.clone())
     }
 
     fn from_snapshot(snapshot: &GpuDeviceSnapshot) -> Self {
@@ -1049,6 +950,7 @@ impl GpuDeviceState {
             completions: snapshot.completions().to_vec(),
             pending_dma_writes: snapshot.pending_dma_writes().to_vec(),
             dma_completions: snapshot.dma_completions().to_vec(),
+            coalesced_memory_accesses: snapshot.coalesced_memory_accesses().to_vec(),
             wait_log: Vec::new(),
         };
         for program in snapshot.queued_isa_programs() {
@@ -1242,6 +1144,14 @@ fn wave_slot_for_slot(slot_index: usize, slots_per_compute_unit: u32) -> u32 {
 
 fn response_data(response: &MemoryResponse) -> Option<Vec<u8>> {
     response.data().map(<[u8]>::to_vec)
+}
+
+fn snapshot_memory_access_count(snapshot: &GpuDeviceSnapshot) -> usize {
+    snapshot
+        .coalesced_memory_accesses()
+        .iter()
+        .map(|access| access.access_count() as usize)
+        .sum()
 }
 
 fn validate_submission_latency(

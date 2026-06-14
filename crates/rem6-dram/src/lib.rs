@@ -5,6 +5,7 @@ mod error;
 mod low_power;
 mod memory_controller;
 mod memory_error;
+mod preset;
 mod profile;
 mod profile_snapshot;
 mod qos;
@@ -27,6 +28,7 @@ pub use memory_controller::{
     DramMemoryWaitForMarker,
 };
 pub use memory_error::DramMemoryError;
+pub use preset::DramJedecRefreshPreset;
 pub use profile::{
     DramMemoryTechnology, DramProfileField, ExternalMemoryParallelResourceSummary,
     ExternalMemoryProfile, ExternalMemoryTopology, NvmMediaTiming, NvmMediaTimingField,
