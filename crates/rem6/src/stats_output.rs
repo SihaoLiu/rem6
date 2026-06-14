@@ -187,6 +187,20 @@ pub(super) fn run_stats_output(
             StatResetPolicy::Monotonic,
             execution.final_tick,
         )?;
+        increment_stat(
+            &mut stats,
+            "simTicks",
+            "Tick",
+            StatResetPolicy::Monotonic,
+            execution.final_tick,
+        )?;
+        increment_stat(
+            &mut stats,
+            "finalTick",
+            "Tick",
+            StatResetPolicy::Monotonic,
+            execution.final_tick,
+        )?;
         match execution.stop {
             Rem6ExecutionStop::HostTrap { stop_code, .. } => {
                 increment_stat(
