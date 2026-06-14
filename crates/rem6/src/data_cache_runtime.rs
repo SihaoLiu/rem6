@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_coherence::{
     CpuResponseRecord, LineBackingStore, MesiCpuResponseRecord, MesiDirectoryLineHarness,
-    MsiBankCycleRun, MsiBankDirectoryHarness, ParallelCoherenceRunSummary,
-    ParallelCoherenceWaitForGraphs,
+    MoesiCpuResponseRecord, MoesiDirectoryLineHarness, MsiBankCycleRun, MsiBankDirectoryHarness,
+    ParallelCoherenceRunSummary, ParallelCoherenceWaitForGraphs,
 };
 use rem6_kernel::{RecordedConservativeRunSummary, WaitForGraph};
 use rem6_memory::{
@@ -28,11 +28,17 @@ pub(super) struct CliDataCacheRuntime {
 enum CliDataCacheHarness {
     Msi(MsiBankDirectoryHarness),
     Mesi(CliMesiLineHarnesses),
+    Moesi(CliMoesiLineHarnesses),
 }
 
 struct CliMesiLineHarnesses {
     agents: Vec<AgentId>,
     lines: BTreeMap<Address, MesiDirectoryLineHarness>,
+}
+
+struct CliMoesiLineHarnesses {
+    agents: Vec<AgentId>,
+    lines: BTreeMap<Address, MoesiDirectoryLineHarness>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -128,6 +134,32 @@ impl CliDataCacheRuntime {
         })
     }
 
+    pub(super) fn new_moesi_lines<I>(
+        layout: CacheLineLayout,
+        agents: I,
+    ) -> Result<Self, Rem6CliError>
+    where
+        I: IntoIterator<Item = AgentId>,
+    {
+        let agents = agents.into_iter().collect::<Vec<_>>();
+        if agents.is_empty() {
+            return Err(execute_error(
+                "CLI MOESI data cache requires at least one agent",
+            ));
+        }
+        Ok(Self {
+            layout,
+            harness: Arc::new(Mutex::new(CliDataCacheHarness::Moesi(
+                CliMoesiLineHarnesses {
+                    agents,
+                    lines: BTreeMap::new(),
+                },
+            ))),
+            records: Arc::new(Mutex::new(Vec::new())),
+            error: Arc::new(Mutex::new(None)),
+        })
+    }
+
     pub(super) fn respond(
         &self,
         memory: &CliMemoryRuntime,
@@ -196,6 +228,11 @@ impl CliDataCacheRuntime {
                         return true;
                     }
                 }
+                CliDataCacheHarness::Moesi(harnesses) => {
+                    if harnesses.lines.contains_key(&line) {
+                        return true;
+                    }
+                }
             }
         }
 
@@ -223,6 +260,21 @@ impl CliDataCacheRuntime {
                 harnesses.lines.insert(line, line_harness);
                 true
             }
+            CliDataCacheHarness::Moesi(harnesses) => {
+                let Ok(backing) = LineBackingStore::new(self.layout, line, data) else {
+                    return false;
+                };
+                let Ok(line_harness) = MoesiDirectoryLineHarness::new(
+                    self.layout,
+                    line,
+                    backing,
+                    harnesses.agents.iter().copied(),
+                ) else {
+                    return false;
+                };
+                harnesses.lines.insert(line, line_harness);
+                true
+            }
         }
     }
 
@@ -239,6 +291,9 @@ impl CliDataCacheRuntime {
             }
             CliDataCacheHarness::Mesi(harnesses) => {
                 self.respond_mesi_inner(memory, start_tick, request, harnesses)
+            }
+            CliDataCacheHarness::Moesi(harnesses) => {
+                self.respond_moesi_inner(memory, start_tick, request, harnesses)
             }
         }
     }
@@ -342,6 +397,57 @@ impl CliDataCacheRuntime {
         Ok(outcome)
     }
 
+    fn respond_moesi_inner(
+        &self,
+        memory: &CliMemoryRuntime,
+        start_tick: u64,
+        request: &MemoryRequest,
+        harnesses: &mut CliMoesiLineHarnesses,
+    ) -> Result<TargetOutcome, Rem6CliError> {
+        let line = self.layout.line_address(request.line_address());
+        let harness = harnesses
+            .lines
+            .get_mut(&line)
+            .ok_or_else(|| execute_error("CLI MOESI data cache backing line missing"))?;
+        let responses_before = harness.cpu_responses().len();
+        let decisions_before = harness.directory_decisions().len();
+        harness
+            .submit_cpu_request(request.id().agent(), request.clone())
+            .map_err(execute_error)?;
+        let responses = harness.cpu_responses();
+        let cpu_response_count = responses.len().saturating_sub(responses_before);
+        let directory_decision_count = harness
+            .directory_decisions()
+            .len()
+            .saturating_sub(decisions_before);
+        let response_record = response_record(&responses, responses_before, request.id());
+        let outcome = match response_record.as_ref() {
+            Some(record) => response_record_to_target_outcome(request, start_tick, record)?,
+            None if request.requires_response() && !request.returns_data() => {
+                TargetOutcome::Respond(
+                    MemoryResponse::completed(request, None).map_err(execute_error)?,
+                )
+            }
+            None if !request.requires_response() => TargetOutcome::NoResponse,
+            None => return Err(execute_error("CLI MOESI data cache response missing")),
+        };
+        if let Some(line_data) = harness
+            .cache_data(request.id().agent())
+            .map_err(execute_error)?
+        {
+            self.sync_request_range(memory, request, &line_data)?;
+        }
+
+        self.records
+            .lock()
+            .expect("CLI data cache record lock")
+            .push(RiscvDataCacheRunRecord::new(
+                RiscvDataCacheProtocol::Moesi,
+                data_cache_run_summary(start_tick, cpu_response_count, directory_decision_count, 0),
+            ));
+        Ok(outcome)
+    }
+
     fn sync_request_range(
         &self,
         memory: &CliMemoryRuntime,
@@ -416,6 +522,24 @@ impl CliDataCacheResponseRecord for MesiCpuResponseRecord {
 
     fn tick(&self) -> u64 {
         MesiCpuResponseRecord::tick(self)
+    }
+}
+
+impl CliDataCacheResponseRecord for MoesiCpuResponseRecord {
+    fn request(&self) -> MemoryRequestId {
+        MoesiCpuResponseRecord::request(self)
+    }
+
+    fn status(&self) -> ResponseStatus {
+        MoesiCpuResponseRecord::status(self)
+    }
+
+    fn data(&self) -> Option<&[u8]> {
+        MoesiCpuResponseRecord::data(self)
+    }
+
+    fn tick(&self) -> u64 {
+        MoesiCpuResponseRecord::tick(self)
     }
 }
 

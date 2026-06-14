@@ -602,6 +602,10 @@ fn execute_riscv(
             line_layout,
             (0..core_count).map(AgentId::new),
         )?),
+        Some(RiscvDataCacheProtocol::Moesi) => Some(CliDataCacheRuntime::new_moesi_lines(
+            line_layout,
+            (0..core_count).map(AgentId::new),
+        )?),
         Some(_) => {
             return Err(Rem6CliError::InvalidRunDataCacheProtocol {
                 value: "unsupported".to_string(),

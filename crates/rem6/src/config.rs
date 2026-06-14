@@ -1454,6 +1454,7 @@ fn parse_run_data_cache_protocol(value: &str) -> Option<RiscvDataCacheProtocol> 
     match value {
         "msi" => Some(RiscvDataCacheProtocol::Msi),
         "mesi" => Some(RiscvDataCacheProtocol::Mesi),
+        "moesi" => Some(RiscvDataCacheProtocol::Moesi),
         _ => None,
     }
 }
