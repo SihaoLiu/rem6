@@ -2,7 +2,8 @@ use rem6_cpu::{CpuId, RiscvCluster, RiscvCore};
 use rem6_debug::{
     GdbRemoteCommand, GdbRemoteError, GdbRemoteFeature, GdbRemoteFeatureValue, GdbRemoteFrame,
     GdbRemotePacket, GdbRemoteRegisterBytes, GdbRemoteSession, GdbRemoteThreadId,
-    GdbRemoteThreadOperation, DEFAULT_GDB_REMOTE_MAX_PAYLOAD_BYTES,
+    GdbRemoteThreadOperation, GdbRemoteTrapKind, GdbRemoteTrapOperation, GdbRemoteTrapRequest,
+    DEFAULT_GDB_REMOTE_MAX_PAYLOAD_BYTES,
 };
 use rem6_isa_riscv::{Register, RiscvGdbTargetDescription, RiscvGdbXlen, RiscvHartState};
 use rem6_memory::{
@@ -373,7 +374,73 @@ pub fn handle_riscv_gdb_remote_memory_packet(
             *memory = updated_memory;
             Ok(frames)
         }
+        GdbRemoteCommand::Trap { request }
+            if request.point().kind() == GdbRemoteTrapKind::SoftwareBreakpoint =>
+        {
+            handle_riscv_gdb_remote_software_breakpoint(session, memory, packet, *request)
+        }
         _ => Ok(session.handle_packet(packet)?),
+    }
+}
+
+fn handle_riscv_gdb_remote_software_breakpoint(
+    session: &mut GdbRemoteSession,
+    memory: &mut PartitionedMemoryStore,
+    packet: &GdbRemotePacket,
+    request: GdbRemoteTrapRequest,
+) -> Result<Vec<GdbRemoteFrame>, RiscvGdbRemotePacketError> {
+    let point = request.point();
+    let Some(breakpoint) = riscv_gdb_software_breakpoint_bytes(point.size()) else {
+        return gdb_remote_error_response(session);
+    };
+
+    match request.operation() {
+        GdbRemoteTrapOperation::Insert => {
+            if session.trap_patch(point).is_some() {
+                return Ok(session.handle_packet(packet)?);
+            }
+
+            let Ok(original) =
+                read_partitioned_memory_bytes(memory, point.address(), breakpoint.len())
+            else {
+                return gdb_remote_error_response(session);
+            };
+            let mut updated_memory = memory.clone();
+            if write_partitioned_memory_bytes(&mut updated_memory, point.address(), &breakpoint)
+                .is_err()
+            {
+                return gdb_remote_error_response(session);
+            }
+
+            let frames = session.handle_packet(packet)?;
+            session.record_trap_patch(point, original);
+            *memory = updated_memory;
+            Ok(frames)
+        }
+        GdbRemoteTrapOperation::Remove => {
+            let Some(original) = session.trap_patch(point).map(<[u8]>::to_vec) else {
+                return Ok(session.handle_packet(packet)?);
+            };
+            let mut updated_memory = memory.clone();
+            if write_partitioned_memory_bytes(&mut updated_memory, point.address(), &original)
+                .is_err()
+            {
+                return gdb_remote_error_response(session);
+            }
+
+            let frames = session.handle_packet(packet)?;
+            session.remove_trap_patch(point);
+            *memory = updated_memory;
+            Ok(frames)
+        }
+    }
+}
+
+fn riscv_gdb_software_breakpoint_bytes(size: u64) -> Option<Vec<u8>> {
+    match size {
+        2 => Some(0x9002_u16.to_le_bytes().to_vec()),
+        4 => Some(0x0010_0073_u32.to_le_bytes().to_vec()),
+        _ => None,
     }
 }
 
@@ -384,12 +451,20 @@ pub fn handle_riscv_gdb_remote_system_packet(
     memory: &mut PartitionedMemoryStore,
     packet: &GdbRemotePacket,
 ) -> Result<Vec<GdbRemoteFrame>, RiscvGdbRemotePacketError> {
-    match GdbRemoteCommand::parse(packet) {
+    let command = GdbRemoteCommand::parse(packet);
+    match &command {
         GdbRemoteCommand::ReadMemory { .. } | GdbRemoteCommand::WriteMemory { .. } => {
+            handle_riscv_gdb_remote_memory_packet(session, memory, packet)
+        }
+        GdbRemoteCommand::Trap { request } if is_riscv_gdb_software_breakpoint(*request) => {
             handle_riscv_gdb_remote_memory_packet(session, memory, packet)
         }
         _ => handle_riscv_gdb_remote_cluster_packet(xlen, session, cluster, packet),
     }
+}
+
+fn is_riscv_gdb_software_breakpoint(request: GdbRemoteTrapRequest) -> bool {
+    request.point().kind() == GdbRemoteTrapKind::SoftwareBreakpoint
 }
 
 pub fn handle_riscv_gdb_remote_system_packet_with_data_translation(

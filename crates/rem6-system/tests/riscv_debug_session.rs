@@ -564,6 +564,293 @@ fn riscv_gdb_remote_system_packet_handler_serves_translation_map_page_table_dump
 }
 
 #[test]
+fn riscv_gdb_remote_system_packet_handler_patches_software_breakpoints() {
+    let cluster = RiscvCluster::new([riscv_core(0x8000)]).unwrap();
+    let mut memory = debug_memory_store();
+    let mut session = riscv_gdb_remote_session(RiscvGdbXlen::Rv64);
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"m1000,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"00112233",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"Z0,1000,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"m1000,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"73001000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"z0,1000,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"m1000,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"00112233",
+    );
+}
+
+#[test]
+fn riscv_gdb_remote_system_packet_handler_patches_compressed_software_breakpoints() {
+    let cluster = RiscvCluster::new([riscv_core(0x8000)]).unwrap();
+    let mut memory = debug_memory_store();
+    let mut session = riscv_gdb_remote_session(RiscvGdbXlen::Rv64);
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"Z0,1002,2".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"m1000,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"00110290",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"z0,1002,2".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"m1000,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"00112233",
+    );
+}
+
+#[test]
+fn riscv_gdb_remote_system_packet_handler_preserves_original_breakpoint_bytes() {
+    let cluster = RiscvCluster::new([riscv_core(0x8000)]).unwrap();
+    let mut memory = debug_memory_store();
+    let mut session = riscv_gdb_remote_session(RiscvGdbXlen::Rv64);
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"Z0,1000,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"Z0,1000,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"z0,1000,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"m1000,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"00112233",
+    );
+}
+
+#[test]
+fn riscv_gdb_remote_system_packet_handler_rejects_unsupported_software_breakpoints() {
+    let cluster = RiscvCluster::new([riscv_core(0x8000)]).unwrap();
+    let mut memory = debug_memory_store();
+    let mut session = riscv_gdb_remote_session(RiscvGdbXlen::Rv64);
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"Z0,1000,8".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"E01",
+    );
+    assert!(session.active_traps().is_empty());
+    assert_eq!(session.last_trap_request(), None);
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"m1000,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"00112233",
+    );
+}
+
+#[test]
+fn riscv_gdb_remote_system_packet_handler_rejects_unmapped_software_breakpoints() {
+    let cluster = RiscvCluster::new([riscv_core(0x8000)]).unwrap();
+    let mut memory = debug_memory_store();
+    let mut session = riscv_gdb_remote_session(RiscvGdbXlen::Rv64);
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"Z0,2000,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"E01",
+    );
+    assert!(session.active_traps().is_empty());
+    assert_eq!(session.last_trap_request(), None);
+}
+
+#[test]
+fn riscv_gdb_remote_system_packet_handler_ignores_unknown_software_breakpoint_removal() {
+    let cluster = RiscvCluster::new([riscv_core(0x8000)]).unwrap();
+    let mut memory = debug_memory_store();
+    let mut session = riscv_gdb_remote_session(RiscvGdbXlen::Rv64);
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"z0,1000,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert!(session.active_traps().is_empty());
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_system_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &cluster,
+                &mut memory,
+                &GdbRemotePacket::new(b"m1000,4".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"00112233",
+    );
+}
+
+#[test]
 fn riscv_gdb_remote_session_reports_live_core_registers() {
     let core = riscv_core(0x8000);
     core.write_register(Register::new(1).unwrap(), 0x0123_4567_89ab_cdef);

@@ -1,12 +1,12 @@
 use crate::hex::decode_hex_u64;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum GdbRemoteTrapOperation {
     Insert,
     Remove,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum GdbRemoteTrapKind {
     SoftwareBreakpoint,
     HardwareBreakpoint,
@@ -15,7 +15,7 @@ pub enum GdbRemoteTrapKind {
     AccessWatchpoint,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct GdbRemoteTrapPoint {
     kind: GdbRemoteTrapKind,
     address: u64,
@@ -44,7 +44,7 @@ impl GdbRemoteTrapPoint {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct GdbRemoteTrapRequest {
     operation: GdbRemoteTrapOperation,
     point: GdbRemoteTrapPoint,

@@ -328,6 +328,7 @@ pub struct GdbRemoteSession {
     last_disconnect_request: Option<GdbRemoteDisconnectRequest>,
     last_trap_request: Option<GdbRemoteTrapRequest>,
     active_traps: Vec<GdbRemoteTrapPoint>,
+    trap_patches: BTreeMap<GdbRemoteTrapPoint, Vec<u8>>,
     disconnected: bool,
     last_response: Option<GdbRemotePacket>,
     interrupt_requested: bool,
@@ -364,6 +365,7 @@ impl GdbRemoteSession {
             last_disconnect_request: None,
             last_trap_request: None,
             active_traps: Vec::new(),
+            trap_patches: BTreeMap::new(),
             disconnected: false,
             last_response: None,
             interrupt_requested: false,
@@ -404,6 +406,18 @@ impl GdbRemoteSession {
 
     pub fn active_traps(&self) -> &[GdbRemoteTrapPoint] {
         &self.active_traps
+    }
+
+    pub fn trap_patch(&self, point: GdbRemoteTrapPoint) -> Option<&[u8]> {
+        self.trap_patches.get(&point).map(Vec::as_slice)
+    }
+
+    pub fn record_trap_patch(&mut self, point: GdbRemoteTrapPoint, bytes: Vec<u8>) {
+        self.trap_patches.entry(point).or_insert(bytes);
+    }
+
+    pub fn remove_trap_patch(&mut self, point: GdbRemoteTrapPoint) -> Option<Vec<u8>> {
+        self.trap_patches.remove(&point)
     }
 
     pub fn stub_features(&self) -> &[GdbRemoteFeature] {
