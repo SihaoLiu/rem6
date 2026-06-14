@@ -163,6 +163,131 @@ int main(void) {
     assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
 }
 
+#[test]
+fn rem6_run_riscv_se_runs_static_newlib_directory_open_with_getdents64() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static newlib RISC-V SE directory-open smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-newlib-directory-open");
+    let source = workspace.join("newlib-directory-open.c");
+    let binary = workspace.join("newlib-directory-open");
+    let input = workspace.join("guest.txt");
+    fs::write(&input, b"file-backed input\n").unwrap();
+    fs::write(
+        &source,
+        r#"#include <errno.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+struct linux_dirent64 {
+    unsigned long long d_ino;
+    long long d_off;
+    unsigned short d_reclen;
+    unsigned char d_type;
+    char d_name[];
+};
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    char buffer[512];
+    int fd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0) {
+        printf("newlib-directory-open:open:%d\n", errno);
+        return 81;
+    }
+    long bytes = linux_syscall3(61, fd, (long)buffer, sizeof(buffer));
+    if (bytes < 0) {
+        printf("newlib-directory-open:getdents:%ld\n", bytes);
+        close(fd);
+        return 82;
+    }
+
+    int seen_guest = 0;
+    for (long offset = 0; offset < bytes;) {
+        struct linux_dirent64 *entry = (struct linux_dirent64 *)(buffer + offset);
+        if (strcmp(entry->d_name, "guest.txt") == 0) {
+            seen_guest++;
+        }
+        offset += entry->d_reclen;
+    }
+    long eof = linux_syscall3(61, fd, (long)buffer, sizeof(buffer));
+    int closed = close(fd);
+
+    printf("newlib-directory-open:%ld:%d:%ld:%d\n",
+           bytes,
+           seen_guest,
+           eof,
+           closed);
+    return seen_guest == 1 && eof == 0 && closed == 0 ? 61 : 83;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "400000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+            "--riscv-se-file",
+            &format!("guest.txt={}", input.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":61"));
+    assert!(stdout.contains("\"text\":\"newlib-directory-open:"));
+    assert!(stdout.contains(":1:0:0\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}
+
 fn find_riscv_tool(name: &str) -> Option<PathBuf> {
     find_tool_on_path(name).or_else(|| {
         let module_candidate =

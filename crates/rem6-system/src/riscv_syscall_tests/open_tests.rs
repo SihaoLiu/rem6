@@ -4,10 +4,14 @@ const RISCV_LINUX_O_RDWR_FOR_TEST: u64 = 2;
 const RISCV_LINUX_O_WRONLY_FOR_TEST: u64 = 1;
 const RISCV_LINUX_O_CREAT_FOR_TEST: u64 = 0o100;
 const RISCV_LINUX_O_APPEND_FOR_TEST: u64 = 0o2000;
+const RISCV_LINUX_O_DIRECTORY_FOR_TEST: u64 = 0o200000;
+const RISCV_LINUX_O_CLOEXEC_FOR_TEST: u64 = 0o2000000;
 const RISCV_NEWLIB_O_CREAT_FOR_TEST: u64 = 0x0200;
 const RISCV_NEWLIB_O_TRUNC_FOR_TEST: u64 = 0x0400;
 const RISCV_NEWLIB_O_EXCL_FOR_TEST: u64 = 0x0800;
 const RISCV_NEWLIB_O_DIRECT_FOR_TEST: u64 = 0x80000;
+const RISCV_NEWLIB_O_CLOEXEC_FOR_TEST: u64 = 0x40000;
+const RISCV_NEWLIB_O_DIRECTORY_FOR_TEST: u64 = 0x200000;
 const RISCV_LINUX_UMASK_FOR_OPEN_TEST: u64 = 166;
 const RISCV_LINUX_LINK_FOR_OPEN_TEST: u64 = 1025;
 const RISCV_LINUX_RENAMEAT2_FOR_OPEN_TEST: u64 = 276;
@@ -291,6 +295,52 @@ fn linux_table_legacy_open_accepts_newlib_create_truncate_flags() {
         &[(0xb000, b"alpha:17\n".to_vec())]
     );
     assert_eq!(state.guest_path_stat(b"created.txt").unwrap().size(), 9);
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_legacy_open_accepts_newlib_directory_flag() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"seed\n");
+    let guest_memory_reader = c_string_reader(0x9000, b".");
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPEN,
+                [
+                    0x9000,
+                    RISCV_NEWLIB_O_DIRECTORY_FOR_TEST | RISCV_NEWLIB_O_CLOEXEC_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+
+    let fd = GuestFd::new(3).unwrap();
+    assert!(state.guest_fds().entry(fd).is_some());
+    assert!(state.guest_fds().close_on_exec(fd).unwrap());
+    assert_eq!(
+        state.guest_fds().status_flags(fd).unwrap(),
+        GuestFileStatusFlags::new((RISCV_LINUX_O_RDONLY | RISCV_LINUX_O_DIRECTORY_FOR_TEST) as u32)
+    );
+    assert_eq!(state.guest_opens().len(), 1);
+    let open = &state.guest_opens()[0];
+    assert_eq!(open.fd(), fd);
+    assert_eq!(
+        open.flags(),
+        RISCV_LINUX_O_DIRECTORY_FOR_TEST | RISCV_LINUX_O_CLOEXEC_FOR_TEST
+    );
     assert!(state.unknown_syscalls().is_empty());
 }
 

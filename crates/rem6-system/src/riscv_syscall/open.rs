@@ -22,6 +22,7 @@ const RISCV_NEWLIB_O_TRUNC: u64 = 0x0400;
 const RISCV_NEWLIB_O_EXCL: u64 = 0x0800;
 const RISCV_NEWLIB_O_NONBLOCK: u64 = 0x4000;
 const RISCV_NEWLIB_O_CLOEXEC: u64 = 0x40000;
+const RISCV_NEWLIB_O_DIRECTORY: u64 = 0x200000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvGuestOpenRecord {
@@ -132,6 +133,9 @@ fn normalize_newlib_legacy_open_flags(flags: u64) -> u64 {
     if flags & RISCV_NEWLIB_O_CLOEXEC != 0 {
         normalized |= RISCV_LINUX_O_CLOEXEC;
     }
+    if flags & RISCV_NEWLIB_O_DIRECTORY != 0 {
+        normalized |= RISCV_LINUX_O_DIRECTORY;
+    }
     normalized
 }
 
@@ -143,7 +147,8 @@ fn legacy_open_unknown_flags(flags: u64) -> u64 {
             | RISCV_NEWLIB_O_TRUNC
             | RISCV_NEWLIB_O_EXCL
             | RISCV_NEWLIB_O_NONBLOCK
-            | RISCV_NEWLIB_O_CLOEXEC)
+            | RISCV_NEWLIB_O_CLOEXEC
+            | RISCV_NEWLIB_O_DIRECTORY)
 }
 
 fn syscall_open_registered_path(
