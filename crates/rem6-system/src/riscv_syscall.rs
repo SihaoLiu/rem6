@@ -28,6 +28,7 @@ mod file_write;
 mod futex;
 mod guest_memory;
 mod guest_write;
+mod hwprobe;
 mod identity;
 mod ioctl;
 mod limits;
@@ -95,6 +96,7 @@ pub use guest_memory::{
     RiscvGuestMemoryWriter,
 };
 pub use guest_write::RiscvGuestWriteRecord;
+use hwprobe::{syscall_riscv_hwprobe, RISCV_LINUX_RISCV_HWPROBE};
 pub(crate) use identity::RiscvSyscallIdentity;
 use identity::{
     syscall_identity, RISCV_LINUX_GETEGID, RISCV_LINUX_GETEUID, RISCV_LINUX_GETGID,
@@ -1276,6 +1278,9 @@ impl RiscvSyscallTable {
             }
             RISCV_LINUX_GETCPU => syscall_getcpu(request, guest_memory_writer)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
+            RISCV_LINUX_RISCV_HWPROBE => Some(RiscvSyscallOutcome::Return {
+                value: syscall_riscv_hwprobe(request, guest_memory_reader, guest_memory_writer),
+            }),
             RISCV_LINUX_NANOSLEEP => syscall_nanosleep(request, guest_memory_reader)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_CLOCK_NANOSLEEP => {

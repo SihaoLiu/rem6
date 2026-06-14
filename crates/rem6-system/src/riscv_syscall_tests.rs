@@ -19,6 +19,8 @@ mod fcntl_tests;
 mod fd_tests;
 #[path = "riscv_syscall_tests/futex_tests.rs"]
 mod futex_tests;
+#[path = "riscv_syscall_tests/hwprobe_tests.rs"]
+mod hwprobe_tests;
 #[path = "riscv_syscall_tests/link_tests.rs"]
 mod link_tests;
 #[path = "riscv_syscall_tests/mkdir_tests.rs"]
