@@ -86,7 +86,7 @@ parity are not present.
 
 - [x] RV64 integer, atomic, CSR, trap, counter, WFI, fence, PMP/PMA slices have tests.
 - [x] RV64C integer/load-store/control-flow slices have tests.
-- [x] RV64F/RV64D scalar load/store, arithmetic, comparisons, conversions, NaN-boxing, and accrued flag slices have tests.
+- [x] RV64F/RV64D scalar load/store, arithmetic, comparisons, conversions, legal FP arithmetic rounding-mode decode, NaN-boxing, and accrued flag slices have tests.
 - [x] RV64C double-precision FP load/store decode and compressed FP load CPU data-access slices have tests.
 - [x] Sv39 helpers and CPU memory-walker paths have tests.
 - [x] RISC-V SE ecalls reach the system syscall table.
@@ -96,9 +96,10 @@ parity are not present.
 - [ ] Hardware fetch translation and full boot-time privileged behavior are complete.
 
 **Migrated:** RISC-V architectural state, large RV64 scalar slices, FP slices
-including fused multiply-add special-case exception flags, compressed double FP
-load/store decoding, compressed FP load CPU data access, traps, translation
-helpers, and SE ecall plumbing.
+including fused multiply-add special-case exception flags and legal static FP
+arithmetic rounding-mode decoding, compressed double FP load/store decoding,
+compressed FP load CPU data access, traps, translation helpers, and SE ecall
+plumbing.
 
 **Not migrated:** Full RV64GC/vector breadth, other major ISAs, directed
 rounding breadth, and complete Linux privileged behavior.

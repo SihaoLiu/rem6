@@ -197,7 +197,7 @@ fn decoder_accepts_rv64d_arithmetic_sign_and_compare_operations() {
 }
 
 #[test]
-fn decoder_accepts_rv64d_arithmetic_dynamic_rounding_modes() {
+fn decoder_accepts_rv64d_arithmetic_static_and_dynamic_rounding_modes() {
     assert_eq!(
         RiscvInstruction::decode(r_type(0x01, 3, 2, 0x7, 5, 0x53)).unwrap(),
         RiscvInstruction::FloatAddD {
@@ -205,6 +205,15 @@ fn decoder_accepts_rv64d_arithmetic_dynamic_rounding_modes() {
             rs1: freg(2),
             rs2: freg(3),
             rounding_mode: RiscvFloatRoundingMode::Dynamic,
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(r_type(0x01, 3, 2, 0x1, 5, 0x53)).unwrap(),
+        RiscvInstruction::FloatAddD {
+            rd: freg(5),
+            rs1: freg(2),
+            rs2: freg(3),
+            rounding_mode: RiscvFloatRoundingMode::RoundTowardZero,
         }
     );
     assert_eq!(
@@ -216,6 +225,14 @@ fn decoder_accepts_rv64d_arithmetic_dynamic_rounding_modes() {
         }
     );
     assert_eq!(
+        RiscvInstruction::decode(r_type(0x2d, 0, 2, 0x2, 5, 0x53)).unwrap(),
+        RiscvInstruction::FloatSqrtD {
+            rd: freg(5),
+            rs1: freg(2),
+            rounding_mode: RiscvFloatRoundingMode::RoundDown,
+        }
+    );
+    assert_eq!(
         RiscvInstruction::decode(r4_type(4, 0x1, 3, 2, 0x7, 5, 0x43)).unwrap(),
         RiscvInstruction::FloatMultiplyAddD {
             rd: freg(5),
@@ -223,6 +240,16 @@ fn decoder_accepts_rv64d_arithmetic_dynamic_rounding_modes() {
             rs2: freg(3),
             rs3: freg(4),
             rounding_mode: RiscvFloatRoundingMode::Dynamic,
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(r4_type(4, 0x1, 3, 2, 0x4, 5, 0x43)).unwrap(),
+        RiscvInstruction::FloatMultiplyAddD {
+            rd: freg(5),
+            rs1: freg(2),
+            rs2: freg(3),
+            rs3: freg(4),
+            rounding_mode: RiscvFloatRoundingMode::RoundNearestMaxMagnitude,
         }
     );
     assert!(RiscvInstruction::decode(r_type(0x01, 3, 2, 0x5, 5, 0x53)).is_err());

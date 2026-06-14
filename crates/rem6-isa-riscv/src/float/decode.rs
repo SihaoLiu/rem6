@@ -344,12 +344,7 @@ pub(crate) fn decode_float_multiply_add(raw: u32) -> Result<RiscvInstruction, Ri
 }
 
 fn supported_arithmetic_rounding_mode(raw: u32) -> Result<RiscvFloatRoundingMode, RiscvError> {
-    match float_rounding_mode(raw)? {
-        mode @ (RiscvFloatRoundingMode::RoundNearestEven | RiscvFloatRoundingMode::Dynamic) => {
-            Ok(mode)
-        }
-        _ => Err(RiscvError::UnknownEncoding { raw }),
-    }
+    float_rounding_mode(raw)
 }
 
 fn float_rd(raw: u32) -> FloatRegister {
