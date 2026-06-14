@@ -60,9 +60,8 @@ mod wait4;
 mod writev;
 
 use brk::syscall_brk;
-use clock::syscall_clock;
 use clock::{
-    RISCV_LINUX_CLOCK_GETRES, RISCV_LINUX_CLOCK_GETTIME, RISCV_LINUX_GETTIMEOFDAY,
+    syscall_clock, RISCV_LINUX_CLOCK_GETRES, RISCV_LINUX_CLOCK_GETTIME, RISCV_LINUX_GETTIMEOFDAY,
     RISCV_LINUX_TIMES,
 };
 use cpu_locality::{syscall_getcpu, RISCV_LINUX_GETCPU};
@@ -108,9 +107,9 @@ use links::syscall_readlinkat;
 use mkdir::{syscall_mkdirat, RISCV_LINUX_MKDIRAT};
 pub use mmap::RiscvMmapRegion;
 use mmap::{
-    syscall_mmap, syscall_mprotect, syscall_mremap, syscall_munmap, RISCV64_LINUX_MMAP_BASE,
-    RISCV_LINUX_MMAP, RISCV_LINUX_MPROTECT, RISCV_LINUX_MREMAP, RISCV_LINUX_MUNMAP,
-    RISCV_PAGE_BYTES,
+    syscall_mincore, syscall_mmap, syscall_mprotect, syscall_mremap, syscall_munmap,
+    RISCV64_LINUX_MMAP_BASE, RISCV_LINUX_MINCORE, RISCV_LINUX_MMAP, RISCV_LINUX_MPROTECT,
+    RISCV_LINUX_MREMAP, RISCV_LINUX_MUNMAP, RISCV_PAGE_BYTES,
 };
 #[cfg(test)]
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
@@ -185,7 +184,6 @@ const RISCV_LINUX_MLOCK: u64 = 228;
 const RISCV_LINUX_MUNLOCK: u64 = 229;
 const RISCV_LINUX_MLOCKALL: u64 = 230;
 const RISCV_LINUX_MUNLOCKALL: u64 = 231;
-const RISCV_LINUX_MINCORE: u64 = 232;
 const RISCV_LINUX_MADVISE: u64 = 233;
 const RISCV_LINUX_MBIND: u64 = 235;
 const RISCV_LINUX_STAT: u64 = 1038;
@@ -1345,7 +1343,6 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_MUNLOCK
             | RISCV_LINUX_MLOCKALL
             | RISCV_LINUX_MUNLOCKALL
-            | RISCV_LINUX_MINCORE
             | RISCV_LINUX_MADVISE
             | RISCV_LINUX_MBIND
             | RISCV_LINUX_SETUID
@@ -1371,6 +1368,9 @@ impl RiscvSyscallTable {
             }),
             RISCV_LINUX_MREMAP => Some(RiscvSyscallOutcome::Return {
                 value: syscall_mremap(request, state, guest_memory_writer),
+            }),
+            RISCV_LINUX_MINCORE => Some(RiscvSyscallOutcome::Return {
+                value: syscall_mincore(request, state, guest_memory_writer),
             }),
             _ => {
                 state.push_unknown_syscall(RiscvUnknownSyscallRecord::new(

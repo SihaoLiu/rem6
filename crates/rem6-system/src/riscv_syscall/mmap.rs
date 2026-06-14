@@ -11,6 +11,7 @@ pub(super) const RISCV_LINUX_MUNMAP: u64 = 215;
 pub(super) const RISCV_LINUX_MREMAP: u64 = 216;
 pub(super) const RISCV_LINUX_MMAP: u64 = 222;
 pub(super) const RISCV_LINUX_MPROTECT: u64 = 226;
+pub(super) const RISCV_LINUX_MINCORE: u64 = 232;
 pub(super) const RISCV_LINUX_MAP_SHARED: u64 = 0x01;
 pub(super) const RISCV_LINUX_MAP_PRIVATE: u64 = 0x02;
 pub(super) const RISCV_LINUX_MAP_FIXED: u64 = 0x10;
@@ -478,6 +479,52 @@ pub(super) fn syscall_mprotect(
         region.push_fragments_after_mprotect(start, length, protection, &mut regions);
     }
     state.mmap_regions = regions;
+    0
+}
+
+pub(super) fn syscall_mincore(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> u64 {
+    let start = request.argument(0);
+    let requested_length = request.argument(1);
+    let vector = request.argument(2);
+
+    if !start.is_multiple_of(RISCV_PAGE_BYTES) {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    let Some(length) = align_to_page(requested_length) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    if start.checked_add(length).is_none() {
+        return linux_error(RISCV_LINUX_ENOMEM);
+    }
+    if length == 0 {
+        return 0;
+    }
+
+    let page_count = length / RISCV_PAGE_BYTES;
+    let Some(vector_end) = vector.checked_add(page_count) else {
+        return linux_error(RISCV_LINUX_EFAULT);
+    };
+    let Some(guest_memory_writer) = guest_memory_writer else {
+        return linux_error(RISCV_LINUX_EFAULT);
+    };
+    if !mmap_range_is_mapped(state, start, length) {
+        return linux_error(RISCV_LINUX_ENOMEM);
+    }
+
+    let present_page = [1u8; RISCV_PAGE_BYTES as usize];
+    let mut cursor = vector;
+    while cursor < vector_end {
+        let remaining = vector_end - cursor;
+        let bytes = remaining.min(RISCV_PAGE_BYTES) as usize;
+        if !guest_memory_writer.write(cursor, &present_page[..bytes]) {
+            return linux_error(RISCV_LINUX_EFAULT);
+        }
+        cursor += bytes as u64;
+    }
     0
 }
 

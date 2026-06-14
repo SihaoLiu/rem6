@@ -177,7 +177,7 @@ bucket cap is single-axis because static newlib smokes are high-value but
 tool-detected, and broad workload coverage is not present.
 
 - [x] User-mode ecalls reach `RiscvSyscallTable`.
-- [x] Startup stack, argv/envp/auxv, `brk`, `mmap`, in-place `mremap` slice, `mprotect`, stdio, file create/truncate/`ftruncate`/read/write/append, positioned I/O, vector I/O, `statx`, `sysinfo`, `ppoll`, `sched_getscheduler`, `sched_getparam`, `sched_get_priority_max/min`, `sched_rr_get_interval`, single-word `sched_setaffinity`/`sched_getaffinity`, single CPU/node `getcpu`, single-process `membarrier` slice, zero-duration `nanosleep` and `clock_nanosleep` validation, `clock_getres`, `CLOCK_TAI` `clock_gettime`, `kill(..., 0)`, `tkill(..., 0)`, and `tgkill(..., 0)` existence checks, current-process scoped process-group/session `setpgid`/`getpgid`/`getsid`/`setsid` slices, gem5-style advisory `setuid`/`setrlimit` success returns, legacy `getrlimit` stack/data/NPROC limits, basic `rt_sigaction`/`rt_sigprocmask`, empty `rt_sigpending` mask reporting, no-pending zero-timeout `rt_sigtimedwait`, futex mismatch and wake-bitset count/bitset behavior, `umask` masking for `mkdirat` directories and `openat(O_CREAT)` regular files, time, cwd, `chdir`/`fchdir`, random, resource, and wait slices have tests.
+- [x] Startup stack, argv/envp/auxv, `brk`, `mmap`, in-place `mremap` slice, `mprotect`, mapped-page `mincore` present-vector reporting, stdio, file create/truncate/`ftruncate`/read/write/append, positioned I/O, vector I/O, `statx`, `sysinfo`, `ppoll`, `sched_getscheduler`, `sched_getparam`, `sched_get_priority_max/min`, `sched_rr_get_interval`, single-word `sched_setaffinity`/`sched_getaffinity`, single CPU/node `getcpu`, single-process `membarrier` slice, zero-duration `nanosleep` and `clock_nanosleep` validation, `clock_getres`, `CLOCK_TAI` `clock_gettime`, `kill(..., 0)`, `tkill(..., 0)`, and `tgkill(..., 0)` existence checks, current-process scoped process-group/session `setpgid`/`getpgid`/`getsid`/`setsid` slices, gem5-style advisory `setuid`/`setrlimit` success returns, legacy `getrlimit` stack/data/NPROC limits, basic `rt_sigaction`/`rt_sigprocmask`, empty `rt_sigpending` mask reporting, no-pending zero-timeout `rt_sigtimedwait`, futex mismatch and wake-bitset count/bitset behavior, `umask` masking for `mkdirat` directories and `openat(O_CREAT)` regular files, time, cwd, `chdir`/`fchdir`, random, resource, and wait slices have tests.
 - [x] Unknown syscall returns `ENOSYS` and records a typed diagnostic.
 - [x] Static no-libc and newlib smoke binaries can be generated and compared with qemu when tools exist.
 - [x] Linux at-family hard-link, `renameat2` flags=0, unlink, `mkdirat`, `unlinkat` with `AT_REMOVEDIR`, and registered-directory `getdents64` syscalls mutate or expose registered guest files and directories and have qemu-compared raw smoke evidence.
@@ -189,7 +189,8 @@ tool-detected, and broad workload coverage is not present.
 - [ ] PARSEC or comparable workload programs run through ROI/stat hooks.
 
 **Migrated:** RISC-V SE ecall path; startup stack and auxv setup; `brk`,
-`mmap`, in-place `mremap` shrink and tail-free expansion, `mprotect`, stdio, guest-backed file create/truncate/`ftruncate`/read/write/append/positioned read-write/readback and open
+`mmap`, in-place `mremap` shrink and tail-free expansion, `mprotect`,
+mapped-page `mincore` present-vector reporting, stdio, guest-backed file create/truncate/`ftruncate`/read/write/append/positioned read-write/readback and open
 fd/link visibility, vector I/O, `ppoll`, `sched_getscheduler`, `sched_getparam`,
 `sched_get_priority_max/min`, `sched_rr_get_interval`,
 single-word `sched_setaffinity` and `sched_getaffinity`, `statx` basic stat buffer writes, `sysinfo` uptime and
@@ -230,6 +231,7 @@ full Linux boot, and real benchmark workloads.
 `riscv_se_links`, `riscv_se_mkdir`, `riscv_se_rename`, `riscv_se_getdents`,
 `riscv_se_permissions`,
 `riscv_se_stdio`, `riscv_syscall::tests::cpu_tests`,
+`riscv_syscall::tests::mmap_tests`,
 `riscv_syscall::tests::positioned_io_tests`,
 `riscv_syscall::tests::mkdir_tests`,
 `riscv_syscall::tests::truncate_tests`,

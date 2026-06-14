@@ -325,7 +325,6 @@ fn linux_table_ignores_gem5_memory_management_advisory_syscalls() {
         RISCV_LINUX_MUNLOCK,
         RISCV_LINUX_MLOCKALL,
         RISCV_LINUX_MUNLOCKALL,
-        RISCV_LINUX_MINCORE,
         RISCV_LINUX_MADVISE,
         RISCV_LINUX_MBIND,
     ] {

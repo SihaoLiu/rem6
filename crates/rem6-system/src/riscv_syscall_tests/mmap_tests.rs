@@ -1,6 +1,7 @@
 use super::*;
 
 const RISCV_LINUX_ENOMEM_FOR_TEST: u64 = 12;
+const RISCV_LINUX_MINCORE_FOR_TEST: u64 = 232;
 const RISCV_LINUX_MREMAP_FOR_TEST: u64 = 216;
 const RISCV_LINUX_MREMAP_MAYMOVE_FOR_TEST: u64 = 1;
 const RISCV_LINUX_MREMAP_FIXED_FOR_TEST: u64 = 2;
@@ -1297,4 +1298,256 @@ fn linux_table_rejects_overflowing_fixed_mmap() {
         })
     );
     assert!(state.mmap_regions().is_empty());
+}
+
+#[test]
+fn linux_table_mincore_reports_tracked_mapped_pages_present() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MMAP,
+                [0, 2 * RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_MINCORE_FOR_TEST,
+                [
+                    RISCV64_LINUX_MMAP_BASE,
+                    RISCV_PAGE_BYTES + 17,
+                    0x9000,
+                    0,
+                    0,
+                    0
+                ]
+            ),
+            &mut state,
+            0,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    assert_eq!(writes.lock().unwrap().as_slice(), &[(0x9000, vec![1, 1])]);
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_mincore_rejects_unmapped_ranges_without_vector_write() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MMAP,
+                [0, RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_MINCORE_FOR_TEST,
+                [
+                    RISCV64_LINUX_MMAP_BASE,
+                    2 * RISCV_PAGE_BYTES,
+                    0x9000,
+                    0,
+                    0,
+                    0
+                ]
+            ),
+            &mut state,
+            0,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOMEM_FOR_TEST)
+        })
+    );
+    assert!(writes.lock().unwrap().is_empty());
+}
+
+#[test]
+fn linux_table_mincore_rejects_invalid_arguments_without_vector_write() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MINCORE_FOR_TEST,
+                [
+                    RISCV64_LINUX_MMAP_BASE + 1,
+                    RISCV_PAGE_BYTES,
+                    0x9000,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            0,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert!(writes.lock().unwrap().is_empty());
+}
+
+#[test]
+fn linux_table_mincore_reports_enomem_for_overflowing_address_range() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(|_address, _bytes| true);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MINCORE_FOR_TEST,
+                [
+                    u64::MAX - (RISCV_PAGE_BYTES - 1),
+                    RISCV_PAGE_BYTES,
+                    0x9000,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            0,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOMEM_FOR_TEST)
+        })
+    );
+}
+
+#[test]
+fn linux_table_mincore_reports_efault_for_overflowing_vector_range() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(|_address, _bytes| true);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MMAP,
+                [0, RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_MINCORE_FOR_TEST,
+                [RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYTES, u64::MAX, 0, 0, 0,]
+            ),
+            &mut state,
+            0,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+}
+
+#[test]
+fn linux_table_mincore_reports_efault_when_vector_write_fails() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(|_address, _bytes| false);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MMAP,
+                [0, RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_MINCORE_FOR_TEST,
+                [RISCV64_LINUX_MMAP_BASE, RISCV_PAGE_BYTES, 0x9000, 0, 0, 0]
+            ),
+            &mut state,
+            0,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
 }
