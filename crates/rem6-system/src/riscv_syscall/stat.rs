@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use super::{
     guest_fd_argument, linux_error, read_guest_c_string, RiscvGuestCStringError,
     RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallIdentity, RiscvSyscallRequest,
@@ -9,8 +11,13 @@ use super::{
 
 const RISCV_LINUX_STAT_BYTES: usize = 128;
 const RISCV_LINUX_STATX_BYTES: usize = 256;
+const RISCV_LINUX_STATFS_BYTES: usize = 120;
 const RISCV_LINUX_STAT_BLOCK_BYTES: u64 = 512;
 const RISCV_LINUX_STAT_BLOCK_SIZE: u64 = 8192;
+const RISCV_LINUX_STATFS_MAGIC: u64 = 0x5245_4d36;
+const RISCV_LINUX_STATFS_BLOCK_SIZE: u64 = 4096;
+const RISCV_LINUX_STATFS_FSID_LOW: u32 = 0x7265_6d36;
+const RISCV_LINUX_STATFS_NAME_MAX: u64 = 255;
 const RISCV_LINUX_STATX_BASIC_STATS: u32 = 0x0000_07ff;
 const RISCV_LINUX_STATX_RESERVED: u64 = 0x8000_0000;
 const RISCV_LINUX_S_IFCHR: u32 = 0o020000;
@@ -22,6 +29,8 @@ pub(super) const RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS: u32 = 0o555;
 const RISCV_LINUX_CHARACTER_DEVICE_MODE: u32 = RISCV_LINUX_S_IFCHR | 0o666;
 const RISCV_LINUX_SYMBOLIC_LINK_MODE: u32 = RISCV_LINUX_S_IFLNK | 0o777;
 pub(super) const RISCV_LINUX_FACCESSAT: u64 = 48;
+pub(super) const RISCV_LINUX_STATFS: u64 = 43;
+pub(super) const RISCV_LINUX_FSTATFS: u64 = 44;
 pub(super) const RISCV_LINUX_STATX: u64 = 291;
 pub(super) const RISCV_LINUX_ACCESS: u64 = 1033;
 pub(super) const RISCV_LINUX_LSTAT: u64 = 1039;
@@ -434,6 +443,46 @@ pub(super) fn syscall_fstat(
     write_riscv_linux_stat(request.argument(1), stat, guest_memory)
 }
 
+pub(super) fn syscall_statfs(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let path = match read_guest_c_string(
+        guest_memory_reader,
+        request.argument(0),
+        RISCV_LINUX_PATH_MAX,
+    ) {
+        Ok(path) => path,
+        Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
+        Err(RiscvGuestCStringError::TooLong) => return linux_error(RISCV_LINUX_ENAMETOOLONG),
+    };
+    if path.is_empty() {
+        return linux_error(RISCV_LINUX_ENOENT);
+    }
+    if state.guest_path_stat(&path).is_none() {
+        return linux_error(RISCV_LINUX_ENOENT);
+    }
+
+    write_riscv_linux_statfs(request.argument(1), state, guest_memory_writer)
+}
+
+pub(super) fn syscall_fstatfs(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let Some(fd) = guest_fd_argument(request.argument(0)) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    if state.guest_fd_stat(fd).is_err() {
+        return linux_error(RISCV_LINUX_EBADF);
+    }
+
+    write_riscv_linux_statfs(request.argument(1), state, guest_memory)
+}
+
 fn riscv_linux_stat_bytes(stat: RiscvGuestStat) -> [u8; RISCV_LINUX_STAT_BYTES] {
     let mut bytes = [0; RISCV_LINUX_STAT_BYTES];
     write_le_u64(&mut bytes, 0, stat.device);
@@ -447,6 +496,112 @@ fn riscv_linux_stat_bytes(stat: RiscvGuestStat) -> [u8; RISCV_LINUX_STAT_BYTES] 
     write_le_u64(&mut bytes, 56, stat.block_size);
     write_le_u64(&mut bytes, 64, stat.blocks);
     bytes
+}
+
+fn write_riscv_linux_statfs(
+    address: u64,
+    state: &RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let bytes = riscv_linux_statfs_bytes(state);
+    for (offset, byte) in bytes.iter().enumerate() {
+        let Some(byte_address) = address.checked_add(offset as u64) else {
+            return linux_error(RISCV_LINUX_EFAULT);
+        };
+        if !guest_memory.write(byte_address, std::slice::from_ref(byte)) {
+            return linux_error(RISCV_LINUX_EFAULT);
+        }
+    }
+    0
+}
+
+fn riscv_linux_statfs_bytes(state: &RiscvSyscallState) -> [u8; RISCV_LINUX_STATFS_BYTES] {
+    let mut bytes = [0; RISCV_LINUX_STATFS_BYTES];
+    let blocks = state
+        .linux_se_memory_capacity()
+        .div_ceil(RISCV_LINUX_STATFS_BLOCK_SIZE)
+        .max(1);
+    let used_blocks = guest_statfs_used_blocks(state).min(blocks);
+    let free_blocks = blocks - used_blocks;
+    let files = guest_statfs_node_count(state);
+    let free_files = blocks.saturating_sub(files);
+
+    write_le_u64(&mut bytes, 0, RISCV_LINUX_STATFS_MAGIC);
+    write_le_u64(&mut bytes, 8, RISCV_LINUX_STATFS_BLOCK_SIZE);
+    write_le_u64(&mut bytes, 16, blocks);
+    write_le_u64(&mut bytes, 24, free_blocks);
+    write_le_u64(&mut bytes, 32, free_blocks);
+    write_le_u64(&mut bytes, 40, files);
+    write_le_u64(&mut bytes, 48, free_files);
+    write_le_u32(&mut bytes, 56, RISCV_LINUX_STATFS_FSID_LOW);
+    write_le_u32(&mut bytes, 60, 0);
+    write_le_u64(&mut bytes, 64, RISCV_LINUX_STATFS_NAME_MAX);
+    write_le_u64(&mut bytes, 72, RISCV_LINUX_STATFS_BLOCK_SIZE);
+    bytes
+}
+
+fn guest_statfs_node_count(state: &RiscvSyscallState) -> u64 {
+    let mut file_identities = BTreeSet::new();
+    let mut directories = BTreeSet::new();
+    for path in state.guest_paths.iter().chain(state.guest_links.keys()) {
+        file_identities.insert(state.guest_file_identity(path));
+        insert_guest_statfs_parent_directories(path, &mut directories);
+    }
+    for path in &state.guest_directories {
+        insert_guest_statfs_directory_and_parents(path, &mut directories);
+    }
+
+    1_u64
+        .saturating_add(file_identities.len() as u64)
+        .saturating_add(directories.len() as u64)
+}
+
+fn guest_statfs_used_blocks(state: &RiscvSyscallState) -> u64 {
+    let mut seen = BTreeSet::new();
+    let mut blocks = 0_u64;
+    for path in &state.guest_paths {
+        let identity = state.guest_file_identity(path);
+        if !seen.insert(identity) {
+            continue;
+        }
+        let Some(contents) = state.guest_file_contents(path) else {
+            continue;
+        };
+        blocks =
+            blocks.saturating_add((contents.len() as u64).div_ceil(RISCV_LINUX_STATFS_BLOCK_SIZE));
+    }
+    for (path, target) in &state.guest_links {
+        let identity = state.guest_file_identity(path);
+        if !seen.insert(identity) {
+            continue;
+        }
+        blocks =
+            blocks.saturating_add((target.len() as u64).div_ceil(RISCV_LINUX_STATFS_BLOCK_SIZE));
+    }
+    blocks
+}
+
+fn insert_guest_statfs_parent_directories(path: &[u8], directories: &mut BTreeSet<Vec<u8>>) {
+    let components = guest_statfs_path_components(path);
+    for end in 1..components.len() {
+        directories.insert(components[..end].join(&b'/'));
+    }
+}
+
+fn insert_guest_statfs_directory_and_parents(path: &[u8], directories: &mut BTreeSet<Vec<u8>>) {
+    let components = guest_statfs_path_components(path);
+    for end in 1..=components.len() {
+        directories.insert(components[..end].join(&b'/'));
+    }
+}
+
+fn guest_statfs_path_components(path: &[u8]) -> Vec<Vec<u8>> {
+    path.strip_prefix(b"/")
+        .unwrap_or(path)
+        .split(|byte| *byte == b'/')
+        .filter(|component| !component.is_empty() && *component != b".")
+        .map(Vec::from)
+        .collect()
 }
 
 fn write_riscv_linux_statx(
