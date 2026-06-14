@@ -323,9 +323,9 @@ impl RiscvSbiFirmware {
             (SBI_IPI_EXTENSION, SBI_IPI_SEND_IPI) => self.send_ipi(request),
             (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_FENCE_I) => self.remote_fence_i(request),
             (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_SFENCE_VMA)
-            | (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_SFENCE_VMA_ASID) => {
-                self.remote_sfence_vma(request)
-            }
+            | (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_SFENCE_VMA_ASID) => self
+                .remote_sfence_vma(scheduler, core, request, parallel)
+                .map_err(SystemError::Scheduler)?,
             (SBI_SRST_EXTENSION, SBI_SRST_SYSTEM_RESET) => self.system_reset(request),
             _ => RiscvSbiOutcome::not_supported(),
         }))
@@ -556,24 +556,69 @@ impl RiscvSbiFirmware {
         RiscvSbiOutcome::success(0)
     }
 
-    fn remote_sfence_vma(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+    fn remote_sfence_vma(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        source: &RiscvCore,
+        request: RiscvSbiRequest,
+        parallel: bool,
+    ) -> Result<RiscvSbiOutcome, SchedulerError> {
         if !valid_rfence_range(request.arg2(), request.arg3()) {
-            return RiscvSbiOutcome::invalid_address();
+            return Ok(RiscvSbiOutcome::invalid_address());
         }
         let Some(address_space) = rfence_address_space(request) else {
-            return RiscvSbiOutcome::invalid_param();
+            return Ok(RiscvSbiOutcome::invalid_param());
         };
         let Some(targets) = self.hart_mask_targets(request.arg0(), request.arg1()) else {
-            return RiscvSbiOutcome::invalid_param();
+            return Ok(RiscvSbiOutcome::invalid_param());
         };
         let Some(virtual_range) = rfence_virtual_range(request.arg2(), request.arg3()) else {
-            return RiscvSbiOutcome::invalid_address();
+            return Ok(RiscvSbiOutcome::invalid_address());
         };
 
+        self.schedule_remote_sfence_vma(
+            scheduler,
+            source,
+            targets,
+            virtual_range,
+            address_space,
+            parallel,
+        )?;
+        Ok(RiscvSbiOutcome::success(0))
+    }
+
+    fn schedule_remote_sfence_vma(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        source: &RiscvCore,
+        targets: Vec<RiscvCore>,
+        virtual_range: Option<AddressRange>,
+        address_space: Option<TranslationAddressSpaceId>,
+        parallel: bool,
+    ) -> Result<(), SchedulerError> {
+        let source_now = scheduler.partition_now(source.partition())?;
+        let delay = scheduler.min_remote_delay();
+        let source_deadline =
+            source_now
+                .checked_add(delay)
+                .ok_or(SchedulerError::TickOverflow {
+                    now: source_now,
+                    delay,
+                })?;
         for target in targets {
-            target.flush_data_translation_tlb_range(virtual_range, address_space);
+            let target_now = scheduler.partition_now(target.partition())?;
+            let deadline = source_deadline.max(target_now);
+            if parallel {
+                scheduler.schedule_parallel_at(target.partition(), deadline, move |_context| {
+                    target.flush_data_translation_tlb_range(virtual_range, address_space);
+                })?;
+            } else {
+                scheduler.schedule_at(target.partition(), deadline, move |_context| {
+                    target.flush_data_translation_tlb_range(virtual_range, address_space);
+                })?;
+            }
         }
-        RiscvSbiOutcome::success(0)
+        Ok(())
     }
 
     fn hart_mask_targets(&self, hart_mask: u64, hart_mask_base: u64) -> Option<Vec<RiscvCore>> {
@@ -686,10 +731,16 @@ fn register(index: u8) -> Register {
 #[cfg(test)]
 mod tests {
     use rem6_boot::BootImage;
-    use rem6_cpu::{CpuCore, CpuFetchConfig, CpuResetState};
+    use rem6_cpu::{
+        CpuCore, CpuDataConfig, CpuFetchConfig, CpuResetState, CpuTranslationFrontend,
+        CpuTranslationFrontendSnapshot,
+    };
     use rem6_kernel::{PartitionId, SchedulerContext};
     use rem6_memory::{
         AccessSize, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
+        TranslationPagePermissions, TranslationPageSize, TranslationQueueConfig,
+        TranslationQueueSnapshot, TranslationTlbConfig, TranslationTlbEntrySnapshot,
+        TranslationTlbSnapshot, TranslationTlbStats,
     };
     use rem6_transport::{
         MemoryRoute, MemoryTrace, MemoryTransport, RequestDelivery, TargetOutcome,
@@ -733,6 +784,72 @@ mod tests {
         )
     }
 
+    struct TranslatedTestCoreSpec<'a> {
+        cpu: u32,
+        partition: u32,
+        agent: u32,
+        fetch_endpoint: &'a str,
+        fetch_route: rem6_transport::MemoryRouteId,
+        data_endpoint: &'a str,
+        data_route: rem6_transport::MemoryRouteId,
+        pc: u64,
+    }
+
+    fn translated_test_core(
+        spec: TranslatedTestCoreSpec<'_>,
+        tlb_entries: Vec<TranslationTlbEntrySnapshot>,
+    ) -> RiscvCore {
+        let core = CpuCore::new(
+            CpuResetState::new(
+                CpuId::new(spec.cpu),
+                PartitionId::new(spec.partition),
+                AgentId::new(spec.agent),
+                Address::new(spec.pc),
+            ),
+            CpuFetchConfig::new(
+                endpoint(spec.fetch_endpoint),
+                spec.fetch_route,
+                CacheLineLayout::new(16).expect("valid cache line size"),
+                AccessSize::new(4).expect("valid fetch size"),
+            ),
+        )
+        .expect("valid CPU core");
+        let queue_config = TranslationQueueConfig::new(4, 0).expect("valid translation queue");
+        let tlb_config = TranslationTlbConfig::new(4).expect("valid translation TLB");
+        let frontend =
+            CpuTranslationFrontend::from_snapshot(&CpuTranslationFrontendSnapshot::new_with_tlb(
+                TranslationQueueSnapshot::new(queue_config, Vec::new(), 0),
+                Vec::new(),
+                TranslationTlbSnapshot::new(
+                    tlb_config,
+                    tlb_entries,
+                    8,
+                    TranslationTlbStats::default(),
+                ),
+            ))
+            .expect("valid translated frontend snapshot");
+
+        RiscvCore::with_data_translation(
+            core,
+            CpuDataConfig::new(
+                endpoint(spec.data_endpoint),
+                spec.data_route,
+                CacheLineLayout::new(16).expect("valid cache line size"),
+            ),
+            frontend,
+        )
+    }
+
+    fn rfence_tlb_entry(virtual_page: u64, physical_page: u64) -> TranslationTlbEntrySnapshot {
+        TranslationTlbEntrySnapshot::new(
+            Address::new(virtual_page),
+            Address::new(physical_page),
+            TranslationPageSize::new(4096).expect("valid page size"),
+            TranslationPagePermissions::read_write_execute(),
+            4,
+        )
+    }
+
     fn hsm_request(function: u64, arg0: u64, arg1: u64, arg2: u64) -> RiscvSbiRequest {
         RiscvSbiRequest {
             extension: SBI_HSM_EXTENSION,
@@ -742,6 +859,25 @@ mod tests {
             arg2,
             arg3: 0,
             arg4: 0,
+        }
+    }
+
+    fn rfence_request(
+        function: u64,
+        hart_mask: u64,
+        hart_mask_base: u64,
+        start_addr: u64,
+        size: u64,
+        asid: u64,
+    ) -> RiscvSbiRequest {
+        RiscvSbiRequest {
+            extension: SBI_RFENCE_EXTENSION,
+            function,
+            arg0: hart_mask,
+            arg1: hart_mask_base,
+            arg2: start_addr,
+            arg3: size,
+            arg4: asid,
         }
     }
 
@@ -833,20 +969,92 @@ mod tests {
         (scheduler, transport, firmware, core0, core1)
     }
 
-    fn execute_hsm_ecall(
+    fn registered_rfence_pair() -> (
+        PartitionedScheduler,
+        MemoryTransport,
+        RiscvSbiFirmware,
+        RiscvCore,
+        RiscvCore,
+    ) {
+        let scheduler =
+            PartitionedScheduler::with_min_remote_delay(4, 2).expect("valid test scheduler");
+        let mut transport = MemoryTransport::new();
+        let cpu0_route = transport
+            .add_route(
+                MemoryRoute::new(
+                    endpoint("cpu0.ifetch"),
+                    PartitionId::new(0),
+                    endpoint("l1i"),
+                    PartitionId::new(2),
+                    2,
+                    3,
+                )
+                .expect("valid CPU 0 route"),
+            )
+            .expect("registered CPU 0 route");
+        let cpu1_fetch_route = transport
+            .add_route(
+                MemoryRoute::new(
+                    endpoint("cpu1.ifetch"),
+                    PartitionId::new(1),
+                    endpoint("l1i"),
+                    PartitionId::new(2),
+                    2,
+                    3,
+                )
+                .expect("valid CPU 1 fetch route"),
+            )
+            .expect("registered CPU 1 fetch route");
+        let cpu1_data_route = transport
+            .add_route(
+                MemoryRoute::new(
+                    endpoint("cpu1.dmem"),
+                    PartitionId::new(1),
+                    endpoint("l1d"),
+                    PartitionId::new(2),
+                    2,
+                    3,
+                )
+                .expect("valid CPU 1 data route"),
+            )
+            .expect("registered CPU 1 data route");
+        let core0 = test_core(0, 0, 7, "cpu0.ifetch", cpu0_route, 0x8000);
+        let core1 = translated_test_core(
+            TranslatedTestCoreSpec {
+                cpu: 1,
+                partition: 1,
+                agent: 8,
+                fetch_endpoint: "cpu1.ifetch",
+                fetch_route: cpu1_fetch_route,
+                data_endpoint: "cpu1.dmem",
+                data_route: cpu1_data_route,
+                pc: 0x8800,
+            },
+            vec![rfence_tlb_entry(0x4000, 0x9000)],
+        );
+        core0.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+        core1.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+        let cluster = RiscvCluster::new([core0.clone(), core1.clone()]).expect("valid cluster");
+        let firmware = RiscvSbiFirmware::new();
+        firmware
+            .register_cluster(&cluster)
+            .expect("cluster registers with SBI firmware");
+        (scheduler, transport, firmware, core0, core1)
+    }
+
+    fn execute_sbi_ecall(
         scheduler: &mut PartitionedScheduler,
         transport: &MemoryTransport,
         core: &RiscvCore,
+        extension: u64,
         function: u64,
-        arg0: u64,
-        arg1: u64,
-        arg2: u64,
+        args: [u64; 5],
     ) {
-        core.write_register(register(17), SBI_HSM_EXTENSION);
+        core.write_register(register(17), extension);
         core.write_register(register(16), function);
-        core.write_register(register(10), arg0);
-        core.write_register(register(11), arg1);
-        core.write_register(register(12), arg2);
+        for (offset, value) in args.into_iter().enumerate() {
+            core.write_register(register(10 + offset as u8), value);
+        }
         core.issue_next_fetch(
             scheduler,
             transport,
@@ -859,6 +1067,47 @@ mod tests {
             .expect("executed ecall")
             .expect("ecall execution event");
         assert!(core.has_pending_trap());
+    }
+
+    fn execute_hsm_ecall(
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        core: &RiscvCore,
+        function: u64,
+        arg0: u64,
+        arg1: u64,
+        arg2: u64,
+    ) {
+        execute_sbi_ecall(
+            scheduler,
+            transport,
+            core,
+            SBI_HSM_EXTENSION,
+            function,
+            [arg0, arg1, arg2, 0, 0],
+        );
+    }
+
+    fn execute_rfence_ecall(
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        core: &RiscvCore,
+        request: RiscvSbiRequest,
+    ) {
+        execute_sbi_ecall(
+            scheduler,
+            transport,
+            core,
+            request.extension(),
+            request.function(),
+            [
+                request.arg0(),
+                request.arg1(),
+                request.arg2(),
+                request.arg3(),
+                request.arg4(),
+            ],
+        );
     }
 
     fn execute_hsm_hart_start_ecall(
@@ -875,6 +1124,38 @@ mod tests {
             0x9000,
             0x55,
         );
+    }
+
+    #[test]
+    fn remote_sfence_vma_flushes_target_tlb_when_completion_event_runs() {
+        let (mut scheduler, transport, firmware, core0, core1) = registered_rfence_pair();
+        assert_eq!(core1.data_translation_tlb_entry_count(), Some(1));
+        assert_eq!(
+            core1.data_translation_tlb_contains_entry(
+                TranslationAddressSpaceId::global(),
+                Address::new(0x4000),
+            ),
+            Some(true)
+        );
+
+        execute_rfence_ecall(
+            &mut scheduler,
+            &transport,
+            &core0,
+            rfence_request(SBI_RFENCE_REMOTE_SFENCE_VMA, 0b10, 0, 0, 0, 0),
+        );
+
+        let outcome = firmware
+            .handle_pending_core_trap(&mut scheduler, &core0, false)
+            .expect("handled SBI trap")
+            .expect("SBI outcome");
+
+        assert_eq!(outcome, RiscvSbiOutcome::success(0));
+        assert_eq!(core1.data_translation_tlb_entry_count(), Some(1));
+
+        scheduler.run_until_idle_conservative();
+
+        assert_eq!(core1.data_translation_tlb_entry_count(), Some(0));
     }
 
     #[test]
