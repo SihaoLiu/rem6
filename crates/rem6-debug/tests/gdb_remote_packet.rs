@@ -1323,7 +1323,7 @@ fn gdb_remote_session_reports_vcont_actions() {
             .unwrap(),
         vec![
             GdbRemoteFrame::Ack,
-            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"vCont;c;C;s;S".to_vec()).unwrap()),
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"vCont;c;s".to_vec()).unwrap()),
         ],
     );
 }

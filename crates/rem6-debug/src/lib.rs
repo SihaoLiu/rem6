@@ -647,7 +647,7 @@ impl GdbRemoteSession {
             }
             GdbRemoteCommand::QueryResumeActions => {
                 if self.supports_vcont() {
-                    self.packet_response(b"vCont;c;C;s;S".to_vec())
+                    self.packet_response(b"vCont;c;s".to_vec())
                 } else {
                     self.packet_response(Vec::new())
                 }

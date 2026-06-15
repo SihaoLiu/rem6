@@ -39,6 +39,7 @@ pub fn riscv_gdb_remote_session(xlen: RiscvGdbXlen) -> GdbRemoteSession {
             b"qXfer:features:read".to_vec(),
             GdbRemoteFeatureValue::Supported,
         ),
+        GdbRemoteFeature::new(b"vContSupported".to_vec(), GdbRemoteFeatureValue::Supported),
     ]);
 
     for document in RiscvGdbTargetDescription::new(xlen).into_documents() {

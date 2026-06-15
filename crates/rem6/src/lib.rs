@@ -73,7 +73,7 @@ pub use resource_acquire_cli::{
 };
 pub use resource_acquire_config::{Rem6ResourceAcquireConfig, Rem6ResourceAcquireResourceConfig};
 use run_gdb::{
-    serve_riscv_gdb_with_single_step, validate_run_gdb_listen_config, RiscvGdbServeOutcome,
+    serve_riscv_gdb_with_run_control, validate_run_gdb_listen_config, RiscvGdbServeOutcome,
 };
 use run_resource_config::run_kernel_binary_from_resource_config;
 use runtime_memory::{read_memory_dumps, CliMemoryRuntime};
@@ -824,8 +824,8 @@ fn execute_riscv(
     }
     let fetch_trace = MemoryTrace::new();
     let data_trace = MemoryTrace::new();
-    let gdb_outcome = if let Some(listen) = config.gdb_listen() {
-        serve_riscv_gdb_with_single_step(
+    let mut gdb_outcome = if let Some(listen) = config.gdb_listen() {
+        serve_riscv_gdb_with_run_control(
             listen,
             &cluster,
             &memory,
@@ -842,70 +842,78 @@ fn execute_riscv(
     } else {
         RiscvGdbServeOutcome::default()
     };
-    let run_result = match config.max_instructions() {
-        Some(max_instructions) => {
-            let remaining_instructions =
-                max_instructions.saturating_sub(gdb_outcome.retired_instruction_count());
-            if remaining_instructions == 0 {
-                Ok(RiscvSystemRun::new(
-                    Vec::new(),
-                    Vec::new(),
-                    RiscvSystemRunStopReason::InstructionLimit {
-                        tick: scheduler.now(),
-                        limit: max_instructions,
-                        committed: gdb_outcome.retired_instruction_count(),
-                    },
-                ))
-            } else {
-                driver.drive_until_host_stop_or_instruction_limit_parallel(
-                    &cluster,
-                    &mut scheduler,
-                    &transport,
-                    fetch_trace.clone(),
-                    data_trace.clone(),
-                    |_cpu| {
-                        let memory = memory.clone();
-                        let instruction_cache = instruction_cache.clone();
-                        move |delivery, _context| {
-                            cli_data_memory_response(instruction_cache.as_ref(), &memory, &delivery)
-                        }
-                    },
-                    |_cpu| {
-                        let memory = memory.clone();
-                        let data_cache = data_cache.clone();
-                        move |delivery, _context| {
-                            cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
-                        }
-                    },
-                    tick_limit,
-                    remaining_instructions,
-                    |cpu| GuestEventId::new(u64::from(cpu.get())),
-                )
+    let run_result = if let Some(run) = gdb_outcome.take_completed_run() {
+        Ok(run)
+    } else {
+        match config.max_instructions() {
+            Some(max_instructions) => {
+                let remaining_instructions =
+                    max_instructions.saturating_sub(gdb_outcome.retired_instruction_count());
+                if remaining_instructions == 0 {
+                    Ok(RiscvSystemRun::new(
+                        Vec::new(),
+                        Vec::new(),
+                        RiscvSystemRunStopReason::InstructionLimit {
+                            tick: scheduler.now(),
+                            limit: max_instructions,
+                            committed: gdb_outcome.retired_instruction_count(),
+                        },
+                    ))
+                } else {
+                    driver.drive_until_host_stop_or_instruction_limit_parallel(
+                        &cluster,
+                        &mut scheduler,
+                        &transport,
+                        fetch_trace.clone(),
+                        data_trace.clone(),
+                        |_cpu| {
+                            let memory = memory.clone();
+                            let instruction_cache = instruction_cache.clone();
+                            move |delivery, _context| {
+                                cli_data_memory_response(
+                                    instruction_cache.as_ref(),
+                                    &memory,
+                                    &delivery,
+                                )
+                            }
+                        },
+                        |_cpu| {
+                            let memory = memory.clone();
+                            let data_cache = data_cache.clone();
+                            move |delivery, _context| {
+                                cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
+                            }
+                        },
+                        tick_limit,
+                        remaining_instructions,
+                        |cpu| GuestEventId::new(u64::from(cpu.get())),
+                    )
+                }
             }
+            None => driver.drive_until_host_stop_or_tick_limit_parallel(
+                &cluster,
+                &mut scheduler,
+                &transport,
+                fetch_trace.clone(),
+                data_trace.clone(),
+                |_cpu| {
+                    let memory = memory.clone();
+                    let instruction_cache = instruction_cache.clone();
+                    move |delivery, _context| {
+                        cli_data_memory_response(instruction_cache.as_ref(), &memory, &delivery)
+                    }
+                },
+                |_cpu| {
+                    let memory = memory.clone();
+                    let data_cache = data_cache.clone();
+                    move |delivery, _context| {
+                        cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
+                    }
+                },
+                tick_limit,
+                |cpu| GuestEventId::new(u64::from(cpu.get())),
+            ),
         }
-        None => driver.drive_until_host_stop_or_tick_limit_parallel(
-            &cluster,
-            &mut scheduler,
-            &transport,
-            fetch_trace.clone(),
-            data_trace.clone(),
-            |_cpu| {
-                let memory = memory.clone();
-                let instruction_cache = instruction_cache.clone();
-                move |delivery, _context| {
-                    cli_data_memory_response(instruction_cache.as_ref(), &memory, &delivery)
-                }
-            },
-            |_cpu| {
-                let memory = memory.clone();
-                let data_cache = data_cache.clone();
-                move |delivery, _context| {
-                    cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
-                }
-            },
-            tick_limit,
-            |cpu| GuestEventId::new(u64::from(cpu.get())),
-        ),
     };
     if let Some(data_cache) = data_cache.as_ref() {
         if let Some(error) = data_cache.take_error() {

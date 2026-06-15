@@ -34,7 +34,10 @@ fn riscv_gdb_remote_session_advertises_target_description_xfer() {
         vec![
             GdbRemoteFrame::Ack,
             GdbRemoteFrame::Packet(
-                GdbRemotePacket::new(b"PacketSize=4000;qXfer:features:read+".to_vec()).unwrap(),
+                GdbRemotePacket::new(
+                    b"PacketSize=4000;qXfer:features:read+;vContSupported+".to_vec(),
+                )
+                .unwrap(),
             ),
         ],
     );
