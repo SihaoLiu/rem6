@@ -3,6 +3,7 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use flate2::read::GzDecoder;
 use rem6_boot::BootImage;
 use rem6_memory::Address;
 use rem6_workload::{
@@ -354,6 +355,7 @@ fn read_tar_member(archive: &Path, member: &str) -> Result<Vec<u8>, Rem6CliError
         path: archive.to_path_buf(),
         error: error.to_string(),
     })?;
+    let data = tar_archive_payload(archive, data)?;
     let mut offset: usize = 0;
     while let Some(header_end) = offset.checked_add(512).filter(|end| *end <= data.len()) {
         let header = &data[offset..header_end];
@@ -408,6 +410,21 @@ fn read_tar_member(archive: &Path, member: &str) -> Result<Vec<u8>, Rem6CliError
         path: archive.to_path_buf(),
         error: format!("tar member {member} was not found"),
     })
+}
+
+fn tar_archive_payload(archive: &Path, data: Vec<u8>) -> Result<Vec<u8>, Rem6CliError> {
+    if !data.starts_with(&[0x1f, 0x8b]) {
+        return Ok(data);
+    }
+    let mut decoder = GzDecoder::new(data.as_slice());
+    let mut decoded = Vec::new();
+    decoder
+        .read_to_end(&mut decoded)
+        .map_err(|error| Rem6CliError::ReadResourceArtifact {
+            path: archive.to_path_buf(),
+            error: format!("gzip tar archive decode failed: {error}"),
+        })?;
+    Ok(decoded)
 }
 
 fn tar_header_text(field: &[u8]) -> String {

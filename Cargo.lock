@@ -147,6 +147,7 @@ dependencies = [
 name = "rem6"
 version = "0.1.0"
 dependencies = [
+ "flate2",
  "rem6-boot",
  "rem6-coherence",
  "rem6-cpu",
