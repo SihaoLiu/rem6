@@ -35,6 +35,8 @@ mod msync_tests;
 mod nanosleep_tests;
 #[path = "riscv_syscall_tests/open_tests.rs"]
 mod open_tests;
+#[path = "riscv_syscall_tests/permissions_tests.rs"]
+mod permissions_tests;
 #[path = "riscv_syscall_tests/poll_tests.rs"]
 mod poll_tests;
 #[path = "riscv_syscall_tests/positioned_io_tests.rs"]

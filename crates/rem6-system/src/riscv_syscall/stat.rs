@@ -26,6 +26,7 @@ const RISCV_LINUX_S_IFREG: u32 = 0o100000;
 const RISCV_LINUX_S_IFLNK: u32 = 0o120000;
 pub(super) const RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS: u32 = 0o444;
 pub(super) const RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS: u32 = 0o555;
+pub(super) const RISCV_LINUX_MODE_BITS: u32 = 0o7777;
 const RISCV_LINUX_CHARACTER_DEVICE_MODE: u32 = RISCV_LINUX_S_IFCHR | 0o666;
 const RISCV_LINUX_SYMBOLIC_LINK_MODE: u32 = RISCV_LINUX_S_IFLNK | 0o777;
 pub(super) const RISCV_LINUX_FACCESSAT: u64 = 48;
@@ -74,7 +75,7 @@ impl RiscvGuestStat {
         Self {
             device: 0,
             inode,
-            mode: RISCV_LINUX_S_IFREG | (permissions & 0o777),
+            mode: RISCV_LINUX_S_IFREG | (permissions & RISCV_LINUX_MODE_BITS),
             link_count,
             user_id: linux_stat_user_id(identity.user_id()),
             group_id: linux_stat_user_id(identity.group_id()),
@@ -104,7 +105,7 @@ impl RiscvGuestStat {
         Self {
             device: 0,
             inode,
-            mode: RISCV_LINUX_S_IFDIR | (permissions & 0o777),
+            mode: RISCV_LINUX_S_IFDIR | (permissions & RISCV_LINUX_MODE_BITS),
             link_count: 2,
             user_id: linux_stat_user_id(identity.user_id()),
             group_id: linux_stat_user_id(identity.group_id()),

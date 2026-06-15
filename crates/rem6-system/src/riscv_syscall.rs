@@ -121,7 +121,10 @@ use mmap::{
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
 pub use open::RiscvGuestOpenRecord;
 use open::{syscall_open, syscall_openat, RiscvGuestOpenRequest, RISCV_LINUX_OPEN};
-use permissions::{syscall_umask, RISCV_LINUX_UMASK};
+use permissions::{
+    syscall_chmod, syscall_fchmod, syscall_fchmodat, syscall_umask, RISCV_LINUX_FCHMOD,
+    RISCV_LINUX_FCHMODAT, RISCV_LINUX_UMASK, RISCV_NEWLIB_LEGACY_CHMOD,
+};
 use pipe::{syscall_pipe2, RiscvGuestPipeId, RISCV_LINUX_PIPE2};
 use poll::{syscall_ppoll, RISCV_LINUX_PPOLL};
 use process::{
@@ -1199,6 +1202,19 @@ impl RiscvSyscallTable {
                     value: syscall_readlinkat(request, state, reader, writer),
                 })
             }),
+            RISCV_LINUX_FCHMOD => Some(RiscvSyscallOutcome::Return {
+                value: syscall_fchmod(request, state),
+            }),
+            RISCV_LINUX_FCHMODAT => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_fchmodat(request, state, guest_memory),
+                })
+            }
+            RISCV_NEWLIB_LEGACY_CHMOD => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_chmod(request, state, guest_memory),
+                })
+            }
             RISCV_LINUX_FACCESSAT => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_faccessat(request, state, guest_memory),
