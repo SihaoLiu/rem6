@@ -1224,6 +1224,20 @@ fn rem6_trace_replay_data_cache_protocol_drives_executable_policy_stats() {
         2,
         "monotonic",
     );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.data_cache.runs",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.data_cache.msi.runs",
+        "Count",
+        2,
+        "monotonic",
+    );
 }
 
 fn trace_replay_output(trace: &std::path::Path, max_tick: &str) -> std::process::Output {
