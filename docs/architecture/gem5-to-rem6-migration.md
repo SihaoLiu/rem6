@@ -429,7 +429,7 @@ pipeline and cache/DRAM runtime state.
 - [x] m5 exit/fail/stats/checkpoint/work markers reach typed host actions.
 - [x] Decode-first checkpoint capture/restore exists across scheduler, memory, device, storage, VirtIO, timer, interrupt, RISC-V hart run-state, platform, workload, and manifest owners.
 - [x] GDB remote packet/session parsing and RISC-V integer/PC register paths exist.
-- [x] GDB RV64D floating-point, including `fflags`/`frm`/`fcsr`, and advertised RV64 supervisor CSR register target descriptions including `sscratch` and `satp` plus `p`/`P`/`g`/`G` register-cache paths exist.
+- [x] GDB RV64D floating-point, including `fflags`/`frm`/`fcsr`, advertised RV64 supervisor CSR register target descriptions including `sscratch` and `satp`, and RV64 machine status, interrupt, and trap CSR register-cache paths exist.
 - [x] Power and thermal models plus external power-analysis exports exist.
 - [x] Host actions and guest events are typed and checkpoint-aware.
 - [x] First-class histogram stats have registry snapshots, deltas, resets,
@@ -463,10 +463,10 @@ pipeline and cache/DRAM runtime state.
 
 **Migrated:** Structured stats, real RISC-V probe producers, checkpoint banks,
 m5ops, host actions, GDB packet/session parsing, RISC-V integer/PC register
-paths, RV64D floating-point target descriptions including `fflags`/`frm`/`fcsr`
-and advertised RV64 supervisor CSR target descriptions including `sscratch`
-and `satp`
-plus `p`/`P`/`g`/`G` register-cache paths, RISC-V software breakpoint
+paths, RV64D floating-point target descriptions including `fflags`/`frm`/`fcsr`,
+advertised RV64 supervisor CSR target descriptions including `sscratch` and
+`satp`, and RV64 machine status, interrupt, and trap CSR register-cache paths,
+RISC-V software breakpoint
 patch/restore through the
 system GDB memory handler, gem5-style final-tick, committed-instruction, and
 sim-frequency stat aliases, text output with gem5-compatible no-leading-blank
@@ -499,8 +499,9 @@ broad O3 ROB/LSQ/rename checkpoint ownership.
 `RiscvDataAccessStats`, `SystemActionExecutor`, `GdbRemoteSession`,
 checkpoint tests including RISC-V hart run-state and in-order pipeline restore,
 O3 writeback transfer deferred-state payload tests, GDB byte-stream,
-RV64D FP, FP CSR, RV64 supervisor CSR register-cache including `sscratch`
-and `satp` write/readback through guest CSR execution, and control-state tests,
+RV64D FP, FP CSR, RV64 supervisor CSR register-cache including `sscratch` and
+`satp`, RV64 machine CSR register-cache including `mscratch` write/readback
+through guest CSR execution, and control-state tests,
 `gdb_remote_packet` execution-control tests,
 CLI `run --gdb-listen` smoke tests for RISC-V pre-execution state and
 pre-execution writes consumed by the subsequent run, CLI `run --gdb-listen`
@@ -639,7 +640,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/regression_tests` | all rem6 crates | 35% unit-slice | Workspace tests act as the current regression suite. | Add migration tags or per-family regression rows. |
 | `tests/gem5/replacement_policies` | `rem6-cache` | 60% representative | Multiple replacement, indexing, dueling, compressed, and sector tag tests exist. | Add remaining policies and exact trace/reference parity where useful. |
 | `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, RFENCE remote SFENCE.VMA data TLB flushes with finite-range, ASID scope, and scheduled completion events, unsupported HFENCE validation, and HSM start entry-state, `START_PENDING`, status, no-return stop, retentive-suspend, default-non-retentive `RESUME_PENDING`/resume, and IPI-wake slices are tested. | Add broader SBI timer/IPI/reset power-state behavior, remaining HSM wake semantics, RFENCE hypervisor-fence execution semantics and broader completion coverage, and a real Linux boot smoke. |
-| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 66% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, instruction/data cache counters, cache-local prefetch queue counters, top-level trace-replay fabric-route counters, top-level trace-replay data-cache run/protocol counters, CLI stat output with gem5-style final-tick, committed-instruction, sim-ops, sim-seconds, and sim-frequency aliases, CLI GDB attach-before-execute register/memory smoke coverage plus pre-execution writes, RV64 supervisor CSR `sscratch` and translation CSR `satp` write/readback consumed by guest execution, software and hardware breakpoints, single-step execution consumed by the following run, continue and `vCont;c` execution with completed-run summary handoff, data watchpoints stopping after real RISC-V load/store data-access completion, and library-level plus run-CLI McPAT/DSENT-shaped export tests exist. | Add more hierarchy counters, calibrated power/thermal activity, exact gem5 stat naming breadth, and remaining RV32 FP/vector plus broader CSR GDB register-cache coverage. |
+| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 66% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, instruction/data cache counters, cache-local prefetch queue counters, top-level trace-replay fabric-route counters, top-level trace-replay data-cache run/protocol counters, CLI stat output with gem5-style final-tick, committed-instruction, sim-ops, sim-seconds, and sim-frequency aliases, CLI GDB attach-before-execute register/memory smoke coverage plus pre-execution writes, RV64 supervisor CSR `sscratch`, translation CSR `satp`, and machine CSR `mscratch` write/readback consumed by guest execution, software and hardware breakpoints, single-step execution consumed by the following run, continue and `vCont;c` execution with completed-run summary handoff, data watchpoints stopping after real RISC-V load/store data-access completion, and library-level plus run-CLI McPAT/DSENT-shaped export tests exist. | Add more hierarchy counters, calibrated power/thermal activity, exact gem5 stat naming breadth, and remaining RV32 FP/vector plus broader CSR GDB register-cache coverage. |
 | `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 54% single-axis | Workload manifests, resource payloads, manifest/suite-level CLI resource acquisition including host-file and uncompressed/gzip tar-entry inputs, manifest-acquired and unique-suite run kernel handoff, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage, remote/cache policy acquisition, and ergonomic topology/workload definitions. |
 | `tests/test-progs` | `rem6-system`, `rem6` CLI, ISA crates | 35% unit-slice | Static RISC-V no-libc, newlib, and raw syscall smoke binaries, including `sendfile`, `statx`, `faccessat2`, `utimensat`, advisory `flock` and `fchownat`/`fchown`, `sysinfo`, newlib file-create roundtrip, newlib `/proc/self/exe` readlink coverage, newlib pipe2 roundtrip coverage, newlib directory-open coverage, and newlib open-flag coverage, are generated when tools exist. | Add durable generated fixtures for hello, threads, and m5 utility shapes across ISAs. |
 | `tests/gem5/traffic_gen` | `rem6-traffic`, `rem6-system`, `rem6-workload`, `rem6` CLI | 55% single-axis | Text config parsing, GUPS, packet trace replay including manifest and unique suite resource-config trace handoff, flags, maintenance, HTM, responses, workload summaries, typed generator/memory-profile summaries, top-level trace-replay fabric-route activity stats, top-level trace-replay data-cache run/protocol stats, and top-level GUPS profile JSON/stats output exist. | Add cache hierarchy matrix and broader trusted stats. |

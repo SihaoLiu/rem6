@@ -2,10 +2,10 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_isa_riscv::{
-    walk_sv39_page_table_with_context, RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext,
-    RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte,
-    RiscvSv39VirtualAddress, RiscvSv39WalkAdvance as IsaSv39WalkAdvance, RiscvSv39WalkState,
-    RiscvSystemEvent, RiscvTrapKind,
+    walk_sv39_page_table_with_context, RiscvMachineTrapCsr, RiscvPrivilegeMode, RiscvStatusWord,
+    RiscvSv39AccessContext, RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel,
+    RiscvSv39Pte, RiscvSv39VirtualAddress, RiscvSv39WalkAdvance as IsaSv39WalkAdvance,
+    RiscvSv39WalkState, RiscvSystemEvent, RiscvTrapKind,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
@@ -631,6 +631,22 @@ impl RiscvCore {
             .machine_interrupt_pending()
     }
 
+    pub fn machine_interrupt_enable(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .machine_interrupt_enable()
+    }
+
+    pub fn set_machine_interrupt_enable(&self, enable: u64) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_machine_interrupt_enable(enable);
+    }
+
     pub fn set_machine_interrupt_pending(&self, pending: u64) {
         let mut state = self.state.lock().expect("riscv core lock");
         state.hart.set_machine_interrupt_pending(pending);
@@ -724,6 +740,16 @@ impl RiscvCore {
             .expect("riscv core lock")
             .hart
             .machine_trap_value()
+    }
+
+    pub fn machine_trap_csr(&self, csr: RiscvMachineTrapCsr) -> u64 {
+        let state = self.state.lock().expect("riscv core lock");
+        read_machine_trap_csr(&state.hart, csr)
+    }
+
+    pub fn set_machine_trap_csr(&self, csr: RiscvMachineTrapCsr, value: u64) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        write_machine_trap_csr(&mut state.hart, csr, value);
     }
 
     pub fn set_machine_exception_delegation(&self, delegation: u64) {
@@ -1475,6 +1501,34 @@ impl RiscvCore {
             physical_address: translated.physical_address,
             line_layout: Some(line_layout),
         })
+    }
+}
+
+fn read_machine_trap_csr(hart: &rem6_isa_riscv::RiscvHartState, csr: RiscvMachineTrapCsr) -> u64 {
+    match csr {
+        RiscvMachineTrapCsr::Medeleg => hart.machine_exception_delegation(),
+        RiscvMachineTrapCsr::Mideleg => hart.machine_interrupt_delegation(),
+        RiscvMachineTrapCsr::Mtvec => hart.machine_trap_vector(),
+        RiscvMachineTrapCsr::Mscratch => hart.machine_scratch(),
+        RiscvMachineTrapCsr::Mepc => hart.machine_exception_pc(),
+        RiscvMachineTrapCsr::Mcause => hart.machine_trap_cause(),
+        RiscvMachineTrapCsr::Mtval => hart.machine_trap_value(),
+    }
+}
+
+fn write_machine_trap_csr(
+    hart: &mut rem6_isa_riscv::RiscvHartState,
+    csr: RiscvMachineTrapCsr,
+    value: u64,
+) {
+    match csr {
+        RiscvMachineTrapCsr::Medeleg => hart.set_machine_exception_delegation(value),
+        RiscvMachineTrapCsr::Mideleg => hart.set_machine_interrupt_delegation(value),
+        RiscvMachineTrapCsr::Mtvec => hart.set_machine_trap_vector(value),
+        RiscvMachineTrapCsr::Mscratch => hart.set_machine_scratch(value),
+        RiscvMachineTrapCsr::Mepc => hart.set_machine_exception_pc(value),
+        RiscvMachineTrapCsr::Mcause => hart.set_machine_trap_cause(value),
+        RiscvMachineTrapCsr::Mtval => hart.set_machine_trap_value(value),
     }
 }
 

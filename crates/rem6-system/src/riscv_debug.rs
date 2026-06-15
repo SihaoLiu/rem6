@@ -7,7 +7,8 @@ use rem6_debug::{
 };
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvFloatCsr, RiscvGdbTargetDescription, RiscvGdbXlen,
-    RiscvHartState, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
+    RiscvHartState, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvSupervisorTrapCsr,
+    RiscvTranslationCsr,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, MemoryError, MemoryRequest, MemoryRequestId,
@@ -24,12 +25,14 @@ const RISCV_GDB_FLOAT_REGISTER_COUNT: u8 = 32;
 const RISCV_GDB_FLOAT_CSR_REGISTER_BASE: u64 = 65;
 const RISCV_GDB_FLOAT_CSR_REGISTER_COUNT: u8 = 3;
 const RISCV_GDB_CSR_REGISTER_BASE: u64 = 68;
-const RISCV_GDB_CSR_REGISTER_COUNT: u8 = 7;
+const RISCV_GDB_CSR_REGISTER_COUNT: u8 = 17;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RiscvGdbCsrRegister {
-    Sstatus,
+    Status(RiscvStatusCsr),
+    Interrupt(RiscvInterruptCsr),
+    MachineTrap(RiscvMachineTrapCsr),
     SupervisorTrap(RiscvSupervisorTrapCsr),
     Translation(RiscvTranslationCsr),
 }
@@ -717,6 +720,15 @@ fn riscv_gdb_hart_snapshot_from_core(core: &RiscvCore) -> RiscvHartState {
     }
     hart.set_float_status(core.float_status());
     hart.set_status(core.status());
+    hart.set_machine_exception_delegation(core.machine_trap_csr(RiscvMachineTrapCsr::Medeleg));
+    hart.set_machine_interrupt_delegation(core.machine_trap_csr(RiscvMachineTrapCsr::Mideleg));
+    hart.set_machine_interrupt_enable(core.machine_interrupt_enable());
+    hart.set_machine_trap_vector(core.machine_trap_csr(RiscvMachineTrapCsr::Mtvec));
+    hart.set_machine_scratch(core.machine_trap_csr(RiscvMachineTrapCsr::Mscratch));
+    hart.set_machine_exception_pc(core.machine_trap_csr(RiscvMachineTrapCsr::Mepc));
+    hart.set_machine_trap_cause(core.machine_trap_csr(RiscvMachineTrapCsr::Mcause));
+    hart.set_machine_trap_value(core.machine_trap_csr(RiscvMachineTrapCsr::Mtval));
+    hart.set_machine_interrupt_pending(core.machine_interrupt_pending());
     hart.set_supervisor_trap_vector(core.supervisor_trap_vector());
     hart.set_supervisor_scratch(core.supervisor_scratch());
     hart.set_supervisor_exception_pc(core.supervisor_exception_pc());
@@ -900,7 +912,9 @@ fn write_core_float_csr_register_value(core: &RiscvCore, number: u64, value: u64
 
 fn read_hart_csr_register_value(hart: &RiscvHartState, number: u64) -> u64 {
     match riscv_gdb_csr_register(number) {
-        RiscvGdbCsrRegister::Sstatus => RiscvStatusCsr::Sstatus.read(hart.status()),
+        RiscvGdbCsrRegister::Status(csr) => csr.read(hart.status()),
+        RiscvGdbCsrRegister::Interrupt(csr) => read_hart_interrupt_csr(hart, csr),
+        RiscvGdbCsrRegister::MachineTrap(csr) => read_hart_machine_trap_csr(hart, csr),
         RiscvGdbCsrRegister::SupervisorTrap(csr) => read_hart_supervisor_trap_csr(hart, csr),
         RiscvGdbCsrRegister::Translation(csr) => read_hart_translation_csr(hart, csr),
     }
@@ -908,8 +922,14 @@ fn read_hart_csr_register_value(hart: &RiscvHartState, number: u64) -> u64 {
 
 fn write_hart_csr_register_value(hart: &mut RiscvHartState, number: u64, value: u64) {
     match riscv_gdb_csr_register(number) {
-        RiscvGdbCsrRegister::Sstatus => {
-            hart.set_status(RiscvStatusCsr::Sstatus.write(hart.status(), value));
+        RiscvGdbCsrRegister::Status(csr) => {
+            hart.set_status(csr.write(hart.status(), value));
+        }
+        RiscvGdbCsrRegister::Interrupt(csr) => {
+            write_hart_interrupt_csr(hart, csr, value);
+        }
+        RiscvGdbCsrRegister::MachineTrap(csr) => {
+            write_hart_machine_trap_csr(hart, csr, value);
         }
         RiscvGdbCsrRegister::SupervisorTrap(csr) => {
             write_hart_supervisor_trap_csr(hart, csr, value);
@@ -922,8 +942,14 @@ fn write_hart_csr_register_value(hart: &mut RiscvHartState, number: u64, value: 
 
 fn write_core_csr_register_value(core: &RiscvCore, number: u64, value: u64) {
     match riscv_gdb_csr_register(number) {
-        RiscvGdbCsrRegister::Sstatus => {
-            core.set_status(RiscvStatusCsr::Sstatus.write(core.status(), value));
+        RiscvGdbCsrRegister::Status(csr) => {
+            core.set_status(csr.write(core.status(), value));
+        }
+        RiscvGdbCsrRegister::Interrupt(csr) => {
+            write_core_interrupt_csr(core, csr, value);
+        }
+        RiscvGdbCsrRegister::MachineTrap(csr) => {
+            core.set_machine_trap_csr(csr, value);
         }
         RiscvGdbCsrRegister::SupervisorTrap(csr) => {
             write_core_supervisor_trap_csr(core, csr, value);
@@ -936,14 +962,95 @@ fn write_core_csr_register_value(core: &RiscvCore, number: u64, value: u64) {
 
 fn riscv_gdb_csr_register(number: u64) -> RiscvGdbCsrRegister {
     match number - RISCV_GDB_CSR_REGISTER_BASE {
-        0 => RiscvGdbCsrRegister::Sstatus,
+        0 => RiscvGdbCsrRegister::Status(RiscvStatusCsr::Sstatus),
         1 => RiscvGdbCsrRegister::SupervisorTrap(RiscvSupervisorTrapCsr::Stvec),
         2 => RiscvGdbCsrRegister::SupervisorTrap(RiscvSupervisorTrapCsr::Sscratch),
         3 => RiscvGdbCsrRegister::SupervisorTrap(RiscvSupervisorTrapCsr::Sepc),
         4 => RiscvGdbCsrRegister::SupervisorTrap(RiscvSupervisorTrapCsr::Scause),
         5 => RiscvGdbCsrRegister::SupervisorTrap(RiscvSupervisorTrapCsr::Stval),
         6 => RiscvGdbCsrRegister::Translation(RiscvTranslationCsr::Satp),
+        7 => RiscvGdbCsrRegister::Status(RiscvStatusCsr::Mstatus),
+        8 => RiscvGdbCsrRegister::MachineTrap(RiscvMachineTrapCsr::Medeleg),
+        9 => RiscvGdbCsrRegister::MachineTrap(RiscvMachineTrapCsr::Mideleg),
+        10 => RiscvGdbCsrRegister::Interrupt(RiscvInterruptCsr::MachineInterruptEnable),
+        11 => RiscvGdbCsrRegister::MachineTrap(RiscvMachineTrapCsr::Mtvec),
+        12 => RiscvGdbCsrRegister::MachineTrap(RiscvMachineTrapCsr::Mscratch),
+        13 => RiscvGdbCsrRegister::MachineTrap(RiscvMachineTrapCsr::Mepc),
+        14 => RiscvGdbCsrRegister::MachineTrap(RiscvMachineTrapCsr::Mcause),
+        15 => RiscvGdbCsrRegister::MachineTrap(RiscvMachineTrapCsr::Mtval),
+        16 => RiscvGdbCsrRegister::Interrupt(RiscvInterruptCsr::MachineInterruptPending),
         _ => unreachable!("validated RISC-V GDB CSR register"),
+    }
+}
+
+fn read_hart_interrupt_csr(hart: &RiscvHartState, csr: RiscvInterruptCsr) -> u64 {
+    match csr {
+        RiscvInterruptCsr::MachineInterruptEnable => hart.machine_interrupt_enable(),
+        RiscvInterruptCsr::MachineInterruptPending => hart.machine_interrupt_pending(),
+        RiscvInterruptCsr::SupervisorInterruptEnable => {
+            hart.machine_interrupt_enable() & hart.machine_interrupt_delegation()
+        }
+        RiscvInterruptCsr::SupervisorInterruptPending => {
+            hart.machine_interrupt_pending() & hart.machine_interrupt_delegation()
+        }
+    }
+}
+
+fn write_hart_interrupt_csr(hart: &mut RiscvHartState, csr: RiscvInterruptCsr, value: u64) {
+    match csr {
+        RiscvInterruptCsr::MachineInterruptEnable => hart.set_machine_interrupt_enable(value),
+        RiscvInterruptCsr::MachineInterruptPending => hart.set_machine_interrupt_pending(value),
+        RiscvInterruptCsr::SupervisorInterruptEnable => {
+            let mask = hart.machine_interrupt_delegation();
+            let enable = (hart.machine_interrupt_enable() & !mask) | (value & mask);
+            hart.set_machine_interrupt_enable(enable);
+        }
+        RiscvInterruptCsr::SupervisorInterruptPending => {
+            let mask = hart.machine_interrupt_delegation();
+            let pending = (hart.machine_interrupt_pending() & !mask) | (value & mask);
+            hart.set_machine_interrupt_pending(pending);
+        }
+    }
+}
+
+fn write_core_interrupt_csr(core: &RiscvCore, csr: RiscvInterruptCsr, value: u64) {
+    match csr {
+        RiscvInterruptCsr::MachineInterruptEnable => core.set_machine_interrupt_enable(value),
+        RiscvInterruptCsr::MachineInterruptPending => core.set_machine_interrupt_pending(value),
+        RiscvInterruptCsr::SupervisorInterruptEnable => {
+            let mask = core.machine_trap_csr(RiscvMachineTrapCsr::Mideleg);
+            let enable = (core.machine_interrupt_enable() & !mask) | (value & mask);
+            core.set_machine_interrupt_enable(enable);
+        }
+        RiscvInterruptCsr::SupervisorInterruptPending => {
+            let mask = core.machine_trap_csr(RiscvMachineTrapCsr::Mideleg);
+            let pending = (core.machine_interrupt_pending() & !mask) | (value & mask);
+            core.set_machine_interrupt_pending(pending);
+        }
+    }
+}
+
+fn read_hart_machine_trap_csr(hart: &RiscvHartState, csr: RiscvMachineTrapCsr) -> u64 {
+    match csr {
+        RiscvMachineTrapCsr::Medeleg => hart.machine_exception_delegation(),
+        RiscvMachineTrapCsr::Mideleg => hart.machine_interrupt_delegation(),
+        RiscvMachineTrapCsr::Mtvec => hart.machine_trap_vector(),
+        RiscvMachineTrapCsr::Mscratch => hart.machine_scratch(),
+        RiscvMachineTrapCsr::Mepc => hart.machine_exception_pc(),
+        RiscvMachineTrapCsr::Mcause => hart.machine_trap_cause(),
+        RiscvMachineTrapCsr::Mtval => hart.machine_trap_value(),
+    }
+}
+
+fn write_hart_machine_trap_csr(hart: &mut RiscvHartState, csr: RiscvMachineTrapCsr, value: u64) {
+    match csr {
+        RiscvMachineTrapCsr::Medeleg => hart.set_machine_exception_delegation(value),
+        RiscvMachineTrapCsr::Mideleg => hart.set_machine_interrupt_delegation(value),
+        RiscvMachineTrapCsr::Mtvec => hart.set_machine_trap_vector(value),
+        RiscvMachineTrapCsr::Mscratch => hart.set_machine_scratch(value),
+        RiscvMachineTrapCsr::Mepc => hart.set_machine_exception_pc(value),
+        RiscvMachineTrapCsr::Mcause => hart.set_machine_trap_cause(value),
+        RiscvMachineTrapCsr::Mtval => hart.set_machine_trap_value(value),
     }
 }
 

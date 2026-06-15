@@ -52,14 +52,27 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "  <reg name=\"scause\" bitsize=\"64\"/>\n",
             "  <reg name=\"stval\" bitsize=\"64\"/>\n",
             "  <reg name=\"satp\" bitsize=\"64\"/>\n",
+            "  <reg name=\"mstatus\" bitsize=\"64\"/>\n",
+            "  <reg name=\"medeleg\" bitsize=\"64\"/>\n",
+            "  <reg name=\"mideleg\" bitsize=\"64\"/>\n",
+            "  <reg name=\"mie\" bitsize=\"64\"/>\n",
+            "  <reg name=\"mtvec\" bitsize=\"64\"/>\n",
+            "  <reg name=\"mscratch\" bitsize=\"64\"/>\n",
+            "  <reg name=\"mepc\" bitsize=\"64\"/>\n",
+            "  <reg name=\"mcause\" bitsize=\"64\"/>\n",
+            "  <reg name=\"mtval\" bitsize=\"64\"/>\n",
+            "  <reg name=\"mip\" bitsize=\"64\"/>\n",
             "</feature>\n",
         ),
     );
     assert_eq!(
         register_names(csr),
-        vec!["sstatus", "stvec", "sscratch", "sepc", "scause", "stval", "satp"],
+        vec![
+            "sstatus", "stvec", "sscratch", "sepc", "scause", "stval", "satp", "mstatus",
+            "medeleg", "mideleg", "mie", "mtvec", "mscratch", "mepc", "mcause", "mtval", "mip",
+        ],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 7);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 17);
 }
 
 #[test]
