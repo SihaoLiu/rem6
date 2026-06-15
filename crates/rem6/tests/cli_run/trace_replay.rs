@@ -268,6 +268,190 @@ fn rem6_trace_replay_loads_trace_payload_from_resource_config() {
 }
 
 #[test]
+fn rem6_trace_replay_loads_trace_payload_from_suite_resource_config() {
+    let workspace = temp_workspace("trace-replay-suite-resource-config");
+    let trace_dir = workspace.join("artifacts");
+    std::fs::create_dir(&trace_dir).unwrap();
+    std::fs::write(
+        trace_dir.join("trace.pb"),
+        packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    )
+    .unwrap();
+    std::fs::write(workspace.join("kernel.bin"), [0x13, 0x00, 0x00, 0x00]).unwrap();
+    let resource_config = workspace.join("resource-acquire-suite.toml");
+    std::fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+suite_id = "trace-suite-cli"
+stats_format = "json"
+
+[[resource_acquire.manifests]]
+workload_id = "trace-workload"
+boot_entry = 4096
+
+[[resource_acquire.manifests.resources]]
+id = "trace"
+kind = "input"
+digest = "sha256:trace-resource"
+locator = "resources/trace.pb"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://trace"
+artifact = "artifacts/trace.pb"
+artifact_digest = "sha256:trace-resource"
+
+[[resource_acquire.manifests]]
+workload_id = "side-workload"
+boot_entry = 8192
+
+[[resource_acquire.manifests.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:kernel-resource"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel"
+artifact = "kernel.bin"
+artifact_digest = "sha256:kernel-resource"
+artifact_size = 4
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("trace-replay.toml");
+    std::fs::write(
+        &config,
+        "[trace_replay]\nresource_config = \"resource-acquire-suite.toml\"\nroute = \"cpu0.suite-resource\"\nmemory_start = 4096\nmemory_size = 4096\nmax_tick = 64\ntick_frequency = 1000\nline_bytes = 64\nagent = 7\ncontrol_partition = 2\nstats_format = \"json\"\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args(["trace-replay", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"schema\":\"rem6.cli.trace_replay.v1\""));
+    assert!(stdout.contains("\"trace\":\"resource-config:"));
+    assert!(stdout.contains("resource-acquire-suite.toml"));
+    assert!(stdout.contains("\"route\":\"cpu0.suite-resource\""));
+    assert!(stdout.contains("\"scheduled_count\":1"));
+    assert!(stdout.contains("\"trace_read_response_count\":1"));
+    assert!(stdout.contains("\"trace_response_data_byte_count\":8"));
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.scheduled",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_trace_replay_rejects_ambiguous_suite_trace_resources() {
+    let workspace = temp_workspace("trace-replay-suite-resource-config-ambiguous");
+    let trace_dir = workspace.join("artifacts");
+    std::fs::create_dir(&trace_dir).unwrap();
+    for trace_name in ["trace-a.pb", "trace-b.pb"] {
+        std::fs::write(
+            trace_dir.join(trace_name),
+            packet_trace_bytes(
+                1_000,
+                &[PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                }],
+            ),
+        )
+        .unwrap();
+    }
+    let resource_config = workspace.join("resource-acquire-suite.toml");
+    std::fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+suite_id = "ambiguous-trace-suite-cli"
+stats_format = "json"
+
+[[resource_acquire.manifests]]
+workload_id = "trace-workload-a"
+boot_entry = 4096
+
+[[resource_acquire.manifests.resources]]
+id = "trace"
+kind = "input"
+digest = "sha256:trace-resource-a"
+locator = "resources/trace-a.pb"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://trace-a"
+artifact = "artifacts/trace-a.pb"
+artifact_digest = "sha256:trace-resource-a"
+
+[[resource_acquire.manifests]]
+workload_id = "trace-workload-b"
+boot_entry = 8192
+
+[[resource_acquire.manifests.resources]]
+id = "trace"
+kind = "input"
+digest = "sha256:trace-resource-b"
+locator = "resources/trace-b.pb"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://trace-b"
+artifact = "artifacts/trace-b.pb"
+artifact_digest = "sha256:trace-resource-b"
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("trace-replay.toml");
+    std::fs::write(
+        &config,
+        "[trace_replay]\nresource_config = \"resource-acquire-suite.toml\"\nroute = \"cpu0.suite-resource\"\nmemory_start = 4096\nmemory_size = 4096\nmax_tick = 64\ntick_frequency = 1000\nline_bytes = 64\nagent = 7\ncontrol_partition = 2\nstats_format = \"json\"\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args(["trace-replay", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("acquired 2 required trace resources"));
+    assert!(stderr.contains("expected exactly one"));
+}
+
+#[test]
 fn rem6_trace_replay_cli_trace_overrides_toml_resource_config() {
     let workspace = temp_workspace("trace-replay-resource-config-override");
     let resource_trace_dir = workspace.join("artifacts");

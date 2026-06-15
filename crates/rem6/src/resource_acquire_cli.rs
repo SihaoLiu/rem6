@@ -104,6 +104,21 @@ pub(crate) fn acquire_manifest_required_resources(
     Ok((manifest, acquired))
 }
 
+pub(crate) fn acquire_suite_required_resources(
+    config: &Rem6ResourceAcquireConfig,
+) -> Result<(WorkloadSuiteReplayPlan, Vec<WorkloadAcquiredSuiteResource>), Rem6CliError> {
+    if config.suite_id().is_none() {
+        return Err(Rem6CliError::Execute {
+            error: "resource acquisition suite handoff requires a suite config".to_string(),
+        });
+    }
+    let (plan, executor) = suite_replay_plan_and_executor(config)?;
+    let acquired = executor
+        .acquire_suite_replay_plan(&plan)
+        .map_err(execute_error)?;
+    Ok((plan, acquired))
+}
+
 fn run_manifest_resource_acquire_config(
     config: Rem6ResourceAcquireConfig,
 ) -> Result<Rem6ResourceAcquireArtifact, Rem6CliError> {
@@ -168,21 +183,7 @@ fn run_suite_resource_acquire_config(
             flag: "resource_acquire.suite_id",
         })?
         .to_string();
-    let mut suite_builder =
-        WorkloadSuite::builder(WorkloadSuiteId::new(&suite_id).map_err(execute_error)?);
-    let mut executor = WorkloadInMemoryResourceAcquisitionExecutor::new();
-    for manifest_config in config.manifests() {
-        let (manifest, next_executor) = build_manifest_and_artifacts(manifest_config, executor)?;
-        executor = next_executor;
-        suite_builder = suite_builder
-            .add_manifest(manifest)
-            .map_err(execute_error)?;
-    }
-    let suite = suite_builder.build().map_err(execute_error)?;
-    let plan = WorkloadSuiteReplayPlan::from_suite(&suite).map_err(execute_error)?;
-    let acquired = executor
-        .acquire_suite_replay_plan(&plan)
-        .map_err(execute_error)?;
+    let (plan, acquired) = acquire_suite_required_resources(&config)?;
     let resources = acquired
         .iter()
         .map(Rem6ResourceAcquireResourceSummary::from_suite_acquired)
@@ -218,6 +219,36 @@ fn run_suite_resource_acquire_config(
     artifact.stats_json = stats.json;
     artifact.stats_text = stats.text;
     Ok(artifact)
+}
+
+fn suite_replay_plan_and_executor(
+    config: &Rem6ResourceAcquireConfig,
+) -> Result<
+    (
+        WorkloadSuiteReplayPlan,
+        WorkloadInMemoryResourceAcquisitionExecutor,
+    ),
+    Rem6CliError,
+> {
+    let suite_id = config
+        .suite_id()
+        .ok_or(Rem6CliError::MissingRequiredFlag {
+            flag: "resource_acquire.suite_id",
+        })?
+        .to_string();
+    let mut suite_builder =
+        WorkloadSuite::builder(WorkloadSuiteId::new(&suite_id).map_err(execute_error)?);
+    let mut executor = WorkloadInMemoryResourceAcquisitionExecutor::new();
+    for manifest_config in config.manifests() {
+        let (manifest, next_executor) = build_manifest_and_artifacts(manifest_config, executor)?;
+        executor = next_executor;
+        suite_builder = suite_builder
+            .add_manifest(manifest)
+            .map_err(execute_error)?;
+    }
+    let suite = suite_builder.build().map_err(execute_error)?;
+    let plan = WorkloadSuiteReplayPlan::from_suite(&suite).map_err(execute_error)?;
+    Ok((plan, executor))
 }
 
 fn build_manifest_and_artifacts(

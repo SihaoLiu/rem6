@@ -15,7 +15,9 @@ use sha2::{Digest, Sha256};
 use crate::cli_output::emit_cli_output;
 use crate::config::{Rem6TraceReplayConfig, StatsFormat};
 use crate::formatting::bytes_to_hex;
-use crate::resource_acquire_cli::acquire_manifest_required_resources;
+use crate::resource_acquire_cli::{
+    acquire_manifest_required_resources, acquire_suite_required_resources,
+};
 use crate::resource_acquire_config::Rem6ResourceAcquireConfig;
 use crate::stats_output::{trace_replay_stats_output, Rem6TraceReplayStatsInputs};
 use crate::{execute_error, Rem6CliError};
@@ -154,6 +156,25 @@ fn trace_replay_payload(
             "--config".to_string(),
             resource_config.display().to_string(),
         ])?;
+        if acquire_config.suite_id().is_some() {
+            let (_plan, acquired) = acquire_suite_required_resources(&acquire_config)?;
+            let mut trace_payloads = acquired
+                .into_iter()
+                .filter(|resource| resource.acquired().resource() == trace_resource)
+                .map(|resource| resource.into_acquired().into_payload())
+                .collect::<Vec<_>>();
+            if trace_payloads.len() != 1 {
+                return Err(Rem6CliError::Execute {
+                    error: format!(
+                        "trace replay suite resource config {} acquired {} required trace resources; expected exactly one",
+                        resource_config.display(),
+                        trace_payloads.len(),
+                    ),
+                });
+            }
+            let payload = trace_payloads.remove(0);
+            return Ok(payload.data().to_vec());
+        }
         let (_manifest, acquired) = acquire_manifest_required_resources(&acquire_config)?;
         let payload = acquired
             .into_iter()
