@@ -62,6 +62,7 @@ pub(crate) fn run_trace_replay_cli(args: Vec<String>) -> Result<String, Rem6CliE
         artifact.config.output(),
         artifact.config.stats_output(),
         stats_format,
+        None,
     )
 }
 

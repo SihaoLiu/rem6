@@ -396,7 +396,8 @@ runtime resource counters, RISC-V in-order pipeline checkpoint capture/restore,
 GDB byte-stream packet handling, debug execution-control state for packet-stream
 step/resume and break/watch requests, fixed-width register-cache seeding, O3
 writeback transfer deferred-completion checkpoint payloads, and custom plus
-library-level McPAT-shaped and DSENT-shaped power-analysis exports.
+library-level and `rem6 run --power-output` McPAT-shaped and DSENT-shaped
+power-analysis exports.
 
 **Not migrated:** Complete gem5 text-stat parity, full debug execution control,
 runtime resource counters, runtime-calibrated power/thermal, and broad O3
@@ -407,8 +408,9 @@ ROB/LSQ/rename checkpoint ownership.
 checkpoint tests including RISC-V hart run-state and in-order pipeline restore,
 O3 writeback transfer deferred-state payload tests, GDB byte-stream and
 control-state tests, `gdb_remote_packet` execution-control tests,
-power-analysis export tests, system GDB software breakpoint patch/restore
-tests, CLI data-access probe tests, and histogram registry/output tests.
+power-analysis export tests, CLI power-output tests, system GDB software
+breakpoint patch/restore tests, CLI data-access probe tests, and histogram
+registry/output tests.
 The CLI data-access probe tests include stack-distance histogram stats emitted
 from executed RISC-V loads. CLI DRAM-backed execution tests include
 target/port/bank-level DRAM resource counters emitted from executed RISC-V
@@ -515,7 +517,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/regression_tests` | all rem6 crates | 35% unit-slice | Workspace tests act as the current regression suite. | Add migration tags or per-family regression rows. |
 | `tests/gem5/replacement_policies` | `rem6-cache` | 60% representative | Multiple replacement, indexing, dueling, compressed, and sector tag tests exist. | Add remaining policies and exact trace/reference parity where useful. |
 | `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, RFENCE remote SFENCE.VMA data TLB flushes with finite-range, ASID scope, and scheduled completion events, unsupported HFENCE validation, and HSM start entry-state, `START_PENDING`, status, no-return stop, retentive-suspend, default-non-retentive `RESUME_PENDING`/resume, and IPI-wake slices are tested. | Add broader SBI timer/IPI/reset power-state behavior, remaining HSM wake semantics, RFENCE hypervisor-fence execution semantics and broader completion coverage, and a real Linux boot smoke. |
-| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 62% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, instruction/data cache counters, cache-local prefetch queue counters, CLI stat output, and library-level McPAT/DSENT-shaped export self-tests exist. | Add more hierarchy counters, power-export CLI/runtime wiring, and stricter text-stat compatibility. |
+| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 64% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, instruction/data cache counters, cache-local prefetch queue counters, CLI stat output, and library-level plus run-CLI McPAT/DSENT-shaped export tests exist. | Add more hierarchy counters, calibrated power/thermal activity, and stricter text-stat compatibility. |
 | `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 50% single-axis | Workload manifests, resource payloads, manifest/suite-level CLI resource acquisition including host-file and uncompressed/gzip tar-entry inputs, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage, remote/cache policy acquisition, and ergonomic topology/workload definitions. |
 | `tests/test-progs` | `rem6-system`, `rem6` CLI, ISA crates | 35% unit-slice | Static RISC-V no-libc, newlib, and raw syscall smoke binaries, including `statx`, `sysinfo`, newlib file-create roundtrip, newlib `/proc/self/exe` readlink coverage, newlib pipe2 roundtrip coverage, newlib directory-open coverage, and newlib open-flag coverage, are generated when tools exist. | Add durable generated fixtures for hello, threads, and m5 utility shapes across ISAs. |
 | `tests/gem5/traffic_gen` | `rem6-traffic`, `rem6-system`, `rem6-workload`, `rem6` CLI | 55% single-axis | Text config parsing, GUPS, packet trace replay including resource-config trace handoff, flags, maintenance, HTM, responses, workload summaries, typed generator/memory-profile summaries, and top-level GUPS profile JSON/stats output exist. | Add cache hierarchy matrix and broader trusted stats. |
@@ -568,16 +570,17 @@ external adapter contract in `rem6-proto` self-tests.
 
 **Next evidence:** SST-specific checkpoint and runtime handoff tests.
 
-### Power and Physical-Design Export Adapters - 50% single-axis
+### Power and Physical-Design Export Adapters - 57% single-axis
 
-**Score calculation:** 3 of 6 items have executable evidence, or 50% raw. The
-bucket cap is single-axis because library-level McPAT-shaped and DSENT-shaped
-exports exist, but top-level CLI/runtime export wiring, ingestion, full schema
-parity, and NoMali evidence remain absent.
+**Score calculation:** 4 of 7 items have executable evidence, or 57% raw. The
+bucket cap is single-axis because McPAT-shaped and DSENT-shaped exports can be
+written from a top-level run, but external-tool ingestion, full schema parity,
+calibrated activity, and NoMali evidence remain absent.
 
 - [x] rem6-power can export typed power-analysis records.
 - [x] McPAT-shaped XML export serializes power, thermal, and residency records.
 - [x] DSENT-shaped CSV export serializes power, thermal, and residency records.
+- [x] `rem6 run --power-output` writes an executed-run activity-derived power-analysis artifact.
 - [ ] McPAT-compatible ingestion/export parity is complete.
 - [ ] DSENT-compatible ingestion/export parity is complete.
 - [ ] NoMali-compatible GPU adapter evidence exists.
@@ -585,15 +588,20 @@ parity, and NoMali evidence remain absent.
 **Migrated:** Typed power-analysis export records and deterministic library-level
 custom XML smoke coverage for totals, components, and residency entries, plus
 deterministic library-level McPAT-shaped XML and DSENT-shaped CSV exports.
+Top-level `rem6 run --power-output` emits an activity-derived McPAT-shaped or
+DSENT-shaped artifact from executed CPU and DRAM summaries, and reports the
+artifact path in run JSON or the CLI output envelope.
 
 **Not migrated:** Complete `ext/nomali`, `ext/mcpat`, and `ext/dsent` parity,
-plus top-level CLI/runtime export wiring from real simulation activity.
+external-tool ingestion, full external schema parity, and calibrated
+power/thermal activity.
 
 **Evidence:** rem6-power power-analysis export self-tests including custom XML,
-McPAT-shaped XML, and DSENT-shaped CSV output. Top-level `rem6` CLI/runtime
-power export is not wired yet.
+McPAT-shaped XML, and DSENT-shaped CSV output; `rem6 run` CLI tests for
+`--power-output`, envelope reporting, and load-only rejection.
 
-**Next evidence:** Adapter ingestion and stricter external schema parity tests.
+**Next evidence:** Adapter ingestion, calibrated activity models, and stricter
+external schema parity tests.
 
 ### Native Loader and Math Replacement - 50% single-axis
 

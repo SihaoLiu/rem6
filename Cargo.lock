@@ -155,6 +155,7 @@ dependencies = [
  "rem6-isa-riscv",
  "rem6-kernel",
  "rem6-memory",
+ "rem6-power",
  "rem6-stats",
  "rem6-system",
  "rem6-traffic",

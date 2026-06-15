@@ -36,6 +36,9 @@ pub enum Rem6CliError {
     UnsupportedStatsFormat {
         format: String,
     },
+    UnsupportedPowerAnalysisFormat {
+        format: String,
+    },
     UnsupportedDramMemoryProfile {
         profile: String,
     },
@@ -141,6 +144,7 @@ pub enum Rem6CliError {
     RiscvSeRequiresExecution,
     DataCacheProtocolRequiresExecution,
     InstructionCacheProtocolRequiresExecution,
+    PowerOutputRequiresExecution,
     RiscvSeInputRequiresRiscvSe {
         input: &'static str,
     },
@@ -200,6 +204,12 @@ pub enum Rem6CliError {
     ConflictingOutputPaths {
         path: PathBuf,
     },
+    ConflictingRunOutputPaths {
+        path: PathBuf,
+    },
+    PowerAnalysis {
+        error: String,
+    },
     WriteOutput {
         path: PathBuf,
         error: String,
@@ -233,6 +243,9 @@ impl fmt::Display for Rem6CliError {
             Self::UnsupportedIsa { isa } => write!(formatter, "unsupported ISA {isa}"),
             Self::UnsupportedStatsFormat { format } => {
                 write!(formatter, "unsupported stats format {format}")
+            }
+            Self::UnsupportedPowerAnalysisFormat { format } => {
+                write!(formatter, "unsupported power analysis format {format}")
             }
             Self::UnsupportedDramMemoryProfile { profile } => {
                 write!(formatter, "unsupported DRAM memory profile {profile}")
@@ -355,6 +368,9 @@ impl fmt::Display for Rem6CliError {
             Self::InstructionCacheProtocolRequiresExecution => {
                 write!(formatter, "--instruction-cache-protocol requires --execute")
             }
+            Self::PowerOutputRequiresExecution => {
+                write!(formatter, "--power-output requires --execute")
+            }
             Self::RiscvSeInputRequiresRiscvSe { input } => {
                 write!(formatter, "{input} requires --riscv-se")
             }
@@ -450,6 +466,14 @@ impl fmt::Display for Rem6CliError {
                 "--output and --stats-output must use different paths: {}",
                 path.display()
             ),
+            Self::ConflictingRunOutputPaths { path } => write!(
+                formatter,
+                "run output artifacts must use different paths: {}",
+                path.display()
+            ),
+            Self::PowerAnalysis { error } => {
+                write!(formatter, "failed to build power analysis export: {error}")
+            }
             Self::WriteOutput { path, error } => {
                 write!(formatter, "failed to write {}: {error}", path.display())
             }

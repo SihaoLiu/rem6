@@ -71,6 +71,31 @@ impl StatsFormat {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PowerAnalysisFormat {
+    McpatXml,
+    DsentCsv,
+}
+
+impl PowerAnalysisFormat {
+    pub fn parse(value: &str) -> Result<Self, Rem6CliError> {
+        match value {
+            "mcpat-xml" => Ok(Self::McpatXml),
+            "dsent-csv" => Ok(Self::DsentCsv),
+            _ => Err(Rem6CliError::UnsupportedPowerAnalysisFormat {
+                format: value.to_string(),
+            }),
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::McpatXml => "mcpat-xml",
+            Self::DsentCsv => "dsent-csv",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CliDramMemoryProfile {
     Ddr,
     Ddr4_2400_8Gb,
@@ -139,6 +164,8 @@ pub struct Rem6RunConfig {
     load_blobs: Vec<LoadBlobRequest>,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
+    power_format: PowerAnalysisFormat,
+    power_output: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -214,6 +241,8 @@ struct Rem6RunFileConfig {
     load_blobs: Option<Vec<String>>,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
+    power_format: Option<String>,
+    power_output: Option<PathBuf>,
     #[serde(skip)]
     config_dir: Option<PathBuf>,
 }
@@ -453,6 +482,16 @@ impl Rem6RunConfig {
             .stats_output
             .as_deref()
             .map(|path| file_config.resolve_path(path));
+        let mut power_format = file_config
+            .power_format
+            .as_deref()
+            .map(PowerAnalysisFormat::parse)
+            .transpose()?
+            .unwrap_or(PowerAnalysisFormat::McpatXml);
+        let mut power_output = file_config
+            .power_output
+            .as_deref()
+            .map(|path| file_config.resolve_path(path));
         let mut args = remaining_args.into_iter();
         while let Some(flag) = args.next() {
             match flag.as_str() {
@@ -636,6 +675,13 @@ impl Rem6RunConfig {
                 "--stats-output" => {
                     stats_output = Some(PathBuf::from(required_value(&flag, args.next())?));
                 }
+                "--power-format" => {
+                    power_format =
+                        PowerAnalysisFormat::parse(&required_value(&flag, args.next())?)?;
+                }
+                "--power-output" => {
+                    power_output = Some(PathBuf::from(required_value(&flag, args.next())?));
+                }
                 _ => return Err(Rem6CliError::UnknownFlag { flag }),
             }
         }
@@ -644,6 +690,14 @@ impl Rem6RunConfig {
             if output == stats_output {
                 return Err(Rem6CliError::ConflictingOutputPaths {
                     path: output.to_path_buf(),
+                });
+            }
+        }
+        if let Some(power_output) = &power_output {
+            if output.as_ref() == Some(power_output) || stats_output.as_ref() == Some(power_output)
+            {
+                return Err(Rem6CliError::ConflictingRunOutputPaths {
+                    path: power_output.to_path_buf(),
                 });
             }
         }
@@ -727,6 +781,8 @@ impl Rem6RunConfig {
             load_blobs,
             output,
             stats_output,
+            power_format,
+            power_output,
         })
     }
 
@@ -836,6 +892,14 @@ impl Rem6RunConfig {
 
     pub fn stats_output(&self) -> Option<&Path> {
         self.stats_output.as_deref()
+    }
+
+    pub const fn power_format(&self) -> PowerAnalysisFormat {
+        self.power_format
+    }
+
+    pub fn power_output(&self) -> Option<&Path> {
+        self.power_output.as_deref()
     }
 }
 
@@ -1550,6 +1614,8 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--load-blob",
             "--output",
             "--stats-output",
+            "--power-format",
+            "--power-output",
         ],
         &["--execute", "--dram-memory", "--riscv-se"],
     )

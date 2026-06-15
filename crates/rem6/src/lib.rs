@@ -35,6 +35,7 @@ mod formatting;
 mod guest_memory;
 mod gups_cli;
 mod parallel_stats;
+mod power_output;
 mod resource_acquire_cli;
 mod resource_acquire_config;
 mod runtime_memory;
@@ -46,8 +47,8 @@ mod transport_summary_tests;
 
 pub use cli_error::Rem6CliError;
 pub use config::{
-    CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest, Rem6GupsConfig, Rem6RunConfig,
-    Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, StatsFormat,
+    CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest, PowerAnalysisFormat, Rem6GupsConfig,
+    Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, StatsFormat,
 };
 use data_cache_runtime::{
     cli_data_memory_response, with_riscv_syscall_data_cache_memory_io, CliDataCacheRuntime,
@@ -55,6 +56,7 @@ use data_cache_runtime::{
 };
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
+use power_output::{run_power_analysis_artifact, Rem6PowerAnalysisArtifact};
 pub use resource_acquire_cli::{
     run_resource_acquire_config, Rem6ResourceAcquireArtifact, Rem6ResourceAcquireResourceSummary,
 };
@@ -90,6 +92,7 @@ pub struct Rem6RunArtifact {
     execution: Option<Rem6ExecutionSummary>,
     stats_json: String,
     stats_text: String,
+    power_analysis: Option<Rem6PowerAnalysisArtifact>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -451,6 +454,14 @@ fn run_run_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
         artifact.config.output(),
         artifact.config.stats_output(),
         stats_format,
+        artifact
+            .power_analysis
+            .as_ref()
+            .map(|artifact| cli_output::ExtraCliArtifact {
+                name: "power_artifact",
+                path: artifact.output(),
+                contents: artifact.contents(),
+            }),
     )
 }
 
@@ -493,6 +504,9 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         }
         if config.instruction_cache_protocol().is_some() {
             return Err(Rem6CliError::InstructionCacheProtocolRequiresExecution);
+        }
+        if config.power_output().is_some() {
+            return Err(Rem6CliError::PowerOutputRequiresExecution);
         }
     }
     if config.data_cache_protocol().is_some() {
@@ -561,6 +575,14 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         config: &config,
         execution: execution.as_ref(),
     })?;
+    let power_analysis = match (execution.as_ref(), config.power_output()) {
+        (Some(execution), Some(path)) => Some(run_power_analysis_artifact(
+            config.power_format(),
+            path.to_path_buf(),
+            execution,
+        )?),
+        _ => None,
+    };
     Ok(Rem6RunArtifact {
         schema: "rem6.cli.run.v1",
         binary_bytes: bytes.len() as u64,
@@ -573,6 +595,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         execution,
         stats_json: stats.json,
         stats_text: stats.text,
+        power_analysis,
     })
 }
 
