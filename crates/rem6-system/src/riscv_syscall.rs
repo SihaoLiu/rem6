@@ -125,8 +125,9 @@ use permissions::{syscall_umask, RISCV_LINUX_UMASK};
 use pipe::{syscall_pipe2, RiscvGuestPipeId, RISCV_LINUX_PIPE2};
 use poll::{syscall_ppoll, RISCV_LINUX_PPOLL};
 use process::{
-    syscall_getpgid, syscall_getsid, syscall_setpgid, syscall_setsid, RISCV_LINUX_GETPGID,
-    RISCV_LINUX_GETSID, RISCV_LINUX_SETPGID, RISCV_LINUX_SETSID,
+    syscall_getpgid, syscall_getsid, syscall_prctl, syscall_setpgid, syscall_setsid,
+    RISCV_LINUX_GETPGID, RISCV_LINUX_GETSID, RISCV_LINUX_PRCTL, RISCV_LINUX_SETPGID,
+    RISCV_LINUX_SETSID,
 };
 use random::{invalid_getrandom_flags, syscall_getrandom, RISCV_LINUX_GETRANDOM};
 use readv::{syscall_readv, RISCV_LINUX_READV};
@@ -265,6 +266,7 @@ pub struct RiscvSyscallState {
     guest_futexes: GuestFutexTable,
     guest_wait: GuestWaitQueue,
     session_id: u64,
+    process_name: [u8; 16],
     guest_paths: BTreeSet<Vec<u8>>,
     guest_directories: BTreeSet<Vec<u8>>,
     guest_directory_modes: BTreeMap<Vec<u8>, u32>,
@@ -346,6 +348,7 @@ impl RiscvSyscallState {
             guest_futexes: GuestFutexTable::new(),
             guest_wait: GuestWaitQueue::new(current_process_group),
             session_id: u64::from(current_process_group.get()),
+            process_name: *b"rem6\0\0\0\0\0\0\0\0\0\0\0\0",
             guest_paths: BTreeSet::new(),
             guest_directories: BTreeSet::new(),
             guest_directory_modes: BTreeMap::new(),
@@ -1269,6 +1272,10 @@ impl RiscvSyscallTable {
             RISCV_LINUX_SETSID => Some(RiscvSyscallOutcome::Return {
                 value: syscall_setsid(state),
             }),
+            RISCV_LINUX_PRCTL => {
+                syscall_prctl(request, state, guest_memory_reader, guest_memory_writer)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
             RISCV_LINUX_UNAME => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: write_riscv_linux_utsname(request.argument(0), guest_memory),

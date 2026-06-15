@@ -317,6 +317,241 @@ fn linux_table_setsid_creates_session_for_current_nonleader() {
 }
 
 #[test]
+fn linux_table_prctl_set_and_get_name_roundtrips_process_name() {
+    const RISCV_LINUX_PRCTL: u64 = 167;
+    const RISCV_LINUX_PR_SET_NAME: u64 = 15;
+    const RISCV_LINUX_PR_GET_NAME: u64 = 16;
+
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let name = b"rem6-worker-thread-name-is-truncated\0".to_vec();
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        let offset = usize::try_from(address.checked_sub(0x9000)?).ok()?;
+        let end = offset.checked_add(bytes)?;
+        (end <= name.len()).then(|| name[offset..end].to_vec())
+    });
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_PRCTL,
+                [RISCV_LINUX_PR_SET_NAME, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            0,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_PRCTL,
+                [RISCV_LINUX_PR_GET_NAME, 0xa000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            0,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let writes = writes.lock().unwrap();
+    assert_eq!(
+        writes.as_slice(),
+        &[(0xa000, b"rem6-worker-thr\0".to_vec())]
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_prctl_set_name_clears_bytes_after_first_nul() {
+    const RISCV_LINUX_PRCTL: u64 = 167;
+    const RISCV_LINUX_PR_SET_NAME: u64 = 15;
+    const RISCV_LINUX_PR_GET_NAME: u64 = 16;
+
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        let source = b"ab\0junk-data-here";
+        let offset = usize::try_from(address.checked_sub(0x9000)?).ok()?;
+        let end = offset.checked_add(bytes)?;
+        (end <= source.len()).then(|| source[offset..end].to_vec())
+    });
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_PRCTL,
+                [RISCV_LINUX_PR_SET_NAME, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            0,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_PRCTL,
+                [RISCV_LINUX_PR_GET_NAME, 0xa000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            0,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let mut expected = [0; 16];
+    expected[0] = b'a';
+    expected[1] = b'b';
+    let writes = writes.lock().unwrap();
+    assert_eq!(writes.as_slice(), &[(0xa000, expected.to_vec())]);
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_prctl_set_name_reads_only_through_first_nul() {
+    const RISCV_LINUX_PRCTL: u64 = 167;
+    const RISCV_LINUX_PR_SET_NAME: u64 = 15;
+    const RISCV_LINUX_PR_GET_NAME: u64 = 16;
+
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        let offset = address.checked_sub(0x9000)? as usize;
+        let source = b"xy\0";
+        if bytes == 1 && offset < source.len() {
+            Some(vec![source[offset]])
+        } else {
+            None
+        }
+    });
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_PRCTL,
+                [RISCV_LINUX_PR_SET_NAME, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            0,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_PRCTL,
+                [RISCV_LINUX_PR_GET_NAME, 0xa000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            0,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let mut expected = [0; 16];
+    expected[0] = b'x';
+    expected[1] = b'y';
+    let writes = writes.lock().unwrap();
+    assert_eq!(writes.as_slice(), &[(0xa000, expected.to_vec())]);
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_prctl_set_name_reports_efault_on_guest_address_overflow() {
+    const RISCV_LINUX_PRCTL: u64 = 167;
+    const RISCV_LINUX_PR_SET_NAME: u64 = 15;
+
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if bytes == 1 && address >= u64::MAX - 1 {
+            Some(vec![b'z'])
+        } else {
+            None
+        }
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_PRCTL,
+                [RISCV_LINUX_PR_SET_NAME, u64::MAX - 1, 0, 0, 0, 0],
+            ),
+            &mut state,
+            0,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_prctl_rejects_unknown_option_without_unknown_syscall_record() {
+    const RISCV_LINUX_PRCTL: u64 = 167;
+
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_PRCTL, [999, 0, 0, 0, 0, 0],),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
 fn linux_table_wait4_after_rejected_setpgid_still_uses_current_process_group() {
     let table = RiscvSyscallTable::new();
     let mut state =
