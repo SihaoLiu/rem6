@@ -139,6 +139,7 @@ impl CliDramMemoryProfile {
 pub struct Rem6RunConfig {
     isa: RequestedIsa,
     binary: PathBuf,
+    resource_config: Option<PathBuf>,
     max_tick: u64,
     min_remote_delay: u64,
     memory_route_delay: u64,
@@ -216,6 +217,7 @@ struct Rem6FileConfig {
 struct Rem6RunFileConfig {
     isa: Option<String>,
     binary: Option<PathBuf>,
+    resource_config: Option<PathBuf>,
     max_tick: Option<u64>,
     min_remote_delay: Option<u64>,
     memory_route_delay: Option<u64>,
@@ -349,6 +351,10 @@ impl Rem6RunConfig {
             .transpose()?;
         let mut binary = file_config
             .binary
+            .as_deref()
+            .map(|path| file_config.resolve_path(path));
+        let mut resource_config = file_config
+            .resource_config
             .as_deref()
             .map(|path| file_config.resolve_path(path));
         let mut max_tick = file_config.max_tick;
@@ -503,6 +509,11 @@ impl Rem6RunConfig {
                 }
                 "--binary" => {
                     binary = Some(PathBuf::from(required_value(&flag, args.next())?));
+                    resource_config = None;
+                }
+                "--resource-config" => {
+                    resource_config = Some(PathBuf::from(required_value(&flag, args.next())?));
+                    binary = None;
                 }
                 "--max-tick" => {
                     let value = required_value(&flag, args.next())?;
@@ -715,6 +726,9 @@ impl Rem6RunConfig {
                 min_remote_delay,
             });
         }
+        if binary.is_some() && resource_config.is_some() {
+            return Err(Rem6CliError::ConflictingRunBinarySources);
+        }
         if dram_memory_profile_was_set && !dram_memory {
             return Err(Rem6CliError::DramMemoryProfileRequiresDramMemory);
         }
@@ -753,9 +767,20 @@ impl Rem6RunConfig {
             }
         }
 
+        let binary = binary
+            .or_else(|| {
+                resource_config
+                    .as_ref()
+                    .map(|path| PathBuf::from(format!("resource-config:{}", path.display())))
+            })
+            .ok_or(Rem6CliError::MissingRequiredFlag {
+                flag: "--binary or --resource-config",
+            })?;
+
         Ok(Self {
             isa: isa.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--isa" })?,
-            binary: binary.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--binary" })?,
+            binary,
+            resource_config,
             max_tick: max_tick.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--max-tick" })?,
             min_remote_delay,
             memory_route_delay,
@@ -792,6 +817,10 @@ impl Rem6RunConfig {
 
     pub fn binary(&self) -> &Path {
         &self.binary
+    }
+
+    pub fn resource_config(&self) -> Option<&Path> {
+        self.resource_config.as_deref()
     }
 
     pub const fn max_tick(&self) -> u64 {
@@ -1592,6 +1621,7 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
         &[
             "--isa",
             "--binary",
+            "--resource-config",
             "--max-tick",
             "--min-remote-delay",
             "--memory-route-delay",

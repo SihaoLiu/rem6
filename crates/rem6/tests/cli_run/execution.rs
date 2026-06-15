@@ -237,6 +237,72 @@ fn rem6_run_resolves_toml_relative_binary_from_config_directory() {
 }
 
 #[test]
+fn rem6_run_loads_kernel_binary_from_manifest_resource_config() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let workspace = temp_workspace("run-resource-config-kernel");
+    let binary_name = "kernel.elf";
+    let binary = workspace.join(binary_name);
+    fs::write(&binary, &elf).unwrap();
+    let resource_config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+workload_id = "run-resource-cli"
+boot_entry = 2147483648
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:run-kernel-resource"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel"
+artifact = "kernel.elf"
+artifact_digest = "sha256:run-kernel-resource"
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("run.toml");
+    fs::write(
+        &config,
+        "[run]\nisa = \"riscv\"\nresource_config = \"resource-acquire.toml\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\ncores = 1\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"binary\":\"resource-config:"));
+    assert!(stdout.contains("resource-acquire.toml"));
+    assert!(stdout.contains("\"stop_code\":0"));
+    assert!(stdout.contains("\"trap\":\"environment_call\""));
+    assert!(stdout.contains("\"x5\":\"0x7\""));
+    assert_stat(
+        &stdout,
+        "sim.instructions.committed",
+        "Count",
+        2,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_cli_load_blob_flags_replace_toml_load_blob_defaults() {
     let program = riscv64_program(&[0x0000_0073]); // ecall
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);

@@ -207,6 +207,7 @@ pub enum Rem6CliError {
     ConflictingRunOutputPaths {
         path: PathBuf,
     },
+    ConflictingRunBinarySources,
     PowerAnalysis {
         error: String,
     },
@@ -471,6 +472,9 @@ impl fmt::Display for Rem6CliError {
                 "run output artifacts must use different paths: {}",
                 path.display()
             ),
+            Self::ConflictingRunBinarySources => {
+                write!(formatter, "run binary sources conflict: use binary or resource_config")
+            }
             Self::PowerAnalysis { error } => {
                 write!(formatter, "failed to build power analysis export: {error}")
             }

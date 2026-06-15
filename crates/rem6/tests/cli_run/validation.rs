@@ -961,6 +961,152 @@ fn rem6_run_rejects_overlapping_load_blobs() {
 }
 
 #[test]
+fn rem6_run_rejects_toml_binary_and_resource_config_together() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let workspace = temp_workspace("run-binary-resource-config-conflict");
+    let binary = workspace.join("kernel.elf");
+    std::fs::write(&binary, elf).unwrap();
+    let resource_config = workspace.join("resource-acquire.toml");
+    std::fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+workload_id = "conflict"
+boot_entry = 2147483648
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:conflict-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel"
+artifact = "kernel.elf"
+artifact_digest = "sha256:conflict-kernel"
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("run.toml");
+    std::fs::write(
+        &config,
+        "[run]\nisa = \"riscv\"\nbinary = \"kernel.elf\"\nresource_config = \"resource-acquire.toml\"\nmax_tick = 40\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("run binary sources conflict"));
+    assert!(stderr.contains("binary"));
+    assert!(stderr.contains("resource_config"));
+}
+
+#[test]
+fn rem6_run_rejects_resource_config_without_required_kernel() {
+    let workspace = temp_workspace("run-resource-config-no-kernel");
+    let input = workspace.join("input.bin");
+    std::fs::write(&input, [0xaa]).unwrap();
+    let resource_config = workspace.join("resource-acquire.toml");
+    std::fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+workload_id = "no-kernel"
+boot_entry = 2147483648
+
+[[resource_acquire.resources]]
+id = "input"
+kind = "input"
+digest = "sha256:input"
+locator = "resources/input.bin"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://input"
+artifact = "input.bin"
+artifact_digest = "sha256:input"
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("run.toml");
+    std::fs::write(
+        &config,
+        "[run]\nisa = \"riscv\"\nresource_config = \"resource-acquire.toml\"\nmax_tick = 40\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("acquired 0 required kernel resources"));
+    assert!(stderr.contains("expected exactly one"));
+}
+
+#[test]
+fn rem6_run_rejects_resource_config_with_multiple_required_kernels() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let workspace = temp_workspace("run-resource-config-multiple-kernels");
+    std::fs::write(workspace.join("kernel-a.elf"), &elf).unwrap();
+    std::fs::write(workspace.join("kernel-b.elf"), &elf).unwrap();
+    let resource_config = workspace.join("resource-acquire.toml");
+    std::fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+workload_id = "multiple-kernel"
+boot_entry = 2147483648
+
+[[resource_acquire.resources]]
+id = "kernel-a"
+kind = "kernel"
+digest = "sha256:kernel-a"
+locator = "resources/kernel-a.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel-a"
+artifact = "kernel-a.elf"
+artifact_digest = "sha256:kernel-a"
+
+[[resource_acquire.resources]]
+id = "kernel-b"
+kind = "kernel"
+digest = "sha256:kernel-b"
+locator = "resources/kernel-b.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel-b"
+artifact = "kernel-b.elf"
+artifact_digest = "sha256:kernel-b"
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("run.toml");
+    std::fs::write(
+        &config,
+        "[run]\nisa = \"riscv\"\nresource_config = \"resource-acquire.toml\"\nmax_tick = 40\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("acquired 2 required kernel resources"));
+    assert!(stderr.contains("expected exactly one"));
+}
+
+#[test]
 fn rem6_run_rejects_memory_route_delay_below_scheduler_lookahead() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("short-memory-route-delay", &elf);

@@ -38,6 +38,7 @@ mod parallel_stats;
 mod power_output;
 mod resource_acquire_cli;
 mod resource_acquire_config;
+mod run_resource_config;
 mod runtime_memory;
 mod stats_output;
 mod trace_replay_cli;
@@ -61,6 +62,7 @@ pub use resource_acquire_cli::{
     run_resource_acquire_config, Rem6ResourceAcquireArtifact, Rem6ResourceAcquireResourceSummary,
 };
 pub use resource_acquire_config::{Rem6ResourceAcquireConfig, Rem6ResourceAcquireResourceConfig};
+use run_resource_config::run_kernel_binary_from_resource_config;
 use runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use stats_output::{run_stats_output, Rem6StatsInputs};
 pub use trace_replay_cli::{
@@ -466,10 +468,7 @@ fn run_run_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
 }
 
 pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError> {
-    let bytes = std::fs::read(config.binary()).map_err(|error| Rem6CliError::ReadBinary {
-        path: config.binary().to_path_buf(),
-        error: error.to_string(),
-    })?;
+    let bytes = run_binary_bytes(&config)?;
     let image = BootImage::from_elf(&bytes).map_err(|error| Rem6CliError::LoadBinary {
         path: config.binary().to_path_buf(),
         error: error.to_string(),
@@ -596,6 +595,17 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         stats_json: stats.json,
         stats_text: stats.text,
         power_analysis,
+    })
+}
+
+fn run_binary_bytes(config: &Rem6RunConfig) -> Result<Vec<u8>, Rem6CliError> {
+    if let Some(resource_config) = config.resource_config() {
+        return run_kernel_binary_from_resource_config(resource_config);
+    }
+
+    std::fs::read(config.binary()).map_err(|error| Rem6CliError::ReadBinary {
+        path: config.binary().to_path_buf(),
+        error: error.to_string(),
     })
 }
 

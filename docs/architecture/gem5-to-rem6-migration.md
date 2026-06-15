@@ -423,17 +423,17 @@ O3 checkpoint capture/restore.
 
 ### Configuration, Resources, Suites, GPU, and Accelerators - 59% single-axis
 
-**Score calculation:** 9 of 14 items have executable evidence, or 64% raw. The
-bucket cap is single-axis; its 59% maximum reports a three-point discount
-because GPU memory behavior is visible inside the GPU execution path but does
-not yet drive cache/DRAM, manifest and suite acquisition have top-level
-local-artifact paths, a trace-replay suite resource handoff exists, and
-benchmark orchestration remains absent.
+**Score calculation:** 10 of 15 items have executable evidence, or 67% raw.
+The bucket cap is single-axis because GPU memory behavior is visible inside the
+GPU execution path but does not yet drive cache/DRAM, manifest and suite
+acquisition have top-level local-artifact paths, narrow run and trace-replay
+resource handoffs exist, and benchmark orchestration remains absent.
 
 - [x] CLI `run`, `gups`, and `trace-replay` plus TOML configuration have tests; `gups` emits traffic profile summaries from the executed controller.
 - [x] Workload manifests, resource identity, disk-image construction records, and suite planning exist.
 - [x] CLI workload-resource acquisition consumes a resource executor for manifest required artifacts.
 - [x] CLI workload-resource acquisition consumes a resource executor for suite required artifacts.
+- [x] CLI `run` consumes a manifest-acquired kernel resource at runtime.
 - [x] CLI `trace-replay` consumes a unique suite-acquired trace resource at runtime.
 - [x] GPU and accelerator command routing, DMA routes, topology validation, and replay evidence exist.
 - [x] Dispatch plans and execution summaries expose typed parallel evidence.
@@ -454,10 +454,12 @@ top-level host-file acquisition through config-relative host paths and the same
 executor validation flow, top-level uncompressed tar archive entry acquisition
 and gzip-compressed tar archive entry acquisition through the same executor
 validation flow, top-level HTTP `remote-uri` acquisition through the same
-executor validation flow, top-level `trace-replay` handoff of an acquired trace
-manifest resource into `RiscvWorkloadReplay`, top-level `trace-replay` handoff
-of a unique suite-acquired trace resource into `RiscvWorkloadReplay`,
-GPU/accelerator shells, DMA routing, and a
+executor validation flow, top-level `rem6 run` handoff of a manifest-acquired
+kernel resource into the normal ELF load and execution path, top-level
+`trace-replay` handoff of an acquired trace manifest resource into
+`RiscvWorkloadReplay`, top-level `trace-replay` handoff of a unique
+suite-acquired trace resource into `RiscvWorkloadReplay`, GPU/accelerator
+shells, DMA routing, and a
 minimal GPU scalar ISA program execution path with completion, queued-workgroup
 snapshot evidence, visible compute-unit assignment, coalesced memory access
 records, and top-level GUPS traffic profile JSON/stats output.
@@ -465,18 +467,19 @@ records, and top-level GUPS traffic profile JSON/stats output.
 **Not migrated:** Full gem5 stdlib ergonomics, host/network/archive resource
 acquisition beyond the host-file, tar-entry, gzip-tar-entry, and basic HTTP
 slices, HTTPS, redirects, cache/policy controls, other compressed archive
-formats, runtime handoff of acquired suite resources into executable workload
-replay beyond the unique trace-resource replay slice, broad GPU ISA semantics,
-GPU cache/DRAM interaction, and broad benchmark orchestration.
+formats, runtime handoff of acquired suite resources into `rem6 run` or
+workload replay beyond the unique trace-resource replay slice, broad GPU ISA
+semantics, GPU cache/DRAM interaction, and broad benchmark orchestration.
 
 **Evidence:** `Rem6RunConfig`, `run_config`, `WorkloadManifest`,
 `WorkloadResource`, `WorkloadSuiteReplayPlan`,
 `WorkloadInMemoryResourceAcquisitionExecutor`, `WorkloadResolvedResources`,
-`rem6 resource-acquire` CLI tests, `rem6 trace-replay` manifest and suite
-resource-config handoff tests, suite tests, resource acquisition executor
-tests, `rem6 gups` profile-summary CLI tests, GPU and accelerator topology
-tests, and GPU compute tests covering scalar ISA execution, coalesced memory
-records, and snapshot restore of queued ISA programs.
+`rem6 resource-acquire` CLI tests, `rem6 run` manifest resource-config kernel
+handoff tests, `rem6 trace-replay` manifest and suite resource-config handoff
+tests, suite tests, resource acquisition executor tests, `rem6 gups`
+profile-summary CLI tests, GPU and accelerator topology tests, and GPU compute
+tests covering scalar ISA execution, coalesced memory records, and snapshot
+restore of queued ISA programs.
 
 **Next evidence:** Broader suite-level handoff into executable workload replay,
 network-backed workload acquisition, additional compressed archive formats,
@@ -503,7 +506,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/example_configs`, `tests/gem5/learning_gem5` | `rem6` CLI, `rem6-platform`, `rem6-workload` | 40% single-axis | CLI and TOML tests cover several execution and trace-replay paths. | Add rem6 examples that run from data files without recompilation. |
 | `tests/gem5/fdp_tests` | `rem6-cache` | 45% single-axis | Fetch-directed prefetcher state, errors, and cache-local queue/translation counters have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |
 | `tests/gem5/fs` | `rem6-platform`, `rem6-system`, device crates | 15% scoped | Generic device and handoff slices exist, but the gem5 row is mainly full-system boot. | Add full-system Linux boot with SBI, console, storage, network, timer, and shutdown evidence. |
-| `tests/gem5/gem5_resources` | `rem6-workload`, `rem6` CLI | 52% single-axis | Resource declarations, identity, provenance, disk-image construction records, library-level in-memory acquisition executor records, manifest/suite-level `rem6 resource-acquire` execution with local-artifact, host-file, uncompressed/gzip tar-entry, and basic HTTP remote inputs, plus manifest and unique suite trace-replay resource-config handoff exist. | Add broader network-backed, additional compressed-archive, suite runtime handoff beyond trace replay, and artifact-kind acquisition coverage. |
+| `tests/gem5/gem5_resources` | `rem6-workload`, `rem6` CLI | 54% single-axis | Resource declarations, identity, provenance, disk-image construction records, library-level in-memory acquisition executor records, manifest/suite-level `rem6 resource-acquire` execution with local-artifact, host-file, uncompressed/gzip tar-entry, and basic HTTP remote inputs, plus manifest run-kernel and manifest/unique-suite trace-replay resource-config handoff exist. | Add broader network-backed, additional compressed-archive, suite runtime handoff beyond trace replay, and artifact-kind acquisition coverage. |
 | `tests/gem5/gpu` | `rem6-gpu`, `rem6-accelerator`, `rem6-transport` | 35% unit-slice | GPU and accelerator topology, command, DMA route, scalar ISA, CU assignment, and coalesced memory-record tests exist. | Add representative CU scheduling and cache/DRAM interactions. |
 | `tests/gem5/insttest_se` | future SPARC owner, ISA crates | 10% scoped | Current RISC-V evidence belongs under `asmtest`; this gem5 anchor is SPARC SE focused. | Add SPARC or explicitly retire the row as out of scope. |
 | `tests/gem5/kvm_fork_tests`, `tests/gem5/kvm_switch_tests` | `rem6-system`, future host adapters | 10% scoped | Host-assisted takeover admission rejects unsafe switch shapes. | Add explicit fast-forward adapter and KVM-like switch/fork tests. |
@@ -522,7 +525,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/replacement_policies` | `rem6-cache` | 60% representative | Multiple replacement, indexing, dueling, compressed, and sector tag tests exist. | Add remaining policies and exact trace/reference parity where useful. |
 | `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, RFENCE remote SFENCE.VMA data TLB flushes with finite-range, ASID scope, and scheduled completion events, unsupported HFENCE validation, and HSM start entry-state, `START_PENDING`, status, no-return stop, retentive-suspend, default-non-retentive `RESUME_PENDING`/resume, and IPI-wake slices are tested. | Add broader SBI timer/IPI/reset power-state behavior, remaining HSM wake semantics, RFENCE hypervisor-fence execution semantics and broader completion coverage, and a real Linux boot smoke. |
 | `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 64% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, instruction/data cache counters, cache-local prefetch queue counters, CLI stat output, and library-level plus run-CLI McPAT/DSENT-shaped export tests exist. | Add more hierarchy counters, calibrated power/thermal activity, and stricter text-stat compatibility. |
-| `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 50% single-axis | Workload manifests, resource payloads, manifest/suite-level CLI resource acquisition including host-file and uncompressed/gzip tar-entry inputs, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage, remote/cache policy acquisition, and ergonomic topology/workload definitions. |
+| `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 52% single-axis | Workload manifests, resource payloads, manifest/suite-level CLI resource acquisition including host-file and uncompressed/gzip tar-entry inputs, manifest-acquired run kernel handoff, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage, remote/cache policy acquisition, and ergonomic topology/workload definitions. |
 | `tests/test-progs` | `rem6-system`, `rem6` CLI, ISA crates | 35% unit-slice | Static RISC-V no-libc, newlib, and raw syscall smoke binaries, including `statx`, `sysinfo`, newlib file-create roundtrip, newlib `/proc/self/exe` readlink coverage, newlib pipe2 roundtrip coverage, newlib directory-open coverage, and newlib open-flag coverage, are generated when tools exist. | Add durable generated fixtures for hello, threads, and m5 utility shapes across ISAs. |
 | `tests/gem5/traffic_gen` | `rem6-traffic`, `rem6-system`, `rem6-workload`, `rem6` CLI | 55% single-axis | Text config parsing, GUPS, packet trace replay including manifest and unique suite resource-config trace handoff, flags, maintenance, HTM, responses, workload summaries, typed generator/memory-profile summaries, and top-level GUPS profile JSON/stats output exist. | Add cache hierarchy matrix and broader trusted stats. |
 | `tests/gem5/x86_boot_tests` | `rem6-isa-x86`, future platform work | 0% open | Narrow x86 prefix and interrupt-flag semantics exist, but no x86 boot path exists. | Add x86 ISA execution, paging, interrupt, platform, and boot-image tests. |
