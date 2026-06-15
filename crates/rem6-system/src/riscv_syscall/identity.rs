@@ -5,6 +5,8 @@ use super::{
     RISCV_LINUX_EINVAL, RISCV_LINUX_EPERM,
 };
 
+pub(super) const RISCV_LINUX_SETGID: u64 = 144;
+pub(super) const RISCV_LINUX_SETUID: u64 = 146;
 pub(super) const RISCV_LINUX_SETRESUID: u64 = 147;
 pub(super) const RISCV_LINUX_GETRESUID: u64 = 148;
 pub(super) const RISCV_LINUX_SETRESGID: u64 = 149;
@@ -158,6 +160,17 @@ pub(super) fn syscall_setres_identity(
     }
 }
 
+pub(super) fn syscall_set_identity(
+    request: RiscvSyscallRequest,
+    identity: &mut RiscvSyscallIdentity,
+) -> u64 {
+    match request.number() {
+        RISCV_LINUX_SETUID => set_user_identity(request.argument(0), identity),
+        RISCV_LINUX_SETGID => set_group_identity(request.argument(0), identity),
+        _ => unreachable!("RISC-V Linux identity update syscall is handled by caller"),
+    }
+}
+
 pub(super) fn syscall_getgroups(
     request: RiscvSyscallRequest,
     _identity: RiscvSyscallIdentity,
@@ -171,6 +184,36 @@ pub(super) fn syscall_getgroups(
 
 pub(super) fn syscall_setgroups() -> u64 {
     linux_error(RISCV_LINUX_EPERM)
+}
+
+fn set_user_identity(requested: u64, identity: &mut RiscvSyscallIdentity) -> u64 {
+    if identity.effective_user_id == 0 {
+        identity.user_id = requested;
+        identity.effective_user_id = requested;
+        identity.saved_user_id = requested;
+        return 0;
+    }
+    if requested == identity.user_id || requested == identity.saved_user_id {
+        identity.effective_user_id = requested;
+        0
+    } else {
+        linux_error(RISCV_LINUX_EPERM)
+    }
+}
+
+fn set_group_identity(requested: u64, identity: &mut RiscvSyscallIdentity) -> u64 {
+    if identity.effective_user_id == 0 {
+        identity.group_id = requested;
+        identity.effective_group_id = requested;
+        identity.saved_group_id = requested;
+        return 0;
+    }
+    if requested == identity.group_id || requested == identity.saved_group_id {
+        identity.effective_group_id = requested;
+        0
+    } else {
+        linux_error(RISCV_LINUX_EPERM)
+    }
 }
 
 fn setres_user_identity(request: RiscvSyscallRequest, identity: &mut RiscvSyscallIdentity) -> u64 {

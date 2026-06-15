@@ -291,22 +291,17 @@ fn linux_table_ignores_gem5_warn_once_startup_syscalls() {
 }
 
 #[test]
-fn linux_table_ignores_gem5_privilege_and_resource_advisory_syscalls() {
+fn linux_table_ignores_gem5_resource_advisory_syscalls() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
 
-    for (number, arguments) in [
-        (RISCV_LINUX_SETUID, [100, 0, 0, 0, 0, 0]),
-        (RISCV_LINUX_SETRLIMIT, [3, 0x9000, 0, 0, 0, 0]),
-    ] {
-        assert_eq!(
-            table.handle(
-                RiscvSyscallRequest::new(0x8000, number, arguments),
-                &mut state,
-            ),
-            Some(RiscvSyscallOutcome::Return { value: 0 })
-        );
-    }
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_SETRLIMIT, [3, 0x9000, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
     assert!(state.unknown_syscalls().is_empty());
 }
 

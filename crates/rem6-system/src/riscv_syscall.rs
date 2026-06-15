@@ -101,11 +101,12 @@ pub use guest_write::RiscvGuestWriteRecord;
 use hwprobe::{syscall_riscv_hwprobe, RISCV_LINUX_RISCV_HWPROBE};
 pub(crate) use identity::RiscvSyscallIdentity;
 use identity::{
-    syscall_getgroups, syscall_identity, syscall_res_identity, syscall_setgroups,
-    syscall_setres_identity, RISCV_LINUX_GETEGID, RISCV_LINUX_GETEUID, RISCV_LINUX_GETGID,
-    RISCV_LINUX_GETGROUPS, RISCV_LINUX_GETPID, RISCV_LINUX_GETPPID, RISCV_LINUX_GETRESGID,
-    RISCV_LINUX_GETRESUID, RISCV_LINUX_GETTID, RISCV_LINUX_GETUID, RISCV_LINUX_SETGROUPS,
-    RISCV_LINUX_SETRESGID, RISCV_LINUX_SETRESUID,
+    syscall_getgroups, syscall_identity, syscall_res_identity, syscall_set_identity,
+    syscall_setgroups, syscall_setres_identity, RISCV_LINUX_GETEGID, RISCV_LINUX_GETEUID,
+    RISCV_LINUX_GETGID, RISCV_LINUX_GETGROUPS, RISCV_LINUX_GETPID, RISCV_LINUX_GETPPID,
+    RISCV_LINUX_GETRESGID, RISCV_LINUX_GETRESUID, RISCV_LINUX_GETTID, RISCV_LINUX_GETUID,
+    RISCV_LINUX_SETGID, RISCV_LINUX_SETGROUPS, RISCV_LINUX_SETRESGID, RISCV_LINUX_SETRESUID,
+    RISCV_LINUX_SETUID,
 };
 use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
 pub use limits::RISCV_LINUX_STACK_LIMIT_BYTES;
@@ -197,7 +198,6 @@ const RISCV_LINUX_RT_SIGPENDING: u64 = 136;
 const RISCV_LINUX_RT_SIGTIMEDWAIT: u64 = 137;
 const RISCV_LINUX_RT_SIGQUEUEINFO: u64 = 138;
 const RISCV_LINUX_RT_SIGRETURN: u64 = 139;
-const RISCV_LINUX_SETUID: u64 = 146;
 const RISCV_LINUX_UNAME: u64 = 160;
 const RISCV_LINUX_SETRLIMIT: u64 = 164;
 const RISCV_LINUX_FUTEX: u64 = 98;
@@ -1371,6 +1371,9 @@ impl RiscvSyscallTable {
             RISCV_LINUX_SETRESUID | RISCV_LINUX_SETRESGID => Some(RiscvSyscallOutcome::Return {
                 value: syscall_setres_identity(request, &mut state.identity),
             }),
+            RISCV_LINUX_SETUID | RISCV_LINUX_SETGID => Some(RiscvSyscallOutcome::Return {
+                value: syscall_set_identity(request, &mut state.identity),
+            }),
             RISCV_LINUX_GETGROUPS => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_getgroups(request, state.identity(), guest_memory),
@@ -1471,7 +1474,6 @@ impl RiscvSyscallTable {
             RISCV_LINUX_MLOCKALL
             | RISCV_LINUX_MUNLOCKALL
             | RISCV_LINUX_MBIND
-            | RISCV_LINUX_SETUID
             | RISCV_LINUX_SETRLIMIT => Some(RiscvSyscallOutcome::Return { value: 0 }),
             RISCV_LINUX_EXIT | RISCV_LINUX_EXIT_GROUP => Some(RiscvSyscallOutcome::Exit {
                 code: syscall_exit_code(request.argument(0)),
