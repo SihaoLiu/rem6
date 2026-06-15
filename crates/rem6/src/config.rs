@@ -7,6 +7,8 @@ use serde::Deserialize;
 
 use crate::Rem6CliError;
 
+mod trace_replay;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RequestedIsa {
     Riscv,
@@ -200,6 +202,8 @@ pub struct Rem6TraceReplayConfig {
     agent: u32,
     control_partition: u32,
     data_cache_protocol: Option<WorkloadDataCacheProtocol>,
+    fabric_link: Option<String>,
+    fabric_bandwidth_bytes_per_tick: Option<u64>,
     stats_format: StatsFormat,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
@@ -303,6 +307,8 @@ struct Rem6TraceReplayFileConfig {
     agent: Option<u32>,
     control_partition: Option<u32>,
     data_cache_protocol: Option<String>,
+    fabric_link: Option<String>,
+    fabric_bandwidth_bytes_per_tick: Option<u64>,
     stats_format: Option<String>,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
@@ -1165,317 +1171,6 @@ impl Rem6GupsConfig {
     }
 }
 
-impl Rem6TraceReplayConfig {
-    pub fn parse_args<I, S>(args: I) -> Result<Self, Rem6CliError>
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        let mut args = args.into_iter().map(Into::into);
-        let Some(command) = args.next() else {
-            return Err(Rem6CliError::MissingCommand);
-        };
-        if command != "trace-replay" {
-            return Err(Rem6CliError::UnsupportedCommand { command });
-        }
-
-        let remaining_args = args.collect::<Vec<_>>();
-        let file_config = trace_replay_file_config_from_args(&remaining_args)?
-            .map(|path| load_trace_replay_file_config(&path))
-            .transpose()?
-            .unwrap_or_default();
-
-        let mut trace = file_config
-            .trace
-            .as_deref()
-            .map(|path| file_config.resolve_path(path));
-        let mut resource_config = file_config
-            .resource_config
-            .as_deref()
-            .map(|path| file_config.resolve_path(path));
-        let mut output = file_config
-            .output
-            .as_deref()
-            .map(|path| file_config.resolve_path(path));
-        let mut stats_output = file_config
-            .stats_output
-            .as_deref()
-            .map(|path| file_config.resolve_path(path));
-        let mut route = file_config.route;
-        let mut memory_start = file_config.memory_start;
-        let mut memory_size = file_config.memory_size;
-        if memory_size == Some(0) {
-            return Err(Rem6CliError::InvalidTraceReplayMemorySize {
-                value: "0".to_string(),
-            });
-        }
-        let mut max_tick = file_config.max_tick;
-        let mut min_remote_delay = file_config.min_remote_delay.unwrap_or(1);
-        if min_remote_delay == 0 {
-            return Err(Rem6CliError::InvalidMinRemoteDelay {
-                value: min_remote_delay.to_string(),
-            });
-        }
-        let mut memory_route_delay = file_config.memory_route_delay;
-        if memory_route_delay == Some(0) {
-            return Err(Rem6CliError::InvalidMemoryRouteDelay {
-                value: "0".to_string(),
-            });
-        }
-        let mut tick_frequency = file_config.tick_frequency.unwrap_or(1_000);
-        if tick_frequency == 0 {
-            return Err(Rem6CliError::InvalidTraceReplayTickFrequency {
-                value: "0".to_string(),
-            });
-        }
-        let mut line_bytes = file_config.line_bytes.unwrap_or(64);
-        if line_bytes == 0 {
-            return Err(Rem6CliError::InvalidTraceReplayLineBytes {
-                value: "0".to_string(),
-            });
-        }
-        let mut agent = file_config.agent.unwrap_or(0);
-        let mut control_partition = file_config.control_partition.unwrap_or(2);
-        let mut data_cache_protocol = file_config
-            .data_cache_protocol
-            .as_deref()
-            .map(|value| {
-                parse_data_cache_protocol(value).ok_or_else(|| {
-                    Rem6CliError::InvalidTraceReplayDataCacheProtocol {
-                        value: value.to_string(),
-                    }
-                })
-            })
-            .transpose()?;
-        let mut stats_format = file_config
-            .stats_format
-            .as_deref()
-            .map(StatsFormat::parse)
-            .transpose()?
-            .unwrap_or(StatsFormat::Json);
-        let mut args = remaining_args.into_iter();
-        while let Some(flag) = args.next() {
-            match flag.as_str() {
-                "--config" => {
-                    let _ = required_value(&flag, args.next())?;
-                }
-                "--trace" => {
-                    trace = Some(PathBuf::from(required_value(&flag, args.next())?));
-                    resource_config = None;
-                }
-                "--resource-config" => {
-                    resource_config = Some(PathBuf::from(required_value(&flag, args.next())?));
-                }
-                "--route" => {
-                    route = Some(required_value(&flag, args.next())?);
-                }
-                "--memory-start" => {
-                    let value = required_value(&flag, args.next())?;
-                    memory_start = Some(parse_number(&value).ok_or_else(|| {
-                        Rem6CliError::InvalidTraceReplayMemoryStart {
-                            value: value.clone(),
-                        }
-                    })?);
-                }
-                "--memory-size" => {
-                    let value = required_value(&flag, args.next())?;
-                    memory_size = Some(parse_number(&value).filter(|size| *size > 0).ok_or_else(
-                        || Rem6CliError::InvalidTraceReplayMemorySize {
-                            value: value.clone(),
-                        },
-                    )?);
-                }
-                "--max-tick" => {
-                    let value = required_value(&flag, args.next())?;
-                    max_tick = Some(value.parse().map_err(|_| Rem6CliError::InvalidMaxTick {
-                        value: value.clone(),
-                    })?);
-                }
-                "--min-remote-delay" => {
-                    let value = required_value(&flag, args.next())?;
-                    min_remote_delay = parse_positive_u64(&value).ok_or_else(|| {
-                        Rem6CliError::InvalidMinRemoteDelay {
-                            value: value.clone(),
-                        }
-                    })?;
-                }
-                "--memory-route-delay" => {
-                    let value = required_value(&flag, args.next())?;
-                    memory_route_delay = Some(parse_positive_u64(&value).ok_or_else(|| {
-                        Rem6CliError::InvalidMemoryRouteDelay {
-                            value: value.clone(),
-                        }
-                    })?);
-                }
-                "--tick-frequency" => {
-                    let value = required_value(&flag, args.next())?;
-                    tick_frequency = parse_positive_u64(&value).ok_or_else(|| {
-                        Rem6CliError::InvalidTraceReplayTickFrequency {
-                            value: value.clone(),
-                        }
-                    })?;
-                }
-                "--line-bytes" => {
-                    let value = required_value(&flag, args.next())?;
-                    line_bytes = parse_positive_u64(&value).ok_or_else(|| {
-                        Rem6CliError::InvalidTraceReplayLineBytes {
-                            value: value.clone(),
-                        }
-                    })?;
-                }
-                "--agent" => {
-                    let value = required_value(&flag, args.next())?;
-                    agent = value
-                        .parse()
-                        .map_err(|_| Rem6CliError::InvalidTraceReplayAgent {
-                            value: value.clone(),
-                        })?;
-                }
-                "--control-partition" => {
-                    let value = required_value(&flag, args.next())?;
-                    control_partition = value.parse().map_err(|_| {
-                        Rem6CliError::InvalidTraceReplayControlPartition {
-                            value: value.clone(),
-                        }
-                    })?;
-                }
-                "--data-cache-protocol" => {
-                    let value = required_value(&flag, args.next())?;
-                    data_cache_protocol =
-                        Some(parse_data_cache_protocol(&value).ok_or_else(|| {
-                            Rem6CliError::InvalidTraceReplayDataCacheProtocol {
-                                value: value.clone(),
-                            }
-                        })?);
-                }
-                "--stats-format" => {
-                    stats_format = StatsFormat::parse(&required_value(&flag, args.next())?)?;
-                }
-                "--output" => {
-                    output = Some(PathBuf::from(required_value(&flag, args.next())?));
-                }
-                "--stats-output" => {
-                    stats_output = Some(PathBuf::from(required_value(&flag, args.next())?));
-                }
-                _ => return Err(Rem6CliError::UnknownFlag { flag }),
-            }
-        }
-
-        if let (Some(output), Some(stats_output)) = (&output, &stats_output) {
-            if output == stats_output {
-                return Err(Rem6CliError::ConflictingOutputPaths {
-                    path: output.to_path_buf(),
-                });
-            }
-        }
-        let memory_route_delay = memory_route_delay.unwrap_or(min_remote_delay);
-        if memory_route_delay < min_remote_delay {
-            return Err(Rem6CliError::MemoryRouteDelayBelowMinRemoteDelay {
-                memory_route_delay,
-                min_remote_delay,
-            });
-        }
-
-        Ok(Self {
-            trace: trace.or_else(|| resource_config.clone()).ok_or(
-                Rem6CliError::MissingRequiredFlag {
-                    flag: "--trace or --resource-config",
-                },
-            )?,
-            resource_config,
-            route: route.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--route" })?,
-            memory_start: memory_start.ok_or(Rem6CliError::MissingRequiredFlag {
-                flag: "--memory-start",
-            })?,
-            memory_size: memory_size.ok_or(Rem6CliError::MissingRequiredFlag {
-                flag: "--memory-size",
-            })?,
-            max_tick: max_tick.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--max-tick" })?,
-            min_remote_delay,
-            memory_route_delay,
-            tick_frequency,
-            line_bytes,
-            agent,
-            control_partition,
-            data_cache_protocol,
-            stats_format,
-            output,
-            stats_output,
-        })
-    }
-
-    pub fn trace(&self) -> &Path {
-        &self.trace
-    }
-
-    pub fn resource_config(&self) -> Option<&Path> {
-        self.resource_config.as_deref()
-    }
-
-    pub fn trace_input(&self) -> String {
-        self.resource_config
-            .as_ref()
-            .map(|path| format!("resource-config:{}", path.display()))
-            .unwrap_or_else(|| self.trace.display().to_string())
-    }
-
-    pub fn route(&self) -> &str {
-        &self.route
-    }
-
-    pub const fn memory_start(&self) -> u64 {
-        self.memory_start
-    }
-
-    pub const fn memory_size(&self) -> u64 {
-        self.memory_size
-    }
-
-    pub const fn max_tick(&self) -> u64 {
-        self.max_tick
-    }
-
-    pub const fn min_remote_delay(&self) -> u64 {
-        self.min_remote_delay
-    }
-
-    pub const fn memory_route_delay(&self) -> u64 {
-        self.memory_route_delay
-    }
-
-    pub const fn tick_frequency(&self) -> u64 {
-        self.tick_frequency
-    }
-
-    pub const fn line_bytes(&self) -> u64 {
-        self.line_bytes
-    }
-
-    pub const fn agent(&self) -> u32 {
-        self.agent
-    }
-
-    pub const fn control_partition(&self) -> u32 {
-        self.control_partition
-    }
-
-    pub const fn data_cache_protocol(&self) -> Option<WorkloadDataCacheProtocol> {
-        self.data_cache_protocol
-    }
-
-    pub const fn stats_format(&self) -> StatsFormat {
-        self.stats_format
-    }
-
-    pub fn output(&self) -> Option<&Path> {
-        self.output.as_deref()
-    }
-
-    pub fn stats_output(&self) -> Option<&Path> {
-        self.stats_output.as_deref()
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct MemoryDumpRequest {
     address: u64,
@@ -1698,6 +1393,8 @@ fn trace_replay_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>
             "--agent",
             "--control-partition",
             "--data-cache-protocol",
+            "--fabric-link",
+            "--fabric-bandwidth-bytes-per-tick",
             "--stats-format",
             "--output",
             "--stats-output",

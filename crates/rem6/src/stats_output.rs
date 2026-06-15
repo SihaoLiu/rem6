@@ -794,6 +794,7 @@ pub(super) fn trace_replay_stats_output(
         inputs.execution.final_tick(),
     )?;
     emit_trace_replay_summary_stats(&mut stats, inputs.execution.summary())?;
+    emit_trace_replay_fabric_stats(&mut stats, inputs.execution.parallel_summary())?;
 
     let snapshot = stats.snapshot(0);
     Ok(Rem6StatsOutput {
@@ -1279,6 +1280,55 @@ fn emit_trace_replay_summary_stats(
 
 fn emit_trace_count(stats: &mut StatsRegistry, path: &str, value: u64) -> Result<(), Rem6CliError> {
     increment_stat(stats, path, "Count", StatResetPolicy::Monotonic, value)
+}
+
+fn emit_trace_replay_fabric_stats(
+    stats: &mut StatsRegistry,
+    summary: &rem6_workload::WorkloadParallelExecutionSummary,
+) -> Result<(), Rem6CliError> {
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.fabric.active_lanes",
+        summary.active_fabric_lane_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.fabric.transfers",
+        summary.fabric_transfer_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.fabric.bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        summary.fabric_byte_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.fabric.occupied_ticks",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        summary.fabric_occupied_ticks(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.fabric.queue_delay_ticks",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        summary.fabric_queue_delay_ticks(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.fabric.max_queue_delay_ticks",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        summary.fabric_max_queue_delay_ticks(),
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.fabric.contended_lanes",
+        summary.contended_fabric_lane_count() as u64,
+    )
 }
 
 fn emit_gups_response_stats(

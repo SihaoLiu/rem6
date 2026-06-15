@@ -211,7 +211,7 @@ impl Rem6TraceReplayArtifact {
             self.config.control_partition(),
             data_cache_protocol,
             self.execution.to_json(self.config.max_tick()),
-            traffic_trace_summary_json(self.execution.summary()),
+            traffic_trace_summary_json(self.execution.summary(), self.execution.parallel_summary()),
             self.stats_json,
         )
     }
@@ -241,6 +241,7 @@ impl Rem6GupsExecutionSummary {
 
 fn traffic_trace_summary_json(
     summary: &rem6_workload::WorkloadTrafficTraceReplaySummary,
+    parallel_summary: &rem6_workload::WorkloadParallelExecutionSummary,
 ) -> String {
     let mut fields = vec![format!(
         "\"route\":\"{}\"",
@@ -336,6 +337,41 @@ fn traffic_trace_summary_json(
         &mut fields,
         "memory_write_completion_byte_count",
         summary.memory_write_completion_byte_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "active_fabric_lane_count",
+        parallel_summary.active_fabric_lane_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "fabric_transfer_count",
+        parallel_summary.fabric_transfer_count(),
+    );
+    push_json_u64(
+        &mut fields,
+        "fabric_byte_count",
+        parallel_summary.fabric_byte_count(),
+    );
+    push_json_u64(
+        &mut fields,
+        "fabric_occupied_ticks",
+        parallel_summary.fabric_occupied_ticks(),
+    );
+    push_json_u64(
+        &mut fields,
+        "fabric_queue_delay_ticks",
+        parallel_summary.fabric_queue_delay_ticks(),
+    );
+    push_json_u64(
+        &mut fields,
+        "fabric_max_queue_delay_ticks",
+        parallel_summary.fabric_max_queue_delay_ticks(),
+    );
+    push_json_usize(
+        &mut fields,
+        "contended_fabric_lane_count",
+        parallel_summary.contended_fabric_lane_count(),
     );
     push_json_usize(
         &mut fields,
@@ -1107,7 +1143,9 @@ impl Rem6MemoryTransportCounters {
 
 #[cfg(test)]
 mod tests {
-    use rem6_workload::{WorkloadRouteId, WorkloadTrafficTraceReplaySummary};
+    use rem6_workload::{
+        WorkloadParallelExecutionSummary, WorkloadRouteId, WorkloadTrafficTraceReplaySummary,
+    };
 
     use super::traffic_trace_summary_json;
 
@@ -1128,7 +1166,8 @@ mod tests {
             .with_trace_l1_invalidation_count(1)
             .with_trace_diagnostic_count(1);
 
-        let json = traffic_trace_summary_json(&summary);
+        let json =
+            traffic_trace_summary_json(&summary, &WorkloadParallelExecutionSummary::default());
 
         assert!(json.contains("\"trace_invalidate_response_count\":1"));
         assert!(json.contains("\"trace_clean_response_count\":1"));

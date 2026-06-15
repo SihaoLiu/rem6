@@ -97,6 +97,9 @@ pub enum Rem6CliError {
     InvalidTraceReplayDataCacheProtocol {
         value: String,
     },
+    InvalidTraceReplayFabricBandwidth {
+        value: String,
+    },
     InvalidResourceKind {
         value: String,
     },
@@ -312,6 +315,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidTraceReplayDataCacheProtocol { value } => {
                 write!(formatter, "invalid trace replay data cache protocol {value}")
+            }
+            Self::InvalidTraceReplayFabricBandwidth { value } => {
+                write!(formatter, "invalid trace replay fabric bandwidth {value}")
             }
             Self::InvalidResourceKind { value } => {
                 write!(formatter, "invalid resource kind {value}")

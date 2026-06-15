@@ -6,9 +6,10 @@ use rem6_system::RiscvWorkloadReplay;
 use rem6_traffic::TrafficTrace;
 use rem6_workload::{
     WorkloadDataCacheProtocol, WorkloadHostPlacement, WorkloadId, WorkloadManifest,
-    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResolvedResources,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResourcePayload,
-    WorkloadRiscvDataCache, WorkloadRouteId, WorkloadTopology, WorkloadTrafficTraceReplayRun,
+    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadParallelExecutionSummary,
+    WorkloadReplayPlan, WorkloadResolvedResources, WorkloadResource, WorkloadResourceId,
+    WorkloadResourceKind, WorkloadResourcePayload, WorkloadRiscvDataCache, WorkloadRouteFabric,
+    WorkloadRouteId, WorkloadTopology, WorkloadTrafficTraceReplayRun,
 };
 use sha2::{Digest, Sha256};
 
@@ -48,6 +49,7 @@ pub struct Rem6TraceReplayArtifact {
 pub struct Rem6TraceReplayExecutionSummary {
     pub(crate) final_tick: u64,
     pub(crate) summary: rem6_workload::WorkloadTrafficTraceReplaySummary,
+    pub(crate) parallel_summary: WorkloadParallelExecutionSummary,
 }
 
 pub(crate) fn run_trace_replay_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
@@ -115,6 +117,11 @@ pub fn run_trace_replay_config(
         .traffic_trace_replay_summary(&route)
         .cloned()
         .ok_or_else(|| execute_error("trace replay summary missing"))?;
+    let parallel_summary = outcome
+        .result()
+        .parallel_execution_summary()
+        .cloned()
+        .ok_or_else(|| execute_error("trace replay parallel summary missing"))?;
     let final_tick = outcome
         .run()
         .final_tick()
@@ -131,6 +138,7 @@ pub fn run_trace_replay_config(
     let execution = Rem6TraceReplayExecutionSummary {
         final_tick,
         summary,
+        parallel_summary,
     };
     let stats = trace_replay_stats_output(Rem6TraceReplayStatsInputs {
         config: &config,
@@ -334,7 +342,7 @@ fn trace_replay_memory_route(
     source_partition: u32,
     config: &Rem6TraceReplayConfig,
 ) -> Result<WorkloadMemoryRoute, Rem6CliError> {
-    WorkloadMemoryRoute::new(
+    let route = WorkloadMemoryRoute::new(
         route,
         source_endpoint,
         source_partition,
@@ -343,7 +351,28 @@ fn trace_replay_memory_route(
         config.memory_route_delay(),
         config.memory_route_delay(),
     )
-    .map_err(execute_error)
+    .map_err(execute_error)?;
+    Ok(match trace_replay_fabric_route(config)? {
+        Some(fabric) => route.with_fabric(fabric),
+        None => route,
+    })
+}
+
+fn trace_replay_fabric_route(
+    config: &Rem6TraceReplayConfig,
+) -> Result<Option<WorkloadRouteFabric>, Rem6CliError> {
+    let Some(link) = config.fabric_link() else {
+        return Ok(None);
+    };
+    let bandwidth =
+        config
+            .fabric_bandwidth_bytes_per_tick()
+            .ok_or(Rem6CliError::MissingRequiredFlag {
+                flag: "--fabric-bandwidth-bytes-per-tick",
+            })?;
+    WorkloadRouteFabric::new(link, bandwidth)
+        .map(Some)
+        .map_err(execute_error)
 }
 
 fn trace_replay_backing_route(route: &WorkloadRouteId) -> Result<WorkloadRouteId, Rem6CliError> {
@@ -400,5 +429,9 @@ impl Rem6TraceReplayExecutionSummary {
 
     pub(crate) const fn summary(&self) -> &rem6_workload::WorkloadTrafficTraceReplaySummary {
         &self.summary
+    }
+
+    pub(crate) const fn parallel_summary(&self) -> &WorkloadParallelExecutionSummary {
+        &self.parallel_summary
     }
 }
