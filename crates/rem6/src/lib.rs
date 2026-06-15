@@ -18,9 +18,9 @@ use rem6_stats::{
 };
 use rem6_system::{
     GuestEventId, GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats,
-    RiscvGuestWriteRecord, RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun,
-    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, RiscvUnknownSyscallRecord,
-    SystemHostController, SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
+    RiscvDataCacheProtocol, RiscvGuestWriteRecord, RiscvSeAuxvEntry, RiscvSeStartupConfig,
+    RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort,
+    RiscvUnknownSyscallRecord, SystemHostController, SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TransportEndpointId,
@@ -527,24 +527,28 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
             return Err(Rem6CliError::PowerOutputRequiresExecution);
         }
     }
-    if config.data_cache_protocol().is_some() {
-        if config.isa() != RequestedIsa::Riscv {
-            return Err(Rem6CliError::DataCacheProtocolRequiresRiscv);
-        }
-        if config.cores() != 1 {
-            return Err(Rem6CliError::DataCacheProtocolRequiresSingleCore {
-                cores: config.cores(),
-            });
-        }
+    if config.data_cache_protocol().is_some() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::DataCacheProtocolRequiresRiscv);
     }
-    if config.instruction_cache_protocol().is_some() {
-        if config.isa() != RequestedIsa::Riscv {
-            return Err(Rem6CliError::InstructionCacheProtocolRequiresRiscv);
+    if config.instruction_cache_protocol().is_some() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::InstructionCacheProtocolRequiresRiscv);
+    }
+    if config.cores() > 1 {
+        if let Some(protocol) = config.data_cache_protocol() {
+            if protocol != RiscvDataCacheProtocol::Msi {
+                return Err(Rem6CliError::DataCacheProtocolMulticoreRequiresMsi {
+                    protocol,
+                    cores: config.cores(),
+                });
+            }
         }
-        if config.cores() != 1 {
-            return Err(Rem6CliError::InstructionCacheProtocolRequiresSingleCore {
-                cores: config.cores(),
-            });
+        if let Some(protocol) = config.instruction_cache_protocol() {
+            if protocol != RiscvDataCacheProtocol::Msi {
+                return Err(Rem6CliError::InstructionCacheProtocolMulticoreRequiresMsi {
+                    protocol,
+                    cores: config.cores(),
+                });
+            }
         }
     }
     if config.riscv_se() {

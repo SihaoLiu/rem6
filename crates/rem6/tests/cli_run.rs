@@ -1,5 +1,7 @@
 #[path = "cli_run/data.rs"]
 mod data;
+#[path = "cli_run/data_cache_multicore.rs"]
+mod data_cache_multicore;
 #[path = "cli_run/execution.rs"]
 mod execution;
 #[path = "cli_run/gdb.rs"]

@@ -253,65 +253,71 @@ fn rem6_run_rejects_instruction_cache_protocol_for_non_riscv_isa() {
 }
 
 #[test]
-fn rem6_run_rejects_data_cache_protocol_for_multiple_cores() {
+fn rem6_run_rejects_non_msi_data_cache_protocol_for_multiple_cores() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
-    let path = temp_binary("data-cache-multiple-cores", &elf);
+    let path = temp_binary("data-cache-multicore-non-msi", &elf);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-        .args([
-            "run",
-            "--isa",
-            "riscv",
-            "--binary",
-            path.to_str().unwrap(),
-            "--max-tick",
-            "40",
-            "--stats-format",
-            "json",
-            "--execute",
-            "--cores",
-            "2",
-            "--data-cache-protocol",
-            "msi",
-        ])
-        .output()
-        .unwrap();
+    for protocol in ["mesi", "moesi", "chi"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "40",
+                "--stats-format",
+                "json",
+                "--execute",
+                "--cores",
+                "2",
+                "--data-cache-protocol",
+                protocol,
+            ])
+            .output()
+            .unwrap();
 
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("--data-cache-protocol requires --cores 1, got 2"));
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("--data-cache-protocol with --cores > 1 requires msi"));
+        assert!(stderr.contains(protocol));
+    }
 }
 
 #[test]
-fn rem6_run_rejects_instruction_cache_protocol_for_multiple_cores() {
+fn rem6_run_rejects_non_msi_instruction_cache_protocol_for_multiple_cores() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
-    let path = temp_binary("instruction-cache-multiple-cores", &elf);
+    let path = temp_binary("instruction-cache-multicore-non-msi", &elf);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-        .args([
-            "run",
-            "--isa",
-            "riscv",
-            "--binary",
-            path.to_str().unwrap(),
-            "--max-tick",
-            "40",
-            "--stats-format",
-            "json",
-            "--execute",
-            "--cores",
-            "2",
-            "--instruction-cache-protocol",
-            "msi",
-        ])
-        .output()
-        .unwrap();
+    for protocol in ["mesi", "moesi", "chi"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "40",
+                "--stats-format",
+                "json",
+                "--execute",
+                "--cores",
+                "2",
+                "--instruction-cache-protocol",
+                protocol,
+            ])
+            .output()
+            .unwrap();
 
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("--instruction-cache-protocol requires --cores 1, got 2"));
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains("--instruction-cache-protocol with --cores > 1 requires msi"));
+        assert!(stderr.contains(protocol));
+    }
 }
 
 #[test]

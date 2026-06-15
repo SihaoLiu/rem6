@@ -3,6 +3,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use rem6_boot::BootElfArchitecture;
+use rem6_system::RiscvDataCacheProtocol;
 
 use crate::config::RequestedIsa;
 use crate::formatting::elf_architecture_name;
@@ -160,10 +161,12 @@ pub enum Rem6CliError {
     },
     DataCacheProtocolRequiresRiscv,
     InstructionCacheProtocolRequiresRiscv,
-    DataCacheProtocolRequiresSingleCore {
+    DataCacheProtocolMulticoreRequiresMsi {
+        protocol: RiscvDataCacheProtocol,
         cores: usize,
     },
-    InstructionCacheProtocolRequiresSingleCore {
+    InstructionCacheProtocolMulticoreRequiresMsi {
+        protocol: RiscvDataCacheProtocol,
         cores: usize,
     },
     RiscvSeRequiresRiscv,
@@ -402,16 +405,18 @@ impl fmt::Display for Rem6CliError {
             Self::InstructionCacheProtocolRequiresRiscv => {
                 write!(formatter, "--instruction-cache-protocol requires --isa riscv")
             }
-            Self::DataCacheProtocolRequiresSingleCore { cores } => {
+            Self::DataCacheProtocolMulticoreRequiresMsi { protocol, cores } => {
                 write!(
                     formatter,
-                    "--data-cache-protocol requires --cores 1, got {cores}"
+                    "--data-cache-protocol with --cores > 1 requires msi, got {} with {cores} cores",
+                    riscv_data_cache_protocol_name(*protocol)
                 )
             }
-            Self::InstructionCacheProtocolRequiresSingleCore { cores } => {
+            Self::InstructionCacheProtocolMulticoreRequiresMsi { protocol, cores } => {
                 write!(
                     formatter,
-                    "--instruction-cache-protocol requires --cores 1, got {cores}"
+                    "--instruction-cache-protocol with --cores > 1 requires msi, got {} with {cores} cores",
+                    riscv_data_cache_protocol_name(*protocol)
                 )
             }
             Self::RiscvSeRequiresRiscv => {
@@ -503,6 +508,15 @@ impl fmt::Display for Rem6CliError {
                 write!(formatter, "failed to write {}: {error}", path.display())
             }
         }
+    }
+}
+
+const fn riscv_data_cache_protocol_name(protocol: RiscvDataCacheProtocol) -> &'static str {
+    match protocol {
+        RiscvDataCacheProtocol::Msi => "msi",
+        RiscvDataCacheProtocol::Mesi => "mesi",
+        RiscvDataCacheProtocol::Moesi => "moesi",
+        RiscvDataCacheProtocol::Chi => "chi",
     }
 }
 
