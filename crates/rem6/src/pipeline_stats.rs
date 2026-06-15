@@ -1,13 +1,13 @@
 use std::collections::BTreeMap;
 
-use rem6_cpu::{CpuFetchEventKind, RiscvCore};
+use rem6_cpu::{CpuFetchEventKind, InOrderPipelineRunSummary, RiscvCore};
 
-pub(super) fn in_order_pipeline_retired(core: &RiscvCore) -> u64 {
-    core.execution_events()
-        .iter()
-        .filter_map(|event| event.in_order_pipeline_cycle())
-        .map(|cycle| cycle.summary().retired_count() as u64)
-        .sum()
+pub(super) fn in_order_pipeline_run_summary(core: &RiscvCore) -> InOrderPipelineRunSummary {
+    InOrderPipelineRunSummary::from_cycle_records(
+        core.execution_events()
+            .iter()
+            .filter_map(|event| event.in_order_pipeline_cycle().cloned()),
+    )
 }
 
 pub(super) fn in_order_pipeline_fetch_wait_cycles(core: &RiscvCore) -> u64 {

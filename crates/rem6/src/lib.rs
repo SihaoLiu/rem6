@@ -65,7 +65,7 @@ use parallel_stats::{
 };
 use pipeline_stats::{
     in_order_pipeline_data_wait_cycles, in_order_pipeline_fetch_wait_cycles,
-    in_order_pipeline_retired,
+    in_order_pipeline_run_summary,
 };
 use power_output::{run_power_analysis_artifact, Rem6PowerAnalysisArtifact};
 pub use resource_acquire_cli::{
@@ -421,6 +421,10 @@ pub struct Rem6CoreSummary {
     in_order_pipeline_retired: u64,
     in_order_pipeline_fetch_wait_cycles: u64,
     in_order_pipeline_data_wait_cycles: u64,
+    in_order_pipeline_branch_predictions: u64,
+    in_order_pipeline_branch_mispredictions: u64,
+    in_order_pipeline_branch_prediction_flushes: u64,
+    in_order_pipeline_redirects: u64,
     data_loads: u64,
     data_stores: u64,
     data_atomics: u64,
@@ -1060,14 +1064,22 @@ fn execution_summary(
                 registers.push((register_index, value));
             }
         }
+        let pipeline_summary = in_order_pipeline_run_summary(&core);
         cores.push(Rem6CoreSummary {
             cpu: cpu_index,
             pc: core.pc().get(),
             committed_instructions: committed_by_cpu.get(&cpu).copied().unwrap_or(0),
             in_order_pipeline_cycles: core.in_order_pipeline_snapshot().cycle(),
-            in_order_pipeline_retired: in_order_pipeline_retired(&core),
+            in_order_pipeline_retired: pipeline_summary.retired_count() as u64,
             in_order_pipeline_fetch_wait_cycles: in_order_pipeline_fetch_wait_cycles(&core),
             in_order_pipeline_data_wait_cycles: in_order_pipeline_data_wait_cycles(&core),
+            in_order_pipeline_branch_predictions: pipeline_summary.branch_prediction_count() as u64,
+            in_order_pipeline_branch_mispredictions: pipeline_summary.branch_misprediction_count()
+                as u64,
+            in_order_pipeline_branch_prediction_flushes: pipeline_summary
+                .branch_prediction_flushed_count()
+                as u64,
+            in_order_pipeline_redirects: pipeline_summary.redirect_count() as u64,
             data_loads: data.loads,
             data_stores: data.stores,
             data_atomics: data.atomics,

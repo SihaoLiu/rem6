@@ -589,6 +589,40 @@ pub(super) fn run_stats_output(
             )?;
             increment_stat(
                 &mut stats,
+                &format!("sim.cpu{}.pipeline.in_order.branch_predictions", core.cpu),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.in_order_pipeline_branch_predictions,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!(
+                    "sim.cpu{}.pipeline.in_order.branch_mispredictions",
+                    core.cpu
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.in_order_pipeline_branch_mispredictions,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!(
+                    "sim.cpu{}.pipeline.in_order.branch_prediction_flushes",
+                    core.cpu
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.in_order_pipeline_branch_prediction_flushes,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!("sim.cpu{}.pipeline.in_order.redirects", core.cpu),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.in_order_pipeline_redirects,
+            )?;
+            increment_stat(
+                &mut stats,
                 &format!("sim.cpu{}.data.loads", core.cpu),
                 "Count",
                 StatResetPolicy::Monotonic,
