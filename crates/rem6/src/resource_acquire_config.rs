@@ -418,12 +418,18 @@ fn parse_resource_acquire_resource(
             .ok_or(Rem6CliError::MissingRequiredFlag {
                 flag: "resource_acquire.resources.acquisition_locator",
             })?;
-    let artifact = resource
-        .artifact
-        .as_deref()
-        .ok_or(Rem6CliError::MissingRequiredFlag {
-            flag: "resource_acquire.resources.artifact",
-        })?;
+    let artifact = resource.artifact.as_deref();
+    let artifact = match (artifact, acquisition_kind) {
+        (Some(artifact), _) => file_config.resolve_path(artifact),
+        (None, WorkloadResourceAcquisitionKind::HostFile) => {
+            file_config.resolve_path(Path::new(&acquisition_locator))
+        }
+        (None, _) => {
+            return Err(Rem6CliError::MissingRequiredFlag {
+                flag: "resource_acquire.resources.artifact",
+            });
+        }
+    };
     let artifact_digest = resource
         .artifact_digest
         .clone()
@@ -439,7 +445,7 @@ fn parse_resource_acquire_resource(
         acquisition_locator,
         acquisition_tool: resource.acquisition_tool.clone(),
         acquisition_revision: resource.acquisition_revision.clone(),
-        artifact: file_config.resolve_path(artifact),
+        artifact,
         artifact_digest,
         artifact_size: resource.artifact_size,
     })
@@ -482,6 +488,7 @@ fn parse_resource_kind(value: &str) -> Option<WorkloadResourceKind> {
 fn parse_resource_acquisition_kind(value: &str) -> Option<WorkloadResourceAcquisitionKind> {
     match value {
         "local-file" => Some(WorkloadResourceAcquisitionKind::LocalFile),
+        "host-file" => Some(WorkloadResourceAcquisitionKind::HostFile),
         "remote-uri" => Some(WorkloadResourceAcquisitionKind::RemoteUri),
         "generated" => Some(WorkloadResourceAcquisitionKind::Generated),
         "preloaded" => Some(WorkloadResourceAcquisitionKind::Preloaded),

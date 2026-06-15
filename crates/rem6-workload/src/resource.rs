@@ -58,6 +58,7 @@ impl WorkloadResourceKindField {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum WorkloadResourceAcquisitionKind {
     LocalFile,
+    HostFile,
     RemoteUri,
     Generated,
     Preloaded,
@@ -67,6 +68,7 @@ impl WorkloadResourceAcquisitionKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::LocalFile => "local-file",
+            Self::HostFile => "host-file",
             Self::RemoteUri => "remote-uri",
             Self::Generated => "generated",
             Self::Preloaded => "preloaded",
