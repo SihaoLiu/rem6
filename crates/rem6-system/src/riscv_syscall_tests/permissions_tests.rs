@@ -2,15 +2,20 @@ use super::*;
 
 const RISCV_LINUX_FCHMOD_FOR_TEST: u64 = 52;
 const RISCV_LINUX_FCHMODAT_FOR_TEST: u64 = 53;
+const RISCV_LINUX_FCHOWNAT_FOR_TEST: u64 = 54;
+const RISCV_LINUX_FCHOWN_FOR_TEST: u64 = 55;
 const RISCV_LINUX_OPENAT_FOR_PERMISSIONS_TEST: u64 = 56;
 const RISCV_LINUX_FSTAT_FOR_PERMISSIONS_TEST: u64 = 80;
 const RISCV_NEWLIB_LEGACY_CHMOD_FOR_TEST: u64 = 1028;
 const RISCV_LINUX_NEWFSTATAT_FOR_PERMISSIONS_TEST: u64 = 79;
 const RISCV_LINUX_ACCESS_FOR_PERMISSIONS_TEST: u64 = 1033;
+const RISCV_LINUX_EPERM_FOR_PERMISSIONS_TEST: u64 = 1;
 const RISCV_LINUX_EACCES_FOR_PERMISSIONS_TEST: u64 = 13;
 const RISCV_LINUX_W_OK_FOR_PERMISSIONS_TEST: u64 = 2;
 const RISCV_LINUX_X_OK_FOR_PERMISSIONS_TEST: u64 = 1;
 const RISCV_LINUX_O_DIRECTORY_FOR_PERMISSIONS_TEST: u64 = 0o200000;
+const RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST: u64 = u64::MAX;
+const RISCV_LINUX_TRUNCATED_NO_OWNER_CHANGE_FOR_TEST: u64 = u32::MAX as u64;
 
 #[test]
 fn linux_table_chmod_updates_registered_file_permissions() {
@@ -254,6 +259,308 @@ fn linux_table_chmod_family_preserves_special_mode_bits() {
     assert_eq!(
         stat_mode_at(&table, &mut state, &guest_memory_reader, 0x9010, 0x800c),
         0o041755
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_chown_family_validates_registered_paths_fds_and_flags() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"file-backed input\n");
+    state.register_guest_symlink(b"link.txt", b"guest.txt");
+    state.register_guest_file(b"sub/target.txt", b"nested input\n");
+    state.register_guest_symlink(b"abs-link.txt", b"/guest.txt");
+    state.register_guest_symlink(b"sub/link.txt", b"../guest.txt");
+    let guest_memory_reader = c_string_reader(&[
+        (0x9000, b"guest.txt"),
+        (0x9010, b"missing.txt"),
+        (0x9020, b""),
+        (0x9030, b"link.txt"),
+        (0x9040, b"abs-link.txt"),
+        (0x9050, b"sub/link.txt"),
+    ]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCHOWNAT_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FCHOWNAT_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_TRUNCATED_NO_OWNER_CHANGE_FOR_TEST,
+                    RISCV_LINUX_TRUNCATED_NO_OWNER_CHANGE_FOR_TEST,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_FCHOWNAT_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9010,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOENT)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_FCHOWNAT_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    0x8000,
+                    0,
+                ],
+            ),
+            &mut state,
+            10,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8010,
+                RISCV_LINUX_OPENAT_FOR_PERMISSIONS_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            11,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8014,
+                RISCV_LINUX_FCHOWN_FOR_TEST,
+                [
+                    3,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8018,
+                RISCV_LINUX_FCHOWN_FOR_TEST,
+                [
+                    99,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x801c,
+                RISCV_LINUX_FCHOWNAT_FOR_TEST,
+                [
+                    3,
+                    0x9020,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    RISCV_LINUX_AT_EMPTY_PATH,
+                    0,
+                ],
+            ),
+            &mut state,
+            12,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8020,
+                RISCV_LINUX_FCHOWNAT_FOR_TEST,
+                [
+                    99,
+                    0x9020,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    RISCV_LINUX_AT_EMPTY_PATH,
+                    0,
+                ],
+            ),
+            &mut state,
+            13,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8024,
+                RISCV_LINUX_FCHOWNAT_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9030,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            14,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8028,
+                RISCV_LINUX_FCHOWNAT_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9040,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            15,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x802c,
+                RISCV_LINUX_FCHOWNAT_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9050,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            16,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8030,
+                RISCV_LINUX_FCHOWNAT_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9030,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    RISCV_LINUX_NO_OWNER_CHANGE_FOR_TEST,
+                    RISCV_LINUX_AT_SYMLINK_NOFOLLOW,
+                    0,
+                ],
+            ),
+            &mut state,
+            17,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8034,
+                RISCV_LINUX_FCHOWNAT_FOR_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0, 0, 0, 0,],
+            ),
+            &mut state,
+            18,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EPERM_FOR_PERMISSIONS_TEST)
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8030, RISCV_LINUX_FCHOWN_FOR_TEST, [3, 0, 0, 0, 0, 0],),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EPERM_FOR_PERMISSIONS_TEST)
+        })
     );
     assert!(state.unknown_syscalls().is_empty());
 }
