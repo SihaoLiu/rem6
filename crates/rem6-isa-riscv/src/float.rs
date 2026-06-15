@@ -3,6 +3,7 @@ use crate::{
     RiscvInstruction,
 };
 
+mod add;
 mod convert_flags;
 mod decode;
 mod int_to_float;
@@ -52,6 +53,29 @@ pub(crate) fn float_register_write(
     }
 }
 
+pub(crate) fn float_register_write_binary(
+    instruction: RiscvInstruction,
+    lhs: u64,
+    rhs: u64,
+    frm: u64,
+) -> (FloatRegister, u64) {
+    match instruction {
+        RiscvInstruction::FloatAddS {
+            rd, rounding_mode, ..
+        } => (
+            rd,
+            add::register_write(
+                lhs,
+                rhs,
+                rounding_mode
+                    .resolve(frm)
+                    .expect("binary float rounding mode is valid"),
+            ),
+        ),
+        _ => float_register_write(instruction, lhs, rhs),
+    }
+}
+
 pub(crate) fn binary_register_rounding_mode_is_supported(
     instruction: RiscvInstruction,
     frm: u64,
@@ -62,6 +86,7 @@ pub(crate) fn binary_register_rounding_mode_is_supported(
         instruction,
         frm,
         binary_result_is_rounding_insensitive(instruction, lhs, rhs),
+        binary_rounding_mode_is_implemented(instruction, lhs, rhs),
     )
 }
 
@@ -74,6 +99,7 @@ pub(crate) fn unary_register_rounding_mode_is_supported(
         instruction,
         frm,
         unary_result_is_rounding_insensitive(instruction, value),
+        false,
     )
 }
 
@@ -88,6 +114,7 @@ pub(crate) fn ternary_register_rounding_mode_is_supported(
         instruction,
         frm,
         ternary_result_is_rounding_insensitive(instruction, lhs, rhs, addend),
+        false,
     )
 }
 
@@ -95,6 +122,7 @@ fn register_rounding_mode_is_supported(
     instruction: RiscvInstruction,
     frm: u64,
     rounding_insensitive: bool,
+    implemented_rounding: bool,
 ) -> bool {
     let Some(rounding_mode) = register_rounding_mode(instruction) else {
         return true;
@@ -102,6 +130,11 @@ fn register_rounding_mode_is_supported(
 
     match rounding_mode.resolve(frm) {
         Some(RiscvFloatRoundingMode::RoundNearestEven) => true,
+        Some(
+            RiscvFloatRoundingMode::RoundTowardZero
+            | RiscvFloatRoundingMode::RoundDown
+            | RiscvFloatRoundingMode::RoundUp,
+        ) if implemented_rounding => true,
         Some(_) => rounding_insensitive,
         None => false,
     }
@@ -130,6 +163,13 @@ fn register_rounding_mode(instruction: RiscvInstruction) -> Option<RiscvFloatRou
         _ => return None,
     };
     Some(rounding_mode)
+}
+
+fn binary_rounding_mode_is_implemented(instruction: RiscvInstruction, lhs: u64, rhs: u64) -> bool {
+    match instruction {
+        RiscvInstruction::FloatAddS { .. } => add::directed_rounding_is_supported(lhs, rhs),
+        _ => false,
+    }
 }
 
 fn binary_result_is_rounding_insensitive(
@@ -475,6 +515,7 @@ pub(crate) fn write_float_register(
 
 pub(crate) fn binary_exception_flags(instruction: RiscvInstruction, lhs: u64, rhs: u64) -> u64 {
     match instruction {
+        RiscvInstruction::FloatAddS { .. } => add::exception_flags(lhs, rhs),
         RiscvInstruction::FloatDivS { .. } => divide_exception_flags_single(lhs, rhs),
         RiscvInstruction::FloatDivD { .. } => divide_exception_flags_double(lhs, rhs),
         RiscvInstruction::FloatMinS { .. } | RiscvInstruction::FloatMaxS { .. } => {
@@ -1142,4 +1183,5 @@ const DOUBLE_QUIET_NAN_BIT: u64 = 1 << 51;
 const DEFAULT_NAN_DOUBLE: u64 = 0x7ff8_0000_0000_0000;
 const FLOAT_FLAG_INVALID: u64 = 1 << 4;
 const FLOAT_FLAG_DIVIDE_BY_ZERO: u64 = 1 << 3;
+const FLOAT_FLAG_OVERFLOW: u64 = 1 << 2;
 const FLOAT_FLAG_INEXACT: u64 = 1 << 0;

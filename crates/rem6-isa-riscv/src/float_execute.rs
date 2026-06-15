@@ -64,7 +64,12 @@ pub(crate) fn execute_float_register_instruction(
                 return Err(());
             }
             let flags = float::binary_exception_flags(instruction, lhs, rhs);
-            let (rd, value) = float::float_register_write(instruction, lhs, rhs);
+            let (rd, value) = float::float_register_write_binary(
+                instruction,
+                lhs,
+                rhs,
+                hart.float_status().frm(),
+            );
             hart.raise_float_exception_flags(flags);
             float::write_float_register(hart, writes, rd, value);
         }
