@@ -252,4 +252,6 @@ const RV64D_FLOAT_REGISTERS: &[&str] = &[
 
 const RV64D_FLOAT_CSR_REGISTERS: &[&str] = &["fflags", "frm", "fcsr"];
 
-const RV64_CSR_REGISTERS: &[&str] = &["sstatus", "stvec", "sscratch", "sepc", "scause", "stval"];
+const RV64_CSR_REGISTERS: &[&str] = &[
+    "sstatus", "stvec", "sscratch", "sepc", "scause", "stval", "satp",
+];

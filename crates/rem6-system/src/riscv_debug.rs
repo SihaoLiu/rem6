@@ -7,7 +7,7 @@ use rem6_debug::{
 };
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvFloatCsr, RiscvGdbTargetDescription, RiscvGdbXlen,
-    RiscvHartState, RiscvStatusCsr, RiscvSupervisorTrapCsr,
+    RiscvHartState, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, MemoryError, MemoryRequest, MemoryRequestId,
@@ -24,13 +24,14 @@ const RISCV_GDB_FLOAT_REGISTER_COUNT: u8 = 32;
 const RISCV_GDB_FLOAT_CSR_REGISTER_BASE: u64 = 65;
 const RISCV_GDB_FLOAT_CSR_REGISTER_COUNT: u8 = 3;
 const RISCV_GDB_CSR_REGISTER_BASE: u64 = 68;
-const RISCV_GDB_CSR_REGISTER_COUNT: u8 = 6;
+const RISCV_GDB_CSR_REGISTER_COUNT: u8 = 7;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RiscvGdbCsrRegister {
     Sstatus,
     SupervisorTrap(RiscvSupervisorTrapCsr),
+    Translation(RiscvTranslationCsr),
 }
 
 pub fn riscv_gdb_remote_session(xlen: RiscvGdbXlen) -> GdbRemoteSession {
@@ -721,6 +722,7 @@ fn riscv_gdb_hart_snapshot_from_core(core: &RiscvCore) -> RiscvHartState {
     hart.set_supervisor_exception_pc(core.supervisor_exception_pc());
     hart.set_supervisor_trap_cause(core.supervisor_trap_cause());
     hart.set_supervisor_trap_value(core.supervisor_trap_value());
+    hart.set_translation_satp(core.translation_satp());
     hart
 }
 
@@ -900,6 +902,7 @@ fn read_hart_csr_register_value(hart: &RiscvHartState, number: u64) -> u64 {
     match riscv_gdb_csr_register(number) {
         RiscvGdbCsrRegister::Sstatus => RiscvStatusCsr::Sstatus.read(hart.status()),
         RiscvGdbCsrRegister::SupervisorTrap(csr) => read_hart_supervisor_trap_csr(hart, csr),
+        RiscvGdbCsrRegister::Translation(csr) => read_hart_translation_csr(hart, csr),
     }
 }
 
@@ -910,6 +913,9 @@ fn write_hart_csr_register_value(hart: &mut RiscvHartState, number: u64, value: 
         }
         RiscvGdbCsrRegister::SupervisorTrap(csr) => {
             write_hart_supervisor_trap_csr(hart, csr, value);
+        }
+        RiscvGdbCsrRegister::Translation(csr) => {
+            write_hart_translation_csr(hart, csr, value);
         }
     }
 }
@@ -922,6 +928,9 @@ fn write_core_csr_register_value(core: &RiscvCore, number: u64, value: u64) {
         RiscvGdbCsrRegister::SupervisorTrap(csr) => {
             write_core_supervisor_trap_csr(core, csr, value);
         }
+        RiscvGdbCsrRegister::Translation(csr) => {
+            write_core_translation_csr(core, csr, value);
+        }
     }
 }
 
@@ -933,6 +942,7 @@ fn riscv_gdb_csr_register(number: u64) -> RiscvGdbCsrRegister {
         3 => RiscvGdbCsrRegister::SupervisorTrap(RiscvSupervisorTrapCsr::Sepc),
         4 => RiscvGdbCsrRegister::SupervisorTrap(RiscvSupervisorTrapCsr::Scause),
         5 => RiscvGdbCsrRegister::SupervisorTrap(RiscvSupervisorTrapCsr::Stval),
+        6 => RiscvGdbCsrRegister::Translation(RiscvTranslationCsr::Satp),
         _ => unreachable!("validated RISC-V GDB CSR register"),
     }
 }
@@ -968,6 +978,24 @@ fn write_core_supervisor_trap_csr(core: &RiscvCore, csr: RiscvSupervisorTrapCsr,
         RiscvSupervisorTrapCsr::Sepc => core.set_supervisor_exception_pc(value),
         RiscvSupervisorTrapCsr::Scause => core.set_supervisor_trap_cause(value),
         RiscvSupervisorTrapCsr::Stval => core.set_supervisor_trap_value(value),
+    }
+}
+
+fn read_hart_translation_csr(hart: &RiscvHartState, csr: RiscvTranslationCsr) -> u64 {
+    match csr {
+        RiscvTranslationCsr::Satp => hart.translation_satp(),
+    }
+}
+
+fn write_hart_translation_csr(hart: &mut RiscvHartState, csr: RiscvTranslationCsr, value: u64) {
+    match csr {
+        RiscvTranslationCsr::Satp => hart.set_translation_satp(value),
+    }
+}
+
+fn write_core_translation_csr(core: &RiscvCore, csr: RiscvTranslationCsr, value: u64) {
+    match csr {
+        RiscvTranslationCsr::Satp => core.set_translation_satp(value),
     }
 }
 

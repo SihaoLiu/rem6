@@ -87,6 +87,7 @@ fn riscv_gdb_remote_session_serves_rv64_target_documents() {
     assert!(csr.contains("<reg name=\"sstatus\" bitsize=\"64\" regnum=\"68\"/>"));
     assert!(csr.contains("<reg name=\"sscratch\" bitsize=\"64\"/>"));
     assert!(csr.contains("<reg name=\"stval\" bitsize=\"64\"/>"));
+    assert!(csr.contains("<reg name=\"satp\" bitsize=\"64\"/>"));
 }
 
 #[test]
@@ -213,7 +214,7 @@ fn riscv_gdb_remote_session_reports_rv64_hart_register_snapshot() {
             .handle_packet(&GdbRemotePacket::new(b"g".to_vec()).unwrap())
             .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(74));
+    assert_eq!(registers.len(), rv64_register_hex_offset(75));
     assert_eq!(&registers[0..16], b"0000000000000000");
     assert_eq!(&registers[16..32], b"efcdab8967452301");
     assert_eq!(&registers[10 * 16..11 * 16], b"1032547698badcfe");
@@ -233,7 +234,7 @@ fn rv64_register_hex_offset(number: u64) -> usize {
     let byte_offset = match number {
         0..=65 => number * 8,
         66..=68 => (65 * 8) + ((number - 65) * 4),
-        69..=74 => (65 * 8) + (3 * 4) + ((number - 68) * 8),
+        69..=75 => (65 * 8) + (3 * 4) + ((number - 68) * 8),
         _ => panic!("unsupported RV64 GDB register number"),
     };
     byte_offset as usize * 2

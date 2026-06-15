@@ -51,14 +51,15 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "  <reg name=\"sepc\" bitsize=\"64\"/>\n",
             "  <reg name=\"scause\" bitsize=\"64\"/>\n",
             "  <reg name=\"stval\" bitsize=\"64\"/>\n",
+            "  <reg name=\"satp\" bitsize=\"64\"/>\n",
             "</feature>\n",
         ),
     );
     assert_eq!(
         register_names(csr),
-        vec!["sstatus", "stvec", "sscratch", "sepc", "scause", "stval"],
+        vec!["sstatus", "stvec", "sscratch", "sepc", "scause", "stval", "satp"],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 6);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 7);
 }
 
 #[test]

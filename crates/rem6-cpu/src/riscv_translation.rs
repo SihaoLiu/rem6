@@ -810,6 +810,22 @@ impl RiscvCore {
         )
     }
 
+    pub fn translation_satp(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .translation_satp()
+    }
+
+    pub fn set_translation_satp(&self, value: u64) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_translation_satp(value);
+    }
+
     pub fn set_data_translation_address_space(&self, address_space: TranslationAddressSpaceId) {
         self.state
             .lock()
