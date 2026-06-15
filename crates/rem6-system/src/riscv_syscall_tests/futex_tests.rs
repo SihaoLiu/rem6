@@ -151,6 +151,100 @@ fn linux_table_futex_wait_mismatch_returns_eagain_without_queueing() {
 }
 
 #[test]
+fn linux_table_futex_wait_mismatch_still_validates_bad_timeout_pointer() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let address = GuestFutexAddress::new(0x189);
+    let timeout_address = 0x3000;
+    let thread_group = GuestThreadGroupId::new(100);
+    let guest_memory = RiscvGuestMemoryReader::new(move |read_address, bytes| {
+        if read_address == address.get() && bytes == 4 {
+            Some(1_i32.to_le_bytes().to_vec())
+        } else {
+            None
+        }
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(0x8000, 98, [address.get(), 0, 2, timeout_address, 0, 0],),
+            &mut state,
+            42,
+            Some(&guest_memory),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert_eq!(state.guest_futexes().waiter_count(address, thread_group), 0);
+}
+
+#[test]
+fn linux_table_futex_wait_mismatch_still_validates_invalid_timeout() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let address = GuestFutexAddress::new(0x18a);
+    let timeout_address = 0x3010;
+    let thread_group = GuestThreadGroupId::new(100);
+    let guest_memory = RiscvGuestMemoryReader::new(move |read_address, bytes| {
+        if read_address == address.get() && bytes == 4 {
+            Some(1_i32.to_le_bytes().to_vec())
+        } else if read_address == timeout_address && bytes == 16 {
+            let mut timeout = Vec::new();
+            timeout.extend_from_slice(&0_i64.to_le_bytes());
+            timeout.extend_from_slice(&1_000_000_000_i64.to_le_bytes());
+            Some(timeout)
+        } else {
+            None
+        }
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(0x8000, 98, [address.get(), 0, 2, timeout_address, 0, 0],),
+            &mut state,
+            42,
+            Some(&guest_memory),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert_eq!(state.guest_futexes().waiter_count(address, thread_group), 0);
+}
+
+#[test]
+fn linux_table_futex_wait_mismatch_with_zero_timeout_returns_eagain() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let address = GuestFutexAddress::new(0x18b);
+    let timeout_address = 0x3020;
+    let thread_group = GuestThreadGroupId::new(100);
+    let guest_memory = RiscvGuestMemoryReader::new(move |read_address, bytes| {
+        if read_address == address.get() && bytes == 4 {
+            Some(1_i32.to_le_bytes().to_vec())
+        } else if read_address == timeout_address && bytes == 16 {
+            Some(vec![0; 16])
+        } else {
+            None
+        }
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(0x8000, 98, [address.get(), 0, 2, timeout_address, 0, 0],),
+            &mut state,
+            42,
+            Some(&guest_memory),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(11)
+        })
+    );
+    assert_eq!(state.guest_futexes().waiter_count(address, thread_group), 0);
+}
+
+#[test]
 fn linux_table_futex_wait_bitset_zero_returns_einval() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);

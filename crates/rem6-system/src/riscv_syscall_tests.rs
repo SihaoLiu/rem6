@@ -13,6 +13,8 @@ mod cpu_tests;
 mod cwd_tests;
 #[path = "riscv_syscall_tests/dirent_tests.rs"]
 mod dirent_tests;
+#[path = "riscv_syscall_tests/exit_tests.rs"]
+mod exit_tests;
 #[path = "riscv_syscall_tests/fcntl_tests.rs"]
 mod fcntl_tests;
 #[path = "riscv_syscall_tests/fd_tests.rs"]
@@ -91,27 +93,6 @@ fn collect_guest_writes(writes: &[(u64, Vec<u8>)], base: u64, len: usize) -> Vec
         bytes[offset..offset + chunk.len()].copy_from_slice(chunk);
     }
     bytes
-}
-
-#[test]
-fn linux_table_maps_exit_numbers_to_stop_codes() {
-    let table = RiscvSyscallTable::new();
-    let mut state = RiscvSyscallState::new(0);
-
-    assert_eq!(
-        table.handle(
-            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_EXIT, [17; 6]),
-            &mut state,
-        ),
-        Some(RiscvSyscallOutcome::Exit { code: 17 })
-    );
-    assert_eq!(
-        table.handle(
-            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_EXIT_GROUP, [19; 6]),
-            &mut state,
-        ),
-        Some(RiscvSyscallOutcome::Exit { code: 19 })
-    );
 }
 
 #[test]
