@@ -1,13 +1,16 @@
 const RISCV_LINUX_SINGLE_PROCESS_ID: u64 = 100;
 
 use super::{
-    linux_error, RiscvGuestMemoryWriter, RiscvSyscallRequest, RISCV_LINUX_EFAULT, RISCV_LINUX_EPERM,
+    linux_error, RiscvGuestMemoryWriter, RiscvSyscallRequest, RISCV_LINUX_EFAULT,
+    RISCV_LINUX_EINVAL, RISCV_LINUX_EPERM,
 };
 
 pub(super) const RISCV_LINUX_SETRESUID: u64 = 147;
 pub(super) const RISCV_LINUX_GETRESUID: u64 = 148;
 pub(super) const RISCV_LINUX_SETRESGID: u64 = 149;
 pub(super) const RISCV_LINUX_GETRESGID: u64 = 150;
+pub(super) const RISCV_LINUX_GETGROUPS: u64 = 158;
+pub(super) const RISCV_LINUX_SETGROUPS: u64 = 159;
 pub(super) const RISCV_LINUX_GETPID: u64 = 172;
 pub(super) const RISCV_LINUX_GETPPID: u64 = 173;
 pub(super) const RISCV_LINUX_GETUID: u64 = 174;
@@ -155,6 +158,21 @@ pub(super) fn syscall_setres_identity(
     }
 }
 
+pub(super) fn syscall_getgroups(
+    request: RiscvSyscallRequest,
+    _identity: RiscvSyscallIdentity,
+    _guest_memory: &RiscvGuestMemoryWriter,
+) -> u64 {
+    if getgroups_count_is_negative(request.argument(0)) {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    0
+}
+
+pub(super) fn syscall_setgroups() -> u64 {
+    linux_error(RISCV_LINUX_EPERM)
+}
+
 fn setres_user_identity(request: RiscvSyscallRequest, identity: &mut RiscvSyscallIdentity) -> u64 {
     let current = [
         identity.user_id,
@@ -216,6 +234,10 @@ fn next_identity_id(requested: u64, current: u64, allowed: [u64; 3]) -> Result<u
 
 const fn identity_no_change(requested: u64) -> bool {
     requested == u64::MAX || requested == u32::MAX as u64
+}
+
+const fn getgroups_count_is_negative(count: u64) -> bool {
+    (count as u32) & (1 << 31) != 0
 }
 
 fn write_uid_gid(address: u64, value: u64, guest_memory: &RiscvGuestMemoryWriter) -> bool {

@@ -101,9 +101,10 @@ pub use guest_write::RiscvGuestWriteRecord;
 use hwprobe::{syscall_riscv_hwprobe, RISCV_LINUX_RISCV_HWPROBE};
 pub(crate) use identity::RiscvSyscallIdentity;
 use identity::{
-    syscall_identity, syscall_res_identity, syscall_setres_identity, RISCV_LINUX_GETEGID,
-    RISCV_LINUX_GETEUID, RISCV_LINUX_GETGID, RISCV_LINUX_GETPID, RISCV_LINUX_GETPPID,
-    RISCV_LINUX_GETRESGID, RISCV_LINUX_GETRESUID, RISCV_LINUX_GETTID, RISCV_LINUX_GETUID,
+    syscall_getgroups, syscall_identity, syscall_res_identity, syscall_setgroups,
+    syscall_setres_identity, RISCV_LINUX_GETEGID, RISCV_LINUX_GETEUID, RISCV_LINUX_GETGID,
+    RISCV_LINUX_GETGROUPS, RISCV_LINUX_GETPID, RISCV_LINUX_GETPPID, RISCV_LINUX_GETRESGID,
+    RISCV_LINUX_GETRESUID, RISCV_LINUX_GETTID, RISCV_LINUX_GETUID, RISCV_LINUX_SETGROUPS,
     RISCV_LINUX_SETRESGID, RISCV_LINUX_SETRESUID,
 };
 use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
@@ -1369,6 +1370,14 @@ impl RiscvSyscallTable {
             }
             RISCV_LINUX_SETRESUID | RISCV_LINUX_SETRESGID => Some(RiscvSyscallOutcome::Return {
                 value: syscall_setres_identity(request, &mut state.identity),
+            }),
+            RISCV_LINUX_GETGROUPS => {
+                guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_getgroups(request, state.identity(), guest_memory),
+                })
+            }
+            RISCV_LINUX_SETGROUPS => Some(RiscvSyscallOutcome::Return {
+                value: syscall_setgroups(),
             }),
             RISCV_LINUX_GETRLIMIT => syscall_getrlimit(request, guest_memory_writer)
                 .map(|value| RiscvSyscallOutcome::Return { value }),

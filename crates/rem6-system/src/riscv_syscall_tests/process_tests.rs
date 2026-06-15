@@ -6,6 +6,8 @@ const RISCV_LINUX_GETRESUID_FOR_TEST: u64 = 148;
 const RISCV_LINUX_SETRESUID_FOR_TEST: u64 = 147;
 const RISCV_LINUX_SETRESGID_FOR_TEST: u64 = 149;
 const RISCV_LINUX_GETRESGID_FOR_TEST: u64 = 150;
+const RISCV_LINUX_GETGROUPS_FOR_TEST: u64 = 158;
+const RISCV_LINUX_SETGROUPS_FOR_TEST: u64 = 159;
 
 fn child(pid: u32, process_group: u32, status: GuestWaitStatus) -> GuestChildStatus {
     GuestChildStatus::new(
@@ -218,6 +220,93 @@ fn linux_table_setresuid_rejects_unprivileged_identity_change() {
             &mut state,
         ),
         Some(RiscvSyscallOutcome::Return { value: 7 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_getgroups_reports_empty_supplementary_group_list() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_GETGROUPS_FOR_TEST, [0, 0, 0, 0, 0, 0],),
+            &mut state,
+            5,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_GETGROUPS_FOR_TEST,
+                [2, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            6,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(writes.lock().unwrap().is_empty());
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_getgroups_rejects_negative_group_count() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(|_address, _bytes| true);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_GETGROUPS_FOR_TEST,
+                [u64::MAX, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            5,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_setgroups_rejects_unprivileged_group_list_changes() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_SETGROUPS_FOR_TEST, [0, 0, 0, 0, 0, 0],),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EPERM)
+        })
     );
     assert!(state.unknown_syscalls().is_empty());
 }

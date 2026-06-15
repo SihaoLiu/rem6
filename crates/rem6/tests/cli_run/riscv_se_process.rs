@@ -236,6 +236,70 @@ fn rem6_run_riscv_se_runs_static_raw_setres_identity_syscalls() {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_group_list_syscalls() {
+    let program = riscv64_program(&[
+        i_type(-16, 2, 0x0, 2, 0x13),  // addi sp, sp, -16
+        i_type(77, 0, 0x0, 5, 0x13),   // addi x5, x0, 77
+        s_type(0, 5, 2, 0x2),          // sw x5, 0(sp)
+        i_type(0, 0, 0x0, 10, 0x13),   // addi a0, x0, 0
+        i_type(0, 0, 0x0, 11, 0x13),   // addi a1, x0, 0
+        i_type(158, 0, 0x0, 17, 0x13), // addi a7, x0, getgroups
+        0x0000_0073,                   // ecall
+        b_type(68, 0, 10, 0x1),        // bne a0, x0, fail
+        i_type(1, 0, 0x0, 10, 0x13),   // addi a0, x0, 1
+        i_type(0, 2, 0x0, 11, 0x13),   // addi a1, sp, 0
+        i_type(158, 0, 0x0, 17, 0x13), // addi a7, x0, getgroups
+        0x0000_0073,                   // ecall
+        b_type(48, 0, 10, 0x1),        // bne a0, x0, fail
+        i_type(0, 2, 0x2, 6, 0x03),    // lw x6, 0(sp)
+        b_type(40, 5, 6, 0x1),         // bne x6, x5, fail
+        i_type(0, 0, 0x0, 10, 0x13),   // addi a0, x0, 0
+        i_type(0, 0, 0x0, 11, 0x13),   // addi a1, x0, 0
+        i_type(159, 0, 0x0, 17, 0x13), // addi a7, x0, setgroups
+        0x0000_0073,                   // ecall
+        i_type(-1, 0, 0x0, 29, 0x13),  // addi x29, x0, -1
+        b_type(16, 29, 10, 0x1),       // bne a0, x29, fail
+        i_type(73, 0, 0x0, 10, 0x13),  // addi a0, x0, 73
+        i_type(93, 0, 0x0, 17, 0x13),  // addi a7, x0, exit
+        0x0000_0073,                   // ecall
+        i_type(74, 0, 0x0, 10, 0x13),  // addi a0, x0, 74
+        i_type(93, 0, 0x0, 17, 0x13),  // addi a7, x0, exit
+        0x0000_0073,                   // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-group-list", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "340",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":73"));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 73, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_personality_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(
