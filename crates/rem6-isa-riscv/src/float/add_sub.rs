@@ -11,20 +11,60 @@ const SINGLE_MAX_MANTISSA: u128 = (1 << 24) - 1;
 const SINGLE_MIN_NORMAL_SHIFT: i32 = -149;
 const SINGLE_MAX_NORMAL_SHIFT: i32 = 104;
 
-pub(super) fn directed_rounding_is_supported(lhs: u64, rhs: u64) -> bool {
-    wide_sum_value(lhs, rhs).is_some()
+pub(super) fn add_directed_rounding_is_supported(lhs: u64, rhs: u64) -> bool {
+    wide_sum_value(lhs, rhs, false).is_some()
 }
 
-pub(super) fn register_write(lhs: u64, rhs: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
-    match wide_sum_value(lhs, rhs) {
+pub(super) fn sub_directed_rounding_is_supported(lhs: u64, rhs: u64) -> bool {
+    wide_sum_value(lhs, rhs, true).is_some()
+}
+
+pub(super) fn add_register_write(lhs: u64, rhs: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
+    register_write(lhs, rhs, rounding_mode, false)
+}
+
+pub(super) fn sub_register_write(lhs: u64, rhs: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
+    register_write(lhs, rhs, rounding_mode, true)
+}
+
+pub(super) fn add_exception_flags(
+    lhs: u64,
+    rhs: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> u64 {
+    exception_flags(lhs, rhs, rounding_mode, false)
+}
+
+pub(super) fn sub_exception_flags(
+    lhs: u64,
+    rhs: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> u64 {
+    exception_flags(lhs, rhs, rounding_mode, true)
+}
+
+fn register_write(
+    lhs: u64,
+    rhs: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+    subtract: bool,
+) -> u64 {
+    let lhs = unbox_single(lhs);
+    let rhs = effective_rhs_bits(rhs, subtract);
+    match wide_sum_value_from_single_bits(lhs, rhs) {
         Some(exact) => box_canonical_single(round_wide_sum(lhs, rhs, exact, rounding_mode)),
         None => native_register_write(lhs, rhs),
     }
 }
 
-pub(super) fn exception_flags(lhs: u64, rhs: u64) -> u64 {
+fn exception_flags(
+    lhs: u64,
+    rhs: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+    subtract: bool,
+) -> u64 {
     let lhs = unbox_single(lhs);
-    let rhs = unbox_single(rhs);
+    let rhs = effective_rhs_bits(rhs, subtract);
     if is_signaling_nan_single(lhs) || is_signaling_nan_single(rhs) || opposite_infinities(lhs, rhs)
     {
         return FLOAT_FLAG_INVALID;
@@ -32,7 +72,7 @@ pub(super) fn exception_flags(lhs: u64, rhs: u64) -> u64 {
     if !is_finite(lhs) || !is_finite(rhs) {
         return 0;
     }
-    if native_sum_overflows(lhs, rhs) {
+    if sum_overflows(lhs, rhs, rounding_mode) {
         return FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT;
     }
     if !finite_sum_is_exact(lhs, rhs) {
@@ -46,9 +86,22 @@ fn native_sum_overflows(lhs: u32, rhs: u32) -> bool {
     (f32::from_bits(lhs) + f32::from_bits(rhs)).is_infinite()
 }
 
-fn wide_sum_value(lhs: u64, rhs: u64) -> Option<f64> {
+fn sum_overflows(lhs: u32, rhs: u32, rounding_mode: RiscvFloatRoundingMode) -> bool {
+    if native_sum_overflows(lhs, rhs) {
+        return true;
+    }
+    wide_sum_value_from_single_bits(lhs, rhs)
+        .map(|exact| round_wide_sum(lhs, rhs, exact, rounding_mode).is_infinite())
+        .unwrap_or(false)
+}
+
+fn wide_sum_value(lhs: u64, rhs: u64, subtract: bool) -> Option<f64> {
     let lhs = unbox_single(lhs);
-    let rhs = unbox_single(rhs);
+    let rhs = effective_rhs_bits(rhs, subtract);
+    wide_sum_value_from_single_bits(lhs, rhs)
+}
+
+fn wide_sum_value_from_single_bits(lhs: u32, rhs: u32) -> Option<f64> {
     if !is_finite(lhs) || !is_finite(rhs) {
         return None;
     }
@@ -63,10 +116,10 @@ fn wide_sum_value(lhs: u64, rhs: u64) -> Option<f64> {
     Some(f64::from(f32::from_bits(lhs)) + f64::from(f32::from_bits(rhs)))
 }
 
-fn round_wide_sum(lhs: u64, rhs: u64, exact: f64, rounding_mode: RiscvFloatRoundingMode) -> f32 {
+fn round_wide_sum(lhs: u32, rhs: u32, exact: f64, rounding_mode: RiscvFloatRoundingMode) -> f32 {
     if exact == 0.0
         && rounding_mode == RiscvFloatRoundingMode::RoundDown
-        && has_single_sign(unbox_single(lhs)) != has_single_sign(unbox_single(rhs))
+        && has_single_sign(lhs) != has_single_sign(rhs)
     {
         return f32::from_bits(SINGLE_SIGN_BIT);
     }
@@ -151,8 +204,8 @@ fn scaled_sum_is_representable(mut mantissa: u128, mut shift: i32) -> bool {
     }
 }
 
-fn native_register_write(lhs: u64, rhs: u64) -> u64 {
-    box_canonical_single(f32::from_bits(unbox_single(lhs)) + f32::from_bits(unbox_single(rhs)))
+fn native_register_write(lhs: u32, rhs: u32) -> u64 {
+    box_canonical_single(f32::from_bits(lhs) + f32::from_bits(rhs))
 }
 
 fn step_toward_exact(nearest: f32, exact: f64) -> f32 {
@@ -186,6 +239,15 @@ fn opposite_infinities(lhs: u32, rhs: u32) -> bool {
 
 fn is_finite(value: u32) -> bool {
     value & SINGLE_EXP_MASK != SINGLE_EXP_MASK
+}
+
+fn effective_rhs_bits(rhs: u64, subtract: bool) -> u32 {
+    let rhs = unbox_single(rhs);
+    if subtract {
+        rhs ^ SINGLE_SIGN_BIT
+    } else {
+        rhs
+    }
 }
 
 fn normal_exponent(value: u32) -> Option<u32> {

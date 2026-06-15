@@ -55,21 +55,12 @@ pub(crate) fn execute_float_register_instruction(
         | RiscvInstruction::FloatMaxD { rs1, rs2, .. }) => {
             let lhs = hart.read_float(rs1);
             let rhs = hart.read_float(rs2);
-            if !float::binary_register_rounding_mode_is_supported(
-                instruction,
-                hart.float_status().frm(),
-                lhs,
-                rhs,
-            ) {
+            let frm = hart.float_status().frm();
+            if !float::binary_register_rounding_mode_is_supported(instruction, frm, lhs, rhs) {
                 return Err(());
             }
-            let flags = float::binary_exception_flags(instruction, lhs, rhs);
-            let (rd, value) = float::float_register_write_binary(
-                instruction,
-                lhs,
-                rhs,
-                hart.float_status().frm(),
-            );
+            let flags = float::binary_exception_flags(instruction, lhs, rhs, frm);
+            let (rd, value) = float::float_register_write_binary(instruction, lhs, rhs, frm);
             hart.raise_float_exception_flags(flags);
             float::write_float_register(hart, writes, rd, value);
         }
