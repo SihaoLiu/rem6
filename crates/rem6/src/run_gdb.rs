@@ -4,7 +4,7 @@ use std::net::{SocketAddr, TcpListener};
 use rem6_cpu::RiscvCluster;
 use rem6_debug::{
     parse_gdb_remote_frame, GdbRemoteCommand, GdbRemoteError, GdbRemoteFrame, GdbRemotePacket,
-    GdbRemoteSession,
+    GdbRemoteSession, GdbRemoteTrapKind,
 };
 use rem6_isa_riscv::RiscvGdbXlen;
 use rem6_memory::PartitionedMemoryStore;
@@ -149,15 +149,13 @@ fn parse_loopback_gdb_listen_addr(listen: &str) -> Result<SocketAddr, Rem6CliErr
 }
 
 fn rejects_preexecution_gdb_command(packet: &GdbRemotePacket) -> bool {
-    matches!(
-        GdbRemoteCommand::parse(packet),
-        GdbRemoteCommand::Resume { .. }
-            | GdbRemoteCommand::ResumeActions { .. }
-            | GdbRemoteCommand::Trap { .. }
-            | GdbRemoteCommand::WriteMemory { .. }
-            | GdbRemoteCommand::WriteRegister { .. }
-            | GdbRemoteCommand::WriteRegisters { .. }
-    )
+    match GdbRemoteCommand::parse(packet) {
+        GdbRemoteCommand::Resume { .. } | GdbRemoteCommand::ResumeActions { .. } => true,
+        GdbRemoteCommand::Trap { request } => {
+            request.point().kind() != GdbRemoteTrapKind::SoftwareBreakpoint
+        }
+        _ => false,
+    }
 }
 
 fn write_gdb_frames(
