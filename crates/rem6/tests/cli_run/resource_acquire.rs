@@ -338,6 +338,115 @@ artifact_size = 4
 }
 
 #[test]
+fn rem6_resource_acquire_rejects_remote_uri_without_content_sha256() {
+    let workspace = temp_workspace("resource-acquire-remote-uri-without-content-sha256");
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        r#"[resource_acquire]
+workload_id = "resource-remote-uri-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:remote-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "remote-uri"
+acquisition_locator = "http://127.0.0.1:1/kernel.bin"
+artifact_digest = "sha256:remote-kernel"
+artifact_size = 4
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("remote-uri resource kernel requires artifact_digest sha256:"));
+    assert!(stderr.contains("64 lowercase hex"));
+}
+
+#[test]
+fn rem6_resource_acquire_rejects_remote_uri_without_explicit_artifact_digest() {
+    let workspace = temp_workspace("resource-acquire-remote-uri-missing-artifact-digest");
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        r#"[resource_acquire]
+workload_id = "resource-remote-uri-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "remote-uri"
+acquisition_locator = "http://127.0.0.1:1/kernel.bin"
+artifact_size = 4
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("remote-uri resource kernel requires explicit artifact_digest"));
+}
+
+#[test]
+fn rem6_resource_acquire_rejects_remote_uri_uppercase_artifact_digest() {
+    let workspace = temp_workspace("resource-acquire-remote-uri-uppercase-digest");
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        r#"[resource_acquire]
+workload_id = "resource-remote-uri-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "remote-uri"
+acquisition_locator = "http://127.0.0.1:1/kernel.bin"
+artifact_digest = "sha256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+artifact_size = 4
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("remote-uri resource kernel requires artifact_digest sha256:"));
+    assert!(stderr.contains("lowercase"));
+}
+
+#[test]
 fn rem6_resource_acquire_loads_chunked_remote_uri_resource() {
     let workspace = temp_workspace("resource-acquire-remote-uri-chunked");
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -424,7 +533,7 @@ locator = "resources/kernel.elf"
 required = true
 acquisition_kind = "remote-uri"
 acquisition_locator = "{url}"
-artifact_digest = "sha256:remote-kernel"
+artifact_digest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 artifact_size = 4
 "#,
         ),
@@ -444,7 +553,9 @@ artifact_size = 4
     assert!(
         stderr.contains("sha256:eba09f2f48f209cfa2dfbf19fc678d755d05559671eceda0164f3e080cb49765")
     );
-    assert!(stderr.contains("sha256:remote-kernel"));
+    assert!(
+        stderr.contains("sha256:0000000000000000000000000000000000000000000000000000000000000000")
+    );
 }
 
 #[test]

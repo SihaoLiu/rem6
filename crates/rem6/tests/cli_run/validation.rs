@@ -1119,12 +1119,12 @@ boot_entry = 2147483648
 [[resource_acquire.resources]]
 id = "kernel"
 kind = "kernel"
-digest = "sha256:remote-kernel"
+digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
 locator = "resources/kernel.elf"
 required = true
 acquisition_kind = "remote-uri"
 acquisition_locator = "http://127.0.0.1:9/kernel.elf"
-artifact_digest = "sha256:remote-kernel"
+artifact_digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
 "#,
     )
     .unwrap();

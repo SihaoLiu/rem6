@@ -463,10 +463,22 @@ fn parse_resource_acquire_resource(
             });
         }
     };
-    let artifact_digest = resource
-        .artifact_digest
-        .clone()
-        .unwrap_or_else(|| digest.clone());
+    let artifact_digest = match (&resource.artifact_digest, acquisition_kind) {
+        (Some(artifact_digest), WorkloadResourceAcquisitionKind::RemoteUri) => {
+            if !is_sha256_content_digest(artifact_digest) {
+                return Err(Rem6CliError::InvalidRemoteResourceArtifactDigest {
+                    resource: id,
+                    value: artifact_digest.clone(),
+                });
+            }
+            artifact_digest.clone()
+        }
+        (None, WorkloadResourceAcquisitionKind::RemoteUri) => {
+            return Err(Rem6CliError::MissingRemoteResourceArtifactDigest { resource: id });
+        }
+        (Some(artifact_digest), _) => artifact_digest.clone(),
+        (None, _) => digest.clone(),
+    };
 
     Ok(Rem6ResourceAcquireResourceConfig {
         id,
@@ -484,6 +496,16 @@ fn parse_resource_acquire_resource(
         artifact_digest,
         artifact_size: resource.artifact_size,
     })
+}
+
+fn is_sha256_content_digest(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return false;
+    };
+    hex.len() == 64
+        && hex
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn resolve_config_path(config_dir: Option<&Path>, path: &Path) -> PathBuf {

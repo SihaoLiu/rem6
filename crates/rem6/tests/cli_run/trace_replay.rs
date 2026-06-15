@@ -464,12 +464,12 @@ boot_entry = 4096
 [[resource_acquire.resources]]
 id = "trace"
 kind = "input"
-digest = "sha256:remote-trace"
+digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 locator = "resources/trace.pb"
 required = true
 acquisition_kind = "remote-uri"
 acquisition_locator = "http://127.0.0.1:9/trace.pb"
-artifact_digest = "sha256:remote-trace"
+artifact_digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 "#,
     )
     .unwrap();

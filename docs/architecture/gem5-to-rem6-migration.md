@@ -485,11 +485,12 @@ resource acquisition through the same top-level local-artifact executor path,
 top-level host-file acquisition through config-relative host paths and the same
 executor validation flow, top-level uncompressed tar archive entry acquisition
 and gzip-compressed tar archive entry acquisition through the same executor
-validation flow, top-level HTTP `remote-uri` acquisition with response-body
-SHA-256 validation for basic and chunked transfer responses through the same
-executor validation flow for explicit pre-simulation `resource-acquire`,
-runtime `run` and `trace-replay` resource handoffs rejecting `remote-uri`
-resources before artifact reads to keep simulation entry points network-free,
+validation flow, top-level HTTP `remote-uri` acquisition requiring an
+`artifact_digest` content SHA-256 and validating response bodies for basic and
+chunked transfer responses through the same executor validation flow for
+explicit pre-simulation `resource-acquire`, runtime `run` and `trace-replay`
+resource handoffs rejecting `remote-uri` resources before artifact reads to keep
+simulation entry points network-free,
 top-level `rem6 run` handoff of a manifest-acquired
 kernel resource into the normal ELF load and execution path, top-level
 `rem6 run` handoff of a unique suite-acquired kernel resource into the normal
@@ -514,13 +515,13 @@ cache/DRAM interaction, and broad benchmark orchestration.
 `WorkloadInMemoryResourceAcquisitionExecutor`, `WorkloadResolvedResources`,
 `rem6 resource-acquire` CLI tests, `rem6 run` manifest and suite
 resource-config kernel handoff tests, `rem6 resource-acquire` remote-uri
-content-digest and chunked-transfer tests, `rem6 run` remote-uri runtime rejection tests,
-`rem6 trace-replay` manifest and suite resource-config handoff tests,
-`rem6 trace-replay` remote-uri runtime rejection tests, suite tests, resource
-acquisition executor tests, `rem6 gups` profile-summary CLI tests, GPU and
-accelerator topology tests, and GPU compute tests covering scalar ISA
-execution, coalesced memory records, and snapshot restore of queued ISA
-programs.
+content-digest, content-address requirement, and chunked-transfer tests, `rem6
+run` remote-uri runtime rejection tests, `rem6 trace-replay` manifest and suite
+resource-config handoff tests, `rem6 trace-replay` remote-uri runtime rejection
+tests, suite tests, resource acquisition executor tests, `rem6 gups`
+profile-summary CLI tests, GPU and accelerator topology tests, and GPU compute
+tests covering scalar ISA execution, coalesced memory records, and snapshot
+restore of queued ISA programs.
 
 **Next evidence:** Broader suite-level workload replay beyond unique resource
 handoffs, network-backed workload acquisition, additional compressed archive

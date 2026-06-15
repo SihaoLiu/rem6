@@ -103,6 +103,13 @@ pub enum Rem6CliError {
     InvalidResourceAcquisitionKind {
         value: String,
     },
+    MissingRemoteResourceArtifactDigest {
+        resource: String,
+    },
+    InvalidRemoteResourceArtifactDigest {
+        resource: String,
+        value: String,
+    },
     InvalidRunDataCacheProtocol {
         value: String,
     },
@@ -312,6 +319,14 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidResourceAcquisitionKind { value } => {
                 write!(formatter, "invalid resource acquisition kind {value}")
             }
+            Self::MissingRemoteResourceArtifactDigest { resource } => write!(
+                formatter,
+                "remote-uri resource {resource} requires explicit artifact_digest"
+            ),
+            Self::InvalidRemoteResourceArtifactDigest { resource, value } => write!(
+                formatter,
+                "remote-uri resource {resource} requires artifact_digest sha256:<64 lowercase hex>; got {value}"
+            ),
             Self::InvalidRunDataCacheProtocol { value } => {
                 write!(formatter, "invalid run data cache protocol {value}")
             }
