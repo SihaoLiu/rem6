@@ -49,6 +49,7 @@ mod request;
 mod robust;
 mod scheduler;
 mod seek;
+mod sendfile;
 mod signal;
 mod sleep;
 mod startup;
@@ -146,6 +147,7 @@ use rename::{syscall_renameat, syscall_renameat2, RISCV_LINUX_RENAMEAT, RISCV_LI
 pub use request::RiscvSyscallRequest;
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
+use sendfile::{syscall_sendfile, RISCV_LINUX_SENDFILE};
 use signal::{
     syscall_kill, syscall_rt_sigaction, syscall_rt_sigpending, syscall_rt_sigprocmask,
     syscall_rt_sigtimedwait, syscall_sigaltstack, syscall_tgkill, syscall_tkill, RiscvSignalAction,
@@ -1199,6 +1201,20 @@ impl RiscvSyscallTable {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_pwrite64(request, state, tick, guest_memory),
                 })
+            }
+            RISCV_LINUX_SENDFILE => {
+                if request.argument(2) == 0 {
+                    Some(RiscvSyscallOutcome::Return {
+                        value: syscall_sendfile(request, state, None, None),
+                    })
+                } else {
+                    match (guest_memory_reader, guest_memory_writer) {
+                        (Some(reader), Some(writer)) => Some(RiscvSyscallOutcome::Return {
+                            value: syscall_sendfile(request, state, Some(reader), Some(writer)),
+                        }),
+                        _ => None,
+                    }
+                }
             }
             RISCV_LINUX_WRITEV => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {

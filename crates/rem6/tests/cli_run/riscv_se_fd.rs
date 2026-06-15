@@ -261,6 +261,168 @@ int main(void) {
     assert_stat(&stdout, "sim.stop_code", "Count", 46, "constant");
 }
 
+#[test]
+fn rem6_run_riscv_se_runs_static_raw_sendfile_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!("skipping static RISC-V SE sendfile smoke: riscv64-unknown-elf-gcc not found");
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE sendfile smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-sendfile");
+    let qemu_workspace = workspace.join("qemu");
+    fs::create_dir(&qemu_workspace).unwrap();
+    let source = workspace.join("sendfile.c");
+    let binary = workspace.join("sendfile");
+    let qemu_input = qemu_workspace.join("input.txt");
+    let rem6_input = workspace.join("rem6-input.txt");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+#include <string.h>
+
+#define AT_FDCWD (-100L)
+#define O_RDONLY 0
+#define O_RDWR 02
+#define O_CREAT 0100
+#define O_TRUNC 01000
+#define SEEK_SET 0
+
+static long linux_syscall1(long number, long arg0) {
+    register long a0 asm("a0") = arg0;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall4(long number, long arg0, long arg1, long arg2, long arg3) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3), "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    char copied_bytes[8] = {0};
+    char next_bytes[8] = {0};
+    unsigned long offset = 2;
+    long in_fd = linux_syscall4(56, AT_FDCWD, (long)"input.txt", O_RDONLY, 0);
+    long out_fd = linux_syscall4(56, AT_FDCWD, (long)"output.txt",
+                                 O_RDWR | O_CREAT | O_TRUNC, 0600);
+    long copied = in_fd < 0 || out_fd < 0 ? -1 :
+        linux_syscall4(71, out_fd, in_fd, (long)&offset, 3);
+    long seek = out_fd < 0 ? -1 : linux_syscall3(62, out_fd, 0, SEEK_SET);
+    long read_out = seek < 0 ? -1 : linux_syscall3(63, out_fd, (long)copied_bytes, 7);
+    long read_in = in_fd < 0 ? -1 : linux_syscall3(63, in_fd, (long)next_bytes, 7);
+    if (out_fd >= 0) {
+        linux_syscall1(57, out_fd);
+    }
+    if (in_fd >= 0) {
+        linux_syscall1(57, in_fd);
+    }
+
+    printf("sendfile:%ld:%ld:%ld:%lu:%ld:%.*s:%ld:%.*s\n",
+           in_fd >= 0 ? 0 : in_fd,
+           out_fd >= 0 ? 0 : out_fd,
+           copied,
+           offset,
+           read_out,
+           (int)(read_out > 0 ? read_out : 0),
+           copied_bytes,
+           read_in,
+           (int)(read_in > 0 ? read_in : 0),
+           next_bytes);
+    return in_fd >= 0 && out_fd >= 0 &&
+           copied == 3 && offset == 5 &&
+           read_out == 3 && memcmp(copied_bytes, "cde", 3) == 0 &&
+           read_in == 7 && memcmp(next_bytes, "abcdefg", 7) == 0 ? 48 : 79;
+}
+"#,
+    )
+    .unwrap();
+    fs::write(&qemu_input, b"abcdefgh\n").unwrap();
+    fs::write(&rem6_input, b"abcdefgh\n").unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu)
+        .arg(&binary)
+        .current_dir(&qemu_workspace)
+        .output()
+        .unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(48),
+        "qemu stdout: {}; qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stdout),
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(qemu_output.stdout, b"sendfile:0:0:3:5:3:cde:7:abcdefg\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "450000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+            "--riscv-se-file",
+            &format!("input.txt={}", rem6_input.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":48"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"sendfile:0:0:3:5:3:cde:7:abcdefg\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 48, "constant");
+}
+
 fn find_riscv_tool(name: &str) -> Option<PathBuf> {
     find_tool_on_path(name).or_else(|| {
         let module_candidate =
