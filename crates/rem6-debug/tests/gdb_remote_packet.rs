@@ -1106,6 +1106,7 @@ fn gdb_remote_session_reports_thread_info_sequence() {
             GdbRemoteFrame::Packet(GdbRemotePacket::new(b"m1".to_vec()).unwrap()),
         ],
     );
+    assert!(session.set_thread_ids(vec![1]));
     assert_eq!(
         session
             .handle_packet(&GdbRemotePacket::new(b"qsThreadInfo".to_vec()).unwrap())
@@ -2163,6 +2164,26 @@ fn gdb_remote_session_retransmits_last_response_after_negative_acknowledgement()
         session.handle_frame(&GdbRemoteFrame::NegativeAck).unwrap(),
         vec![GdbRemoteFrame::Packet(
             GdbRemotePacket::new(b"PacketSize=4000".to_vec()).unwrap(),
+        )],
+    );
+}
+
+#[test]
+fn gdb_remote_session_records_async_response_for_negative_acknowledgement() {
+    let mut session = GdbRemoteSession::new(Vec::new());
+
+    assert_eq!(
+        session
+            .async_response_with_payload(b"S05".to_vec())
+            .unwrap(),
+        vec![GdbRemoteFrame::Packet(
+            GdbRemotePacket::new(b"S05".to_vec()).unwrap(),
+        )],
+    );
+    assert_eq!(
+        session.handle_frame(&GdbRemoteFrame::NegativeAck).unwrap(),
+        vec![GdbRemoteFrame::Packet(
+            GdbRemotePacket::new(b"S05".to_vec()).unwrap(),
         )],
     );
 }

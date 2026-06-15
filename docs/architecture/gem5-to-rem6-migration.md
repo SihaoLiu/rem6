@@ -406,7 +406,7 @@ network evidence.
 
 ### Stats, Probes, Debug, Host Actions, and Checkpointing - 59% single-axis
 
-**Score calculation:** 13 of 17 items have executable evidence, or 76% raw,
+**Score calculation:** 14 of 18 items have executable evidence, or 78% raw,
 capped to 59% by the single-axis bucket. The bucket cap is single-axis because
 probe, debug, power, and checkpoint evidence is not yet integrated across O3
 pipeline and cache/DRAM runtime state.
@@ -427,9 +427,12 @@ pipeline and cache/DRAM runtime state.
 - [x] CLI `run --gdb-listen` applies pre-execution RISC-V register writes,
   memory writes, and software breakpoint packets before the normal run consumes
   the mutated core and memory state.
+- [x] CLI `run --gdb-listen` single-step packets drive one real RISC-V
+  instruction, return a GDB stop reply, and leave the stepped state visible to
+  subsequent register reads and detach-time execution.
 - [x] Stricter gem5 text-stat compatibility exists.
 - [ ] Cache/bank/fabric/DRAM hierarchy counters are complete.
-- [ ] GDB socket loop, step/resume/break/watch integration, RV32 FP/vector register cache, and broader CSR register cache exist.
+- [ ] GDB socket loop continue/vCont, hardware break/watch integration, RV32 FP/vector register cache, and broader CSR register cache exist.
 - [ ] Power and thermal models are calibrated against real component activity.
 - [ ] O3 pending-state checkpoints exist.
 
@@ -447,15 +450,16 @@ execution-control state for packet-stream step/resume and break/watch requests,
 CLI `run --gdb-listen` attach-before-execute socket handoff for RISC-V
 stop-reason, register, memory, and detach packets, pre-execution register and
 memory writes, and pre-execution software breakpoints consumed by the following
-run,
+run, plus pre-detach single-step execution through the normal RISC-V run driver,
 target-description-aligned register-cache seeding, O3 writeback transfer
 deferred-completion checkpoint payloads, and custom plus library-level and
 `rem6 run --power-output` McPAT-shaped and DSENT-shaped power-analysis exports.
 
 **Not migrated:** Complete gem5 text-stat parity, full debug execution control,
-runtime GDB resume/step and hardware watchpoint handling, RV32 FP/vector and
-broader CSR GDB register cache, runtime resource counters, runtime-calibrated
-power/thermal, and broad O3 ROB/LSQ/rename checkpoint ownership.
+runtime GDB continue/vCont and hardware watchpoint handling, RV32 FP/vector and
+broader CSR GDB register cache, integrated debug-run stat roll-up,
+runtime resource counters, runtime-calibrated power/thermal, and broad O3
+ROB/LSQ/rename checkpoint ownership.
 
 **Evidence:** `StatsRegistry`, `ProbeRegistry`, `RiscvInstructionStats`,
 `RiscvDataAccessStats`, `SystemActionExecutor`, `GdbRemoteSession`,
@@ -464,7 +468,8 @@ O3 writeback transfer deferred-state payload tests, GDB byte-stream,
 RV64D FP, FP CSR, and RV64 supervisor CSR register-cache, and control-state tests,
 `gdb_remote_packet` execution-control tests,
 CLI `run --gdb-listen` smoke tests for RISC-V pre-execution state and
-pre-execution writes consumed by the subsequent run,
+pre-execution writes consumed by the subsequent run, CLI `run --gdb-listen`
+single-step smoke tests,
 power-analysis export tests, CLI power-output tests, system GDB software
 breakpoint patch/restore tests, CLI data-access probe tests, and histogram
 registry/output tests.
@@ -476,7 +481,7 @@ committed-instruction, sim-ops, sim-seconds, and sim-frequency aliases emitted
 from an executed RISC-V run.
 
 **Next evidence:** Broader gem5 text-stat compatibility, remaining
-cache/bank/fabric runtime resource counters, GDB socket-loop resume/step and
+cache/bank/fabric runtime resource counters, GDB socket-loop continue/vCont and
 hardware watchpoint execution-control integration, RV32 FP/vector and broader CSR
 register-cache tests, and O3
 checkpoint capture/restore.
@@ -595,7 +600,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/regression_tests` | all rem6 crates | 35% unit-slice | Workspace tests act as the current regression suite. | Add migration tags or per-family regression rows. |
 | `tests/gem5/replacement_policies` | `rem6-cache` | 60% representative | Multiple replacement, indexing, dueling, compressed, and sector tag tests exist. | Add remaining policies and exact trace/reference parity where useful. |
 | `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, RFENCE remote SFENCE.VMA data TLB flushes with finite-range, ASID scope, and scheduled completion events, unsupported HFENCE validation, and HSM start entry-state, `START_PENDING`, status, no-return stop, retentive-suspend, default-non-retentive `RESUME_PENDING`/resume, and IPI-wake slices are tested. | Add broader SBI timer/IPI/reset power-state behavior, remaining HSM wake semantics, RFENCE hypervisor-fence execution semantics and broader completion coverage, and a real Linux boot smoke. |
-| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 64% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, instruction/data cache counters, cache-local prefetch queue counters, CLI stat output with gem5-style final-tick, committed-instruction, sim-ops, sim-seconds, and sim-frequency aliases, CLI GDB attach-before-execute register/memory smoke coverage plus pre-execution writes and software breakpoints consumed by the following run, and library-level plus run-CLI McPAT/DSENT-shaped export tests exist. | Add more hierarchy counters, calibrated power/thermal activity, exact gem5 stat naming breadth, and GDB resume/step execution control. |
+| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 64% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, instruction/data cache counters, cache-local prefetch queue counters, CLI stat output with gem5-style final-tick, committed-instruction, sim-ops, sim-seconds, and sim-frequency aliases, CLI GDB attach-before-execute register/memory smoke coverage plus pre-execution writes, software breakpoints, and single-step execution consumed by the following run, and library-level plus run-CLI McPAT/DSENT-shaped export tests exist. | Add more hierarchy counters, calibrated power/thermal activity, exact gem5 stat naming breadth, and GDB continue/vCont execution control. |
 | `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 54% single-axis | Workload manifests, resource payloads, manifest/suite-level CLI resource acquisition including host-file and uncompressed/gzip tar-entry inputs, manifest-acquired and unique-suite run kernel handoff, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage, remote/cache policy acquisition, and ergonomic topology/workload definitions. |
 | `tests/test-progs` | `rem6-system`, `rem6` CLI, ISA crates | 35% unit-slice | Static RISC-V no-libc, newlib, and raw syscall smoke binaries, including `statx`, `faccessat2`, `utimensat`, advisory `fchownat`/`fchown`, `sysinfo`, newlib file-create roundtrip, newlib `/proc/self/exe` readlink coverage, newlib pipe2 roundtrip coverage, newlib directory-open coverage, and newlib open-flag coverage, are generated when tools exist. | Add durable generated fixtures for hello, threads, and m5 utility shapes across ISAs. |
 | `tests/gem5/traffic_gen` | `rem6-traffic`, `rem6-system`, `rem6-workload`, `rem6` CLI | 55% single-axis | Text config parsing, GUPS, packet trace replay including manifest and unique suite resource-config trace handoff, flags, maintenance, HTM, responses, workload summaries, typed generator/memory-profile summaries, and top-level GUPS profile JSON/stats output exist. | Add cache hierarchy matrix and broader trusted stats. |

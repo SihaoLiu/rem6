@@ -484,6 +484,9 @@ impl GdbRemoteSession {
         if thread_ids.is_empty() || thread_ids.contains(&0) || has_duplicates(&thread_ids) {
             return false;
         }
+        if self.thread_ids == thread_ids {
+            return true;
+        }
         if !thread_ids.contains(&self.current_thread_id) {
             self.current_thread_id = thread_ids[0];
         }
@@ -584,6 +587,15 @@ impl GdbRemoteSession {
         payload: Vec<u8>,
     ) -> Result<Vec<GdbRemoteFrame>, GdbRemoteError> {
         self.packet_response(payload)
+    }
+
+    pub fn async_response_with_payload(
+        &mut self,
+        payload: Vec<u8>,
+    ) -> Result<Vec<GdbRemoteFrame>, GdbRemoteError> {
+        let packet = GdbRemotePacket::with_config(payload, self.response_config)?;
+        self.last_response = Some(packet.clone());
+        Ok(vec![GdbRemoteFrame::Packet(packet)])
     }
 
     fn write_memory_bytes(&mut self, address: u64, bytes: &[u8]) -> bool {

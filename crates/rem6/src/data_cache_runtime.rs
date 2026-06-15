@@ -116,6 +116,29 @@ pub(super) fn cli_data_memory_response(
     cli_memory_response(memory, delivery)
 }
 
+pub(super) fn cli_cache_runtime(
+    protocol: Option<RiscvDataCacheProtocol>,
+    line_layout: CacheLineLayout,
+    core_count: u32,
+) -> Result<Option<CliDataCacheRuntime>, Rem6CliError> {
+    let agents = || (0..core_count).map(AgentId::new);
+    match protocol {
+        Some(RiscvDataCacheProtocol::Msi) => {
+            CliDataCacheRuntime::new_msi_bank(line_layout, agents()).map(Some)
+        }
+        Some(RiscvDataCacheProtocol::Mesi) => {
+            CliDataCacheRuntime::new_mesi_lines(line_layout, agents()).map(Some)
+        }
+        Some(RiscvDataCacheProtocol::Moesi) => {
+            CliDataCacheRuntime::new_moesi_lines(line_layout, agents()).map(Some)
+        }
+        Some(RiscvDataCacheProtocol::Chi) => {
+            CliDataCacheRuntime::new_chi_lines(line_layout, agents()).map(Some)
+        }
+        None => Ok(None),
+    }
+}
+
 pub(super) fn with_riscv_syscall_data_cache_memory_io(
     driver: RiscvSystemRunDriver,
     memory: CliMemoryRuntime,

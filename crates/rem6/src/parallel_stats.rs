@@ -1,11 +1,93 @@
 use std::collections::BTreeMap;
 
+use rem6_kernel::{PartitionFrontier, ReadyPartition};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
+use rem6_system::RiscvSystemRun;
 
 use super::{
     stats_output::increment_stat, Rem6CliError, Rem6ExecutionSummary, Rem6ParallelFrontierSummary,
-    Rem6ParallelReadyPartitionSummary,
+    Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6ParallelWorkerLaneSummary,
+    Rem6ParallelWorkerSlotSummary,
 };
+
+pub(super) fn parallel_worker_slot_summaries(
+    run: &RiscvSystemRun,
+) -> Vec<Rem6ParallelWorkerSlotSummary> {
+    run.parallel_scheduler_batch_worker_slot_tick_summaries()
+        .into_iter()
+        .map(
+            |(slot, active_ticks, idle_ticks)| Rem6ParallelWorkerSlotSummary {
+                slot,
+                active_ticks,
+                idle_ticks,
+            },
+        )
+        .collect()
+}
+
+pub(super) fn parallel_worker_lane_summaries(
+    run: &RiscvSystemRun,
+) -> Vec<Rem6ParallelWorkerLaneSummary> {
+    let mut summaries = BTreeMap::<(usize, u32), u64>::new();
+    for lane in run.parallel_scheduler_worker_lanes() {
+        let key = (lane.lane(), lane.partition().index());
+        let ticks = summaries.entry(key).or_default();
+        *ticks = ticks.saturating_add(lane.duration_ticks());
+    }
+    summaries
+        .into_iter()
+        .map(
+            |((lane, partition), active_ticks)| Rem6ParallelWorkerLaneSummary {
+                lane,
+                partition,
+                active_ticks,
+            },
+        )
+        .collect()
+}
+
+pub(super) fn parallel_partition_summaries(
+    run: &RiscvSystemRun,
+) -> Vec<Rem6ParallelPartitionSummary> {
+    run.parallel_scheduler_partition_activities()
+        .into_iter()
+        .map(|(partition, activity)| Rem6ParallelPartitionSummary {
+            partition: partition.index(),
+            workers: activity.worker_count() as u64,
+            dispatches: activity.dispatch_count() as u64,
+            remote_sends: activity.remote_send_count() as u64,
+            remote_receives: activity.remote_receive_count() as u64,
+            max_pending_events: activity.max_pending_events() as u64,
+        })
+        .collect()
+}
+
+pub(super) fn parallel_frontier_summaries(
+    frontiers: Vec<PartitionFrontier>,
+) -> Vec<Rem6ParallelFrontierSummary> {
+    frontiers
+        .into_iter()
+        .map(|frontier| Rem6ParallelFrontierSummary {
+            partition: frontier.partition().index(),
+            now: frontier.now(),
+            safe_until: frontier.safe_until(),
+            next_tick: frontier.next_tick(),
+            pending_events: frontier.pending_events() as u64,
+        })
+        .collect()
+}
+
+pub(super) fn parallel_ready_partition_summaries(
+    ready_partitions: Vec<ReadyPartition>,
+) -> Vec<Rem6ParallelReadyPartitionSummary> {
+    ready_partitions
+        .into_iter()
+        .map(|ready| Rem6ParallelReadyPartitionSummary {
+            partition: ready.partition.index(),
+            next_tick: ready.next_tick,
+        })
+        .collect()
+}
 
 pub(super) fn emit_scheduler_stats(
     stats: &mut StatsRegistry,

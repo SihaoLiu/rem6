@@ -11,16 +11,16 @@ use rem6_cpu::{
     RiscvCoreDriveAction, RiscvDataAccessEventKind,
 };
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode};
-use rem6_kernel::{PartitionFrontier, PartitionId, PartitionedScheduler, ReadyPartition};
+use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation};
 use rem6_stats::{
     MemFootprintAddressRange, MemFootprintProbeConfig, StackDistProbeConfig, StatsRegistry,
 };
 use rem6_system::{
     GuestEventId, GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats,
-    RiscvDataCacheProtocol, RiscvGuestWriteRecord, RiscvSeAuxvEntry, RiscvSeStartupConfig,
-    RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort,
-    RiscvUnknownSyscallRecord, SystemHostController, SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
+    RiscvGuestWriteRecord, RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun,
+    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, RiscvUnknownSyscallRecord,
+    SystemHostController, SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TransportEndpointId,
@@ -54,11 +54,15 @@ pub use config::{
     Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, StatsFormat,
 };
 use data_cache_runtime::{
-    cli_data_memory_response, with_riscv_syscall_data_cache_memory_io, CliDataCacheRuntime,
-    CliDataCacheSummary,
+    cli_cache_runtime, cli_data_memory_response, with_riscv_syscall_data_cache_memory_io,
+    CliDataCacheRuntime, CliDataCacheSummary,
 };
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
+use parallel_stats::{
+    parallel_frontier_summaries, parallel_partition_summaries, parallel_ready_partition_summaries,
+    parallel_worker_lane_summaries, parallel_worker_slot_summaries,
+};
 use pipeline_stats::{
     in_order_pipeline_data_wait_cycles, in_order_pipeline_fetch_wait_cycles,
     in_order_pipeline_retired,
@@ -68,7 +72,9 @@ pub use resource_acquire_cli::{
     run_resource_acquire_config, Rem6ResourceAcquireArtifact, Rem6ResourceAcquireResourceSummary,
 };
 pub use resource_acquire_config::{Rem6ResourceAcquireConfig, Rem6ResourceAcquireResourceConfig};
-use run_gdb::{serve_riscv_gdb_once, validate_run_gdb_listen_config};
+use run_gdb::{
+    serve_riscv_gdb_with_single_step, validate_run_gdb_listen_config, RiscvGdbServeOutcome,
+};
 use run_resource_config::run_kernel_binary_from_resource_config;
 use runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use stats_output::{run_stats_output, Rem6StatsInputs};
@@ -403,6 +409,7 @@ struct ExecutionSummaryInputs<'a> {
     data_trace: &'a MemoryTrace,
     riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
     riscv_unknown_syscalls: Vec<Rem6RiscvUnknownSyscallSummary>,
+    prior_committed_by_cpu: BTreeMap<CpuId, u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -741,9 +748,6 @@ fn execute_riscv(
         cores.push(core);
     }
     let cluster = RiscvCluster::new(cores).map_err(execute_error)?;
-    if let Some(listen) = config.gdb_listen() {
-        serve_riscv_gdb_once(listen, &cluster, &memory)?;
-    }
     let controller = Arc::new(Mutex::new(SystemHostController::new(
         HostEventPolicy,
         StatsRegistry::new(),
@@ -820,31 +824,65 @@ fn execute_riscv(
     }
     let fetch_trace = MemoryTrace::new();
     let data_trace = MemoryTrace::new();
-    let run_result = match config.max_instructions() {
-        Some(max_instructions) => driver.drive_until_host_stop_or_instruction_limit_parallel(
+    let gdb_outcome = if let Some(listen) = config.gdb_listen() {
+        serve_riscv_gdb_with_single_step(
+            listen,
             &cluster,
+            &memory,
+            &driver,
             &mut scheduler,
             &transport,
+            instruction_cache.clone(),
+            data_cache.clone(),
             fetch_trace.clone(),
             data_trace.clone(),
-            |_cpu| {
-                let memory = memory.clone();
-                let instruction_cache = instruction_cache.clone();
-                move |delivery, _context| {
-                    cli_data_memory_response(instruction_cache.as_ref(), &memory, &delivery)
-                }
-            },
-            |_cpu| {
-                let memory = memory.clone();
-                let data_cache = data_cache.clone();
-                move |delivery, _context| {
-                    cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
-                }
-            },
             tick_limit,
-            max_instructions,
-            |cpu| GuestEventId::new(u64::from(cpu.get())),
-        ),
+            config.max_instructions(),
+        )?
+    } else {
+        RiscvGdbServeOutcome::default()
+    };
+    let run_result = match config.max_instructions() {
+        Some(max_instructions) => {
+            let remaining_instructions =
+                max_instructions.saturating_sub(gdb_outcome.retired_instruction_count());
+            if remaining_instructions == 0 {
+                Ok(RiscvSystemRun::new(
+                    Vec::new(),
+                    Vec::new(),
+                    RiscvSystemRunStopReason::InstructionLimit {
+                        tick: scheduler.now(),
+                        limit: max_instructions,
+                        committed: gdb_outcome.retired_instruction_count(),
+                    },
+                ))
+            } else {
+                driver.drive_until_host_stop_or_instruction_limit_parallel(
+                    &cluster,
+                    &mut scheduler,
+                    &transport,
+                    fetch_trace.clone(),
+                    data_trace.clone(),
+                    |_cpu| {
+                        let memory = memory.clone();
+                        let instruction_cache = instruction_cache.clone();
+                        move |delivery, _context| {
+                            cli_data_memory_response(instruction_cache.as_ref(), &memory, &delivery)
+                        }
+                    },
+                    |_cpu| {
+                        let memory = memory.clone();
+                        let data_cache = data_cache.clone();
+                        move |delivery, _context| {
+                            cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
+                        }
+                    },
+                    tick_limit,
+                    remaining_instructions,
+                    |cpu| GuestEventId::new(u64::from(cpu.get())),
+                )
+            }
+        }
         None => driver.drive_until_host_stop_or_tick_limit_parallel(
             &cluster,
             &mut scheduler,
@@ -915,32 +953,10 @@ fn execute_riscv(
         data_trace: &data_trace,
         riscv_guest_writes,
         riscv_unknown_syscalls,
+        prior_committed_by_cpu: gdb_outcome.retired_by_cpu().clone(),
     };
 
     execution_summary(&cluster, &run, summary_inputs)
-}
-
-fn cli_cache_runtime(
-    protocol: Option<RiscvDataCacheProtocol>,
-    line_layout: CacheLineLayout,
-    core_count: u32,
-) -> Result<Option<CliDataCacheRuntime>, Rem6CliError> {
-    let agents = || (0..core_count).map(AgentId::new);
-    match protocol {
-        Some(RiscvDataCacheProtocol::Msi) => {
-            CliDataCacheRuntime::new_msi_bank(line_layout, agents()).map(Some)
-        }
-        Some(RiscvDataCacheProtocol::Mesi) => {
-            CliDataCacheRuntime::new_mesi_lines(line_layout, agents()).map(Some)
-        }
-        Some(RiscvDataCacheProtocol::Moesi) => {
-            CliDataCacheRuntime::new_moesi_lines(line_layout, agents()).map(Some)
-        }
-        Some(RiscvDataCacheProtocol::Chi) => {
-            CliDataCacheRuntime::new_chi_lines(line_layout, agents()).map(Some)
-        }
-        None => Ok(None),
-    }
 }
 
 fn add_memory_route(
@@ -970,7 +986,10 @@ fn execution_summary(
     run: &RiscvSystemRun,
     inputs: ExecutionSummaryInputs<'_>,
 ) -> Result<Rem6ExecutionSummary, Rem6CliError> {
-    let committed_by_cpu = committed_instructions_by_cpu(run);
+    let mut committed_by_cpu = inputs.prior_committed_by_cpu.clone();
+    for (cpu, committed) in committed_instructions_by_cpu(run) {
+        *committed_by_cpu.entry(cpu).or_insert(0) += committed;
+    }
     let committed_instructions = committed_by_cpu.values().sum();
     let final_tick = run.final_tick().ok_or_else(|| Rem6CliError::Execute {
         error: "RISC-V execution stopped without a final tick".to_string(),
@@ -991,7 +1010,7 @@ fn execution_summary(
         }
         RiscvSystemRunStopReason::InstructionLimit { limit, .. } => {
             Rem6ExecutionStop::InstructionLimit {
-                instruction_limit: limit,
+                instruction_limit: inputs.config.max_instructions().unwrap_or(limit),
             }
         }
         RiscvSystemRunStopReason::TickLimit { limit, .. } => {
@@ -1145,79 +1164,6 @@ fn data_access_probe_summary(
             }
         })
         .unwrap_or_default()
-}
-
-fn parallel_worker_slot_summaries(run: &RiscvSystemRun) -> Vec<Rem6ParallelWorkerSlotSummary> {
-    run.parallel_scheduler_batch_worker_slot_tick_summaries()
-        .into_iter()
-        .map(
-            |(slot, active_ticks, idle_ticks)| Rem6ParallelWorkerSlotSummary {
-                slot,
-                active_ticks,
-                idle_ticks,
-            },
-        )
-        .collect()
-}
-
-fn parallel_worker_lane_summaries(run: &RiscvSystemRun) -> Vec<Rem6ParallelWorkerLaneSummary> {
-    let mut summaries = BTreeMap::<(usize, u32), u64>::new();
-    for lane in run.parallel_scheduler_worker_lanes() {
-        let key = (lane.lane(), lane.partition().index());
-        let ticks = summaries.entry(key).or_default();
-        *ticks = ticks.saturating_add(lane.duration_ticks());
-    }
-    summaries
-        .into_iter()
-        .map(
-            |((lane, partition), active_ticks)| Rem6ParallelWorkerLaneSummary {
-                lane,
-                partition,
-                active_ticks,
-            },
-        )
-        .collect()
-}
-
-fn parallel_partition_summaries(run: &RiscvSystemRun) -> Vec<Rem6ParallelPartitionSummary> {
-    run.parallel_scheduler_partition_activities()
-        .into_iter()
-        .map(|(partition, activity)| Rem6ParallelPartitionSummary {
-            partition: partition.index(),
-            workers: activity.worker_count() as u64,
-            dispatches: activity.dispatch_count() as u64,
-            remote_sends: activity.remote_send_count() as u64,
-            remote_receives: activity.remote_receive_count() as u64,
-            max_pending_events: activity.max_pending_events() as u64,
-        })
-        .collect()
-}
-
-fn parallel_frontier_summaries(
-    frontiers: Vec<PartitionFrontier>,
-) -> Vec<Rem6ParallelFrontierSummary> {
-    frontiers
-        .into_iter()
-        .map(|frontier| Rem6ParallelFrontierSummary {
-            partition: frontier.partition().index(),
-            now: frontier.now(),
-            safe_until: frontier.safe_until(),
-            next_tick: frontier.next_tick(),
-            pending_events: frontier.pending_events() as u64,
-        })
-        .collect()
-}
-
-fn parallel_ready_partition_summaries(
-    ready_partitions: Vec<ReadyPartition>,
-) -> Vec<Rem6ParallelReadyPartitionSummary> {
-    ready_partitions
-        .into_iter()
-        .map(|ready| Rem6ParallelReadyPartitionSummary {
-            partition: ready.partition.index(),
-            next_tick: ready.next_tick,
-        })
-        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
