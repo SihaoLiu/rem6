@@ -344,6 +344,36 @@ impl BranchPredictor {
         })
     }
 
+    pub fn discard_speculation(
+        &mut self,
+        id: BranchSpeculationId,
+    ) -> Result<BranchSpeculationDiscard, BranchPredictorError> {
+        let Some(index) = self
+            .pending_speculations
+            .iter()
+            .position(|speculation| speculation.id() == id)
+        else {
+            return Err(BranchPredictorError::UnknownSpeculation { id });
+        };
+
+        let restored_history = self.pending_speculations[index].history_before();
+        let mut discarded_and_youngers = self.pending_speculations.split_off(index);
+        let discarded = discarded_and_youngers.remove(0);
+        self.speculative_history = restored_history;
+
+        Ok(BranchSpeculationDiscard {
+            discarded,
+            removed_youngers: discarded_and_youngers,
+            restored_history,
+        })
+    }
+
+    pub fn discard_all_speculations(&mut self) -> Vec<BranchSpeculation> {
+        let discarded = std::mem::take(&mut self.pending_speculations);
+        self.speculative_history = self.committed_history;
+        discarded
+    }
+
     pub fn snapshot(&self) -> BranchPredictorSnapshot {
         BranchPredictorSnapshot {
             config: self.config.clone(),
@@ -522,6 +552,27 @@ impl BranchSpeculationRepair {
 
     pub const fn new_history_after(&self) -> u64 {
         self.new_history_after
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BranchSpeculationDiscard {
+    discarded: BranchSpeculation,
+    removed_youngers: Vec<BranchSpeculation>,
+    restored_history: u64,
+}
+
+impl BranchSpeculationDiscard {
+    pub const fn discarded(&self) -> &BranchSpeculation {
+        &self.discarded
+    }
+
+    pub fn removed_youngers(&self) -> &[BranchSpeculation] {
+        &self.removed_youngers
+    }
+
+    pub const fn restored_history(&self) -> u64 {
+        self.restored_history
     }
 }
 

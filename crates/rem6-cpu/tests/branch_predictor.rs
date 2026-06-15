@@ -263,6 +263,58 @@ fn committing_speculation_advances_committed_history_in_order() {
 }
 
 #[test]
+fn discarding_speculation_restores_history_without_committing_branch() {
+    let mut predictor = predictor(8);
+    let taken_pc = Address::new(0x1000);
+    let skipped_pc = Address::new(0x1004);
+    let younger_pc = Address::new(0x1008);
+    let target = Address::new(0x1080);
+
+    predictor.update(taken_pc, true, Some(target));
+    let committed = predictor.predict_speculative(taken_pc);
+    predictor.commit_speculation(committed.id()).unwrap();
+    assert_eq!(predictor.committed_history(), 1);
+
+    let skipped = predictor.predict_speculative(skipped_pc);
+    let younger = predictor.predict_speculative(younger_pc);
+    assert_eq!(skipped.history_before(), 1);
+    assert_eq!(predictor.speculative_history(), 4);
+
+    let discard = predictor.discard_speculation(skipped.id()).unwrap();
+
+    assert_eq!(discard.discarded(), &skipped);
+    assert_eq!(discard.removed_youngers(), &[younger]);
+    assert_eq!(discard.restored_history(), 1);
+    assert_eq!(predictor.committed_history(), 1);
+    assert_eq!(predictor.speculative_history(), 1);
+    assert_eq!(predictor.pending_speculations(), &[]);
+}
+
+#[test]
+fn discarding_all_speculations_restores_committed_history() {
+    let mut predictor = predictor(8);
+    let taken_pc = Address::new(0x1000);
+    let skipped_pc = Address::new(0x1004);
+    let younger_pc = Address::new(0x1008);
+    let target = Address::new(0x1080);
+
+    predictor.update(taken_pc, true, Some(target));
+    let committed = predictor.predict_speculative(taken_pc);
+    predictor.commit_speculation(committed.id()).unwrap();
+    assert_eq!(predictor.committed_history(), 1);
+
+    let skipped = predictor.predict_speculative(skipped_pc);
+    let younger = predictor.predict_speculative(younger_pc);
+
+    let discarded = predictor.discard_all_speculations();
+
+    assert_eq!(discarded, vec![skipped, younger]);
+    assert_eq!(predictor.committed_history(), 1);
+    assert_eq!(predictor.speculative_history(), 1);
+    assert_eq!(predictor.pending_speculations(), &[]);
+}
+
+#[test]
 fn speculation_commit_rejects_out_of_order_and_unknown_records() {
     let mut predictor = predictor(8);
     let first = predictor.predict_speculative(Address::new(0x1000));
@@ -277,6 +329,12 @@ fn speculation_commit_rejects_out_of_order_and_unknown_records() {
     );
     assert_eq!(
         predictor.repair_speculation(BranchSpeculationId::new(99), true),
+        Err(BranchPredictorError::UnknownSpeculation {
+            id: BranchSpeculationId::new(99),
+        })
+    );
+    assert_eq!(
+        predictor.discard_speculation(BranchSpeculationId::new(99)),
         Err(BranchPredictorError::UnknownSpeculation {
             id: BranchSpeculationId::new(99),
         })

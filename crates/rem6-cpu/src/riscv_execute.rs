@@ -152,7 +152,13 @@ impl RiscvCore {
             state.pending_trap = Some(trap);
         }
         state.apply_riscv_system_event(execution.system_event());
-        let retired_branch = retire_branch_predictions(state, fetch.pc(), instruction, &execution)?;
+        let retired_branch = retire_branch_predictions(
+            state,
+            fetch.request_id().sequence(),
+            fetch.pc(),
+            instruction,
+            &execution,
+        )?;
         let pipeline_branch_prediction = in_order_pipeline_branch_prediction(
             fetch.request_id().sequence(),
             fetch.pc(),
@@ -335,11 +341,13 @@ fn in_order_pipeline_branch_prediction(
 
 fn retire_branch_predictions(
     state: &mut RiscvCoreState,
+    sequence: u64,
     pc: Address,
     instruction: RiscvInstruction,
     execution: &rem6_isa_riscv::RiscvExecutionRecord,
 ) -> Result<RiscvRetiredBranchUpdates, RiscvCpuError> {
     if execution.trap().is_some() {
+        discard_branch_speculation(state, sequence)?;
         return Ok(RiscvRetiredBranchUpdates::default());
     }
 
@@ -368,6 +376,7 @@ fn retire_branch_predictions(
     let branch_update = state
         .branch_predictor
         .update(pc, actual_taken, actual_target);
+    resolve_branch_speculation(state, sequence, &branch_update)?;
     let prediction = if conditional {
         state
             .gshare_branch_predictor
@@ -414,6 +423,58 @@ fn retire_branch_predictions(
             tournament_training_update,
         ),
     ))
+}
+
+fn resolve_branch_speculation(
+    state: &mut RiscvCoreState,
+    sequence: u64,
+    update: &crate::BranchUpdate,
+) -> Result<(), RiscvCpuError> {
+    let Some(speculation) = state.branch_speculations.remove(&sequence) else {
+        return Ok(());
+    };
+
+    let predicted_correctly = update.predicted_taken() == update.actual_taken()
+        && (!update.predicted_taken() || update.predicted_target() == update.actual_target());
+    if !predicted_correctly {
+        let repair = state
+            .branch_predictor
+            .repair_speculation(speculation, update.actual_taken())
+            .map_err(RiscvCpuError::BranchPredictor)?;
+        remove_branch_speculation_mappings(state, repair.removed_youngers());
+    }
+    state
+        .branch_predictor
+        .commit_speculation(speculation)
+        .map_err(RiscvCpuError::BranchPredictor)?;
+    Ok(())
+}
+
+fn discard_branch_speculation(
+    state: &mut RiscvCoreState,
+    sequence: u64,
+) -> Result<(), RiscvCpuError> {
+    let Some(speculation) = state.branch_speculations.remove(&sequence) else {
+        return Ok(());
+    };
+
+    let discard = state
+        .branch_predictor
+        .discard_speculation(speculation)
+        .map_err(RiscvCpuError::BranchPredictor)?;
+    remove_branch_speculation_mappings(state, discard.removed_youngers());
+    Ok(())
+}
+
+fn remove_branch_speculation_mappings(
+    state: &mut RiscvCoreState,
+    removed: &[crate::BranchSpeculation],
+) {
+    state.branch_speculations.retain(|_, pending| {
+        !removed
+            .iter()
+            .any(|removed_speculation| removed_speculation.id() == *pending)
+    });
 }
 
 #[cfg(test)]

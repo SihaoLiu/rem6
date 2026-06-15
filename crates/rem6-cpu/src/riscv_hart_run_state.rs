@@ -1,7 +1,7 @@
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvStatusWord};
 use rem6_memory::Address;
 
-use crate::{CpuCore, RiscvCore};
+use crate::RiscvCore;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvHartRunState {
@@ -12,15 +12,6 @@ pub enum RiscvHartRunState {
     ResumePending,
     Stopped,
     Suspended,
-}
-
-impl CpuCore {
-    pub(super) fn reset_fetch_to_pc(&self, pc: Address) {
-        let mut state = self.state.lock().expect("cpu core lock");
-        state.pc = pc;
-        state.outstanding.clear();
-        state.events.clear();
-    }
 }
 
 impl RiscvCore {
@@ -159,6 +150,7 @@ impl RiscvCore {
         );
         state.pending_fetch_prefix = None;
         state.executed_fetches.clear();
+        state.discard_branch_speculations();
         state.issued_data_for_fetches.clear();
         state.pending_data_translations.clear();
         state.ready_translated_data.clear();
@@ -167,7 +159,7 @@ impl RiscvCore {
         state.pending_trap_event = None;
         state.reservation = None;
         drop(state);
-        self.core.reset_fetch_to_pc(entry);
+        self.core.reset_fetch_stream_to_pc(entry);
         true
     }
 }

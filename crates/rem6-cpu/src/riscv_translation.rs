@@ -988,10 +988,11 @@ impl RiscvCore {
             return Ok(None);
         }
 
-        if let Some(pc) = self.next_fetch_ahead_pc_before_retire() {
-            self.set_fetch_ahead_pc(pc);
+        if let Some(decision) = self.next_fetch_ahead_before_retire() {
+            self.set_fetch_ahead_pc(decision.pc());
             let event =
                 self.issue_next_fetch(scheduler, transport, fetch_trace, fetch_responder)?;
+            self.record_fetch_ahead_speculation(&decision);
             return Ok(Some(RiscvCoreDriveAction::FetchIssued { event }));
         }
 

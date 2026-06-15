@@ -2,8 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_cpu::{
-    CpuCore, CpuDataConfig, CpuFetchConfig, CpuFetchEventKind, CpuId, CpuResetState, RiscvCore,
-    RiscvCoreDriveAction, RiscvCpuError, RiscvDataAccessEventKind, RiscvLoadReservation,
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuFetchEventKind, CpuId, CpuResetState,
+    HtmFailureCause, RiscvCore, RiscvCoreDriveAction, RiscvCpuError, RiscvDataAccessEventKind,
+    RiscvLoadReservation,
 };
 use rem6_isa_riscv::{
     FloatRegister, MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction,
@@ -674,6 +675,323 @@ fn riscv_core_driver_fetch_ahead_uses_trained_branch_target() {
     );
     assert_eq!(core.read_register(reg(2)), 2);
     assert_eq!(core.read_register(reg(1)), 0);
+}
+
+#[test]
+fn riscv_core_driver_fetch_ahead_commits_branch_speculation_history() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let branch = b_type(8, 0, 0, 0x0);
+    let store = loaded_program_store(
+        0x8000,
+        &[branch, i_type(1, 0, 0x0, 1, 0x13), 0x0010_0073],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    let speculative = core.branch_predictor_snapshot();
+    assert_eq!(speculative.pending_speculations().len(), 1);
+    assert_eq!(speculative.committed_history(), 0);
+    assert_eq!(speculative.speculative_history(), 0);
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(retired) = action else {
+        panic!("expected branch to retire after speculative fallthrough fetch");
+    };
+    assert_eq!(
+        retired.instruction(),
+        RiscvInstruction::decode(branch).unwrap()
+    );
+    let resolved = core.branch_predictor_snapshot();
+    assert_eq!(resolved.pending_speculations(), &[]);
+    assert_eq!(resolved.committed_history(), 1);
+    assert_eq!(resolved.speculative_history(), 1);
+}
+
+#[test]
+fn riscv_core_driver_fetch_ahead_repairs_branch_speculation_on_trap() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let interrupt_bit = 1_u64 << 1;
+    core.set_status(RiscvStatusWord::new(0).with_mie(true));
+    let branch = b_type(8, 0, 0, 0x0);
+    let store = loaded_program_store(
+        0x8000,
+        &[branch, i_type(1, 0, 0x0, 1, 0x13), 0x0010_0073],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(
+        core.branch_predictor_snapshot()
+            .pending_speculations()
+            .len(),
+        1
+    );
+    core.set_machine_interrupt_pending(interrupt_bit);
+    core.set_machine_interrupt_enable(interrupt_bit);
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(interrupted) = action else {
+        panic!("expected pending interrupt to retire the speculative branch fetch");
+    };
+    assert_eq!(interrupted.branch_update(), None);
+    assert_eq!(
+        interrupted.execution().trap(),
+        Some(&RiscvTrap::new(
+            RiscvTrapKind::Interrupt { code: 1 },
+            0x8000
+        ))
+    );
+    let repaired = core.branch_predictor_snapshot();
+    assert_eq!(repaired.pending_speculations(), &[]);
+    assert_eq!(repaired.committed_history(), 0);
+    assert_eq!(repaired.speculative_history(), 0);
+}
+
+#[test]
+fn riscv_core_redirect_discards_fetch_ahead_branch_speculation() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let branch = b_type(8, 0, 0, 0x0);
+    let store = loaded_program_store(
+        0x8000,
+        &[branch, i_type(1, 0, 0x0, 1, 0x13), 0x0010_0073],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store, &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(
+        core.branch_predictor_snapshot()
+            .pending_speculations()
+            .len(),
+        1
+    );
+
+    core.redirect_pc(Address::new(0x9000));
+
+    let redirected = core.branch_predictor_snapshot();
+    assert_eq!(redirected.pending_speculations(), &[]);
+    assert_eq!(redirected.committed_history(), 0);
+    assert_eq!(redirected.speculative_history(), 0);
+}
+
+#[test]
+fn riscv_core_redirect_abandons_outstanding_fetch_response() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let store = loaded_program_store(0x8000, &[i_type(1, 0, 0x0, 1, 0x13)], &[]);
+
+    core.issue_next_fetch(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        move |delivery, _context| {
+            let response = store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+    )
+    .unwrap();
+
+    core.redirect_pc(Address::new(0x9000));
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(core.pc(), Address::new(0x9000));
+    assert_eq!(core.inner().pc(), Address::new(0x9000));
+    assert!(core.inner().fetch_events().is_empty());
+}
+
+#[test]
+fn riscv_core_supervisor_hart_entry_discards_fetch_ahead_branch_speculation() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let branch = b_type(8, 0, 0, 0x0);
+    let store = loaded_program_store(
+        0x8000,
+        &[branch, i_type(1, 0, 0x0, 1, 0x13), 0x0010_0073],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store, &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(
+        core.branch_predictor_snapshot()
+            .pending_speculations()
+            .len(),
+        1
+    );
+
+    core.start_supervisor_hart(Address::new(0x9000), 0x55);
+
+    let entered = core.branch_predictor_snapshot();
+    assert_eq!(entered.pending_speculations(), &[]);
+    assert_eq!(entered.committed_history(), 0);
+    assert_eq!(entered.speculative_history(), 0);
+}
+
+#[test]
+fn riscv_core_htm_abort_discards_fetch_ahead_branch_speculation() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let begin = core.begin_htm_transaction().unwrap();
+    let branch = b_type(8, 0, 0, 0x0);
+    let store = loaded_program_store(
+        0x8000,
+        &[branch, i_type(1, 0, 0x0, 1, 0x13), 0x0010_0073],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store, &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(
+        core.branch_predictor_snapshot()
+            .pending_speculations()
+            .len(),
+        1
+    );
+
+    core.abort_htm_transaction(begin.uid(), HtmFailureCause::Explicit)
+        .unwrap();
+
+    let aborted = core.branch_predictor_snapshot();
+    assert_eq!(aborted.pending_speculations(), &[]);
+    assert_eq!(aborted.committed_history(), 0);
+    assert_eq!(aborted.speculative_history(), 0);
+}
+
+#[test]
+fn riscv_core_htm_abort_abandons_outstanding_fetch_response() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let begin = core.begin_htm_transaction().unwrap();
+    let store = loaded_program_store(0x8000, &[i_type(1, 0, 0x0, 1, 0x13)], &[]);
+
+    core.issue_next_fetch(
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+        move |delivery, _context| {
+            let response = store
+                .lock()
+                .unwrap()
+                .respond(delivery.request())
+                .unwrap()
+                .response()
+                .cloned()
+                .unwrap();
+            TargetOutcome::Respond(response)
+        },
+    )
+    .unwrap();
+
+    core.abort_htm_transaction(begin.uid(), HtmFailureCause::Explicit)
+        .unwrap();
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(core.pc(), Address::new(0x8000));
+    assert_eq!(core.inner().pc(), Address::new(0x8000));
+    assert!(core.inner().fetch_events().is_empty());
+}
+
+#[test]
+fn riscv_core_htm_abort_clears_pending_split_fetch_prefix() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let restored_raw = i_type(9, 0, 0x0, 2, 0x13);
+    let abandoned_raw = i_type(5, 0, 0x0, 1, 0x13);
+    let core = RiscvCore::new(core(route, 0x8000));
+    let begin = core.begin_htm_transaction().unwrap();
+    core.redirect_pc(Address::new(0x800e));
+    let store = loaded_program_store(0x800e, &[abandoned_raw], &[(0x8000, word(restored_raw))]);
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    assert_eq!(core.execute_next_completed_fetch().unwrap(), None);
+
+    core.abort_htm_transaction(begin.uid(), HtmFailureCause::Explicit)
+        .unwrap();
+    fetch_one(&core, store, &mut scheduler, &transport, MemoryTrace::new());
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(event.fetch_pc(), Address::new(0x8000));
+    assert_eq!(
+        event.instruction(),
+        RiscvInstruction::decode(restored_raw).unwrap()
+    );
+    assert_eq!(core.read_register(reg(1)), 0);
+    assert_eq!(core.read_register(reg(2)), 9);
+    assert_eq!(core.pc(), Address::new(0x8004));
+    assert_eq!(core.inner().pc(), Address::new(0x8004));
 }
 
 #[test]
@@ -2473,7 +2791,7 @@ fn riscv_core_does_not_execute_completed_fetch_twice() {
 }
 
 #[test]
-fn riscv_core_rejects_pc_mismatch_before_execution() {
+fn riscv_core_redirect_discards_completed_fetch_before_execution() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
     let mut transport = MemoryTransport::new();
     let route = transport
@@ -2501,11 +2819,8 @@ fn riscv_core_rejects_pc_mismatch_before_execution() {
     );
     core.redirect_pc(Address::new(0x9000));
 
-    assert_eq!(
-        core.execute_next_completed_fetch().unwrap_err(),
-        RiscvCpuError::PcMismatch {
-            fetch: Address::new(0x8000),
-            architectural: Address::new(0x9000),
-        }
-    );
+    assert_eq!(core.execute_next_completed_fetch().unwrap(), None);
+    assert_eq!(core.pc(), Address::new(0x9000));
+    assert_eq!(core.inner().pc(), Address::new(0x9000));
+    assert!(core.inner().fetch_events().is_empty());
 }

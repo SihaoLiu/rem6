@@ -67,8 +67,8 @@ pub use bimode_predictor::{
 };
 pub use branch_predictor::{
     BranchPrediction, BranchPredictor, BranchPredictorConfig, BranchPredictorError,
-    BranchPredictorSnapshot, BranchSpeculation, BranchSpeculationId, BranchSpeculationRepair,
-    BranchTargetBuffer, BranchTargetBufferConfig, BranchTargetBufferError,
+    BranchPredictorSnapshot, BranchSpeculation, BranchSpeculationDiscard, BranchSpeculationId,
+    BranchSpeculationRepair, BranchTargetBuffer, BranchTargetBufferConfig, BranchTargetBufferError,
     BranchTargetBufferSnapshot, BranchTargetEntry, BranchTargetKind, BranchTargetLookup,
     BranchTargetSafetyConfig, BranchTargetSafetyProfile, BranchTargetUpdate, BranchUpdate,
     ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,
@@ -328,6 +328,13 @@ impl CpuCore {
 
     fn set_pc(&self, pc: Address) {
         self.state.lock().expect("cpu core lock").pc = pc;
+    }
+
+    fn reset_fetch_stream_to_pc(&self, pc: Address) {
+        let mut state = self.state.lock().expect("cpu core lock");
+        state.pc = pc;
+        state.outstanding.clear();
+        state.events.clear();
     }
 
     pub fn add_fetch_line_layout_range(&self, range: AddressRange, line_layout: CacheLineLayout) {
@@ -1059,8 +1066,9 @@ impl RiscvCore {
         let mut state = self.state.lock().expect("riscv core lock");
         state.hart.set_pc(pc.get());
         state.pending_fetch_prefix = None;
+        state.discard_branch_speculations();
         drop(state);
-        self.core.set_pc(pc);
+        self.core.reset_fetch_stream_to_pc(pc);
     }
 
     pub fn add_memory_line_layout_range(&self, range: AddressRange, line_layout: CacheLineLayout) {
@@ -1193,6 +1201,7 @@ struct RiscvCoreState {
     htm: HtmTransactionState,
     htm_hart_checkpoint: Option<RiscvHartState>,
     branch_predictor: BranchPredictor,
+    branch_speculations: BTreeMap<u64, BranchSpeculationId>,
     gshare_branch_predictor: GShareBranchPredictor,
     tournament_branch_predictor: TournamentBranchPredictor,
     in_order_pipeline: InOrderPipelineState,
@@ -1226,6 +1235,7 @@ impl RiscvCoreState {
                 BranchPredictorConfig::new(DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES)
                     .expect("default RISC-V branch predictor entries are valid"),
             ),
+            branch_speculations: BTreeMap::new(),
             gshare_branch_predictor: GShareBranchPredictor::new(
                 GShareBranchPredictorConfig::new(1, DEFAULT_RISCV_GSHARE_BRANCH_PREDICTOR_ENTRIES)
                     .expect("default RISC-V gshare branch predictor config is valid"),
@@ -1249,6 +1259,11 @@ impl RiscvCoreState {
             run_state: RiscvHartRunState::Started,
             run_state_explicit: false,
         }
+    }
+
+    fn discard_branch_speculations(&mut self) {
+        self.branch_predictor.discard_all_speculations();
+        self.branch_speculations.clear();
     }
 }
 

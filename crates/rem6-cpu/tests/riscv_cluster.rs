@@ -52,6 +52,18 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
         | opcode
 }
 
+fn b_type(imm: i32, rs2: u8, rs1: u8, funct3: u32) -> u32 {
+    let imm = imm as u32;
+    (((imm >> 12) & 0x1) << 31)
+        | (((imm >> 5) & 0x3f) << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (((imm >> 1) & 0xf) << 8)
+        | (((imm >> 11) & 0x1) << 7)
+        | 0x63
+}
+
 fn word(raw: u32) -> Vec<u8> {
     raw.to_le_bytes().to_vec()
 }
@@ -1664,6 +1676,252 @@ fn riscv_cluster_parallel_turns_issue_mmio_and_memory_data_accesses() {
         cluster.core(CpuId::new(1)).unwrap().read_register(reg(5)),
         0x0f1e_2d3c_4b5a_6978
     );
+}
+
+#[test]
+fn riscv_cluster_parallel_fetch_commits_branch_fetch_ahead_speculation() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([riscv_core(CoreSpec {
+        cpu: 0,
+        partition: 0,
+        agent: 7,
+        entry: 0x8000,
+        fetch_endpoint: "cpu0.ifetch",
+        fetch_route,
+        data_endpoint: "cpu0.dmem",
+        data_route,
+    })])
+    .unwrap();
+    let branch = b_type(8, 0, 0, 0x0);
+    let store = store_with_programs(&[
+        (0x8000, branch),
+        (0x8004, i_type(1, 0, 0x0, 1, 0x13)),
+        (0x8008, i_type(2, 0, 0x0, 2, 0x13)),
+    ]);
+
+    let issued = cluster
+        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
+            let store = store.clone();
+            move |delivery, _context| memory_response(&store, &delivery)
+        })
+        .unwrap();
+    assert!(matches!(
+        issued.first().map(RiscvClusterDriveEvent::action),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let fetch_ahead = cluster
+        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
+            let store = store.clone();
+            move |delivery, _context| memory_response(&store, &delivery)
+        })
+        .unwrap();
+    assert!(matches!(
+        fetch_ahead.first().map(RiscvClusterDriveEvent::action),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(
+        cluster
+            .core(CpuId::new(0))
+            .unwrap()
+            .branch_predictor_snapshot()
+            .pending_speculations()
+            .len(),
+        1
+    );
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let retired = cluster
+        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
+            let store = store.clone();
+            move |delivery, _context| memory_response(&store, &delivery)
+        })
+        .unwrap();
+    let Some(RiscvCoreDriveAction::InstructionExecuted(event)) =
+        retired.first().map(RiscvClusterDriveEvent::action)
+    else {
+        panic!("expected parallel fetch path to retire the branch");
+    };
+    assert!(event.branch_update().unwrap().actual_taken());
+    let resolved = cluster
+        .core(CpuId::new(0))
+        .unwrap()
+        .branch_predictor_snapshot();
+    assert_eq!(resolved.pending_speculations(), &[]);
+    assert_eq!(resolved.committed_history(), 1);
+    assert_eq!(resolved.speculative_history(), 1);
+}
+
+#[test]
+fn riscv_cluster_parallel_mmio_path_commits_branch_fetch_ahead_speculation() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([riscv_core(CoreSpec {
+        cpu: 0,
+        partition: 0,
+        agent: 7,
+        entry: 0x8000,
+        fetch_endpoint: "cpu0.ifetch",
+        fetch_route,
+        data_endpoint: "cpu0.dmem",
+        data_route,
+    })])
+    .unwrap();
+    let branch = b_type(8, 0, 0, 0x0);
+    let store = store_with_programs(&[
+        (0x8000, branch),
+        (0x8004, i_type(1, 0, 0x0, 1, 0x13)),
+        (0x8008, i_type(2, 0, 0x0, 2, 0x13)),
+    ]);
+    let bus = MmioBus::new();
+
+    let issued = cluster
+        .drive_turn_parallel_with_mmio(
+            &mut scheduler,
+            &transport,
+            &bus,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        issued
+            .core_events()
+            .first()
+            .map(RiscvClusterDriveEvent::action),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let fetch_ahead = cluster
+        .drive_turn_parallel_with_mmio(
+            &mut scheduler,
+            &transport,
+            &bus,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+        )
+        .unwrap();
+    assert!(matches!(
+        fetch_ahead
+            .core_events()
+            .first()
+            .map(RiscvClusterDriveEvent::action),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(
+        cluster
+            .core(CpuId::new(0))
+            .unwrap()
+            .branch_predictor_snapshot()
+            .pending_speculations()
+            .len(),
+        1
+    );
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let retired = cluster
+        .drive_turn_parallel_with_mmio(
+            &mut scheduler,
+            &transport,
+            &bus,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+            |_cpu| {
+                let store = store.clone();
+                move |delivery, _context| memory_response(&store, &delivery)
+            },
+        )
+        .unwrap();
+    let Some(RiscvCoreDriveAction::InstructionExecuted(event)) = retired
+        .core_events()
+        .first()
+        .map(RiscvClusterDriveEvent::action)
+    else {
+        panic!("expected MMIO-parallel path to retire the branch");
+    };
+    assert!(event.branch_update().unwrap().actual_taken());
+    let resolved = cluster
+        .core(CpuId::new(0))
+        .unwrap()
+        .branch_predictor_snapshot();
+    assert_eq!(resolved.pending_speculations(), &[]);
+    assert_eq!(resolved.committed_history(), 1);
+    assert_eq!(resolved.speculative_history(), 1);
 }
 
 #[test]

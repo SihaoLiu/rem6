@@ -8,8 +8,8 @@ use rem6_mmio::MmioError;
 use rem6_transport::{MemoryRouteId, TransportEndpointId, TransportError};
 
 use crate::{
-    CpuId, CpuTranslationFrontendError, GShareBranchPredictorError, InOrderPipelineError,
-    TournamentBranchPredictorError,
+    BranchPredictorError, CpuId, CpuTranslationFrontendError, GShareBranchPredictorError,
+    InOrderPipelineError, TournamentBranchPredictorError,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -215,6 +215,7 @@ pub enum RiscvCpuError {
         error: RiscvPmaError,
     },
     Cpu(CpuError),
+    BranchPredictor(BranchPredictorError),
     GShareBranchPredictor(GShareBranchPredictorError),
     TournamentBranchPredictor(TournamentBranchPredictorError),
     InOrderPipeline(InOrderPipelineError),
@@ -343,6 +344,7 @@ impl fmt::Display for RiscvCpuError {
                 fetch.agent().get()
             ),
             Self::Cpu(error) => write!(formatter, "{error}"),
+            Self::BranchPredictor(error) => write!(formatter, "{error}"),
             Self::GShareBranchPredictor(error) => write!(formatter, "{error}"),
             Self::TournamentBranchPredictor(error) => write!(formatter, "{error}"),
             Self::InOrderPipeline(error) => write!(formatter, "{error}"),
@@ -359,6 +361,7 @@ impl Error for RiscvCpuError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Cpu(error) => Some(error),
+            Self::BranchPredictor(error) => Some(error),
             Self::GShareBranchPredictor(error) => Some(error),
             Self::TournamentBranchPredictor(error) => Some(error),
             Self::InOrderPipeline(error) => Some(error),

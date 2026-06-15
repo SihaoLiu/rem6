@@ -38,8 +38,11 @@ impl RiscvCore {
         let restored_pc = checkpoint.pc();
         state.hart = checkpoint;
         state.pending_trap = None;
+        state.pending_fetch_prefix = None;
+        state.discard_branch_speculations();
         drop(state);
-        self.core.set_pc(Address::new(restored_pc));
+        self.core
+            .reset_fetch_stream_to_pc(Address::new(restored_pc));
         Ok(abort)
     }
 
