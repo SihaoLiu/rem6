@@ -13,10 +13,11 @@ use rem6_workload::{
     WorkloadResourceArtifact, WorkloadResourceId, WorkloadSuite, WorkloadSuiteId,
     WorkloadSuiteReplayPlan,
 };
+use sha2::{Digest, Sha256};
 
 use crate::cli_output::emit_cli_output;
 use crate::config::StatsFormat;
-use crate::formatting::json_escape;
+use crate::formatting::{bytes_to_hex, json_escape};
 use crate::resource_acquire_config::{
     Rem6ResourceAcquireConfig, Rem6ResourceAcquireManifestConfig, Rem6ResourceAcquireResourceConfig,
 };
@@ -307,6 +308,7 @@ fn build_manifest_and_artifacts(
         }
 
         let data = read_resource_artifact(resource)?;
+        validate_remote_uri_artifact_digest(resource, &data)?;
         let size_bytes = resource.artifact_size().unwrap_or(data.len());
         executor = executor
             .add_artifact(WorkloadResourceArtifact::new(
@@ -335,6 +337,33 @@ fn read_resource_artifact(
             error: error.to_string(),
         })
     }
+}
+
+fn validate_remote_uri_artifact_digest(
+    resource: &Rem6ResourceAcquireResourceConfig,
+    data: &[u8],
+) -> Result<(), Rem6CliError> {
+    if resource.acquisition_kind() != WorkloadResourceAcquisitionKind::RemoteUri {
+        return Ok(());
+    }
+
+    let actual = format!("sha256:{}", bytes_to_hex(&Sha256::digest(data)));
+    let expected = resource.artifact_digest();
+    if actual == expected {
+        return Ok(());
+    }
+
+    let path = resource
+        .artifact_remote_locator()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| resource.artifact().to_path_buf());
+    Err(Rem6CliError::ReadResourceArtifact {
+        path,
+        error: format!(
+            "remote-uri resource {} content digest {actual} does not match {expected}",
+            resource.id(),
+        ),
+    })
 }
 
 fn read_remote_http_resource(locator: &str) -> Result<Vec<u8>, Rem6CliError> {

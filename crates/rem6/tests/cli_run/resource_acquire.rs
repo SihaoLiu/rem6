@@ -292,12 +292,12 @@ stats_format = "json"
 [[resource_acquire.resources]]
 id = "kernel"
 kind = "kernel"
-digest = "sha256:remote-kernel"
+digest = "sha256:eba09f2f48f209cfa2dfbf19fc678d755d05559671eceda0164f3e080cb49765"
 locator = "resources/kernel.elf"
 required = true
 acquisition_kind = "remote-uri"
 acquisition_locator = "{url}"
-artifact_digest = "sha256:remote-kernel"
+artifact_digest = "sha256:eba09f2f48f209cfa2dfbf19fc678d755d05559671eceda0164f3e080cb49765"
 artifact_size = 4
 "#,
         ),
@@ -335,6 +335,52 @@ artifact_size = 4
         4,
         "monotonic",
     );
+}
+
+#[test]
+fn rem6_resource_acquire_rejects_remote_uri_content_digest_mismatch() {
+    let workspace = temp_workspace("resource-acquire-remote-uri-digest-mismatch");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/kernel.bin", listener.local_addr().unwrap());
+    let server = serve_http_resource_once(listener, "/kernel.bin", [0x13, 0x00, 0x00, 0x00]);
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        format!(
+            r#"[resource_acquire]
+workload_id = "resource-remote-uri-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:remote-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "remote-uri"
+acquisition_locator = "{url}"
+artifact_digest = "sha256:remote-kernel"
+artifact_size = 4
+"#,
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+    server.join().unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("remote-uri resource kernel content digest"));
+    assert!(
+        stderr.contains("sha256:eba09f2f48f209cfa2dfbf19fc678d755d05559671eceda0164f3e080cb49765")
+    );
+    assert!(stderr.contains("sha256:remote-kernel"));
 }
 
 #[test]
