@@ -1,5 +1,11 @@
 use super::*;
 
+const RISCV_LINUX_FLOCK_FOR_TEST: u64 = 32;
+const RISCV_LINUX_LOCK_SH_FOR_TEST: u64 = 1;
+const RISCV_LINUX_LOCK_EX_FOR_TEST: u64 = 2;
+const RISCV_LINUX_LOCK_NB_FOR_TEST: u64 = 4;
+const RISCV_LINUX_LOCK_UN_FOR_TEST: u64 = 8;
+
 #[test]
 fn linux_table_dup_preserves_stdin_read_source() {
     let table = RiscvSyscallTable::new();
@@ -218,5 +224,103 @@ fn linux_table_leaves_unsupported_fcntl_commands_unhandled_before_fd_validation(
             &mut state,
         ),
         None
+    );
+}
+
+#[test]
+fn linux_table_flock_accepts_advisory_locks_for_open_fds() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FLOCK_FOR_TEST,
+                [
+                    1,
+                    RISCV_LINUX_LOCK_EX_FOR_TEST | RISCV_LINUX_LOCK_NB_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FLOCK_FOR_TEST,
+                [1, RISCV_LINUX_LOCK_UN_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+}
+
+#[test]
+fn linux_table_flock_reports_bad_fd_and_invalid_operations() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FLOCK_FOR_TEST,
+                [99, RISCV_LINUX_LOCK_EX_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_FLOCK_FOR_TEST, [1, 0, 0, 0, 0, 0],),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_FLOCK_FOR_TEST,
+                [
+                    1,
+                    RISCV_LINUX_LOCK_SH_FOR_TEST | RISCV_LINUX_LOCK_EX_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_FLOCK_FOR_TEST,
+                [1, RISCV_LINUX_LOCK_UN_FOR_TEST | 16, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
     );
 }

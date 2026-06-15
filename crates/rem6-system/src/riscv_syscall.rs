@@ -25,6 +25,7 @@ mod fcntl;
 mod fd;
 mod file_read;
 mod file_write;
+mod flock;
 mod futex;
 mod guest_memory;
 mod guest_write;
@@ -92,6 +93,7 @@ use file_write::{
     syscall_ftruncate, syscall_pwrite64, syscall_write, RISCV_LINUX_FTRUNCATE,
     RISCV_LINUX_PWRITE64, RISCV_LINUX_WRITE,
 };
+use flock::{syscall_flock, RISCV_LINUX_FLOCK};
 use futex::syscall_futex;
 pub use guest_memory::{
     RiscvGuestMemoryMapRequest, RiscvGuestMemoryMapResult, RiscvGuestMemoryReader,
@@ -1123,6 +1125,9 @@ impl RiscvSyscallTable {
                 ),
             }),
             RISCV_LINUX_FCNTL => syscall_fcntl(request, state),
+            RISCV_LINUX_FLOCK => Some(RiscvSyscallOutcome::Return {
+                value: syscall_flock(request, state),
+            }),
             RISCV_LINUX_FTRUNCATE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_ftruncate(request, state),
             }),
