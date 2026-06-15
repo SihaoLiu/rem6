@@ -786,7 +786,7 @@ pub(super) fn resource_acquire_stats_output(
         "sim.resource_acquire.resources",
         "Count",
         StatResetPolicy::Constant,
-        inputs.artifact.config.resources().len() as u64,
+        inputs.artifact.config.resource_count() as u64,
     )?;
     increment_stat(
         &mut stats,
@@ -815,6 +815,34 @@ pub(super) fn resource_acquire_stats_output(
         "Byte",
         StatResetPolicy::Monotonic,
         inputs.artifact.acquired_bytes,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.resource_acquire.suite_manifests",
+        "Count",
+        StatResetPolicy::Constant,
+        inputs.artifact.suite_manifests,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.resource_acquire.suite_required_resources",
+        "Count",
+        StatResetPolicy::Constant,
+        inputs.artifact.suite_required_resources,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.resource_acquire.suite_acquired_resources",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.artifact.suite_acquired_resources,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.resource_acquire.suite_acquired_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        inputs.artifact.suite_acquired_bytes,
     )?;
     for (index, resource) in inputs.artifact.resources.iter().enumerate() {
         increment_stat(

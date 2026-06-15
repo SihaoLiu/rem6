@@ -8,12 +8,18 @@ use crate::Rem6CliError;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6ResourceAcquireConfig {
-    workload_id: String,
-    boot_entry: u64,
-    resources: Vec<Rem6ResourceAcquireResourceConfig>,
+    suite_id: Option<String>,
+    manifests: Vec<Rem6ResourceAcquireManifestConfig>,
     stats_format: StatsFormat,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6ResourceAcquireManifestConfig {
+    workload_id: String,
+    boot_entry: u64,
+    resources: Vec<Rem6ResourceAcquireResourceConfig>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -41,6 +47,8 @@ struct Rem6ResourceAcquireToml {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Rem6ResourceAcquireFileConfig {
+    suite_id: Option<String>,
+    manifests: Option<Vec<Rem6ResourceAcquireFileManifestConfig>>,
     workload_id: Option<String>,
     boot_entry: Option<u64>,
     resources: Option<Vec<Rem6ResourceAcquireFileResourceConfig>>,
@@ -55,6 +63,14 @@ impl Rem6ResourceAcquireFileConfig {
     fn resolve_path(&self, path: &Path) -> PathBuf {
         resolve_config_path(self.config_dir.as_deref(), path)
     }
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rem6ResourceAcquireFileManifestConfig {
+    workload_id: Option<String>,
+    boot_entry: Option<u64>,
+    resources: Option<Vec<Rem6ResourceAcquireFileResourceConfig>>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -96,13 +112,6 @@ impl Rem6ResourceAcquireConfig {
 
         let mut workload_id = file_config.workload_id.clone();
         let mut boot_entry = file_config.boot_entry;
-        let resources = file_config
-            .resources
-            .as_deref()
-            .unwrap_or(&[])
-            .iter()
-            .map(|resource| parse_resource_acquire_resource(&file_config, resource))
-            .collect::<Result<Vec<_>, _>>()?;
         let mut stats_format = file_config
             .stats_format
             .as_deref()
@@ -147,6 +156,47 @@ impl Rem6ResourceAcquireConfig {
                 _ => return Err(Rem6CliError::UnknownFlag { flag }),
             }
         }
+        let manifests = match file_config.manifests.as_deref() {
+            Some(manifests) => {
+                if manifests.is_empty() {
+                    return Err(Rem6CliError::MissingRequiredFlag {
+                        flag: "resource_acquire.manifests",
+                    });
+                }
+                manifests
+                    .iter()
+                    .map(|manifest| parse_resource_acquire_manifest(&file_config, manifest))
+                    .collect::<Result<Vec<_>, _>>()?
+            }
+            None if file_config.suite_id.is_some() => {
+                return Err(Rem6CliError::MissingRequiredFlag {
+                    flag: "resource_acquire.manifests",
+                });
+            }
+            None => {
+                let resources = file_config
+                    .resources
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .iter()
+                    .map(|resource| parse_resource_acquire_resource(&file_config, resource))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if resources.is_empty() {
+                    return Err(Rem6CliError::MissingRequiredFlag {
+                        flag: "resource_acquire.resources",
+                    });
+                }
+                vec![Rem6ResourceAcquireManifestConfig {
+                    workload_id: workload_id.ok_or(Rem6CliError::MissingRequiredFlag {
+                        flag: "resource_acquire.workload_id",
+                    })?,
+                    boot_entry: boot_entry.ok_or(Rem6CliError::MissingRequiredFlag {
+                        flag: "resource_acquire.boot_entry",
+                    })?,
+                    resources,
+                }]
+            }
+        };
 
         if let (Some(output), Some(stats_output)) = (&output, &stats_output) {
             if output == stats_output {
@@ -155,36 +205,53 @@ impl Rem6ResourceAcquireConfig {
                 });
             }
         }
-        if resources.is_empty() {
-            return Err(Rem6CliError::MissingRequiredFlag {
-                flag: "resource_acquire.resources",
-            });
-        }
+        let suite_id = if file_config.manifests.is_some() {
+            Some(
+                file_config
+                    .suite_id
+                    .clone()
+                    .ok_or(Rem6CliError::MissingRequiredFlag {
+                        flag: "resource_acquire.suite_id",
+                    })?,
+            )
+        } else {
+            None
+        };
 
         Ok(Self {
-            workload_id: workload_id.ok_or(Rem6CliError::MissingRequiredFlag {
-                flag: "resource_acquire.workload_id",
-            })?,
-            boot_entry: boot_entry.ok_or(Rem6CliError::MissingRequiredFlag {
-                flag: "resource_acquire.boot_entry",
-            })?,
-            resources,
+            suite_id,
+            manifests,
             stats_format,
             output,
             stats_output,
         })
     }
 
-    pub fn workload_id(&self) -> &str {
-        &self.workload_id
+    pub fn suite_id(&self) -> Option<&str> {
+        self.suite_id.as_deref()
     }
 
-    pub const fn boot_entry(&self) -> u64 {
-        self.boot_entry
+    pub fn manifests(&self) -> &[Rem6ResourceAcquireManifestConfig] {
+        &self.manifests
+    }
+
+    pub fn workload_id(&self) -> &str {
+        self.manifests[0].workload_id()
+    }
+
+    pub fn boot_entry(&self) -> u64 {
+        self.manifests[0].boot_entry()
     }
 
     pub fn resources(&self) -> &[Rem6ResourceAcquireResourceConfig] {
-        &self.resources
+        self.manifests[0].resources()
+    }
+
+    pub fn resource_count(&self) -> usize {
+        self.manifests
+            .iter()
+            .map(|manifest| manifest.resources().len())
+            .sum()
     }
 
     pub const fn stats_format(&self) -> StatsFormat {
@@ -197,6 +264,20 @@ impl Rem6ResourceAcquireConfig {
 
     pub fn stats_output(&self) -> Option<&Path> {
         self.stats_output.as_deref()
+    }
+}
+
+impl Rem6ResourceAcquireManifestConfig {
+    pub fn workload_id(&self) -> &str {
+        &self.workload_id
+    }
+
+    pub const fn boot_entry(&self) -> u64 {
+        self.boot_entry
+    }
+
+    pub fn resources(&self) -> &[Rem6ResourceAcquireResourceConfig] {
+        &self.resources
     }
 }
 
@@ -248,6 +329,38 @@ impl Rem6ResourceAcquireResourceConfig {
     pub const fn artifact_size(&self) -> Option<usize> {
         self.artifact_size
     }
+}
+
+fn parse_resource_acquire_manifest(
+    file_config: &Rem6ResourceAcquireFileConfig,
+    manifest: &Rem6ResourceAcquireFileManifestConfig,
+) -> Result<Rem6ResourceAcquireManifestConfig, Rem6CliError> {
+    let resources = manifest
+        .resources
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .map(|resource| parse_resource_acquire_resource(file_config, resource))
+        .collect::<Result<Vec<_>, _>>()?;
+    if resources.is_empty() {
+        return Err(Rem6CliError::MissingRequiredFlag {
+            flag: "resource_acquire.manifests.resources",
+        });
+    }
+    Ok(Rem6ResourceAcquireManifestConfig {
+        workload_id: manifest
+            .workload_id
+            .clone()
+            .ok_or(Rem6CliError::MissingRequiredFlag {
+                flag: "resource_acquire.manifests.workload_id",
+            })?,
+        boot_entry: manifest
+            .boot_entry
+            .ok_or(Rem6CliError::MissingRequiredFlag {
+                flag: "resource_acquire.manifests.boot_entry",
+            })?,
+        resources,
+    })
 }
 
 fn parse_resource_acquire_resource(
