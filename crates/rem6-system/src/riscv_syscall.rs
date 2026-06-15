@@ -76,7 +76,7 @@ use dirent::{
     RISCV_LINUX_GETDENTS64,
 };
 pub use emulation::RiscvSyscallEmulation;
-use exit::{syscall_exit_code, RISCV_LINUX_EXIT, RISCV_LINUX_EXIT_GROUP};
+use exit::{syscall_exit, RISCV_LINUX_EXIT, RISCV_LINUX_EXIT_GROUP};
 use fcntl::{syscall_fcntl, RISCV_LINUX_FCNTL};
 #[cfg(test)]
 use fcntl::{
@@ -1475,9 +1475,12 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_MUNLOCKALL
             | RISCV_LINUX_MBIND
             | RISCV_LINUX_SETRLIMIT => Some(RiscvSyscallOutcome::Return { value: 0 }),
-            RISCV_LINUX_EXIT | RISCV_LINUX_EXIT_GROUP => Some(RiscvSyscallOutcome::Exit {
-                code: syscall_exit_code(request.argument(0)),
-            }),
+            RISCV_LINUX_EXIT | RISCV_LINUX_EXIT_GROUP => Some(syscall_exit(
+                request.argument(0),
+                state,
+                tick,
+                guest_memory_writer,
+            )),
             RISCV_LINUX_GETPID | RISCV_LINUX_GETPPID | RISCV_LINUX_GETTID | RISCV_LINUX_GETUID
             | RISCV_LINUX_GETEUID | RISCV_LINUX_GETGID | RISCV_LINUX_GETEGID => {
                 Some(RiscvSyscallOutcome::Return {
