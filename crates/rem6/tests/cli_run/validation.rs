@@ -1107,6 +1107,69 @@ artifact_digest = "sha256:kernel-b"
 }
 
 #[test]
+fn rem6_run_rejects_suite_resource_config_with_multiple_required_kernels() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let workspace = temp_workspace("run-suite-resource-config-multiple-kernels");
+    std::fs::write(workspace.join("kernel-a.elf"), &elf).unwrap();
+    std::fs::write(workspace.join("kernel-b.elf"), &elf).unwrap();
+    let resource_config = workspace.join("resource-acquire-suite.toml");
+    std::fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+suite_id = "multiple-kernel-suite"
+
+[[resource_acquire.manifests]]
+workload_id = "kernel-a-workload"
+boot_entry = 2147483648
+
+[[resource_acquire.manifests.resources]]
+id = "kernel-a"
+kind = "kernel"
+digest = "sha256:kernel-a"
+locator = "resources/kernel-a.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel-a"
+artifact = "kernel-a.elf"
+artifact_digest = "sha256:kernel-a"
+
+[[resource_acquire.manifests]]
+workload_id = "kernel-b-workload"
+boot_entry = 2147483648
+
+[[resource_acquire.manifests.resources]]
+id = "kernel-b"
+kind = "kernel"
+digest = "sha256:kernel-b"
+locator = "resources/kernel-b.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel-b"
+artifact = "kernel-b.elf"
+artifact_digest = "sha256:kernel-b"
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("run.toml");
+    std::fs::write(
+        &config,
+        "[run]\nisa = \"riscv\"\nresource_config = \"resource-acquire-suite.toml\"\nmax_tick = 40\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("acquired 2 required kernel resources"));
+    assert!(stderr.contains("expected exactly one"));
+}
+
+#[test]
 fn rem6_run_rejects_memory_route_delay_below_scheduler_lookahead() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("short-memory-route-delay", &elf);
