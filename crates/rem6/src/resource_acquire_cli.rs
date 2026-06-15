@@ -131,9 +131,10 @@ pub(crate) fn reject_runtime_remote_uri_resources(
             if resource.acquisition_kind() == WorkloadResourceAcquisitionKind::RemoteUri {
                 return Err(Rem6CliError::Execute {
                     error: format!(
-                        "{command} runtime resource handoff does not allow remote-uri resources in {}; run `rem6 resource-acquire` before simulation (resource {})",
+                        "{command} runtime resource handoff does not allow remote-uri resources in {}; run `rem6 resource-acquire` before simulation (resource {} at {})",
                         resource_config.display(),
                         resource.id(),
+                        resource.acquisition_locator(),
                     ),
                 });
             }

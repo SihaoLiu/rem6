@@ -128,7 +128,7 @@ privileged Linux trap and interrupt smoke tests.
 
 **Score calculation:** 3 of 10 items have executable evidence, or 30% raw. The
 bucket cap is unit-slice because RISC-V core timing has direct completed-fetch
-overlap and a bounded normal-driver fetch-ahead slice, but not full top-level
+overlap and a bounded normal-driver fetch-ahead slice, but not broad top-level
 stalls/squashes, and O3 state is not yet an executable cycle-visible engine.
 
 - [x] RISC-V atomic execution and parallel clusters execute real instructions.
@@ -146,14 +146,16 @@ stalls/squashes, and O3 state is not yet an executable cycle-visible engine.
 state and retired training, directly issued completed 4-byte fetches occupying
 the in-order timing state before retire, normal `drive_next_action`, cluster,
 and data-translation drivers issuing a bounded fetch-ahead for completed
-straight-line 4-byte integer instructions before retire, per-retired-instruction
-in-order stage advancement with runtime stats, data-response wait cycles folded
-into in-order retire timing, per-core fetch-response and data-response wait
-cycle stats, retired branch prediction and redirect summaries in normal
-in-order timing records, and O3 policy helpers.
+straight-line 4-byte integer instructions and predictor-selected conditional
+branches before retire, completed younger fetches consumed by in-order branch
+flushes, per-retired-instruction in-order stage advancement with runtime stats,
+data-response wait cycles folded into in-order retire timing, per-core
+fetch-response and data-response wait cycle stats, retired branch prediction and
+redirect summaries in normal in-order timing records, and O3 policy helpers.
 
 **Not migrated:** Full Minor-like in-order timing with realistic stalls and
-squashes, executable O3 timing, fetch speculation, checker, and KVM equivalents.
+squashes, executable O3 timing, branch speculation snapshots and rollback,
+checker, and KVM equivalents.
 
 **Evidence:** `RiscvCore::execute_next_completed_fetch`,
 `RiscvClusterRun`, `record_data_retire_cycle`, `InOrderPipelineState`,
@@ -163,15 +165,18 @@ fetch-response wait counters from executed RISC-V instructions, and CLI data
 stats show load/store response wait changing the in-order pipeline cycle
 counter and data-wait cycle stat; CLI run stats also expose per-core
 in-order branch-prediction, branch-misprediction, branch-prediction flush, and
-redirect counters from the same executed RISC-V timing records.
+redirect counters from the same executed RISC-V timing records, including
+nonzero branch-prediction flush evidence for a real taken RISC-V branch.
 RISC-V in-order timing tests include retired taken and fall-through branch
 prediction redirect evidence from the normal execution path, plus direct
 completed-fetch overlap evidence before retire. CPU frontend and cluster tests
-also cover normal-driver fetch-ahead before retiring straight-line integer
-instructions while preserving trap and data-access ordering.
+also cover normal-driver fetch-ahead before retiring straight-line integer and
+conditional branch instructions, including trained taken-branch target fetch,
+while preserving trap and data-access ordering.
 
 **Next evidence:** Broader per-cycle in-order stalls/squashes, branch-predicted
-fetch with squash/rollback, then a ROB/LSQ-backed O3 run test.
+target fetch with speculation snapshots and rollback, then a ROB/LSQ-backed O3
+run test.
 
 ### Memory, Cache, Coherence, Fabric, and DRAM - 54% single-axis
 
@@ -620,7 +625,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/chi_protocol` | `rem6-coherence`, protocol crates, `rem6-cache` | 40% single-axis | CHI-like line, controller, bank, dirty peer sourcing, reservation, and Evict-hazard tests exist. | Add Ruby-scale CHI transactions, topology networks, directory races, and workload checks. |
 | `tests/gem5/chi_tlm_tests` | `rem6-proto`, future adapter crates, `rem6-coherence` | 19% scoped | A library-level co-simulation boundary can register TLM endpoints, validate transaction shape, hand off events, and checkpoint clean adapter state in self-tests. | Add runtime TLM bridge tests with coherence traffic. |
 | `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, and text stats output tests exist. | Add config-driven file layouts for full-system manifests and multi-artifact workloads. |
-| `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line fetch-ahead, per-retired-instruction in-order stage timing stats, top-level fetch/data wait stats, top-level branch redirect/misprediction stats, and O3 policies exist. | Add broader in-order stalls/squashes and ROB/LSQ-backed O3 execution tests. |
+| `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line and conditional-branch fetch-ahead, completed younger fetch squash, per-retired-instruction in-order stage timing stats, top-level fetch/data wait stats, top-level branch redirect/misprediction/flush stats, and O3 policies exist. | Add broader in-order stalls/squashes and ROB/LSQ-backed O3 execution tests. |
 | `tests/gem5/dram_lowp` | `rem6-dram`, `rem6-power` | 40% single-axis | DRAM/NVM profile counters and low-power constants are surfaced. | Add executable low-power state transition tests through routed requests. |
 | `tests/gem5/example_configs`, `tests/gem5/learning_gem5` | `rem6` CLI, `rem6-platform`, `rem6-workload` | 40% single-axis | CLI and TOML tests cover several execution and trace-replay paths. | Add rem6 examples that run from data files without recompilation. |
 | `tests/gem5/fdp_tests` | `rem6-cache` | 45% single-axis | Fetch-directed prefetcher state, errors, and cache-local queue/translation counters have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |

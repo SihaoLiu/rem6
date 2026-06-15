@@ -378,7 +378,8 @@ impl RiscvCluster {
                 continue;
             }
 
-            if core.should_issue_fetch_ahead_before_retire() {
+            if let Some(pc) = core.next_fetch_ahead_pc_before_retire() {
+                core.set_fetch_ahead_pc(pc);
                 push_prepared_parallel_fetch_action(
                     *cpu,
                     core,
@@ -458,7 +459,8 @@ impl RiscvCluster {
                 continue;
             }
 
-            if core.should_issue_fetch_ahead_before_retire() {
+            if let Some(pc) = core.next_fetch_ahead_pc_before_retire() {
+                core.set_fetch_ahead_pc(pc);
                 push_prepared_parallel_fetch_action(
                     *cpu,
                     core,
@@ -574,19 +576,22 @@ impl RiscvCluster {
                 continue;
             }
 
-            if !data_only && core.should_issue_fetch_ahead_before_retire() {
-                push_prepared_parallel_fetch_action(
-                    *cpu,
-                    core,
-                    scheduler.now(),
-                    transport,
-                    fetch_trace.clone(),
-                    fetch_responder(*cpu),
-                    &mut prepared_actions,
-                    &mut transaction_cpus,
-                    &mut transactions,
-                )?;
-                continue;
+            if !data_only {
+                if let Some(pc) = core.next_fetch_ahead_pc_before_retire() {
+                    core.set_fetch_ahead_pc(pc);
+                    push_prepared_parallel_fetch_action(
+                        *cpu,
+                        core,
+                        scheduler.now(),
+                        transport,
+                        fetch_trace.clone(),
+                        fetch_responder(*cpu),
+                        &mut prepared_actions,
+                        &mut transaction_cpus,
+                        &mut transactions,
+                    )?;
+                    continue;
+                }
             }
 
             if !data_only {
@@ -712,7 +717,8 @@ impl RiscvCluster {
                 continue;
             }
 
-            if core.should_issue_fetch_ahead_before_retire() {
+            if let Some(pc) = core.next_fetch_ahead_pc_before_retire() {
+                core.set_fetch_ahead_pc(pc);
                 push_prepared_parallel_fetch_action(
                     *cpu,
                     core,
@@ -847,7 +853,8 @@ impl RiscvCluster {
                 continue;
             }
 
-            if core.should_issue_fetch_ahead_before_retire() {
+            if let Some(pc) = core.next_fetch_ahead_pc_before_retire() {
+                core.set_fetch_ahead_pc(pc);
                 push_prepared_parallel_fetch_action(
                     *cpu,
                     core,
@@ -1062,7 +1069,8 @@ impl RiscvCluster {
                 continue;
             }
 
-            if core.should_issue_fetch_ahead_before_retire() {
+            if let Some(pc) = core.next_fetch_ahead_pc_before_retire() {
+                core.set_fetch_ahead_pc(pc);
                 let event = core
                     .issue_next_fetch_parallel(
                         scheduler,

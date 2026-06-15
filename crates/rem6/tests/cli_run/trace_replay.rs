@@ -1,3 +1,5 @@
+use std::io::ErrorKind;
+use std::net::TcpListener;
 use std::process::Command;
 
 use crate::support::*;
@@ -548,10 +550,14 @@ artifact_digest = "sha256:trace-resource-b"
 #[test]
 fn rem6_trace_replay_rejects_remote_uri_resource_config_before_replay() {
     let workspace = temp_workspace("trace-replay-resource-config-remote-uri");
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let remote_locator = format!("http://{}/trace.pb", listener.local_addr().unwrap());
     let resource_config = workspace.join("resource-acquire.toml");
     std::fs::write(
         &resource_config,
-        r#"[resource_acquire]
+        format!(
+            r#"[resource_acquire]
 workload_id = "remote-trace"
 boot_entry = 4096
 
@@ -562,9 +568,10 @@ digest = "sha256:111111111111111111111111111111111111111111111111111111111111111
 locator = "resources/trace.pb"
 required = true
 acquisition_kind = "remote-uri"
-acquisition_locator = "http://127.0.0.1:9/trace.pb"
+acquisition_locator = "{remote_locator}"
 artifact_digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
 "#,
+        ),
     )
     .unwrap();
     let config = workspace.join("trace-replay.toml");
@@ -585,7 +592,13 @@ artifact_digest = "sha256:111111111111111111111111111111111111111111111111111111
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("runtime resource handoff does not allow remote-uri resources"));
     assert!(stderr.contains("trace"));
+    assert!(stderr.contains(&remote_locator));
     assert!(stderr.contains("rem6 resource-acquire"));
+    match listener.accept() {
+        Err(error) if error.kind() == ErrorKind::WouldBlock => {}
+        Ok(_) => panic!("trace-replay opened a connection to a remote resource during replay"),
+        Err(error) => panic!("failed to inspect remote resource listener: {error}"),
+    }
 }
 
 #[test]

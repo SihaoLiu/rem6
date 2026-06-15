@@ -1,19 +1,19 @@
 use rem6_isa_riscv::{RiscvHartState, RiscvInstruction, RiscvPrivilegeMode};
 use rem6_memory::Address;
 
-use crate::{CpuFetchEventKind, RiscvCore};
+use crate::{CpuFetchEventKind, RiscvCore, RiscvCoreState};
 
 const COMPLETED_FETCH_WINDOW: usize = 2;
 
 impl RiscvCore {
-    pub(crate) fn should_issue_fetch_ahead_before_retire(&self) -> bool {
+    pub(crate) fn next_fetch_ahead_pc_before_retire(&self) -> Option<Address> {
         let fetch_events = self.core.fetch_events();
         let state = self.state.lock().expect("riscv core lock");
         if state.pending_trap.is_some() || state.pending_fetch_prefix.is_some() {
-            return false;
+            return None;
         }
         if hart_has_enabled_pending_interrupt(&state.hart) {
-            return false;
+            return None;
         }
 
         let mut completed = fetch_events
@@ -24,29 +24,32 @@ impl RiscvCore {
             })
             .collect::<Vec<_>>();
         if completed.is_empty() || completed.len() >= COMPLETED_FETCH_WINDOW {
-            return false;
+            return None;
         }
         completed.sort_by_key(|event| event.request_id().sequence());
 
         let fetch = completed[0];
         if fetch.pc() != Address::new(state.hart.pc()) {
-            return false;
+            return None;
         }
-        let Some(data) = fetch.data() else {
-            return false;
-        };
+        let data = fetch.data()?;
         let raw = match data {
             [a, b, c, d] => u32::from_le_bytes([*a, *b, *c, *d]),
-            _ => return false,
+            _ => return None,
         };
         let Ok(decoded) = RiscvInstruction::decode_with_length(raw) else {
-            return false;
+            return None;
         };
         if decoded.bytes() != 4 {
-            return false;
+            return None;
         }
+        let sequential_pc = Address::new(fetch.pc().get().wrapping_add(u64::from(decoded.bytes())));
 
-        instruction_allows_fetch_ahead(decoded.instruction())
+        fetch_ahead_pc(&state, fetch.pc(), sequential_pc, decoded.instruction())
+    }
+
+    pub(crate) fn set_fetch_ahead_pc(&self, pc: Address) {
+        self.core.set_pc(pc);
     }
 }
 
@@ -77,7 +80,28 @@ fn hart_has_enabled_pending_interrupt(hart: &RiscvHartState) -> bool {
     false
 }
 
-fn instruction_allows_fetch_ahead(instruction: RiscvInstruction) -> bool {
+fn fetch_ahead_pc(
+    state: &RiscvCoreState,
+    fetch_pc: Address,
+    sequential_pc: Address,
+    instruction: RiscvInstruction,
+) -> Option<Address> {
+    if instruction_allows_straight_line_fetch_ahead(instruction) {
+        return Some(sequential_pc);
+    }
+    if !instruction_is_conditional_branch(instruction) {
+        return None;
+    }
+
+    let prediction = state.branch_predictor.predict(fetch_pc);
+    if prediction.predicted_taken() {
+        prediction.target()
+    } else {
+        Some(sequential_pc)
+    }
+}
+
+fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -> bool {
     matches!(
         instruction,
         RiscvInstruction::Lui { .. }
@@ -123,5 +147,17 @@ fn instruction_allows_fetch_ahead(instruction: RiscvInstruction) -> bool {
             | RiscvInstruction::Sllw { .. }
             | RiscvInstruction::Srlw { .. }
             | RiscvInstruction::Sraw { .. }
+    )
+}
+
+fn instruction_is_conditional_branch(instruction: RiscvInstruction) -> bool {
+    matches!(
+        instruction,
+        RiscvInstruction::Beq { .. }
+            | RiscvInstruction::Bne { .. }
+            | RiscvInstruction::Blt { .. }
+            | RiscvInstruction::Bge { .. }
+            | RiscvInstruction::Bltu { .. }
+            | RiscvInstruction::Bgeu { .. }
     )
 }

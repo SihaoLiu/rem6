@@ -324,7 +324,10 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     );
     assert!(branch_predictions > 0);
     assert!(branch_mispredictions > 0);
+    assert!(branch_prediction_flushes > 0);
     assert!(redirects > 0);
+    assert!(stdout.contains("\"x5\":\"0x7\""));
+    assert!(!stdout.contains("\"x6\":\"0x1\""));
 }
 
 fn json_u64_field(stdout: &str, marker: &str) -> u64 {

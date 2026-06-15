@@ -178,9 +178,21 @@ impl RiscvCore {
             0,
             true,
         );
+        let squashed_requests = event
+            .in_order_pipeline_cycle()
+            .map(|cycle| {
+                squashed_completed_fetch_requests(
+                    state,
+                    &self.core.fetch_events(),
+                    cycle,
+                    consumed_requests,
+                )
+            })
+            .unwrap_or_default();
         state
             .executed_fetches
             .extend(consumed_requests.iter().copied());
+        state.executed_fetches.extend(squashed_requests);
         state.events.push(event.clone());
         Ok(event)
     }
@@ -274,6 +286,31 @@ fn sync_completed_fetches_to_in_order_pipeline(
             .map_err(RiscvCpuError::InOrderPipeline)?;
     }
     Ok(())
+}
+
+fn squashed_completed_fetch_requests(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    cycle: &InOrderPipelineCycleRecord,
+    consumed_requests: &[MemoryRequestId],
+) -> Vec<MemoryRequestId> {
+    if cycle.plan().flushed().is_empty() {
+        return Vec::new();
+    }
+
+    fetch_events
+        .iter()
+        .filter(|event| {
+            event.kind() == CpuFetchEventKind::Completed
+                && cycle
+                    .plan()
+                    .flushed_sequences()
+                    .any(|sequence| sequence == event.request_id().sequence())
+                && !state.executed_fetches.contains(&event.request_id())
+                && !consumed_requests.contains(&event.request_id())
+        })
+        .map(|event| event.request_id())
+        .collect()
 }
 
 fn in_order_pipeline_branch_prediction(

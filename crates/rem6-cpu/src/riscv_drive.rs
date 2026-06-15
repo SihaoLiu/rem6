@@ -28,7 +28,8 @@ impl RiscvCore {
             return Ok(None);
         }
 
-        if self.should_issue_fetch_ahead_before_retire() {
+        if let Some(pc) = self.next_fetch_ahead_pc_before_retire() {
+            self.set_fetch_ahead_pc(pc);
             let event =
                 self.issue_next_fetch(scheduler, transport, fetch_trace, fetch_responder)?;
             return Ok(Some(RiscvCoreDriveAction::FetchIssued { event }));

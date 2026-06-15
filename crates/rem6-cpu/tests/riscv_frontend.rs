@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_cpu::{
-    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCoreDriveAction,
-    RiscvCpuError, RiscvDataAccessEventKind, RiscvLoadReservation,
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuFetchEventKind, CpuId, CpuResetState, RiscvCore,
+    RiscvCoreDriveAction, RiscvCpuError, RiscvDataAccessEventKind, RiscvLoadReservation,
 };
 use rem6_isa_riscv::{
     FloatRegister, MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction,
@@ -598,6 +598,82 @@ fn riscv_core_driver_fetch_ahead_does_not_reissue_completed_successor_pc() {
         panic!("expected ebreak to retire after second instruction");
     };
     assert_eq!(trap.instruction(), RiscvInstruction::Ebreak);
+}
+
+#[test]
+fn riscv_core_driver_fetch_ahead_uses_trained_branch_target() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let branch = b_type(8, 0, 0, 0x0);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            branch,
+            i_type(1, 0, 0x0, 1, 0x13),
+            i_type(2, 0, 0x0, 2, 0x13),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    let trained = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(
+        trained.instruction(),
+        RiscvInstruction::decode(branch).unwrap()
+    );
+    assert_eq!(trained.execution().next_pc(), 0x8008);
+    core.redirect_pc(Address::new(0x8000));
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::FetchIssued { .. } = action else {
+        panic!("expected branch-target fetch ahead before retiring predicted taken branch");
+    };
+    scheduler.run_until_idle_conservative();
+    assert!(
+        core.inner().fetch_events().iter().any(|event| {
+            event.kind() == CpuFetchEventKind::Completed && event.pc() == Address::new(0x8008)
+        }),
+        "expected fetch-ahead to issue the trained branch target"
+    );
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(retired) = action else {
+        panic!("expected trained branch to retire after target fetch-ahead");
+    };
+    let update = retired.branch_update().unwrap();
+    assert!(update.predicted_taken());
+    assert_eq!(update.predicted_target(), Some(Address::new(0x8008)));
+    assert_eq!(retired.execution().next_pc(), 0x8008);
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::FetchIssued { .. } = action else {
+        panic!("expected target instruction to fetch ahead before retire");
+    };
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(target) = action else {
+        panic!("expected predicted target instruction to retire next");
+    };
+    assert_eq!(
+        target.instruction(),
+        RiscvInstruction::decode(i_type(2, 0, 0x0, 2, 0x13)).unwrap()
+    );
+    assert_eq!(core.read_register(reg(2)), 2);
+    assert_eq!(core.read_register(reg(1)), 0);
 }
 
 #[test]
