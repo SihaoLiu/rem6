@@ -159,6 +159,7 @@ pub struct Rem6GupsConfig {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6TraceReplayConfig {
     trace: PathBuf,
+    resource_config: Option<PathBuf>,
     route: String,
     memory_start: u64,
     memory_size: u64,
@@ -258,6 +259,7 @@ impl Rem6GupsFileConfig {
 #[serde(deny_unknown_fields)]
 struct Rem6TraceReplayFileConfig {
     trace: Option<PathBuf>,
+    resource_config: Option<PathBuf>,
     route: Option<String>,
     memory_start: Option<u64>,
     memory_size: Option<u64>,
@@ -1084,6 +1086,10 @@ impl Rem6TraceReplayConfig {
             .trace
             .as_deref()
             .map(|path| file_config.resolve_path(path));
+        let mut resource_config = file_config
+            .resource_config
+            .as_deref()
+            .map(|path| file_config.resolve_path(path));
         let mut output = file_config
             .output
             .as_deref()
@@ -1152,6 +1158,10 @@ impl Rem6TraceReplayConfig {
                 }
                 "--trace" => {
                     trace = Some(PathBuf::from(required_value(&flag, args.next())?));
+                    resource_config = None;
+                }
+                "--resource-config" => {
+                    resource_config = Some(PathBuf::from(required_value(&flag, args.next())?));
                 }
                 "--route" => {
                     route = Some(required_value(&flag, args.next())?);
@@ -1264,7 +1274,12 @@ impl Rem6TraceReplayConfig {
         }
 
         Ok(Self {
-            trace: trace.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--trace" })?,
+            trace: trace.or_else(|| resource_config.clone()).ok_or(
+                Rem6CliError::MissingRequiredFlag {
+                    flag: "--trace or --resource-config",
+                },
+            )?,
+            resource_config,
             route: route.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--route" })?,
             memory_start: memory_start.ok_or(Rem6CliError::MissingRequiredFlag {
                 flag: "--memory-start",
@@ -1288,6 +1303,17 @@ impl Rem6TraceReplayConfig {
 
     pub fn trace(&self) -> &Path {
         &self.trace
+    }
+
+    pub fn resource_config(&self) -> Option<&Path> {
+        self.resource_config.as_deref()
+    }
+
+    pub fn trace_input(&self) -> String {
+        self.resource_config
+            .as_ref()
+            .map(|path| format!("resource-config:{}", path.display()))
+            .unwrap_or_else(|| self.trace.display().to_string())
     }
 
     pub fn route(&self) -> &str {
@@ -1554,6 +1580,7 @@ fn trace_replay_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>
         args,
         &[
             "--trace",
+            "--resource-config",
             "--route",
             "--memory-start",
             "--memory-size",

@@ -194,7 +194,7 @@ impl Rem6TraceReplayArtifact {
         format!(
             "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"data_cache_protocol\":{},\"simulation\":{},\"summary\":{},\"stats\":{}}}\n",
             self.schema,
-            json_escape(&self.config.trace().display().to_string()),
+            json_escape(&self.config.trace_input()),
             json_escape(&self.trace_digest),
             json_escape(self.config.route()),
             self.config.memory_start(),

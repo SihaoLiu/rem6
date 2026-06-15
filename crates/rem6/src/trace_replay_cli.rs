@@ -15,6 +15,8 @@ use sha2::{Digest, Sha256};
 use crate::cli_output::emit_cli_output;
 use crate::config::{Rem6TraceReplayConfig, StatsFormat};
 use crate::formatting::bytes_to_hex;
+use crate::resource_acquire_cli::acquire_manifest_required_resources;
+use crate::resource_acquire_config::Rem6ResourceAcquireConfig;
 use crate::stats_output::{trace_replay_stats_output, Rem6TraceReplayStatsInputs};
 use crate::{execute_error, Rem6CliError};
 
@@ -66,11 +68,8 @@ pub(crate) fn run_trace_replay_cli(args: Vec<String>) -> Result<String, Rem6CliE
 pub fn run_trace_replay_config(
     config: Rem6TraceReplayConfig,
 ) -> Result<Rem6TraceReplayArtifact, Rem6CliError> {
-    let trace_payload =
-        std::fs::read(config.trace()).map_err(|error| Rem6CliError::ReadBinary {
-            path: config.trace().to_path_buf(),
-            error: error.to_string(),
-        })?;
+    let trace_resource = WorkloadResourceId::new(TRACE_RESOURCE_ID).map_err(execute_error)?;
+    let trace_payload = trace_replay_payload(&config, &trace_resource)?;
     let trace = TrafficTrace::from_gem5_packet_trace(&trace_payload, config.tick_frequency())
         .map_err(execute_error)?;
     let trace_max_tick = trace.max_tick().unwrap_or(0);
@@ -85,7 +84,6 @@ pub fn run_trace_replay_config(
     }
     let trace_digest = trace_payload_digest(&trace_payload);
     let route = WorkloadRouteId::new(config.route()).map_err(execute_error)?;
-    let trace_resource = WorkloadResourceId::new(TRACE_RESOURCE_ID).map_err(execute_error)?;
     let manifest = trace_replay_manifest(
         &config,
         &route,
@@ -142,6 +140,36 @@ pub fn run_trace_replay_config(
         execution,
         stats_json: stats.json,
         stats_text: stats.text,
+    })
+}
+
+fn trace_replay_payload(
+    config: &Rem6TraceReplayConfig,
+    trace_resource: &WorkloadResourceId,
+) -> Result<Vec<u8>, Rem6CliError> {
+    if let Some(resource_config) = config.resource_config() {
+        let acquire_config = Rem6ResourceAcquireConfig::parse_args([
+            "resource-acquire".to_string(),
+            "--config".to_string(),
+            resource_config.display().to_string(),
+        ])?;
+        let (_manifest, acquired) = acquire_manifest_required_resources(&acquire_config)?;
+        let payload = acquired
+            .into_iter()
+            .find(|resource| resource.resource() == trace_resource)
+            .ok_or_else(|| Rem6CliError::Execute {
+                error: format!(
+                    "trace replay resource config {} did not acquire required trace resource",
+                    resource_config.display()
+                ),
+            })?
+            .into_payload();
+        return Ok(payload.data().to_vec());
+    }
+
+    std::fs::read(config.trace()).map_err(|error| Rem6CliError::ReadBinary {
+        path: config.trace().to_path_buf(),
+        error: error.to_string(),
     })
 }
 
@@ -202,7 +230,7 @@ fn trace_replay_manifest(
             trace_resource.clone(),
             WorkloadResourceKind::Input,
             trace_digest,
-            config.trace().display().to_string(),
+            config.trace_input(),
         )
         .map_err(execute_error)?,
     )

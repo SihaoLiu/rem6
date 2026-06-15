@@ -85,6 +85,24 @@ pub fn run_resource_acquire_config(
     }
 }
 
+pub(crate) fn acquire_manifest_required_resources(
+    config: &Rem6ResourceAcquireConfig,
+) -> Result<(WorkloadManifest, Vec<WorkloadAcquiredResource>), Rem6CliError> {
+    if config.suite_id().is_some() {
+        return Err(Rem6CliError::Execute {
+            error: "resource acquisition handoff requires a manifest config".to_string(),
+        });
+    }
+    let (manifest, executor) = build_manifest_and_artifacts(
+        &config.manifests()[0],
+        WorkloadInMemoryResourceAcquisitionExecutor::new(),
+    )?;
+    let acquired = executor
+        .acquire_manifest(&manifest)
+        .map_err(execute_error)?;
+    Ok((manifest, acquired))
+}
+
 fn run_manifest_resource_acquire_config(
     config: Rem6ResourceAcquireConfig,
 ) -> Result<Rem6ResourceAcquireArtifact, Rem6CliError> {
