@@ -1,8 +1,4 @@
-use std::{
-    env, fs,
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::{fs, process::Command};
 
 use crate::support::*;
 
@@ -481,20 +477,4 @@ int main(void) {
     assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
     assert!(stdout.contains("\"text\":\"raw-personality:0:0:262144:262144:0\\n\""));
     assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
-}
-
-fn find_riscv_tool(name: &str) -> Option<PathBuf> {
-    find_tool_on_path(name).or_else(|| {
-        let module_candidate =
-            Path::new("/mnt/nas0/software/riscv/riscv64-elf-ubuntu-24.04-gcc/bin").join(name);
-        module_candidate.is_file().then_some(module_candidate)
-    })
-}
-
-fn find_tool_on_path(name: &str) -> Option<PathBuf> {
-    env::var_os("PATH").and_then(|paths| {
-        env::split_paths(&paths)
-            .map(|directory| directory.join(name))
-            .find(|candidate| candidate.is_file())
-    })
 }

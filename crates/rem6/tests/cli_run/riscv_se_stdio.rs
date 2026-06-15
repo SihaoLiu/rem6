@@ -1,6 +1,5 @@
 use std::{
-    env, fs,
-    path::{Path, PathBuf},
+    fs,
     process::{Command, Stdio},
 };
 
@@ -1416,22 +1415,6 @@ fn rem6_run_riscv_se_toml_stdin_path_resolves_from_config_directory() {
     assert!(stdout.contains("\"status\":\"stopped_by_host\""));
     assert!(stdout.contains("\"stop_code\":114"));
     assert!(!stdout.contains("riscv_unknown_syscalls\":[{"));
-}
-
-fn find_riscv_tool(name: &str) -> Option<PathBuf> {
-    find_tool_on_path(name).or_else(|| {
-        let module_candidate =
-            Path::new("/mnt/nas0/software/riscv/riscv64-elf-ubuntu-24.04-gcc/bin").join(name);
-        module_candidate.is_file().then_some(module_candidate)
-    })
-}
-
-fn find_tool_on_path(name: &str) -> Option<PathBuf> {
-    env::var_os("PATH").and_then(|paths| {
-        env::split_paths(&paths)
-            .map(|directory| directory.join(name))
-            .find(|candidate| candidate.is_file())
-    })
 }
 
 fn registered_guest_file_program() -> Vec<u8> {

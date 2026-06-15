@@ -1,4 +1,7 @@
-use std::fs;
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
 
@@ -167,6 +170,22 @@ pub(crate) fn temp_trace(name: &str, bytes: &[u8]) -> std::path::PathBuf {
     let path = std::env::temp_dir().join(format!("rem6-{name}-{}.pb", std::process::id()));
     fs::write(&path, bytes).unwrap();
     path
+}
+
+pub(crate) fn find_riscv_tool(name: &str) -> Option<PathBuf> {
+    find_tool_on_path(name).or_else(|| {
+        let module_candidate =
+            Path::new("/mnt/nas0/software/riscv/riscv64-elf-ubuntu-24.04-gcc/bin").join(name);
+        module_candidate.is_file().then_some(module_candidate)
+    })
+}
+
+fn find_tool_on_path(name: &str) -> Option<PathBuf> {
+    env::var_os("PATH").and_then(|paths| {
+        env::split_paths(&paths)
+            .map(|directory| directory.join(name))
+            .find(|candidate| candidate.is_file())
+    })
 }
 
 pub(crate) fn packet_trace_bytes(tick_frequency: u64, packets: &[PacketFields]) -> Vec<u8> {
