@@ -33,6 +33,7 @@ pub(super) const RISCV_LINUX_FACCESSAT: u64 = 48;
 pub(super) const RISCV_LINUX_FACCESSAT2: u64 = 439;
 pub(super) const RISCV_LINUX_STATFS: u64 = 43;
 pub(super) const RISCV_LINUX_FSTATFS: u64 = 44;
+pub(super) const RISCV_LINUX_UTIMENSAT: u64 = 88;
 pub(super) const RISCV_LINUX_STATX: u64 = 291;
 pub(super) const RISCV_LINUX_ACCESS: u64 = 1033;
 pub(super) const RISCV_LINUX_LSTAT: u64 = 1039;
@@ -49,6 +50,11 @@ const RISCV_LINUX_STATX_VALID_FLAGS: u64 = RISCV_LINUX_AT_EMPTY_PATH
     | RISCV_LINUX_AT_NO_AUTOMOUNT
     | RISCV_LINUX_AT_SYMLINK_NOFOLLOW
     | RISCV_LINUX_AT_STATX_SYNC_TYPE;
+const RISCV_LINUX_UTIMENSAT_VALID_FLAGS: u64 =
+    RISCV_LINUX_AT_EMPTY_PATH | RISCV_LINUX_AT_SYMLINK_NOFOLLOW;
+const RISCV_LINUX_UTIMENSAT_TIMES_BYTES: usize = 32;
+const RISCV_LINUX_UTIME_NOW: i64 = (1_i64 << 30) - 1;
+const RISCV_LINUX_UTIME_OMIT: i64 = (1_i64 << 30) - 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct RiscvGuestStat {
@@ -277,6 +283,93 @@ pub(super) fn syscall_lstat(
     };
 
     write_riscv_linux_stat(request.argument(1), stat, guest_memory_writer)
+}
+
+pub(super) fn syscall_utimensat(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+) -> u64 {
+    let flags = request.argument(3);
+    if flags & !RISCV_LINUX_UTIMENSAT_VALID_FLAGS != 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if request.argument(2) != 0 {
+        match validate_utimensat_times(request.argument(2), guest_memory_reader) {
+            Ok(()) => {}
+            Err(error) => return error,
+        }
+    }
+
+    let path = match read_guest_c_string(
+        guest_memory_reader,
+        request.argument(1),
+        RISCV_LINUX_PATH_MAX,
+    ) {
+        Ok(path) => path,
+        Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
+        Err(RiscvGuestCStringError::TooLong) => return linux_error(RISCV_LINUX_ENAMETOOLONG),
+    };
+
+    if path.is_empty() {
+        if flags & RISCV_LINUX_AT_EMPTY_PATH == 0 {
+            return linux_error(RISCV_LINUX_ENOENT);
+        }
+        if request.argument(0) == RISCV_LINUX_AT_FDCWD {
+            return match state.guest_path_stat(b".") {
+                Some(_stat) => 0,
+                None => linux_error(RISCV_LINUX_ENOENT),
+            };
+        }
+        let Some(fd) = guest_fd_argument(request.argument(0)) else {
+            return linux_error(RISCV_LINUX_EBADF);
+        };
+        return match state.guest_fd_stat(fd) {
+            Ok(_stat) => 0,
+            Err(_error) => linux_error(RISCV_LINUX_EBADF),
+        };
+    }
+
+    let path = match resolve_guest_at_path(request.argument(0), &path, state) {
+        Ok(path) => path,
+        Err(error) => return error,
+    };
+    let stat = if flags & RISCV_LINUX_AT_SYMLINK_NOFOLLOW != 0 {
+        state
+            .guest_link_stat(&path)
+            .or_else(|| state.guest_path_stat(&path))
+    } else {
+        state.guest_path_stat(&path)
+    };
+    match stat {
+        Some(_stat) => 0,
+        None => linux_error(RISCV_LINUX_ENOENT),
+    }
+}
+
+fn validate_utimensat_times(
+    address: u64,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+) -> Result<(), u64> {
+    let Some(bytes) = guest_memory_reader.read(address, RISCV_LINUX_UTIMENSAT_TIMES_BYTES) else {
+        return Err(linux_error(RISCV_LINUX_EFAULT));
+    };
+    if bytes.len() != RISCV_LINUX_UTIMENSAT_TIMES_BYTES {
+        return Err(linux_error(RISCV_LINUX_EFAULT));
+    }
+    let first_nsec = read_le_i64(&bytes, 8);
+    let second_nsec = read_le_i64(&bytes, 24);
+    if valid_utimensat_nsec(first_nsec) && valid_utimensat_nsec(second_nsec) {
+        Ok(())
+    } else {
+        Err(linux_error(RISCV_LINUX_EINVAL))
+    }
+}
+
+const fn valid_utimensat_nsec(value: i64) -> bool {
+    (0 <= value && value < 1_000_000_000)
+        || value == RISCV_LINUX_UTIME_NOW
+        || value == RISCV_LINUX_UTIME_OMIT
 }
 
 pub(super) fn syscall_statx(
@@ -706,6 +799,10 @@ fn riscv_linux_statx_bytes(stat: RiscvGuestStat) -> [u8; RISCV_LINUX_STATX_BYTES
 
 fn linux_stat_user_id(value: u64) -> u32 {
     value.min(u32::MAX as u64) as u32
+}
+
+fn read_le_i64(input: &[u8], offset: usize) -> i64 {
+    i64::from_le_bytes(input[offset..offset + 8].try_into().unwrap())
 }
 
 fn write_le_u16(output: &mut [u8], offset: usize, value: u16) {

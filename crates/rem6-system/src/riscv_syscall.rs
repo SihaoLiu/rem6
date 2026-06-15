@@ -156,9 +156,10 @@ pub use startup::{
 use stat::{
     guest_path_inode, syscall_access, syscall_faccessat, syscall_faccessat2, syscall_fstat,
     syscall_fstatfs, syscall_lstat, syscall_newfstatat, syscall_stat, syscall_statfs,
-    syscall_statx, RiscvGuestStat, RISCV_LINUX_ACCESS, RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS,
-    RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS, RISCV_LINUX_FACCESSAT, RISCV_LINUX_FACCESSAT2,
-    RISCV_LINUX_FSTATFS, RISCV_LINUX_LSTAT, RISCV_LINUX_STATFS, RISCV_LINUX_STATX,
+    syscall_statx, syscall_utimensat, RiscvGuestStat, RISCV_LINUX_ACCESS,
+    RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS, RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS,
+    RISCV_LINUX_FACCESSAT, RISCV_LINUX_FACCESSAT2, RISCV_LINUX_FSTATFS, RISCV_LINUX_LSTAT,
+    RISCV_LINUX_STATFS, RISCV_LINUX_STATX, RISCV_LINUX_UTIMENSAT,
 };
 use sync::{
     syscall_fd_sync, syscall_sync, RISCV_LINUX_FDATASYNC, RISCV_LINUX_FSYNC, RISCV_LINUX_SYNC,
@@ -1255,6 +1256,11 @@ impl RiscvSyscallTable {
                     value: syscall_statx(request, state, reader, writer),
                 })
             }),
+            RISCV_LINUX_UTIMENSAT => {
+                guest_memory_reader.map(|reader| RiscvSyscallOutcome::Return {
+                    value: syscall_utimensat(request, state, reader),
+                })
+            }
             RISCV_LINUX_ACCESS => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_access(request, state, guest_memory),

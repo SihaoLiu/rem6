@@ -207,6 +207,165 @@ int main(void) {
     assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
 }
 
+#[test]
+fn rem6_run_riscv_se_runs_static_raw_utimensat_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE raw utimensat smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE raw utimensat smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-utimensat");
+    let source = workspace.join("raw-utimensat.c");
+    let binary = workspace.join("raw-utimensat");
+    let input = workspace.join("guest.txt");
+    fs::write(
+        &source,
+        r#"#define AT_FDCWD (-100L)
+#define AT_EMPTY_PATH 0x1000L
+#define O_RDONLY 0
+#define UTIME_NOW ((1L << 30) - 1L)
+#define UTIME_OMIT ((1L << 30) - 2L)
+
+struct timespec64 {
+    long tv_sec;
+    long tv_nsec;
+};
+
+static long linux_syscall1(long number, long arg0) {
+    register long a0 asm("a0") = arg0;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall4(long number, long arg0, long arg1, long arg2, long arg3) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3), "r"(a7) : "memory");
+    return a0;
+}
+
+static void write_stdout(const char *bytes, long len) {
+    linux_syscall3(64, 1, (long)bytes, len);
+}
+
+int main(void) {
+    struct timespec64 valid[2] = {{7, 123456789L}, {0, UTIME_OMIT}};
+    struct timespec64 current[2] = {{0, UTIME_NOW}, {0, UTIME_OMIT}};
+    struct timespec64 invalid[2] = {{0, 1000000000L}, {0, 0}};
+    long present = linux_syscall4(88, AT_FDCWD, (long)"guest.txt", (long)valid, 0);
+    long null_times = linux_syscall4(88, AT_FDCWD, (long)"guest.txt", 0, 0);
+    long missing = linux_syscall4(88, AT_FDCWD, (long)"missing.txt", (long)valid, 0);
+    long bad_flags = linux_syscall4(88, AT_FDCWD, (long)"guest.txt", (long)valid, 0x8000);
+    long bad_nsec = linux_syscall4(88, AT_FDCWD, (long)"guest.txt", (long)invalid, 0);
+    long fd = linux_syscall4(56, AT_FDCWD, (long)"guest.txt", O_RDONLY, 0);
+    long empty_fd = fd >= 0 ? linux_syscall4(88, fd, (long)"", (long)current, AT_EMPTY_PATH) : -99;
+    long close_status = fd >= 0 ? linux_syscall1(57, fd) : -99;
+    long bad_fd = linux_syscall4(88, 99, (long)"", (long)valid, AT_EMPTY_PATH);
+    int ok = present == 0 &&
+             null_times == 0 &&
+             missing == -2 &&
+             bad_flags == -22 &&
+             bad_nsec == -22 &&
+             fd == 3 &&
+             empty_fd == 0 &&
+             close_status == 0 &&
+             bad_fd == -9;
+    if (ok) {
+        write_stdout("raw-utimensat:ok\n", sizeof("raw-utimensat:ok\n") - 1);
+    } else {
+        write_stdout("raw-utimensat:fail\n", sizeof("raw-utimensat:fail\n") - 1);
+    }
+    linux_syscall1(93, ok ? 46 : 87);
+    __builtin_unreachable();
+}
+"#,
+    )
+    .unwrap();
+    fs::write(&input, b"file-backed input\n").unwrap();
+    fs::set_permissions(&input, fs::Permissions::from_mode(0o444)).unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu)
+        .current_dir(&workspace)
+        .arg(&binary)
+        .output()
+        .unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(46),
+        "qemu stdout: {}; qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stdout),
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(qemu_output.stdout, b"raw-utimensat:ok\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+            "--riscv-se-file",
+            &format!("guest.txt={}", input.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":46"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("raw-utimensat:ok"));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}
+
 fn find_riscv_tool(name: &str) -> Option<PathBuf> {
     find_tool_on_path(name).or_else(|| {
         let module_candidate =

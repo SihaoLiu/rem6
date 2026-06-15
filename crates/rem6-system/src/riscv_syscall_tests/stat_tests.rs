@@ -3,6 +3,7 @@ use super::*;
 const RISCV_LINUX_FACCESSAT_FOR_TEST: u64 = 48;
 const RISCV_LINUX_FACCESSAT2_FOR_TEST: u64 = 439;
 const RISCV_LINUX_OPENAT_FOR_STAT_TEST: u64 = 56;
+const RISCV_LINUX_UTIMENSAT_FOR_TEST: u64 = 88;
 const RISCV_LINUX_STATX_FOR_TEST: u64 = 291;
 const RISCV_LINUX_ACCESS_FOR_TEST: u64 = 1033;
 const RISCV_LINUX_LSTAT_FOR_TEST: u64 = 1039;
@@ -15,6 +16,8 @@ const RISCV_LINUX_W_OK_FOR_TEST: u64 = 2;
 const RISCV_LINUX_X_OK_FOR_TEST: u64 = 1;
 const RISCV_LINUX_EACCES_FOR_TEST: u64 = 13;
 const RISCV_LINUX_AT_EACCESS_FOR_TEST: u64 = 0x200;
+const RISCV_LINUX_UTIME_NOW_FOR_TEST: i64 = (1_i64 << 30) - 1;
+const RISCV_LINUX_UTIME_OMIT_FOR_TEST: i64 = (1_i64 << 30) - 2;
 
 #[test]
 fn linux_table_stat_writes_registered_guest_file_stat() {
@@ -128,6 +131,183 @@ fn linux_table_lstat_writes_registered_guest_symlink_stat() {
     assert_eq!(read_le_u64(&stat, 48), 9);
     assert_eq!(read_le_u32(&stat, 16), 0o120777);
     assert_eq!(read_le_u32(&stat, 20), 1);
+}
+
+#[test]
+fn linux_table_utimensat_validates_guest_paths_fds_and_timespecs() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"file-backed input\n");
+    state.register_guest_symlink(b"link.txt", b"guest.txt");
+    let guest_memory_reader = c_string_reader_with_blocks(
+        &[
+            (0x9000, b"guest.txt"),
+            (0x9020, b"missing.txt"),
+            (0x9040, b""),
+            (0x9060, b"link.txt"),
+        ],
+        vec![
+            (
+                0xa000,
+                timespec_pair(
+                    RISCV_LINUX_UTIME_NOW_FOR_TEST,
+                    RISCV_LINUX_UTIME_OMIT_FOR_TEST,
+                ),
+            ),
+            (0xa100, timespec_pair(1_000_000_000, 0)),
+        ],
+    );
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_UTIMENSAT_FOR_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0xa000, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_UTIMENSAT_FOR_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_UTIMENSAT_FOR_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9020, 0xa000, 0, 0, 0],
+            ),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOENT)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_UTIMENSAT_FOR_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0xa000, 0x8000, 0, 0],
+            ),
+            &mut state,
+            10,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8010,
+                RISCV_LINUX_UTIMENSAT_FOR_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0xa100, 0, 0, 0],
+            ),
+            &mut state,
+            11,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8014,
+                RISCV_LINUX_UTIMENSAT_FOR_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0xb000, 0, 0, 0],
+            ),
+            &mut state,
+            12,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8018,
+                RISCV_LINUX_UTIMENSAT_FOR_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9040, 0xa000, 0, 0, 0],
+            ),
+            &mut state,
+            13,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOENT)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x801c,
+                RISCV_LINUX_UTIMENSAT_FOR_TEST,
+                [1, 0x9040, 0xa000, RISCV_LINUX_AT_EMPTY_PATH, 0, 0],
+            ),
+            &mut state,
+            14,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8020,
+                RISCV_LINUX_UTIMENSAT_FOR_TEST,
+                [99, 0x9040, 0xa000, RISCV_LINUX_AT_EMPTY_PATH, 0, 0],
+            ),
+            &mut state,
+            15,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8024,
+                RISCV_LINUX_UTIMENSAT_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9060,
+                    0xa000,
+                    RISCV_LINUX_AT_SYMLINK_NOFOLLOW,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            16,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
 }
 
 #[test]
@@ -977,21 +1157,45 @@ fn c_string_reader(base: u64, bytes: &'static [u8]) -> RiscvGuestMemoryReader {
 }
 
 fn c_string_reader_with(strings: &[(u64, &'static [u8])]) -> RiscvGuestMemoryReader {
+    c_string_reader_with_blocks(strings, Vec::new())
+}
+
+fn c_string_reader_with_blocks(
+    strings: &[(u64, &'static [u8])],
+    blocks: Vec<(u64, Vec<u8>)>,
+) -> RiscvGuestMemoryReader {
     let strings = strings
         .iter()
         .map(|(base, bytes)| (*base, [*bytes, b"\0"].concat()))
         .collect::<Vec<_>>();
     RiscvGuestMemoryReader::new(move |address, count| {
-        if count != 1 {
-            return None;
+        if count == 1 {
+            return strings.iter().find_map(|(base, path)| {
+                if address < *base {
+                    return None;
+                }
+                path.get((address - *base) as usize)
+                    .copied()
+                    .map(|byte| vec![byte])
+            });
         }
-        strings.iter().find_map(|(base, path)| {
+        blocks.iter().find_map(|(base, block)| {
             if address < *base {
                 return None;
             }
-            path.get((address - *base) as usize)
-                .copied()
-                .map(|byte| vec![byte])
+            let offset = usize::try_from(address - *base).ok()?;
+            block
+                .get(offset..offset.checked_add(count)?)
+                .map(<[u8]>::to_vec)
         })
     })
+}
+
+fn timespec_pair(first_nsec: i64, second_nsec: i64) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&7_i64.to_le_bytes());
+    bytes.extend_from_slice(&first_nsec.to_le_bytes());
+    bytes.extend_from_slice(&8_i64.to_le_bytes());
+    bytes.extend_from_slice(&second_nsec.to_le_bytes());
+    bytes
 }
