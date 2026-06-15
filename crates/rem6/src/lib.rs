@@ -35,6 +35,7 @@ mod formatting;
 mod guest_memory;
 mod gups_cli;
 mod parallel_stats;
+mod pipeline_stats;
 mod power_output;
 mod resource_acquire_cli;
 mod resource_acquire_config;
@@ -57,6 +58,10 @@ use data_cache_runtime::{
 };
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
+use pipeline_stats::{
+    in_order_pipeline_data_wait_cycles, in_order_pipeline_fetch_wait_cycles,
+    in_order_pipeline_retired,
+};
 use power_output::{run_power_analysis_artifact, Rem6PowerAnalysisArtifact};
 pub use resource_acquire_cli::{
     run_resource_acquire_config, Rem6ResourceAcquireArtifact, Rem6ResourceAcquireResourceSummary,
@@ -405,6 +410,7 @@ pub struct Rem6CoreSummary {
     committed_instructions: u64,
     in_order_pipeline_cycles: u64,
     in_order_pipeline_retired: u64,
+    in_order_pipeline_fetch_wait_cycles: u64,
     in_order_pipeline_data_wait_cycles: u64,
     data_loads: u64,
     data_stores: u64,
@@ -1020,6 +1026,7 @@ fn execution_summary(
             committed_instructions: committed_by_cpu.get(&cpu).copied().unwrap_or(0),
             in_order_pipeline_cycles: core.in_order_pipeline_snapshot().cycle(),
             in_order_pipeline_retired: in_order_pipeline_retired(&core),
+            in_order_pipeline_fetch_wait_cycles: in_order_pipeline_fetch_wait_cycles(&core),
             in_order_pipeline_data_wait_cycles: in_order_pipeline_data_wait_cycles(&core),
             data_loads: data.loads,
             data_stores: data.stores,
@@ -1252,21 +1259,6 @@ fn committed_instructions_by_cpu(run: &RiscvSystemRun) -> BTreeMap<CpuId, u64> {
         }
     }
     committed
-}
-
-fn in_order_pipeline_retired(core: &RiscvCore) -> u64 {
-    core.execution_events()
-        .iter()
-        .filter_map(|event| event.in_order_pipeline_cycle())
-        .map(|cycle| cycle.summary().retired_count() as u64)
-        .sum()
-}
-
-fn in_order_pipeline_data_wait_cycles(core: &RiscvCore) -> u64 {
-    core.execution_events()
-        .iter()
-        .map(|event| event.in_order_pipeline_data_wait_cycles())
-        .sum()
 }
 
 fn guest_trap_name(kind: GuestTrapKind) -> &'static str {

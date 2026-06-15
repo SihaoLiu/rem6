@@ -148,9 +148,9 @@ the in-order timing state before retire, normal `drive_next_action`, cluster,
 and data-translation drivers issuing a bounded fetch-ahead for completed
 straight-line 4-byte integer instructions before retire, per-retired-instruction
 in-order stage advancement with runtime stats, data-response wait cycles folded
-into in-order retire timing, per-core data-wait cycle stats, retired branch
-prediction and redirect summaries in normal in-order timing records, and O3
-policy helpers.
+into in-order retire timing, per-core fetch-response and data-response wait
+cycle stats, retired branch prediction and redirect summaries in normal
+in-order timing records, and O3 policy helpers.
 
 **Not migrated:** Full Minor-like in-order timing with realistic stalls and
 squashes, executable O3 timing, fetch speculation, checker, and KVM equivalents.
@@ -158,9 +158,10 @@ squashes, executable O3 timing, fetch speculation, checker, and KVM equivalents.
 **Evidence:** `RiscvCore::execute_next_completed_fetch`,
 `RiscvClusterRun`, `record_data_retire_cycle`, `InOrderPipelineState`,
 `O3DistributedIssueScheduler`, `O3SourceRenamePlan`, CPU frontend and O3 tests.
-CLI run stats include per-core in-order pipeline cycle and retired counters
-from executed RISC-V instructions, and CLI data stats show load/store response
-wait changing the in-order pipeline cycle counter and data-wait cycle stat.
+CLI run stats include per-core in-order pipeline cycle, retired, and
+fetch-response wait counters from executed RISC-V instructions, and CLI data
+stats show load/store response wait changing the in-order pipeline cycle
+counter and data-wait cycle stat.
 RISC-V in-order timing tests include retired taken and fall-through branch
 prediction redirect evidence from the normal execution path, plus direct
 completed-fetch overlap evidence before retire. CPU frontend and cluster tests
@@ -425,7 +426,8 @@ m5ops, host actions, GDB packet/session parsing, RISC-V integer/PC register
 paths, RV64D floating-point target descriptions including `fflags`/`frm`/`fcsr`
 and advertised RV64 supervisor CSR target descriptions plus `p`/`P`/`g`/`G`
 register-cache paths, RISC-V software breakpoint patch/restore through the
-system GDB memory handler, gem5-style final-tick stat aliases,
+system GDB memory handler, gem5-style final-tick, committed-instruction, and
+sim-frequency stat aliases,
 target/port/bank-level DRAM runtime resource counters, RISC-V in-order pipeline
 checkpoint capture/restore, GDB byte-stream packet handling, debug
 execution-control state for packet-stream step/resume and break/watch requests,
@@ -450,8 +452,9 @@ registry/output tests.
 The CLI data-access probe tests include stack-distance histogram stats emitted
 from executed RISC-V loads. CLI DRAM-backed execution tests include
 target/port/bank-level DRAM resource counters emitted from executed RISC-V
-instruction fetches. CLI text stats include gem5-style final-tick aliases
-emitted from an executed RISC-V run.
+instruction fetches. CLI text stats include gem5-style final-tick,
+committed-instruction, and sim-frequency aliases emitted from an executed
+RISC-V run.
 
 **Next evidence:** Broader gem5 text-stat compatibility, remaining
 cache/bank/fabric runtime resource counters, GDB socket-loop execution-control
@@ -549,7 +552,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/chi_protocol` | `rem6-coherence`, protocol crates, `rem6-cache` | 40% single-axis | CHI-like line, controller, bank, dirty peer sourcing, reservation, and Evict-hazard tests exist. | Add Ruby-scale CHI transactions, topology networks, directory races, and workload checks. |
 | `tests/gem5/chi_tlm_tests` | `rem6-proto`, future adapter crates, `rem6-coherence` | 19% scoped | A library-level co-simulation boundary can register TLM endpoints, validate transaction shape, hand off events, and checkpoint clean adapter state in self-tests. | Add runtime TLM bridge tests with coherence traffic. |
 | `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, and text stats output tests exist. | Add config-driven file layouts for full-system manifests and multi-artifact workloads. |
-| `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line fetch-ahead, per-retired-instruction in-order stage timing stats, and O3 policies exist. | Add broader in-order stalls/squashes and ROB/LSQ-backed O3 execution tests. |
+| `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line fetch-ahead, per-retired-instruction in-order stage timing stats, top-level fetch-response wait stats, and O3 policies exist. | Add broader in-order stalls/squashes and ROB/LSQ-backed O3 execution tests. |
 | `tests/gem5/dram_lowp` | `rem6-dram`, `rem6-power` | 40% single-axis | DRAM/NVM profile counters and low-power constants are surfaced. | Add executable low-power state transition tests through routed requests. |
 | `tests/gem5/example_configs`, `tests/gem5/learning_gem5` | `rem6` CLI, `rem6-platform`, `rem6-workload` | 40% single-axis | CLI and TOML tests cover several execution and trace-replay paths. | Add rem6 examples that run from data files without recompilation. |
 | `tests/gem5/fdp_tests` | `rem6-cache` | 45% single-axis | Fetch-directed prefetcher state, errors, and cache-local queue/translation counters have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |
@@ -572,7 +575,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/regression_tests` | all rem6 crates | 35% unit-slice | Workspace tests act as the current regression suite. | Add migration tags or per-family regression rows. |
 | `tests/gem5/replacement_policies` | `rem6-cache` | 60% representative | Multiple replacement, indexing, dueling, compressed, and sector tag tests exist. | Add remaining policies and exact trace/reference parity where useful. |
 | `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, RFENCE remote SFENCE.VMA data TLB flushes with finite-range, ASID scope, and scheduled completion events, unsupported HFENCE validation, and HSM start entry-state, `START_PENDING`, status, no-return stop, retentive-suspend, default-non-retentive `RESUME_PENDING`/resume, and IPI-wake slices are tested. | Add broader SBI timer/IPI/reset power-state behavior, remaining HSM wake semantics, RFENCE hypervisor-fence execution semantics and broader completion coverage, and a real Linux boot smoke. |
-| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 64% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, instruction/data cache counters, cache-local prefetch queue counters, CLI stat output, and library-level plus run-CLI McPAT/DSENT-shaped export tests exist. | Add more hierarchy counters, calibrated power/thermal activity, and stricter text-stat compatibility. |
+| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 64% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, instruction/data cache counters, cache-local prefetch queue counters, CLI stat output with gem5-style final-tick, committed-instruction, and sim-frequency aliases, and library-level plus run-CLI McPAT/DSENT-shaped export tests exist. | Add more hierarchy counters, calibrated power/thermal activity, and stricter text-stat compatibility. |
 | `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 54% single-axis | Workload manifests, resource payloads, manifest/suite-level CLI resource acquisition including host-file and uncompressed/gzip tar-entry inputs, manifest-acquired and unique-suite run kernel handoff, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage, remote/cache policy acquisition, and ergonomic topology/workload definitions. |
 | `tests/test-progs` | `rem6-system`, `rem6` CLI, ISA crates | 35% unit-slice | Static RISC-V no-libc, newlib, and raw syscall smoke binaries, including `statx`, `faccessat2`, `utimensat`, advisory `fchownat`/`fchown`, `sysinfo`, newlib file-create roundtrip, newlib `/proc/self/exe` readlink coverage, newlib pipe2 roundtrip coverage, newlib directory-open coverage, and newlib open-flag coverage, are generated when tools exist. | Add durable generated fixtures for hello, threads, and m5 utility shapes across ISAs. |
 | `tests/gem5/traffic_gen` | `rem6-traffic`, `rem6-system`, `rem6-workload`, `rem6` CLI | 55% single-axis | Text config parsing, GUPS, packet trace replay including manifest and unique suite resource-config trace handoff, flags, maintenance, HTM, responses, workload summaries, typed generator/memory-profile summaries, and top-level GUPS profile JSON/stats output exist. | Add cache hierarchy matrix and broader trusted stats. |

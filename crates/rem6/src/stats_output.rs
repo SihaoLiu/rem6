@@ -11,6 +11,8 @@ use super::{
 };
 use dram::emit_dram_stats;
 
+const GEM5_COMPAT_SIM_FREQ_HZ: u64 = 1_000_000_000_000;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Rem6StatsOutput {
     pub(super) json: String,
@@ -186,6 +188,13 @@ pub(super) fn run_stats_output(
         )?;
         increment_stat(
             &mut stats,
+            "simInsts",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.committed_instructions,
+        )?;
+        increment_stat(
+            &mut stats,
             "sim.final_tick",
             "Tick",
             StatResetPolicy::Monotonic,
@@ -204,6 +213,13 @@ pub(super) fn run_stats_output(
             "Tick",
             StatResetPolicy::Monotonic,
             execution.final_tick,
+        )?;
+        increment_stat(
+            &mut stats,
+            "simFreq",
+            "Hz",
+            StatResetPolicy::Constant,
+            GEM5_COMPAT_SIM_FREQ_HZ,
         )?;
         match execution.stop {
             Rem6ExecutionStop::HostTrap { stop_code, .. } => {
@@ -542,6 +558,13 @@ pub(super) fn run_stats_output(
                 "Count",
                 StatResetPolicy::Monotonic,
                 core.in_order_pipeline_retired,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!("sim.cpu{}.pipeline.in_order.fetch_wait_cycles", core.cpu),
+                "Cycle",
+                StatResetPolicy::Monotonic,
+                core.in_order_pipeline_fetch_wait_cycles,
             )?;
             increment_stat(
                 &mut stats,
