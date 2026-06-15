@@ -59,6 +59,7 @@ impl WorkloadResourceKindField {
 pub enum WorkloadResourceAcquisitionKind {
     LocalFile,
     HostFile,
+    ArchiveTar,
     RemoteUri,
     Generated,
     Preloaded,
@@ -69,6 +70,7 @@ impl WorkloadResourceAcquisitionKind {
         match self {
             Self::LocalFile => "local-file",
             Self::HostFile => "host-file",
+            Self::ArchiveTar => "archive-tar",
             Self::RemoteUri => "remote-uri",
             Self::Generated => "generated",
             Self::Preloaded => "preloaded",

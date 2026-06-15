@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use rem6_boot::BootImage;
 use rem6_memory::Address;
 use rem6_workload::{
@@ -228,12 +230,7 @@ fn build_manifest_and_artifacts(
             builder = builder.add_required_resource(resource_id);
         }
 
-        let data = std::fs::read(resource.artifact()).map_err(|error| {
-            Rem6CliError::ReadResourceArtifact {
-                path: resource.artifact().to_path_buf(),
-                error: error.to_string(),
-            }
-        })?;
+        let data = read_resource_artifact(resource)?;
         let size_bytes = resource.artifact_size().unwrap_or(data.len());
         executor = executor
             .add_artifact(WorkloadResourceArtifact::new(
@@ -247,6 +244,97 @@ fn build_manifest_and_artifacts(
 
     let manifest = builder.build().map_err(execute_error)?;
     Ok((manifest, executor))
+}
+
+fn read_resource_artifact(
+    resource: &Rem6ResourceAcquireResourceConfig,
+) -> Result<Vec<u8>, Rem6CliError> {
+    if let Some(member) = resource.artifact_member() {
+        read_tar_member(resource.artifact(), member)
+    } else {
+        std::fs::read(resource.artifact()).map_err(|error| Rem6CliError::ReadResourceArtifact {
+            path: resource.artifact().to_path_buf(),
+            error: error.to_string(),
+        })
+    }
+}
+
+fn read_tar_member(archive: &Path, member: &str) -> Result<Vec<u8>, Rem6CliError> {
+    let data = std::fs::read(archive).map_err(|error| Rem6CliError::ReadResourceArtifact {
+        path: archive.to_path_buf(),
+        error: error.to_string(),
+    })?;
+    let mut offset: usize = 0;
+    while let Some(header_end) = offset.checked_add(512).filter(|end| *end <= data.len()) {
+        let header = &data[offset..header_end];
+        if header.iter().all(|byte| *byte == 0) {
+            break;
+        }
+        let name = tar_header_text(&header[0..100]);
+        let size = tar_header_octal(&header[124..136]).map_err(|error| {
+            Rem6CliError::ReadResourceArtifact {
+                path: archive.to_path_buf(),
+                error,
+            }
+        })?;
+        let typeflag = header[156];
+        let data_start = header_end;
+        let data_end =
+            data_start
+                .checked_add(size)
+                .ok_or_else(|| Rem6CliError::ReadResourceArtifact {
+                    path: archive.to_path_buf(),
+                    error: format!("tar member {name} size overflows host address space"),
+                })?;
+        if data_end > data.len() {
+            return Err(Rem6CliError::ReadResourceArtifact {
+                path: archive.to_path_buf(),
+                error: format!("tar member {name} extends past archive size"),
+            });
+        }
+        if name == member {
+            if typeflag == 0 || typeflag == b'0' {
+                return Ok(data[data_start..data_end].to_vec());
+            }
+            return Err(Rem6CliError::ReadResourceArtifact {
+                path: archive.to_path_buf(),
+                error: format!("tar member {member} is not a regular file"),
+            });
+        }
+        let padded_size = size.div_ceil(512).checked_mul(512).ok_or_else(|| {
+            Rem6CliError::ReadResourceArtifact {
+                path: archive.to_path_buf(),
+                error: format!("tar member {name} padded size overflows host address space"),
+            }
+        })?;
+        offset = data_start.checked_add(padded_size).ok_or_else(|| {
+            Rem6CliError::ReadResourceArtifact {
+                path: archive.to_path_buf(),
+                error: format!("tar member {name} offset overflows host address space"),
+            }
+        })?;
+    }
+    Err(Rem6CliError::ReadResourceArtifact {
+        path: archive.to_path_buf(),
+        error: format!("tar member {member} was not found"),
+    })
+}
+
+fn tar_header_text(field: &[u8]) -> String {
+    let end = field
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(field.len());
+    String::from_utf8_lossy(&field[..end]).to_string()
+}
+
+fn tar_header_octal(field: &[u8]) -> Result<usize, String> {
+    let text = tar_header_text(field);
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(0);
+    }
+    usize::from_str_radix(text, 8).map_err(|error| format!("invalid tar size {text}: {error}"))
 }
 
 fn resource_acquisition(

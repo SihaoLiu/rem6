@@ -34,6 +34,7 @@ pub struct Rem6ResourceAcquireResourceConfig {
     acquisition_tool: Option<String>,
     acquisition_revision: Option<String>,
     artifact: PathBuf,
+    artifact_member: Option<String>,
     artifact_digest: String,
     artifact_size: Option<usize>,
 }
@@ -322,6 +323,10 @@ impl Rem6ResourceAcquireResourceConfig {
         &self.artifact
     }
 
+    pub fn artifact_member(&self) -> Option<&str> {
+        self.artifact_member.as_deref()
+    }
+
     pub fn artifact_digest(&self) -> &str {
         &self.artifact_digest
     }
@@ -419,10 +424,28 @@ fn parse_resource_acquire_resource(
                 flag: "resource_acquire.resources.acquisition_locator",
             })?;
     let artifact = resource.artifact.as_deref();
-    let artifact = match (artifact, acquisition_kind) {
-        (Some(artifact), _) => file_config.resolve_path(artifact),
-        (None, WorkloadResourceAcquisitionKind::HostFile) => {
-            file_config.resolve_path(Path::new(&acquisition_locator))
+    let (artifact, artifact_member) = match (artifact, acquisition_kind) {
+        (Some(artifact), _) => (file_config.resolve_path(artifact), None),
+        (None, WorkloadResourceAcquisitionKind::HostFile) => (
+            file_config.resolve_path(Path::new(&acquisition_locator)),
+            None,
+        ),
+        (None, WorkloadResourceAcquisitionKind::ArchiveTar) => {
+            let (archive, member) =
+                acquisition_locator
+                    .split_once('#')
+                    .ok_or(Rem6CliError::MissingRequiredFlag {
+                        flag: "resource_acquire.resources.acquisition_locator archive#member",
+                    })?;
+            if archive.is_empty() || member.is_empty() {
+                return Err(Rem6CliError::MissingRequiredFlag {
+                    flag: "resource_acquire.resources.acquisition_locator archive#member",
+                });
+            }
+            (
+                file_config.resolve_path(Path::new(archive)),
+                Some(member.to_string()),
+            )
         }
         (None, _) => {
             return Err(Rem6CliError::MissingRequiredFlag {
@@ -446,6 +469,7 @@ fn parse_resource_acquire_resource(
         acquisition_tool: resource.acquisition_tool.clone(),
         acquisition_revision: resource.acquisition_revision.clone(),
         artifact,
+        artifact_member,
         artifact_digest,
         artifact_size: resource.artifact_size,
     })
@@ -489,6 +513,7 @@ fn parse_resource_acquisition_kind(value: &str) -> Option<WorkloadResourceAcquis
     match value {
         "local-file" => Some(WorkloadResourceAcquisitionKind::LocalFile),
         "host-file" => Some(WorkloadResourceAcquisitionKind::HostFile),
+        "archive-tar" => Some(WorkloadResourceAcquisitionKind::ArchiveTar),
         "remote-uri" => Some(WorkloadResourceAcquisitionKind::RemoteUri),
         "generated" => Some(WorkloadResourceAcquisitionKind::Generated),
         "preloaded" => Some(WorkloadResourceAcquisitionKind::Preloaded),

@@ -140,6 +140,70 @@ artifact_size = 4
 }
 
 #[test]
+fn rem6_resource_acquire_loads_config_manifest_from_tar_archive_locator() {
+    let workspace = temp_workspace("resource-acquire-archive-tar-config");
+    let archive_dir = workspace.join("archives");
+    fs::create_dir(&archive_dir).unwrap();
+    fs::write(
+        archive_dir.join("kernel.tar"),
+        tar_archive_with_entry("kernel.bin", &[0x13, 0x00, 0x00, 0x00]),
+    )
+    .unwrap();
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        r#"[resource_acquire]
+workload_id = "resource-archive-tar-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:archive-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "archive-tar"
+acquisition_locator = "archives/kernel.tar#kernel.bin"
+artifact_digest = "sha256:archive-kernel"
+artifact_size = 4
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"workload_id\":\"resource-archive-tar-cli\""));
+    assert!(stdout.contains("\"resource\":\"kernel\""));
+    assert!(stdout.contains("\"size_bytes\":4"));
+    assert!(stdout.contains("\"acquisition_kind\":\"archive-tar\""));
+    assert!(stdout.contains("\"acquisition_locator\":\"archives/kernel.tar#kernel.bin\""));
+    assert_stat(
+        &stdout,
+        "sim.resource_acquire.acquired_resources",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.resource_acquire.acquired_bytes",
+        "Byte",
+        4,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_resource_acquire_loads_suite_manifests_and_local_artifacts() {
     let workspace = temp_workspace("resource-acquire-suite-config");
     let first_artifact = workspace.join("kernel-a.bin");
@@ -315,4 +379,40 @@ artifact_size = 4
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr
         .contains("resource kernel artifact digest sha256:other does not match sha256:kernel"));
+}
+
+fn tar_archive_with_entry(name: &str, data: &[u8]) -> Vec<u8> {
+    let mut header = [0_u8; 512];
+    header[..name.len()].copy_from_slice(name.as_bytes());
+    write_tar_octal(&mut header[100..108], 0o644);
+    write_tar_octal(&mut header[108..116], 0);
+    write_tar_octal(&mut header[116..124], 0);
+    write_tar_octal(&mut header[124..136], data.len() as u64);
+    write_tar_octal(&mut header[136..148], 0);
+    header[148..156].fill(b' ');
+    header[156] = b'0';
+    header[257..263].copy_from_slice(b"ustar\0");
+    header[263..265].copy_from_slice(b"00");
+    let checksum = header.iter().map(|byte| u64::from(*byte)).sum::<u64>();
+    write_tar_checksum(&mut header[148..156], checksum);
+
+    let mut archive = Vec::from(header);
+    archive.extend_from_slice(data);
+    let padding = (512 - (data.len() % 512)) % 512;
+    archive.resize(archive.len() + padding, 0);
+    archive.resize(archive.len() + 1024, 0);
+    archive
+}
+
+fn write_tar_octal(field: &mut [u8], value: u64) {
+    field.fill(0);
+    let encoded = format!("{:0width$o}", value, width = field.len() - 1);
+    field[..encoded.len()].copy_from_slice(encoded.as_bytes());
+}
+
+fn write_tar_checksum(field: &mut [u8], value: u64) {
+    field.fill(b' ');
+    let encoded = format!("{:06o}", value);
+    field[..encoded.len()].copy_from_slice(encoded.as_bytes());
+    field[6] = 0;
 }
