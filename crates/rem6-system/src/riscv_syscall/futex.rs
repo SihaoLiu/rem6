@@ -3,7 +3,7 @@ use rem6_kernel::{PartitionId, Tick};
 use super::time::read_timespec64;
 use super::{
     linux_error, RiscvGuestMemoryReader, RiscvSyscallOutcome, RiscvSyscallRequest,
-    RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
+    RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ENOSYS,
 };
 use crate::{
     GuestFutexAddress, GuestFutexKey, GuestFutexWaitOutcome, GuestFutexWaitRequest,
@@ -14,6 +14,8 @@ const RISCV_LINUX_EAGAIN: u64 = 11;
 const RISCV_LINUX_ETIMEDOUT: u64 = 110;
 const RISCV_LINUX_FUTEX_WAIT: u32 = 0;
 const RISCV_LINUX_FUTEX_WAKE: u32 = 1;
+const RISCV_LINUX_FUTEX_REQUEUE: u32 = 3;
+const RISCV_LINUX_FUTEX_CMP_REQUEUE: u32 = 4;
 const RISCV_LINUX_FUTEX_WAIT_BITSET: u32 = 9;
 const RISCV_LINUX_FUTEX_WAKE_BITSET: u32 = 10;
 const RISCV_LINUX_FUTEX_PRIVATE_FLAG: u32 = 128;
@@ -49,8 +51,14 @@ pub(super) fn syscall_futex(
     tick: Tick,
     guest_memory: Option<&RiscvGuestMemoryReader>,
 ) -> Option<RiscvSyscallOutcome> {
-    let op = (request.argument(1) as u32)
-        & !(RISCV_LINUX_FUTEX_PRIVATE_FLAG | RISCV_LINUX_FUTEX_CLOCK_REALTIME_FLAG);
+    let raw_op = request.argument(1) as u32;
+    let op = raw_op & !RISCV_LINUX_FUTEX_PRIVATE_FLAG;
+    if futex_clock_realtime_is_invalid(op) {
+        return Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOSYS),
+        });
+    }
+    let op = op & !RISCV_LINUX_FUTEX_CLOCK_REALTIME_FLAG;
     let address = GuestFutexAddress::new(request.argument(0));
     let thread_group = GuestThreadGroupId::new(state.identity().thread_group_id());
     match op {
@@ -95,6 +103,16 @@ pub(super) fn syscall_futex(
                 value: outcome.woken_count() as u64,
             })
         }
+        RISCV_LINUX_FUTEX_REQUEUE => Some(syscall_futex_requeue(
+            request,
+            state,
+            tick,
+            address,
+            thread_group,
+        )),
+        RISCV_LINUX_FUTEX_CMP_REQUEUE => guest_memory.map(|guest_memory| {
+            syscall_futex_cmp_requeue(request, state, tick, address, thread_group, guest_memory)
+        }),
         RISCV_LINUX_FUTEX_WAKE_BITSET => {
             let bitset = request.argument(5) as u32;
             if bitset == 0 {
@@ -113,6 +131,62 @@ pub(super) fn syscall_futex(
         }
         _ => None,
     }
+}
+
+fn syscall_futex_requeue(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    tick: Tick,
+    address: GuestFutexAddress,
+    thread_group: GuestThreadGroupId,
+) -> RiscvSyscallOutcome {
+    let target_address = GuestFutexAddress::new(request.argument(4));
+    let Some(wake_count) = futex_requeue_count(request.argument(2)) else {
+        return RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL),
+        };
+    };
+    let Some(requeue_count) = futex_requeue_count(request.argument(3)) else {
+        return RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL),
+        };
+    };
+    let outcome = state
+        .guest_futexes
+        .requeue(
+            address,
+            target_address,
+            thread_group,
+            wake_count,
+            requeue_count,
+            tick,
+        )
+        .expect("guest futex requeue cannot fail");
+    RiscvSyscallOutcome::Return {
+        value: (outcome.woken().len() + outcome.requeued().len()) as u64,
+    }
+}
+
+fn syscall_futex_cmp_requeue(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    tick: Tick,
+    address: GuestFutexAddress,
+    thread_group: GuestThreadGroupId,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> RiscvSyscallOutcome {
+    let Some(observed) = read_guest_i32(guest_memory, request.argument(0)) else {
+        return RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT),
+        };
+    };
+    let expected = request.argument(5) as i32;
+    if observed != expected {
+        return RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EAGAIN),
+        };
+    }
+    syscall_futex_requeue(request, state, tick, address, thread_group)
 }
 
 fn syscall_futex_wait(
@@ -200,4 +274,21 @@ fn futex_wake_count(value: u64) -> usize {
     } else {
         count as usize
     }
+}
+
+fn futex_requeue_count(value: u64) -> Option<usize> {
+    let count = value as i32;
+    if count < 0 {
+        None
+    } else {
+        Some(count as usize)
+    }
+}
+
+fn futex_clock_realtime_is_invalid(op: u32) -> bool {
+    op & RISCV_LINUX_FUTEX_CLOCK_REALTIME_FLAG != 0
+        && matches!(
+            op & !RISCV_LINUX_FUTEX_CLOCK_REALTIME_FLAG,
+            RISCV_LINUX_FUTEX_REQUEUE | RISCV_LINUX_FUTEX_CMP_REQUEUE
+        )
 }
