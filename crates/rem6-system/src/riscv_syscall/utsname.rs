@@ -1,8 +1,8 @@
 use super::{linux_error, RiscvGuestMemoryWriter, RISCV_LINUX_EFAULT};
 
 const RISCV_LINUX_UTS_FIELD_BYTES: usize = 65;
-const RISCV_LINUX_UTS_FIELDS: usize = 5;
-const RISCV_LINUX_UTS_BYTES: usize = RISCV_LINUX_UTS_FIELD_BYTES * RISCV_LINUX_UTS_FIELDS;
+const RISCV_LINUX_NEW_UTS_FIELDS: usize = 6;
+const RISCV_LINUX_UTS_BYTES: usize = RISCV_LINUX_UTS_FIELD_BYTES * RISCV_LINUX_NEW_UTS_FIELDS;
 const RISCV_LINUX_UTS_SYSNAME: &[u8] = b"Linux";
 const RISCV_LINUX_UTS_NODENAME: &[u8] = b"sim.gem5.org";
 const RISCV_LINUX_UTS_RELEASE: &[u8] = b"5.1.0";

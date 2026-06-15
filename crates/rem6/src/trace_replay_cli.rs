@@ -17,6 +17,7 @@ use crate::config::{Rem6TraceReplayConfig, StatsFormat};
 use crate::formatting::bytes_to_hex;
 use crate::resource_acquire_cli::{
     acquire_manifest_required_resources, acquire_suite_required_resources,
+    reject_runtime_remote_uri_resources,
 };
 use crate::resource_acquire_config::Rem6ResourceAcquireConfig;
 use crate::stats_output::{trace_replay_stats_output, Rem6TraceReplayStatsInputs};
@@ -156,6 +157,7 @@ fn trace_replay_payload(
             "--config".to_string(),
             resource_config.display().to_string(),
         ])?;
+        reject_runtime_remote_uri_resources("trace-replay", resource_config, &acquire_config)?;
         if acquire_config.suite_id().is_some() {
             let (_plan, acquired) = acquire_suite_required_resources(&acquire_config)?;
             let mut trace_payloads = acquired

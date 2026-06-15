@@ -1107,6 +1107,48 @@ artifact_digest = "sha256:kernel-b"
 }
 
 #[test]
+fn rem6_run_rejects_remote_uri_resource_config_before_simulation() {
+    let workspace = temp_workspace("run-resource-config-remote-uri-kernel");
+    let resource_config = workspace.join("resource-acquire.toml");
+    std::fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+workload_id = "remote-kernel"
+boot_entry = 2147483648
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:remote-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "remote-uri"
+acquisition_locator = "http://127.0.0.1:9/kernel.elf"
+artifact_digest = "sha256:remote-kernel"
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("run.toml");
+    std::fs::write(
+        &config,
+        "[run]\nisa = \"riscv\"\nresource_config = \"resource-acquire.toml\"\nmax_tick = 40\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("runtime resource handoff does not allow remote-uri resources"));
+    assert!(stderr.contains("kernel"));
+    assert!(stderr.contains("rem6 resource-acquire"));
+}
+
+#[test]
 fn rem6_run_rejects_suite_resource_config_with_multiple_required_kernels() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let workspace = temp_workspace("run-suite-resource-config-multiple-kernels");

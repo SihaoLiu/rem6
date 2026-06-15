@@ -9,8 +9,9 @@ use rem6_memory::Address;
 use rem6_workload::{
     WorkloadAcquiredResource, WorkloadAcquiredSuiteResource, WorkloadId,
     WorkloadInMemoryResourceAcquisitionExecutor, WorkloadManifest, WorkloadResolvedResources,
-    WorkloadResource, WorkloadResourceAcquisition, WorkloadResourceArtifact, WorkloadResourceId,
-    WorkloadSuite, WorkloadSuiteId, WorkloadSuiteReplayPlan,
+    WorkloadResource, WorkloadResourceAcquisition, WorkloadResourceAcquisitionKind,
+    WorkloadResourceArtifact, WorkloadResourceId, WorkloadSuite, WorkloadSuiteId,
+    WorkloadSuiteReplayPlan,
 };
 
 use crate::cli_output::emit_cli_output;
@@ -117,6 +118,27 @@ pub(crate) fn acquire_suite_required_resources(
         .acquire_suite_replay_plan(&plan)
         .map_err(execute_error)?;
     Ok((plan, acquired))
+}
+
+pub(crate) fn reject_runtime_remote_uri_resources(
+    command: &str,
+    resource_config: &Path,
+    config: &Rem6ResourceAcquireConfig,
+) -> Result<(), Rem6CliError> {
+    for manifest in config.manifests() {
+        for resource in manifest.resources() {
+            if resource.acquisition_kind() == WorkloadResourceAcquisitionKind::RemoteUri {
+                return Err(Rem6CliError::Execute {
+                    error: format!(
+                        "{command} runtime resource handoff does not allow remote-uri resources in {}; run `rem6 resource-acquire` before simulation (resource {})",
+                        resource_config.display(),
+                        resource.id(),
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn run_manifest_resource_acquire_config(

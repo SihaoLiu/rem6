@@ -452,6 +452,49 @@ artifact_digest = "sha256:trace-resource-b"
 }
 
 #[test]
+fn rem6_trace_replay_rejects_remote_uri_resource_config_before_replay() {
+    let workspace = temp_workspace("trace-replay-resource-config-remote-uri");
+    let resource_config = workspace.join("resource-acquire.toml");
+    std::fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+workload_id = "remote-trace"
+boot_entry = 4096
+
+[[resource_acquire.resources]]
+id = "trace"
+kind = "input"
+digest = "sha256:remote-trace"
+locator = "resources/trace.pb"
+required = true
+acquisition_kind = "remote-uri"
+acquisition_locator = "http://127.0.0.1:9/trace.pb"
+artifact_digest = "sha256:remote-trace"
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("trace-replay.toml");
+    std::fs::write(
+        &config,
+        "[trace_replay]\nresource_config = \"resource-acquire.toml\"\nroute = \"cpu0.remote-resource\"\nmemory_start = 4096\nmemory_size = 4096\nmax_tick = 64\ntick_frequency = 1000\nline_bytes = 64\nagent = 7\ncontrol_partition = 2\nstats_format = \"json\"\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args(["trace-replay", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("runtime resource handoff does not allow remote-uri resources"));
+    assert!(stderr.contains("trace"));
+    assert!(stderr.contains("rem6 resource-acquire"));
+}
+
+#[test]
 fn rem6_trace_replay_cli_trace_overrides_toml_resource_config() {
     let workspace = temp_workspace("trace-replay-resource-config-override");
     let resource_trace_dir = workspace.join("artifacts");

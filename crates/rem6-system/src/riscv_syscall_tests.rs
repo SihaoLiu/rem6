@@ -67,6 +67,8 @@ mod time_tests;
 mod truncate_tests;
 #[path = "riscv_syscall_tests/unlink_tests.rs"]
 mod unlink_tests;
+#[path = "riscv_syscall_tests/utsname_tests.rs"]
+mod utsname_tests;
 #[path = "riscv_syscall_tests/wait4_tests.rs"]
 mod wait4_tests;
 
@@ -180,12 +182,13 @@ fn linux_table_uname_writes_riscv64_utsname() {
         Some(RiscvSyscallOutcome::Return { value: 0 })
     );
 
-    let utsname = collect_guest_writes(&writes.lock().unwrap(), 0x9000, 325);
+    let utsname = collect_guest_writes(&writes.lock().unwrap(), 0x9000, 390);
     assert_eq!(&utsname[0..6], b"Linux\0");
     assert_eq!(&utsname[65..78], b"sim.gem5.org\0");
     assert_eq!(&utsname[130..136], b"5.1.0\0");
     assert_eq!(&utsname[195..227], b"#1 Mon Aug 18 11:32:15 EDT 2003\0");
     assert_eq!(&utsname[260..268], b"riscv64\0");
+    assert!(utsname[325..390].iter().all(|byte| *byte == 0));
 }
 
 #[test]

@@ -4,6 +4,7 @@ use rem6_workload::{WorkloadResourceKind, WorkloadResourcePayload};
 
 use crate::resource_acquire_cli::{
     acquire_manifest_required_resources, acquire_suite_required_resources,
+    reject_runtime_remote_uri_resources,
 };
 use crate::{Rem6CliError, Rem6ResourceAcquireConfig};
 
@@ -15,6 +16,7 @@ pub(crate) fn run_kernel_binary_from_resource_config(
         "--config".to_string(),
         resource_config.display().to_string(),
     ])?;
+    reject_runtime_remote_uri_resources("run", resource_config, &acquire_config)?;
     if acquire_config.suite_id().is_some() {
         let (_plan, acquired) = acquire_suite_required_resources(&acquire_config)?;
         let payloads = acquired
