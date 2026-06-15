@@ -1,5 +1,9 @@
 const RISCV_LINUX_SINGLE_PROCESS_ID: u64 = 100;
 
+use super::{linux_error, RiscvGuestMemoryWriter, RiscvSyscallRequest, RISCV_LINUX_EFAULT};
+
+pub(super) const RISCV_LINUX_GETRESUID: u64 = 148;
+pub(super) const RISCV_LINUX_GETRESGID: u64 = 150;
 pub(super) const RISCV_LINUX_GETPID: u64 = 172;
 pub(super) const RISCV_LINUX_GETPPID: u64 = 173;
 pub(super) const RISCV_LINUX_GETUID: u64 = 174;
@@ -92,4 +96,34 @@ pub(super) fn syscall_identity(number: u64, identity: RiscvSyscallIdentity) -> O
         RISCV_LINUX_GETEGID => Some(identity.effective_group_id()),
         _ => None,
     }
+}
+
+pub(super) fn syscall_res_identity(
+    request: RiscvSyscallRequest,
+    identity: RiscvSyscallIdentity,
+    guest_memory: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let (real_id, effective_id) = match request.number() {
+        RISCV_LINUX_GETRESUID => (identity.user_id(), identity.effective_user_id()),
+        RISCV_LINUX_GETRESGID => (identity.group_id(), identity.effective_group_id()),
+        _ => unreachable!("RISC-V Linux resolved identity syscall is handled by caller"),
+    };
+    let saved_id = effective_id;
+    for (address, value) in [
+        (request.argument(0), real_id),
+        (request.argument(1), effective_id),
+        (request.argument(2), saved_id),
+    ] {
+        if !write_uid_gid(address, value, guest_memory) {
+            return linux_error(RISCV_LINUX_EFAULT);
+        }
+    }
+    0
+}
+
+fn write_uid_gid(address: u64, value: u64, guest_memory: &RiscvGuestMemoryWriter) -> bool {
+    let Ok(value) = u32::try_from(value) else {
+        return false;
+    };
+    guest_memory.write(address, &value.to_le_bytes())
 }

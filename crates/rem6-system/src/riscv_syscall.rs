@@ -101,8 +101,9 @@ pub use guest_write::RiscvGuestWriteRecord;
 use hwprobe::{syscall_riscv_hwprobe, RISCV_LINUX_RISCV_HWPROBE};
 pub(crate) use identity::RiscvSyscallIdentity;
 use identity::{
-    syscall_identity, RISCV_LINUX_GETEGID, RISCV_LINUX_GETEUID, RISCV_LINUX_GETGID,
-    RISCV_LINUX_GETPID, RISCV_LINUX_GETPPID, RISCV_LINUX_GETTID, RISCV_LINUX_GETUID,
+    syscall_identity, syscall_res_identity, RISCV_LINUX_GETEGID, RISCV_LINUX_GETEUID,
+    RISCV_LINUX_GETGID, RISCV_LINUX_GETPID, RISCV_LINUX_GETPPID, RISCV_LINUX_GETRESGID,
+    RISCV_LINUX_GETRESUID, RISCV_LINUX_GETTID, RISCV_LINUX_GETUID,
 };
 use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
 pub use limits::RISCV_LINUX_STACK_LIMIT_BYTES;
@@ -1360,6 +1361,11 @@ impl RiscvSyscallTable {
             RISCV_LINUX_GETRUSAGE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_getrusage(request, guest_memory_writer),
             }),
+            RISCV_LINUX_GETRESUID | RISCV_LINUX_GETRESGID => {
+                guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_res_identity(request, state.identity(), guest_memory),
+                })
+            }
             RISCV_LINUX_GETRLIMIT => syscall_getrlimit(request, guest_memory_writer)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_PRLIMIT64 => syscall_prlimit64(request, state, guest_memory_writer)

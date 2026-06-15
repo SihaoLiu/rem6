@@ -1,5 +1,9 @@
 use super::super::*;
+use super::{collect_guest_writes, read_le_u32};
 use crate::{GuestChildStatus, GuestProcessGroupId, GuestProcessId, GuestWaitStatus};
+
+const RISCV_LINUX_GETRESUID_FOR_TEST: u64 = 148;
+const RISCV_LINUX_GETRESGID_FOR_TEST: u64 = 150;
 
 fn child(pid: u32, process_group: u32, status: GuestWaitStatus) -> GuestChildStatus {
     GuestChildStatus::new(
@@ -29,6 +33,86 @@ fn linux_table_returns_process_identity() {
             Some(RiscvSyscallOutcome::Return { value })
         );
     }
+}
+
+#[test]
+fn linux_table_writes_resuid_and_resgid_identity_triples() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_GETRESUID_FOR_TEST,
+                [0x9000, 0x9004, 0x9008, 0, 0, 0],
+            ),
+            &mut state,
+            5,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_GETRESGID_FOR_TEST,
+                [0x9010, 0x9014, 0x9018, 0, 0, 0],
+            ),
+            &mut state,
+            6,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+
+    let bytes = collect_guest_writes(&writes.lock().unwrap(), 0x9000, 28);
+    assert_eq!(read_le_u32(&bytes, 0), 7);
+    assert_eq!(read_le_u32(&bytes, 4), 8);
+    assert_eq!(read_le_u32(&bytes, 8), 8);
+    assert_eq!(read_le_u32(&bytes, 16), 9);
+    assert_eq!(read_le_u32(&bytes, 20), 10);
+    assert_eq!(read_le_u32(&bytes, 24), 10);
+}
+
+#[test]
+fn linux_table_resuid_returns_efault_when_guest_write_fails() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(|address, _bytes| address != 0x9004);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_GETRESUID_FOR_TEST,
+                [0x9000, 0x9004, 0x9008, 0, 0, 0],
+            ),
+            &mut state,
+            5,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
 }
 
 #[test]
