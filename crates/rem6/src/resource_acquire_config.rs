@@ -35,6 +35,7 @@ pub struct Rem6ResourceAcquireResourceConfig {
     acquisition_revision: Option<String>,
     artifact: PathBuf,
     artifact_member: Option<String>,
+    artifact_remote_locator: Option<String>,
     artifact_digest: String,
     artifact_size: Option<usize>,
 }
@@ -327,6 +328,10 @@ impl Rem6ResourceAcquireResourceConfig {
         self.artifact_member.as_deref()
     }
 
+    pub fn artifact_remote_locator(&self) -> Option<&str> {
+        self.artifact_remote_locator.as_deref()
+    }
+
     pub fn artifact_digest(&self) -> &str {
         &self.artifact_digest
     }
@@ -424,10 +429,11 @@ fn parse_resource_acquire_resource(
                 flag: "resource_acquire.resources.acquisition_locator",
             })?;
     let artifact = resource.artifact.as_deref();
-    let (artifact, artifact_member) = match (artifact, acquisition_kind) {
-        (Some(artifact), _) => (file_config.resolve_path(artifact), None),
+    let (artifact, artifact_member, artifact_remote_locator) = match (artifact, acquisition_kind) {
+        (Some(artifact), _) => (file_config.resolve_path(artifact), None, None),
         (None, WorkloadResourceAcquisitionKind::HostFile) => (
             file_config.resolve_path(Path::new(&acquisition_locator)),
+            None,
             None,
         ),
         (None, WorkloadResourceAcquisitionKind::ArchiveTar) => {
@@ -445,7 +451,11 @@ fn parse_resource_acquire_resource(
             (
                 file_config.resolve_path(Path::new(archive)),
                 Some(member.to_string()),
+                None,
             )
+        }
+        (None, WorkloadResourceAcquisitionKind::RemoteUri) => {
+            (PathBuf::new(), None, Some(acquisition_locator.clone()))
         }
         (None, _) => {
             return Err(Rem6CliError::MissingRequiredFlag {
@@ -470,6 +480,7 @@ fn parse_resource_acquire_resource(
         acquisition_revision: resource.acquisition_revision.clone(),
         artifact,
         artifact_member,
+        artifact_remote_locator,
         artifact_digest,
         artifact_size: resource.artifact_size,
     })

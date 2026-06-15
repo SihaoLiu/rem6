@@ -1,4 +1,7 @@
-use std::path::Path;
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rem6_boot::BootImage;
 use rem6_memory::Address;
@@ -249,13 +252,100 @@ fn build_manifest_and_artifacts(
 fn read_resource_artifact(
     resource: &Rem6ResourceAcquireResourceConfig,
 ) -> Result<Vec<u8>, Rem6CliError> {
-    if let Some(member) = resource.artifact_member() {
+    if let Some(locator) = resource.artifact_remote_locator() {
+        read_remote_http_resource(locator)
+    } else if let Some(member) = resource.artifact_member() {
         read_tar_member(resource.artifact(), member)
     } else {
         std::fs::read(resource.artifact()).map_err(|error| Rem6CliError::ReadResourceArtifact {
             path: resource.artifact().to_path_buf(),
             error: error.to_string(),
         })
+    }
+}
+
+fn read_remote_http_resource(locator: &str) -> Result<Vec<u8>, Rem6CliError> {
+    let (host, port, path) = parse_http_locator(locator)?;
+    let address = format!("{host}:{port}");
+    let mut stream =
+        TcpStream::connect(address).map_err(|error| remote_resource_error(locator, error))?;
+    let timeout = Some(Duration::from_secs(5));
+    stream
+        .set_read_timeout(timeout)
+        .map_err(|error| remote_resource_error(locator, error))?;
+    stream
+        .set_write_timeout(timeout)
+        .map_err(|error| remote_resource_error(locator, error))?;
+    let request =
+        format!("GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n");
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|error| remote_resource_error(locator, error))?;
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .map_err(|error| remote_resource_error(locator, error))?;
+    http_response_body(locator, &response)
+}
+
+fn parse_http_locator(locator: &str) -> Result<(String, u16, String), Rem6CliError> {
+    let Some(rest) = locator.strip_prefix("http://") else {
+        return Err(remote_resource_error(
+            locator,
+            "only http:// remote resource locators are supported",
+        ));
+    };
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    if authority.is_empty() {
+        return Err(remote_resource_error(
+            locator,
+            "remote resource locator is missing a host",
+        ));
+    }
+    let (host, port) = if let Some((host, port)) = authority.rsplit_once(':') {
+        if host.is_empty() {
+            return Err(remote_resource_error(
+                locator,
+                "remote resource locator is missing a host",
+            ));
+        }
+        let port = port
+            .parse::<u16>()
+            .map_err(|error| remote_resource_error(locator, error))?;
+        (host.to_string(), port)
+    } else {
+        (authority.to_string(), 80)
+    };
+    Ok((host, port, format!("/{path}")))
+}
+
+fn http_response_body(locator: &str, response: &[u8]) -> Result<Vec<u8>, Rem6CliError> {
+    let header_end = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .ok_or_else(|| remote_resource_error(locator, "HTTP response is missing headers"))?;
+    let headers = String::from_utf8_lossy(&response[..header_end]);
+    let status = headers
+        .lines()
+        .next()
+        .ok_or_else(|| remote_resource_error(locator, "HTTP response is missing a status line"))?;
+    let status_code = status
+        .split_whitespace()
+        .nth(1)
+        .ok_or_else(|| remote_resource_error(locator, "HTTP response is missing a status code"))?;
+    if status_code != "200" {
+        return Err(remote_resource_error(
+            locator,
+            format!("HTTP resource returned status {status_code}"),
+        ));
+    }
+    Ok(response[header_end + 4..].to_vec())
+}
+
+fn remote_resource_error(locator: &str, error: impl ToString) -> Rem6CliError {
+    Rem6CliError::ReadResourceArtifact {
+        path: PathBuf::from(locator),
+        error: error.to_string(),
     }
 }
 
