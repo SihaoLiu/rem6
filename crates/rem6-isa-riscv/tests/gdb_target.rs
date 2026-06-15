@@ -7,7 +7,12 @@ fn riscv_gdb_target_description_reports_rv64_cpu_documents() {
     assert_eq!(description.xlen(), RiscvGdbXlen::Rv64);
     assert_eq!(
         annex_names(description.documents()),
-        vec!["target.xml", "riscv-64bit-cpu.xml", "riscv-64bit-csr.xml",],
+        vec![
+            "target.xml",
+            "riscv-64bit-cpu.xml",
+            "riscv-64bit-fpu.xml",
+            "riscv-64bit-csr.xml",
+        ],
     );
     assert_eq!(
         description.document("target.xml").unwrap().content(),
@@ -17,12 +22,13 @@ fn riscv_gdb_target_description_reports_rv64_cpu_documents() {
             "<target>\n",
             "  <architecture>riscv</architecture>\n",
             "  <xi:include href=\"riscv-64bit-cpu.xml\"/>\n",
+            "  <xi:include href=\"riscv-64bit-fpu.xml\"/>\n",
             "  <xi:include href=\"riscv-64bit-csr.xml\"/>\n",
             "</target>\n",
         )
         .as_bytes(),
     );
-    assert!(description.document("riscv-64bit-fpu.xml").is_none());
+    assert!(description.document("riscv-64bit-fpu.xml").is_some());
 }
 
 #[test]
@@ -39,7 +45,7 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "<?xml version=\"1.0\"?>\n",
             "<!DOCTYPE feature SYSTEM \"gdb-target.dtd\">\n",
             "<feature name=\"org.gnu.gdb.riscv.csr\">\n",
-            "  <reg name=\"sstatus\" bitsize=\"64\"/>\n",
+            "  <reg name=\"sstatus\" bitsize=\"64\" regnum=\"68\"/>\n",
             "  <reg name=\"stvec\" bitsize=\"64\"/>\n",
             "  <reg name=\"sepc\" bitsize=\"64\"/>\n",
             "  <reg name=\"scause\" bitsize=\"64\"/>\n",
@@ -52,6 +58,32 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
         vec!["sstatus", "stvec", "sepc", "scause", "stval"],
     );
     assert_eq!(csr.matches("bitsize=\"64\"").count(), 5);
+}
+
+#[test]
+fn riscv_gdb_target_description_reports_rv64d_fpu_document() {
+    let description = RiscvGdbTargetDescription::new(RiscvGdbXlen::Rv64);
+
+    let target = text(description.document("target.xml").unwrap());
+    assert!(target.contains("<xi:include href=\"riscv-64bit-fpu.xml\"/>"));
+
+    let fpu = text(description.document("riscv-64bit-fpu.xml").unwrap());
+    assert!(fpu.contains("<feature name=\"org.gnu.gdb.riscv.fpu\">"));
+    assert!(fpu.contains("<reg name=\"ft0\" bitsize=\"64\" type=\"ieee_double\" regnum=\"33\"/>"));
+    assert!(fpu.contains("<reg name=\"ft11\" bitsize=\"64\" type=\"ieee_double\"/>"));
+    assert!(fpu.contains("<reg name=\"fflags\" bitsize=\"32\" type=\"int\"/>"));
+    assert!(fpu.contains("<reg name=\"frm\" bitsize=\"32\" type=\"int\"/>"));
+    assert!(fpu.contains("<reg name=\"fcsr\" bitsize=\"32\" type=\"int\"/>"));
+    assert_eq!(
+        register_names(fpu),
+        vec![
+            "ft0", "ft1", "ft2", "ft3", "ft4", "ft5", "ft6", "ft7", "fs0", "fs1", "fa0", "fa1",
+            "fa2", "fa3", "fa4", "fa5", "fa6", "fa7", "fs2", "fs3", "fs4", "fs5", "fs6", "fs7",
+            "fs8", "fs9", "fs10", "fs11", "ft8", "ft9", "ft10", "ft11", "fflags", "frm", "fcsr",
+        ],
+    );
+    assert_eq!(fpu.matches("bitsize=\"64\"").count(), 32);
+    assert_eq!(fpu.matches("bitsize=\"32\"").count(), 3);
 }
 
 #[test]

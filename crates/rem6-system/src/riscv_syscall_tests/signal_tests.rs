@@ -1619,9 +1619,9 @@ fn stack_reader(regions: Vec<(u64, Vec<u8>)>) -> RiscvGuestMemoryReader {
     })
 }
 
-fn recording_stack_writer(
-    writes: std::sync::Arc<std::sync::Mutex<Vec<(u64, Vec<u8>)>>>,
-) -> RiscvGuestMemoryWriter {
+type StackWriteLog = std::sync::Arc<std::sync::Mutex<Vec<(u64, Vec<u8>)>>>;
+
+fn recording_stack_writer(writes: StackWriteLog) -> RiscvGuestMemoryWriter {
     RiscvGuestMemoryWriter::new(move |address, bytes| {
         writes.lock().unwrap().push((address, bytes.to_vec()));
         true

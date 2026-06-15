@@ -658,6 +658,26 @@ impl RiscvCore {
             .supervisor_exception_pc()
     }
 
+    pub fn status(&self) -> RiscvStatusWord {
+        self.state.lock().expect("riscv core lock").hart.status()
+    }
+
+    pub fn float_status(&self) -> rem6_isa_riscv::RiscvFloatStatus {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .float_status()
+    }
+
+    pub fn supervisor_trap_vector(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .supervisor_trap_vector()
+    }
+
     pub fn supervisor_trap_cause(&self) -> u64 {
         self.state
             .lock()
@@ -712,6 +732,30 @@ impl RiscvCore {
             .expect("riscv core lock")
             .hart
             .set_supervisor_trap_vector(vector);
+    }
+
+    pub fn set_supervisor_exception_pc(&self, pc: u64) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_supervisor_exception_pc(pc);
+    }
+
+    pub fn set_supervisor_trap_cause(&self, cause: u64) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_supervisor_trap_cause(cause);
+    }
+
+    pub fn set_supervisor_trap_value(&self, value: u64) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_supervisor_trap_value(value);
     }
 
     pub fn set_machine_trap_vector(&self, vector: u64) {
@@ -780,6 +824,14 @@ impl RiscvCore {
             .expect("riscv core lock")
             .hart
             .set_status(status);
+    }
+
+    pub fn set_float_status(&self, status: rem6_isa_riscv::RiscvFloatStatus) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_float_status(status);
     }
 
     pub fn ready_data_translation_requests(&self, tick: Tick) -> Vec<CpuTranslationRequest> {

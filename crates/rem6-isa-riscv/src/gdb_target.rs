@@ -25,6 +25,13 @@ impl RiscvGdbXlen {
             Self::Rv64 => Some("riscv-64bit-csr.xml"),
         }
     }
+
+    const fn fpu_annex(self) -> Option<&'static str> {
+        match self {
+            Self::Rv32 => None,
+            Self::Rv64 => Some("riscv-64bit-fpu.xml"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -60,6 +67,9 @@ pub struct RiscvGdbTargetDescription {
 impl RiscvGdbTargetDescription {
     pub fn new(xlen: RiscvGdbXlen) -> Self {
         let mut documents = vec![target_document(xlen), cpu_document(xlen)];
+        if let Some(document) = fpu_document(xlen) {
+            documents.push(document);
+        }
         if let Some(document) = csr_document(xlen) {
             documents.push(document);
         }
@@ -97,6 +107,9 @@ fn target_document(xlen: RiscvGdbXlen) -> RiscvGdbTargetDocument {
         ),
         xlen.cpu_annex(),
     );
+    if let Some(annex) = xlen.fpu_annex() {
+        content.push_str(&format!("  <xi:include href=\"{annex}\"/>\n"));
+    }
     if let Some(annex) = xlen.csr_annex() {
         content.push_str(&format!("  <xi:include href=\"{annex}\"/>\n"));
     }
@@ -129,6 +142,35 @@ fn cpu_document(xlen: RiscvGdbXlen) -> RiscvGdbTargetDocument {
     RiscvGdbTargetDocument::new(xlen.cpu_annex(), content.into_bytes())
 }
 
+fn fpu_document(xlen: RiscvGdbXlen) -> Option<RiscvGdbTargetDocument> {
+    let annex = xlen.fpu_annex()?;
+    let mut content = concat!(
+        "<?xml version=\"1.0\"?>\n",
+        "<!DOCTYPE feature SYSTEM \"gdb-target.dtd\">\n",
+        "<feature name=\"org.gnu.gdb.riscv.fpu\">\n",
+    )
+    .to_string();
+    for (index, register) in RV64D_FLOAT_REGISTERS.iter().enumerate() {
+        content.push_str(&format!(
+            "  <reg name=\"{}\" bitsize=\"{}\" type=\"ieee_double\"",
+            register,
+            xlen.bits(),
+        ));
+        if index == 0 {
+            content.push_str(" regnum=\"33\"");
+        }
+        content.push_str("/>\n");
+    }
+    for register in RV64D_FLOAT_CSR_REGISTERS {
+        content.push_str(&format!(
+            "  <reg name=\"{register}\" bitsize=\"32\" type=\"int\"/>\n",
+        ));
+    }
+    content.push_str("</feature>\n");
+
+    Some(RiscvGdbTargetDocument::new(annex, content.into_bytes()))
+}
+
 fn csr_document(xlen: RiscvGdbXlen) -> Option<RiscvGdbTargetDocument> {
     let annex = xlen.csr_annex()?;
     let mut content = concat!(
@@ -137,12 +179,16 @@ fn csr_document(xlen: RiscvGdbXlen) -> Option<RiscvGdbTargetDocument> {
         "<feature name=\"org.gnu.gdb.riscv.csr\">\n",
     )
     .to_string();
-    for register in RV64_CSR_REGISTERS {
+    for (index, register) in RV64_CSR_REGISTERS.iter().enumerate() {
         content.push_str(&format!(
-            "  <reg name=\"{}\" bitsize=\"{}\"/>\n",
+            "  <reg name=\"{}\" bitsize=\"{}\"",
             register,
             xlen.bits(),
         ));
+        if index == 0 {
+            content.push_str(" regnum=\"68\"");
+        }
+        content.push_str("/>\n");
     }
     content.push_str("</feature>\n");
 
@@ -197,5 +243,13 @@ const CPU_REGISTERS: &[CpuRegister] = &[
     CpuRegister::new("t6", "int", None),
     CpuRegister::new("pc", "code_ptr", None),
 ];
+
+const RV64D_FLOAT_REGISTERS: &[&str] = &[
+    "ft0", "ft1", "ft2", "ft3", "ft4", "ft5", "ft6", "ft7", "fs0", "fs1", "fa0", "fa1", "fa2",
+    "fa3", "fa4", "fa5", "fa6", "fa7", "fs2", "fs3", "fs4", "fs5", "fs6", "fs7", "fs8", "fs9",
+    "fs10", "fs11", "ft8", "ft9", "ft10", "ft11",
+];
+
+const RV64D_FLOAT_CSR_REGISTERS: &[&str] = &["fflags", "frm", "fcsr"];
 
 const RV64_CSR_REGISTERS: &[&str] = &["sstatus", "stvec", "sepc", "scause", "stval"];

@@ -396,7 +396,7 @@ network evidence.
 
 ### Stats, Probes, Debug, Host Actions, and Checkpointing - 59% single-axis
 
-**Score calculation:** 10 of 15 items have executable evidence, or 67% raw,
+**Score calculation:** 11 of 16 items have executable evidence, or 69% raw,
 capped to 59% by the single-axis bucket. The bucket cap is single-axis because
 probe, debug, power, and checkpoint evidence is not yet integrated across O3
 pipeline and cache/DRAM runtime state.
@@ -406,6 +406,7 @@ pipeline and cache/DRAM runtime state.
 - [x] m5 exit/fail/stats/checkpoint/work markers reach typed host actions.
 - [x] Decode-first checkpoint capture/restore exists across scheduler, memory, device, storage, VirtIO, timer, interrupt, RISC-V hart run-state, platform, workload, and manifest owners.
 - [x] GDB remote packet/session parsing and RISC-V integer/PC register paths exist.
+- [x] GDB RV64D floating-point, including `fflags`/`frm`/`fcsr`, and advertised RV64 supervisor CSR register target descriptions plus `p`/`P`/`g`/`G` register-cache paths exist.
 - [x] Power and thermal models plus external power-analysis exports exist.
 - [x] Host actions and guest events are typed and checkpoint-aware.
 - [x] First-class histogram stats have registry snapshots, deltas, resets,
@@ -415,30 +416,34 @@ pipeline and cache/DRAM runtime state.
 - [x] GDB packet byte streams drive typed step/resume and break/watch control state in memory-backed sessions.
 - [ ] Stricter gem5 text-stat compatibility exists.
 - [ ] Cache/bank/fabric/DRAM hierarchy counters are complete.
-- [ ] GDB socket loop, step/resume/break/watch integration, and full FP/vector/CSR register cache exist.
+- [ ] GDB socket loop, step/resume/break/watch integration, RV32 FP/vector register cache, and broader CSR register cache exist.
 - [ ] Power and thermal models are calibrated against real component activity.
 - [ ] O3 pending-state checkpoints exist.
 
 **Migrated:** Structured stats, real RISC-V probe producers, checkpoint banks,
-m5ops, host actions, GDB packet/session parsing, RISC-V integer/PC debug
-register paths, RISC-V software breakpoint patch/restore through the system GDB
-memory handler, gem5-style final-tick stat aliases, target/port/bank-level DRAM
-runtime resource counters, RISC-V in-order pipeline checkpoint capture/restore,
-GDB byte-stream packet handling, debug execution-control state for packet-stream
-step/resume and break/watch requests, fixed-width register-cache seeding, O3
-writeback transfer deferred-completion checkpoint payloads, and custom plus
-library-level and `rem6 run --power-output` McPAT-shaped and DSENT-shaped
-power-analysis exports.
+m5ops, host actions, GDB packet/session parsing, RISC-V integer/PC register
+paths, RV64D floating-point target descriptions including `fflags`/`frm`/`fcsr`
+and advertised RV64 supervisor CSR target descriptions plus `p`/`P`/`g`/`G`
+register-cache paths, RISC-V software breakpoint patch/restore through the
+system GDB memory handler, gem5-style final-tick stat aliases,
+target/port/bank-level DRAM runtime resource counters, RISC-V in-order pipeline
+checkpoint capture/restore, GDB byte-stream packet handling, debug
+execution-control state for packet-stream step/resume and break/watch requests,
+target-description-aligned register-cache seeding, O3 writeback transfer
+deferred-completion checkpoint payloads, and custom plus library-level and
+`rem6 run --power-output` McPAT-shaped and DSENT-shaped power-analysis exports.
 
 **Not migrated:** Complete gem5 text-stat parity, full debug execution control,
-runtime resource counters, runtime-calibrated power/thermal, and broad O3
-ROB/LSQ/rename checkpoint ownership.
+RV32 FP/vector and broader CSR GDB register cache, runtime resource counters,
+runtime-calibrated power/thermal, and broad O3 ROB/LSQ/rename checkpoint
+ownership.
 
 **Evidence:** `StatsRegistry`, `ProbeRegistry`, `RiscvInstructionStats`,
 `RiscvDataAccessStats`, `SystemActionExecutor`, `GdbRemoteSession`,
 checkpoint tests including RISC-V hart run-state and in-order pipeline restore,
-O3 writeback transfer deferred-state payload tests, GDB byte-stream and
-control-state tests, `gdb_remote_packet` execution-control tests,
+O3 writeback transfer deferred-state payload tests, GDB byte-stream,
+RV64D FP, FP CSR, and RV64 supervisor CSR register-cache, and control-state tests,
+`gdb_remote_packet` execution-control tests,
 power-analysis export tests, CLI power-output tests, system GDB software
 breakpoint patch/restore tests, CLI data-access probe tests, and histogram
 registry/output tests.
@@ -449,8 +454,9 @@ instruction fetches. CLI text stats include gem5-style final-tick aliases
 emitted from an executed RISC-V run.
 
 **Next evidence:** Broader gem5 text-stat compatibility, remaining
-cache/bank/fabric runtime resource counters, GDB execution-control tests, and
-O3 checkpoint capture/restore.
+cache/bank/fabric runtime resource counters, GDB socket-loop execution-control
+integration, RV32 FP/vector and broader CSR register-cache tests, and O3
+checkpoint capture/restore.
 
 ### Configuration, Resources, Suites, GPU, and Accelerators - 59% single-axis
 
