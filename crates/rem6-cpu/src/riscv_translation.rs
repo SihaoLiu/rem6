@@ -678,6 +678,14 @@ impl RiscvCore {
             .supervisor_trap_vector()
     }
 
+    pub fn supervisor_scratch(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .supervisor_scratch()
+    }
+
     pub fn supervisor_trap_cause(&self) -> u64 {
         self.state
             .lock()
@@ -732,6 +740,14 @@ impl RiscvCore {
             .expect("riscv core lock")
             .hart
             .set_supervisor_trap_vector(vector);
+    }
+
+    pub fn set_supervisor_scratch(&self, value: u64) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_supervisor_scratch(value);
     }
 
     pub fn set_supervisor_exception_pc(&self, pc: u64) {

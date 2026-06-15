@@ -231,6 +231,48 @@ fn rem6_run_gdb_listen_applies_preexecution_state_changes() {
 }
 
 #[test]
+fn rem6_run_gdb_listen_writes_sscratch_before_execution() {
+    let program = riscv64_program(&[
+        0x1400_22f3, // csrr x5, sscratch
+        0x0000_0073, // ecall
+    ]);
+    let (child, mut stream) = start_riscv_gdb_run("gdb-listen-sscratch", program, 40);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    let csr_description = send_gdb_packet(
+        &mut stream,
+        b"qXfer:features:read:riscv-64bit-csr.xml:a0,a0",
+    );
+    assert!(
+        String::from_utf8_lossy(&csr_description).contains("sscratch"),
+        "missing sscratch in {}",
+        String::from_utf8_lossy(&csr_description)
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P46=8877665544332211"),
+        gdb_response(b"OK")
+    );
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p5"),
+        gdb_response(b"8877665544332211")
+    );
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
+}
+
+#[test]
 fn rem6_run_gdb_listen_single_steps_before_detach() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
@@ -1543,7 +1585,13 @@ fn gdb_packet(payload: &[u8]) -> Vec<u8> {
 }
 
 fn rv64_all_register_write_packet(x5: u64, pc: u64) -> Vec<u8> {
-    const RV64_REGISTER_BYTES: usize = 572;
+    const RV64_INTEGER_AND_PC_REGISTERS: usize = 33;
+    const RV64_FLOAT_REGISTERS: usize = 32;
+    const RV64_FLOAT_CSR_REGISTERS: usize = 3;
+    const RV64_CSR_REGISTERS: usize = 6;
+    const RV64_REGISTER_BYTES: usize =
+        (RV64_INTEGER_AND_PC_REGISTERS + RV64_FLOAT_REGISTERS + RV64_CSR_REGISTERS) * 8
+            + RV64_FLOAT_CSR_REGISTERS * 4;
     const X5_OFFSET: usize = 5 * 8;
     const PC_OFFSET: usize = 32 * 8;
 

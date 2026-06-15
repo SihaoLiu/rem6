@@ -7,7 +7,7 @@ use rem6_debug::{
 };
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvFloatCsr, RiscvGdbTargetDescription, RiscvGdbXlen,
-    RiscvHartState, RiscvStatusCsr,
+    RiscvHartState, RiscvStatusCsr, RiscvSupervisorTrapCsr,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, MemoryError, MemoryRequest, MemoryRequestId,
@@ -24,8 +24,14 @@ const RISCV_GDB_FLOAT_REGISTER_COUNT: u8 = 32;
 const RISCV_GDB_FLOAT_CSR_REGISTER_BASE: u64 = 65;
 const RISCV_GDB_FLOAT_CSR_REGISTER_COUNT: u8 = 3;
 const RISCV_GDB_CSR_REGISTER_BASE: u64 = 68;
-const RISCV_GDB_CSR_REGISTER_COUNT: u8 = 5;
+const RISCV_GDB_CSR_REGISTER_COUNT: u8 = 6;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RiscvGdbCsrRegister {
+    Sstatus,
+    SupervisorTrap(RiscvSupervisorTrapCsr),
+}
 
 pub fn riscv_gdb_remote_session(xlen: RiscvGdbXlen) -> GdbRemoteSession {
     let mut session = GdbRemoteSession::new(vec![
@@ -711,6 +717,7 @@ fn riscv_gdb_hart_snapshot_from_core(core: &RiscvCore) -> RiscvHartState {
     hart.set_float_status(core.float_status());
     hart.set_status(core.status());
     hart.set_supervisor_trap_vector(core.supervisor_trap_vector());
+    hart.set_supervisor_scratch(core.supervisor_scratch());
     hart.set_supervisor_exception_pc(core.supervisor_exception_pc());
     hart.set_supervisor_trap_cause(core.supervisor_trap_cause());
     hart.set_supervisor_trap_value(core.supervisor_trap_value());
@@ -890,35 +897,77 @@ fn write_core_float_csr_register_value(core: &RiscvCore, number: u64, value: u64
 }
 
 fn read_hart_csr_register_value(hart: &RiscvHartState, number: u64) -> u64 {
-    match number - RISCV_GDB_CSR_REGISTER_BASE {
-        0 => RiscvStatusCsr::Sstatus.read(hart.status()),
-        1 => hart.supervisor_trap_vector(),
-        2 => hart.supervisor_exception_pc(),
-        3 => hart.supervisor_trap_cause(),
-        4 => hart.supervisor_trap_value(),
-        _ => unreachable!("validated RISC-V GDB CSR register"),
+    match riscv_gdb_csr_register(number) {
+        RiscvGdbCsrRegister::Sstatus => RiscvStatusCsr::Sstatus.read(hart.status()),
+        RiscvGdbCsrRegister::SupervisorTrap(csr) => read_hart_supervisor_trap_csr(hart, csr),
     }
 }
 
 fn write_hart_csr_register_value(hart: &mut RiscvHartState, number: u64, value: u64) {
-    match number - RISCV_GDB_CSR_REGISTER_BASE {
-        0 => hart.set_status(RiscvStatusCsr::Sstatus.write(hart.status(), value)),
-        1 => hart.set_supervisor_trap_vector(value),
-        2 => hart.set_supervisor_exception_pc(value),
-        3 => hart.set_supervisor_trap_cause(value),
-        4 => hart.set_supervisor_trap_value(value),
-        _ => unreachable!("validated RISC-V GDB CSR register"),
+    match riscv_gdb_csr_register(number) {
+        RiscvGdbCsrRegister::Sstatus => {
+            hart.set_status(RiscvStatusCsr::Sstatus.write(hart.status(), value));
+        }
+        RiscvGdbCsrRegister::SupervisorTrap(csr) => {
+            write_hart_supervisor_trap_csr(hart, csr, value);
+        }
     }
 }
 
 fn write_core_csr_register_value(core: &RiscvCore, number: u64, value: u64) {
+    match riscv_gdb_csr_register(number) {
+        RiscvGdbCsrRegister::Sstatus => {
+            core.set_status(RiscvStatusCsr::Sstatus.write(core.status(), value));
+        }
+        RiscvGdbCsrRegister::SupervisorTrap(csr) => {
+            write_core_supervisor_trap_csr(core, csr, value);
+        }
+    }
+}
+
+fn riscv_gdb_csr_register(number: u64) -> RiscvGdbCsrRegister {
     match number - RISCV_GDB_CSR_REGISTER_BASE {
-        0 => core.set_status(RiscvStatusCsr::Sstatus.write(core.status(), value)),
-        1 => core.set_supervisor_trap_vector(value),
-        2 => core.set_supervisor_exception_pc(value),
-        3 => core.set_supervisor_trap_cause(value),
-        4 => core.set_supervisor_trap_value(value),
+        0 => RiscvGdbCsrRegister::Sstatus,
+        1 => RiscvGdbCsrRegister::SupervisorTrap(RiscvSupervisorTrapCsr::Stvec),
+        2 => RiscvGdbCsrRegister::SupervisorTrap(RiscvSupervisorTrapCsr::Sscratch),
+        3 => RiscvGdbCsrRegister::SupervisorTrap(RiscvSupervisorTrapCsr::Sepc),
+        4 => RiscvGdbCsrRegister::SupervisorTrap(RiscvSupervisorTrapCsr::Scause),
+        5 => RiscvGdbCsrRegister::SupervisorTrap(RiscvSupervisorTrapCsr::Stval),
         _ => unreachable!("validated RISC-V GDB CSR register"),
+    }
+}
+
+fn read_hart_supervisor_trap_csr(hart: &RiscvHartState, csr: RiscvSupervisorTrapCsr) -> u64 {
+    match csr {
+        RiscvSupervisorTrapCsr::Stvec => hart.supervisor_trap_vector(),
+        RiscvSupervisorTrapCsr::Sscratch => hart.supervisor_scratch(),
+        RiscvSupervisorTrapCsr::Sepc => hart.supervisor_exception_pc(),
+        RiscvSupervisorTrapCsr::Scause => hart.supervisor_trap_cause(),
+        RiscvSupervisorTrapCsr::Stval => hart.supervisor_trap_value(),
+    }
+}
+
+fn write_hart_supervisor_trap_csr(
+    hart: &mut RiscvHartState,
+    csr: RiscvSupervisorTrapCsr,
+    value: u64,
+) {
+    match csr {
+        RiscvSupervisorTrapCsr::Stvec => hart.set_supervisor_trap_vector(value),
+        RiscvSupervisorTrapCsr::Sscratch => hart.set_supervisor_scratch(value),
+        RiscvSupervisorTrapCsr::Sepc => hart.set_supervisor_exception_pc(value),
+        RiscvSupervisorTrapCsr::Scause => hart.set_supervisor_trap_cause(value),
+        RiscvSupervisorTrapCsr::Stval => hart.set_supervisor_trap_value(value),
+    }
+}
+
+fn write_core_supervisor_trap_csr(core: &RiscvCore, csr: RiscvSupervisorTrapCsr, value: u64) {
+    match csr {
+        RiscvSupervisorTrapCsr::Stvec => core.set_supervisor_trap_vector(value),
+        RiscvSupervisorTrapCsr::Sscratch => core.set_supervisor_scratch(value),
+        RiscvSupervisorTrapCsr::Sepc => core.set_supervisor_exception_pc(value),
+        RiscvSupervisorTrapCsr::Scause => core.set_supervisor_trap_cause(value),
+        RiscvSupervisorTrapCsr::Stval => core.set_supervisor_trap_value(value),
     }
 }
 

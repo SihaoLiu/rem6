@@ -47,6 +47,7 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "<feature name=\"org.gnu.gdb.riscv.csr\">\n",
             "  <reg name=\"sstatus\" bitsize=\"64\" regnum=\"68\"/>\n",
             "  <reg name=\"stvec\" bitsize=\"64\"/>\n",
+            "  <reg name=\"sscratch\" bitsize=\"64\"/>\n",
             "  <reg name=\"sepc\" bitsize=\"64\"/>\n",
             "  <reg name=\"scause\" bitsize=\"64\"/>\n",
             "  <reg name=\"stval\" bitsize=\"64\"/>\n",
@@ -55,9 +56,9 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
     );
     assert_eq!(
         register_names(csr),
-        vec!["sstatus", "stvec", "sepc", "scause", "stval"],
+        vec!["sstatus", "stvec", "sscratch", "sepc", "scause", "stval"],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 5);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 6);
 }
 
 #[test]
