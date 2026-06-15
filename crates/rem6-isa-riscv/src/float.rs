@@ -8,6 +8,7 @@ mod convert_flags;
 mod decode;
 mod fused;
 mod int_to_float;
+mod ternary;
 
 pub(crate) use decode::{
     decode_float_load, decode_float_multiply_add, decode_float_op, decode_float_store,
@@ -16,6 +17,10 @@ pub(crate) use int_to_float::{
     exception_flags as integer_to_float_exception_flags,
     register_write as float_register_write_from_integer,
     rounding_mode_is_supported as integer_to_float_rounding_mode_is_supported,
+};
+pub(crate) use ternary::{
+    float_register_write_ternary, ternary_exception_flags,
+    ternary_register_rounding_mode_is_supported,
 };
 
 fn add_double(lhs: u64, rhs: u64) -> u64 {
@@ -116,21 +121,6 @@ pub(crate) fn unary_register_rounding_mode_is_supported(
     )
 }
 
-pub(crate) fn ternary_register_rounding_mode_is_supported(
-    instruction: RiscvInstruction,
-    frm: u64,
-    lhs: u64,
-    rhs: u64,
-    addend: u64,
-) -> bool {
-    register_rounding_mode_is_supported(
-        instruction,
-        frm,
-        ternary_result_is_rounding_insensitive(instruction, lhs, rhs, addend),
-        ternary_rounding_mode_is_implemented(instruction, lhs, rhs, addend),
-    )
-}
-
 fn register_rounding_mode_is_supported(
     instruction: RiscvInstruction,
     frm: u64,
@@ -187,33 +177,6 @@ fn binary_rounding_mode_is_implemented(instruction: RiscvInstruction, lhs: u64, 
     }
 }
 
-fn ternary_rounding_mode_is_implemented(
-    instruction: RiscvInstruction,
-    lhs: u64,
-    rhs: u64,
-    addend: u64,
-) -> bool {
-    match instruction {
-        RiscvInstruction::FloatMultiplyAddS { .. } => {
-            fused::single_directed_rounding_is_supported(lhs, rhs, addend)
-        }
-        RiscvInstruction::FloatMultiplySubtractS { .. } => {
-            fused::single_directed_rounding_is_supported(lhs, rhs, sign_negate_single(addend))
-        }
-        RiscvInstruction::FloatNegativeMultiplySubtractS { .. } => {
-            fused::single_directed_rounding_is_supported(sign_negate_single(lhs), rhs, addend)
-        }
-        RiscvInstruction::FloatNegativeMultiplyAddS { .. } => {
-            fused::single_directed_rounding_is_supported(
-                sign_negate_single(lhs),
-                rhs,
-                sign_negate_single(addend),
-            )
-        }
-        _ => false,
-    }
-}
-
 fn binary_result_is_rounding_insensitive(
     instruction: RiscvInstruction,
     lhs: u64,
@@ -236,29 +199,6 @@ fn unary_result_is_rounding_insensitive(instruction: RiscvInstruction, value: u6
     match instruction {
         RiscvInstruction::FloatSqrtS { .. } => sqrt_single_is_exact(value),
         RiscvInstruction::FloatSqrtD { .. } => sqrt_double_is_exact(value),
-        _ => false,
-    }
-}
-
-fn ternary_result_is_rounding_insensitive(
-    instruction: RiscvInstruction,
-    lhs: u64,
-    rhs: u64,
-    addend: u64,
-) -> bool {
-    match instruction {
-        RiscvInstruction::FloatMultiplyAddS { .. }
-        | RiscvInstruction::FloatMultiplySubtractS { .. }
-        | RiscvInstruction::FloatNegativeMultiplySubtractS { .. }
-        | RiscvInstruction::FloatNegativeMultiplyAddS { .. } => {
-            fused_single_is_identity(lhs, rhs, addend)
-        }
-        RiscvInstruction::FloatMultiplyAddD { .. }
-        | RiscvInstruction::FloatMultiplySubtractD { .. }
-        | RiscvInstruction::FloatNegativeMultiplySubtractD { .. }
-        | RiscvInstruction::FloatNegativeMultiplyAddD { .. } => {
-            fused_double_is_identity(lhs, rhs, addend)
-        }
         _ => false,
     }
 }
@@ -299,32 +239,6 @@ fn divide_double_is_identity(lhs: u64, rhs: u64) -> bool {
     lhs.is_finite() && rhs.abs() == 1.0
 }
 
-fn fused_single_is_identity(lhs: u64, rhs: u64, addend: u64) -> bool {
-    let lhs = f32::from_bits(unbox_single(lhs));
-    let rhs = f32::from_bits(unbox_single(rhs));
-    let addend = f32::from_bits(unbox_single(addend));
-    lhs.is_finite()
-        && rhs.is_finite()
-        && addend.is_finite()
-        && lhs != 0.0
-        && rhs != 0.0
-        && addend == 0.0
-        && (lhs.abs() == 1.0 || rhs.abs() == 1.0)
-}
-
-fn fused_double_is_identity(lhs: u64, rhs: u64, addend: u64) -> bool {
-    let lhs = f64::from_bits(lhs);
-    let rhs = f64::from_bits(rhs);
-    let addend = f64::from_bits(addend);
-    lhs.is_finite()
-        && rhs.is_finite()
-        && addend.is_finite()
-        && lhs != 0.0
-        && rhs != 0.0
-        && addend == 0.0
-        && (lhs.abs() == 1.0 || rhs.abs() == 1.0)
-}
-
 fn sqrt_single_is_exact(value: u64) -> bool {
     let value = f32::from_bits(unbox_single(value));
     value.is_finite()
@@ -348,85 +262,6 @@ fn is_square_u64(value: u64) -> bool {
     [root.saturating_sub(1), root, root.saturating_add(1)]
         .into_iter()
         .any(|candidate| candidate.checked_mul(candidate) == Some(value))
-}
-
-pub(crate) fn float_register_write_ternary(
-    instruction: RiscvInstruction,
-    lhs: u64,
-    rhs: u64,
-    addend: u64,
-    frm: u64,
-) -> (FloatRegister, u64) {
-    match instruction {
-        RiscvInstruction::FloatMultiplyAddS {
-            rd, rounding_mode, ..
-        } => (
-            rd,
-            fused::single_register_write(
-                lhs,
-                rhs,
-                addend,
-                rounding_mode
-                    .resolve(frm)
-                    .expect("ternary float rounding mode is valid"),
-            ),
-        ),
-        RiscvInstruction::FloatMultiplyAddD { rd, .. } => {
-            (rd, multiply_add_double(lhs, rhs, addend))
-        }
-        RiscvInstruction::FloatMultiplySubtractS {
-            rd, rounding_mode, ..
-        } => (
-            rd,
-            fused::single_register_write(
-                lhs,
-                rhs,
-                sign_negate_single(addend),
-                rounding_mode
-                    .resolve(frm)
-                    .expect("ternary float rounding mode is valid"),
-            ),
-        ),
-        RiscvInstruction::FloatMultiplySubtractD { rd, .. } => (
-            rd,
-            multiply_add_double(lhs, rhs, sign_negate_double(addend)),
-        ),
-        RiscvInstruction::FloatNegativeMultiplySubtractS {
-            rd, rounding_mode, ..
-        } => (
-            rd,
-            fused::single_register_write(
-                sign_negate_single(lhs),
-                rhs,
-                addend,
-                rounding_mode
-                    .resolve(frm)
-                    .expect("ternary float rounding mode is valid"),
-            ),
-        ),
-        RiscvInstruction::FloatNegativeMultiplySubtractD { rd, .. } => (
-            rd,
-            multiply_add_double(sign_negate_double(lhs), rhs, addend),
-        ),
-        RiscvInstruction::FloatNegativeMultiplyAddS {
-            rd, rounding_mode, ..
-        } => (
-            rd,
-            fused::single_register_write(
-                sign_negate_single(lhs),
-                rhs,
-                sign_negate_single(addend),
-                rounding_mode
-                    .resolve(frm)
-                    .expect("ternary float rounding mode is valid"),
-            ),
-        ),
-        RiscvInstruction::FloatNegativeMultiplyAddD { rd, .. } => (
-            rd,
-            multiply_add_double(sign_negate_double(lhs), rhs, sign_negate_double(addend)),
-        ),
-        _ => unreachable!("non-fused-float instruction dispatched to ternary float register write"),
-    }
 }
 
 pub(crate) fn integer_register_write(
@@ -634,62 +469,6 @@ pub(crate) fn unary_exception_flags(instruction: RiscvInstruction, value: u64) -
     }
 }
 
-pub(crate) fn ternary_exception_flags(
-    instruction: RiscvInstruction,
-    lhs: u64,
-    rhs: u64,
-    addend: u64,
-    frm: u64,
-) -> u64 {
-    match instruction {
-        RiscvInstruction::FloatMultiplyAddS { rounding_mode, .. } => fused::single_exception_flags(
-            lhs,
-            rhs,
-            addend,
-            rounding_mode
-                .resolve(frm)
-                .expect("ternary float rounding mode is valid"),
-        ),
-        RiscvInstruction::FloatMultiplySubtractS { rounding_mode, .. } => {
-            fused::single_exception_flags(
-                lhs,
-                rhs,
-                sign_negate_single(addend),
-                rounding_mode
-                    .resolve(frm)
-                    .expect("ternary float rounding mode is valid"),
-            )
-        }
-        RiscvInstruction::FloatNegativeMultiplySubtractS { rounding_mode, .. } => {
-            fused::single_exception_flags(
-                sign_negate_single(lhs),
-                rhs,
-                addend,
-                rounding_mode
-                    .resolve(frm)
-                    .expect("ternary float rounding mode is valid"),
-            )
-        }
-        RiscvInstruction::FloatNegativeMultiplyAddS { rounding_mode, .. } => {
-            fused::single_exception_flags(
-                sign_negate_single(lhs),
-                rhs,
-                sign_negate_single(addend),
-                rounding_mode
-                    .resolve(frm)
-                    .expect("ternary float rounding mode is valid"),
-            )
-        }
-        RiscvInstruction::FloatMultiplyAddD { .. }
-        | RiscvInstruction::FloatMultiplySubtractD { .. }
-        | RiscvInstruction::FloatNegativeMultiplySubtractD { .. }
-        | RiscvInstruction::FloatNegativeMultiplyAddD { .. } => {
-            multiply_add_exception_flags_double(lhs, rhs, addend)
-        }
-        _ => 0,
-    }
-}
-
 fn add_single(lhs: u64, rhs: u64) -> u64 {
     box_canonical_single(f32::from_bits(unbox_single(lhs)) + f32::from_bits(unbox_single(rhs)))
 }
@@ -807,29 +586,6 @@ fn quiet_compare_exception_flags_double(lhs: u64, rhs: u64) -> u64 {
     } else {
         0
     }
-}
-
-fn multiply_add_exception_flags_double(lhs: u64, rhs: u64, addend: u64) -> u64 {
-    if is_signaling_nan_double(lhs)
-        || is_signaling_nan_double(rhs)
-        || is_signaling_nan_double(addend)
-        || is_infinity_times_zero_double(lhs, rhs)
-    {
-        FLOAT_FLAG_INVALID
-    } else {
-        0
-    }
-}
-
-fn is_infinity_times_zero_double(lhs: u64, rhs: u64) -> bool {
-    (is_infinity_double(lhs) && is_zero_double(rhs))
-        || (is_zero_double(lhs) && is_infinity_double(rhs))
-}
-
-fn multiply_add_double(lhs: u64, rhs: u64, addend: u64) -> u64 {
-    f64::from_bits(lhs)
-        .mul_add(f64::from_bits(rhs), f64::from_bits(addend))
-        .to_bits()
 }
 
 fn sqrt_single(value: u64) -> u64 {

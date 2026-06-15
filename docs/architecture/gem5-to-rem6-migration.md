@@ -86,7 +86,7 @@ parity are not present.
 
 - [x] RV64 integer, atomic, CSR, trap, counter, WFI, fence, PMP/PMA slices have tests.
 - [x] RV64C integer/load-store/control-flow slices have tests.
-- [x] RV64F/RV64D scalar load/store, arithmetic, comparisons, conversions, legal FP arithmetic and integer-to-float rounding-mode decode, exact static non-RNE integer-to-float conversion execution, inexact integer-to-float accrued flag updates, rounding-insensitive static arithmetic execution, `fadd.s`/`fsub.s` exact-wide-sum directed rounding, `fmadd.s` exact-window directed rounding, `fadd.s`/`fsub.s`/`fmadd.s` invalid, overflow, and inexact accrued flags, and NaN-boxing have tests.
+- [x] RV64F/RV64D scalar load/store, arithmetic, comparisons, conversions, legal FP arithmetic and integer-to-float rounding-mode decode, exact static non-RNE integer-to-float conversion execution, inexact integer-to-float accrued flag updates, rounding-insensitive static arithmetic execution, `fadd.s`/`fsub.s` exact-wide-sum directed rounding, `fmadd.s` exact-window directed rounding, narrow `fmadd.d` exact-window static/dynamic directed rounding slices, `fadd.s`/`fsub.s`/`fmadd.s` invalid, overflow, and inexact accrued flags, and NaN-boxing have tests.
 - [x] RV64F/RV64D integer-to-float conversions execute inexact static directed rounding and valid dynamic `frm` modes with accrued inexact flags.
 - [x] RV64C double-precision FP load/store decode and compressed FP load CPU data-access slices have tests.
 - [x] Sv39 helpers and CPU memory-walker paths have tests.
@@ -104,19 +104,22 @@ non-RNE integer-to-float conversion execution, integer-to-float inexact
 integer-to-float execution, rounding-insensitive static FP arithmetic
 execution, `fadd.s`/`fsub.s` exact-wide-sum static/dynamic directed rounding
 with NX accrual, `fmadd.s` exact-window static/dynamic directed rounding with
-RMM tie-away, NX, and directed-boundary overflow accrual, plus
+RMM tie-away, NX, and directed-boundary overflow accrual, narrow `fmadd.d`
+static RoundUp and dynamic RoundDown exact-window inexact rounding with
+directed zero-sign and overflow-flag boundary slices, plus
 `fadd.s`/`fsub.s` signaling-NaN, infinity invalid, overflow, and wider finite
 NX flag slices, compressed double FP load/store decoding, compressed FP load
 CPU data access, traps, translation helpers, and SE ecall plumbing.
 
 **Not migrated:** Full RV64GC/vector breadth, other major ISAs, directed
-rounding breadth beyond the covered integer-to-float and single-precision
-add/sub/fused multiply-add slices, and complete Linux privileged behavior.
+rounding breadth beyond the covered integer-to-float, single-precision
+add/sub/fused multiply-add, and narrow double-precision `fmadd.d` slices, and
+complete Linux privileged behavior.
 
 **Evidence:** `RiscvInstruction::decode_with_length`,
 `decode_float_op`, `decode_compressed`, `walk_sv39_page_table_with_context`,
 tests `rv64i`, `rv64m`, `rv64f`, `rv64f_add`, `rv64f_sub`, `rv64f_fma`,
-`rv64d`, `riscv_frontend`, `sv39`, and privileged RISC-V tests.
+`rv64d`, `rv64d_fma`, `riscv_frontend`, `sv39`, and privileged RISC-V tests.
 
 **Next evidence:** Generated or imported RV64GC/vector instruction tests plus
 privileged Linux trap and interrupt smoke tests.

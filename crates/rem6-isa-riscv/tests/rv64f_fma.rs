@@ -247,3 +247,31 @@ fn hart_rv64f_single_fmadd_raises_overflow_for_directed_boundary_sum() {
     assert_eq!(hart.read_float(freg(4)), f32_box(f32::INFINITY));
     assert_eq!(hart.float_status().fflags(), expected_flags);
 }
+
+#[test]
+fn hart_rv64f_single_fmadd_raises_overflow_when_directed_result_is_max_finite() {
+    let max_finite = f32::from_bits(0x7f7f_ffff);
+    let one_ulp = f32::from_bits(0x7380_0000);
+    let expected_flags = FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT;
+
+    for rounding_mode in [
+        RiscvFloatRoundingMode::RoundTowardZero,
+        RiscvFloatRoundingMode::RoundDown,
+    ] {
+        let mut hart = RiscvHartState::new(0xa140);
+        hart.write_float(freg(1), f32_box(max_finite));
+        hart.write_float(freg(2), f32_box(1.0));
+        hart.write_float(freg(3), f32_box(one_ulp));
+        hart.execute(RiscvInstruction::FloatMultiplyAddS {
+            rd: freg(4),
+            rs1: freg(1),
+            rs2: freg(2),
+            rs3: freg(3),
+            rounding_mode,
+        })
+        .unwrap();
+
+        assert_eq!(hart.read_float(freg(4)), f32_box(max_finite));
+        assert_eq!(hart.float_status().fflags(), expected_flags);
+    }
+}

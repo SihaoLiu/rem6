@@ -1578,16 +1578,6 @@ fn hart_traps_rv64d_static_rounding_when_result_may_depend_on_rounding() {
     assert!(sqrt.trap().is_some());
     assert_eq!(sqrt_hart.read_float(freg(2)), 0);
 
-    let mut fused_hart = RiscvHartState::new(0x8400);
-    fused_hart.write_float(freg(1), 1.0f64.to_bits());
-    fused_hart.write_float(freg(2), 0.0f64.to_bits());
-    fused_hart.write_float(freg(3), (-0.0f64).to_bits());
-    let fused = fused_hart
-        .execute(RiscvInstruction::decode(r4_type(3, 0x1, 2, 1, 0x2, 4, 0x43)).unwrap())
-        .unwrap();
-    assert!(fused.trap().is_some());
-    assert_eq!(fused_hart.read_float(freg(4)), 0);
-
     let mut invalid_hart = RiscvHartState::new(0x8500);
     invalid_hart.write_float(freg(1), 0x7ff0_0000_0000_0001);
     invalid_hart.write_float(freg(2), 1.0f64.to_bits());
