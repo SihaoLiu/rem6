@@ -150,11 +150,11 @@ pub use startup::{
     RISCV_LINUX_AT_SECURE,
 };
 use stat::{
-    guest_path_inode, syscall_access, syscall_faccessat, syscall_fstat, syscall_fstatfs,
-    syscall_lstat, syscall_newfstatat, syscall_stat, syscall_statfs, syscall_statx, RiscvGuestStat,
-    RISCV_LINUX_ACCESS, RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS,
-    RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS, RISCV_LINUX_FACCESSAT, RISCV_LINUX_FSTATFS,
-    RISCV_LINUX_LSTAT, RISCV_LINUX_STATFS, RISCV_LINUX_STATX,
+    guest_path_inode, syscall_access, syscall_faccessat, syscall_faccessat2, syscall_fstat,
+    syscall_fstatfs, syscall_lstat, syscall_newfstatat, syscall_stat, syscall_statfs,
+    syscall_statx, RiscvGuestStat, RISCV_LINUX_ACCESS, RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS,
+    RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS, RISCV_LINUX_FACCESSAT, RISCV_LINUX_FACCESSAT2,
+    RISCV_LINUX_FSTATFS, RISCV_LINUX_LSTAT, RISCV_LINUX_STATFS, RISCV_LINUX_STATX,
 };
 use sysinfo::{syscall_sysinfo, RISCV_LINUX_SYSINFO};
 pub use unknown::RiscvUnknownSyscallRecord;
@@ -1202,6 +1202,11 @@ impl RiscvSyscallTable {
             RISCV_LINUX_FACCESSAT => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_faccessat(request, state, guest_memory),
+                })
+            }
+            RISCV_LINUX_FACCESSAT2 => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_faccessat2(request, state, guest_memory),
                 })
             }
             RISCV_LINUX_NEWFSTATAT => guest_memory_reader.and_then(|reader| {

@@ -29,6 +29,7 @@ pub(super) const RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS: u32 = 0o555;
 const RISCV_LINUX_CHARACTER_DEVICE_MODE: u32 = RISCV_LINUX_S_IFCHR | 0o666;
 const RISCV_LINUX_SYMBOLIC_LINK_MODE: u32 = RISCV_LINUX_S_IFLNK | 0o777;
 pub(super) const RISCV_LINUX_FACCESSAT: u64 = 48;
+pub(super) const RISCV_LINUX_FACCESSAT2: u64 = 439;
 pub(super) const RISCV_LINUX_STATFS: u64 = 43;
 pub(super) const RISCV_LINUX_FSTATFS: u64 = 44;
 pub(super) const RISCV_LINUX_STATX: u64 = 291;
@@ -39,6 +40,9 @@ const RISCV_LINUX_X_OK: u64 = 1;
 const RISCV_LINUX_W_OK: u64 = 2;
 const RISCV_LINUX_R_OK: u64 = 4;
 const RISCV_LINUX_ACCESS_VALID_MODE: u64 = RISCV_LINUX_X_OK | RISCV_LINUX_W_OK | RISCV_LINUX_R_OK;
+const RISCV_LINUX_AT_EACCESS: u64 = 0x200;
+const RISCV_LINUX_FACCESSAT2_VALID_FLAGS: u64 =
+    RISCV_LINUX_AT_EACCESS | RISCV_LINUX_AT_SYMLINK_NOFOLLOW | RISCV_LINUX_AT_EMPTY_PATH;
 const RISCV_LINUX_AT_STATX_SYNC_TYPE: u64 = 0x6000;
 const RISCV_LINUX_STATX_VALID_FLAGS: u64 = RISCV_LINUX_AT_EMPTY_PATH
     | RISCV_LINUX_AT_NO_AUTOMOUNT
@@ -314,7 +318,7 @@ pub(super) fn syscall_statx(
             }
         }
     } else {
-        let path = match resolve_statx_path(request.argument(0), &path, state) {
+        let path = match resolve_guest_at_path(request.argument(0), &path, state) {
             Ok(path) => path,
             Err(error) => return error,
         };
@@ -339,7 +343,11 @@ const fn invalid_statx_flags(flags: u64) -> bool {
         || flags & RISCV_LINUX_AT_STATX_SYNC_TYPE == RISCV_LINUX_AT_STATX_SYNC_TYPE
 }
 
-fn resolve_statx_path(dirfd: u64, path: &[u8], state: &RiscvSyscallState) -> Result<Vec<u8>, u64> {
+fn resolve_guest_at_path(
+    dirfd: u64,
+    path: &[u8],
+    state: &RiscvSyscallState,
+) -> Result<Vec<u8>, u64> {
     if dirfd == RISCV_LINUX_AT_FDCWD || path.starts_with(b"/") {
         return Ok(path.to_vec());
     }
@@ -397,6 +405,58 @@ pub(super) fn syscall_faccessat(
     syscall_access_registered_path(&path, mode, state)
 }
 
+pub(super) fn syscall_faccessat2(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+) -> u64 {
+    let flags = request.argument(3);
+    if flags & !RISCV_LINUX_FACCESSAT2_VALID_FLAGS != 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+
+    let mode = request.argument(2);
+    let path = match read_access_path(request.argument(1), mode, guest_memory_reader) {
+        Ok(path) => path,
+        Err(error) => return error,
+    };
+    if path.is_empty() {
+        if flags & RISCV_LINUX_AT_EMPTY_PATH == 0 {
+            return linux_error(RISCV_LINUX_ENOENT);
+        }
+        let stat = if request.argument(0) == RISCV_LINUX_AT_FDCWD {
+            match state.guest_path_stat(b".") {
+                Some(stat) => stat,
+                None => return linux_error(RISCV_LINUX_ENOENT),
+            }
+        } else {
+            let Some(fd) = guest_fd_argument(request.argument(0)) else {
+                return linux_error(RISCV_LINUX_EBADF);
+            };
+            match state.guest_fd_stat(fd) {
+                Ok(stat) => stat,
+                Err(_error) => return linux_error(RISCV_LINUX_EBADF),
+            }
+        };
+        return syscall_access_stat(stat, mode);
+    }
+    let path = match resolve_guest_at_path(request.argument(0), &path, state) {
+        Ok(path) => path,
+        Err(error) => return error,
+    };
+    let stat = if flags & RISCV_LINUX_AT_SYMLINK_NOFOLLOW != 0 {
+        state
+            .guest_link_stat(&path)
+            .or_else(|| state.guest_path_stat(&path))
+    } else {
+        state.guest_path_stat(&path)
+    };
+    let Some(stat) = stat else {
+        return linux_error(RISCV_LINUX_ENOENT);
+    };
+    syscall_access_stat(stat, mode)
+}
+
 fn read_access_path(
     path_address: u64,
     mode: u64,
@@ -421,6 +481,10 @@ fn syscall_access_registered_path(path: &[u8], mode: u64, state: &RiscvSyscallSt
     let Some(stat) = state.guest_path_stat(path) else {
         return linux_error(RISCV_LINUX_ENOENT);
     };
+    syscall_access_stat(stat, mode)
+}
+
+fn syscall_access_stat(stat: RiscvGuestStat, mode: u64) -> u64 {
     if !stat.allows_access(mode) {
         return linux_error(RISCV_LINUX_EACCES);
     }
