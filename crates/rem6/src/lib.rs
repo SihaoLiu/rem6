@@ -39,6 +39,7 @@ mod pipeline_stats;
 mod power_output;
 mod resource_acquire_cli;
 mod resource_acquire_config;
+mod run_gdb;
 mod run_resource_config;
 mod runtime_memory;
 mod stats_output;
@@ -67,6 +68,7 @@ pub use resource_acquire_cli::{
     run_resource_acquire_config, Rem6ResourceAcquireArtifact, Rem6ResourceAcquireResourceSummary,
 };
 pub use resource_acquire_config::{Rem6ResourceAcquireConfig, Rem6ResourceAcquireResourceConfig};
+use run_gdb::{serve_riscv_gdb_once, validate_run_gdb_listen_config};
 use run_resource_config::run_kernel_binary_from_resource_config;
 use runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use stats_output::{run_stats_output, Rem6StatsInputs};
@@ -544,6 +546,9 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
             });
         }
     }
+    if config.gdb_listen().is_some() {
+        validate_run_gdb_listen_config(&config)?;
+    }
 
     let load_blobs = read_load_blobs(config.load_blobs())?;
     let load_blob_summaries = load_blobs
@@ -736,6 +741,9 @@ fn execute_riscv(
         cores.push(core);
     }
     let cluster = RiscvCluster::new(cores).map_err(execute_error)?;
+    if let Some(listen) = config.gdb_listen() {
+        serve_riscv_gdb_once(listen, &cluster, &memory)?;
+    }
     let controller = Arc::new(Mutex::new(SystemHostController::new(
         HostEventPolicy,
         StatsRegistry::new(),

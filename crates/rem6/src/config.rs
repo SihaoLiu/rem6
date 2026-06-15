@@ -159,6 +159,7 @@ pub struct Rem6RunConfig {
     dram_memory_profile: CliDramMemoryProfile,
     data_cache_protocol: Option<RiscvDataCacheProtocol>,
     instruction_cache_protocol: Option<RiscvDataCacheProtocol>,
+    gdb_listen: Option<String>,
     cores: usize,
     parallel_workers: usize,
     memory_dumps: Vec<MemoryDumpRequest>,
@@ -442,6 +443,7 @@ impl Rem6RunConfig {
                 })
             })
             .transpose()?;
+        let mut gdb_listen = None;
         let mut cores = file_config.cores.unwrap_or(1);
         if cores == 0 {
             return Err(Rem6CliError::InvalidCoreCount {
@@ -642,6 +644,9 @@ impl Rem6RunConfig {
                             }
                         })?);
                 }
+                "--gdb-listen" => {
+                    gdb_listen = Some(required_value(&flag, args.next())?);
+                }
                 "--cores" => {
                     let value = required_value(&flag, args.next())?;
                     cores = value
@@ -800,6 +805,7 @@ impl Rem6RunConfig {
             dram_memory_profile,
             data_cache_protocol,
             instruction_cache_protocol,
+            gdb_listen,
             cores,
             parallel_workers: parallel_workers.unwrap_or(cores),
             memory_dumps,
@@ -897,6 +903,10 @@ impl Rem6RunConfig {
 
     pub const fn instruction_cache_protocol(&self) -> Option<RiscvDataCacheProtocol> {
         self.instruction_cache_protocol
+    }
+
+    pub fn gdb_listen(&self) -> Option<&str> {
+        self.gdb_listen.as_deref()
     }
 
     pub const fn cores(&self) -> usize {

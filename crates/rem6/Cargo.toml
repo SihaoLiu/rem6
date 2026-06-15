@@ -9,6 +9,7 @@ repository.workspace = true
 rem6-boot = { path = "../rem6-boot" }
 rem6-coherence = { path = "../rem6-coherence" }
 rem6-cpu = { path = "../rem6-cpu" }
+rem6-debug = { path = "../rem6-debug" }
 rem6-dram = { path = "../rem6-dram" }
 rem6-isa-riscv = { path = "../rem6-isa-riscv" }
 rem6-kernel = { path = "../rem6-kernel" }

@@ -151,6 +151,7 @@ dependencies = [
  "rem6-boot",
  "rem6-coherence",
  "rem6-cpu",
+ "rem6-debug",
  "rem6-dram",
  "rem6-isa-riscv",
  "rem6-kernel",

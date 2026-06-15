@@ -62,6 +62,19 @@ impl CliMemoryRuntime {
         }
     }
 
+    pub(super) fn with_store_mut<R>(
+        &self,
+        operation: impl FnOnce(&mut PartitionedMemoryStore) -> R,
+    ) -> Option<R> {
+        match self {
+            Self::Store(store) => {
+                let mut store = store.lock().expect("CLI memory store lock");
+                Some(operation(&mut store))
+            }
+            Self::Dram(_) => None,
+        }
+    }
+
     pub(super) fn install_riscv_se_startup(
         &self,
         startup: &RiscvSeStartupImage,
