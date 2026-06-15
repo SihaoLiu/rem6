@@ -52,6 +52,7 @@ mod signal;
 mod sleep;
 mod startup;
 mod stat;
+mod sync;
 mod sysinfo;
 mod thread;
 mod time;
@@ -158,6 +159,10 @@ use stat::{
     syscall_statx, RiscvGuestStat, RISCV_LINUX_ACCESS, RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS,
     RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS, RISCV_LINUX_FACCESSAT, RISCV_LINUX_FACCESSAT2,
     RISCV_LINUX_FSTATFS, RISCV_LINUX_LSTAT, RISCV_LINUX_STATFS, RISCV_LINUX_STATX,
+};
+use sync::{
+    syscall_fd_sync, syscall_sync, RISCV_LINUX_FDATASYNC, RISCV_LINUX_FSYNC, RISCV_LINUX_SYNC,
+    RISCV_LINUX_SYNCFS,
 };
 use sysinfo::{syscall_sysinfo, RISCV_LINUX_SYSINFO};
 pub use unknown::RiscvUnknownSyscallRecord;
@@ -1268,6 +1273,14 @@ impl RiscvSyscallTable {
             RISCV_LINUX_FSTATFS => guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
                 value: syscall_fstatfs(request, state, writer),
             }),
+            RISCV_LINUX_SYNC => Some(RiscvSyscallOutcome::Return {
+                value: syscall_sync(),
+            }),
+            RISCV_LINUX_FSYNC | RISCV_LINUX_FDATASYNC | RISCV_LINUX_SYNCFS => {
+                Some(RiscvSyscallOutcome::Return {
+                    value: syscall_fd_sync(request.argument(0), state),
+                })
+            }
             RISCV_LINUX_GETRANDOM => {
                 let flags = request.argument(2);
                 if invalid_getrandom_flags(flags) {
