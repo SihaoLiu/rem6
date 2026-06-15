@@ -1,6 +1,7 @@
 use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
 
 mod dram;
+mod text;
 
 use super::formatting::json_escape;
 use super::{
@@ -10,6 +11,7 @@ use super::{
     Rem6RunConfig, Rem6TraceReplayConfig, Rem6TraceReplayExecutionSummary, RequestedIsa,
 };
 use dram::emit_dram_stats;
+use text::stats_snapshot_text;
 
 const GEM5_COMPAT_SIM_FREQ_HZ: u64 = 1_000_000_000_000;
 
@@ -189,6 +191,13 @@ pub(super) fn run_stats_output(
         increment_stat(
             &mut stats,
             "simInsts",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.committed_instructions,
+        )?;
+        increment_stat(
+            &mut stats,
+            "simOps",
             "Count",
             StatResetPolicy::Monotonic,
             execution.committed_instructions,
@@ -1467,32 +1476,6 @@ fn stats_snapshot_json(snapshot: &StatSnapshot) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!("[{samples}]")
-}
-
-fn stats_snapshot_text(snapshot: &StatSnapshot) -> String {
-    let mut output = "\n---------- Begin Simulation Statistics ----------\n".to_string();
-    for sample in snapshot.samples() {
-        output.push_str(&format!(
-            "{:<64} {:>20} # kind={} unit={} reset_policy={}\n",
-            sample.path(),
-            sample.value(),
-            sample.kind(),
-            sample.unit(),
-            sample.reset_policy()
-        ));
-        for bucket in sample.histogram_buckets() {
-            output.push_str(&format!(
-                "{:<64} {:>20} # histogram_bucket={} unit={} reset_policy={}\n",
-                format!("{}.bucket", sample.path()),
-                bucket.count(),
-                bucket.bucket(),
-                sample.unit(),
-                sample.reset_policy()
-            ));
-        }
-    }
-    output.push_str("\n---------- End Simulation Statistics   ----------\n");
-    output
 }
 
 pub(super) fn increment_stat(

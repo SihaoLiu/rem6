@@ -397,7 +397,7 @@ network evidence.
 
 ### Stats, Probes, Debug, Host Actions, and Checkpointing - 59% single-axis
 
-**Score calculation:** 11 of 16 items have executable evidence, or 69% raw,
+**Score calculation:** 12 of 16 items have executable evidence, or 75% raw,
 capped to 59% by the single-axis bucket. The bucket cap is single-axis because
 probe, debug, power, and checkpoint evidence is not yet integrated across O3
 pipeline and cache/DRAM runtime state.
@@ -415,7 +415,7 @@ pipeline and cache/DRAM runtime state.
   output.
 - [x] RISC-V in-order pipeline timing state is captured and restored by core checkpoints.
 - [x] GDB packet byte streams drive typed step/resume and break/watch control state in memory-backed sessions.
-- [ ] Stricter gem5 text-stat compatibility exists.
+- [x] Stricter gem5 text-stat compatibility exists.
 - [ ] Cache/bank/fabric/DRAM hierarchy counters are complete.
 - [ ] GDB socket loop, step/resume/break/watch integration, RV32 FP/vector register cache, and broader CSR register cache exist.
 - [ ] Power and thermal models are calibrated against real component activity.
@@ -427,7 +427,8 @@ paths, RV64D floating-point target descriptions including `fflags`/`frm`/`fcsr`
 and advertised RV64 supervisor CSR target descriptions plus `p`/`P`/`g`/`G`
 register-cache paths, RISC-V software breakpoint patch/restore through the
 system GDB memory handler, gem5-style final-tick, committed-instruction, and
-sim-frequency stat aliases,
+sim-frequency stat aliases, text output with gem5-compatible no-leading-blank
+headers plus `simOps` and deterministic `simSeconds` aliases,
 target/port/bank-level DRAM runtime resource counters, RISC-V in-order pipeline
 checkpoint capture/restore, GDB byte-stream packet handling, debug
 execution-control state for packet-stream step/resume and break/watch requests,
@@ -456,8 +457,8 @@ The CLI data-access probe tests include stack-distance histogram stats emitted
 from executed RISC-V loads. CLI DRAM-backed execution tests include
 target/port/bank-level DRAM resource counters emitted from executed RISC-V
 instruction fetches. CLI text stats include gem5-style final-tick,
-committed-instruction, and sim-frequency aliases emitted from an executed
-RISC-V run.
+committed-instruction, sim-ops, sim-seconds, and sim-frequency aliases emitted
+from an executed RISC-V run.
 
 **Next evidence:** Broader gem5 text-stat compatibility, remaining
 cache/bank/fabric runtime resource counters, GDB socket-loop resume/step and
@@ -579,7 +580,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/regression_tests` | all rem6 crates | 35% unit-slice | Workspace tests act as the current regression suite. | Add migration tags or per-family regression rows. |
 | `tests/gem5/replacement_policies` | `rem6-cache` | 60% representative | Multiple replacement, indexing, dueling, compressed, and sector tag tests exist. | Add remaining policies and exact trace/reference parity where useful. |
 | `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, RFENCE remote SFENCE.VMA data TLB flushes with finite-range, ASID scope, and scheduled completion events, unsupported HFENCE validation, and HSM start entry-state, `START_PENDING`, status, no-return stop, retentive-suspend, default-non-retentive `RESUME_PENDING`/resume, and IPI-wake slices are tested. | Add broader SBI timer/IPI/reset power-state behavior, remaining HSM wake semantics, RFENCE hypervisor-fence execution semantics and broader completion coverage, and a real Linux boot smoke. |
-| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 64% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, instruction/data cache counters, cache-local prefetch queue counters, CLI stat output with gem5-style final-tick, committed-instruction, and sim-frequency aliases, CLI GDB attach-before-execute register/memory smoke coverage, and library-level plus run-CLI McPAT/DSENT-shaped export tests exist. | Add more hierarchy counters, calibrated power/thermal activity, stricter text-stat compatibility, and GDB resume/step execution control. |
+| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 64% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, power bindings, instruction/data cache counters, cache-local prefetch queue counters, CLI stat output with gem5-style final-tick, committed-instruction, sim-ops, sim-seconds, and sim-frequency aliases, CLI GDB attach-before-execute register/memory smoke coverage, and library-level plus run-CLI McPAT/DSENT-shaped export tests exist. | Add more hierarchy counters, calibrated power/thermal activity, exact gem5 stat naming breadth, and GDB resume/step execution control. |
 | `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 54% single-axis | Workload manifests, resource payloads, manifest/suite-level CLI resource acquisition including host-file and uncompressed/gzip tar-entry inputs, manifest-acquired and unique-suite run kernel handoff, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage, remote/cache policy acquisition, and ergonomic topology/workload definitions. |
 | `tests/test-progs` | `rem6-system`, `rem6` CLI, ISA crates | 35% unit-slice | Static RISC-V no-libc, newlib, and raw syscall smoke binaries, including `statx`, `faccessat2`, `utimensat`, advisory `fchownat`/`fchown`, `sysinfo`, newlib file-create roundtrip, newlib `/proc/self/exe` readlink coverage, newlib pipe2 roundtrip coverage, newlib directory-open coverage, and newlib open-flag coverage, are generated when tools exist. | Add durable generated fixtures for hello, threads, and m5 utility shapes across ISAs. |
 | `tests/gem5/traffic_gen` | `rem6-traffic`, `rem6-system`, `rem6-workload`, `rem6` CLI | 55% single-axis | Text config parsing, GUPS, packet trace replay including manifest and unique suite resource-config trace handoff, flags, maintenance, HTM, responses, workload summaries, typed generator/memory-profile summaries, and top-level GUPS profile JSON/stats output exist. | Add cache hierarchy matrix and broader trusted stats. |
