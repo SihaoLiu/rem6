@@ -6,6 +6,7 @@ const RISCV_LINUX_MKDIRAT_FOR_RENAME_TEST: u64 = 34;
 const RISCV_LINUX_OPENAT_FOR_RENAME_TEST: u64 = 56;
 const RISCV_LINUX_NEWFSTATAT_FOR_RENAME_TEST: u64 = 79;
 const RISCV_LINUX_UMASK_FOR_RENAME_TEST: u64 = 166;
+const RISCV_LINUX_RENAMEAT_FOR_TEST: u64 = 38;
 const RISCV_LINUX_RENAMEAT2_FOR_TEST: u64 = 276;
 const RISCV_LINUX_O_WRONLY_FOR_RENAME_TEST: u64 = 1;
 const RISCV_LINUX_O_CREAT_FOR_RENAME_TEST: u64 = 0o100;
@@ -30,6 +31,41 @@ fn linux_table_renameat2_moves_registered_guest_file_path() {
                     RISCV_LINUX_AT_FDCWD,
                     0x9100,
                     0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+    assert!(state.guest_path_stat(b"guest.txt").is_none());
+    assert_eq!(
+        state.guest_file_contents(b"renamed.txt"),
+        Some(&b"file-backed input\n"[..])
+    );
+}
+
+#[test]
+fn linux_table_renameat_moves_registered_guest_file_path_and_ignores_stale_flags_register() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"file-backed input\n");
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"guest.txt"), (0x9100, b"renamed.txt")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RENAMEAT_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9100,
+                    1_u64 << 63,
                     0,
                 ],
             ),

@@ -229,7 +229,7 @@ tool-detected, and broad workload coverage is not present.
 - [x] Startup stack, argv/envp/auxv, `brk`, `mmap`, in-place `mremap` slice, `mprotect`, mapped-page `mincore` present-vector reporting, `madvise` known-advice and mapped-range validation, `msync` flags and mapped-range validation, `mlock`/`munlock` `mmap`/`brk` range validation, stdio, file create/truncate/`ftruncate`/read/write/append, positioned I/O, vector I/O, `statx`, `faccessat2`, `statfs`/`fstatfs`, `sysinfo`, value-mode `riscv_hwprobe` base key reporting, `personality` query/set state, `ppoll`, `sched_getscheduler`, `sched_getparam`, `sched_get_priority_max/min`, `sched_rr_get_interval`, single-word `sched_setaffinity`/`sched_getaffinity`, single CPU/node `getcpu`, single-process `membarrier` slice, zero-duration `nanosleep` and `clock_nanosleep` validation, `clock_getres`, `CLOCK_TAI` `clock_gettime`, `kill(..., 0)`, `tkill(..., 0)`, and `tgkill(..., 0)` existence checks, current-process scoped process-group/session `setpgid`/`getpgid`/`getsid`/`setsid` slices, gem5-style advisory `setuid`/`setrlimit` success returns, legacy `getrlimit` stack/data/NPROC limits, `sigaltstack` query/set/disable state, basic `rt_sigaction`/`rt_sigprocmask`, empty `rt_sigpending` mask reporting, no-pending zero-timeout `rt_sigtimedwait`, futex mismatch and wake-bitset count/bitset behavior, `umask` masking for `mkdirat` directories and `openat(O_CREAT)` regular files, time, cwd, `chdir`/`fchdir`, random, resource, and wait slices have tests.
 - [x] Unknown syscall returns `ENOSYS` and records a typed diagnostic.
 - [x] Static no-libc and newlib smoke binaries can be generated and compared with qemu when tools exist; tool-detected newlib directory-open and `O_NOCTTY`/`O_NOFOLLOW` coverage runs through the legacy `open` syscall and registered guest files, while `/proc/self/exe` readlink and pipe roundtrip coverage run through direct ecalls.
-- [x] Linux at-family hard-link, `renameat2` flags=0, unlink, `mkdirat`, `unlinkat` with `AT_REMOVEDIR`, and registered-directory `getdents64` syscalls mutate or expose registered guest files and directories and have qemu-compared raw smoke evidence.
+- [x] Linux at-family hard-link, `renameat`, `renameat2` flags=0, unlink, `mkdirat`, `unlinkat` with `AT_REMOVEDIR`, and registered-directory `getdents64` syscalls mutate or expose registered guest files and directories and have raw smoke evidence. Current qemu-riscv64 reports `ENOSYS` for raw `renameat`, so that smoke test records the qemu boundary and verifies rem6 registered-file rename behavior directly.
 - [ ] Process/thread lifecycle, signals, permissions, and blocking wait/futex semantics are broad enough for distro-like programs.
 - [ ] Broad Linux syscall table parity exists.
 - [ ] Host filesystem policy matches the needed gem5 SE cases.
@@ -266,7 +266,7 @@ empty `rt_sigpending` mask reporting, no-pending zero-timeout `rt_sigtimedwait`,
 futex wait mismatch and wake-bitset count/bitset behavior,
 `umask` state applied to `mkdirat` directory modes and `openat(O_CREAT)`
 regular-file modes, cwd-aware registered-path lookup, at-family
-hard-link/`renameat2` flags=0/unlink/`mkdirat`/`AT_REMOVEDIR`, and
+hard-link/`renameat`/`renameat2` flags=0/unlink/`mkdirat`/`AT_REMOVEDIR`, and
 registered-directory `getdents64` slices; supervisor SBI base read-only
 identity/probe calls, minimal TIME `set_timer` STIP scheduling, IPI
 `send_ipi` SSIP pending-bit injection for registered harts, standard SRST

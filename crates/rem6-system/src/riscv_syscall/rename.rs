@@ -8,6 +8,7 @@ use super::{
 };
 
 pub(super) const RISCV_LINUX_RENAMEAT2: u64 = 276;
+pub(super) const RISCV_LINUX_RENAMEAT: u64 = 38;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum RiscvGuestRenameError {
@@ -23,7 +24,24 @@ pub(super) fn syscall_renameat2(
     state: &mut RiscvSyscallState,
     guest_memory: &RiscvGuestMemoryReader,
 ) -> u64 {
-    if request.argument(4) != 0 {
+    syscall_rename_operation(request, state, guest_memory, request.argument(4))
+}
+
+pub(super) fn syscall_renameat(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> u64 {
+    syscall_rename_operation(request, state, guest_memory, 0)
+}
+
+fn syscall_rename_operation(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryReader,
+    flags: u64,
+) -> u64 {
+    if flags != 0 {
         return linux_error(RISCV_LINUX_EINVAL);
     }
 

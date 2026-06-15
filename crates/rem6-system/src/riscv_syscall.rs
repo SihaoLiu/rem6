@@ -134,7 +134,7 @@ use process::{
 };
 use random::{invalid_getrandom_flags, syscall_getrandom, RISCV_LINUX_GETRANDOM};
 use readv::{syscall_readv, RISCV_LINUX_READV};
-use rename::{syscall_renameat2, RISCV_LINUX_RENAMEAT2};
+use rename::{syscall_renameat, syscall_renameat2, RISCV_LINUX_RENAMEAT, RISCV_LINUX_RENAMEAT2};
 pub use request::RiscvSyscallRequest;
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
@@ -1147,6 +1147,11 @@ impl RiscvSyscallTable {
             RISCV_LINUX_UNLINK | RISCV_LINUX_UNLINKAT => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_unlink_operation(request, state, guest_memory),
+                })
+            }
+            RISCV_LINUX_RENAMEAT => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_renameat(request, state, guest_memory),
                 })
             }
             RISCV_LINUX_RENAMEAT2 => {
