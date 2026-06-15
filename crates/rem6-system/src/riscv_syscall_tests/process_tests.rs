@@ -52,6 +52,47 @@ fn linux_table_uses_gem5_default_process_identity() {
 }
 
 #[test]
+fn linux_table_personality_queries_and_sets_process_persona() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_PERSONALITY,
+                [0xffff_ffff, 0, 0, 0, 0, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_PERSONALITY,
+                [0x0004_0000, 0, 0, 0, 0, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_PERSONALITY,
+                [0xffff_ffff, 0, 0, 0, 0, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0x0004_0000 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
 fn linux_table_getpgid_and_getsid_report_current_process_scope() {
     let table = RiscvSyscallTable::new();
     let mut state =

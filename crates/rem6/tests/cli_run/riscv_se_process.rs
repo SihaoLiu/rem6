@@ -1,4 +1,8 @@
-use std::process::Command;
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use crate::support::*;
 
@@ -72,4 +76,118 @@ fn rem6_run_riscv_se_runs_static_raw_process_group_session_syscalls() {
     assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
     assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
     assert_stat(&stdout, "sim.stop_code", "Count", 63, "constant");
+}
+
+#[test]
+fn rem6_run_riscv_se_runs_static_raw_personality_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE raw personality smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE raw personality smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-personality");
+    let source = workspace.join("raw-personality.c");
+    let binary = workspace.join("raw-personality");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+
+static long linux_syscall1(long number, long arg0) {
+    register long a0 asm("a0") = arg0;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    long query0 = linux_syscall1(92, 0xffffffffL);
+    long set = linux_syscall1(92, 0x0040000L);
+    long query1 = linux_syscall1(92, 0xffffffffL);
+    long clear = linux_syscall1(92, 0L);
+    long query2 = linux_syscall1(92, 0xffffffffL);
+    printf("raw-personality:%ld:%ld:%ld:%ld:%ld\n",
+           query0, set, query1, clear, query2);
+    return query0 == 0 && set == 0 && query1 == 0x0040000L &&
+           clear == 0x0040000L && query2 == 0 ? 67 : 68;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(67),
+        "qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(qemu_output.stdout, b"raw-personality:0:0:262144:262144:0\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":67"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"raw-personality:0:0:262144:262144:0\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}
+
+fn find_riscv_tool(name: &str) -> Option<PathBuf> {
+    find_tool_on_path(name).or_else(|| {
+        let module_candidate =
+            Path::new("/mnt/nas0/software/riscv/riscv64-elf-ubuntu-24.04-gcc/bin").join(name);
+        module_candidate.is_file().then_some(module_candidate)
+    })
+}
+
+fn find_tool_on_path(name: &str) -> Option<PathBuf> {
+    env::var_os("PATH").and_then(|paths| {
+        env::split_paths(&paths)
+            .map(|directory| directory.join(name))
+            .find(|candidate| candidate.is_file())
+    })
 }

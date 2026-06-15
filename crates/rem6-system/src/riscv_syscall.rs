@@ -125,9 +125,9 @@ use permissions::{syscall_umask, RISCV_LINUX_UMASK};
 use pipe::{syscall_pipe2, RiscvGuestPipeId, RISCV_LINUX_PIPE2};
 use poll::{syscall_ppoll, RISCV_LINUX_PPOLL};
 use process::{
-    syscall_getpgid, syscall_getsid, syscall_prctl, syscall_setpgid, syscall_setsid,
-    RISCV_LINUX_GETPGID, RISCV_LINUX_GETSID, RISCV_LINUX_PRCTL, RISCV_LINUX_SETPGID,
-    RISCV_LINUX_SETSID,
+    syscall_getpgid, syscall_getsid, syscall_personality, syscall_prctl, syscall_setpgid,
+    syscall_setsid, RISCV_LINUX_GETPGID, RISCV_LINUX_GETSID, RISCV_LINUX_PERSONALITY,
+    RISCV_LINUX_PRCTL, RISCV_LINUX_SETPGID, RISCV_LINUX_SETSID,
 };
 use random::{invalid_getrandom_flags, syscall_getrandom, RISCV_LINUX_GETRANDOM};
 use readv::{syscall_readv, RISCV_LINUX_READV};
@@ -262,6 +262,7 @@ pub struct RiscvSyscallState {
     current_directory: Vec<u8>,
     child_clear_tid: Option<u64>,
     robust_list: RiscvRobustList,
+    personality: u32,
     guest_fds: GuestFdTable,
     guest_futexes: GuestFutexTable,
     guest_wait: GuestWaitQueue,
@@ -344,6 +345,7 @@ impl RiscvSyscallState {
             current_directory: b"/".to_vec(),
             child_clear_tid: None,
             robust_list: RiscvRobustList::new(0, 0),
+            personality: 0,
             guest_fds: linux_standard_guest_fds(),
             guest_futexes: GuestFutexTable::new(),
             guest_wait: GuestWaitQueue::new(current_process_group),
@@ -1271,6 +1273,9 @@ impl RiscvSyscallTable {
             }),
             RISCV_LINUX_SETSID => Some(RiscvSyscallOutcome::Return {
                 value: syscall_setsid(state),
+            }),
+            RISCV_LINUX_PERSONALITY => Some(RiscvSyscallOutcome::Return {
+                value: syscall_personality(request, state),
             }),
             RISCV_LINUX_PRCTL => {
                 syscall_prctl(request, state, guest_memory_reader, guest_memory_writer)

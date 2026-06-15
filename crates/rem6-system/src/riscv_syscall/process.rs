@@ -11,7 +11,9 @@ pub(super) const RISCV_LINUX_GETPGID: u64 = 155;
 pub(super) const RISCV_LINUX_GETSID: u64 = 156;
 pub(super) const RISCV_LINUX_SETSID: u64 = 157;
 pub(super) const RISCV_LINUX_PRCTL: u64 = 167;
+pub(super) const RISCV_LINUX_PERSONALITY: u64 = 92;
 
+const RISCV_LINUX_PERSONALITY_QUERY: u32 = 0xffff_ffff;
 const RISCV_LINUX_PR_SET_NAME: u64 = 15;
 const RISCV_LINUX_PR_GET_NAME: u64 = 16;
 const RISCV_LINUX_TASK_COMM_BYTES: usize = 16;
@@ -32,6 +34,26 @@ impl RiscvSyscallState {
     pub(super) fn set_process_name(&mut self, name: [u8; RISCV_LINUX_TASK_COMM_BYTES]) {
         self.process_name = name;
     }
+
+    pub(super) const fn personality(&self) -> u32 {
+        self.personality
+    }
+
+    pub(super) fn set_personality(&mut self, personality: u32) {
+        self.personality = personality;
+    }
+}
+
+pub(super) fn syscall_personality(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+) -> u64 {
+    let requested = request.argument(0) as u32;
+    let previous = state.personality();
+    if requested != RISCV_LINUX_PERSONALITY_QUERY {
+        state.set_personality(requested);
+    }
+    u64::from(previous)
 }
 
 pub(super) fn syscall_setpgid(request: RiscvSyscallRequest, state: &mut RiscvSyscallState) -> u64 {
