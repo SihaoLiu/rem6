@@ -243,16 +243,18 @@ where
                 session.set_stop_reply(rem6_debug::GdbRemoteStopReply::signal(0x05));
                 let step = if instruction_budget
                     .is_some_and(|budget| outcome.gdb_retired_instruction_count() >= budget)
+                    || cluster_hits_active_gdb_hardware_breakpoint(&session, cluster)
                 {
                     RiscvGdbSingleStepOutcome::NoInstructionRetired
-                } else if has_active_gdb_data_watchpoints(&session) {
+                } else if has_active_gdb_runtime_stops(&session) {
                     data_access_cursor.sync_to_cluster(cluster);
                     let mut debug_stop = |cluster: &RiscvCluster, _turn: &RiscvClusterTurn| {
-                        cluster_hits_active_gdb_data_watchpoint(
-                            &session,
-                            &mut data_access_cursor,
-                            cluster,
-                        )
+                        cluster_hits_active_gdb_hardware_breakpoint(&session, cluster)
+                            || cluster_hits_active_gdb_data_watchpoint(
+                                &session,
+                                &mut data_access_cursor,
+                                cluster,
+                            )
                     };
                     let (run, _stopped_at_watchpoint) = drive(Some(1), Some(&mut debug_stop))?;
                     let retired_by_cpu = riscv_run_retired_instructions_by_cpu(&run);
@@ -285,29 +287,35 @@ where
             RiscvGdbRunControl::Continue => {
                 let remaining_instructions = instruction_budget
                     .map(|budget| budget.saturating_sub(outcome.gdb_retired_instruction_count()));
-                let continue_outcome = if has_active_gdb_data_watchpoints(&session) {
-                    data_access_cursor.sync_to_cluster(cluster);
-                    let mut debug_stop = |cluster: &RiscvCluster, _turn: &RiscvClusterTurn| {
-                        cluster_hits_active_gdb_data_watchpoint(
-                            &session,
-                            &mut data_access_cursor,
-                            cluster,
-                        )
-                    };
-                    let (run, stopped_at_watchpoint) =
-                        drive(remaining_instructions, Some(&mut debug_stop))?;
-                    if stopped_at_watchpoint {
+                let continue_outcome =
+                    if cluster_hits_active_gdb_hardware_breakpoint(&session, cluster) {
                         RiscvGdbContinueOutcome::StoppedAtTrap {
-                            retired_by_cpu: riscv_run_retired_instructions_by_cpu(&run),
+                            retired_by_cpu: BTreeMap::new(),
+                        }
+                    } else if has_active_gdb_runtime_stops(&session) {
+                        data_access_cursor.sync_to_cluster(cluster);
+                        let mut debug_stop = |cluster: &RiscvCluster, _turn: &RiscvClusterTurn| {
+                            cluster_hits_active_gdb_hardware_breakpoint(&session, cluster)
+                                || cluster_hits_active_gdb_data_watchpoint(
+                                    &session,
+                                    &mut data_access_cursor,
+                                    cluster,
+                                )
+                        };
+                        let (run, stopped_at_watchpoint) =
+                            drive(remaining_instructions, Some(&mut debug_stop))?;
+                        if stopped_at_watchpoint {
+                            RiscvGdbContinueOutcome::StoppedAtTrap {
+                                retired_by_cpu: riscv_run_retired_instructions_by_cpu(&run),
+                            }
+                        } else {
+                            RiscvGdbContinueOutcome::CompletedRun { run: Box::new(run) }
                         }
                     } else {
-                        RiscvGdbContinueOutcome::CompletedRun { run: Box::new(run) }
-                    }
-                } else {
-                    RiscvGdbContinueOutcome::CompletedRun {
-                        run: Box::new(drive(remaining_instructions, None)?.0),
-                    }
-                };
+                        RiscvGdbContinueOutcome::CompletedRun {
+                            run: Box::new(drive(remaining_instructions, None)?.0),
+                        }
+                    };
                 session.set_stop_reply(rem6_debug::GdbRemoteStopReply::signal(0x05));
                 let frames = session
                     .async_response_with_payload(b"S05".to_vec())
@@ -550,6 +558,7 @@ fn rejects_preexecution_gdb_command(
         GdbRemoteCommand::Trap { request } => !matches!(
             request.point().kind(),
             GdbRemoteTrapKind::SoftwareBreakpoint
+                | GdbRemoteTrapKind::HardwareBreakpoint
                 | GdbRemoteTrapKind::WriteWatchpoint
                 | GdbRemoteTrapKind::ReadWatchpoint
                 | GdbRemoteTrapKind::AccessWatchpoint
@@ -572,6 +581,35 @@ fn supports_preexecution_resume_request(request: &GdbRemoteResumeRequest) -> boo
             request.thread(),
             GdbRemoteThreadId::All | GdbRemoteThreadId::Any
         )
+}
+
+fn has_active_gdb_runtime_stops(session: &GdbRemoteSession) -> bool {
+    has_active_gdb_hardware_breakpoints(session) || has_active_gdb_data_watchpoints(session)
+}
+
+fn has_active_gdb_hardware_breakpoints(session: &GdbRemoteSession) -> bool {
+    session
+        .active_traps()
+        .iter()
+        .any(|point| point.kind() == GdbRemoteTrapKind::HardwareBreakpoint)
+}
+
+fn cluster_hits_active_gdb_hardware_breakpoint(
+    session: &GdbRemoteSession,
+    cluster: &RiscvCluster,
+) -> bool {
+    let active_traps = session.active_traps();
+    cluster.core_ids().into_iter().any(|cpu| {
+        let pc = cluster
+            .core(cpu)
+            .expect("cluster core id exists")
+            .pc()
+            .get();
+        active_traps.iter().any(|point| {
+            point.kind() == GdbRemoteTrapKind::HardwareBreakpoint
+                && range_overlaps(pc, 1, point.address(), point.size())
+        })
+    })
 }
 
 fn has_active_gdb_data_watchpoints(session: &GdbRemoteSession) -> bool {

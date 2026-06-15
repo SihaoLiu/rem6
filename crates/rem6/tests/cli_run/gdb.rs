@@ -116,7 +116,8 @@ fn rem6_run_gdb_listen_serves_loaded_riscv_state_before_execution() {
     assert_eq!(send_gdb_packet(&mut stream, b"vCont;c;s"), b"+$E22#a9");
     assert_eq!(send_gdb_packet(&mut stream, b"vCont;c:1"), b"+$E22#a9");
     assert_eq!(send_gdb_packet(&mut stream, b"Hc1"), b"+$E02#a7");
-    assert_eq!(send_gdb_packet(&mut stream, b"Z1,80000000,4"), b"+$E22#a9");
+    assert_eq!(send_gdb_packet(&mut stream, b"Z1,80000000,4"), b"+$OK#9a");
+    assert_eq!(send_gdb_packet(&mut stream, b"z1,80000000,4"), b"+$OK#9a");
     assert_eq!(
         send_gdb_packet(&mut stream, b"m80000000,4"),
         b"+$93027000#95"
@@ -451,6 +452,195 @@ fn rem6_run_gdb_listen_vcont_continue_runs_until_guest_stop() {
     assert!(stdout.contains("\"stop_code\":0"));
     assert!(stdout.contains("\"x5\":\"0x9\""));
     assert!(stdout.contains("\"x6\":\"0xb\""));
+}
+
+#[test]
+fn rem6_run_gdb_listen_hardware_breakpoint_stops_at_current_pc_before_retire() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let (child, mut stream) =
+        start_riscv_gdb_run("gdb-listen-hardware-breakpoint-current", program, 120);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"Z1,1000,4"),
+        gdb_response(b"OK")
+    );
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p20"),
+        gdb_response(b"0010000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p5"),
+        gdb_response(b"0000000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"z1,1000,4"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(send_gdb_packet(&mut stream, b"c"), gdb_response(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p5"),
+        gdb_response(b"0700000000000000")
+    );
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"stop_code\":0"));
+    assert!(stdout.contains("\"x5\":\"0x7\""));
+}
+
+#[test]
+fn rem6_run_gdb_listen_hardware_breakpoint_stops_before_target_instruction() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0080_0313, // addi x6, x0, 8
+        0x0000_0073, // ecall
+    ]);
+    let (child, mut stream) =
+        start_riscv_gdb_run("gdb-listen-hardware-breakpoint-next", program, 120);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"Z1,1004,4"),
+        gdb_response(b"OK")
+    );
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p20"),
+        gdb_response(b"0410000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p5"),
+        gdb_response(b"0700000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p6"),
+        gdb_response(b"0000000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"z1,1004,4"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(send_gdb_packet(&mut stream, b"c"), gdb_response(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p6"),
+        gdb_response(b"0800000000000000")
+    );
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"stop_code\":0"));
+    assert!(stdout.contains("\"x5\":\"0x7\""));
+    assert!(stdout.contains("\"x6\":\"0x8\""));
+}
+
+#[test]
+fn rem6_run_gdb_listen_hardware_breakpoint_wins_over_instruction_budget() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0080_0313, // addi x6, x0, 8
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x1000, 0x1000, &program);
+    let path = temp_binary("gdb-listen-hardware-breakpoint-instruction-budget", &elf);
+    let listen = unused_loopback_addr();
+    let child = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--max-instructions",
+            "1",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--gdb-listen",
+            &listen.to_string(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stream = match connect_with_retry(listen.address(), Duration::from_secs(3)) {
+        Ok(stream) => stream,
+        Err(error) => {
+            let output = wait_with_output_timeout(child, Duration::from_secs(1));
+            panic!(
+                "failed to connect to GDB listener: {error}; stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"Z1,1004,4"),
+        gdb_response(b"OK")
+    );
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p20"),
+        gdb_response(b"0410000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p5"),
+        gdb_response(b"0700000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p6"),
+        gdb_response(b"0000000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"z1,1004,4"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_at_instruction_limit\""));
+    assert!(stdout.contains("\"committed_instructions\":1"));
+    assert!(!stdout.contains("\"x6\":\"0x8\""));
 }
 
 #[test]
