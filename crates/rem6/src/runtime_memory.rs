@@ -62,6 +62,10 @@ impl CliMemoryRuntime {
         }
     }
 
+    pub(super) const fn uses_dram(&self) -> bool {
+        matches!(self, Self::Dram(_))
+    }
+
     pub(super) fn with_store_mut<R>(
         &self,
         operation: impl FnOnce(&mut PartitionedMemoryStore) -> R,

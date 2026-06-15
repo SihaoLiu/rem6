@@ -287,12 +287,10 @@ impl CliDataCacheRuntime {
         if request.line_layout() != self.layout {
             return None;
         }
-        if !self.ensure_backing(memory, request) {
-            return None;
-        }
+        let backing_dram_access_count = self.ensure_backing(memory, request)?;
 
         Some(
-            self.respond_inner(memory, tick, request)
+            self.respond_inner(memory, tick, request, backing_dram_access_count)
                 .unwrap_or_else(|error| {
                     self.record_error(error);
                     TargetOutcome::Respond(MemoryResponse::retry(request))
@@ -346,7 +344,7 @@ impl CliDataCacheRuntime {
         Ok(())
     }
 
-    fn ensure_backing(&self, memory: &CliMemoryRuntime, request: &MemoryRequest) -> bool {
+    fn ensure_backing(&self, memory: &CliMemoryRuntime, request: &MemoryRequest) -> Option<usize> {
         let line = self.layout.line_address(request.line_address());
         {
             let harness = self.harness.lock().expect("CLI data cache lock");
@@ -361,39 +359,36 @@ impl CliDataCacheRuntime {
                                 .unwrap_or(false)
                         })
                     {
-                        return true;
+                        return Some(0);
                     }
                 }
                 CliDataCacheHarness::Mesi(harnesses) => {
                     if harnesses.lines.contains_key(&line) {
-                        return true;
+                        return Some(0);
                     }
                 }
                 CliDataCacheHarness::Moesi(harnesses) => {
                     if harnesses.lines.contains_key(&line) {
-                        return true;
+                        return Some(0);
                     }
                 }
                 CliDataCacheHarness::Chi(harnesses) => {
                     if harnesses.lines.contains_key(&line) {
-                        return true;
+                        return Some(0);
                     }
                 }
             }
         }
 
-        let Some(data) =
-            memory.read_guest_memory(line.get(), self.layout.bytes() as usize, self.layout)
-        else {
-            return false;
-        };
+        let data =
+            memory.read_guest_memory(line.get(), self.layout.bytes() as usize, self.layout)?;
 
         let mut harness = self.harness.lock().expect("CLI data cache lock");
-        match &mut *harness {
+        let inserted = match &mut *harness {
             CliDataCacheHarness::Msi(harness) => harness.insert_backing_line(line, data).is_ok(),
             CliDataCacheHarness::Mesi(harnesses) => {
                 let Ok(backing) = LineBackingStore::new(self.layout, line, data) else {
-                    return false;
+                    return None;
                 };
                 let Ok(line_harness) = MesiDirectoryLineHarness::new(
                     self.layout,
@@ -401,14 +396,14 @@ impl CliDataCacheRuntime {
                     backing,
                     harnesses.agents.iter().copied(),
                 ) else {
-                    return false;
+                    return None;
                 };
                 harnesses.lines.insert(line, line_harness);
                 true
             }
             CliDataCacheHarness::Moesi(harnesses) => {
                 let Ok(backing) = LineBackingStore::new(self.layout, line, data) else {
-                    return false;
+                    return None;
                 };
                 let Ok(line_harness) = MoesiDirectoryLineHarness::new(
                     self.layout,
@@ -416,14 +411,14 @@ impl CliDataCacheRuntime {
                     backing,
                     harnesses.agents.iter().copied(),
                 ) else {
-                    return false;
+                    return None;
                 };
                 harnesses.lines.insert(line, line_harness);
                 true
             }
             CliDataCacheHarness::Chi(harnesses) => {
                 let Ok(backing) = LineBackingStore::new(self.layout, line, data) else {
-                    return false;
+                    return None;
                 };
                 let Ok(line_harness) = ChiDirectoryLineHarness::new(
                     self.layout,
@@ -431,11 +426,16 @@ impl CliDataCacheRuntime {
                     backing,
                     harnesses.agents.iter().copied(),
                 ) else {
-                    return false;
+                    return None;
                 };
                 harnesses.lines.insert(line, line_harness);
                 true
             }
+        };
+        if inserted {
+            Some(if memory.uses_dram() { 1 } else { 0 })
+        } else {
+            None
         }
     }
 
@@ -444,21 +444,38 @@ impl CliDataCacheRuntime {
         memory: &CliMemoryRuntime,
         start_tick: u64,
         request: &MemoryRequest,
+        backing_dram_access_count: usize,
     ) -> Result<TargetOutcome, Rem6CliError> {
         let mut harness = self.harness.lock().expect("CLI data cache lock");
         match &mut *harness {
-            CliDataCacheHarness::Msi(harness) => {
-                self.respond_msi_inner(memory, start_tick, request, harness)
-            }
-            CliDataCacheHarness::Mesi(harnesses) => {
-                self.respond_mesi_inner(memory, start_tick, request, harnesses)
-            }
-            CliDataCacheHarness::Moesi(harnesses) => {
-                self.respond_moesi_inner(memory, start_tick, request, harnesses)
-            }
-            CliDataCacheHarness::Chi(harnesses) => {
-                self.respond_chi_inner(memory, start_tick, request, harnesses)
-            }
+            CliDataCacheHarness::Msi(harness) => self.respond_msi_inner(
+                memory,
+                start_tick,
+                request,
+                harness,
+                backing_dram_access_count,
+            ),
+            CliDataCacheHarness::Mesi(harnesses) => self.respond_mesi_inner(
+                memory,
+                start_tick,
+                request,
+                harnesses,
+                backing_dram_access_count,
+            ),
+            CliDataCacheHarness::Moesi(harnesses) => self.respond_moesi_inner(
+                memory,
+                start_tick,
+                request,
+                harnesses,
+                backing_dram_access_count,
+            ),
+            CliDataCacheHarness::Chi(harnesses) => self.respond_chi_inner(
+                memory,
+                start_tick,
+                request,
+                harnesses,
+                backing_dram_access_count,
+            ),
         }
     }
 
@@ -468,6 +485,7 @@ impl CliDataCacheRuntime {
         start_tick: u64,
         request: &MemoryRequest,
         harness: &mut MsiBankDirectoryHarness,
+        backing_dram_access_count: usize,
     ) -> Result<TargetOutcome, Rem6CliError> {
         let responses_before = harness.cpu_responses().len();
         let decisions_before = harness.directory_decisions().len();
@@ -505,7 +523,11 @@ impl CliDataCacheRuntime {
             .expect("CLI data cache record lock")
             .push(RiscvDataCacheRunRecord::new(
                 RiscvDataCacheProtocol::Msi,
-                msi_bank_cycle_run_summary(&cycle_run, directory_decision_count),
+                msi_bank_cycle_run_summary(
+                    &cycle_run,
+                    directory_decision_count,
+                    backing_dram_access_count,
+                ),
             ));
         Ok(outcome)
     }
@@ -516,6 +538,7 @@ impl CliDataCacheRuntime {
         start_tick: u64,
         request: &MemoryRequest,
         harnesses: &mut CliMesiLineHarnesses,
+        backing_dram_access_count: usize,
     ) -> Result<TargetOutcome, Rem6CliError> {
         let line = self.layout.line_address(request.line_address());
         let harness = harnesses
@@ -556,7 +579,12 @@ impl CliDataCacheRuntime {
             .expect("CLI data cache record lock")
             .push(RiscvDataCacheRunRecord::new(
                 RiscvDataCacheProtocol::Mesi,
-                data_cache_run_summary(start_tick, cpu_response_count, directory_decision_count, 0),
+                data_cache_run_summary(
+                    start_tick,
+                    cpu_response_count,
+                    directory_decision_count,
+                    backing_dram_access_count,
+                ),
             ));
         Ok(outcome)
     }
@@ -567,6 +595,7 @@ impl CliDataCacheRuntime {
         start_tick: u64,
         request: &MemoryRequest,
         harnesses: &mut CliMoesiLineHarnesses,
+        backing_dram_access_count: usize,
     ) -> Result<TargetOutcome, Rem6CliError> {
         let line = self.layout.line_address(request.line_address());
         let harness = harnesses
@@ -607,7 +636,12 @@ impl CliDataCacheRuntime {
             .expect("CLI data cache record lock")
             .push(RiscvDataCacheRunRecord::new(
                 RiscvDataCacheProtocol::Moesi,
-                data_cache_run_summary(start_tick, cpu_response_count, directory_decision_count, 0),
+                data_cache_run_summary(
+                    start_tick,
+                    cpu_response_count,
+                    directory_decision_count,
+                    backing_dram_access_count,
+                ),
             ));
         Ok(outcome)
     }
@@ -618,6 +652,7 @@ impl CliDataCacheRuntime {
         start_tick: u64,
         request: &MemoryRequest,
         harnesses: &mut CliChiLineHarnesses,
+        backing_dram_access_count: usize,
     ) -> Result<TargetOutcome, Rem6CliError> {
         let line = self.layout.line_address(request.line_address());
         let harness = harnesses
@@ -658,7 +693,12 @@ impl CliDataCacheRuntime {
             .expect("CLI data cache record lock")
             .push(RiscvDataCacheRunRecord::new(
                 RiscvDataCacheProtocol::Chi,
-                data_cache_run_summary(start_tick, cpu_response_count, directory_decision_count, 0),
+                data_cache_run_summary(
+                    start_tick,
+                    cpu_response_count,
+                    directory_decision_count,
+                    backing_dram_access_count,
+                ),
             ));
         Ok(outcome)
     }
@@ -821,12 +861,13 @@ where
 fn msi_bank_cycle_run_summary(
     run: &MsiBankCycleRun,
     directory_decision_count: usize,
+    dram_access_count: usize,
 ) -> ParallelCoherenceRunSummary {
     data_cache_run_summary(
         run.tick(),
         run.response_count(),
         directory_decision_count,
-        0,
+        dram_access_count,
     )
 }
 
