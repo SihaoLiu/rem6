@@ -30,8 +30,10 @@ pub(crate) fn execute_float_register_instruction(
             ) {
                 return Err(());
             }
-            let flags = float::ternary_exception_flags(instruction, lhs, rhs, addend);
-            let (rd, value) = float::float_register_write_ternary(instruction, lhs, rhs, addend);
+            let frm = hart.float_status().frm();
+            let flags = float::ternary_exception_flags(instruction, lhs, rhs, addend, frm);
+            let (rd, value) =
+                float::float_register_write_ternary(instruction, lhs, rhs, addend, frm);
             hart.raise_float_exception_flags(flags);
             float::write_float_register(hart, writes, rd, value);
         }
