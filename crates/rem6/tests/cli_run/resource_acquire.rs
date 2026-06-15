@@ -338,6 +338,70 @@ artifact_size = 4
 }
 
 #[test]
+fn rem6_resource_acquire_loads_chunked_remote_uri_resource() {
+    let workspace = temp_workspace("resource-acquire-remote-uri-chunked");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/kernel.bin", listener.local_addr().unwrap());
+    let server =
+        serve_chunked_http_resource_once(listener, "/kernel.bin", [0x13, 0x00, 0x00, 0x00]);
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        format!(
+            r#"[resource_acquire]
+workload_id = "resource-remote-uri-chunked-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:eba09f2f48f209cfa2dfbf19fc678d755d05559671eceda0164f3e080cb49765"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "remote-uri"
+acquisition_locator = "{url}"
+artifact_digest = "sha256:eba09f2f48f209cfa2dfbf19fc678d755d05559671eceda0164f3e080cb49765"
+artifact_size = 4
+"#,
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+    server.join().unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"workload_id\":\"resource-remote-uri-chunked-cli\""));
+    assert!(stdout.contains("\"resource\":\"kernel\""));
+    assert!(stdout.contains("\"size_bytes\":4"));
+    assert!(stdout.contains("\"acquisition_kind\":\"remote-uri\""));
+    assert!(stdout.contains(&format!("\"acquisition_locator\":\"{url}\"")));
+    assert_stat(
+        &stdout,
+        "sim.resource_acquire.acquired_resources",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.resource_acquire.acquired_bytes",
+        "Byte",
+        4,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_resource_acquire_rejects_remote_uri_content_digest_mismatch() {
     let workspace = temp_workspace("resource-acquire-remote-uri-digest-mismatch");
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -653,6 +717,45 @@ fn serve_http_resource_once(
                     thread::sleep(Duration::from_millis(10));
                 }
                 Err(error) => panic!("failed to accept remote resource request: {error}"),
+            }
+        }
+    })
+}
+
+fn serve_chunked_http_resource_once(
+    listener: TcpListener,
+    path: &'static str,
+    body: [u8; 4],
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        listener.set_nonblocking(true).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    let mut request = [0_u8; 1024];
+                    let bytes = stream.read(&mut request).unwrap();
+                    let request = String::from_utf8_lossy(&request[..bytes]);
+                    assert!(request.starts_with(&format!("GET {path} HTTP/1.1\r\n")));
+                    stream
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                        )
+                        .unwrap();
+                    stream.write_all(b"2\r\n").unwrap();
+                    stream.write_all(&body[..2]).unwrap();
+                    stream.write_all(b"\r\n2\r\n").unwrap();
+                    stream.write_all(&body[2..]).unwrap();
+                    stream.write_all(b"\r\n0\r\n\r\n").unwrap();
+                    return;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    if Instant::now() >= deadline {
+                        return;
+                    }
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("failed to accept chunked remote resource request: {error}"),
             }
         }
     })

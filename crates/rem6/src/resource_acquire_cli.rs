@@ -441,7 +441,12 @@ fn http_response_body(locator: &str, response: &[u8]) -> Result<Vec<u8>, Rem6Cli
             format!("HTTP resource returned status {status_code}"),
         ));
     }
-    Ok(response[header_end + 4..].to_vec())
+    let body = &response[header_end + 4..];
+    if http_headers_have_chunked_transfer_encoding(&headers) {
+        decode_http_chunked_body(locator, body)
+    } else {
+        Ok(body.to_vec())
+    }
 }
 
 fn remote_resource_error(locator: &str, error: impl ToString) -> Rem6CliError {
@@ -449,6 +454,66 @@ fn remote_resource_error(locator: &str, error: impl ToString) -> Rem6CliError {
         path: PathBuf::from(locator),
         error: error.to_string(),
     }
+}
+
+fn http_headers_have_chunked_transfer_encoding(headers: &str) -> bool {
+    headers.lines().skip(1).any(|line| {
+        let Some((name, value)) = line.split_once(':') else {
+            return false;
+        };
+        name.eq_ignore_ascii_case("transfer-encoding")
+            && value
+                .split(',')
+                .any(|encoding| encoding.trim().eq_ignore_ascii_case("chunked"))
+    })
+}
+
+fn decode_http_chunked_body(locator: &str, body: &[u8]) -> Result<Vec<u8>, Rem6CliError> {
+    let mut cursor = 0usize;
+    let mut decoded = Vec::new();
+    loop {
+        let Some(line_end) = find_crlf(&body[cursor..]).map(|offset| cursor + offset) else {
+            return Err(remote_resource_error(
+                locator,
+                "chunked HTTP body is missing a chunk-size line terminator",
+            ));
+        };
+        let line = std::str::from_utf8(&body[cursor..line_end])
+            .map_err(|error| remote_resource_error(locator, error))?;
+        let size_text = line.split_once(';').map_or(line, |(size, _)| size).trim();
+        let size = usize::from_str_radix(size_text, 16).map_err(|error| {
+            remote_resource_error(
+                locator,
+                format!("invalid HTTP chunk size {size_text}: {error}"),
+            )
+        })?;
+        cursor = line_end + 2;
+        if size == 0 {
+            return Ok(decoded);
+        }
+        let data_end = cursor
+            .checked_add(size)
+            .ok_or_else(|| remote_resource_error(locator, "HTTP chunk size overflow"))?;
+        if data_end > body.len() {
+            return Err(remote_resource_error(
+                locator,
+                "HTTP chunk extends past response body",
+            ));
+        }
+        decoded.extend_from_slice(&body[cursor..data_end]);
+        cursor = data_end;
+        if body.get(cursor..cursor + 2) != Some(b"\r\n") {
+            return Err(remote_resource_error(
+                locator,
+                "HTTP chunk is missing a trailing line terminator",
+            ));
+        }
+        cursor += 2;
+    }
+}
+
+fn find_crlf(bytes: &[u8]) -> Option<usize> {
+    bytes.windows(2).position(|window| window == b"\r\n")
 }
 
 fn read_tar_member(archive: &Path, member: &str) -> Result<Vec<u8>, Rem6CliError> {
