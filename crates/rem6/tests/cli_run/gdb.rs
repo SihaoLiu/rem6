@@ -1,8 +1,9 @@
 use std::{
-    env,
+    env, fmt,
     io::{ErrorKind, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     process::{Child, Command, Output, Stdio},
+    sync::{Mutex, MutexGuard, OnceLock},
     thread,
     time::{Duration, Instant},
 };
@@ -35,7 +36,7 @@ fn start_riscv_gdb_run(name: &str, program: Vec<u8>, max_tick: u64) -> (Child, T
         .spawn()
         .unwrap();
 
-    let stream = match connect_with_retry(listen, Duration::from_secs(3)) {
+    let stream = match connect_with_retry(listen.address(), Duration::from_secs(3)) {
         Ok(stream) => stream,
         Err(error) => {
             let output = wait_with_output_timeout(child, Duration::from_secs(1));
@@ -83,7 +84,7 @@ fn rem6_run_gdb_listen_serves_loaded_riscv_state_before_execution() {
         .spawn()
         .unwrap();
 
-    let mut stream = match connect_with_retry(listen, Duration::from_secs(3)) {
+    let mut stream = match connect_with_retry(listen.address(), Duration::from_secs(3)) {
         Ok(stream) => stream,
         Err(error) => {
             let output = wait_with_output_timeout(child, Duration::from_secs(1));
@@ -162,7 +163,7 @@ fn rem6_run_gdb_listen_applies_preexecution_state_changes() {
         .spawn()
         .unwrap();
 
-    let mut stream = match connect_with_retry(listen, Duration::from_secs(3)) {
+    let mut stream = match connect_with_retry(listen.address(), Duration::from_secs(3)) {
         Ok(stream) => stream,
         Err(error) => {
             let output = wait_with_output_timeout(child, Duration::from_secs(1));
@@ -258,7 +259,7 @@ fn rem6_run_gdb_listen_single_steps_before_detach() {
         .spawn()
         .unwrap();
 
-    let mut stream = match connect_with_retry(listen, Duration::from_secs(3)) {
+    let mut stream = match connect_with_retry(listen.address(), Duration::from_secs(3)) {
         Ok(stream) => stream,
         Err(error) => {
             let output = wait_with_output_timeout(child, Duration::from_secs(1));
@@ -332,7 +333,7 @@ fn rem6_run_gdb_listen_continues_until_guest_stop() {
         .spawn()
         .unwrap();
 
-    let mut stream = match connect_with_retry(listen, Duration::from_secs(3)) {
+    let mut stream = match connect_with_retry(listen.address(), Duration::from_secs(3)) {
         Ok(stream) => stream,
         Err(error) => {
             let output = wait_with_output_timeout(child, Duration::from_secs(1));
@@ -406,7 +407,7 @@ fn rem6_run_gdb_listen_vcont_continue_runs_until_guest_stop() {
         .spawn()
         .unwrap();
 
-    let mut stream = match connect_with_retry(listen, Duration::from_secs(3)) {
+    let mut stream = match connect_with_retry(listen.address(), Duration::from_secs(3)) {
         Ok(stream) => stream,
         Err(error) => {
             let output = wait_with_output_timeout(child, Duration::from_secs(1));
@@ -485,7 +486,7 @@ fn rem6_run_gdb_listen_write_watchpoint_stops_on_riscv_store() {
         .spawn()
         .unwrap();
 
-    let mut stream = match connect_with_retry(listen, Duration::from_secs(3)) {
+    let mut stream = match connect_with_retry(listen.address(), Duration::from_secs(3)) {
         Ok(stream) => stream,
         Err(error) => {
             let output = wait_with_output_timeout(child, Duration::from_secs(1));
@@ -534,6 +535,195 @@ fn rem6_run_gdb_listen_write_watchpoint_stops_on_riscv_store() {
     assert!(stdout.contains("\"status\":\"executed_until_trap\""));
     assert!(stdout.contains("\"stop_code\":0"));
     assert!(stdout.contains("\"x6\":\"0x55\""));
+    assert!(stdout.contains("\"x7\":\"0x1\""));
+}
+
+#[test]
+fn rem6_run_gdb_listen_read_watchpoint_stops_on_riscv_load() {
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),          // auipc x2, 0
+        i_type(64, 2, 0x3, 6, 0x03), // ld x6, 64(x2)
+        0x0010_0393,                 // addi x7, x0, 1
+        0x0000_0073,                 // ecall
+    ]);
+    program.resize(72, 0);
+    program[64..72].copy_from_slice(&0x1122_3344_5566_7788_u64.to_le_bytes());
+    let (child, mut stream) = start_riscv_gdb_run("gdb-listen-read-watchpoint", program, 120);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"Z3,1040,8"),
+        gdb_response(b"OK")
+    );
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p6"),
+        gdb_response(b"8877665544332211")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p7"),
+        gdb_response(b"0000000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"z3,1040,8"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"stop_code\":0"));
+    assert!(stdout.contains("\"x6\":\"0x1122334455667788\""));
+    assert!(stdout.contains("\"x7\":\"0x1\""));
+}
+
+#[test]
+fn rem6_run_gdb_listen_access_watchpoint_stops_on_riscv_store() {
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),    // auipc x2, 0
+        0x0550_0313,           // addi x6, x0, 0x55
+        s_type(64, 6, 2, 0x3), // sd x6, 64(x2)
+        0x0010_0393,           // addi x7, x0, 1
+        0x0000_0073,           // ecall
+    ]);
+    program.resize(72, 0);
+    let (child, mut stream) = start_riscv_gdb_run("gdb-listen-access-watchpoint", program, 120);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"Z4,1040,8"),
+        gdb_response(b"OK")
+    );
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p7"),
+        gdb_response(b"0000000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"m1040,8"),
+        gdb_response(b"5500000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"z4,1040,8"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"stop_code\":0"));
+    assert!(stdout.contains("\"x6\":\"0x55\""));
+    assert!(stdout.contains("\"x7\":\"0x1\""));
+}
+
+#[test]
+fn rem6_run_gdb_listen_read_watchpoint_ignores_riscv_store() {
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),    // auipc x2, 0
+        0x0550_0313,           // addi x6, x0, 0x55
+        s_type(64, 6, 2, 0x3), // sd x6, 64(x2)
+        0x0010_0393,           // addi x7, x0, 1
+        0x0000_0073,           // ecall
+    ]);
+    program.resize(72, 0);
+    let (child, mut stream) =
+        start_riscv_gdb_run("gdb-listen-read-watchpoint-ignore-store", program, 120);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"Z3,1040,8"),
+        gdb_response(b"OK")
+    );
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p7"),
+        gdb_response(b"0100000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"m1040,8"),
+        gdb_response(b"5500000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"z3,1040,8"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"stop_code\":0"));
+    assert!(stdout.contains("\"x7\":\"0x1\""));
+}
+
+#[test]
+fn rem6_run_gdb_listen_write_watchpoint_ignores_riscv_load() {
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),          // auipc x2, 0
+        i_type(64, 2, 0x3, 6, 0x03), // ld x6, 64(x2)
+        0x0010_0393,                 // addi x7, x0, 1
+        0x0000_0073,                 // ecall
+    ]);
+    program.resize(72, 0);
+    program[64..72].copy_from_slice(&0x1122_3344_5566_7788_u64.to_le_bytes());
+    let (child, mut stream) =
+        start_riscv_gdb_run("gdb-listen-write-watchpoint-ignore-load", program, 120);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"Z2,1040,8"),
+        gdb_response(b"OK")
+    );
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p6"),
+        gdb_response(b"8877665544332211")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p7"),
+        gdb_response(b"0100000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"z2,1040,8"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"stop_code\":0"));
+    assert!(stdout.contains("\"x6\":\"0x1122334455667788\""));
     assert!(stdout.contains("\"x7\":\"0x1\""));
 }
 
@@ -619,7 +809,7 @@ fn rem6_run_gdb_listen_write_watchpoint_wins_over_instruction_budget_drain() {
         .spawn()
         .unwrap();
 
-    let mut stream = match connect_with_retry(listen, Duration::from_secs(3)) {
+    let mut stream = match connect_with_retry(listen.address(), Duration::from_secs(3)) {
         Ok(stream) => stream,
         Err(error) => {
             let output = wait_with_output_timeout(child, Duration::from_secs(1));
@@ -758,7 +948,7 @@ fn rem6_run_gdb_listen_rejects_continue_after_completed_guest_stop() {
         .spawn()
         .unwrap();
 
-    let mut stream = match connect_with_retry(listen, Duration::from_secs(3)) {
+    let mut stream = match connect_with_retry(listen.address(), Duration::from_secs(3)) {
         Ok(stream) => stream,
         Err(error) => {
             let output = wait_with_output_timeout(child, Duration::from_secs(1));
@@ -843,7 +1033,7 @@ fn rem6_run_gdb_listen_rejects_single_step_without_tick_budget() {
         .spawn()
         .unwrap();
 
-    let mut stream = match connect_with_retry(listen, Duration::from_secs(3)) {
+    let mut stream = match connect_with_retry(listen.address(), Duration::from_secs(3)) {
         Ok(stream) => stream,
         Err(error) => {
             let output = wait_with_output_timeout(child, Duration::from_secs(1));
@@ -917,7 +1107,7 @@ fn rem6_run_gdb_listen_single_step_counts_against_instruction_limit() {
         .spawn()
         .unwrap();
 
-    let mut stream = match connect_with_retry(listen, Duration::from_secs(3)) {
+    let mut stream = match connect_with_retry(listen.address(), Duration::from_secs(3)) {
         Ok(stream) => stream,
         Err(error) => {
             let output = wait_with_output_timeout(child, Duration::from_secs(1));
@@ -986,7 +1176,7 @@ fn rem6_run_gdb_listen_processes_buffered_packets_after_single_step() {
         .spawn()
         .unwrap();
 
-    let mut stream = match connect_with_retry(listen, Duration::from_secs(3)) {
+    let mut stream = match connect_with_retry(listen.address(), Duration::from_secs(3)) {
         Ok(stream) => stream,
         Err(error) => {
             let output = wait_with_output_timeout(child, Duration::from_secs(1));
@@ -1075,11 +1265,36 @@ fn rem6_run_rejects_non_loopback_gdb_listen_before_accepting_connections() {
     assert!(stderr.contains("--gdb-listen requires an explicit loopback address"));
 }
 
-fn unused_loopback_addr() -> SocketAddr {
+struct ReservedLoopbackAddr {
+    address: SocketAddr,
+    _guard: MutexGuard<'static, ()>,
+}
+
+impl ReservedLoopbackAddr {
+    fn address(&self) -> SocketAddr {
+        self.address
+    }
+}
+
+impl fmt::Display for ReservedLoopbackAddr {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.address.fmt(formatter)
+    }
+}
+
+fn unused_loopback_addr() -> ReservedLoopbackAddr {
+    static GDB_LISTEN_ADDR_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let guard = GDB_LISTEN_ADDR_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     drop(listener);
-    address
+    ReservedLoopbackAddr {
+        address,
+        _guard: guard,
+    }
 }
 
 fn connect_with_retry(address: SocketAddr, timeout: Duration) -> std::io::Result<TcpStream> {

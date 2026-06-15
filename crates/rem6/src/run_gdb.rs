@@ -245,10 +245,10 @@ where
                     .is_some_and(|budget| outcome.gdb_retired_instruction_count() >= budget)
                 {
                     RiscvGdbSingleStepOutcome::NoInstructionRetired
-                } else if has_active_gdb_write_watchpoints(&session) {
+                } else if has_active_gdb_data_watchpoints(&session) {
                     data_access_cursor.sync_to_cluster(cluster);
                     let mut debug_stop = |cluster: &RiscvCluster, _turn: &RiscvClusterTurn| {
-                        cluster_hits_active_gdb_write_watchpoint(
+                        cluster_hits_active_gdb_data_watchpoint(
                             &session,
                             &mut data_access_cursor,
                             cluster,
@@ -285,10 +285,10 @@ where
             RiscvGdbRunControl::Continue => {
                 let remaining_instructions = instruction_budget
                     .map(|budget| budget.saturating_sub(outcome.gdb_retired_instruction_count()));
-                let continue_outcome = if has_active_gdb_write_watchpoints(&session) {
+                let continue_outcome = if has_active_gdb_data_watchpoints(&session) {
                     data_access_cursor.sync_to_cluster(cluster);
                     let mut debug_stop = |cluster: &RiscvCluster, _turn: &RiscvClusterTurn| {
-                        cluster_hits_active_gdb_write_watchpoint(
+                        cluster_hits_active_gdb_data_watchpoint(
                             &session,
                             &mut data_access_cursor,
                             cluster,
@@ -549,7 +549,10 @@ fn rejects_preexecution_gdb_command(
         }
         GdbRemoteCommand::Trap { request } => !matches!(
             request.point().kind(),
-            GdbRemoteTrapKind::SoftwareBreakpoint | GdbRemoteTrapKind::WriteWatchpoint
+            GdbRemoteTrapKind::SoftwareBreakpoint
+                | GdbRemoteTrapKind::WriteWatchpoint
+                | GdbRemoteTrapKind::ReadWatchpoint
+                | GdbRemoteTrapKind::AccessWatchpoint
         ),
         _ => false,
     }
@@ -571,14 +574,18 @@ fn supports_preexecution_resume_request(request: &GdbRemoteResumeRequest) -> boo
         )
 }
 
-fn has_active_gdb_write_watchpoints(session: &GdbRemoteSession) -> bool {
-    session
-        .active_traps()
-        .iter()
-        .any(|point| point.kind() == GdbRemoteTrapKind::WriteWatchpoint)
+fn has_active_gdb_data_watchpoints(session: &GdbRemoteSession) -> bool {
+    session.active_traps().iter().any(|point| {
+        matches!(
+            point.kind(),
+            GdbRemoteTrapKind::WriteWatchpoint
+                | GdbRemoteTrapKind::ReadWatchpoint
+                | GdbRemoteTrapKind::AccessWatchpoint
+        )
+    })
 }
 
-fn cluster_hits_active_gdb_write_watchpoint(
+fn cluster_hits_active_gdb_data_watchpoint(
     session: &GdbRemoteSession,
     data_access_cursor: &mut RiscvGdbDataAccessCursor,
     cluster: &RiscvCluster,
@@ -587,10 +594,10 @@ fn cluster_hits_active_gdb_write_watchpoint(
     let data_events = data_access_cursor.take_new_events(cluster);
     data_events
         .iter()
-        .any(|(_, event)| data_event_hits_active_write_watchpoint(event, active_traps))
+        .any(|(_, event)| data_event_hits_active_data_watchpoint(event, active_traps))
 }
 
-fn data_event_hits_active_write_watchpoint(
+fn data_event_hits_active_data_watchpoint(
     event: &RiscvDataAccessEvent,
     active_traps: &[rem6_debug::GdbRemoteTrapPoint],
 ) -> bool {
@@ -598,8 +605,7 @@ fn data_event_hits_active_write_watchpoint(
         return false;
     }
     active_traps.iter().any(|point| {
-        point.kind() == GdbRemoteTrapKind::WriteWatchpoint
-            && memory_operation_writes(event.operation())
+        data_watchpoint_kind_matches_access(point.kind(), event.operation())
             && range_overlaps(
                 event.physical_address().get(),
                 event.size().bytes(),
@@ -609,10 +615,40 @@ fn data_event_hits_active_write_watchpoint(
     })
 }
 
+fn data_watchpoint_kind_matches_access(
+    kind: GdbRemoteTrapKind,
+    operation: MemoryOperation,
+) -> bool {
+    match kind {
+        GdbRemoteTrapKind::WriteWatchpoint => memory_operation_writes(operation),
+        GdbRemoteTrapKind::ReadWatchpoint => memory_operation_reads(operation),
+        GdbRemoteTrapKind::AccessWatchpoint => {
+            memory_operation_writes(operation) || memory_operation_reads(operation)
+        }
+        GdbRemoteTrapKind::SoftwareBreakpoint | GdbRemoteTrapKind::HardwareBreakpoint => false,
+    }
+}
+
+fn memory_operation_reads(operation: MemoryOperation) -> bool {
+    matches!(
+        operation,
+        MemoryOperation::ReadShared
+            | MemoryOperation::ReadUnique
+            | MemoryOperation::LoadLocked
+            | MemoryOperation::LockedRmwRead
+            | MemoryOperation::Atomic
+            | MemoryOperation::AtomicNoReturn
+    )
+}
+
 fn memory_operation_writes(operation: MemoryOperation) -> bool {
     matches!(
         operation,
-        MemoryOperation::Write | MemoryOperation::StoreConditional | MemoryOperation::Atomic
+        MemoryOperation::Write
+            | MemoryOperation::LockedRmwWrite
+            | MemoryOperation::StoreConditional
+            | MemoryOperation::Atomic
+            | MemoryOperation::AtomicNoReturn
     )
 }
 
