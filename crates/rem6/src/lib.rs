@@ -35,6 +35,8 @@ mod formatting;
 mod guest_memory;
 mod gups_cli;
 mod parallel_stats;
+mod resource_acquire_cli;
+mod resource_acquire_config;
 mod runtime_memory;
 mod stats_output;
 mod trace_replay_cli;
@@ -53,6 +55,10 @@ use data_cache_runtime::{
 };
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
+pub use resource_acquire_cli::{
+    run_resource_acquire_config, Rem6ResourceAcquireArtifact, Rem6ResourceAcquireResourceSummary,
+};
+pub use resource_acquire_config::{Rem6ResourceAcquireConfig, Rem6ResourceAcquireResourceConfig};
 use runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use stats_output::{run_stats_output, Rem6StatsInputs};
 pub use trace_replay_cli::{
@@ -423,6 +429,7 @@ where
         "run" => run_run_cli(args),
         "gups" => gups_cli::run_gups_cli(args),
         "trace-replay" => trace_replay_cli::run_trace_replay_cli(args),
+        "resource-acquire" => resource_acquire_cli::run_resource_acquire_cli(args),
         _ => Err(Rem6CliError::UnsupportedCommand {
             command: command.clone(),
         }),

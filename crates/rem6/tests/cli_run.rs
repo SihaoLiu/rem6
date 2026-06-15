@@ -6,6 +6,8 @@ mod execution;
 mod gups;
 #[path = "cli_run/load.rs"]
 mod load;
+#[path = "cli_run/resource_acquire.rs"]
+mod resource_acquire;
 #[path = "cli_run/riscv_se_chdir.rs"]
 mod riscv_se_chdir;
 #[path = "cli_run/riscv_se_fd.rs"]

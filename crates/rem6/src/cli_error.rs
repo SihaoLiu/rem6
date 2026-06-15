@@ -94,6 +94,12 @@ pub enum Rem6CliError {
     InvalidTraceReplayDataCacheProtocol {
         value: String,
     },
+    InvalidResourceKind {
+        value: String,
+    },
+    InvalidResourceAcquisitionKind {
+        value: String,
+    },
     InvalidRunDataCacheProtocol {
         value: String,
     },
@@ -155,6 +161,10 @@ pub enum Rem6CliError {
         error: String,
     },
     ReadLoadBlob {
+        path: PathBuf,
+        error: String,
+    },
+    ReadResourceArtifact {
         path: PathBuf,
         error: String,
     },
@@ -282,6 +292,12 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidTraceReplayDataCacheProtocol { value } => {
                 write!(formatter, "invalid trace replay data cache protocol {value}")
             }
+            Self::InvalidResourceKind { value } => {
+                write!(formatter, "invalid resource kind {value}")
+            }
+            Self::InvalidResourceAcquisitionKind { value } => {
+                write!(formatter, "invalid resource acquisition kind {value}")
+            }
             Self::InvalidRunDataCacheProtocol { value } => {
                 write!(formatter, "invalid run data cache protocol {value}")
             }
@@ -373,6 +389,13 @@ impl fmt::Display for Rem6CliError {
                 write!(
                     formatter,
                     "failed to read load blob {}: {error}",
+                    path.display()
+                )
+            }
+            Self::ReadResourceArtifact { path, error } => {
+                write!(
+                    formatter,
+                    "failed to read resource artifact {}: {error}",
                     path.display()
                 )
             }
