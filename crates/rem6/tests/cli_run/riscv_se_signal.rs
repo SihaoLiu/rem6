@@ -1,4 +1,8 @@
-use std::process::Command;
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use crate::support::*;
 
@@ -109,4 +113,158 @@ fn rem6_run_riscv_se_runs_static_raw_thread_signal_zero() {
     assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
     assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
     assert_stat(&stdout, "sim.stop_code", "Count", 61, "constant");
+}
+
+#[test]
+fn rem6_run_riscv_se_runs_static_raw_sigaltstack_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE raw sigaltstack smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE raw sigaltstack smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-sigaltstack");
+    let source = workspace.join("raw-sigaltstack.c");
+    let binary = workspace.join("raw-sigaltstack");
+    fs::write(
+        &source,
+        r#"struct linux_stack {
+    void *ss_sp;
+    int ss_flags;
+    unsigned int padding;
+    unsigned long ss_size;
+};
+
+static long linux_syscall2(long number, long arg0, long arg1) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+static void finish(int ok) {
+    static const char pass[] = "raw-sigaltstack:0:2:0:0:0:1:0:8192:0:0:2:0\n";
+    static const char fail[] = "raw-sigaltstack:fail\n";
+    if (ok) {
+        linux_syscall3(64, 1, (long)pass, sizeof(pass) - 1);
+        linux_syscall2(93, 69, 0);
+    } else {
+        linux_syscall3(64, 1, (long)fail, sizeof(fail) - 1);
+        linux_syscall2(93, 70, 0);
+    }
+    for (;;) {
+    }
+}
+
+int main(void) {
+    char alt[8192];
+    struct linux_stack old0 = {0};
+    struct linux_stack set = {alt, 0, 0, sizeof(alt)};
+    struct linux_stack old1 = {0};
+    struct linux_stack disable = {0, 2, 0, 0};
+    struct linux_stack old2 = {0};
+    long q0 = linux_syscall2(132, 0, (long)&old0);
+    long s0 = linux_syscall2(132, (long)&set, 0);
+    long q1 = linux_syscall2(132, 0, (long)&old1);
+    long d0 = linux_syscall2(132, (long)&disable, 0);
+    long q2 = linux_syscall2(132, 0, (long)&old2);
+    int old1_matches = old1.ss_sp == alt;
+    finish(q0 == 0 && old0.ss_sp == 0 && old0.ss_flags == 2 && old0.ss_size == 0 &&
+           s0 == 0 && q1 == 0 && old1_matches && old1.ss_flags == 0 &&
+           old1.ss_size == sizeof(alt) && d0 == 0 && q2 == 0 &&
+           old2.ss_flags == 2 && old2.ss_size == 0);
+    return 71;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(69),
+        "qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(
+        qemu_output.stdout,
+        b"raw-sigaltstack:0:2:0:0:0:1:0:8192:0:0:2:0\n"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":69"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"raw-sigaltstack:0:2:0:0:0:1:0:8192:0:0:2:0\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}
+
+fn find_riscv_tool(name: &str) -> Option<PathBuf> {
+    find_tool_on_path(name).or_else(|| {
+        let module_candidate =
+            Path::new("/mnt/nas0/software/riscv/riscv64-elf-ubuntu-24.04-gcc/bin").join(name);
+        module_candidate.is_file().then_some(module_candidate)
+    })
+}
+
+fn find_tool_on_path(name: &str) -> Option<PathBuf> {
+    env::var_os("PATH").and_then(|paths| {
+        env::split_paths(&paths)
+            .map(|directory| directory.join(name))
+            .find(|candidate| candidate.is_file())
+    })
 }

@@ -137,7 +137,8 @@ use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
 use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
 use signal::{
     syscall_kill, syscall_rt_sigaction, syscall_rt_sigpending, syscall_rt_sigprocmask,
-    syscall_rt_sigtimedwait, syscall_tgkill, syscall_tkill, RiscvSignalAction,
+    syscall_rt_sigtimedwait, syscall_sigaltstack, syscall_tgkill, syscall_tkill, RiscvSignalAction,
+    RiscvSignalAltStack, RISCV_LINUX_SIGALTSTACK,
 };
 use sleep::{
     syscall_clock_nanosleep, syscall_nanosleep, RISCV_LINUX_CLOCK_NANOSLEEP, RISCV_LINUX_NANOSLEEP,
@@ -290,6 +291,7 @@ pub struct RiscvSyscallState {
     file_creation_mask: u32,
     signal_mask: u64,
     signal_actions: BTreeMap<u64, RiscvSignalAction>,
+    signal_alt_stack: RiscvSignalAltStack,
     membarrier_registrations: u64,
     stdin: VecDeque<u8>,
     getrandom_byte_counter: u8,
@@ -373,6 +375,7 @@ impl RiscvSyscallState {
             file_creation_mask: 0,
             signal_mask: 0,
             signal_actions: BTreeMap::new(),
+            signal_alt_stack: RiscvSignalAltStack::disabled(),
             membarrier_registrations: 0,
             stdin: VecDeque::new(),
             getrandom_byte_counter: 0,
@@ -1363,6 +1366,10 @@ impl RiscvSyscallTable {
             RISCV_LINUX_TGKILL => Some(RiscvSyscallOutcome::Return {
                 value: syscall_tgkill(request, state, tick),
             }),
+            RISCV_LINUX_SIGALTSTACK => {
+                syscall_sigaltstack(request, state, guest_memory_reader, guest_memory_writer)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
             RISCV_LINUX_SCHED_YIELD
             | RISCV_LINUX_RT_SIGSUSPEND
             | RISCV_LINUX_RT_SIGQUEUEINFO

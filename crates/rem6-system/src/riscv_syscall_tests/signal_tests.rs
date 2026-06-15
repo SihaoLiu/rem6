@@ -9,6 +9,9 @@ const SA_SIGINFO: u64 = 0x0000_0004;
 const SA_UNSUPPORTED: u64 = 0x0000_0400;
 const SA_RESTART: u64 = 0x1000_0000;
 const EAGAIN: u64 = 11;
+const RISCV_LINUX_SIGALTSTACK_FOR_TEST: u64 = 132;
+const SS_DISABLE: u64 = 2;
+const LINUX_STACK_T_BYTES: usize = 24;
 
 #[test]
 fn linux_table_kill_signal_zero_accepts_current_process() {
@@ -1015,6 +1018,114 @@ fn linux_table_rt_sigtimedwait_reports_timeout_errors() {
 }
 
 #[test]
+fn linux_table_sigaltstack_queries_sets_and_disables_alt_stack() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let reader = stack_reader(vec![
+        (0x9000, stack_t_bytes(0x9100, 0, 8192)),
+        (0x9020, stack_t_bytes(0, SS_DISABLE, 0)),
+    ]);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer = recording_stack_writer(writes.clone());
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SIGALTSTACK_FOR_TEST,
+                [0, 0xa000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            11,
+            Some(&reader),
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        written_stack_at(&writes.lock().unwrap(), 0xa000),
+        (0, SS_DISABLE, 0)
+    );
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_SIGALTSTACK_FOR_TEST,
+                [0x9000, 0xa020, 0, 0, 0, 0],
+            ),
+            &mut state,
+            12,
+            Some(&reader),
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        written_stack_at(&writes.lock().unwrap(), 0xa020),
+        (0, SS_DISABLE, 0)
+    );
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_SIGALTSTACK_FOR_TEST,
+                [0, 0xa040, 0, 0, 0, 0],
+            ),
+            &mut state,
+            13,
+            Some(&reader),
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        written_stack_at(&writes.lock().unwrap(), 0xa040),
+        (0x9100, 0, 8192)
+    );
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_SIGALTSTACK_FOR_TEST,
+                [0x9020, 0xa060, 0, 0, 0, 0],
+            ),
+            &mut state,
+            14,
+            Some(&reader),
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        written_stack_at(&writes.lock().unwrap(), 0xa060),
+        (0x9100, 0, 8192)
+    );
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8010,
+                RISCV_LINUX_SIGALTSTACK_FOR_TEST,
+                [0, 0xa080, 0, 0, 0, 0],
+            ),
+            &mut state,
+            15,
+            Some(&reader),
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        written_stack_at(&writes.lock().unwrap(), 0xa080),
+        (0, SS_DISABLE, 0)
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
 fn linux_table_rt_sigaction_installs_and_queries_guest_action() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
@@ -1470,6 +1581,15 @@ fn sigaction_bytes(handler: u64, flags: u64, mask: u64) -> Vec<u8> {
     bytes
 }
 
+fn stack_t_bytes(sp: u64, flags: u64, size: u64) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(LINUX_STACK_T_BYTES);
+    bytes.extend_from_slice(&sp.to_le_bytes());
+    bytes.extend_from_slice(&(flags as u32).to_le_bytes());
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(&size.to_le_bytes());
+    bytes
+}
+
 fn timespec64_bytes(seconds: i64, nanoseconds: i64) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(16);
     bytes.extend_from_slice(&seconds.to_le_bytes());
@@ -1486,6 +1606,37 @@ fn written_sigaction_at(writes: &[(u64, Vec<u8>)], address: u64) -> (u64, u64, u
     (
         read_le_u64(bytes, 0),
         read_le_u64(bytes, 8),
+        read_le_u64(bytes, 16),
+    )
+}
+
+fn stack_reader(regions: Vec<(u64, Vec<u8>)>) -> RiscvGuestMemoryReader {
+    RiscvGuestMemoryReader::new(move |address, bytes| {
+        regions
+            .iter()
+            .find(|(base, region)| *base == address && region.len() == bytes)
+            .map(|(_, region)| region.clone())
+    })
+}
+
+fn recording_stack_writer(
+    writes: std::sync::Arc<std::sync::Mutex<Vec<(u64, Vec<u8>)>>>,
+) -> RiscvGuestMemoryWriter {
+    RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes.lock().unwrap().push((address, bytes.to_vec()));
+        true
+    })
+}
+
+fn written_stack_at(writes: &[(u64, Vec<u8>)], address: u64) -> (u64, u64, u64) {
+    let (_, bytes) = writes
+        .iter()
+        .find(|(write_address, _)| *write_address == address)
+        .expect("signal stack write must exist");
+    assert_eq!(bytes.len(), LINUX_STACK_T_BYTES);
+    (
+        read_le_u64(bytes, 0),
+        u64::from(read_le_u32(bytes, 8)),
         read_le_u64(bytes, 16),
     )
 }

@@ -2,13 +2,18 @@ use super::time::read_timespec64;
 use super::{
     linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallRequest,
     RiscvSyscallState, RISCV_LINUX_EAGAIN, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
-    RISCV_LINUX_ENOSYS, RISCV_LINUX_ESRCH,
+    RISCV_LINUX_ENOMEM, RISCV_LINUX_ENOSYS, RISCV_LINUX_ESRCH,
 };
+
+pub(super) const RISCV_LINUX_SIGALTSTACK: u64 = 132;
 
 const RISCV_LINUX_SIG_BLOCK: u64 = 0;
 const RISCV_LINUX_SIG_UNBLOCK: u64 = 1;
 const RISCV_LINUX_SIG_SETMASK: u64 = 2;
 const RISCV_LINUX_SIGSET_BYTES: u64 = 8;
+const RISCV_LINUX_STACK_T_BYTES: usize = 24;
+const RISCV_LINUX_MINSIGSTKSZ: u64 = 2048;
+const RISCV_LINUX_SS_DISABLE: u64 = 2;
 const RISCV_LINUX_SIGKILL_MASK: u64 = 1 << (9 - 1);
 const RISCV_LINUX_SIGSTOP_MASK: u64 = 1 << (19 - 1);
 const RISCV_LINUX_UNBLOCKABLE_SIGNALS: u64 = RISCV_LINUX_SIGKILL_MASK | RISCV_LINUX_SIGSTOP_MASK;
@@ -64,6 +69,68 @@ impl RiscvSignalAction {
         bytes[8..16].copy_from_slice(&self.flags.to_le_bytes());
         bytes[16..24].copy_from_slice(&self.mask.to_le_bytes());
         bytes
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct RiscvSignalAltStack {
+    sp: u64,
+    flags: u64,
+    size: u64,
+}
+
+impl RiscvSignalAltStack {
+    pub(super) const fn disabled() -> Self {
+        Self {
+            sp: 0,
+            flags: RISCV_LINUX_SS_DISABLE,
+            size: 0,
+        }
+    }
+
+    const fn enabled(sp: u64, size: u64) -> Self {
+        Self { sp, flags: 0, size }
+    }
+
+    fn from_guest_bytes(bytes: Vec<u8>) -> Option<Self> {
+        if bytes.len() != RISCV_LINUX_STACK_T_BYTES {
+            return None;
+        }
+        let sp = u64::from_le_bytes(bytes[0..8].try_into().ok()?);
+        let flags = u64::from(u32::from_le_bytes(bytes[8..12].try_into().ok()?));
+        let size = u64::from_le_bytes(bytes[16..24].try_into().ok()?);
+        Some(match flags {
+            0 => Self::enabled(sp, size),
+            RISCV_LINUX_SS_DISABLE => Self::disabled(),
+            _ => Self { sp, flags, size },
+        })
+    }
+
+    fn validate(self) -> Result<Self, u64> {
+        match self.flags {
+            0 if self.size < RISCV_LINUX_MINSIGSTKSZ => Err(RISCV_LINUX_ENOMEM),
+            0 => Ok(self),
+            RISCV_LINUX_SS_DISABLE => Ok(Self::disabled()),
+            _ => Err(RISCV_LINUX_EINVAL),
+        }
+    }
+
+    fn to_guest_bytes(self) -> [u8; RISCV_LINUX_STACK_T_BYTES] {
+        let mut bytes = [0; RISCV_LINUX_STACK_T_BYTES];
+        bytes[0..8].copy_from_slice(&self.sp.to_le_bytes());
+        bytes[8..12].copy_from_slice(&(self.flags as u32).to_le_bytes());
+        bytes[16..24].copy_from_slice(&self.size.to_le_bytes());
+        bytes
+    }
+}
+
+impl RiscvSyscallState {
+    pub(super) const fn signal_alt_stack(&self) -> RiscvSignalAltStack {
+        self.signal_alt_stack
+    }
+
+    pub(super) fn set_signal_alt_stack(&mut self, alt_stack: RiscvSignalAltStack) {
+        self.signal_alt_stack = alt_stack;
     }
 }
 
@@ -229,6 +296,45 @@ pub(super) fn syscall_rt_sigpending(
     let pending_mask = 0_u64.to_le_bytes();
     if !guest_memory_writer.write(request.argument(0), &pending_mask[..sigsetsize as usize]) {
         return Some(linux_error(RISCV_LINUX_EFAULT));
+    }
+    Some(0)
+}
+
+pub(super) fn syscall_sigaltstack(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> Option<u64> {
+    let stack_address = request.argument(0);
+    let old_stack_address = request.argument(1);
+    let requested_stack = if stack_address == 0 {
+        None
+    } else {
+        let guest_memory_reader = guest_memory_reader?;
+        let bytes = match guest_memory_reader.read(stack_address, RISCV_LINUX_STACK_T_BYTES) {
+            Some(bytes) => bytes,
+            None => return Some(linux_error(RISCV_LINUX_EFAULT)),
+        };
+        let stack = match RiscvSignalAltStack::from_guest_bytes(bytes) {
+            Some(stack) => stack,
+            None => return Some(linux_error(RISCV_LINUX_EFAULT)),
+        };
+        match stack.validate() {
+            Ok(stack) => Some(stack),
+            Err(error) => return Some(linux_error(error)),
+        }
+    };
+
+    let old_stack = state.signal_alt_stack();
+    if old_stack_address != 0 {
+        let guest_memory_writer = guest_memory_writer?;
+        if !guest_memory_writer.write(old_stack_address, &old_stack.to_guest_bytes()) {
+            return Some(linux_error(RISCV_LINUX_EFAULT));
+        }
+    }
+    if let Some(stack) = requested_stack {
+        state.set_signal_alt_stack(stack);
     }
     Some(0)
 }
