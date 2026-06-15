@@ -124,6 +124,7 @@ use crate::{
 
 const DEFAULT_MAX_TURNS: usize = 64;
 const WORKLOAD_STOP_REASON_HOST: &str = "host-stop";
+const WORKLOAD_STOP_REASON_DEBUG: &str = "debug-stop";
 const WORKLOAD_STOP_REASON_IDLE: &str = "idle";
 const WORKLOAD_STOP_REASON_TICK_LIMIT: &str = "tick-limit";
 const WORKLOAD_STOP_REASON_INSTRUCTION_LIMIT: &str = "instruction-limit";
@@ -1219,6 +1220,9 @@ impl RiscvWorkloadReplay {
         result = match run.stop_reason() {
             RiscvSystemRunStopReason::HostStop(_) => {
                 result.with_stop_reason(WORKLOAD_STOP_REASON_HOST)
+            }
+            RiscvSystemRunStopReason::DebugStop { .. } => {
+                result.with_stop_reason(WORKLOAD_STOP_REASON_DEBUG)
             }
             RiscvSystemRunStopReason::Idle { .. } => {
                 result.with_stop_reason(WORKLOAD_STOP_REASON_IDLE)

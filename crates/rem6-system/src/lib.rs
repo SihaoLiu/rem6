@@ -313,6 +313,9 @@ pub use workload_replay::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvSystemRunStopReason {
     HostStop(StopRequest),
+    DebugStop {
+        tick: Tick,
+    },
     Idle {
         tick: Tick,
     },
@@ -472,7 +475,8 @@ impl RiscvSystemRun {
     pub const fn host_stop(&self) -> Option<StopRequest> {
         match self.stop_reason {
             RiscvSystemRunStopReason::HostStop(stop) => Some(stop),
-            RiscvSystemRunStopReason::Idle { .. }
+            RiscvSystemRunStopReason::DebugStop { .. }
+            | RiscvSystemRunStopReason::Idle { .. }
             | RiscvSystemRunStopReason::TickLimit { .. }
             | RiscvSystemRunStopReason::InstructionLimit { .. } => None,
         }
@@ -481,6 +485,7 @@ impl RiscvSystemRun {
     pub const fn final_tick(&self) -> Option<Tick> {
         match self.stop_reason {
             RiscvSystemRunStopReason::HostStop(stop) => Some(stop.tick()),
+            RiscvSystemRunStopReason::DebugStop { tick } => Some(tick),
             RiscvSystemRunStopReason::Idle { tick } => Some(tick),
             RiscvSystemRunStopReason::TickLimit { tick, .. } => Some(tick),
             RiscvSystemRunStopReason::InstructionLimit { tick, .. } => Some(tick),

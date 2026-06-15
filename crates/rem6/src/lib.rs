@@ -1016,6 +1016,11 @@ fn execution_summary(
                 }
             }
         }
+        RiscvSystemRunStopReason::DebugStop { .. } => {
+            return Err(Rem6CliError::Execute {
+                error: "RISC-V execution stopped at a debugger watchpoint".to_string(),
+            });
+        }
         RiscvSystemRunStopReason::InstructionLimit { limit, .. } => {
             Rem6ExecutionStop::InstructionLimit {
                 instruction_limit: inputs.config.max_instructions().unwrap_or(limit),

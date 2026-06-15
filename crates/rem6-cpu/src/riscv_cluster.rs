@@ -559,15 +559,12 @@ impl RiscvCluster {
             + Send
             + 'static,
     {
-        if instruction_budget == 0 {
-            return Ok(Vec::new());
-        }
-
         self.reconcile_reservation_invalidations();
         let mut prepared_actions = Vec::new();
         let mut transaction_cpus = Vec::new();
         let mut transactions = Vec::new();
         let mut committed_instructions = 0u64;
+        let data_only = instruction_budget == 0;
         for (cpu, core) in &self.cores {
             if !core.is_hart_started() {
                 continue;
@@ -577,7 +574,7 @@ impl RiscvCluster {
                 continue;
             }
 
-            if core.should_issue_fetch_ahead_before_retire() {
+            if !data_only && core.should_issue_fetch_ahead_before_retire() {
                 push_prepared_parallel_fetch_action(
                     *cpu,
                     core,
@@ -592,22 +589,26 @@ impl RiscvCluster {
                 continue;
             }
 
-            if let Some(event) = core
-                .execute_next_completed_fetch()
-                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
-            {
-                if committed_instructions >= instruction_budget {
-                    break;
+            if !data_only {
+                if let Some(event) = core
+                    .execute_next_completed_fetch()
+                    .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
+                {
+                    if committed_instructions >= instruction_budget {
+                        break;
+                    }
+                    prepared_actions.push(PreparedParallelAction::Ready(
+                        RiscvClusterDriveEvent::new(
+                            *cpu,
+                            RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
+                        ),
+                    ));
+                    committed_instructions += 1;
+                    if committed_instructions >= instruction_budget {
+                        break;
+                    }
+                    continue;
                 }
-                prepared_actions.push(PreparedParallelAction::Ready(RiscvClusterDriveEvent::new(
-                    *cpu,
-                    RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
-                )));
-                committed_instructions += 1;
-                if committed_instructions >= instruction_budget {
-                    break;
-                }
-                continue;
             }
 
             if let Some(prepared) = core
@@ -639,6 +640,10 @@ impl RiscvCluster {
                         });
                     }
                 }
+                continue;
+            }
+
+            if data_only {
                 continue;
             }
 

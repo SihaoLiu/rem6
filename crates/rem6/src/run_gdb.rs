@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener};
 
-use rem6_cpu::{CpuId, RiscvCluster, RiscvCoreDriveAction};
+use rem6_cpu::{
+    CpuId, RiscvCluster, RiscvClusterTurn, RiscvCoreDriveAction, RiscvDataAccessEvent,
+    RiscvDataAccessEventKind,
+};
 use rem6_debug::{
     parse_gdb_remote_frame, GdbRemoteCommand, GdbRemoteControlState, GdbRemoteError,
     GdbRemoteFrame, GdbRemotePacket, GdbRemoteResumeKind, GdbRemoteResumeRequest, GdbRemoteSession,
@@ -10,10 +13,10 @@ use rem6_debug::{
 };
 use rem6_isa_riscv::RiscvGdbXlen;
 use rem6_kernel::PartitionedScheduler;
-use rem6_memory::PartitionedMemoryStore;
+use rem6_memory::{MemoryOperation, PartitionedMemoryStore};
 use rem6_system::{
     handle_riscv_gdb_remote_system_packet, riscv_gdb_remote_session_from_cluster, GuestEventId,
-    RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason,
+    RiscvSystemRun, RiscvSystemRunDriver,
 };
 use rem6_transport::{MemoryTrace, MemoryTransport};
 
@@ -73,19 +76,40 @@ pub(super) fn serve_riscv_gdb_with_run_control(
         cluster,
         memory,
         instruction_budget,
-        |max_instructions| {
-            if max_instructions == Some(0) {
-                return Ok(RiscvSystemRun::new(
-                    Vec::new(),
-                    Vec::new(),
-                    RiscvSystemRunStopReason::InstructionLimit {
-                        tick: scheduler.now(),
-                        limit: 0,
-                        committed: 0,
-                    },
-                ));
+        |max_instructions, debug_stop| {
+            if let Some(debug_stop) = debug_stop {
+                return driver
+                    .drive_until_host_stop_or_instruction_limit_parallel_with_debug_stop(
+                        cluster,
+                        scheduler,
+                        transport,
+                        fetch_trace.clone(),
+                        data_trace.clone(),
+                        |_cpu: CpuId| {
+                            let memory = gdb_memory.clone();
+                            let instruction_cache = instruction_cache.clone();
+                            move |delivery, _context| {
+                                cli_data_memory_response(
+                                    instruction_cache.as_ref(),
+                                    &memory,
+                                    &delivery,
+                                )
+                            }
+                        },
+                        |_cpu: CpuId| {
+                            let memory = gdb_memory.clone();
+                            let data_cache = data_cache.clone();
+                            move |delivery, _context| {
+                                cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
+                            }
+                        },
+                        tick_limit,
+                        max_instructions.unwrap_or(u64::MAX),
+                        |cpu| GuestEventId::new(u64::from(cpu.get())),
+                        debug_stop,
+                    )
+                    .map_err(execute_error);
             }
-
             match max_instructions {
                 Some(max_instructions) => driver
                     .drive_until_host_stop_or_instruction_limit_parallel(
@@ -116,6 +140,7 @@ pub(super) fn serve_riscv_gdb_with_run_control(
                         max_instructions,
                         |cpu| GuestEventId::new(u64::from(cpu.get())),
                     )
+                    .map(|run| (run, false))
                     .map_err(execute_error),
                 None => driver
                     .drive_until_host_stop_or_tick_limit_parallel(
@@ -145,11 +170,14 @@ pub(super) fn serve_riscv_gdb_with_run_control(
                         tick_limit,
                         |cpu| GuestEventId::new(u64::from(cpu.get())),
                     )
+                    .map(|run| (run, false))
                     .map_err(execute_error),
             }
         },
     )
 }
+
+type RiscvGdbDebugStopPredicate<'a> = dyn FnMut(&RiscvCluster, &RiscvClusterTurn) -> bool + 'a;
 
 pub(super) fn serve_riscv_gdb_once<D>(
     listen: &str,
@@ -159,7 +187,10 @@ pub(super) fn serve_riscv_gdb_once<D>(
     mut drive: D,
 ) -> Result<RiscvGdbServeOutcome, Rem6CliError>
 where
-    D: FnMut(Option<u64>) -> Result<RiscvSystemRun, Rem6CliError>,
+    D: FnMut(
+        Option<u64>,
+        Option<&mut RiscvGdbDebugStopPredicate<'_>>,
+    ) -> Result<(RiscvSystemRun, bool), Rem6CliError>,
 {
     let listen = parse_loopback_gdb_listen_addr(listen)?;
     let Some(mut session) = riscv_gdb_remote_session_from_cluster(RiscvGdbXlen::Rv64, cluster)
@@ -179,6 +210,7 @@ where
     let mut buffer = [0; 1024];
     let mut should_read = true;
     let mut outcome = RiscvGdbServeOutcome::default();
+    let mut data_access_cursor = RiscvGdbDataAccessCursor::from_cluster(cluster);
 
     loop {
         if should_read {
@@ -213,8 +245,25 @@ where
                     .is_some_and(|budget| outcome.gdb_retired_instruction_count() >= budget)
                 {
                     RiscvGdbSingleStepOutcome::NoInstructionRetired
+                } else if has_active_gdb_write_watchpoints(&session) {
+                    data_access_cursor.sync_to_cluster(cluster);
+                    let mut debug_stop = |cluster: &RiscvCluster, _turn: &RiscvClusterTurn| {
+                        cluster_hits_active_gdb_write_watchpoint(
+                            &session,
+                            &mut data_access_cursor,
+                            cluster,
+                        )
+                    };
+                    let (run, _stopped_at_watchpoint) = drive(Some(1), Some(&mut debug_stop))?;
+                    let retired_by_cpu = riscv_run_retired_instructions_by_cpu(&run);
+                    let retired = retired_by_cpu.values().sum::<u64>();
+                    if retired == 1 {
+                        RiscvGdbSingleStepOutcome::InstructionRetired { retired_by_cpu }
+                    } else {
+                        RiscvGdbSingleStepOutcome::NoInstructionRetired
+                    }
                 } else {
-                    let run = drive(Some(1))?;
+                    let (run, _debug_stop) = drive(Some(1), None)?;
                     let retired_by_cpu = riscv_run_retired_instructions_by_cpu(&run);
                     let retired = retired_by_cpu.values().sum::<u64>();
                     if retired == 1 {
@@ -236,7 +285,29 @@ where
             RiscvGdbRunControl::Continue => {
                 let remaining_instructions = instruction_budget
                     .map(|budget| budget.saturating_sub(outcome.gdb_retired_instruction_count()));
-                let run = drive(remaining_instructions)?;
+                let continue_outcome = if has_active_gdb_write_watchpoints(&session) {
+                    data_access_cursor.sync_to_cluster(cluster);
+                    let mut debug_stop = |cluster: &RiscvCluster, _turn: &RiscvClusterTurn| {
+                        cluster_hits_active_gdb_write_watchpoint(
+                            &session,
+                            &mut data_access_cursor,
+                            cluster,
+                        )
+                    };
+                    let (run, stopped_at_watchpoint) =
+                        drive(remaining_instructions, Some(&mut debug_stop))?;
+                    if stopped_at_watchpoint {
+                        RiscvGdbContinueOutcome::StoppedAtTrap {
+                            retired_by_cpu: riscv_run_retired_instructions_by_cpu(&run),
+                        }
+                    } else {
+                        RiscvGdbContinueOutcome::CompletedRun { run: Box::new(run) }
+                    }
+                } else {
+                    RiscvGdbContinueOutcome::CompletedRun {
+                        run: Box::new(drive(remaining_instructions, None)?.0),
+                    }
+                };
                 session.set_stop_reply(rem6_debug::GdbRemoteStopReply::signal(0x05));
                 let frames = session
                     .async_response_with_payload(b"S05".to_vec())
@@ -244,7 +315,14 @@ where
                         execute_error(format!("failed to build GDB continue response: {error}"))
                     })?;
                 write_gdb_frames(&mut stream, &frames)?;
-                outcome.set_completed_run(run);
+                match continue_outcome {
+                    RiscvGdbContinueOutcome::StoppedAtTrap { retired_by_cpu } => {
+                        outcome.record_retired_by_cpu(retired_by_cpu);
+                    }
+                    RiscvGdbContinueOutcome::CompletedRun { run } => {
+                        outcome.set_completed_run(*run);
+                    }
+                }
             }
         }
         if session.is_disconnected() {
@@ -313,6 +391,61 @@ enum RiscvGdbRunControl {
     None,
     Continue,
     SingleStep,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum RiscvGdbContinueOutcome {
+    StoppedAtTrap {
+        retired_by_cpu: BTreeMap<CpuId, u64>,
+    },
+    CompletedRun {
+        run: Box<RiscvSystemRun>,
+    },
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct RiscvGdbDataAccessCursor {
+    cursors: BTreeMap<CpuId, usize>,
+}
+
+impl RiscvGdbDataAccessCursor {
+    fn from_cluster(cluster: &RiscvCluster) -> Self {
+        let mut cursor = Self::default();
+        cursor.sync_to_cluster(cluster);
+        cursor
+    }
+
+    fn sync_to_cluster(&mut self, cluster: &RiscvCluster) {
+        let mut cursors = BTreeMap::new();
+        for cpu in cluster.core_ids() {
+            let events = cluster
+                .core(cpu)
+                .expect("cluster core id exists")
+                .data_access_events();
+            cursors.insert(cpu, events.len());
+        }
+        self.cursors = cursors;
+    }
+
+    fn take_new_events(&mut self, cluster: &RiscvCluster) -> Vec<(CpuId, RiscvDataAccessEvent)> {
+        let mut new_events = Vec::new();
+        for cpu in cluster.core_ids() {
+            let events = cluster
+                .core(cpu)
+                .expect("cluster core id exists")
+                .data_access_events();
+            let cursor = self.cursors.entry(cpu).or_insert(0);
+            new_events.extend(
+                events
+                    .iter()
+                    .skip(*cursor)
+                    .cloned()
+                    .map(|event| (cpu, event)),
+            );
+            *cursor = events.len();
+        }
+        new_events
+    }
 }
 
 fn process_gdb_bytes(
@@ -414,9 +547,10 @@ fn rejects_preexecution_gdb_command(
         GdbRemoteCommand::ResumeActions { requests } => {
             !resume_allowed || !supports_preexecution_resume_requests(&requests)
         }
-        GdbRemoteCommand::Trap { request } => {
-            request.point().kind() != GdbRemoteTrapKind::SoftwareBreakpoint
-        }
+        GdbRemoteCommand::Trap { request } => !matches!(
+            request.point().kind(),
+            GdbRemoteTrapKind::SoftwareBreakpoint | GdbRemoteTrapKind::WriteWatchpoint
+        ),
         _ => false,
     }
 }
@@ -435,6 +569,61 @@ fn supports_preexecution_resume_request(request: &GdbRemoteResumeRequest) -> boo
             request.thread(),
             GdbRemoteThreadId::All | GdbRemoteThreadId::Any
         )
+}
+
+fn has_active_gdb_write_watchpoints(session: &GdbRemoteSession) -> bool {
+    session
+        .active_traps()
+        .iter()
+        .any(|point| point.kind() == GdbRemoteTrapKind::WriteWatchpoint)
+}
+
+fn cluster_hits_active_gdb_write_watchpoint(
+    session: &GdbRemoteSession,
+    data_access_cursor: &mut RiscvGdbDataAccessCursor,
+    cluster: &RiscvCluster,
+) -> bool {
+    let active_traps = session.active_traps();
+    let data_events = data_access_cursor.take_new_events(cluster);
+    data_events
+        .iter()
+        .any(|(_, event)| data_event_hits_active_write_watchpoint(event, active_traps))
+}
+
+fn data_event_hits_active_write_watchpoint(
+    event: &RiscvDataAccessEvent,
+    active_traps: &[rem6_debug::GdbRemoteTrapPoint],
+) -> bool {
+    if event.kind() != RiscvDataAccessEventKind::Completed {
+        return false;
+    }
+    active_traps.iter().any(|point| {
+        point.kind() == GdbRemoteTrapKind::WriteWatchpoint
+            && memory_operation_writes(event.operation())
+            && range_overlaps(
+                event.physical_address().get(),
+                event.size().bytes(),
+                point.address(),
+                point.size(),
+            )
+    })
+}
+
+fn memory_operation_writes(operation: MemoryOperation) -> bool {
+    matches!(
+        operation,
+        MemoryOperation::Write | MemoryOperation::StoreConditional | MemoryOperation::Atomic
+    )
+}
+
+fn range_overlaps(left_start: u64, left_size: u64, right_start: u64, right_size: u64) -> bool {
+    let Some(left_end) = left_start.checked_add(left_size) else {
+        return false;
+    };
+    let Some(right_end) = right_start.checked_add(right_size) else {
+        return false;
+    };
+    left_start < right_end && right_start < left_end
 }
 
 fn write_gdb_frames(
