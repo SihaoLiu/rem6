@@ -190,7 +190,7 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"committed_instructions\":2"));
-    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":6,\"retired\":2,"));
+    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":6,\"in_flight\":0,\"retired\":2,"));
     assert!(stdout.contains("\"data_wait_cycles\":0"));
     assert_stat(
         &stdout,
@@ -211,6 +211,79 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
         "sim.cpu0.pipeline.in_order.data_wait_cycles",
         "Cycle",
         0,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_stats_include_issued_fetch_ahead_before_response() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-issued-fetch-ahead-stats", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "12",
+            "--memory-route-delay",
+            "5",
+            "--stats-format",
+            "json",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_at_tick_limit\""));
+    assert_eq!(json_u64_field(&stdout, "\"committed_instructions\":"), 1);
+    assert_eq!(json_u64_field(&stdout, "\"in_flight\":"), 1);
+    assert_stat_greater_than(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.cycles",
+        "Cycle",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.retired",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.in_flight",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.fetch.requests",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.fetch.responses",
+        "Count",
+        1,
         "monotonic",
     );
 }

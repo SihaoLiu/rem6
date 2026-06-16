@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuFetchEventKind, CpuId, CpuResetState,
-    HtmFailureCause, RiscvCore, RiscvCoreDriveAction, RiscvCpuError, RiscvDataAccessEventKind,
-    RiscvLoadReservation,
+    HtmFailureCause, InOrderPipelineStage, RiscvCore, RiscvCoreDriveAction, RiscvCpuError,
+    RiscvDataAccessEventKind, RiscvLoadReservation,
 };
 use rem6_isa_riscv::{
     FloatRegister, MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction,
@@ -105,6 +105,14 @@ fn word(raw: u32) -> Vec<u8> {
 
 fn halfword(raw: u16) -> [u8; 2] {
     raw.to_le_bytes()
+}
+
+fn in_order_in_flight(core: &RiscvCore) -> Vec<(u64, InOrderPipelineStage)> {
+    core.in_order_pipeline_snapshot()
+        .in_flight()
+        .iter()
+        .map(|instruction| (instruction.sequence(), instruction.stage()))
+        .collect()
 }
 
 fn data_read(address: u64, size: u64, sequence: u64) -> MemoryRequest {
@@ -477,6 +485,17 @@ fn riscv_core_driver_sequences_fetch_execute_load_and_next_fetch() {
         first.instruction(),
         RiscvInstruction::decode(i_type(7, 0, 0x0, 1, 0x13)).unwrap()
     );
+    assert_eq!(
+        first
+            .in_order_pipeline_cycle()
+            .unwrap()
+            .after()
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![(1, InOrderPipelineStage::Commit)]
+    );
     assert_eq!(core.read_register(reg(1)), 7);
     assert_eq!(core.pc(), Address::new(0x8004));
 
@@ -557,12 +576,23 @@ fn riscv_core_driver_retires_completed_fetch_while_fetch_ahead_is_pending() {
         drive_one_action(&core, store.clone(), &mut scheduler, &transport),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
+    assert_eq!(
+        in_order_in_flight(&core),
+        vec![(0, InOrderPipelineStage::Fetch1)]
+    );
     scheduler.run_until_idle_conservative();
 
     assert!(matches!(
         drive_one_action(&core, store.clone(), &mut scheduler, &transport),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
+    assert_eq!(
+        in_order_in_flight(&core),
+        vec![
+            (0, InOrderPipelineStage::Fetch2),
+            (1, InOrderPipelineStage::Fetch1)
+        ]
+    );
 
     let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
     let RiscvCoreDriveAction::InstructionExecuted(first) = action else {
@@ -571,6 +601,17 @@ fn riscv_core_driver_retires_completed_fetch_while_fetch_ahead_is_pending() {
     assert_eq!(
         first.instruction(),
         RiscvInstruction::decode(i_type(7, 0, 0x0, 1, 0x13)).unwrap()
+    );
+    assert_eq!(
+        first
+            .in_order_pipeline_cycle()
+            .unwrap()
+            .after()
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![(1, InOrderPipelineStage::Commit)]
     );
     assert_eq!(core.read_register(reg(1)), 7);
     assert_eq!(core.pc(), Address::new(0x8004));
@@ -582,6 +623,152 @@ fn riscv_core_driver_retires_completed_fetch_while_fetch_ahead_is_pending() {
         panic!("expected pending fetch-ahead instruction to retire after it completes");
     };
     assert_eq!(trap.instruction(), RiscvInstruction::Ebreak);
+}
+
+#[test]
+fn riscv_core_driver_removes_retried_fetch_ahead_from_in_order_pipeline() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let store = loaded_program_store(0x8000, &[i_type(7, 0, 0x0, 1, 0x13), 0x0010_0073], &[]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    let action = core
+        .drive_next_action(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |delivery, _context| TargetOutcome::Respond(MemoryResponse::retry(delivery.request())),
+            |delivery, _context| TargetOutcome::Respond(MemoryResponse::retry(delivery.request())),
+        )
+        .unwrap()
+        .unwrap();
+    assert!(matches!(action, RiscvCoreDriveAction::FetchIssued { .. }));
+
+    scheduler.run_until_idle_conservative();
+    assert_eq!(
+        in_order_in_flight(&core),
+        vec![(0, InOrderPipelineStage::Fetch2)]
+    );
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    assert!(matches!(action, RiscvCoreDriveAction::FetchIssued { .. }));
+    let in_flight = in_order_in_flight(&core);
+    assert!(!in_flight.iter().any(|(sequence, _stage)| *sequence == 1));
+}
+
+#[test]
+fn riscv_core_driver_removes_failed_fetch_ahead_from_in_order_pipeline() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let store = loaded_program_store(0x8000, &[i_type(7, 0, 0x0, 1, 0x13), 0x0010_0073], &[]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    let action = core
+        .drive_next_action(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_, _| TargetOutcome::NoResponse,
+            |_, _| TargetOutcome::NoResponse,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(matches!(action, RiscvCoreDriveAction::FetchIssued { .. }));
+    let failed = core
+        .inner()
+        .fetch_events()
+        .into_iter()
+        .filter(|event| event.kind() == CpuFetchEventKind::Issued)
+        .max_by_key(|event| event.request_id().sequence())
+        .unwrap();
+    core.record_fetch_failure(
+        failed.request_id(),
+        scheduler.now(),
+        failed.route(),
+        failed.endpoint().clone(),
+    );
+    assert_eq!(
+        in_order_in_flight(&core),
+        vec![(0, InOrderPipelineStage::Fetch2)]
+    );
+
+    drop(store);
+    let first = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(
+        first.instruction(),
+        RiscvInstruction::decode(i_type(7, 0, 0x0, 1, 0x13)).unwrap()
+    );
+    assert!(first
+        .in_order_pipeline_cycle()
+        .unwrap()
+        .after()
+        .in_flight()
+        .is_empty());
+
+    scheduler.run_until_idle_conservative();
+    assert_eq!(core.execute_next_completed_fetch().unwrap(), None);
+    assert!(core.in_order_pipeline_snapshot().in_flight().is_empty());
+}
+
+#[test]
+fn riscv_core_driver_discards_outstanding_fetch_ahead_flushed_by_redirect() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let branch = b_type(12, 0, 0, 0x0);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            branch,
+            i_type(1, 0, 0x0, 1, 0x13),
+            i_type(2, 0, 0x0, 2, 0x13),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert!(core.has_pending_fetch());
+
+    let retired = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert_eq!(
+        retired.instruction(),
+        RiscvInstruction::decode(branch).unwrap()
+    );
+    assert_eq!(retired.execution().next_pc(), 0x800c);
+    assert_eq!(
+        retired
+            .in_order_pipeline_cycle()
+            .unwrap()
+            .plan()
+            .flushed_sequences()
+            .collect::<Vec<_>>(),
+        vec![1]
+    );
+    assert_eq!(core.inner().pc(), Address::new(0x800c));
+
+    scheduler.run_until_idle_conservative();
+    assert_eq!(core.inner().pc(), Address::new(0x800c));
 }
 
 #[test]
@@ -841,6 +1028,21 @@ fn riscv_core_driver_fetch_ahead_repairs_branch_speculation_on_trap() {
             0x8000
         ))
     );
+    assert_eq!(
+        interrupted
+            .in_order_pipeline_cycle()
+            .unwrap()
+            .plan()
+            .flushed_sequences()
+            .collect::<Vec<_>>(),
+        vec![1]
+    );
+    assert!(interrupted
+        .in_order_pipeline_cycle()
+        .unwrap()
+        .after()
+        .in_flight()
+        .is_empty());
     let repaired = core.branch_predictor_snapshot();
     assert_eq!(repaired.pending_speculations(), &[]);
     assert_eq!(repaired.committed_history(), 0);

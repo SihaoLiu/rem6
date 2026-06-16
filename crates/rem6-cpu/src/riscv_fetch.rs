@@ -5,7 +5,7 @@ use rem6_kernel::{
 use rem6_memory::{AccessSize, Address, MemoryRequest, MemoryRequestId};
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
-    TargetOutcome, TransportEndpointId,
+    ResponseDelivery, TargetOutcome, TransportEndpointId,
 };
 
 use crate::{OutstandingFetch, RiscvCore, RiscvCpuError};
@@ -31,7 +31,7 @@ impl RiscvCore {
         .map_err(RiscvCpuError::Memory)?;
         let request = self.apply_pma_fetch_request_attributes(issue.pc, issue.size, request)?;
 
-        let core = self.inner();
+        let core = self.clone();
         let event = transport
             .submit(
                 scheduler,
@@ -39,11 +39,12 @@ impl RiscvCore {
                 request,
                 trace,
                 responder,
-                move |delivery| core.record_response(delivery),
+                move |delivery| core.record_fetch_response(delivery),
             )
             .map_err(RiscvCpuError::Transport)?;
 
         self.inner().record_issue(issue);
+        self.sync_in_order_fetch_state()?;
         Ok(event)
     }
 
@@ -69,6 +70,7 @@ impl RiscvCore {
             .expect("single fetch transaction returns one event");
 
         self.inner().record_issue(issue);
+        self.sync_in_order_fetch_state()?;
         Ok(event)
     }
 
@@ -94,19 +96,23 @@ impl RiscvCore {
         .map_err(RiscvCpuError::Memory)?;
         let request = self.apply_pma_fetch_request_attributes(issue.pc, issue.size, request)?;
 
-        let core = self.inner();
+        let core = self.clone();
         let transaction = ParallelMemoryTransaction::new(
             issue.route,
             request,
             trace,
             responder,
-            move |delivery| core.record_response(delivery),
+            move |delivery| core.record_fetch_response(delivery),
         );
         Ok((issue, transaction))
     }
 
-    pub(crate) fn record_prepared_fetch_issue(&self, issue: OutstandingFetch) {
+    pub(crate) fn record_prepared_fetch_issue(
+        &self,
+        issue: OutstandingFetch,
+    ) -> Result<(), RiscvCpuError> {
         self.inner().record_issue(issue);
+        self.sync_in_order_fetch_state()
     }
 
     pub fn record_fetch_failure(
@@ -118,6 +124,14 @@ impl RiscvCore {
     ) {
         self.inner()
             .record_fetch_failure(request_id, tick, route, endpoint);
+        self.sync_in_order_fetch_state()
+            .expect("fetch failure sync preserves canonical pipeline state");
+    }
+
+    fn record_fetch_response(&self, delivery: ResponseDelivery) {
+        self.inner().record_response(delivery);
+        self.sync_in_order_fetch_state()
+            .expect("fetch response sync preserves canonical pipeline state");
     }
 
     fn prepare_fetch(

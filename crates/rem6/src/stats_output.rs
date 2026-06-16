@@ -723,6 +723,13 @@ pub(super) fn run_stats_output(
             )?;
             increment_stat(
                 &mut stats,
+                &format!("sim.cpu{}.pipeline.in_order.in_flight", core.cpu),
+                "Count",
+                StatResetPolicy::Constant,
+                core.in_order_pipeline_in_flight,
+            )?;
+            increment_stat(
+                &mut stats,
                 &format!("sim.cpu{}.pipeline.in_order.fetch_wait_cycles", core.cpu),
                 "Cycle",
                 StatResetPolicy::Monotonic,

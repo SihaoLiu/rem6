@@ -565,6 +565,16 @@ impl CpuCore {
         }
     }
 
+    pub(crate) fn discard_outstanding_fetches<I>(&self, request_ids: I)
+    where
+        I: IntoIterator<Item = MemoryRequestId>,
+    {
+        let mut state = self.state.lock().expect("cpu core lock");
+        for request_id in request_ids {
+            state.outstanding.remove(&request_id);
+        }
+    }
+
     pub(crate) fn record_fetch_failure(
         &self,
         request_id: MemoryRequestId,
@@ -914,6 +924,12 @@ impl RiscvCore {
         Ok(())
     }
 
+    pub(crate) fn sync_in_order_fetch_state(&self) -> Result<(), RiscvCpuError> {
+        let fetch_events = self.core.fetch_events();
+        let mut state = self.state.lock().expect("riscv core lock");
+        sync_in_order_fetch_state(&mut state, &fetch_events)
+    }
+
     pub fn write_pmp_config(
         &self,
         index: usize,
@@ -1184,6 +1200,71 @@ impl RiscvCore {
             .next_unissued_data_access()
             .map(|(fetch_request, _access)| fetch_request)
     }
+}
+
+fn sync_in_order_fetch_state(
+    state: &mut RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+) -> Result<(), RiscvCpuError> {
+    let failed_or_retried = fetch_events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.kind(),
+                CpuFetchEventKind::Retry | CpuFetchEventKind::Failed
+            )
+        })
+        .map(CpuFetchEvent::request_id)
+        .collect::<BTreeSet<_>>();
+    let failed_or_retried_sequences = failed_or_retried
+        .iter()
+        .map(|request| request.sequence())
+        .collect::<BTreeSet<_>>();
+    remove_fetch_sequences_from_pipeline(state, &failed_or_retried_sequences)?;
+    let mut fetches = fetch_events
+        .iter()
+        .filter(|event| {
+            !failed_or_retried.contains(&event.request_id())
+                && !state.executed_fetches.contains(&event.request_id())
+                && match event.kind() {
+                    CpuFetchEventKind::Issued => event.size().bytes() == 4,
+                    CpuFetchEventKind::Completed => {
+                        event.data().is_some_and(|data| data.len() == 4)
+                    }
+                    CpuFetchEventKind::Retry | CpuFetchEventKind::Failed => false,
+                }
+        })
+        .collect::<Vec<_>>();
+    fetches.sort_by_key(|event| event.request_id().sequence());
+
+    for fetch in fetches {
+        state
+            .in_order_pipeline
+            .enqueue_fetch(fetch.request_id().sequence())
+            .map_err(RiscvCpuError::InOrderPipeline)?;
+    }
+    Ok(())
+}
+
+fn remove_fetch_sequences_from_pipeline(
+    state: &mut RiscvCoreState,
+    sequences: &BTreeSet<u64>,
+) -> Result<(), RiscvCpuError> {
+    if sequences.is_empty() {
+        return Ok(());
+    }
+
+    let retained = state
+        .in_order_pipeline
+        .in_flight()
+        .iter()
+        .copied()
+        .filter(|instruction| !sequences.contains(&instruction.sequence()))
+        .collect::<Vec<_>>();
+    state
+        .in_order_pipeline
+        .replace_in_flight(retained)
+        .map_err(RiscvCpuError::InOrderPipeline)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

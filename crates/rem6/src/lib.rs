@@ -437,6 +437,7 @@ pub struct Rem6CoreSummary {
     pc: u64,
     committed_instructions: u64,
     in_order_pipeline_cycles: u64,
+    in_order_pipeline_in_flight: u64,
     in_order_pipeline_retired: u64,
     in_order_pipeline_fetch_wait_cycles: u64,
     in_order_pipeline_data_wait_cycles: u64,
@@ -1029,11 +1030,13 @@ fn execution_summary(
             }
         }
         let pipeline_summary = in_order_pipeline_run_summary(&core);
+        let pipeline_snapshot = core.in_order_pipeline_snapshot();
         cores.push(Rem6CoreSummary {
             cpu: cpu_index,
             pc: core.pc().get(),
             committed_instructions: committed_by_cpu.get(&cpu).copied().unwrap_or(0),
-            in_order_pipeline_cycles: core.in_order_pipeline_snapshot().cycle(),
+            in_order_pipeline_cycles: pipeline_snapshot.cycle(),
+            in_order_pipeline_in_flight: pipeline_snapshot.in_flight().len() as u64,
             in_order_pipeline_retired: pipeline_summary.retired_count() as u64,
             in_order_pipeline_fetch_wait_cycles: in_order_pipeline_fetch_wait_cycles(&core),
             in_order_pipeline_data_wait_cycles: in_order_pipeline_data_wait_cycles(&core),

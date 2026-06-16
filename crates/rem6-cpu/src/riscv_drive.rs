@@ -27,6 +27,7 @@ impl RiscvCore {
         if self.has_pending_trap() {
             return Ok(None);
         }
+        self.sync_in_order_fetch_state()?;
         if self.core.has_pending_fetch() {
             if !self.can_retire_completed_fetch_while_fetch_pending() {
                 return Ok(None);

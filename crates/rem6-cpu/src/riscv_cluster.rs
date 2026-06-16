@@ -932,7 +932,8 @@ impl RiscvCluster {
                     fetch_ahead,
                     transaction_index,
                 } => {
-                    core.record_prepared_fetch_issue(issue);
+                    core.record_prepared_fetch_issue(issue)
+                        .map_err(|error| RiscvClusterError::Core { cpu, error })?;
                     if let Some(decision) = fetch_ahead {
                         core.record_fetch_ahead_speculation(&decision);
                     }

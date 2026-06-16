@@ -3,7 +3,7 @@ use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
     riscv_execution_event::RiscvRetiredBranchUpdates, CpuFetchEvent, CpuFetchEventKind,
-    CpuFetchRecord, InOrderBranchPrediction, InOrderPipelineCycleRecord,
+    CpuFetchRecord, InOrderBranchPrediction, InOrderBranchRedirect, InOrderPipelineCycleRecord,
     InOrderPipelineInstruction, InOrderPipelineStage, RiscvCore, RiscvCoreState, RiscvCpuError,
     RiscvCpuExecutionEvent, RiscvGShareBranchUpdate, RiscvTournamentBranchUpdate,
     RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
@@ -25,12 +25,18 @@ impl RiscvCore {
     pub fn execute_next_completed_fetch(
         &self,
     ) -> Result<Option<RiscvCpuExecutionEvent>, RiscvCpuError> {
-        let fetch_events = self.core.fetch_events();
-        let mut state = self.state.lock().expect("riscv core lock");
-        if state.pending_trap.is_some() {
+        if self
+            .state
+            .lock()
+            .expect("riscv core lock")
+            .pending_trap
+            .is_some()
+        {
             return Ok(None);
         }
-        sync_completed_fetches_to_in_order_pipeline(&mut state, &fetch_events)?;
+        self.sync_in_order_fetch_state()?;
+        let fetch_events = self.core.fetch_events();
+        let mut state = self.state.lock().expect("riscv core lock");
 
         if let Some(prefix) = state.pending_fetch_prefix.clone() {
             let architectural = Address::new(state.hart.pc());
@@ -165,11 +171,19 @@ impl RiscvCore {
             next_pc,
             retired_branch.branch_update(),
         );
+        let pipeline_redirect = execution.trap().is_some().then(|| {
+            InOrderBranchRedirect::new(
+                fetch.request_id().sequence(),
+                InOrderPipelineStage::Commit,
+                next_pc.get(),
+            )
+        });
         let pipeline_cycle = if execution.memory_access().is_none() {
-            Some(record_retired_in_order_pipeline_cycle(
+            Some(record_retired_in_order_pipeline_cycle_with_redirect(
                 state,
                 fetch.request_id().sequence(),
                 pipeline_branch_prediction,
+                pipeline_redirect,
             )?)
         } else {
             None
@@ -187,14 +201,11 @@ impl RiscvCore {
         let squashed_requests = event
             .in_order_pipeline_cycle()
             .map(|cycle| {
-                squashed_completed_fetch_requests(
-                    state,
-                    &self.core.fetch_events(),
-                    cycle,
-                    consumed_requests,
-                )
+                squashed_fetch_requests(state, &self.core.fetch_events(), cycle, consumed_requests)
             })
             .unwrap_or_default();
+        self.core
+            .discard_outstanding_fetches(squashed_requests.iter().copied());
         state
             .executed_fetches
             .extend(consumed_requests.iter().copied());
@@ -204,18 +215,41 @@ impl RiscvCore {
     }
 }
 
-pub(crate) fn record_retired_in_order_pipeline_cycle(
-    state: &mut RiscvCoreState,
-    sequence: u64,
-    branch_prediction: Option<InOrderBranchPrediction>,
-) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
-    record_retired_in_order_pipeline_cycle_after_wait(state, sequence, branch_prediction, 0)
-}
-
 pub(crate) fn record_retired_in_order_pipeline_cycle_after_wait(
     state: &mut RiscvCoreState,
     sequence: u64,
     branch_prediction: Option<InOrderBranchPrediction>,
+    wait_cycles: u64,
+) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
+    record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
+        state,
+        sequence,
+        branch_prediction,
+        None,
+        wait_cycles,
+    )
+}
+
+fn record_retired_in_order_pipeline_cycle_with_redirect(
+    state: &mut RiscvCoreState,
+    sequence: u64,
+    branch_prediction: Option<InOrderBranchPrediction>,
+    redirect: Option<InOrderBranchRedirect>,
+) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
+    record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
+        state,
+        sequence,
+        branch_prediction,
+        redirect,
+        0,
+    )
+}
+
+fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
+    state: &mut RiscvCoreState,
+    sequence: u64,
+    branch_prediction: Option<InOrderBranchPrediction>,
+    redirect: Option<InOrderBranchRedirect>,
     wait_cycles: u64,
 ) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
     if !state.in_order_pipeline.contains_sequence(sequence) {
@@ -230,22 +264,29 @@ pub(crate) fn record_retired_in_order_pipeline_cycle_after_wait(
     let max_retire_cycles =
         InOrderPipelineStage::ALL.len() + state.in_order_pipeline.in_flight().len();
     for _ in 0..max_retire_cycles {
-        let resolves_branch = branch_prediction.is_some()
-            && state
+        let snapshot = state.in_order_pipeline.snapshot();
+        let active_prediction = branch_prediction.filter(|prediction| {
+            snapshot.in_flight().iter().any(|instruction| {
+                instruction.sequence() == prediction.sequence()
+                    && instruction.stage() == prediction.resolved_stage()
+            })
+        });
+        let active_redirect = redirect.filter(|redirect| {
+            snapshot.in_flight().iter().any(|instruction| {
+                instruction.sequence() == redirect.sequence()
+                    && instruction.stage() == redirect.resolved_stage()
+            })
+        });
+        let record = if active_prediction.is_some() {
+            state
                 .in_order_pipeline
-                .snapshot()
-                .in_flight()
-                .iter()
-                .any(|instruction| {
-                    instruction.sequence() == sequence
-                        && instruction.stage() == InOrderPipelineStage::Commit
-                });
-        let record = state
-            .in_order_pipeline
-            .try_advance_cycle_recorded_with_prediction(
-                resolves_branch.then_some(branch_prediction).flatten(),
-            )
-            .map_err(RiscvCpuError::InOrderPipeline)?;
+                .try_advance_cycle_recorded_with_prediction(active_prediction)
+        } else {
+            state
+                .in_order_pipeline
+                .try_advance_cycle_recorded_with_redirect(active_redirect)
+        }
+        .map_err(RiscvCpuError::InOrderPipeline)?;
         if record.after().in_flight().iter().any(|instruction| {
             instruction.sequence() == sequence
                 && instruction.stage() == InOrderPipelineStage::Execute
@@ -271,30 +312,7 @@ fn record_retires_sequence(record: &InOrderPipelineCycleRecord, sequence: u64) -
         .any(|advance| advance.sequence() == sequence && advance.retires())
 }
 
-fn sync_completed_fetches_to_in_order_pipeline(
-    state: &mut RiscvCoreState,
-    fetch_events: &[CpuFetchEvent],
-) -> Result<(), RiscvCpuError> {
-    let mut completed = fetch_events
-        .iter()
-        .filter(|event| {
-            event.kind() == CpuFetchEventKind::Completed
-                && !state.executed_fetches.contains(&event.request_id())
-                && event.data().is_some_and(|data| data.len() == 4)
-        })
-        .collect::<Vec<_>>();
-    completed.sort_by_key(|event| event.request_id().sequence());
-
-    for fetch in completed {
-        state
-            .in_order_pipeline
-            .enqueue_fetch(fetch.request_id().sequence())
-            .map_err(RiscvCpuError::InOrderPipeline)?;
-    }
-    Ok(())
-}
-
-fn squashed_completed_fetch_requests(
+fn squashed_fetch_requests(
     state: &RiscvCoreState,
     fetch_events: &[CpuFetchEvent],
     cycle: &InOrderPipelineCycleRecord,
@@ -307,11 +325,13 @@ fn squashed_completed_fetch_requests(
     fetch_events
         .iter()
         .filter(|event| {
-            event.kind() == CpuFetchEventKind::Completed
-                && cycle
-                    .plan()
-                    .flushed_sequences()
-                    .any(|sequence| sequence == event.request_id().sequence())
+            matches!(
+                event.kind(),
+                CpuFetchEventKind::Issued | CpuFetchEventKind::Completed
+            ) && cycle
+                .plan()
+                .flushed_sequences()
+                .any(|sequence| sequence == event.request_id().sequence())
                 && !state.executed_fetches.contains(&event.request_id())
                 && !consumed_requests.contains(&event.request_id())
         })
