@@ -222,6 +222,150 @@ fn rem6_trace_replay_fabric_route_emits_activity_stats() {
 }
 
 #[test]
+fn rem6_trace_replay_fabric_route_uses_virtual_networks_and_credit_depth() {
+    let trace = temp_trace(
+        "trace-replay-fabric-credit",
+        &packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "trace-replay",
+            "--trace",
+            trace.to_str().unwrap(),
+            "--route",
+            "cpu0.fetch",
+            "--memory-start",
+            "0x1000",
+            "--memory-size",
+            "0x1000",
+            "--max-tick",
+            "64",
+            "--tick-frequency",
+            "1000",
+            "--line-bytes",
+            "64",
+            "--agent",
+            "7",
+            "--control-partition",
+            "2",
+            "--fabric-link",
+            "cpu_mem",
+            "--fabric-bandwidth-bytes-per-tick",
+            "4",
+            "--fabric-request-virtual-network",
+            "1",
+            "--fabric-response-virtual-network",
+            "2",
+            "--fabric-credit-depth",
+            "1",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"fabric_link\":\"cpu_mem\""));
+    assert!(stdout.contains("\"fabric_request_virtual_network\":1"));
+    assert!(stdout.contains("\"fabric_response_virtual_network\":2"));
+    assert!(stdout.contains("\"fabric_credit_depth\":1"));
+    assert!(stdout.contains("\"active_fabric_lane_count\":2"));
+    assert!(stdout.contains("\"active_fabric_virtual_network_count\":2"));
+    assert!(stdout.contains("\"fabric_transfer_count\":2"));
+    assert!(stdout.contains("\"fabric_queue_delay_ticks\":0"));
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.fabric.active_virtual_networks",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.fabric.queue_delay_ticks",
+        "Tick",
+        0,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_trace_replay_rejects_fabric_virtual_network_without_link() {
+    let trace = temp_trace(
+        "trace-replay-fabric-vn-without-link",
+        &packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "trace-replay",
+            "--trace",
+            trace.to_str().unwrap(),
+            "--route",
+            "cpu0.fetch",
+            "--memory-start",
+            "0x1000",
+            "--memory-size",
+            "0x1000",
+            "--max-tick",
+            "64",
+            "--fabric-request-virtual-network",
+            "1",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("missing required flag --fabric-link"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn rem6_trace_replay_loads_toml_config_relative_trace_and_cli_route_override() {
     let workspace = temp_workspace("trace-replay-toml-config");
     let trace_name = format!("trace-{}.pb", std::process::id());
@@ -253,7 +397,7 @@ fn rem6_trace_replay_loads_toml_config_relative_trace_and_cli_route_override() {
     std::fs::write(
         &config,
         format!(
-            "[trace_replay]\ntrace = \"{}\"\nroute = \"cpu0.config\"\nmemory_start = 4096\nmemory_size = 4096\nmax_tick = 64\ntick_frequency = 1000\nline_bytes = 64\nagent = 7\ncontrol_partition = 2\nfabric_link = \"cpu_mem\"\nfabric_bandwidth_bytes_per_tick = 4\nstats_format = \"json\"\n",
+            "[trace_replay]\ntrace = \"{}\"\nroute = \"cpu0.config\"\nmemory_start = 4096\nmemory_size = 4096\nmax_tick = 64\ntick_frequency = 1000\nline_bytes = 64\nagent = 7\ncontrol_partition = 2\nfabric_link = \"cpu_mem\"\nfabric_bandwidth_bytes_per_tick = 4\nfabric_request_virtual_network = 3\nfabric_response_virtual_network = 4\nfabric_credit_depth = 2\nstats_format = \"json\"\n",
             trace_name
         ),
     )
@@ -283,7 +427,11 @@ fn rem6_trace_replay_loads_toml_config_relative_trace_and_cli_route_override() {
     assert!(stdout.contains("\"scheduled_count\":1"));
     assert!(stdout.contains("\"trace_read_response_count\":1"));
     assert!(stdout.contains("\"trace_response_data_byte_count\":8"));
-    assert!(stdout.contains("\"active_fabric_lane_count\":1"));
+    assert!(stdout.contains("\"fabric_request_virtual_network\":3"));
+    assert!(stdout.contains("\"fabric_response_virtual_network\":4"));
+    assert!(stdout.contains("\"fabric_credit_depth\":2"));
+    assert!(stdout.contains("\"active_fabric_lane_count\":2"));
+    assert!(stdout.contains("\"active_fabric_virtual_network_count\":2"));
     assert_stat(
         &stdout,
         "sim.trace_replay.fabric.transfers",

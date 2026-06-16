@@ -97,6 +97,14 @@ impl Rem6TraceReplayConfig {
                 value: "0".to_string(),
             });
         }
+        let mut fabric_request_virtual_network = file_config.fabric_request_virtual_network;
+        let mut fabric_response_virtual_network = file_config.fabric_response_virtual_network;
+        let mut fabric_credit_depth = file_config.fabric_credit_depth;
+        if fabric_credit_depth == Some(0) {
+            return Err(Rem6CliError::InvalidTraceReplayFabricCreditDepth {
+                value: "0".to_string(),
+            });
+        }
         let mut stats_format = file_config
             .stats_format
             .as_deref()
@@ -210,6 +218,18 @@ impl Rem6TraceReplayConfig {
                             }
                         })?);
                 }
+                "--fabric-request-virtual-network" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_request_virtual_network = Some(parse_fabric_virtual_network(&value)?);
+                }
+                "--fabric-response-virtual-network" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_response_virtual_network = Some(parse_fabric_virtual_network(&value)?);
+                }
+                "--fabric-credit-depth" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_credit_depth = Some(parse_fabric_credit_depth(&value)?);
+                }
                 "--stats-format" => {
                     stats_format = StatsFormat::parse(&required_value(&flag, args.next())?)?;
                 }
@@ -229,6 +249,15 @@ impl Rem6TraceReplayConfig {
             });
         }
         if fabric_link.is_none() && fabric_bandwidth_bytes_per_tick.is_some() {
+            return Err(Rem6CliError::MissingRequiredFlag {
+                flag: "--fabric-link",
+            });
+        }
+        if fabric_link.is_none()
+            && (fabric_request_virtual_network.is_some()
+                || fabric_response_virtual_network.is_some()
+                || fabric_credit_depth.is_some())
+        {
             return Err(Rem6CliError::MissingRequiredFlag {
                 flag: "--fabric-link",
             });
@@ -272,6 +301,9 @@ impl Rem6TraceReplayConfig {
             data_cache_protocol,
             fabric_link,
             fabric_bandwidth_bytes_per_tick,
+            fabric_request_virtual_network: fabric_request_virtual_network.unwrap_or(0),
+            fabric_response_virtual_network: fabric_response_virtual_network.unwrap_or(0),
+            fabric_credit_depth,
             stats_format,
             output,
             stats_output,
@@ -345,6 +377,18 @@ impl Rem6TraceReplayConfig {
         self.fabric_bandwidth_bytes_per_tick
     }
 
+    pub const fn fabric_request_virtual_network(&self) -> u16 {
+        self.fabric_request_virtual_network
+    }
+
+    pub const fn fabric_response_virtual_network(&self) -> u16 {
+        self.fabric_response_virtual_network
+    }
+
+    pub const fn fabric_credit_depth(&self) -> Option<u32> {
+        self.fabric_credit_depth
+    }
+
     pub const fn stats_format(&self) -> StatsFormat {
         self.stats_format
     }
@@ -356,4 +400,20 @@ impl Rem6TraceReplayConfig {
     pub fn stats_output(&self) -> Option<&Path> {
         self.stats_output.as_deref()
     }
+}
+
+fn parse_fabric_virtual_network(value: &str) -> Result<u16, Rem6CliError> {
+    parse_number(value)
+        .and_then(|network| u16::try_from(network).ok())
+        .ok_or_else(|| Rem6CliError::InvalidTraceReplayFabricVirtualNetwork {
+            value: value.to_string(),
+        })
+}
+
+fn parse_fabric_credit_depth(value: &str) -> Result<u32, Rem6CliError> {
+    parse_positive_u64(value)
+        .and_then(|depth| u32::try_from(depth).ok())
+        .ok_or_else(|| Rem6CliError::InvalidTraceReplayFabricCreditDepth {
+            value: value.to_string(),
+        })
 }

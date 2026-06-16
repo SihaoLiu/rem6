@@ -370,9 +370,19 @@ fn trace_replay_fabric_route(
             .ok_or(Rem6CliError::MissingRequiredFlag {
                 flag: "--fabric-bandwidth-bytes-per-tick",
             })?;
-    WorkloadRouteFabric::new(link, bandwidth)
-        .map(Some)
-        .map_err(execute_error)
+    let fabric = WorkloadRouteFabric::new(link, bandwidth)
+        .map_err(execute_error)?
+        .with_virtual_networks(
+            config.fabric_request_virtual_network(),
+            config.fabric_response_virtual_network(),
+        );
+    match config.fabric_credit_depth() {
+        Some(credit_depth) => fabric
+            .with_credit_depth(credit_depth)
+            .map(Some)
+            .map_err(execute_error),
+        None => Ok(Some(fabric)),
+    }
 }
 
 fn trace_replay_backing_route(route: &WorkloadRouteId) -> Result<WorkloadRouteId, Rem6CliError> {
@@ -433,5 +443,46 @@ impl Rem6TraceReplayExecutionSummary {
 
     pub(crate) const fn parallel_summary(&self) -> &WorkloadParallelExecutionSummary {
         &self.parallel_summary
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trace_replay_fabric_route_preserves_virtual_networks_and_credit_depth() {
+        let config = Rem6TraceReplayConfig::parse_args([
+            "trace-replay",
+            "--trace",
+            "trace.pb",
+            "--route",
+            "cpu0.fetch",
+            "--memory-start",
+            "0x1000",
+            "--memory-size",
+            "0x1000",
+            "--max-tick",
+            "64",
+            "--fabric-link",
+            "cpu_mem",
+            "--fabric-bandwidth-bytes-per-tick",
+            "4",
+            "--fabric-request-virtual-network",
+            "3",
+            "--fabric-response-virtual-network",
+            "4",
+            "--fabric-credit-depth",
+            "2",
+        ])
+        .unwrap();
+
+        let fabric = trace_replay_fabric_route(&config).unwrap().unwrap();
+
+        assert_eq!(fabric.link(), "cpu_mem");
+        assert_eq!(fabric.bandwidth_bytes_per_tick(), 4);
+        assert_eq!(fabric.request_virtual_network(), 3);
+        assert_eq!(fabric.response_virtual_network(), 4);
+        assert_eq!(fabric.credit_depth(), Some(2));
     }
 }

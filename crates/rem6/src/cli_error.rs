@@ -101,6 +101,12 @@ pub enum Rem6CliError {
     InvalidTraceReplayFabricBandwidth {
         value: String,
     },
+    InvalidTraceReplayFabricVirtualNetwork {
+        value: String,
+    },
+    InvalidTraceReplayFabricCreditDepth {
+        value: String,
+    },
     InvalidResourceKind {
         value: String,
     },
@@ -333,6 +339,15 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidTraceReplayFabricBandwidth { value } => {
                 write!(formatter, "invalid trace replay fabric bandwidth {value}")
+            }
+            Self::InvalidTraceReplayFabricVirtualNetwork { value } => {
+                write!(
+                    formatter,
+                    "invalid trace replay fabric virtual network {value}"
+                )
+            }
+            Self::InvalidTraceReplayFabricCreditDepth { value } => {
+                write!(formatter, "invalid trace replay fabric credit depth {value}")
             }
             Self::InvalidResourceKind { value } => {
                 write!(formatter, "invalid resource kind {value}")

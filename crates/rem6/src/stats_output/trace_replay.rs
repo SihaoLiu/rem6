@@ -434,6 +434,11 @@ pub(super) fn emit_trace_replay_fabric_stats(
     )?;
     emit_trace_count(
         stats,
+        "sim.trace_replay.fabric.active_virtual_networks",
+        summary.active_fabric_virtual_network_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
         "sim.trace_replay.fabric.transfers",
         summary.fabric_transfer_count() as u64,
     )?;

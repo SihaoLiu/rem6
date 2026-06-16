@@ -198,8 +198,22 @@ impl Rem6TraceReplayArtifact {
             .data_cache_protocol()
             .map(|protocol| format!("\"{}\"", protocol.as_str()))
             .unwrap_or_else(|| "null".to_string());
+        let fabric_link = optional_string_json(self.config.fabric_link());
+        let fabric_bandwidth = optional_count_json(self.config.fabric_bandwidth_bytes_per_tick());
+        let fabric_request_virtual_network = optional_count_json(
+            self.config
+                .fabric_link()
+                .map(|_| u64::from(self.config.fabric_request_virtual_network())),
+        );
+        let fabric_response_virtual_network = optional_count_json(
+            self.config
+                .fabric_link()
+                .map(|_| u64::from(self.config.fabric_response_virtual_network())),
+        );
+        let fabric_credit_depth =
+            optional_count_json(self.config.fabric_credit_depth().map(u64::from));
         format!(
-            "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"data_cache_protocol\":{},\"simulation\":{},\"summary\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"data_cache_protocol\":{},\"fabric_link\":{},\"fabric_bandwidth_bytes_per_tick\":{},\"fabric_request_virtual_network\":{},\"fabric_response_virtual_network\":{},\"fabric_credit_depth\":{},\"simulation\":{},\"summary\":{},\"stats\":{}}}\n",
             self.schema,
             json_escape(&self.config.trace_input()),
             json_escape(&self.trace_digest),
@@ -211,6 +225,11 @@ impl Rem6TraceReplayArtifact {
             self.config.agent(),
             self.config.control_partition(),
             data_cache_protocol,
+            fabric_link,
+            fabric_bandwidth,
+            fabric_request_virtual_network,
+            fabric_response_virtual_network,
+            fabric_credit_depth,
             self.execution.to_json(self.config.max_tick()),
             traffic_trace_summary_json(self.execution.summary(), self.execution.parallel_summary()),
             self.stats_json,
@@ -343,6 +362,11 @@ fn traffic_trace_summary_json(
         &mut fields,
         "active_fabric_lane_count",
         parallel_summary.active_fabric_lane_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "active_fabric_virtual_network_count",
+        parallel_summary.active_fabric_virtual_network_count(),
     );
     push_json_usize(
         &mut fields,
