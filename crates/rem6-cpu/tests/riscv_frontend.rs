@@ -264,6 +264,62 @@ fn vmsne_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
     vector_vi_type(0b011001, vs2, imm, vd)
 }
 
+fn vmsltu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b011010, vs2, vs1, vd)
+}
+
+fn vmsltu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b011010, vs2, rs1, vd)
+}
+
+fn vmslt_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b011011, vs2, vs1, vd)
+}
+
+fn vmslt_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b011011, vs2, rs1, vd)
+}
+
+fn vmsleu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b011100, vs2, vs1, vd)
+}
+
+fn vmsleu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b011100, vs2, rs1, vd)
+}
+
+fn vmsleu_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
+    vector_vi_type(0b011100, vs2, imm, vd)
+}
+
+fn vmsle_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b011101, vs2, vs1, vd)
+}
+
+fn vmsle_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b011101, vs2, rs1, vd)
+}
+
+fn vmsle_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
+    vector_vi_type(0b011101, vs2, imm, vd)
+}
+
+fn vmsgtu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b011110, vs2, rs1, vd)
+}
+
+fn vmsgtu_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
+    vector_vi_type(0b011110, vs2, imm, vd)
+}
+
+fn vmsgt_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b011111, vs2, rs1, vd)
+}
+
+fn vmsgt_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
+    vector_vi_type(0b011111, vs2, imm, vd)
+}
+
 fn vreg(index: u8) -> VectorRegister {
     VectorRegister::new(index).unwrap()
 }
@@ -645,6 +701,24 @@ fn drive_until_instruction(
         }
     }
     panic!("expected instruction execution");
+}
+
+fn assert_next_vector_mask_instruction(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+    expected_instruction: RiscvInstruction,
+    destination: VectorRegister,
+    expected_first_byte: u8,
+) {
+    assert_eq!(
+        drive_until_instruction(core, store, scheduler, transport),
+        expected_instruction
+    );
+    let mut expected_mask = [0; 16];
+    expected_mask[0] = expected_first_byte;
+    assert_eq!(core.read_vector_register(destination), expected_mask);
 }
 
 fn issue_one_data_access(
@@ -1588,6 +1662,245 @@ fn riscv_core_driver_executes_vector_mask_compare_operations_from_fetch_stream()
     let mut expected = [0; 16];
     expected[0] = 0x36;
     assert_eq!(core.read_vector_register(vreg(9)), expected);
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_ordered_mask_compare_operations_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 6);
+    core.write_register(reg(8), 1);
+    core.write_register(reg(9), (-1_i64) as u64);
+    core.write_vector_register(
+        vreg(2),
+        [
+            0, 1, 2, 127, 128, 255, 0xaa, 0xaa, 0xaa, 0xaa, 0, 0, 0, 0, 0, 0,
+        ],
+    );
+    core.write_vector_register(
+        vreg(3),
+        [
+            1, 1, 0, 127, 0, 254, 0xbb, 0xbb, 0xbb, 0xbb, 0, 0, 0, 0, 0, 0,
+        ],
+    );
+    for index in 6..=19 {
+        core.write_vector_register(vreg(index), [0; 16]);
+    }
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xc0, 10, 5),
+            vmsltu_vv_type(2, 3, 6),
+            vmsltu_vx_type(2, 8, 7),
+            vmslt_vv_type(2, 3, 8),
+            vmslt_vx_type(2, 9, 9),
+            vmsleu_vv_type(2, 3, 10),
+            vmsleu_vx_type(2, 8, 11),
+            vmsleu_vi_type(2, -1, 12),
+            vmsle_vv_type(2, 3, 13),
+            vmsle_vx_type(2, 9, 14),
+            vmsle_vi_type(2, -1, 15),
+            vmsgtu_vx_type(2, 8, 16),
+            vmsgtu_vi_type(2, -1, 17),
+            vmsgt_vx_type(2, 9, 18),
+            vmsgt_vi_type(2, -1, 19),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xc0,
+        }
+    );
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(6, 0xc0));
+
+    assert_next_vector_mask_instruction(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        RiscvInstruction::VectorMaskLessUnsignedVv {
+            vd: vreg(6),
+            vs1: vreg(3),
+            vs2: vreg(2),
+        },
+        vreg(6),
+        0x01,
+    );
+    assert_next_vector_mask_instruction(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        RiscvInstruction::VectorMaskLessUnsignedVx {
+            vd: vreg(7),
+            vs2: vreg(2),
+            rs1: reg(8),
+        },
+        vreg(7),
+        0x01,
+    );
+    assert_next_vector_mask_instruction(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        RiscvInstruction::VectorMaskLessSignedVv {
+            vd: vreg(8),
+            vs1: vreg(3),
+            vs2: vreg(2),
+        },
+        vreg(8),
+        0x11,
+    );
+    assert_next_vector_mask_instruction(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        RiscvInstruction::VectorMaskLessSignedVx {
+            vd: vreg(9),
+            vs2: vreg(2),
+            rs1: reg(9),
+        },
+        vreg(9),
+        0x10,
+    );
+    assert_next_vector_mask_instruction(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        RiscvInstruction::VectorMaskLessEqualUnsignedVv {
+            vd: vreg(10),
+            vs1: vreg(3),
+            vs2: vreg(2),
+        },
+        vreg(10),
+        0x0b,
+    );
+    assert_next_vector_mask_instruction(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        RiscvInstruction::VectorMaskLessEqualUnsignedVx {
+            vd: vreg(11),
+            vs2: vreg(2),
+            rs1: reg(8),
+        },
+        vreg(11),
+        0x03,
+    );
+    assert_next_vector_mask_instruction(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        RiscvInstruction::VectorMaskLessEqualUnsignedVi {
+            vd: vreg(12),
+            vs2: vreg(2),
+            imm: -1,
+        },
+        vreg(12),
+        0x3f,
+    );
+    assert_next_vector_mask_instruction(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        RiscvInstruction::VectorMaskLessEqualSignedVv {
+            vd: vreg(13),
+            vs1: vreg(3),
+            vs2: vreg(2),
+        },
+        vreg(13),
+        0x1b,
+    );
+    assert_next_vector_mask_instruction(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        RiscvInstruction::VectorMaskLessEqualSignedVx {
+            vd: vreg(14),
+            vs2: vreg(2),
+            rs1: reg(9),
+        },
+        vreg(14),
+        0x30,
+    );
+    assert_next_vector_mask_instruction(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        RiscvInstruction::VectorMaskLessEqualSignedVi {
+            vd: vreg(15),
+            vs2: vreg(2),
+            imm: -1,
+        },
+        vreg(15),
+        0x30,
+    );
+    assert_next_vector_mask_instruction(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        RiscvInstruction::VectorMaskGreaterUnsignedVx {
+            vd: vreg(16),
+            vs2: vreg(2),
+            rs1: reg(8),
+        },
+        vreg(16),
+        0x3c,
+    );
+    assert_next_vector_mask_instruction(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        RiscvInstruction::VectorMaskGreaterUnsignedVi {
+            vd: vreg(17),
+            vs2: vreg(2),
+            imm: -1,
+        },
+        vreg(17),
+        0x00,
+    );
+    assert_next_vector_mask_instruction(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        RiscvInstruction::VectorMaskGreaterSignedVx {
+            vd: vreg(18),
+            vs2: vreg(2),
+            rs1: reg(9),
+        },
+        vreg(18),
+        0x0f,
+    );
+    assert_next_vector_mask_instruction(
+        &core,
+        store,
+        &mut scheduler,
+        &transport,
+        RiscvInstruction::VectorMaskGreaterSignedVi {
+            vd: vreg(19),
+            vs2: vreg(2),
+            imm: -1,
+        },
+        vreg(19),
+        0x0f,
+    );
 }
 
 #[test]

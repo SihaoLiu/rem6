@@ -133,6 +133,78 @@ pub(crate) fn execute_vector_integer_binary(
         RiscvInstruction::VectorMaskNotEqualVi { vd, vs2, imm } => {
             execute_vector_mask_compare_vi(hart, vd, vs2, imm, MaskCompareOp::NotEqual)
         }
+        RiscvInstruction::VectorMaskLessUnsignedVv { vd, vs1, vs2 } => {
+            execute_vector_mask_compare_vv(hart, vd, vs1, vs2, MaskCompareOp::LessUnsigned)
+        }
+        RiscvInstruction::VectorMaskLessUnsignedVx { vd, vs2, rs1 } => {
+            execute_vector_mask_compare_vx(
+                hart,
+                vd,
+                vs2,
+                hart.read(rs1),
+                MaskCompareOp::LessUnsigned,
+            )
+        }
+        RiscvInstruction::VectorMaskLessSignedVv { vd, vs1, vs2 } => {
+            execute_vector_mask_compare_vv(hart, vd, vs1, vs2, MaskCompareOp::LessSigned)
+        }
+        RiscvInstruction::VectorMaskLessSignedVx { vd, vs2, rs1 } => {
+            execute_vector_mask_compare_vx(hart, vd, vs2, hart.read(rs1), MaskCompareOp::LessSigned)
+        }
+        RiscvInstruction::VectorMaskLessEqualUnsignedVv { vd, vs1, vs2 } => {
+            execute_vector_mask_compare_vv(hart, vd, vs1, vs2, MaskCompareOp::LessEqualUnsigned)
+        }
+        RiscvInstruction::VectorMaskLessEqualUnsignedVx { vd, vs2, rs1 } => {
+            execute_vector_mask_compare_vx(
+                hart,
+                vd,
+                vs2,
+                hart.read(rs1),
+                MaskCompareOp::LessEqualUnsigned,
+            )
+        }
+        RiscvInstruction::VectorMaskLessEqualUnsignedVi { vd, vs2, imm } => {
+            execute_vector_mask_compare_vi(hart, vd, vs2, imm, MaskCompareOp::LessEqualUnsigned)
+        }
+        RiscvInstruction::VectorMaskLessEqualSignedVv { vd, vs1, vs2 } => {
+            execute_vector_mask_compare_vv(hart, vd, vs1, vs2, MaskCompareOp::LessEqualSigned)
+        }
+        RiscvInstruction::VectorMaskLessEqualSignedVx { vd, vs2, rs1 } => {
+            execute_vector_mask_compare_vx(
+                hart,
+                vd,
+                vs2,
+                hart.read(rs1),
+                MaskCompareOp::LessEqualSigned,
+            )
+        }
+        RiscvInstruction::VectorMaskLessEqualSignedVi { vd, vs2, imm } => {
+            execute_vector_mask_compare_vi(hart, vd, vs2, imm, MaskCompareOp::LessEqualSigned)
+        }
+        RiscvInstruction::VectorMaskGreaterUnsignedVx { vd, vs2, rs1 } => {
+            execute_vector_mask_compare_vx(
+                hart,
+                vd,
+                vs2,
+                hart.read(rs1),
+                MaskCompareOp::GreaterUnsigned,
+            )
+        }
+        RiscvInstruction::VectorMaskGreaterUnsignedVi { vd, vs2, imm } => {
+            execute_vector_mask_compare_vi(hart, vd, vs2, imm, MaskCompareOp::GreaterUnsigned)
+        }
+        RiscvInstruction::VectorMaskGreaterSignedVx { vd, vs2, rs1 } => {
+            execute_vector_mask_compare_vx(
+                hart,
+                vd,
+                vs2,
+                hart.read(rs1),
+                MaskCompareOp::GreaterSigned,
+            )
+        }
+        RiscvInstruction::VectorMaskGreaterSignedVi { vd, vs2, imm } => {
+            execute_vector_mask_compare_vi(hart, vd, vs2, imm, MaskCompareOp::GreaterSigned)
+        }
         RiscvInstruction::VectorAndVv { vd, vs1, vs2 } => {
             execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::And)
         }
@@ -523,6 +595,12 @@ impl LaneBinaryOp {
 enum MaskCompareOp {
     Equal,
     NotEqual,
+    LessUnsigned,
+    LessSigned,
+    LessEqualUnsigned,
+    LessEqualSigned,
+    GreaterUnsigned,
+    GreaterSigned,
 }
 
 impl MaskCompareOp {
@@ -530,7 +608,37 @@ impl MaskCompareOp {
         match self {
             Self::Equal => left == right,
             Self::NotEqual => left != right,
+            Self::LessUnsigned => mask_lane_unsigned(left) < mask_lane_unsigned(right),
+            Self::LessSigned => mask_lane_signed(left) < mask_lane_signed(right),
+            Self::LessEqualUnsigned => mask_lane_unsigned(left) <= mask_lane_unsigned(right),
+            Self::LessEqualSigned => mask_lane_signed(left) <= mask_lane_signed(right),
+            Self::GreaterUnsigned => mask_lane_unsigned(left) > mask_lane_unsigned(right),
+            Self::GreaterSigned => mask_lane_signed(left) > mask_lane_signed(right),
         }
+    }
+}
+
+fn mask_lane_unsigned(bytes: &[u8]) -> u64 {
+    match bytes.len() {
+        1 => u64::from(bytes[0]),
+        2 => u64::from(u16::from_le_bytes([bytes[0], bytes[1]])),
+        4 => u64::from(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+        8 => u64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]),
+        _ => unreachable!("validated vector element width"),
+    }
+}
+
+fn mask_lane_signed(bytes: &[u8]) -> i64 {
+    match bytes.len() {
+        1 => i64::from(bytes[0] as i8),
+        2 => i64::from(i16::from_le_bytes([bytes[0], bytes[1]])),
+        4 => i64::from(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+        8 => i64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]),
+        _ => unreachable!("validated vector element width"),
     }
 }
 

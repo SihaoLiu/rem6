@@ -324,6 +324,26 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs1: vector_register(raw, 15),
             vs2: vector_register(raw, 20),
         }),
+        (0x0, 0b011010, true) => Ok(RiscvInstruction::VectorMaskLessUnsignedVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x0, 0b011011, true) => Ok(RiscvInstruction::VectorMaskLessSignedVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x0, 0b011100, true) => Ok(RiscvInstruction::VectorMaskLessEqualUnsignedVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x0, 0b011101, true) => Ok(RiscvInstruction::VectorMaskLessEqualSignedVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
         (0x0, 0b100101, true) => Ok(RiscvInstruction::VectorShiftLeftLogicalVv {
             vd: vector_register(raw, 7),
             vs1: vector_register(raw, 15),
@@ -409,6 +429,26 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             imm: vector_signed_imm5(raw),
         }),
+        (0x3, 0b011100, true) => Ok(RiscvInstruction::VectorMaskLessEqualUnsignedVi {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            imm: vector_signed_imm5(raw),
+        }),
+        (0x3, 0b011101, true) => Ok(RiscvInstruction::VectorMaskLessEqualSignedVi {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            imm: vector_signed_imm5(raw),
+        }),
+        (0x3, 0b011110, true) => Ok(RiscvInstruction::VectorMaskGreaterUnsignedVi {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            imm: vector_signed_imm5(raw),
+        }),
+        (0x3, 0b011111, true) => Ok(RiscvInstruction::VectorMaskGreaterSignedVi {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            imm: vector_signed_imm5(raw),
+        }),
         (0x3, 0b100101, true) => Ok(RiscvInstruction::VectorShiftLeftLogicalVi {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
@@ -475,6 +515,36 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs1: rs1(raw),
         }),
         (0x4, 0b011001, true) => Ok(RiscvInstruction::VectorMaskNotEqualVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b011010, true) => Ok(RiscvInstruction::VectorMaskLessUnsignedVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b011011, true) => Ok(RiscvInstruction::VectorMaskLessSignedVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b011100, true) => Ok(RiscvInstruction::VectorMaskLessEqualUnsignedVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b011101, true) => Ok(RiscvInstruction::VectorMaskLessEqualSignedVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b011110, true) => Ok(RiscvInstruction::VectorMaskGreaterUnsignedVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b011111, true) => Ok(RiscvInstruction::VectorMaskGreaterSignedVx {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
             rs1: rs1(raw),

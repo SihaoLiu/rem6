@@ -267,6 +267,20 @@ fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -
             | RiscvInstruction::VectorMaskNotEqualVv { .. }
             | RiscvInstruction::VectorMaskNotEqualVx { .. }
             | RiscvInstruction::VectorMaskNotEqualVi { .. }
+            | RiscvInstruction::VectorMaskLessUnsignedVv { .. }
+            | RiscvInstruction::VectorMaskLessUnsignedVx { .. }
+            | RiscvInstruction::VectorMaskLessSignedVv { .. }
+            | RiscvInstruction::VectorMaskLessSignedVx { .. }
+            | RiscvInstruction::VectorMaskLessEqualUnsignedVv { .. }
+            | RiscvInstruction::VectorMaskLessEqualUnsignedVx { .. }
+            | RiscvInstruction::VectorMaskLessEqualUnsignedVi { .. }
+            | RiscvInstruction::VectorMaskLessEqualSignedVv { .. }
+            | RiscvInstruction::VectorMaskLessEqualSignedVx { .. }
+            | RiscvInstruction::VectorMaskLessEqualSignedVi { .. }
+            | RiscvInstruction::VectorMaskGreaterUnsignedVx { .. }
+            | RiscvInstruction::VectorMaskGreaterUnsignedVi { .. }
+            | RiscvInstruction::VectorMaskGreaterSignedVx { .. }
+            | RiscvInstruction::VectorMaskGreaterSignedVi { .. }
             | RiscvInstruction::VectorAndVv { .. }
             | RiscvInstruction::VectorAndVx { .. }
             | RiscvInstruction::VectorAndVi { .. }

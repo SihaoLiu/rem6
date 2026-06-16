@@ -10,6 +10,7 @@ mod float_execute;
 mod gdb_target;
 mod hart;
 mod instruction;
+mod instruction_privilege;
 mod integer;
 mod load_store;
 mod pma;
@@ -23,7 +24,7 @@ mod vector;
 mod vector_execute;
 
 use encoding::{j_imm, rd, u_imm};
-use instruction::csr_privilege_allowed;
+use instruction_privilege::csr_privilege_allowed;
 use integer::{
     div_signed, div_signed_word, div_unsigned, div_unsigned_word, mulh_signed,
     mulh_signed_unsigned, mulh_unsigned, rem_signed, rem_signed_word, rem_unsigned,
@@ -474,6 +475,20 @@ impl RiscvHartState {
             | RiscvInstruction::VectorMaskNotEqualVv { .. }
             | RiscvInstruction::VectorMaskNotEqualVx { .. }
             | RiscvInstruction::VectorMaskNotEqualVi { .. }
+            | RiscvInstruction::VectorMaskLessUnsignedVv { .. }
+            | RiscvInstruction::VectorMaskLessUnsignedVx { .. }
+            | RiscvInstruction::VectorMaskLessSignedVv { .. }
+            | RiscvInstruction::VectorMaskLessSignedVx { .. }
+            | RiscvInstruction::VectorMaskLessEqualUnsignedVv { .. }
+            | RiscvInstruction::VectorMaskLessEqualUnsignedVx { .. }
+            | RiscvInstruction::VectorMaskLessEqualUnsignedVi { .. }
+            | RiscvInstruction::VectorMaskLessEqualSignedVv { .. }
+            | RiscvInstruction::VectorMaskLessEqualSignedVx { .. }
+            | RiscvInstruction::VectorMaskLessEqualSignedVi { .. }
+            | RiscvInstruction::VectorMaskGreaterUnsignedVx { .. }
+            | RiscvInstruction::VectorMaskGreaterUnsignedVi { .. }
+            | RiscvInstruction::VectorMaskGreaterSignedVx { .. }
+            | RiscvInstruction::VectorMaskGreaterSignedVi { .. }
             | RiscvInstruction::VectorAndVv { .. }
             | RiscvInstruction::VectorAndVx { .. }
             | RiscvInstruction::VectorAndVi { .. }

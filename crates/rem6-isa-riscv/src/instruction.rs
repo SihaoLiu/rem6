@@ -1,8 +1,7 @@
 use crate::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryWidth, Register, RiscvCounterCsr,
     RiscvFenceSet, RiscvFloatCsr, RiscvFloatRoundingMode, RiscvInterruptCsr, RiscvMachineTrapCsr,
-    RiscvPrivilegeMode, RiscvPseudoOp, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
-    VectorRegister,
+    RiscvPseudoOp, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr, VectorRegister,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -445,6 +444,76 @@ pub enum RiscvInstruction {
         rs1: Register,
     },
     VectorMaskNotEqualVi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        imm: i8,
+    },
+    VectorMaskLessUnsignedVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorMaskLessUnsignedVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorMaskLessSignedVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorMaskLessSignedVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorMaskLessEqualUnsignedVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorMaskLessEqualUnsignedVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorMaskLessEqualUnsignedVi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        imm: i8,
+    },
+    VectorMaskLessEqualSignedVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorMaskLessEqualSignedVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorMaskLessEqualSignedVi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        imm: i8,
+    },
+    VectorMaskGreaterUnsignedVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorMaskGreaterUnsignedVi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        imm: i8,
+    },
+    VectorMaskGreaterSignedVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorMaskGreaterSignedVi {
         vd: VectorRegister,
         vs2: VectorRegister,
         imm: i8,
@@ -1157,98 +1226,4 @@ pub enum RiscvInstruction {
     },
     Ecall,
     Ebreak,
-}
-
-impl RiscvInstruction {
-    pub(crate) const fn required_csr_privilege(self) -> Option<RiscvPrivilegeMode> {
-        match self {
-            Self::ReadMachineHartId { .. } => Some(RiscvPrivilegeMode::Machine),
-            Self::ReadCounterCsr { .. } => Some(RiscvPrivilegeMode::User),
-            Self::ReadMachineCounterCsr { .. }
-            | Self::WriteCounterCsr { .. }
-            | Self::SetCounterCsr { .. }
-            | Self::ClearCounterCsr { .. }
-            | Self::WriteCounterCsrImmediate { .. }
-            | Self::SetCounterCsrImmediate { .. }
-            | Self::ClearCounterCsrImmediate { .. } => Some(RiscvPrivilegeMode::Machine),
-            Self::ReadFloatCsr { csr, .. }
-            | Self::WriteFloatCsr { csr, .. }
-            | Self::SetFloatCsr { csr, .. }
-            | Self::ClearFloatCsr { csr, .. }
-            | Self::WriteFloatCsrImmediate { csr, .. }
-            | Self::SetFloatCsrImmediate { csr, .. }
-            | Self::ClearFloatCsrImmediate { csr, .. } => {
-                Some(required_csr_privilege(csr.address()))
-            }
-            Self::ReadStatusCsr { csr, .. }
-            | Self::WriteStatusCsr { csr, .. }
-            | Self::SetStatusCsr { csr, .. }
-            | Self::ClearStatusCsr { csr, .. }
-            | Self::WriteStatusCsrImmediate { csr, .. }
-            | Self::SetStatusCsrImmediate { csr, .. }
-            | Self::ClearStatusCsrImmediate { csr, .. } => {
-                Some(required_csr_privilege(csr.address()))
-            }
-            Self::ReadInterruptCsr { csr, .. }
-            | Self::WriteInterruptCsr { csr, .. }
-            | Self::SetInterruptCsr { csr, .. }
-            | Self::ClearInterruptCsr { csr, .. }
-            | Self::WriteInterruptCsrImmediate { csr, .. }
-            | Self::SetInterruptCsrImmediate { csr, .. }
-            | Self::ClearInterruptCsrImmediate { csr, .. } => {
-                Some(required_csr_privilege(csr.address()))
-            }
-            Self::ReadMachineTrapCsr { csr, .. }
-            | Self::WriteMachineTrapCsr { csr, .. }
-            | Self::SetMachineTrapCsr { csr, .. }
-            | Self::ClearMachineTrapCsr { csr, .. }
-            | Self::WriteMachineTrapCsrImmediate { csr, .. }
-            | Self::SetMachineTrapCsrImmediate { csr, .. }
-            | Self::ClearMachineTrapCsrImmediate { csr, .. } => {
-                Some(required_csr_privilege(csr.address()))
-            }
-            Self::ReadSupervisorTrapCsr { csr, .. }
-            | Self::WriteSupervisorTrapCsr { csr, .. }
-            | Self::SetSupervisorTrapCsr { csr, .. }
-            | Self::ClearSupervisorTrapCsr { csr, .. }
-            | Self::WriteSupervisorTrapCsrImmediate { csr, .. }
-            | Self::SetSupervisorTrapCsrImmediate { csr, .. }
-            | Self::ClearSupervisorTrapCsrImmediate { csr, .. } => {
-                Some(required_csr_privilege(csr.address()))
-            }
-            Self::ReadTranslationCsr { csr, .. }
-            | Self::WriteTranslationCsr { csr, .. }
-            | Self::SetTranslationCsr { csr, .. }
-            | Self::ClearTranslationCsr { csr, .. }
-            | Self::WriteTranslationCsrImmediate { csr, .. }
-            | Self::SetTranslationCsrImmediate { csr, .. }
-            | Self::ClearTranslationCsrImmediate { csr, .. } => {
-                Some(required_csr_privilege(csr.address()))
-            }
-            _ => None,
-        }
-    }
-}
-
-const fn required_csr_privilege(address: u16) -> RiscvPrivilegeMode {
-    match (address >> 8) & 0b11 {
-        0 => RiscvPrivilegeMode::User,
-        1 => RiscvPrivilegeMode::Supervisor,
-        _ => RiscvPrivilegeMode::Machine,
-    }
-}
-
-pub(crate) fn csr_privilege_allowed(
-    current: RiscvPrivilegeMode,
-    required: RiscvPrivilegeMode,
-) -> bool {
-    privilege_rank(current) >= privilege_rank(required)
-}
-
-const fn privilege_rank(privilege: RiscvPrivilegeMode) -> u8 {
-    match privilege {
-        RiscvPrivilegeMode::User => 0,
-        RiscvPrivilegeMode::Supervisor => 1,
-        RiscvPrivilegeMode::Machine => 3,
-    }
 }
