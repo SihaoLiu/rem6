@@ -87,6 +87,34 @@ pub(crate) fn execute_vector_integer_binary(
             hart.read(rs1),
             LaneBinaryOp::MultiplyHighSigned,
         ),
+        RiscvInstruction::VectorDivideUnsignedVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::DivideUnsigned)
+        }
+        RiscvInstruction::VectorDivideUnsignedVx { vd, vs2, rs1 } => {
+            execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::DivideUnsigned)
+        }
+        RiscvInstruction::VectorDivideSignedVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::DivideSigned)
+        }
+        RiscvInstruction::VectorDivideSignedVx { vd, vs2, rs1 } => {
+            execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::DivideSigned)
+        }
+        RiscvInstruction::VectorRemainderUnsignedVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::RemainderUnsigned)
+        }
+        RiscvInstruction::VectorRemainderUnsignedVx { vd, vs2, rs1 } => execute_vector_binary_vx(
+            hart,
+            vd,
+            vs2,
+            hart.read(rs1),
+            LaneBinaryOp::RemainderUnsigned,
+        ),
+        RiscvInstruction::VectorRemainderSignedVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::RemainderSigned)
+        }
+        RiscvInstruction::VectorRemainderSignedVx { vd, vs2, rs1 } => {
+            execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::RemainderSigned)
+        }
         RiscvInstruction::VectorAndVv { vd, vs1, vs2 } => {
             execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::And)
         }
@@ -230,6 +258,10 @@ enum LaneBinaryOp {
     MultiplyHighUnsigned,
     MultiplyHighSignedUnsigned,
     MultiplyHighSigned,
+    DivideUnsigned,
+    DivideSigned,
+    RemainderUnsigned,
+    RemainderSigned,
     And,
     Or,
     Xor,
@@ -260,6 +292,22 @@ impl LaneBinaryOp {
                 multiply_high_signed(i128::from(left as i8), i128::from(right as i8), u8::BITS)
                     as u8
             }
+            Self::DivideUnsigned => {
+                divide_unsigned(u128::from(left), u128::from(right), u8::MAX.into()) as u8
+            }
+            Self::DivideSigned => divide_signed(
+                i128::from(left as i8),
+                i128::from(right as i8),
+                i128::from(i8::MIN),
+            ) as u8,
+            Self::RemainderUnsigned => {
+                remainder_unsigned(u128::from(left), u128::from(right)) as u8
+            }
+            Self::RemainderSigned => remainder_signed(
+                i128::from(left as i8),
+                i128::from(right as i8),
+                i128::from(i8::MIN),
+            ) as u8,
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
@@ -290,6 +338,22 @@ impl LaneBinaryOp {
                 multiply_high_signed(i128::from(left as i16), i128::from(right as i16), u16::BITS)
                     as u16
             }
+            Self::DivideUnsigned => {
+                divide_unsigned(u128::from(left), u128::from(right), u16::MAX.into()) as u16
+            }
+            Self::DivideSigned => divide_signed(
+                i128::from(left as i16),
+                i128::from(right as i16),
+                i128::from(i16::MIN),
+            ) as u16,
+            Self::RemainderUnsigned => {
+                remainder_unsigned(u128::from(left), u128::from(right)) as u16
+            }
+            Self::RemainderSigned => remainder_signed(
+                i128::from(left as i16),
+                i128::from(right as i16),
+                i128::from(i16::MIN),
+            ) as u16,
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
@@ -320,6 +384,22 @@ impl LaneBinaryOp {
                 multiply_high_signed(i128::from(left as i32), i128::from(right as i32), u32::BITS)
                     as u32
             }
+            Self::DivideUnsigned => {
+                divide_unsigned(u128::from(left), u128::from(right), u32::MAX.into()) as u32
+            }
+            Self::DivideSigned => divide_signed(
+                i128::from(left as i32),
+                i128::from(right as i32),
+                i128::from(i32::MIN),
+            ) as u32,
+            Self::RemainderUnsigned => {
+                remainder_unsigned(u128::from(left), u128::from(right)) as u32
+            }
+            Self::RemainderSigned => remainder_signed(
+                i128::from(left as i32),
+                i128::from(right as i32),
+                i128::from(i32::MIN),
+            ) as u32,
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
@@ -350,6 +430,22 @@ impl LaneBinaryOp {
                 multiply_high_signed(i128::from(left as i64), i128::from(right as i64), u64::BITS)
                     as u64
             }
+            Self::DivideUnsigned => {
+                divide_unsigned(u128::from(left), u128::from(right), u64::MAX.into()) as u64
+            }
+            Self::DivideSigned => divide_signed(
+                i128::from(left as i64),
+                i128::from(right as i64),
+                i128::from(i64::MIN),
+            ) as u64,
+            Self::RemainderUnsigned => {
+                remainder_unsigned(u128::from(left), u128::from(right)) as u64
+            }
+            Self::RemainderSigned => remainder_signed(
+                i128::from(left as i64),
+                i128::from(right as i64),
+                i128::from(i64::MIN),
+            ) as u64,
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
@@ -370,6 +466,42 @@ fn multiply_high_signed(left: i128, right: i128, element_bits: u32) -> u128 {
 
 fn multiply_high_signed_unsigned(left: i128, right: u128, element_bits: u32) -> u128 {
     ((left * right as i128) >> element_bits) as u128
+}
+
+fn divide_unsigned(left: u128, right: u128, division_by_zero_result: u128) -> u128 {
+    if right == 0 {
+        division_by_zero_result
+    } else {
+        left / right
+    }
+}
+
+fn divide_signed(left: i128, right: i128, min_value: i128) -> u128 {
+    if right == 0 {
+        u128::MAX
+    } else if left == min_value && right == -1 {
+        min_value as u128
+    } else {
+        (left / right) as u128
+    }
+}
+
+fn remainder_unsigned(left: u128, right: u128) -> u128 {
+    if right == 0 {
+        left
+    } else {
+        left % right
+    }
+}
+
+fn remainder_signed(left: i128, right: i128, min_value: i128) -> u128 {
+    if right == 0 {
+        left as u128
+    } else if left == min_value && right == -1 {
+        0
+    } else {
+        (left % right) as u128
+    }
 }
 
 fn shift_amount(raw: u64, element_bits: u32) -> u32 {

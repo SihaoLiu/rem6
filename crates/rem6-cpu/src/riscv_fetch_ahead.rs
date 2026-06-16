@@ -253,6 +253,14 @@ fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -
             | RiscvInstruction::VectorMultiplyHighSignedUnsignedVx { .. }
             | RiscvInstruction::VectorMultiplyHighSignedVv { .. }
             | RiscvInstruction::VectorMultiplyHighSignedVx { .. }
+            | RiscvInstruction::VectorDivideUnsignedVv { .. }
+            | RiscvInstruction::VectorDivideUnsignedVx { .. }
+            | RiscvInstruction::VectorDivideSignedVv { .. }
+            | RiscvInstruction::VectorDivideSignedVx { .. }
+            | RiscvInstruction::VectorRemainderUnsignedVv { .. }
+            | RiscvInstruction::VectorRemainderUnsignedVx { .. }
+            | RiscvInstruction::VectorRemainderSignedVv { .. }
+            | RiscvInstruction::VectorRemainderSignedVx { .. }
             | RiscvInstruction::VectorAndVv { .. }
             | RiscvInstruction::VectorAndVx { .. }
             | RiscvInstruction::VectorAndVi { .. }

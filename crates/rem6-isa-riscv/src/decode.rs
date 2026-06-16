@@ -349,6 +349,26 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs1: vector_register(raw, 15),
             vs2: vector_register(raw, 20),
         }),
+        (0x2, 0b100000, true) => Ok(RiscvInstruction::VectorDivideUnsignedVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x2, 0b100001, true) => Ok(RiscvInstruction::VectorDivideSignedVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x2, 0b100010, true) => Ok(RiscvInstruction::VectorRemainderUnsignedVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x2, 0b100011, true) => Ok(RiscvInstruction::VectorRemainderSignedVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
         (0x3, 0, true) => Ok(RiscvInstruction::VectorAddVi {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
@@ -460,6 +480,26 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs1: rs1(raw),
         }),
         (0x6, 0b100111, true) => Ok(RiscvInstruction::VectorMultiplyHighSignedVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x6, 0b100000, true) => Ok(RiscvInstruction::VectorDivideUnsignedVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x6, 0b100001, true) => Ok(RiscvInstruction::VectorDivideSignedVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x6, 0b100010, true) => Ok(RiscvInstruction::VectorRemainderUnsignedVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x6, 0b100011, true) => Ok(RiscvInstruction::VectorRemainderSignedVx {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
             rs1: rs1(raw),
