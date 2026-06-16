@@ -168,6 +168,28 @@ fn vector_vi_type(funct6: u32, vs2: u8, imm: i8, vd: u8) -> u32 {
         | 0x57
 }
 
+fn vector_masked_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
+    (funct6 << 26) | (u32::from(vs2) << 20) | (u32::from(vs1) << 15) | (u32::from(vd) << 7) | 0x57
+}
+
+fn vector_masked_vx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (0b100 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vector_masked_vi_type(funct6: u32, vs2: u8, imm: i8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (u32::from(vs2) << 20)
+        | (u32::from(imm as u8 & 0x1f) << 15)
+        | (0b011 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
 fn vand_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_vv_type(0b001001, vs2, vs1, vd)
 }
@@ -318,6 +340,30 @@ fn vmsgt_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
 
 fn vmsgt_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
     vector_vi_type(0b011111, vs2, imm, vd)
+}
+
+fn vmerge_vvm_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_masked_vv_type(0b010111, vs2, vs1, vd)
+}
+
+fn vmerge_vxm_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_masked_vx_type(0b010111, vs2, rs1, vd)
+}
+
+fn vmerge_vim_type(vs2: u8, imm: i8, vd: u8) -> u32 {
+    vector_masked_vi_type(0b010111, vs2, imm, vd)
+}
+
+fn vmv_v_v_type(vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b010111, 0, vs1, vd)
+}
+
+fn vmv_v_x_type(rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b010111, 0, rs1, vd)
+}
+
+fn vmv_v_i_type(imm: i8, vd: u8) -> u32 {
+    vector_vi_type(0b010111, 0, imm, vd)
 }
 
 fn vreg(index: u8) -> VectorRegister {
@@ -1900,6 +1946,140 @@ fn riscv_core_driver_executes_vector_ordered_mask_compare_operations_from_fetch_
         },
         vreg(19),
         0x0f,
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_merge_and_move_operations_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 6);
+    core.write_register(reg(6), 0xab);
+    core.write_register(reg(7), 0x44);
+    core.write_vector_register(vreg(0), [0x0b, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    core.write_vector_register(
+        vreg(5),
+        [
+            10, 20, 30, 40, 50, 60, 0xaa, 0xaa, 0xaa, 0xaa, 0, 0, 0, 0, 0, 0,
+        ],
+    );
+    core.write_vector_register(
+        vreg(6),
+        [1, 2, 3, 4, 5, 6, 0xbb, 0xbb, 0xbb, 0xbb, 0, 0, 0, 0, 0, 0],
+    );
+    for index in [4, 9, 10, 11, 12, 13] {
+        core.write_vector_register(vreg(index), [0xee; 16]);
+    }
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xc0, 10, 5),
+            vmerge_vvm_type(5, 6, 4),
+            vmerge_vxm_type(5, 6, 9),
+            vmerge_vim_type(5, -3, 10),
+            vmv_v_v_type(6, 11),
+            vmv_v_x_type(7, 12),
+            vmv_v_i_type(-4, 13),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xc0,
+        }
+    );
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(6, 0xc0));
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMergeVvm {
+            vd: vreg(4),
+            vs2: vreg(5),
+            vs1: vreg(6),
+        }
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(4)),
+        [1, 2, 30, 4, 50, 60, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee]
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMergeVxm {
+            vd: vreg(9),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(9)),
+        [
+            0xab, 0xab, 30, 0xab, 50, 60, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee,
+        ]
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMergeVim {
+            vd: vreg(10),
+            vs2: vreg(5),
+            imm: -3,
+        }
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(10)),
+        [
+            0xfd, 0xfd, 30, 0xfd, 50, 60, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee,
+        ]
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMoveVv {
+            vd: vreg(11),
+            vs1: vreg(6),
+        }
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(11)),
+        [1, 2, 3, 4, 5, 6, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee]
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMoveVx {
+            vd: vreg(12),
+            rs1: reg(7),
+        }
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(12)),
+        [
+            0x44, 0x44, 0x44, 0x44, 0x44, 0x44, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee, 0xee,
+        ]
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorMoveVi {
+            vd: vreg(13),
+            imm: -4,
+        }
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(13)),
+        [
+            0xfc, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee, 0xee,
+        ]
     );
 }
 

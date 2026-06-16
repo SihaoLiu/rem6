@@ -115,6 +115,20 @@ pub(crate) fn execute_vector_integer_binary(
         RiscvInstruction::VectorRemainderSignedVx { vd, vs2, rs1 } => {
             execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::RemainderSigned)
         }
+        RiscvInstruction::VectorMergeVvm { vd, vs2, vs1 } => {
+            execute_vector_merge_vv(hart, vd, vs2, vs1)
+        }
+        RiscvInstruction::VectorMergeVxm { vd, vs2, rs1 } => {
+            execute_vector_merge_vx(hart, vd, vs2, hart.read(rs1))
+        }
+        RiscvInstruction::VectorMergeVim { vd, vs2, imm } => {
+            execute_vector_merge_vi(hart, vd, vs2, imm)
+        }
+        RiscvInstruction::VectorMoveVv { vd, vs1 } => execute_vector_move_vv(hart, vd, vs1),
+        RiscvInstruction::VectorMoveVx { vd, rs1 } => {
+            execute_vector_move_vx(hart, vd, hart.read(rs1))
+        }
+        RiscvInstruction::VectorMoveVi { vd, imm } => execute_vector_move_vi(hart, vd, imm),
         RiscvInstruction::VectorMaskEqualVv { vd, vs1, vs2 } => {
             execute_vector_mask_compare_vv(hart, vd, vs1, vs2, MaskCompareOp::Equal)
         }
@@ -332,6 +346,90 @@ fn execute_vector_binary_vx(
     let left = read_register_group(hart, vs2, plan.group_registers);
     let mut result = read_register_group(hart, vd, plan.group_registers);
     apply_scalar_lanes(&plan, &mut result, &left, scalar, operation);
+    write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
+
+fn execute_vector_merge_vi(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    imm: i8,
+) -> bool {
+    execute_vector_merge_vx(hart, vd, vs2, imm as i64 as u64)
+}
+
+fn execute_vector_merge_vv(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    vs1: VectorRegister,
+) -> bool {
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2, vs1]) else {
+        return false;
+    };
+    if register_group_overlaps_v0(vd, plan.group_registers)
+        || register_group_overlaps_v0(vs2, plan.group_registers)
+        || register_group_overlaps_v0(vs1, plan.group_registers)
+    {
+        return false;
+    }
+    let mask = hart.read_vector(VectorRegister::from_field(0));
+    let fallback = read_register_group(hart, vs2, plan.group_registers);
+    let selected = read_register_group(hart, vs1, plan.group_registers);
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    apply_masked_vector_select_lanes(&plan, &mut result, &fallback, &selected, &mask);
+    write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
+
+fn execute_vector_merge_vx(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    scalar: u64,
+) -> bool {
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2]) else {
+        return false;
+    };
+    if register_group_overlaps_v0(vd, plan.group_registers)
+        || register_group_overlaps_v0(vs2, plan.group_registers)
+    {
+        return false;
+    }
+    let mask = hart.read_vector(VectorRegister::from_field(0));
+    let fallback = read_register_group(hart, vs2, plan.group_registers);
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    apply_masked_scalar_select_lanes(&plan, &mut result, &fallback, scalar, &mask);
+    write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
+
+fn execute_vector_move_vi(hart: &mut RiscvHartState, vd: VectorRegister, imm: i8) -> bool {
+    execute_vector_move_vx(hart, vd, imm as i64 as u64)
+}
+
+fn execute_vector_move_vv(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs1: VectorRegister,
+) -> bool {
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs1]) else {
+        return false;
+    };
+    let source = read_register_group(hart, vs1, plan.group_registers);
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    apply_vector_move_lanes(&plan, &mut result, &source);
+    write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
+
+fn execute_vector_move_vx(hart: &mut RiscvHartState, vd: VectorRegister, scalar: u64) -> bool {
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[]) else {
+        return false;
+    };
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    apply_scalar_move_lanes(&plan, &mut result, scalar);
     write_register_group(hart, vd, plan.group_registers, &result);
     true
 }
@@ -728,6 +826,10 @@ impl VectorBinaryPlan {
             active_bytes,
         })
     }
+
+    fn active_element_count(&self) -> usize {
+        self.active_bytes / self.element_bytes
+    }
 }
 
 struct VectorMaskPlan {
@@ -799,6 +901,68 @@ fn apply_scalar_lanes(
     }
 }
 
+fn apply_masked_vector_select_lanes(
+    plan: &VectorBinaryPlan,
+    result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
+    fallback: &[u8; MAX_VECTOR_GROUP_BYTES],
+    selected: &[u8; MAX_VECTOR_GROUP_BYTES],
+    mask: &[u8; RISCV_VECTOR_REGISTER_BYTES],
+) {
+    for element_index in 0..plan.active_element_count() {
+        let offset = element_index * plan.element_bytes;
+        let source = if read_mask_bit(mask, element_index) {
+            selected
+        } else {
+            fallback
+        };
+        result[offset..offset + plan.element_bytes]
+            .copy_from_slice(&source[offset..offset + plan.element_bytes]);
+    }
+}
+
+fn apply_masked_scalar_select_lanes(
+    plan: &VectorBinaryPlan,
+    result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
+    fallback: &[u8; MAX_VECTOR_GROUP_BYTES],
+    scalar: u64,
+    mask: &[u8; RISCV_VECTOR_REGISTER_BYTES],
+) {
+    let scalar_bytes = scalar.to_le_bytes();
+    for element_index in 0..plan.active_element_count() {
+        let offset = element_index * plan.element_bytes;
+        if read_mask_bit(mask, element_index) {
+            result[offset..offset + plan.element_bytes]
+                .copy_from_slice(&scalar_bytes[..plan.element_bytes]);
+        } else {
+            result[offset..offset + plan.element_bytes]
+                .copy_from_slice(&fallback[offset..offset + plan.element_bytes]);
+        }
+    }
+}
+
+fn apply_vector_move_lanes(
+    plan: &VectorBinaryPlan,
+    result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
+    source: &[u8; MAX_VECTOR_GROUP_BYTES],
+) {
+    for offset in (0..plan.active_bytes).step_by(plan.element_bytes) {
+        result[offset..offset + plan.element_bytes]
+            .copy_from_slice(&source[offset..offset + plan.element_bytes]);
+    }
+}
+
+fn apply_scalar_move_lanes(
+    plan: &VectorBinaryPlan,
+    result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
+    scalar: u64,
+) {
+    let scalar_bytes = scalar.to_le_bytes();
+    for offset in (0..plan.active_bytes).step_by(plan.element_bytes) {
+        result[offset..offset + plan.element_bytes]
+            .copy_from_slice(&scalar_bytes[..plan.element_bytes]);
+    }
+}
+
 fn apply_vector_mask_lanes(
     plan: &VectorMaskPlan,
     mask: &mut [u8; RISCV_VECTOR_REGISTER_BYTES],
@@ -844,12 +1008,22 @@ fn write_mask_bit(mask: &mut [u8; RISCV_VECTOR_REGISTER_BYTES], element_index: u
     }
 }
 
+fn read_mask_bit(mask: &[u8; RISCV_VECTOR_REGISTER_BYTES], element_index: usize) -> bool {
+    let byte_index = element_index / 8;
+    let bit = 1_u8 << (element_index % 8);
+    (mask[byte_index] & bit) != 0
+}
+
 fn valid_register_group(register: VectorRegister, group_registers: usize) -> bool {
     let index = register.index() as usize;
     group_registers > 0
         && group_registers <= MAX_VECTOR_GROUP_REGISTERS
         && index.is_multiple_of(group_registers)
         && index + group_registers <= 32
+}
+
+fn register_group_overlaps_v0(register: VectorRegister, group_registers: usize) -> bool {
+    register.index() == 0 && group_registers > 0
 }
 
 fn read_register_group(

@@ -469,6 +469,12 @@ impl RiscvHartState {
             | RiscvInstruction::VectorRemainderUnsignedVx { .. }
             | RiscvInstruction::VectorRemainderSignedVv { .. }
             | RiscvInstruction::VectorRemainderSignedVx { .. }
+            | RiscvInstruction::VectorMergeVvm { .. }
+            | RiscvInstruction::VectorMergeVxm { .. }
+            | RiscvInstruction::VectorMergeVim { .. }
+            | RiscvInstruction::VectorMoveVv { .. }
+            | RiscvInstruction::VectorMoveVx { .. }
+            | RiscvInstruction::VectorMoveVi { .. }
             | RiscvInstruction::VectorMaskEqualVv { .. }
             | RiscvInstruction::VectorMaskEqualVx { .. }
             | RiscvInstruction::VectorMaskEqualVi { .. }

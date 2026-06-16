@@ -418,6 +418,33 @@ pub enum RiscvInstruction {
         vs2: VectorRegister,
         rs1: Register,
     },
+    VectorMergeVvm {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+    },
+    VectorMergeVxm {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorMergeVim {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        imm: i8,
+    },
+    VectorMoveVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+    },
+    VectorMoveVx {
+        vd: VectorRegister,
+        rs1: Register,
+    },
+    VectorMoveVi {
+        vd: VectorRegister,
+        imm: i8,
+    },
     VectorMaskEqualVv {
         vd: VectorRegister,
         vs1: VectorRegister,

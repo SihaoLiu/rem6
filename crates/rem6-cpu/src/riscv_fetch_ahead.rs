@@ -261,6 +261,12 @@ fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -
             | RiscvInstruction::VectorRemainderUnsignedVx { .. }
             | RiscvInstruction::VectorRemainderSignedVv { .. }
             | RiscvInstruction::VectorRemainderSignedVx { .. }
+            | RiscvInstruction::VectorMergeVvm { .. }
+            | RiscvInstruction::VectorMergeVxm { .. }
+            | RiscvInstruction::VectorMergeVim { .. }
+            | RiscvInstruction::VectorMoveVv { .. }
+            | RiscvInstruction::VectorMoveVx { .. }
+            | RiscvInstruction::VectorMoveVi { .. }
             | RiscvInstruction::VectorMaskEqualVv { .. }
             | RiscvInstruction::VectorMaskEqualVx { .. }
             | RiscvInstruction::VectorMaskEqualVi { .. }

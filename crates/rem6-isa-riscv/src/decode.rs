@@ -314,6 +314,15 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs1: vector_register(raw, 15),
             vs2: vector_register(raw, 20),
         }),
+        (0x0, 0b010111, false) => Ok(RiscvInstruction::VectorMergeVvm {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            vs1: vector_register(raw, 15),
+        }),
+        (0x0, 0b010111, true) if vector_vs2_is_zero(raw) => Ok(RiscvInstruction::VectorMoveVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+        }),
         (0x0, 0b011000, true) => Ok(RiscvInstruction::VectorMaskEqualVv {
             vd: vector_register(raw, 7),
             vs1: vector_register(raw, 15),
@@ -419,6 +428,15 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             imm: vector_signed_imm5(raw),
         }),
+        (0x3, 0b010111, false) => Ok(RiscvInstruction::VectorMergeVim {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            imm: vector_signed_imm5(raw),
+        }),
+        (0x3, 0b010111, true) if vector_vs2_is_zero(raw) => Ok(RiscvInstruction::VectorMoveVi {
+            vd: vector_register(raw, 7),
+            imm: vector_signed_imm5(raw),
+        }),
         (0x3, 0b011000, true) => Ok(RiscvInstruction::VectorMaskEqualVi {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
@@ -507,6 +525,15 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         (0x4, 0b001011, true) => Ok(RiscvInstruction::VectorXorVx {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b010111, false) => Ok(RiscvInstruction::VectorMergeVxm {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b010111, true) if vector_vs2_is_zero(raw) => Ok(RiscvInstruction::VectorMoveVx {
+            vd: vector_register(raw, 7),
             rs1: rs1(raw),
         }),
         (0x4, 0b011000, true) => Ok(RiscvInstruction::VectorMaskEqualVx {
@@ -629,6 +656,10 @@ fn vector_funct6(raw: u32) -> u32 {
 
 fn vector_unmasked(raw: u32) -> bool {
     (raw & (1 << 25)) != 0
+}
+
+fn vector_vs2_is_zero(raw: u32) -> bool {
+    ((raw >> 20) & 0x1f) == 0
 }
 
 fn vector_register(raw: u32, shift: u32) -> VectorRegister {
