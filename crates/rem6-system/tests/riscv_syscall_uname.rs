@@ -61,7 +61,7 @@ fn user_ecall_uname_writes_riscv64_machine_field() {
             (0x8020, addi(10, 5, 0)),
             (0x8024, 0x0000_0073),
         ],
-        &[(0x9000, &[0; 325])],
+        &[(0x9000, &[0; 390])],
     );
     let controller = Arc::new(Mutex::new(SystemHostController::new(
         HostEventPolicy,

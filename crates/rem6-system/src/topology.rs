@@ -225,6 +225,11 @@ fn default_rtc_checkpoint_component(base: Address) -> CheckpointComponentId {
         .expect("formatted RTC checkpoint component is nonempty")
 }
 
+fn default_readfile_checkpoint_component(base: Address) -> CheckpointComponentId {
+    CheckpointComponentId::new(format!("readfile.{:x}", base.get()))
+        .expect("formatted readfile checkpoint component is nonempty")
+}
+
 fn default_pl031_checkpoint_component(base: Address) -> CheckpointComponentId {
     CheckpointComponentId::new(format!("pl031.{:x}", base.get()))
         .expect("formatted PL031 checkpoint component is nonempty")

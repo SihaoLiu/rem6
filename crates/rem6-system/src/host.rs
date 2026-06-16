@@ -1,10 +1,9 @@
+mod checkpoint_accessors;
 mod execution_mode_checkpoint;
 
 use std::collections::BTreeMap;
 
-use rem6_checkpoint::{
-    CheckpointComponentId, CheckpointError, CheckpointManifest, CheckpointRegistry,
-};
+use rem6_checkpoint::{CheckpointError, CheckpointManifest, CheckpointRegistry};
 use rem6_kernel::Tick;
 use rem6_stats::{StatDumpRecord, StatsRegistry, StatsResetRecord};
 
@@ -17,15 +16,15 @@ use crate::{
     IdeControllerCheckpointPort, InterruptControllerCheckpointBank, MemoryStoreCheckpointBank,
     MsiBankCheckpointBank, PciHostCheckpointBank, PciHostCheckpointPort,
     PciLegacyInterruptRouterCheckpointBank, PciLegacyInterruptRouterCheckpointPort,
-    Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, RiscvCoreCheckpointBank,
-    RtcCheckpointBank, SchedulerCheckpointBank, SinicFifoCheckpointBank, SinicFifoCheckpointPort,
-    SinicRegisterCheckpointBank, SinicRegisterCheckpointPort, Sp804CheckpointBank,
-    Sp805CheckpointBank, StopRequest, StorageImageCheckpointBank, StorageImageCheckpointPort,
-    SystemError, TimerCheckpointBank, UartCheckpointBank, VirtioPciCommonCheckpointBank,
-    VirtioPciCommonCheckpointPort, VirtioPciDeviceConfigCheckpointBank,
-    VirtioPciDeviceConfigCheckpointPort, VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointPort,
-    VirtioPciNotifyCheckpointBank, VirtioPciNotifyCheckpointPort, VirtioSplitQueueCheckpointBank,
-    VirtioSplitQueueCheckpointPort,
+    Pl011UartCheckpointBank, Pl031CheckpointBank, PlicCheckpointBank, ReadfileCheckpointBank,
+    RiscvCoreCheckpointBank, RtcCheckpointBank, SchedulerCheckpointBank, SinicFifoCheckpointBank,
+    SinicFifoCheckpointPort, SinicRegisterCheckpointBank, SinicRegisterCheckpointPort,
+    Sp804CheckpointBank, Sp805CheckpointBank, StopRequest, StorageImageCheckpointBank,
+    StorageImageCheckpointPort, SystemError, TimerCheckpointBank, UartCheckpointBank,
+    VirtioPciCommonCheckpointBank, VirtioPciCommonCheckpointPort,
+    VirtioPciDeviceConfigCheckpointBank, VirtioPciDeviceConfigCheckpointPort,
+    VirtioPciIsrCheckpointBank, VirtioPciIsrCheckpointPort, VirtioPciNotifyCheckpointBank,
+    VirtioPciNotifyCheckpointPort, VirtioSplitQueueCheckpointBank, VirtioSplitQueueCheckpointPort,
 };
 
 pub use execution_mode_checkpoint::ExecutionModeCheckpointError;
@@ -112,6 +111,7 @@ pub struct SystemActionExecutor {
     sinic_register_checkpoints: Option<SinicRegisterCheckpointBank>,
     sinic_fifo_checkpoints: Option<SinicFifoCheckpointBank>,
     dram_memory_checkpoints: Option<DramMemoryCheckpointBank>,
+    readfile_checkpoints: Option<ReadfileCheckpointBank>,
     interrupt_controller_checkpoints: Option<InterruptControllerCheckpointBank>,
     clint_checkpoints: Option<ClintCheckpointBank>,
     timer_checkpoints: Option<TimerCheckpointBank>,
@@ -160,6 +160,7 @@ impl SystemActionExecutor {
             sinic_register_checkpoints: None,
             sinic_fifo_checkpoints: None,
             dram_memory_checkpoints: None,
+            readfile_checkpoints: None,
             interrupt_controller_checkpoints: None,
             clint_checkpoints: None,
             timer_checkpoints: None,
@@ -568,6 +569,15 @@ impl SystemActionExecutor {
         Ok(())
     }
 
+    pub fn attach_readfile_checkpoint_bank(
+        &mut self,
+        readfile_checkpoints: ReadfileCheckpointBank,
+    ) -> Result<(), CheckpointError> {
+        readfile_checkpoints.register_all(&mut self.checkpoints)?;
+        self.readfile_checkpoints = Some(readfile_checkpoints);
+        Ok(())
+    }
+
     pub fn attach_interrupt_controller_checkpoint_bank(
         &mut self,
         interrupt_controller_checkpoints: InterruptControllerCheckpointBank,
@@ -829,154 +839,6 @@ impl SystemActionExecutor {
         }
     }
 
-    pub const fn riscv_checkpoint_bank(&self) -> Option<&RiscvCoreCheckpointBank> {
-        self.riscv_checkpoints.as_ref()
-    }
-
-    pub const fn scheduler_checkpoint_bank(&self) -> Option<&SchedulerCheckpointBank> {
-        self.scheduler_checkpoints.as_ref()
-    }
-
-    pub const fn accelerator_checkpoint_bank(&self) -> Option<&AcceleratorCheckpointBank> {
-        self.accelerator_checkpoints.as_ref()
-    }
-
-    pub const fn msi_bank_checkpoint_bank(&self) -> Option<&MsiBankCheckpointBank> {
-        self.msi_bank_checkpoints.as_ref()
-    }
-
-    pub const fn fabric_checkpoint_bank(&self) -> Option<&FabricCheckpointBank> {
-        self.fabric_checkpoints.as_ref()
-    }
-
-    pub const fn gpu_checkpoint_bank(&self) -> Option<&GpuCheckpointBank> {
-        self.gpu_checkpoints.as_ref()
-    }
-
-    pub const fn memory_checkpoint_bank(&self) -> Option<&MemoryStoreCheckpointBank> {
-        self.memory_checkpoints.as_ref()
-    }
-
-    pub const fn storage_image_checkpoint_bank(&self) -> Option<&StorageImageCheckpointBank> {
-        self.storage_image_checkpoints.as_ref()
-    }
-
-    pub const fn guest_fd_checkpoint_bank(&self) -> Option<&GuestFdCheckpointBank> {
-        self.guest_fd_checkpoints.as_ref()
-    }
-
-    pub const fn guest_futex_checkpoint_bank(&self) -> Option<&GuestFutexCheckpointBank> {
-        self.guest_futex_checkpoints.as_ref()
-    }
-
-    pub const fn guest_wait_checkpoint_bank(&self) -> Option<&GuestWaitCheckpointBank> {
-        self.guest_wait_checkpoints.as_ref()
-    }
-
-    pub const fn ide_controller_checkpoint_bank(&self) -> Option<&IdeControllerCheckpointBank> {
-        self.ide_controller_checkpoints.as_ref()
-    }
-
-    pub const fn sinic_register_checkpoint_bank(&self) -> Option<&SinicRegisterCheckpointBank> {
-        self.sinic_register_checkpoints.as_ref()
-    }
-
-    pub const fn sinic_fifo_checkpoint_bank(&self) -> Option<&SinicFifoCheckpointBank> {
-        self.sinic_fifo_checkpoints.as_ref()
-    }
-
-    pub const fn dram_memory_checkpoint_bank(&self) -> Option<&DramMemoryCheckpointBank> {
-        self.dram_memory_checkpoints.as_ref()
-    }
-
-    pub const fn interrupt_controller_checkpoint_bank(
-        &self,
-    ) -> Option<&InterruptControllerCheckpointBank> {
-        self.interrupt_controller_checkpoints.as_ref()
-    }
-
-    pub const fn clint_checkpoint_bank(&self) -> Option<&ClintCheckpointBank> {
-        self.clint_checkpoints.as_ref()
-    }
-
-    pub const fn timer_checkpoint_bank(&self) -> Option<&TimerCheckpointBank> {
-        self.timer_checkpoints.as_ref()
-    }
-
-    pub const fn uart_checkpoint_bank(&self) -> Option<&UartCheckpointBank> {
-        self.uart_checkpoints.as_ref()
-    }
-
-    pub const fn pl011_uart_checkpoint_bank(&self) -> Option<&Pl011UartCheckpointBank> {
-        self.pl011_uart_checkpoints.as_ref()
-    }
-
-    pub const fn plic_checkpoint_bank(&self) -> Option<&PlicCheckpointBank> {
-        self.plic_checkpoints.as_ref()
-    }
-
-    pub const fn pl031_checkpoint_bank(&self) -> Option<&Pl031CheckpointBank> {
-        self.pl031_checkpoints.as_ref()
-    }
-
-    pub const fn sp804_checkpoint_bank(&self) -> Option<&Sp804CheckpointBank> {
-        self.sp804_checkpoints.as_ref()
-    }
-
-    pub const fn sp805_checkpoint_bank(&self) -> Option<&Sp805CheckpointBank> {
-        self.sp805_checkpoints.as_ref()
-    }
-
-    pub const fn cpu_local_timer_checkpoint_bank(&self) -> Option<&CpuLocalTimerCheckpointBank> {
-        self.cpu_local_timer_checkpoints.as_ref()
-    }
-
-    pub const fn rtc_checkpoint_bank(&self) -> Option<&RtcCheckpointBank> {
-        self.rtc_checkpoints.as_ref()
-    }
-
-    pub const fn pci_host_checkpoint_bank(&self) -> Option<&PciHostCheckpointBank> {
-        self.pci_host_checkpoints.as_ref()
-    }
-
-    pub const fn pci_legacy_interrupt_router_checkpoint_bank(
-        &self,
-    ) -> Option<&PciLegacyInterruptRouterCheckpointBank> {
-        self.pci_legacy_interrupt_router_checkpoints.as_ref()
-    }
-
-    pub fn has_checkpoint_component(&self, component: &CheckpointComponentId) -> bool {
-        self.checkpoints.contains_component(component)
-    }
-
-    pub const fn virtio_split_queue_checkpoint_bank(
-        &self,
-    ) -> Option<&VirtioSplitQueueCheckpointBank> {
-        self.virtio_split_queue_checkpoints.as_ref()
-    }
-
-    pub const fn virtio_pci_isr_checkpoint_bank(&self) -> Option<&VirtioPciIsrCheckpointBank> {
-        self.virtio_pci_isr_checkpoints.as_ref()
-    }
-
-    pub const fn virtio_pci_common_checkpoint_bank(
-        &self,
-    ) -> Option<&VirtioPciCommonCheckpointBank> {
-        self.virtio_pci_common_checkpoints.as_ref()
-    }
-
-    pub const fn virtio_pci_notify_checkpoint_bank(
-        &self,
-    ) -> Option<&VirtioPciNotifyCheckpointBank> {
-        self.virtio_pci_notify_checkpoints.as_ref()
-    }
-
-    pub const fn virtio_pci_device_config_checkpoint_bank(
-        &self,
-    ) -> Option<&VirtioPciDeviceConfigCheckpointBank> {
-        self.virtio_pci_device_config_checkpoints.as_ref()
-    }
-
     fn restore_checkpoint_manifest(
         &mut self,
         manifest: &CheckpointManifest,
@@ -1080,6 +942,11 @@ impl SystemActionExecutor {
             dram_memory_checkpoints
                 .validate_restore_from(checkpoints)
                 .map_err(SystemError::DramMemoryCheckpoint)?;
+        }
+        if let Some(readfile_checkpoints) = &self.readfile_checkpoints {
+            readfile_checkpoints
+                .validate_restore_from(checkpoints)
+                .map_err(SystemError::ReadfileCheckpoint)?;
         }
         if let Some(interrupt_controller_checkpoints) = &self.interrupt_controller_checkpoints {
             interrupt_controller_checkpoints
@@ -1253,6 +1120,11 @@ impl SystemActionExecutor {
             dram_memory_checkpoints
                 .restore_all_from(&self.checkpoints)
                 .map_err(SystemError::DramMemoryCheckpoint)?;
+        }
+        if let Some(readfile_checkpoints) = &self.readfile_checkpoints {
+            readfile_checkpoints
+                .restore_all_from(&self.checkpoints)
+                .map_err(SystemError::ReadfileCheckpoint)?;
         }
         if let Some(interrupt_controller_checkpoints) = &self.interrupt_controller_checkpoints {
             interrupt_controller_checkpoints
@@ -1490,6 +1362,11 @@ impl SystemActionExecutor {
                 }
                 if let Some(dram_memory_checkpoints) = &self.dram_memory_checkpoints {
                     dram_memory_checkpoints
+                        .capture_all_into(&mut staged_checkpoints)
+                        .map_err(SystemError::Checkpoint)?;
+                }
+                if let Some(readfile_checkpoints) = &self.readfile_checkpoints {
+                    readfile_checkpoints
                         .capture_all_into(&mut staged_checkpoints)
                         .map_err(SystemError::Checkpoint)?;
                 }
