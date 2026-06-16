@@ -115,6 +115,24 @@ pub(crate) fn execute_vector_integer_binary(
         RiscvInstruction::VectorRemainderSignedVx { vd, vs2, rs1 } => {
             execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::RemainderSigned)
         }
+        RiscvInstruction::VectorMaskEqualVv { vd, vs1, vs2 } => {
+            execute_vector_mask_compare_vv(hart, vd, vs1, vs2, MaskCompareOp::Equal)
+        }
+        RiscvInstruction::VectorMaskEqualVx { vd, vs2, rs1 } => {
+            execute_vector_mask_compare_vx(hart, vd, vs2, hart.read(rs1), MaskCompareOp::Equal)
+        }
+        RiscvInstruction::VectorMaskEqualVi { vd, vs2, imm } => {
+            execute_vector_mask_compare_vi(hart, vd, vs2, imm, MaskCompareOp::Equal)
+        }
+        RiscvInstruction::VectorMaskNotEqualVv { vd, vs1, vs2 } => {
+            execute_vector_mask_compare_vv(hart, vd, vs1, vs2, MaskCompareOp::NotEqual)
+        }
+        RiscvInstruction::VectorMaskNotEqualVx { vd, vs2, rs1 } => {
+            execute_vector_mask_compare_vx(hart, vd, vs2, hart.read(rs1), MaskCompareOp::NotEqual)
+        }
+        RiscvInstruction::VectorMaskNotEqualVi { vd, vs2, imm } => {
+            execute_vector_mask_compare_vi(hart, vd, vs2, imm, MaskCompareOp::NotEqual)
+        }
         RiscvInstruction::VectorAndVv { vd, vs1, vs2 } => {
             execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::And)
         }
@@ -243,6 +261,51 @@ fn execute_vector_binary_vx(
     let mut result = read_register_group(hart, vd, plan.group_registers);
     apply_scalar_lanes(&plan, &mut result, &left, scalar, operation);
     write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
+
+fn execute_vector_mask_compare_vi(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    imm: i8,
+    operation: MaskCompareOp,
+) -> bool {
+    execute_vector_mask_compare_vx(hart, vd, vs2, imm as i64 as u64, operation)
+}
+
+fn execute_vector_mask_compare_vv(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs1: VectorRegister,
+    vs2: VectorRegister,
+    operation: MaskCompareOp,
+) -> bool {
+    let Some(plan) = VectorMaskPlan::new(hart, &[vs2, vs1]) else {
+        return false;
+    };
+    let left = read_register_group(hart, vs2, plan.group_registers);
+    let right = read_register_group(hart, vs1, plan.group_registers);
+    let mut mask = hart.read_vector(vd);
+    apply_vector_mask_lanes(&plan, &mut mask, &left, &right, operation);
+    hart.write_vector(vd, mask);
+    true
+}
+
+fn execute_vector_mask_compare_vx(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    scalar: u64,
+    operation: MaskCompareOp,
+) -> bool {
+    let Some(plan) = VectorMaskPlan::new(hart, &[vs2]) else {
+        return false;
+    };
+    let left = read_register_group(hart, vs2, plan.group_registers);
+    let mut mask = hart.read_vector(vd);
+    apply_scalar_mask_lanes(&plan, &mut mask, &left, scalar, operation);
+    hart.write_vector(vd, mask);
     true
 }
 
@@ -456,6 +519,21 @@ impl LaneBinaryOp {
     }
 }
 
+#[derive(Clone, Copy)]
+enum MaskCompareOp {
+    Equal,
+    NotEqual,
+}
+
+impl MaskCompareOp {
+    fn apply(self, left: &[u8], right: &[u8]) -> bool {
+        match self {
+            Self::Equal => left == right,
+            Self::NotEqual => left != right,
+        }
+    }
+}
+
 fn multiply_high_unsigned(left: u128, right: u128, element_bits: u32) -> u128 {
     (left * right) >> element_bits
 }
@@ -544,6 +622,41 @@ impl VectorBinaryPlan {
     }
 }
 
+struct VectorMaskPlan {
+    element_bytes: usize,
+    group_registers: usize,
+    active_elements: usize,
+}
+
+impl VectorMaskPlan {
+    fn new(hart: &RiscvHartState, sources: &[VectorRegister]) -> Option<Self> {
+        let config = hart.vector_config();
+        let element_bytes = config.element_width_bytes()?;
+        let group_registers = config.register_group_registers()?;
+        if sources
+            .iter()
+            .any(|source| !valid_register_group(*source, group_registers))
+        {
+            return None;
+        }
+
+        let active_elements = config.vl() as usize;
+        let active_bytes = active_elements.checked_mul(element_bytes)?;
+        let active_mask_bytes = active_elements.div_ceil(8);
+        if active_bytes > group_registers * RISCV_VECTOR_REGISTER_BYTES
+            || active_mask_bytes > RISCV_VECTOR_REGISTER_BYTES
+        {
+            return None;
+        }
+
+        Some(Self {
+            element_bytes,
+            group_registers,
+            active_elements,
+        })
+    }
+}
+
 fn apply_vector_lanes(
     plan: &VectorBinaryPlan,
     result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
@@ -575,6 +688,51 @@ fn apply_scalar_lanes(
             scalar,
             operation,
         );
+    }
+}
+
+fn apply_vector_mask_lanes(
+    plan: &VectorMaskPlan,
+    mask: &mut [u8; RISCV_VECTOR_REGISTER_BYTES],
+    left: &[u8; MAX_VECTOR_GROUP_BYTES],
+    right: &[u8; MAX_VECTOR_GROUP_BYTES],
+    operation: MaskCompareOp,
+) {
+    for element_index in 0..plan.active_elements {
+        let offset = element_index * plan.element_bytes;
+        let result = operation.apply(
+            &left[offset..offset + plan.element_bytes],
+            &right[offset..offset + plan.element_bytes],
+        );
+        write_mask_bit(mask, element_index, result);
+    }
+}
+
+fn apply_scalar_mask_lanes(
+    plan: &VectorMaskPlan,
+    mask: &mut [u8; RISCV_VECTOR_REGISTER_BYTES],
+    left: &[u8; MAX_VECTOR_GROUP_BYTES],
+    scalar: u64,
+    operation: MaskCompareOp,
+) {
+    let scalar_bytes = scalar.to_le_bytes();
+    for element_index in 0..plan.active_elements {
+        let offset = element_index * plan.element_bytes;
+        let result = operation.apply(
+            &left[offset..offset + plan.element_bytes],
+            &scalar_bytes[..plan.element_bytes],
+        );
+        write_mask_bit(mask, element_index, result);
+    }
+}
+
+fn write_mask_bit(mask: &mut [u8; RISCV_VECTOR_REGISTER_BYTES], element_index: usize, value: bool) {
+    let byte_index = element_index / 8;
+    let bit = 1_u8 << (element_index % 8);
+    if value {
+        mask[byte_index] |= bit;
+    } else {
+        mask[byte_index] &= !bit;
     }
 }
 

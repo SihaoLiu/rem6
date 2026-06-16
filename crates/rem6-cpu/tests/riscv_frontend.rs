@@ -240,6 +240,30 @@ fn vrem_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_mvv_type(0b100011, vs2, vs1, vd)
 }
 
+fn vmseq_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b011000, vs2, vs1, vd)
+}
+
+fn vmseq_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b011000, vs2, rs1, vd)
+}
+
+fn vmseq_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
+    vector_vi_type(0b011000, vs2, imm, vd)
+}
+
+fn vmsne_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b011001, vs2, vs1, vd)
+}
+
+fn vmsne_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b011001, vs2, rs1, vd)
+}
+
+fn vmsne_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
+    vector_vi_type(0b011001, vs2, imm, vd)
+}
+
 fn vreg(index: u8) -> VectorRegister {
     VectorRegister::new(index).unwrap()
 }
@@ -1442,6 +1466,128 @@ fn riscv_core_driver_executes_vector_divide_remainder_operations_from_fetch_stre
         core.read_vector_register(vreg(14)),
         lanes_u32([(-1_i32) as u32, 9, 0, 0xaaaa_aaaa])
     );
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_mask_compare_operations_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 6);
+    core.write_register(reg(8), 0x1ff);
+    core.write_vector_register(
+        vreg(2),
+        [
+            0xff, 0, 1, 0xff, 2, 3, 0xaa, 0xaa, 0xaa, 0xaa, 0, 0, 0, 0, 0, 0,
+        ],
+    );
+    core.write_vector_register(
+        vreg(1),
+        [
+            0xff, 9, 1, 8, 2, 0, 0xbb, 0xbb, 0xbb, 0xbb, 0, 0, 0, 0, 0, 0,
+        ],
+    );
+    core.write_vector_register(vreg(6), [0; 16]);
+    core.write_vector_register(vreg(7), [0; 16]);
+    core.write_vector_register(vreg(8), [0; 16]);
+    core.write_vector_register(vreg(9), [0; 16]);
+    core.write_vector_register(vreg(10), [0; 16]);
+    core.write_vector_register(vreg(11), [0; 16]);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xc0, 10, 5),
+            vmseq_vv_type(2, 1, 6),
+            vmsne_vv_type(2, 1, 10),
+            vmseq_vx_type(2, 8, 7),
+            vmsne_vx_type(2, 8, 11),
+            vmseq_vi_type(2, -1, 8),
+            vmsne_vi_type(2, -1, 9),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xc0,
+        }
+    );
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(6, 0xc0));
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMaskEqualVv {
+            vd: vreg(6),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        }
+    );
+    let mut expected = [0; 16];
+    expected[0] = 0x15;
+    assert_eq!(core.read_vector_register(vreg(6)), expected);
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMaskNotEqualVv {
+            vd: vreg(10),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        }
+    );
+    let mut expected = [0; 16];
+    expected[0] = 0x2a;
+    assert_eq!(core.read_vector_register(vreg(10)), expected);
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMaskEqualVx {
+            vd: vreg(7),
+            vs2: vreg(2),
+            rs1: reg(8),
+        }
+    );
+    let mut expected = [0; 16];
+    expected[0] = 0x09;
+    assert_eq!(core.read_vector_register(vreg(7)), expected);
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMaskNotEqualVx {
+            vd: vreg(11),
+            vs2: vreg(2),
+            rs1: reg(8),
+        }
+    );
+    let mut expected = [0; 16];
+    expected[0] = 0x36;
+    assert_eq!(core.read_vector_register(vreg(11)), expected);
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMaskEqualVi {
+            vd: vreg(8),
+            vs2: vreg(2),
+            imm: -1,
+        }
+    );
+    let mut expected = [0; 16];
+    expected[0] = 0x09;
+    assert_eq!(core.read_vector_register(vreg(8)), expected);
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorMaskNotEqualVi {
+            vd: vreg(9),
+            vs2: vreg(2),
+            imm: -1,
+        }
+    );
+    let mut expected = [0; 16];
+    expected[0] = 0x36;
+    assert_eq!(core.read_vector_register(vreg(9)), expected);
 }
 
 #[test]

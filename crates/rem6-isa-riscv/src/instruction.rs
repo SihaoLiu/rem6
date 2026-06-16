@@ -419,6 +419,36 @@ pub enum RiscvInstruction {
         vs2: VectorRegister,
         rs1: Register,
     },
+    VectorMaskEqualVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorMaskEqualVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorMaskEqualVi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        imm: i8,
+    },
+    VectorMaskNotEqualVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorMaskNotEqualVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorMaskNotEqualVi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        imm: i8,
+    },
     VectorAndVv {
         vd: VectorRegister,
         vs1: VectorRegister,

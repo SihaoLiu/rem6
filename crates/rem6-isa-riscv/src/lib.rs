@@ -468,6 +468,12 @@ impl RiscvHartState {
             | RiscvInstruction::VectorRemainderUnsignedVx { .. }
             | RiscvInstruction::VectorRemainderSignedVv { .. }
             | RiscvInstruction::VectorRemainderSignedVx { .. }
+            | RiscvInstruction::VectorMaskEqualVv { .. }
+            | RiscvInstruction::VectorMaskEqualVx { .. }
+            | RiscvInstruction::VectorMaskEqualVi { .. }
+            | RiscvInstruction::VectorMaskNotEqualVv { .. }
+            | RiscvInstruction::VectorMaskNotEqualVx { .. }
+            | RiscvInstruction::VectorMaskNotEqualVi { .. }
             | RiscvInstruction::VectorAndVv { .. }
             | RiscvInstruction::VectorAndVx { .. }
             | RiscvInstruction::VectorAndVi { .. }

@@ -314,6 +314,16 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs1: vector_register(raw, 15),
             vs2: vector_register(raw, 20),
         }),
+        (0x0, 0b011000, true) => Ok(RiscvInstruction::VectorMaskEqualVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x0, 0b011001, true) => Ok(RiscvInstruction::VectorMaskNotEqualVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
         (0x0, 0b100101, true) => Ok(RiscvInstruction::VectorShiftLeftLogicalVv {
             vd: vector_register(raw, 7),
             vs1: vector_register(raw, 15),
@@ -389,6 +399,16 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             imm: vector_signed_imm5(raw),
         }),
+        (0x3, 0b011000, true) => Ok(RiscvInstruction::VectorMaskEqualVi {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            imm: vector_signed_imm5(raw),
+        }),
+        (0x3, 0b011001, true) => Ok(RiscvInstruction::VectorMaskNotEqualVi {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            imm: vector_signed_imm5(raw),
+        }),
         (0x3, 0b100101, true) => Ok(RiscvInstruction::VectorShiftLeftLogicalVi {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
@@ -445,6 +465,16 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs1: rs1(raw),
         }),
         (0x4, 0b001011, true) => Ok(RiscvInstruction::VectorXorVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b011000, true) => Ok(RiscvInstruction::VectorMaskEqualVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b011001, true) => Ok(RiscvInstruction::VectorMaskNotEqualVx {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
             rs1: rs1(raw),
