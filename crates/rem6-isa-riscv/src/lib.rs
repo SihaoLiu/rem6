@@ -428,23 +428,15 @@ impl RiscvHartState {
                 next_pc = add_signed(self.read(rs1), offset.value())? & !1;
             }
             RiscvInstruction::VectorSetVli { rd, rs1, vtype } => {
-                let avl = if rs1.is_zero() {
-                    if rd.is_zero() {
-                        u64::from(self.vector_config().vl())
-                    } else {
-                        u64::MAX
-                    }
-                } else {
-                    self.read(rs1)
-                };
-                let vector_config = RiscvVectorConfig::from_avl(vtype, avl);
-                self.set_vector_config(vector_config);
-                write_register(
-                    self,
-                    &mut register_writes,
-                    rd,
-                    u64::from(vector_config.vl()),
-                );
+                let avl = vector_avl(self, rd, rs1);
+                write_vector_config(self, &mut register_writes, rd, vtype, avl);
+            }
+            RiscvInstruction::VectorSetIvli { rd, avl, vtype } => {
+                write_vector_config(self, &mut register_writes, rd, vtype, u64::from(avl));
+            }
+            RiscvInstruction::VectorSetVl { rd, rs1, rs2 } => {
+                let avl = vector_avl(self, rd, rs1);
+                write_vector_config(self, &mut register_writes, rd, self.read(rs2), avl);
             }
             RiscvInstruction::Load {
                 rd,
@@ -1018,6 +1010,30 @@ pub(crate) fn write_register(
     hart.write(register, value);
     writes.push(RegisterWrite::new(register, value));
 }
+
+fn vector_avl(hart: &RiscvHartState, rd: Register, rs1: Register) -> u64 {
+    if !rs1.is_zero() {
+        return hart.read(rs1);
+    }
+    if rd.is_zero() {
+        u64::from(hart.vector_config().vl())
+    } else {
+        u64::MAX
+    }
+}
+
+fn write_vector_config(
+    hart: &mut RiscvHartState,
+    writes: &mut Vec<RegisterWrite>,
+    rd: Register,
+    vtype: u64,
+    avl: u64,
+) {
+    let vector_config = RiscvVectorConfig::from_avl(vtype, avl);
+    hart.set_vector_config(vector_config);
+    write_register(hart, writes, rd, u64::from(vector_config.vl()));
+}
+
 fn write_counter_csr(
     hart: &mut RiscvHartState,
     writes: &mut Vec<RegisterWrite>,

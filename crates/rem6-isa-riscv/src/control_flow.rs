@@ -43,13 +43,14 @@ impl RiscvVectorConfig {
             return None;
         }
 
-        let vsew = (vtype & 0x7) as u32;
+        let vlmul = vtype & 0x7;
+        let vsew = ((vtype >> 3) & 0x7) as u32;
         if vsew > 3 {
             return None;
         }
 
         let base = Self::DEFAULT_VLEN_BITS / (8_u32 << vsew);
-        match (vtype >> 3) & 0x7 {
+        match vlmul {
             0 => Some(base),
             1 => Some(base * 2),
             2 => Some(base * 4),

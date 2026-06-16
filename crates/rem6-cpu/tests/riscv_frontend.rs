@@ -60,6 +60,24 @@ fn vsetvli_type(vtype: u32, rs1: u8, rd: u8) -> u32 {
     (vtype << 20) | (u32::from(rs1) << 15) | (0b111 << 12) | (u32::from(rd) << 7) | 0x57
 }
 
+fn vsetivli_type(vtype: u32, avl: u8, rd: u8) -> u32 {
+    (0b11 << 30)
+        | (vtype << 20)
+        | (u32::from(avl) << 15)
+        | (0b111 << 12)
+        | (u32::from(rd) << 7)
+        | 0x57
+}
+
+fn vsetvl_type(rs2: u8, rs1: u8, rd: u8) -> u32 {
+    (1 << 31)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (0b111 << 12)
+        | (u32::from(rd) << 7)
+        | 0x57
+}
+
 fn locked_tor_without_permissions() -> RiscvPmpConfig {
     RiscvPmpConfig::new(RiscvPmpAddressMode::Tor).with_locked(true)
 }
@@ -408,6 +426,29 @@ fn drive_one_action(
     .unwrap()
 }
 
+fn drive_until_instruction(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) -> RiscvInstruction {
+    for _ in 0..8 {
+        match drive_one_action(core, store.clone(), scheduler, transport) {
+            Some(RiscvCoreDriveAction::FetchIssued { .. })
+            | Some(RiscvCoreDriveAction::DataAccessIssued { .. }) => {
+                scheduler.run_until_idle_conservative();
+            }
+            Some(RiscvCoreDriveAction::InstructionExecuted(event)) => {
+                return event.instruction();
+            }
+            None => {
+                scheduler.run_until_idle_conservative();
+            }
+        }
+    }
+    panic!("expected instruction execution");
+}
+
 fn issue_one_data_access(
     core: &RiscvCore,
     store: Arc<Mutex<PartitionedMemoryStore>>,
@@ -575,7 +616,7 @@ fn riscv_core_driver_executes_vsetvli_from_fetch_stream() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);
     core.write_register(reg(10), 5);
-    let store = loaded_program_store(0x8000, &[vsetvli_type(0x02, 10, 5), 0x0010_0073], &[]);
+    let store = loaded_program_store(0x8000, &[vsetvli_type(0xd0, 10, 5), 0x0010_0073], &[]);
 
     assert!(matches!(
         drive_one_action(&core, store.clone(), &mut scheduler, &transport),
@@ -599,11 +640,46 @@ fn riscv_core_driver_executes_vsetvli_from_fetch_stream() {
         RiscvInstruction::VectorSetVli {
             rd: reg(5),
             rs1: reg(10),
-            vtype: 0x02,
+            vtype: 0xd0,
         }
     );
     assert_eq!(core.read_register(reg(5)), 4);
-    assert_eq!(core.vector_config(), RiscvVectorConfig::new(4, 0x02));
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(4, 0xd0));
+}
+
+#[test]
+fn riscv_core_driver_executes_vsetivli_and_vsetvl_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(8), 9);
+    core.write_register(reg(9), 0xd0);
+    let store = loaded_program_store(
+        0x8000,
+        &[vsetivli_type(0xc9, 7, 6), vsetvl_type(9, 8, 7), 0x0010_0073],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetIvli {
+            rd: reg(6),
+            avl: 7,
+            vtype: 0xc9,
+        }
+    );
+    assert_eq!(core.read_register(reg(6)), 7);
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(7, 0xc9));
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVl {
+            rd: reg(7),
+            rs1: reg(8),
+            rs2: reg(9),
+        }
+    );
+    assert_eq!(core.read_register(reg(7)), 4);
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(4, 0xd0));
 }
 
 #[test]
