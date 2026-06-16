@@ -894,6 +894,9 @@ impl RiscvCore {
         }
 
         state.pending_trap = None;
+        state.pending_trap_event = None;
+        state.pending_fetch_prefix = None;
+        state.discard_branch_speculations();
         state.hart.set_privilege_mode(RiscvPrivilegeMode::User);
         state.hart.write(
             Register::new(10).expect("valid RISC-V integer register"),
@@ -902,7 +905,7 @@ impl RiscvCore {
         let next_pc = Address::new(trap.pc().wrapping_add(4));
         state.hart.set_pc(next_pc.get());
         drop(state);
-        self.core.set_pc(next_pc);
+        self.core.reset_fetch_stream_to_pc(next_pc);
         Some(trap)
     }
 
@@ -926,6 +929,9 @@ impl RiscvCore {
         }
 
         state.pending_trap = None;
+        state.pending_trap_event = None;
+        state.pending_fetch_prefix = None;
+        state.discard_branch_speculations();
         state
             .hart
             .set_privilege_mode(RiscvPrivilegeMode::Supervisor);
@@ -940,7 +946,7 @@ impl RiscvCore {
         let next_pc = Address::new(trap.pc().wrapping_add(4));
         state.hart.set_pc(next_pc.get());
         drop(state);
-        self.core.set_pc(next_pc);
+        self.core.reset_fetch_stream_to_pc(next_pc);
         Some(trap)
     }
 

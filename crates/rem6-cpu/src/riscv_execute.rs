@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use rem6_isa_riscv::RiscvInstruction;
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
@@ -85,20 +87,12 @@ impl RiscvCore {
                 .map(Some);
         }
 
-        let Some(fetch) = fetch_events.into_iter().find(|event| {
-            event.kind() == CpuFetchEventKind::Completed
-                && !state.executed_fetches.contains(&event.request_id())
-        }) else {
+        let architectural = Address::new(state.hart.pc());
+        let Some(fetch) =
+            next_completed_fetch_for_architectural_pc(&mut state, &fetch_events, architectural)
+        else {
             return Ok(None);
         };
-
-        let architectural = Address::new(state.hart.pc());
-        if fetch.pc() != architectural {
-            return Err(RiscvCpuError::PcMismatch {
-                fetch: fetch.pc(),
-                architectural,
-            });
-        }
 
         let data = fetch.data().ok_or(RiscvCpuError::MissingFetchData {
             request: fetch.request_id(),
@@ -198,21 +192,95 @@ impl RiscvCore {
             0,
             true,
         );
+        let fetch_events = self.core.fetch_events();
         let squashed_requests = event
             .in_order_pipeline_cycle()
-            .map(|cycle| {
-                squashed_fetch_requests(state, &self.core.fetch_events(), cycle, consumed_requests)
-            })
+            .map(|cycle| squashed_fetch_requests(state, &fetch_events, cycle, consumed_requests))
             .unwrap_or_default();
+        let redirected_target = redirects_fetch.then_some(next_pc);
+        let stale_requests = stale_fetch_requests_after_retire(
+            state,
+            &fetch_events,
+            fetch.pc(),
+            consumed_requests,
+            redirected_target,
+        );
+        let discarded_requests = squashed_requests
+            .into_iter()
+            .chain(stale_requests)
+            .collect::<BTreeSet<_>>();
         self.core
-            .discard_outstanding_fetches(squashed_requests.iter().copied());
+            .discard_outstanding_fetches(discarded_requests.iter().copied());
         state
             .executed_fetches
             .extend(consumed_requests.iter().copied());
-        state.executed_fetches.extend(squashed_requests);
+        state.executed_fetches.extend(discarded_requests);
         state.events.push(event.clone());
         Ok(event)
     }
+}
+
+fn next_completed_fetch_for_architectural_pc(
+    state: &mut RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    architectural: Address,
+) -> Option<CpuFetchEvent> {
+    let mut completed = fetch_events
+        .iter()
+        .filter(|event| {
+            event.kind() == CpuFetchEventKind::Completed
+                && !state.executed_fetches.contains(&event.request_id())
+        })
+        .collect::<Vec<_>>();
+    completed.sort_by_key(|event| event.request_id().sequence());
+
+    for event in completed {
+        if event.pc() == architectural {
+            return Some(event.clone());
+        }
+    }
+    None
+}
+
+fn stale_fetch_requests_after_retire(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    retired_pc: Address,
+    consumed_requests: &[MemoryRequestId],
+    redirected_target: Option<Address>,
+) -> Vec<MemoryRequestId> {
+    let consumed = consumed_requests.iter().copied().collect::<BTreeSet<_>>();
+    let Some(max_consumed_sequence) = consumed.iter().map(|request| request.sequence()).max()
+    else {
+        return Vec::new();
+    };
+
+    fetch_events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.kind(),
+                CpuFetchEventKind::Issued | CpuFetchEventKind::Completed
+            )
+        })
+        .filter_map(|event| {
+            let request = event.request_id();
+            if state.executed_fetches.contains(&request) || consumed.contains(&request) {
+                return None;
+            }
+            if redirected_target.is_some_and(|target| event.pc() == target) {
+                return None;
+            }
+            if request.sequence() <= max_consumed_sequence || event.pc() == retired_pc {
+                return Some(request);
+            }
+            redirected_target
+                .is_some_and(|target| event.pc() != target)
+                .then_some(request)
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 pub(crate) fn record_retired_in_order_pipeline_cycle_after_wait(
@@ -500,6 +568,29 @@ fn remove_branch_speculation_mappings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CpuFetchRecord;
+    use rem6_kernel::PartitionId;
+    use rem6_memory::{AccessSize, AgentId, MemoryRequestId};
+    use rem6_transport::{MemoryRouteId, TransportEndpointId};
+
+    fn request(sequence: u64) -> MemoryRequestId {
+        MemoryRequestId::new(AgentId::new(7), sequence)
+    }
+
+    fn completed(sequence: u64, pc: u64) -> CpuFetchEvent {
+        CpuFetchEvent::completed(
+            CpuFetchRecord::new(
+                0,
+                PartitionId::new(0),
+                MemoryRouteId::new(0),
+                TransportEndpointId::new("cpu0.ifetch").unwrap(),
+                request(sequence),
+                Address::new(pc),
+                AccessSize::new(4).unwrap(),
+            ),
+            vec![0; 4],
+        )
+    }
 
     #[test]
     fn retire_cycle_waits_for_requested_sequence_when_older_work_is_stale() {
@@ -525,5 +616,62 @@ mod tests {
             .advanced()
             .iter()
             .any(|advance| advance.sequence() == 0 && advance.retires()));
+    }
+
+    #[test]
+    fn stale_fetches_after_retire_discard_duplicate_and_redirect_wrong_path_requests() {
+        let state = RiscvCoreState::new(0x8000, 0);
+        let events = vec![
+            completed(0, 0x8008),
+            completed(1, 0x8008),
+            completed(2, 0x800e),
+            completed(3, 0x8000),
+        ];
+
+        let stale = stale_fetch_requests_after_retire(
+            &state,
+            &events,
+            Address::new(0x8008),
+            &[request(0)],
+            Some(Address::new(0x8000)),
+        );
+
+        assert_eq!(stale, vec![request(1), request(2)]);
+    }
+
+    #[test]
+    fn stale_fetches_after_retire_keep_same_pc_redirect_target_request() {
+        let state = RiscvCoreState::new(0x8000, 0);
+        let events = vec![completed(0, 0x8000), completed(1, 0x8000)];
+
+        let stale = stale_fetch_requests_after_retire(
+            &state,
+            &events,
+            Address::new(0x8000),
+            &[request(0)],
+            Some(Address::new(0x8000)),
+        );
+
+        assert!(stale.is_empty());
+    }
+
+    #[test]
+    fn stale_fetches_after_retire_discard_backedge_wrong_path_request() {
+        let state = RiscvCoreState::new(0x8000, 0);
+        let events = vec![
+            completed(0, 0x8010),
+            completed(1, 0x8014),
+            completed(2, 0x8008),
+        ];
+
+        let stale = stale_fetch_requests_after_retire(
+            &state,
+            &events,
+            Address::new(0x8010),
+            &[request(0)],
+            Some(Address::new(0x8008)),
+        );
+
+        assert_eq!(stale, vec![request(1)]);
     }
 }
