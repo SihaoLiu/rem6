@@ -276,6 +276,20 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 vs2: vector_register(raw, 20),
             })
         }
+        0x3 if vector_funct6(raw) == 0 && vector_unmasked(raw) => {
+            Ok(RiscvInstruction::VectorAddVi {
+                vd: vector_register(raw, 7),
+                vs2: vector_register(raw, 20),
+                imm: vector_signed_imm5(raw),
+            })
+        }
+        0x4 if vector_funct6(raw) == 0 && vector_unmasked(raw) => {
+            Ok(RiscvInstruction::VectorAddVx {
+                vd: vector_register(raw, 7),
+                vs2: vector_register(raw, 20),
+                rs1: rs1(raw),
+            })
+        }
         0x7 if (raw & 0x8000_0000) == 0 => Ok(RiscvInstruction::VectorSetVli {
             rd: rd(raw),
             rs1: rs1(raw),
@@ -305,6 +319,11 @@ fn vector_unmasked(raw: u32) -> bool {
 
 fn vector_register(raw: u32, shift: u32) -> VectorRegister {
     VectorRegister::from_field((raw >> shift) & 0x1f)
+}
+
+fn vector_signed_imm5(raw: u32) -> i8 {
+    let value = ((raw >> 15) & 0x1f) as i8;
+    (value << 3) >> 3
 }
 
 pub(crate) fn decode_branch(raw: u32) -> Result<RiscvInstruction, RiscvError> {

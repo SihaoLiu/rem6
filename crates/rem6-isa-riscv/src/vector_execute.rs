@@ -9,39 +9,106 @@ pub(crate) fn execute_vector_add_vv(
     vs1: VectorRegister,
     vs2: VectorRegister,
 ) -> bool {
-    let config = hart.vector_config();
-    let Some(element_bytes) = config.element_width_bytes() else {
+    let Some(plan) = VectorAddPlan::new(hart, vd, &[vs2, vs1]) else {
         return false;
     };
-    let Some(group_registers) = config.register_group_registers() else {
-        return false;
-    };
-    if !valid_register_group(vd, group_registers)
-        || !valid_register_group(vs1, group_registers)
-        || !valid_register_group(vs2, group_registers)
-    {
-        return false;
-    }
+    let left = read_register_group(hart, vs2, plan.group_registers);
+    let right = read_register_group(hart, vs1, plan.group_registers);
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    add_vector_lanes(&plan, &mut result, &left, &right);
+    write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
 
-    let Some(active_bytes) = (config.vl() as usize).checked_mul(element_bytes) else {
+pub(crate) fn execute_vector_add_vx(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    scalar: u64,
+) -> bool {
+    let Some(plan) = VectorAddPlan::new(hart, vd, &[vs2]) else {
         return false;
     };
-    if active_bytes > group_registers * RISCV_VECTOR_REGISTER_BYTES {
-        return false;
-    }
+    let left = read_register_group(hart, vs2, plan.group_registers);
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    add_scalar_lanes(&plan, &mut result, &left, scalar);
+    write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
 
-    let left = read_register_group(hart, vs1, group_registers);
-    let right = read_register_group(hart, vs2, group_registers);
-    let mut result = read_register_group(hart, vd, group_registers);
-    for offset in (0..active_bytes).step_by(element_bytes) {
+pub(crate) fn execute_vector_add_vi(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    imm: i8,
+) -> bool {
+    execute_vector_add_vx(hart, vd, vs2, imm as i64 as u64)
+}
+
+struct VectorAddPlan {
+    element_bytes: usize,
+    group_registers: usize,
+    active_bytes: usize,
+}
+
+impl VectorAddPlan {
+    fn new(
+        hart: &RiscvHartState,
+        destination: VectorRegister,
+        sources: &[VectorRegister],
+    ) -> Option<Self> {
+        let config = hart.vector_config();
+        let element_bytes = config.element_width_bytes()?;
+        let group_registers = config.register_group_registers()?;
+        if !valid_register_group(destination, group_registers)
+            || sources
+                .iter()
+                .any(|source| !valid_register_group(*source, group_registers))
+        {
+            return None;
+        }
+
+        let active_bytes = (config.vl() as usize).checked_mul(element_bytes)?;
+        if active_bytes > group_registers * RISCV_VECTOR_REGISTER_BYTES {
+            return None;
+        }
+
+        Some(Self {
+            element_bytes,
+            group_registers,
+            active_bytes,
+        })
+    }
+}
+
+fn add_vector_lanes(
+    plan: &VectorAddPlan,
+    result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
+    left: &[u8; MAX_VECTOR_GROUP_BYTES],
+    right: &[u8; MAX_VECTOR_GROUP_BYTES],
+) {
+    for offset in (0..plan.active_bytes).step_by(plan.element_bytes) {
         add_lane(
-            &mut result[offset..offset + element_bytes],
-            &left[offset..offset + element_bytes],
-            &right[offset..offset + element_bytes],
+            &mut result[offset..offset + plan.element_bytes],
+            &left[offset..offset + plan.element_bytes],
+            &right[offset..offset + plan.element_bytes],
         );
     }
-    write_register_group(hart, vd, group_registers, &result);
-    true
+}
+
+fn add_scalar_lanes(
+    plan: &VectorAddPlan,
+    result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
+    left: &[u8; MAX_VECTOR_GROUP_BYTES],
+    scalar: u64,
+) {
+    for offset in (0..plan.active_bytes).step_by(plan.element_bytes) {
+        add_lane_scalar(
+            &mut result[offset..offset + plan.element_bytes],
+            &left[offset..offset + plan.element_bytes],
+            scalar,
+        );
+    }
 }
 
 fn valid_register_group(register: VectorRegister, group_registers: usize) -> bool {
@@ -104,6 +171,30 @@ fn add_lane(result: &mut [u8], left: &[u8], right: &[u8]) {
             .wrapping_add(u64::from_le_bytes([
                 right[0], right[1], right[2], right[3], right[4], right[5], right[6], right[7],
             ]))
+            .to_le_bytes(),
+        ),
+        _ => unreachable!("validated vector element width"),
+    }
+}
+
+fn add_lane_scalar(result: &mut [u8], left: &[u8], scalar: u64) {
+    match result.len() {
+        1 => result[0] = left[0].wrapping_add(scalar as u8),
+        2 => result.copy_from_slice(
+            &u16::from_le_bytes([left[0], left[1]])
+                .wrapping_add(scalar as u16)
+                .to_le_bytes(),
+        ),
+        4 => result.copy_from_slice(
+            &u32::from_le_bytes([left[0], left[1], left[2], left[3]])
+                .wrapping_add(scalar as u32)
+                .to_le_bytes(),
+        ),
+        8 => result.copy_from_slice(
+            &u64::from_le_bytes([
+                left[0], left[1], left[2], left[3], left[4], left[5], left[6], left[7],
+            ])
+            .wrapping_add(scalar)
             .to_le_bytes(),
         ),
         _ => unreachable!("validated vector element width"),
