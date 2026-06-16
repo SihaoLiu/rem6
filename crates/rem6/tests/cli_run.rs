@@ -8,6 +8,10 @@ mod data_cache_multicore;
 mod execution;
 #[path = "cli_run/gdb.rs"]
 mod gdb;
+#[path = "cli_run/gdb_cache.rs"]
+mod gdb_cache;
+#[path = "cli_run/gdb_support.rs"]
+mod gdb_support;
 #[path = "cli_run/gups.rs"]
 mod gups;
 #[path = "cli_run/load.rs"]

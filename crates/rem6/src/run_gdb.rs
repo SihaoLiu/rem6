@@ -42,11 +42,6 @@ pub(super) fn validate_run_gdb_listen_config(config: &Rem6RunConfig) -> Result<(
             "--gdb-listen does not yet support --dram-memory",
         ));
     }
-    if config.data_cache_protocol().is_some() || config.instruction_cache_protocol().is_some() {
-        return Err(execute_error(
-            "--gdb-listen does not yet support cache protocol runtime options",
-        ));
-    }
     let _ = parse_loopback_gdb_listen_addr(
         config
             .gdb_listen()
