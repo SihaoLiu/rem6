@@ -543,13 +543,15 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
             }
         }
     }
-    if config.cores() > 1 {
+    if config.cores() > 2 {
         if let Some(protocol) = config.instruction_cache_protocol() {
             if protocol != RiscvDataCacheProtocol::Msi {
-                return Err(Rem6CliError::InstructionCacheProtocolMulticoreRequiresMsi {
-                    protocol,
-                    cores: config.cores(),
-                });
+                return Err(
+                    Rem6CliError::InstructionCacheProtocolLargeMulticoreRequiresMsi {
+                        protocol,
+                        cores: config.cores(),
+                    },
+                );
             }
         }
     }

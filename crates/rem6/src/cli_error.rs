@@ -165,7 +165,7 @@ pub enum Rem6CliError {
         protocol: RiscvDataCacheProtocol,
         cores: usize,
     },
-    InstructionCacheProtocolMulticoreRequiresMsi {
+    InstructionCacheProtocolLargeMulticoreRequiresMsi {
         protocol: RiscvDataCacheProtocol,
         cores: usize,
     },
@@ -412,10 +412,10 @@ impl fmt::Display for Rem6CliError {
                     riscv_data_cache_protocol_name(*protocol)
                 )
             }
-            Self::InstructionCacheProtocolMulticoreRequiresMsi { protocol, cores } => {
+            Self::InstructionCacheProtocolLargeMulticoreRequiresMsi { protocol, cores } => {
                 write!(
                     formatter,
-                    "--instruction-cache-protocol with --cores > 1 requires msi, got {} with {cores} cores",
+                    "--instruction-cache-protocol with --cores > 2 requires msi, got {} with {cores} cores",
                     riscv_data_cache_protocol_name(*protocol)
                 )
             }

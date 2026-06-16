@@ -111,6 +111,41 @@ fn assert_two_core_data_cache(protocol: &str, summary_field: &str, protocol_stat
 
 #[test]
 fn rem6_run_routes_two_cores_through_msi_instruction_cache() {
+    assert_two_core_instruction_cache(
+        "msi",
+        "instruction_cache_msi_runs",
+        "sim.instruction_cache.msi.runs",
+    );
+}
+
+#[test]
+fn rem6_run_routes_two_cores_through_mesi_instruction_cache() {
+    assert_two_core_instruction_cache(
+        "mesi",
+        "instruction_cache_mesi_runs",
+        "sim.instruction_cache.mesi.runs",
+    );
+}
+
+#[test]
+fn rem6_run_routes_two_cores_through_moesi_instruction_cache() {
+    assert_two_core_instruction_cache(
+        "moesi",
+        "instruction_cache_moesi_runs",
+        "sim.instruction_cache.moesi.runs",
+    );
+}
+
+#[test]
+fn rem6_run_routes_two_cores_through_chi_instruction_cache() {
+    assert_two_core_instruction_cache(
+        "chi",
+        "instruction_cache_chi_runs",
+        "sim.instruction_cache.chi.runs",
+    );
+}
+
+fn assert_two_core_instruction_cache(protocol: &str, summary_field: &str, protocol_stat: &str) {
     let mut program = riscv64_program(&[
         u_type(0, 2, 0x17),          // auipc x2, 0
         i_type(24, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
@@ -123,7 +158,7 @@ fn rem6_run_routes_two_cores_through_msi_instruction_cache() {
     program.extend_from_slice(&0u64.to_le_bytes());
     program.extend_from_slice(&[0; 16]);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
-    let path = temp_binary("multicore-msi-instruction-cache", &elf);
+    let path = temp_binary(&format!("multicore-{protocol}-instruction-cache"), &elf);
 
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
@@ -140,7 +175,7 @@ fn rem6_run_routes_two_cores_through_msi_instruction_cache() {
             "--cores",
             "2",
             "--instruction-cache-protocol",
-            "msi",
+            protocol,
         ])
         .output()
         .unwrap();
@@ -157,7 +192,7 @@ fn rem6_run_routes_two_cores_through_msi_instruction_cache() {
     assert!(stdout.contains("\"cpu\":1"));
     assert!(stdout.contains("\"data_cache_runs\":0"));
     assert!(stdout.contains("\"instruction_cache_runs\":12"));
-    assert!(stdout.contains("\"instruction_cache_msi_runs\":12"));
+    assert!(stdout.contains(&format!("\"{summary_field}\":12")));
     assert!(stdout.contains("\"instruction_cache_cpu_responses\":12"));
     assert!(stdout.contains("\"instruction_cache_directory_decisions\":4"));
     assert_stat(
@@ -167,13 +202,7 @@ fn rem6_run_routes_two_cores_through_msi_instruction_cache() {
         12,
         "monotonic",
     );
-    assert_stat(
-        &stdout,
-        "sim.instruction_cache.msi.runs",
-        "Count",
-        12,
-        "monotonic",
-    );
+    assert_stat(&stdout, protocol_stat, "Count", 12, "monotonic");
     assert_stat(
         &stdout,
         "sim.instruction_cache.cpu_responses",
