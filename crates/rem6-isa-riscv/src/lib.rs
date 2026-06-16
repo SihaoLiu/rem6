@@ -118,6 +118,7 @@ impl RiscvInstruction {
             0x73 => decode::decode_system(raw),
             0x43 | 0x47 | 0x4b | 0x4f => float::decode_float_multiply_add(raw),
             0x53 => float::decode_float_op(raw),
+            0x57 => decode::decode_vector(raw),
             0x7b => pseudo::decode_gem5_pseudo_op(raw),
             _ => Err(RiscvError::UnknownEncoding { raw }),
         }?;
@@ -425,6 +426,25 @@ impl RiscvHartState {
             RiscvInstruction::Jalr { rd, rs1, offset } => {
                 write_register(self, &mut register_writes, rd, next_pc);
                 next_pc = add_signed(self.read(rs1), offset.value())? & !1;
+            }
+            RiscvInstruction::VectorSetVli { rd, rs1, vtype } => {
+                let avl = if rs1.is_zero() {
+                    if rd.is_zero() {
+                        u64::from(self.vector_config().vl())
+                    } else {
+                        u64::MAX
+                    }
+                } else {
+                    self.read(rs1)
+                };
+                let vector_config = RiscvVectorConfig::from_avl(vtype, avl);
+                self.set_vector_config(vector_config);
+                write_register(
+                    self,
+                    &mut register_writes,
+                    rd,
+                    u64::from(vector_config.vl()),
+                );
             }
             RiscvInstruction::Load {
                 rd,

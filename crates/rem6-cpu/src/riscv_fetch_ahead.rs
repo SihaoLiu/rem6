@@ -229,6 +229,7 @@ fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -
             | RiscvInstruction::Sllw { .. }
             | RiscvInstruction::Srlw { .. }
             | RiscvInstruction::Sraw { .. }
+            | RiscvInstruction::VectorSetVli { .. }
     )
 }
 

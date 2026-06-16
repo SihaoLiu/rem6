@@ -10,7 +10,7 @@ use rem6_isa_riscv::{
     FloatRegister, MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction,
     RiscvMemoryOrdering, RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmpAccessKind,
     RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvStatusWord,
-    RiscvTrap, RiscvTrapKind,
+    RiscvTrap, RiscvTrapKind, RiscvVectorConfig,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -54,6 +54,10 @@ fn fence_type(mode: u32, predecessor: u32, successor: u32, funct3: u32) -> u32 {
 
 fn csr_type(csr: u16, rs1: u8, funct3: u32, rd: u8) -> u32 {
     (u32::from(csr) << 20) | (u32::from(rs1) << 15) | (funct3 << 12) | (u32::from(rd) << 7) | 0x73
+}
+
+fn vsetvli_type(vtype: u32, rs1: u8, rd: u8) -> u32 {
+    (vtype << 20) | (u32::from(rs1) << 15) | (0b111 << 12) | (u32::from(rd) << 7) | 0x57
 }
 
 fn locked_tor_without_permissions() -> RiscvPmpConfig {
@@ -564,6 +568,42 @@ fn riscv_core_driver_fetches_ahead_for_straight_line_integer_instruction() {
         trap.execution().trap(),
         Some(&RiscvTrap::new(RiscvTrapKind::Breakpoint, 0x8004))
     );
+}
+
+#[test]
+fn riscv_core_driver_executes_vsetvli_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 5);
+    let store = loaded_program_store(0x8000, &[vsetvli_type(0x02, 10, 5), 0x0010_0073], &[]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(vsetvli) = action else {
+        panic!("expected vsetvli execution");
+    };
+
+    assert_eq!(
+        vsetvli.instruction(),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0x02,
+        }
+    );
+    assert_eq!(core.read_register(reg(5)), 4);
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(4, 0x02));
 }
 
 #[test]

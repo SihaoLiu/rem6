@@ -2,11 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use rem6_boot::BootImage;
 use rem6_isa_riscv::{
     FloatRegister, MemoryAccessKind, Register, RiscvHartState, RiscvPmaError, RiscvPmaRange,
     RiscvPmaTable, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot, RiscvPmpTable,
-    RiscvPrivilegeMode, RiscvTrap, RiscvTrapKind,
+    RiscvPrivilegeMode, RiscvTrap, RiscvTrapKind, RiscvVectorConfig,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
@@ -23,6 +22,8 @@ use rem6_transport::{
 
 mod bimode_predictor;
 mod branch_predictor;
+mod cpu_cluster;
+mod cpu_identity;
 mod data_config;
 mod error;
 mod fetch_config;
@@ -79,6 +80,8 @@ pub use branch_predictor::{
     ReturnAddressStackOperation, ReturnAddressStackOperationId, ReturnAddressStackOperationKind,
     ReturnAddressStackRepair, ReturnAddressStackSnapshot,
 };
+pub use cpu_cluster::CpuCluster;
+pub use cpu_identity::{CpuId, CpuResetState};
 pub use data_config::CpuDataConfig;
 pub use error::{CpuClusterError, CpuError, RiscvCpuError};
 pub use fetch_config::CpuFetchConfig;
@@ -205,27 +208,6 @@ pub use translation::{
     CpuTranslationRequest,
 };
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct CpuId(u32);
-
-impl CpuId {
-    pub const fn new(value: u32) -> Self {
-        Self(value)
-    }
-
-    pub const fn get(self) -> u32 {
-        self.0
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct CpuResetState {
-    cpu: CpuId,
-    partition: PartitionId,
-    agent: AgentId,
-    entry: Address,
-}
-
 pub const DEFAULT_RISCV_PMP_ENTRIES: usize = 16;
 pub const DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES: usize = 1024;
 pub const DEFAULT_RISCV_GSHARE_BRANCH_PREDICTOR_ENTRIES: usize = 1024;
@@ -235,42 +217,6 @@ pub const DEFAULT_RISCV_TOURNAMENT_GLOBAL_ENTRIES: usize = 1024;
 pub const DEFAULT_RISCV_TOURNAMENT_CHOICE_ENTRIES: usize = 1024;
 pub const RISCV_LOCAL_GSHARE_THREAD: CpuId = CpuId::new(0);
 pub const RISCV_LOCAL_TOURNAMENT_THREAD: CpuId = CpuId::new(0);
-
-impl CpuResetState {
-    pub const fn new(cpu: CpuId, partition: PartitionId, agent: AgentId, entry: Address) -> Self {
-        Self {
-            cpu,
-            partition,
-            agent,
-            entry,
-        }
-    }
-
-    pub fn from_boot_image(
-        cpu: CpuId,
-        partition: PartitionId,
-        agent: AgentId,
-        image: &BootImage,
-    ) -> Self {
-        Self::new(cpu, partition, agent, image.entry())
-    }
-
-    pub const fn cpu(&self) -> CpuId {
-        self.cpu
-    }
-
-    pub const fn partition(&self) -> PartitionId {
-        self.partition
-    }
-
-    pub const fn agent(&self) -> AgentId {
-        self.agent
-    }
-
-    pub const fn entry(&self) -> Address {
-        self.entry
-    }
-}
 
 #[derive(Clone)]
 pub struct CpuCore {
@@ -605,82 +551,6 @@ impl fmt::Debug for CpuCore {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct CpuCluster {
-    cores: BTreeMap<CpuId, CpuCore>,
-}
-
-impl CpuCluster {
-    pub fn new<I>(cores: I) -> Result<Self, CpuClusterError>
-    where
-        I: IntoIterator<Item = CpuCore>,
-    {
-        let mut by_cpu = BTreeMap::new();
-        let mut by_agent = BTreeMap::new();
-        let mut by_endpoint = BTreeMap::new();
-
-        for core in cores {
-            let cpu = core.id();
-            if by_cpu.contains_key(&cpu) {
-                return Err(CpuClusterError::DuplicateCpu { cpu });
-            }
-
-            let agent = core.agent();
-            if let Some(existing) = by_agent.insert(agent, cpu) {
-                return Err(CpuClusterError::DuplicateAgent {
-                    agent,
-                    existing,
-                    duplicate: cpu,
-                });
-            }
-
-            let endpoint = core.fetch_endpoint();
-            if let Some(existing) = by_endpoint.insert(endpoint.clone(), cpu) {
-                return Err(CpuClusterError::DuplicateFetchEndpoint {
-                    endpoint,
-                    existing,
-                    duplicate: cpu,
-                });
-            }
-
-            by_cpu.insert(cpu, core);
-        }
-
-        Ok(Self { cores: by_cpu })
-    }
-
-    pub fn core_count(&self) -> usize {
-        self.cores.len()
-    }
-
-    pub fn core_ids(&self) -> Vec<CpuId> {
-        self.cores.keys().copied().collect()
-    }
-
-    pub fn core(&self, cpu: CpuId) -> Result<CpuCore, CpuClusterError> {
-        self.cores
-            .get(&cpu)
-            .cloned()
-            .ok_or(CpuClusterError::UnknownCpu { cpu })
-    }
-
-    pub fn issue_next_fetch<F>(
-        &self,
-        cpu: CpuId,
-        scheduler: &mut PartitionedScheduler,
-        transport: &MemoryTransport,
-        trace: MemoryTrace,
-        responder: F,
-    ) -> Result<PartitionEventId, CpuClusterError>
-    where
-        F: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
-    {
-        self.core(cpu)?
-            .issue_next_fetch(scheduler, transport, trace, responder)
-            .map_err(CpuClusterError::Cpu)
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CpuCoreState {
     reset: CpuResetState,
@@ -852,6 +722,14 @@ impl RiscvCore {
             .expect("riscv core lock")
             .hart
             .read_float(register)
+    }
+
+    pub fn vector_config(&self) -> RiscvVectorConfig {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .vector_config()
     }
 
     pub fn add_pma_misaligned_range(&self, range: RiscvPmaRange) -> Result<(), RiscvPmaError> {

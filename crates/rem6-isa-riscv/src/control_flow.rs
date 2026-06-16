@@ -6,6 +6,7 @@ pub struct RiscvVectorConfig {
 
 impl RiscvVectorConfig {
     pub const VILL_BIT: u64 = 1_u64 << 63;
+    pub const DEFAULT_VLEN_BITS: u32 = 128;
 
     pub const fn new(vl: u32, vtype: u64) -> Self {
         Self { vl, vtype }
@@ -29,6 +30,42 @@ impl RiscvVectorConfig {
     pub const fn vill(self) -> bool {
         (self.vtype & Self::VILL_BIT) != 0
     }
+
+    pub fn from_avl(vtype: u64, avl: u64) -> Self {
+        let Some(vlmax) = Self::vlmax(vtype) else {
+            return Self::invalid();
+        };
+        Self::new(avl.min(u64::from(vlmax)) as u32, vtype)
+    }
+
+    pub fn vlmax(vtype: u64) -> Option<u32> {
+        if vtype & !0xff != 0 {
+            return None;
+        }
+
+        let vsew = (vtype & 0x7) as u32;
+        if vsew > 3 {
+            return None;
+        }
+
+        let base = Self::DEFAULT_VLEN_BITS / (8_u32 << vsew);
+        match (vtype >> 3) & 0x7 {
+            0 => Some(base),
+            1 => Some(base * 2),
+            2 => Some(base * 4),
+            3 => Some(base * 8),
+            4 => None,
+            5 => nonzero_fractional_lmul(base, 8),
+            6 => nonzero_fractional_lmul(base, 4),
+            7 => nonzero_fractional_lmul(base, 2),
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn nonzero_fractional_lmul(base: u32, denominator: u32) -> Option<u32> {
+    let vlmax = base / denominator;
+    (vlmax != 0).then_some(vlmax)
 }
 
 impl Default for RiscvVectorConfig {

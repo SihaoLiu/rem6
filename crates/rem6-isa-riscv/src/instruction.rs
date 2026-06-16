@@ -258,6 +258,11 @@ pub enum RiscvInstruction {
         rs1: Register,
         offset: Immediate,
     },
+    VectorSetVli {
+        rd: Register,
+        rs1: Register,
+        vtype: u64,
+    },
     Load {
         rd: Register,
         rs1: Register,

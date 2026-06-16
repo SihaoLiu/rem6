@@ -267,6 +267,17 @@ pub(crate) fn decode_op_32(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     }
 }
 
+pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    match funct3(raw) {
+        0x7 if (raw & 0x8000_0000) == 0 => Ok(RiscvInstruction::VectorSetVli {
+            rd: rd(raw),
+            rs1: rs1(raw),
+            vtype: u64::from((raw >> 20) & 0x7ff),
+        }),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
+    }
+}
+
 pub(crate) fn decode_branch(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     match funct3(raw) {
         0x0 => Ok(RiscvInstruction::Beq {
