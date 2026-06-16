@@ -8,8 +8,9 @@ use super::formatting::json_escape;
 use super::{
     parallel_stats, stats_error, Rem6CliError, Rem6ExecutionStop, Rem6ExecutionSummary,
     Rem6GupsConfig, Rem6GupsExecutionSummary, Rem6LoadBlobSummary, Rem6MemoryDump,
-    Rem6MemoryTransportCounters, Rem6MemoryTransportSummary, Rem6ResourceAcquireArtifact,
-    Rem6RunConfig, Rem6TraceReplayConfig, Rem6TraceReplayExecutionSummary, RequestedIsa,
+    Rem6MemoryTransportCounters, Rem6MemoryTransportSummary, Rem6ReadfileSummary,
+    Rem6ResourceAcquireArtifact, Rem6RunConfig, Rem6TraceReplayConfig,
+    Rem6TraceReplayExecutionSummary, RequestedIsa,
 };
 use dram::emit_dram_stats;
 use text::stats_snapshot_text;
@@ -30,6 +31,7 @@ pub(super) struct Rem6StatsInputs<'a> {
     pub(super) binary_bytes: u64,
     pub(super) load_segments: u64,
     pub(super) load_blobs: &'a [Rem6LoadBlobSummary],
+    pub(super) readfiles: &'a [Rem6ReadfileSummary],
     pub(super) start_address: u64,
     pub(super) config: &'a Rem6RunConfig,
     pub(super) execution: Option<&'a Rem6ExecutionSummary>,
@@ -101,6 +103,47 @@ pub(super) fn run_stats_output(
             "Byte",
             StatResetPolicy::Constant,
             blob.bytes(),
+        )?;
+    }
+    increment_stat(
+        &mut stats,
+        "sim.readfiles",
+        "Count",
+        StatResetPolicy::Constant,
+        inputs.readfiles.len() as u64,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.readfile_bytes",
+        "Byte",
+        StatResetPolicy::Constant,
+        inputs
+            .readfiles
+            .iter()
+            .map(Rem6ReadfileSummary::bytes)
+            .sum(),
+    )?;
+    for (index, readfile) in inputs.readfiles.iter().enumerate() {
+        increment_stat(
+            &mut stats,
+            &format!("sim.readfile{index}.base"),
+            "Address",
+            StatResetPolicy::Constant,
+            readfile.base(),
+        )?;
+        increment_stat(
+            &mut stats,
+            &format!("sim.readfile{index}.size"),
+            "Byte",
+            StatResetPolicy::Constant,
+            readfile.size(),
+        )?;
+        increment_stat(
+            &mut stats,
+            &format!("sim.readfile{index}.bytes"),
+            "Byte",
+            StatResetPolicy::Constant,
+            readfile.bytes(),
         )?;
     }
     increment_stat(

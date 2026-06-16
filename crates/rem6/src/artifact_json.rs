@@ -6,9 +6,9 @@ use super::{
     Rem6ExecutionSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary, Rem6InstructionProbeSummary,
     Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
     Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary,
-    Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6RiscvGuestWriteSummary,
-    Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact, Rem6TraceReplayArtifact,
-    Rem6TraceReplayExecutionSummary, RequestedIsa,
+    Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6ReadfileSummary,
+    Rem6RiscvGuestWriteSummary, Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact,
+    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -77,6 +77,12 @@ impl Rem6RunArtifact {
             .map(Rem6LoadBlobSummary::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let readfiles = self
+            .readfiles
+            .iter()
+            .map(Rem6ReadfileSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         let riscv_boot = if self.config.isa() == RequestedIsa::Riscv {
             format!(
                 ",\"riscv_boot\":{{\"a0\":\"0x{:x}\",\"a1\":\"0x{:x}\",\"se\":{}}}",
@@ -93,7 +99,7 @@ impl Rem6RunArtifact {
             .map(|artifact| format!(",\"power_analysis\":{}", artifact.to_json()))
             .unwrap_or_default();
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"dram\":{},\"transport\":{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"dram\":{},\"transport\":{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -101,6 +107,7 @@ impl Rem6RunArtifact {
             self.start_address,
             riscv_boot,
             load_blobs,
+            readfiles,
             elf_class_name(self.metadata.class()),
             elf_endian_name(self.metadata.endian()),
             elf_architecture_name(self.metadata.architecture()),
@@ -134,6 +141,18 @@ impl Rem6LoadBlobSummary {
         format!(
             "{{\"address\":\"0x{:x}\",\"bytes\":{},\"path\":\"{}\"}}",
             self.address(),
+            self.bytes(),
+            json_escape(&self.path().display().to_string())
+        )
+    }
+}
+
+impl Rem6ReadfileSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"base\":\"0x{:x}\",\"size\":{},\"bytes\":{},\"path\":\"{}\"}}",
+            self.base(),
+            self.size(),
             self.bytes(),
             json_escape(&self.path().display().to_string())
         )

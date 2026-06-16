@@ -229,6 +229,143 @@ fn rem6_run_loads_riscv_elf_with_explicit_blob() {
 }
 
 #[test]
+fn rem6_run_binds_readfile_mmio_payload_from_cli() {
+    let program = riscv64_program(&[i_type(0, 10, 0x3, 5, 0x03), 0x0010_0073]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("readfile-mmio", &elf);
+    let readfile_path = temp_binary(
+        "readfile-mmio-data",
+        &[0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11],
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--execute",
+            "--stats-format",
+            "json",
+            "--riscv-boot-a0",
+            "0x10000000",
+            "--readfile",
+            &format!("0x10000000:0x100:{}", readfile_path.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_trap\""));
+    assert!(stdout.contains("\"registers\":{\"x5\":\"0x1122334455667788\",\"x10\":\"0x10000000\"}"));
+    assert!(stdout.contains(&format!(
+        "\"readfiles\":[{{\"base\":\"0x10000000\",\"size\":256,\"bytes\":8,\"path\":\"{}\"}}]",
+        readfile_path.display()
+    )));
+    assert_stat(&stdout, "sim.readfiles", "Count", 1, "constant");
+    assert_stat(
+        &stdout,
+        "sim.readfile0.base",
+        "Address",
+        0x1000_0000,
+        "constant",
+    );
+    assert_stat(&stdout, "sim.readfile0.size", "Byte", 0x100, "constant");
+    assert_stat(&stdout, "sim.readfile0.bytes", "Byte", 8, "constant");
+}
+
+#[test]
+fn rem6_run_binds_readfile_mmio_payload_from_toml_config() {
+    let program = riscv64_program(&[i_type(0, 10, 0x3, 5, 0x03), 0x0010_0073]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let workspace = temp_workspace("readfile-mmio-toml");
+    let binary = workspace.join("kernel.elf");
+    let readfile = workspace.join("boot.readfile");
+    let config = workspace.join("run.toml");
+    fs::write(&binary, elf).unwrap();
+    fs::write(&readfile, [0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01]).unwrap();
+    fs::write(
+        &config,
+        "[run]\nisa = \"riscv\"\nbinary = \"kernel.elf\"\nmax_tick = 80\nexecute = true\nstats_format = \"json\"\nriscv_boot_a0 = 268435456\nreadfiles = [\"0x10000000:0x100:boot.readfile\"]\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"registers\":{\"x5\":\"0x102030405060708\",\"x10\":\"0x10000000\"}"));
+    assert!(stdout.contains(&format!(
+        "\"readfiles\":[{{\"base\":\"0x10000000\",\"size\":256,\"bytes\":8,\"path\":\"{}\"}}]",
+        readfile.display()
+    )));
+}
+
+#[test]
+fn rem6_run_readfile_mmio_obeys_instruction_limit() {
+    let program = riscv64_program(&[i_type(0, 10, 0x3, 5, 0x03), 0x0010_0073]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("readfile-mmio-instruction-limit", &elf);
+    let readfile_path = temp_binary(
+        "readfile-mmio-instruction-limit-data",
+        &[0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01],
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--execute",
+            "--max-instructions",
+            "1",
+            "--stats-format",
+            "json",
+            "--riscv-boot-a0",
+            "0x10000000",
+            "--readfile",
+            &format!("0x10000000:0x100:{}", readfile_path.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"stop_reason\":\"instruction_limit\""));
+    assert!(stdout.contains("\"committed_instructions\":1"));
+    assert!(stdout.contains("\"registers\":{\"x10\":\"0x10000000\"}"));
+    assert!(stdout.contains(&format!(
+        "\"readfiles\":[{{\"base\":\"0x10000000\",\"size\":256,\"bytes\":8,\"path\":\"{}\"}}]",
+        readfile_path.display()
+    )));
+    assert_stat(&stdout, "sim.readfiles", "Count", 1, "constant");
+}
+
+#[test]
 fn rem6_run_writes_json_artifact_to_requested_output_path() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("output-sink", &elf);

@@ -18,11 +18,11 @@ use rem6_stats::{
     StatsRegistry,
 };
 use rem6_system::{
-    GuestEventId, GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats,
-    RiscvGuestWriteRecord, RiscvInstructionStats, RiscvRetiredInstructionProbeSnapshot,
-    RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun, RiscvSystemRunDriver,
-    RiscvSystemRunStopReason, RiscvTrapEventPort, RiscvUnknownSyscallRecord, SystemHostController,
-    SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
+    GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats, RiscvGuestWriteRecord,
+    RiscvInstructionStats, RiscvRetiredInstructionProbeSnapshot, RiscvSeAuxvEntry,
+    RiscvSeStartupConfig, RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason,
+    RiscvTrapEventPort, RiscvUnknownSyscallRecord, SystemHostController, SystemHostEventPort,
+    RISCV_LINUX_AT_ENTRY,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TransportEndpointId,
@@ -39,8 +39,10 @@ mod gups_cli;
 mod parallel_stats;
 mod pipeline_stats;
 mod power_output;
+mod readfile_runtime;
 mod resource_acquire_cli;
 mod resource_acquire_config;
+mod riscv_run_driver;
 mod run_gdb;
 mod run_resource_config;
 mod run_validation;
@@ -54,12 +56,12 @@ mod transport_summary_tests;
 pub use cli_error::Rem6CliError;
 pub use config::{
     CliCachePrefetcher, CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest,
-    PowerAnalysisFormat, Rem6GupsConfig, Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa,
-    RiscvSeFileRequest, StatsFormat,
+    PowerAnalysisFormat, ReadfileRequest, Rem6GupsConfig, Rem6RunConfig, Rem6TraceReplayConfig,
+    RequestedIsa, RiscvSeFileRequest, StatsFormat,
 };
 use data_cache_runtime::{
-    cli_cache_runtime_with_prefetcher, cli_data_memory_response,
-    with_riscv_syscall_data_cache_memory_io, CliDataCacheRuntime, CliDataCacheSummary,
+    cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io,
+    CliDataCacheRuntime, CliDataCacheSummary,
 };
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
@@ -72,10 +74,12 @@ use pipeline_stats::{
     in_order_pipeline_run_summary,
 };
 use power_output::{run_power_analysis_artifact, Rem6PowerAnalysisArtifact};
+use readfile_runtime::{read_readfiles, readfile_mmio_bus, LoadedReadfile, Rem6ReadfileSummary};
 pub use resource_acquire_cli::{
     run_resource_acquire_config, Rem6ResourceAcquireArtifact, Rem6ResourceAcquireResourceSummary,
 };
 pub use resource_acquire_config::{Rem6ResourceAcquireConfig, Rem6ResourceAcquireResourceConfig};
+use riscv_run_driver::drive_cli_riscv_run;
 use run_gdb::{serve_riscv_gdb_with_run_control, RiscvGdbServeOutcome};
 use run_resource_config::run_kernel_binary_from_resource_config;
 use run_validation::validate_run_config_inputs;
@@ -107,6 +111,7 @@ pub struct Rem6RunArtifact {
     metadata: rem6_boot::BootElfMetadata,
     load_segments: u64,
     load_blobs: Vec<Rem6LoadBlobSummary>,
+    readfiles: Vec<Rem6ReadfileSummary>,
     execution: Option<Rem6ExecutionSummary>,
     stats_json: String,
     stats_text: String,
@@ -525,6 +530,11 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         .iter()
         .map(|blob| blob.summary.clone())
         .collect::<Vec<_>>();
+    let readfiles = read_readfiles(config.readfiles())?;
+    let readfile_summaries = readfiles
+        .iter()
+        .map(|readfile| readfile.summary().clone())
+        .collect::<Vec<_>>();
     let line_layout = CacheLineLayout::new(DEFAULT_CACHE_LINE_BYTES).map_err(execute_error)?;
     if !config.execute() {
         build_cli_memory_store(&image, &load_blobs, line_layout)?;
@@ -539,6 +549,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
                 &image,
                 &config,
                 &load_blobs,
+                &readfiles,
                 line_layout,
                 Address::new(start_address),
             )?,
@@ -551,6 +562,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         binary_bytes: bytes.len() as u64,
         load_segments: image.segments().len() as u64,
         load_blobs: &load_blob_summaries,
+        readfiles: &readfile_summaries,
         start_address,
         config: &config,
         execution: execution.as_ref(),
@@ -571,6 +583,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         load_segments: image.segments().len() as u64,
         metadata,
         load_blobs: load_blob_summaries,
+        readfiles: readfile_summaries,
         config,
         execution,
         stats_json: stats.json,
@@ -594,6 +607,7 @@ fn execute_riscv(
     image: &BootImage,
     config: &Rem6RunConfig,
     load_blobs: &[LoadedBlob],
+    readfiles: &[LoadedReadfile],
     line_layout: CacheLineLayout,
     start_address: Address,
 ) -> Result<Rem6ExecutionSummary, Rem6CliError> {
@@ -627,6 +641,12 @@ fn execute_riscv(
         line_layout,
         core_count,
         config.data_cache_prefetcher(),
+    )?;
+    let readfile_bus = readfile_mmio_bus(
+        readfiles,
+        core_count,
+        memory_partition,
+        config.memory_route_delay(),
     )?;
     let riscv_se_startup = if config.riscv_se() {
         let mut startup_config = RiscvSeStartupConfig::new(Address::new(RISCV64_SE_STACK_TOP));
@@ -819,76 +839,27 @@ fn execute_riscv(
     let run_result = if let Some(run) = gdb_outcome.take_completed_run() {
         Ok(run)
     } else {
-        match config.max_instructions() {
-            Some(max_instructions) => {
-                let remaining_instructions =
-                    max_instructions.saturating_sub(gdb_outcome.retired_instruction_count());
-                if remaining_instructions == 0 {
-                    Ok(RiscvSystemRun::new(
-                        Vec::new(),
-                        Vec::new(),
-                        RiscvSystemRunStopReason::InstructionLimit {
-                            tick: scheduler.now(),
-                            limit: max_instructions,
-                            committed: gdb_outcome.retired_instruction_count(),
-                        },
-                    ))
-                } else {
-                    driver.drive_until_host_stop_or_instruction_limit_parallel(
-                        &cluster,
-                        &mut scheduler,
-                        &transport,
-                        fetch_trace.clone(),
-                        data_trace.clone(),
-                        |_cpu| {
-                            let memory = memory.clone();
-                            let instruction_cache = instruction_cache.clone();
-                            move |delivery, _context| {
-                                cli_data_memory_response(
-                                    instruction_cache.as_ref(),
-                                    &memory,
-                                    &delivery,
-                                )
-                            }
-                        },
-                        |_cpu| {
-                            let memory = memory.clone();
-                            let data_cache = data_cache.clone();
-                            move |delivery, _context| {
-                                cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
-                            }
-                        },
-                        tick_limit,
-                        remaining_instructions,
-                        |cpu| GuestEventId::new(u64::from(cpu.get())),
-                    )
-                }
-            }
-            None => driver.drive_until_host_stop_or_tick_limit_parallel(
-                &cluster,
-                &mut scheduler,
-                &transport,
-                fetch_trace.clone(),
-                data_trace.clone(),
-                |_cpu| {
-                    let memory = memory.clone();
-                    let instruction_cache = instruction_cache.clone();
-                    move |delivery, _context| {
-                        cli_data_memory_response(instruction_cache.as_ref(), &memory, &delivery)
-                    }
-                },
-                |_cpu| {
-                    let memory = memory.clone();
-                    let data_cache = data_cache.clone();
-                    move |delivery, _context| {
-                        cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
-                    }
-                },
-                tick_limit,
-                |cpu| GuestEventId::new(u64::from(cpu.get())),
-            ),
-        }
+        drive_cli_riscv_run(
+            &driver,
+            &cluster,
+            &mut scheduler,
+            &transport,
+            readfile_bus.as_ref(),
+            &memory,
+            instruction_cache.clone(),
+            data_cache.clone(),
+            fetch_trace.clone(),
+            data_trace.clone(),
+            tick_limit,
+            config.max_instructions(),
+            gdb_outcome.retired_instruction_count(),
+        )
     };
+    if let Some(bus) = readfile_bus.as_ref() {
+        if let Some(error) = bus.response_errors().into_iter().next() {
+            return Err(execute_error(error));
+        }
+    }
     if let Some(data_cache) = data_cache.as_ref() {
         if let Some(error) = data_cache.take_error() {
             return Err(error);

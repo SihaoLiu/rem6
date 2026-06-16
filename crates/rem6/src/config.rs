@@ -200,6 +200,7 @@ pub struct Rem6RunConfig {
     parallel_workers: usize,
     memory_dumps: Vec<MemoryDumpRequest>,
     load_blobs: Vec<LoadBlobRequest>,
+    readfiles: Vec<ReadfileRequest>,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
     power_format: PowerAnalysisFormat,
@@ -285,6 +286,7 @@ struct Rem6RunFileConfig {
     parallel_workers: Option<usize>,
     memory_dumps: Option<Vec<String>>,
     load_blobs: Option<Vec<String>>,
+    readfiles: Option<Vec<String>>,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
     power_format: Option<String>,
@@ -534,8 +536,22 @@ impl Rem6RunConfig {
                 Ok(request)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let mut readfiles = file_config
+            .readfiles
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|request| {
+                let mut request = ReadfileRequest::parse(request)?;
+                if let Some(config_dir) = file_config.config_dir.as_deref() {
+                    request.resolve_path(config_dir);
+                }
+                Ok(request)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let mut memory_dumps_from_cli = false;
         let mut load_blobs_from_cli = false;
+        let mut readfiles_from_cli = false;
         let mut riscv_se_args_from_cli = false;
         let mut riscv_se_env_from_cli = false;
         let mut riscv_se_stdin_from_cli = false;
@@ -754,6 +770,14 @@ impl Rem6RunConfig {
                     }
                     load_blobs.push(LoadBlobRequest::parse(&value)?);
                 }
+                "--readfile" => {
+                    let value = required_value(&flag, args.next())?;
+                    if !readfiles_from_cli {
+                        readfiles.clear();
+                        readfiles_from_cli = true;
+                    }
+                    readfiles.push(ReadfileRequest::parse(&value)?);
+                }
                 "--output" => {
                     output = Some(PathBuf::from(required_value(&flag, args.next())?));
                 }
@@ -881,6 +905,7 @@ impl Rem6RunConfig {
             parallel_workers: parallel_workers.unwrap_or(cores),
             memory_dumps,
             load_blobs,
+            readfiles,
             output,
             stats_output,
             power_format,
@@ -1002,6 +1027,10 @@ impl Rem6RunConfig {
 
     pub fn load_blobs(&self) -> &[LoadBlobRequest] {
         &self.load_blobs
+    }
+
+    pub fn readfiles(&self) -> &[ReadfileRequest] {
+        &self.readfiles
     }
 
     pub fn output(&self) -> Option<&Path> {
@@ -1320,6 +1349,70 @@ impl LoadBlobRequest {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReadfileRequest {
+    base: u64,
+    size: u64,
+    path: PathBuf,
+}
+
+impl ReadfileRequest {
+    pub fn parse(value: &str) -> Result<Self, Rem6CliError> {
+        let mut parts = value.splitn(3, ':');
+        let Some(base) = parts.next() else {
+            return Err(Rem6CliError::InvalidReadfile {
+                value: value.to_string(),
+            });
+        };
+        let Some(size) = parts.next() else {
+            return Err(Rem6CliError::InvalidReadfile {
+                value: value.to_string(),
+            });
+        };
+        let Some(path) = parts.next() else {
+            return Err(Rem6CliError::InvalidReadfile {
+                value: value.to_string(),
+            });
+        };
+        let base = parse_number(base).ok_or_else(|| Rem6CliError::InvalidReadfile {
+            value: value.to_string(),
+        })?;
+        let size = parse_number(size)
+            .filter(|bytes| *bytes > 0)
+            .ok_or_else(|| Rem6CliError::InvalidReadfile {
+                value: value.to_string(),
+            })?;
+        if path.is_empty() {
+            return Err(Rem6CliError::InvalidReadfile {
+                value: value.to_string(),
+            });
+        }
+        Ok(Self {
+            base,
+            size,
+            path: PathBuf::from(path),
+        })
+    }
+
+    pub const fn base(&self) -> u64 {
+        self.base
+    }
+
+    pub const fn size(&self) -> u64 {
+        self.size
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn resolve_path(&mut self, base: &Path) {
+        if self.path.is_relative() {
+            self.path = base.join(&self.path);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvSeFileRequest {
     guest_path: String,
     host_path: PathBuf,
@@ -1422,6 +1515,7 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--parallel-workers",
             "--dump-memory",
             "--load-blob",
+            "--readfile",
             "--output",
             "--stats-output",
             "--power-format",

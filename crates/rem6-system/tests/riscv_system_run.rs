@@ -1930,3 +1930,179 @@ fn riscv_system_run_driver_parallel_mmio_path_drives_data_accesses_to_host_stop(
     assert!(run.has_parallel_scheduler_partition_activity(PartitionId::new(0)));
     assert!(!run.has_parallel_scheduler_partition_activity(PartitionId::new(4)));
 }
+
+struct SingleCoreMmioFixture {
+    scheduler: PartitionedScheduler,
+    transport: MemoryTransport,
+    bus: MmioBus,
+    cluster: RiscvCluster,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    driver: RiscvSystemRunDriver,
+}
+
+fn single_core_mmio_load_fixture() -> SingleCoreMmioFixture {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(41);
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_data_core(
+        0,
+        0,
+        7,
+        "cpu0.ifetch",
+        fetch_route,
+        "cpu0.dmem",
+        data_route,
+        0x8000,
+    );
+    core.write_register(reg(2), 0x1000);
+    let cluster = RiscvCluster::new([core]).unwrap();
+    let store =
+        loaded_program_store(&[(0x8000, i_type(8, 2, 0x3, 5, 0x03)), (0x8004, 0x0010_0073)]);
+    let mut bank =
+        MmioRegisterBank::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap();
+    bank.insert_register(
+        8,
+        AccessSize::new(8).unwrap(),
+        MmioAccess::ReadOnly,
+        vec![0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01],
+    )
+    .unwrap();
+    let mut bus = MmioBus::new();
+    bus.insert_device(
+        AddressRange::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap(),
+        MmioRoute::new(PartitionId::new(0), PartitionId::new(2), 2, 2).unwrap(),
+        Mutex::new(bank),
+    )
+    .unwrap();
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, controller).unwrap(),
+        source,
+    );
+
+    SingleCoreMmioFixture {
+        scheduler: PartitionedScheduler::with_min_remote_delay(4, 2).unwrap(),
+        transport,
+        bus,
+        cluster,
+        store,
+        driver: RiscvSystemRunDriver::new(trap_port),
+    }
+}
+
+#[test]
+fn riscv_system_run_driver_mmio_instruction_limit_stops_before_pending_load_completion() {
+    let mut fixture = single_core_mmio_load_fixture();
+    let fetch_store = Arc::clone(&fixture.store);
+    let data_store = Arc::clone(&fixture.store);
+
+    let run = fixture
+        .driver
+        .drive_until_host_stop_or_instruction_limit_parallel_with_mmio(
+            &fixture.cluster,
+            &mut fixture.scheduler,
+            &fixture.transport,
+            &fixture.bus,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            move |_cpu| parallel_responder(Arc::clone(&fetch_store)),
+            move |_cpu| parallel_responder(Arc::clone(&data_store)),
+            100,
+            1,
+            |cpu| GuestEventId::new(120 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    match run.stop_reason() {
+        RiscvSystemRunStopReason::InstructionLimit {
+            limit, committed, ..
+        } => {
+            assert_eq!(limit, 1);
+            assert_eq!(committed, 1);
+        }
+        stop => panic!("expected instruction limit, got {stop:?}"),
+    }
+    assert!(run.turns().iter().any(|turn| {
+        turn.core_events()
+            .iter()
+            .any(|event| matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_)))
+    }));
+    assert!(!run.turns().iter().any(|turn| {
+        turn.core_events().iter().any(|event| {
+            matches!(
+                event.action(),
+                RiscvCoreDriveAction::DataAccessIssued { .. }
+            )
+        })
+    }));
+    let core = fixture.cluster.core(CpuId::new(0)).unwrap();
+    assert_eq!(core.read_register(reg(5)), 0);
+    assert!(core.has_unissued_data_access() || core.has_pending_data_access());
+    assert!(core.data_access_events().is_empty());
+}
+
+#[test]
+fn riscv_system_run_driver_mmio_instruction_limit_obeys_tick_limit_first() {
+    let mut fixture = single_core_mmio_load_fixture();
+    let fetch_store = Arc::clone(&fixture.store);
+    let data_store = Arc::clone(&fixture.store);
+
+    let run = fixture
+        .driver
+        .drive_until_host_stop_or_instruction_limit_parallel_with_mmio(
+            &fixture.cluster,
+            &mut fixture.scheduler,
+            &fixture.transport,
+            &fixture.bus,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            move |_cpu| parallel_responder(Arc::clone(&fetch_store)),
+            move |_cpu| parallel_responder(Arc::clone(&data_store)),
+            1,
+            1,
+            |cpu| GuestEventId::new(130 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    assert_eq!(
+        run.stop_reason(),
+        RiscvSystemRunStopReason::TickLimit { tick: 1, limit: 1 }
+    );
+    assert!(!run.turns().iter().any(|turn| {
+        turn.core_events()
+            .iter()
+            .any(|event| matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_)))
+    }));
+    let core = fixture.cluster.core(CpuId::new(0)).unwrap();
+    assert_eq!(core.read_register(reg(5)), 0);
+    assert!(core.data_access_events().is_empty());
+}

@@ -9,6 +9,7 @@ pub(super) fn validate_run_config_inputs(config: &Rem6RunConfig) -> Result<(), R
         validate_non_execution_inputs(config)?;
     }
     validate_cache_inputs(config)?;
+    validate_readfile_inputs(config)?;
     validate_riscv_se_inputs(config)?;
     if config.gdb_listen().is_some() {
         validate_run_gdb_listen_config(config)?;
@@ -25,6 +26,9 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     }
     if !config.memory_dumps().is_empty() {
         return Err(Rem6CliError::MemoryDumpRequiresExecution);
+    }
+    if !config.readfiles().is_empty() {
+        return Err(Rem6CliError::ReadfileRequiresExecution);
     }
     if config.riscv_se() {
         return Err(Rem6CliError::RiscvSeRequiresExecution);
@@ -43,6 +47,13 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     }
     if config.power_output().is_some() {
         return Err(Rem6CliError::PowerOutputRequiresExecution);
+    }
+    Ok(())
+}
+
+fn validate_readfile_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
+    if !config.readfiles().is_empty() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::ReadfileRequiresRiscv);
     }
     Ok(())
 }

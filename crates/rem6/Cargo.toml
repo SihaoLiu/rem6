@@ -15,6 +15,8 @@ rem6-dram = { path = "../rem6-dram" }
 rem6-isa-riscv = { path = "../rem6-isa-riscv" }
 rem6-kernel = { path = "../rem6-kernel" }
 rem6-memory = { path = "../rem6-memory" }
+rem6-mmio = { path = "../rem6-mmio" }
+rem6-platform = { path = "../rem6-platform" }
 rem6-power = { path = "../rem6-power" }
 rem6-stats = { path = "../rem6-stats" }
 rem6-system = { path = "../rem6-system" }

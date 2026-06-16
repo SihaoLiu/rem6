@@ -1,16 +1,12 @@
 use std::collections::BTreeMap;
-use std::error::Error;
-use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use rem6_kernel::{
-    ParallelSchedulerContext, PartitionedScheduler, SchedulerContext, SchedulerError, Tick,
-};
+use rem6_kernel::{ParallelSchedulerContext, PartitionedScheduler, SchedulerContext, Tick};
 use rem6_memory::{AccessSize, Address, AgentId, TranslationPageMap};
 use rem6_mmio::MmioBus;
 use rem6_transport::{
     MemoryRouteId, MemoryTrace, MemoryTransport, ParallelMemoryTransaction, RequestDelivery,
-    TargetOutcome, TransportEndpointId,
+    TargetOutcome,
 };
 
 use crate::riscv_cluster_drive::{
@@ -18,58 +14,25 @@ use crate::riscv_cluster_drive::{
     push_prepared_completed_fetch_drive_event, push_prepared_parallel_fetch_action,
     PreparedParallelAction,
 };
+pub use crate::riscv_cluster_error::RiscvClusterError;
+pub use crate::riscv_cluster_htm::{RiscvClusterHtmAbortOutcome, RiscvClusterHtmBeginOutcome};
 use crate::riscv_cluster_run::{
     RiscvClusterDriveEvent, RiscvClusterRun, RiscvClusterStopReason, RiscvClusterTurn,
+};
+use crate::riscv_cluster_scheduler::{
+    drive_parallel_scheduler_turn, drive_parallel_scheduler_turn_until_tick,
 };
 use crate::riscv_data_issue::PreparedDataParallelAccess;
 use crate::riscv_reservation::RiscvReservationTracker;
 use crate::{
-    CpuId, HtmAbortRecord, HtmBeginRecord, HtmFailureCause, HtmTransactionError, RiscvCore,
-    RiscvCoreDriveAction, RiscvCpuError, RiscvStoreConditionalFailureDiagnostic,
+    CpuId, HtmFailureCause, RiscvCore, RiscvCoreDriveAction, RiscvCpuError,
+    RiscvStoreConditionalFailureDiagnostic,
 };
 
 #[derive(Clone, Debug)]
 pub struct RiscvCluster {
     cores: BTreeMap<CpuId, RiscvCore>,
     reservations: Arc<Mutex<RiscvReservationTracker>>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RiscvClusterHtmAbortOutcome {
-    NoMatchingDataRoute {
-        route: MemoryRouteId,
-    },
-    NoActiveTransaction {
-        cpu: CpuId,
-        route: MemoryRouteId,
-    },
-    Aborted {
-        cpu: CpuId,
-        route: MemoryRouteId,
-        abort: HtmAbortRecord,
-    },
-    Failed {
-        cpu: CpuId,
-        route: MemoryRouteId,
-        error: HtmTransactionError,
-    },
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RiscvClusterHtmBeginOutcome {
-    NoMatchingDataRoute {
-        route: MemoryRouteId,
-    },
-    Begun {
-        cpu: CpuId,
-        route: MemoryRouteId,
-        begin: HtmBeginRecord,
-    },
-    Failed {
-        cpu: CpuId,
-        route: MemoryRouteId,
-        error: HtmTransactionError,
-    },
 }
 
 impl RiscvCluster {
@@ -1115,6 +1078,135 @@ impl RiscvCluster {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn drive_ready_cores_parallel_with_mmio_and_instruction_budget<F, D, FR, DR>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        bus: &MmioBus,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        mut fetch_responder: F,
+        mut data_responder: D,
+        instruction_budget: u64,
+    ) -> Result<Vec<RiscvClusterDriveEvent>, RiscvClusterError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        self.reconcile_reservation_invalidations();
+        let mut actions = Vec::new();
+        let mut committed_instructions = 0u64;
+        let data_only = instruction_budget == 0;
+        for (cpu, core) in &self.cores {
+            if !core.is_hart_started() {
+                continue;
+            }
+            if core.has_pending_data_access() || core.has_pending_trap() {
+                continue;
+            }
+            if core.has_pending_fetch() {
+                if !data_only && core.can_retire_completed_fetch_while_fetch_pending() {
+                    if let Some(event) = completed_fetch_drive_event(*cpu, core)? {
+                        if committed_instructions >= instruction_budget {
+                            break;
+                        }
+                        actions.push(event);
+                        committed_instructions += 1;
+                        if committed_instructions >= instruction_budget {
+                            break;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if !data_only {
+                if let Some(decision) = core.next_fetch_ahead_before_retire() {
+                    core.set_fetch_ahead_pc(decision.pc());
+                    let event = core
+                        .issue_next_fetch_parallel(
+                            scheduler,
+                            transport,
+                            fetch_trace.clone(),
+                            fetch_responder(*cpu),
+                        )
+                        .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
+                    core.record_fetch_ahead_speculation(&decision);
+                    actions.push(RiscvClusterDriveEvent::new(
+                        *cpu,
+                        RiscvCoreDriveAction::FetchIssued { event },
+                    ));
+                    continue;
+                }
+
+                if let Some(event) = completed_fetch_drive_event(*cpu, core)? {
+                    if committed_instructions >= instruction_budget {
+                        break;
+                    }
+                    actions.push(event);
+                    committed_instructions += 1;
+                    if committed_instructions >= instruction_budget {
+                        break;
+                    }
+                    continue;
+                }
+            }
+
+            if let Some(event) = core
+                .issue_next_mmio_data_access_parallel(scheduler, bus)
+                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
+            {
+                actions.push(RiscvClusterDriveEvent::new(
+                    *cpu,
+                    RiscvCoreDriveAction::DataAccessIssued { event },
+                ));
+                continue;
+            }
+
+            if let Some(event) = core
+                .issue_next_data_access_parallel(
+                    scheduler,
+                    transport,
+                    data_trace.clone(),
+                    data_responder(*cpu),
+                )
+                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
+            {
+                actions.push(RiscvClusterDriveEvent::new(
+                    *cpu,
+                    RiscvCoreDriveAction::DataAccessIssued { event },
+                ));
+                continue;
+            }
+
+            if data_only {
+                continue;
+            }
+
+            let event = core
+                .issue_next_fetch_parallel(
+                    scheduler,
+                    transport,
+                    fetch_trace.clone(),
+                    fetch_responder(*cpu),
+                )
+                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
+            actions.push(RiscvClusterDriveEvent::new(
+                *cpu,
+                RiscvCoreDriveAction::FetchIssued { event },
+            ));
+        }
+
+        Ok(actions)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn drive_turn<F, D, FR, DR>(
         &self,
         scheduler: &mut PartitionedScheduler,
@@ -1497,6 +1589,108 @@ impl RiscvCluster {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub fn drive_turn_parallel_with_mmio_until_tick<F, D, FR, DR>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        bus: &MmioBus,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        fetch_responder: F,
+        data_responder: D,
+        tick_limit: Tick,
+    ) -> Result<Option<RiscvClusterTurn>, RiscvClusterError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        if scheduler.now() >= tick_limit {
+            return Ok(None);
+        }
+
+        let core_events = self.drive_ready_cores_parallel_with_mmio(
+            scheduler,
+            transport,
+            bus,
+            fetch_trace,
+            data_trace,
+            fetch_responder,
+            data_responder,
+        )?;
+        if !core_events.is_empty() {
+            return Ok(Some(RiscvClusterTurn::core(core_events)));
+        }
+
+        if scheduler.is_idle() {
+            return Ok(Some(RiscvClusterTurn::idle(scheduler.now())));
+        }
+
+        let Some(turn) = drive_parallel_scheduler_turn_until_tick(scheduler, tick_limit)? else {
+            return Ok(None);
+        };
+        self.reconcile_reservation_invalidations();
+        Ok(Some(turn))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn drive_turn_parallel_with_mmio_and_instruction_budget_until_tick<F, D, FR, DR>(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        transport: &MemoryTransport,
+        bus: &MmioBus,
+        fetch_trace: MemoryTrace,
+        data_trace: MemoryTrace,
+        fetch_responder: F,
+        data_responder: D,
+        instruction_budget: u64,
+        tick_limit: Tick,
+    ) -> Result<Option<RiscvClusterTurn>, RiscvClusterError>
+    where
+        F: FnMut(CpuId) -> FR,
+        D: FnMut(CpuId) -> DR,
+        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
+            + Send
+            + 'static,
+    {
+        if scheduler.now() >= tick_limit {
+            return Ok(None);
+        }
+
+        let core_events = self.drive_ready_cores_parallel_with_mmio_and_instruction_budget(
+            scheduler,
+            transport,
+            bus,
+            fetch_trace,
+            data_trace,
+            fetch_responder,
+            data_responder,
+            instruction_budget,
+        )?;
+        if !core_events.is_empty() {
+            return Ok(Some(RiscvClusterTurn::core(core_events)));
+        }
+
+        if scheduler.is_idle() {
+            return Ok(Some(RiscvClusterTurn::idle(scheduler.now())));
+        }
+
+        let Some(turn) = drive_parallel_scheduler_turn_until_tick(scheduler, tick_limit)? else {
+            return Ok(None);
+        };
+        self.reconcile_reservation_invalidations();
+        Ok(Some(turn))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub fn drive_until<F, D, FR, DR, S>(
         &self,
         scheduler: &mut PartitionedScheduler,
@@ -1590,129 +1784,5 @@ impl RiscvCluster {
             limit: max_turns,
             completed: turns.len(),
         })
-    }
-}
-
-fn drive_parallel_scheduler_turn(
-    scheduler: &mut PartitionedScheduler,
-) -> Result<RiscvClusterTurn, RiscvClusterError> {
-    let Some(plan) = scheduler
-        .plan_next_parallel_epoch()
-        .map_err(RiscvClusterError::Scheduler)?
-    else {
-        return Ok(RiscvClusterTurn::idle(scheduler.now()));
-    };
-    let recorded = scheduler
-        .run_next_epoch_parallel_recorded()
-        .map_err(RiscvClusterError::Scheduler)?;
-    Ok(RiscvClusterTurn::parallel_scheduler(plan, recorded))
-}
-
-fn drive_parallel_scheduler_turn_until_tick(
-    scheduler: &mut PartitionedScheduler,
-    tick_limit: Tick,
-) -> Result<Option<RiscvClusterTurn>, RiscvClusterError> {
-    let Some((plan, recorded)) = scheduler
-        .run_next_epoch_parallel_recorded_until(tick_limit)
-        .map_err(RiscvClusterError::Scheduler)?
-    else {
-        return Ok(None);
-    };
-    Ok(Some(RiscvClusterTurn::parallel_scheduler(plan, recorded)))
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RiscvClusterError {
-    DuplicateCpu {
-        cpu: CpuId,
-    },
-    DuplicateAgent {
-        agent: AgentId,
-        existing: CpuId,
-        duplicate: CpuId,
-    },
-    DuplicateFetchEndpoint {
-        endpoint: TransportEndpointId,
-        existing: CpuId,
-        duplicate: CpuId,
-    },
-    DuplicateDataEndpoint {
-        endpoint: TransportEndpointId,
-        existing: CpuId,
-        duplicate: CpuId,
-    },
-    UnknownCpu {
-        cpu: CpuId,
-    },
-    Core {
-        cpu: CpuId,
-        error: RiscvCpuError,
-    },
-    Scheduler(SchedulerError),
-    TurnLimitExceeded {
-        limit: usize,
-        completed: usize,
-    },
-}
-
-impl fmt::Display for RiscvClusterError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DuplicateCpu { cpu } => {
-                write!(formatter, "CPU {} is already registered", cpu.get())
-            }
-            Self::DuplicateAgent {
-                agent,
-                existing,
-                duplicate,
-            } => write!(
-                formatter,
-                "agent {} is assigned to CPU {} and CPU {}",
-                agent.get(),
-                existing.get(),
-                duplicate.get()
-            ),
-            Self::DuplicateFetchEndpoint {
-                endpoint,
-                existing,
-                duplicate,
-            } => write!(
-                formatter,
-                "fetch endpoint {} is assigned to CPU {} and CPU {}",
-                endpoint.as_str(),
-                existing.get(),
-                duplicate.get()
-            ),
-            Self::DuplicateDataEndpoint {
-                endpoint,
-                existing,
-                duplicate,
-            } => write!(
-                formatter,
-                "data endpoint {} is assigned to CPU {} and CPU {}",
-                endpoint.as_str(),
-                existing.get(),
-                duplicate.get()
-            ),
-            Self::UnknownCpu { cpu } => write!(formatter, "CPU {} is not registered", cpu.get()),
-            Self::Core { cpu, error } => {
-                write!(formatter, "CPU {} action failed: {error}", cpu.get())
-            }
-            Self::Scheduler(error) => write!(formatter, "{error}"),
-            Self::TurnLimitExceeded { limit, completed } => write!(
-                formatter,
-                "RISC-V cluster run reached turn limit {limit} after {completed} completed turns"
-            ),
-        }
-    }
-}
-
-impl Error for RiscvClusterError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Core { error, .. } => Some(error),
-            Self::Scheduler(error) => Some(error),
-            _ => None,
-        }
     }
 }

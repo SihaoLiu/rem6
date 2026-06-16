@@ -1679,6 +1679,178 @@ fn riscv_cluster_parallel_turns_issue_mmio_and_memory_data_accesses() {
 }
 
 #[test]
+fn zero_instruction_budget_drains_existing_mmio_work_without_retiring_next_instruction() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("l1d0"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([riscv_core(CoreSpec {
+        cpu: 0,
+        partition: 0,
+        agent: 7,
+        entry: 0x8000,
+        fetch_endpoint: "cpu0.ifetch",
+        fetch_route,
+        data_endpoint: "cpu0.dmem",
+        data_route,
+    })])
+    .unwrap();
+    let cpu = cluster.core(CpuId::new(0)).unwrap();
+    cpu.write_register(reg(2), 0x1000);
+    let store = store_with_programs(&[
+        (0x8000, i_type(8, 2, 0x3, 5, 0x03)),
+        (0x8004, i_type(1, 0, 0x0, 7, 0x13)),
+    ]);
+    let mut bank =
+        MmioRegisterBank::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap();
+    bank.insert_register(
+        8,
+        AccessSize::new(8).unwrap(),
+        MmioAccess::ReadOnly,
+        vec![0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01],
+    )
+    .unwrap();
+    let mut bus = MmioBus::new();
+    bus.insert_device(
+        AddressRange::new(Address::new(0x1000), AccessSize::new(0x100).unwrap()).unwrap(),
+        MmioRoute::new(PartitionId::new(0), PartitionId::new(2), 2, 2).unwrap(),
+        Mutex::new(bank),
+    )
+    .unwrap();
+
+    let mut retired_load = false;
+    for _ in 0..16 {
+        let turn = cluster
+            .drive_turn_parallel_with_mmio_and_instruction_budget_until_tick(
+                &mut scheduler,
+                &transport,
+                &bus,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                1,
+                100,
+            )
+            .unwrap()
+            .expect("load setup turn");
+        if turn
+            .core_events()
+            .iter()
+            .any(|event| matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_)))
+        {
+            retired_load = true;
+            break;
+        }
+    }
+    assert!(retired_load);
+    assert_eq!(cpu.read_register(reg(5)), 0);
+    assert_eq!(cpu.read_register(reg(7)), 0);
+    assert!(cpu.has_unissued_data_access() || cpu.has_pending_data_access());
+
+    let mut drain_turns = Vec::new();
+    for _ in 0..8 {
+        if !(cpu.has_unissued_data_access() || cpu.has_pending_data_access()) {
+            break;
+        }
+        let turn = cluster
+            .drive_turn_parallel_with_mmio_and_instruction_budget_until_tick(
+                &mut scheduler,
+                &transport,
+                &bus,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                0,
+                100,
+            )
+            .unwrap()
+            .expect("MMIO data drain turn");
+        drain_turns.push(turn);
+    }
+
+    assert!(!drain_turns.is_empty());
+    assert!(drain_turns.iter().all(|turn| {
+        turn.core_events()
+            .iter()
+            .all(|event| !matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_)))
+    }));
+    assert_eq!(cpu.read_register(reg(5)), 0x0123_4567_89ab_cdef);
+    assert_eq!(cpu.read_register(reg(7)), 0);
+
+    let mut retired_addi = false;
+    for _ in 0..16 {
+        let turn = cluster
+            .drive_turn_parallel_with_mmio_and_instruction_budget_until_tick(
+                &mut scheduler,
+                &transport,
+                &bus,
+                MemoryTrace::new(),
+                MemoryTrace::new(),
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+                1,
+                100,
+            )
+            .unwrap()
+            .expect("addi turn");
+        if turn
+            .core_events()
+            .iter()
+            .any(|event| matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_)))
+        {
+            retired_addi = true;
+            break;
+        }
+    }
+    assert!(retired_addi);
+    assert_eq!(cpu.read_register(reg(7)), 1);
+}
+
+#[test]
 fn riscv_cluster_parallel_fetch_commits_branch_fetch_ahead_speculation() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
     let mut transport = MemoryTransport::new();

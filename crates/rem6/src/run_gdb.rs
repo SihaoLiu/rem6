@@ -20,9 +20,10 @@ use rem6_system::{
 };
 use rem6_transport::{MemoryTrace, MemoryTransport};
 
+use crate::data_cache_runtime::cli_data_memory_response;
 use crate::data_cache_runtime::CliDataCacheRuntime;
 use crate::runtime_memory::CliMemoryRuntime;
-use crate::{cli_data_memory_response, execute_error, Rem6CliError, Rem6RunConfig, RequestedIsa};
+use crate::{execute_error, Rem6CliError, Rem6RunConfig, RequestedIsa};
 
 pub(super) fn validate_run_gdb_listen_config(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
     if !config.execute() {
@@ -40,6 +41,11 @@ pub(super) fn validate_run_gdb_listen_config(config: &Rem6RunConfig) -> Result<(
     if config.dram_memory() {
         return Err(execute_error(
             "--gdb-listen does not yet support --dram-memory",
+        ));
+    }
+    if !config.readfiles().is_empty() {
+        return Err(execute_error(
+            "--gdb-listen does not yet support --readfile",
         ));
     }
     let _ = parse_loopback_gdb_listen_addr(

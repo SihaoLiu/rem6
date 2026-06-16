@@ -58,6 +58,221 @@ fn rem6_run_rejects_riscv_se_without_execution() {
 }
 
 #[test]
+fn rem6_run_rejects_readfile_without_execution() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("readfile-without-execute", &elf);
+    let readfile_path = temp_binary("readfile-without-execute-data", &[1, 2, 3, 4]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--readfile",
+            &format!("0x10000000:0x100:{}", readfile_path.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--readfile requires --execute"));
+}
+
+#[test]
+fn rem6_run_rejects_readfile_without_riscv_isa() {
+    let elf = x86_64_elf(0x1000_0000, 0x1000_0000, &[0x90]);
+    let path = temp_binary("readfile-without-riscv", &elf);
+    let readfile_path = temp_binary("readfile-without-riscv-data", &[1, 2, 3, 4]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "x86",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--execute",
+            "--stats-format",
+            "json",
+            "--readfile",
+            &format!("0x10000000:0x100:{}", readfile_path.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--readfile requires --isa riscv"));
+}
+
+#[test]
+fn rem6_run_rejects_invalid_readfile() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("invalid-readfile", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--execute",
+            "--stats-format",
+            "json",
+            "--readfile",
+            "not-a-readfile",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid readfile not-a-readfile"));
+}
+
+#[test]
+fn rem6_run_rejects_zero_sized_readfile() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("zero-sized-readfile", &elf);
+    let readfile_path = temp_binary("zero-sized-readfile-data", &[1, 2, 3, 4]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--execute",
+            "--stats-format",
+            "json",
+            "--readfile",
+            &format!("0x10000000:0:{}", readfile_path.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid readfile"));
+}
+
+#[test]
+fn rem6_run_rejects_missing_readfile_file() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("missing-readfile", &elf);
+    let readfile_path = temp_output("missing-readfile-data");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--execute",
+            "--stats-format",
+            "json",
+            "--readfile",
+            &format!("0x10000000:0x100:{}", readfile_path.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains(&format!(
+        "failed to read readfile {}:",
+        readfile_path.display()
+    )));
+}
+
+#[test]
+fn rem6_run_rejects_readfile_payload_larger_than_window() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("oversized-readfile", &elf);
+    let readfile_path = temp_binary("oversized-readfile-data", &[1, 2, 3, 4]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--execute",
+            "--stats-format",
+            "json",
+            "--readfile",
+            &format!("0x10000000:2:{}", readfile_path.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("readfile payload has 4 bytes but MMIO window has 2"));
+}
+
+#[test]
+fn rem6_run_rejects_overlapping_readfiles() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("overlapping-readfiles", &elf);
+    let first_readfile = temp_binary("overlapping-readfiles-first", &[1, 2, 3, 4]);
+    let second_readfile = temp_binary("overlapping-readfiles-second", &[5, 6, 7, 8]);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--execute",
+            "--stats-format",
+            "json",
+            "--readfile",
+            &format!("0x10000000:0x100:{}", first_readfile.display()),
+            "--readfile",
+            &format!("0x10000080:0x100:{}", second_readfile.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("MMIO device region"));
+    assert!(stderr.contains("overlaps existing region"));
+}
+
+#[test]
 fn rem6_run_rejects_data_cache_protocol_without_execution() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("data-cache-without-execute", &elf);

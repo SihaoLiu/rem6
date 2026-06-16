@@ -155,6 +155,9 @@ pub enum Rem6CliError {
     InvalidLoadBlob {
         value: String,
     },
+    InvalidReadfile {
+        value: String,
+    },
     InvalidRiscvSeFile {
         value: String,
     },
@@ -164,6 +167,8 @@ pub enum Rem6CliError {
     DramMemoryRequiresExecution,
     InstructionLimitRequiresExecution,
     MemoryDumpRequiresExecution,
+    ReadfileRequiresExecution,
+    ReadfileRequiresRiscv,
     RiscvSeRequiresExecution,
     DataCacheProtocolRequiresExecution,
     DataCachePrefetcherRequiresExecution,
@@ -196,6 +201,10 @@ pub enum Rem6CliError {
         error: String,
     },
     ReadLoadBlob {
+        path: PathBuf,
+        error: String,
+    },
+    ReadReadfile {
         path: PathBuf,
         error: String,
     },
@@ -402,6 +411,9 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidLoadBlob { value } => {
                 write!(formatter, "invalid load blob {value}")
             }
+            Self::InvalidReadfile { value } => {
+                write!(formatter, "invalid readfile {value}")
+            }
             Self::InvalidRiscvSeFile { value } => {
                 write!(formatter, "invalid RISC-V SE file mapping {value}")
             }
@@ -416,6 +428,12 @@ impl fmt::Display for Rem6CliError {
             }
             Self::MemoryDumpRequiresExecution => {
                 write!(formatter, "--dump-memory requires --execute")
+            }
+            Self::ReadfileRequiresExecution => {
+                write!(formatter, "--readfile requires --execute")
+            }
+            Self::ReadfileRequiresRiscv => {
+                write!(formatter, "--readfile requires --isa riscv")
             }
             Self::RiscvSeRequiresExecution => {
                 write!(formatter, "--riscv-se requires --execute")
@@ -489,6 +507,13 @@ impl fmt::Display for Rem6CliError {
                 write!(
                     formatter,
                     "failed to read load blob {}: {error}",
+                    path.display()
+                )
+            }
+            Self::ReadReadfile { path, error } => {
+                write!(
+                    formatter,
+                    "failed to read readfile {}: {error}",
                     path.display()
                 )
             }
