@@ -264,6 +264,7 @@ fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -
             | RiscvInstruction::VectorMergeVvm { .. }
             | RiscvInstruction::VectorMergeVxm { .. }
             | RiscvInstruction::VectorMergeVim { .. }
+            | RiscvInstruction::VectorCompressVm(..)
             | RiscvInstruction::VectorMoveVv { .. }
             | RiscvInstruction::VectorMoveVx { .. }
             | RiscvInstruction::VectorMoveVi { .. }

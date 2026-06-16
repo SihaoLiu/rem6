@@ -127,6 +127,9 @@ pub(crate) fn execute_vector_integer_binary(
         RiscvInstruction::VectorMergeVim { vd, vs2, imm } => {
             execute_vector_merge_vi(hart, vd, vs2, imm)
         }
+        RiscvInstruction::VectorCompressVm(vd, vs2, vs1) => {
+            crate::vector_compress_execute::execute_vector_compress_vm(hart, vd, vs2, vs1)
+        }
         RiscvInstruction::VectorMoveVv { vd, vs1 } => execute_vector_move_vv(hart, vd, vs1),
         RiscvInstruction::VectorMoveVx { vd, rs1 } => {
             execute_vector_move_vx(hart, vd, hart.read(rs1))

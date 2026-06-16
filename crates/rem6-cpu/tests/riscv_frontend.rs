@@ -128,6 +128,16 @@ fn vector_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
         | 0x57
 }
 
+fn vcompress_vm_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    (0b010111 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(vs1) << 15)
+        | (0x2 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
 fn vector_vx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
     (funct6 << 26)
         | (1 << 25)
@@ -2111,6 +2121,54 @@ fn riscv_core_driver_executes_vector_merge_and_move_operations_from_fetch_stream
         [
             0xfc, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
             0xee, 0xee,
+        ]
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vcompress_vm_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 6);
+    core.write_vector_register(vreg(3), [0xee; 16]);
+    core.write_vector_register(
+        vreg(4),
+        [
+            10, 20, 30, 40, 50, 60, 0xaa, 0xaa, 0xaa, 0xaa, 0, 0, 0, 0, 0, 0,
+        ],
+    );
+    core.write_vector_register(
+        vreg(5),
+        [0b0010_0101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0x80, 10, 6),
+            vcompress_vm_type(4, 5, 3),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(6),
+            rs1: reg(10),
+            vtype: 0x80,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorCompressVm(vreg(3), vreg(4), vreg(5))
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        [
+            10, 30, 60, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee
         ]
     );
 }

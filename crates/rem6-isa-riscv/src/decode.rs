@@ -413,6 +413,11 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             vs1: vector_register(raw, 15),
         }),
+        (0x2, 0b010111, true) => Ok(RiscvInstruction::VectorCompressVm(
+            vector_register(raw, 7),
+            vector_register(raw, 20),
+            vector_register(raw, 15),
+        )),
         (0x2, 0b100101, true) => Ok(RiscvInstruction::VectorMultiplyLowVv {
             vd: vector_register(raw, 7),
             vs1: vector_register(raw, 15),

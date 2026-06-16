@@ -433,6 +433,7 @@ pub enum RiscvInstruction {
         vs2: VectorRegister,
         imm: i8,
     },
+    VectorCompressVm(VectorRegister, VectorRegister, VectorRegister),
     VectorMoveVv {
         vd: VectorRegister,
         vs1: VectorRegister,

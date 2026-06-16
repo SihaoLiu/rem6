@@ -21,6 +21,7 @@ mod sv39;
 mod trap;
 mod types;
 mod vector;
+mod vector_compress_execute;
 mod vector_execute;
 
 use encoding::{j_imm, rd, u_imm};
@@ -472,6 +473,7 @@ impl RiscvHartState {
             | RiscvInstruction::VectorMergeVvm { .. }
             | RiscvInstruction::VectorMergeVxm { .. }
             | RiscvInstruction::VectorMergeVim { .. }
+            | RiscvInstruction::VectorCompressVm(..)
             | RiscvInstruction::VectorMoveVv { .. }
             | RiscvInstruction::VectorMoveVx { .. }
             | RiscvInstruction::VectorMoveVi { .. }
