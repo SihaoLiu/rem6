@@ -1047,6 +1047,11 @@ pub enum MmioError {
         expected: MmioRequestId,
         actual: MmioRequestId,
     },
+    TransferTooLarge {
+        request: MmioRequestId,
+        bytes: u64,
+        maximum: u64,
+    },
     UnsupportedDeviceAccess {
         request: MmioRequestId,
         device: String,
@@ -1234,6 +1239,15 @@ impl fmt::Display for MmioError {
                 "MMIO response references request {} but channel expected request {}",
                 actual.get(),
                 expected.get()
+            ),
+            Self::TransferTooLarge {
+                request,
+                bytes,
+                maximum,
+            } => write!(
+                formatter,
+                "MMIO request {} transfers {bytes} bytes but maximum is {maximum}",
+                request.get()
             ),
             Self::UnsupportedDeviceAccess {
                 request,

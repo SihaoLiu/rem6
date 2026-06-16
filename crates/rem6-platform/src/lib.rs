@@ -21,11 +21,15 @@ use rem6_topology::{Endpoint, Topology, TopologyError};
 use rem6_uart::{Pl011UartMmioDevice, UartId, UartMmioDevice};
 
 mod device_tree;
+mod readfile;
 
 use self::device_tree::PlatformDeviceTreeInventory;
 pub use self::device_tree::{
     PlatformDeviceTree, PlatformDeviceTreeNode, PlatformDeviceTreeProperty,
     PlatformDeviceTreePropertyValue, PlatformRiscvDeviceTreeConfig,
+};
+pub use self::readfile::{
+    PlatformReadfileConfig, PlatformReadfileError, PlatformReadfileMmioDevice,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -259,6 +263,7 @@ pub struct PlatformBuilder {
     sp804_timers: Vec<PlatformSp804TimerConfig>,
     sp805_watchdogs: Vec<PlatformSp805WatchdogConfig>,
     cpu_local_timers: Vec<PlatformCpuLocalTimerConfig>,
+    readfiles: Vec<PlatformReadfileConfig>,
 }
 
 impl PlatformBuilder {
@@ -276,6 +281,7 @@ impl PlatformBuilder {
             sp804_timers: Vec::new(),
             sp805_watchdogs: Vec::new(),
             cpu_local_timers: Vec::new(),
+            readfiles: Vec::new(),
         }
     }
 
@@ -338,6 +344,11 @@ impl PlatformBuilder {
         self
     }
 
+    pub fn add_readfile(mut self, config: PlatformReadfileConfig) -> Self {
+        self.readfiles.push(config);
+        self
+    }
+
     pub fn build(self) -> Result<Platform, PlatformError> {
         if self.partition_count == 0 {
             return Err(PlatformError::NoPartitions);
@@ -364,6 +375,7 @@ impl PlatformBuilder {
         let mut sp804_timers = BTreeMap::new();
         let mut sp805_watchdogs = BTreeMap::new();
         let mut cpu_local_timers = BTreeMap::new();
+        let mut readfiles = BTreeMap::new();
 
         for config in self.interrupt_controllers {
             validate_route(self.partition_count, config.route)?;
@@ -693,6 +705,15 @@ impl PlatformBuilder {
             cpu_local_timers.insert(config.base, device);
         }
 
+        for config in self.readfiles {
+            validate_route(self.partition_count, config.route)?;
+            let device = PlatformReadfileMmioDevice::new(config.base, config.size, config.payload)
+                .map_err(PlatformError::Readfile)?;
+            bus.insert_device(device.range(), config.route, device.clone())
+                .map_err(PlatformError::Mmio)?;
+            readfiles.insert(config.base, device);
+        }
+
         Ok(Platform {
             partition_count: self.partition_count,
             interrupt_controller: controller,
@@ -707,6 +728,7 @@ impl PlatformBuilder {
             sp804_timers,
             sp805_watchdogs,
             cpu_local_timers,
+            readfiles,
             device_tree_inventory,
         })
     }
@@ -727,6 +749,7 @@ pub struct Platform {
     sp804_timers: BTreeMap<Address, Sp804DualTimerMmioDevice>,
     sp805_watchdogs: BTreeMap<Address, Sp805WatchdogMmioDevice>,
     cpu_local_timers: BTreeMap<Address, CpuLocalTimerMmioDevice>,
+    readfiles: BTreeMap<Address, PlatformReadfileMmioDevice>,
     device_tree_inventory: PlatformDeviceTreeInventory,
 }
 
@@ -845,6 +868,14 @@ impl Platform {
         self.cpu_local_timers
             .iter()
             .map(|(base, device)| (*base, device))
+    }
+
+    pub fn readfile(&self, base: Address) -> Option<&PlatformReadfileMmioDevice> {
+        self.readfiles.get(&base)
+    }
+
+    pub fn readfiles(&self) -> impl Iterator<Item = (Address, &PlatformReadfileMmioDevice)> {
+        self.readfiles.iter().map(|(base, device)| (*base, device))
     }
 
     pub fn riscv_device_tree(
@@ -975,6 +1006,7 @@ pub enum PlatformError {
     Sp804(Sp804Error),
     Sp805(Sp805Error),
     CpuLocalTimer(CpuLocalTimerError),
+    Readfile(PlatformReadfileError),
 }
 
 impl fmt::Display for PlatformError {
@@ -1015,6 +1047,7 @@ impl fmt::Display for PlatformError {
             Self::Sp804(error) => write!(formatter, "{error}"),
             Self::Sp805(error) => write!(formatter, "{error}"),
             Self::CpuLocalTimer(error) => write!(formatter, "{error}"),
+            Self::Readfile(error) => write!(formatter, "{error}"),
         }
     }
 }
@@ -1031,6 +1064,7 @@ impl Error for PlatformError {
             Self::Sp804(error) => Some(error),
             Self::Sp805(error) => Some(error),
             Self::CpuLocalTimer(error) => Some(error),
+            Self::Readfile(error) => Some(error),
             _ => None,
         }
     }
