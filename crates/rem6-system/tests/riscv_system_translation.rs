@@ -31,6 +31,8 @@ use rem6_transport::{
 };
 
 const SBI_RFENCE_EXTENSION: u64 = 0x5246_4e43;
+const SBI_RFENCE_REMOTE_SFENCE_VMA: u64 = 1;
+const SBI_RFENCE_REMOTE_HFENCE_GVMA: u64 = 4;
 
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()
@@ -646,10 +648,13 @@ fn riscv_topology_config_builds_translated_parallel_data_cores() {
     );
 }
 
-#[test]
-fn riscv_sbi_remote_sfence_vma_flushes_translated_data_tlb() {
+fn assert_remote_tlb_fence_flushes_translated_data_tlb(
+    function: u64,
+    source_id: u32,
+    event_base: u64,
+) {
     let host = PartitionId::new(3);
-    let source = GuestSourceId::new(54);
+    let source = GuestSourceId::new(source_id);
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
     let mut transport = MemoryTransport::new();
     let cpu0_fetch = transport
@@ -734,7 +739,7 @@ fn riscv_sbi_remote_sfence_vma_flushes_translated_data_tlb() {
         &[
             (0x8000, lui(17, rfence_hi)),
             (0x8004, i_type(rfence_lo, 17, 0x0, 17, 0x13)),
-            (0x8008, i_type(1, 0, 0x0, 16, 0x13)),
+            (0x8008, i_type(function as i32, 0, 0x0, 16, 0x13)),
             (0x800c, i_type(2, 0, 0x0, 10, 0x13)),
             (0x8010, i_type(0, 0, 0x0, 11, 0x13)),
             (0x8014, i_type(0, 0, 0x0, 12, 0x13)),
@@ -814,11 +819,16 @@ fn riscv_sbi_remote_sfence_vma_flushes_translated_data_tlb() {
                 move |delivery, _context| memory_response(&store, &delivery)
             },
             80,
-            |cpu| GuestEventId::new(170 + u64::from(cpu.get())),
+            |cpu| GuestEventId::new(event_base + u64::from(cpu.get())),
         )
         .unwrap();
 
-    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(170), source, 1);
+    let stop = StopRequest::new(
+        run.final_tick().unwrap(),
+        GuestEventId::new(event_base),
+        source,
+        1,
+    );
     assert_eq!(run.stop_reason(), RiscvSystemRunStopReason::HostStop(stop));
     assert_eq!(core0.read_register(reg(6)), 0);
     assert_eq!(core0.read_register(reg(7)), 0);
@@ -828,6 +838,16 @@ fn riscv_sbi_remote_sfence_vma_flushes_translated_data_tlb() {
         Some(TranslationTlbStats::new(0, 1, 0, 1, 0))
     );
     assert_eq!(core1.data_translation_tlb_entry_count(), Some(0));
+}
+
+#[test]
+fn riscv_sbi_remote_sfence_vma_flushes_translated_data_tlb() {
+    assert_remote_tlb_fence_flushes_translated_data_tlb(SBI_RFENCE_REMOTE_SFENCE_VMA, 54, 170);
+}
+
+#[test]
+fn riscv_sbi_remote_hfence_gvma_flushes_translated_data_tlb() {
+    assert_remote_tlb_fence_flushes_translated_data_tlb(SBI_RFENCE_REMOTE_HFENCE_GVMA, 57, 200);
 }
 
 #[test]

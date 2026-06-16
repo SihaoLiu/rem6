@@ -334,8 +334,11 @@ identity/probe calls, minimal TIME `set_timer` STIP scheduling, IPI
 shutdown stop requests and invalid-param returns, RFENCE probe reporting, and
 remote SFENCE.VMA finite-range and ASID-scoped data TLB flushes through
 translated execution, remote SFENCE.VMA scheduled completion events, explicit
-unsupported HFENCE.GVMA/VVMA validation for invalid hart masks and ASID/VMID
-width, plus HSM probe, `hart_get_status`, `hart_start`
+HFENCE.GVMA conservative whole modeled data TLB invalidation through translated
+execution, HFENCE.VVMA range-scoped data TLB invalidation, HFENCE.VVMA.ASID
+scoped data TLB invalidation that preserves other address spaces, and HFENCE
+invalid hart mask, ASID-width, VMID-width, and range validation, plus HSM
+probe, `hart_get_status`, `hart_start`
 secondary-hart `START_PENDING` reporting before the scheduled entry event,
 secondary-hart release with supervisor entry state, `satp=0`, `sstatus.SIE=0`,
 `a0=hartid`, and `a1=opaque`, current-hart `hart_stop` as a no-return stop
@@ -374,9 +377,9 @@ for no-op owner changes, missing paths, bad flags, fd-based ownership calls,
 **Not migrated:** Broad Linux SE parity, process/thread lifecycle, broad SBI
 timer/IPI/reset power-state behavior, remaining HSM wake semantics beyond the
 `hart_start`, `hart_stop`, retentive `hart_suspend`, and default
-non-retentive `hart_suspend` slices, RFENCE hypervisor-fence execution
-semantics and broader completion coverage, full Linux boot, and real benchmark
-workloads.
+non-retentive `hart_suspend` slices, VMID/G-stage/range-precise HFENCE.GVMA
+completion coverage beyond conservative modeled data TLB invalidation, full
+Linux boot, and real benchmark workloads.
 
 **Evidence:** `RiscvSyscallTable::handle_with_guest_memory_io_at_tick`,
 `RiscvSyscallEmulation::handle_pending_core_trap`, CLI static newlib tests,
@@ -409,15 +412,19 @@ shared RISC-V CLI tool detection in `cli_run::support`,
 `riscv_se_time`,
 `riscv_sbi_firmware`, `riscv_system_translation`, `riscv_se_process`,
 `riscv_se_signal`,
-`riscv_sbi::tests::remote_hfence_gvma_rejects_missing_target_before_reporting_unsupported`,
-`riscv_sbi::tests::remote_hfence_gvma_rejects_invalid_range_before_reporting_unsupported`,
-`riscv_sbi::tests::remote_hfence_gvma_reports_not_supported_after_valid_target_validation`,
-`riscv_sbi::tests::remote_hfence_gvma_vmid_rejects_invalid_vmid_before_reporting_unsupported`,
-`riscv_sbi::tests::remote_hfence_vvma_asid_rejects_invalid_asid_before_reporting_unsupported`,
+`riscv_sbi::tests::remote_hfence_gvma_rejects_missing_target_before_scheduling_flush`,
+`riscv_sbi::tests::remote_hfence_gvma_rejects_invalid_range_before_scheduling_flush`,
+`riscv_sbi::tests::remote_hfence_gvma_flushes_target_tlb_when_completion_event_runs`,
+`riscv_sbi::tests::remote_hfence_gvma_vmid_conservatively_flushes_all_modeled_tlb_entries`,
+`riscv_sbi::tests::remote_hfence_gvma_vmid_rejects_invalid_vmid_before_scheduling_flush`,
+`riscv_sbi::tests::remote_hfence_vvma_asid_rejects_invalid_asid_before_scheduling_flush`,
+`riscv_sbi::tests::remote_hfence_vvma_range_flushes_overlapping_pages_only`,
+`riscv_sbi::tests::remote_hfence_vvma_asid_preserves_other_address_spaces`,
+`riscv_sbi_remote_hfence_gvma_flushes_translated_data_tlb`,
 `RiscvLinuxBootHandoffConfig`, and RISC-V DTB handoff tests.
 
-**Next evidence:** Broader static libc program coverage, followed by RFENCE
-hypervisor-fence execution tests, then a real Linux boot smoke.
+**Next evidence:** Broader static libc program coverage, broader SBI completion
+coverage, then a real Linux boot smoke.
 
 ### Devices and Platforms - 50% single-axis
 
@@ -675,7 +682,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/pyunit` | `rem6-stats`, `rem6-workload`, future utility owners | 35% unit-slice | Selected pystats and stdlib semantics are covered by typed Rust tests. | Split HDF5, pystats, registry/probes, stdlib helpers, and parsing rows. |
 | `tests/gem5/regression_tests` | all rem6 crates | 35% unit-slice | Workspace tests act as the current regression suite. | Add migration tags or per-family regression rows. |
 | `tests/gem5/replacement_policies` | `rem6-cache` | 60% representative | Multiple replacement, indexing, dueling, compressed, and sector tag tests exist. | Add remaining policies and exact trace/reference parity where useful. |
-| `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, RFENCE remote SFENCE.VMA data TLB flushes with finite-range, ASID scope, and scheduled completion events, unsupported HFENCE validation, and HSM start entry-state, `START_PENDING`, status, no-return stop, retentive-suspend, default-non-retentive `RESUME_PENDING`/resume, and IPI-wake slices are tested. | Add broader SBI timer/IPI/reset power-state behavior, remaining HSM wake semantics, RFENCE hypervisor-fence execution semantics and broader completion coverage, and a real Linux boot smoke. |
+| `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, RFENCE remote SFENCE.VMA data TLB flushes with finite-range, ASID scope, and scheduled completion events, HFENCE.GVMA conservative whole modeled data TLB flush execution, HFENCE.VVMA range-scoped flush, HFENCE.VVMA.ASID scoped flush preservation, HFENCE validation, and HSM start entry-state, `START_PENDING`, status, no-return stop, retentive-suspend, default-non-retentive `RESUME_PENDING`/resume, and IPI-wake slices are tested. | Add broader SBI timer/IPI/reset power-state behavior, remaining HSM wake semantics, VMID/G-stage/range-precise HFENCE.GVMA completion coverage beyond conservative modeled data TLB invalidation, and a real Linux boot smoke. |
 | `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 66% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, top-level retired-instruction probe stats, power bindings, instruction/data cache counters, cache-local and top-level data-cache and instruction-cache prefetch queue counters, top-level trace-replay fabric-route counters including active virtual networks, top-level trace-replay data-cache run/protocol counters, CLI stat output with gem5-style final-tick, committed-instruction, sim-ops, sim-seconds, and sim-frequency aliases, CLI GDB attach-before-execute register/memory smoke coverage plus pre-execution writes, RV64 supervisor CSR `sscratch`, translation CSR `satp`, and machine CSR `mscratch` write/readback consumed by guest execution, software and hardware breakpoints, single-step execution consumed by the following run, continue and `vCont;c` execution with completed-run summary handoff, cache-backed GDB run-control summary stats, data watchpoints stopping after real RISC-V load/store data-access completion, and library-level plus run-CLI McPAT/DSENT-shaped export tests exist. | Add more hierarchy counters, calibrated power/thermal activity, exact gem5 stat naming breadth, and remaining RV32 FP/vector plus broader CSR GDB register-cache coverage. |
 | `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 54% single-axis | Workload manifests, resource payloads, manifest/suite-level CLI resource acquisition including host-file and uncompressed/gzip tar-entry inputs, manifest-acquired and unique-suite run kernel handoff, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage, remote/cache policy acquisition, and ergonomic topology/workload definitions. |
 | `tests/test-progs` | `rem6-system`, `rem6` CLI, ISA crates | 35% unit-slice | Static RISC-V no-libc, newlib, and raw syscall smoke binaries, including `sendfile`, `statx`, `faccessat2`, `utimensat`, advisory `flock` and `fchownat`/`fchown`, `sysinfo`, newlib file-create roundtrip, newlib `/proc/self/exe` readlink coverage, newlib pipe2 roundtrip coverage, newlib directory-open coverage, and newlib open-flag coverage, are generated when tools exist. | Add durable generated fixtures for hello, threads, and m5 utility shapes across ISAs. |
