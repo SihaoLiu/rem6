@@ -70,6 +70,30 @@ pub(super) fn build_cli_memory_store(
     Ok(store)
 }
 
+pub(super) fn cli_source_backed_cache_line_ranges(
+    image: &BootImage,
+    load_blobs: &[LoadedBlob],
+    line_layout: CacheLineLayout,
+) -> Result<Vec<AddressRange>, Rem6CliError> {
+    fully_covered_line_ranges(checked_cli_memory_ranges(image, load_blobs)?, line_layout)
+}
+
+pub(super) fn cli_fully_covered_cache_line_ranges(
+    address: u64,
+    bytes: u64,
+    line_layout: CacheLineLayout,
+) -> Result<Vec<AddressRange>, Rem6CliError> {
+    if bytes == 0 {
+        return Ok(Vec::new());
+    }
+    let range = AddressRange::new(
+        Address::new(address),
+        AccessSize::new(bytes).map_err(execute_error)?,
+    )
+    .map_err(execute_error)?;
+    fully_covered_line_ranges(vec![range], line_layout)
+}
+
 pub(super) fn build_cli_dram_memory(
     image: &BootImage,
     load_blobs: &[LoadedBlob],
@@ -232,7 +256,9 @@ fn checked_cli_memory_ranges(
     Ok(merged)
 }
 
-fn merge_line_ranges(ranges: Vec<AddressRange>) -> Result<Vec<AddressRange>, Rem6CliError> {
+pub(super) fn merge_line_ranges(
+    ranges: Vec<AddressRange>,
+) -> Result<Vec<AddressRange>, Rem6CliError> {
     let mut merged: Vec<AddressRange> = Vec::new();
     for range in ranges {
         if let Some(last) = merged.last_mut() {
@@ -247,6 +273,50 @@ fn merge_line_ranges(ranges: Vec<AddressRange>) -> Result<Vec<AddressRange>, Rem
         merged.push(range);
     }
     Ok(merged)
+}
+
+fn fully_covered_line_ranges(
+    ranges: Vec<AddressRange>,
+    line_layout: CacheLineLayout,
+) -> Result<Vec<AddressRange>, Rem6CliError> {
+    let mut covered = Vec::new();
+    for range in ranges {
+        let start = first_fully_covered_line(range, line_layout)?;
+        let end = line_layout.line_address(range.end());
+        if start.get() >= end.get() {
+            continue;
+        }
+        covered.push(
+            AddressRange::new(
+                start,
+                AccessSize::new(end.get() - start.get()).map_err(execute_error)?,
+            )
+            .map_err(execute_error)?,
+        );
+    }
+    covered.sort_by_key(|range| (range.start(), range.end()));
+    merge_line_ranges(covered)
+}
+
+fn first_fully_covered_line(
+    range: AddressRange,
+    line_layout: CacheLineLayout,
+) -> Result<Address, Rem6CliError> {
+    if line_layout.line_offset(range.start()) == 0 {
+        return Ok(range.start());
+    }
+    let partial = line_layout.line_address(range.start());
+    let line_size = AccessSize::new(line_layout.bytes()).map_err(execute_error)?;
+    let next = partial
+        .get()
+        .checked_add(line_layout.bytes())
+        .ok_or_else(|| {
+            execute_error(MemoryError::AddressOverflow {
+                start: partial,
+                size: line_size,
+            })
+        })?;
+    Ok(Address::new(next))
 }
 
 fn line_covered_range(
@@ -384,5 +454,27 @@ mod tests {
         let error = build_cli_memory_store(&image, &[blob], line_layout).unwrap_err();
 
         assert!(format!("{error}").contains("overlaps existing region"));
+    }
+
+    #[test]
+    fn source_backed_cache_line_ranges_include_only_fully_covered_lines() {
+        let line_layout = CacheLineLayout::new(16).unwrap();
+        let image = BootImage::new(Address::new(0x8000))
+            .add_segment(Address::new(0x8000), vec![0xaa; 24])
+            .unwrap();
+        let blob = LoadedBlob {
+            summary: crate::Rem6LoadBlobSummary::new(0x8024, PathBuf::from("blob.bin"), 44),
+            data: vec![0xbb; 44],
+        };
+
+        let ranges = cli_source_backed_cache_line_ranges(&image, &[blob], line_layout).unwrap();
+
+        assert_eq!(
+            ranges,
+            vec![
+                AddressRange::new(Address::new(0x8000), AccessSize::new(16).unwrap()).unwrap(),
+                AddressRange::new(Address::new(0x8030), AccessSize::new(32).unwrap()).unwrap()
+            ]
+        );
     }
 }

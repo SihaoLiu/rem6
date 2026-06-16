@@ -6,14 +6,17 @@ use rem6_dram::{
     DramMemoryError, DramPortActivity, DramTargetActivity,
 };
 use rem6_memory::{
-    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryError, MemoryRequest,
-    MemoryRequestId, PartitionedMemoryStore,
+    AccessSize, Address, AddressRange, AgentId, ByteMask, CacheLineLayout, MemoryError,
+    MemoryRequest, MemoryRequestId, PartitionedMemoryStore,
 };
 use rem6_system::{RiscvGuestMemoryMapResult, RiscvSeStartupImage, RISCV_LINUX_STACK_LIMIT_BYTES};
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
 use crate::config::CliDramMemoryProfile;
-use crate::guest_memory::{build_cli_dram_memory, build_cli_memory_store, CLI_MEMORY_TARGET};
+use crate::guest_memory::{
+    build_cli_dram_memory, build_cli_memory_store, cli_fully_covered_cache_line_ranges,
+    cli_source_backed_cache_line_ranges, merge_line_ranges, CLI_MEMORY_TARGET,
+};
 use crate::{
     execute_error, LoadedBlob, MemoryDumpRequest, Rem6CliError, Rem6DramBankSummary,
     Rem6DramPortSummary, Rem6DramSummary, Rem6DramTargetSummary, Rem6MemoryDump,
@@ -24,8 +27,14 @@ const CLI_GUEST_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 
 #[derive(Clone)]
 pub(super) enum CliMemoryRuntime {
-    Store(Arc<Mutex<PartitionedMemoryStore>>),
-    Dram(Arc<Mutex<DramMemoryController>>),
+    Store {
+        store: Arc<Mutex<PartitionedMemoryStore>>,
+        full_line_backing: Arc<Mutex<Vec<AddressRange>>>,
+    },
+    Dram {
+        memory: Arc<Mutex<DramMemoryController>>,
+        full_line_backing: Arc<Mutex<Vec<AddressRange>>>,
+    },
 }
 
 impl CliMemoryRuntime {
@@ -36,26 +45,37 @@ impl CliMemoryRuntime {
         use_dram: bool,
         dram_profile: CliDramMemoryProfile,
     ) -> Result<Self, Rem6CliError> {
-        if use_dram {
-            return Ok(Self::Dram(Arc::new(Mutex::new(build_cli_dram_memory(
-                image,
-                load_blobs,
-                line_layout,
-                dram_profile,
-            )?))));
-        }
-
-        Ok(Self::Store(Arc::new(Mutex::new(build_cli_memory_store(
+        let full_line_backing = Arc::new(Mutex::new(cli_source_backed_cache_line_ranges(
             image,
             load_blobs,
             line_layout,
-        )?))))
+        )?));
+        if use_dram {
+            return Ok(Self::Dram {
+                memory: Arc::new(Mutex::new(build_cli_dram_memory(
+                    image,
+                    load_blobs,
+                    line_layout,
+                    dram_profile,
+                )?)),
+                full_line_backing,
+            });
+        }
+
+        Ok(Self::Store {
+            store: Arc::new(Mutex::new(build_cli_memory_store(
+                image,
+                load_blobs,
+                line_layout,
+            )?)),
+            full_line_backing,
+        })
     }
 
     pub(super) fn dram_summary_until(&self, final_tick: u64) -> Rem6DramSummary {
         match self {
-            Self::Store(_) => Rem6DramSummary::default(),
-            Self::Dram(memory) => {
+            Self::Store { .. } => Rem6DramSummary::default(),
+            Self::Dram { memory, .. } => {
                 let memory = memory.lock().expect("CLI DRAM memory lock");
                 Rem6DramSummary::from_target_activities(memory.target_activities_until(final_tick))
             }
@@ -63,7 +83,7 @@ impl CliMemoryRuntime {
     }
 
     pub(super) const fn uses_dram(&self) -> bool {
-        matches!(self, Self::Dram(_))
+        matches!(self, Self::Dram { .. })
     }
 
     pub(super) fn with_store_mut<R>(
@@ -71,11 +91,11 @@ impl CliMemoryRuntime {
         operation: impl FnOnce(&mut PartitionedMemoryStore) -> R,
     ) -> Option<R> {
         match self {
-            Self::Store(store) => {
+            Self::Store { store, .. } => {
                 let mut store = store.lock().expect("CLI memory store lock");
                 Some(operation(&mut store))
             }
-            Self::Dram(_) => None,
+            Self::Dram { .. } => None,
         }
     }
 
@@ -86,7 +106,10 @@ impl CliMemoryRuntime {
     ) -> Result<(), Rem6CliError> {
         let (stack_start, stack_size) = riscv_se_stack_region(startup)?;
         match self {
-            Self::Store(store) => {
+            Self::Store {
+                store,
+                full_line_backing,
+            } => {
                 let mut store = store.lock().expect("CLI memory store lock");
                 store
                     .map_region(CLI_MEMORY_TARGET, stack_start, stack_size)
@@ -99,9 +122,18 @@ impl CliMemoryRuntime {
                 ) {
                     return Err(execute_error("failed to install RISC-V SE stack backing"));
                 }
+                insert_full_line_backing(
+                    full_line_backing,
+                    stack_start.get(),
+                    stack_size.bytes(),
+                    line_layout,
+                )?;
                 write_startup_stack_to_store(&mut store, startup, line_layout)
             }
-            Self::Dram(memory) => {
+            Self::Dram {
+                memory,
+                full_line_backing,
+            } => {
                 let mut memory = memory.lock().expect("CLI DRAM memory lock");
                 memory
                     .map_region(CLI_MEMORY_TARGET, stack_start, stack_size)
@@ -114,6 +146,12 @@ impl CliMemoryRuntime {
                 ) {
                     return Err(execute_error("failed to install RISC-V SE stack backing"));
                 }
+                insert_full_line_backing(
+                    full_line_backing,
+                    stack_start.get(),
+                    stack_size.bytes(),
+                    line_layout,
+                )?;
                 write_startup_stack_to_dram(&mut memory, startup, line_layout)
             }
         }
@@ -130,15 +168,34 @@ impl CliMemoryRuntime {
         }
         let chunks = guest_memory_chunks(address, bytes, line_layout)?;
         match self {
-            Self::Store(store) => {
+            Self::Store { store, .. } => {
                 let mut store = store.lock().expect("CLI memory store lock");
                 read_guest_memory_from_store(&mut store, &chunks, line_layout)
             }
-            Self::Dram(memory) => {
+            Self::Dram { memory, .. } => {
                 let memory = memory.lock().expect("CLI DRAM memory lock");
                 read_guest_memory_from_dram(&memory, &chunks, line_layout)
             }
         }
+    }
+
+    pub(super) fn read_guest_cache_line(
+        &self,
+        line: Address,
+        line_layout: CacheLineLayout,
+    ) -> Option<Vec<u8>> {
+        let full_line_backing = match self {
+            Self::Store {
+                full_line_backing, ..
+            }
+            | Self::Dram {
+                full_line_backing, ..
+            } => full_line_backing,
+        };
+        if !contains_full_line_backing(full_line_backing, line, line_layout) {
+            return None;
+        }
+        self.read_guest_memory(line.get(), line_layout.bytes() as usize, line_layout)
     }
 
     pub(super) fn write_guest_memory(
@@ -157,11 +214,11 @@ impl CliMemoryRuntime {
             return false;
         };
         match self {
-            Self::Store(store) => {
+            Self::Store { store, .. } => {
                 let mut store = store.lock().expect("CLI memory store lock");
                 write_guest_memory_to_store(&mut store, &requests, &chunks, line_layout)
             }
-            Self::Dram(memory) => {
+            Self::Dram { memory, .. } => {
                 let mut memory = memory.lock().expect("CLI DRAM memory lock");
                 write_guest_memory_to_dram(&mut memory, &requests, &chunks, line_layout)
             }
@@ -182,7 +239,10 @@ impl CliMemoryRuntime {
             return RiscvGuestMemoryMapResult::Failed;
         };
         match self {
-            Self::Store(store) => {
+            Self::Store {
+                store,
+                full_line_backing,
+            } => {
                 let mut store = store.lock().expect("CLI memory store lock");
                 let result = store_map_region_result(
                     store.map_region(CLI_MEMORY_TARGET, Address::new(address), size),
@@ -192,12 +252,20 @@ impl CliMemoryRuntime {
                     return result;
                 }
                 if insert_zero_guest_lines_in_store(&mut store, address, bytes, line_layout) {
+                    if insert_full_line_backing(full_line_backing, address, bytes, line_layout)
+                        .is_err()
+                    {
+                        return RiscvGuestMemoryMapResult::Failed;
+                    }
                     RiscvGuestMemoryMapResult::Mapped
                 } else {
                     RiscvGuestMemoryMapResult::Failed
                 }
             }
-            Self::Dram(memory) => {
+            Self::Dram {
+                memory,
+                full_line_backing,
+            } => {
                 let mut memory = memory.lock().expect("CLI DRAM memory lock");
                 let result = dram_map_region_result(
                     memory.map_region(CLI_MEMORY_TARGET, Address::new(address), size),
@@ -207,6 +275,11 @@ impl CliMemoryRuntime {
                     return result;
                 }
                 if insert_zero_guest_lines_in_dram(&mut memory, address, bytes, line_layout) {
+                    if insert_full_line_backing(full_line_backing, address, bytes, line_layout)
+                        .is_err()
+                    {
+                        return RiscvGuestMemoryMapResult::Failed;
+                    }
                     RiscvGuestMemoryMapResult::Mapped
                 } else {
                     RiscvGuestMemoryMapResult::Failed
@@ -214,6 +287,43 @@ impl CliMemoryRuntime {
             }
         }
     }
+}
+
+fn insert_full_line_backing(
+    full_line_backing: &Arc<Mutex<Vec<AddressRange>>>,
+    address: u64,
+    bytes: u64,
+    line_layout: CacheLineLayout,
+) -> Result<(), Rem6CliError> {
+    let mut ranges = cli_fully_covered_cache_line_ranges(address, bytes, line_layout)?;
+    let mut full_line_backing = full_line_backing
+        .lock()
+        .expect("CLI memory full-line backing lock");
+    if full_line_backing.is_empty() {
+        *full_line_backing = ranges;
+        return Ok(());
+    }
+
+    let mut merged = full_line_backing.clone();
+    merged.append(&mut ranges);
+    merged.sort_by_key(|range| (range.start(), range.end()));
+    *full_line_backing = merge_line_ranges(merged)?;
+    Ok(())
+}
+
+fn contains_full_line_backing(
+    full_line_backing: &Arc<Mutex<Vec<AddressRange>>>,
+    line: Address,
+    line_layout: CacheLineLayout,
+) -> bool {
+    let Some(end) = line.get().checked_add(line_layout.bytes()) else {
+        return false;
+    };
+    full_line_backing
+        .lock()
+        .expect("CLI memory full-line backing lock")
+        .iter()
+        .any(|range| range.start().get() <= line.get() && end <= range.end().get())
 }
 
 fn riscv_se_stack_region(
@@ -565,7 +675,7 @@ pub(super) fn cli_memory_response(
     delivery: &RequestDelivery,
 ) -> TargetOutcome {
     match memory {
-        CliMemoryRuntime::Store(store) => {
+        CliMemoryRuntime::Store { store, .. } => {
             let outcome = store
                 .lock()
                 .expect("CLI memory store lock")
@@ -576,7 +686,7 @@ pub(super) fn cli_memory_response(
                 None => TargetOutcome::NoResponse,
             }
         }
-        CliMemoryRuntime::Dram(memory) => {
+        CliMemoryRuntime::Dram { memory, .. } => {
             let outcome = memory
                 .lock()
                 .expect("CLI DRAM memory lock")
@@ -855,10 +965,12 @@ fn read_memory_dump(
     dump: MemoryDumpRequest,
 ) -> Result<Rem6MemoryDump, Rem6CliError> {
     match memory {
-        CliMemoryRuntime::Store(store) => {
+        CliMemoryRuntime::Store { store, .. } => {
             read_memory_dump_from_store(store, line_layout, sequence, dump)
         }
-        CliMemoryRuntime::Dram(memory) => read_memory_dump_from_dram(memory, line_layout, dump),
+        CliMemoryRuntime::Dram { memory, .. } => {
+            read_memory_dump_from_dram(memory, line_layout, dump)
+        }
     }
 }
 

@@ -136,7 +136,10 @@ pub fn run_gups_config(config: Rem6GupsConfig) -> Result<Rem6GupsArtifact, Rem6C
         });
     }
 
-    let memory_runtime = CliMemoryRuntime::Store(memory);
+    let memory_runtime = CliMemoryRuntime::Store {
+        store: memory,
+        full_line_backing: Arc::new(Mutex::new(Vec::new())),
+    };
     let memory_dumps = read_memory_dumps(&memory_runtime, line_layout, config.memory_dumps())?;
     let transport = memory_transport_summary(&trace);
     let execution = Rem6GupsExecutionSummary {

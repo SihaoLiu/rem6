@@ -467,8 +467,7 @@ impl CliDataCacheRuntime {
             return Some(0);
         }
 
-        let data =
-            memory.read_guest_memory(line.get(), self.layout.bytes() as usize, self.layout)?;
+        let data = memory.read_guest_cache_line(line, self.layout)?;
 
         let mut harness = self.harness.lock().expect("CLI data cache lock");
         let inserted = match &mut *harness {
@@ -551,10 +550,7 @@ impl CliDataCacheRuntime {
         address: Address,
     ) -> bool {
         let line = self.layout.line_address(address);
-        !self.contains_line(line)
-            && memory
-                .read_guest_memory(line.get(), self.layout.bytes() as usize, self.layout)
-                .is_some()
+        !self.contains_line(line) && memory.read_guest_cache_line(line, self.layout).is_some()
     }
 
     fn respond_inner(
@@ -1204,7 +1200,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use rem6_memory::{
-        AccessSize, Address, MemoryRequestId, MemoryTargetId, PartitionedMemoryStore,
+        AccessSize, Address, AddressRange, MemoryRequestId, MemoryTargetId, PartitionedMemoryStore,
         ResponseStatus,
     };
 
@@ -1257,6 +1253,13 @@ mod tests {
                 vec![0xa5; layout.bytes() as usize],
             )
             .unwrap();
-        CliMemoryRuntime::Store(Arc::new(Mutex::new(store)))
+        CliMemoryRuntime::Store {
+            store: Arc::new(Mutex::new(store)),
+            full_line_backing: Arc::new(Mutex::new(vec![AddressRange::new(
+                Address::new(0x1000),
+                AccessSize::new(layout.bytes()).unwrap(),
+            )
+            .unwrap()])),
+        }
     }
 }
