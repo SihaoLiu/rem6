@@ -12,6 +12,13 @@ impl RiscvGdbXlen {
         }
     }
 
+    const fn csr_register_base(self) -> u8 {
+        match self {
+            Self::Rv32 => 33,
+            Self::Rv64 => 68,
+        }
+    }
+
     const fn cpu_annex(self) -> &'static str {
         match self {
             Self::Rv32 => "riscv-32bit-cpu.xml",
@@ -21,7 +28,7 @@ impl RiscvGdbXlen {
 
     const fn csr_annex(self) -> Option<&'static str> {
         match self {
-            Self::Rv32 => None,
+            Self::Rv32 => Some("riscv-32bit-csr.xml"),
             Self::Rv64 => Some("riscv-64bit-csr.xml"),
         }
     }
@@ -186,7 +193,7 @@ fn csr_document(xlen: RiscvGdbXlen) -> Option<RiscvGdbTargetDocument> {
             xlen.bits(),
         ));
         if index == 0 {
-            content.push_str(" regnum=\"68\"");
+            content.push_str(&format!(" regnum=\"{}\"", xlen.csr_register_base()));
         }
         content.push_str("/>\n");
     }

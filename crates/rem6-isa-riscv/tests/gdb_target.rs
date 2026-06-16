@@ -112,13 +112,59 @@ fn riscv_gdb_target_description_reports_rv32_cpu_documents() {
     assert_eq!(description.xlen(), RiscvGdbXlen::Rv32);
     assert_eq!(
         annex_names(description.documents()),
-        vec!["target.xml", "riscv-32bit-cpu.xml"],
+        vec!["target.xml", "riscv-32bit-cpu.xml", "riscv-32bit-csr.xml",],
     );
 
     let target = text(description.document("target.xml").unwrap());
     assert!(target.contains("<architecture>riscv</architecture>"));
     assert!(target.contains("<xi:include href=\"riscv-32bit-cpu.xml\"/>"));
+    assert!(target.contains("<xi:include href=\"riscv-32bit-csr.xml\"/>"));
     assert!(!target.contains("riscv-64bit-cpu.xml"));
+}
+
+#[test]
+fn riscv_gdb_target_description_reports_rv32_csr_document() {
+    let description = RiscvGdbTargetDescription::new(RiscvGdbXlen::Rv32);
+
+    let csr = text(description.document("riscv-32bit-csr.xml").unwrap());
+    assert_eq!(
+        csr,
+        concat!(
+            "<?xml version=\"1.0\"?>\n",
+            "<!DOCTYPE feature SYSTEM \"gdb-target.dtd\">\n",
+            "<feature name=\"org.gnu.gdb.riscv.csr\">\n",
+            "  <reg name=\"sstatus\" bitsize=\"32\" regnum=\"33\"/>\n",
+            "  <reg name=\"stvec\" bitsize=\"32\"/>\n",
+            "  <reg name=\"sscratch\" bitsize=\"32\"/>\n",
+            "  <reg name=\"sepc\" bitsize=\"32\"/>\n",
+            "  <reg name=\"scause\" bitsize=\"32\"/>\n",
+            "  <reg name=\"stval\" bitsize=\"32\"/>\n",
+            "  <reg name=\"satp\" bitsize=\"32\"/>\n",
+            "  <reg name=\"mstatus\" bitsize=\"32\"/>\n",
+            "  <reg name=\"medeleg\" bitsize=\"32\"/>\n",
+            "  <reg name=\"mideleg\" bitsize=\"32\"/>\n",
+            "  <reg name=\"mie\" bitsize=\"32\"/>\n",
+            "  <reg name=\"mtvec\" bitsize=\"32\"/>\n",
+            "  <reg name=\"mscratch\" bitsize=\"32\"/>\n",
+            "  <reg name=\"mepc\" bitsize=\"32\"/>\n",
+            "  <reg name=\"mcause\" bitsize=\"32\"/>\n",
+            "  <reg name=\"mtval\" bitsize=\"32\"/>\n",
+            "  <reg name=\"mip\" bitsize=\"32\"/>\n",
+            "  <reg name=\"vxsat\" bitsize=\"32\"/>\n",
+            "  <reg name=\"vxrm\" bitsize=\"32\"/>\n",
+            "  <reg name=\"vcsr\" bitsize=\"32\"/>\n",
+            "</feature>\n",
+        ),
+    );
+    assert_eq!(
+        register_names(csr),
+        vec![
+            "sstatus", "stvec", "sscratch", "sepc", "scause", "stval", "satp", "mstatus",
+            "medeleg", "mideleg", "mie", "mtvec", "mscratch", "mepc", "mcause", "mtval", "mip",
+            "vxsat", "vxrm", "vcsr",
+        ],
+    );
+    assert_eq!(csr.matches("bitsize=\"32\"").count(), 20);
 }
 
 #[test]

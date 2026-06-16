@@ -215,7 +215,7 @@ fn riscv_gdb_remote_session_reports_rv64_hart_register_snapshot() {
             .handle_packet(&GdbRemotePacket::new(b"g".to_vec()).unwrap())
             .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(85));
+    assert_eq!(registers.len(), rv64_register_hex_offset(88));
     assert_eq!(&registers[0..16], b"0000000000000000");
     assert_eq!(&registers[16..32], b"efcdab8967452301");
     assert_eq!(&registers[10 * 16..11 * 16], b"1032547698badcfe");
@@ -235,7 +235,7 @@ fn rv64_register_hex_offset(number: u64) -> usize {
     let byte_offset = match number {
         0..=65 => number * 8,
         66..=68 => (65 * 8) + ((number - 65) * 4),
-        69..=85 => (65 * 8) + (3 * 4) + ((number - 68) * 8),
+        69..=88 => (65 * 8) + (3 * 4) + ((number - 68) * 8),
         _ => panic!("unsupported RV64 GDB register number"),
     };
     byte_offset as usize * 2
