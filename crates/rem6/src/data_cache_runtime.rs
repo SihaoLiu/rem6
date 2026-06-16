@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use rem6_cache::{
@@ -22,7 +22,7 @@ use rem6_system::{
 };
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
-use crate::config::CliDataCachePrefetcher;
+use crate::config::CliCachePrefetcher;
 use crate::runtime_memory::{cli_memory_response, CliMemoryRuntime};
 use crate::{execute_error, Rem6CliError};
 
@@ -68,6 +68,7 @@ struct CliChiLineHarnesses {
 struct CliDataCachePrefetchRuntime {
     tagged: TaggedPrefetcher,
     queue: QueuedPrefetcher,
+    issued_lines: BTreeSet<Address>,
     next_sequence: u64,
 }
 
@@ -167,19 +168,11 @@ pub(super) fn cli_data_memory_response(
     cli_memory_response(memory, delivery)
 }
 
-pub(super) fn cli_cache_runtime(
-    protocol: Option<RiscvDataCacheProtocol>,
-    line_layout: CacheLineLayout,
-    core_count: u32,
-) -> Result<Option<CliDataCacheRuntime>, Rem6CliError> {
-    cli_cache_runtime_with_prefetcher(protocol, line_layout, core_count, None)
-}
-
 pub(super) fn cli_cache_runtime_with_prefetcher(
     protocol: Option<RiscvDataCacheProtocol>,
     line_layout: CacheLineLayout,
     core_count: u32,
-    prefetcher: Option<CliDataCachePrefetcher>,
+    prefetcher: Option<CliCachePrefetcher>,
 ) -> Result<Option<CliDataCacheRuntime>, Rem6CliError> {
     let agents = || (0..core_count).map(AgentId::new);
     match protocol {
@@ -269,7 +262,7 @@ impl CliDataCacheRuntime {
     pub(super) fn new_msi_bank<I>(
         layout: CacheLineLayout,
         agents: I,
-        prefetcher: Option<CliDataCachePrefetcher>,
+        prefetcher: Option<CliCachePrefetcher>,
     ) -> Result<Self, Rem6CliError>
     where
         I: IntoIterator<Item = AgentId>,
@@ -288,7 +281,7 @@ impl CliDataCacheRuntime {
     pub(super) fn new_mesi_lines<I>(
         layout: CacheLineLayout,
         agents: I,
-        prefetcher: Option<CliDataCachePrefetcher>,
+        prefetcher: Option<CliCachePrefetcher>,
     ) -> Result<Self, Rem6CliError>
     where
         I: IntoIterator<Item = AgentId>,
@@ -316,7 +309,7 @@ impl CliDataCacheRuntime {
     pub(super) fn new_moesi_lines<I>(
         layout: CacheLineLayout,
         agents: I,
-        prefetcher: Option<CliDataCachePrefetcher>,
+        prefetcher: Option<CliCachePrefetcher>,
     ) -> Result<Self, Rem6CliError>
     where
         I: IntoIterator<Item = AgentId>,
@@ -344,7 +337,7 @@ impl CliDataCacheRuntime {
     pub(super) fn new_chi_lines<I>(
         layout: CacheLineLayout,
         agents: I,
-        prefetcher: Option<CliDataCachePrefetcher>,
+        prefetcher: Option<CliCachePrefetcher>,
     ) -> Result<Self, Rem6CliError>
     where
         I: IntoIterator<Item = AgentId>,
@@ -459,43 +452,19 @@ impl CliDataCacheRuntime {
                 harnesses.lines.clear();
             }
         }
+        if let Some(prefetch) = self.prefetch.as_ref() {
+            prefetch
+                .lock()
+                .expect("CLI data cache prefetch lock")
+                .clear_issued_lines();
+        }
         Ok(())
     }
 
     fn ensure_backing(&self, memory: &CliMemoryRuntime, request: &MemoryRequest) -> Option<usize> {
         let line = self.layout.line_address(request.line_address());
-        {
-            let harness = self.harness.lock().expect("CLI data cache lock");
-            match &*harness {
-                CliDataCacheHarness::Msi(harness) => {
-                    if harness.backing_line(line).is_some()
-                        || harness.directory_line_addresses().contains(&line)
-                        || harness.cache_agents().into_iter().any(|agent| {
-                            harness
-                                .cache_line_addresses(agent)
-                                .map(|lines| lines.contains(&line))
-                                .unwrap_or(false)
-                        })
-                    {
-                        return Some(0);
-                    }
-                }
-                CliDataCacheHarness::Mesi(harnesses) => {
-                    if harnesses.lines.contains_key(&line) {
-                        return Some(0);
-                    }
-                }
-                CliDataCacheHarness::Moesi(harnesses) => {
-                    if harnesses.lines.contains_key(&line) {
-                        return Some(0);
-                    }
-                }
-                CliDataCacheHarness::Chi(harnesses) => {
-                    if harnesses.lines.contains_key(&line) {
-                        return Some(0);
-                    }
-                }
-            }
+        if self.contains_line(line) {
+            return Some(0);
         }
 
         let data =
@@ -555,6 +524,37 @@ impl CliDataCacheRuntime {
         } else {
             None
         }
+    }
+
+    fn contains_line(&self, line: Address) -> bool {
+        let harness = self.harness.lock().expect("CLI data cache lock");
+        match &*harness {
+            CliDataCacheHarness::Msi(harness) => {
+                harness.backing_line(line).is_some()
+                    || harness.directory_line_addresses().contains(&line)
+                    || harness.cache_agents().into_iter().any(|agent| {
+                        harness
+                            .cache_line_addresses(agent)
+                            .map(|lines| lines.contains(&line))
+                            .unwrap_or(false)
+                    })
+            }
+            CliDataCacheHarness::Mesi(harnesses) => harnesses.lines.contains_key(&line),
+            CliDataCacheHarness::Moesi(harnesses) => harnesses.lines.contains_key(&line),
+            CliDataCacheHarness::Chi(harnesses) => harnesses.lines.contains_key(&line),
+        }
+    }
+
+    fn should_enqueue_prefetch_candidate(
+        &self,
+        memory: &CliMemoryRuntime,
+        address: Address,
+    ) -> bool {
+        let line = self.layout.line_address(address);
+        !self.contains_line(line)
+            && memory
+                .read_guest_memory(line.get(), self.layout.bytes() as usize, self.layout)
+                .is_some()
     }
 
     fn respond_inner(
@@ -851,7 +851,7 @@ impl CliDataCacheRuntime {
         tick: u64,
         request: &MemoryRequest,
     ) -> Result<(), Rem6CliError> {
-        if !is_data_prefetch_source(request) {
+        if !is_cache_prefetch_source(request) {
             return Ok(());
         }
         let Some(prefetch) = self.prefetch.as_ref() else {
@@ -859,11 +859,12 @@ impl CliDataCacheRuntime {
         };
         let issues = {
             let mut prefetch = prefetch.lock().expect("CLI data cache prefetch lock");
-            prefetch.observe_and_issue(tick, request, |address| {
-                prefetch_candidate_is_backed(memory, self.layout, address)
+            prefetch.observe_and_issue(tick, request, self.layout, |address| {
+                self.should_enqueue_prefetch_candidate(memory, address)
             })?
         };
         for (issue, sequence) in issues {
+            let issue_address = issue.address();
             let prefetch_request = prefetch_issue_request(issue, sequence, self.layout)?;
             if let Some(backing_dram_access_count) = self.ensure_backing(memory, &prefetch_request)
             {
@@ -874,6 +875,12 @@ impl CliDataCacheRuntime {
                     backing_dram_access_count,
                     CliDataCacheResponseMode::InternalPrefetch,
                 )?;
+                if let Some(prefetch) = self.prefetch.as_ref() {
+                    prefetch
+                        .lock()
+                        .expect("CLI data cache prefetch lock")
+                        .mark_issued(issue_address, self.layout);
+                }
             }
         }
         Ok(())
@@ -888,9 +895,9 @@ impl CliDataCacheRuntime {
 }
 
 impl CliDataCachePrefetchRuntime {
-    fn new(kind: CliDataCachePrefetcher, layout: CacheLineLayout) -> Result<Self, Rem6CliError> {
+    fn new(kind: CliCachePrefetcher, layout: CacheLineLayout) -> Result<Self, Rem6CliError> {
         match kind {
-            CliDataCachePrefetcher::TaggedNextLine => {
+            CliCachePrefetcher::TaggedNextLine => {
                 let tagged = TaggedPrefetcher::new(
                     TaggedPrefetcherConfig::new(layout.bytes(), 1).map_err(execute_error)?,
                 );
@@ -900,6 +907,7 @@ impl CliDataCachePrefetchRuntime {
                 Ok(Self {
                     tagged,
                     queue: QueuedPrefetcher::new(queue_config),
+                    issued_lines: BTreeSet::new(),
                     next_sequence: PREFETCH_REQUEST_SEQUENCE_BASE,
                 })
             }
@@ -910,6 +918,7 @@ impl CliDataCachePrefetchRuntime {
         &mut self,
         tick: u64,
         request: &MemoryRequest,
+        layout: CacheLineLayout,
         candidate_is_backed: impl Fn(Address) -> bool,
     ) -> Result<Vec<(QueuedPrefetchIssue, u64)>, Rem6CliError> {
         let access = TaggedPrefetchAccess::new(
@@ -918,10 +927,16 @@ impl CliDataCachePrefetchRuntime {
             request.range().start(),
             request.attributes().is_secure(),
         );
-        let candidates = self.tagged.observe(access).map_err(execute_error)?;
+        let candidates = self.tagged.observe(access).map_err(execute_error)?.to_vec();
         let backed_candidates = candidates
             .iter()
-            .filter(|candidate| candidate_is_backed(candidate.address()))
+            .filter(|candidate| {
+                let address = candidate.address();
+                candidate_is_backed(address)
+                    && !self
+                        .issued_lines
+                        .contains(&layout.line_address(candidate.address()))
+            })
             .cloned()
             .collect::<Vec<_>>();
         self.queue
@@ -939,6 +954,14 @@ impl CliDataCachePrefetchRuntime {
         Ok(sequenced_issues)
     }
 
+    fn mark_issued(&mut self, address: Address, layout: CacheLineLayout) {
+        self.issued_lines.insert(layout.line_address(address));
+    }
+
+    fn clear_issued_lines(&mut self) {
+        self.issued_lines.clear();
+    }
+
     fn summary(&self) -> CliDataCachePrefetchSummary {
         let stats = self.queue.stats();
         CliDataCachePrefetchSummary {
@@ -953,7 +976,7 @@ impl CliDataCachePrefetchRuntime {
 
 fn cli_prefetch_runtime(
     layout: CacheLineLayout,
-    prefetcher: Option<CliDataCachePrefetcher>,
+    prefetcher: Option<CliCachePrefetcher>,
 ) -> Result<Option<Arc<Mutex<CliDataCachePrefetchRuntime>>>, Rem6CliError> {
     prefetcher
         .map(|prefetcher| {
@@ -963,21 +986,11 @@ fn cli_prefetch_runtime(
         .transpose()
 }
 
-fn prefetch_candidate_is_backed(
-    memory: &CliMemoryRuntime,
-    layout: CacheLineLayout,
-    address: Address,
-) -> bool {
-    let line = layout.line_address(address);
-    memory
-        .read_guest_memory(line.get(), layout.bytes() as usize, layout)
-        .is_some()
-}
-
-fn is_data_prefetch_source(request: &MemoryRequest) -> bool {
+fn is_cache_prefetch_source(request: &MemoryRequest) -> bool {
     matches!(
         request.operation(),
-        MemoryOperation::ReadShared
+        MemoryOperation::InstructionFetch
+            | MemoryOperation::ReadShared
             | MemoryOperation::ReadUnique
             | MemoryOperation::LoadLocked
             | MemoryOperation::LockedRmwRead

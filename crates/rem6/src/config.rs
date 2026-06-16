@@ -138,18 +138,28 @@ impl CliDramMemoryProfile {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CliDataCachePrefetcher {
+pub enum CliCachePrefetcher {
     TaggedNextLine,
 }
 
-impl CliDataCachePrefetcher {
-    pub fn parse(value: &str) -> Result<Self, Rem6CliError> {
+impl CliCachePrefetcher {
+    fn parse(value: &str) -> Option<Self> {
         match value {
-            "tagged-next-line" => Ok(Self::TaggedNextLine),
-            _ => Err(Rem6CliError::InvalidRunDataCachePrefetcher {
-                value: value.to_string(),
-            }),
+            "tagged-next-line" => Some(Self::TaggedNextLine),
+            _ => None,
         }
+    }
+
+    pub fn parse_data_cache(value: &str) -> Result<Self, Rem6CliError> {
+        Self::parse(value).ok_or_else(|| Rem6CliError::InvalidRunDataCachePrefetcher {
+            value: value.to_string(),
+        })
+    }
+
+    pub fn parse_instruction_cache(value: &str) -> Result<Self, Rem6CliError> {
+        Self::parse(value).ok_or_else(|| Rem6CliError::InvalidRunInstructionCachePrefetcher {
+            value: value.to_string(),
+        })
     }
 
     pub const fn as_str(self) -> &'static str {
@@ -182,8 +192,9 @@ pub struct Rem6RunConfig {
     dram_memory: bool,
     dram_memory_profile: CliDramMemoryProfile,
     data_cache_protocol: Option<RiscvDataCacheProtocol>,
-    data_cache_prefetcher: Option<CliDataCachePrefetcher>,
+    data_cache_prefetcher: Option<CliCachePrefetcher>,
     instruction_cache_protocol: Option<RiscvDataCacheProtocol>,
+    instruction_cache_prefetcher: Option<CliCachePrefetcher>,
     gdb_listen: Option<String>,
     cores: usize,
     parallel_workers: usize,
@@ -266,6 +277,7 @@ struct Rem6RunFileConfig {
     data_cache_protocol: Option<String>,
     data_cache_prefetcher: Option<String>,
     instruction_cache_protocol: Option<String>,
+    instruction_cache_prefetcher: Option<String>,
     cores: Option<usize>,
     parallel_workers: Option<usize>,
     memory_dumps: Option<Vec<String>>,
@@ -465,7 +477,7 @@ impl Rem6RunConfig {
         let mut data_cache_prefetcher = file_config
             .data_cache_prefetcher
             .as_deref()
-            .map(CliDataCachePrefetcher::parse)
+            .map(CliCachePrefetcher::parse_data_cache)
             .transpose()?;
         let mut instruction_cache_protocol = file_config
             .instruction_cache_protocol
@@ -477,6 +489,11 @@ impl Rem6RunConfig {
                     }
                 })
             })
+            .transpose()?;
+        let mut instruction_cache_prefetcher = file_config
+            .instruction_cache_prefetcher
+            .as_deref()
+            .map(CliCachePrefetcher::parse_instruction_cache)
             .transpose()?;
         let mut gdb_listen = None;
         let mut cores = file_config.cores.unwrap_or(1);
@@ -671,10 +688,9 @@ impl Rem6RunConfig {
                         })?);
                 }
                 "--data-cache-prefetcher" => {
-                    data_cache_prefetcher = Some(CliDataCachePrefetcher::parse(&required_value(
-                        &flag,
-                        args.next(),
-                    )?)?);
+                    data_cache_prefetcher = Some(CliCachePrefetcher::parse_data_cache(
+                        &required_value(&flag, args.next())?,
+                    )?);
                 }
                 "--instruction-cache-protocol" => {
                     let value = required_value(&flag, args.next())?;
@@ -684,6 +700,12 @@ impl Rem6RunConfig {
                                 value: value.clone(),
                             }
                         })?);
+                }
+                "--instruction-cache-prefetcher" => {
+                    instruction_cache_prefetcher =
+                        Some(CliCachePrefetcher::parse_instruction_cache(
+                            &required_value(&flag, args.next())?,
+                        )?);
                 }
                 "--gdb-listen" => {
                     gdb_listen = Some(required_value(&flag, args.next())?);
@@ -847,6 +869,7 @@ impl Rem6RunConfig {
             data_cache_protocol,
             data_cache_prefetcher,
             instruction_cache_protocol,
+            instruction_cache_prefetcher,
             gdb_listen,
             cores,
             parallel_workers: parallel_workers.unwrap_or(cores),
@@ -943,12 +966,16 @@ impl Rem6RunConfig {
         self.data_cache_protocol
     }
 
-    pub const fn data_cache_prefetcher(&self) -> Option<CliDataCachePrefetcher> {
+    pub const fn data_cache_prefetcher(&self) -> Option<CliCachePrefetcher> {
         self.data_cache_prefetcher
     }
 
     pub const fn instruction_cache_protocol(&self) -> Option<RiscvDataCacheProtocol> {
         self.instruction_cache_protocol
+    }
+
+    pub const fn instruction_cache_prefetcher(&self) -> Option<CliCachePrefetcher> {
+        self.instruction_cache_prefetcher
     }
 
     pub fn gdb_listen(&self) -> Option<&str> {
@@ -1384,6 +1411,7 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--data-cache-protocol",
             "--data-cache-prefetcher",
             "--instruction-cache-protocol",
+            "--instruction-cache-prefetcher",
             "--cores",
             "--parallel-workers",
             "--dump-memory",

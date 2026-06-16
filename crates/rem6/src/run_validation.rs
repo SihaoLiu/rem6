@@ -1,0 +1,112 @@
+use rem6_system::RiscvDataCacheProtocol;
+
+use crate::config::{Rem6RunConfig, RequestedIsa};
+use crate::run_gdb::validate_run_gdb_listen_config;
+use crate::Rem6CliError;
+
+pub(super) fn validate_run_config_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
+    if !config.execute() {
+        validate_non_execution_inputs(config)?;
+    }
+    validate_cache_inputs(config)?;
+    validate_riscv_se_inputs(config)?;
+    if config.gdb_listen().is_some() {
+        validate_run_gdb_listen_config(config)?;
+    }
+    Ok(())
+}
+
+fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
+    if config.dram_memory() {
+        return Err(Rem6CliError::DramMemoryRequiresExecution);
+    }
+    if config.max_instructions().is_some() {
+        return Err(Rem6CliError::InstructionLimitRequiresExecution);
+    }
+    if !config.memory_dumps().is_empty() {
+        return Err(Rem6CliError::MemoryDumpRequiresExecution);
+    }
+    if config.riscv_se() {
+        return Err(Rem6CliError::RiscvSeRequiresExecution);
+    }
+    if config.data_cache_protocol().is_some() {
+        return Err(Rem6CliError::DataCacheProtocolRequiresExecution);
+    }
+    if config.data_cache_prefetcher().is_some() {
+        return Err(Rem6CliError::DataCachePrefetcherRequiresExecution);
+    }
+    if config.instruction_cache_protocol().is_some() {
+        return Err(Rem6CliError::InstructionCacheProtocolRequiresExecution);
+    }
+    if config.instruction_cache_prefetcher().is_some() {
+        return Err(Rem6CliError::InstructionCachePrefetcherRequiresExecution);
+    }
+    if config.power_output().is_some() {
+        return Err(Rem6CliError::PowerOutputRequiresExecution);
+    }
+    Ok(())
+}
+
+fn validate_cache_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
+    if config.data_cache_protocol().is_some() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::DataCacheProtocolRequiresRiscv);
+    }
+    if config.data_cache_prefetcher().is_some() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::DataCachePrefetcherRequiresRiscv);
+    }
+    if config.data_cache_prefetcher().is_some() && config.data_cache_protocol().is_none() {
+        return Err(Rem6CliError::DataCachePrefetcherRequiresDataCacheProtocol);
+    }
+    if config.instruction_cache_protocol().is_some() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::InstructionCacheProtocolRequiresRiscv);
+    }
+    if config.instruction_cache_prefetcher().is_some() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::InstructionCachePrefetcherRequiresRiscv);
+    }
+    if config.instruction_cache_prefetcher().is_some()
+        && config.instruction_cache_protocol().is_none()
+    {
+        return Err(Rem6CliError::InstructionCachePrefetcherRequiresInstructionCacheProtocol);
+    }
+    validate_large_multicore_cache_protocols(config)
+}
+
+fn validate_large_multicore_cache_protocols(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
+    if config.cores() <= 3 {
+        return Ok(());
+    }
+    if let Some(protocol) = config.data_cache_protocol() {
+        if protocol != RiscvDataCacheProtocol::Msi {
+            return Err(Rem6CliError::DataCacheProtocolLargeMulticoreRequiresMsi {
+                protocol,
+                cores: config.cores(),
+            });
+        }
+    }
+    if let Some(protocol) = config.instruction_cache_protocol() {
+        if protocol != RiscvDataCacheProtocol::Msi {
+            return Err(
+                Rem6CliError::InstructionCacheProtocolLargeMulticoreRequiresMsi {
+                    protocol,
+                    cores: config.cores(),
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+fn validate_riscv_se_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
+    if !config.riscv_se() {
+        return Ok(());
+    }
+    if config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::RiscvSeRequiresRiscv);
+    }
+    if config.cores() != 1 {
+        return Err(Rem6CliError::RiscvSeRequiresSingleCore {
+            cores: config.cores(),
+        });
+    }
+    Ok(())
+}

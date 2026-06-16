@@ -1,0 +1,302 @@
+use std::process::Command;
+
+use crate::support::*;
+
+fn tagged_next_line_prefetch_two_load_elf() -> Vec<u8> {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        i_type(32, 2, 0x3, 6, 0x03),                 // ld x6, 32(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET + 96, 0);
+    program[DATA_OFFSET..DATA_OFFSET + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program[DATA_OFFSET + 32..DATA_OFFSET + 40]
+        .copy_from_slice(&0x99aa_bbcc_ddee_ff00u64.to_le_bytes());
+    riscv64_elf(0x8000_0000, 0x8000_0000, &program)
+}
+
+fn run_tagged_next_line_prefetch(
+    path: &std::path::Path,
+    max_tick: u64,
+    dram_memory: bool,
+) -> String {
+    let max_tick = max_tick.to_string();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
+    command.args([
+        "run",
+        "--isa",
+        "riscv",
+        "--binary",
+        path.to_str().unwrap(),
+        "--max-tick",
+        max_tick.as_str(),
+        "--stats-format",
+        "json",
+        "--execute",
+    ]);
+    if dram_memory {
+        command.arg("--dram-memory");
+    }
+    command.args([
+        "--data-cache-protocol",
+        "msi",
+        "--data-cache-prefetcher",
+        "tagged-next-line",
+    ]);
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+#[test]
+fn rem6_run_data_cache_prefetcher_issues_tagged_next_line_prefetches() {
+    let elf = tagged_next_line_prefetch_two_load_elf();
+    let path = temp_binary("data-cache-prefetch-tagged-next-line", &elf);
+    let stdout = run_tagged_next_line_prefetch(&path, 200, false);
+
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
+    assert!(stdout.contains("\"x6\":\"0x99aabbccddeeff00\""));
+    assert!(stdout.contains("\"data_loads\":2"));
+    assert!(stdout.contains("\"data_cache_runs\":4"));
+    assert!(stdout.contains("\"data_cache_cpu_responses\":2"));
+    assert!(stdout.contains("\"data_cache_prefetch_identified\":2"));
+    assert!(stdout.contains("\"data_cache_prefetch_issued\":2"));
+    assert!(stdout.contains("\"data_cache_prefetch_queue_enqueued\":2"));
+    assert!(stdout.contains("\"data_cache_prefetch_queue_issued\":2"));
+    assert!(stdout.contains("\"data_cache_prefetch_queue_dropped\":0"));
+    assert_stat(
+        &stdout,
+        "sim.data_cache.cpu_responses",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.prefetch.identified",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.prefetch.issued",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.prefetch.queue.enqueued",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.prefetch.queue.issued",
+        "Count",
+        2,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_data_cache_prefetcher_accounts_dram_line_fills() {
+    let elf = tagged_next_line_prefetch_two_load_elf();
+    let path = temp_binary("data-cache-prefetch-dram-fills", &elf);
+    let stdout = run_tagged_next_line_prefetch(&path, 260, true);
+
+    assert!(stdout.contains("\"data_cache_runs\":4"));
+    assert!(stdout.contains("\"data_cache_cpu_responses\":2"));
+    assert!(stdout.contains("\"data_cache_dram_accesses\":4"));
+    assert!(stdout.contains("\"data_cache_prefetch_issued\":2"));
+    assert_stat(
+        &stdout,
+        "sim.data_cache.dram_accesses",
+        "Count",
+        4,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_data_cache_prefetcher_does_not_reissue_same_next_line() {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        i_type(8, 2, 0x3, 6, 0x03),                  // ld x6, 8(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET + 32, 0);
+    program[DATA_OFFSET..DATA_OFFSET + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program[DATA_OFFSET + 8..DATA_OFFSET + 16]
+        .copy_from_slice(&0x99aa_bbcc_ddee_ff00u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("data-cache-prefetch-same-next-line", &elf);
+    let stdout = run_tagged_next_line_prefetch(&path, 160, false);
+
+    assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
+    assert!(stdout.contains("\"x6\":\"0x99aabbccddeeff00\""));
+    assert!(stdout.contains("\"data_loads\":2"));
+    assert!(stdout.contains("\"data_cache_runs\":3"));
+    assert!(stdout.contains("\"data_cache_cpu_responses\":2"));
+    assert!(stdout.contains("\"data_cache_prefetch_identified\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_issued\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_queue_enqueued\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_queue_issued\":1"));
+}
+
+#[test]
+fn rem6_run_data_cache_prefetcher_drops_unbacked_next_line_before_issue() {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET, 0);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("data-cache-prefetch-unbacked-next-line", &elf);
+    let stdout = run_tagged_next_line_prefetch(&path, 120, false);
+
+    assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
+    assert!(stdout.contains("\"data_loads\":1"));
+    assert!(stdout.contains("\"data_cache_runs\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_identified\":0"));
+    assert!(stdout.contains("\"data_cache_prefetch_issued\":0"));
+    assert!(stdout.contains("\"data_cache_prefetch_queue_enqueued\":0"));
+    assert!(stdout.contains("\"data_cache_prefetch_queue_issued\":0"));
+}
+
+#[test]
+fn rem6_run_instruction_cache_prefetcher_issues_tagged_next_line_prefetch() {
+    let mut program = riscv64_program(&[
+        i_type(1, 0, 0x0, 5, 0x13), // addi x5, x0, 1
+        i_type(1, 5, 0x0, 5, 0x13), // addi x5, x5, 1
+        i_type(1, 5, 0x0, 5, 0x13), // addi x5, x5, 1
+        0x0000_0073,                // ecall
+    ]);
+    program.resize(32, 0);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("instruction-cache-prefetch-tagged-next-line", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--instruction-cache-protocol",
+            "msi",
+            "--instruction-cache-prefetcher",
+            "tagged-next-line",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x5\":\"0x3\""));
+    assert!(stdout.contains("\"instruction_cache_runs\":5"));
+    assert!(stdout.contains("\"instruction_cache_cpu_responses\":4"));
+    assert!(stdout.contains("\"instruction_cache_prefetch_identified\":1"));
+    assert!(stdout.contains("\"instruction_cache_prefetch_issued\":1"));
+    assert!(stdout.contains("\"instruction_cache_prefetch_queue_enqueued\":1"));
+    assert!(stdout.contains("\"instruction_cache_prefetch_queue_issued\":1"));
+    assert_stat(
+        &stdout,
+        "sim.instruction_cache.prefetch.identified",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.instruction_cache.prefetch.issued",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_instruction_cache_prefetcher_works_across_cache_protocols() {
+    let mut program = riscv64_program(&[
+        i_type(1, 0, 0x0, 5, 0x13), // addi x5, x0, 1
+        i_type(1, 5, 0x0, 5, 0x13), // addi x5, x5, 1
+        i_type(1, 5, 0x0, 5, 0x13), // addi x5, x5, 1
+        0x0000_0073,                // ecall
+    ]);
+    program.resize(32, 0);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("instruction-cache-prefetch-protocol-matrix", &elf);
+
+    for protocol in ["msi", "mesi", "moesi", "chi"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "160",
+                "--stats-format",
+                "json",
+                "--execute",
+                "--instruction-cache-protocol",
+                protocol,
+                "--instruction-cache-prefetcher",
+                "tagged-next-line",
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "protocol {protocol} stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            stdout.contains("\"status\":\"executed_until_trap\""),
+            "protocol {protocol} stdout: {stdout}"
+        );
+        assert!(
+            stdout.contains("\"instruction_cache_cpu_responses\":4"),
+            "protocol {protocol} stdout: {stdout}"
+        );
+        assert!(
+            stdout.contains("\"instruction_cache_prefetch_issued\":1"),
+            "protocol {protocol} stdout: {stdout}"
+        );
+    }
+}

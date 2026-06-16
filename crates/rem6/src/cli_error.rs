@@ -123,6 +123,9 @@ pub enum Rem6CliError {
     InvalidRunInstructionCacheProtocol {
         value: String,
     },
+    InvalidRunInstructionCachePrefetcher {
+        value: String,
+    },
     MemoryRouteDelayBelowMinRemoteDelay {
         memory_route_delay: u64,
         min_remote_delay: u64,
@@ -159,6 +162,7 @@ pub enum Rem6CliError {
     DataCacheProtocolRequiresExecution,
     DataCachePrefetcherRequiresExecution,
     InstructionCacheProtocolRequiresExecution,
+    InstructionCachePrefetcherRequiresExecution,
     PowerOutputRequiresExecution,
     RiscvSeInputRequiresRiscvSe {
         input: &'static str,
@@ -167,6 +171,8 @@ pub enum Rem6CliError {
     DataCachePrefetcherRequiresRiscv,
     DataCachePrefetcherRequiresDataCacheProtocol,
     InstructionCacheProtocolRequiresRiscv,
+    InstructionCachePrefetcherRequiresRiscv,
+    InstructionCachePrefetcherRequiresInstructionCacheProtocol,
     DataCacheProtocolLargeMulticoreRequiresMsi {
         protocol: RiscvDataCacheProtocol,
         cores: usize,
@@ -351,6 +357,9 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidRunInstructionCacheProtocol { value } => {
                 write!(formatter, "invalid run instruction cache protocol {value}")
             }
+            Self::InvalidRunInstructionCachePrefetcher { value } => {
+                write!(formatter, "invalid run instruction cache prefetcher {value}")
+            }
             Self::MemoryRouteDelayBelowMinRemoteDelay {
                 memory_route_delay,
                 min_remote_delay,
@@ -405,6 +414,9 @@ impl fmt::Display for Rem6CliError {
             Self::InstructionCacheProtocolRequiresExecution => {
                 write!(formatter, "--instruction-cache-protocol requires --execute")
             }
+            Self::InstructionCachePrefetcherRequiresExecution => {
+                write!(formatter, "--instruction-cache-prefetcher requires --execute")
+            }
             Self::PowerOutputRequiresExecution => {
                 write!(formatter, "--power-output requires --execute")
             }
@@ -425,6 +437,15 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InstructionCacheProtocolRequiresRiscv => {
                 write!(formatter, "--instruction-cache-protocol requires --isa riscv")
+            }
+            Self::InstructionCachePrefetcherRequiresRiscv => {
+                write!(formatter, "--instruction-cache-prefetcher requires --isa riscv")
+            }
+            Self::InstructionCachePrefetcherRequiresInstructionCacheProtocol => {
+                write!(
+                    formatter,
+                    "--instruction-cache-prefetcher requires --instruction-cache-protocol"
+                )
             }
             Self::DataCacheProtocolLargeMulticoreRequiresMsi { protocol, cores } => {
                 write!(

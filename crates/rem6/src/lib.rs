@@ -18,9 +18,9 @@ use rem6_stats::{
 };
 use rem6_system::{
     GuestEventId, GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats,
-    RiscvDataCacheProtocol, RiscvGuestWriteRecord, RiscvSeAuxvEntry, RiscvSeStartupConfig,
-    RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort,
-    RiscvUnknownSyscallRecord, SystemHostController, SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
+    RiscvGuestWriteRecord, RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun,
+    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, RiscvUnknownSyscallRecord,
+    SystemHostController, SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TransportEndpointId,
@@ -41,6 +41,7 @@ mod resource_acquire_cli;
 mod resource_acquire_config;
 mod run_gdb;
 mod run_resource_config;
+mod run_validation;
 mod runtime_memory;
 mod stats_output;
 mod trace_replay_cli;
@@ -50,12 +51,12 @@ mod transport_summary_tests;
 
 pub use cli_error::Rem6CliError;
 pub use config::{
-    CliDataCachePrefetcher, CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest,
+    CliCachePrefetcher, CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest,
     PowerAnalysisFormat, Rem6GupsConfig, Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa,
     RiscvSeFileRequest, StatsFormat,
 };
 use data_cache_runtime::{
-    cli_cache_runtime, cli_cache_runtime_with_prefetcher, cli_data_memory_response,
+    cli_cache_runtime_with_prefetcher, cli_data_memory_response,
     with_riscv_syscall_data_cache_memory_io, CliDataCacheRuntime, CliDataCacheSummary,
 };
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
@@ -73,10 +74,9 @@ pub use resource_acquire_cli::{
     run_resource_acquire_config, Rem6ResourceAcquireArtifact, Rem6ResourceAcquireResourceSummary,
 };
 pub use resource_acquire_config::{Rem6ResourceAcquireConfig, Rem6ResourceAcquireResourceConfig};
-use run_gdb::{
-    serve_riscv_gdb_with_run_control, validate_run_gdb_listen_config, RiscvGdbServeOutcome,
-};
+use run_gdb::{serve_riscv_gdb_with_run_control, RiscvGdbServeOutcome};
 use run_resource_config::run_kernel_binary_from_resource_config;
+use run_validation::validate_run_config_inputs;
 use runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use stats_output::{run_stats_output, Rem6StatsInputs};
 pub use trace_replay_cli::{
@@ -506,79 +506,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         });
     }
 
-    if !config.execute() {
-        if config.dram_memory() {
-            return Err(Rem6CliError::DramMemoryRequiresExecution);
-        }
-        if config.max_instructions().is_some() {
-            return Err(Rem6CliError::InstructionLimitRequiresExecution);
-        }
-        if !config.memory_dumps().is_empty() {
-            return Err(Rem6CliError::MemoryDumpRequiresExecution);
-        }
-        if config.riscv_se() {
-            return Err(Rem6CliError::RiscvSeRequiresExecution);
-        }
-        if config.data_cache_protocol().is_some() {
-            return Err(Rem6CliError::DataCacheProtocolRequiresExecution);
-        }
-        if config.data_cache_prefetcher().is_some() {
-            return Err(Rem6CliError::DataCachePrefetcherRequiresExecution);
-        }
-        if config.instruction_cache_protocol().is_some() {
-            return Err(Rem6CliError::InstructionCacheProtocolRequiresExecution);
-        }
-        if config.power_output().is_some() {
-            return Err(Rem6CliError::PowerOutputRequiresExecution);
-        }
-    }
-    if config.data_cache_protocol().is_some() && config.isa() != RequestedIsa::Riscv {
-        return Err(Rem6CliError::DataCacheProtocolRequiresRiscv);
-    }
-    if config.data_cache_prefetcher().is_some() && config.isa() != RequestedIsa::Riscv {
-        return Err(Rem6CliError::DataCachePrefetcherRequiresRiscv);
-    }
-    if config.data_cache_prefetcher().is_some() && config.data_cache_protocol().is_none() {
-        return Err(Rem6CliError::DataCachePrefetcherRequiresDataCacheProtocol);
-    }
-    if config.instruction_cache_protocol().is_some() && config.isa() != RequestedIsa::Riscv {
-        return Err(Rem6CliError::InstructionCacheProtocolRequiresRiscv);
-    }
-    if config.cores() > 3 {
-        if let Some(protocol) = config.data_cache_protocol() {
-            if protocol != RiscvDataCacheProtocol::Msi {
-                return Err(Rem6CliError::DataCacheProtocolLargeMulticoreRequiresMsi {
-                    protocol,
-                    cores: config.cores(),
-                });
-            }
-        }
-    }
-    if config.cores() > 3 {
-        if let Some(protocol) = config.instruction_cache_protocol() {
-            if protocol != RiscvDataCacheProtocol::Msi {
-                return Err(
-                    Rem6CliError::InstructionCacheProtocolLargeMulticoreRequiresMsi {
-                        protocol,
-                        cores: config.cores(),
-                    },
-                );
-            }
-        }
-    }
-    if config.riscv_se() {
-        if config.isa() != RequestedIsa::Riscv {
-            return Err(Rem6CliError::RiscvSeRequiresRiscv);
-        }
-        if config.cores() != 1 {
-            return Err(Rem6CliError::RiscvSeRequiresSingleCore {
-                cores: config.cores(),
-            });
-        }
-    }
-    if config.gdb_listen().is_some() {
-        validate_run_gdb_listen_config(&config)?;
-    }
+    validate_run_config_inputs(&config)?;
 
     let load_blobs = read_load_blobs(config.load_blobs())?;
     let load_blob_summaries = load_blobs
@@ -676,8 +604,12 @@ fn execute_riscv(
         config.dram_memory(),
         config.dram_memory_profile(),
     )?;
-    let instruction_cache =
-        cli_cache_runtime(config.instruction_cache_protocol(), line_layout, core_count)?;
+    let instruction_cache = cli_cache_runtime_with_prefetcher(
+        config.instruction_cache_protocol(),
+        line_layout,
+        core_count,
+        config.instruction_cache_prefetcher(),
+    )?;
     let data_cache = cli_cache_runtime_with_prefetcher(
         config.data_cache_protocol(),
         line_layout,
@@ -984,7 +916,13 @@ fn execute_riscv(
         memory: &memory,
         line_layout,
         config,
-        instruction_cache: CliDataCacheSummary::from_records(&instruction_cache_records),
+        instruction_cache: CliDataCacheSummary::from_records(&instruction_cache_records)
+            .with_prefetch_summary(
+                instruction_cache
+                    .as_ref()
+                    .map(CliDataCacheRuntime::prefetch_summary)
+                    .unwrap_or_default(),
+            ),
         data_cache: CliDataCacheSummary::from_run(&run).with_prefetch_summary(
             data_cache
                 .as_ref()
