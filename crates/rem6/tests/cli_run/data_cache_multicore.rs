@@ -4,6 +4,29 @@ use crate::support::*;
 
 #[test]
 fn rem6_run_routes_two_cores_through_shared_msi_data_cache() {
+    assert_two_core_data_cache("msi", "data_cache_msi_runs", "sim.data_cache.msi.runs");
+}
+
+#[test]
+fn rem6_run_routes_two_cores_through_shared_mesi_data_cache() {
+    assert_two_core_data_cache("mesi", "data_cache_mesi_runs", "sim.data_cache.mesi.runs");
+}
+
+#[test]
+fn rem6_run_routes_two_cores_through_shared_moesi_data_cache() {
+    assert_two_core_data_cache(
+        "moesi",
+        "data_cache_moesi_runs",
+        "sim.data_cache.moesi.runs",
+    );
+}
+
+#[test]
+fn rem6_run_routes_two_cores_through_shared_chi_data_cache() {
+    assert_two_core_data_cache("chi", "data_cache_chi_runs", "sim.data_cache.chi.runs");
+}
+
+fn assert_two_core_data_cache(protocol: &str, summary_field: &str, protocol_stat: &str) {
     const DATA_OFFSET: usize = 88;
 
     let mut program = riscv64_program(&[
@@ -32,7 +55,7 @@ fn rem6_run_routes_two_cores_through_shared_msi_data_cache() {
     program.resize(DATA_OFFSET, 0);
     program.extend_from_slice(&3u64.to_le_bytes());
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
-    let path = temp_binary("multicore-msi-data-cache", &elf);
+    let path = temp_binary(&format!("multicore-{protocol}-data-cache"), &elf);
 
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
@@ -49,7 +72,7 @@ fn rem6_run_routes_two_cores_through_shared_msi_data_cache() {
             "--cores",
             "2",
             "--data-cache-protocol",
-            "msi",
+            protocol,
         ])
         .output()
         .unwrap();
@@ -67,10 +90,10 @@ fn rem6_run_routes_two_cores_through_shared_msi_data_cache() {
     assert!(stdout.contains("\"x6\":\"0x3\""));
     assert!(stdout.contains("\"x7\":\"0x7\""));
     assert!(stdout.contains("\"data_cache_runs\":3"));
-    assert!(stdout.contains("\"data_cache_msi_runs\":3"));
+    assert!(stdout.contains(&format!("\"{summary_field}\":3")));
     assert!(stdout.contains("\"data_cache_cpu_responses\":3"));
     assert_stat(&stdout, "sim.data_cache.runs", "Count", 3, "monotonic");
-    assert_stat(&stdout, "sim.data_cache.msi.runs", "Count", 3, "monotonic");
+    assert_stat(&stdout, protocol_stat, "Count", 3, "monotonic");
     assert_stat(
         &stdout,
         "sim.data_cache.cpu_responses",

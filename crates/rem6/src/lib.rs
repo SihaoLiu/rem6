@@ -533,15 +533,17 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
     if config.instruction_cache_protocol().is_some() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::InstructionCacheProtocolRequiresRiscv);
     }
-    if config.cores() > 1 {
+    if config.cores() > 2 {
         if let Some(protocol) = config.data_cache_protocol() {
             if protocol != RiscvDataCacheProtocol::Msi {
-                return Err(Rem6CliError::DataCacheProtocolMulticoreRequiresMsi {
+                return Err(Rem6CliError::DataCacheProtocolLargeMulticoreRequiresMsi {
                     protocol,
                     cores: config.cores(),
                 });
             }
         }
+    }
+    if config.cores() > 1 {
         if let Some(protocol) = config.instruction_cache_protocol() {
             if protocol != RiscvDataCacheProtocol::Msi {
                 return Err(Rem6CliError::InstructionCacheProtocolMulticoreRequiresMsi {
