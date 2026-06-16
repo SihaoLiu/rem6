@@ -5,7 +5,7 @@ use rem6_isa_riscv::{
     walk_sv39_page_table_with_context, RiscvMachineTrapCsr, RiscvPrivilegeMode, RiscvStatusWord,
     RiscvSv39AccessContext, RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel,
     RiscvSv39Pte, RiscvSv39VirtualAddress, RiscvSv39WalkAdvance as IsaSv39WalkAdvance,
-    RiscvSv39WalkState, RiscvSystemEvent, RiscvTrapKind,
+    RiscvSv39WalkState, RiscvSystemEvent, RiscvTrapKind, RiscvVectorFixedPointState,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
@@ -686,6 +686,14 @@ impl RiscvCore {
             .float_status()
     }
 
+    pub fn vector_fixed_point(&self) -> RiscvVectorFixedPointState {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .vector_fixed_point()
+    }
+
     pub fn supervisor_trap_vector(&self) -> u64 {
         self.state
             .lock()
@@ -890,6 +898,14 @@ impl RiscvCore {
             .expect("riscv core lock")
             .hart
             .set_float_status(status);
+    }
+
+    pub fn set_vector_fixed_point(&self, state: RiscvVectorFixedPointState) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .set_vector_fixed_point(state);
     }
 
     pub fn ready_data_translation_requests(&self, tick: Tick) -> Vec<CpuTranslationRequest> {

@@ -8,7 +8,7 @@ use rem6_debug::{
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvFloatCsr, RiscvGdbTargetDescription, RiscvGdbXlen,
     RiscvHartState, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvSupervisorTrapCsr,
-    RiscvTranslationCsr,
+    RiscvTranslationCsr, RiscvVectorFixedPointCsr,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, MemoryError, MemoryRequest, MemoryRequestId,
@@ -25,7 +25,7 @@ const RISCV_GDB_FLOAT_REGISTER_COUNT: u8 = 32;
 const RISCV_GDB_FLOAT_CSR_REGISTER_BASE: u64 = 65;
 const RISCV_GDB_FLOAT_CSR_REGISTER_COUNT: u8 = 3;
 const RISCV_GDB_CSR_REGISTER_BASE: u64 = 68;
-const RISCV_GDB_CSR_REGISTER_COUNT: u8 = 17;
+const RISCV_GDB_CSR_REGISTER_COUNT: u8 = 20;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -35,6 +35,7 @@ enum RiscvGdbCsrRegister {
     MachineTrap(RiscvMachineTrapCsr),
     SupervisorTrap(RiscvSupervisorTrapCsr),
     Translation(RiscvTranslationCsr),
+    VectorFixedPoint(RiscvVectorFixedPointCsr),
 }
 
 pub fn riscv_gdb_remote_session(xlen: RiscvGdbXlen) -> GdbRemoteSession {
@@ -735,6 +736,7 @@ fn riscv_gdb_hart_snapshot_from_core(core: &RiscvCore) -> RiscvHartState {
     hart.set_supervisor_trap_cause(core.supervisor_trap_cause());
     hart.set_supervisor_trap_value(core.supervisor_trap_value());
     hart.set_translation_satp(core.translation_satp());
+    hart.set_vector_fixed_point(core.vector_fixed_point());
     hart
 }
 
@@ -917,6 +919,7 @@ fn read_hart_csr_register_value(hart: &RiscvHartState, number: u64) -> u64 {
         RiscvGdbCsrRegister::MachineTrap(csr) => read_hart_machine_trap_csr(hart, csr),
         RiscvGdbCsrRegister::SupervisorTrap(csr) => read_hart_supervisor_trap_csr(hart, csr),
         RiscvGdbCsrRegister::Translation(csr) => read_hart_translation_csr(hart, csr),
+        RiscvGdbCsrRegister::VectorFixedPoint(csr) => csr.read(hart.vector_fixed_point()),
     }
 }
 
@@ -937,6 +940,9 @@ fn write_hart_csr_register_value(hart: &mut RiscvHartState, number: u64, value: 
         RiscvGdbCsrRegister::Translation(csr) => {
             write_hart_translation_csr(hart, csr, value);
         }
+        RiscvGdbCsrRegister::VectorFixedPoint(csr) => {
+            hart.set_vector_fixed_point(csr.write(hart.vector_fixed_point(), value));
+        }
     }
 }
 
@@ -956,6 +962,9 @@ fn write_core_csr_register_value(core: &RiscvCore, number: u64, value: u64) {
         }
         RiscvGdbCsrRegister::Translation(csr) => {
             write_core_translation_csr(core, csr, value);
+        }
+        RiscvGdbCsrRegister::VectorFixedPoint(csr) => {
+            core.set_vector_fixed_point(csr.write(core.vector_fixed_point(), value));
         }
     }
 }
@@ -979,6 +988,9 @@ fn riscv_gdb_csr_register(number: u64) -> RiscvGdbCsrRegister {
         14 => RiscvGdbCsrRegister::MachineTrap(RiscvMachineTrapCsr::Mcause),
         15 => RiscvGdbCsrRegister::MachineTrap(RiscvMachineTrapCsr::Mtval),
         16 => RiscvGdbCsrRegister::Interrupt(RiscvInterruptCsr::MachineInterruptPending),
+        17 => RiscvGdbCsrRegister::VectorFixedPoint(RiscvVectorFixedPointCsr::Vxsat),
+        18 => RiscvGdbCsrRegister::VectorFixedPoint(RiscvVectorFixedPointCsr::Vxrm),
+        19 => RiscvGdbCsrRegister::VectorFixedPoint(RiscvVectorFixedPointCsr::Vcsr),
         _ => unreachable!("validated RISC-V GDB CSR register"),
     }
 }

@@ -62,6 +62,9 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "  <reg name=\"mcause\" bitsize=\"64\"/>\n",
             "  <reg name=\"mtval\" bitsize=\"64\"/>\n",
             "  <reg name=\"mip\" bitsize=\"64\"/>\n",
+            "  <reg name=\"vxsat\" bitsize=\"64\"/>\n",
+            "  <reg name=\"vxrm\" bitsize=\"64\"/>\n",
+            "  <reg name=\"vcsr\" bitsize=\"64\"/>\n",
             "</feature>\n",
         ),
     );
@@ -70,9 +73,10 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
         vec![
             "sstatus", "stvec", "sscratch", "sepc", "scause", "stval", "satp", "mstatus",
             "medeleg", "mideleg", "mie", "mtvec", "mscratch", "mepc", "mcause", "mtval", "mip",
+            "vxsat", "vxrm", "vcsr",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 17);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 20);
 }
 
 #[test]

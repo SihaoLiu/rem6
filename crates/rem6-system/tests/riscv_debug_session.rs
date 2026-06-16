@@ -2,7 +2,7 @@ use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, Risc
 use rem6_debug::{GdbRemoteCommand, GdbRemoteFrame, GdbRemotePacket, GdbRemoteThreadId};
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvFloatCsr, RiscvFloatStatus, RiscvGdbXlen, RiscvHartState,
-    RiscvMachineTrapCsr, RiscvStatusWord,
+    RiscvMachineTrapCsr, RiscvStatusWord, RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode,
 };
 use rem6_kernel::PartitionId;
 use rem6_memory::{
@@ -87,7 +87,7 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_rv64d_float_registers() {
         )
         .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(85));
+    assert_eq!(registers.len(), rv64_register_hex_offset(88));
     assert_eq!(&registers[rv64_register_hex_range(33)], b"8877665544332211");
     assert_eq!(&registers[rv64_register_hex_range(64)], b"1032547698badcfe");
 }
@@ -265,11 +265,11 @@ fn riscv_gdb_remote_register_write_reports_invalid_requests() {
             RiscvGdbXlen::Rv64,
             &mut hart,
             &GdbRemoteCommand::WriteRegister {
-                number: 85,
+                number: 88,
                 bytes: vec![0; 8],
             },
         ),
-        Err(RiscvGdbRegisterWriteError::UnsupportedRegister { number: 85 }),
+        Err(RiscvGdbRegisterWriteError::UnsupportedRegister { number: 88 }),
     );
 
     assert_eq!(
@@ -333,17 +333,17 @@ fn riscv_gdb_remote_packet_handler_reports_writeback_errors() {
             RiscvGdbXlen::Rv64,
             &mut session,
             &mut hart,
-            &GdbRemotePacket::new(b"P55=0000000000000000".to_vec()).unwrap(),
+            &GdbRemotePacket::new(b"P58=0000000000000000".to_vec()).unwrap(),
         ),
         Err(RiscvGdbRemotePacketError::RegisterWrite(
-            RiscvGdbRegisterWriteError::UnsupportedRegister { number: 85 },
+            RiscvGdbRegisterWriteError::UnsupportedRegister { number: 88 },
         )),
     );
     assert_eq!(hart.pc(), 0x1000);
     assert_eq!(
         packet_payload(
             session
-                .handle_packet(&GdbRemotePacket::new(b"p55".to_vec()).unwrap())
+                .handle_packet(&GdbRemotePacket::new(b"p58".to_vec()).unwrap())
                 .unwrap(),
         ),
         b"E01",
@@ -408,21 +408,7 @@ fn riscv_gdb_remote_packet_handler_canonicalizes_session_register_cache() {
         b"0000000000000000",
     );
 
-    let mut bytes = Vec::new();
-    for register in 0..32_u64 {
-        bytes.extend_from_slice(&(0x1000_0000_0000_0000_u64 + register).to_le_bytes());
-    }
-    bytes.extend_from_slice(&0x8000_4000_u64.to_le_bytes());
-    for register in 0..32_u64 {
-        bytes.extend_from_slice(&(0x2000_0000_0000_0000_u64 + register).to_le_bytes());
-    }
-    bytes.extend_from_slice(&0x1f_u32.to_le_bytes());
-    bytes.extend_from_slice(&0x03_u32.to_le_bytes());
-    bytes.extend_from_slice(&0x7f_u32.to_le_bytes());
-    bytes.extend_from_slice(&0x000c_0122_u64.to_le_bytes());
-    for register in 1..17_u64 {
-        bytes.extend_from_slice(&(0x3000_0000_0000_0000_u64 + register).to_le_bytes());
-    }
+    let bytes = rv64_register_set_write_bytes();
 
     assert_eq!(
         handle_riscv_gdb_remote_packet(
@@ -525,6 +511,35 @@ fn riscv_gdb_remote_packet_handler_canonicalizes_session_register_cache() {
         ),
         b"0c00000000000030",
     );
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p55".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"0100000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p56".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"0200000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p57".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"0500000000000000",
+    );
+    assert_eq!(
+        hart.vector_fixed_point().rounding_mode(),
+        RiscvVectorFixedRoundingMode::RoundDown,
+    );
+    assert!(hart.vector_fixed_point().vxsat());
     let registers = packet_payload(
         session
             .handle_packet(&GdbRemotePacket::new(b"g".to_vec()).unwrap())
@@ -540,6 +555,9 @@ fn riscv_gdb_remote_packet_handler_canonicalizes_session_register_cache() {
     assert_eq!(&registers[rv64_register_hex_range(74)], b"0600000000000030");
     assert_eq!(&registers[rv64_register_hex_range(75)], b"0700000000000030");
     assert_eq!(&registers[rv64_register_hex_range(80)], b"0c00000000000030");
+    assert_eq!(&registers[rv64_register_hex_range(85)], b"0100000000000000");
+    assert_eq!(&registers[rv64_register_hex_range(86)], b"0200000000000000");
+    assert_eq!(&registers[rv64_register_hex_range(87)], b"0500000000000000");
 }
 
 #[test]
@@ -1055,6 +1073,127 @@ fn riscv_gdb_remote_core_packet_handler_reads_and_writes_advertised_rv64_csr_reg
 }
 
 #[test]
+fn riscv_gdb_remote_core_packet_handler_reads_and_writes_rv64_vector_fixed_point_csrs() {
+    let core = riscv_core(0x8000);
+    let mut fixed = RiscvVectorFixedPointState::new(RiscvVectorFixedRoundingMode::RoundToOdd);
+    fixed.write_vxsat_bit(true);
+    core.set_vector_fixed_point(fixed);
+    let mut session = riscv_gdb_remote_session_from_core(RiscvGdbXlen::Rv64, &core);
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"p55".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"0100000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"p56".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"0300000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"p57".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"0700000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"P57=0500000000000000".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        core.vector_fixed_point().rounding_mode(),
+        RiscvVectorFixedRoundingMode::RoundDown,
+    );
+    assert!(core.vector_fixed_point().vxsat());
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p57".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"0500000000000000",
+    );
+}
+
+#[test]
+fn riscv_gdb_remote_core_packet_handler_applies_all_register_vector_fixed_point_csrs() {
+    let core = riscv_core(0x8000);
+    let mut session = riscv_gdb_remote_session_from_core(RiscvGdbXlen::Rv64, &core);
+    let bytes = rv64_register_set_write_bytes();
+
+    assert_eq!(
+        handle_riscv_gdb_remote_core_packet(
+            RiscvGdbXlen::Rv64,
+            &mut session,
+            &core,
+            &register_write_packet(&bytes),
+        )
+        .unwrap(),
+        vec![
+            GdbRemoteFrame::Ack,
+            GdbRemoteFrame::Packet(GdbRemotePacket::new(b"OK".to_vec()).unwrap()),
+        ],
+    );
+    assert_eq!(
+        core.vector_fixed_point().rounding_mode(),
+        RiscvVectorFixedRoundingMode::RoundDown,
+    );
+    assert!(core.vector_fixed_point().vxsat());
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p55".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"0100000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p56".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"0200000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p57".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"0500000000000000",
+    );
+}
+
+#[test]
 fn riscv_gdb_remote_core_packet_handler_reads_and_writes_advertised_rv64d_float_csr_registers() {
     let core = riscv_core(0x8000);
     core.set_float_status(RiscvFloatStatus::new(0x85));
@@ -1101,17 +1240,17 @@ fn riscv_gdb_remote_core_packet_handler_rejects_invalid_write_without_session_or
             RiscvGdbXlen::Rv64,
             &mut session,
             &core,
-            &GdbRemotePacket::new(b"P55=0000000000000000".to_vec()).unwrap(),
+            &GdbRemotePacket::new(b"P58=0000000000000000".to_vec()).unwrap(),
         ),
         Err(RiscvGdbRemotePacketError::RegisterWrite(
-            RiscvGdbRegisterWriteError::UnsupportedRegister { number: 85 },
+            RiscvGdbRegisterWriteError::UnsupportedRegister { number: 88 },
         )),
     );
     assert_eq!(core.pc(), Address::new(0x8000));
     assert_eq!(
         packet_payload(
             session
-                .handle_packet(&GdbRemotePacket::new(b"p55".to_vec()).unwrap())
+                .handle_packet(&GdbRemotePacket::new(b"p58".to_vec()).unwrap())
                 .unwrap(),
         ),
         b"E01",
@@ -1631,7 +1770,7 @@ fn rv64_register_hex_offset(number: u64) -> usize {
     let byte_offset = match number {
         0..=65 => number * 8,
         66..=68 => (65 * 8) + ((number - 65) * 4),
-        69..=85 => (65 * 8) + (3 * 4) + ((number - 68) * 8),
+        69..=88 => (65 * 8) + (3 * 4) + ((number - 68) * 8),
         _ => panic!("unsupported RV64 GDB register number"),
     };
     byte_offset as usize * 2
@@ -1674,6 +1813,28 @@ fn register_write_packet(bytes: &[u8]) -> GdbRemotePacket {
         payload.extend_from_slice(format!("{byte:02x}").as_bytes());
     }
     GdbRemotePacket::new(payload).unwrap()
+}
+
+fn rv64_register_set_write_bytes() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for register in 0..32_u64 {
+        bytes.extend_from_slice(&(0x1000_0000_0000_0000_u64 + register).to_le_bytes());
+    }
+    bytes.extend_from_slice(&0x8000_4000_u64.to_le_bytes());
+    for register in 0..32_u64 {
+        bytes.extend_from_slice(&(0x2000_0000_0000_0000_u64 + register).to_le_bytes());
+    }
+    bytes.extend_from_slice(&0x1f_u32.to_le_bytes());
+    bytes.extend_from_slice(&0x03_u32.to_le_bytes());
+    bytes.extend_from_slice(&0x7f_u32.to_le_bytes());
+    bytes.extend_from_slice(&0x000c_0122_u64.to_le_bytes());
+    for register in 1..17_u64 {
+        bytes.extend_from_slice(&(0x3000_0000_0000_0000_u64 + register).to_le_bytes());
+    }
+    bytes.extend_from_slice(&1_u64.to_le_bytes());
+    bytes.extend_from_slice(&2_u64.to_le_bytes());
+    bytes.extend_from_slice(&5_u64.to_le_bytes());
+    bytes
 }
 
 fn packet_payload(frames: Vec<GdbRemoteFrame>) -> Vec<u8> {
