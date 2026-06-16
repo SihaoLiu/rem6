@@ -121,6 +121,42 @@ fn vxor_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
     vector_vi_type(0b001011, vs2, imm, vd)
 }
 
+fn vsll_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b100101, vs2, vs1, vd)
+}
+
+fn vsll_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b100101, vs2, rs1, vd)
+}
+
+fn vsll_vi_type(vs2: u8, shamt: u8, vd: u8) -> u32 {
+    vector_vi_type(0b100101, vs2, shamt as i8, vd)
+}
+
+fn vsrl_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b101000, vs2, vs1, vd)
+}
+
+fn vsrl_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b101000, vs2, rs1, vd)
+}
+
+fn vsrl_vi_type(vs2: u8, shamt: u8, vd: u8) -> u32 {
+    vector_vi_type(0b101000, vs2, shamt as i8, vd)
+}
+
+fn vsra_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b101001, vs2, vs1, vd)
+}
+
+fn vsra_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b101001, vs2, rs1, vd)
+}
+
+fn vsra_vi_type(vs2: u8, shamt: u8, vd: u8) -> u32 {
+    vector_vi_type(0b101001, vs2, shamt as i8, vd)
+}
+
 fn lanes_u32(lanes: [u32; 4]) -> [u8; 16] {
     let mut bytes = [0; 16];
     for (index, lane) in lanes.into_iter().enumerate() {
@@ -284,6 +320,92 @@ fn decoder_accepts_unmasked_vector_logical_operations() {
             vd: vreg(3),
             vs2: vreg(2),
             imm: 15,
+        }
+    );
+}
+
+#[test]
+fn decoder_accepts_unmasked_vector_shift_operations() {
+    assert_eq!(vsll_vv_type(7, 8, 6), 0x9674_0357);
+    assert_eq!(vsll_vx_type(5, 6, 4), 0x9653_4257);
+    assert_eq!(vsll_vi_type(2, 7, 3), 0x9623_b1d7);
+    assert_eq!(vsrl_vv_type(7, 8, 6), 0xa274_0357);
+    assert_eq!(vsrl_vx_type(5, 6, 4), 0xa253_4257);
+    assert_eq!(vsrl_vi_type(2, 15, 3), 0xa227_b1d7);
+    assert_eq!(vsra_vv_type(7, 8, 6), 0xa674_0357);
+    assert_eq!(vsra_vx_type(5, 6, 4), 0xa653_4257);
+    assert_eq!(vsra_vi_type(2, 31, 3), 0xa62f_b1d7);
+
+    assert_eq!(
+        RiscvInstruction::decode(vsll_vv_type(7, 8, 6)).unwrap(),
+        RiscvInstruction::VectorShiftLeftLogicalVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vsll_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorShiftLeftLogicalVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vsll_vi_type(2, 7, 3)).unwrap(),
+        RiscvInstruction::VectorShiftLeftLogicalVi {
+            vd: vreg(3),
+            vs2: vreg(2),
+            shamt: 7,
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vsrl_vv_type(7, 8, 6)).unwrap(),
+        RiscvInstruction::VectorShiftRightLogicalVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vsrl_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorShiftRightLogicalVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vsrl_vi_type(2, 15, 3)).unwrap(),
+        RiscvInstruction::VectorShiftRightLogicalVi {
+            vd: vreg(3),
+            vs2: vreg(2),
+            shamt: 15,
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vsra_vv_type(7, 8, 6)).unwrap(),
+        RiscvInstruction::VectorShiftRightArithmeticVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vsra_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorShiftRightArithmeticVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vsra_vi_type(2, 31, 3)).unwrap(),
+        RiscvInstruction::VectorShiftRightArithmeticVi {
+            vd: vreg(3),
+            vs2: vreg(2),
+            shamt: 31,
         }
     );
 }
@@ -526,6 +648,76 @@ fn hart_executes_vector_logical_vv_vx_and_vi_forms() {
             vd: vreg(8),
             vs2: vreg(7),
             imm: -1,
+        }
+    );
+}
+
+#[test]
+fn hart_executes_vector_shift_vv_vx_and_vi_forms() {
+    let mut vv = RiscvHartState::new(0x80c0);
+    vv.set_vector_config(RiscvVectorConfig::new(3, 0xd0));
+    vv.write_vector(vreg(7), lanes_u32([1, 0x8000_0000, 3, 0xaaaa_aaaa]));
+    vv.write_vector(vreg(8), lanes_u32([1, 31, 32, 0]));
+    vv.write_vector(vreg(6), lanes_u32([0, 0, 0, 0xdddd_dddd]));
+    let vv_record = vv
+        .execute(RiscvInstruction::decode(vsll_vv_type(7, 8, 6)).unwrap())
+        .unwrap();
+    assert_eq!(vv.read_vector(vreg(6)), lanes_u32([2, 0, 3, 0xdddd_dddd]));
+    assert_eq!(
+        vv_record.instruction(),
+        RiscvInstruction::VectorShiftLeftLogicalVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+
+    let mut vx = RiscvHartState::new(0x80d0);
+    vx.set_vector_config(RiscvVectorConfig::new(3, 0xd0));
+    vx.write(reg(6), 4);
+    vx.write_vector(
+        vreg(5),
+        lanes_u32([0xffff_0000, 0x8000_0000, 0x0000_00f0, 0xaaaa_aaaa]),
+    );
+    vx.write_vector(vreg(4), lanes_u32([0, 0, 0, 0xcccc_cccc]));
+    let vx_record = vx
+        .execute(RiscvInstruction::decode(vsrl_vx_type(5, 6, 4)).unwrap())
+        .unwrap();
+    assert_eq!(
+        vx.read_vector(vreg(4)),
+        lanes_u32([0x0fff_f000, 0x0800_0000, 0x0000_000f, 0xcccc_cccc])
+    );
+    assert_eq!(
+        vx_record.instruction(),
+        RiscvInstruction::VectorShiftRightLogicalVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+
+    let mut vi = RiscvHartState::new(0x80e0);
+    vi.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    vi.write_vector(
+        vreg(2),
+        bytes_with_u16([
+            0x8000, 0x7ff0, 0xffff, 0x0008, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd,
+        ]),
+    );
+    vi.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let vi_record = vi
+        .execute(RiscvInstruction::decode(vsra_vi_type(2, 3, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        vi.read_vector(vreg(3)),
+        bytes_with_u16([0xf000, 0x0ffe, 0xffff, 0x0001, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        vi_record.instruction(),
+        RiscvInstruction::VectorShiftRightArithmeticVi {
+            vd: vreg(3),
+            vs2: vreg(2),
+            shamt: 3,
         }
     );
 }

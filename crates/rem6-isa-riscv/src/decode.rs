@@ -294,6 +294,21 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs1: vector_register(raw, 15),
             vs2: vector_register(raw, 20),
         }),
+        (0x0, 0b100101, true) => Ok(RiscvInstruction::VectorShiftLeftLogicalVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x0, 0b101000, true) => Ok(RiscvInstruction::VectorShiftRightLogicalVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x0, 0b101001, true) => Ok(RiscvInstruction::VectorShiftRightArithmeticVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
         (0x3, 0, true) => Ok(RiscvInstruction::VectorAddVi {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
@@ -313,6 +328,21 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
             imm: vector_signed_imm5(raw),
+        }),
+        (0x3, 0b100101, true) => Ok(RiscvInstruction::VectorShiftLeftLogicalVi {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            shamt: vector_unsigned_imm5(raw),
+        }),
+        (0x3, 0b101000, true) => Ok(RiscvInstruction::VectorShiftRightLogicalVi {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            shamt: vector_unsigned_imm5(raw),
+        }),
+        (0x3, 0b101001, true) => Ok(RiscvInstruction::VectorShiftRightArithmeticVi {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            shamt: vector_unsigned_imm5(raw),
         }),
         (0x4, 0, true) => Ok(RiscvInstruction::VectorAddVx {
             vd: vector_register(raw, 7),
@@ -335,6 +365,21 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs1: rs1(raw),
         }),
         (0x4, 0b001011, true) => Ok(RiscvInstruction::VectorXorVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b100101, true) => Ok(RiscvInstruction::VectorShiftLeftLogicalVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b101000, true) => Ok(RiscvInstruction::VectorShiftRightLogicalVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b101001, true) => Ok(RiscvInstruction::VectorShiftRightArithmeticVx {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
             rs1: rs1(raw),
@@ -373,6 +418,10 @@ fn vector_register(raw: u32, shift: u32) -> VectorRegister {
 fn vector_signed_imm5(raw: u32) -> i8 {
     let value = ((raw >> 15) & 0x1f) as i8;
     (value << 3) >> 3
+}
+
+fn vector_unsigned_imm5(raw: u32) -> u8 {
+    ((raw >> 15) & 0x1f) as u8
 }
 
 pub(crate) fn decode_branch(raw: u32) -> Result<RiscvInstruction, RiscvError> {

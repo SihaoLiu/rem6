@@ -452,7 +452,16 @@ impl RiscvHartState {
             | RiscvInstruction::VectorOrVi { .. }
             | RiscvInstruction::VectorXorVv { .. }
             | RiscvInstruction::VectorXorVx { .. }
-            | RiscvInstruction::VectorXorVi { .. } => {
+            | RiscvInstruction::VectorXorVi { .. }
+            | RiscvInstruction::VectorShiftLeftLogicalVv { .. }
+            | RiscvInstruction::VectorShiftLeftLogicalVx { .. }
+            | RiscvInstruction::VectorShiftLeftLogicalVi { .. }
+            | RiscvInstruction::VectorShiftRightLogicalVv { .. }
+            | RiscvInstruction::VectorShiftRightLogicalVx { .. }
+            | RiscvInstruction::VectorShiftRightLogicalVi { .. }
+            | RiscvInstruction::VectorShiftRightArithmeticVv { .. }
+            | RiscvInstruction::VectorShiftRightArithmeticVx { .. }
+            | RiscvInstruction::VectorShiftRightArithmeticVi { .. } => {
                 if !vector_execute::execute_vector_integer_binary(self, instruction) {
                     return Ok(enter_synchronous_trap(
                         self,

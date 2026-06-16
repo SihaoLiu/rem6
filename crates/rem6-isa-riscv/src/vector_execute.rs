@@ -8,158 +8,115 @@ pub(crate) fn execute_vector_integer_binary(
     instruction: RiscvInstruction,
 ) -> bool {
     match instruction {
-        RiscvInstruction::VectorAddVv { vd, vs1, vs2 } => execute_vector_add_vv(hart, vd, vs1, vs2),
+        RiscvInstruction::VectorAddVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::Add)
+        }
         RiscvInstruction::VectorAddVx { vd, vs2, rs1 } => {
-            execute_vector_add_vx(hart, vd, vs2, hart.read(rs1))
+            execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::Add)
         }
-        RiscvInstruction::VectorAddVi { vd, vs2, imm } => execute_vector_add_vi(hart, vd, vs2, imm),
-        RiscvInstruction::VectorSubVv { vd, vs1, vs2 } => execute_vector_sub_vv(hart, vd, vs1, vs2),
+        RiscvInstruction::VectorAddVi { vd, vs2, imm } => {
+            execute_vector_binary_vi(hart, vd, vs2, imm, LaneBinaryOp::Add)
+        }
+        RiscvInstruction::VectorSubVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::Sub)
+        }
         RiscvInstruction::VectorSubVx { vd, vs2, rs1 } => {
-            execute_vector_sub_vx(hart, vd, vs2, hart.read(rs1))
+            execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::Sub)
         }
-        RiscvInstruction::VectorAndVv { vd, vs1, vs2 } => execute_vector_and_vv(hart, vd, vs1, vs2),
+        RiscvInstruction::VectorAndVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::And)
+        }
         RiscvInstruction::VectorAndVx { vd, vs2, rs1 } => {
-            execute_vector_and_vx(hart, vd, vs2, hart.read(rs1))
+            execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::And)
         }
-        RiscvInstruction::VectorAndVi { vd, vs2, imm } => execute_vector_and_vi(hart, vd, vs2, imm),
-        RiscvInstruction::VectorOrVv { vd, vs1, vs2 } => execute_vector_or_vv(hart, vd, vs1, vs2),
+        RiscvInstruction::VectorAndVi { vd, vs2, imm } => {
+            execute_vector_binary_vi(hart, vd, vs2, imm, LaneBinaryOp::And)
+        }
+        RiscvInstruction::VectorOrVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::Or)
+        }
         RiscvInstruction::VectorOrVx { vd, vs2, rs1 } => {
-            execute_vector_or_vx(hart, vd, vs2, hart.read(rs1))
+            execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::Or)
         }
-        RiscvInstruction::VectorOrVi { vd, vs2, imm } => execute_vector_or_vi(hart, vd, vs2, imm),
-        RiscvInstruction::VectorXorVv { vd, vs1, vs2 } => execute_vector_xor_vv(hart, vd, vs1, vs2),
+        RiscvInstruction::VectorOrVi { vd, vs2, imm } => {
+            execute_vector_binary_vi(hart, vd, vs2, imm, LaneBinaryOp::Or)
+        }
+        RiscvInstruction::VectorXorVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::Xor)
+        }
         RiscvInstruction::VectorXorVx { vd, vs2, rs1 } => {
-            execute_vector_xor_vx(hart, vd, vs2, hart.read(rs1))
+            execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::Xor)
         }
-        RiscvInstruction::VectorXorVi { vd, vs2, imm } => execute_vector_xor_vi(hart, vd, vs2, imm),
+        RiscvInstruction::VectorXorVi { vd, vs2, imm } => {
+            execute_vector_binary_vi(hart, vd, vs2, imm, LaneBinaryOp::Xor)
+        }
+        RiscvInstruction::VectorShiftLeftLogicalVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::ShiftLeftLogical)
+        }
+        RiscvInstruction::VectorShiftLeftLogicalVx { vd, vs2, rs1 } => execute_vector_binary_vx(
+            hart,
+            vd,
+            vs2,
+            hart.read(rs1),
+            LaneBinaryOp::ShiftLeftLogical,
+        ),
+        RiscvInstruction::VectorShiftLeftLogicalVi { vd, vs2, shamt } => execute_vector_binary_vx(
+            hart,
+            vd,
+            vs2,
+            u64::from(shamt),
+            LaneBinaryOp::ShiftLeftLogical,
+        ),
+        RiscvInstruction::VectorShiftRightLogicalVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::ShiftRightLogical)
+        }
+        RiscvInstruction::VectorShiftRightLogicalVx { vd, vs2, rs1 } => execute_vector_binary_vx(
+            hart,
+            vd,
+            vs2,
+            hart.read(rs1),
+            LaneBinaryOp::ShiftRightLogical,
+        ),
+        RiscvInstruction::VectorShiftRightLogicalVi { vd, vs2, shamt } => execute_vector_binary_vx(
+            hart,
+            vd,
+            vs2,
+            u64::from(shamt),
+            LaneBinaryOp::ShiftRightLogical,
+        ),
+        RiscvInstruction::VectorShiftRightArithmeticVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::ShiftRightArithmetic)
+        }
+        RiscvInstruction::VectorShiftRightArithmeticVx { vd, vs2, rs1 } => {
+            execute_vector_binary_vx(
+                hart,
+                vd,
+                vs2,
+                hart.read(rs1),
+                LaneBinaryOp::ShiftRightArithmetic,
+            )
+        }
+        RiscvInstruction::VectorShiftRightArithmeticVi { vd, vs2, shamt } => {
+            execute_vector_binary_vx(
+                hart,
+                vd,
+                vs2,
+                u64::from(shamt),
+                LaneBinaryOp::ShiftRightArithmetic,
+            )
+        }
         _ => false,
     }
 }
 
-fn execute_vector_add_vv(
-    hart: &mut RiscvHartState,
-    vd: VectorRegister,
-    vs1: VectorRegister,
-    vs2: VectorRegister,
-) -> bool {
-    execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::Add)
-}
-
-fn execute_vector_add_vx(
-    hart: &mut RiscvHartState,
-    vd: VectorRegister,
-    vs2: VectorRegister,
-    scalar: u64,
-) -> bool {
-    execute_vector_binary_vx(hart, vd, vs2, scalar, LaneBinaryOp::Add)
-}
-
-fn execute_vector_add_vi(
+fn execute_vector_binary_vi(
     hart: &mut RiscvHartState,
     vd: VectorRegister,
     vs2: VectorRegister,
     imm: i8,
+    operation: LaneBinaryOp,
 ) -> bool {
-    execute_vector_add_vx(hart, vd, vs2, imm as i64 as u64)
-}
-
-fn execute_vector_sub_vv(
-    hart: &mut RiscvHartState,
-    vd: VectorRegister,
-    vs1: VectorRegister,
-    vs2: VectorRegister,
-) -> bool {
-    execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::Sub)
-}
-
-fn execute_vector_sub_vx(
-    hart: &mut RiscvHartState,
-    vd: VectorRegister,
-    vs2: VectorRegister,
-    scalar: u64,
-) -> bool {
-    execute_vector_binary_vx(hart, vd, vs2, scalar, LaneBinaryOp::Sub)
-}
-
-fn execute_vector_and_vv(
-    hart: &mut RiscvHartState,
-    vd: VectorRegister,
-    vs1: VectorRegister,
-    vs2: VectorRegister,
-) -> bool {
-    execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::And)
-}
-
-fn execute_vector_and_vx(
-    hart: &mut RiscvHartState,
-    vd: VectorRegister,
-    vs2: VectorRegister,
-    scalar: u64,
-) -> bool {
-    execute_vector_binary_vx(hart, vd, vs2, scalar, LaneBinaryOp::And)
-}
-
-fn execute_vector_and_vi(
-    hart: &mut RiscvHartState,
-    vd: VectorRegister,
-    vs2: VectorRegister,
-    imm: i8,
-) -> bool {
-    execute_vector_and_vx(hart, vd, vs2, imm as i64 as u64)
-}
-
-fn execute_vector_or_vv(
-    hart: &mut RiscvHartState,
-    vd: VectorRegister,
-    vs1: VectorRegister,
-    vs2: VectorRegister,
-) -> bool {
-    execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::Or)
-}
-
-fn execute_vector_or_vx(
-    hart: &mut RiscvHartState,
-    vd: VectorRegister,
-    vs2: VectorRegister,
-    scalar: u64,
-) -> bool {
-    execute_vector_binary_vx(hart, vd, vs2, scalar, LaneBinaryOp::Or)
-}
-
-fn execute_vector_or_vi(
-    hart: &mut RiscvHartState,
-    vd: VectorRegister,
-    vs2: VectorRegister,
-    imm: i8,
-) -> bool {
-    execute_vector_or_vx(hart, vd, vs2, imm as i64 as u64)
-}
-
-fn execute_vector_xor_vv(
-    hart: &mut RiscvHartState,
-    vd: VectorRegister,
-    vs1: VectorRegister,
-    vs2: VectorRegister,
-) -> bool {
-    execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::Xor)
-}
-
-fn execute_vector_xor_vx(
-    hart: &mut RiscvHartState,
-    vd: VectorRegister,
-    vs2: VectorRegister,
-    scalar: u64,
-) -> bool {
-    execute_vector_binary_vx(hart, vd, vs2, scalar, LaneBinaryOp::Xor)
-}
-
-fn execute_vector_xor_vi(
-    hart: &mut RiscvHartState,
-    vd: VectorRegister,
-    vs2: VectorRegister,
-    imm: i8,
-) -> bool {
-    execute_vector_xor_vx(hart, vd, vs2, imm as i64 as u64)
+    execute_vector_binary_vx(hart, vd, vs2, imm as i64 as u64, operation)
 }
 
 fn execute_vector_binary_vv(
@@ -204,48 +161,71 @@ enum LaneBinaryOp {
     And,
     Or,
     Xor,
+    ShiftLeftLogical,
+    ShiftRightLogical,
+    ShiftRightArithmetic,
 }
 
 impl LaneBinaryOp {
     fn apply_u8(self, left: u8, right: u8) -> u8 {
+        let shift = shift_amount(u64::from(right), 8);
         match self {
             Self::Add => left.wrapping_add(right),
             Self::Sub => left.wrapping_sub(right),
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
+            Self::ShiftLeftLogical => left << shift,
+            Self::ShiftRightLogical => left >> shift,
+            Self::ShiftRightArithmetic => ((left as i8) >> shift) as u8,
         }
     }
 
     fn apply_u16(self, left: u16, right: u16) -> u16 {
+        let shift = shift_amount(u64::from(right), 16);
         match self {
             Self::Add => left.wrapping_add(right),
             Self::Sub => left.wrapping_sub(right),
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
+            Self::ShiftLeftLogical => left << shift,
+            Self::ShiftRightLogical => left >> shift,
+            Self::ShiftRightArithmetic => ((left as i16) >> shift) as u16,
         }
     }
 
     fn apply_u32(self, left: u32, right: u32) -> u32 {
+        let shift = shift_amount(u64::from(right), 32);
         match self {
             Self::Add => left.wrapping_add(right),
             Self::Sub => left.wrapping_sub(right),
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
+            Self::ShiftLeftLogical => left << shift,
+            Self::ShiftRightLogical => left >> shift,
+            Self::ShiftRightArithmetic => ((left as i32) >> shift) as u32,
         }
     }
 
     fn apply_u64(self, left: u64, right: u64) -> u64 {
+        let shift = shift_amount(right, 64);
         match self {
             Self::Add => left.wrapping_add(right),
             Self::Sub => left.wrapping_sub(right),
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
+            Self::ShiftLeftLogical => left << shift,
+            Self::ShiftRightLogical => left >> shift,
+            Self::ShiftRightArithmetic => ((left as i64) >> shift) as u64,
         }
     }
+}
+
+fn shift_amount(raw: u64, element_bits: u32) -> u32 {
+    (raw & u64::from(element_bits - 1)) as u32
 }
 
 struct VectorBinaryPlan {

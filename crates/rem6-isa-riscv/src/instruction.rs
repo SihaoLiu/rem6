@@ -344,6 +344,51 @@ pub enum RiscvInstruction {
         vs2: VectorRegister,
         imm: i8,
     },
+    VectorShiftLeftLogicalVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorShiftLeftLogicalVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorShiftLeftLogicalVi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        shamt: u8,
+    },
+    VectorShiftRightLogicalVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorShiftRightLogicalVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorShiftRightLogicalVi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        shamt: u8,
+    },
+    VectorShiftRightArithmeticVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorShiftRightArithmeticVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorShiftRightArithmeticVi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        shamt: u8,
+    },
     Load {
         rd: Register,
         rs1: Register,
