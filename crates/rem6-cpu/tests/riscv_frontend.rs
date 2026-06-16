@@ -138,6 +138,26 @@ fn vector_vx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
         | 0x57
 }
 
+fn vector_mvv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(vs1) << 15)
+        | (0b010 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vector_mvx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (0b110 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
 fn vector_vi_type(funct6: u32, vs2: u8, imm: i8, vd: u8) -> u32 {
     (funct6 << 26)
         | (1 << 25)
@@ -186,6 +206,22 @@ fn vmaxu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
 
 fn vmax_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_vv_type(0b000111, vs2, vs1, vd)
+}
+
+fn vmul_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b100101, vs2, vs1, vd)
+}
+
+fn vmulhu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b100100, vs2, rs1, vd)
+}
+
+fn vmulh_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b100111, vs2, rs1, vd)
+}
+
+fn vmulhsu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b100110, vs2, vs1, vd)
 }
 
 fn vreg(index: u8) -> VectorRegister {
@@ -1204,6 +1240,97 @@ fn riscv_core_driver_executes_vector_minmax_operations_from_fetch_stream() {
     assert_eq!(
         core.read_vector_register(vreg(14)),
         lanes_u32([0, 0x7fff_ffff, 4, 0xaaaa_aaaa])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_multiply_operations_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.write_register(reg(8), 0x0001_0000);
+    core.write_register(reg(9), 0xffff_fffe);
+    core.write_vector_register(vreg(2), lanes_u32([3, u32::MAX, 0x8000_0000, 0xaaaa_aaaa]));
+    core.write_vector_register(vreg(1), lanes_u32([7, 2, 2, 0]));
+    core.write_vector_register(vreg(4), lanes_u32([0, 0, 0, 0xeeee_eeee]));
+    core.write_vector_register(vreg(6), lanes_u32([0, 0, 0, 0xdddd_dddd]));
+    core.write_vector_register(vreg(11), lanes_u32([0, 0, 0, 0xcccc_cccc]));
+    core.write_vector_register(vreg(12), lanes_u32([u32::MAX, 0x8000_0000, 2, 0xbbbb_bbbb]));
+    core.write_vector_register(vreg(13), lanes_u32([2, 2, u32::MAX, 0]));
+    core.write_vector_register(vreg(14), lanes_u32([0, 0, 0, 0xaaaa_aaaa]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 5),
+            vmul_vv_type(2, 1, 4),
+            vmulhu_vx_type(4, 8, 6),
+            vmulh_vx_type(6, 9, 11),
+            vmulhsu_vv_type(12, 13, 14),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(3, 0xd0));
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMultiplyLowVv {
+            vd: vreg(4),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        }
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(4)),
+        lanes_u32([21, u32::MAX - 1, 0, 0xeeee_eeee])
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMultiplyHighUnsignedVx {
+            vd: vreg(6),
+            vs2: vreg(4),
+            rs1: reg(8),
+        }
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(6)),
+        lanes_u32([0, 0x0000_ffff, 0, 0xdddd_dddd])
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMultiplyHighSignedVx {
+            vd: vreg(11),
+            vs2: vreg(6),
+            rs1: reg(9),
+        }
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(11)),
+        lanes_u32([0, u32::MAX, 0, 0xcccc_cccc])
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorMultiplyHighSignedUnsignedVv {
+            vd: vreg(14),
+            vs1: vreg(13),
+            vs2: vreg(12),
+        }
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(14)),
+        lanes_u32([u32::MAX, u32::MAX, 1, 0xaaaa_aaaa])
     );
 }
 

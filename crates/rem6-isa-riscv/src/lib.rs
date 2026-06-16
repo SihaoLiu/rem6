@@ -452,6 +452,14 @@ impl RiscvHartState {
             | RiscvInstruction::VectorMaxUnsignedVx { .. }
             | RiscvInstruction::VectorMaxSignedVv { .. }
             | RiscvInstruction::VectorMaxSignedVx { .. }
+            | RiscvInstruction::VectorMultiplyLowVv { .. }
+            | RiscvInstruction::VectorMultiplyLowVx { .. }
+            | RiscvInstruction::VectorMultiplyHighUnsignedVv { .. }
+            | RiscvInstruction::VectorMultiplyHighUnsignedVx { .. }
+            | RiscvInstruction::VectorMultiplyHighSignedUnsignedVv { .. }
+            | RiscvInstruction::VectorMultiplyHighSignedUnsignedVx { .. }
+            | RiscvInstruction::VectorMultiplyHighSignedVv { .. }
+            | RiscvInstruction::VectorMultiplyHighSignedVx { .. }
             | RiscvInstruction::VectorAndVv { .. }
             | RiscvInstruction::VectorAndVx { .. }
             | RiscvInstruction::VectorAndVi { .. }

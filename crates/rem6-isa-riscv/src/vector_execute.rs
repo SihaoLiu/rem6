@@ -47,6 +47,46 @@ pub(crate) fn execute_vector_integer_binary(
         RiscvInstruction::VectorMaxSignedVx { vd, vs2, rs1 } => {
             execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::MaxSigned)
         }
+        RiscvInstruction::VectorMultiplyLowVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::MultiplyLow)
+        }
+        RiscvInstruction::VectorMultiplyLowVx { vd, vs2, rs1 } => {
+            execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::MultiplyLow)
+        }
+        RiscvInstruction::VectorMultiplyHighUnsignedVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::MultiplyHighUnsigned)
+        }
+        RiscvInstruction::VectorMultiplyHighUnsignedVx { vd, vs2, rs1 } => {
+            execute_vector_binary_vx(
+                hart,
+                vd,
+                vs2,
+                hart.read(rs1),
+                LaneBinaryOp::MultiplyHighUnsigned,
+            )
+        }
+        RiscvInstruction::VectorMultiplyHighSignedUnsignedVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::MultiplyHighSignedUnsigned)
+        }
+        RiscvInstruction::VectorMultiplyHighSignedUnsignedVx { vd, vs2, rs1 } => {
+            execute_vector_binary_vx(
+                hart,
+                vd,
+                vs2,
+                hart.read(rs1),
+                LaneBinaryOp::MultiplyHighSignedUnsigned,
+            )
+        }
+        RiscvInstruction::VectorMultiplyHighSignedVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::MultiplyHighSigned)
+        }
+        RiscvInstruction::VectorMultiplyHighSignedVx { vd, vs2, rs1 } => execute_vector_binary_vx(
+            hart,
+            vd,
+            vs2,
+            hart.read(rs1),
+            LaneBinaryOp::MultiplyHighSigned,
+        ),
         RiscvInstruction::VectorAndVv { vd, vs1, vs2 } => {
             execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::And)
         }
@@ -186,6 +226,10 @@ enum LaneBinaryOp {
     MinSigned,
     MaxUnsigned,
     MaxSigned,
+    MultiplyLow,
+    MultiplyHighUnsigned,
+    MultiplyHighSignedUnsigned,
+    MultiplyHighSigned,
     And,
     Or,
     Xor,
@@ -204,6 +248,18 @@ impl LaneBinaryOp {
             Self::MinSigned => (left as i8).min(right as i8) as u8,
             Self::MaxUnsigned => left.max(right),
             Self::MaxSigned => (left as i8).max(right as i8) as u8,
+            Self::MultiplyLow => left.wrapping_mul(right),
+            Self::MultiplyHighUnsigned => {
+                multiply_high_unsigned(u128::from(left), u128::from(right), u8::BITS) as u8
+            }
+            Self::MultiplyHighSignedUnsigned => {
+                multiply_high_signed_unsigned(i128::from(left as i8), u128::from(right), u8::BITS)
+                    as u8
+            }
+            Self::MultiplyHighSigned => {
+                multiply_high_signed(i128::from(left as i8), i128::from(right as i8), u8::BITS)
+                    as u8
+            }
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
@@ -222,6 +278,18 @@ impl LaneBinaryOp {
             Self::MinSigned => (left as i16).min(right as i16) as u16,
             Self::MaxUnsigned => left.max(right),
             Self::MaxSigned => (left as i16).max(right as i16) as u16,
+            Self::MultiplyLow => left.wrapping_mul(right),
+            Self::MultiplyHighUnsigned => {
+                multiply_high_unsigned(u128::from(left), u128::from(right), u16::BITS) as u16
+            }
+            Self::MultiplyHighSignedUnsigned => {
+                multiply_high_signed_unsigned(i128::from(left as i16), u128::from(right), u16::BITS)
+                    as u16
+            }
+            Self::MultiplyHighSigned => {
+                multiply_high_signed(i128::from(left as i16), i128::from(right as i16), u16::BITS)
+                    as u16
+            }
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
@@ -240,6 +308,18 @@ impl LaneBinaryOp {
             Self::MinSigned => (left as i32).min(right as i32) as u32,
             Self::MaxUnsigned => left.max(right),
             Self::MaxSigned => (left as i32).max(right as i32) as u32,
+            Self::MultiplyLow => left.wrapping_mul(right),
+            Self::MultiplyHighUnsigned => {
+                multiply_high_unsigned(u128::from(left), u128::from(right), u32::BITS) as u32
+            }
+            Self::MultiplyHighSignedUnsigned => {
+                multiply_high_signed_unsigned(i128::from(left as i32), u128::from(right), u32::BITS)
+                    as u32
+            }
+            Self::MultiplyHighSigned => {
+                multiply_high_signed(i128::from(left as i32), i128::from(right as i32), u32::BITS)
+                    as u32
+            }
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
@@ -258,6 +338,18 @@ impl LaneBinaryOp {
             Self::MinSigned => (left as i64).min(right as i64) as u64,
             Self::MaxUnsigned => left.max(right),
             Self::MaxSigned => (left as i64).max(right as i64) as u64,
+            Self::MultiplyLow => left.wrapping_mul(right),
+            Self::MultiplyHighUnsigned => {
+                multiply_high_unsigned(u128::from(left), u128::from(right), u64::BITS) as u64
+            }
+            Self::MultiplyHighSignedUnsigned => {
+                multiply_high_signed_unsigned(i128::from(left as i64), u128::from(right), u64::BITS)
+                    as u64
+            }
+            Self::MultiplyHighSigned => {
+                multiply_high_signed(i128::from(left as i64), i128::from(right as i64), u64::BITS)
+                    as u64
+            }
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
@@ -266,6 +358,18 @@ impl LaneBinaryOp {
             Self::ShiftRightArithmetic => ((left as i64) >> shift) as u64,
         }
     }
+}
+
+fn multiply_high_unsigned(left: u128, right: u128, element_bits: u32) -> u128 {
+    (left * right) >> element_bits
+}
+
+fn multiply_high_signed(left: i128, right: i128, element_bits: u32) -> u128 {
+    ((left * right) >> element_bits) as u128
+}
+
+fn multiply_high_signed_unsigned(left: i128, right: u128, element_bits: u32) -> u128 {
+    ((left * right as i128) >> element_bits) as u128
 }
 
 fn shift_amount(raw: u64, element_bits: u32) -> u32 {

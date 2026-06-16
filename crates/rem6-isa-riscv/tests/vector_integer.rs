@@ -75,6 +75,26 @@ fn vector_vx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
         | 0x57
 }
 
+fn vector_mvv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(vs1) << 15)
+        | (0b010 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vector_mvx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (0b110 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
 fn vector_vi_type(funct6: u32, vs2: u8, imm: i8, vd: u8) -> u32 {
     (funct6 << 26)
         | (1 << 25)
@@ -187,6 +207,38 @@ fn vmax_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
 
 fn vmax_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
     vector_vx_type(0b000111, vs2, rs1, vd)
+}
+
+fn vmul_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b100101, vs2, vs1, vd)
+}
+
+fn vmul_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b100101, vs2, rs1, vd)
+}
+
+fn vmulhu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b100100, vs2, vs1, vd)
+}
+
+fn vmulhu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b100100, vs2, rs1, vd)
+}
+
+fn vmulhsu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b100110, vs2, vs1, vd)
+}
+
+fn vmulhsu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b100110, vs2, rs1, vd)
+}
+
+fn vmulh_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b100111, vs2, vs1, vd)
+}
+
+fn vmulh_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b100111, vs2, rs1, vd)
 }
 
 fn lanes_u32(lanes: [u32; 4]) -> [u8; 16] {
@@ -525,6 +577,83 @@ fn decoder_rejects_vector_minmax_immediate_forms() {
     assert!(RiscvInstruction::decode(vector_vi_type(0b000101, 2, 7, 3)).is_err());
     assert!(RiscvInstruction::decode(vector_vi_type(0b000110, 2, 7, 3)).is_err());
     assert!(RiscvInstruction::decode(vector_vi_type(0b000111, 2, 7, 3)).is_err());
+}
+
+#[test]
+fn decoder_accepts_unmasked_vector_multiply_operations() {
+    assert_eq!(vmul_vv_type(7, 8, 6), 0x9674_2357);
+    assert_eq!(vmul_vx_type(5, 6, 4), 0x9653_6257);
+    assert_eq!(vmulhu_vv_type(7, 8, 6), 0x9274_2357);
+    assert_eq!(vmulhu_vx_type(5, 6, 4), 0x9253_6257);
+    assert_eq!(vmulhsu_vv_type(7, 8, 6), 0x9a74_2357);
+    assert_eq!(vmulhsu_vx_type(5, 6, 4), 0x9a53_6257);
+    assert_eq!(vmulh_vv_type(7, 8, 6), 0x9e74_2357);
+    assert_eq!(vmulh_vx_type(5, 6, 4), 0x9e53_6257);
+
+    assert_eq!(
+        RiscvInstruction::decode(vmul_vv_type(7, 8, 6)).unwrap(),
+        RiscvInstruction::VectorMultiplyLowVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmul_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorMultiplyLowVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmulhu_vv_type(7, 8, 6)).unwrap(),
+        RiscvInstruction::VectorMultiplyHighUnsignedVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmulhu_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorMultiplyHighUnsignedVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmulhsu_vv_type(7, 8, 6)).unwrap(),
+        RiscvInstruction::VectorMultiplyHighSignedUnsignedVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmulhsu_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorMultiplyHighSignedUnsignedVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmulh_vv_type(7, 8, 6)).unwrap(),
+        RiscvInstruction::VectorMultiplyHighSignedVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmulh_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorMultiplyHighSignedVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
 }
 
 #[test]
@@ -931,6 +1060,175 @@ fn hart_executes_vector_minmax_vv_and_vx_forms() {
             vs1: vreg(8),
             vs2: vreg(7),
         }
+    );
+}
+
+#[test]
+fn hart_executes_vector_multiply_vv_and_vx_forms() {
+    let mut low = RiscvHartState::new(0x8130);
+    low.set_vector_config(RiscvVectorConfig::new(3, 0xd0));
+    low.write_vector(vreg(7), lanes_u32([3, u32::MAX, 0x8000_0000, 0xaaaa_aaaa]));
+    low.write_vector(vreg(8), lanes_u32([7, 2, 2, 0]));
+    low.write_vector(vreg(6), lanes_u32([0, 0, 0, 0xdddd_dddd]));
+    let low_record = low
+        .execute(RiscvInstruction::decode(vmul_vv_type(7, 8, 6)).unwrap())
+        .unwrap();
+    assert_eq!(
+        low.read_vector(vreg(6)),
+        lanes_u32([21, u32::MAX - 1, 0, 0xdddd_dddd])
+    );
+    assert_eq!(
+        low_record.instruction(),
+        RiscvInstruction::VectorMultiplyLowVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+
+    let mut high_unsigned = RiscvHartState::new(0x8140);
+    high_unsigned.set_vector_config(RiscvVectorConfig::new(3, 0xd0));
+    high_unsigned.write(reg(6), 0x0001_0000);
+    high_unsigned.write_vector(
+        vreg(5),
+        lanes_u32([u32::MAX, 0x8000_0000, 0x0002_0000, 0xaaaa_aaaa]),
+    );
+    high_unsigned.write_vector(vreg(4), lanes_u32([0, 0, 0, 0xcccc_cccc]));
+    let high_unsigned_record = high_unsigned
+        .execute(RiscvInstruction::decode(vmulhu_vx_type(5, 6, 4)).unwrap())
+        .unwrap();
+    assert_eq!(
+        high_unsigned.read_vector(vreg(4)),
+        lanes_u32([0x0000_ffff, 0x0000_8000, 2, 0xcccc_cccc])
+    );
+    assert_eq!(
+        high_unsigned_record.instruction(),
+        RiscvInstruction::VectorMultiplyHighUnsignedVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+
+    let mut high_signed = RiscvHartState::new(0x8150);
+    high_signed.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    high_signed.write(reg(6), u64::from(0xfffe_u16));
+    high_signed.write_vector(
+        vreg(5),
+        bytes_with_u16([
+            0x8000, 0x7fff, 0xffff, 0x0002, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd,
+        ]),
+    );
+    high_signed.write_vector(vreg(4), bytes_with_u16([0xeeee; 8]));
+    let high_signed_record = high_signed
+        .execute(RiscvInstruction::decode(vmulh_vx_type(5, 6, 4)).unwrap())
+        .unwrap();
+    assert_eq!(
+        high_signed.read_vector(vreg(4)),
+        bytes_with_u16([0x0001, 0xffff, 0x0000, 0xffff, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        high_signed_record.instruction(),
+        RiscvInstruction::VectorMultiplyHighSignedVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+
+    let mut high_signed_unsigned = RiscvHartState::new(0x8160);
+    high_signed_unsigned.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    high_signed_unsigned.write_vector(
+        vreg(7),
+        bytes_with_u16([
+            0xffff, 0x8000, 0x7fff, 0xfffe, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd,
+        ]),
+    );
+    high_signed_unsigned.write_vector(vreg(8), bytes_with_u16([2, 2, 2, 0xffff, 0, 0, 0, 0]));
+    high_signed_unsigned.write_vector(vreg(6), bytes_with_u16([0xeeee; 8]));
+    let high_signed_unsigned_record = high_signed_unsigned
+        .execute(RiscvInstruction::decode(vmulhsu_vv_type(7, 8, 6)).unwrap())
+        .unwrap();
+    assert_eq!(
+        high_signed_unsigned.read_vector(vreg(6)),
+        bytes_with_u16([0xffff, 0xffff, 0x0000, 0xfffe, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        high_signed_unsigned_record.instruction(),
+        RiscvInstruction::VectorMultiplyHighSignedUnsignedVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+
+    let mut high_signed_unsigned_vx_e8 = RiscvHartState::new(0x8168);
+    high_signed_unsigned_vx_e8.set_vector_config(RiscvVectorConfig::new(4, 0xc0));
+    high_signed_unsigned_vx_e8.write(reg(6), 0x1ff);
+    high_signed_unsigned_vx_e8.write_vector(
+        vreg(5),
+        [
+            0xff, 0x80, 0x7f, 0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0x11, 0x22, 0x33, 0x44, 0x55,
+            0x66, 0x77,
+        ],
+    );
+    high_signed_unsigned_vx_e8.write_vector(vreg(4), [0x99; 16]);
+    let high_signed_unsigned_vx_e8_record = high_signed_unsigned_vx_e8
+        .execute(RiscvInstruction::decode(vmulhsu_vx_type(5, 6, 4)).unwrap())
+        .unwrap();
+    assert_eq!(
+        high_signed_unsigned_vx_e8.read_vector(vreg(4)),
+        [
+            0xff, 0x80, 0x7e, 0x01, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99,
+            0x99, 0x99,
+        ]
+    );
+    assert_eq!(
+        high_signed_unsigned_vx_e8_record.instruction(),
+        RiscvInstruction::VectorMultiplyHighSignedUnsignedVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+
+    let mut high_unsigned_e64 = RiscvHartState::new(0x8170);
+    high_unsigned_e64.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
+    high_unsigned_e64.write_vector(vreg(7), bytes_with_u64([u64::MAX, 1_u64 << 63]));
+    high_unsigned_e64.write_vector(vreg(8), bytes_with_u64([2, 2]));
+    high_unsigned_e64.write_vector(vreg(6), bytes_with_u64([0, 0]));
+    high_unsigned_e64
+        .execute(RiscvInstruction::decode(vmulhu_vv_type(7, 8, 6)).unwrap())
+        .unwrap();
+    assert_eq!(
+        high_unsigned_e64.read_vector(vreg(6)),
+        bytes_with_u64([1, 1])
+    );
+
+    let mut high_signed_e64 = RiscvHartState::new(0x8180);
+    high_signed_e64.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
+    high_signed_e64.write(reg(6), u64::MAX - 1);
+    high_signed_e64.write_vector(vreg(5), bytes_with_u64([i64::MAX as u64, 1_u64 << 63]));
+    high_signed_e64.write_vector(vreg(4), bytes_with_u64([0, 0]));
+    high_signed_e64
+        .execute(RiscvInstruction::decode(vmulh_vx_type(5, 6, 4)).unwrap())
+        .unwrap();
+    assert_eq!(
+        high_signed_e64.read_vector(vreg(4)),
+        bytes_with_u64([u64::MAX, 1])
+    );
+
+    let mut high_signed_unsigned_e64 = RiscvHartState::new(0x8190);
+    high_signed_unsigned_e64.set_vector_config(RiscvVectorConfig::new(2, 0xd8));
+    high_signed_unsigned_e64.write_vector(vreg(7), bytes_with_u64([u64::MAX - 1, i64::MAX as u64]));
+    high_signed_unsigned_e64.write_vector(vreg(8), bytes_with_u64([u64::MAX, 2]));
+    high_signed_unsigned_e64.write_vector(vreg(6), bytes_with_u64([0, 0]));
+    high_signed_unsigned_e64
+        .execute(RiscvInstruction::decode(vmulhsu_vv_type(7, 8, 6)).unwrap())
+        .unwrap();
+    assert_eq!(
+        high_signed_unsigned_e64.read_vector(vreg(6)),
+        bytes_with_u64([u64::MAX - 1, 0])
     );
 }
 
