@@ -20,6 +20,7 @@ mod sv39;
 mod trap;
 mod types;
 mod vector;
+mod vector_execute;
 
 use encoding::{j_imm, rd, u_imm};
 use instruction::csr_privilege_allowed;
@@ -64,7 +65,7 @@ pub use sv39::{
 pub use types::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryAccessKind, MemoryResponseError,
     MemoryResponseWriteback, MemoryResponseWritebackTarget, MemoryWidth, Register, RiscvFenceSet,
-    RiscvMemoryOrdering,
+    RiscvMemoryOrdering, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 pub use vector::{
     RiscvInstructionFlags, RiscvVectorCompressPlan, RiscvVectorCompressResult, RiscvVectorElements,
@@ -437,6 +438,17 @@ impl RiscvHartState {
             RiscvInstruction::VectorSetVl { rd, rs1, rs2 } => {
                 let avl = vector_avl(self, rd, rs1);
                 write_vector_config(self, &mut register_writes, rd, self.read(rs2), avl);
+            }
+            RiscvInstruction::VectorAddVv { vd, vs1, vs2 } => {
+                if !vector_execute::execute_vector_add_vv(self, vd, vs1, vs2) {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                }
             }
             RiscvInstruction::Load {
                 rd,

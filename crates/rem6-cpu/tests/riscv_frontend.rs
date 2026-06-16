@@ -10,7 +10,7 @@ use rem6_isa_riscv::{
     FloatRegister, MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction,
     RiscvMemoryOrdering, RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmpAccessKind,
     RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvStatusWord,
-    RiscvTrap, RiscvTrapKind, RiscvVectorConfig,
+    RiscvTrap, RiscvTrapKind, RiscvVectorConfig, VectorRegister,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -76,6 +76,22 @@ fn vsetvl_type(rs2: u8, rs1: u8, rd: u8) -> u32 {
         | (0b111 << 12)
         | (u32::from(rd) << 7)
         | 0x57
+}
+
+fn vadd_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    (1 << 25) | (u32::from(vs2) << 20) | (u32::from(vs1) << 15) | (u32::from(vd) << 7) | 0x57
+}
+
+fn vreg(index: u8) -> VectorRegister {
+    VectorRegister::new(index).unwrap()
+}
+
+fn lanes_u32(lanes: [u32; 4]) -> [u8; 16] {
+    let mut bytes = [0; 16];
+    for (index, lane) in lanes.into_iter().enumerate() {
+        bytes[index * 4..index * 4 + 4].copy_from_slice(&lane.to_le_bytes());
+    }
+    bytes
 }
 
 fn locked_tor_without_permissions() -> RiscvPmpConfig {
@@ -680,6 +696,48 @@ fn riscv_core_driver_executes_vsetivli_and_vsetvl_from_fetch_stream() {
     );
     assert_eq!(core.read_register(reg(7)), 4);
     assert_eq!(core.vector_config(), RiscvVectorConfig::new(4, 0xd0));
+}
+
+#[test]
+fn riscv_core_driver_executes_vadd_vv_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.write_vector_register(vreg(1), lanes_u32([7, 8, u32::MAX, 100]));
+    core.write_vector_register(vreg(2), lanes_u32([1, 20, 2, 300]));
+    core.write_vector_register(vreg(3), lanes_u32([0, 0, 0, 0xeeee_eeee]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 5),
+            vadd_vv_type(2, 1, 3),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(3, 0xd0));
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorAddVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        }
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_u32([8, 28, 1, 0xeeee_eeee])
+    );
 }
 
 #[test]

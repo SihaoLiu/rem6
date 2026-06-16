@@ -1,7 +1,7 @@
 use crate::{
     FloatRegister, Register, RiscvControlFlowSnapshot, RiscvControlFlowUpdate, RiscvCounterBank,
     RiscvCounterSnapshot, RiscvFloatStatus, RiscvInterruptCsr, RiscvPrivilegeMode, RiscvStatusWord,
-    RiscvSv39AccessContext, RiscvVectorConfig,
+    RiscvSv39AccessContext, RiscvVectorConfig, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -30,6 +30,7 @@ pub struct RiscvHartState {
     pub(crate) vector_config: RiscvVectorConfig,
     pub(crate) registers: [u64; 32],
     pub(crate) float_registers: [u64; 32],
+    pub(crate) vector_registers: [[u8; RISCV_VECTOR_REGISTER_BYTES]; 32],
 }
 
 impl RiscvHartState {
@@ -63,6 +64,7 @@ impl RiscvHartState {
             vector_config: RiscvVectorConfig::invalid(),
             registers: [0; 32],
             float_registers: [0; 32],
+            vector_registers: [[0; RISCV_VECTOR_REGISTER_BYTES]; 32],
         }
     }
 
@@ -341,5 +343,17 @@ impl RiscvHartState {
 
     pub fn write_float(&mut self, register: FloatRegister, value: u64) {
         self.float_registers[register.index() as usize] = value;
+    }
+
+    pub const fn read_vector(&self, register: VectorRegister) -> [u8; RISCV_VECTOR_REGISTER_BYTES] {
+        self.vector_registers[register.index() as usize]
+    }
+
+    pub fn write_vector(
+        &mut self,
+        register: VectorRegister,
+        value: [u8; RISCV_VECTOR_REGISTER_BYTES],
+    ) {
+        self.vector_registers[register.index() as usize] = value;
     }
 }

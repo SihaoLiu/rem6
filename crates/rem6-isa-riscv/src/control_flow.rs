@@ -62,6 +62,34 @@ impl RiscvVectorConfig {
             _ => unreachable!(),
         }
     }
+
+    pub fn element_width_bytes(self) -> Option<usize> {
+        if self.vill() || Self::vlmax(self.vtype).is_none() {
+            return None;
+        }
+
+        match (self.vtype >> 3) & 0x7 {
+            0 => Some(1),
+            1 => Some(2),
+            2 => Some(4),
+            3 => Some(8),
+            _ => None,
+        }
+    }
+
+    pub fn register_group_registers(self) -> Option<usize> {
+        if self.vill() || Self::vlmax(self.vtype).is_none() {
+            return None;
+        }
+
+        match self.vtype & 0x7 {
+            0 | 5 | 6 | 7 => Some(1),
+            1 => Some(2),
+            2 => Some(4),
+            3 => Some(8),
+            _ => None,
+        }
+    }
 }
 
 fn nonzero_fractional_lmul(base: u32, denominator: u32) -> Option<u32> {

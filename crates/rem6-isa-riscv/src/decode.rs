@@ -4,7 +4,7 @@ use crate::encoding::{
 use crate::{
     Immediate, RiscvCounterCsr, RiscvError, RiscvFenceSet, RiscvFloatCsr, RiscvInstruction,
     RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvSupervisorTrapCsr,
-    RiscvTranslationCsr,
+    RiscvTranslationCsr, VectorRegister,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -269,6 +269,13 @@ pub(crate) fn decode_op_32(raw: u32) -> Result<RiscvInstruction, RiscvError> {
 
 pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     match funct3(raw) {
+        0x0 if vector_funct6(raw) == 0 && vector_unmasked(raw) => {
+            Ok(RiscvInstruction::VectorAddVv {
+                vd: vector_register(raw, 7),
+                vs1: vector_register(raw, 15),
+                vs2: vector_register(raw, 20),
+            })
+        }
         0x7 if (raw & 0x8000_0000) == 0 => Ok(RiscvInstruction::VectorSetVli {
             rd: rd(raw),
             rs1: rs1(raw),
@@ -286,6 +293,18 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         }),
         _ => Err(RiscvError::UnknownEncoding { raw }),
     }
+}
+
+fn vector_funct6(raw: u32) -> u32 {
+    (raw >> 26) & 0x3f
+}
+
+fn vector_unmasked(raw: u32) -> bool {
+    (raw & (1 << 25)) != 0
+}
+
+fn vector_register(raw: u32, shift: u32) -> VectorRegister {
+    VectorRegister::from_field((raw >> shift) & 0x1f)
 }
 
 pub(crate) fn decode_branch(raw: u32) -> Result<RiscvInstruction, RiscvError> {

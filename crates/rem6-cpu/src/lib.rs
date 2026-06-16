@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 use rem6_isa_riscv::{
     FloatRegister, MemoryAccessKind, Register, RiscvHartState, RiscvPmaError, RiscvPmaRange,
     RiscvPmaTable, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot, RiscvPmpTable,
-    RiscvPrivilegeMode, RiscvTrap, RiscvTrapKind, RiscvVectorConfig,
+    RiscvPrivilegeMode, RiscvTrap, RiscvTrapKind, RiscvVectorConfig, VectorRegister,
+    RISCV_VECTOR_REGISTER_BYTES,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
@@ -722,6 +723,29 @@ impl RiscvCore {
             .expect("riscv core lock")
             .hart
             .read_float(register)
+    }
+
+    pub fn read_vector_register(
+        &self,
+        register: VectorRegister,
+    ) -> [u8; RISCV_VECTOR_REGISTER_BYTES] {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .read_vector(register)
+    }
+
+    pub fn write_vector_register(
+        &self,
+        register: VectorRegister,
+        value: [u8; RISCV_VECTOR_REGISTER_BYTES],
+    ) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .write_vector(register, value);
     }
 
     pub fn vector_config(&self) -> RiscvVectorConfig {

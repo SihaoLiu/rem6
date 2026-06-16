@@ -2,6 +2,7 @@ use crate::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryWidth, Register, RiscvCounterCsr,
     RiscvFenceSet, RiscvFloatCsr, RiscvFloatRoundingMode, RiscvInterruptCsr, RiscvMachineTrapCsr,
     RiscvPrivilegeMode, RiscvPseudoOp, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
+    VectorRegister,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -272,6 +273,11 @@ pub enum RiscvInstruction {
         rd: Register,
         rs1: Register,
         rs2: Register,
+    },
+    VectorAddVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
     },
     Load {
         rd: Register,

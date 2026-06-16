@@ -46,6 +46,29 @@ impl FloatRegister {
     }
 }
 
+pub const RISCV_VECTOR_REGISTER_BYTES: usize = 16;
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct VectorRegister(u8);
+
+impl VectorRegister {
+    pub fn new(index: u8) -> Result<Self, RiscvError> {
+        if index < 32 {
+            Ok(Self(index))
+        } else {
+            Err(RiscvError::InvalidRegister { index })
+        }
+    }
+
+    pub(crate) const fn from_field(index: u32) -> Self {
+        Self(index as u8)
+    }
+
+    pub const fn index(self) -> u8 {
+        self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Immediate(i64);
 
