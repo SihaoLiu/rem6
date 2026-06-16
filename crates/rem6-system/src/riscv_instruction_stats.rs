@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use rem6_cpu::CpuId;
@@ -84,14 +84,15 @@ impl RiscvSystemRun {
 
 #[derive(Debug)]
 pub struct RiscvInstructionStats {
+    cpus: BTreeSet<CpuId>,
     committed: BTreeMap<CpuId, StatId>,
     retired_instruction_probes: Arc<Mutex<RiscvRetiredInstructionProbeRecorder>>,
 }
 
 impl Clone for RiscvInstructionStats {
     fn clone(&self) -> Self {
+        let cpus = self.cpus.clone();
         let committed = self.committed.clone();
-        let cpus = committed.keys().copied().collect::<Vec<_>>();
         let thresholds = self
             .retired_instruction_probes
             .lock()
@@ -104,35 +105,48 @@ impl Clone for RiscvInstructionStats {
             .expect("retired instruction probe recorder lock")
             .pc_targets()
             .to_vec();
+        Self::from_parts(cpus, committed, thresholds, pc_targets)
+    }
+}
+
+impl RiscvInstructionStats {
+    fn from_parts(
+        cpus: BTreeSet<CpuId>,
+        committed: BTreeMap<CpuId, StatId>,
+        thresholds: Vec<u64>,
+        pc_targets: Vec<PcCountPair>,
+    ) -> Self {
         Self {
+            cpus: cpus.clone(),
             committed,
             retired_instruction_probes: Arc::new(Mutex::new(
                 RiscvRetiredInstructionProbeRecorder::new(cpus, thresholds, pc_targets),
             )),
         }
     }
-}
 
-impl RiscvInstructionStats {
     pub fn new<I>(committed: I) -> Self
     where
         I: IntoIterator<Item = (CpuId, StatId)>,
     {
         let committed = committed.into_iter().collect::<BTreeMap<_, _>>();
-        let cpus = committed.keys().copied().collect::<Vec<_>>();
-        Self {
-            committed,
-            retired_instruction_probes: Arc::new(Mutex::new(
-                RiscvRetiredInstructionProbeRecorder::new(cpus, Vec::new(), Vec::new()),
-            )),
-        }
+        let cpus = committed.keys().copied().collect::<BTreeSet<_>>();
+        Self::from_parts(cpus, committed, Vec::new(), Vec::new())
+    }
+
+    pub fn for_cpus<I>(cpus: I) -> Self
+    where
+        I: IntoIterator<Item = CpuId>,
+    {
+        let cpus = cpus.into_iter().collect::<BTreeSet<_>>();
+        Self::from_parts(cpus, BTreeMap::new(), Vec::new(), Vec::new())
     }
 
     pub fn with_retired_inst_thresholds<I>(self, thresholds: I) -> Self
     where
         I: IntoIterator<Item = u64>,
     {
-        let cpus = self.committed.keys().copied().collect::<Vec<_>>();
+        let cpus = self.cpus.clone();
         let pc_targets = self
             .retired_instruction_probes
             .lock()
@@ -151,7 +165,7 @@ impl RiscvInstructionStats {
     where
         I: IntoIterator<Item = PcCountPair>,
     {
-        let cpus = self.committed.keys().copied().collect::<Vec<_>>();
+        let cpus = self.cpus.clone();
         let thresholds = self
             .retired_instruction_probes
             .lock()
@@ -175,7 +189,7 @@ impl RiscvInstructionStats {
     }
 
     pub fn reset_retired_instruction_probes(&self) {
-        let cpus = self.committed.keys().copied().collect::<Vec<_>>();
+        let cpus = self.cpus.clone();
         self.retired_instruction_probes
             .lock()
             .expect("retired instruction probe recorder lock")

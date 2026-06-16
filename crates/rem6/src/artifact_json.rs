@@ -3,11 +3,12 @@ use super::formatting::{
 };
 use super::{
     Rem6CoreSummary, Rem6DataAccessProbeSummary, Rem6DramSummary, Rem6ExecutionStop,
-    Rem6ExecutionSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary, Rem6LoadBlobSummary,
-    Rem6MemoryDump, Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary,
-    Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
-    Rem6ParallelReadyPartitionSummary, Rem6RiscvGuestWriteSummary, Rem6RiscvUnknownSyscallSummary,
-    Rem6RunArtifact, Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary, RequestedIsa,
+    Rem6ExecutionSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary, Rem6InstructionProbeSummary,
+    Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
+    Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary,
+    Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6RiscvGuestWriteSummary,
+    Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact, Rem6TraceReplayArtifact,
+    Rem6TraceReplayExecutionSummary, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -687,7 +688,7 @@ impl Rem6ExecutionSummary {
             | Rem6ExecutionStop::TickLimit { .. } => max_instructions,
         };
         let common = format!(
-            "\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{},\"instruction_cache_runs\":{},\"instruction_cache_msi_runs\":{},\"instruction_cache_mesi_runs\":{},\"instruction_cache_moesi_runs\":{},\"instruction_cache_chi_runs\":{},\"instruction_cache_cpu_responses\":{},\"instruction_cache_directory_decisions\":{},\"instruction_cache_dram_accesses\":{},\"instruction_cache_prefetch_identified\":{},\"instruction_cache_prefetch_issued\":{},\"instruction_cache_prefetch_queue_enqueued\":{},\"instruction_cache_prefetch_queue_issued\":{},\"instruction_cache_prefetch_queue_dropped\":{},\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_cache_prefetch_identified\":{},\"data_cache_prefetch_issued\":{},\"data_cache_prefetch_queue_enqueued\":{},\"data_cache_prefetch_queue_issued\":{},\"data_cache_prefetch_queue_dropped\":{},\"data_access_probes\":{}",
+            "\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{},\"instruction_probes\":{},\"instruction_cache_runs\":{},\"instruction_cache_msi_runs\":{},\"instruction_cache_mesi_runs\":{},\"instruction_cache_moesi_runs\":{},\"instruction_cache_chi_runs\":{},\"instruction_cache_cpu_responses\":{},\"instruction_cache_directory_decisions\":{},\"instruction_cache_dram_accesses\":{},\"instruction_cache_prefetch_identified\":{},\"instruction_cache_prefetch_issued\":{},\"instruction_cache_prefetch_queue_enqueued\":{},\"instruction_cache_prefetch_queue_issued\":{},\"instruction_cache_prefetch_queue_dropped\":{},\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_cache_prefetch_identified\":{},\"data_cache_prefetch_issued\":{},\"data_cache_prefetch_queue_enqueued\":{},\"data_cache_prefetch_queue_issued\":{},\"data_cache_prefetch_queue_dropped\":{},\"data_access_probes\":{}",
             max_tick,
             optional_count_json(instruction_limit),
             memory_route_delay,
@@ -696,6 +697,7 @@ impl Rem6ExecutionSummary {
             self.final_tick,
             self.cores.len(),
             self.committed_instructions,
+            self.instruction_probes.to_json(),
             self.instruction_cache.runs,
             self.instruction_cache.msi_runs,
             self.instruction_cache.mesi_runs,
@@ -889,6 +891,19 @@ impl Rem6RiscvUnknownSyscallSummary {
         format!(
             "{{\"pc\":\"0x{:x}\",\"number\":{},\"tick\":{},\"arguments\":[{}]}}",
             self.pc, self.number, self.tick, arguments
+        )
+    }
+}
+
+impl Rem6InstructionProbeSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"event_count\":{},\"retired_instruction_events\":{},\"tracked_instructions\":{},\"pc_sample_events\":{},\"pc_target_counters\":{}}}",
+            self.event_count,
+            self.retired_instruction_events,
+            self.tracked_instructions,
+            self.pc_sample_events,
+            self.pc_target_counters,
         )
     }
 }

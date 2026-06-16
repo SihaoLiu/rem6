@@ -209,6 +209,41 @@ pub(super) fn run_stats_output(
         )?;
         increment_stat(
             &mut stats,
+            "sim.instructions.probes.events",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.instruction_probes.event_count,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.instructions.probes.retired_events",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.instruction_probes.retired_instruction_events,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.instructions.probes.tracked_insts",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.instruction_probes.tracked_instructions,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.instructions.probes.pc_sample_events",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.instruction_probes.pc_sample_events,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.instructions.probes.pc_target_counters",
+            "Count",
+            StatResetPolicy::Constant,
+            execution.instruction_probes.pc_target_counters,
+        )?;
+        increment_stat(
+            &mut stats,
             "sim.final_tick",
             "Tick",
             StatResetPolicy::Monotonic,
