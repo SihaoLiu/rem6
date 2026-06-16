@@ -268,39 +268,43 @@ pub(crate) fn decode_op_32(raw: u32) -> Result<RiscvInstruction, RiscvError> {
 }
 
 pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    match funct3(raw) {
-        0x0 if vector_funct6(raw) == 0 && vector_unmasked(raw) => {
-            Ok(RiscvInstruction::VectorAddVv {
-                vd: vector_register(raw, 7),
-                vs1: vector_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            })
-        }
-        0x3 if vector_funct6(raw) == 0 && vector_unmasked(raw) => {
-            Ok(RiscvInstruction::VectorAddVi {
-                vd: vector_register(raw, 7),
-                vs2: vector_register(raw, 20),
-                imm: vector_signed_imm5(raw),
-            })
-        }
-        0x4 if vector_funct6(raw) == 0 && vector_unmasked(raw) => {
-            Ok(RiscvInstruction::VectorAddVx {
-                vd: vector_register(raw, 7),
-                vs2: vector_register(raw, 20),
-                rs1: rs1(raw),
-            })
-        }
-        0x7 if (raw & 0x8000_0000) == 0 => Ok(RiscvInstruction::VectorSetVli {
+    match (funct3(raw), vector_funct6(raw), vector_unmasked(raw)) {
+        (0x0, 0, true) => Ok(RiscvInstruction::VectorAddVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x0, 0b000010, true) => Ok(RiscvInstruction::VectorSubVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x3, 0, true) => Ok(RiscvInstruction::VectorAddVi {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            imm: vector_signed_imm5(raw),
+        }),
+        (0x4, 0, true) => Ok(RiscvInstruction::VectorAddVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b000010, true) => Ok(RiscvInstruction::VectorSubVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x7, _, _) if (raw & 0x8000_0000) == 0 => Ok(RiscvInstruction::VectorSetVli {
             rd: rd(raw),
             rs1: rs1(raw),
             vtype: u64::from((raw >> 20) & 0x7ff),
         }),
-        0x7 if (raw & 0xfe00_0000) == 0x8000_0000 => Ok(RiscvInstruction::VectorSetVl {
+        (0x7, _, _) if (raw & 0xfe00_0000) == 0x8000_0000 => Ok(RiscvInstruction::VectorSetVl {
             rd: rd(raw),
             rs1: rs1(raw),
             rs2: rs2(raw),
         }),
-        0x7 if (raw & 0xc000_0000) == 0xc000_0000 => Ok(RiscvInstruction::VectorSetIvli {
+        (0x7, _, _) if (raw & 0xc000_0000) == 0xc000_0000 => Ok(RiscvInstruction::VectorSetIvli {
             rd: rd(raw),
             avl: ((raw >> 15) & 0x1f) as u8,
             vtype: u64::from((raw >> 20) & 0x3ff),

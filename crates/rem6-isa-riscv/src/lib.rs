@@ -472,6 +472,28 @@ impl RiscvHartState {
                     ));
                 }
             }
+            RiscvInstruction::VectorSubVv { vd, vs1, vs2 } => {
+                if !vector_execute::execute_vector_sub_vv(self, vd, vs1, vs2) {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                }
+            }
+            RiscvInstruction::VectorSubVx { vd, vs2, rs1 } => {
+                if !vector_execute::execute_vector_sub_vx(self, vd, vs2, self.read(rs1)) {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                }
+            }
             RiscvInstruction::Load {
                 rd,
                 rs1,

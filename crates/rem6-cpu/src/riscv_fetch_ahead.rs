@@ -235,6 +235,8 @@ fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -
             | RiscvInstruction::VectorAddVv { .. }
             | RiscvInstruction::VectorAddVx { .. }
             | RiscvInstruction::VectorAddVi { .. }
+            | RiscvInstruction::VectorSubVv { .. }
+            | RiscvInstruction::VectorSubVx { .. }
     )
 }
 

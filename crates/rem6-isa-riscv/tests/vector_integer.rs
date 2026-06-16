@@ -37,6 +37,25 @@ fn vadd_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
         | 0x57
 }
 
+fn vsub_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    (0b000010 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(vs1) << 15)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vsub_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    (0b000010 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (0b100 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
 fn lanes_u32(lanes: [u32; 4]) -> [u8; 16] {
     let mut bytes = [0; 16];
     for (index, lane) in lanes.into_iter().enumerate() {
@@ -92,6 +111,28 @@ fn decoder_accepts_unmasked_vadd_vx_and_vi() {
             vd: vreg(4),
             vs2: vreg(5),
             imm: -1,
+        }
+    );
+}
+
+#[test]
+fn decoder_accepts_unmasked_vsub_vv_and_vx() {
+    assert_eq!(vsub_vv_type(7, 8, 6), 0x0a74_0357);
+    assert_eq!(vsub_vx_type(5, 6, 4), 0x0a53_4257);
+    assert_eq!(
+        RiscvInstruction::decode(vsub_vv_type(7, 8, 6)).unwrap(),
+        RiscvInstruction::VectorSubVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vsub_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorSubVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
         }
     );
 }
@@ -196,6 +237,70 @@ fn hart_executes_vadd_vi_with_signed_immediate() {
 }
 
 #[test]
+fn hart_executes_vsub_vv_for_active_u32_lanes() {
+    let mut hart = RiscvHartState::new(0x8070);
+    hart.set_vector_config(RiscvVectorConfig::new(3, 0xd0));
+    hart.write_vector(vreg(7), lanes_u32([20, 0, 5, 40]));
+    hart.write_vector(vreg(8), lanes_u32([3, 1, 7, 400]));
+    hart.write_vector(
+        vreg(6),
+        lanes_u32([0xaaaa_0000, 0xaaaa_0001, 0xaaaa_0002, 0xdddd_dddd]),
+    );
+
+    let record = hart
+        .execute(RiscvInstruction::decode(vsub_vv_type(7, 8, 6)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        hart.read_vector(vreg(6)),
+        lanes_u32([17, u32::MAX, u32::MAX - 1, 0xdddd_dddd])
+    );
+    assert_eq!(
+        record.instruction(),
+        RiscvInstruction::VectorSubVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+}
+
+#[test]
+fn hart_executes_vsub_vx_for_active_u16_lanes() {
+    let mut hart = RiscvHartState::new(0x8080);
+    hart.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    hart.write(reg(6), 3);
+    hart.write_vector(vreg(5), bytes_with_u16([10, 0, 3, 1, 50, 60, 70, 80]));
+    hart.write_vector(vreg(4), bytes_with_u16([0xaaaa; 8]));
+
+    let record = hart
+        .execute(RiscvInstruction::decode(vsub_vx_type(5, 6, 4)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        hart.read_vector(vreg(4)),
+        bytes_with_u16([
+            7,
+            u16::MAX - 2,
+            0,
+            u16::MAX - 1,
+            0xaaaa,
+            0xaaaa,
+            0xaaaa,
+            0xaaaa
+        ])
+    );
+    assert_eq!(
+        record.instruction(),
+        RiscvInstruction::VectorSubVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+}
+
+#[test]
 fn hart_executes_vadd_vv_for_configured_element_widths() {
     let mut e8 = RiscvHartState::new(0x8100);
     e8.set_vector_config(RiscvVectorConfig::new(5, 0xc0));
@@ -273,6 +378,36 @@ fn hart_executes_vadd_vv_across_lmul2_register_group() {
     assert_eq!(
         hart.read_vector(vreg(7)),
         lanes_u32([55, 66, 0xbbbb_0002, 0xbbbb_0003])
+    );
+}
+
+#[test]
+fn hart_executes_vsub_vv_across_lmul2_register_group() {
+    let mut hart = RiscvHartState::new(0x8450);
+    hart.set_vector_config(RiscvVectorConfig::new(6, 0xd1));
+    hart.write_vector(vreg(2), lanes_u32([20, 0, 3, 4]));
+    hart.write_vector(vreg(3), lanes_u32([5, 6, 7, 8]));
+    hart.write_vector(vreg(4), lanes_u32([10, 1, 30, 40]));
+    hart.write_vector(vreg(5), lanes_u32([50, 10, 9, 80]));
+    hart.write_vector(
+        vreg(6),
+        lanes_u32([0xaaaa_0000, 0xaaaa_0001, 0xaaaa_0002, 0xaaaa_0003]),
+    );
+    hart.write_vector(
+        vreg(7),
+        lanes_u32([0xbbbb_0000, 0xbbbb_0001, 0xbbbb_0002, 0xbbbb_0003]),
+    );
+
+    hart.execute(RiscvInstruction::decode(vsub_vv_type(2, 4, 6)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        hart.read_vector(vreg(6)),
+        lanes_u32([10, u32::MAX, u32::MAX - 26, u32::MAX - 35])
+    );
+    assert_eq!(
+        hart.read_vector(vreg(7)),
+        lanes_u32([u32::MAX - 44, u32::MAX - 3, 0xbbbb_0002, 0xbbbb_0003])
     );
 }
 
