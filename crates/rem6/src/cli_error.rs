@@ -408,14 +408,14 @@ impl fmt::Display for Rem6CliError {
             Self::DataCacheProtocolLargeMulticoreRequiresMsi { protocol, cores } => {
                 write!(
                     formatter,
-                    "--data-cache-protocol with --cores > 2 requires msi, got {} with {cores} cores",
+                    "--data-cache-protocol with --cores > 3 requires msi, got {} with {cores} cores",
                     riscv_data_cache_protocol_name(*protocol)
                 )
             }
             Self::InstructionCacheProtocolLargeMulticoreRequiresMsi { protocol, cores } => {
                 write!(
                     formatter,
-                    "--instruction-cache-protocol with --cores > 2 requires msi, got {} with {cores} cores",
+                    "--instruction-cache-protocol with --cores > 3 requires msi, got {} with {cores} cores",
                     riscv_data_cache_protocol_name(*protocol)
                 )
             }

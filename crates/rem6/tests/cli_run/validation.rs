@@ -253,7 +253,7 @@ fn rem6_run_rejects_instruction_cache_protocol_for_non_riscv_isa() {
 }
 
 #[test]
-fn rem6_run_rejects_non_msi_instruction_cache_protocol_for_more_than_two_cores() {
+fn rem6_run_rejects_non_msi_instruction_cache_protocol_for_more_than_three_cores() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("instruction-cache-large-multicore-non-msi", &elf);
 
@@ -271,7 +271,7 @@ fn rem6_run_rejects_non_msi_instruction_cache_protocol_for_more_than_two_cores()
                 "json",
                 "--execute",
                 "--cores",
-                "3",
+                "4",
                 "--instruction-cache-protocol",
                 protocol,
             ])
@@ -281,13 +281,13 @@ fn rem6_run_rejects_non_msi_instruction_cache_protocol_for_more_than_two_cores()
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
         let stderr = String::from_utf8(output.stderr).unwrap();
-        assert!(stderr.contains("--instruction-cache-protocol with --cores > 2 requires msi"));
+        assert!(stderr.contains("--instruction-cache-protocol with --cores > 3 requires msi"));
         assert!(stderr.contains(protocol));
     }
 }
 
 #[test]
-fn rem6_run_rejects_non_msi_data_cache_protocol_for_more_than_two_cores() {
+fn rem6_run_rejects_non_msi_data_cache_protocol_for_more_than_three_cores() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("data-cache-large-multicore-non-msi", &elf);
 
@@ -305,7 +305,7 @@ fn rem6_run_rejects_non_msi_data_cache_protocol_for_more_than_two_cores() {
                 "json",
                 "--execute",
                 "--cores",
-                "3",
+                "4",
                 "--data-cache-protocol",
                 protocol,
             ])
@@ -315,7 +315,7 @@ fn rem6_run_rejects_non_msi_data_cache_protocol_for_more_than_two_cores() {
         assert!(!output.status.success());
         assert!(output.stdout.is_empty());
         let stderr = String::from_utf8(output.stderr).unwrap();
-        assert!(stderr.contains("--data-cache-protocol with --cores > 2 requires msi"));
+        assert!(stderr.contains("--data-cache-protocol with --cores > 3 requires msi"));
         assert!(stderr.contains(protocol));
     }
 }

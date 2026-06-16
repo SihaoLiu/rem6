@@ -4,30 +4,72 @@ use crate::support::*;
 
 #[test]
 fn rem6_run_routes_two_cores_through_shared_msi_data_cache() {
-    assert_two_core_data_cache("msi", "data_cache_msi_runs", "sim.data_cache.msi.runs");
+    assert_multicore_data_cache("msi", "data_cache_msi_runs", "sim.data_cache.msi.runs", 2);
 }
 
 #[test]
 fn rem6_run_routes_two_cores_through_shared_mesi_data_cache() {
-    assert_two_core_data_cache("mesi", "data_cache_mesi_runs", "sim.data_cache.mesi.runs");
+    assert_multicore_data_cache(
+        "mesi",
+        "data_cache_mesi_runs",
+        "sim.data_cache.mesi.runs",
+        2,
+    );
 }
 
 #[test]
 fn rem6_run_routes_two_cores_through_shared_moesi_data_cache() {
-    assert_two_core_data_cache(
+    assert_multicore_data_cache(
         "moesi",
         "data_cache_moesi_runs",
         "sim.data_cache.moesi.runs",
+        2,
     );
 }
 
 #[test]
 fn rem6_run_routes_two_cores_through_shared_chi_data_cache() {
-    assert_two_core_data_cache("chi", "data_cache_chi_runs", "sim.data_cache.chi.runs");
+    assert_multicore_data_cache("chi", "data_cache_chi_runs", "sim.data_cache.chi.runs", 2);
 }
 
-fn assert_two_core_data_cache(protocol: &str, summary_field: &str, protocol_stat: &str) {
+#[test]
+fn rem6_run_routes_three_cores_through_shared_msi_data_cache() {
+    assert_multicore_data_cache("msi", "data_cache_msi_runs", "sim.data_cache.msi.runs", 3);
+}
+
+#[test]
+fn rem6_run_routes_three_cores_through_shared_mesi_data_cache() {
+    assert_multicore_data_cache(
+        "mesi",
+        "data_cache_mesi_runs",
+        "sim.data_cache.mesi.runs",
+        3,
+    );
+}
+
+#[test]
+fn rem6_run_routes_three_cores_through_shared_moesi_data_cache() {
+    assert_multicore_data_cache(
+        "moesi",
+        "data_cache_moesi_runs",
+        "sim.data_cache.moesi.runs",
+        3,
+    );
+}
+
+#[test]
+fn rem6_run_routes_three_cores_through_shared_chi_data_cache() {
+    assert_multicore_data_cache("chi", "data_cache_chi_runs", "sim.data_cache.chi.runs", 3);
+}
+
+fn assert_multicore_data_cache(
+    protocol: &str,
+    summary_field: &str,
+    protocol_stat: &str,
+    cores: u32,
+) {
     const DATA_OFFSET: usize = 88;
+    let expected_runs = 1 + 2 * u64::from(cores - 1);
 
     let mut program = riscv64_program(&[
         csr_read(0xf14, 5),                                 // csrr x5, mhartid
@@ -55,7 +97,7 @@ fn assert_two_core_data_cache(protocol: &str, summary_field: &str, protocol_stat
     program.resize(DATA_OFFSET, 0);
     program.extend_from_slice(&3u64.to_le_bytes());
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
-    let path = temp_binary(&format!("multicore-{protocol}-data-cache"), &elf);
+    let path = temp_binary(&format!("multicore-{cores}-{protocol}-data-cache"), &elf);
 
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
@@ -70,7 +112,7 @@ fn assert_two_core_data_cache(protocol: &str, summary_field: &str, protocol_stat
             "json",
             "--execute",
             "--cores",
-            "2",
+            &cores.to_string(),
             "--data-cache-protocol",
             protocol,
         ])
@@ -84,21 +126,30 @@ fn assert_two_core_data_cache(protocol: &str, summary_field: &str, protocol_stat
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"status\":\"executed_until_trap\""));
-    assert!(stdout.contains("\"cores\":2"));
+    assert!(stdout.contains(&format!("\"cores\":{cores}")));
     assert!(stdout.contains("\"cpu\":0"));
     assert!(stdout.contains("\"cpu\":1"));
+    if cores == 3 {
+        assert!(stdout.contains("\"cpu\":2"));
+    }
     assert!(stdout.contains("\"x6\":\"0x3\""));
     assert!(stdout.contains("\"x7\":\"0x7\""));
-    assert!(stdout.contains("\"data_cache_runs\":3"));
-    assert!(stdout.contains(&format!("\"{summary_field}\":3")));
-    assert!(stdout.contains("\"data_cache_cpu_responses\":3"));
-    assert_stat(&stdout, "sim.data_cache.runs", "Count", 3, "monotonic");
-    assert_stat(&stdout, protocol_stat, "Count", 3, "monotonic");
+    assert!(stdout.contains(&format!("\"data_cache_runs\":{expected_runs}")));
+    assert!(stdout.contains(&format!("\"{summary_field}\":{expected_runs}")));
+    assert!(stdout.contains(&format!("\"data_cache_cpu_responses\":{expected_runs}")));
+    assert_stat(
+        &stdout,
+        "sim.data_cache.runs",
+        "Count",
+        expected_runs,
+        "monotonic",
+    );
+    assert_stat(&stdout, protocol_stat, "Count", expected_runs, "monotonic");
     assert_stat(
         &stdout,
         "sim.data_cache.cpu_responses",
         "Count",
-        3,
+        expected_runs,
         "monotonic",
     );
     assert_stat(&stdout, "sim.cpu0.data.loads", "Count", 0, "monotonic");
@@ -107,45 +158,102 @@ fn assert_two_core_data_cache(protocol: &str, summary_field: &str, protocol_stat
     assert_stat(&stdout, "sim.cpu1.data.stores", "Count", 0, "monotonic");
     assert_transport_stats(&stdout, "sim.memory.data.route1.source.cpu0.dmem", 1, 2, 2);
     assert_transport_stats(&stdout, "sim.memory.data.route3.source.cpu1.dmem", 2, 4, 2);
+    if cores == 3 {
+        assert_stat(&stdout, "sim.cpu2.data.loads", "Count", 2, "monotonic");
+        assert_stat(&stdout, "sim.cpu2.data.stores", "Count", 0, "monotonic");
+        assert_transport_stats(&stdout, "sim.memory.data.route5.source.cpu2.dmem", 2, 4, 2);
+    }
 }
 
 #[test]
 fn rem6_run_routes_two_cores_through_msi_instruction_cache() {
-    assert_two_core_instruction_cache(
+    assert_multicore_instruction_cache(
         "msi",
         "instruction_cache_msi_runs",
         "sim.instruction_cache.msi.runs",
+        2,
     );
 }
 
 #[test]
 fn rem6_run_routes_two_cores_through_mesi_instruction_cache() {
-    assert_two_core_instruction_cache(
+    assert_multicore_instruction_cache(
         "mesi",
         "instruction_cache_mesi_runs",
         "sim.instruction_cache.mesi.runs",
+        2,
     );
 }
 
 #[test]
 fn rem6_run_routes_two_cores_through_moesi_instruction_cache() {
-    assert_two_core_instruction_cache(
+    assert_multicore_instruction_cache(
         "moesi",
         "instruction_cache_moesi_runs",
         "sim.instruction_cache.moesi.runs",
+        2,
     );
 }
 
 #[test]
 fn rem6_run_routes_two_cores_through_chi_instruction_cache() {
-    assert_two_core_instruction_cache(
+    assert_multicore_instruction_cache(
         "chi",
         "instruction_cache_chi_runs",
         "sim.instruction_cache.chi.runs",
+        2,
     );
 }
 
-fn assert_two_core_instruction_cache(protocol: &str, summary_field: &str, protocol_stat: &str) {
+#[test]
+fn rem6_run_routes_three_cores_through_msi_instruction_cache() {
+    assert_multicore_instruction_cache(
+        "msi",
+        "instruction_cache_msi_runs",
+        "sim.instruction_cache.msi.runs",
+        3,
+    );
+}
+
+#[test]
+fn rem6_run_routes_three_cores_through_mesi_instruction_cache() {
+    assert_multicore_instruction_cache(
+        "mesi",
+        "instruction_cache_mesi_runs",
+        "sim.instruction_cache.mesi.runs",
+        3,
+    );
+}
+
+#[test]
+fn rem6_run_routes_three_cores_through_moesi_instruction_cache() {
+    assert_multicore_instruction_cache(
+        "moesi",
+        "instruction_cache_moesi_runs",
+        "sim.instruction_cache.moesi.runs",
+        3,
+    );
+}
+
+#[test]
+fn rem6_run_routes_three_cores_through_chi_instruction_cache() {
+    assert_multicore_instruction_cache(
+        "chi",
+        "instruction_cache_chi_runs",
+        "sim.instruction_cache.chi.runs",
+        3,
+    );
+}
+
+fn assert_multicore_instruction_cache(
+    protocol: &str,
+    summary_field: &str,
+    protocol_stat: &str,
+    cores: u32,
+) {
+    let expected_runs = 6 * u64::from(cores);
+    let expected_directory_decisions = 2 * u64::from(cores);
+
     let mut program = riscv64_program(&[
         u_type(0, 2, 0x17),          // auipc x2, 0
         i_type(24, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
@@ -158,7 +266,10 @@ fn assert_two_core_instruction_cache(protocol: &str, summary_field: &str, protoc
     program.extend_from_slice(&0u64.to_le_bytes());
     program.extend_from_slice(&[0; 16]);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
-    let path = temp_binary(&format!("multicore-{protocol}-instruction-cache"), &elf);
+    let path = temp_binary(
+        &format!("multicore-{cores}-{protocol}-instruction-cache"),
+        &elf,
+    );
 
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
@@ -173,7 +284,7 @@ fn assert_two_core_instruction_cache(protocol: &str, summary_field: &str, protoc
             "json",
             "--execute",
             "--cores",
-            "2",
+            &cores.to_string(),
             "--instruction-cache-protocol",
             protocol,
         ])
@@ -187,34 +298,41 @@ fn assert_two_core_instruction_cache(protocol: &str, summary_field: &str, protoc
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"status\":\"executed_until_trap\""));
-    assert!(stdout.contains("\"cores\":2"));
+    assert!(stdout.contains(&format!("\"cores\":{cores}")));
     assert!(stdout.contains("\"cpu\":0"));
     assert!(stdout.contains("\"cpu\":1"));
+    if cores == 3 {
+        assert!(stdout.contains("\"cpu\":2"));
+    }
     assert!(stdout.contains("\"data_cache_runs\":0"));
-    assert!(stdout.contains("\"instruction_cache_runs\":12"));
-    assert!(stdout.contains(&format!("\"{summary_field}\":12")));
-    assert!(stdout.contains("\"instruction_cache_cpu_responses\":12"));
-    assert!(stdout.contains("\"instruction_cache_directory_decisions\":4"));
+    assert!(stdout.contains(&format!("\"instruction_cache_runs\":{expected_runs}")));
+    assert!(stdout.contains(&format!("\"{summary_field}\":{expected_runs}")));
+    assert!(stdout.contains(&format!(
+        "\"instruction_cache_cpu_responses\":{expected_runs}"
+    )));
+    assert!(stdout.contains(&format!(
+        "\"instruction_cache_directory_decisions\":{expected_directory_decisions}"
+    )));
     assert_stat(
         &stdout,
         "sim.instruction_cache.runs",
         "Count",
-        12,
+        expected_runs,
         "monotonic",
     );
-    assert_stat(&stdout, protocol_stat, "Count", 12, "monotonic");
+    assert_stat(&stdout, protocol_stat, "Count", expected_runs, "monotonic");
     assert_stat(
         &stdout,
         "sim.instruction_cache.cpu_responses",
         "Count",
-        12,
+        expected_runs,
         "monotonic",
     );
     assert_stat(
         &stdout,
         "sim.instruction_cache.directory_decisions",
         "Count",
-        4,
+        expected_directory_decisions,
         "monotonic",
     );
     assert_transport_stats(
@@ -231,4 +349,13 @@ fn assert_two_core_instruction_cache(protocol: &str, summary_field: &str, protoc
         12,
         2,
     );
+    if cores == 3 {
+        assert_transport_stats(
+            &stdout,
+            "sim.memory.fetch.route4.source.cpu2.ifetch",
+            6,
+            12,
+            2,
+        );
+    }
 }
