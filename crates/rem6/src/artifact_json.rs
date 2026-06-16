@@ -687,7 +687,7 @@ impl Rem6ExecutionSummary {
             | Rem6ExecutionStop::TickLimit { .. } => max_instructions,
         };
         let common = format!(
-            "\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{},\"instruction_cache_runs\":{},\"instruction_cache_msi_runs\":{},\"instruction_cache_mesi_runs\":{},\"instruction_cache_moesi_runs\":{},\"instruction_cache_chi_runs\":{},\"instruction_cache_cpu_responses\":{},\"instruction_cache_directory_decisions\":{},\"instruction_cache_dram_accesses\":{},\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_access_probes\":{}",
+            "\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{},\"instruction_cache_runs\":{},\"instruction_cache_msi_runs\":{},\"instruction_cache_mesi_runs\":{},\"instruction_cache_moesi_runs\":{},\"instruction_cache_chi_runs\":{},\"instruction_cache_cpu_responses\":{},\"instruction_cache_directory_decisions\":{},\"instruction_cache_dram_accesses\":{},\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_cache_prefetch_identified\":{},\"data_cache_prefetch_issued\":{},\"data_cache_prefetch_queue_enqueued\":{},\"data_cache_prefetch_queue_issued\":{},\"data_cache_prefetch_queue_dropped\":{},\"data_access_probes\":{}",
             max_tick,
             optional_count_json(instruction_limit),
             memory_route_delay,
@@ -712,6 +712,11 @@ impl Rem6ExecutionSummary {
             self.data_cache.cpu_responses,
             self.data_cache.directory_decisions,
             self.data_cache.dram_accesses,
+            self.data_cache.prefetch_identified,
+            self.data_cache.prefetch_issued,
+            self.data_cache.prefetch_queue_enqueued,
+            self.data_cache.prefetch_queue_issued,
+            self.data_cache.prefetch_queue_dropped,
             self.data_access_probes.to_json(),
         );
         match self.stop {

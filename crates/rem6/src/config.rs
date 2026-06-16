@@ -137,6 +137,28 @@ impl CliDramMemoryProfile {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CliDataCachePrefetcher {
+    TaggedNextLine,
+}
+
+impl CliDataCachePrefetcher {
+    pub fn parse(value: &str) -> Result<Self, Rem6CliError> {
+        match value {
+            "tagged-next-line" => Ok(Self::TaggedNextLine),
+            _ => Err(Rem6CliError::InvalidRunDataCachePrefetcher {
+                value: value.to_string(),
+            }),
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TaggedNextLine => "tagged-next-line",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6RunConfig {
     isa: RequestedIsa,
@@ -160,6 +182,7 @@ pub struct Rem6RunConfig {
     dram_memory: bool,
     dram_memory_profile: CliDramMemoryProfile,
     data_cache_protocol: Option<RiscvDataCacheProtocol>,
+    data_cache_prefetcher: Option<CliDataCachePrefetcher>,
     instruction_cache_protocol: Option<RiscvDataCacheProtocol>,
     gdb_listen: Option<String>,
     cores: usize,
@@ -241,6 +264,7 @@ struct Rem6RunFileConfig {
     dram_memory: Option<bool>,
     dram_memory_profile: Option<String>,
     data_cache_protocol: Option<String>,
+    data_cache_prefetcher: Option<String>,
     instruction_cache_protocol: Option<String>,
     cores: Option<usize>,
     parallel_workers: Option<usize>,
@@ -437,6 +461,11 @@ impl Rem6RunConfig {
                     }
                 })
             })
+            .transpose()?;
+        let mut data_cache_prefetcher = file_config
+            .data_cache_prefetcher
+            .as_deref()
+            .map(CliDataCachePrefetcher::parse)
             .transpose()?;
         let mut instruction_cache_protocol = file_config
             .instruction_cache_protocol
@@ -641,6 +670,12 @@ impl Rem6RunConfig {
                             }
                         })?);
                 }
+                "--data-cache-prefetcher" => {
+                    data_cache_prefetcher = Some(CliDataCachePrefetcher::parse(&required_value(
+                        &flag,
+                        args.next(),
+                    )?)?);
+                }
                 "--instruction-cache-protocol" => {
                     let value = required_value(&flag, args.next())?;
                     instruction_cache_protocol =
@@ -810,6 +845,7 @@ impl Rem6RunConfig {
             dram_memory,
             dram_memory_profile,
             data_cache_protocol,
+            data_cache_prefetcher,
             instruction_cache_protocol,
             gdb_listen,
             cores,
@@ -905,6 +941,10 @@ impl Rem6RunConfig {
 
     pub const fn data_cache_protocol(&self) -> Option<RiscvDataCacheProtocol> {
         self.data_cache_protocol
+    }
+
+    pub const fn data_cache_prefetcher(&self) -> Option<CliDataCachePrefetcher> {
+        self.data_cache_prefetcher
     }
 
     pub const fn instruction_cache_protocol(&self) -> Option<RiscvDataCacheProtocol> {
@@ -1342,6 +1382,7 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--stats-format",
             "--dram-memory-profile",
             "--data-cache-protocol",
+            "--data-cache-prefetcher",
             "--instruction-cache-protocol",
             "--cores",
             "--parallel-workers",

@@ -1,6 +1,10 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
+use rem6_cache::{
+    QueuedPrefetchConfig, QueuedPrefetchIssue, QueuedPrefetcher, TaggedPrefetchAccess,
+    TaggedPrefetcher, TaggedPrefetcherConfig,
+};
 use rem6_coherence::{
     ChiCpuResponseRecord, ChiDirectoryLineHarness, CpuResponseRecord, LineBackingStore,
     MesiCpuResponseRecord, MesiDirectoryLineHarness, MoesiCpuResponseRecord,
@@ -9,8 +13,8 @@ use rem6_coherence::{
 };
 use rem6_kernel::{RecordedConservativeRunSummary, WaitForGraph};
 use rem6_memory::{
-    Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId, MemoryResponse,
-    ResponseStatus,
+    Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId,
+    MemoryResponse, ResponseStatus,
 };
 use rem6_system::{
     RiscvDataCacheProtocol, RiscvDataCacheRunRecord, RiscvGuestMemoryMapRequest,
@@ -18,13 +22,17 @@ use rem6_system::{
 };
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
+use crate::config::CliDataCachePrefetcher;
 use crate::runtime_memory::{cli_memory_response, CliMemoryRuntime};
 use crate::{execute_error, Rem6CliError};
+
+const PREFETCH_REQUEST_SEQUENCE_BASE: u64 = 1 << 63;
 
 #[derive(Clone)]
 pub(super) struct CliDataCacheRuntime {
     layout: CacheLineLayout,
     harness: Arc<Mutex<CliDataCacheHarness>>,
+    prefetch: Option<Arc<Mutex<CliDataCachePrefetchRuntime>>>,
     records: Arc<Mutex<Vec<RiscvDataCacheRunRecord>>>,
     error: Arc<Mutex<Option<String>>>,
 }
@@ -34,6 +42,12 @@ enum CliDataCacheHarness {
     Mesi(CliMesiLineHarnesses),
     Moesi(CliMoesiLineHarnesses),
     Chi(CliChiLineHarnesses),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CliDataCacheResponseMode {
+    External,
+    InternalPrefetch,
 }
 
 struct CliMesiLineHarnesses {
@@ -51,6 +65,21 @@ struct CliChiLineHarnesses {
     lines: BTreeMap<Address, ChiDirectoryLineHarness>,
 }
 
+struct CliDataCachePrefetchRuntime {
+    tagged: TaggedPrefetcher,
+    queue: QueuedPrefetcher,
+    next_sequence: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct CliDataCachePrefetchSummary {
+    pub(crate) identified: u64,
+    pub(crate) issued: u64,
+    pub(crate) queue_enqueued: u64,
+    pub(crate) queue_issued: u64,
+    pub(crate) queue_dropped: u64,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct CliDataCacheSummary {
     pub(crate) runs: u64,
@@ -61,6 +90,11 @@ pub(crate) struct CliDataCacheSummary {
     pub(crate) cpu_responses: u64,
     pub(crate) directory_decisions: u64,
     pub(crate) dram_accesses: u64,
+    pub(crate) prefetch_identified: u64,
+    pub(crate) prefetch_issued: u64,
+    pub(crate) prefetch_queue_enqueued: u64,
+    pub(crate) prefetch_queue_issued: u64,
+    pub(crate) prefetch_queue_dropped: u64,
 }
 
 impl CliDataCacheSummary {
@@ -99,7 +133,24 @@ impl CliDataCacheSummary {
                 .iter()
                 .map(|record| record.summary().dram_access_count() as u64)
                 .sum(),
+            prefetch_identified: 0,
+            prefetch_issued: 0,
+            prefetch_queue_enqueued: 0,
+            prefetch_queue_issued: 0,
+            prefetch_queue_dropped: 0,
         }
+    }
+
+    pub(crate) const fn with_prefetch_summary(
+        mut self,
+        summary: CliDataCachePrefetchSummary,
+    ) -> Self {
+        self.prefetch_identified = summary.identified;
+        self.prefetch_issued = summary.issued;
+        self.prefetch_queue_enqueued = summary.queue_enqueued;
+        self.prefetch_queue_issued = summary.queue_issued;
+        self.prefetch_queue_dropped = summary.queue_dropped;
+        self
     }
 }
 
@@ -121,19 +172,28 @@ pub(super) fn cli_cache_runtime(
     line_layout: CacheLineLayout,
     core_count: u32,
 ) -> Result<Option<CliDataCacheRuntime>, Rem6CliError> {
+    cli_cache_runtime_with_prefetcher(protocol, line_layout, core_count, None)
+}
+
+pub(super) fn cli_cache_runtime_with_prefetcher(
+    protocol: Option<RiscvDataCacheProtocol>,
+    line_layout: CacheLineLayout,
+    core_count: u32,
+    prefetcher: Option<CliDataCachePrefetcher>,
+) -> Result<Option<CliDataCacheRuntime>, Rem6CliError> {
     let agents = || (0..core_count).map(AgentId::new);
     match protocol {
         Some(RiscvDataCacheProtocol::Msi) => {
-            CliDataCacheRuntime::new_msi_bank(line_layout, agents()).map(Some)
+            CliDataCacheRuntime::new_msi_bank(line_layout, agents(), prefetcher).map(Some)
         }
         Some(RiscvDataCacheProtocol::Mesi) => {
-            CliDataCacheRuntime::new_mesi_lines(line_layout, agents()).map(Some)
+            CliDataCacheRuntime::new_mesi_lines(line_layout, agents(), prefetcher).map(Some)
         }
         Some(RiscvDataCacheProtocol::Moesi) => {
-            CliDataCacheRuntime::new_moesi_lines(line_layout, agents()).map(Some)
+            CliDataCacheRuntime::new_moesi_lines(line_layout, agents(), prefetcher).map(Some)
         }
         Some(RiscvDataCacheProtocol::Chi) => {
-            CliDataCacheRuntime::new_chi_lines(line_layout, agents()).map(Some)
+            CliDataCacheRuntime::new_chi_lines(line_layout, agents(), prefetcher).map(Some)
         }
         None => Ok(None),
     }
@@ -206,7 +266,11 @@ fn map_guest_memory_with_data_cache_invalidation(
 }
 
 impl CliDataCacheRuntime {
-    pub(super) fn new_msi_bank<I>(layout: CacheLineLayout, agents: I) -> Result<Self, Rem6CliError>
+    pub(super) fn new_msi_bank<I>(
+        layout: CacheLineLayout,
+        agents: I,
+        prefetcher: Option<CliDataCachePrefetcher>,
+    ) -> Result<Self, Rem6CliError>
     where
         I: IntoIterator<Item = AgentId>,
     {
@@ -215,6 +279,7 @@ impl CliDataCacheRuntime {
             harness: Arc::new(Mutex::new(CliDataCacheHarness::Msi(
                 MsiBankDirectoryHarness::new(layout, agents).map_err(execute_error)?,
             ))),
+            prefetch: cli_prefetch_runtime(layout, prefetcher)?,
             records: Arc::new(Mutex::new(Vec::new())),
             error: Arc::new(Mutex::new(None)),
         })
@@ -223,6 +288,7 @@ impl CliDataCacheRuntime {
     pub(super) fn new_mesi_lines<I>(
         layout: CacheLineLayout,
         agents: I,
+        prefetcher: Option<CliDataCachePrefetcher>,
     ) -> Result<Self, Rem6CliError>
     where
         I: IntoIterator<Item = AgentId>,
@@ -241,6 +307,7 @@ impl CliDataCacheRuntime {
                     lines: BTreeMap::new(),
                 },
             ))),
+            prefetch: cli_prefetch_runtime(layout, prefetcher)?,
             records: Arc::new(Mutex::new(Vec::new())),
             error: Arc::new(Mutex::new(None)),
         })
@@ -249,6 +316,7 @@ impl CliDataCacheRuntime {
     pub(super) fn new_moesi_lines<I>(
         layout: CacheLineLayout,
         agents: I,
+        prefetcher: Option<CliDataCachePrefetcher>,
     ) -> Result<Self, Rem6CliError>
     where
         I: IntoIterator<Item = AgentId>,
@@ -267,12 +335,17 @@ impl CliDataCacheRuntime {
                     lines: BTreeMap::new(),
                 },
             ))),
+            prefetch: cli_prefetch_runtime(layout, prefetcher)?,
             records: Arc::new(Mutex::new(Vec::new())),
             error: Arc::new(Mutex::new(None)),
         })
     }
 
-    pub(super) fn new_chi_lines<I>(layout: CacheLineLayout, agents: I) -> Result<Self, Rem6CliError>
+    pub(super) fn new_chi_lines<I>(
+        layout: CacheLineLayout,
+        agents: I,
+        prefetcher: Option<CliDataCachePrefetcher>,
+    ) -> Result<Self, Rem6CliError>
     where
         I: IntoIterator<Item = AgentId>,
     {
@@ -288,6 +361,7 @@ impl CliDataCacheRuntime {
                 agents,
                 lines: BTreeMap::new(),
             }))),
+            prefetch: cli_prefetch_runtime(layout, prefetcher)?,
             records: Arc::new(Mutex::new(Vec::new())),
             error: Arc::new(Mutex::new(None)),
         })
@@ -312,13 +386,22 @@ impl CliDataCacheRuntime {
         }
         let backing_dram_access_count = self.ensure_backing(memory, request)?;
 
-        Some(
-            self.respond_inner(memory, tick, request, backing_dram_access_count)
-                .unwrap_or_else(|error| {
-                    self.record_error(error);
-                    TargetOutcome::Respond(MemoryResponse::retry(request))
-                }),
-        )
+        let outcome = self
+            .respond_inner(
+                memory,
+                tick,
+                request,
+                backing_dram_access_count,
+                CliDataCacheResponseMode::External,
+            )
+            .unwrap_or_else(|error| {
+                self.record_error(error);
+                TargetOutcome::Respond(MemoryResponse::retry(request))
+            });
+        if let Err(error) = self.issue_prefetches_from_request(memory, tick, request) {
+            self.record_error(error);
+        }
+        Some(outcome)
     }
 
     pub(super) fn records(&self) -> Vec<RiscvDataCacheRunRecord> {
@@ -326,6 +409,18 @@ impl CliDataCacheRuntime {
             .lock()
             .expect("CLI data cache record lock")
             .clone()
+    }
+
+    pub(super) fn prefetch_summary(&self) -> CliDataCachePrefetchSummary {
+        self.prefetch
+            .as_ref()
+            .map(|prefetch| {
+                prefetch
+                    .lock()
+                    .expect("CLI data cache prefetch lock")
+                    .summary()
+            })
+            .unwrap_or_default()
     }
 
     pub(super) fn take_error(&self) -> Option<Rem6CliError> {
@@ -468,6 +563,7 @@ impl CliDataCacheRuntime {
         start_tick: u64,
         request: &MemoryRequest,
         backing_dram_access_count: usize,
+        response_mode: CliDataCacheResponseMode,
     ) -> Result<TargetOutcome, Rem6CliError> {
         let mut harness = self.harness.lock().expect("CLI data cache lock");
         match &mut *harness {
@@ -477,6 +573,7 @@ impl CliDataCacheRuntime {
                 request,
                 harness,
                 backing_dram_access_count,
+                response_mode,
             ),
             CliDataCacheHarness::Mesi(harnesses) => self.respond_mesi_inner(
                 memory,
@@ -484,6 +581,7 @@ impl CliDataCacheRuntime {
                 request,
                 harnesses,
                 backing_dram_access_count,
+                response_mode,
             ),
             CliDataCacheHarness::Moesi(harnesses) => self.respond_moesi_inner(
                 memory,
@@ -491,6 +589,7 @@ impl CliDataCacheRuntime {
                 request,
                 harnesses,
                 backing_dram_access_count,
+                response_mode,
             ),
             CliDataCacheHarness::Chi(harnesses) => self.respond_chi_inner(
                 memory,
@@ -498,6 +597,7 @@ impl CliDataCacheRuntime {
                 request,
                 harnesses,
                 backing_dram_access_count,
+                response_mode,
             ),
         }
     }
@@ -509,6 +609,7 @@ impl CliDataCacheRuntime {
         request: &MemoryRequest,
         harness: &mut MsiBankDirectoryHarness,
         backing_dram_access_count: usize,
+        response_mode: CliDataCacheResponseMode,
     ) -> Result<TargetOutcome, Rem6CliError> {
         let responses_before = harness.cpu_responses().len();
         let decisions_before = harness.directory_decisions().len();
@@ -521,16 +622,13 @@ impl CliDataCacheRuntime {
             .saturating_sub(decisions_before);
         let response_record =
             response_record(&harness.cpu_responses(), responses_before, request.id());
-        let outcome = match response_record.as_ref() {
-            Some(record) => response_record_to_target_outcome(request, start_tick, record)?,
-            None if request.requires_response() && !request.returns_data() => {
-                TargetOutcome::Respond(
-                    MemoryResponse::completed(request, None).map_err(execute_error)?,
-                )
-            }
-            None if !request.requires_response() => TargetOutcome::NoResponse,
-            None => return Err(execute_error("CLI MSI data cache response missing")),
-        };
+        let outcome = data_cache_target_outcome(
+            response_mode,
+            request,
+            start_tick,
+            response_record.as_ref(),
+            "CLI MSI data cache response missing",
+        )?;
         let line_data = harness
             .functional_read_line(self.layout.line_address(request.line_address()))
             .map_err(execute_error)?
@@ -549,6 +647,7 @@ impl CliDataCacheRuntime {
                 msi_bank_cycle_run_summary(
                     &cycle_run,
                     directory_decision_count,
+                    response_count_for_request(response_mode, request, cycle_run.response_count()),
                     backing_dram_access_count,
                 ),
             ));
@@ -562,6 +661,7 @@ impl CliDataCacheRuntime {
         request: &MemoryRequest,
         harnesses: &mut CliMesiLineHarnesses,
         backing_dram_access_count: usize,
+        response_mode: CliDataCacheResponseMode,
     ) -> Result<TargetOutcome, Rem6CliError> {
         let line = self.layout.line_address(request.line_address());
         let harness = harnesses
@@ -580,16 +680,13 @@ impl CliDataCacheRuntime {
             .len()
             .saturating_sub(decisions_before);
         let response_record = response_record(&responses, responses_before, request.id());
-        let outcome = match response_record.as_ref() {
-            Some(record) => response_record_to_target_outcome(request, start_tick, record)?,
-            None if request.requires_response() && !request.returns_data() => {
-                TargetOutcome::Respond(
-                    MemoryResponse::completed(request, None).map_err(execute_error)?,
-                )
-            }
-            None if !request.requires_response() => TargetOutcome::NoResponse,
-            None => return Err(execute_error("CLI MESI data cache response missing")),
-        };
+        let outcome = data_cache_target_outcome(
+            response_mode,
+            request,
+            start_tick,
+            response_record.as_ref(),
+            "CLI MESI data cache response missing",
+        )?;
         if let Some(line_data) = harness
             .cache_data(request.id().agent())
             .map_err(execute_error)?
@@ -604,7 +701,7 @@ impl CliDataCacheRuntime {
                 RiscvDataCacheProtocol::Mesi,
                 data_cache_run_summary(
                     start_tick,
-                    cpu_response_count,
+                    response_count_for_request(response_mode, request, cpu_response_count),
                     directory_decision_count,
                     backing_dram_access_count,
                 ),
@@ -619,6 +716,7 @@ impl CliDataCacheRuntime {
         request: &MemoryRequest,
         harnesses: &mut CliMoesiLineHarnesses,
         backing_dram_access_count: usize,
+        response_mode: CliDataCacheResponseMode,
     ) -> Result<TargetOutcome, Rem6CliError> {
         let line = self.layout.line_address(request.line_address());
         let harness = harnesses
@@ -637,16 +735,13 @@ impl CliDataCacheRuntime {
             .len()
             .saturating_sub(decisions_before);
         let response_record = response_record(&responses, responses_before, request.id());
-        let outcome = match response_record.as_ref() {
-            Some(record) => response_record_to_target_outcome(request, start_tick, record)?,
-            None if request.requires_response() && !request.returns_data() => {
-                TargetOutcome::Respond(
-                    MemoryResponse::completed(request, None).map_err(execute_error)?,
-                )
-            }
-            None if !request.requires_response() => TargetOutcome::NoResponse,
-            None => return Err(execute_error("CLI MOESI data cache response missing")),
-        };
+        let outcome = data_cache_target_outcome(
+            response_mode,
+            request,
+            start_tick,
+            response_record.as_ref(),
+            "CLI MOESI data cache response missing",
+        )?;
         if let Some(line_data) = harness
             .cache_data(request.id().agent())
             .map_err(execute_error)?
@@ -661,7 +756,7 @@ impl CliDataCacheRuntime {
                 RiscvDataCacheProtocol::Moesi,
                 data_cache_run_summary(
                     start_tick,
-                    cpu_response_count,
+                    response_count_for_request(response_mode, request, cpu_response_count),
                     directory_decision_count,
                     backing_dram_access_count,
                 ),
@@ -676,6 +771,7 @@ impl CliDataCacheRuntime {
         request: &MemoryRequest,
         harnesses: &mut CliChiLineHarnesses,
         backing_dram_access_count: usize,
+        response_mode: CliDataCacheResponseMode,
     ) -> Result<TargetOutcome, Rem6CliError> {
         let line = self.layout.line_address(request.line_address());
         let harness = harnesses
@@ -694,16 +790,13 @@ impl CliDataCacheRuntime {
             .len()
             .saturating_sub(decisions_before);
         let response_record = response_record(&responses, responses_before, request.id());
-        let outcome = match response_record.as_ref() {
-            Some(record) => response_record_to_target_outcome(request, start_tick, record)?,
-            None if request.requires_response() && !request.returns_data() => {
-                TargetOutcome::Respond(
-                    MemoryResponse::completed(request, None).map_err(execute_error)?,
-                )
-            }
-            None if !request.requires_response() => TargetOutcome::NoResponse,
-            None => return Err(execute_error("CLI CHI data cache response missing")),
-        };
+        let outcome = data_cache_target_outcome(
+            response_mode,
+            request,
+            start_tick,
+            response_record.as_ref(),
+            "CLI CHI data cache response missing",
+        )?;
         if let Some(line_data) = harness
             .cache_data(request.id().agent())
             .map_err(execute_error)?
@@ -718,7 +811,7 @@ impl CliDataCacheRuntime {
                 RiscvDataCacheProtocol::Chi,
                 data_cache_run_summary(
                     start_tick,
-                    cpu_response_count,
+                    response_count_for_request(response_mode, request, cpu_response_count),
                     directory_decision_count,
                     backing_dram_access_count,
                 ),
@@ -752,12 +845,159 @@ impl CliDataCacheRuntime {
         }
     }
 
+    fn issue_prefetches_from_request(
+        &self,
+        memory: &CliMemoryRuntime,
+        tick: u64,
+        request: &MemoryRequest,
+    ) -> Result<(), Rem6CliError> {
+        if !is_data_prefetch_source(request) {
+            return Ok(());
+        }
+        let Some(prefetch) = self.prefetch.as_ref() else {
+            return Ok(());
+        };
+        let issues = {
+            let mut prefetch = prefetch.lock().expect("CLI data cache prefetch lock");
+            prefetch.observe_and_issue(tick, request, |address| {
+                prefetch_candidate_is_backed(memory, self.layout, address)
+            })?
+        };
+        for (issue, sequence) in issues {
+            let prefetch_request = prefetch_issue_request(issue, sequence, self.layout)?;
+            if let Some(backing_dram_access_count) = self.ensure_backing(memory, &prefetch_request)
+            {
+                let _ = self.respond_inner(
+                    memory,
+                    tick,
+                    &prefetch_request,
+                    backing_dram_access_count,
+                    CliDataCacheResponseMode::InternalPrefetch,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     fn record_error(&self, error: Rem6CliError) {
         let mut slot = self.error.lock().expect("CLI data cache error lock");
         if slot.is_none() {
             *slot = Some(error.to_string());
         }
     }
+}
+
+impl CliDataCachePrefetchRuntime {
+    fn new(kind: CliDataCachePrefetcher, layout: CacheLineLayout) -> Result<Self, Rem6CliError> {
+        match kind {
+            CliDataCachePrefetcher::TaggedNextLine => {
+                let tagged = TaggedPrefetcher::new(
+                    TaggedPrefetcherConfig::new(layout.bytes(), 1).map_err(execute_error)?,
+                );
+                let queue_config =
+                    QueuedPrefetchConfig::with_line_size(8, 0, 1, true, layout.bytes())
+                        .map_err(execute_error)?;
+                Ok(Self {
+                    tagged,
+                    queue: QueuedPrefetcher::new(queue_config),
+                    next_sequence: PREFETCH_REQUEST_SEQUENCE_BASE,
+                })
+            }
+        }
+    }
+
+    fn observe_and_issue(
+        &mut self,
+        tick: u64,
+        request: &MemoryRequest,
+        candidate_is_backed: impl Fn(Address) -> bool,
+    ) -> Result<Vec<(QueuedPrefetchIssue, u64)>, Rem6CliError> {
+        let access = TaggedPrefetchAccess::new(
+            request.id().agent(),
+            request.range().start().get(),
+            request.range().start(),
+            request.attributes().is_secure(),
+        );
+        let candidates = self.tagged.observe(access).map_err(execute_error)?;
+        let backed_candidates = candidates
+            .iter()
+            .filter(|candidate| candidate_is_backed(candidate.address()))
+            .cloned()
+            .collect::<Vec<_>>();
+        self.queue
+            .enqueue_candidates_filtered(tick, &backed_candidates, &[])
+            .map_err(execute_error)?;
+        let issues = self.queue.issue_ready(tick);
+        let mut sequenced_issues = Vec::with_capacity(issues.len());
+        for issue in issues {
+            let sequence = self.next_sequence;
+            self.next_sequence = sequence
+                .checked_add(1)
+                .ok_or_else(|| execute_error("CLI data cache prefetch request id overflow"))?;
+            sequenced_issues.push((issue, sequence));
+        }
+        Ok(sequenced_issues)
+    }
+
+    fn summary(&self) -> CliDataCachePrefetchSummary {
+        let stats = self.queue.stats();
+        CliDataCachePrefetchSummary {
+            identified: stats.identified_prefetches(),
+            issued: stats.issued_prefetches(),
+            queue_enqueued: stats.prefetch_queue().enqueued(),
+            queue_issued: stats.prefetch_queue().issued(),
+            queue_dropped: stats.prefetch_queue().dropped(),
+        }
+    }
+}
+
+fn cli_prefetch_runtime(
+    layout: CacheLineLayout,
+    prefetcher: Option<CliDataCachePrefetcher>,
+) -> Result<Option<Arc<Mutex<CliDataCachePrefetchRuntime>>>, Rem6CliError> {
+    prefetcher
+        .map(|prefetcher| {
+            CliDataCachePrefetchRuntime::new(prefetcher, layout)
+                .map(|runtime| Arc::new(Mutex::new(runtime)))
+        })
+        .transpose()
+}
+
+fn prefetch_candidate_is_backed(
+    memory: &CliMemoryRuntime,
+    layout: CacheLineLayout,
+    address: Address,
+) -> bool {
+    let line = layout.line_address(address);
+    memory
+        .read_guest_memory(line.get(), layout.bytes() as usize, layout)
+        .is_some()
+}
+
+fn is_data_prefetch_source(request: &MemoryRequest) -> bool {
+    matches!(
+        request.operation(),
+        MemoryOperation::ReadShared
+            | MemoryOperation::ReadUnique
+            | MemoryOperation::LoadLocked
+            | MemoryOperation::LockedRmwRead
+    )
+}
+
+fn prefetch_issue_request(
+    issue: QueuedPrefetchIssue,
+    sequence: u64,
+    layout: CacheLineLayout,
+) -> Result<MemoryRequest, Rem6CliError> {
+    let request = MemoryRequest::prefetch_read(
+        MemoryRequestId::new(issue.context(), sequence),
+        issue.address(),
+        rem6_memory::AccessSize::new(layout.bytes()).map_err(execute_error)?,
+        layout,
+    )
+    .map_err(execute_error)?;
+    let snapshot = request.snapshot().with_response_required();
+    MemoryRequest::from_snapshot(&snapshot).map_err(execute_error)
 }
 
 trait CliDataCacheResponseRecord: Clone {
@@ -881,14 +1121,49 @@ where
     }
 }
 
+fn data_cache_target_outcome<R>(
+    response_mode: CliDataCacheResponseMode,
+    request: &MemoryRequest,
+    start_tick: u64,
+    record: Option<&R>,
+    missing_response_error: &'static str,
+) -> Result<TargetOutcome, Rem6CliError>
+where
+    R: CliDataCacheResponseRecord,
+{
+    if response_mode == CliDataCacheResponseMode::InternalPrefetch || !request.requires_response() {
+        return Ok(TargetOutcome::NoResponse);
+    }
+    match record {
+        Some(record) => response_record_to_target_outcome(request, start_tick, record),
+        None if !request.returns_data() => Ok(TargetOutcome::Respond(
+            MemoryResponse::completed(request, None).map_err(execute_error)?,
+        )),
+        None => Err(execute_error(missing_response_error)),
+    }
+}
+
+fn response_count_for_request(
+    response_mode: CliDataCacheResponseMode,
+    request: &MemoryRequest,
+    count: usize,
+) -> usize {
+    if response_mode == CliDataCacheResponseMode::External && request.requires_response() {
+        count
+    } else {
+        0
+    }
+}
+
 fn msi_bank_cycle_run_summary(
     run: &MsiBankCycleRun,
     directory_decision_count: usize,
+    cpu_response_count: usize,
     dram_access_count: usize,
 ) -> ParallelCoherenceRunSummary {
     data_cache_run_summary(
         run.tick(),
-        run.response_count(),
+        cpu_response_count,
         directory_decision_count,
         dram_access_count,
     )
@@ -928,7 +1203,7 @@ mod tests {
     fn respond_for_request_records_internal_error_before_retry() {
         let layout = CacheLineLayout::new(32).unwrap();
         let memory = memory_with_line(layout);
-        let runtime = CliDataCacheRuntime::new_msi_bank(layout, [AgentId::new(0)]).unwrap();
+        let runtime = CliDataCacheRuntime::new_msi_bank(layout, [AgentId::new(0)], None).unwrap();
         let request = MemoryRequest::read_shared(
             MemoryRequestId::new(AgentId::new(0), 1),
             Address::new(0x1018),

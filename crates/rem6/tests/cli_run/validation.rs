@@ -86,6 +86,34 @@ fn rem6_run_rejects_data_cache_protocol_without_execution() {
 }
 
 #[test]
+fn rem6_run_rejects_data_cache_prefetcher_without_execution() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("data-cache-prefetcher-without-execute", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--data-cache-prefetcher requires --execute"));
+}
+
+#[test]
 fn rem6_run_rejects_instruction_cache_protocol_without_execution() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("instruction-cache-without-execute", &elf);
@@ -143,6 +171,37 @@ fn rem6_run_rejects_unsupported_data_cache_protocol() {
 }
 
 #[test]
+fn rem6_run_rejects_unsupported_data_cache_prefetcher() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("unsupported-data-cache-prefetcher", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-prefetcher",
+            "ruby",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid run data cache prefetcher ruby"));
+}
+
+#[test]
 fn rem6_run_rejects_unsupported_instruction_cache_protocol() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("unsupported-instruction-cache-protocol", &elf);
@@ -195,6 +254,29 @@ fn rem6_run_rejects_unsupported_instruction_cache_protocol_from_toml_config() {
 }
 
 #[test]
+fn rem6_run_rejects_unsupported_data_cache_prefetcher_from_toml_config() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let binary = temp_binary("unsupported-data-cache-prefetcher-config-bin", &elf);
+    let config = temp_config(
+        "unsupported-data-cache-prefetcher-config",
+        &format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\ndata_cache_protocol = \"msi\"\ndata_cache_prefetcher = \"ruby\"\n",
+            binary.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid run data cache prefetcher ruby"));
+}
+
+#[test]
 fn rem6_run_rejects_data_cache_protocol_for_non_riscv_isa() {
     let elf = x86_64_elf(0x4000_0000, 0x4000_0000, &[0x90]);
     let path = temp_binary("data-cache-non-riscv", &elf);
@@ -221,6 +303,64 @@ fn rem6_run_rejects_data_cache_protocol_for_non_riscv_isa() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("--data-cache-protocol requires --isa riscv"));
+}
+
+#[test]
+fn rem6_run_rejects_data_cache_prefetcher_for_non_riscv_isa() {
+    let elf = x86_64_elf(0x4000_0000, 0x4000_0000, &[0x90]);
+    let path = temp_binary("data-cache-prefetcher-non-riscv", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "x86",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--data-cache-prefetcher requires --isa riscv"));
+}
+
+#[test]
+fn rem6_run_rejects_data_cache_prefetcher_without_data_cache_protocol() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("data-cache-prefetcher-without-protocol", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--data-cache-prefetcher requires --data-cache-protocol"));
 }
 
 #[test]

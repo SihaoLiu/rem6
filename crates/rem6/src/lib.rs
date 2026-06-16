@@ -50,12 +50,13 @@ mod transport_summary_tests;
 
 pub use cli_error::Rem6CliError;
 pub use config::{
-    CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest, PowerAnalysisFormat, Rem6GupsConfig,
-    Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, StatsFormat,
+    CliDataCachePrefetcher, CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest,
+    PowerAnalysisFormat, Rem6GupsConfig, Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa,
+    RiscvSeFileRequest, StatsFormat,
 };
 use data_cache_runtime::{
-    cli_cache_runtime, cli_data_memory_response, with_riscv_syscall_data_cache_memory_io,
-    CliDataCacheRuntime, CliDataCacheSummary,
+    cli_cache_runtime, cli_cache_runtime_with_prefetcher, cli_data_memory_response,
+    with_riscv_syscall_data_cache_memory_io, CliDataCacheRuntime, CliDataCacheSummary,
 };
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
@@ -405,6 +406,7 @@ struct ExecutionSummaryInputs<'a> {
     line_layout: CacheLineLayout,
     config: &'a Rem6RunConfig,
     instruction_cache: CliDataCacheSummary,
+    data_cache: CliDataCacheSummary,
     fetch_trace: &'a MemoryTrace,
     data_trace: &'a MemoryTrace,
     riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
@@ -520,6 +522,9 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         if config.data_cache_protocol().is_some() {
             return Err(Rem6CliError::DataCacheProtocolRequiresExecution);
         }
+        if config.data_cache_prefetcher().is_some() {
+            return Err(Rem6CliError::DataCachePrefetcherRequiresExecution);
+        }
         if config.instruction_cache_protocol().is_some() {
             return Err(Rem6CliError::InstructionCacheProtocolRequiresExecution);
         }
@@ -529,6 +534,12 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
     }
     if config.data_cache_protocol().is_some() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::DataCacheProtocolRequiresRiscv);
+    }
+    if config.data_cache_prefetcher().is_some() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::DataCachePrefetcherRequiresRiscv);
+    }
+    if config.data_cache_prefetcher().is_some() && config.data_cache_protocol().is_none() {
+        return Err(Rem6CliError::DataCachePrefetcherRequiresDataCacheProtocol);
     }
     if config.instruction_cache_protocol().is_some() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::InstructionCacheProtocolRequiresRiscv);
@@ -667,7 +678,12 @@ fn execute_riscv(
     )?;
     let instruction_cache =
         cli_cache_runtime(config.instruction_cache_protocol(), line_layout, core_count)?;
-    let data_cache = cli_cache_runtime(config.data_cache_protocol(), line_layout, core_count)?;
+    let data_cache = cli_cache_runtime_with_prefetcher(
+        config.data_cache_protocol(),
+        line_layout,
+        core_count,
+        config.data_cache_prefetcher(),
+    )?;
     let riscv_se_startup = if config.riscv_se() {
         let mut startup_config = RiscvSeStartupConfig::new(Address::new(RISCV64_SE_STACK_TOP));
         if config.riscv_se_args().is_empty() {
@@ -969,6 +985,12 @@ fn execute_riscv(
         line_layout,
         config,
         instruction_cache: CliDataCacheSummary::from_records(&instruction_cache_records),
+        data_cache: CliDataCacheSummary::from_run(&run).with_prefetch_summary(
+            data_cache
+                .as_ref()
+                .map(CliDataCacheRuntime::prefetch_summary)
+                .unwrap_or_default(),
+        ),
         fetch_trace: &fetch_trace,
         data_trace: &data_trace,
         riscv_guest_writes,
@@ -1109,7 +1131,7 @@ fn execution_summary(
         data_store_bytes,
         data_atomic_bytes,
         instruction_cache: inputs.instruction_cache,
-        data_cache: CliDataCacheSummary::from_run(run),
+        data_cache: inputs.data_cache,
         data_access_probes: data_access_probe_summary(
             run,
             inputs.line_layout,

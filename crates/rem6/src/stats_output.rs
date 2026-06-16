@@ -450,6 +450,41 @@ pub(super) fn run_stats_output(
         )?;
         increment_stat(
             &mut stats,
+            "sim.data_cache.prefetch.identified",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.prefetch_identified,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data_cache.prefetch.issued",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.prefetch_issued,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data_cache.prefetch.queue.enqueued",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.prefetch_queue_enqueued,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data_cache.prefetch.queue.issued",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.prefetch_queue_issued,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data_cache.prefetch.queue.dropped",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.prefetch_queue_dropped,
+        )?;
+        increment_stat(
+            &mut stats,
             "sim.data.probes.samples",
             "Count",
             StatResetPolicy::Monotonic,

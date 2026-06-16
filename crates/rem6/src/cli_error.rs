@@ -117,6 +117,9 @@ pub enum Rem6CliError {
     InvalidRunDataCacheProtocol {
         value: String,
     },
+    InvalidRunDataCachePrefetcher {
+        value: String,
+    },
     InvalidRunInstructionCacheProtocol {
         value: String,
     },
@@ -154,12 +157,15 @@ pub enum Rem6CliError {
     MemoryDumpRequiresExecution,
     RiscvSeRequiresExecution,
     DataCacheProtocolRequiresExecution,
+    DataCachePrefetcherRequiresExecution,
     InstructionCacheProtocolRequiresExecution,
     PowerOutputRequiresExecution,
     RiscvSeInputRequiresRiscvSe {
         input: &'static str,
     },
     DataCacheProtocolRequiresRiscv,
+    DataCachePrefetcherRequiresRiscv,
+    DataCachePrefetcherRequiresDataCacheProtocol,
     InstructionCacheProtocolRequiresRiscv,
     DataCacheProtocolLargeMulticoreRequiresMsi {
         protocol: RiscvDataCacheProtocol,
@@ -339,6 +345,9 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidRunDataCacheProtocol { value } => {
                 write!(formatter, "invalid run data cache protocol {value}")
             }
+            Self::InvalidRunDataCachePrefetcher { value } => {
+                write!(formatter, "invalid run data cache prefetcher {value}")
+            }
             Self::InvalidRunInstructionCacheProtocol { value } => {
                 write!(formatter, "invalid run instruction cache protocol {value}")
             }
@@ -390,6 +399,9 @@ impl fmt::Display for Rem6CliError {
             Self::DataCacheProtocolRequiresExecution => {
                 write!(formatter, "--data-cache-protocol requires --execute")
             }
+            Self::DataCachePrefetcherRequiresExecution => {
+                write!(formatter, "--data-cache-prefetcher requires --execute")
+            }
             Self::InstructionCacheProtocolRequiresExecution => {
                 write!(formatter, "--instruction-cache-protocol requires --execute")
             }
@@ -401,6 +413,15 @@ impl fmt::Display for Rem6CliError {
             }
             Self::DataCacheProtocolRequiresRiscv => {
                 write!(formatter, "--data-cache-protocol requires --isa riscv")
+            }
+            Self::DataCachePrefetcherRequiresRiscv => {
+                write!(formatter, "--data-cache-prefetcher requires --isa riscv")
+            }
+            Self::DataCachePrefetcherRequiresDataCacheProtocol => {
+                write!(
+                    formatter,
+                    "--data-cache-prefetcher requires --data-cache-protocol"
+                )
             }
             Self::InstructionCacheProtocolRequiresRiscv => {
                 write!(formatter, "--instruction-cache-protocol requires --isa riscv")
