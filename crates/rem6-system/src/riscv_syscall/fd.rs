@@ -11,6 +11,11 @@ use super::{
 pub(super) const RISCV_LINUX_DUP: u64 = 23;
 pub(super) const RISCV_LINUX_DUP3: u64 = 24;
 pub(super) const RISCV_LINUX_CLOSE: u64 = 57;
+pub(super) const RISCV_LINUX_CLOSE_RANGE: u64 = 436;
+const RISCV_LINUX_CLOSE_RANGE_UNSHARE: u64 = 1 << 1;
+const RISCV_LINUX_CLOSE_RANGE_CLOEXEC: u64 = 1 << 2;
+const RISCV_LINUX_CLOSE_RANGE_SUPPORTED_FLAGS: u64 =
+    RISCV_LINUX_CLOSE_RANGE_UNSHARE | RISCV_LINUX_CLOSE_RANGE_CLOEXEC;
 
 pub(super) fn linux_standard_guest_fds() -> GuestFdTable {
     let mut table = GuestFdTable::new();
@@ -47,6 +52,29 @@ pub(super) fn syscall_close(fd_argument: u64, state: &mut RiscvSyscallState) -> 
         }
         Err(_error) => linux_error(RISCV_LINUX_EBADF),
     }
+}
+
+pub(super) fn syscall_close_range(
+    first: u64,
+    last: u64,
+    flags: u64,
+    state: &mut RiscvSyscallState,
+) -> u64 {
+    if first > last || first > u64::from(u32::MAX) || last > u64::from(u32::MAX) {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if flags & !RISCV_LINUX_CLOSE_RANGE_SUPPORTED_FLAGS != 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if flags & RISCV_LINUX_CLOSE_RANGE_CLOEXEC != 0 {
+        state.guest_fds.set_close_on_exec_range(first, last, true);
+        return 0;
+    }
+
+    for record in state.guest_fds.close_descriptor_range(first, last) {
+        state.close_fd_sources(&record);
+    }
+    0
 }
 
 pub(super) fn syscall_dup(old_fd_argument: u64, state: &mut RiscvSyscallState) -> u64 {

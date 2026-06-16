@@ -507,6 +507,13 @@ impl GuestFdTable {
         Ok(self.close_record_after_removal(fd, entry))
     }
 
+    pub fn close_descriptor_range(&mut self, first: u64, last: u64) -> Vec<GuestFdCloseRecord> {
+        let fds = self.fds_in_number_range(first, last);
+        fds.into_iter()
+            .filter_map(|fd| self.close_descriptor(fd).ok())
+            .collect()
+    }
+
     pub fn close(&mut self, fd: GuestFd) -> Result<GuestFdEntry, GuestFdError> {
         self.entries.remove(&fd).ok_or(GuestFdError::BadFd { fd })
     }
@@ -527,6 +534,14 @@ impl GuestFdTable {
             .ok_or(GuestFdError::BadFd { fd })?;
         entry.close_on_exec = close_on_exec;
         Ok(())
+    }
+
+    pub fn set_close_on_exec_range(&mut self, first: u64, last: u64, close_on_exec: bool) {
+        for fd in self.fds_in_number_range(first, last) {
+            if let Some(entry) = self.entries.get_mut(&fd) {
+                entry.close_on_exec = close_on_exec;
+            }
+        }
     }
 
     pub fn close_on_exec_descriptors(&mut self) -> Vec<GuestFdCloseRecord> {
@@ -638,6 +653,17 @@ impl GuestFdTable {
                 .checked_add(1)
                 .ok_or(GuestFdError::FdSpaceExhausted)?;
         }
+    }
+
+    fn fds_in_number_range(&self, first: u64, last: u64) -> Vec<GuestFd> {
+        self.entries
+            .keys()
+            .copied()
+            .filter(|fd| {
+                let value = u64::from(fd.get());
+                value >= first && value <= last
+            })
+            .collect()
     }
 
     fn close_record_after_removal(

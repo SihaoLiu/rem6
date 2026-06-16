@@ -86,8 +86,8 @@ use fcntl::{
     RISCV_LINUX_F_SETFL,
 };
 use fd::{
-    linux_standard_guest_fds, syscall_close, syscall_dup, syscall_dup3, RISCV_LINUX_CLOSE,
-    RISCV_LINUX_DUP, RISCV_LINUX_DUP3,
+    linux_standard_guest_fds, syscall_close, syscall_close_range, syscall_dup, syscall_dup3,
+    RISCV_LINUX_CLOSE, RISCV_LINUX_CLOSE_RANGE, RISCV_LINUX_DUP, RISCV_LINUX_DUP3,
 };
 use file_read::{syscall_pread64, syscall_read, RISCV_LINUX_PREAD64, RISCV_LINUX_READ};
 use file_write::{
@@ -1178,6 +1178,14 @@ impl RiscvSyscallTable {
             }
             RISCV_LINUX_CLOSE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_close(request.argument(0), state),
+            }),
+            RISCV_LINUX_CLOSE_RANGE => Some(RiscvSyscallOutcome::Return {
+                value: syscall_close_range(
+                    request.argument(0),
+                    request.argument(1),
+                    request.argument(2),
+                    state,
+                ),
             }),
             RISCV_LINUX_LSEEK => Some(RiscvSyscallOutcome::Return {
                 value: syscall_lseek(request, state),
