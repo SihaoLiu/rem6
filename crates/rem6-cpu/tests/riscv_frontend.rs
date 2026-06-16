@@ -342,6 +342,38 @@ fn vmsgt_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
     vector_vi_type(0b011111, vs2, imm, vd)
 }
 
+fn vmand_mm_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b011001, vs2, vs1, vd)
+}
+
+fn vmnand_mm_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b011101, vs2, vs1, vd)
+}
+
+fn vmandn_mm_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b011000, vs2, vs1, vd)
+}
+
+fn vmxor_mm_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b011011, vs2, vs1, vd)
+}
+
+fn vmor_mm_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b011010, vs2, vs1, vd)
+}
+
+fn vmnor_mm_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b011110, vs2, vs1, vd)
+}
+
+fn vmorn_mm_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b011100, vs2, vs1, vd)
+}
+
+fn vmxnor_mm_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b011111, vs2, vs1, vd)
+}
+
 fn vmerge_vvm_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_masked_vv_type(0b010111, vs2, vs1, vd)
 }
@@ -2080,6 +2112,229 @@ fn riscv_core_driver_executes_vector_merge_and_move_operations_from_fetch_stream
             0xfc, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
             0xee, 0xee,
         ]
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_mask_logical_operations_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 6);
+    core.write_vector_register(
+        vreg(5),
+        [0xca, 0xaa, 0xaa, 0xaa, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+    core.write_vector_register(
+        vreg(6),
+        [0xac, 0xbb, 0xbb, 0xbb, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+    for index in 11..=18 {
+        core.write_vector_register(
+            vreg(index),
+            [0xc0, 0xee, 0xee, 0xee, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+    }
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xc0, 10, 4),
+            vmand_mm_type(5, 6, 11),
+            vmnand_mm_type(5, 6, 12),
+            vmandn_mm_type(5, 6, 13),
+            vmxor_mm_type(5, 6, 14),
+            vmor_mm_type(5, 6, 15),
+            vmnor_mm_type(5, 6, 16),
+            vmorn_mm_type(5, 6, 17),
+            vmxnor_mm_type(5, 6, 18),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(4),
+            rs1: reg(10),
+            vtype: 0xc0,
+        }
+    );
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(6, 0xc0));
+
+    let cases = [
+        (
+            RiscvInstruction::VectorMaskAndMm {
+                vd: vreg(11),
+                vs2: vreg(5),
+                vs1: vreg(6),
+            },
+            vreg(11),
+            0xc8,
+        ),
+        (
+            RiscvInstruction::VectorMaskNandMm {
+                vd: vreg(12),
+                vs2: vreg(5),
+                vs1: vreg(6),
+            },
+            vreg(12),
+            0xf7,
+        ),
+        (
+            RiscvInstruction::VectorMaskAndNotMm {
+                vd: vreg(13),
+                vs2: vreg(5),
+                vs1: vreg(6),
+            },
+            vreg(13),
+            0xc2,
+        ),
+        (
+            RiscvInstruction::VectorMaskXorMm {
+                vd: vreg(14),
+                vs2: vreg(5),
+                vs1: vreg(6),
+            },
+            vreg(14),
+            0xe6,
+        ),
+        (
+            RiscvInstruction::VectorMaskOrMm {
+                vd: vreg(15),
+                vs2: vreg(5),
+                vs1: vreg(6),
+            },
+            vreg(15),
+            0xee,
+        ),
+        (
+            RiscvInstruction::VectorMaskNorMm {
+                vd: vreg(16),
+                vs2: vreg(5),
+                vs1: vreg(6),
+            },
+            vreg(16),
+            0xd1,
+        ),
+        (
+            RiscvInstruction::VectorMaskOrNotMm {
+                vd: vreg(17),
+                vs2: vreg(5),
+                vs1: vreg(6),
+            },
+            vreg(17),
+            0xdb,
+        ),
+        (
+            RiscvInstruction::VectorMaskXnorMm {
+                vd: vreg(18),
+                vs2: vreg(5),
+                vs1: vreg(6),
+            },
+            vreg(18),
+            0xd9,
+        ),
+    ];
+    for (instruction, destination, expected_first_byte) in cases {
+        assert_eq!(
+            drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+            instruction
+        );
+        assert_eq!(
+            core.read_vector_register(destination),
+            [
+                expected_first_byte,
+                0xee,
+                0xee,
+                0xee,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+            ]
+        );
+    }
+}
+
+#[test]
+fn riscv_core_driver_fetches_ahead_for_vector_mask_logical_instruction() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 6);
+    core.write_vector_register(vreg(5), [0xca, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    core.write_vector_register(vreg(6), [0xac, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    core.write_vector_register(
+        vreg(11),
+        [0xc0, 0xee, 0xee, 0xee, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xc0, 10, 4),
+            vmand_mm_type(5, 6, 11),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(vsetvli) = action else {
+        panic!("expected vsetvli execution after vector mask-logical fetch-ahead");
+    };
+    assert_eq!(
+        vsetvli.instruction(),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(4),
+            rs1: reg(10),
+            vtype: 0xc0,
+        }
+    );
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::FetchIssued { .. } = action else {
+        panic!("expected ebreak fetch before retiring vector mask-logical instruction");
+    };
+    assert_eq!(
+        core.read_vector_register(vreg(11)),
+        [0xc0, 0xee, 0xee, 0xee, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    );
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(mask_logical) = action else {
+        panic!("expected vector mask-logical instruction to retire after successor fetch");
+    };
+    assert_eq!(
+        mask_logical.instruction(),
+        RiscvInstruction::VectorMaskAndMm {
+            vd: vreg(11),
+            vs2: vreg(5),
+            vs1: vreg(6),
+        }
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(11)),
+        [0xc8, 0xee, 0xee, 0xee, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     );
 }
 

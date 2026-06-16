@@ -475,6 +475,14 @@ impl RiscvHartState {
             | RiscvInstruction::VectorMoveVv { .. }
             | RiscvInstruction::VectorMoveVx { .. }
             | RiscvInstruction::VectorMoveVi { .. }
+            | RiscvInstruction::VectorMaskAndMm { .. }
+            | RiscvInstruction::VectorMaskNandMm { .. }
+            | RiscvInstruction::VectorMaskAndNotMm { .. }
+            | RiscvInstruction::VectorMaskXorMm { .. }
+            | RiscvInstruction::VectorMaskOrMm { .. }
+            | RiscvInstruction::VectorMaskNorMm { .. }
+            | RiscvInstruction::VectorMaskOrNotMm { .. }
+            | RiscvInstruction::VectorMaskXnorMm { .. }
             | RiscvInstruction::VectorMaskEqualVv { .. }
             | RiscvInstruction::VectorMaskEqualVx { .. }
             | RiscvInstruction::VectorMaskEqualVi { .. }

@@ -1,4 +1,7 @@
-use crate::{RiscvHartState, RiscvInstruction, VectorRegister, RISCV_VECTOR_REGISTER_BYTES};
+use crate::{
+    RiscvHartState, RiscvInstruction, RiscvVectorConfig, VectorRegister,
+    RISCV_VECTOR_REGISTER_BYTES,
+};
 
 const MAX_VECTOR_GROUP_REGISTERS: usize = 8;
 const MAX_VECTOR_GROUP_BYTES: usize = RISCV_VECTOR_REGISTER_BYTES * MAX_VECTOR_GROUP_REGISTERS;
@@ -129,6 +132,30 @@ pub(crate) fn execute_vector_integer_binary(
             execute_vector_move_vx(hart, vd, hart.read(rs1))
         }
         RiscvInstruction::VectorMoveVi { vd, imm } => execute_vector_move_vi(hart, vd, imm),
+        RiscvInstruction::VectorMaskAndMm { vd, vs2, vs1 } => {
+            execute_vector_mask_logical_mm(hart, vd, vs2, vs1, MaskLogicalOp::And)
+        }
+        RiscvInstruction::VectorMaskNandMm { vd, vs2, vs1 } => {
+            execute_vector_mask_logical_mm(hart, vd, vs2, vs1, MaskLogicalOp::Nand)
+        }
+        RiscvInstruction::VectorMaskAndNotMm { vd, vs2, vs1 } => {
+            execute_vector_mask_logical_mm(hart, vd, vs2, vs1, MaskLogicalOp::AndNot)
+        }
+        RiscvInstruction::VectorMaskXorMm { vd, vs2, vs1 } => {
+            execute_vector_mask_logical_mm(hart, vd, vs2, vs1, MaskLogicalOp::Xor)
+        }
+        RiscvInstruction::VectorMaskOrMm { vd, vs2, vs1 } => {
+            execute_vector_mask_logical_mm(hart, vd, vs2, vs1, MaskLogicalOp::Or)
+        }
+        RiscvInstruction::VectorMaskNorMm { vd, vs2, vs1 } => {
+            execute_vector_mask_logical_mm(hart, vd, vs2, vs1, MaskLogicalOp::Nor)
+        }
+        RiscvInstruction::VectorMaskOrNotMm { vd, vs2, vs1 } => {
+            execute_vector_mask_logical_mm(hart, vd, vs2, vs1, MaskLogicalOp::OrNot)
+        }
+        RiscvInstruction::VectorMaskXnorMm { vd, vs2, vs1 } => {
+            execute_vector_mask_logical_mm(hart, vd, vs2, vs1, MaskLogicalOp::Xnor)
+        }
         RiscvInstruction::VectorMaskEqualVv { vd, vs1, vs2 } => {
             execute_vector_mask_compare_vv(hart, vd, vs1, vs2, MaskCompareOp::Equal)
         }
@@ -479,6 +506,24 @@ fn execute_vector_mask_compare_vx(
     true
 }
 
+fn execute_vector_mask_logical_mm(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    vs1: VectorRegister,
+    operation: MaskLogicalOp,
+) -> bool {
+    let Some(plan) = VectorMaskLogicalPlan::new(hart) else {
+        return false;
+    };
+    let left = hart.read_vector(vs2);
+    let right = hart.read_vector(vs1);
+    let mut result = hart.read_vector(vd);
+    apply_mask_logical_bits(&plan, &mut result, &left, &right, operation);
+    hart.write_vector(vd, result);
+    true
+}
+
 #[derive(Clone, Copy)]
 enum LaneBinaryOp {
     Add,
@@ -716,6 +761,33 @@ impl MaskCompareOp {
     }
 }
 
+#[derive(Clone, Copy)]
+enum MaskLogicalOp {
+    And,
+    Nand,
+    AndNot,
+    Xor,
+    Or,
+    Nor,
+    OrNot,
+    Xnor,
+}
+
+impl MaskLogicalOp {
+    fn apply(self, left: bool, right: bool) -> bool {
+        match self {
+            Self::And => left & right,
+            Self::Nand => !(left & right),
+            Self::AndNot => left & !right,
+            Self::Xor => left ^ right,
+            Self::Or => left | right,
+            Self::Nor => !(left | right),
+            Self::OrNot => left | !right,
+            Self::Xnor => !(left ^ right),
+        }
+    }
+}
+
 fn mask_lane_unsigned(bytes: &[u8]) -> u64 {
     match bytes.len() {
         1 => u64::from(bytes[0]),
@@ -867,6 +939,24 @@ impl VectorMaskPlan {
     }
 }
 
+struct VectorMaskLogicalPlan {
+    active_elements: usize,
+}
+
+impl VectorMaskLogicalPlan {
+    fn new(hart: &RiscvHartState) -> Option<Self> {
+        let config = hart.vector_config();
+        let _ = config.element_width_bytes()?;
+        let vlmax = RiscvVectorConfig::vlmax(config.vtype())? as usize;
+        let active_elements = config.vl() as usize;
+        if active_elements > vlmax || active_elements.div_ceil(8) > RISCV_VECTOR_REGISTER_BYTES {
+            return None;
+        }
+
+        Some(Self { active_elements })
+    }
+}
+
 fn apply_vector_lanes(
     plan: &VectorBinaryPlan,
     result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
@@ -995,6 +1085,22 @@ fn apply_scalar_mask_lanes(
             &scalar_bytes[..plan.element_bytes],
         );
         write_mask_bit(mask, element_index, result);
+    }
+}
+
+fn apply_mask_logical_bits(
+    plan: &VectorMaskLogicalPlan,
+    result: &mut [u8; RISCV_VECTOR_REGISTER_BYTES],
+    left: &[u8; RISCV_VECTOR_REGISTER_BYTES],
+    right: &[u8; RISCV_VECTOR_REGISTER_BYTES],
+    operation: MaskLogicalOp,
+) {
+    for element_index in 0..plan.active_elements {
+        let result_bit = operation.apply(
+            read_mask_bit(left, element_index),
+            read_mask_bit(right, element_index),
+        );
+        write_mask_bit(result, element_index, result_bit);
     }
 }
 

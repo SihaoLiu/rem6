@@ -373,6 +373,46 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs1: vector_register(raw, 15),
             vs2: vector_register(raw, 20),
         }),
+        (0x2, 0b011000, true) => Ok(RiscvInstruction::VectorMaskAndNotMm {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            vs1: vector_register(raw, 15),
+        }),
+        (0x2, 0b011001, true) => Ok(RiscvInstruction::VectorMaskAndMm {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            vs1: vector_register(raw, 15),
+        }),
+        (0x2, 0b011010, true) => Ok(RiscvInstruction::VectorMaskOrMm {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            vs1: vector_register(raw, 15),
+        }),
+        (0x2, 0b011011, true) => Ok(RiscvInstruction::VectorMaskXorMm {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            vs1: vector_register(raw, 15),
+        }),
+        (0x2, 0b011100, true) => Ok(RiscvInstruction::VectorMaskOrNotMm {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            vs1: vector_register(raw, 15),
+        }),
+        (0x2, 0b011101, true) => Ok(RiscvInstruction::VectorMaskNandMm {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            vs1: vector_register(raw, 15),
+        }),
+        (0x2, 0b011110, true) => Ok(RiscvInstruction::VectorMaskNorMm {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            vs1: vector_register(raw, 15),
+        }),
+        (0x2, 0b011111, true) => Ok(RiscvInstruction::VectorMaskXnorMm {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            vs1: vector_register(raw, 15),
+        }),
         (0x2, 0b100101, true) => Ok(RiscvInstruction::VectorMultiplyLowVv {
             vd: vector_register(raw, 7),
             vs1: vector_register(raw, 15),

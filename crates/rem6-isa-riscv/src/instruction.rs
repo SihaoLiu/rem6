@@ -445,6 +445,46 @@ pub enum RiscvInstruction {
         vd: VectorRegister,
         imm: i8,
     },
+    VectorMaskAndMm {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+    },
+    VectorMaskNandMm {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+    },
+    VectorMaskAndNotMm {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+    },
+    VectorMaskXorMm {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+    },
+    VectorMaskOrMm {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+    },
+    VectorMaskNorMm {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+    },
+    VectorMaskOrNotMm {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+    },
+    VectorMaskXnorMm {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+    },
     VectorMaskEqualVv {
         vd: VectorRegister,
         vs1: VectorRegister,
