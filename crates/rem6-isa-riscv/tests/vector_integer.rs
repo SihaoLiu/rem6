@@ -157,6 +157,38 @@ fn vsra_vi_type(vs2: u8, shamt: u8, vd: u8) -> u32 {
     vector_vi_type(0b101001, vs2, shamt as i8, vd)
 }
 
+fn vminu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b000100, vs2, vs1, vd)
+}
+
+fn vminu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b000100, vs2, rs1, vd)
+}
+
+fn vmin_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b000101, vs2, vs1, vd)
+}
+
+fn vmin_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b000101, vs2, rs1, vd)
+}
+
+fn vmaxu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b000110, vs2, vs1, vd)
+}
+
+fn vmaxu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b000110, vs2, rs1, vd)
+}
+
+fn vmax_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b000111, vs2, vs1, vd)
+}
+
+fn vmax_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b000111, vs2, rs1, vd)
+}
+
 fn lanes_u32(lanes: [u32; 4]) -> [u8; 16] {
     let mut bytes = [0; 16];
     for (index, lane) in lanes.into_iter().enumerate() {
@@ -408,6 +440,91 @@ fn decoder_accepts_unmasked_vector_shift_operations() {
             shamt: 31,
         }
     );
+}
+
+#[test]
+fn decoder_accepts_unmasked_vector_minmax_operations() {
+    assert_eq!(vminu_vv_type(7, 8, 6), 0x1274_0357);
+    assert_eq!(vminu_vx_type(5, 6, 4), 0x1253_4257);
+    assert_eq!(vmin_vv_type(7, 8, 6), 0x1674_0357);
+    assert_eq!(vmin_vx_type(5, 6, 4), 0x1653_4257);
+    assert_eq!(vmaxu_vv_type(7, 8, 6), 0x1a74_0357);
+    assert_eq!(vmaxu_vx_type(5, 6, 4), 0x1a53_4257);
+    assert_eq!(vmax_vv_type(7, 8, 6), 0x1e74_0357);
+    assert_eq!(vmax_vx_type(5, 6, 4), 0x1e53_4257);
+
+    assert_eq!(
+        RiscvInstruction::decode(vminu_vv_type(7, 8, 6)).unwrap(),
+        RiscvInstruction::VectorMinUnsignedVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vminu_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorMinUnsignedVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmin_vv_type(7, 8, 6)).unwrap(),
+        RiscvInstruction::VectorMinSignedVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmin_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorMinSignedVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmaxu_vv_type(7, 8, 6)).unwrap(),
+        RiscvInstruction::VectorMaxUnsignedVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmaxu_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorMaxUnsignedVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmax_vv_type(7, 8, 6)).unwrap(),
+        RiscvInstruction::VectorMaxSignedVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmax_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorMaxSignedVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+}
+
+#[test]
+fn decoder_rejects_vector_minmax_immediate_forms() {
+    assert!(RiscvInstruction::decode(vector_vi_type(0b000100, 2, 7, 3)).is_err());
+    assert!(RiscvInstruction::decode(vector_vi_type(0b000101, 2, 7, 3)).is_err());
+    assert!(RiscvInstruction::decode(vector_vi_type(0b000110, 2, 7, 3)).is_err());
+    assert!(RiscvInstruction::decode(vector_vi_type(0b000111, 2, 7, 3)).is_err());
 }
 
 #[test]
@@ -718,6 +835,101 @@ fn hart_executes_vector_shift_vv_vx_and_vi_forms() {
             vd: vreg(3),
             vs2: vreg(2),
             shamt: 3,
+        }
+    );
+}
+
+#[test]
+fn hart_executes_vector_minmax_vv_and_vx_forms() {
+    let mut min_unsigned = RiscvHartState::new(0x80f0);
+    min_unsigned.set_vector_config(RiscvVectorConfig::new(3, 0xd0));
+    min_unsigned.write_vector(vreg(7), lanes_u32([1, u32::MAX, 0x8000_0000, 0xaaaa_aaaa]));
+    min_unsigned.write_vector(vreg(8), lanes_u32([2, 7, 0x7fff_ffff, 0]));
+    min_unsigned.write_vector(vreg(6), lanes_u32([0, 0, 0, 0xdddd_dddd]));
+    let min_unsigned_record = min_unsigned
+        .execute(RiscvInstruction::decode(vminu_vv_type(7, 8, 6)).unwrap())
+        .unwrap();
+    assert_eq!(
+        min_unsigned.read_vector(vreg(6)),
+        lanes_u32([1, 7, 0x7fff_ffff, 0xdddd_dddd])
+    );
+    assert_eq!(
+        min_unsigned_record.instruction(),
+        RiscvInstruction::VectorMinUnsignedVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
+        }
+    );
+
+    let mut min_signed = RiscvHartState::new(0x8100);
+    min_signed.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    min_signed.write(reg(6), u64::from(0x8001_u16));
+    min_signed.write_vector(
+        vreg(5),
+        bytes_with_u16([
+            0x0001, 0x7fff, 0x8000, 0xffff, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd,
+        ]),
+    );
+    min_signed.write_vector(vreg(4), bytes_with_u16([0xeeee; 8]));
+    let min_signed_record = min_signed
+        .execute(RiscvInstruction::decode(vmin_vx_type(5, 6, 4)).unwrap())
+        .unwrap();
+    assert_eq!(
+        min_signed.read_vector(vreg(4)),
+        bytes_with_u16([0x8001, 0x8001, 0x8000, 0x8001, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        min_signed_record.instruction(),
+        RiscvInstruction::VectorMinSignedVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+
+    let mut max_unsigned = RiscvHartState::new(0x8110);
+    max_unsigned.set_vector_config(RiscvVectorConfig::new(3, 0xd0));
+    max_unsigned.write(reg(6), 0x7fff_ffff);
+    max_unsigned.write_vector(vreg(5), lanes_u32([0, 0x8000_0000, u32::MAX, 0xaaaa_aaaa]));
+    max_unsigned.write_vector(vreg(4), lanes_u32([0, 0, 0, 0xcccc_cccc]));
+    let max_unsigned_record = max_unsigned
+        .execute(RiscvInstruction::decode(vmaxu_vx_type(5, 6, 4)).unwrap())
+        .unwrap();
+    assert_eq!(
+        max_unsigned.read_vector(vreg(4)),
+        lanes_u32([0x7fff_ffff, 0x8000_0000, u32::MAX, 0xcccc_cccc])
+    );
+    assert_eq!(
+        max_unsigned_record.instruction(),
+        RiscvInstruction::VectorMaxUnsignedVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+
+    let mut max_signed = RiscvHartState::new(0x8120);
+    max_signed.set_vector_config(RiscvVectorConfig::new(3, 0xd0));
+    max_signed.write_vector(
+        vreg(7),
+        lanes_u32([0xffff_ffff, 0x8000_0000, 4, 0xaaaa_aaaa]),
+    );
+    max_signed.write_vector(vreg(8), lanes_u32([0, 0x7fff_ffff, 3, 0]));
+    max_signed.write_vector(vreg(6), lanes_u32([0, 0, 0, 0xbbbb_bbbb]));
+    let max_signed_record = max_signed
+        .execute(RiscvInstruction::decode(vmax_vv_type(7, 8, 6)).unwrap())
+        .unwrap();
+    assert_eq!(
+        max_signed.read_vector(vreg(6)),
+        lanes_u32([0, 0x7fff_ffff, 4, 0xbbbb_bbbb])
+    );
+    assert_eq!(
+        max_signed_record.instruction(),
+        RiscvInstruction::VectorMaxSignedVv {
+            vd: vreg(6),
+            vs1: vreg(8),
+            vs2: vreg(7),
         }
     );
 }

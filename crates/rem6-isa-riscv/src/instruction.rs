@@ -299,6 +299,46 @@ pub enum RiscvInstruction {
         vs2: VectorRegister,
         rs1: Register,
     },
+    VectorMinUnsignedVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorMinUnsignedVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorMinSignedVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorMinSignedVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorMaxUnsignedVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorMaxUnsignedVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorMaxSignedVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorMaxSignedVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
     VectorAndVv {
         vd: VectorRegister,
         vs1: VectorRegister,

@@ -79,7 +79,7 @@ from the checklist source.
 
 ### RISC-V ISA and Privileged Substrate - 59% single-axis
 
-**Score calculation:** 13 of 17 items have executable evidence, or 76% raw,
+**Score calculation:** 14 of 18 items have executable evidence, or 78% raw,
 capped to 59% by the single-axis bucket.
 The bucket cap is single-axis because non-RISC-V ISAs and full RV64GC/vector
 parity are not present.
@@ -95,6 +95,7 @@ parity are not present.
 - [x] RVV unmasked integer `vsub.vv` LMUL=1 plus m2 register-group slices and `vsub.vx` decode, hart execution, and CPU fetch-stream execution have tests.
 - [x] RVV unmasked integer bitwise `vand`, `vor`, and `vxor` vv/vx/vi forms decode, hart execution, and CPU fetch-stream execution have tests.
 - [x] RVV unmasked integer shift `vsll`, `vsrl`, and `vsra` vv/vx/vi forms decode, hart execution, and CPU fetch-stream execution have tests.
+- [x] RVV unmasked integer min/max `vminu`, `vmin`, `vmaxu`, and `vmax` vv/vx forms decode, hart execution, and CPU fetch-stream execution have tests.
 - [x] Sv39 helpers and CPU memory-walker paths have tests.
 - [x] RISC-V SE ecalls reach the system syscall table.
 - [ ] Full RV64GC including vector execution and directed rounding coverage is complete.
@@ -119,8 +120,8 @@ CPU data access, RVV vector-configuration decode and unmasked integer
 `vadd.vv` LMUL=1 plus m2 register-group execution, unmasked integer
 `vadd.vx`, signed-immediate `vadd.vi`, unmasked integer `vsub.vv` LMUL=1 plus
 m2 register-group execution, `vsub.vx`, and unmasked integer bitwise
-`vand`/`vor`/`vxor` plus shift `vsll`/`vsrl`/`vsra` vv/vx/vi forms through
-the CPU fetch stream, traps,
+`vand`/`vor`/`vxor`, shift `vsll`/`vsrl`/`vsra`, and min/max
+`vminu`/`vmin`/`vmaxu`/`vmax` forms through the CPU fetch stream, traps,
 translation helpers, and SE ecall plumbing.
 
 **Not migrated:** Full RV64GC/vector data-operation breadth, other major ISAs, directed
@@ -676,7 +677,7 @@ checklist-backed component sections above define the auditable percentages.
 | gem5 test anchor | rem6 owner | Row score | Migrated boundary | Next evidence |
 | --- | --- | --- | --- | --- |
 | `tests/gem5/arm_boot_tests` | future ARM ISA crate, `rem6-platform` | 0% open | ARM device slices exist, but this row requires Arm ISA boot. | Add Arm ISA, board handoff, device tree, and kernel boot tests. |
-| `tests/gem5/asmtest` | ISA crates, `rem6` CLI | 50% single-axis | RISC-V no-libc and ISA unit tests cover selected instruction, ecall, scalar FP directed integer-to-float paths, RVV vector configuration, unmasked integer `vadd.vv` LMUL=1 plus m2, `vadd.vx`, `vadd.vi`, `vsub.vv` LMUL=1 plus m2, `vsub.vx`, bitwise `vand`/`vor`/`vxor` vv/vx/vi, and shift `vsll`/`vsrl`/`vsra` vv/vx/vi slices. | Split RV32/RV64 and extension families with architectural-state comparison. |
+| `tests/gem5/asmtest` | ISA crates, `rem6` CLI | 50% single-axis | RISC-V no-libc and ISA unit tests cover selected instruction, ecall, scalar FP directed integer-to-float paths, RVV vector configuration, unmasked integer `vadd.vv` LMUL=1 plus m2, `vadd.vx`, `vadd.vi`, `vsub.vv` LMUL=1 plus m2, `vsub.vx`, bitwise `vand`/`vor`/`vxor` vv/vx/vi, shift `vsll`/`vsrl`/`vsra` vv/vx/vi, and min/max `vminu`/`vmin`/`vmaxu`/`vmax` vv/vx slices. | Split RV32/RV64 and extension families with architectural-state comparison. |
 | `tests/gem5/checkpoint_tests` | `rem6-checkpoint`, subsystem checkpoint banks | 65% representative | Scheduler, memory, devices, storage, VirtIO, timer, interrupt, RISC-V started/stopped/suspended hart run-state, RISC-V in-order pipeline state, platform, workload, and manifest checkpoints exist. | Add O3 and non-quiescent restore evidence. |
 | `tests/gem5/chi_protocol` | `rem6-coherence`, protocol crates, `rem6-cache` | 40% single-axis | CHI-like line, controller, bank, dirty peer sourcing, reservation, and Evict-hazard tests exist. | Add Ruby-scale CHI transactions, topology networks, directory races, and workload checks. |
 | `tests/gem5/chi_tlm_tests` | `rem6-proto`, future adapter crates, `rem6-coherence` | 19% scoped | A library-level co-simulation boundary can register TLM endpoints, validate transaction shape, hand off events, and checkpoint clean adapter state in self-tests. | Add runtime TLM bridge tests with coherence traffic. |

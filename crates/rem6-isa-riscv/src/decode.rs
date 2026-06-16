@@ -279,6 +279,26 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs1: vector_register(raw, 15),
             vs2: vector_register(raw, 20),
         }),
+        (0x0, 0b000100, true) => Ok(RiscvInstruction::VectorMinUnsignedVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x0, 0b000101, true) => Ok(RiscvInstruction::VectorMinSignedVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x0, 0b000110, true) => Ok(RiscvInstruction::VectorMaxUnsignedVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x0, 0b000111, true) => Ok(RiscvInstruction::VectorMaxSignedVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
         (0x0, 0b001001, true) => Ok(RiscvInstruction::VectorAndVv {
             vd: vector_register(raw, 7),
             vs1: vector_register(raw, 15),
@@ -350,6 +370,26 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs1: rs1(raw),
         }),
         (0x4, 0b000010, true) => Ok(RiscvInstruction::VectorSubVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b000100, true) => Ok(RiscvInstruction::VectorMinUnsignedVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b000101, true) => Ok(RiscvInstruction::VectorMinSignedVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b000110, true) => Ok(RiscvInstruction::VectorMaxUnsignedVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b000111, true) => Ok(RiscvInstruction::VectorMaxSignedVx {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
             rs1: rs1(raw),

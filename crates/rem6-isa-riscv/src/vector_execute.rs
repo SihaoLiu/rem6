@@ -23,6 +23,30 @@ pub(crate) fn execute_vector_integer_binary(
         RiscvInstruction::VectorSubVx { vd, vs2, rs1 } => {
             execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::Sub)
         }
+        RiscvInstruction::VectorMinUnsignedVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::MinUnsigned)
+        }
+        RiscvInstruction::VectorMinUnsignedVx { vd, vs2, rs1 } => {
+            execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::MinUnsigned)
+        }
+        RiscvInstruction::VectorMinSignedVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::MinSigned)
+        }
+        RiscvInstruction::VectorMinSignedVx { vd, vs2, rs1 } => {
+            execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::MinSigned)
+        }
+        RiscvInstruction::VectorMaxUnsignedVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::MaxUnsigned)
+        }
+        RiscvInstruction::VectorMaxUnsignedVx { vd, vs2, rs1 } => {
+            execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::MaxUnsigned)
+        }
+        RiscvInstruction::VectorMaxSignedVv { vd, vs1, vs2 } => {
+            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::MaxSigned)
+        }
+        RiscvInstruction::VectorMaxSignedVx { vd, vs2, rs1 } => {
+            execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::MaxSigned)
+        }
         RiscvInstruction::VectorAndVv { vd, vs1, vs2 } => {
             execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::And)
         }
@@ -158,6 +182,10 @@ fn execute_vector_binary_vx(
 enum LaneBinaryOp {
     Add,
     Sub,
+    MinUnsigned,
+    MinSigned,
+    MaxUnsigned,
+    MaxSigned,
     And,
     Or,
     Xor,
@@ -172,6 +200,10 @@ impl LaneBinaryOp {
         match self {
             Self::Add => left.wrapping_add(right),
             Self::Sub => left.wrapping_sub(right),
+            Self::MinUnsigned => left.min(right),
+            Self::MinSigned => (left as i8).min(right as i8) as u8,
+            Self::MaxUnsigned => left.max(right),
+            Self::MaxSigned => (left as i8).max(right as i8) as u8,
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
@@ -186,6 +218,10 @@ impl LaneBinaryOp {
         match self {
             Self::Add => left.wrapping_add(right),
             Self::Sub => left.wrapping_sub(right),
+            Self::MinUnsigned => left.min(right),
+            Self::MinSigned => (left as i16).min(right as i16) as u16,
+            Self::MaxUnsigned => left.max(right),
+            Self::MaxSigned => (left as i16).max(right as i16) as u16,
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
@@ -200,6 +236,10 @@ impl LaneBinaryOp {
         match self {
             Self::Add => left.wrapping_add(right),
             Self::Sub => left.wrapping_sub(right),
+            Self::MinUnsigned => left.min(right),
+            Self::MinSigned => (left as i32).min(right as i32) as u32,
+            Self::MaxUnsigned => left.max(right),
+            Self::MaxSigned => (left as i32).max(right as i32) as u32,
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
@@ -214,6 +254,10 @@ impl LaneBinaryOp {
         match self {
             Self::Add => left.wrapping_add(right),
             Self::Sub => left.wrapping_sub(right),
+            Self::MinUnsigned => left.min(right),
+            Self::MinSigned => (left as i64).min(right as i64) as u64,
+            Self::MaxUnsigned => left.max(right),
+            Self::MaxSigned => (left as i64).max(right as i64) as u64,
             Self::And => left & right,
             Self::Or => left | right,
             Self::Xor => left ^ right,
