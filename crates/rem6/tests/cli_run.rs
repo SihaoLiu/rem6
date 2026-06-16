@@ -16,6 +16,8 @@ mod gdb_support;
 mod gups;
 #[path = "cli_run/load.rs"]
 mod load;
+#[path = "cli_run/readfile_resource.rs"]
+mod readfile_resource;
 #[path = "cli_run/resource_acquire.rs"]
 mod resource_acquire;
 #[path = "cli_run/riscv_se_chdir.rs"]

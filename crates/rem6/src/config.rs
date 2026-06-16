@@ -1352,7 +1352,13 @@ impl LoadBlobRequest {
 pub struct ReadfileRequest {
     base: u64,
     size: u64,
-    path: PathBuf,
+    source: ReadfileSource,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ReadfileSource {
+    Path(PathBuf),
+    Resource(String),
 }
 
 impl ReadfileRequest {
@@ -1386,11 +1392,18 @@ impl ReadfileRequest {
                 value: value.to_string(),
             });
         }
-        Ok(Self {
-            base,
-            size,
-            path: PathBuf::from(path),
-        })
+        let source = path
+            .strip_prefix("resource:")
+            .map(|resource| {
+                if resource.is_empty() {
+                    return Err(Rem6CliError::InvalidReadfile {
+                        value: value.to_string(),
+                    });
+                }
+                Ok(ReadfileSource::Resource(resource.to_string()))
+            })
+            .unwrap_or_else(|| Ok(ReadfileSource::Path(PathBuf::from(path))))?;
+        Ok(Self { base, size, source })
     }
 
     pub const fn base(&self) -> u64 {
@@ -1401,13 +1414,23 @@ impl ReadfileRequest {
         self.size
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    pub const fn source(&self) -> &ReadfileSource {
+        &self.source
+    }
+
+    pub fn source_name(&self) -> String {
+        match &self.source {
+            ReadfileSource::Path(path) => path.display().to_string(),
+            ReadfileSource::Resource(resource) => format!("resource:{resource}"),
+        }
     }
 
     fn resolve_path(&mut self, base: &Path) {
-        if self.path.is_relative() {
-            self.path = base.join(&self.path);
+        let ReadfileSource::Path(path) = &mut self.source else {
+            return;
+        };
+        if path.is_relative() {
+            *path = base.join(&path);
         }
     }
 }

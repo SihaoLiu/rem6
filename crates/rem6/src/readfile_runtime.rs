@@ -1,11 +1,10 @@
-use std::path::{Path, PathBuf};
-
 use rem6_kernel::PartitionId;
 use rem6_memory::{AccessSize, Address};
 use rem6_mmio::{MmioBus, MmioRoute};
 use rem6_platform::PlatformReadfileMmioDevice;
 
-use crate::{execute_error, ReadfileRequest, Rem6CliError};
+use crate::run_resource_config::RunResourcePayloads;
+use crate::{execute_error, ReadfileRequest, ReadfileSource, Rem6CliError};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct LoadedReadfile {
@@ -21,24 +20,41 @@ impl LoadedReadfile {
 
 pub(super) fn read_readfiles(
     requests: &[ReadfileRequest],
+    resource_payloads: Option<&RunResourcePayloads>,
 ) -> Result<Vec<LoadedReadfile>, Rem6CliError> {
     requests
         .iter()
         .map(|request| {
-            let payload =
-                std::fs::read(request.path()).map_err(|error| Rem6CliError::ReadReadfile {
-                    path: request.path().to_path_buf(),
-                    error: error.to_string(),
-                })?;
+            let payload = read_readfile_payload(request, resource_payloads)?;
             let summary = Rem6ReadfileSummary::new(
                 request.base(),
                 request.size(),
-                request.path().to_path_buf(),
+                request.source_name(),
                 payload.len() as u64,
             );
             Ok(LoadedReadfile { summary, payload })
         })
         .collect()
+}
+
+fn read_readfile_payload(
+    request: &ReadfileRequest,
+    resource_payloads: Option<&RunResourcePayloads>,
+) -> Result<Vec<u8>, Rem6CliError> {
+    match request.source() {
+        ReadfileSource::Path(path) => {
+            std::fs::read(path).map_err(|error| Rem6CliError::ReadReadfile {
+                path: path.to_path_buf(),
+                error: error.to_string(),
+            })
+        }
+        ReadfileSource::Resource(resource) => {
+            let payloads = resource_payloads.ok_or_else(|| Rem6CliError::Execute {
+                error: format!("readfile resource {resource} requires --resource-config"),
+            })?;
+            Ok(payloads.readfile_payload(resource)?.to_vec())
+        }
+    }
 }
 
 pub(super) fn readfile_mmio_bus(
@@ -80,16 +96,16 @@ pub(super) fn readfile_mmio_bus(
 pub struct Rem6ReadfileSummary {
     base: u64,
     size: u64,
-    path: PathBuf,
+    source: String,
     bytes: u64,
 }
 
 impl Rem6ReadfileSummary {
-    pub fn new(base: u64, size: u64, path: PathBuf, bytes: u64) -> Self {
+    pub fn new(base: u64, size: u64, source: String, bytes: u64) -> Self {
         Self {
             base,
             size,
-            path,
+            source,
             bytes,
         }
     }
@@ -102,8 +118,8 @@ impl Rem6ReadfileSummary {
         self.size
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    pub fn path(&self) -> &str {
+        &self.source
     }
 
     pub const fn bytes(&self) -> u64 {

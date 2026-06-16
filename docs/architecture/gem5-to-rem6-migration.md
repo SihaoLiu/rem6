@@ -451,7 +451,7 @@ non-RISC-V boards, and Linux-driver validation.
 **Evidence:** `PlatformBuilder`, `PlatformRiscvDeviceTreeConfig`, topology
 tests, PCI/VirtIO/storage/network checkpoint tests, CLINT/PLIC/UART tests,
 `readfile_device` platform-MMIO tests, `riscv_topology_readfile`, and CLI
-`run --readfile` guest-load tests.
+`run --readfile` guest-load tests covering host-file and resource payloads.
 
 **Next evidence:** Board-level Linux boot with console, timer, storage, and
 network evidence.
@@ -680,7 +680,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/processor_switch_tests` | `rem6-system`, `rem6-cpu` | 20% unit-slice | Host-assisted switch admission and execution-mode metadata exist. | Add executable CPU model switching with quiescence and state transfer. |
 | `tests/gem5/py_port` | `rem6` CLI, `rem6-workload` | 0% open | No Python embedding port exists. | Decide on a typed external control adapter or document a Rust/CLI replacement. |
 | `tests/gem5/pyunit` | rem6 test crates, `rem6-workload`, `rem6-stats` | 35% unit-slice | Rust tests cover selected typed stats, workload, config, and helper behavior. | Map each pyunit helper family to a Rust owner. |
-| `tests/gem5/readfile_tests` | `rem6-platform`, `rem6-system`, `rem6` CLI | 45% single-axis | DTB/initrd handoff, CLI input-file plumbing, `PlatformBuilder` read-only readfile MMIO-window tests, topology host-checkpoint capture of attached readfile payloads, and `rem6 run --readfile` host-file binding into a guest-visible MMIO load exist. | Bind resource payloads into the platform readfile device and validate Linux consumption. |
+| `tests/gem5/readfile_tests` | `rem6-platform`, `rem6-system`, `rem6` CLI | 55% single-axis | DTB/initrd handoff, CLI input-file plumbing, `PlatformBuilder` read-only readfile MMIO-window tests, topology host-checkpoint capture of attached readfile payloads, and `rem6 run --readfile` host-file plus resource-config input payload binding into guest-visible MMIO loads exist. | Validate Linux consumption and board-level boot handoff. |
 | `tests/pyunit` | `rem6-stats`, `rem6-workload`, future utility owners | 35% unit-slice | Selected pystats and stdlib semantics are covered by typed Rust tests. | Split HDF5, pystats, registry/probes, stdlib helpers, and parsing rows. |
 | `tests/gem5/regression_tests` | all rem6 crates | 35% unit-slice | Workspace tests act as the current regression suite. | Add migration tags or per-family regression rows. |
 | `tests/gem5/replacement_policies` | `rem6-cache` | 60% representative | Multiple replacement, indexing, dueling, compressed, and sector tag tests exist. | Add remaining policies and exact trace/reference parity where useful. |

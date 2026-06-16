@@ -56,8 +56,8 @@ mod transport_summary_tests;
 pub use cli_error::Rem6CliError;
 pub use config::{
     CliCachePrefetcher, CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest,
-    PowerAnalysisFormat, ReadfileRequest, Rem6GupsConfig, Rem6RunConfig, Rem6TraceReplayConfig,
-    RequestedIsa, RiscvSeFileRequest, StatsFormat,
+    PowerAnalysisFormat, ReadfileRequest, ReadfileSource, Rem6GupsConfig, Rem6RunConfig,
+    Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, StatsFormat,
 };
 use data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io,
@@ -81,7 +81,7 @@ pub use resource_acquire_cli::{
 pub use resource_acquire_config::{Rem6ResourceAcquireConfig, Rem6ResourceAcquireResourceConfig};
 use riscv_run_driver::drive_cli_riscv_run;
 use run_gdb::{serve_riscv_gdb_with_run_control, RiscvGdbServeOutcome};
-use run_resource_config::run_kernel_binary_from_resource_config;
+use run_resource_config::{run_resource_payloads_from_config, RunResourcePayloads};
 use run_validation::validate_run_config_inputs;
 use runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use stats_output::{run_stats_output, Rem6StatsInputs};
@@ -506,7 +506,11 @@ fn run_run_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
 }
 
 pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError> {
-    let bytes = run_binary_bytes(&config)?;
+    let resource_payloads = config
+        .resource_config()
+        .map(run_resource_payloads_from_config)
+        .transpose()?;
+    let bytes = run_binary_bytes(&config, resource_payloads.as_ref())?;
     let image = BootImage::from_elf(&bytes).map_err(|error| Rem6CliError::LoadBinary {
         path: config.binary().to_path_buf(),
         error: error.to_string(),
@@ -530,7 +534,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         .iter()
         .map(|blob| blob.summary.clone())
         .collect::<Vec<_>>();
-    let readfiles = read_readfiles(config.readfiles())?;
+    let readfiles = read_readfiles(config.readfiles(), resource_payloads.as_ref())?;
     let readfile_summaries = readfiles
         .iter()
         .map(|readfile| readfile.summary().clone())
@@ -592,9 +596,16 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
     })
 }
 
-fn run_binary_bytes(config: &Rem6RunConfig) -> Result<Vec<u8>, Rem6CliError> {
-    if let Some(resource_config) = config.resource_config() {
-        return run_kernel_binary_from_resource_config(resource_config);
+fn run_binary_bytes(
+    config: &Rem6RunConfig,
+    resource_payloads: Option<&RunResourcePayloads>,
+) -> Result<Vec<u8>, Rem6CliError> {
+    if config.resource_config().is_some() {
+        return resource_payloads
+            .ok_or_else(|| Rem6CliError::Execute {
+                error: "run resource config was not loaded".to_string(),
+            })?
+            .kernel_binary();
     }
 
     std::fs::read(config.binary()).map_err(|error| Rem6CliError::ReadBinary {

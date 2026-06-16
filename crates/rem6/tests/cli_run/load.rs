@@ -318,6 +318,78 @@ fn rem6_run_binds_readfile_mmio_payload_from_toml_config() {
 }
 
 #[test]
+fn rem6_run_binds_readfile_mmio_payload_from_resource_config() {
+    let program = riscv64_program(&[i_type(0, 10, 0x3, 5, 0x03), 0x0010_0073]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let workspace = temp_workspace("readfile-mmio-resource-config");
+    fs::write(workspace.join("kernel.elf"), elf).unwrap();
+    fs::write(
+        workspace.join("boot.input"),
+        [0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11],
+    )
+    .unwrap();
+    let resource_config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+workload_id = "readfile-resource-cli"
+boot_entry = 2147483648
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:readfile-resource-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel"
+artifact = "kernel.elf"
+artifact_digest = "sha256:readfile-resource-kernel"
+
+[[resource_acquire.resources]]
+id = "boot-readfile"
+kind = "input"
+digest = "sha256:readfile-resource-input"
+locator = "resources/boot.input"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://boot-readfile"
+artifact = "boot.input"
+artifact_digest = "sha256:readfile-resource-input"
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("run.toml");
+    fs::write(
+        &config,
+        "[run]\nisa = \"riscv\"\nresource_config = \"resource-acquire.toml\"\nmax_tick = 80\nexecute = true\nstats_format = \"json\"\nriscv_boot_a0 = 268435456\nreadfiles = [\"0x10000000:0x100:resource:boot-readfile\"]\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"registers\":{\"x5\":\"0x1112131415161718\",\"x10\":\"0x10000000\"}"));
+    assert!(
+        stdout.contains(
+            "\"readfiles\":[{\"base\":\"0x10000000\",\"size\":256,\"bytes\":8,\"path\":\"resource:boot-readfile\"}]"
+        )
+    );
+    assert_stat(&stdout, "sim.readfiles", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.readfile0.bytes", "Byte", 8, "constant");
+}
+
+#[test]
 fn rem6_run_readfile_mmio_obeys_instruction_limit() {
     let program = riscv64_program(&[i_type(0, 10, 0x3, 5, 0x03), 0x0010_0073]);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);

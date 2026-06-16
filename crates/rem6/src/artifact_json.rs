@@ -154,7 +154,7 @@ impl Rem6ReadfileSummary {
             self.base(),
             self.size(),
             self.bytes(),
-            json_escape(&self.path().display().to_string())
+            json_escape(self.path())
         )
     }
 }

@@ -1,6 +1,6 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use rem6_workload::{WorkloadResourceKind, WorkloadResourcePayload};
+use rem6_workload::{WorkloadAcquiredResource, WorkloadResourceKind, WorkloadResourcePayload};
 
 use crate::resource_acquire_cli::{
     acquire_manifest_required_resources, acquire_suite_required_resources,
@@ -8,9 +8,78 @@ use crate::resource_acquire_cli::{
 };
 use crate::{Rem6CliError, Rem6ResourceAcquireConfig};
 
-pub(crate) fn run_kernel_binary_from_resource_config(
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RunResourcePayloads {
+    resource_config: PathBuf,
+    payloads: Vec<RunResourcePayload>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RunResourcePayload {
+    kind: WorkloadResourceKind,
+    payload: WorkloadResourcePayload,
+}
+
+impl RunResourcePayloads {
+    pub(crate) fn kernel_binary(&self) -> Result<Vec<u8>, Rem6CliError> {
+        let payloads = self
+            .payloads
+            .iter()
+            .filter(|payload| payload.kind == WorkloadResourceKind::Kernel)
+            .collect::<Vec<_>>();
+        if payloads.len() != 1 {
+            return Err(Rem6CliError::Execute {
+                error: format!(
+                    "run resource config {} acquired {} required kernel resources; expected exactly one",
+                    self.resource_config.display(),
+                    payloads.len(),
+                ),
+            });
+        }
+        Ok(payloads[0].payload.data().to_vec())
+    }
+
+    pub(crate) fn readfile_payload(&self, id: &str) -> Result<&[u8], Rem6CliError> {
+        let payloads = self
+            .payloads
+            .iter()
+            .filter(|payload| payload.payload.resource().as_str() == id)
+            .collect::<Vec<_>>();
+        let payload = match payloads.as_slice() {
+            [payload] => payload,
+            [] => {
+                return Err(Rem6CliError::Execute {
+                    error: format!(
+                        "readfile resource {id} was not acquired by run resource config {}",
+                        self.resource_config.display(),
+                    ),
+                })
+            }
+            _ => {
+                return Err(Rem6CliError::Execute {
+                    error: format!(
+                        "readfile resource {id} is ambiguous in run resource config {}; expected exactly one",
+                        self.resource_config.display(),
+                    ),
+                })
+            }
+        };
+        if payload.kind != WorkloadResourceKind::Input {
+            return Err(Rem6CliError::Execute {
+                error: format!(
+                    "readfile resource {id} in run resource config {} has kind {}; expected input",
+                    self.resource_config.display(),
+                    payload.kind.as_str(),
+                ),
+            });
+        }
+        Ok(payload.payload.data())
+    }
+}
+
+pub(crate) fn run_resource_payloads_from_config(
     resource_config: &Path,
-) -> Result<Vec<u8>, Rem6CliError> {
+) -> Result<RunResourcePayloads, Rem6CliError> {
     let acquire_config = Rem6ResourceAcquireConfig::parse_args([
         "resource-acquire".to_string(),
         "--config".to_string(),
@@ -21,33 +90,30 @@ pub(crate) fn run_kernel_binary_from_resource_config(
         let (_plan, acquired) = acquire_suite_required_resources(&acquire_config)?;
         let payloads = acquired
             .into_iter()
-            .filter(|resource| resource.acquired().kind() == WorkloadResourceKind::Kernel)
-            .map(|resource| resource.into_acquired().into_payload())
+            .map(|resource| RunResourcePayload::from_acquired(resource.into_acquired()))
             .collect::<Vec<_>>();
-        return unique_run_kernel_payload(payloads, resource_config);
+        return Ok(RunResourcePayloads {
+            resource_config: resource_config.to_path_buf(),
+            payloads,
+        });
     }
     let (_manifest, acquired) = acquire_manifest_required_resources(&acquire_config)?;
     let payloads = acquired
         .into_iter()
-        .filter(|resource| resource.kind() == WorkloadResourceKind::Kernel)
-        .map(|resource| resource.into_payload())
+        .map(RunResourcePayload::from_acquired)
         .collect::<Vec<_>>();
-    unique_run_kernel_payload(payloads, resource_config)
+    Ok(RunResourcePayloads {
+        resource_config: resource_config.to_path_buf(),
+        payloads,
+    })
 }
 
-fn unique_run_kernel_payload(
-    mut payloads: Vec<WorkloadResourcePayload>,
-    resource_config: &Path,
-) -> Result<Vec<u8>, Rem6CliError> {
-    if payloads.len() != 1 {
-        return Err(Rem6CliError::Execute {
-            error: format!(
-                "run resource config {} acquired {} required kernel resources; expected exactly one",
-                resource_config.display(),
-                payloads.len(),
-            ),
-        });
+impl RunResourcePayload {
+    fn from_acquired(resource: WorkloadAcquiredResource) -> Self {
+        let kind = resource.kind();
+        Self {
+            kind,
+            payload: resource.into_payload(),
+        }
     }
-    let payload = payloads.remove(0);
-    Ok(payload.data().to_vec())
 }
