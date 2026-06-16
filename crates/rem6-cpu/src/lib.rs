@@ -39,6 +39,7 @@ mod o3_pipeline;
 mod parallel_flow;
 mod riscv_activity;
 mod riscv_cluster;
+mod riscv_cluster_drive;
 mod riscv_cluster_run;
 mod riscv_data_access;
 mod riscv_data_issue;

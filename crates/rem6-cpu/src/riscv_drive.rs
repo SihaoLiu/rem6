@@ -21,10 +21,21 @@ impl RiscvCore {
         if !self.is_hart_started() {
             return Ok(None);
         }
-        if self.core.has_pending_fetch() || self.has_pending_data_access() {
+        if self.has_pending_data_access() {
             return Ok(None);
         }
         if self.has_pending_trap() {
+            return Ok(None);
+        }
+        if self.core.has_pending_fetch() {
+            if !self.can_retire_completed_fetch_while_fetch_pending() {
+                return Ok(None);
+            }
+            if let Some(event) = self.execute_next_completed_fetch()? {
+                return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
+                    event,
+                ))));
+            }
             return Ok(None);
         }
 

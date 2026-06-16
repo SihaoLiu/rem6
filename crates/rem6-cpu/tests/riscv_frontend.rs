@@ -548,6 +548,84 @@ fn riscv_core_driver_fetches_ahead_for_straight_line_integer_instruction() {
 }
 
 #[test]
+fn riscv_core_driver_retires_completed_fetch_while_fetch_ahead_is_pending() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let store = loaded_program_store(0x8000, &[i_type(7, 0, 0x0, 1, 0x13), 0x0010_0073], &[]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(first) = action else {
+        panic!("expected older completed instruction to retire while fetch-ahead is pending");
+    };
+    assert_eq!(
+        first.instruction(),
+        RiscvInstruction::decode(i_type(7, 0, 0x0, 1, 0x13)).unwrap()
+    );
+    assert_eq!(core.read_register(reg(1)), 7);
+    assert_eq!(core.pc(), Address::new(0x8004));
+
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(trap) = action else {
+        panic!("expected pending fetch-ahead instruction to retire after it completes");
+    };
+    assert_eq!(trap.instruction(), RiscvInstruction::Ebreak);
+}
+
+#[test]
+fn riscv_core_driver_blocks_pending_fetch_retire_when_interrupt_can_redirect() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let interrupt_bit = 1_u64 << 1;
+    core.set_status(RiscvStatusWord::new(0).with_mie(true));
+    let store = loaded_program_store(0x8000, &[i_type(7, 0, 0x0, 1, 0x13), 0x0010_0073], &[]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    core.set_machine_interrupt_pending(interrupt_bit);
+    core.set_machine_interrupt_enable(interrupt_bit);
+
+    assert_eq!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        None
+    );
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(interrupted) = action else {
+        panic!("expected interrupt redirect after pending fetch completes");
+    };
+    assert_eq!(
+        interrupted.instruction(),
+        RiscvInstruction::decode(i_type(7, 0, 0x0, 1, 0x13)).unwrap()
+    );
+    assert!(matches!(
+        interrupted.execution().trap().map(|trap| trap.kind()),
+        Some(RiscvTrapKind::Interrupt { code: 1 })
+    ));
+}
+
+#[test]
 fn riscv_core_driver_fetch_ahead_does_not_reissue_completed_successor_pc() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);

@@ -74,6 +74,14 @@ impl RiscvCore {
             .branch_speculations
             .insert(speculation.sequence(), prediction.id());
     }
+
+    pub(crate) fn can_retire_completed_fetch_while_fetch_pending(&self) -> bool {
+        let state = self.state.lock().expect("riscv core lock");
+        state.pending_trap.is_none()
+            && state.pending_fetch_prefix.is_none()
+            && state.branch_speculations.is_empty()
+            && !hart_has_enabled_pending_interrupt(&state.hart)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

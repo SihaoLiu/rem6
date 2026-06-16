@@ -5,6 +5,7 @@ use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
     RiscvCore, RiscvCoreDriveAction,
 };
+use rem6_isa_riscv::Register;
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
     AccessSize, Address, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
@@ -23,12 +24,47 @@ fn layout() -> CacheLineLayout {
     CacheLineLayout::new(16).unwrap()
 }
 
+fn reg(index: u8) -> Register {
+    Register::new(index).unwrap()
+}
+
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
     (((imm as u32) & 0x0fff) << 20)
         | (u32::from(rs1) << 15)
         | (funct3 << 12)
         | (u32::from(rd) << 7)
         | opcode
+}
+
+#[test]
+fn riscv_core_translated_driver_retires_completed_fetch_while_fetch_ahead_is_pending() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = translated_data_core(fetch_route, data_route, 0x8000);
+    let page_map = single_page_map(0x4000, 0x9000);
+    let store = loaded_program_store(
+        0x8000,
+        &[i_type(7, 0, 0x0, 1, 0x13), i_type(9, 0, 0x0, 2, 0x13)],
+    );
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+
+    let action =
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map)
+            .expect("expected translated driver to retire completed fetch");
+    let RiscvCoreDriveAction::InstructionExecuted(_) = action else {
+        panic!("expected translated driver to retire completed fetch");
+    };
+    assert_eq!(core.read_register(reg(1)), 7);
+    assert_eq!(core.pc(), Address::new(0x8004));
 }
 
 fn b_type(imm: i32, rs2: u8, rs1: u8, funct3: u32) -> u32 {

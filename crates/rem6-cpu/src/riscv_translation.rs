@@ -981,10 +981,23 @@ impl RiscvCore {
                 event,
             ))));
         }
-        if self.core.has_pending_fetch() || self.has_outstanding_data_request() {
+        if self.has_outstanding_data_request() {
             return Ok(None);
         }
         if self.has_pending_trap() {
+            return Ok(None);
+        }
+        if self.core.has_pending_fetch() {
+            if self.has_pending_data_access()
+                || !self.can_retire_completed_fetch_while_fetch_pending()
+            {
+                return Ok(None);
+            }
+            if let Some(event) = self.execute_next_completed_fetch()? {
+                return Ok(Some(RiscvCoreDriveAction::InstructionExecuted(Box::new(
+                    event,
+                ))));
+            }
             return Ok(None);
         }
 

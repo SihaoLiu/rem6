@@ -13,70 +13,20 @@ use rem6_transport::{
     TargetOutcome, TransportEndpointId,
 };
 
+use crate::riscv_cluster_drive::{
+    completed_fetch_drive_event, push_completed_fetch_drive_event,
+    push_prepared_completed_fetch_drive_event, push_prepared_parallel_fetch_action,
+    PreparedParallelAction,
+};
 use crate::riscv_cluster_run::{
     RiscvClusterDriveEvent, RiscvClusterRun, RiscvClusterStopReason, RiscvClusterTurn,
 };
-use crate::riscv_data_issue::{OutstandingDataAccess, PreparedDataParallelAccess};
-use crate::riscv_fetch_ahead::RiscvFetchAheadDecision;
+use crate::riscv_data_issue::PreparedDataParallelAccess;
 use crate::riscv_reservation::RiscvReservationTracker;
 use crate::{
-    CpuId, HtmAbortRecord, HtmBeginRecord, HtmFailureCause, HtmTransactionError, OutstandingFetch,
-    RiscvCore, RiscvCoreDriveAction, RiscvCpuError, RiscvStoreConditionalFailureDiagnostic,
+    CpuId, HtmAbortRecord, HtmBeginRecord, HtmFailureCause, HtmTransactionError, RiscvCore,
+    RiscvCoreDriveAction, RiscvCpuError, RiscvStoreConditionalFailureDiagnostic,
 };
-
-enum PreparedParallelAction {
-    Ready(RiscvClusterDriveEvent),
-    Fetch {
-        cpu: CpuId,
-        core: RiscvCore,
-        issue: OutstandingFetch,
-        fetch_ahead: Option<RiscvFetchAheadDecision>,
-        transaction_index: usize,
-    },
-    Data {
-        cpu: CpuId,
-        core: RiscvCore,
-        issue: OutstandingDataAccess,
-        transaction_index: usize,
-    },
-    LocalDataFailure {
-        cpu: CpuId,
-        core: RiscvCore,
-        issue: OutstandingDataAccess,
-    },
-}
-
-#[allow(clippy::too_many_arguments)]
-fn push_prepared_parallel_fetch_action<F>(
-    cpu: CpuId,
-    core: &RiscvCore,
-    tick: Tick,
-    transport: &MemoryTransport,
-    fetch_trace: MemoryTrace,
-    fetch_responder: F,
-    prepared_actions: &mut Vec<PreparedParallelAction>,
-    transaction_cpus: &mut Vec<CpuId>,
-    transactions: &mut Vec<ParallelMemoryTransaction>,
-    fetch_ahead: Option<RiscvFetchAheadDecision>,
-) -> Result<(), RiscvClusterError>
-where
-    F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome + Send + 'static,
-{
-    let (issue, transaction) = core
-        .prepare_fetch_parallel_transaction(tick, transport, fetch_trace, fetch_responder)
-        .map_err(|error| RiscvClusterError::Core { cpu, error })?;
-    let transaction_index = transactions.len();
-    transaction_cpus.push(cpu);
-    transactions.push(transaction);
-    prepared_actions.push(PreparedParallelAction::Fetch {
-        cpu,
-        core: core.clone(),
-        issue,
-        fetch_ahead,
-        transaction_index,
-    });
-    Ok(())
-}
 
 #[derive(Clone, Debug)]
 pub struct RiscvCluster {
@@ -374,11 +324,18 @@ impl RiscvCluster {
             if !core.is_hart_started() {
                 continue;
             }
-            if core.has_pending_fetch()
-                || core.has_pending_data_access()
+            if core.has_pending_data_access()
                 || core.has_unissued_data_access()
                 || core.has_pending_trap()
             {
+                continue;
+            }
+            if core.has_pending_fetch() {
+                if core.can_retire_completed_fetch_while_fetch_pending()
+                    && push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)?
+                {
+                    continue;
+                }
                 continue;
             }
 
@@ -399,14 +356,7 @@ impl RiscvCluster {
                 continue;
             }
 
-            if let Some(event) = core
-                .execute_next_completed_fetch()
-                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
-            {
-                prepared_actions.push(PreparedParallelAction::Ready(RiscvClusterDriveEvent::new(
-                    *cpu,
-                    RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
-                )));
+            if push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)? {
                 continue;
             }
 
@@ -460,8 +410,15 @@ impl RiscvCluster {
             if !core.is_hart_started() {
                 continue;
             }
-            if core.has_pending_fetch() || core.has_pending_data_access() || core.has_pending_trap()
-            {
+            if core.has_pending_data_access() || core.has_pending_trap() {
+                continue;
+            }
+            if core.has_pending_fetch() {
+                if core.can_retire_completed_fetch_while_fetch_pending()
+                    && push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)?
+                {
+                    continue;
+                }
                 continue;
             }
 
@@ -482,14 +439,7 @@ impl RiscvCluster {
                 continue;
             }
 
-            if let Some(event) = core
-                .execute_next_completed_fetch()
-                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
-            {
-                prepared_actions.push(PreparedParallelAction::Ready(RiscvClusterDriveEvent::new(
-                    *cpu,
-                    RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
-                )));
+            if push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)? {
                 continue;
             }
 
@@ -579,8 +529,22 @@ impl RiscvCluster {
             if !core.is_hart_started() {
                 continue;
             }
-            if core.has_pending_fetch() || core.has_pending_data_access() || core.has_pending_trap()
-            {
+            if core.has_pending_data_access() || core.has_pending_trap() {
+                continue;
+            }
+            if core.has_pending_fetch() {
+                if !data_only && core.can_retire_completed_fetch_while_fetch_pending() {
+                    if let Some(event) = completed_fetch_drive_event(*cpu, core)? {
+                        if committed_instructions >= instruction_budget {
+                            break;
+                        }
+                        prepared_actions.push(PreparedParallelAction::Ready(event));
+                        committed_instructions += 1;
+                        if committed_instructions >= instruction_budget {
+                            break;
+                        }
+                    }
+                }
                 continue;
             }
 
@@ -604,19 +568,11 @@ impl RiscvCluster {
             }
 
             if !data_only {
-                if let Some(event) = core
-                    .execute_next_completed_fetch()
-                    .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
-                {
+                if let Some(event) = completed_fetch_drive_event(*cpu, core)? {
                     if committed_instructions >= instruction_budget {
                         break;
                     }
-                    prepared_actions.push(PreparedParallelAction::Ready(
-                        RiscvClusterDriveEvent::new(
-                            *cpu,
-                            RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
-                        ),
-                    ));
+                    prepared_actions.push(PreparedParallelAction::Ready(event));
                     committed_instructions += 1;
                     if committed_instructions >= instruction_budget {
                         break;
@@ -720,10 +676,16 @@ impl RiscvCluster {
                 )));
                 continue;
             }
-            if core.has_pending_fetch()
-                || core.has_outstanding_data_request()
-                || core.has_pending_trap()
-            {
+            if core.has_outstanding_data_request() || core.has_pending_trap() {
+                continue;
+            }
+            if core.has_pending_fetch() {
+                if !core.has_pending_data_access()
+                    && core.can_retire_completed_fetch_while_fetch_pending()
+                    && push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)?
+                {
+                    continue;
+                }
                 continue;
             }
 
@@ -744,14 +706,7 @@ impl RiscvCluster {
                 continue;
             }
 
-            if let Some(event) = core
-                .execute_next_completed_fetch()
-                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
-            {
-                prepared_actions.push(PreparedParallelAction::Ready(RiscvClusterDriveEvent::new(
-                    *cpu,
-                    RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
-                )));
+            if push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)? {
                 continue;
             }
 
@@ -858,10 +813,16 @@ impl RiscvCluster {
                 )));
                 continue;
             }
-            if core.has_pending_fetch()
-                || core.has_outstanding_data_request()
-                || core.has_pending_trap()
-            {
+            if core.has_outstanding_data_request() || core.has_pending_trap() {
+                continue;
+            }
+            if core.has_pending_fetch() {
+                if !core.has_pending_data_access()
+                    && core.can_retire_completed_fetch_while_fetch_pending()
+                    && push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)?
+                {
+                    continue;
+                }
                 continue;
             }
 
@@ -882,14 +843,7 @@ impl RiscvCluster {
                 continue;
             }
 
-            if let Some(event) = core
-                .execute_next_completed_fetch()
-                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
-            {
-                prepared_actions.push(PreparedParallelAction::Ready(RiscvClusterDriveEvent::new(
-                    *cpu,
-                    RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
-                )));
+            if push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)? {
                 continue;
             }
 
@@ -1082,8 +1036,15 @@ impl RiscvCluster {
             if !core.is_hart_started() {
                 continue;
             }
-            if core.has_pending_fetch() || core.has_pending_data_access() || core.has_pending_trap()
-            {
+            if core.has_pending_data_access() || core.has_pending_trap() {
+                continue;
+            }
+            if core.has_pending_fetch() {
+                if core.can_retire_completed_fetch_while_fetch_pending()
+                    && push_completed_fetch_drive_event(*cpu, core, &mut actions)?
+                {
+                    continue;
+                }
                 continue;
             }
 
@@ -1105,14 +1066,7 @@ impl RiscvCluster {
                 continue;
             }
 
-            if let Some(event) = core
-                .execute_next_completed_fetch()
-                .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?
-            {
-                actions.push(RiscvClusterDriveEvent::new(
-                    *cpu,
-                    RiscvCoreDriveAction::InstructionExecuted(Box::new(event)),
-                ));
+            if push_completed_fetch_drive_event(*cpu, core, &mut actions)? {
                 continue;
             }
 
