@@ -1,9 +1,42 @@
-use crate::{RiscvHartState, VectorRegister, RISCV_VECTOR_REGISTER_BYTES};
+use crate::{RiscvHartState, RiscvInstruction, VectorRegister, RISCV_VECTOR_REGISTER_BYTES};
 
 const MAX_VECTOR_GROUP_REGISTERS: usize = 8;
 const MAX_VECTOR_GROUP_BYTES: usize = RISCV_VECTOR_REGISTER_BYTES * MAX_VECTOR_GROUP_REGISTERS;
 
-pub(crate) fn execute_vector_add_vv(
+pub(crate) fn execute_vector_integer_binary(
+    hart: &mut RiscvHartState,
+    instruction: RiscvInstruction,
+) -> bool {
+    match instruction {
+        RiscvInstruction::VectorAddVv { vd, vs1, vs2 } => execute_vector_add_vv(hart, vd, vs1, vs2),
+        RiscvInstruction::VectorAddVx { vd, vs2, rs1 } => {
+            execute_vector_add_vx(hart, vd, vs2, hart.read(rs1))
+        }
+        RiscvInstruction::VectorAddVi { vd, vs2, imm } => execute_vector_add_vi(hart, vd, vs2, imm),
+        RiscvInstruction::VectorSubVv { vd, vs1, vs2 } => execute_vector_sub_vv(hart, vd, vs1, vs2),
+        RiscvInstruction::VectorSubVx { vd, vs2, rs1 } => {
+            execute_vector_sub_vx(hart, vd, vs2, hart.read(rs1))
+        }
+        RiscvInstruction::VectorAndVv { vd, vs1, vs2 } => execute_vector_and_vv(hart, vd, vs1, vs2),
+        RiscvInstruction::VectorAndVx { vd, vs2, rs1 } => {
+            execute_vector_and_vx(hart, vd, vs2, hart.read(rs1))
+        }
+        RiscvInstruction::VectorAndVi { vd, vs2, imm } => execute_vector_and_vi(hart, vd, vs2, imm),
+        RiscvInstruction::VectorOrVv { vd, vs1, vs2 } => execute_vector_or_vv(hart, vd, vs1, vs2),
+        RiscvInstruction::VectorOrVx { vd, vs2, rs1 } => {
+            execute_vector_or_vx(hart, vd, vs2, hart.read(rs1))
+        }
+        RiscvInstruction::VectorOrVi { vd, vs2, imm } => execute_vector_or_vi(hart, vd, vs2, imm),
+        RiscvInstruction::VectorXorVv { vd, vs1, vs2 } => execute_vector_xor_vv(hart, vd, vs1, vs2),
+        RiscvInstruction::VectorXorVx { vd, vs2, rs1 } => {
+            execute_vector_xor_vx(hart, vd, vs2, hart.read(rs1))
+        }
+        RiscvInstruction::VectorXorVi { vd, vs2, imm } => execute_vector_xor_vi(hart, vd, vs2, imm),
+        _ => false,
+    }
+}
+
+fn execute_vector_add_vv(
     hart: &mut RiscvHartState,
     vd: VectorRegister,
     vs1: VectorRegister,
@@ -12,7 +45,7 @@ pub(crate) fn execute_vector_add_vv(
     execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::Add)
 }
 
-pub(crate) fn execute_vector_add_vx(
+fn execute_vector_add_vx(
     hart: &mut RiscvHartState,
     vd: VectorRegister,
     vs2: VectorRegister,
@@ -21,7 +54,7 @@ pub(crate) fn execute_vector_add_vx(
     execute_vector_binary_vx(hart, vd, vs2, scalar, LaneBinaryOp::Add)
 }
 
-pub(crate) fn execute_vector_add_vi(
+fn execute_vector_add_vi(
     hart: &mut RiscvHartState,
     vd: VectorRegister,
     vs2: VectorRegister,
@@ -30,7 +63,7 @@ pub(crate) fn execute_vector_add_vi(
     execute_vector_add_vx(hart, vd, vs2, imm as i64 as u64)
 }
 
-pub(crate) fn execute_vector_sub_vv(
+fn execute_vector_sub_vv(
     hart: &mut RiscvHartState,
     vd: VectorRegister,
     vs1: VectorRegister,
@@ -39,13 +72,94 @@ pub(crate) fn execute_vector_sub_vv(
     execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::Sub)
 }
 
-pub(crate) fn execute_vector_sub_vx(
+fn execute_vector_sub_vx(
     hart: &mut RiscvHartState,
     vd: VectorRegister,
     vs2: VectorRegister,
     scalar: u64,
 ) -> bool {
     execute_vector_binary_vx(hart, vd, vs2, scalar, LaneBinaryOp::Sub)
+}
+
+fn execute_vector_and_vv(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs1: VectorRegister,
+    vs2: VectorRegister,
+) -> bool {
+    execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::And)
+}
+
+fn execute_vector_and_vx(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    scalar: u64,
+) -> bool {
+    execute_vector_binary_vx(hart, vd, vs2, scalar, LaneBinaryOp::And)
+}
+
+fn execute_vector_and_vi(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    imm: i8,
+) -> bool {
+    execute_vector_and_vx(hart, vd, vs2, imm as i64 as u64)
+}
+
+fn execute_vector_or_vv(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs1: VectorRegister,
+    vs2: VectorRegister,
+) -> bool {
+    execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::Or)
+}
+
+fn execute_vector_or_vx(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    scalar: u64,
+) -> bool {
+    execute_vector_binary_vx(hart, vd, vs2, scalar, LaneBinaryOp::Or)
+}
+
+fn execute_vector_or_vi(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    imm: i8,
+) -> bool {
+    execute_vector_or_vx(hart, vd, vs2, imm as i64 as u64)
+}
+
+fn execute_vector_xor_vv(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs1: VectorRegister,
+    vs2: VectorRegister,
+) -> bool {
+    execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::Xor)
+}
+
+fn execute_vector_xor_vx(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    scalar: u64,
+) -> bool {
+    execute_vector_binary_vx(hart, vd, vs2, scalar, LaneBinaryOp::Xor)
+}
+
+fn execute_vector_xor_vi(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    imm: i8,
+) -> bool {
+    execute_vector_xor_vx(hart, vd, vs2, imm as i64 as u64)
 }
 
 fn execute_vector_binary_vv(
@@ -87,6 +201,9 @@ fn execute_vector_binary_vx(
 enum LaneBinaryOp {
     Add,
     Sub,
+    And,
+    Or,
+    Xor,
 }
 
 impl LaneBinaryOp {
@@ -94,6 +211,9 @@ impl LaneBinaryOp {
         match self {
             Self::Add => left.wrapping_add(right),
             Self::Sub => left.wrapping_sub(right),
+            Self::And => left & right,
+            Self::Or => left | right,
+            Self::Xor => left ^ right,
         }
     }
 
@@ -101,6 +221,9 @@ impl LaneBinaryOp {
         match self {
             Self::Add => left.wrapping_add(right),
             Self::Sub => left.wrapping_sub(right),
+            Self::And => left & right,
+            Self::Or => left | right,
+            Self::Xor => left ^ right,
         }
     }
 
@@ -108,6 +231,9 @@ impl LaneBinaryOp {
         match self {
             Self::Add => left.wrapping_add(right),
             Self::Sub => left.wrapping_sub(right),
+            Self::And => left & right,
+            Self::Or => left | right,
+            Self::Xor => left ^ right,
         }
     }
 
@@ -115,6 +241,9 @@ impl LaneBinaryOp {
         match self {
             Self::Add => left.wrapping_add(right),
             Self::Sub => left.wrapping_sub(right),
+            Self::And => left & right,
+            Self::Or => left | right,
+            Self::Xor => left ^ right,
         }
     }
 }

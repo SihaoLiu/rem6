@@ -439,52 +439,21 @@ impl RiscvHartState {
                 let avl = vector_avl(self, rd, rs1);
                 write_vector_config(self, &mut register_writes, rd, self.read(rs2), avl);
             }
-            RiscvInstruction::VectorAddVv { vd, vs1, vs2 } => {
-                if !vector_execute::execute_vector_add_vv(self, vd, vs1, vs2) {
-                    return Ok(enter_synchronous_trap(
-                        self,
-                        instruction,
-                        instruction_bytes_u8,
-                        pc,
-                        RiscvTrapKind::IllegalInstruction,
-                    ));
-                }
-            }
-            RiscvInstruction::VectorAddVx { vd, vs2, rs1 } => {
-                if !vector_execute::execute_vector_add_vx(self, vd, vs2, self.read(rs1)) {
-                    return Ok(enter_synchronous_trap(
-                        self,
-                        instruction,
-                        instruction_bytes_u8,
-                        pc,
-                        RiscvTrapKind::IllegalInstruction,
-                    ));
-                }
-            }
-            RiscvInstruction::VectorAddVi { vd, vs2, imm } => {
-                if !vector_execute::execute_vector_add_vi(self, vd, vs2, imm) {
-                    return Ok(enter_synchronous_trap(
-                        self,
-                        instruction,
-                        instruction_bytes_u8,
-                        pc,
-                        RiscvTrapKind::IllegalInstruction,
-                    ));
-                }
-            }
-            RiscvInstruction::VectorSubVv { vd, vs1, vs2 } => {
-                if !vector_execute::execute_vector_sub_vv(self, vd, vs1, vs2) {
-                    return Ok(enter_synchronous_trap(
-                        self,
-                        instruction,
-                        instruction_bytes_u8,
-                        pc,
-                        RiscvTrapKind::IllegalInstruction,
-                    ));
-                }
-            }
-            RiscvInstruction::VectorSubVx { vd, vs2, rs1 } => {
-                if !vector_execute::execute_vector_sub_vx(self, vd, vs2, self.read(rs1)) {
+            RiscvInstruction::VectorAddVv { .. }
+            | RiscvInstruction::VectorAddVx { .. }
+            | RiscvInstruction::VectorAddVi { .. }
+            | RiscvInstruction::VectorSubVv { .. }
+            | RiscvInstruction::VectorSubVx { .. }
+            | RiscvInstruction::VectorAndVv { .. }
+            | RiscvInstruction::VectorAndVx { .. }
+            | RiscvInstruction::VectorAndVi { .. }
+            | RiscvInstruction::VectorOrVv { .. }
+            | RiscvInstruction::VectorOrVx { .. }
+            | RiscvInstruction::VectorOrVi { .. }
+            | RiscvInstruction::VectorXorVv { .. }
+            | RiscvInstruction::VectorXorVx { .. }
+            | RiscvInstruction::VectorXorVi { .. } => {
+                if !vector_execute::execute_vector_integer_binary(self, instruction) {
                     return Ok(enter_synchronous_trap(
                         self,
                         instruction,

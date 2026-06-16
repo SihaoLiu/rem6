@@ -279,7 +279,37 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs1: vector_register(raw, 15),
             vs2: vector_register(raw, 20),
         }),
+        (0x0, 0b001001, true) => Ok(RiscvInstruction::VectorAndVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x0, 0b001010, true) => Ok(RiscvInstruction::VectorOrVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
+        (0x0, 0b001011, true) => Ok(RiscvInstruction::VectorXorVv {
+            vd: vector_register(raw, 7),
+            vs1: vector_register(raw, 15),
+            vs2: vector_register(raw, 20),
+        }),
         (0x3, 0, true) => Ok(RiscvInstruction::VectorAddVi {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            imm: vector_signed_imm5(raw),
+        }),
+        (0x3, 0b001001, true) => Ok(RiscvInstruction::VectorAndVi {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            imm: vector_signed_imm5(raw),
+        }),
+        (0x3, 0b001010, true) => Ok(RiscvInstruction::VectorOrVi {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            imm: vector_signed_imm5(raw),
+        }),
+        (0x3, 0b001011, true) => Ok(RiscvInstruction::VectorXorVi {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
             imm: vector_signed_imm5(raw),
@@ -290,6 +320,21 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs1: rs1(raw),
         }),
         (0x4, 0b000010, true) => Ok(RiscvInstruction::VectorSubVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b001001, true) => Ok(RiscvInstruction::VectorAndVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b001010, true) => Ok(RiscvInstruction::VectorOrVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b001011, true) => Ok(RiscvInstruction::VectorXorVx {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
             rs1: rs1(raw),

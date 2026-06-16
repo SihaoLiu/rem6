@@ -119,6 +119,47 @@ fn vsub_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
         | 0x57
 }
 
+fn vector_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(vs1) << 15)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vector_vx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (0b100 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vector_vi_type(funct6: u32, vs2: u8, imm: i8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(imm as u8 & 0x1f) << 15)
+        | (0b011 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vand_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b001001, vs2, vs1, vd)
+}
+
+fn vor_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b001010, vs2, rs1, vd)
+}
+
+fn vxor_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
+    vector_vi_type(0b001011, vs2, imm, vd)
+}
+
 fn vreg(index: u8) -> VectorRegister {
     VectorRegister::new(index).unwrap()
 }
@@ -889,6 +930,85 @@ fn riscv_core_driver_executes_vsub_vv_and_vx_from_fetch_stream() {
     assert_eq!(
         core.read_vector_register(vreg(6)),
         lanes_u32([15, u32::MAX - 2, u32::MAX - 3, 0xdddd_dddd])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_logical_operations_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.write_register(reg(8), 0x00ff_000f);
+    core.write_vector_register(
+        vreg(2),
+        lanes_u32([0b1100, 0xffff_0000, 0x1234_5678, 0xaaaa_aaaa]),
+    );
+    core.write_vector_register(
+        vreg(1),
+        lanes_u32([0b1010, 0x00ff_00ff, 0xffff_0000, 0x5555_5555]),
+    );
+    core.write_vector_register(vreg(4), lanes_u32([0, 0, 0, 0xeeee_eeee]));
+    core.write_vector_register(vreg(6), lanes_u32([0, 0, 0, 0xdddd_dddd]));
+    core.write_vector_register(vreg(8), lanes_u32([0, 0, 0, 0xcccc_cccc]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 5),
+            vand_vv_type(2, 1, 4),
+            vor_vx_type(4, 8, 6),
+            vxor_vi_type(6, -1, 8),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(3, 0xd0));
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorAndVv {
+            vd: vreg(4),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        }
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(4)),
+        lanes_u32([0b1000, 0x00ff_0000, 0x1234_0000, 0xeeee_eeee])
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorOrVx {
+            vd: vreg(6),
+            vs2: vreg(4),
+            rs1: reg(8),
+        }
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(6)),
+        lanes_u32([0x00ff_000f, 0x00ff_000f, 0x12ff_000f, 0xdddd_dddd])
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorXorVi {
+            vd: vreg(8),
+            vs2: vreg(6),
+            imm: -1,
+        }
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(8)),
+        lanes_u32([0xff00_fff0, 0xff00_fff0, 0xed00_fff0, 0xcccc_cccc])
     );
 }
 

@@ -299,6 +299,51 @@ pub enum RiscvInstruction {
         vs2: VectorRegister,
         rs1: Register,
     },
+    VectorAndVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorAndVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorAndVi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        imm: i8,
+    },
+    VectorOrVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorOrVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorOrVi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        imm: i8,
+    },
+    VectorXorVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    VectorXorVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorXorVi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        imm: i8,
+    },
     Load {
         rd: Register,
         rs1: Register,

@@ -237,6 +237,15 @@ fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -
             | RiscvInstruction::VectorAddVi { .. }
             | RiscvInstruction::VectorSubVv { .. }
             | RiscvInstruction::VectorSubVx { .. }
+            | RiscvInstruction::VectorAndVv { .. }
+            | RiscvInstruction::VectorAndVx { .. }
+            | RiscvInstruction::VectorAndVi { .. }
+            | RiscvInstruction::VectorOrVv { .. }
+            | RiscvInstruction::VectorOrVx { .. }
+            | RiscvInstruction::VectorOrVi { .. }
+            | RiscvInstruction::VectorXorVv { .. }
+            | RiscvInstruction::VectorXorVx { .. }
+            | RiscvInstruction::VectorXorVi { .. }
     )
 }
 
