@@ -56,7 +56,7 @@ pub(super) fn build_cli_memory_store(
     store
         .add_partition(CLI_MEMORY_TARGET, line_layout)
         .map_err(execute_error)?;
-    for region in cli_memory_regions(image, load_blobs)? {
+    for region in cli_memory_regions(image, load_blobs, line_layout)? {
         store
             .map_region(CLI_MEMORY_TARGET, region.start(), region.size())
             .map_err(execute_error)?;
@@ -180,6 +180,21 @@ fn build_cli_dram_profile(
 fn cli_memory_regions(
     image: &BootImage,
     load_blobs: &[LoadedBlob],
+    line_layout: CacheLineLayout,
+) -> Result<Vec<AddressRange>, Rem6CliError> {
+    let ranges = checked_cli_memory_ranges(image, load_blobs)?;
+    let mut line_ranges = ranges
+        .into_iter()
+        .map(|range| line_covered_range(range, line_layout))
+        .collect::<Result<Vec<_>, _>>()?;
+    line_ranges.sort_by_key(|range| (range.start(), range.end()));
+
+    merge_line_ranges(line_ranges)
+}
+
+fn checked_cli_memory_ranges(
+    image: &BootImage,
+    load_blobs: &[LoadedBlob],
 ) -> Result<Vec<AddressRange>, Rem6CliError> {
     let mut ranges = Vec::with_capacity(image.segments().len() + load_blobs.len());
     ranges.extend(image.segments().iter().map(|segment| segment.range()));
@@ -217,6 +232,48 @@ fn cli_memory_regions(
     Ok(merged)
 }
 
+fn merge_line_ranges(ranges: Vec<AddressRange>) -> Result<Vec<AddressRange>, Rem6CliError> {
+    let mut merged: Vec<AddressRange> = Vec::new();
+    for range in ranges {
+        if let Some(last) = merged.last_mut() {
+            if range.start().get() <= last.end().get() {
+                let bytes = range.end().get().max(last.end().get()) - last.start().get();
+                *last =
+                    AddressRange::new(last.start(), AccessSize::new(bytes).map_err(execute_error)?)
+                        .map_err(execute_error)?;
+                continue;
+            }
+        }
+        merged.push(range);
+    }
+    Ok(merged)
+}
+
+fn line_covered_range(
+    range: AddressRange,
+    line_layout: CacheLineLayout,
+) -> Result<AddressRange, Rem6CliError> {
+    let start = line_layout.line_address(range.start());
+    let last_byte = range
+        .end()
+        .get()
+        .checked_sub(1)
+        .expect("address ranges are nonempty");
+    let end_line = line_layout.line_address(Address::new(last_byte));
+    let line_size = AccessSize::new(line_layout.bytes()).map_err(execute_error)?;
+    let end = end_line
+        .get()
+        .checked_add(line_layout.bytes())
+        .ok_or_else(|| {
+            execute_error(MemoryError::AddressOverflow {
+                start: end_line,
+                size: line_size,
+            })
+        })?;
+    let bytes = end - start.get();
+    AddressRange::new(start, AccessSize::new(bytes).map_err(execute_error)?).map_err(execute_error)
+}
+
 fn load_blob_into_store(
     store: &mut PartitionedMemoryStore,
     line_layout: CacheLineLayout,
@@ -247,4 +304,85 @@ fn load_blob_into_store(
         data_offset = next_data_offset;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use rem6_boot::BootImage;
+    use rem6_memory::{MemoryRequest, MemoryRequestId};
+
+    use super::*;
+
+    #[test]
+    fn cli_memory_store_maps_entire_loaded_lines() {
+        let line_layout = CacheLineLayout::new(16).unwrap();
+        let image = BootImage::new(Address::new(0x8000))
+            .add_segment(Address::new(0x8000), vec![0x13, 0x05, 0x70, 0x00])
+            .unwrap();
+        let mut store = build_cli_memory_store(&image, &[], line_layout).unwrap();
+        let request = MemoryRequest::instruction_fetch(
+            MemoryRequestId::new(rem6_memory::AgentId::new(1), 0),
+            Address::new(0x8004),
+            AccessSize::new(4).unwrap(),
+            line_layout,
+        )
+        .unwrap();
+
+        let response = store
+            .respond(&request)
+            .unwrap()
+            .response()
+            .cloned()
+            .unwrap();
+
+        assert_eq!(response.data(), Some(&[0, 0, 0, 0][..]));
+    }
+
+    #[test]
+    fn cli_memory_store_merges_disjoint_ranges_sharing_a_line() {
+        let line_layout = CacheLineLayout::new(16).unwrap();
+        let image = BootImage::new(Address::new(0x8000))
+            .add_segment(Address::new(0x8000), vec![1, 2, 3, 4])
+            .unwrap();
+        let blob = LoadedBlob {
+            summary: crate::Rem6LoadBlobSummary::new(0x8008, PathBuf::from("blob.bin"), 4),
+            data: vec![5, 6, 7, 8],
+        };
+
+        let mut store = build_cli_memory_store(&image, &[blob], line_layout).unwrap();
+        let request = MemoryRequest::instruction_fetch(
+            MemoryRequestId::new(rem6_memory::AgentId::new(1), 0),
+            Address::new(0x8004),
+            AccessSize::new(8).unwrap(),
+            line_layout,
+        )
+        .unwrap();
+
+        let response = store
+            .respond(&request)
+            .unwrap()
+            .response()
+            .cloned()
+            .unwrap();
+
+        assert_eq!(response.data(), Some(&[0, 0, 0, 0, 5, 6, 7, 8][..]));
+    }
+
+    #[test]
+    fn cli_memory_store_rejects_overlapping_raw_ranges() {
+        let line_layout = CacheLineLayout::new(16).unwrap();
+        let image = BootImage::new(Address::new(0x8000))
+            .add_segment(Address::new(0x8000), vec![1, 2, 3, 4])
+            .unwrap();
+        let blob = LoadedBlob {
+            summary: crate::Rem6LoadBlobSummary::new(0x8002, PathBuf::from("blob.bin"), 4),
+            data: vec![5, 6, 7, 8],
+        };
+
+        let error = build_cli_memory_store(&image, &[blob], line_layout).unwrap_err();
+
+        assert!(format!("{error}").contains("overlaps existing region"));
+    }
 }
