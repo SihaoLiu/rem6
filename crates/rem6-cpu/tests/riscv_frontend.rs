@@ -138,6 +138,16 @@ fn vcompress_vm_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
         | 0x57
 }
 
+fn vnclipu_wi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
+    (0b101110 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(imm & 0x1f) << 15)
+        | (0x3 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
 fn vector_vx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
     (funct6 << 26)
         | (1 << 25)
@@ -2174,6 +2184,47 @@ fn riscv_core_driver_executes_vcompress_vm_from_fetch_stream() {
 }
 
 #[test]
+fn riscv_core_driver_executes_vnclipu_wi_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 4);
+    core.write_vector_register(vreg(3), [0xee; 16]);
+    core.write_vector_register(
+        vreg(4),
+        [
+            5, 0, 0xff, 0x01, 4, 0, 6, 0, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+        ],
+    );
+    core.write_vector_register(vreg(5), [0xbb; 16]);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0x80, 10, 6),
+            vnclipu_wi_type(4, 1, 3),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(6),
+            rs1: reg(10),
+            vtype: 0x80,
+        }
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorNarrowClipUnsignedWi(vreg(3), vreg(4), 1)
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        [3, 0xff, 2, 3, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee]
+    );
+}
+
+#[test]
 fn riscv_core_driver_executes_vector_mask_logical_operations_from_fetch_stream() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);
@@ -2393,6 +2444,69 @@ fn riscv_core_driver_fetches_ahead_for_vector_mask_logical_instruction() {
     assert_eq!(
         core.read_vector_register(vreg(11)),
         [0xc8, 0xee, 0xee, 0xee, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    );
+}
+
+#[test]
+fn riscv_core_driver_fetches_ahead_for_vnclipu_wi_instruction() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 4);
+    core.write_vector_register(vreg(3), [0xee; 16]);
+    core.write_vector_register(
+        vreg(4),
+        [
+            5, 0, 0xff, 0x01, 4, 0, 6, 0, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+        ],
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0x80, 10, 6),
+            vnclipu_wi_type(4, 1, 3),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(vsetvli) = action else {
+        panic!("expected vsetvli execution after vnclipu.wi fetch-ahead");
+    };
+    assert_eq!(
+        vsetvli.instruction(),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(6),
+            rs1: reg(10),
+            vtype: 0x80,
+        }
+    );
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::FetchIssued { .. } = action else {
+        panic!("expected ebreak fetch before retiring vnclipu.wi");
+    };
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(vnclipu) = action else {
+        panic!("expected vnclipu.wi instruction to retire after successor fetch");
+    };
+    assert_eq!(
+        vnclipu.instruction(),
+        RiscvInstruction::VectorNarrowClipUnsignedWi(vreg(3), vreg(4), 1)
     );
 }
 

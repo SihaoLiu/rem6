@@ -2,9 +2,10 @@ use crate::encoding::{
     b_imm, csr, funct3, funct7, i_imm, rd, rs1, rs2, shamt32, shamt64, shift_funct6,
 };
 use crate::{
-    Immediate, RiscvCounterCsr, RiscvError, RiscvFenceSet, RiscvFloatCsr, RiscvInstruction,
-    RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvSupervisorTrapCsr,
-    RiscvTranslationCsr, VectorRegister,
+    Immediate, RiscvCounterCsr, RiscvCsrOp, RiscvError, RiscvFenceSet, RiscvFloatCsr,
+    RiscvInstruction, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr,
+    RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvVectorFixedPointCsr,
+    RiscvVectorFixedPointCsrInstruction, VectorRegister,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -418,6 +419,11 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vector_register(raw, 20),
             vector_register(raw, 15),
         )),
+        (0x3, 0b101110, true) => Ok(RiscvInstruction::VectorNarrowClipUnsignedWi(
+            vector_register(raw, 7),
+            vector_register(raw, 20),
+            vector_unsigned_imm5(raw),
+        )),
         (0x2, 0b100101, true) => Ok(RiscvInstruction::VectorMultiplyLowVv {
             vd: vector_register(raw, 7),
             vs1: vector_register(raw, 15),
@@ -784,6 +790,13 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                         .map(|csr| RiscvInstruction::ReadFloatCsr { rd: rd(raw), csr })
                 })
                 .or_else(|| {
+                    RiscvVectorFixedPointCsr::from_address(csr_address).map(|csr| {
+                        RiscvInstruction::VectorFixedPointCsr(
+                            RiscvVectorFixedPointCsrInstruction::read(rd(raw), csr),
+                        )
+                    })
+                })
+                .or_else(|| {
                     RiscvStatusCsr::from_address(csr_address)
                         .map(|csr| RiscvInstruction::ReadStatusCsr { rd: rd(raw), csr })
                 })
@@ -839,6 +852,30 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 csr,
                 zimm: rs1(raw).index(),
             }),
+            _ => Err(RiscvError::UnknownEncoding { raw }),
+        };
+    }
+
+    if let Some(csr) = RiscvVectorFixedPointCsr::from_address(csr_address) {
+        return match funct3(raw) {
+            0x1 => Ok(decode_vector_fixed_point_csr(raw, csr, RiscvCsrOp::Write)),
+            0x2 => Ok(decode_vector_fixed_point_csr(raw, csr, RiscvCsrOp::Set)),
+            0x3 => Ok(decode_vector_fixed_point_csr(raw, csr, RiscvCsrOp::Clear)),
+            0x5 => Ok(decode_vector_fixed_point_csr_immediate(
+                raw,
+                csr,
+                RiscvCsrOp::Write,
+            )),
+            0x6 => Ok(decode_vector_fixed_point_csr_immediate(
+                raw,
+                csr,
+                RiscvCsrOp::Set,
+            )),
+            0x7 => Ok(decode_vector_fixed_point_csr_immediate(
+                raw,
+                csr,
+                RiscvCsrOp::Clear,
+            )),
             _ => Err(RiscvError::UnknownEncoding { raw }),
         };
     }
@@ -1063,6 +1100,32 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
 
 fn is_csr_no_write_read(raw: u32) -> bool {
     matches!((funct3(raw), rs1(raw).index()), (0x2 | 0x3 | 0x6 | 0x7, 0))
+}
+
+fn decode_vector_fixed_point_csr(
+    raw: u32,
+    csr: RiscvVectorFixedPointCsr,
+    op: RiscvCsrOp,
+) -> RiscvInstruction {
+    RiscvInstruction::VectorFixedPointCsr(RiscvVectorFixedPointCsrInstruction::register(
+        rd(raw),
+        csr,
+        op,
+        rs1(raw),
+    ))
+}
+
+fn decode_vector_fixed_point_csr_immediate(
+    raw: u32,
+    csr: RiscvVectorFixedPointCsr,
+    op: RiscvCsrOp,
+) -> RiscvInstruction {
+    RiscvInstruction::VectorFixedPointCsr(RiscvVectorFixedPointCsrInstruction::immediate(
+        rd(raw),
+        csr,
+        op,
+        rs1(raw).index(),
+    ))
 }
 
 fn machine_counter_csr(address: u16) -> Option<RiscvCounterCsr> {

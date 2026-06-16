@@ -243,9 +243,18 @@ impl RiscvVectorNarrowClipPlan {
         }
         validate_fixed_point_shift(shift)?;
 
-        let rounded = round_unsigned(value, shift, rounding_mode)?;
-        let shifted = rounded >> shift;
         let max = unsigned_max(self.width);
+        let rounded = match round_unsigned(value, shift, rounding_mode) {
+            Ok(value) => value,
+            Err(RiscvVectorError::FixedPointRoundingOverflow) => {
+                return Ok(RiscvVectorNarrowClipResult {
+                    value: max as i128,
+                    saturated: true,
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        let shifted = rounded >> shift;
         let saturated = shifted > max;
         let value = if saturated { max } else { shifted } as i128;
 

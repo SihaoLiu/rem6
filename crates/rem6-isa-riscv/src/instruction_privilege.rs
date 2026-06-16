@@ -21,6 +21,9 @@ impl RiscvInstruction {
             | Self::ClearFloatCsrImmediate { csr, .. } => {
                 Some(required_csr_privilege(csr.address()))
             }
+            Self::VectorFixedPointCsr(instruction) => {
+                Some(required_csr_privilege(instruction.csr().address()))
+            }
             Self::ReadStatusCsr { csr, .. }
             | Self::WriteStatusCsr { csr, .. }
             | Self::SetStatusCsr { csr, .. }

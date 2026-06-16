@@ -1,7 +1,8 @@
 use crate::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryWidth, Register, RiscvCounterCsr,
     RiscvFenceSet, RiscvFloatCsr, RiscvFloatRoundingMode, RiscvInterruptCsr, RiscvMachineTrapCsr,
-    RiscvPseudoOp, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr, VectorRegister,
+    RiscvPseudoOp, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
+    RiscvVectorFixedPointCsrInstruction, VectorRegister,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -434,6 +435,7 @@ pub enum RiscvInstruction {
         imm: i8,
     },
     VectorCompressVm(VectorRegister, VectorRegister, VectorRegister),
+    VectorNarrowClipUnsignedWi(VectorRegister, VectorRegister, u8),
     VectorMoveVv {
         vd: VectorRegister,
         vs1: VectorRegister,
@@ -1122,6 +1124,7 @@ pub enum RiscvInstruction {
         csr: RiscvFloatCsr,
         zimm: u8,
     },
+    VectorFixedPointCsr(RiscvVectorFixedPointCsrInstruction),
     ReadStatusCsr {
         rd: Register,
         csr: RiscvStatusCsr,

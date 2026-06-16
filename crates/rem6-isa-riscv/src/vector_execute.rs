@@ -130,6 +130,11 @@ pub(crate) fn execute_vector_integer_binary(
         RiscvInstruction::VectorCompressVm(vd, vs2, vs1) => {
             crate::vector_compress_execute::execute_vector_compress_vm(hart, vd, vs2, vs1)
         }
+        RiscvInstruction::VectorNarrowClipUnsignedWi(vd, vs2, shift) => {
+            crate::vector_narrow_clip_execute::execute_vector_narrow_clip_unsigned_wi(
+                hart, vd, vs2, shift,
+            )
+        }
         RiscvInstruction::VectorMoveVv { vd, vs1 } => execute_vector_move_vv(hart, vd, vs1),
         RiscvInstruction::VectorMoveVx { vd, rs1 } => {
             execute_vector_move_vx(hart, vd, hart.read(rs1))

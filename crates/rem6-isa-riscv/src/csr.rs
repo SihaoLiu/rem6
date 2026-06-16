@@ -1,4 +1,4 @@
-use crate::{RiscvCsrError, RiscvPrivilegeMode};
+use crate::{Register, RiscvCsrError, RiscvPrivilegeMode, RiscvVectorFixedPointState};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RiscvFloatCsr {
@@ -39,6 +39,130 @@ impl RiscvFloatCsr {
             Self::Frm => status.with_frm(value),
             Self::Fcsr => RiscvFloatStatus::new(value),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RiscvVectorFixedPointCsr {
+    Vxsat,
+    Vxrm,
+    Vcsr,
+}
+
+impl RiscvVectorFixedPointCsr {
+    pub const fn address(self) -> u16 {
+        match self {
+            Self::Vxsat => 0x009,
+            Self::Vxrm => 0x00a,
+            Self::Vcsr => 0x00f,
+        }
+    }
+
+    pub const fn from_address(address: u16) -> Option<Self> {
+        match address {
+            0x009 => Some(Self::Vxsat),
+            0x00a => Some(Self::Vxrm),
+            0x00f => Some(Self::Vcsr),
+            _ => None,
+        }
+    }
+
+    pub const fn read(self, state: RiscvVectorFixedPointState) -> u64 {
+        match self {
+            Self::Vxsat => state.vxsat() as u64,
+            Self::Vxrm => state.vxrm_bits() as u64,
+            Self::Vcsr => state.vcsr_bits() as u64,
+        }
+    }
+
+    pub fn write(
+        self,
+        mut state: RiscvVectorFixedPointState,
+        value: u64,
+    ) -> RiscvVectorFixedPointState {
+        match self {
+            Self::Vxsat => state.write_vxsat_bit(value & 0b1 != 0),
+            Self::Vxrm => state.write_vxrm_bits(value as u8),
+            Self::Vcsr => state.write_vcsr_bits(value as u8),
+        }
+        state
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RiscvCsrOp {
+    Read,
+    Write,
+    Set,
+    Clear,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RiscvCsrOperand {
+    Register(Register),
+    Immediate(u8),
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RiscvVectorFixedPointCsrInstruction {
+    rd: Register,
+    csr: RiscvVectorFixedPointCsr,
+    op: RiscvCsrOp,
+    operand: RiscvCsrOperand,
+}
+
+impl RiscvVectorFixedPointCsrInstruction {
+    pub const fn read(rd: Register, csr: RiscvVectorFixedPointCsr) -> Self {
+        Self {
+            rd,
+            csr,
+            op: RiscvCsrOp::Read,
+            operand: RiscvCsrOperand::Immediate(0),
+        }
+    }
+
+    pub const fn register(
+        rd: Register,
+        csr: RiscvVectorFixedPointCsr,
+        op: RiscvCsrOp,
+        rs1: Register,
+    ) -> Self {
+        Self {
+            rd,
+            csr,
+            op,
+            operand: RiscvCsrOperand::Register(rs1),
+        }
+    }
+
+    pub const fn immediate(
+        rd: Register,
+        csr: RiscvVectorFixedPointCsr,
+        op: RiscvCsrOp,
+        zimm: u8,
+    ) -> Self {
+        Self {
+            rd,
+            csr,
+            op,
+            operand: RiscvCsrOperand::Immediate(zimm),
+        }
+    }
+
+    pub const fn rd(self) -> Register {
+        self.rd
+    }
+
+    pub const fn csr(self) -> RiscvVectorFixedPointCsr {
+        self.csr
+    }
+
+    pub const fn op(self) -> RiscvCsrOp {
+        self.op
+    }
+
+    pub const fn operand(self) -> RiscvCsrOperand {
+        self.operand
     }
 }
 

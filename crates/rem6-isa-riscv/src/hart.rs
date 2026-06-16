@@ -1,7 +1,8 @@
 use crate::{
     FloatRegister, Register, RiscvControlFlowSnapshot, RiscvControlFlowUpdate, RiscvCounterBank,
     RiscvCounterSnapshot, RiscvFloatStatus, RiscvInterruptCsr, RiscvPrivilegeMode, RiscvStatusWord,
-    RiscvSv39AccessContext, RiscvVectorConfig, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
+    RiscvSv39AccessContext, RiscvVectorConfig, RiscvVectorFixedPointState,
+    RiscvVectorFixedRoundingMode, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,6 +29,7 @@ pub struct RiscvHartState {
     pub(crate) status: RiscvStatusWord,
     pub(crate) float_status: RiscvFloatStatus,
     pub(crate) vector_config: RiscvVectorConfig,
+    pub(crate) vector_fixed_point: RiscvVectorFixedPointState,
     pub(crate) registers: [u64; 32],
     pub(crate) float_registers: [u64; 32],
     pub(crate) vector_registers: [[u8; RISCV_VECTOR_REGISTER_BYTES]; 32],
@@ -62,6 +64,9 @@ impl RiscvHartState {
             status: RiscvStatusWord::new(0),
             float_status: RiscvFloatStatus::new(0),
             vector_config: RiscvVectorConfig::invalid(),
+            vector_fixed_point: RiscvVectorFixedPointState::new(
+                RiscvVectorFixedRoundingMode::RoundNearestUp,
+            ),
             registers: [0; 32],
             float_registers: [0; 32],
             vector_registers: [[0; RISCV_VECTOR_REGISTER_BYTES]; 32],
@@ -305,6 +310,14 @@ impl RiscvHartState {
 
     pub fn set_vector_config(&mut self, vector_config: RiscvVectorConfig) {
         self.vector_config = vector_config;
+    }
+
+    pub const fn vector_fixed_point(&self) -> RiscvVectorFixedPointState {
+        self.vector_fixed_point
+    }
+
+    pub fn set_vector_fixed_point(&mut self, state: RiscvVectorFixedPointState) {
+        self.vector_fixed_point = state;
     }
 
     pub const fn control_flow_snapshot(&self) -> RiscvControlFlowSnapshot {

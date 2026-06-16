@@ -23,6 +23,9 @@ mod types;
 mod vector;
 mod vector_compress_execute;
 mod vector_execute;
+mod vector_fixed_point_csr;
+mod vector_group;
+mod vector_narrow_clip_execute;
 
 use encoding::{j_imm, rd, u_imm};
 use instruction_privilege::csr_privilege_allowed;
@@ -41,9 +44,10 @@ pub use control_flow::{
     RiscvVectorConfig, RiscvVectorConfigUpdate,
 };
 pub use csr::{
-    RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterSnapshot, RiscvFloatCsr,
-    RiscvFloatRoundingMode, RiscvFloatStatus, RiscvInterruptCsr, RiscvMachineTrapCsr,
-    RiscvStatusCsr, RiscvStatusWord, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
+    RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterSnapshot, RiscvCsrOp,
+    RiscvCsrOperand, RiscvFloatCsr, RiscvFloatRoundingMode, RiscvFloatStatus, RiscvInterruptCsr,
+    RiscvMachineTrapCsr, RiscvStatusCsr, RiscvStatusWord, RiscvSupervisorTrapCsr,
+    RiscvTranslationCsr, RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction,
 };
 pub use error::{RiscvCsrError, RiscvError};
 pub use gdb_target::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
@@ -474,6 +478,7 @@ impl RiscvHartState {
             | RiscvInstruction::VectorMergeVxm { .. }
             | RiscvInstruction::VectorMergeVim { .. }
             | RiscvInstruction::VectorCompressVm(..)
+            | RiscvInstruction::VectorNarrowClipUnsignedWi(..)
             | RiscvInstruction::VectorMoveVv { .. }
             | RiscvInstruction::VectorMoveVx { .. }
             | RiscvInstruction::VectorMoveVi { .. }
@@ -900,6 +905,9 @@ impl RiscvHartState {
             RiscvInstruction::ClearFloatCsrImmediate { rd, csr, zimm } => {
                 let value = read_float_csr(self, csr) & !u64::from(zimm);
                 write_float_csr(self, &mut register_writes, rd, csr, value);
+            }
+            RiscvInstruction::VectorFixedPointCsr(instruction) => {
+                vector_fixed_point_csr::execute(self, &mut register_writes, instruction);
             }
             RiscvInstruction::ReadStatusCsr { rd, csr } => {
                 write_register(self, &mut register_writes, rd, read_status_csr(self, csr));
