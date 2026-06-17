@@ -231,10 +231,16 @@ impl Rem6TraceReplayArtifact {
         );
         let fabric_credit_depth =
             optional_count_json(self.config.fabric_credit_depth().map(u64::from));
+        let trace_resource = self
+            .config
+            .trace_resource()
+            .map(|selector| format!("\"{}\"", json_escape(&selector.source_name())))
+            .unwrap_or_else(|| "null".to_string());
         format!(
-            "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"data_cache_protocol\":{},\"fabric_link\":{},\"fabric_bandwidth_bytes_per_tick\":{},\"fabric_request_virtual_network\":{},\"fabric_response_virtual_network\":{},\"fabric_credit_depth\":{},\"simulation\":{},\"summary\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_resource\":{},\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"data_cache_protocol\":{},\"fabric_link\":{},\"fabric_bandwidth_bytes_per_tick\":{},\"fabric_request_virtual_network\":{},\"fabric_response_virtual_network\":{},\"fabric_credit_depth\":{},\"simulation\":{},\"summary\":{},\"stats\":{}}}\n",
             self.schema,
             json_escape(&self.config.trace_input()),
+            trace_resource,
             json_escape(&self.trace_digest),
             json_escape(self.config.route()),
             self.config.memory_start(),

@@ -131,6 +131,10 @@ impl Rem6TraceReplayConfig {
                 "--resource-config" => {
                     resource_config = Some(PathBuf::from(required_value(&flag, args.next())?));
                 }
+                "--trace-resource" => {
+                    let value = required_value(&flag, args.next())?;
+                    trace_resource = Some(parse_trace_replay_resource(&value)?);
+                }
                 "--route" => {
                     route = Some(required_value(&flag, args.next())?);
                 }

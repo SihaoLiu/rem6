@@ -1355,7 +1355,7 @@ impl SuiteResourceSelector {
         format!("{}/{}", self.workload_id, self.resource_id)
     }
 
-    fn source_name(&self) -> String {
+    pub fn source_name(&self) -> String {
         format!("suite-resource:{}", self.qualified_id())
     }
 }
