@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
@@ -55,7 +54,7 @@ mod transport_summary_tests;
 
 pub use cli_error::Rem6CliError;
 pub use config::{
-    CliCachePrefetcher, CliDramMemoryProfile, LoadBlobRequest, MemoryDumpRequest,
+    CliCachePrefetcher, CliDramMemoryProfile, LoadBlobRequest, LoadBlobSource, MemoryDumpRequest,
     PowerAnalysisFormat, ReadfileRequest, ReadfileSource, Rem6GupsConfig, Rem6RunConfig,
     Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, StatsFormat,
 };
@@ -121,15 +120,15 @@ pub struct Rem6RunArtifact {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6LoadBlobSummary {
     address: u64,
-    path: PathBuf,
+    source: String,
     bytes: u64,
 }
 
 impl Rem6LoadBlobSummary {
-    fn new(address: u64, path: PathBuf, bytes: u64) -> Self {
+    fn new(address: u64, source: impl Into<String>, bytes: u64) -> Self {
         Self {
             address,
-            path,
+            source: source.into(),
             bytes,
         }
     }
@@ -138,8 +137,8 @@ impl Rem6LoadBlobSummary {
         self.address
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    pub fn source(&self) -> &str {
+        &self.source
     }
 
     pub const fn bytes(&self) -> u64 {
@@ -530,7 +529,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
 
     validate_run_config_inputs(&config)?;
 
-    let load_blobs = read_load_blobs(config.load_blobs())?;
+    let load_blobs = read_load_blobs(config.load_blobs(), resource_payloads.as_ref())?;
     let load_blob_summaries = load_blobs
         .iter()
         .map(|blob| blob.summary.clone())

@@ -8,7 +8,8 @@ use rem6_memory::{
     PartitionedMemoryStore,
 };
 
-use crate::config::{CliDramMemoryProfile, LoadBlobRequest};
+use crate::config::{CliDramMemoryProfile, LoadBlobRequest, LoadBlobSource};
+use crate::run_resource_config::RunResourcePayloads;
 use crate::{execute_error, Rem6CliError, Rem6LoadBlobSummary};
 
 pub(super) const CLI_MEMORY_TARGET: MemoryTargetId = MemoryTargetId::new(0);
@@ -23,28 +24,45 @@ pub(super) struct LoadedBlob {
 
 pub(super) fn read_load_blobs(
     requests: &[LoadBlobRequest],
+    resource_payloads: Option<&RunResourcePayloads>,
 ) -> Result<Vec<LoadedBlob>, Rem6CliError> {
     requests
         .iter()
         .map(|request| {
-            let data =
-                std::fs::read(request.path()).map_err(|error| Rem6CliError::ReadLoadBlob {
-                    path: request.path().to_path_buf(),
-                    error: error.to_string(),
-                })?;
+            let data = read_load_blob_data(request, resource_payloads)?;
             if data.is_empty() {
                 return Err(Rem6CliError::EmptyLoadBlob {
-                    path: request.path().to_path_buf(),
+                    source: request.source_name(),
                 });
             }
             let summary = Rem6LoadBlobSummary::new(
                 request.address(),
-                request.path().to_path_buf(),
+                request.source_name(),
                 data.len() as u64,
             );
             Ok(LoadedBlob { summary, data })
         })
         .collect()
+}
+
+fn read_load_blob_data(
+    request: &LoadBlobRequest,
+    resource_payloads: Option<&RunResourcePayloads>,
+) -> Result<Vec<u8>, Rem6CliError> {
+    match request.source() {
+        LoadBlobSource::Path(path) => {
+            std::fs::read(path).map_err(|error| Rem6CliError::ReadLoadBlob {
+                path: path.to_path_buf(),
+                error: error.to_string(),
+            })
+        }
+        LoadBlobSource::Resource(resource) => {
+            let payloads = resource_payloads.ok_or_else(|| Rem6CliError::Execute {
+                error: format!("load blob resource {resource} requires --resource-config"),
+            })?;
+            Ok(payloads.blob_payload(resource)?.to_vec())
+        }
+    }
 }
 
 pub(super) fn build_cli_memory_store(
@@ -378,8 +396,6 @@ fn load_blob_into_store(
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-
     use rem6_boot::BootImage;
     use rem6_memory::{MemoryRequest, MemoryRequestId};
 
@@ -417,7 +433,7 @@ mod tests {
             .add_segment(Address::new(0x8000), vec![1, 2, 3, 4])
             .unwrap();
         let blob = LoadedBlob {
-            summary: crate::Rem6LoadBlobSummary::new(0x8008, PathBuf::from("blob.bin"), 4),
+            summary: crate::Rem6LoadBlobSummary::new(0x8008, "blob.bin", 4),
             data: vec![5, 6, 7, 8],
         };
 
@@ -447,7 +463,7 @@ mod tests {
             .add_segment(Address::new(0x8000), vec![1, 2, 3, 4])
             .unwrap();
         let blob = LoadedBlob {
-            summary: crate::Rem6LoadBlobSummary::new(0x8002, PathBuf::from("blob.bin"), 4),
+            summary: crate::Rem6LoadBlobSummary::new(0x8002, "blob.bin", 4),
             data: vec![5, 6, 7, 8],
         };
 
@@ -463,7 +479,7 @@ mod tests {
             .add_segment(Address::new(0x8000), vec![0xaa; 24])
             .unwrap();
         let blob = LoadedBlob {
-            summary: crate::Rem6LoadBlobSummary::new(0x8024, PathBuf::from("blob.bin"), 44),
+            summary: crate::Rem6LoadBlobSummary::new(0x8024, "blob.bin", 44),
             data: vec![0xbb; 44],
         };
 

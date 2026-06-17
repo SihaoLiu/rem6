@@ -1309,7 +1309,13 @@ impl MemoryDumpRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoadBlobRequest {
     address: u64,
-    path: PathBuf,
+    source: LoadBlobSource,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum LoadBlobSource {
+    Path(PathBuf),
+    Resource(String),
 }
 
 impl LoadBlobRequest {
@@ -1327,23 +1333,41 @@ impl LoadBlobRequest {
                 value: value.to_string(),
             });
         }
-        Ok(Self {
-            address,
-            path: PathBuf::from(path),
-        })
+        let source = path
+            .strip_prefix("resource:")
+            .map(|resource| {
+                if resource.is_empty() {
+                    return Err(Rem6CliError::InvalidLoadBlob {
+                        value: value.to_string(),
+                    });
+                }
+                Ok(LoadBlobSource::Resource(resource.to_string()))
+            })
+            .unwrap_or_else(|| Ok(LoadBlobSource::Path(PathBuf::from(path))))?;
+        Ok(Self { address, source })
     }
 
     pub const fn address(&self) -> u64 {
         self.address
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    pub const fn source(&self) -> &LoadBlobSource {
+        &self.source
+    }
+
+    pub fn source_name(&self) -> String {
+        match &self.source {
+            LoadBlobSource::Path(path) => path.display().to_string(),
+            LoadBlobSource::Resource(resource) => format!("resource:{resource}"),
+        }
     }
 
     fn resolve_path(&mut self, base: &Path) {
-        if self.path.is_relative() {
-            self.path = base.join(&self.path);
+        let LoadBlobSource::Path(path) = &mut self.source else {
+            return;
+        };
+        if path.is_relative() {
+            *path = base.join(&*path);
         }
     }
 }

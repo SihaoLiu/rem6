@@ -40,30 +40,7 @@ impl RunResourcePayloads {
     }
 
     pub(crate) fn readfile_payload(&self, id: &str) -> Result<&[u8], Rem6CliError> {
-        let payloads = self
-            .payloads
-            .iter()
-            .filter(|payload| payload.payload.resource().as_str() == id)
-            .collect::<Vec<_>>();
-        let payload = match payloads.as_slice() {
-            [payload] => payload,
-            [] => {
-                return Err(Rem6CliError::Execute {
-                    error: format!(
-                        "readfile resource {id} was not acquired by run resource config {}",
-                        self.resource_config.display(),
-                    ),
-                })
-            }
-            _ => {
-                return Err(Rem6CliError::Execute {
-                    error: format!(
-                        "readfile resource {id} is ambiguous in run resource config {}; expected exactly one",
-                        self.resource_config.display(),
-                    ),
-                })
-            }
-        };
+        let payload = self.payload_by_id("readfile", id)?;
         if payload.kind != WorkloadResourceKind::Input {
             return Err(Rem6CliError::Execute {
                 error: format!(
@@ -74,6 +51,39 @@ impl RunResourcePayloads {
             });
         }
         Ok(payload.payload.data())
+    }
+
+    pub(crate) fn blob_payload(&self, id: &str) -> Result<&[u8], Rem6CliError> {
+        let payload = self.payload_by_id("load blob", id)?;
+        Ok(payload.payload.data())
+    }
+
+    fn payload_by_id(&self, use_case: &str, id: &str) -> Result<&RunResourcePayload, Rem6CliError> {
+        let payloads = self
+            .payloads
+            .iter()
+            .filter(|payload| payload.payload.resource().as_str() == id)
+            .collect::<Vec<_>>();
+        let payload = match payloads.as_slice() {
+            [payload] => payload,
+            [] => {
+                return Err(Rem6CliError::Execute {
+                    error: format!(
+                        "{use_case} resource {id} was not acquired by run resource config {}",
+                        self.resource_config.display(),
+                    ),
+                })
+            }
+            _ => {
+                return Err(Rem6CliError::Execute {
+                    error: format!(
+                        "{use_case} resource {id} is ambiguous in run resource config {}; expected exactly one",
+                        self.resource_config.display(),
+                    ),
+                })
+            }
+        };
+        Ok(payload)
     }
 }
 

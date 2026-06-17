@@ -162,7 +162,7 @@ pub enum Rem6CliError {
         value: String,
     },
     EmptyLoadBlob {
-        path: PathBuf,
+        source: String,
     },
     DramMemoryRequiresExecution,
     InstructionLimitRequiresExecution,
@@ -417,8 +417,8 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidRiscvSeFile { value } => {
                 write!(formatter, "invalid RISC-V SE file mapping {value}")
             }
-            Self::EmptyLoadBlob { path } => {
-                write!(formatter, "load blob {} is empty", path.display())
+            Self::EmptyLoadBlob { source } => {
+                write!(formatter, "load blob {source} is empty")
             }
             Self::DramMemoryRequiresExecution => {
                 write!(formatter, "--dram-memory requires --execute")

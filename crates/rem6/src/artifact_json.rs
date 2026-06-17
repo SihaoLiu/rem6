@@ -142,7 +142,7 @@ impl Rem6LoadBlobSummary {
             "{{\"address\":\"0x{:x}\",\"bytes\":{},\"path\":\"{}\"}}",
             self.address(),
             self.bytes(),
-            json_escape(&self.path().display().to_string())
+            json_escape(self.source())
         )
     }
 }

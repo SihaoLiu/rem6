@@ -16,6 +16,8 @@ mod gdb_support;
 mod gups;
 #[path = "cli_run/load.rs"]
 mod load;
+#[path = "cli_run/load_blob_resource.rs"]
+mod load_blob_resource;
 #[path = "cli_run/readfile_resource.rs"]
 mod readfile_resource;
 #[path = "cli_run/resource_acquire.rs"]
