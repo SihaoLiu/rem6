@@ -106,10 +106,7 @@ pub(super) fn cli_source_backed_cache_line_ranges(
     load_blobs: &[LoadedBlob],
     line_layout: CacheLineLayout,
 ) -> Result<Vec<AddressRange>, Rem6CliError> {
-    fully_covered_line_ranges(
-        checked_cli_memory_backing_ranges(image, load_blobs)?,
-        line_layout,
-    )
+    fully_covered_line_ranges(checked_cli_memory_ranges(image, load_blobs)?, line_layout)
 }
 
 pub(super) fn cli_fully_covered_cache_line_ranges(
@@ -542,6 +539,21 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.data(), Some(&[0, 0, 0, 0][..]));
+    }
+
+    #[test]
+    fn source_backed_cache_line_ranges_exclude_elf_load_page_padding() {
+        let line_layout = CacheLineLayout::new(16).unwrap();
+        let image = BootImage::from_elf64_le(&test_riscv64_elf(
+            0x10000,
+            0x10000,
+            &[0x13, 0x00, 0x00, 0x00],
+        ))
+        .unwrap();
+
+        let ranges = cli_source_backed_cache_line_ranges(&image, &[], line_layout).unwrap();
+
+        assert_eq!(ranges, Vec::<AddressRange>::new());
     }
 
     #[test]
