@@ -2,8 +2,8 @@ use crate::encoding::{
     b_imm, csr, funct3, funct7, i_imm, rd, rs1, rs2, shamt32, shamt64, shift_funct6,
 };
 use crate::{
-    Immediate, RiscvCounterCsr, RiscvCsrOp, RiscvError, RiscvFenceSet, RiscvFloatCsr,
-    RiscvInstruction, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr,
+    FloatRegister, Immediate, RiscvCounterCsr, RiscvCsrOp, RiscvError, RiscvFenceSet,
+    RiscvFloatCsr, RiscvInstruction, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr,
     RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvVectorFixedPointCsr,
     RiscvVectorFixedPointCsrInstruction, RiscvVectorFloatInstruction, VectorRegister,
 };
@@ -279,6 +279,13 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             RiscvVectorFloatInstruction::AddVv {
                 vd: vector_register(raw, 7),
                 vs1: vector_register(raw, 15),
+                vs2: vector_register(raw, 20),
+            },
+        )),
+        (0x5, 0, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::AddVf {
+                vd: vector_register(raw, 7),
+                fs1: float_register(raw, 15),
                 vs2: vector_register(raw, 20),
             },
         )),
@@ -736,6 +743,10 @@ fn vector_vs2_is_zero(raw: u32) -> bool {
 
 fn vector_register(raw: u32, shift: u32) -> VectorRegister {
     VectorRegister::from_field((raw >> shift) & 0x1f)
+}
+
+fn float_register(raw: u32, shift: u32) -> FloatRegister {
+    FloatRegister::from_field((raw >> shift) & 0x1f)
 }
 
 fn vector_signed_imm5(raw: u32) -> i8 {

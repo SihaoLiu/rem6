@@ -103,6 +103,10 @@ pub(crate) fn exact_finite_single_add_sub_bits(
     add_sub::exact_finite_single_bits(lhs, rhs, rounding_mode, subtract)
 }
 
+pub(crate) fn single_register_bits(value: u64) -> u32 {
+    unbox_single(value)
+}
+
 pub(crate) fn binary_register_rounding_mode_is_supported(
     instruction: RiscvInstruction,
     frm: u64,

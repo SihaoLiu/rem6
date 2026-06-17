@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::{MemoryWidth, VectorRegister};
+use crate::{FloatRegister, MemoryWidth, VectorRegister};
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct RiscvInstructionFlags {
@@ -129,6 +129,11 @@ pub enum RiscvVectorFloatInstruction {
     AddVv {
         vd: VectorRegister,
         vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    AddVf {
+        vd: VectorRegister,
+        fs1: FloatRegister,
         vs2: VectorRegister,
     },
     SubVv {

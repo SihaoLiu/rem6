@@ -5,7 +5,7 @@ use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCoreDriveAction,
 };
 use rem6_isa_riscv::{
-    Register, RiscvFloatStatus, RiscvInstruction, RiscvTrapKind, RiscvVectorConfig,
+    FloatRegister, Register, RiscvFloatStatus, RiscvInstruction, RiscvTrapKind, RiscvVectorConfig,
     RiscvVectorFloatInstruction, VectorRegister,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
@@ -28,8 +28,16 @@ fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
 }
 
+fn freg(index: u8) -> FloatRegister {
+    FloatRegister::new(index).unwrap()
+}
+
 fn vreg(index: u8) -> VectorRegister {
     VectorRegister::new(index).unwrap()
+}
+
+fn f32_box(value: f32) -> u64 {
+    u64::from(value.to_bits()) | 0xffff_ffff_0000_0000
 }
 
 fn vsetvli_type(vtype: u32, rs1: u8, rd: u8) -> u32 {
@@ -38,6 +46,10 @@ fn vsetvli_type(vtype: u32, rs1: u8, rd: u8) -> u32 {
 
 fn vfadd_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_float_vv_type(0x00, vs2, vs1, vd)
+}
+
+fn vfadd_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x00, vs2, fs1, vd)
 }
 
 fn vfsub_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -49,11 +61,19 @@ fn vfmul_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
 }
 
 fn vector_float_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_float_type(funct6, 0b001, vs2, vs1, vd)
+}
+
+fn vector_float_vf_type(funct6: u32, vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_type(funct6, 0b101, vs2, fs1, vd)
+}
+
+fn vector_float_type(funct6: u32, funct3: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
     (funct6 << 26)
         | (1 << 25)
         | (u32::from(vs2) << 20)
-        | (u32::from(vs1) << 15)
-        | (0b001 << 12)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
         | (u32::from(vd) << 7)
         | 0x57
 }
@@ -215,6 +235,29 @@ fn drive_until_instruction(
     panic!("expected instruction execution");
 }
 
+fn drive_until_trap_kind(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) -> Option<RiscvTrapKind> {
+    for _ in 0..8 {
+        match drive_one_action(core, store.clone(), scheduler, transport) {
+            Some(RiscvCoreDriveAction::FetchIssued { .. })
+            | Some(RiscvCoreDriveAction::DataAccessIssued { .. }) => {
+                scheduler.run_until_idle_conservative();
+            }
+            Some(RiscvCoreDriveAction::InstructionExecuted(event)) => {
+                return event.execution().trap().map(|trap| trap.kind());
+            }
+            None => {
+                scheduler.run_until_idle_conservative();
+            }
+        }
+    }
+    panic!("expected instruction execution");
+}
+
 #[test]
 fn riscv_core_driver_executes_vfadd_vv_from_fetch_stream() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
@@ -295,6 +338,83 @@ fn riscv_core_driver_executes_vfadd_vv_exact_subnormal_from_fetch_stream() {
     assert_eq!(
         core.read_vector_register(vreg(3)),
         lanes_f32([two_min_subnormal, min_subnormal, 1.0, 12.0])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfadd_vf_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.write_float_register(freg(1), f32_box(1.5));
+    core.write_vector_register(vreg(2), lanes_f32([2.0, -4.0, 0.25, 1.0]));
+    core.write_vector_register(vreg(3), lanes_f32([0.0, 0.0, 0.0, 12.0]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 5),
+            vfadd_vf_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::AddVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_f32([3.5, -2.5, 1.75, 12.0])
+    );
+}
+
+#[test]
+fn riscv_core_driver_traps_vfadd_vf_with_unboxed_scalar_source() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.set_machine_trap_vector(0x9000);
+    core.write_float_register(freg(1), 1.5f32.to_bits().into());
+    core.write_vector_register(vreg(2), lanes_f32([2.0, -4.0, 0.25, 1.0]));
+    core.write_vector_register(vreg(3), lanes_f32([9.0, 9.0, 9.0, 12.0]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 5),
+            vfadd_vf_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_trap_kind(&core, store, &mut scheduler, &transport),
+        Some(RiscvTrapKind::IllegalInstruction)
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_f32([9.0, 9.0, 9.0, 12.0])
     );
 }
 
@@ -406,22 +526,8 @@ fn riscv_core_driver_traps_vfadd_vv_with_reserved_frm() {
         }
     );
 
-    let trap = loop {
-        match drive_one_action(&core, store.clone(), &mut scheduler, &transport) {
-            Some(RiscvCoreDriveAction::FetchIssued { .. })
-            | Some(RiscvCoreDriveAction::DataAccessIssued { .. }) => {
-                scheduler.run_until_idle_conservative();
-            }
-            Some(RiscvCoreDriveAction::InstructionExecuted(event)) => {
-                break event.execution().trap().copied();
-            }
-            None => {
-                scheduler.run_until_idle_conservative();
-            }
-        }
-    };
     assert_eq!(
-        trap.map(|trap| trap.kind()),
+        drive_until_trap_kind(&core, store, &mut scheduler, &transport),
         Some(RiscvTrapKind::IllegalInstruction)
     );
     assert_eq!(core.machine_trap_cause(), 2);
@@ -458,22 +564,8 @@ fn riscv_core_driver_traps_vfsub_vv_when_add_sub_result_is_not_exact_binary32() 
         }
     );
 
-    let trap = loop {
-        match drive_one_action(&core, store.clone(), &mut scheduler, &transport) {
-            Some(RiscvCoreDriveAction::FetchIssued { .. })
-            | Some(RiscvCoreDriveAction::DataAccessIssued { .. }) => {
-                scheduler.run_until_idle_conservative();
-            }
-            Some(RiscvCoreDriveAction::InstructionExecuted(event)) => {
-                break event.execution().trap().copied();
-            }
-            None => {
-                scheduler.run_until_idle_conservative();
-            }
-        }
-    };
     assert_eq!(
-        trap.map(|trap| trap.kind()),
+        drive_until_trap_kind(&core, store, &mut scheduler, &transport),
         Some(RiscvTrapKind::IllegalInstruction)
     );
     assert_eq!(
