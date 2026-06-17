@@ -1,6 +1,6 @@
 use super::{
     linux_error, RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState,
-    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EPERM,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ESRCH,
 };
 
 pub(super) const RISCV_LINUX_PRLIMIT64: u64 = 261;
@@ -20,9 +20,8 @@ pub(super) fn syscall_prlimit64(
     state: &RiscvSyscallState,
     guest_memory: Option<&RiscvGuestMemoryWriter>,
 ) -> Option<u64> {
-    let pid = request.argument(0);
-    if pid != 0 && pid != state.identity().thread_group_id() {
-        return Some(linux_error(RISCV_LINUX_EPERM));
+    if !prlimit_target_is_current_process(request.argument(0), state) {
+        return Some(linux_error(RISCV_LINUX_ESRCH));
     }
 
     let Some((current, maximum)) = prlimit_resource_limit(request.argument(1)) else {
@@ -35,6 +34,14 @@ pub(super) fn syscall_prlimit64(
     }
 
     write_resource_limit(old_limit_address, current, maximum, guest_memory)
+}
+
+fn prlimit_target_is_current_process(pid_argument: u64, state: &RiscvSyscallState) -> bool {
+    let pid = pid_argument as u32 as i32;
+    if pid < 0 {
+        return false;
+    }
+    pid == 0 || u64::try_from(pid).ok() == Some(state.identity().thread_group_id())
 }
 
 pub(super) fn syscall_getrlimit(
