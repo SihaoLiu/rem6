@@ -43,6 +43,20 @@ pub(super) fn sub_exception_flags(
     exception_flags(lhs, rhs, rounding_mode, true)
 }
 
+pub(super) fn exact_finite_single_bits(
+    lhs: u32,
+    rhs: u32,
+    rounding_mode: RiscvFloatRoundingMode,
+    subtract: bool,
+) -> Option<u32> {
+    let rhs = if subtract { rhs ^ SINGLE_SIGN_BIT } else { rhs };
+    if !is_finite(lhs) || !is_finite(rhs) || !finite_sum_is_exact(lhs, rhs) {
+        return None;
+    }
+    let exact = f64::from(f32::from_bits(lhs)) + f64::from(f32::from_bits(rhs));
+    Some(round_wide_sum(lhs, rhs, exact, rounding_mode).to_bits())
+}
+
 fn register_write(
     lhs: u64,
     rhs: u64,

@@ -94,6 +94,15 @@ pub(crate) fn float_register_write_binary(
     }
 }
 
+pub(crate) fn exact_finite_single_add_sub_bits(
+    lhs: u32,
+    rhs: u32,
+    rounding_mode: RiscvFloatRoundingMode,
+    subtract: bool,
+) -> Option<u32> {
+    add_sub::exact_finite_single_bits(lhs, rhs, rounding_mode, subtract)
+}
+
 pub(crate) fn binary_register_rounding_mode_is_supported(
     instruction: RiscvInstruction,
     frm: u64,

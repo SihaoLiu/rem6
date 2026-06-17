@@ -131,6 +131,16 @@ pub enum RiscvVectorFloatInstruction {
         vs1: VectorRegister,
         vs2: VectorRegister,
     },
+    SubVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    MulVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
