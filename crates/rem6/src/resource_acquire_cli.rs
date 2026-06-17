@@ -14,6 +14,7 @@ use rem6_workload::{
     WorkloadSuiteReplayPlan,
 };
 use sha2::{Digest, Sha256};
+use zip::ZipArchive;
 
 use crate::cli_output::emit_cli_output;
 use crate::config::StatsFormat;
@@ -331,7 +332,22 @@ fn read_resource_artifact(
     if let Some(locator) = resource.artifact_remote_locator() {
         read_remote_http_resource(locator)
     } else if let Some(member) = resource.artifact_member() {
-        read_tar_member(resource.artifact(), member)
+        match resource.acquisition_kind() {
+            WorkloadResourceAcquisitionKind::ArchiveTar => {
+                read_tar_member(resource.artifact(), member)
+            }
+            WorkloadResourceAcquisitionKind::ArchiveZip => {
+                read_zip_member(resource.artifact(), member)
+            }
+            kind => Err(Rem6CliError::ReadResourceArtifact {
+                path: resource.artifact().to_path_buf(),
+                error: format!(
+                    "resource {} acquisition kind {} does not support archive members",
+                    resource.id(),
+                    kind.as_str()
+                ),
+            }),
+        }
     } else {
         std::fs::read(resource.artifact()).map_err(|error| Rem6CliError::ReadResourceArtifact {
             path: resource.artifact().to_path_buf(),
@@ -609,6 +625,40 @@ fn tar_header_octal(field: &[u8]) -> Result<usize, String> {
         return Ok(0);
     }
     usize::from_str_radix(text, 8).map_err(|error| format!("invalid tar size {text}: {error}"))
+}
+
+fn read_zip_member(archive: &Path, member: &str) -> Result<Vec<u8>, Rem6CliError> {
+    let file =
+        std::fs::File::open(archive).map_err(|error| Rem6CliError::ReadResourceArtifact {
+            path: archive.to_path_buf(),
+            error: error.to_string(),
+        })?;
+    let mut zip = ZipArchive::new(file)
+        .map_err(|error| zip_error(archive, format!("zip archive open failed: {error}")))?;
+    let mut entry = zip.by_name(member).map_err(|error| {
+        zip_error(
+            archive,
+            format!("zip member {member} was not found: {error}"),
+        )
+    })?;
+    if entry.is_dir() {
+        return Err(zip_error(
+            archive,
+            format!("zip member {member} is not a regular file"),
+        ));
+    }
+    let mut data = Vec::new();
+    entry
+        .read_to_end(&mut data)
+        .map_err(|error| zip_error(archive, format!("zip member {member} read failed: {error}")))?;
+    Ok(data)
+}
+
+fn zip_error(archive: &Path, error: impl ToString) -> Rem6CliError {
+    Rem6CliError::ReadResourceArtifact {
+        path: archive.to_path_buf(),
+        error: error.to_string(),
+    }
 }
 
 fn resource_acquisition(

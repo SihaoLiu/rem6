@@ -5,6 +5,8 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use flate2::{write::DeflateEncoder, Compression};
+
 use crate::support::*;
 
 #[test]
@@ -272,6 +274,163 @@ artifact_size = 4
         4,
         "monotonic",
     );
+}
+
+#[test]
+fn rem6_resource_acquire_loads_config_manifest_from_zip_archive_locator() {
+    let workspace = temp_workspace("resource-acquire-archive-zip-config");
+    let archive_dir = workspace.join("archives");
+    fs::create_dir(&archive_dir).unwrap();
+    fs::write(
+        archive_dir.join("kernel.zip"),
+        zip_archive_with_entry("payload/kernel.bin", &[0x13, 0x00, 0x00, 0x00]),
+    )
+    .unwrap();
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        r#"[resource_acquire]
+workload_id = "resource-archive-zip-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:archive-zip-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "archive-zip"
+acquisition_locator = "archives/kernel.zip#payload/kernel.bin"
+artifact_digest = "sha256:archive-zip-kernel"
+artifact_size = 4
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"workload_id\":\"resource-archive-zip-cli\""));
+    assert!(stdout.contains("\"resource\":\"kernel\""));
+    assert!(stdout.contains("\"size_bytes\":4"));
+    assert!(stdout.contains("\"acquisition_kind\":\"archive-zip\""));
+    assert!(stdout.contains("\"acquisition_locator\":\"archives/kernel.zip#payload/kernel.bin\""));
+    assert_stat(
+        &stdout,
+        "sim.resource_acquire.acquired_resources",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.resource_acquire.acquired_bytes",
+        "Byte",
+        4,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_resource_acquire_loads_config_manifest_from_deflated_zip_archive_locator() {
+    let workspace = temp_workspace("resource-acquire-archive-zip-deflated-config");
+    let archive_dir = workspace.join("archives");
+    fs::create_dir(&archive_dir).unwrap();
+    fs::write(
+        archive_dir.join("kernel.zip"),
+        zip_deflated_archive_with_entry("payload/kernel.bin", &[0x13, 0x00, 0x00, 0x00]),
+    )
+    .unwrap();
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        r#"[resource_acquire]
+workload_id = "resource-archive-zip-deflated-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:archive-zip-deflated-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "archive-zip"
+acquisition_locator = "archives/kernel.zip#payload/kernel.bin"
+artifact_digest = "sha256:archive-zip-deflated-kernel"
+artifact_size = 4
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"workload_id\":\"resource-archive-zip-deflated-cli\""));
+    assert!(stdout.contains("\"resource\":\"kernel\""));
+    assert!(stdout.contains("\"size_bytes\":4"));
+    assert!(stdout.contains("\"acquisition_kind\":\"archive-zip\""));
+    assert!(stdout.contains("\"acquisition_locator\":\"archives/kernel.zip#payload/kernel.bin\""));
+}
+
+#[test]
+fn rem6_resource_acquire_reports_missing_zip_archive_member() {
+    let workspace = temp_workspace("resource-acquire-archive-zip-missing-member");
+    let archive_dir = workspace.join("archives");
+    fs::create_dir(&archive_dir).unwrap();
+    fs::write(
+        archive_dir.join("kernel.zip"),
+        zip_archive_with_entry("payload/kernel.bin", &[0x13, 0x00, 0x00, 0x00]),
+    )
+    .unwrap();
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        r#"[resource_acquire]
+workload_id = "resource-archive-zip-missing-member-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:archive-zip-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "archive-zip"
+acquisition_locator = "archives/kernel.zip#payload/missing.bin"
+artifact_digest = "sha256:archive-zip-kernel"
+artifact_size = 4
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("zip member payload/missing.bin was not found"));
 }
 
 #[test]
@@ -784,6 +943,80 @@ fn gzip_stored(data: Vec<u8>) -> Vec<u8> {
     gzip.extend_from_slice(&crc32(&data).to_le_bytes());
     gzip.extend_from_slice(&(data.len() as u32).to_le_bytes());
     gzip
+}
+
+fn zip_archive_with_entry(name: &str, data: &[u8]) -> Vec<u8> {
+    zip_archive_with_compressed_entry(name, 0, data, data)
+}
+
+fn zip_deflated_archive_with_entry(name: &str, data: &[u8]) -> Vec<u8> {
+    let mut encoder = DeflateEncoder::new(Vec::new(), Compression::fast());
+    encoder.write_all(data).unwrap();
+    let compressed = encoder.finish().unwrap();
+    zip_archive_with_compressed_entry(name, 8, data, &compressed)
+}
+
+fn zip_archive_with_compressed_entry(
+    name: &str,
+    compression: u16,
+    data: &[u8],
+    compressed: &[u8],
+) -> Vec<u8> {
+    let crc = crc32(data);
+    let local_header_offset = 0_u32;
+    let mut archive = Vec::new();
+    push_u32_le(&mut archive, 0x0403_4b50);
+    push_u16_le(&mut archive, 20);
+    push_u16_le(&mut archive, 0);
+    push_u16_le(&mut archive, compression);
+    push_u16_le(&mut archive, 0);
+    push_u16_le(&mut archive, 0);
+    push_u32_le(&mut archive, crc);
+    push_u32_le(&mut archive, compressed.len() as u32);
+    push_u32_le(&mut archive, data.len() as u32);
+    push_u16_le(&mut archive, name.len() as u16);
+    push_u16_le(&mut archive, 0);
+    archive.extend_from_slice(name.as_bytes());
+    archive.extend_from_slice(compressed);
+
+    let central_directory_offset = archive.len() as u32;
+    push_u32_le(&mut archive, 0x0201_4b50);
+    push_u16_le(&mut archive, 20);
+    push_u16_le(&mut archive, 20);
+    push_u16_le(&mut archive, 0);
+    push_u16_le(&mut archive, compression);
+    push_u16_le(&mut archive, 0);
+    push_u16_le(&mut archive, 0);
+    push_u32_le(&mut archive, crc);
+    push_u32_le(&mut archive, compressed.len() as u32);
+    push_u32_le(&mut archive, data.len() as u32);
+    push_u16_le(&mut archive, name.len() as u16);
+    push_u16_le(&mut archive, 0);
+    push_u16_le(&mut archive, 0);
+    push_u16_le(&mut archive, 0);
+    push_u16_le(&mut archive, 0);
+    push_u32_le(&mut archive, 0);
+    push_u32_le(&mut archive, local_header_offset);
+    archive.extend_from_slice(name.as_bytes());
+
+    let central_directory_size = archive.len() as u32 - central_directory_offset;
+    push_u32_le(&mut archive, 0x0605_4b50);
+    push_u16_le(&mut archive, 0);
+    push_u16_le(&mut archive, 0);
+    push_u16_le(&mut archive, 1);
+    push_u16_le(&mut archive, 1);
+    push_u32_le(&mut archive, central_directory_size);
+    push_u32_le(&mut archive, central_directory_offset);
+    push_u16_le(&mut archive, 0);
+    archive
+}
+
+fn push_u16_le(bytes: &mut Vec<u8>, value: u16) {
+    bytes.extend_from_slice(&value.to_le_bytes());
+}
+
+fn push_u32_le(bytes: &mut Vec<u8>, value: u32) {
+    bytes.extend_from_slice(&value.to_le_bytes());
 }
 
 fn crc32(data: &[u8]) -> u32 {
