@@ -23,6 +23,7 @@ fn run_tagged_next_line_prefetch(
     path: &std::path::Path,
     max_tick: u64,
     dram_memory: bool,
+    instruction_cache: bool,
 ) -> String {
     let max_tick = max_tick.to_string();
     let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
@@ -40,6 +41,9 @@ fn run_tagged_next_line_prefetch(
     ]);
     if dram_memory {
         command.arg("--dram-memory");
+    }
+    if instruction_cache {
+        command.args(["--instruction-cache-protocol", "msi"]);
     }
     command.args([
         "--data-cache-protocol",
@@ -60,7 +64,7 @@ fn run_tagged_next_line_prefetch(
 fn rem6_run_data_cache_prefetcher_issues_tagged_next_line_prefetches() {
     let elf = tagged_next_line_prefetch_two_load_elf();
     let path = temp_binary("data-cache-prefetch-tagged-next-line", &elf);
-    let stdout = run_tagged_next_line_prefetch(&path, 200, false);
+    let stdout = run_tagged_next_line_prefetch(&path, 200, false, false);
 
     assert!(stdout.contains("\"status\":\"executed_until_trap\""));
     assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
@@ -114,12 +118,20 @@ fn rem6_run_data_cache_prefetcher_issues_tagged_next_line_prefetches() {
 fn rem6_run_data_cache_prefetcher_accounts_dram_line_fills() {
     let elf = tagged_next_line_prefetch_two_load_elf();
     let path = temp_binary("data-cache-prefetch-dram-fills", &elf);
-    let stdout = run_tagged_next_line_prefetch(&path, 260, true);
+    let stdout = run_tagged_next_line_prefetch(&path, 260, true, true);
 
+    assert!(stdout.contains("\"instruction_cache_dram_accesses\":2"));
     assert!(stdout.contains("\"data_cache_runs\":4"));
     assert!(stdout.contains("\"data_cache_cpu_responses\":2"));
     assert!(stdout.contains("\"data_cache_dram_accesses\":4"));
     assert!(stdout.contains("\"data_cache_prefetch_issued\":2"));
+    assert_stat(
+        &stdout,
+        "sim.instruction_cache.dram_accesses",
+        "Count",
+        2,
+        "monotonic",
+    );
     assert_stat(
         &stdout,
         "sim.data_cache.dram_accesses",
@@ -127,6 +139,9 @@ fn rem6_run_data_cache_prefetcher_accounts_dram_line_fills() {
         4,
         "monotonic",
     );
+    assert_stat(&stdout, "sim.memory.dram.accesses", "Count", 6, "monotonic");
+    assert_stat(&stdout, "sim.memory.dram.reads", "Count", 6, "monotonic");
+    assert_stat(&stdout, "sim.memory.dram.writes", "Count", 0, "monotonic");
 }
 
 #[test]
@@ -146,7 +161,7 @@ fn rem6_run_data_cache_prefetcher_does_not_reissue_same_next_line() {
         .copy_from_slice(&0x99aa_bbcc_ddee_ff00u64.to_le_bytes());
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     let path = temp_binary("data-cache-prefetch-same-next-line", &elf);
-    let stdout = run_tagged_next_line_prefetch(&path, 160, false);
+    let stdout = run_tagged_next_line_prefetch(&path, 160, false, false);
 
     assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
     assert!(stdout.contains("\"x6\":\"0x99aabbccddeeff00\""));
@@ -174,7 +189,7 @@ fn rem6_run_data_cache_prefetcher_drops_unbacked_next_line_before_issue() {
     program.extend_from_slice(&0u64.to_le_bytes());
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     let path = temp_binary("data-cache-prefetch-unbacked-next-line", &elf);
-    let stdout = run_tagged_next_line_prefetch(&path, 120, false);
+    let stdout = run_tagged_next_line_prefetch(&path, 120, false, false);
 
     assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
     assert!(stdout.contains("\"data_loads\":1"));

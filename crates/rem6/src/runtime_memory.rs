@@ -198,6 +198,34 @@ impl CliMemoryRuntime {
         self.read_guest_memory(line.get(), line_layout.bytes() as usize, line_layout)
     }
 
+    pub(super) fn read_guest_cache_line_for_fill(
+        &self,
+        line: Address,
+        line_layout: CacheLineLayout,
+        tick: u64,
+    ) -> Option<Vec<u8>> {
+        let full_line_backing = match self {
+            Self::Store {
+                full_line_backing, ..
+            }
+            | Self::Dram {
+                full_line_backing, ..
+            } => full_line_backing,
+        };
+        if !contains_full_line_backing(full_line_backing, line, line_layout) {
+            return None;
+        }
+        match self {
+            Self::Store { .. } => {
+                self.read_guest_memory(line.get(), line_layout.bytes() as usize, line_layout)
+            }
+            Self::Dram { memory, .. } => {
+                let mut memory = memory.lock().expect("CLI DRAM memory lock");
+                read_guest_cache_line_from_dram_for_fill(&mut memory, line, line_layout, tick)
+            }
+        }
+    }
+
     pub(super) fn write_guest_memory(
         &self,
         address: u64,
@@ -486,6 +514,21 @@ fn read_guest_memory_from_dram(
         data.extend_from_slice(&response_data);
     }
     Some(data)
+}
+
+fn read_guest_cache_line_from_dram_for_fill(
+    memory: &mut DramMemoryController,
+    line: Address,
+    line_layout: CacheLineLayout,
+    tick: u64,
+) -> Option<Vec<u8>> {
+    let request = guest_memory_read_request(line.get(), line_layout.bytes() as usize, line_layout)?;
+    let outcome = memory.accept(tick, &request).ok()?;
+    let response_data = outcome.response()?.data()?;
+    if response_data.len() != line_layout.bytes() as usize {
+        return None;
+    }
+    Some(response_data.to_vec())
 }
 
 fn write_guest_memory_to_store(

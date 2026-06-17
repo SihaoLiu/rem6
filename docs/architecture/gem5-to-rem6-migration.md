@@ -250,8 +250,9 @@ MSI, MESI, MOESI, and CHI data-cache runtimes, observe cross-core data
 coherence, and emit per-core data route stats; three-core CLI RISC-V instruction
 fetch traffic can drive MSI, MESI, MOESI, and CHI instruction-cache runtimes
 and emit per-core fetch route stats; DRAM-backed MSI data-cache line fills emit
-nonzero backing DRAM access counters from a CLI run using `--dram-memory` and
-`--data-cache-protocol msi`; volatile
+backing DRAM read counters from a CLI run using `--dram-memory` and
+`--data-cache-protocol msi`, and read-only cache fetch/load responses do not
+emit false DRAM writes; volatile
 CLI external-memory profiles carry refresh interval/recovery timing, DDR4,
 DDR5, and HBM preset constructors validate `tREFI`/`tRFC` cycles through
 existing timing checks and controller refresh scheduling, and a DDR CLI RISC-V
@@ -285,7 +286,7 @@ harnesses, `DramController`, `DramMemoryController`, `FabricModel`,
 `prefetch_queue_translation`, `refresh_presets`, and CLI `run` data-cache smoke
 coverage with three-core MSI/MESI/MOESI/CHI data-cache coherence routing,
 three-core MSI/MESI/MOESI/CHI instruction-cache fetch routing, DRAM-backed MSI
-data-cache fill accounting, and instruction-cache fetch smoke coverage. DRAM
+data-cache fill read accounting, and instruction-cache fetch smoke coverage. DRAM
 memory-profile tests cover bank-level resource
 counters, resource-activity stats, and activity-window counter deltas.
 CLI `run` also has DDR profile refresh smoke coverage that exposes refresh

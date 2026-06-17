@@ -383,7 +383,7 @@ impl CliDataCacheRuntime {
         if request.line_layout() != self.layout {
             return None;
         }
-        let backing_dram_access_count = self.ensure_backing(memory, request)?;
+        let backing_dram_access_count = self.ensure_backing(memory, tick, request)?;
 
         let outcome = self
             .respond_inner(
@@ -467,13 +467,18 @@ impl CliDataCacheRuntime {
         Ok(())
     }
 
-    fn ensure_backing(&self, memory: &CliMemoryRuntime, request: &MemoryRequest) -> Option<usize> {
+    fn ensure_backing(
+        &self,
+        memory: &CliMemoryRuntime,
+        tick: u64,
+        request: &MemoryRequest,
+    ) -> Option<usize> {
         let line = self.layout.line_address(request.line_address());
         if self.contains_line(line) {
             return Some(0);
         }
 
-        let data = memory.read_guest_cache_line(line, self.layout)?;
+        let data = memory.read_guest_cache_line_for_fill(line, self.layout, tick)?;
 
         let mut harness = self.harness.lock().expect("CLI data cache lock");
         let inserted = match &mut *harness {
@@ -624,6 +629,7 @@ impl CliDataCacheRuntime {
             .saturating_sub(decisions_before);
         let response_record =
             response_record(&harness.cpu_responses(), responses_before, request.id());
+        let response_status = response_record.as_ref().map(|record| record.status());
         let outcome = data_cache_target_outcome(
             response_mode,
             request,
@@ -638,7 +644,7 @@ impl CliDataCacheRuntime {
             .map(<[u8]>::to_vec);
 
         if let Some(line_data) = line_data {
-            self.sync_request_range(memory, request, &line_data)?;
+            self.sync_request_range(memory, request, response_status, &line_data)?;
         }
 
         self.records
@@ -682,6 +688,7 @@ impl CliDataCacheRuntime {
             .len()
             .saturating_sub(decisions_before);
         let response_record = response_record(&responses, responses_before, request.id());
+        let response_status = response_record.as_ref().map(|record| record.status());
         let outcome = data_cache_target_outcome(
             response_mode,
             request,
@@ -693,7 +700,7 @@ impl CliDataCacheRuntime {
             .cache_data(request.id().agent())
             .map_err(execute_error)?
         {
-            self.sync_request_range(memory, request, &line_data)?;
+            self.sync_request_range(memory, request, response_status, &line_data)?;
         }
 
         self.records
@@ -737,6 +744,7 @@ impl CliDataCacheRuntime {
             .len()
             .saturating_sub(decisions_before);
         let response_record = response_record(&responses, responses_before, request.id());
+        let response_status = response_record.as_ref().map(|record| record.status());
         let outcome = data_cache_target_outcome(
             response_mode,
             request,
@@ -748,7 +756,7 @@ impl CliDataCacheRuntime {
             .cache_data(request.id().agent())
             .map_err(execute_error)?
         {
-            self.sync_request_range(memory, request, &line_data)?;
+            self.sync_request_range(memory, request, response_status, &line_data)?;
         }
 
         self.records
@@ -792,6 +800,7 @@ impl CliDataCacheRuntime {
             .len()
             .saturating_sub(decisions_before);
         let response_record = response_record(&responses, responses_before, request.id());
+        let response_status = response_record.as_ref().map(|record| record.status());
         let outcome = data_cache_target_outcome(
             response_mode,
             request,
@@ -803,7 +812,7 @@ impl CliDataCacheRuntime {
             .cache_data(request.id().agent())
             .map_err(execute_error)?
         {
-            self.sync_request_range(memory, request, &line_data)?;
+            self.sync_request_range(memory, request, response_status, &line_data)?;
         }
 
         self.records
@@ -825,6 +834,7 @@ impl CliDataCacheRuntime {
         &self,
         memory: &CliMemoryRuntime,
         request: &MemoryRequest,
+        response_status: Option<ResponseStatus>,
         line_data: &[u8],
     ) -> Result<(), Rem6CliError> {
         let range = request.range();
@@ -840,6 +850,9 @@ impl CliDataCacheRuntime {
                 "CLI data cache request range exceeds cache line",
             ));
         };
+        if !data_cache_request_updates_backing(request.operation(), response_status) {
+            return Ok(());
+        }
         if memory.write_guest_memory(range.start().get(), data, self.layout) {
             Ok(())
         } else {
@@ -868,7 +881,8 @@ impl CliDataCacheRuntime {
         for (issue, sequence) in issues {
             let issue_address = issue.address();
             let prefetch_request = prefetch_issue_request(issue, sequence, self.layout)?;
-            if let Some(backing_dram_access_count) = self.ensure_backing(memory, &prefetch_request)
+            if let Some(backing_dram_access_count) =
+                self.ensure_backing(memory, tick, &prefetch_request)
             {
                 let _ = self.respond_inner(
                     memory,
@@ -997,6 +1011,24 @@ fn is_cache_prefetch_source(request: &MemoryRequest) -> bool {
             | MemoryOperation::LoadLocked
             | MemoryOperation::LockedRmwRead
     )
+}
+
+fn data_cache_request_updates_backing(
+    operation: MemoryOperation,
+    response_status: Option<ResponseStatus>,
+) -> bool {
+    match operation {
+        MemoryOperation::StoreConditional => response_status == Some(ResponseStatus::Completed),
+        MemoryOperation::Write
+        | MemoryOperation::CacheBlockZero
+        | MemoryOperation::LockedRmwWrite
+        | MemoryOperation::Atomic
+        | MemoryOperation::AtomicNoReturn
+        | MemoryOperation::WriteClean
+        | MemoryOperation::WritebackClean
+        | MemoryOperation::WritebackDirty => true,
+        _ => false,
+    }
 }
 
 fn prefetch_issue_request(
@@ -1205,9 +1237,10 @@ fn data_cache_run_summary(
 mod tests {
     use std::sync::{Arc, Mutex};
 
+    use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
     use rem6_memory::{
-        AccessSize, Address, AddressRange, MemoryRequestId, MemoryTargetId, PartitionedMemoryStore,
-        ResponseStatus,
+        AccessSize, Address, AddressRange, ByteMask, MemoryRequest, MemoryRequestId,
+        MemoryTargetId, PartitionedMemoryStore, ResponseStatus,
     };
 
     use super::*;
@@ -1242,6 +1275,27 @@ mod tests {
         assert!(error.contains("outside cache line"), "{error}");
     }
 
+    #[test]
+    fn failed_store_conditional_does_not_emit_dram_write() {
+        let layout = CacheLineLayout::new(32).unwrap();
+        let memory = dram_memory_with_line(layout);
+        let runtime = CliDataCacheRuntime::new_msi_bank(layout, [AgentId::new(0)], None).unwrap();
+        let store_conditional = store_conditional_request(layout, 1);
+
+        let outcome = runtime
+            .respond_for_request(&memory, 12, &store_conditional)
+            .expect("matching layout should be handled by the data cache runtime");
+
+        let TargetOutcome::Respond(response) = outcome else {
+            panic!("store conditional should produce a response");
+        };
+        assert_eq!(response.status(), ResponseStatus::StoreConditionalFailed);
+        let summary = memory.dram_summary_until(128);
+        assert_eq!(summary.accesses, 1);
+        assert_eq!(summary.reads, 1);
+        assert_eq!(summary.writes, 0);
+    }
+
     fn memory_with_line(layout: CacheLineLayout) -> CliMemoryRuntime {
         let mut store = PartitionedMemoryStore::new();
         store.add_partition(TARGET, layout).unwrap();
@@ -1267,5 +1321,52 @@ mod tests {
             )
             .unwrap()])),
         }
+    }
+
+    fn dram_memory_with_line(layout: CacheLineLayout) -> CliMemoryRuntime {
+        let mut memory = DramMemoryController::new();
+        memory
+            .add_target(DramControllerConfig::new(
+                TARGET,
+                layout,
+                DramGeometry::new(4, 64, layout.bytes()).unwrap(),
+                DramTiming::new(3, 5, 7, 2, 4).unwrap(),
+            ))
+            .unwrap();
+        memory
+            .map_region(
+                TARGET,
+                Address::new(0x1000),
+                AccessSize::new(layout.bytes()).unwrap(),
+            )
+            .unwrap();
+        memory
+            .insert_line(
+                TARGET,
+                Address::new(0x1000),
+                vec![0xa5; layout.bytes() as usize],
+            )
+            .unwrap();
+        CliMemoryRuntime::Dram {
+            memory: Arc::new(Mutex::new(memory)),
+            full_line_backing: Arc::new(Mutex::new(vec![AddressRange::new(
+                Address::new(0x1000),
+                AccessSize::new(layout.bytes()).unwrap(),
+            )
+            .unwrap()])),
+        }
+    }
+
+    fn store_conditional_request(layout: CacheLineLayout, sequence: u64) -> MemoryRequest {
+        let size = AccessSize::new(8).unwrap();
+        MemoryRequest::store_conditional(
+            MemoryRequestId::new(AgentId::new(0), sequence),
+            Address::new(0x1000),
+            size,
+            0x0123_4567_89ab_cdefu64.to_le_bytes().to_vec(),
+            ByteMask::full(size).unwrap(),
+            layout,
+        )
+        .unwrap()
     }
 }
