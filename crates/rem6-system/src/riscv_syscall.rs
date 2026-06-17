@@ -15,6 +15,7 @@ use crate::{
 
 mod brk;
 mod clock;
+mod copy_file_range;
 mod cpu_locality;
 mod cwd;
 mod directory;
@@ -73,6 +74,7 @@ use clock::{
     syscall_clock, RISCV_LINUX_CLOCK_GETRES, RISCV_LINUX_CLOCK_GETTIME, RISCV_LINUX_GETTIMEOFDAY,
     RISCV_LINUX_TIMES,
 };
+use copy_file_range::{syscall_copy_file_range, RISCV_LINUX_COPY_FILE_RANGE};
 use cpu_locality::{syscall_getcpu, RISCV_LINUX_GETCPU};
 use cwd::{syscall_chdir, syscall_fchdir, syscall_getcwd, RISCV_LINUX_CHDIR, RISCV_LINUX_FCHDIR};
 use directory::{RiscvGuestMkdirError, RiscvGuestRmdirError};
@@ -1296,6 +1298,14 @@ impl RiscvSyscallTable {
                     }
                 }
             }
+            RISCV_LINUX_COPY_FILE_RANGE => Some(RiscvSyscallOutcome::Return {
+                value: syscall_copy_file_range(
+                    request,
+                    state,
+                    guest_memory_reader,
+                    guest_memory_writer,
+                ),
+            }),
             RISCV_LINUX_WRITEV => guest_memory_reader.map(|guest_memory| {
                 match syscall_writev(request, state, tick, guest_memory) {
                     Some(value) => RiscvSyscallOutcome::Return { value },
