@@ -237,7 +237,7 @@ fn syscall_futex_wait(
         GuestFutexWaitOutcome::WouldBlock { .. } => Some(RiscvSyscallOutcome::Return {
             value: linux_error(RISCV_LINUX_EAGAIN),
         }),
-        GuestFutexWaitOutcome::Queued { .. } => None,
+        GuestFutexWaitOutcome::Queued { .. } => Some(RiscvSyscallOutcome::Blocked),
     }
 }
 

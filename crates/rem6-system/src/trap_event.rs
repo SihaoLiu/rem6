@@ -668,6 +668,7 @@ impl RiscvTrapEventPort {
             };
 
             match syscalls.handle_pending_core_trap(&core, source_tick) {
+                Some(RiscvSyscallOutcome::Blocked) => {}
                 Some(RiscvSyscallOutcome::Exit { code }) => {
                     pending_syscalls.push(PendingRiscvSystemEventSchedule {
                         event,

@@ -424,6 +424,33 @@ fn linux_table_futex_wait_mismatch_returns_eagain_without_queueing() {
 }
 
 #[test]
+fn linux_table_futex_wait_match_blocks_and_queues_waiter() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let address = GuestFutexAddress::new(0x191);
+    let thread_group = GuestThreadGroupId::new(100);
+    let guest_memory = RiscvGuestMemoryReader::new(move |read_address, bytes| {
+        if read_address == address.get() && bytes == 4 {
+            Some(2_i32.to_le_bytes().to_vec())
+        } else {
+            None
+        }
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(0x8000, 98, [address.get(), 0, 2, 0, 0, 0]),
+            &mut state,
+            42,
+            Some(&guest_memory),
+        ),
+        Some(RiscvSyscallOutcome::Blocked)
+    );
+    assert_eq!(state.guest_futexes().waiter_count(address, thread_group), 1);
+    assert!(state.guest_futexes().is_waiting(GuestThreadId::new(100)));
+}
+
+#[test]
 fn linux_table_futex_wait_mismatch_still_validates_bad_timeout_pointer() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);

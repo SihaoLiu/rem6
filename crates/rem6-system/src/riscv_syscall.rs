@@ -145,7 +145,7 @@ use permissions::{
     RISCV_LINUX_FCHOWNAT, RISCV_LINUX_UMASK, RISCV_NEWLIB_LEGACY_CHMOD,
 };
 use pipe::{syscall_pipe2, RiscvGuestPipeId, RISCV_LINUX_PIPE2};
-use poll::{syscall_ppoll, RISCV_LINUX_PPOLL};
+use poll::{syscall_ppoll, syscall_pselect6, RISCV_LINUX_PPOLL, RISCV_LINUX_PSELECT6};
 use process::{
     syscall_getpgid, syscall_getsid, syscall_personality, syscall_prctl, syscall_setpgid,
     syscall_setsid, RISCV_LINUX_GETPGID, RISCV_LINUX_GETSID, RISCV_LINUX_PERSONALITY,
@@ -257,6 +257,7 @@ const RISCV_LINUX_DEFAULT_SE_MEMORY_CAPACITY_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvSyscallOutcome {
+    Blocked,
     Exit { code: i32 },
     Return { value: u64 },
 }
@@ -1239,18 +1240,22 @@ impl RiscvSyscallTable {
             RISCV_LINUX_LSEEK => Some(RiscvSyscallOutcome::Return {
                 value: syscall_lseek(request, state),
             }),
-            RISCV_LINUX_READ => guest_memory_writer.and_then(|guest_memory| {
-                syscall_read(request, state, guest_memory)
-                    .map(|value| RiscvSyscallOutcome::Return { value })
+            RISCV_LINUX_READ => guest_memory_writer.map(|guest_memory| {
+                match syscall_read(request, state, guest_memory) {
+                    Some(value) => RiscvSyscallOutcome::Return { value },
+                    None => RiscvSyscallOutcome::Blocked,
+                }
             }),
             RISCV_LINUX_PREAD64 => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_pread64(request, state, guest_memory),
                 })
             }
-            RISCV_LINUX_WRITE => guest_memory_reader.and_then(|guest_memory| {
-                syscall_write(request, state, tick, guest_memory)
-                    .map(|value| RiscvSyscallOutcome::Return { value })
+            RISCV_LINUX_WRITE => guest_memory_reader.map(|guest_memory| {
+                match syscall_write(request, state, tick, guest_memory) {
+                    Some(value) => RiscvSyscallOutcome::Return { value },
+                    None => RiscvSyscallOutcome::Blocked,
+                }
             }),
             RISCV_LINUX_PWRITE64 => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
@@ -1271,14 +1276,18 @@ impl RiscvSyscallTable {
                     }
                 }
             }
-            RISCV_LINUX_WRITEV => guest_memory_reader.and_then(|guest_memory| {
-                syscall_writev(request, state, tick, guest_memory)
-                    .map(|value| RiscvSyscallOutcome::Return { value })
+            RISCV_LINUX_WRITEV => guest_memory_reader.map(|guest_memory| {
+                match syscall_writev(request, state, tick, guest_memory) {
+                    Some(value) => RiscvSyscallOutcome::Return { value },
+                    None => RiscvSyscallOutcome::Blocked,
+                }
             }),
             RISCV_LINUX_READV => guest_memory_reader.and_then(|reader| {
-                guest_memory_writer.and_then(|writer| {
-                    syscall_readv(request, state, reader, writer)
-                        .map(|value| RiscvSyscallOutcome::Return { value })
+                guest_memory_writer.map(|writer| {
+                    match syscall_readv(request, state, reader, writer) {
+                        Some(value) => RiscvSyscallOutcome::Return { value },
+                        None => RiscvSyscallOutcome::Blocked,
+                    }
                 })
             }),
             RISCV_LINUX_PIPE2 => guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
@@ -1287,6 +1296,9 @@ impl RiscvSyscallTable {
             RISCV_LINUX_PPOLL => {
                 syscall_ppoll(request, state, guest_memory_reader, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
+            }
+            RISCV_LINUX_PSELECT6 => {
+                syscall_pselect6(request, state, guest_memory_reader, guest_memory_writer)
             }
             RISCV_LINUX_READLINKAT => guest_memory_reader.and_then(|reader| {
                 guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
