@@ -80,12 +80,24 @@ fn vfsgnj_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x08, vs2, fs1, vd)
 }
 
+fn vfsgnj_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x08, vs2, vs1, vd)
+}
+
 fn vfsgnjn_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x09, vs2, fs1, vd)
 }
 
+fn vfsgnjn_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x09, vs2, vs1, vd)
+}
+
 fn vfsgnjx_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x0a, vs2, fs1, vd)
+}
+
+fn vfsgnjx_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x0a, vs2, vs1, vd)
 }
 
 fn vector_float_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -337,6 +349,44 @@ fn assert_vf_fetch_stream_executes(
     assert_eq!(
         core.read_vector_register(vreg(3)),
         lanes_f32(expected_destination)
+    );
+}
+
+fn assert_vv_fetch_stream_executes_bits(
+    instruction: u32,
+    decoded: RiscvVectorFloatInstruction,
+    sign_source: [u32; 4],
+    source: [u32; 4],
+    initial_destination: [u32; 4],
+    expected_destination: [u32; 4],
+) {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.write_vector_register(vreg(1), lanes_f32_bits(sign_source));
+    core.write_vector_register(vreg(2), lanes_f32_bits(source));
+    core.write_vector_register(vreg(3), lanes_f32_bits(initial_destination));
+    let store = loaded_program_store(
+        0x8000,
+        &[vsetvli_type(0xd0, 10, 5), instruction, 0x0010_0073],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(decoded)
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_f32_bits(expected_destination)
     );
 }
 
@@ -652,6 +702,22 @@ fn riscv_core_driver_executes_vfsgnj_vf_with_reserved_frm_from_fetch_stream() {
 }
 
 #[test]
+fn riscv_core_driver_executes_vfsgnj_vv_from_fetch_stream() {
+    assert_vv_fetch_stream_executes_bits(
+        vfsgnj_vv_type(2, 1, 3),
+        RiscvVectorFloatInstruction::SignInjectVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        },
+        [0x8000_0000, 0x0000_0000, 0x8000_0000, 0],
+        [0x3f80_0000, 0xc000_0000, 0x7fc0_1234, 0x4000_0000],
+        [0, 0, 0, 0x40a0_0000],
+        [0xbf80_0000, 0x4000_0000, 0xffc0_1234, 0x40a0_0000],
+    );
+}
+
+#[test]
 fn riscv_core_driver_executes_vfsgnjn_vf_from_fetch_stream() {
     assert_vf_fetch_stream_executes(
         vfsgnjn_vf_type(2, 1, 3),
@@ -668,6 +734,22 @@ fn riscv_core_driver_executes_vfsgnjn_vf_from_fetch_stream() {
 }
 
 #[test]
+fn riscv_core_driver_executes_vfsgnjn_vv_from_fetch_stream() {
+    assert_vv_fetch_stream_executes_bits(
+        vfsgnjn_vv_type(2, 1, 3),
+        RiscvVectorFloatInstruction::SignInjectNegVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        },
+        [0x8000_0000, 0x0000_0000, 0x8000_0000, 0],
+        [0x3f80_0000, 0xc000_0000, 0x3e80_0000, 0x4000_0000],
+        [0, 0, 0, 0x40a0_0000],
+        [0x3f80_0000, 0xc000_0000, 0x3e80_0000, 0x40a0_0000],
+    );
+}
+
+#[test]
 fn riscv_core_driver_executes_vfsgnjx_vf_from_fetch_stream() {
     assert_vf_fetch_stream_executes(
         vfsgnjx_vf_type(2, 1, 3),
@@ -680,6 +762,22 @@ fn riscv_core_driver_executes_vfsgnjx_vf_from_fetch_stream() {
         [1.0, -2.0, 0.25, 1.0],
         [0.0, 0.0, 0.0, 12.0],
         [-1.0, 2.0, -0.25, 12.0],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfsgnjx_vv_from_fetch_stream() {
+    assert_vv_fetch_stream_executes_bits(
+        vfsgnjx_vv_type(2, 1, 3),
+        RiscvVectorFloatInstruction::SignInjectXorVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        },
+        [0x8000_0000, 0x0000_0000, 0x8000_0000, 0],
+        [0x3f80_0000, 0xc000_0000, 0x3e80_0000, 0x4000_0000],
+        [0, 0, 0, 0x40a0_0000],
+        [0xbf80_0000, 0xc000_0000, 0xbe80_0000, 0x40a0_0000],
     );
 }
 

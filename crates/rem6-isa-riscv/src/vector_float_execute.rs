@@ -30,11 +30,20 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
         RiscvVectorFloatInstruction::MulVf { vd, fs1, vs2 } => {
             execute_arithmetic_vf(hart, vd, fs1, vs2, FloatBinaryOp::Mul)
         }
+        RiscvVectorFloatInstruction::SignInjectVv { vd, vs1, vs2 } => {
+            execute_sign_inject_vv(hart, vd, vs1, vs2, FloatSignInjectOp::Inject)
+        }
         RiscvVectorFloatInstruction::SignInjectVf { vd, fs1, vs2 } => {
             execute_sign_inject_vf(hart, vd, fs1, vs2, FloatSignInjectOp::Inject)
         }
+        RiscvVectorFloatInstruction::SignInjectNegVv { vd, vs1, vs2 } => {
+            execute_sign_inject_vv(hart, vd, vs1, vs2, FloatSignInjectOp::InjectNeg)
+        }
         RiscvVectorFloatInstruction::SignInjectNegVf { vd, fs1, vs2 } => {
             execute_sign_inject_vf(hart, vd, fs1, vs2, FloatSignInjectOp::InjectNeg)
+        }
+        RiscvVectorFloatInstruction::SignInjectXorVv { vd, vs1, vs2 } => {
+            execute_sign_inject_vv(hart, vd, vs1, vs2, FloatSignInjectOp::InjectXor)
         }
         RiscvVectorFloatInstruction::SignInjectXorVf { vd, fs1, vs2 } => {
             execute_sign_inject_vf(hart, vd, fs1, vs2, FloatSignInjectOp::InjectXor)
@@ -124,6 +133,33 @@ fn execute_binary_vf(
     let mut result = read_register_group(hart, vd, plan.group_registers);
     if !apply_exact_scalar_lanes(&plan, &mut result, &left, scalar, operation, rounding_mode) {
         return false;
+    }
+    write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
+
+fn execute_sign_inject_vv(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs1: VectorRegister,
+    vs2: VectorRegister,
+    operation: FloatSignInjectOp,
+) -> bool {
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2, vs1]) else {
+        return false;
+    };
+    if plan.element_bytes != 4 {
+        return false;
+    }
+
+    let left = read_register_group(hart, vs2, plan.group_registers);
+    let right = read_register_group(hart, vs1, plan.group_registers);
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    for offset in (0..plan.active_bytes).step_by(4) {
+        let lhs = u32::from_le_bytes(lane4(&left, offset));
+        let rhs = u32::from_le_bytes(lane4(&right, offset));
+        let value = sign_inject_single_bits(lhs, rhs, operation);
+        result[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
     write_register_group(hart, vd, plan.group_registers, &result);
     true

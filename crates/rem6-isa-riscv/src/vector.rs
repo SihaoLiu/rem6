@@ -161,14 +161,29 @@ pub enum RiscvVectorFloatInstruction {
         fs1: FloatRegister,
         vs2: VectorRegister,
     },
+    SignInjectVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
     SignInjectVf {
         vd: VectorRegister,
         fs1: FloatRegister,
         vs2: VectorRegister,
     },
+    SignInjectNegVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
     SignInjectNegVf {
         vd: VectorRegister,
         fs1: FloatRegister,
+        vs2: VectorRegister,
+    },
+    SignInjectXorVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
         vs2: VectorRegister,
     },
     SignInjectXorVf {
