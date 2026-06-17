@@ -1,7 +1,9 @@
 use super::{
     linux_error, RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState,
-    RISCV_LINUX_EFAULT, RISCV_LINUX_EPERM,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ESRCH,
 };
+
+const RISCV_LINUX_ROBUST_LIST_HEAD_BYTES: u64 = 24;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct RiscvRobustList {
@@ -29,7 +31,12 @@ pub(super) fn syscall_set_robust_list(
     request: RiscvSyscallRequest,
     state: &mut RiscvSyscallState,
 ) -> u64 {
-    state.set_robust_list(request.argument(0), request.argument(1));
+    let length = request.argument(1);
+    if length != RISCV_LINUX_ROBUST_LIST_HEAD_BYTES {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+
+    state.set_robust_list(request.argument(0), length);
     0
 }
 
@@ -40,7 +47,7 @@ pub(super) fn syscall_get_robust_list(
 ) -> u64 {
     let pid = request.argument(0);
     if pid != 0 && pid != state.identity().thread_id() {
-        return linux_error(RISCV_LINUX_EPERM);
+        return linux_error(RISCV_LINUX_ESRCH);
     }
 
     let robust_list = state.robust_list();
