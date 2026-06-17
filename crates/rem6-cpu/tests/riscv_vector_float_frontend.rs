@@ -40,6 +40,10 @@ fn f32_box(value: f32) -> u64 {
     u64::from(value.to_bits()) | 0xffff_ffff_0000_0000
 }
 
+fn f32_box_bits(bits: u32) -> u64 {
+    u64::from(bits) | 0xffff_ffff_0000_0000
+}
+
 fn vsetvli_type(vtype: u32, rs1: u8, rd: u8) -> u32 {
     (vtype << 20) | (u32::from(rs1) << 15) | (0b111 << 12) | (u32::from(rd) << 7) | 0x57
 }
@@ -72,6 +76,18 @@ fn vfmul_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x24, vs2, fs1, vd)
 }
 
+fn vfsgnj_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x08, vs2, fs1, vd)
+}
+
+fn vfsgnjn_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x09, vs2, fs1, vd)
+}
+
+fn vfsgnjx_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x0a, vs2, fs1, vd)
+}
+
 fn vector_float_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_float_type(funct6, 0b001, vs2, vs1, vd)
 }
@@ -91,9 +107,13 @@ fn vector_float_type(funct6: u32, funct3: u32, vs2: u8, rs1: u8, vd: u8) -> u32 
 }
 
 fn lanes_f32(lanes: [f32; 4]) -> [u8; 16] {
+    lanes_f32_bits(lanes.map(f32::to_bits))
+}
+
+fn lanes_f32_bits(lanes: [u32; 4]) -> [u8; 16] {
     let mut bytes = [0; 16];
     for (index, lane) in lanes.into_iter().enumerate() {
-        bytes[index * 4..index * 4 + 4].copy_from_slice(&lane.to_bits().to_le_bytes());
+        bytes[index * 4..index * 4 + 4].copy_from_slice(&lane.to_le_bytes());
     }
     bytes
 }
@@ -230,6 +250,15 @@ fn drive_until_instruction(
     scheduler: &mut PartitionedScheduler,
     transport: &MemoryTransport,
 ) -> RiscvInstruction {
+    drive_until_execution(core, store, scheduler, transport).0
+}
+
+fn drive_until_execution(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) -> (RiscvInstruction, Option<RiscvTrapKind>) {
     for _ in 0..8 {
         match drive_one_action(core, store.clone(), scheduler, transport) {
             Some(RiscvCoreDriveAction::FetchIssued { .. })
@@ -237,7 +266,10 @@ fn drive_until_instruction(
                 scheduler.run_until_idle_conservative();
             }
             Some(RiscvCoreDriveAction::InstructionExecuted(event)) => {
-                return event.instruction();
+                return (
+                    event.instruction(),
+                    event.execution().trap().map(|trap| trap.kind()),
+                );
             }
             None => {
                 scheduler.run_until_idle_conservative();
@@ -569,6 +601,85 @@ fn riscv_core_driver_executes_vfmul_vf_from_fetch_stream() {
         [1.5, -2.0, 0.5, 1.0],
         [0.0, 0.0, 0.0, 12.0],
         [-3.0, 4.0, -1.0, 12.0],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfsgnj_vf_with_reserved_frm_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.set_float_status(RiscvFloatStatus::new(0).with_frm(5));
+    core.write_float_register(freg(1), f32_box_bits(0x8000_0000));
+    core.write_vector_register(
+        vreg(2),
+        lanes_f32_bits([0x3f80_0000, 0xc000_0000, 0x7fc0_1234, 0x4000_0000]),
+    );
+    core.write_vector_register(vreg(3), lanes_f32_bits([0, 0, 0, 0x40a0_0000]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 5),
+            vfsgnj_vf_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_execution(&core, store, &mut scheduler, &transport),
+        (
+            RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::SignInjectVf {
+                vd: vreg(3),
+                fs1: freg(1),
+                vs2: vreg(2),
+            }),
+            None,
+        )
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_f32_bits([0xbf80_0000, 0xc000_0000, 0xffc0_1234, 0x40a0_0000])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfsgnjn_vf_from_fetch_stream() {
+    assert_vf_fetch_stream_executes(
+        vfsgnjn_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::SignInjectNegVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        -0.0,
+        [1.0, -2.0, 0.25, 1.0],
+        [0.0, 0.0, 0.0, 12.0],
+        [1.0, 2.0, 0.25, 12.0],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfsgnjx_vf_from_fetch_stream() {
+    assert_vf_fetch_stream_executes(
+        vfsgnjx_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::SignInjectXorVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        -0.0,
+        [1.0, -2.0, 0.25, 1.0],
+        [0.0, 0.0, 0.0, 12.0],
+        [-1.0, 2.0, -0.25, 12.0],
     );
 }
 

@@ -324,6 +324,27 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 vs2: vector_register(raw, 20),
             },
         )),
+        (0x5, 0b001000, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::SignInjectVf {
+                vd: vector_register(raw, 7),
+                fs1: float_register(raw, 15),
+                vs2: vector_register(raw, 20),
+            },
+        )),
+        (0x5, 0b001001, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::SignInjectNegVf {
+                vd: vector_register(raw, 7),
+                fs1: float_register(raw, 15),
+                vs2: vector_register(raw, 20),
+            },
+        )),
+        (0x5, 0b001010, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::SignInjectXorVf {
+                vd: vector_register(raw, 7),
+                fs1: float_register(raw, 15),
+                vs2: vector_register(raw, 20),
+            },
+        )),
         (0x0, 0b000010, true) => Ok(RiscvInstruction::VectorSubVv {
             vd: vector_register(raw, 7),
             vs1: vector_register(raw, 15),
