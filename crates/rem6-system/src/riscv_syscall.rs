@@ -165,8 +165,8 @@ use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
 use sendfile::{syscall_sendfile, RISCV_LINUX_SENDFILE};
 use signal::{
     syscall_kill, syscall_rt_sigaction, syscall_rt_sigpending, syscall_rt_sigprocmask,
-    syscall_rt_sigsuspend, syscall_rt_sigtimedwait, syscall_sigaltstack, syscall_tgkill,
-    syscall_tkill, RiscvSignalAction, RiscvSignalAltStack, RISCV_LINUX_SIGALTSTACK,
+    syscall_rt_sigqueueinfo, syscall_rt_sigsuspend, syscall_rt_sigtimedwait, syscall_sigaltstack,
+    syscall_tgkill, syscall_tkill, RiscvSignalAction, RiscvSignalAltStack, RISCV_LINUX_SIGALTSTACK,
 };
 use sleep::{
     syscall_clock_nanosleep, syscall_nanosleep, RISCV_LINUX_CLOCK_NANOSLEEP, RISCV_LINUX_NANOSLEEP,
@@ -1587,8 +1587,12 @@ impl RiscvSyscallTable {
                 syscall_sigaltstack(request, state, guest_memory_reader, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
-            RISCV_LINUX_SCHED_YIELD | RISCV_LINUX_RT_SIGQUEUEINFO | RISCV_LINUX_RT_SIGRETURN => {
+            RISCV_LINUX_SCHED_YIELD | RISCV_LINUX_RT_SIGRETURN => {
                 Some(RiscvSyscallOutcome::Return { value: 0 })
+            }
+            RISCV_LINUX_RT_SIGQUEUEINFO => {
+                syscall_rt_sigqueueinfo(request, state, tick, guest_memory_reader)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
             }
             RISCV_LINUX_RT_SIGSUSPEND => syscall_rt_sigsuspend(request, state, guest_memory_reader),
             RISCV_LINUX_RT_SIGACTION => {

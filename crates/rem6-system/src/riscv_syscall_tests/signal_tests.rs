@@ -10,6 +10,7 @@ const SA_UNSUPPORTED: u64 = 0x0000_0400;
 const SA_RESTART: u64 = 0x1000_0000;
 const EAGAIN: u64 = 11;
 const RISCV_LINUX_SIGALTSTACK_FOR_TEST: u64 = 132;
+const RISCV_LINUX_SIGINFO_T_BYTES: usize = 128;
 const SS_DISABLE: u64 = 2;
 const LINUX_STACK_T_BYTES: usize = 24;
 
@@ -1098,6 +1099,173 @@ fn linux_table_rt_sigsuspend_blocks_with_blockable_mask() {
 }
 
 #[test]
+fn linux_table_rt_sigqueueinfo_nonzero_signal_is_not_silently_delivered() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let signal_info_address = 0x40a0;
+    let guest_memory_reader = signal_info_reader(signal_info_address, -1);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RT_SIGQUEUEINFO,
+                [100, SIGUSR1, signal_info_address, 0, 0, 0],
+            ),
+            &mut state,
+            13,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOSYS)
+        })
+    );
+    assert_eq!(
+        state.unknown_syscalls(),
+        &[RiscvUnknownSyscallRecord::new(
+            0x8000,
+            RISCV_LINUX_RT_SIGQUEUEINFO,
+            [100, SIGUSR1, signal_info_address, 0, 0, 0],
+            13
+        )]
+    );
+}
+
+#[test]
+fn linux_table_rt_sigqueueinfo_reports_argument_errors() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let signal_info_address = 0x40c0;
+    let guest_memory_reader = signal_info_reader(signal_info_address, -1);
+    let user_signal_info_address = 0x40d0;
+    let user_guest_memory_reader = signal_info_reader(user_signal_info_address, 0);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RT_SIGQUEUEINFO,
+                [0, 0, signal_info_address, 0, 0, 0],
+            ),
+            &mut state,
+            14,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ESRCH)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_RT_SIGQUEUEINFO,
+                [100, SIGRTMAX + 1, signal_info_address, 0, 0, 0],
+            ),
+            &mut state,
+            15,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_RT_SIGQUEUEINFO,
+                [101, 0, signal_info_address, 0, 0, 0],
+            ),
+            &mut state,
+            16,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ESRCH)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_RT_SIGQUEUEINFO,
+                [101, 0, user_signal_info_address, 0, 0, 0],
+            ),
+            &mut state,
+            17,
+            Some(&user_guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EPERM)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_rt_sigqueueinfo_rejects_kernel_siginfo_codes_for_current_process() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    for (pc, signal_info_address, si_code) in [(0x8000, 0x40f0, 0), (0x8004, 0x4170, -6)] {
+        let guest_memory_reader = signal_info_reader(signal_info_address, si_code);
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(
+                    pc,
+                    RISCV_LINUX_RT_SIGQUEUEINFO,
+                    [100, 0, signal_info_address, 0, 0, 0],
+                ),
+                &mut state,
+                18,
+                Some(&guest_memory_reader),
+                None,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EPERM)
+            })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_rt_sigqueueinfo_reports_guest_siginfo_faults() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let signal_info_address = 0x40e0;
+    let faulting_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        assert_eq!(address, signal_info_address);
+        assert_eq!(bytes, RISCV_LINUX_SIGINFO_T_BYTES);
+        None
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RT_SIGQUEUEINFO,
+                [100, 0, signal_info_address, 0, 0, 0],
+            ),
+            &mut state,
+            17,
+            Some(&faulting_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
 fn linux_table_sigaltstack_queries_sets_and_disables_alt_stack() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
@@ -1675,6 +1843,18 @@ fn timespec64_bytes(seconds: i64, nanoseconds: i64) -> Vec<u8> {
     bytes.extend_from_slice(&seconds.to_le_bytes());
     bytes.extend_from_slice(&nanoseconds.to_le_bytes());
     bytes
+}
+
+fn signal_info_reader(address: u64, si_code: i32) -> RiscvGuestMemoryReader {
+    let mut bytes = vec![0; RISCV_LINUX_SIGINFO_T_BYTES];
+    bytes[8..12].copy_from_slice(&si_code.to_le_bytes());
+    RiscvGuestMemoryReader::new(move |read_address, read_bytes| {
+        if read_address == address && read_bytes == RISCV_LINUX_SIGINFO_T_BYTES {
+            Some(bytes.clone())
+        } else {
+            None
+        }
+    })
 }
 
 fn written_sigaction_at(writes: &[(u64, Vec<u8>)], address: u64) -> (u64, u64, u64) {

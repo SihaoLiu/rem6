@@ -283,11 +283,7 @@ fn linux_table_ignores_gem5_warn_once_startup_syscalls() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
 
-    for number in [
-        RISCV_LINUX_SCHED_YIELD,
-        RISCV_LINUX_RT_SIGQUEUEINFO,
-        RISCV_LINUX_RT_SIGRETURN,
-    ] {
+    for number in [RISCV_LINUX_SCHED_YIELD, RISCV_LINUX_RT_SIGRETURN] {
         assert_eq!(
             table.handle(RiscvSyscallRequest::new(0x8000, number, [0; 6]), &mut state,),
             Some(RiscvSyscallOutcome::Return { value: 0 })

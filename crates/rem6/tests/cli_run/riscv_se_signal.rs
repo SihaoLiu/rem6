@@ -161,6 +161,68 @@ fn rem6_run_riscv_se_runs_static_raw_rt_sigsuspend_invalid_size() {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_rt_sigqueueinfo_nonzero_signal() {
+    let mut program = riscv64_program(&[
+        i_type(100, 0, 0x0, 10, 0x13),   // addi a0, x0, current pid
+        i_type(10, 0, 0x0, 11, 0x13),    // addi a1, x0, SIGUSR1
+        u_type(0, 12, 0x17),             // auipc a2, 0
+        i_type(0xf8, 12, 0x0, 12, 0x13), // addi a2, a2, siginfo offset
+        i_type(138, 0, 0x0, 17, 0x13),   // addi a7, x0, rt_sigqueueinfo
+        0x0000_0073,                     // ecall
+        i_type(-38, 0, 0x0, 5, 0x13),    // addi t0, x0, -ENOSYS
+        b_type(16, 5, 10, 0x1),          // bne a0, t0, fail
+        i_type(76, 0, 0x0, 10, 0x13),    // addi a0, x0, 76
+        i_type(93, 0, 0x0, 17, 0x13),    // addi a7, x0, exit
+        0x0000_0073,                     // ecall
+        i_type(77, 0, 0x0, 10, 0x13),    // addi a0, x0, 77
+        i_type(93, 0, 0x0, 17, 0x13),    // addi a7, x0, exit
+        0x0000_0073,                     // ecall
+    ]);
+    program.resize(0x100, 0);
+    let mut siginfo = vec![0; 128];
+    siginfo[8..12].copy_from_slice(&(-1_i32).to_le_bytes());
+    program.extend_from_slice(&siginfo);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-rt-sigqueueinfo-nonzero", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "260",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("\"status\":\"stopped_by_host\""),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("\"stop_code\":76"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("\"riscv_unknown_syscalls\":[{\"pc\":\"0x80000014\""),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("\"number\":138"), "stdout: {stdout}");
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 76, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_sigaltstack_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(

@@ -123,7 +123,7 @@ fn syscall_rseq(
 
     if address == 0
         || length != RISCV_LINUX_RSEQ_SIZE
-        || address % RISCV_LINUX_RSEQ_SIZE != 0
+        || !address.is_multiple_of(RISCV_LINUX_RSEQ_SIZE)
         || flags & !RISCV_LINUX_RSEQ_VALID_FLAGS != 0
     {
         return Some(linux_error(RISCV_LINUX_EINVAL));

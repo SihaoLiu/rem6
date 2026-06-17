@@ -2,7 +2,8 @@ use super::time::read_timespec64;
 use super::{
     linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallOutcome,
     RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAGAIN, RISCV_LINUX_EFAULT,
-    RISCV_LINUX_EINVAL, RISCV_LINUX_ENOMEM, RISCV_LINUX_ENOSYS, RISCV_LINUX_ESRCH,
+    RISCV_LINUX_EINVAL, RISCV_LINUX_ENOMEM, RISCV_LINUX_ENOSYS, RISCV_LINUX_EPERM,
+    RISCV_LINUX_ESRCH,
 };
 
 pub(super) const RISCV_LINUX_SIGALTSTACK: u64 = 132;
@@ -22,6 +23,8 @@ const RISCV_LINUX_FIRST_SIGNAL: u64 = 1;
 const RISCV_LINUX_LAST_SIGNAL: u64 = 64;
 const RISCV_LINUX_SIGKILL: u64 = 9;
 const RISCV_LINUX_SIGSTOP: u64 = 19;
+const RISCV_LINUX_SIGINFO_T_BYTES: usize = 128;
+const RISCV_LINUX_SI_TKILL: i32 = -6;
 const RISCV_LINUX_SA_NOCLDSTOP: u64 = 0x0000_0001;
 const RISCV_LINUX_SA_NOCLDWAIT: u64 = 0x0000_0002;
 const RISCV_LINUX_SA_SIGINFO: u64 = 0x0000_0004;
@@ -321,6 +324,37 @@ pub(super) fn syscall_rt_sigsuspend(
     Some(RiscvSyscallOutcome::Blocked)
 }
 
+pub(super) fn syscall_rt_sigqueueinfo(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    tick: rem6_kernel::Tick,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+) -> Option<u64> {
+    let guest_memory_reader = guest_memory_reader?;
+    let Some(si_code) = read_signal_info_code(guest_memory_reader, request.argument(2)) else {
+        return Some(linux_error(RISCV_LINUX_EFAULT));
+    };
+    if si_code >= 0 || si_code == RISCV_LINUX_SI_TKILL {
+        return Some(linux_error(RISCV_LINUX_EPERM));
+    }
+
+    let target = linux_pid_argument(request.argument(0));
+    let current_process = state.identity().thread_group_id();
+    let target_is_current = u64::try_from(target).ok() == Some(current_process);
+    if !target_is_current {
+        return Some(linux_error(RISCV_LINUX_ESRCH));
+    }
+
+    let signal = linux_int_argument(request.argument(1));
+    if signal != 0 && !valid_signal_i32(signal) {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+
+    Some(signal_probe_or_unimplemented_delivery(
+        request, state, tick, signal,
+    ))
+}
+
 pub(super) fn syscall_sigaltstack(
     request: RiscvSyscallRequest,
     state: &mut RiscvSyscallState,
@@ -393,6 +427,17 @@ fn read_signal_mask(guest_memory_reader: &RiscvGuestMemoryReader, address: u64) 
     let bytes = guest_memory_reader.read(address, RISCV_LINUX_SIGSET_BYTES as usize)?;
     let bytes: [u8; 8] = bytes.try_into().ok()?;
     Some(u64::from_le_bytes(bytes))
+}
+
+fn read_signal_info_code(
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    address: u64,
+) -> Option<i32> {
+    let bytes = guest_memory_reader.read(address, RISCV_LINUX_SIGINFO_T_BYTES)?;
+    if bytes.len() != RISCV_LINUX_SIGINFO_T_BYTES {
+        return None;
+    }
+    Some(i32::from_le_bytes(bytes[8..12].try_into().ok()?))
 }
 
 fn blockable_signal_mask(mask: u64) -> u64 {
