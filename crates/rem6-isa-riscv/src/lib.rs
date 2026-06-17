@@ -24,6 +24,7 @@ mod vector;
 mod vector_compress_execute;
 mod vector_execute;
 mod vector_fixed_point_csr;
+mod vector_float_execute;
 mod vector_group;
 mod vector_narrow_clip_execute;
 
@@ -75,9 +76,9 @@ pub use types::{
 };
 pub use vector::{
     RiscvInstructionFlags, RiscvVectorCompressPlan, RiscvVectorCompressResult, RiscvVectorElements,
-    RiscvVectorError, RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, RiscvVectorMicroOp,
-    RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult,
-    RiscvVectorTailPolicy,
+    RiscvVectorError, RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode,
+    RiscvVectorFloatInstruction, RiscvVectorMicroOp, RiscvVectorMicroOpExpansion,
+    RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult, RiscvVectorTailPolicy,
 };
 
 impl RiscvInstruction {
@@ -529,6 +530,17 @@ impl RiscvHartState {
             | RiscvInstruction::VectorShiftRightArithmeticVx { .. }
             | RiscvInstruction::VectorShiftRightArithmeticVi { .. } => {
                 if !vector_execute::execute_vector_integer_binary(self, instruction) {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                }
+            }
+            RiscvInstruction::VectorFloat(vector_instruction) => {
+                if !vector_float_execute::execute(self, vector_instruction) {
                     return Ok(enter_synchronous_trap(
                         self,
                         instruction,

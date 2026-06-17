@@ -5,7 +5,7 @@ use crate::{
     Immediate, RiscvCounterCsr, RiscvCsrOp, RiscvError, RiscvFenceSet, RiscvFloatCsr,
     RiscvInstruction, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr,
     RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvVectorFixedPointCsr,
-    RiscvVectorFixedPointCsrInstruction, VectorRegister,
+    RiscvVectorFixedPointCsrInstruction, RiscvVectorFloatInstruction, VectorRegister,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -275,6 +275,13 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs1: vector_register(raw, 15),
             vs2: vector_register(raw, 20),
         }),
+        (0x1, 0, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::AddVv {
+                vd: vector_register(raw, 7),
+                vs1: vector_register(raw, 15),
+                vs2: vector_register(raw, 20),
+            },
+        )),
         (0x0, 0b000010, true) => Ok(RiscvInstruction::VectorSubVv {
             vd: vector_register(raw, 7),
             vs1: vector_register(raw, 15),

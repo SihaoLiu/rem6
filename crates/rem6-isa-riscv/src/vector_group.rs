@@ -12,6 +12,46 @@ pub(crate) fn valid_register_group(register: VectorRegister, group_registers: us
         && index + group_registers <= 32
 }
 
+pub(crate) struct VectorBinaryPlan {
+    pub(crate) element_bytes: usize,
+    pub(crate) group_registers: usize,
+    pub(crate) active_bytes: usize,
+}
+
+impl VectorBinaryPlan {
+    pub(crate) fn new(
+        hart: &RiscvHartState,
+        destination: VectorRegister,
+        sources: &[VectorRegister],
+    ) -> Option<Self> {
+        let config = hart.vector_config();
+        let element_bytes = config.element_width_bytes()?;
+        let group_registers = config.register_group_registers()?;
+        if !valid_register_group(destination, group_registers)
+            || sources
+                .iter()
+                .any(|source| !valid_register_group(*source, group_registers))
+        {
+            return None;
+        }
+
+        let active_bytes = (config.vl() as usize).checked_mul(element_bytes)?;
+        if active_bytes > group_registers * RISCV_VECTOR_REGISTER_BYTES {
+            return None;
+        }
+
+        Some(Self {
+            element_bytes,
+            group_registers,
+            active_bytes,
+        })
+    }
+
+    pub(crate) fn active_element_count(&self) -> usize {
+        self.active_bytes / self.element_bytes
+    }
+}
+
 pub(crate) fn register_groups_overlap(
     left: VectorRegister,
     left_registers: usize,
