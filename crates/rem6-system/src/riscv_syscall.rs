@@ -1587,9 +1587,8 @@ impl RiscvSyscallTable {
                 syscall_sigaltstack(request, state, guest_memory_reader, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
-            RISCV_LINUX_SCHED_YIELD | RISCV_LINUX_RT_SIGRETURN => {
-                Some(RiscvSyscallOutcome::Return { value: 0 })
-            }
+            RISCV_LINUX_SCHED_YIELD => Some(RiscvSyscallOutcome::Return { value: 0 }),
+            RISCV_LINUX_RT_SIGRETURN => Some(unsupported_syscall_outcome(request, state, tick)),
             RISCV_LINUX_RT_SIGQUEUEINFO => {
                 syscall_rt_sigqueueinfo(request, state, tick, guest_memory_reader)
                     .map(|value| RiscvSyscallOutcome::Return { value })
@@ -1657,18 +1656,24 @@ impl RiscvSyscallTable {
             RISCV_LINUX_MADVISE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_madvise(request, state),
             }),
-            _ => {
-                state.push_unknown_syscall(RiscvUnknownSyscallRecord::new(
-                    request.pc(),
-                    request.number(),
-                    request.arguments(),
-                    tick,
-                ));
-                Some(RiscvSyscallOutcome::Return {
-                    value: linux_error(RISCV_LINUX_ENOSYS),
-                })
-            }
+            _ => Some(unsupported_syscall_outcome(request, state, tick)),
         }
+    }
+}
+
+fn unsupported_syscall_outcome(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    tick: Tick,
+) -> RiscvSyscallOutcome {
+    state.push_unknown_syscall(RiscvUnknownSyscallRecord::new(
+        request.pc(),
+        request.number(),
+        request.arguments(),
+        tick,
+    ));
+    RiscvSyscallOutcome::Return {
+        value: linux_error(RISCV_LINUX_ENOSYS),
     }
 }
 

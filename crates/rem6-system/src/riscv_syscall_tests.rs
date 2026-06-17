@@ -283,12 +283,40 @@ fn linux_table_ignores_gem5_warn_once_startup_syscalls() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
 
-    for number in [RISCV_LINUX_SCHED_YIELD, RISCV_LINUX_RT_SIGRETURN] {
-        assert_eq!(
-            table.handle(RiscvSyscallRequest::new(0x8000, number, [0; 6]), &mut state,),
-            Some(RiscvSyscallOutcome::Return { value: 0 })
-        );
-    }
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_SCHED_YIELD, [0; 6]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_rt_sigreturn_records_unsupported_frame_restore() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_RT_SIGRETURN, [0; 6]),
+            &mut state,
+            43,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOSYS)
+        })
+    );
+    assert_eq!(
+        state.unknown_syscalls(),
+        &[RiscvUnknownSyscallRecord::new(
+            0x8000,
+            RISCV_LINUX_RT_SIGRETURN,
+            [0; 6],
+            43
+        )]
+    );
 }
 
 #[test]
