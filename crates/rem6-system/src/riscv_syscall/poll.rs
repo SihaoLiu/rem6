@@ -87,6 +87,19 @@ fn pollfd_revents(state: &RiscvSyscallState, fd: i32, events: i16) -> i16 {
 
     let mut revents = 0;
     let access_mode = u64::from(status_flags.bits()) & RISCV_LINUX_O_ACCMODE;
+    match state.guest_eventfd_ready(fd) {
+        Ok(Some(ready)) => {
+            if ready.readable() {
+                revents |= events & (RISCV_LINUX_POLLIN | RISCV_LINUX_POLLRDNORM);
+            }
+            if ready.writable() {
+                revents |= events & (RISCV_LINUX_POLLOUT | RISCV_LINUX_POLLWRNORM);
+            }
+            return revents;
+        }
+        Ok(None) => {}
+        Err(_) => return RISCV_LINUX_POLLNVAL,
+    }
     if access_mode != RISCV_LINUX_O_WRONLY
         && (!state.stdin_readable(fd) || state.stdin_byte_count() > 0)
     {

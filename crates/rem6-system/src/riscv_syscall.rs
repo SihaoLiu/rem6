@@ -20,6 +20,7 @@ mod cwd;
 mod directory;
 mod dirent;
 mod emulation;
+mod eventfd;
 mod exit;
 mod fcntl;
 mod fd;
@@ -78,6 +79,7 @@ use dirent::{
     RISCV_LINUX_GETDENTS64,
 };
 pub use emulation::RiscvSyscallEmulation;
+use eventfd::{syscall_eventfd2, RiscvGuestEventFd, RISCV_LINUX_EVENTFD2};
 use exit::{syscall_exit, RISCV_LINUX_EXIT, RISCV_LINUX_EXIT_GROUP};
 use fcntl::{syscall_fcntl, RISCV_LINUX_FCNTL};
 #[cfg(test)]
@@ -238,6 +240,7 @@ const RISCV_LINUX_O_ACCMODE: u64 = 0x3;
 const RISCV_LINUX_O_CLOEXEC: u64 = 0o2_000_000;
 const RISCV_LINUX_O_RDONLY: u64 = 0;
 const RISCV_LINUX_O_WRONLY: u64 = 1;
+const RISCV_LINUX_O_RDWR: u64 = 2;
 const RISCV_LINUX_O_APPEND: u64 = 0o2000;
 const RISCV_LINUX_O_NONBLOCK: u64 = 0x800;
 const RISCV_LINUX_AT_FDCWD: u64 = (-100_i64) as u64;
@@ -300,6 +303,7 @@ pub struct RiscvSyscallState {
     guest_pipe_buffers: BTreeMap<RiscvGuestPipeId, VecDeque<u8>>,
     guest_pipe_read_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
     guest_pipe_write_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
+    guest_eventfds: BTreeMap<GuestFileDescriptionId, RiscvGuestEventFd>,
     guest_opens: Vec<RiscvGuestOpenRecord>,
     stdin_fds: BTreeSet<GuestFd>,
     guest_file_descriptions: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
@@ -384,6 +388,7 @@ impl RiscvSyscallState {
             guest_pipe_buffers: BTreeMap::new(),
             guest_pipe_read_descriptions: BTreeMap::new(),
             guest_pipe_write_descriptions: BTreeMap::new(),
+            guest_eventfds: BTreeMap::new(),
             guest_opens: Vec::new(),
             stdin_fds,
             guest_file_descriptions: BTreeMap::new(),
@@ -892,6 +897,7 @@ impl RiscvSyscallState {
             self.guest_directory_paths.remove(&description.id());
             self.guest_file_stats.remove(&description.id());
             self.remove_guest_pipe_description(description.id());
+            self.remove_guest_eventfd_description(description.id());
         }
     }
 
@@ -912,6 +918,7 @@ impl RiscvSyscallState {
                 self.guest_directory_paths.remove(&description.id());
                 self.guest_file_stats.remove(&description.id());
                 self.remove_guest_pipe_description(description.id());
+                self.remove_guest_eventfd_description(description.id());
             }
         }
     }
@@ -1131,6 +1138,9 @@ impl RiscvSyscallTable {
                 ),
             }),
             RISCV_LINUX_FCNTL => syscall_fcntl(request, state),
+            RISCV_LINUX_EVENTFD2 => Some(RiscvSyscallOutcome::Return {
+                value: syscall_eventfd2(request, state),
+            }),
             RISCV_LINUX_FLOCK => Some(RiscvSyscallOutcome::Return {
                 value: syscall_flock(request, state),
             }),
@@ -1199,21 +1209,19 @@ impl RiscvSyscallTable {
             RISCV_LINUX_LSEEK => Some(RiscvSyscallOutcome::Return {
                 value: syscall_lseek(request, state),
             }),
-            RISCV_LINUX_READ => {
-                guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
-                    value: syscall_read(request, state, guest_memory),
-                })
-            }
+            RISCV_LINUX_READ => guest_memory_writer.and_then(|guest_memory| {
+                syscall_read(request, state, guest_memory)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }),
             RISCV_LINUX_PREAD64 => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_pread64(request, state, guest_memory),
                 })
             }
-            RISCV_LINUX_WRITE => {
-                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
-                    value: syscall_write(request, state, tick, guest_memory),
-                })
-            }
+            RISCV_LINUX_WRITE => guest_memory_reader.and_then(|guest_memory| {
+                syscall_write(request, state, tick, guest_memory)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }),
             RISCV_LINUX_PWRITE64 => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_pwrite64(request, state, tick, guest_memory),
@@ -1233,14 +1241,14 @@ impl RiscvSyscallTable {
                     }
                 }
             }
-            RISCV_LINUX_WRITEV => {
-                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
-                    value: syscall_writev(request, state, tick, guest_memory),
-                })
-            }
+            RISCV_LINUX_WRITEV => guest_memory_reader.and_then(|guest_memory| {
+                syscall_writev(request, state, tick, guest_memory)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }),
             RISCV_LINUX_READV => guest_memory_reader.and_then(|reader| {
-                guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
-                    value: syscall_readv(request, state, reader, writer),
+                guest_memory_writer.and_then(|writer| {
+                    syscall_readv(request, state, reader, writer)
+                        .map(|value| RiscvSyscallOutcome::Return { value })
                 })
             }),
             RISCV_LINUX_PIPE2 => guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {

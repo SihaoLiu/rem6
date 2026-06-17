@@ -1,7 +1,8 @@
 use super::{
+    eventfd::{eventfd_read_bytes, RiscvGuestEventFdRead},
     guest_fd_argument, linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter,
-    RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT,
-    RISCV_LINUX_EINVAL, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_WRONLY,
+    RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_WRONLY,
 };
 
 pub(super) const RISCV_LINUX_READV: u64 = 65;
@@ -20,51 +21,75 @@ pub(super) fn syscall_readv(
     state: &mut RiscvSyscallState,
     guest_memory_reader: &RiscvGuestMemoryReader,
     guest_memory_writer: &RiscvGuestMemoryWriter,
-) -> u64 {
+) -> Option<u64> {
     let Some(fd) = guest_fd_argument(request.argument(0)) else {
-        return linux_error(RISCV_LINUX_EBADF);
+        return Some(linux_error(RISCV_LINUX_EBADF));
     };
     let Ok(status_flags) = state.guest_fds.status_flags(fd) else {
-        return linux_error(RISCV_LINUX_EBADF);
+        return Some(linux_error(RISCV_LINUX_EBADF));
     };
     if status_flags.bits() & (RISCV_LINUX_O_ACCMODE as u32) == RISCV_LINUX_O_WRONLY as u32 {
-        return linux_error(RISCV_LINUX_EBADF);
+        return Some(linux_error(RISCV_LINUX_EBADF));
     }
 
     let iov_count = request.argument(2);
     if iov_count > RISCV_LINUX_IOV_MAX {
-        return linux_error(RISCV_LINUX_EINVAL);
+        return Some(linux_error(RISCV_LINUX_EINVAL));
     }
     if iov_count == 0 {
-        return 0;
+        return Some(0);
     }
 
     let (iovecs, total) = match read_iovecs(guest_memory_reader, request.argument(1), iov_count) {
         Ok(iovecs) => iovecs,
-        Err(errno) => return linux_error(errno),
+        Err(errno) => return Some(linux_error(errno)),
     };
+    match state.guest_eventfd_read(fd, total) {
+        Ok(Some(read)) => {
+            let value = match read {
+                RiscvGuestEventFdRead::Value(value) => value,
+                RiscvGuestEventFdRead::Blocked => return None,
+                RiscvGuestEventFdRead::WouldBlock => {
+                    return Some(linux_error(RISCV_LINUX_EAGAIN));
+                }
+                RiscvGuestEventFdRead::InvalidSize => {
+                    return Some(linux_error(RISCV_LINUX_EINVAL));
+                }
+            };
+            let bytes = eventfd_read_bytes(value);
+            if !write_iovecs(guest_memory_writer, &iovecs, &bytes) {
+                return Some(linux_error(RISCV_LINUX_EFAULT));
+            }
+            if state.consume_guest_eventfd_read(fd).is_err() {
+                return Some(linux_error(RISCV_LINUX_EBADF));
+            }
+            return Some(bytes.len() as u64);
+        }
+        Ok(None) => {}
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    }
     if total == 0 {
-        return 0;
+        return Some(0);
     }
     let Ok(total_bytes) = usize::try_from(total) else {
-        return linux_error(RISCV_LINUX_EINVAL);
+        return Some(linux_error(RISCV_LINUX_EINVAL));
     };
 
     match state.guest_pipe_prefix(fd, total_bytes) {
         Ok(Some(bytes)) => {
             if bytes.is_empty() {
-                return 0;
+                return Some(0);
             }
             if !write_iovecs(guest_memory_writer, &iovecs, &bytes) {
-                return linux_error(RISCV_LINUX_EFAULT);
+                return Some(linux_error(RISCV_LINUX_EFAULT));
             }
             if state.consume_guest_pipe_prefix(fd, bytes.len()).is_err() {
-                return linux_error(RISCV_LINUX_EBADF);
+                return Some(linux_error(RISCV_LINUX_EBADF));
             }
-            return bytes.len() as u64;
+            return Some(bytes.len() as u64);
         }
         Ok(None) => {}
-        Err(_) => return linux_error(RISCV_LINUX_EBADF),
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
     }
 
     let read_from_stdin = state.stdin_readable(fd);
@@ -73,31 +98,31 @@ pub(super) fn syscall_readv(
     } else {
         match state.guest_file_prefix(fd, total_bytes) {
             Ok(Some(bytes)) => bytes,
-            Ok(None) | Err(_) => return linux_error(RISCV_LINUX_EBADF),
+            Ok(None) | Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
         }
     };
     if bytes.is_empty() {
-        return 0;
+        return Some(0);
     }
 
     let read_count = bytes.len() as u64;
     let Ok(offset) = state.guest_fds.file_offset(fd) else {
-        return linux_error(RISCV_LINUX_EBADF);
+        return Some(linux_error(RISCV_LINUX_EBADF));
     };
     if offset.get().checked_add(read_count).is_none() {
-        return linux_error(RISCV_LINUX_EBADF);
+        return Some(linux_error(RISCV_LINUX_EBADF));
     }
 
     if !write_iovecs(guest_memory_writer, &iovecs, &bytes) {
-        return linux_error(RISCV_LINUX_EFAULT);
+        return Some(linux_error(RISCV_LINUX_EFAULT));
     }
     if state.guest_fds.advance_file_offset(fd, read_count).is_err() {
-        return linux_error(RISCV_LINUX_EBADF);
+        return Some(linux_error(RISCV_LINUX_EBADF));
     }
     if read_from_stdin {
         state.consume_stdin_prefix(bytes.len());
     }
-    read_count
+    Some(read_count)
 }
 
 fn read_iovecs(

@@ -1,9 +1,11 @@
 use super::{
-    guest_fd_argument, linux_error, stat::guest_path_inode, RiscvGuestFileIdentity,
-    RiscvGuestMemoryReader, RiscvGuestNodeKind, RiscvGuestWriteRecord, RiscvSyscallRequest,
-    RiscvSyscallState, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG,
-    RISCV_LINUX_EINVAL, RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND,
-    RISCV_LINUX_O_RDONLY,
+    eventfd::{eventfd_write_bytes_written, eventfd_write_result},
+    guest_fd_argument, linux_error,
+    stat::guest_path_inode,
+    RiscvGuestFileIdentity, RiscvGuestMemoryReader, RiscvGuestNodeKind, RiscvGuestWriteRecord,
+    RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT,
+    RISCV_LINUX_EFBIG, RISCV_LINUX_EINVAL, RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE,
+    RISCV_LINUX_O_APPEND, RISCV_LINUX_O_RDONLY,
 };
 use crate::{GuestFd, GuestFdError, GuestFileOffset};
 use rem6_kernel::Tick;
@@ -294,53 +296,76 @@ pub(super) fn syscall_write(
     state: &mut RiscvSyscallState,
     tick: Tick,
     guest_memory: &RiscvGuestMemoryReader,
-) -> u64 {
+) -> Option<u64> {
     let Some(fd) = guest_fd_argument(request.argument(0)) else {
-        return linux_error(RISCV_LINUX_EBADF);
+        return Some(linux_error(RISCV_LINUX_EBADF));
     };
     let Ok(status_flags) = state.guest_fds.status_flags(fd) else {
-        return linux_error(RISCV_LINUX_EBADF);
+        return Some(linux_error(RISCV_LINUX_EBADF));
     };
     if status_flags.bits() & (RISCV_LINUX_O_ACCMODE as u32) == RISCV_LINUX_O_RDONLY as u32 {
-        return linux_error(RISCV_LINUX_EBADF);
+        return Some(linux_error(RISCV_LINUX_EBADF));
     }
 
     let count = request.argument(2);
+    match state.guest_eventfd_ready(fd) {
+        Ok(Some(_ready)) => {
+            if count < eventfd_write_bytes_written() {
+                return Some(linux_error(RISCV_LINUX_EINVAL));
+            }
+            let address = request.argument(1);
+            let Some(bytes) = guest_memory.read(address, eventfd_write_bytes_written() as usize)
+            else {
+                return Some(linux_error(RISCV_LINUX_EFAULT));
+            };
+            if bytes.len() != eventfd_write_bytes_written() as usize {
+                return Some(linux_error(RISCV_LINUX_EFAULT));
+            }
+            return match state.write_guest_eventfd_from_fd(fd, &bytes) {
+                Ok(Some(write)) => eventfd_write_result(write),
+                Ok(None) | Err(_) => Some(linux_error(RISCV_LINUX_EBADF)),
+            };
+        }
+        Ok(None) => {}
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    }
     if count == 0 {
-        return 0;
+        return Some(0);
     }
 
     let Ok(byte_count) = usize::try_from(count) else {
-        return linux_error(RISCV_LINUX_EINVAL);
+        return Some(linux_error(RISCV_LINUX_EINVAL));
     };
     match state.guest_file_write_exceeds_dense_limit(fd, count) {
-        Ok(true) => return linux_error(RISCV_LINUX_EFBIG),
+        Ok(true) => return Some(linux_error(RISCV_LINUX_EFBIG)),
         Ok(false) => {}
-        Err(_) => return linux_error(RISCV_LINUX_EBADF),
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
     }
     let address = request.argument(1);
     let Some(bytes) = guest_memory.read(address, byte_count) else {
-        return linux_error(RISCV_LINUX_EFAULT);
+        return Some(linux_error(RISCV_LINUX_EFAULT));
     };
     if bytes.len() != byte_count {
-        return linux_error(RISCV_LINUX_EFAULT);
+        return Some(linux_error(RISCV_LINUX_EFAULT));
     }
     match state.write_guest_pipe_from_fd(fd, &bytes) {
-        Ok(true) => return count,
+        Ok(true) => return Some(count),
         Ok(false) => {}
-        Err(_) => return linux_error(RISCV_LINUX_EBADF),
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
     }
     match state.write_guest_file_from_fd(fd, &bytes) {
         Ok(_) => {}
-        Err(RiscvGuestFileWriteError::FileTooLarge) => return linux_error(RISCV_LINUX_EFBIG),
-        Err(RiscvGuestFileWriteError::Fd(_)) => return linux_error(RISCV_LINUX_EBADF),
+        Err(RiscvGuestFileWriteError::FileTooLarge) => {
+            return Some(linux_error(RISCV_LINUX_EFBIG));
+        }
+        Err(RiscvGuestFileWriteError::Fd(_)) => return Some(linux_error(RISCV_LINUX_EBADF)),
     }
     if state.guest_fds.advance_file_offset(fd, count).is_err() {
-        return linux_error(RISCV_LINUX_EBADF);
+        return Some(linux_error(RISCV_LINUX_EBADF));
     }
 
     state.push_guest_write(RiscvGuestWriteRecord::new(fd, address, tick, bytes));
-    count
+    Some(count)
 }
 
 pub(super) fn syscall_pwrite64(
