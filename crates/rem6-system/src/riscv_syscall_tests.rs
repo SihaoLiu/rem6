@@ -324,7 +324,7 @@ fn linux_table_ignores_gem5_memory_management_advisory_syscalls() {
 }
 
 #[test]
-fn linux_table_returns_enosys_for_gem5_ignored_rseq() {
+fn linux_table_rseq_registration_requires_guest_memory_writer() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
 
@@ -333,9 +333,7 @@ fn linux_table_returns_enosys_for_gem5_ignored_rseq() {
             RiscvSyscallRequest::new(0x8000, thread::RISCV_LINUX_RSEQ, [0x4000, 32, 0, 0, 0, 0],),
             &mut state,
         ),
-        Some(RiscvSyscallOutcome::Return {
-            value: linux_error(RISCV_LINUX_ENOSYS)
-        })
+        None
     );
 }
 

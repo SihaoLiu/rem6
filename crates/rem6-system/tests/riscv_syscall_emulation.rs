@@ -555,7 +555,7 @@ fn user_ecall_mlockall_empty_flags_returns_einval_before_exit() {
 }
 
 #[test]
-fn user_ecall_rseq_returns_enosys_before_exit() {
+fn user_ecall_rseq_registers_thread_area_before_exit() {
     let host = PartitionId::new(3);
     let source = GuestSourceId::new(51);
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
@@ -576,14 +576,21 @@ fn user_ecall_rseq_returns_enosys_before_exit() {
     let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
     core.set_privilege_mode(RiscvPrivilegeMode::User);
     let cluster = RiscvCluster::new([core.clone()]).unwrap();
-    let store = loaded_program_store(&[
-        (0x8000, addi(17, 0, 293)),
-        (0x8004, 0x0000_0073),
-        (0x8008, addi(5, 10, 0)),
-        (0x800c, addi(17, 0, 93)),
-        (0x8010, addi(10, 0, 0)),
-        (0x8014, 0x0000_0073),
-    ]);
+    let store = loaded_program_store_with_data(
+        &[
+            (0x8000, lui(10, 9)),
+            (0x8004, addi(11, 0, 32)),
+            (0x8008, addi(12, 0, 0)),
+            (0x800c, addi(13, 0, 0)),
+            (0x8010, addi(17, 0, 293)),
+            (0x8014, 0x0000_0073),
+            (0x8018, addi(5, 10, 0)),
+            (0x801c, addi(17, 0, 93)),
+            (0x8020, addi(10, 0, 0)),
+            (0x8024, 0x0000_0073),
+        ],
+        &[(0x9000, &[0xff; 32])],
+    );
     let controller = Arc::new(Mutex::new(SystemHostController::new(
         HostEventPolicy,
         StatsRegistry::new(),
@@ -592,7 +599,10 @@ fn user_ecall_rseq_returns_enosys_before_exit() {
         SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
         source,
     );
-    let driver = RiscvSystemRunDriver::new(trap_port).with_riscv_syscall_emulation();
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_riscv_syscall_emulation_and_guest_memory_writer(guest_memory_writer(Arc::clone(
+            &store,
+        )));
 
     let run = driver
         .drive_until_host_stop(
@@ -610,9 +620,13 @@ fn user_ecall_rseq_returns_enosys_before_exit() {
 
     let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(360), source, 0);
     assert_eq!(run.host_stop(), Some(stop));
-    assert!(run.scheduled_traps().is_empty());
-    assert_eq!(core.read_register(reg(5)), 0u64.wrapping_sub(38));
+    assert_eq!(run.scheduled_traps(), &[]);
+    assert_eq!(core.read_register(reg(5)), 0);
     assert_eq!(core.read_register(reg(10)), 0);
+    assert_eq!(
+        guest_memory_reader(Arc::clone(&store))(0x9000, 16).unwrap(),
+        vec![0; 16]
+    );
     assert_eq!(
         controller.lock().unwrap().run().action_outcomes(),
         &[SystemActionOutcome::Stop(stop)]

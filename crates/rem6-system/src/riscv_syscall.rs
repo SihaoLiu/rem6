@@ -228,6 +228,7 @@ const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EAGAIN: u64 = 11;
 const RISCV_LINUX_ENOMEM: u64 = 12;
 const RISCV_LINUX_EFAULT: u64 = 14;
+const RISCV_LINUX_EBUSY: u64 = 16;
 const RISCV_LINUX_EEXIST: u64 = 17;
 const RISCV_LINUX_ENOTDIR: u64 = 20;
 const RISCV_LINUX_EISDIR: u64 = 21;
@@ -325,6 +326,7 @@ pub struct RiscvSyscallState {
     signal_actions: BTreeMap<u64, RiscvSignalAction>,
     signal_alt_stack: RiscvSignalAltStack,
     membarrier_registrations: u64,
+    rseq_registration: Option<thread::RiscvSyscallRseqRegistration>,
     stdin: VecDeque<u8>,
     getrandom_byte_counter: u8,
     initial_program_break: u64,
@@ -411,6 +413,7 @@ impl RiscvSyscallState {
             signal_actions: BTreeMap::new(),
             signal_alt_stack: RiscvSignalAltStack::disabled(),
             membarrier_registrations: 0,
+            rseq_registration: None,
             stdin: VecDeque::new(),
             getrandom_byte_counter: 0,
             initial_program_break: program_break,
@@ -1405,9 +1408,10 @@ impl RiscvSyscallTable {
             }
             thread::RISCV_LINUX_SET_TID_ADDRESS
             | thread::RISCV_LINUX_MEMBARRIER
-            | thread::RISCV_LINUX_RSEQ => Some(RiscvSyscallOutcome::Return {
-                value: thread::syscall_thread(request, state),
-            }),
+            | thread::RISCV_LINUX_RSEQ => {
+                thread::syscall_thread(request, state, guest_memory_writer)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
             RISCV_LINUX_TIMES
             | RISCV_LINUX_GETTIMEOFDAY
             | RISCV_LINUX_CLOCK_GETTIME
