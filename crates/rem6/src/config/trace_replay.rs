@@ -5,6 +5,7 @@ use rem6_workload::WorkloadDataCacheProtocol;
 use super::{
     load_trace_replay_file_config, parse_data_cache_protocol, parse_number, parse_positive_u64,
     required_value, trace_replay_file_config_from_args, Rem6TraceReplayConfig, StatsFormat,
+    SuiteResourceSelector,
 };
 use crate::Rem6CliError;
 
@@ -36,6 +37,11 @@ impl Rem6TraceReplayConfig {
             .resource_config
             .as_deref()
             .map(|path| file_config.resolve_path(path));
+        let mut trace_resource = file_config
+            .trace_resource
+            .as_deref()
+            .map(parse_trace_replay_resource)
+            .transpose()?;
         let mut output = file_config
             .output
             .as_deref()
@@ -120,6 +126,7 @@ impl Rem6TraceReplayConfig {
                 "--trace" => {
                     trace = Some(PathBuf::from(required_value(&flag, args.next())?));
                     resource_config = None;
+                    trace_resource = None;
                 }
                 "--resource-config" => {
                     resource_config = Some(PathBuf::from(required_value(&flag, args.next())?));
@@ -269,6 +276,11 @@ impl Rem6TraceReplayConfig {
                 });
             }
         }
+        if trace_resource.is_some() && resource_config.is_none() {
+            return Err(Rem6CliError::MissingRequiredFlag {
+                flag: "--resource-config",
+            });
+        }
         let memory_route_delay = memory_route_delay.unwrap_or(min_remote_delay);
         if memory_route_delay < min_remote_delay {
             return Err(Rem6CliError::MemoryRouteDelayBelowMinRemoteDelay {
@@ -284,6 +296,7 @@ impl Rem6TraceReplayConfig {
                 },
             )?,
             resource_config,
+            trace_resource,
             route: route.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--route" })?,
             memory_start: memory_start.ok_or(Rem6CliError::MissingRequiredFlag {
                 flag: "--memory-start",
@@ -316,6 +329,10 @@ impl Rem6TraceReplayConfig {
 
     pub fn resource_config(&self) -> Option<&Path> {
         self.resource_config.as_deref()
+    }
+
+    pub fn trace_resource(&self) -> Option<&SuiteResourceSelector> {
+        self.trace_resource.as_ref()
     }
 
     pub fn trace_input(&self) -> String {
@@ -400,6 +417,14 @@ impl Rem6TraceReplayConfig {
     pub fn stats_output(&self) -> Option<&Path> {
         self.stats_output.as_deref()
     }
+}
+
+fn parse_trace_replay_resource(value: &str) -> Result<SuiteResourceSelector, Rem6CliError> {
+    SuiteResourceSelector::parse_source(value).ok_or_else(|| {
+        Rem6CliError::InvalidTraceReplayResource {
+            value: value.to_string(),
+        }
+    })
 }
 
 fn parse_fabric_virtual_network(value: &str) -> Result<u16, Rem6CliError> {

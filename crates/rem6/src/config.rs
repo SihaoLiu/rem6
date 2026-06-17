@@ -226,6 +226,7 @@ pub struct Rem6GupsConfig {
 pub struct Rem6TraceReplayConfig {
     trace: PathBuf,
     resource_config: Option<PathBuf>,
+    trace_resource: Option<SuiteResourceSelector>,
     route: String,
     memory_start: u64,
     memory_size: u64,
@@ -337,6 +338,7 @@ impl Rem6GupsFileConfig {
 struct Rem6TraceReplayFileConfig {
     trace: Option<PathBuf>,
     resource_config: Option<PathBuf>,
+    trace_resource: Option<String>,
     route: Option<String>,
     memory_start: Option<u64>,
     memory_size: Option<u64>,
@@ -1326,6 +1328,10 @@ pub enum LoadBlobSource {
 }
 
 impl SuiteResourceSelector {
+    pub fn parse_source(value: &str) -> Option<Self> {
+        value.strip_prefix("suite-resource:").and_then(Self::parse)
+    }
+
     fn parse(value: &str) -> Option<Self> {
         let (workload_id, resource_id) = value.split_once('/')?;
         if workload_id.is_empty() || resource_id.is_empty() {

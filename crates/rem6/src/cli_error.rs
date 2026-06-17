@@ -107,6 +107,9 @@ pub enum Rem6CliError {
     InvalidTraceReplayFabricCreditDepth {
         value: String,
     },
+    InvalidTraceReplayResource {
+        value: String,
+    },
     InvalidResourceKind {
         value: String,
     },
@@ -357,6 +360,12 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidTraceReplayFabricCreditDepth { value } => {
                 write!(formatter, "invalid trace replay fabric credit depth {value}")
+            }
+            Self::InvalidTraceReplayResource { value } => {
+                write!(
+                    formatter,
+                    "invalid trace replay resource {value}; expected suite-resource:<workload>/<resource>"
+                )
             }
             Self::InvalidResourceKind { value } => {
                 write!(formatter, "invalid resource kind {value}")

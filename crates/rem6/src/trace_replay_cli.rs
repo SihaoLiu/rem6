@@ -168,11 +168,22 @@ fn trace_replay_payload(
         reject_runtime_remote_uri_resources("trace-replay", resource_config, &acquire_config)?;
         if acquire_config.suite_id().is_some() {
             let (_plan, acquired) = acquire_suite_required_resources(&acquire_config)?;
-            let mut trace_payloads = acquired
-                .into_iter()
-                .filter(|resource| resource.acquired().resource() == trace_resource)
-                .map(|resource| resource.into_acquired().into_payload())
-                .collect::<Vec<_>>();
+            let mut trace_payloads = if let Some(selector) = config.trace_resource() {
+                acquired
+                    .into_iter()
+                    .filter(|resource| {
+                        resource.workload_id().as_str() == selector.workload_id()
+                            && resource.acquired().resource().as_str() == selector.resource_id()
+                    })
+                    .map(|resource| resource.into_acquired().into_payload())
+                    .collect::<Vec<_>>()
+            } else {
+                acquired
+                    .into_iter()
+                    .filter(|resource| resource.acquired().resource() == trace_resource)
+                    .map(|resource| resource.into_acquired().into_payload())
+                    .collect::<Vec<_>>()
+            };
             if trace_payloads.len() != 1 {
                 return Err(Rem6CliError::Execute {
                     error: format!(
@@ -184,6 +195,14 @@ fn trace_replay_payload(
             }
             let payload = trace_payloads.remove(0);
             return Ok(payload.data().to_vec());
+        }
+        if let Some(selector) = config.trace_resource() {
+            return Err(Rem6CliError::Execute {
+                error: format!(
+                    "trace replay suite resource {} requires suite resource_config",
+                    selector.qualified_id()
+                ),
+            });
         }
         let (_manifest, acquired) = acquire_manifest_required_resources(&acquire_config)?;
         let payload = acquired
