@@ -56,8 +56,20 @@ fn vfsub_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_float_vv_type(0x02, vs2, vs1, vd)
 }
 
+fn vfsub_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x02, vs2, fs1, vd)
+}
+
+fn vfrsub_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x27, vs2, fs1, vd)
+}
+
 fn vfmul_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_float_vv_type(0x24, vs2, vs1, vd)
+}
+
+fn vfmul_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x24, vs2, fs1, vd)
 }
 
 fn vector_float_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -258,6 +270,44 @@ fn drive_until_trap_kind(
     panic!("expected instruction execution");
 }
 
+fn assert_vf_fetch_stream_executes(
+    instruction: u32,
+    decoded: RiscvVectorFloatInstruction,
+    scalar: f32,
+    source: [f32; 4],
+    initial_destination: [f32; 4],
+    expected_destination: [f32; 4],
+) {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.write_float_register(freg(1), f32_box(scalar));
+    core.write_vector_register(vreg(2), lanes_f32(source));
+    core.write_vector_register(vreg(3), lanes_f32(initial_destination));
+    let store = loaded_program_store(
+        0x8000,
+        &[vsetvli_type(0xd0, 10, 5), instruction, 0x0010_0073],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(decoded)
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_f32(expected_destination)
+    );
+}
+
 #[test]
 fn riscv_core_driver_executes_vfadd_vv_from_fetch_stream() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
@@ -343,41 +393,17 @@ fn riscv_core_driver_executes_vfadd_vv_exact_subnormal_from_fetch_stream() {
 
 #[test]
 fn riscv_core_driver_executes_vfadd_vf_from_fetch_stream() {
-    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
-    let core = data_core(fetch_route, data_route, 0x8000);
-    core.write_register(reg(10), 3);
-    core.write_float_register(freg(1), f32_box(1.5));
-    core.write_vector_register(vreg(2), lanes_f32([2.0, -4.0, 0.25, 1.0]));
-    core.write_vector_register(vreg(3), lanes_f32([0.0, 0.0, 0.0, 12.0]));
-    let store = loaded_program_store(
-        0x8000,
-        &[
-            vsetvli_type(0xd0, 10, 5),
-            vfadd_vf_type(2, 1, 3),
-            0x0010_0073,
-        ],
-    );
-
-    assert_eq!(
-        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
-        RiscvInstruction::VectorSetVli {
-            rd: reg(5),
-            rs1: reg(10),
-            vtype: 0xd0,
-        }
-    );
-
-    assert_eq!(
-        drive_until_instruction(&core, store, &mut scheduler, &transport),
-        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::AddVf {
+    assert_vf_fetch_stream_executes(
+        vfadd_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::AddVf {
             vd: vreg(3),
             fs1: freg(1),
             vs2: vreg(2),
-        })
-    );
-    assert_eq!(
-        core.read_vector_register(vreg(3)),
-        lanes_f32([3.5, -2.5, 1.75, 12.0])
+        },
+        1.5,
+        [2.0, -4.0, 0.25, 1.0],
+        [0.0, 0.0, 0.0, 12.0],
+        [3.5, -2.5, 1.75, 12.0],
     );
 }
 
@@ -459,6 +485,38 @@ fn riscv_core_driver_executes_vfsub_vv_from_fetch_stream() {
 }
 
 #[test]
+fn riscv_core_driver_executes_vfsub_vf_from_fetch_stream() {
+    assert_vf_fetch_stream_executes(
+        vfsub_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::SubVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        1.5,
+        [5.0, -2.0, 4.0, 1.0],
+        [0.0, 0.0, 0.0, 12.0],
+        [3.5, -3.5, 2.5, 12.0],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfrsub_vf_from_fetch_stream() {
+    assert_vf_fetch_stream_executes(
+        vfrsub_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::ReverseSubVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        10.0,
+        [2.0, -4.0, 0.25, 1.0],
+        [0.0, 0.0, 0.0, 12.0],
+        [8.0, 14.0, 9.75, 12.0],
+    );
+}
+
+#[test]
 fn riscv_core_driver_executes_vfmul_vv_from_fetch_stream() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);
@@ -495,6 +553,22 @@ fn riscv_core_driver_executes_vfmul_vv_from_fetch_stream() {
     assert_eq!(
         core.read_vector_register(vreg(3)),
         lanes_f32([3.0, -8.0, -4.0, 12.0])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfmul_vf_from_fetch_stream() {
+    assert_vf_fetch_stream_executes(
+        vfmul_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MulVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        -2.0,
+        [1.5, -2.0, 0.5, 1.0],
+        [0.0, 0.0, 0.0, 12.0],
+        [-3.0, 4.0, -1.0, 12.0],
     );
 }
 
