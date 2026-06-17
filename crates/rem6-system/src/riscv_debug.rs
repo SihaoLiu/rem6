@@ -22,10 +22,11 @@ const RISCV_GDB_INTEGER_REGISTER_COUNT: u8 = 32;
 const RISCV_GDB_PC_REGISTER: u64 = 32;
 const RISCV_GDB_FLOAT_REGISTER_BASE: u64 = 33;
 const RISCV_GDB_FLOAT_REGISTER_COUNT: u8 = 32;
-const RISCV_GDB_FLOAT_CSR_REGISTER_BASE: u64 = 65;
+const RISCV_GDB_FLOAT_CSR_REGISTER_BASE: u64 = 66;
 const RISCV_GDB_FLOAT_CSR_REGISTER_COUNT: u8 = 3;
-const RISCV_GDB_RV32_CSR_REGISTER_BASE: u64 = 33;
-const RISCV_GDB_RV64_CSR_REGISTER_BASE: u64 = 68;
+const RISCV_GDB_FLOAT_PLACEHOLDER_REGISTER: u64 = 69;
+const RISCV_GDB_RV32_CSR_REGISTER_BASE: u64 = 70;
+const RISCV_GDB_RV64_CSR_REGISTER_BASE: u64 = 70;
 const RISCV_GDB_CSR_REGISTER_COUNT: u8 = 20;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 
@@ -816,33 +817,33 @@ fn validate_all_register_write(
 }
 
 fn write_register_value(xlen: RiscvGdbXlen, hart: &mut RiscvHartState, number: u64, value: u64) {
-    let value = normalize_register_value(xlen, value);
+    let value = normalize_register_value(xlen, number, value);
 
     if number == RISCV_GDB_PC_REGISTER {
         hart.set_pc(value);
-    } else if matches!(xlen, RiscvGdbXlen::Rv64) && is_riscv_gdb_float_register(number) {
+    } else if is_riscv_gdb_float_register(number) {
         hart.write_float(riscv_float_register(number), value);
-    } else if matches!(xlen, RiscvGdbXlen::Rv64) && is_riscv_gdb_float_csr_register(number) {
+    } else if is_riscv_gdb_float_csr_register(number) {
         write_hart_float_csr_register_value(hart, number, value);
     } else if is_riscv_gdb_csr_register(xlen, number) {
         write_hart_csr_register_value(xlen, hart, number, value);
-    } else {
+    } else if !is_riscv_gdb_float_placeholder_register(number) {
         hart.write(riscv_register(number), value);
     }
 }
 
 fn write_core_register_value(xlen: RiscvGdbXlen, core: &RiscvCore, number: u64, value: u64) {
-    let value = normalize_register_value(xlen, value);
+    let value = normalize_register_value(xlen, number, value);
 
     if number == RISCV_GDB_PC_REGISTER {
         core.redirect_pc(Address::new(value));
-    } else if matches!(xlen, RiscvGdbXlen::Rv64) && is_riscv_gdb_float_register(number) {
+    } else if is_riscv_gdb_float_register(number) {
         core.write_float_register(riscv_float_register(number), value);
-    } else if matches!(xlen, RiscvGdbXlen::Rv64) && is_riscv_gdb_float_csr_register(number) {
+    } else if is_riscv_gdb_float_csr_register(number) {
         write_core_float_csr_register_value(core, number, value);
     } else if is_riscv_gdb_csr_register(xlen, number) {
         write_core_csr_register_value(xlen, core, number, value);
-    } else {
+    } else if !is_riscv_gdb_float_placeholder_register(number) {
         core.write_register(riscv_register(number), value);
     }
 }
@@ -850,10 +851,12 @@ fn write_core_register_value(xlen: RiscvGdbXlen, core: &RiscvCore, number: u64, 
 fn read_hart_register_value(xlen: RiscvGdbXlen, hart: &RiscvHartState, number: u64) -> u64 {
     if number == RISCV_GDB_PC_REGISTER {
         hart.pc()
-    } else if matches!(xlen, RiscvGdbXlen::Rv64) && is_riscv_gdb_float_register(number) {
+    } else if is_riscv_gdb_float_register(number) {
         hart.read_float(riscv_float_register(number))
-    } else if matches!(xlen, RiscvGdbXlen::Rv64) && is_riscv_gdb_float_csr_register(number) {
+    } else if is_riscv_gdb_float_csr_register(number) {
         read_hart_float_csr_register_value(hart, number)
+    } else if is_riscv_gdb_float_placeholder_register(number) {
+        0
     } else if is_riscv_gdb_csr_register(xlen, number) {
         read_hart_csr_register_value(xlen, hart, number)
     } else {
@@ -875,10 +878,18 @@ fn for_each_decoded_register_value(
     }
 }
 
-fn normalize_register_value(xlen: RiscvGdbXlen, value: u64) -> u64 {
-    match xlen {
-        RiscvGdbXlen::Rv32 => value & u64::from(u32::MAX),
-        RiscvGdbXlen::Rv64 => value,
+fn normalize_register_value(xlen: RiscvGdbXlen, number: u64, value: u64) -> u64 {
+    if is_riscv_gdb_float_register(number) {
+        value
+    } else if is_riscv_gdb_float_csr_register(number)
+        || is_riscv_gdb_float_placeholder_register(number)
+    {
+        value & u64::from(u32::MAX)
+    } else {
+        match xlen {
+            RiscvGdbXlen::Rv32 => value & u64::from(u32::MAX),
+            RiscvGdbXlen::Rv64 => value,
+        }
     }
 }
 
@@ -1125,14 +1136,9 @@ fn write_core_translation_csr(core: &RiscvCore, csr: RiscvTranslationCsr, value:
 }
 
 fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
-    let (float_count, float_csr_count, csr_count) = match xlen {
-        RiscvGdbXlen::Rv32 => (0, 0, u64::from(RISCV_GDB_CSR_REGISTER_COUNT)),
-        RiscvGdbXlen::Rv64 => (
-            u64::from(RISCV_GDB_FLOAT_REGISTER_COUNT),
-            u64::from(RISCV_GDB_FLOAT_CSR_REGISTER_COUNT),
-            u64::from(RISCV_GDB_CSR_REGISTER_COUNT),
-        ),
-    };
+    let float_count = u64::from(RISCV_GDB_FLOAT_REGISTER_COUNT);
+    let float_csr_count = u64::from(RISCV_GDB_FLOAT_CSR_REGISTER_COUNT);
+    let csr_count = u64::from(RISCV_GDB_CSR_REGISTER_COUNT);
     (0..RISCV_GDB_INTEGER_REGISTER_COUNT)
         .map(u64::from)
         .chain(std::iter::once(RISCV_GDB_PC_REGISTER))
@@ -1140,19 +1146,17 @@ fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
         .chain(
             RISCV_GDB_FLOAT_CSR_REGISTER_BASE..RISCV_GDB_FLOAT_CSR_REGISTER_BASE + float_csr_count,
         )
+        .chain(std::iter::once(RISCV_GDB_FLOAT_PLACEHOLDER_REGISTER))
         .chain(riscv_gdb_csr_register_base(xlen)..riscv_gdb_csr_register_base(xlen) + csr_count)
 }
 
-const fn register_count(xlen: RiscvGdbXlen) -> usize {
-    let (float_count, float_csr_count, csr_count) = match xlen {
-        RiscvGdbXlen::Rv32 => (0, 0, RISCV_GDB_CSR_REGISTER_COUNT as usize),
-        RiscvGdbXlen::Rv64 => (
-            RISCV_GDB_FLOAT_REGISTER_COUNT as usize,
-            RISCV_GDB_FLOAT_CSR_REGISTER_COUNT as usize,
-            RISCV_GDB_CSR_REGISTER_COUNT as usize,
-        ),
-    };
-    RISCV_GDB_INTEGER_REGISTER_COUNT as usize + 1 + float_count + float_csr_count + csr_count
+const fn register_count(_xlen: RiscvGdbXlen) -> usize {
+    RISCV_GDB_INTEGER_REGISTER_COUNT as usize
+        + 1
+        + RISCV_GDB_FLOAT_REGISTER_COUNT as usize
+        + RISCV_GDB_FLOAT_CSR_REGISTER_COUNT as usize
+        + 1
+        + RISCV_GDB_CSR_REGISTER_COUNT as usize
 }
 
 fn register_set_byte_len(xlen: RiscvGdbXlen) -> usize {
@@ -1163,8 +1167,9 @@ fn register_set_byte_len(xlen: RiscvGdbXlen) -> usize {
 
 const fn riscv_gdb_register_number_is_supported(xlen: RiscvGdbXlen, number: u64) -> bool {
     number <= RISCV_GDB_PC_REGISTER
-        || (matches!(xlen, RiscvGdbXlen::Rv64) && is_riscv_gdb_float_register(number))
-        || (matches!(xlen, RiscvGdbXlen::Rv64) && is_riscv_gdb_float_csr_register(number))
+        || is_riscv_gdb_float_register(number)
+        || is_riscv_gdb_float_csr_register(number)
+        || is_riscv_gdb_float_placeholder_register(number)
         || is_riscv_gdb_csr_register(xlen, number)
 }
 
@@ -1176,6 +1181,10 @@ const fn is_riscv_gdb_float_register(number: u64) -> bool {
 const fn is_riscv_gdb_float_csr_register(number: u64) -> bool {
     number >= RISCV_GDB_FLOAT_CSR_REGISTER_BASE
         && number < RISCV_GDB_FLOAT_CSR_REGISTER_BASE + RISCV_GDB_FLOAT_CSR_REGISTER_COUNT as u64
+}
+
+const fn is_riscv_gdb_float_placeholder_register(number: u64) -> bool {
+    number == RISCV_GDB_FLOAT_PLACEHOLDER_REGISTER
 }
 
 const fn riscv_gdb_csr_register_base(xlen: RiscvGdbXlen) -> u64 {
@@ -1212,7 +1221,11 @@ const fn byte_len(xlen: RiscvGdbXlen) -> usize {
 }
 
 const fn register_byte_len(xlen: RiscvGdbXlen, number: u64) -> usize {
-    if matches!(xlen, RiscvGdbXlen::Rv64) && is_riscv_gdb_float_csr_register(number) {
+    if is_riscv_gdb_float_register(number) {
+        8
+    } else if is_riscv_gdb_float_csr_register(number)
+        || is_riscv_gdb_float_placeholder_register(number)
+    {
         4
     } else {
         byte_len(xlen)

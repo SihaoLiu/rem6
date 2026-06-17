@@ -45,7 +45,7 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "<?xml version=\"1.0\"?>\n",
             "<!DOCTYPE feature SYSTEM \"gdb-target.dtd\">\n",
             "<feature name=\"org.gnu.gdb.riscv.csr\">\n",
-            "  <reg name=\"sstatus\" bitsize=\"64\" regnum=\"68\"/>\n",
+            "  <reg name=\"sstatus\" bitsize=\"64\" regnum=\"70\"/>\n",
             "  <reg name=\"stvec\" bitsize=\"64\"/>\n",
             "  <reg name=\"sscratch\" bitsize=\"64\"/>\n",
             "  <reg name=\"sepc\" bitsize=\"64\"/>\n",
@@ -88,21 +88,58 @@ fn riscv_gdb_target_description_reports_rv64d_fpu_document() {
 
     let fpu = text(description.document("riscv-64bit-fpu.xml").unwrap());
     assert!(fpu.contains("<feature name=\"org.gnu.gdb.riscv.fpu\">"));
-    assert!(fpu.contains("<reg name=\"ft0\" bitsize=\"64\" type=\"ieee_double\" regnum=\"33\"/>"));
-    assert!(fpu.contains("<reg name=\"ft11\" bitsize=\"64\" type=\"ieee_double\"/>"));
-    assert!(fpu.contains("<reg name=\"fflags\" bitsize=\"32\" type=\"int\"/>"));
-    assert!(fpu.contains("<reg name=\"frm\" bitsize=\"32\" type=\"int\"/>"));
-    assert!(fpu.contains("<reg name=\"fcsr\" bitsize=\"32\" type=\"int\"/>"));
+    assert!(fpu.contains("<union id=\"riscv_double\">"));
+    assert!(fpu.contains("<field name=\"float\" type=\"ieee_single\"/>"));
+    assert!(fpu.contains("<field name=\"double\" type=\"ieee_double\"/>"));
+    assert!(fpu.contains("<reg name=\"ft0\" bitsize=\"64\" type=\"riscv_double\" regnum=\"33\"/>"));
+    assert!(fpu.contains("<reg name=\"ft11\" bitsize=\"64\" type=\"riscv_double\"/>"));
+    assert!(fpu.contains("<reg name=\"fflags\" bitsize=\"32\" type=\"int\" regnum=\"66\"/>"));
+    assert!(fpu.contains("<reg name=\"frm\" bitsize=\"32\" type=\"int\" regnum=\"67\"/>"));
+    assert!(fpu.contains("<reg name=\"fcsr\" bitsize=\"32\" type=\"int\" regnum=\"68\"/>"));
+    assert!(fpu.contains("<reg name=\"placeholder\" bitsize=\"32\" type=\"int\" regnum=\"69\"/>"));
     assert_eq!(
         register_names(fpu),
         vec![
-            "ft0", "ft1", "ft2", "ft3", "ft4", "ft5", "ft6", "ft7", "fs0", "fs1", "fa0", "fa1",
-            "fa2", "fa3", "fa4", "fa5", "fa6", "fa7", "fs2", "fs3", "fs4", "fs5", "fs6", "fs7",
-            "fs8", "fs9", "fs10", "fs11", "ft8", "ft9", "ft10", "ft11", "fflags", "frm", "fcsr",
+            "ft0",
+            "ft1",
+            "ft2",
+            "ft3",
+            "ft4",
+            "ft5",
+            "ft6",
+            "ft7",
+            "fs0",
+            "fs1",
+            "fa0",
+            "fa1",
+            "fa2",
+            "fa3",
+            "fa4",
+            "fa5",
+            "fa6",
+            "fa7",
+            "fs2",
+            "fs3",
+            "fs4",
+            "fs5",
+            "fs6",
+            "fs7",
+            "fs8",
+            "fs9",
+            "fs10",
+            "fs11",
+            "ft8",
+            "ft9",
+            "ft10",
+            "ft11",
+            "fflags",
+            "frm",
+            "fcsr",
+            "placeholder",
         ],
     );
     assert_eq!(fpu.matches("bitsize=\"64\"").count(), 32);
-    assert_eq!(fpu.matches("bitsize=\"32\"").count(), 3);
+    assert_eq!(fpu.matches("bitsize=\"32\"").count(), 4);
 }
 
 #[test]
@@ -112,14 +149,81 @@ fn riscv_gdb_target_description_reports_rv32_cpu_documents() {
     assert_eq!(description.xlen(), RiscvGdbXlen::Rv32);
     assert_eq!(
         annex_names(description.documents()),
-        vec!["target.xml", "riscv-32bit-cpu.xml", "riscv-32bit-csr.xml",],
+        vec![
+            "target.xml",
+            "riscv-32bit-cpu.xml",
+            "riscv-32bit-fpu.xml",
+            "riscv-32bit-csr.xml",
+        ],
     );
 
     let target = text(description.document("target.xml").unwrap());
     assert!(target.contains("<architecture>riscv</architecture>"));
     assert!(target.contains("<xi:include href=\"riscv-32bit-cpu.xml\"/>"));
+    assert!(target.contains("<xi:include href=\"riscv-32bit-fpu.xml\"/>"));
     assert!(target.contains("<xi:include href=\"riscv-32bit-csr.xml\"/>"));
     assert!(!target.contains("riscv-64bit-cpu.xml"));
+    assert!(description.document("riscv-32bit-fpu.xml").is_some());
+}
+
+#[test]
+fn riscv_gdb_target_description_reports_rv32d_fpu_document() {
+    let description = RiscvGdbTargetDescription::new(RiscvGdbXlen::Rv32);
+
+    let fpu = text(description.document("riscv-32bit-fpu.xml").unwrap());
+    assert!(fpu.contains("<feature name=\"org.gnu.gdb.riscv.fpu\">"));
+    assert!(fpu.contains("<union id=\"riscv_double\">"));
+    assert!(fpu.contains("<field name=\"float\" type=\"ieee_single\"/>"));
+    assert!(fpu.contains("<field name=\"double\" type=\"ieee_double\"/>"));
+    assert!(fpu.contains("<reg name=\"ft0\" bitsize=\"64\" type=\"riscv_double\" regnum=\"33\"/>"));
+    assert!(fpu.contains("<reg name=\"ft11\" bitsize=\"64\" type=\"riscv_double\"/>"));
+    assert!(fpu.contains("<reg name=\"fflags\" bitsize=\"32\" type=\"int\" regnum=\"66\"/>"));
+    assert!(fpu.contains("<reg name=\"frm\" bitsize=\"32\" type=\"int\" regnum=\"67\"/>"));
+    assert!(fpu.contains("<reg name=\"fcsr\" bitsize=\"32\" type=\"int\" regnum=\"68\"/>"));
+    assert!(fpu.contains("<reg name=\"placeholder\" bitsize=\"32\" type=\"int\" regnum=\"69\"/>"));
+    assert_eq!(
+        register_names(fpu),
+        vec![
+            "ft0",
+            "ft1",
+            "ft2",
+            "ft3",
+            "ft4",
+            "ft5",
+            "ft6",
+            "ft7",
+            "fs0",
+            "fs1",
+            "fa0",
+            "fa1",
+            "fa2",
+            "fa3",
+            "fa4",
+            "fa5",
+            "fa6",
+            "fa7",
+            "fs2",
+            "fs3",
+            "fs4",
+            "fs5",
+            "fs6",
+            "fs7",
+            "fs8",
+            "fs9",
+            "fs10",
+            "fs11",
+            "ft8",
+            "ft9",
+            "ft10",
+            "ft11",
+            "fflags",
+            "frm",
+            "fcsr",
+            "placeholder",
+        ],
+    );
+    assert_eq!(fpu.matches("bitsize=\"64\"").count(), 32);
+    assert_eq!(fpu.matches("bitsize=\"32\"").count(), 4);
 }
 
 #[test]
@@ -133,7 +237,7 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "<?xml version=\"1.0\"?>\n",
             "<!DOCTYPE feature SYSTEM \"gdb-target.dtd\">\n",
             "<feature name=\"org.gnu.gdb.riscv.csr\">\n",
-            "  <reg name=\"sstatus\" bitsize=\"32\" regnum=\"33\"/>\n",
+            "  <reg name=\"sstatus\" bitsize=\"32\" regnum=\"70\"/>\n",
             "  <reg name=\"stvec\" bitsize=\"32\"/>\n",
             "  <reg name=\"sscratch\" bitsize=\"32\"/>\n",
             "  <reg name=\"sepc\" bitsize=\"32\"/>\n",

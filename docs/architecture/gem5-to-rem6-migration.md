@@ -534,9 +534,9 @@ pipeline and cache/DRAM runtime state.
 - [x] m5 exit/fail/stats/checkpoint/work markers reach typed host actions.
 - [x] Decode-first checkpoint capture/restore exists across scheduler, memory, device, storage, VirtIO, timer, interrupt, RISC-V hart run-state, platform, workload, and manifest owners.
 - [x] GDB remote packet/session parsing and RISC-V integer/PC register paths exist.
-- [x] GDB RV64D floating-point, including `fflags`/`frm`/`fcsr`, advertised RV64 supervisor CSR register target descriptions including `sscratch` and `satp`, and RV64 machine status, interrupt, and trap CSR register-cache paths exist.
+- [x] GDB RV64D floating-point, including XML-aligned `fflags`/`frm`/`fcsr` and placeholder numbering, advertised RV64 supervisor CSR register target descriptions including `sscratch` and `satp`, and RV64 machine status, interrupt, and trap CSR register-cache paths exist.
 - [x] GDB RV64 vector fixed-point CSR target descriptions and register-cache read/write paths exist for `vxsat`, `vxrm`, and `vcsr`.
-- [x] GDB RV32 CSR target descriptions and register-cache read/write paths exist for supervisor, machine, interrupt, translation, and vector fixed-point CSRs.
+- [x] GDB RV32D floating-point plus RV32 CSR target descriptions and register-cache read/write paths exist for FP registers, `fflags`/`frm`/`fcsr`, supervisor, machine, interrupt, translation, and vector fixed-point CSRs.
 - [x] Power and thermal models plus external power-analysis exports exist.
 - [x] Host actions and guest events are typed and checkpoint-aware.
 - [x] First-class histogram stats have registry snapshots, deltas, resets,
@@ -565,18 +565,21 @@ pipeline and cache/DRAM runtime state.
   patching guest memory.
 - [x] Stricter gem5 text-stat compatibility exists.
 - [ ] Cache/bank/fabric/DRAM hierarchy counters are complete.
-- [ ] GDB RV32 FP/vector register cache and broader CSR register cache exist.
+- [ ] GDB RV32 vector register cache and broader CSR register cache exist.
 - [ ] Power and thermal models are calibrated against real component activity.
 - [ ] O3 pending-state checkpoints exist.
 
 **Migrated:** Structured stats, real RISC-V probe producers, checkpoint banks,
 m5ops, host actions, GDB packet/session parsing, RISC-V integer/PC register
-paths, RV64D floating-point target descriptions including `fflags`/`frm`/`fcsr`,
+paths, RV64D floating-point target descriptions including XML-aligned
+`fflags`/`frm`/`fcsr` and placeholder numbering,
 advertised RV64 supervisor CSR target descriptions including `sscratch` and
 `satp`, RV64 machine status, interrupt, and trap CSR register-cache paths, and
 RV64 vector fixed-point CSR register-cache paths for `vxsat`, `vxrm`, and
-`vcsr`, plus RV32 CSR target descriptions and register-cache read/write paths
-for supervisor, machine, interrupt, translation, and vector fixed-point CSRs,
+`vcsr`, plus RV32D floating-point target descriptions and register-cache
+read/write paths for FP registers and `fflags`/`frm`/`fcsr`, plus RV32 CSR
+target descriptions and register-cache read/write paths for supervisor,
+machine, interrupt, translation, and vector fixed-point CSRs,
 RISC-V software breakpoint
 patch/restore through the
 system GDB memory handler, gem5-style final-tick, committed-instruction, and
@@ -604,7 +607,7 @@ deferred-completion checkpoint payloads, and custom plus library-level and
 `rem6 run --power-output` McPAT-shaped and DSENT-shaped power-analysis exports.
 
 **Not migrated:** Complete gem5 text-stat parity, full debug execution control,
-RV32 FP/vector and broader CSR GDB register cache, integrated debug-run
+RV32 vector and broader CSR GDB register cache, integrated debug-run
 stat roll-up, runtime resource counters, runtime-calibrated power/thermal, and
 broad O3 ROB/LSQ/rename checkpoint ownership.
 
@@ -615,8 +618,8 @@ O3 writeback transfer deferred-state payload tests, GDB byte-stream,
 RV64D FP, FP CSR, RV64 supervisor CSR register-cache including `sscratch` and
 `satp`, RV64 machine CSR register-cache including `mscratch` write/readback
 through guest CSR execution, RV64 vector fixed-point CSR register-cache tests
-covering `vxsat`, `vxrm`, and `vcsr`, RV32 CSR target and register-cache tests,
-and control-state tests,
+covering `vxsat`, `vxrm`, and `vcsr`, RV32D FP target/register-cache tests,
+RV32 CSR target and register-cache tests, and control-state tests,
 `gdb_remote_packet` execution-control tests,
 CLI `run --gdb-listen` smoke tests for RISC-V pre-execution state and
 pre-execution writes consumed by the subsequent run, CLI `run --gdb-listen`

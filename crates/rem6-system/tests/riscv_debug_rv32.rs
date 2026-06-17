@@ -1,6 +1,7 @@
 use rem6_debug::{GdbRemoteCommand, GdbRemoteFrame, GdbRemotePacket};
 use rem6_isa_riscv::{
-    Register, RiscvGdbXlen, RiscvHartState, RiscvStatusWord, RiscvVectorFixedRoundingMode,
+    FloatRegister, Register, RiscvFloatCsr, RiscvFloatStatus, RiscvGdbXlen, RiscvHartState,
+    RiscvStatusWord, RiscvVectorFixedRoundingMode,
 };
 use rem6_system::{
     apply_riscv_gdb_remote_register_write, handle_riscv_gdb_remote_packet,
@@ -23,14 +24,14 @@ fn riscv_gdb_remote_session_reports_rv32_hart_csr_snapshot_and_writes() {
             .handle_packet(&GdbRemotePacket::new(b"g".to_vec()).unwrap())
             .unwrap(),
     );
-    assert_eq!(registers.len(), rv32_register_hex_offset(53));
+    assert_eq!(registers.len(), rv32_register_hex_offset(90));
     assert_eq!(&registers[0..8], b"00000000");
     assert_eq!(&registers[2 * 8..3 * 8], b"efcdab89");
     assert_eq!(&registers[32 * 8..33 * 8], b"11223344");
-    assert_eq!(&registers[rv32_register_hex_range(33)], b"22010c00");
-    assert_eq!(&registers[rv32_register_hex_range(35)], b"08070605");
-    assert_eq!(&registers[rv32_register_hex_range(39)], b"44443333");
-    assert_eq!(&registers[rv32_register_hex_range(45)], b"08090a0b");
+    assert_eq!(&registers[rv32_register_hex_range(70)], b"22010c00");
+    assert_eq!(&registers[rv32_register_hex_range(72)], b"08070605");
+    assert_eq!(&registers[rv32_register_hex_range(76)], b"44443333");
+    assert_eq!(&registers[rv32_register_hex_range(82)], b"08090a0b");
 
     assert_eq!(
         packet_payload(
@@ -54,7 +55,7 @@ fn riscv_gdb_remote_session_reports_rv32_hart_csr_snapshot_and_writes() {
                 RiscvGdbXlen::Rv32,
                 &mut session,
                 &mut hart,
-                &GdbRemotePacket::new(b"P22=88776655".to_vec()).unwrap(),
+                &GdbRemotePacket::new(b"P47=88776655".to_vec()).unwrap(),
             )
             .unwrap(),
         ),
@@ -67,7 +68,7 @@ fn riscv_gdb_remote_session_reports_rv32_hart_csr_snapshot_and_writes() {
                 RiscvGdbXlen::Rv32,
                 &mut session,
                 &mut hart,
-                &GdbRemotePacket::new(b"P27=78563412".to_vec()).unwrap(),
+                &GdbRemotePacket::new(b"P4c=78563412".to_vec()).unwrap(),
             )
             .unwrap(),
         ),
@@ -80,7 +81,7 @@ fn riscv_gdb_remote_session_reports_rv32_hart_csr_snapshot_and_writes() {
                 RiscvGdbXlen::Rv32,
                 &mut session,
                 &mut hart,
-                &GdbRemotePacket::new(b"P34=05000000".to_vec()).unwrap(),
+                &GdbRemotePacket::new(b"P59=05000000".to_vec()).unwrap(),
             )
             .unwrap(),
         ),
@@ -91,6 +92,130 @@ fn riscv_gdb_remote_session_reports_rv32_hart_csr_snapshot_and_writes() {
         RiscvVectorFixedRoundingMode::RoundDown,
     );
     assert!(hart.vector_fixed_point().vxsat());
+}
+
+#[test]
+fn riscv_gdb_remote_packet_handler_reads_and_writes_rv32d_float_registers_and_csrs() {
+    let mut hart = RiscvHartState::new(0x1000);
+    hart.write_float(freg(0), 0x0123_4567_89ab_cdef);
+    hart.write_float(freg(31), 0xfedc_ba98_7654_3210);
+    hart.set_float_status(RiscvFloatStatus::new(0x85));
+    let mut session = riscv_gdb_remote_session_from_hart(RiscvGdbXlen::Rv32, &hart);
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"p21".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"efcdab8967452301",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"p40".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"1032547698badcfe",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"p42".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"05000000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"p43".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"04000000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"p44".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"85000000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"p45".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"00000000",
+    );
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"P21=8877665544332211".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(hart.read_float(freg(0)), 0x1122_3344_5566_7788);
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"P43=03000000".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(RiscvFloatCsr::Frm.read(hart.float_status()), 3);
+
+    let registers = packet_payload(
+        handle_riscv_gdb_remote_packet(
+            RiscvGdbXlen::Rv32,
+            &mut session,
+            &mut hart,
+            &GdbRemotePacket::new(b"g".to_vec()).unwrap(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(registers.len(), rv32_register_hex_offset(90));
+    assert_eq!(&registers[rv32_register_hex_range(33)], b"8877665544332211");
+    assert_eq!(&registers[rv32_register_hex_range(64)], b"1032547698badcfe");
+    assert_eq!(&registers[rv32_register_hex_range(67)], b"03000000");
+    assert_eq!(&registers[rv32_register_hex_range(69)], b"00000000");
 }
 
 #[test]
@@ -112,6 +237,9 @@ fn riscv_gdb_remote_register_write_applies_all_rv32_registers() {
     assert_eq!(hart.read(Register::new(1).unwrap()), 0x1000_0001);
     assert_eq!(hart.read(Register::new(31).unwrap()), 0x1000_001f);
     assert_eq!(hart.pc(), 0x8000_0040);
+    assert_eq!(hart.read_float(freg(0)), 0x2000_0000_0000_0000);
+    assert_eq!(hart.read_float(freg(31)), 0x2000_0000_0000_001f);
+    assert_eq!(RiscvFloatCsr::Fcsr.read(hart.float_status()), 0x85);
     assert_eq!(hart.supervisor_scratch(), 0x3000_0002);
     assert_eq!(hart.translation_satp(), 0x3000_0006);
     assert_eq!(hart.machine_scratch(), 0x3000_000c);
@@ -130,7 +258,10 @@ fn rv32_register_hex_range(number: u64) -> std::ops::Range<usize> {
 
 fn rv32_register_hex_offset(number: u64) -> usize {
     let byte_offset = match number {
-        0..=53 => number * 4,
+        0..=32 => number * 4,
+        33..=65 => (33 * 4) + ((number - 33) * 8),
+        66..=69 => (33 * 4) + (32 * 8) + ((number - 66) * 4),
+        70..=90 => (33 * 4) + (32 * 8) + (4 * 4) + ((number - 70) * 4),
         _ => panic!("unsupported RV32 GDB register number"),
     };
     byte_offset as usize * 2
@@ -142,6 +273,13 @@ fn rv32_register_set_write_bytes() -> Vec<u8> {
         bytes.extend_from_slice(&(0x1000_0000_u32 + register).to_le_bytes());
     }
     bytes.extend_from_slice(&0x8000_0040_u32.to_le_bytes());
+    for register in 0..32_u64 {
+        bytes.extend_from_slice(&(0x2000_0000_0000_0000_u64 + register).to_le_bytes());
+    }
+    bytes.extend_from_slice(&1_u32.to_le_bytes());
+    bytes.extend_from_slice(&2_u32.to_le_bytes());
+    bytes.extend_from_slice(&0x85_u32.to_le_bytes());
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
     for register in 0..17_u32 {
         bytes.extend_from_slice(&(0x3000_0000_u32 + register).to_le_bytes());
     }
@@ -149,6 +287,10 @@ fn rv32_register_set_write_bytes() -> Vec<u8> {
     bytes.extend_from_slice(&2_u32.to_le_bytes());
     bytes.extend_from_slice(&5_u32.to_le_bytes());
     bytes
+}
+
+fn freg(index: u8) -> FloatRegister {
+    FloatRegister::new(index).unwrap()
 }
 
 fn packet_payload(frames: Vec<GdbRemoteFrame>) -> Vec<u8> {

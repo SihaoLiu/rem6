@@ -14,8 +14,7 @@ impl RiscvGdbXlen {
 
     const fn csr_register_base(self) -> u8 {
         match self {
-            Self::Rv32 => 33,
-            Self::Rv64 => 68,
+            Self::Rv32 | Self::Rv64 => 70,
         }
     }
 
@@ -35,7 +34,7 @@ impl RiscvGdbXlen {
 
     const fn fpu_annex(self) -> Option<&'static str> {
         match self {
-            Self::Rv32 => None,
+            Self::Rv32 => Some("riscv-32bit-fpu.xml"),
             Self::Rv64 => Some("riscv-64bit-fpu.xml"),
         }
     }
@@ -155,13 +154,16 @@ fn fpu_document(xlen: RiscvGdbXlen) -> Option<RiscvGdbTargetDocument> {
         "<?xml version=\"1.0\"?>\n",
         "<!DOCTYPE feature SYSTEM \"gdb-target.dtd\">\n",
         "<feature name=\"org.gnu.gdb.riscv.fpu\">\n",
+        "  <union id=\"riscv_double\">\n",
+        "    <field name=\"float\" type=\"ieee_single\"/>\n",
+        "    <field name=\"double\" type=\"ieee_double\"/>\n",
+        "  </union>\n",
     )
     .to_string();
     for (index, register) in RV64D_FLOAT_REGISTERS.iter().enumerate() {
         content.push_str(&format!(
-            "  <reg name=\"{}\" bitsize=\"{}\" type=\"ieee_double\"",
-            register,
-            xlen.bits(),
+            "  <reg name=\"{}\" bitsize=\"64\" type=\"riscv_double\"",
+            register
         ));
         if index == 0 {
             content.push_str(" regnum=\"33\"");
@@ -170,7 +172,8 @@ fn fpu_document(xlen: RiscvGdbXlen) -> Option<RiscvGdbTargetDocument> {
     }
     for register in RV64D_FLOAT_CSR_REGISTERS {
         content.push_str(&format!(
-            "  <reg name=\"{register}\" bitsize=\"32\" type=\"int\"/>\n",
+            "  <reg name=\"{}\" bitsize=\"32\" type=\"int\" regnum=\"{}\"/>\n",
+            register.name, register.regnum,
         ));
     }
     content.push_str("</feature>\n");
@@ -257,7 +260,24 @@ const RV64D_FLOAT_REGISTERS: &[&str] = &[
     "fs10", "fs11", "ft8", "ft9", "ft10", "ft11",
 ];
 
-const RV64D_FLOAT_CSR_REGISTERS: &[&str] = &["fflags", "frm", "fcsr"];
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FloatCsrRegister {
+    name: &'static str,
+    regnum: u8,
+}
+
+impl FloatCsrRegister {
+    const fn new(name: &'static str, regnum: u8) -> Self {
+        Self { name, regnum }
+    }
+}
+
+const RV64D_FLOAT_CSR_REGISTERS: &[FloatCsrRegister] = &[
+    FloatCsrRegister::new("fflags", 66),
+    FloatCsrRegister::new("frm", 67),
+    FloatCsrRegister::new("fcsr", 68),
+    FloatCsrRegister::new("placeholder", 69),
+];
 
 const RV64_CSR_REGISTERS: &[&str] = &[
     "sstatus", "stvec", "sscratch", "sepc", "scause", "stval", "satp", "mstatus", "medeleg",
