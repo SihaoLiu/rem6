@@ -4,13 +4,15 @@ use super::permissions::apply_file_creation_mask;
 use super::{
     linux_error, read_guest_c_string, RiscvGuestCStringError, RiscvGuestMemoryReader,
     RiscvGuestNodeKind, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_AT_FDCWD,
-    RISCV_LINUX_EBADF, RISCV_LINUX_EEXIST, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
-    RISCV_LINUX_EISDIR, RISCV_LINUX_EMFILE, RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT,
-    RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND, RISCV_LINUX_O_CLOEXEC, RISCV_LINUX_O_NONBLOCK,
-    RISCV_LINUX_O_RDONLY, RISCV_LINUX_O_WRONLY, RISCV_LINUX_PATH_MAX,
+    RISCV_LINUX_E2BIG, RISCV_LINUX_EBADF, RISCV_LINUX_EEXIST, RISCV_LINUX_EFAULT,
+    RISCV_LINUX_EINVAL, RISCV_LINUX_EISDIR, RISCV_LINUX_EMFILE, RISCV_LINUX_ENAMETOOLONG,
+    RISCV_LINUX_ENOENT, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND, RISCV_LINUX_O_CLOEXEC,
+    RISCV_LINUX_O_NONBLOCK, RISCV_LINUX_O_RDONLY, RISCV_LINUX_O_WRONLY, RISCV_LINUX_PATH_MAX,
+    RISCV_PAGE_BYTES,
 };
 
 pub(super) const RISCV_LINUX_OPEN: u64 = 1024;
+pub(super) const RISCV_LINUX_OPENAT2: u64 = 437;
 const RISCV_LINUX_ELOOP: u64 = 40;
 const RISCV_LINUX_O_NOCTTY: u64 = 0o400;
 const RISCV_LINUX_O_DSYNC: u64 = 0o10000;
@@ -32,6 +34,16 @@ const RISCV_NEWLIB_O_NONBLOCK: u64 = 0x4000;
 const RISCV_NEWLIB_O_CLOEXEC: u64 = 0x40000;
 const RISCV_NEWLIB_O_NOFOLLOW: u64 = 0x100000;
 const RISCV_NEWLIB_O_DIRECTORY: u64 = 0x200000;
+const RISCV_LINUX_OPEN_HOW_BYTES: u64 = 24;
+const RISCV_LINUX_OPEN_HOW_EXTENSION_CHUNK_BYTES: u64 = 64;
+const RISCV_LINUX_OPENAT2_MODE_BITS: u64 = 0o7777;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvLinuxOpenHow {
+    flags: u64,
+    mode: u64,
+    resolve: u64,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvGuestOpenRecord {
@@ -118,6 +130,88 @@ pub(super) fn syscall_open(
         state,
         guest_memory,
     )
+}
+
+pub(super) fn syscall_openat2(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> u64 {
+    let how_address = request.argument(2);
+    let how_bytes = request.argument(3);
+    if how_bytes < RISCV_LINUX_OPEN_HOW_BYTES {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if how_bytes > RISCV_PAGE_BYTES {
+        return linux_error(RISCV_LINUX_E2BIG);
+    }
+
+    let how = match read_open_how(guest_memory, how_address) {
+        Some(how) => how,
+        None => return linux_error(RISCV_LINUX_EFAULT),
+    };
+    match require_zero_open_how_extension(guest_memory, how_address, how_bytes) {
+        Ok(()) => {}
+        Err(error) => return linux_error(error),
+    }
+    if how.resolve != 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if how.mode & !RISCV_LINUX_OPENAT2_MODE_BITS != 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if how.mode != 0 && how.flags & RISCV_LINUX_O_CREAT == 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    syscall_open_registered_path(
+        request.argument(0),
+        request.argument(1),
+        how.flags,
+        how.mode,
+        state,
+        guest_memory,
+    )
+}
+
+fn read_open_how(guest_memory: &RiscvGuestMemoryReader, address: u64) -> Option<RiscvLinuxOpenHow> {
+    Some(RiscvLinuxOpenHow {
+        flags: read_guest_u64(guest_memory, address)?,
+        mode: read_guest_u64(guest_memory, address.checked_add(8)?)?,
+        resolve: read_guest_u64(guest_memory, address.checked_add(16)?)?,
+    })
+}
+
+fn read_guest_u64(guest_memory: &RiscvGuestMemoryReader, address: u64) -> Option<u64> {
+    let bytes = guest_memory.read(address, 8)?;
+    if bytes.len() != 8 {
+        return None;
+    }
+    let mut raw = [0; 8];
+    raw.copy_from_slice(&bytes);
+    Some(u64::from_le_bytes(raw))
+}
+
+fn require_zero_open_how_extension(
+    guest_memory: &RiscvGuestMemoryReader,
+    address: u64,
+    bytes: u64,
+) -> Result<(), u64> {
+    let mut offset = RISCV_LINUX_OPEN_HOW_BYTES;
+    while offset < bytes {
+        let chunk_bytes = (bytes - offset).min(RISCV_LINUX_OPEN_HOW_EXTENSION_CHUNK_BYTES);
+        let chunk_address = address.checked_add(offset).ok_or(RISCV_LINUX_EFAULT)?;
+        let chunk = guest_memory
+            .read(chunk_address, chunk_bytes as usize)
+            .ok_or(RISCV_LINUX_EFAULT)?;
+        if chunk.len() != chunk_bytes as usize {
+            return Err(RISCV_LINUX_EFAULT);
+        }
+        if chunk.iter().any(|byte| *byte != 0) {
+            return Err(RISCV_LINUX_E2BIG);
+        }
+        offset += chunk_bytes;
+    }
+    Ok(())
 }
 
 fn normalize_newlib_legacy_open_flags(flags: u64) -> u64 {

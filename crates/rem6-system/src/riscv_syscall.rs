@@ -128,7 +128,10 @@ use mmap::{
 #[cfg(test)]
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
 pub use open::RiscvGuestOpenRecord;
-use open::{syscall_open, syscall_openat, RiscvGuestOpenRequest, RISCV_LINUX_OPEN};
+use open::{
+    syscall_open, syscall_openat, syscall_openat2, RiscvGuestOpenRequest, RISCV_LINUX_OPEN,
+    RISCV_LINUX_OPENAT2,
+};
 use permissions::{
     syscall_chmod, syscall_fchmod, syscall_fchmodat, syscall_fchown, syscall_fchownat,
     syscall_umask, RISCV_LINUX_FCHMOD, RISCV_LINUX_FCHMODAT, RISCV_LINUX_FCHOWN,
@@ -213,6 +216,7 @@ const RISCV_LINUX_STAT: u64 = 1038;
 const RISCV_LINUX_EPERM: u64 = 1;
 const RISCV_LINUX_ENOENT: u64 = 2;
 const RISCV_LINUX_ESRCH: u64 = 3;
+const RISCV_LINUX_E2BIG: u64 = 7;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EAGAIN: u64 = 11;
 const RISCV_LINUX_ENOMEM: u64 = 12;
@@ -1144,6 +1148,11 @@ impl RiscvSyscallTable {
             RISCV_LINUX_OPEN => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_open(request, state, guest_memory),
+                })
+            }
+            RISCV_LINUX_OPENAT2 => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_openat2(request, state, guest_memory),
                 })
             }
             RISCV_LINUX_GETDENTS64 => {
