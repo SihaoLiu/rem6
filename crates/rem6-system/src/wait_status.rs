@@ -246,6 +246,20 @@ impl GuestWaitQueue {
         }
     }
 
+    pub fn take_matching<F>(
+        &mut self,
+        selector: GuestWaitSelector,
+        mut predicate: F,
+    ) -> Option<GuestChildStatus>
+    where
+        F: FnMut(GuestChildStatus) -> bool,
+    {
+        let index = self.pending.iter().position(|child| {
+            selector.matches(*child, self.current_process_group) && predicate(*child)
+        })?;
+        Some(self.pending.remove(index))
+    }
+
     pub fn len(&self) -> usize {
         self.pending.len()
     }

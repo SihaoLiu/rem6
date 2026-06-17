@@ -194,8 +194,8 @@ pub use unknown::RiscvUnknownSyscallRecord;
 use unlink::{syscall_unlink_operation, RISCV_LINUX_UNLINK, RISCV_LINUX_UNLINKAT};
 use utsname::write_riscv_linux_utsname;
 use wait4::{
-    syscall_getrusage, syscall_process_group_id, syscall_wait4, RISCV_LINUX_GETRUSAGE,
-    RISCV_LINUX_WAIT4,
+    syscall_getrusage, syscall_process_group_id, syscall_wait4, syscall_waitid,
+    RISCV_LINUX_GETRUSAGE, RISCV_LINUX_WAIT4, RISCV_LINUX_WAITID,
 };
 use writev::{syscall_pwritev, syscall_writev, RISCV_LINUX_PWRITEV, RISCV_LINUX_WRITEV};
 
@@ -1479,6 +1479,7 @@ impl RiscvSyscallTable {
             RISCV_LINUX_WAIT4 => Some(RiscvSyscallOutcome::Return {
                 value: syscall_wait4(request, state, guest_memory_writer),
             }),
+            RISCV_LINUX_WAITID => Some(syscall_waitid(request, state, guest_memory_writer)),
             RISCV_LINUX_GETRUSAGE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_getrusage(request, guest_memory_writer),
             }),
