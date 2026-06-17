@@ -180,6 +180,16 @@ pub enum RiscvVectorFloatInstruction {
         fs1: FloatRegister,
         vs2: VectorRegister,
     },
+    MaskNotEqualVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    MaskNotEqualVf {
+        vd: VectorRegister,
+        fs1: FloatRegister,
+        vs2: VectorRegister,
+    },
     ReverseSubVf {
         vd: VectorRegister,
         fs1: FloatRegister,

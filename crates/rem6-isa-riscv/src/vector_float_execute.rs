@@ -36,10 +36,16 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
         }
         RiscvVectorFloatInstruction::SqrtV { vd, vs2 } => execute_sqrt_v(hart, vd, vs2),
         RiscvVectorFloatInstruction::MaskEqualVv { vd, vs1, vs2 } => {
-            execute_mask_equal_vv(hart, vd, vs1, vs2)
+            execute_mask_compare_vv(hart, vd, vs1, vs2, FloatMaskCompareOp::Equal)
         }
         RiscvVectorFloatInstruction::MaskEqualVf { vd, fs1, vs2 } => {
-            execute_mask_equal_vf(hart, vd, fs1, vs2)
+            execute_mask_compare_vf(hart, vd, fs1, vs2, FloatMaskCompareOp::Equal)
+        }
+        RiscvVectorFloatInstruction::MaskNotEqualVv { vd, vs1, vs2 } => {
+            execute_mask_compare_vv(hart, vd, vs1, vs2, FloatMaskCompareOp::NotEqual)
+        }
+        RiscvVectorFloatInstruction::MaskNotEqualVf { vd, fs1, vs2 } => {
+            execute_mask_compare_vf(hart, vd, fs1, vs2, FloatMaskCompareOp::NotEqual)
         }
         RiscvVectorFloatInstruction::ReverseSubVf { vd, fs1, vs2 } => {
             execute_arithmetic_vf(hart, vd, fs1, vs2, FloatBinaryOp::ReverseSub)
@@ -90,6 +96,12 @@ enum FloatSignInjectOp {
 enum FloatMinMaxOp {
     Min,
     Max,
+}
+
+#[derive(Clone, Copy)]
+enum FloatMaskCompareOp {
+    Equal,
+    NotEqual,
 }
 
 struct VectorFloatMaskPlan {
@@ -318,11 +330,12 @@ fn execute_sqrt_v(hart: &mut RiscvHartState, vd: VectorRegister, vs2: VectorRegi
     true
 }
 
-fn execute_mask_equal_vv(
+fn execute_mask_compare_vv(
     hart: &mut RiscvHartState,
     vd: VectorRegister,
     vs1: VectorRegister,
     vs2: VectorRegister,
+    operation: FloatMaskCompareOp,
 ) -> bool {
     let Some(plan) = VectorFloatMaskPlan::new(hart, &[vs2, vs1]) else {
         return false;
@@ -340,18 +353,19 @@ fn execute_mask_equal_vv(
         let lhs = u32::from_le_bytes(lane4(&left, offset));
         let rhs = u32::from_le_bytes(lane4(&right, offset));
         exception_flags |= float::quiet_compare_exception_flags_single_bits(lhs, rhs);
-        write_mask_bit(&mut mask, element_index, float::equal_single_bits(lhs, rhs));
+        write_mask_bit(&mut mask, element_index, mask_compare(lhs, rhs, operation));
     }
     hart.write_vector(vd, mask);
     hart.raise_float_exception_flags(exception_flags);
     true
 }
 
-fn execute_mask_equal_vf(
+fn execute_mask_compare_vf(
     hart: &mut RiscvHartState,
     vd: VectorRegister,
     fs1: FloatRegister,
     vs2: VectorRegister,
+    operation: FloatMaskCompareOp,
 ) -> bool {
     let Some(plan) = VectorFloatMaskPlan::new(hart, &[vs2]) else {
         return false;
@@ -371,12 +385,20 @@ fn execute_mask_equal_vf(
         write_mask_bit(
             &mut mask,
             element_index,
-            float::equal_single_bits(lhs, scalar),
+            mask_compare(lhs, scalar, operation),
         );
     }
     hart.write_vector(vd, mask);
     hart.raise_float_exception_flags(exception_flags);
     true
+}
+
+fn mask_compare(lhs: u32, rhs: u32, operation: FloatMaskCompareOp) -> bool {
+    let equal = float::equal_single_bits(lhs, rhs);
+    match operation {
+        FloatMaskCompareOp::Equal => equal,
+        FloatMaskCompareOp::NotEqual => !equal,
+    }
 }
 
 fn execute_sign_inject_vf(
