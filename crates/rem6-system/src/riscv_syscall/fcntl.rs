@@ -38,18 +38,25 @@ pub(super) fn syscall_fcntl(
     guest_memory_reader: Option<&RiscvGuestMemoryReader>,
     guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
 ) -> Option<RiscvSyscallOutcome> {
-    let command = RiscvFcntlCommand::from_raw(request.argument(1))?;
-
     let fd = match guest_fd_argument(request.argument(0)) {
         Some(fd) => fd,
         None => return Some(guest_fd_error_return()),
     };
+    if state.guest_fds.entry(fd).is_none() {
+        return Some(guest_fd_error_return());
+    }
+
+    let command = match RiscvFcntlCommand::from_raw(request.argument(1)) {
+        Some(command) => command,
+        None => {
+            return Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL),
+            });
+        }
+    };
 
     let outcome: RiscvFcntlResult = match command {
         RiscvFcntlCommand::DuplicateFd { close_on_exec } => {
-            if state.guest_fds.entry(fd).is_none() {
-                return Some(guest_fd_error_return());
-            }
             let Some(minimum_fd) = guest_fd_argument(request.argument(2)) else {
                 return Some(RiscvSyscallOutcome::Return {
                     value: linux_error(RISCV_LINUX_EINVAL),

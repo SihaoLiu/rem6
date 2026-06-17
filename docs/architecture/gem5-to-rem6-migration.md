@@ -343,7 +343,8 @@ single-word `sched_setaffinity` and `sched_getaffinity`, `statx` basic stat buff
 advisory `flock` fd and operation validation with direct ecall smoke coverage,
 `fcntl` byte-range advisory `F_GETLK` no-conflict reporting and
 `F_SETLK`/`F_SETLKW` validation with guest `struct flock` ABI tests plus direct
-ecall memory-write coverage and a static raw CLI/qemu smoke,
+ecall memory-write coverage, unknown-command `EINVAL` validation without
+unknown-syscall record pollution, and a static raw CLI/qemu smoke,
 advisory `fchownat`/`fchown` registered-path, missing-path, bad-flag, fd,
 `AT_EMPTY_PATH`, bad-fd, no-op owner forms, non-no-op `EPERM`, and
 `AT_SYMLINK_NOFOLLOW` plus normalized symlink-target checks,

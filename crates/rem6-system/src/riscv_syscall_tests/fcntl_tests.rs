@@ -5,6 +5,7 @@ const RISCV_LINUX_F_GETLK_FOR_TEST: u64 = 5;
 const RISCV_LINUX_F_SETLK_FOR_TEST: u64 = 6;
 const RISCV_LINUX_F_SETLKW_FOR_TEST: u64 = 7;
 const RISCV_LINUX_F_DUPFD_CLOEXEC_FOR_TEST: u64 = 1030;
+const RISCV_LINUX_F_UNKNOWN_FOR_TEST: u64 = 9999;
 const RISCV_LINUX_F_RDLCK_FOR_TEST: u16 = 0;
 const RISCV_LINUX_F_WRLCK_FOR_TEST: u16 = 1;
 const RISCV_LINUX_F_UNLCK_FOR_TEST: u16 = 2;
@@ -130,6 +131,48 @@ fn linux_table_fcntl_dupfd_rejects_invalid_minimum_after_valid_source() {
             value: linux_error(RISCV_LINUX_EINVAL)
         })
     );
+}
+
+#[test]
+fn linux_table_fcntl_rejects_unknown_command_without_unknown_syscall_record() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_UNKNOWN_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_fcntl_reports_bad_fd_before_unknown_command() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCNTL,
+                [99, RISCV_LINUX_F_UNKNOWN_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
 }
 
 #[test]

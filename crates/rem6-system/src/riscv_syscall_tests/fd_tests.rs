@@ -208,7 +208,7 @@ fn linux_table_returns_ebadf_for_fcntl_on_out_of_range_fd() {
 }
 
 #[test]
-fn linux_table_leaves_unsupported_fcntl_commands_unhandled_before_fd_validation() {
+fn linux_table_reports_bad_fd_before_unsupported_fcntl_command() {
     const RISCV_LINUX_F_SETOWN_FOR_TEST: u64 = 8;
 
     let table = RiscvSyscallTable::new();
@@ -219,11 +219,13 @@ fn linux_table_leaves_unsupported_fcntl_commands_unhandled_before_fd_validation(
             RiscvSyscallRequest::new(
                 0x8000,
                 RISCV_LINUX_FCNTL,
-                [u64::MAX, RISCV_LINUX_F_SETOWN_FOR_TEST, 0, 0, 0, 0],
+                [99, RISCV_LINUX_F_SETOWN_FOR_TEST, 0, 0, 0, 0],
             ),
             &mut state,
         ),
-        None
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
     );
 }
 
