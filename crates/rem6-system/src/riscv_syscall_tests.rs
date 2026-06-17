@@ -25,6 +25,8 @@ mod futex_tests;
 mod hwprobe_tests;
 #[path = "riscv_syscall_tests/link_tests.rs"]
 mod link_tests;
+#[path = "riscv_syscall_tests/memory_policy_tests.rs"]
+mod memory_policy_tests;
 #[path = "riscv_syscall_tests/mkdir_tests.rs"]
 mod mkdir_tests;
 #[path = "riscv_syscall_tests/mlock_tests.rs"]
@@ -312,15 +314,13 @@ fn linux_table_ignores_gem5_memory_management_advisory_syscalls() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
 
-    for number in [RISCV_LINUX_MUNLOCKALL, RISCV_LINUX_MBIND] {
-        assert_eq!(
-            table.handle(
-                RiscvSyscallRequest::new(0x8000, number, [0x4000, 4096, 0, 0, 0, 0]),
-                &mut state,
-            ),
-            Some(RiscvSyscallOutcome::Return { value: 0 })
-        );
-    }
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_MUNLOCKALL, [0x4000, 4096, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
 }
 
 #[test]

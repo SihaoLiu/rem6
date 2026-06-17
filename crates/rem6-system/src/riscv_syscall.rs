@@ -126,11 +126,12 @@ use links::syscall_readlinkat;
 use mkdir::{syscall_mkdirat, RISCV_LINUX_MKDIRAT};
 pub use mmap::RiscvMmapRegion;
 use mmap::{
-    syscall_madvise, syscall_memory_lock_range, syscall_mincore, syscall_mlockall, syscall_mmap,
-    syscall_mprotect, syscall_mremap, syscall_msync, syscall_munlockall, syscall_munmap,
-    RISCV64_LINUX_MMAP_BASE, RISCV_LINUX_MADVISE, RISCV_LINUX_MINCORE, RISCV_LINUX_MLOCK,
-    RISCV_LINUX_MMAP, RISCV_LINUX_MPROTECT, RISCV_LINUX_MREMAP, RISCV_LINUX_MSYNC,
-    RISCV_LINUX_MUNLOCK, RISCV_LINUX_MUNMAP, RISCV_PAGE_BYTES,
+    syscall_madvise, syscall_mbind, syscall_memory_lock_range, syscall_mincore, syscall_mlockall,
+    syscall_mmap, syscall_mprotect, syscall_mremap, syscall_msync, syscall_munlockall,
+    syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_LINUX_MADVISE, RISCV_LINUX_MBIND,
+    RISCV_LINUX_MINCORE, RISCV_LINUX_MLOCK, RISCV_LINUX_MMAP, RISCV_LINUX_MPROTECT,
+    RISCV_LINUX_MREMAP, RISCV_LINUX_MSYNC, RISCV_LINUX_MUNLOCK, RISCV_LINUX_MUNMAP,
+    RISCV_PAGE_BYTES,
 };
 #[cfg(test)]
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
@@ -218,7 +219,6 @@ const RISCV_LINUX_FUTEX: u64 = 98;
 const RISCV_LINUX_BRK: u64 = 214;
 const RISCV_LINUX_MLOCKALL: u64 = 230;
 const RISCV_LINUX_MUNLOCKALL: u64 = 231;
-const RISCV_LINUX_MBIND: u64 = 235;
 const RISCV_LINUX_STAT: u64 = 1038;
 const RISCV_LINUX_EPERM: u64 = 1;
 const RISCV_LINUX_ENOENT: u64 = 2;
@@ -1567,9 +1567,10 @@ impl RiscvSyscallTable {
             RISCV_LINUX_MUNLOCKALL => Some(RiscvSyscallOutcome::Return {
                 value: syscall_munlockall(),
             }),
-            RISCV_LINUX_MBIND | RISCV_LINUX_SETRLIMIT => {
-                Some(RiscvSyscallOutcome::Return { value: 0 })
-            }
+            RISCV_LINUX_MBIND => Some(RiscvSyscallOutcome::Return {
+                value: syscall_mbind(request, state, guest_memory_reader),
+            }),
+            RISCV_LINUX_SETRLIMIT => Some(RiscvSyscallOutcome::Return { value: 0 }),
             RISCV_LINUX_EXIT | RISCV_LINUX_EXIT_GROUP => Some(syscall_exit(
                 request.argument(0),
                 state,

@@ -1,7 +1,7 @@
 use super::{
-    guest_fd_argument, linux_error, RiscvGuestMemoryMapResult, RiscvGuestMemoryWriter,
-    RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT,
-    RISCV_LINUX_EINVAL, RISCV_LINUX_ENOMEM,
+    guest_fd_argument, linux_error, RiscvGuestMemoryMapResult, RiscvGuestMemoryReader,
+    RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EBADF,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ENOMEM, RISCV_LINUX_EPERM,
 };
 
 pub(super) const RISCV_PAGE_BYTES: u64 = 4096;
@@ -16,6 +16,7 @@ pub(super) const RISCV_LINUX_MLOCK: u64 = 228;
 pub(super) const RISCV_LINUX_MUNLOCK: u64 = 229;
 pub(super) const RISCV_LINUX_MINCORE: u64 = 232;
 pub(super) const RISCV_LINUX_MADVISE: u64 = 233;
+pub(super) const RISCV_LINUX_MBIND: u64 = 235;
 pub(super) const RISCV_LINUX_MAP_SHARED: u64 = 0x01;
 pub(super) const RISCV_LINUX_MAP_PRIVATE: u64 = 0x02;
 pub(super) const RISCV_LINUX_MAP_FIXED: u64 = 0x10;
@@ -29,6 +30,30 @@ const RISCV_LINUX_MCL_FUTURE: u64 = 2;
 const RISCV_LINUX_MCL_ONFAULT: u64 = 4;
 const RISCV_LINUX_MCL_SUPPORTED_FLAGS: u64 =
     RISCV_LINUX_MCL_CURRENT | RISCV_LINUX_MCL_FUTURE | RISCV_LINUX_MCL_ONFAULT;
+const RISCV_LINUX_MPOL_DEFAULT: u64 = 0;
+const RISCV_LINUX_MPOL_PREFERRED: u64 = 1;
+const RISCV_LINUX_MPOL_BIND: u64 = 2;
+const RISCV_LINUX_MPOL_INTERLEAVE: u64 = 3;
+const RISCV_LINUX_MPOL_LOCAL: u64 = 4;
+const RISCV_LINUX_MPOL_PREFERRED_MANY: u64 = 5;
+const RISCV_LINUX_MPOL_WEIGHTED_INTERLEAVE: u64 = 6;
+const RISCV_LINUX_MPOL_MODE_MASK: u64 = 0x7;
+const RISCV_LINUX_MPOL_F_NUMA_BALANCING: u64 = 1 << 13;
+const RISCV_LINUX_MPOL_F_RELATIVE_NODES: u64 = 1 << 14;
+const RISCV_LINUX_MPOL_F_STATIC_NODES: u64 = 1 << 15;
+const RISCV_LINUX_MPOL_MODE_FLAGS: u64 = RISCV_LINUX_MPOL_F_NUMA_BALANCING
+    | RISCV_LINUX_MPOL_F_RELATIVE_NODES
+    | RISCV_LINUX_MPOL_F_STATIC_NODES;
+const RISCV_LINUX_MPOL_SUPPORTED_MODE_FLAGS: u64 =
+    RISCV_LINUX_MPOL_F_RELATIVE_NODES | RISCV_LINUX_MPOL_F_STATIC_NODES;
+const RISCV_LINUX_MPOL_MF_STRICT: u64 = 1;
+const RISCV_LINUX_MPOL_MF_MOVE: u64 = 1 << 1;
+const RISCV_LINUX_MPOL_MF_MOVE_ALL: u64 = 1 << 2;
+const RISCV_LINUX_MPOL_MF_VALID: u64 =
+    RISCV_LINUX_MPOL_MF_STRICT | RISCV_LINUX_MPOL_MF_MOVE | RISCV_LINUX_MPOL_MF_MOVE_ALL;
+const RISCV_LINUX_MBIND_MAXNODE_BITS: u64 = RISCV_PAGE_BYTES * 8;
+const RISCV_LINUX_NODES_PER_ULONG: u64 = 64;
+const RISCV_LINUX_ULONG_BYTES: u64 = 8;
 const RISCV_LINUX_MS_ASYNC: u64 = 1;
 const RISCV_LINUX_MS_INVALIDATE: u64 = 2;
 const RISCV_LINUX_MS_SYNC: u64 = 4;
@@ -581,6 +606,59 @@ pub(super) const fn syscall_munlockall() -> u64 {
     0
 }
 
+pub(super) fn syscall_mbind(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+) -> u64 {
+    let start = request.argument(0);
+    let requested_length = request.argument(1);
+    let raw_mode = request.argument(2);
+    let nodemask_address = request.argument(3);
+    let maxnode = request.argument(4);
+    let flags = request.argument(5);
+
+    let Some(mode) = parse_mbind_mode(raw_mode) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    let nodemask = match read_mbind_nodemask(nodemask_address, maxnode, guest_memory_reader) {
+        Ok(nodemask) => nodemask,
+        Err(errno) => return linux_error(errno),
+    };
+    let Some(flags) = parse_mbind_flags(flags) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    let policy = RiscvMbindPolicy { mode, flags };
+    if policy.requires_privilege() {
+        return linux_error(RISCV_LINUX_EPERM);
+    }
+    if !mbind_policy_accepts_nodemask(policy.mode, nodemask) {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if !start.is_multiple_of(RISCV_PAGE_BYTES) {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    let Some(length) = align_to_page(requested_length) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    if start.checked_add(length).is_none() {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if length == 0 {
+        return 0;
+    }
+    let range_is_mapped = if policy.mode == RISCV_LINUX_MPOL_DEFAULT {
+        mbind_default_range_has_mapping(state, start, length)
+    } else {
+        mmap_range_is_mapped(state, start, length)
+            || brk_backed_range_is_mapped(state, start, length)
+    };
+    if !range_is_mapped {
+        return linux_error(RISCV_LINUX_EFAULT);
+    }
+    0
+}
+
 fn mlockall_flags_are_valid(flags: u64) -> bool {
     let flags = u64::from(flags as u32);
     if flags & !RISCV_LINUX_MCL_SUPPORTED_FLAGS != 0 {
@@ -588,6 +666,149 @@ fn mlockall_flags_are_valid(flags: u64) -> bool {
     }
     let scoped = flags & (RISCV_LINUX_MCL_CURRENT | RISCV_LINUX_MCL_FUTURE);
     scoped != 0
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvMbindPolicy {
+    mode: u64,
+    flags: u64,
+}
+
+impl RiscvMbindPolicy {
+    const fn requires_privilege(self) -> bool {
+        self.flags & RISCV_LINUX_MPOL_MF_MOVE_ALL != 0
+    }
+}
+
+fn parse_mbind_mode(raw_mode: u64) -> Option<u64> {
+    let raw_mode = u64::from(raw_mode as u32);
+    let mode_flags = raw_mode & RISCV_LINUX_MPOL_MODE_FLAGS;
+    if raw_mode & !(RISCV_LINUX_MPOL_MODE_MASK | RISCV_LINUX_MPOL_MODE_FLAGS) != 0 {
+        return None;
+    }
+    if mode_flags & RISCV_LINUX_MPOL_F_STATIC_NODES != 0
+        && mode_flags & RISCV_LINUX_MPOL_F_RELATIVE_NODES != 0
+    {
+        return None;
+    }
+    if mode_flags & !RISCV_LINUX_MPOL_SUPPORTED_MODE_FLAGS != 0 {
+        return None;
+    }
+    let mode = raw_mode & RISCV_LINUX_MPOL_MODE_MASK;
+    if !mbind_mode_is_known(mode) {
+        return None;
+    }
+    Some(mode)
+}
+
+fn parse_mbind_flags(flags: u64) -> Option<u64> {
+    let flags = u64::from(flags as u32);
+    (flags & !RISCV_LINUX_MPOL_MF_VALID == 0).then_some(flags)
+}
+
+const fn mbind_mode_is_known(mode: u64) -> bool {
+    matches!(
+        mode,
+        RISCV_LINUX_MPOL_DEFAULT
+            | RISCV_LINUX_MPOL_PREFERRED
+            | RISCV_LINUX_MPOL_BIND
+            | RISCV_LINUX_MPOL_INTERLEAVE
+            | RISCV_LINUX_MPOL_LOCAL
+            | RISCV_LINUX_MPOL_PREFERRED_MANY
+            | RISCV_LINUX_MPOL_WEIGHTED_INTERLEAVE
+    )
+}
+
+fn mbind_policy_accepts_nodemask(mode: u64, nodemask: RiscvMbindNodemask) -> bool {
+    match mode {
+        RISCV_LINUX_MPOL_DEFAULT | RISCV_LINUX_MPOL_LOCAL => nodemask.is_empty(),
+        RISCV_LINUX_MPOL_PREFERRED => true,
+        RISCV_LINUX_MPOL_BIND
+        | RISCV_LINUX_MPOL_INTERLEAVE
+        | RISCV_LINUX_MPOL_PREFERRED_MANY
+        | RISCV_LINUX_MPOL_WEIGHTED_INTERLEAVE => !nodemask.is_empty(),
+        _ => false,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvMbindNodemask {
+    node_zero: bool,
+}
+
+impl RiscvMbindNodemask {
+    const EMPTY: Self = Self { node_zero: false };
+
+    const fn is_empty(self) -> bool {
+        !self.node_zero
+    }
+}
+
+fn read_mbind_nodemask(
+    address: u64,
+    maxnode: u64,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+) -> Result<RiscvMbindNodemask, u64> {
+    if address == 0 {
+        return Ok(RiscvMbindNodemask::EMPTY);
+    }
+    let Some(node_bits) = maxnode.checked_sub(1) else {
+        return Err(RISCV_LINUX_EINVAL);
+    };
+    if node_bits > RISCV_LINUX_MBIND_MAXNODE_BITS {
+        return Err(RISCV_LINUX_EINVAL);
+    }
+    if node_bits == 0 {
+        return Ok(RiscvMbindNodemask::EMPTY);
+    }
+    let requested_bytes = mbind_nodemask_bytes(node_bits)?;
+    let Some(guest_memory_reader) = guest_memory_reader else {
+        return Err(RISCV_LINUX_EFAULT);
+    };
+    let bytes = guest_memory_reader
+        .read(address, requested_bytes)
+        .ok_or(RISCV_LINUX_EFAULT)?;
+    if bytes.len() != requested_bytes {
+        return Err(RISCV_LINUX_EFAULT);
+    }
+    let node_zero = bytes[0] & 1 != 0;
+    if nodemask_has_unsupported_nodes(&bytes, node_bits) {
+        return Err(RISCV_LINUX_EINVAL);
+    }
+    Ok(RiscvMbindNodemask { node_zero })
+}
+
+fn mbind_nodemask_bytes(maxnode: u64) -> Result<usize, u64> {
+    let words = maxnode
+        .checked_add(RISCV_LINUX_NODES_PER_ULONG - 1)
+        .ok_or(RISCV_LINUX_EINVAL)?
+        / RISCV_LINUX_NODES_PER_ULONG;
+    let bytes = words
+        .checked_mul(RISCV_LINUX_ULONG_BYTES)
+        .ok_or(RISCV_LINUX_EINVAL)?;
+    usize::try_from(bytes).map_err(|_| RISCV_LINUX_EINVAL)
+}
+
+fn nodemask_has_unsupported_nodes(bytes: &[u8], maxnode: u64) -> bool {
+    for bit in 1..maxnode {
+        let byte_index = (bit / 8) as usize;
+        let bit_index = (bit % 8) as u8;
+        if bytes
+            .get(byte_index)
+            .is_some_and(|byte| byte & (1_u8 << bit_index) != 0)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+fn mbind_default_range_has_mapping(state: &RiscvSyscallState, start: u64, length: u64) -> bool {
+    state
+        .mmap_regions
+        .iter()
+        .any(|region| region.overlaps(start, length))
+        || brk_backed_range_overlaps_mapping(state, start, length)
 }
 
 pub(super) fn syscall_madvise(request: RiscvSyscallRequest, state: &RiscvSyscallState) -> u64 {
@@ -734,6 +955,16 @@ fn brk_backed_range_is_mapped(state: &RiscvSyscallState, start: u64, length: u64
         return false;
     };
     start >= heap_start && end <= state.program_break_backing_end()
+}
+
+fn brk_backed_range_overlaps_mapping(state: &RiscvSyscallState, start: u64, length: u64) -> bool {
+    let Some(heap_start) = align_to_page(state.initial_program_break()) else {
+        return false;
+    };
+    let Some(end) = start.checked_add(length) else {
+        return false;
+    };
+    start < state.program_break_backing_end() && heap_start < end
 }
 
 fn align_to_page(value: u64) -> Option<u64> {
