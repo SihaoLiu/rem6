@@ -166,6 +166,10 @@ pub enum RiscvVectorFloatInstruction {
         fs1: FloatRegister,
         vs2: VectorRegister,
     },
+    SqrtV {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+    },
     ReverseSubVf {
         vd: VectorRegister,
         fs1: FloatRegister,

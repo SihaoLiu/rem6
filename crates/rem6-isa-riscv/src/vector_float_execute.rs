@@ -33,6 +33,7 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
         RiscvVectorFloatInstruction::MaxVf { vd, fs1, vs2 } => {
             execute_minmax_vf(hart, vd, fs1, vs2, FloatMinMaxOp::Max)
         }
+        RiscvVectorFloatInstruction::SqrtV { vd, vs2 } => execute_sqrt_v(hart, vd, vs2),
         RiscvVectorFloatInstruction::ReverseSubVf { vd, fs1, vs2 } => {
             execute_arithmetic_vf(hart, vd, fs1, vs2, FloatBinaryOp::ReverseSub)
         }
@@ -242,6 +243,39 @@ fn execute_minmax_vf(
     true
 }
 
+fn execute_sqrt_v(hart: &mut RiscvHartState, vd: VectorRegister, vs2: VectorRegister) -> bool {
+    if active_rounding_mode(hart).is_none() {
+        return false;
+    }
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2]) else {
+        return false;
+    };
+    if plan.element_bytes != 4 {
+        return false;
+    }
+
+    let source = read_register_group(hart, vs2, plan.group_registers);
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    let mut exception_flags = 0;
+    for offset in (0..plan.active_bytes).step_by(4) {
+        let value = u32::from_le_bytes(lane4(&source, offset));
+        let lane_flags = float::sqrt_exception_flags_single_bits(value);
+        if lane_flags == 0
+            && !value_is_nan(value)
+            && !value_is_positive_infinity(value)
+            && !float::sqrt_single_rounding_insensitive_bits(value)
+        {
+            return false;
+        }
+        exception_flags |= lane_flags;
+        let sqrt = float::sqrt_single_bits(value);
+        result[offset..offset + 4].copy_from_slice(&sqrt.to_le_bytes());
+    }
+    write_register_group(hart, vd, plan.group_registers, &result);
+    hart.raise_float_exception_flags(exception_flags);
+    true
+}
+
 fn execute_sign_inject_vf(
     hart: &mut RiscvHartState,
     vd: VectorRegister,
@@ -365,6 +399,14 @@ fn minmax_single_bits(lhs: u32, rhs: u32, operation: FloatMinMaxOp) -> u32 {
         FloatMinMaxOp::Min => float::min_single_bits(lhs, rhs),
         FloatMinMaxOp::Max => float::max_single_bits(lhs, rhs),
     }
+}
+
+fn value_is_nan(value: u32) -> bool {
+    value & 0x7f80_0000 == 0x7f80_0000 && value & 0x007f_ffff != 0
+}
+
+fn value_is_positive_infinity(value: u32) -> bool {
+    value == 0x7f80_0000
 }
 
 fn lane4(bytes: &[u8; MAX_VECTOR_GROUP_BYTES], offset: usize) -> [u8; 4] {

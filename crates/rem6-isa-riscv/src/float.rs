@@ -107,6 +107,27 @@ pub(crate) fn single_register_bits(value: u64) -> u32 {
     unbox_single(value)
 }
 
+pub(crate) fn sqrt_single_bits(value: u32) -> u32 {
+    let result = f32::from_bits(value).sqrt().to_bits();
+    if is_nan_single(result) {
+        DEFAULT_NAN_SINGLE_BITS
+    } else {
+        result
+    }
+}
+
+pub(crate) fn sqrt_exception_flags_single_bits(value: u32) -> u64 {
+    if is_signaling_nan_single(value) || is_negative_nonzero_non_nan_single(value) {
+        FLOAT_FLAG_INVALID
+    } else {
+        0
+    }
+}
+
+pub(crate) fn sqrt_single_rounding_insensitive_bits(value: u32) -> bool {
+    sqrt_single_is_exact_bits(value)
+}
+
 pub(crate) fn min_single_bits(lhs: u32, rhs: u32) -> u32 {
     if is_nan_single(lhs) && is_nan_single(rhs) {
         return DEFAULT_NAN_SINGLE_BITS;
@@ -301,12 +322,26 @@ fn divide_double_is_identity(lhs: u64, rhs: u64) -> bool {
 }
 
 fn sqrt_single_is_exact(value: u64) -> bool {
-    let value = f32::from_bits(unbox_single(value));
-    value.is_finite()
-        && value >= 0.0
-        && value.fract() == 0.0
-        && value <= 16_777_216.0
-        && is_square_u64(value as u64)
+    sqrt_single_is_exact_bits(unbox_single(value))
+}
+
+fn sqrt_single_is_exact_bits(value: u32) -> bool {
+    let value = f32::from_bits(value);
+    if value == 0.0 {
+        return true;
+    }
+    if !value.is_finite() || value < 0.0 {
+        return false;
+    }
+
+    let root = value.sqrt().to_bits();
+    [root.saturating_sub(1), root, root.saturating_add(1)]
+        .into_iter()
+        .filter(|candidate| candidate & 0x8000_0000 == 0)
+        .any(|candidate| {
+            let root = f32::from_bits(candidate);
+            root.is_finite() && f64::from(root) * f64::from(root) == f64::from(value)
+        })
 }
 
 fn sqrt_double_is_exact(value: u64) -> bool {
@@ -597,12 +632,7 @@ fn minmax_exception_flags_double(lhs: u64, rhs: u64) -> u64 {
 }
 
 fn sqrt_exception_flags_single(value: u64) -> u64 {
-    let value = unbox_single(value);
-    if is_signaling_nan_single(value) || is_negative_nonzero_non_nan_single(value) {
-        FLOAT_FLAG_INVALID
-    } else {
-        0
-    }
+    sqrt_exception_flags_single_bits(unbox_single(value))
 }
 
 fn sqrt_exception_flags_double(value: u64) -> u64 {
@@ -646,7 +676,7 @@ fn quiet_compare_exception_flags_double(lhs: u64, rhs: u64) -> u64 {
 }
 
 fn sqrt_single(value: u64) -> u64 {
-    box_canonical_single(f32::from_bits(unbox_single(value)).sqrt())
+    box_single(sqrt_single_bits(unbox_single(value)))
 }
 
 fn sqrt_double(value: u64) -> u64 {
