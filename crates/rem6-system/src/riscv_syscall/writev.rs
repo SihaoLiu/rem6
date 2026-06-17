@@ -4,10 +4,11 @@ use super::{
     guest_fd_argument,
     iovec::{read_iovec_bytes, read_iovec_prefix, read_iovecs, RISCV_LINUX_IOV_MAX},
     linux_error,
+    pipe::RiscvGuestPipeWrite,
     positioned::riscv_linux_split_offset,
     RiscvGuestMemoryReader, RiscvGuestWriteRecord, RiscvSyscallRequest, RiscvSyscallState,
-    RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG, RISCV_LINUX_EINVAL,
-    RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_RDONLY,
+    RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG,
+    RISCV_LINUX_EINVAL, RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_RDONLY,
 };
 use crate::Tick;
 
@@ -73,16 +74,36 @@ pub(super) fn syscall_writev(
         Ok(false) => {}
         Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
     }
-
-    let Some(bytes) = read_iovec_bytes(guest_memory, &iovecs) else {
-        return Some(linux_error(RISCV_LINUX_EFAULT));
+    let pipe_write = match usize::try_from(total)
+        .ok()
+        .map(|byte_count| state.guest_pipe_write_plan(fd, byte_count))
+    {
+        Some(Ok(RiscvGuestPipeWrite::NotPipe)) | None => None,
+        Some(Ok(RiscvGuestPipeWrite::Written(written))) => Some(written),
+        Some(Ok(RiscvGuestPipeWrite::WouldBlock)) => return Some(linux_error(RISCV_LINUX_EAGAIN)),
+        Some(Ok(RiscvGuestPipeWrite::Blocked)) => return None,
+        Some(Err(_)) => return Some(linux_error(RISCV_LINUX_EBADF)),
     };
 
-    match state.write_guest_pipe_from_fd(fd, &bytes) {
-        Ok(true) => return Some(total),
-        Ok(false) => {}
-        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
-    }
+    let bytes = match pipe_write {
+        Some(written) => {
+            let Some(bytes) = read_iovec_prefix(guest_memory, &iovecs, written) else {
+                return Some(linux_error(RISCV_LINUX_EFAULT));
+            };
+            return match state.write_guest_pipe_from_fd(fd, &bytes) {
+                Ok(RiscvGuestPipeWrite::Written(written)) => Some(written as u64),
+                Ok(RiscvGuestPipeWrite::WouldBlock) => Some(linux_error(RISCV_LINUX_EAGAIN)),
+                Ok(RiscvGuestPipeWrite::Blocked) => None,
+                Ok(RiscvGuestPipeWrite::NotPipe) | Err(_) => Some(linux_error(RISCV_LINUX_EBADF)),
+            };
+        }
+        None => {
+            let Some(bytes) = read_iovec_bytes(guest_memory, &iovecs) else {
+                return Some(linux_error(RISCV_LINUX_EFAULT));
+            };
+            bytes
+        }
+    };
 
     match state.write_guest_file_from_fd(fd, &bytes) {
         Ok(_) => {}

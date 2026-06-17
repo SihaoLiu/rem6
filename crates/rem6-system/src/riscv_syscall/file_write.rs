@@ -1,11 +1,12 @@
 use super::{
     eventfd::{eventfd_write_bytes_written, eventfd_write_result},
     guest_fd_argument, linux_error,
+    pipe::RiscvGuestPipeWrite,
     stat::guest_path_inode,
     RiscvGuestFileIdentity, RiscvGuestMemoryReader, RiscvGuestNodeKind, RiscvGuestWriteRecord,
-    RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT,
-    RISCV_LINUX_EFBIG, RISCV_LINUX_EINVAL, RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE,
-    RISCV_LINUX_O_APPEND, RISCV_LINUX_O_RDONLY,
+    RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG, RISCV_LINUX_EINVAL, RISCV_LINUX_ESPIPE,
+    RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND, RISCV_LINUX_O_RDONLY,
 };
 use crate::{GuestFd, GuestFdError, GuestFileOffset};
 use rem6_kernel::Tick;
@@ -341,17 +342,28 @@ pub(super) fn syscall_write(
         Ok(false) => {}
         Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
     }
+    let pipe_write = match state.guest_pipe_write_plan(fd, byte_count) {
+        Ok(RiscvGuestPipeWrite::NotPipe) => None,
+        Ok(RiscvGuestPipeWrite::Written(written)) => Some(written),
+        Ok(RiscvGuestPipeWrite::WouldBlock) => return Some(linux_error(RISCV_LINUX_EAGAIN)),
+        Ok(RiscvGuestPipeWrite::Blocked) => return None,
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    };
     let address = request.argument(1);
-    let Some(bytes) = guest_memory.read(address, byte_count) else {
+    let read_count = pipe_write.unwrap_or(byte_count);
+    let Some(bytes) = guest_memory.read(address, read_count) else {
         return Some(linux_error(RISCV_LINUX_EFAULT));
     };
-    if bytes.len() != byte_count {
+    if bytes.len() != read_count {
         return Some(linux_error(RISCV_LINUX_EFAULT));
     }
-    match state.write_guest_pipe_from_fd(fd, &bytes) {
-        Ok(true) => return Some(count),
-        Ok(false) => {}
-        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    if pipe_write.is_some() {
+        return match state.write_guest_pipe_from_fd(fd, &bytes) {
+            Ok(RiscvGuestPipeWrite::Written(written)) => Some(written as u64),
+            Ok(RiscvGuestPipeWrite::WouldBlock) => Some(linux_error(RISCV_LINUX_EAGAIN)),
+            Ok(RiscvGuestPipeWrite::Blocked) => None,
+            Ok(RiscvGuestPipeWrite::NotPipe) | Err(_) => Some(linux_error(RISCV_LINUX_EBADF)),
+        };
     }
     match state.write_guest_file_from_fd(fd, &bytes) {
         Ok(_) => {}

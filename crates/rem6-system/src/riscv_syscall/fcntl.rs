@@ -1,10 +1,11 @@
 use crate::{GuestFdError, GuestFileStatusFlags};
 
 use super::{
-    guest_fd_argument, linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter,
-    RiscvSyscallOutcome, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EBADF,
-    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EMFILE, RISCV_LINUX_O_ACCMODE,
-    RISCV_LINUX_O_APPEND, RISCV_LINUX_O_NONBLOCK, RISCV_LINUX_O_RDONLY, RISCV_LINUX_O_WRONLY,
+    guest_fd_argument, linux_error, pipe::RiscvGuestPipeCapacityError, RiscvGuestMemoryReader,
+    RiscvGuestMemoryWriter, RiscvSyscallOutcome, RiscvSyscallRequest, RiscvSyscallState,
+    RISCV_LINUX_EBADF, RISCV_LINUX_EBUSY, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
+    RISCV_LINUX_EMFILE, RISCV_LINUX_EPERM, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND,
+    RISCV_LINUX_O_NONBLOCK, RISCV_LINUX_O_RDONLY, RISCV_LINUX_O_WRONLY,
 };
 
 pub(super) const RISCV_LINUX_FCNTL: u64 = 25;
@@ -17,6 +18,8 @@ pub(super) const RISCV_LINUX_F_GETLK: u64 = 5;
 pub(super) const RISCV_LINUX_F_SETLK: u64 = 6;
 pub(super) const RISCV_LINUX_F_SETLKW: u64 = 7;
 pub(super) const RISCV_LINUX_F_DUPFD_CLOEXEC: u64 = 1030;
+pub(super) const RISCV_LINUX_F_SETPIPE_SZ: u64 = 1031;
+pub(super) const RISCV_LINUX_F_GETPIPE_SZ: u64 = 1032;
 pub(super) const RISCV_LINUX_FD_CLOEXEC: u64 = 1;
 
 const RISCV_LINUX_F_RDLCK: u16 = 0;
@@ -123,6 +126,27 @@ pub(super) fn syscall_fcntl(
                 .map(|_lock| 0)
                 .map_err(RiscvFcntlError::Linux)
         }
+        RiscvFcntlCommand::GetPipeSize => match state.guest_pipe_capacity(fd) {
+            Ok(Some(capacity)) => Ok(capacity as u64),
+            Ok(None) => Err(RiscvFcntlError::Linux(RISCV_LINUX_EBADF)),
+            Err(error) => Err(RiscvFcntlError::GuestFd(error)),
+        },
+        RiscvFcntlCommand::SetPipeSize => {
+            match state.set_guest_pipe_capacity(fd, request.argument(2)) {
+                Ok(Some(capacity)) => Ok(capacity as u64),
+                Ok(None) => Err(RiscvFcntlError::Linux(RISCV_LINUX_EBADF)),
+                Err(RiscvGuestPipeCapacityError::Fd(error)) => Err(RiscvFcntlError::GuestFd(error)),
+                Err(RiscvGuestPipeCapacityError::Busy) => {
+                    Err(RiscvFcntlError::Linux(RISCV_LINUX_EBUSY))
+                }
+                Err(RiscvGuestPipeCapacityError::Permission) => {
+                    Err(RiscvFcntlError::Linux(RISCV_LINUX_EPERM))
+                }
+                Err(RiscvGuestPipeCapacityError::Invalid) => {
+                    Err(RiscvFcntlError::Linux(RISCV_LINUX_EINVAL))
+                }
+            }
+        }
     };
 
     Some(match outcome {
@@ -156,6 +180,8 @@ enum RiscvFcntlCommand {
     SetStatusFlags,
     GetLock,
     SetLock,
+    GetPipeSize,
+    SetPipeSize,
 }
 
 impl RiscvFcntlCommand {
@@ -173,6 +199,8 @@ impl RiscvFcntlCommand {
             RISCV_LINUX_F_DUPFD_CLOEXEC => Some(Self::DuplicateFd {
                 close_on_exec: true,
             }),
+            RISCV_LINUX_F_SETPIPE_SZ => Some(Self::SetPipeSize),
+            RISCV_LINUX_F_GETPIPE_SZ => Some(Self::GetPipeSize),
             _ => None,
         }
     }

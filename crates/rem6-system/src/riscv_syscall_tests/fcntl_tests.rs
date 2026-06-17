@@ -5,11 +5,16 @@ const RISCV_LINUX_F_GETLK_FOR_TEST: u64 = 5;
 const RISCV_LINUX_F_SETLK_FOR_TEST: u64 = 6;
 const RISCV_LINUX_F_SETLKW_FOR_TEST: u64 = 7;
 const RISCV_LINUX_F_DUPFD_CLOEXEC_FOR_TEST: u64 = 1030;
+const RISCV_LINUX_F_SETPIPE_SZ_FOR_TEST: u64 = 1031;
+const RISCV_LINUX_F_GETPIPE_SZ_FOR_TEST: u64 = 1032;
 const RISCV_LINUX_F_UNKNOWN_FOR_TEST: u64 = 9999;
 const RISCV_LINUX_F_RDLCK_FOR_TEST: u16 = 0;
 const RISCV_LINUX_F_WRLCK_FOR_TEST: u16 = 1;
 const RISCV_LINUX_F_UNLCK_FOR_TEST: u16 = 2;
 const RISCV_LINUX_O_RDWR_FOR_TEST: u64 = 2;
+const RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST: u64 = 4096;
+const RISCV_LINUX_DEFAULT_PIPE_CAPACITY_FOR_TEST: u64 = 64 * 1024;
+const RISCV_LINUX_PIPE_MAX_CAPACITY_FOR_TEST: u64 = 1024 * 1024;
 
 #[test]
 fn linux_table_fcntl_dupfd_respects_minimum_and_close_on_exec() {
@@ -150,6 +155,624 @@ fn linux_table_fcntl_rejects_unknown_command_without_unknown_syscall_record() {
         Some(RiscvSyscallOutcome::Return {
             value: linux_error(RISCV_LINUX_EINVAL)
         })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_fcntl_getpipe_sz_reports_guest_pipe_capacity() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_PIPE2, [0x9000, 0, 0, 0, 0, 0]),
+            &mut state,
+            7,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    let fds = collect_guest_writes(&writes.lock().unwrap(), 0x9000, 8);
+    let read_fd = u64::from(read_le_u32(&fds, 0));
+    let write_fd = u64::from(read_le_u32(&fds, 4));
+
+    for fd in [read_fd, write_fd] {
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8004,
+                    RISCV_LINUX_FCNTL,
+                    [fd, RISCV_LINUX_F_GETPIPE_SZ_FOR_TEST, 0, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: RISCV_LINUX_DEFAULT_PIPE_CAPACITY_FOR_TEST
+            })
+        );
+    }
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETPIPE_SZ_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_fcntl_setpipe_sz_resizes_guest_pipe_and_enforces_nonblock_capacity() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+    let payload = vec![b'x'; RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST as usize];
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if (0xa000..0xa000 + payload.len() as u64).contains(&address) {
+            let start = usize::try_from(address - 0xa000).ok()?;
+            let end = start.checked_add(bytes)?;
+            return payload.get(start..end).map(Vec::from);
+        }
+        None
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_PIPE2,
+                [0x9000, RISCV_LINUX_O_NONBLOCK, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    let fds = collect_guest_writes(&writes.lock().unwrap(), 0x9000, 8);
+    let read_fd = u64::from(read_le_u32(&fds, 0));
+    let write_fd = u64::from(read_le_u32(&fds, 4));
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FCNTL,
+                [
+                    write_fd,
+                    RISCV_LINUX_F_SETPIPE_SZ_FOR_TEST,
+                    RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_FCNTL,
+                [read_fd, RISCV_LINUX_F_GETPIPE_SZ_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_WRITE,
+                [
+                    write_fd,
+                    0xa000,
+                    RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST,
+                    0,
+                    0,
+                    0
+                ],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8010, RISCV_LINUX_WRITE, [write_fd, 0xa000, 1, 0, 0, 0]),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EAGAIN)
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8014,
+                RISCV_LINUX_FCNTL,
+                [
+                    write_fd,
+                    RISCV_LINUX_F_SETPIPE_SZ_FOR_TEST,
+                    RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST - 1,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_fcntl_setpipe_sz_reports_busy_and_permission_errors() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+    let unread_payload = vec![b'u'; (RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST * 2) as usize];
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == 0xa000 && bytes == unread_payload.len() {
+            return Some(unread_payload.clone());
+        }
+        None
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_PIPE2, [0x9000, 0, 0, 0, 0, 0]),
+            &mut state,
+            7,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    let fds = collect_guest_writes(&writes.lock().unwrap(), 0x9000, 8);
+    let read_fd = u64::from(read_le_u32(&fds, 0));
+    let write_fd = u64::from(read_le_u32(&fds, 4));
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_WRITE,
+                [
+                    write_fd,
+                    0xa000,
+                    RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST * 2,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST * 2
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_FCNTL,
+                [
+                    read_fd,
+                    RISCV_LINUX_F_SETPIPE_SZ_FOR_TEST,
+                    RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBUSY)
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_FCNTL,
+                [
+                    write_fd,
+                    RISCV_LINUX_F_SETPIPE_SZ_FOR_TEST,
+                    RISCV_LINUX_PIPE_MAX_CAPACITY_FOR_TEST + 1,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EPERM)
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8010,
+                RISCV_LINUX_FCNTL,
+                [read_fd, RISCV_LINUX_F_GETPIPE_SZ_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_DEFAULT_PIPE_CAPACITY_FOR_TEST
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_pipe_blocking_large_write_blocks_until_request_capacity_is_available() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+    let first_payload = vec![b'a'; 2048];
+    let large_payload = vec![b'b'; RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST as usize + 1];
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == 0xa000 && bytes == first_payload.len() {
+            return Some(first_payload.clone());
+        }
+        if address == 0xb000 && bytes == large_payload.len() {
+            return Some(large_payload.clone());
+        }
+        None
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_PIPE2, [0x9000, 0, 0, 0, 0, 0]),
+            &mut state,
+            7,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    let fds = collect_guest_writes(&writes.lock().unwrap(), 0x9000, 8);
+    let write_fd = u64::from(read_le_u32(&fds, 4));
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FCNTL,
+                [
+                    write_fd,
+                    RISCV_LINUX_F_SETPIPE_SZ_FOR_TEST,
+                    RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_WRITE, [write_fd, 0xa000, 2048, 0, 0, 0]),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 2048 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_WRITE,
+                [
+                    write_fd,
+                    0xb000,
+                    RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST + 1,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Blocked)
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_pipe_nonblocking_large_partial_write_reads_only_accepted_bytes() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+    let fill_payload = vec![b'a'; RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST as usize - 1];
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == 0xa000 && bytes == fill_payload.len() {
+            return Some(fill_payload.clone());
+        }
+        if address == 0xb000 && bytes == 1 {
+            return Some(vec![b'b']);
+        }
+        None
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_PIPE2,
+                [0x9000, RISCV_LINUX_O_NONBLOCK, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    let fds = collect_guest_writes(&writes.lock().unwrap(), 0x9000, 8);
+    let read_fd = u64::from(read_le_u32(&fds, 0));
+    let write_fd = u64::from(read_le_u32(&fds, 4));
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FCNTL,
+                [
+                    write_fd,
+                    RISCV_LINUX_F_SETPIPE_SZ_FOR_TEST,
+                    RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_WRITE,
+                [
+                    write_fd,
+                    0xa000,
+                    RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST - 1,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST - 1
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_WRITE,
+                [
+                    write_fd,
+                    0xb000,
+                    RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST + 1,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 1 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8010,
+                RISCV_LINUX_FCNTL,
+                [read_fd, RISCV_LINUX_F_GETPIPE_SZ_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_pipe_nonblocking_large_writev_reads_only_accepted_prefix() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+    let fill_payload = vec![b'a'; RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST as usize - 1];
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == 0xa000 && bytes == fill_payload.len() {
+            return Some(fill_payload.clone());
+        }
+        if address == 0xc000 && bytes == 16 {
+            let mut iovec = Vec::new();
+            iovec.extend_from_slice(&0xb000_u64.to_le_bytes());
+            iovec.extend_from_slice(&(RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST + 1).to_le_bytes());
+            return Some(iovec);
+        }
+        if address == 0xb000 && bytes == 1 {
+            return Some(vec![b'b']);
+        }
+        None
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_PIPE2,
+                [0x9000, RISCV_LINUX_O_NONBLOCK, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    let fds = collect_guest_writes(&writes.lock().unwrap(), 0x9000, 8);
+    let write_fd = u64::from(read_le_u32(&fds, 4));
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FCNTL,
+                [
+                    write_fd,
+                    RISCV_LINUX_F_SETPIPE_SZ_FOR_TEST,
+                    RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_WRITE,
+                [
+                    write_fd,
+                    0xa000,
+                    RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST - 1,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST - 1
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x800c, RISCV_LINUX_WRITEV, [write_fd, 0xc000, 1, 0, 0, 0]),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 1 })
     );
     assert!(state.unknown_syscalls().is_empty());
 }

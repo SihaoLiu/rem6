@@ -437,6 +437,30 @@ pub(super) fn ready_events_for_guest_fd(
         Ok(None) => {}
         Err(error) => return Err(error),
     }
+    let mut pipe_endpoint = false;
+    match state.guest_pipe_read_ready(fd) {
+        Ok(Some(ready)) => {
+            pipe_endpoint = true;
+            if access_mode != RISCV_LINUX_O_WRONLY && ready {
+                revents |= events & RISCV_LINUX_READ_READY_EVENTS;
+            }
+        }
+        Ok(None) => {}
+        Err(error) => return Err(error),
+    }
+    match state.guest_pipe_write_ready(fd) {
+        Ok(Some(ready)) => {
+            pipe_endpoint = true;
+            if access_mode != RISCV_LINUX_O_RDONLY && ready {
+                revents |= events & RISCV_LINUX_WRITE_READY_EVENTS;
+            }
+        }
+        Ok(None) => {}
+        Err(error) => return Err(error),
+    }
+    if pipe_endpoint {
+        return Ok(revents);
+    }
     if access_mode != RISCV_LINUX_O_WRONLY
         && (!state.stdin_readable(fd) || state.stdin_byte_count() > 0)
     {

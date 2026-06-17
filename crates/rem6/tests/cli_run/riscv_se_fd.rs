@@ -127,6 +127,165 @@ int main(void) {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_pipe_size_fcntl_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE pipe size fcntl smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE pipe size fcntl smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-pipe-size-fcntl");
+    let qemu_workspace = workspace.join("qemu");
+    fs::create_dir(&qemu_workspace).unwrap();
+    let source = workspace.join("pipe-size-fcntl.c");
+    let binary = workspace.join("pipe-size-fcntl");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+
+#define AT_FDCWD (-100L)
+#define O_WRONLY 01
+#define O_CREAT 0100
+#define O_TRUNC 01000
+#define F_SETPIPE_SZ 1031
+#define F_GETPIPE_SZ 1032
+#define PIPE_PAGE_BYTES 4096
+
+static long linux_syscall1(long number, long arg0) {
+    register long a0 asm("a0") = arg0;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall2(long number, long arg0, long arg1) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall4(long number, long arg0, long arg1, long arg2, long arg3) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3), "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    int fds[2] = {-1, -1};
+    long pipe_status = linux_syscall2(59, (long)fds, 0);
+    long initial_size = pipe_status == 0 ? linux_syscall3(25, fds[0], F_GETPIPE_SZ, 0) : -1;
+    long set_size = pipe_status == 0 ? linux_syscall3(25, fds[1], F_SETPIPE_SZ, PIPE_PAGE_BYTES) : -1;
+    long after_size = pipe_status == 0 ? linux_syscall3(25, fds[0], F_GETPIPE_SZ, 0) : -1;
+    long fd = linux_syscall4(56, AT_FDCWD, (long)"pipe-size-regular.txt",
+                             O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    long regular_status = fd >= 0 ? linux_syscall3(25, fd, F_GETPIPE_SZ, 0) : fd;
+    long bad_fd_status = linux_syscall3(25, 99, F_GETPIPE_SZ, 0);
+    long close_status = 0;
+    if (pipe_status == 0) {
+        close_status |= linux_syscall1(57, fds[0]);
+        close_status |= linux_syscall1(57, fds[1]);
+    }
+    if (fd >= 0) {
+        close_status |= linux_syscall1(57, fd);
+    }
+
+    int initial_positive = initial_size > 0;
+    int set_positive = set_size >= PIPE_PAGE_BYTES;
+    int after_matches = after_size == set_size;
+    printf("pipe-size:%ld:%d:%d:%d:%ld:%ld:%ld\n",
+           pipe_status, initial_positive, set_positive, after_matches,
+           regular_status, bad_fd_status, close_status);
+    return pipe_status == 0 && initial_positive && set_positive && after_matches &&
+           regular_status == -9 && bad_fd_status == -9 && close_status == 0 ? 48 : 80;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu)
+        .arg(&binary)
+        .current_dir(&qemu_workspace)
+        .output()
+        .unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(48),
+        "qemu stdout: {}; qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stdout),
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(qemu_output.stdout, b"pipe-size:0:1:1:1:-9:-9:0\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":48"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"pipe-size:0:1:1:1:-9:-9:0\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 48, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_flock_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!("skipping static RISC-V SE flock smoke: riscv64-unknown-elf-gcc not found");

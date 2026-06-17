@@ -285,6 +285,21 @@ struct RiscvGuestPipeEndpoint {
     pipe: RiscvGuestPipeId,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RiscvGuestPipe {
+    buffer: VecDeque<u8>,
+    capacity: usize,
+}
+
+impl RiscvGuestPipe {
+    fn new(capacity: usize) -> Self {
+        Self {
+            buffer: VecDeque::new(),
+            capacity,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RiscvOpenGuestFileStat {
     identity: RiscvGuestFileIdentity,
@@ -313,7 +328,7 @@ pub struct RiscvSyscallState {
     guest_links: BTreeMap<Vec<u8>, Vec<u8>>,
     guest_file_identities: BTreeMap<Vec<u8>, RiscvGuestFileIdentity>,
     guest_file_modes: BTreeMap<RiscvGuestFileIdentity, u32>,
-    guest_pipe_buffers: BTreeMap<RiscvGuestPipeId, VecDeque<u8>>,
+    guest_pipes: BTreeMap<RiscvGuestPipeId, RiscvGuestPipe>,
     guest_pipe_read_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
     guest_pipe_write_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
     guest_eventfds: BTreeMap<GuestFileDescriptionId, RiscvGuestEventFd>,
@@ -401,7 +416,7 @@ impl RiscvSyscallState {
             guest_links: BTreeMap::new(),
             guest_file_identities: BTreeMap::new(),
             guest_file_modes: BTreeMap::new(),
-            guest_pipe_buffers: BTreeMap::new(),
+            guest_pipes: BTreeMap::new(),
             guest_pipe_read_descriptions: BTreeMap::new(),
             guest_pipe_write_descriptions: BTreeMap::new(),
             guest_eventfds: BTreeMap::new(),
