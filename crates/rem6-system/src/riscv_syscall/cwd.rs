@@ -3,8 +3,9 @@ use crate::{GuestFd, GuestFdError};
 use super::{
     guest_fd_argument, linux_error, read_guest_c_string, RiscvGuestCStringError,
     RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState,
-    RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT,
-    RISCV_LINUX_ENOTDIR, RISCV_LINUX_ERANGE, RISCV_LINUX_PATH_MAX,
+    RISCV_GUEST_SYMLINK_FOLLOW_LIMIT, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_ELOOP,
+    RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT, RISCV_LINUX_ENOTDIR, RISCV_LINUX_ERANGE,
+    RISCV_LINUX_PATH_MAX,
 };
 
 pub(super) const RISCV_LINUX_CHDIR: u64 = 49;
@@ -14,6 +15,7 @@ pub(super) const RISCV_LINUX_FCHDIR: u64 = 50;
 pub(super) enum RiscvGuestPathResolutionError {
     Missing,
     NotDirectory,
+    Loop,
 }
 
 impl RiscvGuestPathResolutionError {
@@ -21,6 +23,7 @@ impl RiscvGuestPathResolutionError {
         match self {
             Self::Missing => RISCV_LINUX_ENOENT,
             Self::NotDirectory => RISCV_LINUX_ENOTDIR,
+            Self::Loop => RISCV_LINUX_ELOOP,
         }
     }
 }
@@ -105,6 +108,46 @@ impl RiscvSyscallState {
         self.resolve_guest_path_from_directory(self.current_directory(), path)
     }
 
+    pub(super) fn resolve_guest_path_following_symlinks(
+        &self,
+        path: &[u8],
+    ) -> Result<Vec<u8>, RiscvGuestPathResolutionError> {
+        self.resolve_guest_path_following_symlinks_from_directory(
+            self.current_directory(),
+            path,
+            0,
+            true,
+        )
+    }
+
+    pub(super) fn resolve_guest_path_following_intermediate_symlinks(
+        &self,
+        path: &[u8],
+    ) -> Result<Vec<u8>, RiscvGuestPathResolutionError> {
+        self.resolve_guest_path_following_symlinks_from_directory(
+            self.current_directory(),
+            path,
+            0,
+            false,
+        )
+    }
+
+    pub(super) fn resolve_guest_path_from_directory_following_intermediate_symlinks(
+        &self,
+        directory: &[u8],
+        path: &[u8],
+    ) -> Result<Vec<u8>, RiscvGuestPathResolutionError> {
+        self.resolve_guest_path_following_symlinks_from_directory(directory, path, 0, false)
+    }
+
+    pub(super) fn canonical_guest_path_from_directory(
+        &self,
+        directory: &[u8],
+        path: &[u8],
+    ) -> Vec<u8> {
+        canonical_guest_path_for_create(directory, path)
+    }
+
     pub(super) fn resolve_guest_path_from_directory(
         &self,
         directory: &[u8],
@@ -131,6 +174,70 @@ impl RiscvSyscallState {
             }
         }
         Ok(join_components(&components))
+    }
+
+    fn resolve_guest_path_following_symlinks_from_directory(
+        &self,
+        directory: &[u8],
+        path: &[u8],
+        follow_depth: usize,
+        follow_final_symlink: bool,
+    ) -> Result<Vec<u8>, RiscvGuestPathResolutionError> {
+        let mut components = if path.starts_with(b"/") {
+            Vec::new()
+        } else {
+            path_components(directory)
+        };
+        let raw_components = path.split(|byte| *byte == b'/').collect::<Vec<_>>();
+        for (index, component) in raw_components.iter().enumerate() {
+            match *component {
+                b"" | b"." => {}
+                b".." => {
+                    components.pop();
+                }
+                _ => {
+                    components.push(component.to_vec());
+                    let path = join_components(&components);
+                    let remaining_components = &raw_components[index + 1..];
+                    let has_remaining_components = !remaining_components.is_empty();
+                    if follow_final_symlink || has_remaining_components {
+                        if let Some(target_path) =
+                            self.follow_guest_symlink_path(&path, follow_depth)?
+                        {
+                            let mut redirected = target_path;
+                            append_remaining_path(&mut redirected, remaining_components);
+                            return self.resolve_guest_path_following_symlinks_from_directory(
+                                b"",
+                                &redirected,
+                                follow_depth + 1,
+                                follow_final_symlink,
+                            );
+                        }
+                    }
+                    if has_remaining_components {
+                        self.require_guest_directory(&path)?;
+                    }
+                }
+            }
+        }
+        Ok(join_components(&components))
+    }
+
+    fn follow_guest_symlink_path(
+        &self,
+        path: &[u8],
+        follow_depth: usize,
+    ) -> Result<Option<Vec<u8>>, RiscvGuestPathResolutionError> {
+        let Some(path) = self.existing_guest_path_key(path) else {
+            return Ok(None);
+        };
+        let Some(target) = self.guest_links.get(&path) else {
+            return Ok(None);
+        };
+        if follow_depth >= RISCV_GUEST_SYMLINK_FOLLOW_LIMIT {
+            return Err(RiscvGuestPathResolutionError::Loop);
+        }
+        Ok(Some(self.guest_symlink_target_path(&path, target)))
     }
 
     pub(super) fn resolve_guest_path_for_create(&self, path: &[u8]) -> Vec<u8> {
@@ -236,4 +343,21 @@ fn join_components(components: &[Vec<u8>]) -> Vec<u8> {
         path.extend_from_slice(component);
     }
     path
+}
+
+fn append_remaining_path(path: &mut Vec<u8>, components: &[&[u8]]) {
+    let mut appended_component = false;
+    for component in components {
+        if component.is_empty() {
+            continue;
+        }
+        if !path.is_empty() {
+            path.push(b'/');
+        }
+        path.extend_from_slice(component);
+        appended_component = true;
+    }
+    if !appended_component && !components.is_empty() && !path.is_empty() {
+        path.push(b'/');
+    }
 }

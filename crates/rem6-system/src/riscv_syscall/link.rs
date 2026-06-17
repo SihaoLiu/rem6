@@ -1,10 +1,12 @@
 use super::{
-    linux_error, read_guest_c_string, RiscvGuestCStringError, RiscvGuestLinkError,
-    RiscvGuestMemoryReader, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_AT_FDCWD,
-    RISCV_LINUX_EBADF, RISCV_LINUX_EEXIST, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
-    RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT, RISCV_LINUX_EPERM, RISCV_LINUX_PATH_MAX,
+    guest_fd_argument, linux_error, read_guest_c_string, RiscvGuestCStringError,
+    RiscvGuestLinkError, RiscvGuestMemoryReader, RiscvGuestSymlinkError, RiscvSyscallRequest,
+    RiscvSyscallState, RISCV_LINUX_AT_FDCWD, RISCV_LINUX_EBADF, RISCV_LINUX_EEXIST,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT,
+    RISCV_LINUX_ENOTDIR, RISCV_LINUX_EPERM, RISCV_LINUX_PATH_MAX,
 };
 
+pub(super) const RISCV_LINUX_SYMLINKAT: u64 = 36;
 pub(super) const RISCV_LINUX_LINKAT: u64 = 37;
 pub(super) const RISCV_LINUX_LINK: u64 = 1025;
 
@@ -62,6 +64,33 @@ pub(super) fn syscall_linkat(
     syscall_link_registered_paths(source, destination, state)
 }
 
+pub(super) fn syscall_symlinkat(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> u64 {
+    let target = match read_link_path(request.argument(0), guest_memory) {
+        Ok(path) => path,
+        Err(error) => return error,
+    };
+    let link_path = match read_link_path(request.argument(2), guest_memory) {
+        Ok(path) => path,
+        Err(error) => return error,
+    };
+    if target.is_empty() || link_path.is_empty() {
+        return linux_error(RISCV_LINUX_ENOENT);
+    }
+    let link_path = match resolve_link_creation_path_at(request.argument(1), &link_path, state) {
+        Ok(path) => path,
+        Err(error) => return error,
+    };
+
+    match state.symlink_guest_path(&link_path, &target) {
+        Ok(()) => 0,
+        Err(RiscvGuestSymlinkError::DestinationExists) => linux_error(RISCV_LINUX_EEXIST),
+    }
+}
+
 fn syscall_link_registered_paths(
     source: Vec<u8>,
     destination: Vec<u8>,
@@ -101,4 +130,27 @@ fn read_link_path(address: u64, guest_memory: &RiscvGuestMemoryReader) -> Result
 
 fn dirfd_supports_path(dirfd: u64, path: &[u8]) -> bool {
     dirfd == RISCV_LINUX_AT_FDCWD || path.starts_with(b"/")
+}
+
+fn resolve_link_creation_path_at(
+    dirfd: u64,
+    path: &[u8],
+    state: &RiscvSyscallState,
+) -> Result<Vec<u8>, u64> {
+    if dirfd == RISCV_LINUX_AT_FDCWD || path.starts_with(b"/") {
+        return state
+            .resolve_guest_path_following_intermediate_symlinks(path)
+            .map_err(|error| linux_error(error.linux_error_code()));
+    }
+    let Some(fd) = guest_fd_argument(dirfd) else {
+        return Err(linux_error(RISCV_LINUX_EBADF));
+    };
+    let directory = match state.guest_directory_path_for_fd(fd) {
+        Ok(Some(path)) => path,
+        Ok(None) => return Err(linux_error(RISCV_LINUX_ENOTDIR)),
+        Err(_error) => return Err(linux_error(RISCV_LINUX_EBADF)),
+    };
+    state
+        .resolve_guest_path_from_directory_following_intermediate_symlinks(&directory, path)
+        .map_err(|error| linux_error(error.linux_error_code()))
 }

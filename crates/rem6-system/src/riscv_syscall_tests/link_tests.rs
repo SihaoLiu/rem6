@@ -2,10 +2,320 @@ use super::*;
 
 const RISCV_LINUX_LINK_FOR_TEST: u64 = 1025;
 const RISCV_LINUX_LINKAT_FOR_TEST: u64 = 37;
+const RISCV_LINUX_SYMLINKAT_FOR_TEST: u64 = 36;
+const RISCV_LINUX_FACCESSAT_FOR_LINK_TEST: u64 = 48;
 const RISCV_LINUX_LSTAT_FOR_TEST: u64 = 1039;
+const RISCV_LINUX_R_OK_FOR_LINK_TEST: u64 = 4;
 const RISCV_LINUX_EEXIST_FOR_TEST: u64 = 17;
+const RISCV_LINUX_ELOOP_FOR_LINK_TEST: u64 = 40;
+const RISCV_LINUX_ENOTDIR_FOR_LINK_TEST: u64 = 20;
 const RISCV_LINUX_EPERM_FOR_LINK_TEST: u64 = 1;
 const RISCV_LINUX_MKDIRAT_FOR_LINK_TEST: u64 = 34;
+
+#[test]
+fn linux_table_symlinkat_adds_registered_guest_symlink() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"file-backed input\n");
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"guest.txt"), (0x9100, b"alias.txt")]);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SYMLINKAT_FOR_TEST,
+                [0x9000, RISCV_LINUX_AT_FDCWD, 0x9100, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_READLINKAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9100, 0x9200, 32, 0, 0],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 9 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_FACCESSAT_FOR_LINK_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9100,
+                    RISCV_LINUX_R_OK_FOR_LINK_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+
+    let writes = writes.lock().unwrap();
+    assert_eq!(collect_guest_writes(&writes, 0x9200, 9), b"guest.txt");
+    let stat = state.guest_link_stat(b"alias.txt").unwrap();
+    assert_eq!(stat.size(), 9);
+}
+
+#[test]
+fn linux_table_symlinkat_follows_intermediate_symlink_parent_directory() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"sub/existing.txt", b"nested input\n");
+    state.register_guest_symlink(b"linkdir", b"sub");
+    let guest_memory_reader =
+        c_string_reader(&[(0x9000, b"guest.txt"), (0x9100, b"linkdir/alias.txt")]);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SYMLINKAT_FOR_TEST,
+                [0x9000, RISCV_LINUX_AT_FDCWD, 0x9100, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_READLINKAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9100, 0x9200, 32, 0, 0],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 9 })
+    );
+    assert_eq!(
+        state.guest_link_target(b"sub/alias.txt"),
+        Some(&b"guest.txt"[..])
+    );
+
+    let writes = writes.lock().unwrap();
+    assert_eq!(collect_guest_writes(&writes, 0x9200, 9), b"guest.txt");
+}
+
+#[test]
+fn linux_table_symlinkat_rejects_existing_destination() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"file-backed input\n");
+    state.register_guest_symlink(b"alias.txt", b"old-target.txt");
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"guest.txt"), (0x9100, b"alias.txt")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SYMLINKAT_FOR_TEST,
+                [0x9000, RISCV_LINUX_AT_FDCWD, 0x9100, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EEXIST_FOR_TEST)
+        })
+    );
+    assert_eq!(
+        state.guest_link_target(b"alias.txt"),
+        Some(&b"old-target.txt"[..])
+    );
+}
+
+#[test]
+fn linux_table_symlinkat_rejects_implicit_directory_destination() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"file-backed input\n");
+    state.register_guest_file(b"sub/child.txt", b"nested input\n");
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"guest.txt"), (0x9100, b"sub")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SYMLINKAT_FOR_TEST,
+                [0x9000, RISCV_LINUX_AT_FDCWD, 0x9100, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EEXIST_FOR_TEST)
+        })
+    );
+    assert!(state.guest_link_target(b"sub").is_none());
+}
+
+#[test]
+fn linux_table_faccessat_follows_intermediate_symlink_directory() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"sub/child.txt", b"nested input\n");
+    state.register_guest_symlink(b"linkdir", b"sub");
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"linkdir/child.txt")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FACCESSAT_FOR_LINK_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_R_OK_FOR_LINK_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+}
+
+#[test]
+fn linux_table_faccessat_reports_eloop_for_symlink_cycle() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_symlink(b"a", b"b");
+    state.register_guest_symlink(b"b", b"a");
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"a")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FACCESSAT_FOR_LINK_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_R_OK_FOR_LINK_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ELOOP_FOR_LINK_TEST)
+        })
+    );
+}
+
+#[test]
+fn linux_table_faccessat_follows_intermediate_symlink_inside_symlink_target() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"real/child.txt", b"nested input\n");
+    state.register_guest_symlink(b"indir", b"real");
+    state.register_guest_symlink(b"link.txt", b"indir/child.txt");
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"link.txt")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FACCESSAT_FOR_LINK_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_R_OK_FOR_LINK_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+}
+
+#[test]
+fn linux_table_faccessat_preserves_enotdir_inside_symlink_target() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"regular.txt", b"file-backed input\n");
+    state.register_guest_symlink(b"link.txt", b"regular.txt/child.txt");
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"link.txt")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FACCESSAT_FOR_LINK_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_R_OK_FOR_LINK_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOTDIR_FOR_LINK_TEST)
+        })
+    );
+}
 
 #[test]
 fn linux_table_linkat_adds_registered_guest_file_alias() {

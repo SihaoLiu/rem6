@@ -1,5 +1,7 @@
 use super::*;
 
+const RISCV_LINUX_ENOTDIR_FOR_READLINK_TEST: u64 = 20;
+
 #[test]
 fn linux_table_readlinkat_writes_registered_guest_link_without_nul() {
     let table = RiscvSyscallTable::new();
@@ -39,6 +41,87 @@ fn linux_table_readlinkat_writes_registered_guest_link_without_nul() {
         Some(RiscvSyscallOutcome::Return { value: 5 })
     );
     assert_eq!(&*writes.lock().unwrap(), &[(0x9100, b"/bin/".to_vec())]);
+}
+
+#[test]
+fn linux_table_readlinkat_follows_intermediate_symlink_directory() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"sub/existing.txt", b"nested input\n");
+    state.register_guest_symlink(b"sub/link.txt", b"target.txt");
+    state.register_guest_symlink(b"linkdir", b"sub");
+    let path = b"linkdir/link.txt\0".to_vec();
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if bytes != 1 || address < 0x9000 {
+            return None;
+        }
+        path.get((address - 0x9000) as usize)
+            .copied()
+            .map(|byte| vec![byte])
+    });
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_READLINKAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0x9100, 32, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 10 })
+    );
+    assert_eq!(
+        &*writes.lock().unwrap(),
+        &[(0x9100, b"target.txt".to_vec())]
+    );
+}
+
+#[test]
+fn linux_table_readlinkat_rejects_trailing_slash_on_symlink_to_regular_file() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"file-backed input\n");
+    state.register_guest_symlink(b"link.txt", b"guest.txt");
+    let path = b"link.txt/\0".to_vec();
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if bytes != 1 || address < 0x9000 {
+            return None;
+        }
+        path.get((address - 0x9000) as usize)
+            .copied()
+            .map(|byte| vec![byte])
+    });
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(|_address, _bytes| true);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_READLINKAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0x9100, 32, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOTDIR_FOR_READLINK_TEST)
+        })
+    );
 }
 
 #[test]

@@ -223,9 +223,13 @@ pub(super) fn syscall_newfstatat(
         if request.argument(0) != RISCV_LINUX_AT_FDCWD {
             return linux_error(RISCV_LINUX_EBADF);
         }
-        match state.guest_path_stat(&path) {
-            Some(stat) => stat,
-            None => return linux_error(RISCV_LINUX_ENOENT),
+        match guest_path_or_link_stat_or_error(
+            state,
+            &path,
+            flags & RISCV_LINUX_AT_SYMLINK_NOFOLLOW != 0,
+        ) {
+            Ok(stat) => stat,
+            Err(error) => return error,
         }
     };
 
@@ -250,8 +254,9 @@ pub(super) fn syscall_stat(
     if path.is_empty() {
         return linux_error(RISCV_LINUX_ENOENT);
     }
-    let Some(stat) = state.guest_path_stat(&path) else {
-        return linux_error(RISCV_LINUX_ENOENT);
+    let stat = match guest_path_stat_or_error(state, &path) {
+        Ok(stat) => stat,
+        Err(error) => return error,
     };
 
     write_riscv_linux_stat(request.argument(1), stat, guest_memory_writer)
@@ -275,11 +280,9 @@ pub(super) fn syscall_lstat(
     if path.is_empty() {
         return linux_error(RISCV_LINUX_ENOENT);
     }
-    let Some(stat) = state
-        .guest_link_stat(&path)
-        .or_else(|| state.guest_path_stat(&path))
-    else {
-        return linux_error(RISCV_LINUX_ENOENT);
+    let stat = match guest_path_or_link_stat_or_error(state, &path, true) {
+        Ok(stat) => stat,
+        Err(error) => return error,
     };
 
     write_riscv_linux_stat(request.argument(1), stat, guest_memory_writer)
@@ -316,9 +319,9 @@ pub(super) fn syscall_utimensat(
             return linux_error(RISCV_LINUX_ENOENT);
         }
         if request.argument(0) == RISCV_LINUX_AT_FDCWD {
-            return match state.guest_path_stat(b".") {
-                Some(_stat) => 0,
-                None => linux_error(RISCV_LINUX_ENOENT),
+            return match guest_path_stat_or_error(state, b".") {
+                Ok(_stat) => 0,
+                Err(error) => error,
             };
         }
         let Some(fd) = guest_fd_argument(request.argument(0)) else {
@@ -334,16 +337,13 @@ pub(super) fn syscall_utimensat(
         Ok(path) => path,
         Err(error) => return error,
     };
-    let stat = if flags & RISCV_LINUX_AT_SYMLINK_NOFOLLOW != 0 {
-        state
-            .guest_link_stat(&path)
-            .or_else(|| state.guest_path_stat(&path))
-    } else {
-        state.guest_path_stat(&path)
-    };
-    match stat {
-        Some(_stat) => 0,
-        None => linux_error(RISCV_LINUX_ENOENT),
+    match guest_path_or_link_stat_or_error(
+        state,
+        &path,
+        flags & RISCV_LINUX_AT_SYMLINK_NOFOLLOW != 0,
+    ) {
+        Ok(_stat) => 0,
+        Err(error) => error,
     }
 }
 
@@ -398,9 +398,9 @@ pub(super) fn syscall_statx(
             return linux_error(RISCV_LINUX_ENOENT);
         }
         if request.argument(0) == RISCV_LINUX_AT_FDCWD {
-            match state.guest_path_stat(b".") {
-                Some(stat) => stat,
-                None => return linux_error(RISCV_LINUX_ENOENT),
+            match guest_path_stat_or_error(state, b".") {
+                Ok(stat) => stat,
+                Err(error) => return error,
             }
         } else {
             let Some(fd) = guest_fd_argument(request.argument(0)) else {
@@ -416,17 +416,14 @@ pub(super) fn syscall_statx(
             Ok(path) => path,
             Err(error) => return error,
         };
-        let stat = if flags & RISCV_LINUX_AT_SYMLINK_NOFOLLOW != 0 {
-            state
-                .guest_link_stat(&path)
-                .or_else(|| state.guest_path_stat(&path))
-        } else {
-            state.guest_path_stat(&path)
-        };
-        let Some(stat) = stat else {
-            return linux_error(RISCV_LINUX_ENOENT);
-        };
-        stat
+        match guest_path_or_link_stat_or_error(
+            state,
+            &path,
+            flags & RISCV_LINUX_AT_SYMLINK_NOFOLLOW != 0,
+        ) {
+            Ok(stat) => stat,
+            Err(error) => return error,
+        }
     };
 
     write_riscv_linux_statx(request.argument(4), stat, guest_memory_writer)
@@ -454,16 +451,20 @@ fn resolve_guest_at_path(
         Ok(None) => return Err(linux_error(RISCV_LINUX_ENOTDIR)),
         Err(_error) => return Err(linux_error(RISCV_LINUX_EBADF)),
     };
-    let resolved = state
-        .resolve_guest_path_from_directory(&directory, path)
-        .map_err(|error| linux_error(error.linux_error_code()))?;
-    if resolved.is_empty() || resolved.starts_with(b"/") {
+    if directory.is_empty() {
+        let mut resolved = Vec::with_capacity(path.len() + 1);
+        resolved.push(b'/');
+        resolved.extend_from_slice(path);
         Ok(resolved)
     } else {
-        let mut absolute = Vec::with_capacity(resolved.len() + 1);
-        absolute.push(b'/');
-        absolute.extend_from_slice(&resolved);
-        Ok(absolute)
+        let mut resolved = Vec::with_capacity(directory.len() + path.len() + 2);
+        resolved.push(b'/');
+        resolved.extend_from_slice(&directory);
+        if !path.is_empty() {
+            resolved.push(b'/');
+            resolved.extend_from_slice(path);
+        }
+        Ok(resolved)
     }
 }
 
@@ -519,9 +520,9 @@ pub(super) fn syscall_faccessat2(
             return linux_error(RISCV_LINUX_ENOENT);
         }
         let stat = if request.argument(0) == RISCV_LINUX_AT_FDCWD {
-            match state.guest_path_stat(b".") {
-                Some(stat) => stat,
-                None => return linux_error(RISCV_LINUX_ENOENT),
+            match guest_path_stat_or_error(state, b".") {
+                Ok(stat) => stat,
+                Err(error) => return error,
             }
         } else {
             let Some(fd) = guest_fd_argument(request.argument(0)) else {
@@ -538,15 +539,13 @@ pub(super) fn syscall_faccessat2(
         Ok(path) => path,
         Err(error) => return error,
     };
-    let stat = if flags & RISCV_LINUX_AT_SYMLINK_NOFOLLOW != 0 {
-        state
-            .guest_link_stat(&path)
-            .or_else(|| state.guest_path_stat(&path))
-    } else {
-        state.guest_path_stat(&path)
-    };
-    let Some(stat) = stat else {
-        return linux_error(RISCV_LINUX_ENOENT);
+    let stat = match guest_path_or_link_stat_or_error(
+        state,
+        &path,
+        flags & RISCV_LINUX_AT_SYMLINK_NOFOLLOW != 0,
+    ) {
+        Ok(stat) => stat,
+        Err(error) => return error,
     };
     syscall_access_stat(stat, mode)
 }
@@ -572,10 +571,27 @@ fn syscall_access_registered_path(path: &[u8], mode: u64, state: &RiscvSyscallSt
     if path.is_empty() {
         return linux_error(RISCV_LINUX_ENOENT);
     }
-    let Some(stat) = state.guest_path_stat(path) else {
-        return linux_error(RISCV_LINUX_ENOENT);
+    let stat = match guest_path_stat_or_error(state, path) {
+        Ok(stat) => stat,
+        Err(error) => return error,
     };
     syscall_access_stat(stat, mode)
+}
+
+fn guest_path_or_link_stat_or_error(
+    state: &RiscvSyscallState,
+    path: &[u8],
+    nofollow: bool,
+) -> Result<RiscvGuestStat, u64> {
+    match state.guest_path_or_link_stat_result(path, nofollow) {
+        Ok(Some(stat)) => Ok(stat),
+        Ok(None) => Err(linux_error(RISCV_LINUX_ENOENT)),
+        Err(error) => Err(linux_error(error.linux_error_code())),
+    }
+}
+
+fn guest_path_stat_or_error(state: &RiscvSyscallState, path: &[u8]) -> Result<RiscvGuestStat, u64> {
+    guest_path_or_link_stat_or_error(state, path, false)
 }
 
 fn syscall_access_stat(stat: RiscvGuestStat, mode: u64) -> u64 {
@@ -619,8 +635,8 @@ pub(super) fn syscall_statfs(
     if path.is_empty() {
         return linux_error(RISCV_LINUX_ENOENT);
     }
-    if state.guest_path_stat(&path).is_none() {
-        return linux_error(RISCV_LINUX_ENOENT);
+    if let Err(error) = guest_path_stat_or_error(state, &path) {
+        return error;
     }
 
     write_riscv_linux_statfs(request.argument(1), state, guest_memory_writer)

@@ -76,7 +76,10 @@ use clock::{
 };
 use copy_file_range::{syscall_copy_file_range, RISCV_LINUX_COPY_FILE_RANGE};
 use cpu_locality::{syscall_getcpu, RISCV_LINUX_GETCPU};
-use cwd::{syscall_chdir, syscall_fchdir, syscall_getcwd, RISCV_LINUX_CHDIR, RISCV_LINUX_FCHDIR};
+use cwd::{
+    syscall_chdir, syscall_fchdir, syscall_getcwd, RiscvGuestPathResolutionError,
+    RISCV_LINUX_CHDIR, RISCV_LINUX_FCHDIR,
+};
 use directory::{RiscvGuestMkdirError, RiscvGuestRmdirError};
 use dirent::{
     guest_directory_child_name, linux_dirent64_record_boundary, riscv_linux_dirent64_bytes,
@@ -125,7 +128,10 @@ use identity::{
 use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
 pub use limits::RISCV_LINUX_STACK_LIMIT_BYTES;
 use limits::{syscall_getrlimit, syscall_prlimit64, RISCV_LINUX_GETRLIMIT, RISCV_LINUX_PRLIMIT64};
-use link::{syscall_link_operation, RISCV_LINUX_LINK, RISCV_LINUX_LINKAT};
+use link::{
+    syscall_link_operation, syscall_symlinkat, RISCV_LINUX_LINK, RISCV_LINUX_LINKAT,
+    RISCV_LINUX_SYMLINKAT,
+};
 use links::syscall_readlinkat;
 use mkdir::{syscall_mkdirat, RISCV_LINUX_MKDIRAT};
 pub use mmap::RiscvMmapRegion;
@@ -246,6 +252,7 @@ const RISCV_LINUX_ERANGE: u64 = 34;
 const RISCV_LINUX_ENAMETOOLONG: u64 = 36;
 const RISCV_LINUX_ENOSYS: u64 = 38;
 const RISCV_LINUX_ENOTEMPTY: u64 = 39;
+const RISCV_LINUX_ELOOP: u64 = 40;
 const RISCV_LINUX_ENOTSUP: u64 = 95;
 const RISCV_LINUX_O_ACCMODE: u64 = 0x3;
 const RISCV_LINUX_O_CLOEXEC: u64 = 0o2_000_000;
@@ -260,6 +267,7 @@ const RISCV_LINUX_AT_NO_AUTOMOUNT: u64 = 0x800;
 const RISCV_LINUX_AT_SYMLINK_NOFOLLOW: u64 = 0x100;
 const RISCV_LINUX_PATH_MAX: usize = 4096;
 const RISCV_LINUX_DEFAULT_SE_MEMORY_CAPACITY_BYTES: u64 = 256 * 1024 * 1024;
+const RISCV_GUEST_SYMLINK_FOLLOW_LIMIT: usize = 40;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvSyscallOutcome {
@@ -272,6 +280,11 @@ pub enum RiscvSyscallOutcome {
 pub(super) enum RiscvGuestLinkError {
     SourceMissing,
     SourceIsDirectory,
+    DestinationExists,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RiscvGuestSymlinkError {
     DestinationExists,
 }
 
@@ -668,8 +681,18 @@ impl RiscvSyscallState {
     }
 
     fn guest_link_target(&self, path: &[u8]) -> Option<&[u8]> {
-        let path = self.resolve_existing_guest_path(path).ok().flatten()?;
-        self.guest_links.get(&path).map(Vec::as_slice)
+        self.guest_link_target_result(path).ok().flatten()
+    }
+
+    fn guest_link_target_result(
+        &self,
+        path: &[u8],
+    ) -> Result<Option<&[u8]>, RiscvGuestPathResolutionError> {
+        let path = self.resolve_guest_path_following_intermediate_symlinks(path)?;
+        let Some(path) = self.existing_guest_path_key(&path) else {
+            return Ok(None);
+        };
+        Ok(self.guest_links.get(&path).map(Vec::as_slice))
     }
 
     fn guest_file_identity(&self, path: &[u8]) -> RiscvGuestFileIdentity {
@@ -771,12 +794,61 @@ impl RiscvSyscallState {
         Ok(())
     }
 
-    fn guest_path_stat(&self, path: &[u8]) -> Option<RiscvGuestStat> {
-        if let Some(path) = self
-            .resolve_existing_guest_regular_path(path)
-            .ok()
-            .flatten()
+    pub(super) fn symlink_guest_path(
+        &mut self,
+        link_path: &[u8],
+        target: &[u8],
+    ) -> Result<(), RiscvGuestSymlinkError> {
+        if self.existing_guest_path_key(link_path).is_some()
+            || self.guest_directory_entries(link_path).is_some()
         {
+            return Err(RiscvGuestSymlinkError::DestinationExists);
+        }
+        let link_path = link_path.to_vec();
+        self.guest_links.insert(link_path.clone(), target.to_vec());
+        self.guest_file_identities
+            .entry(link_path.clone())
+            .or_insert_with(|| RiscvGuestFileIdentity {
+                inode: guest_path_inode(&link_path),
+            });
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn guest_path_stat(&self, path: &[u8]) -> Option<RiscvGuestStat> {
+        self.guest_path_stat_result(path).ok().flatten()
+    }
+
+    #[cfg(test)]
+    fn guest_path_stat_result(
+        &self,
+        path: &[u8],
+    ) -> Result<Option<RiscvGuestStat>, RiscvGuestPathResolutionError> {
+        self.guest_path_or_link_stat_result(path, false)
+    }
+
+    fn guest_path_or_link_stat_result(
+        &self,
+        path: &[u8],
+        nofollow: bool,
+    ) -> Result<Option<RiscvGuestStat>, RiscvGuestPathResolutionError> {
+        if nofollow {
+            let path = self.resolve_guest_path_following_intermediate_symlinks(path)?;
+            if let Some(stat) = self.guest_link_stat_for_resolved_path(&path) {
+                return Ok(Some(stat));
+            }
+            return Ok(self.guest_path_stat_for_resolved_path(&path));
+        }
+
+        let path = self.resolve_guest_path_following_symlinks(path)?;
+        Ok(self.guest_path_stat_for_resolved_path(&path))
+    }
+
+    fn guest_path_stat_for_resolved_path(&self, path: &[u8]) -> Option<RiscvGuestStat> {
+        let path = self
+            .existing_guest_path_key(path)
+            .unwrap_or_else(|| path.to_vec());
+        if self.guest_path_registered(&path) {
             let identity = self.guest_file_identity(&path);
             return Some(
                 self.guest_file_stat(
@@ -787,7 +859,6 @@ impl RiscvSyscallState {
                 ),
             );
         }
-        let path = self.resolve_guest_path(path).ok()?;
         if self.guest_directory_entries(&path).is_some() {
             return Some(RiscvGuestStat::directory(
                 self.identity(),
@@ -798,8 +869,23 @@ impl RiscvSyscallState {
         None
     }
 
+    fn guest_symlink_target_path(&self, link_path: &[u8], target: &[u8]) -> Vec<u8> {
+        let directory = link_path
+            .iter()
+            .rposition(|byte| *byte == b'/')
+            .map(|index| &link_path[..index])
+            .unwrap_or(b"");
+        self.canonical_guest_path_from_directory(directory, target)
+    }
+
+    #[cfg(test)]
     fn guest_link_stat(&self, path: &[u8]) -> Option<RiscvGuestStat> {
         let path = self.resolve_existing_guest_path(path).ok().flatten()?;
+        self.guest_link_stat_for_resolved_path(&path)
+    }
+
+    fn guest_link_stat_for_resolved_path(&self, path: &[u8]) -> Option<RiscvGuestStat> {
+        let path = self.existing_guest_path_key(path)?;
         let target = self.guest_links.get(&path)?;
         let identity = self.guest_file_identity(&path);
         Some(RiscvGuestStat::symbolic_link(
@@ -1236,6 +1322,11 @@ impl RiscvSyscallTable {
             RISCV_LINUX_LINK | RISCV_LINUX_LINKAT => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_link_operation(request, state, guest_memory),
+                })
+            }
+            RISCV_LINUX_SYMLINKAT => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_symlinkat(request, state, guest_memory),
                 })
             }
             RISCV_LINUX_UNLINK | RISCV_LINUX_UNLINKAT => {

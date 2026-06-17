@@ -15,6 +15,7 @@ const RISCV_LINUX_R_OK_FOR_TEST: u64 = 4;
 const RISCV_LINUX_W_OK_FOR_TEST: u64 = 2;
 const RISCV_LINUX_X_OK_FOR_TEST: u64 = 1;
 const RISCV_LINUX_EACCES_FOR_TEST: u64 = 13;
+const RISCV_LINUX_ENOTDIR_FOR_TEST: u64 = 20;
 const RISCV_LINUX_AT_EACCESS_FOR_TEST: u64 = 0x200;
 const RISCV_LINUX_UTIME_NOW_FOR_TEST: i64 = (1_i64 << 30) - 1;
 const RISCV_LINUX_UTIME_OMIT_FOR_TEST: i64 = (1_i64 << 30) - 2;
@@ -131,6 +132,139 @@ fn linux_table_lstat_writes_registered_guest_symlink_stat() {
     assert_eq!(read_le_u64(&stat, 48), 9);
     assert_eq!(read_le_u32(&stat, 16), 0o120777);
     assert_eq!(read_le_u32(&stat, 20), 1);
+}
+
+#[test]
+fn linux_table_lstat_follows_intermediate_symlink_but_not_final_symlink() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"sub/target.txt", b"file-backed input\n");
+    state.register_guest_symlink(b"sub/link.txt", b"target.txt");
+    state.register_guest_symlink(b"linkdir", b"sub");
+    let guest_memory_reader = c_string_reader(0x9000, b"linkdir/link.txt");
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_LSTAT_FOR_TEST,
+                [0x9000, 0x9100, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let writes = writes.lock().unwrap();
+    let stat = collect_guest_writes(&writes, 0x9100, 128);
+    assert_eq!(read_le_u64(&stat, 48), 10);
+    assert_eq!(read_le_u32(&stat, 16), 0o120777);
+}
+
+#[test]
+fn linux_table_stat_rejects_trailing_slash_on_regular_file() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"file-backed input\n");
+    let guest_memory_reader = c_string_reader(0x9000, b"guest.txt/");
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(|_address, _bytes| true);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_STAT, [0x9000, 0x9100, 0, 0, 0, 0]),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOTDIR_FOR_TEST)
+        })
+    );
+}
+
+#[test]
+fn linux_table_lstat_rejects_trailing_slash_on_symlink_to_regular_file() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"file-backed input\n");
+    state.register_guest_symlink(b"link.txt", b"guest.txt");
+    let guest_memory_reader = c_string_reader(0x9000, b"link.txt/");
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(|_address, _bytes| true);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_LSTAT_FOR_TEST,
+                [0x9000, 0x9100, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOTDIR_FOR_TEST)
+        })
+    );
+}
+
+#[test]
+fn linux_table_newfstatat_nofollow_stats_final_symlink() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"target.txt", b"file-backed input\n");
+    state.register_guest_symlink(b"link.txt", b"target.txt");
+    let guest_memory_reader = c_string_reader(0x9000, b"link.txt");
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_NEWFSTATAT,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    0x9100,
+                    RISCV_LINUX_AT_SYMLINK_NOFOLLOW,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let writes = writes.lock().unwrap();
+    let stat = collect_guest_writes(&writes, 0x9100, 128);
+    assert_eq!(read_le_u64(&stat, 48), 10);
+    assert_eq!(read_le_u32(&stat, 16), 0o120777);
 }
 
 #[test]
@@ -365,6 +499,52 @@ fn linux_table_statx_writes_registered_guest_file_statx() {
     assert_eq!(read_le_u64(&statx, 40), 18);
     assert_eq!(read_le_u64(&statx, 48), 1);
     assert_eq!(read_le_u64(&statx, 56), 0);
+}
+
+#[test]
+fn linux_table_statx_nofollow_follows_intermediate_symlink_but_stats_final_symlink() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"sub/target.txt", b"file-backed input\n");
+    state.register_guest_symlink(b"sub/link.txt", b"target.txt");
+    state.register_guest_symlink(b"linkdir", b"sub");
+    let guest_memory_reader = c_string_reader(0x9000, b"linkdir/link.txt");
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_STATX_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_AT_SYMLINK_NOFOLLOW,
+                    u64::from(RISCV_LINUX_STATX_BASIC_STATS_FOR_TEST),
+                    0x9200,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let writes = writes.lock().unwrap();
+    let statx = collect_guest_writes(&writes, 0x9200, 256);
+    assert_eq!(read_le_u64(&statx, 40), 10);
+    assert_eq!(read_le_u32(&statx, 28) & 0xffff, 0o120777);
 }
 
 #[test]
@@ -1009,6 +1189,50 @@ fn linux_table_faccessat2_resolves_relative_path_against_guest_directory_fd() {
 }
 
 #[test]
+fn linux_table_faccessat2_dirfd_follows_intermediate_symlink_directory() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"base/sub/guest.txt", b"file-backed input\n");
+    state.register_guest_symlink(b"base/linkdir", b"sub");
+    let guest_memory_reader =
+        c_string_reader_with(&[(0x9000, b"base"), (0x9010, b"linkdir/guest.txt")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPENAT_FOR_STAT_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_O_DIRECTORY_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FACCESSAT2_FOR_TEST,
+                [3, 0x9010, RISCV_LINUX_R_OK_FOR_TEST, 0, 0, 0],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+}
+
+#[test]
 fn linux_table_faccessat2_returns_enotdir_for_regular_file_dirfd() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
@@ -1074,6 +1298,37 @@ fn linux_table_faccessat2_nofollow_checks_guest_symlink_stat() {
         Some(RiscvSyscallOutcome::Return { value: 0 })
     );
     assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_faccessat2_nofollow_follows_intermediate_symlink_but_checks_final_symlink() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"sub/target.txt", b"file-backed input\n");
+    state.register_guest_symlink(b"sub/link.txt", b"target.txt");
+    state.register_guest_symlink(b"linkdir", b"sub");
+    let guest_memory_reader = c_string_reader(0x9000, b"linkdir/link.txt");
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FACCESSAT2_FOR_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_X_OK_FOR_TEST,
+                    RISCV_LINUX_AT_SYMLINK_NOFOLLOW,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
 }
 
 #[test]
