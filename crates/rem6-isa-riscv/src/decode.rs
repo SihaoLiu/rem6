@@ -337,6 +337,20 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 vs2: vector_register(raw, 20),
             },
         )),
+        (0x1, 0b011000, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::MaskEqualVv {
+                vd: vector_register(raw, 7),
+                vs1: vector_register(raw, 15),
+                vs2: vector_register(raw, 20),
+            },
+        )),
+        (0x5, 0b011000, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::MaskEqualVf {
+                vd: vector_register(raw, 7),
+                fs1: float_register(raw, 15),
+                vs2: vector_register(raw, 20),
+            },
+        )),
         (0x1, 0b100100, true) => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::MulVv {
                 vd: vector_register(raw, 7),

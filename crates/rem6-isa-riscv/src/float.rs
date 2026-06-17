@@ -128,6 +128,18 @@ pub(crate) fn sqrt_single_rounding_insensitive_bits(value: u32) -> bool {
     sqrt_single_is_exact_bits(value)
 }
 
+pub(crate) fn equal_single_bits(lhs: u32, rhs: u32) -> bool {
+    f32::from_bits(lhs) == f32::from_bits(rhs)
+}
+
+pub(crate) fn quiet_compare_exception_flags_single_bits(lhs: u32, rhs: u32) -> u64 {
+    if is_signaling_nan_single(lhs) || is_signaling_nan_single(rhs) {
+        FLOAT_FLAG_INVALID
+    } else {
+        0
+    }
+}
+
 pub(crate) fn min_single_bits(lhs: u32, rhs: u32) -> u32 {
     if is_nan_single(lhs) && is_nan_single(rhs) {
         return DEFAULT_NAN_SINGLE_BITS;
@@ -660,11 +672,7 @@ fn signaling_compare_exception_flags_double(lhs: u64, rhs: u64) -> u64 {
 }
 
 fn quiet_compare_exception_flags_single(lhs: u64, rhs: u64) -> u64 {
-    if is_signaling_nan_single(unbox_single(lhs)) || is_signaling_nan_single(unbox_single(rhs)) {
-        FLOAT_FLAG_INVALID
-    } else {
-        0
-    }
+    quiet_compare_exception_flags_single_bits(unbox_single(lhs), unbox_single(rhs))
 }
 
 fn quiet_compare_exception_flags_double(lhs: u64, rhs: u64) -> u64 {
@@ -935,7 +943,7 @@ fn less_than_double(lhs: u64, rhs: u64) -> bool {
 }
 
 fn equal_single(lhs: u64, rhs: u64) -> bool {
-    f32::from_bits(unbox_single(lhs)) == f32::from_bits(unbox_single(rhs))
+    equal_single_bits(unbox_single(lhs), unbox_single(rhs))
 }
 
 fn equal_double(lhs: u64, rhs: u64) -> bool {

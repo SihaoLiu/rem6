@@ -1,10 +1,11 @@
 use crate::{
     float,
     vector_group::{
-        read_register_group, write_register_group, VectorBinaryPlan, MAX_VECTOR_GROUP_BYTES,
+        read_register_group, valid_register_group, write_register_group, VectorBinaryPlan,
+        MAX_VECTOR_GROUP_BYTES,
     },
     FloatRegister, RiscvFloatRoundingMode, RiscvHartState, RiscvVectorFloatInstruction,
-    VectorRegister,
+    VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 
 pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatInstruction) -> bool {
@@ -34,6 +35,12 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
             execute_minmax_vf(hart, vd, fs1, vs2, FloatMinMaxOp::Max)
         }
         RiscvVectorFloatInstruction::SqrtV { vd, vs2 } => execute_sqrt_v(hart, vd, vs2),
+        RiscvVectorFloatInstruction::MaskEqualVv { vd, vs1, vs2 } => {
+            execute_mask_equal_vv(hart, vd, vs1, vs2)
+        }
+        RiscvVectorFloatInstruction::MaskEqualVf { vd, fs1, vs2 } => {
+            execute_mask_equal_vf(hart, vd, fs1, vs2)
+        }
         RiscvVectorFloatInstruction::ReverseSubVf { vd, fs1, vs2 } => {
             execute_arithmetic_vf(hart, vd, fs1, vs2, FloatBinaryOp::ReverseSub)
         }
@@ -83,6 +90,41 @@ enum FloatSignInjectOp {
 enum FloatMinMaxOp {
     Min,
     Max,
+}
+
+struct VectorFloatMaskPlan {
+    element_bytes: usize,
+    group_registers: usize,
+    active_elements: usize,
+}
+
+impl VectorFloatMaskPlan {
+    fn new(hart: &RiscvHartState, sources: &[VectorRegister]) -> Option<Self> {
+        let config = hart.vector_config();
+        let element_bytes = config.element_width_bytes()?;
+        let group_registers = config.register_group_registers()?;
+        if sources
+            .iter()
+            .any(|source| !valid_register_group(*source, group_registers))
+        {
+            return None;
+        }
+
+        let active_elements = config.vl() as usize;
+        let active_bytes = active_elements.checked_mul(element_bytes)?;
+        let active_mask_bytes = active_elements.div_ceil(8);
+        if active_bytes > group_registers * RISCV_VECTOR_REGISTER_BYTES
+            || active_mask_bytes > RISCV_VECTOR_REGISTER_BYTES
+        {
+            return None;
+        }
+
+        Some(Self {
+            element_bytes,
+            group_registers,
+            active_elements,
+        })
+    }
 }
 
 fn execute_arithmetic_vv(
@@ -276,6 +318,67 @@ fn execute_sqrt_v(hart: &mut RiscvHartState, vd: VectorRegister, vs2: VectorRegi
     true
 }
 
+fn execute_mask_equal_vv(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs1: VectorRegister,
+    vs2: VectorRegister,
+) -> bool {
+    let Some(plan) = VectorFloatMaskPlan::new(hart, &[vs2, vs1]) else {
+        return false;
+    };
+    if plan.element_bytes != 4 {
+        return false;
+    }
+
+    let left = read_register_group(hart, vs2, plan.group_registers);
+    let right = read_register_group(hart, vs1, plan.group_registers);
+    let mut mask = hart.read_vector(vd);
+    let mut exception_flags = 0;
+    for element_index in 0..plan.active_elements {
+        let offset = element_index * plan.element_bytes;
+        let lhs = u32::from_le_bytes(lane4(&left, offset));
+        let rhs = u32::from_le_bytes(lane4(&right, offset));
+        exception_flags |= float::quiet_compare_exception_flags_single_bits(lhs, rhs);
+        write_mask_bit(&mut mask, element_index, float::equal_single_bits(lhs, rhs));
+    }
+    hart.write_vector(vd, mask);
+    hart.raise_float_exception_flags(exception_flags);
+    true
+}
+
+fn execute_mask_equal_vf(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    fs1: FloatRegister,
+    vs2: VectorRegister,
+) -> bool {
+    let Some(plan) = VectorFloatMaskPlan::new(hart, &[vs2]) else {
+        return false;
+    };
+    if plan.element_bytes != 4 {
+        return false;
+    }
+
+    let left = read_register_group(hart, vs2, plan.group_registers);
+    let scalar = float::single_register_bits(hart.read_float(fs1));
+    let mut mask = hart.read_vector(vd);
+    let mut exception_flags = 0;
+    for element_index in 0..plan.active_elements {
+        let offset = element_index * plan.element_bytes;
+        let lhs = u32::from_le_bytes(lane4(&left, offset));
+        exception_flags |= float::quiet_compare_exception_flags_single_bits(lhs, scalar);
+        write_mask_bit(
+            &mut mask,
+            element_index,
+            float::equal_single_bits(lhs, scalar),
+        );
+    }
+    hart.write_vector(vd, mask);
+    hart.raise_float_exception_flags(exception_flags);
+    true
+}
+
 fn execute_sign_inject_vf(
     hart: &mut RiscvHartState,
     vd: VectorRegister,
@@ -407,6 +510,16 @@ fn value_is_nan(value: u32) -> bool {
 
 fn value_is_positive_infinity(value: u32) -> bool {
     value == 0x7f80_0000
+}
+
+fn write_mask_bit(mask: &mut [u8; RISCV_VECTOR_REGISTER_BYTES], element_index: usize, value: bool) {
+    let byte_index = element_index / 8;
+    let bit = 1_u8 << (element_index % 8);
+    if value {
+        mask[byte_index] |= bit;
+    } else {
+        mask[byte_index] &= !bit;
+    }
 }
 
 fn lane4(bytes: &[u8; MAX_VECTOR_GROUP_BYTES], offset: usize) -> [u8; 4] {
