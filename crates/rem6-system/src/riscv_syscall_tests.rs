@@ -285,7 +285,6 @@ fn linux_table_ignores_gem5_warn_once_startup_syscalls() {
 
     for number in [
         RISCV_LINUX_SCHED_YIELD,
-        RISCV_LINUX_RT_SIGSUSPEND,
         RISCV_LINUX_RT_SIGQUEUEINFO,
         RISCV_LINUX_RT_SIGRETURN,
     ] {

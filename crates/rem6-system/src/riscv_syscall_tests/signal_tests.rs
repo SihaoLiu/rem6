@@ -1018,6 +1018,86 @@ fn linux_table_rt_sigtimedwait_reports_timeout_errors() {
 }
 
 #[test]
+fn linux_table_rt_sigsuspend_reports_sigset_errors() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let signal_set_address = 0x4080;
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RT_SIGSUSPEND,
+                [signal_set_address, 4, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            None,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+
+    let faulting_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        assert_eq!(address, signal_set_address);
+        assert_eq!(bytes, 8);
+        None
+    });
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_RT_SIGSUSPEND,
+                [signal_set_address, 8, 0, 0, 0, 0],
+            ),
+            &mut state,
+            8,
+            Some(&faulting_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert_eq!(state.signal_mask(), 0);
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_rt_sigsuspend_blocks_with_blockable_mask() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let signal_set_address = 0x4090;
+    let requested_mask = (1_u64 << (SIGUSR1 - 1)) | SIGKILL_MASK | SIGSTOP_MASK;
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == signal_set_address && bytes == 8 {
+            Some(requested_mask.to_le_bytes().to_vec())
+        } else {
+            None
+        }
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RT_SIGSUSPEND,
+                [signal_set_address, 8, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Blocked)
+    );
+    assert_eq!(state.signal_mask(), 1_u64 << (SIGUSR1 - 1));
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
 fn linux_table_sigaltstack_queries_sets_and_disables_alt_stack() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);

@@ -387,7 +387,8 @@ updates, empty supplementary `getgroups` reporting and `setgroups` `EPERM`,
 gem5-style advisory success returns for `setrlimit`,
 legacy `getrlimit` and `prlimit64` resource-limit reporting including
 unknown-pid rejection, empty `rt_sigpending` mask reporting,
-no-pending zero-timeout `rt_sigtimedwait`,
+no-pending zero-timeout `rt_sigtimedwait`, `rt_sigsuspend` sigset validation
+and blocking wait,
 futex wait mismatch, zero-timeout wait, wake-bitset count/bitset behavior,
 requeue wake/move behavior, and compare-requeue mismatch handling,
 `umask` state applied to `mkdirat` directory modes and `openat(O_CREAT)`

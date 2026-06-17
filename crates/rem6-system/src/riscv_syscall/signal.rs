@@ -1,8 +1,8 @@
 use super::time::read_timespec64;
 use super::{
-    linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallRequest,
-    RiscvSyscallState, RISCV_LINUX_EAGAIN, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
-    RISCV_LINUX_ENOMEM, RISCV_LINUX_ENOSYS, RISCV_LINUX_ESRCH,
+    linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallOutcome,
+    RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAGAIN, RISCV_LINUX_EFAULT,
+    RISCV_LINUX_EINVAL, RISCV_LINUX_ENOMEM, RISCV_LINUX_ENOSYS, RISCV_LINUX_ESRCH,
 };
 
 pub(super) const RISCV_LINUX_SIGALTSTACK: u64 = 132;
@@ -298,6 +298,27 @@ pub(super) fn syscall_rt_sigpending(
         return Some(linux_error(RISCV_LINUX_EFAULT));
     }
     Some(0)
+}
+
+pub(super) fn syscall_rt_sigsuspend(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+) -> Option<RiscvSyscallOutcome> {
+    if request.argument(1) != RISCV_LINUX_SIGSET_BYTES {
+        return Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL),
+        });
+    }
+
+    let guest_memory_reader = guest_memory_reader?;
+    let Some(mask) = read_signal_mask(guest_memory_reader, request.argument(0)) else {
+        return Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT),
+        });
+    };
+    state.set_signal_mask(blockable_signal_mask(mask));
+    Some(RiscvSyscallOutcome::Blocked)
 }
 
 pub(super) fn syscall_sigaltstack(
