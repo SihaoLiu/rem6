@@ -34,6 +34,7 @@ mod guest_write;
 mod hwprobe;
 mod identity;
 mod ioctl;
+mod iovec;
 mod limits;
 mod link;
 mod links;
@@ -43,6 +44,7 @@ mod open;
 mod permissions;
 mod pipe;
 mod poll;
+mod positioned;
 mod process;
 mod random;
 mod readv;
@@ -153,7 +155,7 @@ use process::{
     RISCV_LINUX_PRCTL, RISCV_LINUX_SETPGID, RISCV_LINUX_SETSID,
 };
 use random::{invalid_getrandom_flags, syscall_getrandom, RISCV_LINUX_GETRANDOM};
-use readv::{syscall_readv, RISCV_LINUX_READV};
+use readv::{syscall_preadv, syscall_readv, RISCV_LINUX_PREADV, RISCV_LINUX_READV};
 use rename::{syscall_renameat, syscall_renameat2, RISCV_LINUX_RENAMEAT, RISCV_LINUX_RENAMEAT2};
 pub use request::RiscvSyscallRequest;
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
@@ -193,7 +195,7 @@ use wait4::{
     syscall_getrusage, syscall_process_group_id, syscall_wait4, RISCV_LINUX_GETRUSAGE,
     RISCV_LINUX_WAIT4,
 };
-use writev::{syscall_writev, RISCV_LINUX_WRITEV};
+use writev::{syscall_pwritev, syscall_writev, RISCV_LINUX_PWRITEV, RISCV_LINUX_WRITEV};
 
 const RISCV_LINUX_GETCWD: u64 = 17;
 const RISCV_LINUX_OPENAT: u64 = 56;
@@ -1256,6 +1258,11 @@ impl RiscvSyscallTable {
                     value: syscall_pread64(request, state, guest_memory),
                 })
             }
+            RISCV_LINUX_PREADV => guest_memory_reader.and_then(|reader| {
+                guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
+                    value: syscall_preadv(request, state, reader, writer),
+                })
+            }),
             RISCV_LINUX_WRITE => guest_memory_reader.map(|guest_memory| {
                 match syscall_write(request, state, tick, guest_memory) {
                     Some(value) => RiscvSyscallOutcome::Return { value },
@@ -1265,6 +1272,11 @@ impl RiscvSyscallTable {
             RISCV_LINUX_PWRITE64 => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_pwrite64(request, state, tick, guest_memory),
+                })
+            }
+            RISCV_LINUX_PWRITEV => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_pwritev(request, state, tick, guest_memory),
                 })
             }
             RISCV_LINUX_SENDFILE => {

@@ -2,6 +2,8 @@ use super::*;
 
 const RISCV_LINUX_PREAD64_FOR_TEST: u64 = 67;
 const RISCV_LINUX_PWRITE64_FOR_TEST: u64 = 68;
+const RISCV_LINUX_PREADV_FOR_TEST: u64 = 69;
+const RISCV_LINUX_PWRITEV_FOR_TEST: u64 = 70;
 const RISCV_LINUX_O_APPEND_FOR_TEST: u64 = 0o2000;
 const RISCV_LINUX_O_RDWR_FOR_TEST: u64 = 2;
 
@@ -459,6 +461,80 @@ fn linux_table_pwrite64_zero_fills_gaps_and_rejects_dense_limit() {
         collect_guest_writes(&writes_in_range(&writes, 0x9200, 6), 0x9200, 6),
         b"ab\0\0\0Z"
     );
+}
+
+#[test]
+fn linux_table_positional_vector_io_uses_split_offset_arguments() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"/data.bin", b"abcdef");
+    let read_iov = rv64_iovec(0x9200, 2);
+    let write_iov = rv64_iovec(0x9300, 1);
+    let reader = memory_reader(vec![
+        (0x9000, b"/data.bin\0".to_vec()),
+        (0x9100, read_iov.to_vec()),
+        (0x9110, write_iov.to_vec()),
+        (0x9300, b"Z".to_vec()),
+    ]);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer = recording_writer(std::sync::Arc::clone(&writes));
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPENAT,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_O_RDWR_FOR_TEST,
+                    0,
+                    0,
+                    0
+                ],
+            ),
+            &mut state,
+            1,
+            Some(&reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_PREADV_FOR_TEST, [3, 0x9100, 1, 0, 1, 0],),
+            &mut state,
+            2,
+            Some(&reader),
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(writes.lock().unwrap().is_empty());
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_PWRITEV_FOR_TEST,
+                [3, 0x9110, 1, 0, 1, 0],
+            ),
+            &mut state,
+            3,
+            Some(&reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFBIG)
+        })
+    );
+    assert!(state.guest_writes().is_empty());
+}
+
+fn rv64_iovec(base: u64, len: u64) -> [u8; 16] {
+    let mut bytes = [0; 16];
+    bytes[..8].copy_from_slice(&base.to_le_bytes());
+    bytes[8..].copy_from_slice(&len.to_le_bytes());
+    bytes
 }
 
 fn memory_reader(regions: Vec<(u64, Vec<u8>)>) -> RiscvGuestMemoryReader {

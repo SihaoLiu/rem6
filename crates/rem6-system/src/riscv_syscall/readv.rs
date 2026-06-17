@@ -1,20 +1,16 @@
 use super::{
     eventfd::{eventfd_read_bytes, RiscvGuestEventFdRead},
-    guest_fd_argument, linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter,
-    RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF,
-    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_WRONLY,
+    guest_fd_argument,
+    iovec::{read_iovecs, write_iovecs, RISCV_LINUX_IOV_MAX},
+    linux_error,
+    positioned::riscv_linux_split_offset,
+    RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState,
+    RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
+    RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_WRONLY,
 };
 
 pub(super) const RISCV_LINUX_READV: u64 = 65;
-
-const RISCV_LINUX_IOV_BYTES: usize = 16;
-const RISCV_LINUX_IOV_MAX: u64 = 1024;
-
-#[derive(Clone, Copy)]
-struct RiscvIovec {
-    address: u64,
-    len: u64,
-}
+pub(super) const RISCV_LINUX_PREADV: u64 = 69;
 
 pub(super) fn syscall_readv(
     request: RiscvSyscallRequest,
@@ -125,71 +121,58 @@ pub(super) fn syscall_readv(
     Some(read_count)
 }
 
-fn read_iovecs(
-    guest_memory: &RiscvGuestMemoryReader,
-    iov_base: u64,
-    iov_count: u64,
-) -> Result<(Vec<RiscvIovec>, u64), u64> {
-    let mut iovecs = Vec::with_capacity(iov_count as usize);
-    let mut total = 0_u64;
-    for index in 0..iov_count {
-        let Some(iov_address) = iov_base.checked_add(index * RISCV_LINUX_IOV_BYTES as u64) else {
-            return Err(RISCV_LINUX_EFAULT);
-        };
-        let Some(iov) = read_guest_exact(guest_memory, iov_address, RISCV_LINUX_IOV_BYTES) else {
-            return Err(RISCV_LINUX_EFAULT);
-        };
-        let data_address = le_u64(&iov, 0);
-        let data_len = le_u64(&iov, 8);
-        total = total.checked_add(data_len).ok_or(RISCV_LINUX_EINVAL)?;
-        iovecs.push(RiscvIovec {
-            address: data_address,
-            len: data_len,
-        });
+pub(super) fn syscall_preadv(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let offset = riscv_linux_split_offset(request.argument(3), request.argument(4));
+    if (offset as i64) < 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
     }
-    Ok((iovecs, total))
-}
-
-fn write_iovecs(
-    guest_memory: &RiscvGuestMemoryWriter,
-    iovecs: &[RiscvIovec],
-    bytes: &[u8],
-) -> bool {
-    let mut offset = 0usize;
-    for iovec in iovecs {
-        if offset == bytes.len() {
-            return true;
-        }
-        let Ok(iov_len) = usize::try_from(iovec.len) else {
-            return false;
-        };
-        if iov_len == 0 {
-            continue;
-        }
-        let chunk_len = iov_len.min(bytes.len() - offset);
-        if !guest_memory.write(iovec.address, &bytes[offset..offset + chunk_len]) {
-            return false;
-        }
-        offset += chunk_len;
+    let Some(fd) = guest_fd_argument(request.argument(0)) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    let Ok(status_flags) = state.guest_fds.status_flags(fd) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    if status_flags.bits() & (RISCV_LINUX_O_ACCMODE as u32) == RISCV_LINUX_O_WRONLY as u32 {
+        return linux_error(RISCV_LINUX_EBADF);
     }
-    offset == bytes.len()
-}
-
-fn read_guest_exact(
-    guest_memory: &RiscvGuestMemoryReader,
-    address: u64,
-    len: usize,
-) -> Option<Vec<u8>> {
-    if len == 0 {
-        return Some(Vec::new());
+    match state.guest_file_fd_is_seekable(fd) {
+        Ok(true) => {}
+        Ok(false) => return linux_error(RISCV_LINUX_ESPIPE),
+        Err(_) => return linux_error(RISCV_LINUX_EBADF),
     }
-    guest_memory
-        .read(address, len)
-        .filter(|bytes| bytes.len() == len)
-}
 
-fn le_u64(bytes: &[u8], offset: usize) -> u64 {
-    let mut raw = [0; 8];
-    raw.copy_from_slice(&bytes[offset..offset + 8]);
-    u64::from_le_bytes(raw)
+    let iov_count = request.argument(2);
+    if iov_count > RISCV_LINUX_IOV_MAX {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if iov_count == 0 {
+        return 0;
+    }
+    let (iovecs, total) = match read_iovecs(guest_memory_reader, request.argument(1), iov_count) {
+        Ok(iovecs) => iovecs,
+        Err(errno) => return linux_error(errno),
+    };
+    if total == 0 {
+        return 0;
+    }
+    let Ok(total_bytes) = usize::try_from(total) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    let bytes = match state.guest_file_slice_at(fd, offset, total_bytes) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return linux_error(RISCV_LINUX_ESPIPE),
+        Err(_) => return linux_error(RISCV_LINUX_EBADF),
+    };
+    if bytes.is_empty() {
+        return 0;
+    }
+    if !write_iovecs(guest_memory_writer, &iovecs, &bytes) {
+        return linux_error(RISCV_LINUX_EFAULT);
+    }
+    bytes.len() as u64
 }

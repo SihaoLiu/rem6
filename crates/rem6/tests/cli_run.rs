@@ -40,6 +40,8 @@ mod riscv_se_permissions;
 mod riscv_se_proc;
 #[path = "cli_run/riscv_se_process.rs"]
 mod riscv_se_process;
+#[path = "cli_run/riscv_se_pvec.rs"]
+mod riscv_se_pvec;
 #[path = "cli_run/riscv_se_rename.rs"]
 mod riscv_se_rename;
 #[path = "cli_run/riscv_se_resource.rs"]
