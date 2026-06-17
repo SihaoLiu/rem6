@@ -207,11 +207,13 @@ fn csr_document(xlen: RiscvGdbXlen) -> Option<RiscvGdbTargetDocument> {
     for (index, register) in RV64_CSR_REGISTERS.iter().enumerate() {
         content.push_str(&format!(
             "  <reg name=\"{}\" bitsize=\"{}\"",
-            register,
+            register.name,
             xlen.bits(),
         ));
         if index == 0 {
             content.push_str(&format!(" regnum=\"{}\"", xlen.csr_register_base()));
+        } else if let Some(regnum) = register.regnum {
+            content.push_str(&format!(" regnum=\"{regnum}\""));
         }
         content.push_str("/>\n");
     }
@@ -323,8 +325,39 @@ const VECTOR_REGISTERS: &[&str] = &[
     "v28", "v29", "v30", "v31",
 ];
 
-const RV64_CSR_REGISTERS: &[&str] = &[
-    "sstatus", "stvec", "sscratch", "sepc", "scause", "stval", "satp", "mstatus", "medeleg",
-    "mideleg", "mie", "mtvec", "mscratch", "mepc", "mcause", "mtval", "mip", "vxsat", "vxrm",
-    "vcsr",
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CsrRegister {
+    name: &'static str,
+    regnum: Option<u8>,
+}
+
+impl CsrRegister {
+    const fn new(name: &'static str, regnum: Option<u8>) -> Self {
+        Self { name, regnum }
+    }
+}
+
+const RV64_CSR_REGISTERS: &[CsrRegister] = &[
+    CsrRegister::new("sstatus", None),
+    CsrRegister::new("stvec", None),
+    CsrRegister::new("sscratch", None),
+    CsrRegister::new("sepc", None),
+    CsrRegister::new("scause", None),
+    CsrRegister::new("stval", None),
+    CsrRegister::new("satp", None),
+    CsrRegister::new("mstatus", None),
+    CsrRegister::new("medeleg", None),
+    CsrRegister::new("mideleg", None),
+    CsrRegister::new("mie", None),
+    CsrRegister::new("mtvec", None),
+    CsrRegister::new("mscratch", None),
+    CsrRegister::new("mepc", None),
+    CsrRegister::new("mcause", None),
+    CsrRegister::new("mtval", None),
+    CsrRegister::new("mip", None),
+    CsrRegister::new("vxsat", None),
+    CsrRegister::new("vxrm", None),
+    CsrRegister::new("vcsr", None),
+    CsrRegister::new("sie", Some(122)),
+    CsrRegister::new("sip", Some(123)),
 ];

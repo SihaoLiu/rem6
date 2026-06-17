@@ -88,7 +88,7 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_rv64d_float_registers() {
         )
         .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(122));
+    assert_eq!(registers.len(), rv64_register_hex_offset(124));
     assert_eq!(&registers[rv64_register_hex_range(33)], b"8877665544332211");
     assert_eq!(&registers[rv64_register_hex_range(64)], b"1032547698badcfe");
 }
@@ -258,11 +258,11 @@ fn riscv_gdb_remote_register_write_reports_invalid_requests() {
             RiscvGdbXlen::Rv64,
             &mut hart,
             &GdbRemoteCommand::WriteRegister {
-                number: 122,
+                number: 124,
                 bytes: vec![0; 8],
             },
         ),
-        Err(RiscvGdbRegisterWriteError::UnsupportedRegister { number: 122 }),
+        Err(RiscvGdbRegisterWriteError::UnsupportedRegister { number: 124 }),
     );
 
     assert_eq!(
@@ -272,7 +272,7 @@ fn riscv_gdb_remote_register_write_reports_invalid_requests() {
             &GdbRemoteCommand::WriteRegisters { bytes: vec![0; 8] },
         ),
         Err(RiscvGdbRegisterWriteError::InvalidRegisterSetBytes {
-            expected: 33 * 4 + 32 * 8 + 4 * 4 + 20 * 4 + 32 * 16,
+            expected: 33 * 4 + 32 * 8 + 4 * 4 + 20 * 4 + 32 * 16 + 2 * 4,
             actual: 8,
         }),
     );
@@ -326,17 +326,17 @@ fn riscv_gdb_remote_packet_handler_reports_writeback_errors() {
             RiscvGdbXlen::Rv64,
             &mut session,
             &mut hart,
-            &GdbRemotePacket::new(b"P7a=0000000000000000".to_vec()).unwrap(),
+            &GdbRemotePacket::new(b"P7c=0000000000000000".to_vec()).unwrap(),
         ),
         Err(RiscvGdbRemotePacketError::RegisterWrite(
-            RiscvGdbRegisterWriteError::UnsupportedRegister { number: 122 },
+            RiscvGdbRegisterWriteError::UnsupportedRegister { number: 124 },
         )),
     );
     assert_eq!(hart.pc(), 0x1000);
     assert_eq!(
         packet_payload(
             session
-                .handle_packet(&GdbRemotePacket::new(b"p7a".to_vec()).unwrap())
+                .handle_packet(&GdbRemotePacket::new(b"p7c".to_vec()).unwrap())
                 .unwrap(),
         ),
         b"E01",
@@ -991,6 +991,9 @@ fn riscv_gdb_remote_core_packet_handler_reads_and_writes_advertised_rv64_csr_reg
     core.set_supervisor_trap_vector(0x0123_4567_89ab_cdef);
     core.set_supervisor_scratch(0x0102_0304_0506_0708);
     core.set_translation_satp(0x1111_2222_3333_4444);
+    core.set_machine_trap_csr(RiscvMachineTrapCsr::Mideleg, 0x0000_0000_0000_0aaa);
+    core.set_machine_interrupt_enable(0x1010_2020_3030_4040);
+    core.set_machine_interrupt_pending(0x1111_3333_5555_7777);
     core.set_machine_trap_csr(RiscvMachineTrapCsr::Mscratch, 0x1111_3333_5555_7777);
     let mut session = riscv_gdb_remote_session_from_core(RiscvGdbXlen::Rv64, &core);
 
@@ -1089,6 +1092,56 @@ fn riscv_gdb_remote_core_packet_handler_reads_and_writes_advertised_rv64_csr_reg
         ),
         b"8877665544332211",
     );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"p7a".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"0000000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"P7a=8808000000000000".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(core.machine_interrupt_enable(), 0x1010_2020_3030_48c8);
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"p7b".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"2202000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"P7b=aa0a000000000000".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(core.machine_interrupt_pending(), 0x1111_3333_5555_7fff);
 }
 
 #[test]
@@ -1327,17 +1380,17 @@ fn riscv_gdb_remote_core_packet_handler_rejects_invalid_write_without_session_or
             RiscvGdbXlen::Rv64,
             &mut session,
             &core,
-            &GdbRemotePacket::new(b"P7a=0000000000000000".to_vec()).unwrap(),
+            &GdbRemotePacket::new(b"P7c=0000000000000000".to_vec()).unwrap(),
         ),
         Err(RiscvGdbRemotePacketError::RegisterWrite(
-            RiscvGdbRegisterWriteError::UnsupportedRegister { number: 122 },
+            RiscvGdbRegisterWriteError::UnsupportedRegister { number: 124 },
         )),
     );
     assert_eq!(core.pc(), Address::new(0x8000));
     assert_eq!(
         packet_payload(
             session
-                .handle_packet(&GdbRemotePacket::new(b"p7a".to_vec()).unwrap())
+                .handle_packet(&GdbRemotePacket::new(b"p7c".to_vec()).unwrap())
                 .unwrap(),
         ),
         b"E01",
@@ -1872,6 +1925,7 @@ fn rv64_register_hex_offset(number: u64) -> usize {
         66..=69 => (33 * 8) + (32 * 8) + ((number - 66) * 4),
         70..=89 => (33 * 8) + (32 * 8) + (4 * 4) + ((number - 70) * 8),
         90..=122 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + ((number - 90) * 16),
+        123..=124 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
         _ => panic!("unsupported RV64 GDB register number"),
     };
     byte_offset as usize * 2
@@ -1939,6 +1993,8 @@ fn rv64_register_set_write_bytes() -> Vec<u8> {
     for register in 0..32_u8 {
         bytes.extend_from_slice(&vector_bytes(0x40 + register));
     }
+    bytes.extend_from_slice(&0_u64.to_le_bytes());
+    bytes.extend_from_slice(&0_u64.to_le_bytes());
     bytes
 }
 

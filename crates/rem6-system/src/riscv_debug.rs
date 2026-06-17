@@ -30,6 +30,8 @@ const RISCV_GDB_RV64_CSR_REGISTER_BASE: u64 = 70;
 const RISCV_GDB_CSR_REGISTER_COUNT: u8 = 20;
 const RISCV_GDB_VECTOR_REGISTER_BASE: u64 = 90;
 const RISCV_GDB_VECTOR_REGISTER_COUNT: u8 = 32;
+const RISCV_GDB_SUPERVISOR_INTERRUPT_ENABLE_REGISTER: u64 = 122;
+const RISCV_GDB_SUPERVISOR_INTERRUPT_PENDING_REGISTER: u64 = 123;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1014,6 +1016,13 @@ fn write_core_csr_register_value(xlen: RiscvGdbXlen, core: &RiscvCore, number: u
 }
 
 fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegister {
+    if number == RISCV_GDB_SUPERVISOR_INTERRUPT_ENABLE_REGISTER {
+        return RiscvGdbCsrRegister::Interrupt(RiscvInterruptCsr::SupervisorInterruptEnable);
+    }
+    if number == RISCV_GDB_SUPERVISOR_INTERRUPT_PENDING_REGISTER {
+        return RiscvGdbCsrRegister::Interrupt(RiscvInterruptCsr::SupervisorInterruptPending);
+    }
+
     match number - riscv_gdb_csr_register_base(xlen) {
         0 => RiscvGdbCsrRegister::Status(RiscvStatusCsr::Sstatus),
         1 => RiscvGdbCsrRegister::SupervisorTrap(RiscvSupervisorTrapCsr::Stvec),
@@ -1179,6 +1188,10 @@ fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
             RISCV_GDB_VECTOR_REGISTER_BASE
                 ..RISCV_GDB_VECTOR_REGISTER_BASE + u64::from(RISCV_GDB_VECTOR_REGISTER_COUNT),
         )
+        .chain([
+            RISCV_GDB_SUPERVISOR_INTERRUPT_ENABLE_REGISTER,
+            RISCV_GDB_SUPERVISOR_INTERRUPT_PENDING_REGISTER,
+        ])
 }
 
 const fn register_count(_xlen: RiscvGdbXlen) -> usize {
@@ -1189,6 +1202,7 @@ const fn register_count(_xlen: RiscvGdbXlen) -> usize {
         + 1
         + RISCV_GDB_CSR_REGISTER_COUNT as usize
         + RISCV_GDB_VECTOR_REGISTER_COUNT as usize
+        + 2
 }
 
 fn register_set_byte_len(xlen: RiscvGdbXlen) -> usize {
@@ -1233,8 +1247,10 @@ const fn riscv_gdb_csr_register_base(xlen: RiscvGdbXlen) -> u64 {
 }
 
 const fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool {
-    number >= riscv_gdb_csr_register_base(xlen)
-        && number < riscv_gdb_csr_register_base(xlen) + RISCV_GDB_CSR_REGISTER_COUNT as u64
+    (number >= riscv_gdb_csr_register_base(xlen)
+        && number < riscv_gdb_csr_register_base(xlen) + RISCV_GDB_CSR_REGISTER_COUNT as u64)
+        || number == RISCV_GDB_SUPERVISOR_INTERRUPT_ENABLE_REGISTER
+        || number == RISCV_GDB_SUPERVISOR_INTERRUPT_PENDING_REGISTER
 }
 
 fn encode_register_value(xlen: RiscvGdbXlen, number: u64, value: u64) -> Vec<u8> {

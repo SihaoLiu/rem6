@@ -68,6 +68,8 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "  <reg name=\"vxsat\" bitsize=\"64\"/>\n",
             "  <reg name=\"vxrm\" bitsize=\"64\"/>\n",
             "  <reg name=\"vcsr\" bitsize=\"64\"/>\n",
+            "  <reg name=\"sie\" bitsize=\"64\" regnum=\"122\"/>\n",
+            "  <reg name=\"sip\" bitsize=\"64\" regnum=\"123\"/>\n",
             "</feature>\n",
         ),
     );
@@ -76,10 +78,10 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
         vec![
             "sstatus", "stvec", "sscratch", "sepc", "scause", "stval", "satp", "mstatus",
             "medeleg", "mideleg", "mie", "mtvec", "mscratch", "mepc", "mcause", "mtval", "mip",
-            "vxsat", "vxrm", "vcsr",
+            "vxsat", "vxrm", "vcsr", "sie", "sip",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 20);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 22);
 }
 
 #[test]
@@ -304,6 +306,8 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "  <reg name=\"vxsat\" bitsize=\"32\"/>\n",
             "  <reg name=\"vxrm\" bitsize=\"32\"/>\n",
             "  <reg name=\"vcsr\" bitsize=\"32\"/>\n",
+            "  <reg name=\"sie\" bitsize=\"32\" regnum=\"122\"/>\n",
+            "  <reg name=\"sip\" bitsize=\"32\" regnum=\"123\"/>\n",
             "</feature>\n",
         ),
     );
@@ -312,10 +316,10 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
         vec![
             "sstatus", "stvec", "sscratch", "sepc", "scause", "stval", "satp", "mstatus",
             "medeleg", "mideleg", "mie", "mtvec", "mscratch", "mepc", "mcause", "mtval", "mip",
-            "vxsat", "vxrm", "vcsr",
+            "vxsat", "vxrm", "vcsr", "sie", "sip",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"32\"").count(), 20);
+    assert_eq!(csr.matches("bitsize=\"32\"").count(), 22);
 }
 
 #[test]

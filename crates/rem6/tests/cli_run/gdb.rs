@@ -377,6 +377,47 @@ fn rem6_run_gdb_listen_writes_mscratch_before_execution() {
 }
 
 #[test]
+fn rem6_run_gdb_listen_writes_sie_before_execution() {
+    let program = riscv64_program(&[
+        0x1040_22f3, // csrr x5, sie
+        0x0000_0073, // ecall
+    ]);
+    let (child, mut stream) = start_riscv_gdb_run("gdb-listen-sie", program, 40);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P4f=aa0a000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P7a=8808000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p7a"),
+        gdb_response(b"8808000000000000")
+    );
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p5"),
+        gdb_response(b"8808000000000000")
+    );
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x5\":\"0x888\""));
+}
+
+#[test]
 fn rem6_run_gdb_listen_single_steps_before_detach() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
@@ -1606,12 +1647,16 @@ fn rv64_all_register_write_packet(x5: u64, pc: u64) -> Vec<u8> {
     const RV64_FLOAT_REGISTERS: usize = 32;
     const RV64_FLOAT_CSR_AND_PLACEHOLDER_REGISTERS: usize = 4;
     const RV64_CSR_REGISTERS: usize = 20;
+    const RV64_CSR_EXTENSION_REGISTERS: usize = 2;
     const RV64_VECTOR_REGISTERS: usize = 32;
     const RV64_VECTOR_REGISTER_BYTES: usize = 16;
-    const RV64_REGISTER_BYTES: usize =
-        (RV64_INTEGER_AND_PC_REGISTERS + RV64_FLOAT_REGISTERS + RV64_CSR_REGISTERS) * 8
-            + RV64_FLOAT_CSR_AND_PLACEHOLDER_REGISTERS * 4
-            + RV64_VECTOR_REGISTERS * RV64_VECTOR_REGISTER_BYTES;
+    const RV64_REGISTER_BYTES: usize = (RV64_INTEGER_AND_PC_REGISTERS
+        + RV64_FLOAT_REGISTERS
+        + RV64_CSR_REGISTERS
+        + RV64_CSR_EXTENSION_REGISTERS)
+        * 8
+        + RV64_FLOAT_CSR_AND_PLACEHOLDER_REGISTERS * 4
+        + RV64_VECTOR_REGISTERS * RV64_VECTOR_REGISTER_BYTES;
     const X5_OFFSET: usize = 5 * 8;
     const PC_OFFSET: usize = 32 * 8;
     const VECTOR_BASE_OFFSET: usize = RV64_INTEGER_AND_PC_REGISTERS * 8
