@@ -391,7 +391,7 @@ impl RiscvSbiFirmware {
         };
         match target.hart_run_state() {
             RiscvHartRunState::Stopped => {}
-            RiscvHartRunState::Started => {
+            RiscvHartRunState::Started | RiscvHartRunState::Suspended => {
                 return RiscvSbiOutcome::already_available();
             }
             _ => return RiscvSbiOutcome::invalid_param(),
