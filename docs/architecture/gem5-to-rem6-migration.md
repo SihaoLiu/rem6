@@ -395,8 +395,9 @@ invalid hart mask, ASID-width, VMID-width, and range validation, plus HSM
 probe, `hart_get_status`, `hart_start`
 secondary-hart `START_PENDING` reporting before the scheduled entry event,
 secondary-hart release with supervisor entry state, `satp=0`, `sstatus.SIE=0`,
-`a0=hartid`, and `a1=opaque`, current-hart `hart_stop` as a no-return stop
-that does not write `sbiret`, `STOP_PENDING` reporting until the scheduled stop
+`a0=hartid`, and `a1=opaque`, `hart_start` already-started `-6` and suspended
+target `-3` error boundaries, current-hart `hart_stop` as a no-return stop that
+does not write `sbiret`, `STOP_PENDING` reporting until the scheduled stop
 event completes, retentive current-hart `hart_suspend` through
 `SUSPEND_PENDING` until the scheduled suspend event reaches the CPU execution
 gate, default non-retentive current-hart `hart_suspend` reporting

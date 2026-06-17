@@ -711,18 +711,57 @@ fn hart_start_reports_already_available_for_started_target() {
 }
 
 #[test]
-fn hart_start_reports_already_available_for_suspended_target() {
+fn hart_start_rejects_suspended_target() {
     let (_scheduler, _transport, firmware, _core0, core1) = registered_hsm_pair();
     core1.set_hart_suspended();
 
     let start = firmware.hart_start(hsm_request(SBI_HSM_HART_START, 1, 0x9000, 0x55));
 
-    assert_eq!(start, RiscvSbiOutcome::already_available());
+    assert_eq!(start, RiscvSbiOutcome::invalid_param());
     assert_eq!(
         firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 1, 0, 0)),
         RiscvSbiOutcome::success(SBI_HSM_HART_SUSPENDED)
     );
     assert_eq!(core1.pc(), Address::new(0x8800));
+}
+
+#[test]
+fn hart_start_rejects_pending_target_states() {
+    for (name, set_state, expected_status) in [
+        (
+            "start-pending",
+            RiscvCore::set_hart_start_pending as fn(&RiscvCore),
+            TEST_HART_START_PENDING,
+        ),
+        (
+            "stop-pending",
+            RiscvCore::set_hart_stop_pending as fn(&RiscvCore),
+            TEST_HART_STOP_PENDING,
+        ),
+        (
+            "suspend-pending",
+            RiscvCore::set_hart_suspend_pending as fn(&RiscvCore),
+            TEST_HART_SUSPEND_PENDING,
+        ),
+        (
+            "resume-pending",
+            RiscvCore::set_hart_resume_pending as fn(&RiscvCore),
+            TEST_HART_RESUME_PENDING,
+        ),
+    ] {
+        let (_scheduler, _transport, firmware, _core0, core1) = registered_hsm_pair();
+        set_state(&core1);
+
+        let start = firmware.hart_start(hsm_request(SBI_HSM_HART_START, 1, 0x9000, 0x55));
+
+        assert_eq!(start, RiscvSbiOutcome::invalid_param(), "{name}");
+        assert_eq!(
+            firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 1, 0, 0)),
+            RiscvSbiOutcome::success(expected_status),
+            "{name}",
+        );
+        assert_eq!(core1.pc(), Address::new(0x8800), "{name}");
+    }
 }
 
 #[test]
