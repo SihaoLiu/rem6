@@ -317,6 +317,7 @@ tool-detected, and broad workload coverage is not present.
 
 - [x] User-mode ecalls reach `RiscvSyscallTable`.
 - [x] Startup stack, argv/envp/auxv, `brk`, `mmap`, in-place `mremap` slice, `mprotect`, mapped-page `mincore` present-vector reporting, `madvise` known-advice and mapped-range validation, `msync` flags and mapped-range validation, `sync`/`fsync`/`fdatasync`/`syncfs` validation, `mlock`/`munlock` `mmap`/`brk` range validation, `mlockall` flag validation, single-node `mbind` mapped-range and nodemask validation slice, stdio, file create/truncate/`ftruncate`/read/write/append, positioned I/O, vector I/O, positional vector I/O, pipe `ioctl(FIONREAD)` unread-byte reporting, `sendfile`, `statx`, `faccessat2`, `utimensat`, advisory `flock`, `fcntl` byte-range advisory lock no-conflict slices, and `fchownat`/`fchown` validation, `statfs`/`fstatfs`, `sysinfo`, value-mode `riscv_hwprobe` base key reporting, `personality` query/set state, `ppoll`, `pselect6` fd-set readiness slices, `eventfd2` counter/semaphore/nonblock/close-on-exec/poll slices, `epoll_create1`/`epoll_ctl`/`epoll_pwait` eventfd-readiness slices, `sched_getscheduler`, `sched_getparam`, `sched_get_priority_max/min`, `sched_rr_get_interval`, single-word `sched_setaffinity`/`sched_getaffinity`, single CPU/node `getcpu`, single-process `membarrier` slice, current-thread `rseq` register/unregister with guest struct initialization and validation, `set_tid_address` exit clear-child-tid write and futex wake behavior, `set_robust_list` head-size validation, current-thread `get_robust_list`, unknown-thread rejection, and guest-write fault handling, zero-duration `nanosleep` and `clock_nanosleep` validation, `clock_getres`, `CLOCK_TAI` `clock_gettime`, `kill(..., 0)`, `tkill(..., 0)`, and `tgkill(..., 0)` existence checks, current-process scoped process-group/session `setpgid`/`getpgid`/`getsid`/`setsid` slices, `getresuid`/`getresgid` identity triples, current-credential `setresuid`/`setresgid` validation and identity updates, current-credential `setuid`/`setgid` validation and effective-identity updates, empty supplementary `getgroups` reporting and `setgroups` `EPERM`, gem5-style advisory `setrlimit` success returns, legacy `getrlimit` stack/data/NPROC limits, `prlimit64` stack/data and unknown-pid rejection, `sigaltstack` query/set/disable state, basic `rt_sigaction`/`rt_sigprocmask`, empty `rt_sigpending` mask reporting, no-pending zero-timeout `rt_sigtimedwait`, futex mismatch, zero-timeout wait, wake-bitset count/bitset behavior, requeue wake/move behavior, and compare-requeue mismatch handling, `close_range` close and `CLOSE_RANGE_CLOEXEC` slices, `openat2` `open_how` parsing, mode validation, and close-on-exec slice, `umask` masking for `mkdirat` directories and `openat(O_CREAT)` regular files, time, cwd, `chdir`/`fchdir`, random, resource, and wait slices have tests.
+  Current-process `getpriority`/`setpriority` raw priority reporting and nice-state updates are covered by scheduler table tests and a static raw CLI/qemu smoke.
 - [x] Unknown syscall returns `ENOSYS` and records a typed diagnostic.
 - [x] Static no-libc and newlib smoke binaries can be generated and compared with qemu when tools exist; shared CLI smoke support detects RISC-V tools from `PATH` and the local module toolchain path, tool-detected newlib directory-open and `O_NOCTTY`/`O_NOFOLLOW` coverage runs through the legacy `open` syscall and registered guest files, while `/proc/self/exe` readlink and pipe roundtrip coverage run through direct ecalls.
 - [x] Linux at-family hard-link, `renameat`, `renameat2` flags=0, unlink, `mkdirat`, `unlinkat` with `AT_REMOVEDIR`, and registered-directory `getdents64` syscalls mutate or expose registered guest files and directories and have raw smoke evidence. Current qemu-riscv64 reports `ENOSYS` for raw `renameat`, so that smoke test records the qemu boundary and verifies rem6 registered-file rename behavior directly.
@@ -341,7 +342,9 @@ actual ecall read-to-exit smoke slices, `epoll_create1`, `epoll_ctl`, and
 `epoll_pwait` eventfd-readiness slices with direct ecall smoke coverage,
 `sched_getscheduler`, `sched_getparam`,
 `sched_get_priority_max/min`, `sched_rr_get_interval`,
-single-word `sched_setaffinity` and `sched_getaffinity`, `statx` basic stat buffer writes,
+single-word `sched_setaffinity` and `sched_getaffinity`, current-process
+`getpriority`/`setpriority` raw priority reporting and nice-state updates,
+`statx` basic stat buffer writes,
 `faccessat2` registered-path, missing-path, directory-fd relative path,
 `AT_SYMLINK_NOFOLLOW`, flag-validation, and `AT_EMPTY_PATH` fd access checks,
 `utimensat` registered-path, missing-path, `AT_EMPTY_PATH` fd,
@@ -435,9 +438,11 @@ copying, output reads, and unchanged input fd offsets;
 a static raw `flock` program that matches qemu for advisory lock, unlock, and
 bad-fd returns; a static raw `fcntl` byte-range advisory lock program that
 matches qemu for no-conflict reporting, lock/unlock success, bad lock type, and
-bad-fd returns; and a static raw `fchownat`/`fchown` program that matches qemu
+bad-fd returns; a static raw `fchownat`/`fchown` program that matches qemu
 for no-op owner changes, missing paths, bad flags, fd-based ownership calls,
-`AT_EMPTY_PATH`, and bad fds.
+`AT_EMPTY_PATH`, and bad fds; and a static raw `getpriority`/`setpriority`
+program that matches qemu for deterministic current-process raw priority and
+invalid target-class returns.
 
 **Not migrated:** Broad Linux SE parity, process/thread lifecycle, broad SBI
 timer/IPI/reset power-state behavior, remaining HSM wake semantics beyond the

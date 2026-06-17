@@ -7,6 +7,9 @@ const RISCV_LINUX_SCHED_GETAFFINITY_FOR_TEST: u64 = 123;
 const RISCV_LINUX_SCHED_GET_PRIORITY_MAX_FOR_TEST: u64 = 125;
 const RISCV_LINUX_SCHED_GET_PRIORITY_MIN_FOR_TEST: u64 = 126;
 const RISCV_LINUX_SCHED_RR_GET_INTERVAL_FOR_TEST: u64 = 127;
+const RISCV_LINUX_SETPRIORITY_FOR_TEST: u64 = 140;
+const RISCV_LINUX_GETPRIORITY_FOR_TEST: u64 = 141;
+const RISCV_LINUX_EACCES_FOR_TEST: u64 = 13;
 const RISCV_LINUX_ESRCH_FOR_TEST: u64 = 3;
 const RISCV_LINUX_SCHED_OTHER_FOR_TEST: u64 = 0;
 const RISCV_LINUX_SCHED_FIFO_FOR_TEST: u64 = 1;
@@ -184,6 +187,137 @@ fn linux_table_sched_get_priority_limits_reject_invalid_policy() {
             ),
             Some(RiscvSyscallOutcome::Return {
                 value: linux_error(RISCV_LINUX_EINVAL)
+            })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_process_priority_uses_raw_kernel_encoding() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_GETPRIORITY_FOR_TEST, [0, 0, 0, 0, 0, 0],),
+            &mut state,
+            10,
+            None,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 20 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_GETPRIORITY_FOR_TEST,
+                [0, 41, 0, 0, 0, 0],
+            ),
+            &mut state,
+            11,
+            None,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 20 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_SETPRIORITY_FOR_TEST, [0, 0, 7, 0, 0, 0],),
+            &mut state,
+            12,
+            None,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x800c, RISCV_LINUX_GETPRIORITY_FOR_TEST, [0, 0, 0, 0, 0, 0],),
+            &mut state,
+            13,
+            None,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 13 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8010,
+                RISCV_LINUX_SETPRIORITY_FOR_TEST,
+                [0, 0, 40, 0, 0, 0],
+            ),
+            &mut state,
+            14,
+            None,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8014, RISCV_LINUX_GETPRIORITY_FOR_TEST, [0, 0, 0, 0, 0, 0],),
+            &mut state,
+            15,
+            None,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 1 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_process_priority_reports_linux_errors() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+
+    for (pc, number, arguments, errno) in [
+        (
+            0x8000,
+            RISCV_LINUX_GETPRIORITY_FOR_TEST,
+            [3, 0, 0, 0, 0, 0],
+            RISCV_LINUX_EINVAL,
+        ),
+        (
+            0x8004,
+            RISCV_LINUX_SETPRIORITY_FOR_TEST,
+            [3, 0, 0, 0, 0, 0],
+            RISCV_LINUX_EINVAL,
+        ),
+        (
+            0x8008,
+            RISCV_LINUX_GETPRIORITY_FOR_TEST,
+            [0, 999, 0, 0, 0, 0],
+            RISCV_LINUX_ESRCH_FOR_TEST,
+        ),
+        (
+            0x800c,
+            RISCV_LINUX_SETPRIORITY_FOR_TEST,
+            [0, 999, 0, 0, 0, 0],
+            RISCV_LINUX_ESRCH_FOR_TEST,
+        ),
+        (
+            0x8010,
+            RISCV_LINUX_SETPRIORITY_FOR_TEST,
+            [0, 0, u64::MAX, 0, 0, 0],
+            RISCV_LINUX_EACCES_FOR_TEST,
+        ),
+    ] {
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(pc, number, arguments),
+                &mut state,
+                20,
+                None,
+                None,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(errno)
             })
         );
     }

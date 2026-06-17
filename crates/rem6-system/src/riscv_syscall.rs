@@ -229,6 +229,7 @@ const RISCV_LINUX_E2BIG: u64 = 7;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EAGAIN: u64 = 11;
 const RISCV_LINUX_ENOMEM: u64 = 12;
+const RISCV_LINUX_EACCES: u64 = 13;
 const RISCV_LINUX_EFAULT: u64 = 14;
 const RISCV_LINUX_EBUSY: u64 = 16;
 const RISCV_LINUX_EEXIST: u64 = 17;
@@ -297,6 +298,7 @@ pub struct RiscvSyscallState {
     child_clear_tid: Option<u64>,
     robust_list: RiscvRobustList,
     personality: u32,
+    process_nice: i32,
     guest_fds: GuestFdTable,
     guest_futexes: GuestFutexTable,
     guest_wait: GuestWaitQueue,
@@ -384,6 +386,7 @@ impl RiscvSyscallState {
             child_clear_tid: None,
             robust_list: RiscvRobustList::new(0, 0),
             personality: 0,
+            process_nice: 0,
             guest_fds: linux_standard_guest_fds(),
             guest_futexes: GuestFutexTable::new(),
             guest_wait: GuestWaitQueue::new(current_process_group),
@@ -1539,6 +1542,12 @@ impl RiscvSyscallTable {
                 scheduler::syscall_sched_rr_get_interval(request, state, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
+            scheduler::RISCV_LINUX_SETPRIORITY => Some(RiscvSyscallOutcome::Return {
+                value: scheduler::syscall_setpriority(request, state),
+            }),
+            scheduler::RISCV_LINUX_GETPRIORITY => Some(RiscvSyscallOutcome::Return {
+                value: scheduler::syscall_getpriority(request, state),
+            }),
             RISCV_LINUX_KILL => Some(RiscvSyscallOutcome::Return {
                 value: syscall_kill(request, state, tick),
             }),

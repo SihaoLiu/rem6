@@ -2,8 +2,8 @@ use std::{cmp, mem};
 
 use super::{
     clock::write_riscv_linux_time_pair, linux_error, RiscvGuestMemoryReader,
-    RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EFAULT,
-    RISCV_LINUX_EINVAL, RISCV_LINUX_ESRCH,
+    RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EACCES,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ESRCH,
 };
 
 pub(super) const RISCV_LINUX_SCHED_GETSCHEDULER: u64 = 120;
@@ -13,8 +13,14 @@ pub(super) const RISCV_LINUX_SCHED_GETAFFINITY: u64 = 123;
 pub(super) const RISCV_LINUX_SCHED_GET_PRIORITY_MAX: u64 = 125;
 pub(super) const RISCV_LINUX_SCHED_GET_PRIORITY_MIN: u64 = 126;
 pub(super) const RISCV_LINUX_SCHED_RR_GET_INTERVAL: u64 = 127;
+pub(super) const RISCV_LINUX_SETPRIORITY: u64 = 140;
+pub(super) const RISCV_LINUX_GETPRIORITY: u64 = 141;
 
 const RISCV_LINUX_DEFAULT_SCHED_PRIORITY: i32 = 0;
+const RISCV_LINUX_NICE_MIN: i32 = -20;
+const RISCV_LINUX_NICE_MAX: i32 = 19;
+const RISCV_LINUX_PRIO_PROCESS: i32 = 0;
+const RISCV_LINUX_RAW_PRIORITY_BASE: i32 = 20;
 const RISCV_LINUX_SCHED_RR_INTERVAL_NANOSECONDS: u64 = 2_000_000;
 const RISCV_LINUX_SCHED_OTHER: i32 = 0;
 const RISCV_LINUX_SCHED_FIFO: i32 = 1;
@@ -55,6 +61,31 @@ pub(super) fn syscall_sched_get_priority_min(request: RiscvSyscallRequest) -> u6
         Some((minimum, _)) => minimum,
         None => linux_error(RISCV_LINUX_EINVAL),
     }
+}
+
+pub(super) fn syscall_getpriority(request: RiscvSyscallRequest, state: &RiscvSyscallState) -> u64 {
+    match priority_target(request, state) {
+        Ok(()) => state.raw_linux_priority(),
+        Err(errno) => linux_error(errno),
+    }
+}
+
+pub(super) fn syscall_setpriority(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+) -> u64 {
+    if let Err(errno) = priority_target(request, state) {
+        return linux_error(errno);
+    }
+
+    let requested_nice =
+        linux_int_argument(request.argument(2)).clamp(RISCV_LINUX_NICE_MIN, RISCV_LINUX_NICE_MAX);
+    if requested_nice < state.process_nice() {
+        return linux_error(RISCV_LINUX_EACCES);
+    }
+
+    state.set_process_nice(requested_nice);
+    0
 }
 
 pub(super) fn syscall_sched_rr_get_interval(
@@ -165,6 +196,37 @@ pub(super) fn syscall_sched_getaffinity(
     }
 
     Some(written_bytes)
+}
+
+impl RiscvSyscallState {
+    fn process_nice(&self) -> i32 {
+        self.process_nice
+    }
+
+    fn raw_linux_priority(&self) -> u64 {
+        (RISCV_LINUX_RAW_PRIORITY_BASE - self.process_nice) as u64
+    }
+
+    fn set_process_nice(&mut self, process_nice: i32) {
+        self.process_nice = process_nice;
+    }
+}
+
+fn priority_target(request: RiscvSyscallRequest, state: &RiscvSyscallState) -> Result<(), u64> {
+    match linux_int_argument(request.argument(0)) {
+        RISCV_LINUX_PRIO_PROCESS => {
+            let requested_pid = linux_int_argument(request.argument(1));
+            if requested_pid < 0 {
+                return Err(RISCV_LINUX_ESRCH);
+            }
+            if matches_current_process(requested_pid as u64, state) {
+                Ok(())
+            } else {
+                Err(RISCV_LINUX_ESRCH)
+            }
+        }
+        _ => Err(RISCV_LINUX_EINVAL),
+    }
 }
 
 fn matches_current_process(requested_pid: u64, state: &RiscvSyscallState) -> bool {
