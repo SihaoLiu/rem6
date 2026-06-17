@@ -2,7 +2,12 @@ use super::*;
 
 const RISCV_LINUX_MLOCK_FOR_TEST: u64 = 228;
 const RISCV_LINUX_MUNLOCK_FOR_TEST: u64 = 229;
+const RISCV_LINUX_MLOCKALL_FOR_TEST: u64 = 230;
+const RISCV_LINUX_MUNLOCKALL_FOR_TEST: u64 = 231;
 const RISCV_LINUX_ENOMEM_FOR_TEST: u64 = 12;
+const RISCV_LINUX_MCL_CURRENT_FOR_TEST: u64 = 1;
+const RISCV_LINUX_MCL_FUTURE_FOR_TEST: u64 = 2;
+const RISCV_LINUX_MCL_ONFAULT_FOR_TEST: u64 = 4;
 
 #[test]
 fn linux_table_mlock_and_munlock_accept_mmap_backed_unaligned_ranges() {
@@ -161,4 +166,75 @@ fn linux_table_mlock_and_munlock_report_einval_for_overflowing_address_range() {
             })
         );
     }
+}
+
+#[test]
+fn linux_table_mlockall_accepts_supported_lock_modes_and_munlockall() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    for flags in [
+        RISCV_LINUX_MCL_CURRENT_FOR_TEST,
+        RISCV_LINUX_MCL_FUTURE_FOR_TEST,
+        RISCV_LINUX_MCL_CURRENT_FOR_TEST | RISCV_LINUX_MCL_FUTURE_FOR_TEST,
+        RISCV_LINUX_MCL_CURRENT_FOR_TEST | RISCV_LINUX_MCL_ONFAULT_FOR_TEST,
+        RISCV_LINUX_MCL_FUTURE_FOR_TEST | RISCV_LINUX_MCL_ONFAULT_FOR_TEST,
+        RISCV_LINUX_MCL_CURRENT_FOR_TEST
+            | RISCV_LINUX_MCL_FUTURE_FOR_TEST
+            | RISCV_LINUX_MCL_ONFAULT_FOR_TEST,
+        (1_u64 << 32) | RISCV_LINUX_MCL_FUTURE_FOR_TEST,
+    ] {
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8000,
+                    RISCV_LINUX_MLOCKALL_FOR_TEST,
+                    [flags, 0, 0, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 0 })
+        );
+    }
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8020,
+                RISCV_LINUX_MUNLOCKALL_FOR_TEST,
+                [u64::MAX, u64::MAX, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_mlockall_rejects_empty_onfault_only_and_unknown_lock_modes() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    for flags in [
+        0,
+        RISCV_LINUX_MCL_ONFAULT_FOR_TEST,
+        RISCV_LINUX_MCL_CURRENT_FOR_TEST | 0x8,
+        u64::MAX,
+    ] {
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8000,
+                    RISCV_LINUX_MLOCKALL_FOR_TEST,
+                    [flags, 0, 0, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL)
+            })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
 }

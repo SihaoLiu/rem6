@@ -24,6 +24,11 @@ const RISCV_LINUX_MREMAP_MAYMOVE: u64 = 1;
 const RISCV_LINUX_MREMAP_FIXED: u64 = 2;
 const RISCV_LINUX_MREMAP_DONTUNMAP: u64 = 4;
 const RISCV_LINUX_MREMAP_SUPPORTED_FLAGS: u64 = RISCV_LINUX_MREMAP_MAYMOVE;
+const RISCV_LINUX_MCL_CURRENT: u64 = 1;
+const RISCV_LINUX_MCL_FUTURE: u64 = 2;
+const RISCV_LINUX_MCL_ONFAULT: u64 = 4;
+const RISCV_LINUX_MCL_SUPPORTED_FLAGS: u64 =
+    RISCV_LINUX_MCL_CURRENT | RISCV_LINUX_MCL_FUTURE | RISCV_LINUX_MCL_ONFAULT;
 const RISCV_LINUX_MS_ASYNC: u64 = 1;
 const RISCV_LINUX_MS_INVALIDATE: u64 = 2;
 const RISCV_LINUX_MS_SYNC: u64 = 4;
@@ -563,6 +568,26 @@ pub(super) fn syscall_memory_lock_range(
         return linux_error(RISCV_LINUX_ENOMEM);
     }
     0
+}
+
+pub(super) fn syscall_mlockall(flags: u64) -> u64 {
+    if !mlockall_flags_are_valid(flags) {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    0
+}
+
+pub(super) const fn syscall_munlockall() -> u64 {
+    0
+}
+
+fn mlockall_flags_are_valid(flags: u64) -> bool {
+    let flags = u64::from(flags as u32);
+    if flags & !RISCV_LINUX_MCL_SUPPORTED_FLAGS != 0 {
+        return false;
+    }
+    let scoped = flags & (RISCV_LINUX_MCL_CURRENT | RISCV_LINUX_MCL_FUTURE);
+    scoped != 0
 }
 
 pub(super) fn syscall_madvise(request: RiscvSyscallRequest, state: &RiscvSyscallState) -> u64 {

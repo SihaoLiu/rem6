@@ -312,11 +312,7 @@ fn linux_table_ignores_gem5_memory_management_advisory_syscalls() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
 
-    for number in [
-        RISCV_LINUX_MLOCKALL,
-        RISCV_LINUX_MUNLOCKALL,
-        RISCV_LINUX_MBIND,
-    ] {
+    for number in [RISCV_LINUX_MUNLOCKALL, RISCV_LINUX_MBIND] {
         assert_eq!(
             table.handle(
                 RiscvSyscallRequest::new(0x8000, number, [0x4000, 4096, 0, 0, 0, 0]),
