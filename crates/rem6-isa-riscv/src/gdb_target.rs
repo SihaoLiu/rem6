@@ -1,3 +1,5 @@
+use crate::RISCV_VECTOR_REGISTER_BYTES;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvGdbXlen {
     Rv32,
@@ -36,6 +38,13 @@ impl RiscvGdbXlen {
         match self {
             Self::Rv32 => Some("riscv-32bit-fpu.xml"),
             Self::Rv64 => Some("riscv-64bit-fpu.xml"),
+        }
+    }
+
+    const fn vector_annex(self) -> Option<&'static str> {
+        match self {
+            Self::Rv32 => Some("riscv-32bit-vector.xml"),
+            Self::Rv64 => Some("riscv-64bit-vector.xml"),
         }
     }
 }
@@ -79,6 +88,9 @@ impl RiscvGdbTargetDescription {
         if let Some(document) = csr_document(xlen) {
             documents.push(document);
         }
+        if let Some(document) = vector_document(xlen) {
+            documents.push(document);
+        }
 
         Self { xlen, documents }
     }
@@ -117,6 +129,9 @@ fn target_document(xlen: RiscvGdbXlen) -> RiscvGdbTargetDocument {
         content.push_str(&format!("  <xi:include href=\"{annex}\"/>\n"));
     }
     if let Some(annex) = xlen.csr_annex() {
+        content.push_str(&format!("  <xi:include href=\"{annex}\"/>\n"));
+    }
+    if let Some(annex) = xlen.vector_annex() {
         content.push_str(&format!("  <xi:include href=\"{annex}\"/>\n"));
     }
     content.push_str("</target>\n");
@@ -205,6 +220,29 @@ fn csr_document(xlen: RiscvGdbXlen) -> Option<RiscvGdbTargetDocument> {
     Some(RiscvGdbTargetDocument::new(annex, content.into_bytes()))
 }
 
+fn vector_document(xlen: RiscvGdbXlen) -> Option<RiscvGdbTargetDocument> {
+    let annex = xlen.vector_annex()?;
+    let mut content = concat!(
+        "<?xml version=\"1.0\"?>\n",
+        "<!DOCTYPE feature SYSTEM \"gdb-target.dtd\">\n",
+        "<feature name=\"org.gnu.gdb.riscv.vector\">\n",
+    )
+    .to_string();
+    let bits = RISCV_VECTOR_REGISTER_BYTES * 8;
+    for (index, register) in VECTOR_REGISTERS.iter().enumerate() {
+        content.push_str(&format!(
+            "  <reg name=\"{register}\" bitsize=\"{bits}\" type=\"uint128\"",
+        ));
+        if index == 0 {
+            content.push_str(" regnum=\"90\"");
+        }
+        content.push_str("/>\n");
+    }
+    content.push_str("</feature>\n");
+
+    Some(RiscvGdbTargetDocument::new(annex, content.into_bytes()))
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CpuRegister {
     name: &'static str,
@@ -277,6 +315,12 @@ const RV64D_FLOAT_CSR_REGISTERS: &[FloatCsrRegister] = &[
     FloatCsrRegister::new("frm", 67),
     FloatCsrRegister::new("fcsr", 68),
     FloatCsrRegister::new("placeholder", 69),
+];
+
+const VECTOR_REGISTERS: &[&str] = &[
+    "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13", "v14",
+    "v15", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23", "v24", "v25", "v26", "v27",
+    "v28", "v29", "v30", "v31",
 ];
 
 const RV64_CSR_REGISTERS: &[&str] = &[

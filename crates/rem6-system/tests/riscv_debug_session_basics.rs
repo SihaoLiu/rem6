@@ -47,6 +47,7 @@ fn riscv_gdb_remote_session_serves_rv64_target_documents() {
     assert!(target.contains("<xi:include href=\"riscv-64bit-cpu.xml\"/>"));
     assert!(target.contains("<xi:include href=\"riscv-64bit-fpu.xml\"/>"));
     assert!(target.contains("<xi:include href=\"riscv-64bit-csr.xml\"/>"));
+    assert!(target.contains("<xi:include href=\"riscv-64bit-vector.xml\"/>"));
     assert!(!target.contains("riscv-32bit-cpu.xml"));
 
     let cpu = packet_payload(
@@ -72,8 +73,9 @@ fn riscv_gdb_remote_session_serves_rv64_target_documents() {
     );
     let fpu = std::str::from_utf8(&fpu[1..]).unwrap();
     assert!(fpu.contains("<feature name=\"org.gnu.gdb.riscv.fpu\">"));
-    assert!(fpu.contains("<reg name=\"ft0\" bitsize=\"64\" type=\"ieee_double\" regnum=\"33\"/>"));
-    assert!(fpu.contains("<reg name=\"ft11\" bitsize=\"64\" type=\"ieee_double\"/>"));
+    assert!(fpu.contains("<reg name=\"ft0\" bitsize=\"64\" type=\"riscv_double\" regnum=\"33\"/>"));
+    assert!(fpu.contains("<reg name=\"ft11\" bitsize=\"64\" type=\"riscv_double\"/>"));
+    assert!(fpu.contains("<reg name=\"fcsr\" bitsize=\"32\" type=\"int\" regnum=\"68\"/>"));
 
     let csr = packet_payload(
         session
@@ -84,11 +86,26 @@ fn riscv_gdb_remote_session_serves_rv64_target_documents() {
             .unwrap(),
     );
     let csr = std::str::from_utf8(&csr[1..]).unwrap();
-    assert!(csr.contains("<reg name=\"sstatus\" bitsize=\"64\" regnum=\"68\"/>"));
+    assert!(csr.contains("<reg name=\"sstatus\" bitsize=\"64\" regnum=\"70\"/>"));
     assert!(csr.contains("<reg name=\"sscratch\" bitsize=\"64\"/>"));
     assert!(csr.contains("<reg name=\"stval\" bitsize=\"64\"/>"));
     assert!(csr.contains("<reg name=\"satp\" bitsize=\"64\"/>"));
     assert!(csr.contains("<reg name=\"mscratch\" bitsize=\"64\"/>"));
+
+    let vector = packet_payload(
+        session
+            .handle_packet(
+                &GdbRemotePacket::new(
+                    b"qXfer:features:read:riscv-64bit-vector.xml:0,2000".to_vec(),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+    );
+    let vector = std::str::from_utf8(&vector[1..]).unwrap();
+    assert!(vector.contains("<feature name=\"org.gnu.gdb.riscv.vector\">"));
+    assert!(vector.contains("<reg name=\"v0\" bitsize=\"128\" type=\"uint128\" regnum=\"90\"/>"));
+    assert!(vector.contains("<reg name=\"v31\" bitsize=\"128\" type=\"uint128\"/>"));
 }
 
 #[test]
@@ -104,6 +121,9 @@ fn riscv_gdb_remote_session_serves_rv32_target_documents() {
     );
     let target = std::str::from_utf8(&target[1..]).unwrap();
     assert!(target.contains("<xi:include href=\"riscv-32bit-cpu.xml\"/>"));
+    assert!(target.contains("<xi:include href=\"riscv-32bit-fpu.xml\"/>"));
+    assert!(target.contains("<xi:include href=\"riscv-32bit-csr.xml\"/>"));
+    assert!(target.contains("<xi:include href=\"riscv-32bit-vector.xml\"/>"));
     assert!(!target.contains("riscv-64bit-cpu.xml"));
 
     let cpu = packet_payload(
@@ -118,6 +138,21 @@ fn riscv_gdb_remote_session_serves_rv32_target_documents() {
     assert!(cpu.contains("<reg name=\"zero\" bitsize=\"32\" type=\"int\" regnum=\"0\"/>"));
     assert!(cpu.contains("<reg name=\"pc\" bitsize=\"32\" type=\"code_ptr\"/>"));
     assert!(!cpu.contains("bitsize=\"64\""));
+
+    let vector = packet_payload(
+        session
+            .handle_packet(
+                &GdbRemotePacket::new(
+                    b"qXfer:features:read:riscv-32bit-vector.xml:0,2000".to_vec(),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+    );
+    let vector = std::str::from_utf8(&vector[1..]).unwrap();
+    assert!(vector.contains("<feature name=\"org.gnu.gdb.riscv.vector\">"));
+    assert!(vector.contains("<reg name=\"v0\" bitsize=\"128\" type=\"uint128\" regnum=\"90\"/>"));
+    assert!(vector.contains("<reg name=\"v31\" bitsize=\"128\" type=\"uint128\"/>"));
 }
 
 #[test]
@@ -215,7 +250,7 @@ fn riscv_gdb_remote_session_reports_rv64_hart_register_snapshot() {
             .handle_packet(&GdbRemotePacket::new(b"g".to_vec()).unwrap())
             .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(88));
+    assert_eq!(registers.len(), rv64_register_hex_offset(122));
     assert_eq!(&registers[0..16], b"0000000000000000");
     assert_eq!(&registers[16..32], b"efcdab8967452301");
     assert_eq!(&registers[10 * 16..11 * 16], b"1032547698badcfe");
@@ -233,9 +268,11 @@ fn riscv_gdb_remote_session_reports_rv64_hart_register_snapshot() {
 
 fn rv64_register_hex_offset(number: u64) -> usize {
     let byte_offset = match number {
-        0..=65 => number * 8,
-        66..=68 => (65 * 8) + ((number - 65) * 4),
-        69..=88 => (65 * 8) + (3 * 4) + ((number - 68) * 8),
+        0..=32 => number * 8,
+        33..=65 => (33 * 8) + ((number - 33) * 8),
+        66..=69 => (33 * 8) + (32 * 8) + ((number - 66) * 4),
+        70..=89 => (33 * 8) + (32 * 8) + (4 * 4) + ((number - 70) * 8),
+        90..=122 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + ((number - 90) * 16),
         _ => panic!("unsupported RV64 GDB register number"),
     };
     byte_offset as usize * 2

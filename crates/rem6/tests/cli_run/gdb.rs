@@ -197,6 +197,23 @@ fn rem6_run_gdb_listen_applies_preexecution_state_changes() {
         send_gdb_packet(&mut stream, b"p5"),
         gdb_response(b"2a00000000000000")
     );
+    let vector_description = send_gdb_packet(
+        &mut stream,
+        b"qXfer:features:read:riscv-64bit-vector.xml:0,a0",
+    );
+    assert!(
+        String::from_utf8_lossy(&vector_description).contains("org.gnu.gdb.riscv.vector"),
+        "missing vector feature in {}",
+        String::from_utf8_lossy(&vector_description)
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P5a=00112233445566778899aabbccddeeff"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p5a"),
+        gdb_response(b"00112233445566778899aabbccddeeff")
+    );
     let all_register_write = rv64_all_register_write_packet(0x2b, 0x8000_0000);
     assert_eq!(
         send_gdb_packet(&mut stream, &all_register_write),
@@ -205,6 +222,10 @@ fn rem6_run_gdb_listen_applies_preexecution_state_changes() {
     assert_eq!(
         send_gdb_packet(&mut stream, b"p5"),
         gdb_response(b"2b00000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p5a"),
+        gdb_response(b"404142434445464748494a4b4c4d4e4f")
     );
     assert_eq!(
         send_gdb_packet(&mut stream, b"Z0,80000004,4"),
@@ -248,7 +269,7 @@ fn rem6_run_gdb_listen_writes_sscratch_before_execution() {
         String::from_utf8_lossy(&csr_description)
     );
     assert_eq!(
-        send_gdb_packet(&mut stream, b"P46=8877665544332211"),
+        send_gdb_packet(&mut stream, b"P48=8877665544332211"),
         gdb_response(b"OK")
     );
     stream.write_all(&gdb_packet(b"c")).unwrap();
@@ -290,7 +311,7 @@ fn rem6_run_gdb_listen_writes_satp_before_execution() {
         String::from_utf8_lossy(&csr_description)
     );
     assert_eq!(
-        send_gdb_packet(&mut stream, b"P4a=8877665544332211"),
+        send_gdb_packet(&mut stream, b"P4c=8877665544332211"),
         gdb_response(b"OK")
     );
     stream.write_all(&gdb_packet(b"c")).unwrap();
@@ -332,7 +353,7 @@ fn rem6_run_gdb_listen_writes_mscratch_before_execution() {
         String::from_utf8_lossy(&csr_description)
     );
     assert_eq!(
-        send_gdb_packet(&mut stream, b"P50=8877665544332211"),
+        send_gdb_packet(&mut stream, b"P52=8877665544332211"),
         gdb_response(b"OK")
     );
     stream.write_all(&gdb_packet(b"c")).unwrap();
@@ -1583,17 +1604,30 @@ fn rem6_run_rejects_non_loopback_gdb_listen_before_accepting_connections() {
 fn rv64_all_register_write_packet(x5: u64, pc: u64) -> Vec<u8> {
     const RV64_INTEGER_AND_PC_REGISTERS: usize = 33;
     const RV64_FLOAT_REGISTERS: usize = 32;
-    const RV64_FLOAT_CSR_REGISTERS: usize = 3;
-    const RV64_CSR_REGISTERS: usize = 17;
+    const RV64_FLOAT_CSR_AND_PLACEHOLDER_REGISTERS: usize = 4;
+    const RV64_CSR_REGISTERS: usize = 20;
+    const RV64_VECTOR_REGISTERS: usize = 32;
+    const RV64_VECTOR_REGISTER_BYTES: usize = 16;
     const RV64_REGISTER_BYTES: usize =
         (RV64_INTEGER_AND_PC_REGISTERS + RV64_FLOAT_REGISTERS + RV64_CSR_REGISTERS) * 8
-            + RV64_FLOAT_CSR_REGISTERS * 4;
+            + RV64_FLOAT_CSR_AND_PLACEHOLDER_REGISTERS * 4
+            + RV64_VECTOR_REGISTERS * RV64_VECTOR_REGISTER_BYTES;
     const X5_OFFSET: usize = 5 * 8;
     const PC_OFFSET: usize = 32 * 8;
+    const VECTOR_BASE_OFFSET: usize = RV64_INTEGER_AND_PC_REGISTERS * 8
+        + RV64_FLOAT_REGISTERS * 8
+        + RV64_FLOAT_CSR_AND_PLACEHOLDER_REGISTERS * 4
+        + RV64_CSR_REGISTERS * 8;
 
     let mut registers = vec![0; RV64_REGISTER_BYTES];
     registers[X5_OFFSET..X5_OFFSET + 8].copy_from_slice(&x5.to_le_bytes());
     registers[PC_OFFSET..PC_OFFSET + 8].copy_from_slice(&pc.to_le_bytes());
+    for (index, byte) in registers[VECTOR_BASE_OFFSET..VECTOR_BASE_OFFSET + 16]
+        .iter_mut()
+        .enumerate()
+    {
+        *byte = 0x40 + index as u8;
+    }
 
     let mut payload = Vec::with_capacity(1 + registers.len() * 2);
     payload.push(b'G');

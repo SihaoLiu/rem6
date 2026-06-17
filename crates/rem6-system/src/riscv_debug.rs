@@ -8,7 +8,7 @@ use rem6_debug::{
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvFloatCsr, RiscvGdbTargetDescription, RiscvGdbXlen,
     RiscvHartState, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvSupervisorTrapCsr,
-    RiscvTranslationCsr, RiscvVectorFixedPointCsr,
+    RiscvTranslationCsr, RiscvVectorFixedPointCsr, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, MemoryError, MemoryRequest, MemoryRequestId,
@@ -28,6 +28,8 @@ const RISCV_GDB_FLOAT_PLACEHOLDER_REGISTER: u64 = 69;
 const RISCV_GDB_RV32_CSR_REGISTER_BASE: u64 = 70;
 const RISCV_GDB_RV64_CSR_REGISTER_BASE: u64 = 70;
 const RISCV_GDB_CSR_REGISTER_COUNT: u8 = 20;
+const RISCV_GDB_VECTOR_REGISTER_BASE: u64 = 90;
+const RISCV_GDB_VECTOR_REGISTER_COUNT: u8 = 32;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -274,11 +276,11 @@ pub fn apply_riscv_gdb_remote_core_register_write(
     let applies = validate_riscv_gdb_remote_register_write(xlen, command)?;
     match command {
         GdbRemoteCommand::WriteRegister { number, bytes } => {
-            write_core_register_value(xlen, core, *number, decode_register_value(bytes));
+            write_core_register_bytes(xlen, core, *number, bytes);
         }
         GdbRemoteCommand::WriteRegisters { bytes } => {
-            for_each_decoded_register_value(xlen, bytes, |number, value| {
-                write_core_register_value(xlen, core, number, value);
+            for_each_register_bytes(xlen, bytes, |number, bytes| {
+                write_core_register_bytes(xlen, core, number, bytes);
             });
         }
         _ => {}
@@ -688,11 +690,7 @@ fn gdb_remote_error_response_with_payload(
 fn riscv_gdb_register_bytes(xlen: RiscvGdbXlen, hart: &RiscvHartState) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(register_set_byte_len(xlen));
     for number in riscv_gdb_register_numbers(xlen) {
-        bytes.extend_from_slice(&encode_register_value(
-            xlen,
-            number,
-            read_hart_register_value(xlen, hart, number),
-        ));
+        bytes.extend_from_slice(&read_hart_register_bytes(xlen, hart, number));
     }
     bytes
 }
@@ -703,10 +701,7 @@ fn riscv_gdb_single_register_bytes(
 ) -> Vec<(u64, Vec<u8>)> {
     let mut registers = Vec::with_capacity(register_count(xlen));
     for number in riscv_gdb_register_numbers(xlen) {
-        registers.push((
-            number,
-            encode_register_value(xlen, number, read_hart_register_value(xlen, hart, number)),
-        ));
+        registers.push((number, read_hart_register_bytes(xlen, hart, number)));
     }
     registers
 }
@@ -720,6 +715,10 @@ fn riscv_gdb_hart_snapshot_from_core(core: &RiscvCore) -> RiscvHartState {
     for register in 0..RISCV_GDB_FLOAT_REGISTER_COUNT {
         let register = FloatRegister::new(register).unwrap();
         hart.write_float(register, core.read_float_register(register));
+    }
+    for register in 0..RISCV_GDB_VECTOR_REGISTER_COUNT {
+        let register = VectorRegister::new(register).unwrap();
+        hart.write_vector(register, core.read_vector_register(register));
     }
     hart.set_float_status(core.float_status());
     hart.set_status(core.status());
@@ -766,7 +765,7 @@ fn apply_single_register_write(
     bytes: &[u8],
 ) -> Result<(), RiscvGdbRegisterWriteError> {
     validate_single_register_write(xlen, number, bytes)?;
-    write_register_value(xlen, hart, number, decode_register_value(bytes));
+    write_register_bytes(xlen, hart, number, bytes);
     Ok(())
 }
 
@@ -776,8 +775,8 @@ fn apply_all_register_write(
     bytes: &[u8],
 ) -> Result<(), RiscvGdbRegisterWriteError> {
     validate_all_register_write(xlen, bytes)?;
-    for_each_decoded_register_value(xlen, bytes, |number, value| {
-        write_register_value(xlen, hart, number, value);
+    for_each_register_bytes(xlen, bytes, |number, bytes| {
+        write_register_bytes(xlen, hart, number, bytes);
     });
     Ok(())
 }
@@ -814,6 +813,26 @@ fn validate_all_register_write(
         });
     }
     Ok(())
+}
+
+fn write_register_bytes(xlen: RiscvGdbXlen, hart: &mut RiscvHartState, number: u64, bytes: &[u8]) {
+    if is_riscv_gdb_vector_register(number) {
+        let mut vector = [0; RISCV_VECTOR_REGISTER_BYTES];
+        vector.copy_from_slice(bytes);
+        hart.write_vector(riscv_vector_register(number), vector);
+    } else {
+        write_register_value(xlen, hart, number, decode_register_value(bytes));
+    }
+}
+
+fn write_core_register_bytes(xlen: RiscvGdbXlen, core: &RiscvCore, number: u64, bytes: &[u8]) {
+    if is_riscv_gdb_vector_register(number) {
+        let mut vector = [0; RISCV_VECTOR_REGISTER_BYTES];
+        vector.copy_from_slice(bytes);
+        core.write_vector_register(riscv_vector_register(number), vector);
+    } else {
+        write_core_register_value(xlen, core, number, decode_register_value(bytes));
+    }
 }
 
 fn write_register_value(xlen: RiscvGdbXlen, hart: &mut RiscvHartState, number: u64, value: u64) {
@@ -864,16 +883,20 @@ fn read_hart_register_value(xlen: RiscvGdbXlen, hart: &RiscvHartState, number: u
     }
 }
 
-fn for_each_decoded_register_value(
-    xlen: RiscvGdbXlen,
-    bytes: &[u8],
-    mut visit: impl FnMut(u64, u64),
-) {
+fn read_hart_register_bytes(xlen: RiscvGdbXlen, hart: &RiscvHartState, number: u64) -> Vec<u8> {
+    if is_riscv_gdb_vector_register(number) {
+        hart.read_vector(riscv_vector_register(number)).to_vec()
+    } else {
+        encode_register_value(xlen, number, read_hart_register_value(xlen, hart, number))
+    }
+}
+
+fn for_each_register_bytes(xlen: RiscvGdbXlen, bytes: &[u8], mut visit: impl FnMut(u64, &[u8])) {
     let mut start = 0;
     for number in riscv_gdb_register_numbers(xlen) {
         let register_byte_len = register_byte_len(xlen, number);
         let end = start + register_byte_len;
-        visit(number, decode_register_value(&bytes[start..end]));
+        visit(number, &bytes[start..end]);
         start = end;
     }
 }
@@ -899,6 +922,10 @@ fn riscv_register(number: u64) -> Register {
 
 fn riscv_float_register(number: u64) -> FloatRegister {
     FloatRegister::new((number - RISCV_GDB_FLOAT_REGISTER_BASE) as u8).unwrap()
+}
+
+fn riscv_vector_register(number: u64) -> VectorRegister {
+    VectorRegister::new((number - RISCV_GDB_VECTOR_REGISTER_BASE) as u8).unwrap()
 }
 
 fn riscv_float_csr_register(number: u64) -> RiscvFloatCsr {
@@ -1148,6 +1175,10 @@ fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
         )
         .chain(std::iter::once(RISCV_GDB_FLOAT_PLACEHOLDER_REGISTER))
         .chain(riscv_gdb_csr_register_base(xlen)..riscv_gdb_csr_register_base(xlen) + csr_count)
+        .chain(
+            RISCV_GDB_VECTOR_REGISTER_BASE
+                ..RISCV_GDB_VECTOR_REGISTER_BASE + u64::from(RISCV_GDB_VECTOR_REGISTER_COUNT),
+        )
 }
 
 const fn register_count(_xlen: RiscvGdbXlen) -> usize {
@@ -1157,6 +1188,7 @@ const fn register_count(_xlen: RiscvGdbXlen) -> usize {
         + RISCV_GDB_FLOAT_CSR_REGISTER_COUNT as usize
         + 1
         + RISCV_GDB_CSR_REGISTER_COUNT as usize
+        + RISCV_GDB_VECTOR_REGISTER_COUNT as usize
 }
 
 fn register_set_byte_len(xlen: RiscvGdbXlen) -> usize {
@@ -1171,6 +1203,7 @@ const fn riscv_gdb_register_number_is_supported(xlen: RiscvGdbXlen, number: u64)
         || is_riscv_gdb_float_csr_register(number)
         || is_riscv_gdb_float_placeholder_register(number)
         || is_riscv_gdb_csr_register(xlen, number)
+        || is_riscv_gdb_vector_register(number)
 }
 
 const fn is_riscv_gdb_float_register(number: u64) -> bool {
@@ -1185,6 +1218,11 @@ const fn is_riscv_gdb_float_csr_register(number: u64) -> bool {
 
 const fn is_riscv_gdb_float_placeholder_register(number: u64) -> bool {
     number == RISCV_GDB_FLOAT_PLACEHOLDER_REGISTER
+}
+
+const fn is_riscv_gdb_vector_register(number: u64) -> bool {
+    number >= RISCV_GDB_VECTOR_REGISTER_BASE
+        && number < RISCV_GDB_VECTOR_REGISTER_BASE + RISCV_GDB_VECTOR_REGISTER_COUNT as u64
 }
 
 const fn riscv_gdb_csr_register_base(xlen: RiscvGdbXlen) -> u64 {
@@ -1223,6 +1261,8 @@ const fn byte_len(xlen: RiscvGdbXlen) -> usize {
 const fn register_byte_len(xlen: RiscvGdbXlen, number: u64) -> usize {
     if is_riscv_gdb_float_register(number) {
         8
+    } else if is_riscv_gdb_vector_register(number) {
+        RISCV_VECTOR_REGISTER_BYTES
     } else if is_riscv_gdb_float_csr_register(number)
         || is_riscv_gdb_float_placeholder_register(number)
     {

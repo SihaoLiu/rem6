@@ -12,6 +12,7 @@ fn riscv_gdb_target_description_reports_rv64_cpu_documents() {
             "riscv-64bit-cpu.xml",
             "riscv-64bit-fpu.xml",
             "riscv-64bit-csr.xml",
+            "riscv-64bit-vector.xml",
         ],
     );
     assert_eq!(
@@ -24,11 +25,13 @@ fn riscv_gdb_target_description_reports_rv64_cpu_documents() {
             "  <xi:include href=\"riscv-64bit-cpu.xml\"/>\n",
             "  <xi:include href=\"riscv-64bit-fpu.xml\"/>\n",
             "  <xi:include href=\"riscv-64bit-csr.xml\"/>\n",
+            "  <xi:include href=\"riscv-64bit-vector.xml\"/>\n",
             "</target>\n",
         )
         .as_bytes(),
     );
     assert!(description.document("riscv-64bit-fpu.xml").is_some());
+    assert!(description.document("riscv-64bit-vector.xml").is_some());
 }
 
 #[test]
@@ -143,6 +146,28 @@ fn riscv_gdb_target_description_reports_rv64d_fpu_document() {
 }
 
 #[test]
+fn riscv_gdb_target_description_reports_rv64_vector_document() {
+    let description = RiscvGdbTargetDescription::new(RiscvGdbXlen::Rv64);
+
+    let target = text(description.document("target.xml").unwrap());
+    assert!(target.contains("<xi:include href=\"riscv-64bit-vector.xml\"/>"));
+
+    let vector = text(description.document("riscv-64bit-vector.xml").unwrap());
+    assert!(vector.contains("<feature name=\"org.gnu.gdb.riscv.vector\">"));
+    assert!(vector.contains("<reg name=\"v0\" bitsize=\"128\" type=\"uint128\" regnum=\"90\"/>"));
+    assert!(vector.contains("<reg name=\"v31\" bitsize=\"128\" type=\"uint128\"/>"));
+    assert_eq!(
+        register_names(vector),
+        vec![
+            "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13",
+            "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23", "v24", "v25",
+            "v26", "v27", "v28", "v29", "v30", "v31",
+        ],
+    );
+    assert_eq!(vector.matches("bitsize=\"128\"").count(), 32);
+}
+
+#[test]
 fn riscv_gdb_target_description_reports_rv32_cpu_documents() {
     let description = RiscvGdbTargetDescription::new(RiscvGdbXlen::Rv32);
 
@@ -154,6 +179,7 @@ fn riscv_gdb_target_description_reports_rv32_cpu_documents() {
             "riscv-32bit-cpu.xml",
             "riscv-32bit-fpu.xml",
             "riscv-32bit-csr.xml",
+            "riscv-32bit-vector.xml",
         ],
     );
 
@@ -162,8 +188,10 @@ fn riscv_gdb_target_description_reports_rv32_cpu_documents() {
     assert!(target.contains("<xi:include href=\"riscv-32bit-cpu.xml\"/>"));
     assert!(target.contains("<xi:include href=\"riscv-32bit-fpu.xml\"/>"));
     assert!(target.contains("<xi:include href=\"riscv-32bit-csr.xml\"/>"));
+    assert!(target.contains("<xi:include href=\"riscv-32bit-vector.xml\"/>"));
     assert!(!target.contains("riscv-64bit-cpu.xml"));
     assert!(description.document("riscv-32bit-fpu.xml").is_some());
+    assert!(description.document("riscv-32bit-vector.xml").is_some());
 }
 
 #[test]
@@ -224,6 +252,25 @@ fn riscv_gdb_target_description_reports_rv32d_fpu_document() {
     );
     assert_eq!(fpu.matches("bitsize=\"64\"").count(), 32);
     assert_eq!(fpu.matches("bitsize=\"32\"").count(), 4);
+}
+
+#[test]
+fn riscv_gdb_target_description_reports_rv32_vector_document() {
+    let description = RiscvGdbTargetDescription::new(RiscvGdbXlen::Rv32);
+
+    let vector = text(description.document("riscv-32bit-vector.xml").unwrap());
+    assert!(vector.contains("<feature name=\"org.gnu.gdb.riscv.vector\">"));
+    assert!(vector.contains("<reg name=\"v0\" bitsize=\"128\" type=\"uint128\" regnum=\"90\"/>"));
+    assert!(vector.contains("<reg name=\"v31\" bitsize=\"128\" type=\"uint128\"/>"));
+    assert_eq!(
+        register_names(vector),
+        vec![
+            "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13",
+            "v14", "v15", "v16", "v17", "v18", "v19", "v20", "v21", "v22", "v23", "v24", "v25",
+            "v26", "v27", "v28", "v29", "v30", "v31",
+        ],
+    );
+    assert_eq!(vector.matches("bitsize=\"128\"").count(), 32);
 }
 
 #[test]
