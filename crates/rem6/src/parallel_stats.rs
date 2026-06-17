@@ -184,31 +184,6 @@ pub(super) fn emit_scheduler_stats(
         StatResetPolicy::Monotonic,
         execution.parallel_scheduler_batch_idle_worker_ticks,
     )?;
-    for (index, frontier) in execution.parallel_scheduler_frontiers.iter().enumerate() {
-        emit_frontier_record_stats(
-            stats,
-            &format!("sim.parallel.scheduler.frontier{index}"),
-            frontier,
-        )?;
-    }
-    for (index, frontier) in execution
-        .parallel_scheduler_final_frontiers
-        .iter()
-        .enumerate()
-    {
-        emit_frontier_record_stats(
-            stats,
-            &format!("sim.parallel.scheduler.final_frontier{index}"),
-            frontier,
-        )?;
-    }
-    for (index, ready) in execution
-        .parallel_scheduler_ready_partitions
-        .iter()
-        .enumerate()
-    {
-        emit_ready_partition_record_stats(stats, index, ready)?;
-    }
     emit_partition_frontier_stats(stats, execution)?;
     emit_worker_stats(stats, execution)?;
     emit_partition_stats(stats, execution)?;
@@ -373,64 +348,5 @@ fn emit_frontier_stats(
             next_tick,
         )?;
     }
-    Ok(())
-}
-
-fn emit_frontier_record_stats(
-    stats: &mut StatsRegistry,
-    prefix: &str,
-    frontier: &Rem6ParallelFrontierSummary,
-) -> Result<(), Rem6CliError> {
-    for (field, value, unit) in [
-        ("partition", frontier.partition as u64, "Count"),
-        ("now", frontier.now, "Tick"),
-        ("safe_until", frontier.safe_until, "Tick"),
-        ("pending_events", frontier.pending_events, "Count"),
-        (
-            "next_tick_present",
-            u64::from(frontier.next_tick.is_some()),
-            "Count",
-        ),
-    ] {
-        increment_stat(
-            stats,
-            &format!("{prefix}.{field}"),
-            unit,
-            StatResetPolicy::Monotonic,
-            value,
-        )?;
-    }
-    if let Some(next_tick) = frontier.next_tick {
-        increment_stat(
-            stats,
-            &format!("{prefix}.next_tick"),
-            "Tick",
-            StatResetPolicy::Monotonic,
-            next_tick,
-        )?;
-    }
-    Ok(())
-}
-
-fn emit_ready_partition_record_stats(
-    stats: &mut StatsRegistry,
-    index: usize,
-    ready: &Rem6ParallelReadyPartitionSummary,
-) -> Result<(), Rem6CliError> {
-    let prefix = format!("sim.parallel.scheduler.ready_partition{index}");
-    increment_stat(
-        stats,
-        &format!("{prefix}.partition"),
-        "Count",
-        StatResetPolicy::Monotonic,
-        ready.partition as u64,
-    )?;
-    increment_stat(
-        stats,
-        &format!("{prefix}.next_tick"),
-        "Tick",
-        StatResetPolicy::Monotonic,
-        ready.next_tick,
-    )?;
     Ok(())
 }

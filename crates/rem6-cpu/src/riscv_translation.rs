@@ -1005,7 +1005,7 @@ impl RiscvCore {
         }
         if self.core.has_pending_fetch() {
             if self.has_pending_data_access()
-                || !self.can_retire_completed_fetch_while_fetch_pending()
+                || !self.can_retire_completed_fetch_while_fetch_pending()?
             {
                 return Ok(None);
             }

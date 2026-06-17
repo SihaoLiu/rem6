@@ -35,6 +35,14 @@ pub struct RiscvCluster {
     reservations: Arc<Mutex<RiscvReservationTracker>>,
 }
 
+fn can_retire_completed_fetch_while_fetch_pending(
+    cpu: CpuId,
+    core: &RiscvCore,
+) -> Result<bool, RiscvClusterError> {
+    core.can_retire_completed_fetch_while_fetch_pending()
+        .map_err(|error| RiscvClusterError::Core { cpu, error })
+}
+
 impl RiscvCluster {
     pub fn new<I>(cores: I) -> Result<Self, RiscvClusterError>
     where
@@ -294,7 +302,7 @@ impl RiscvCluster {
                 continue;
             }
             if core.has_pending_fetch() {
-                if core.can_retire_completed_fetch_while_fetch_pending()
+                if can_retire_completed_fetch_while_fetch_pending(*cpu, core)?
                     && push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)?
                 {
                     continue;
@@ -377,7 +385,7 @@ impl RiscvCluster {
                 continue;
             }
             if core.has_pending_fetch() {
-                if core.can_retire_completed_fetch_while_fetch_pending()
+                if can_retire_completed_fetch_while_fetch_pending(*cpu, core)?
                     && push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)?
                 {
                     continue;
@@ -496,7 +504,7 @@ impl RiscvCluster {
                 continue;
             }
             if core.has_pending_fetch() {
-                if !data_only && core.can_retire_completed_fetch_while_fetch_pending() {
+                if !data_only && can_retire_completed_fetch_while_fetch_pending(*cpu, core)? {
                     if let Some(event) = completed_fetch_drive_event(*cpu, core)? {
                         if committed_instructions >= instruction_budget {
                             break;
@@ -644,7 +652,7 @@ impl RiscvCluster {
             }
             if core.has_pending_fetch() {
                 if !core.has_pending_data_access()
-                    && core.can_retire_completed_fetch_while_fetch_pending()
+                    && can_retire_completed_fetch_while_fetch_pending(*cpu, core)?
                     && push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)?
                 {
                     continue;
@@ -781,7 +789,7 @@ impl RiscvCluster {
             }
             if core.has_pending_fetch() {
                 if !core.has_pending_data_access()
-                    && core.can_retire_completed_fetch_while_fetch_pending()
+                    && can_retire_completed_fetch_while_fetch_pending(*cpu, core)?
                     && push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)?
                 {
                     continue;
@@ -1004,7 +1012,7 @@ impl RiscvCluster {
                 continue;
             }
             if core.has_pending_fetch() {
-                if core.can_retire_completed_fetch_while_fetch_pending()
+                if can_retire_completed_fetch_while_fetch_pending(*cpu, core)?
                     && push_completed_fetch_drive_event(*cpu, core, &mut actions)?
                 {
                     continue;
@@ -1112,7 +1120,7 @@ impl RiscvCluster {
                 continue;
             }
             if core.has_pending_fetch() {
-                if !data_only && core.can_retire_completed_fetch_while_fetch_pending() {
+                if !data_only && can_retire_completed_fetch_while_fetch_pending(*cpu, core)? {
                     if let Some(event) = completed_fetch_drive_event(*cpu, core)? {
                         if committed_instructions >= instruction_budget {
                             break;

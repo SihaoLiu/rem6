@@ -370,6 +370,15 @@ fn riscv_cluster_parallel_turns_issue_completed_data_accesses() {
                 RiscvDataAccessEventKind::Completed,
             ]
         );
+        assert_eq!(core.data_access_event_count(), 2);
+        assert_eq!(
+            core.data_access_events_from(1)
+                .iter()
+                .map(|event| event.kind())
+                .collect::<Vec<_>>(),
+            vec![RiscvDataAccessEventKind::Completed]
+        );
+        assert!(core.data_access_events_from(2).is_empty());
     }
 }
 

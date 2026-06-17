@@ -137,7 +137,18 @@ impl RiscvCore {
             .pc()
             .get()
             .wrapping_add(u64::from(execution.instruction_bytes()));
-        let redirects_fetch = execution.trap().is_some() || next_pc.get() != sequential_next_pc;
+        let retired_branch = retire_branch_predictions(
+            state,
+            fetch.request_id().sequence(),
+            fetch.pc(),
+            instruction,
+            &execution,
+        )?;
+        let redirects_fetch = execution.trap().is_some()
+            || next_pc.get() != sequential_next_pc
+            || retired_branch
+                .branch_update()
+                .is_some_and(branch_update_redirects_fetch);
         let has_completed_successor_fetch = self.core.fetch_events().iter().any(|event| {
             event.kind() == CpuFetchEventKind::Completed
                 && event.pc() == next_pc
@@ -152,13 +163,6 @@ impl RiscvCore {
             state.pending_trap = Some(trap);
         }
         state.apply_riscv_system_event(execution.system_event());
-        let retired_branch = retire_branch_predictions(
-            state,
-            fetch.request_id().sequence(),
-            fetch.pc(),
-            instruction,
-            &execution,
-        )?;
         let pipeline_branch_prediction = in_order_pipeline_branch_prediction(
             fetch.request_id().sequence(),
             fetch.pc(),
@@ -425,6 +429,11 @@ fn in_order_pipeline_branch_prediction(
         update.actual_taken(),
         resolved_target_pc,
     ))
+}
+
+fn branch_update_redirects_fetch(update: &crate::BranchUpdate) -> bool {
+    update.predicted_taken() != update.actual_taken()
+        || update.predicted_target() != update.actual_target()
 }
 
 fn retire_branch_predictions(

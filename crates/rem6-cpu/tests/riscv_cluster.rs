@@ -8,7 +8,7 @@ use rem6_cpu::{
     RiscvDataAccessTarget,
 };
 use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop};
-use rem6_isa_riscv::Register;
+use rem6_isa_riscv::{Register, RiscvInstruction};
 use rem6_kernel::{
     ParallelRunProfile, PartitionId, PartitionedScheduler, ScheduledEventKind, SchedulerContext,
 };
@@ -155,6 +155,25 @@ fn store_with_programs_and_data(
 
 fn store_with_programs(programs: &[(u64, u32)]) -> Arc<Mutex<PartitionedMemoryStore>> {
     store_with_programs_and_data(programs, &[])
+}
+
+fn store_with_raw_program(entry: u64, bytes: Vec<u8>) -> Arc<Mutex<PartitionedMemoryStore>> {
+    let target = MemoryTargetId::new(0);
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(target, layout()).unwrap();
+    store
+        .map_region(
+            target,
+            Address::new(0x8000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    BootImage::new(Address::new(entry))
+        .add_segment(Address::new(entry), bytes)
+        .unwrap()
+        .load_into_partitioned_store(&mut store, target)
+        .unwrap();
+    Arc::new(Mutex::new(store))
 }
 
 fn memory_response(
@@ -2057,6 +2076,256 @@ fn riscv_cluster_parallel_fetch_retires_branch_before_wrong_path_fetch_ahead_com
         cluster.core(CpuId::new(0)).unwrap().pc(),
         Address::new(0x8008)
     );
+}
+
+#[test]
+fn riscv_cluster_parallel_fetch_retires_fallthrough_branch_after_predicted_target_completes() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([riscv_core(CoreSpec {
+        cpu: 0,
+        partition: 0,
+        agent: 7,
+        entry: 0x8000,
+        fetch_endpoint: "cpu0.ifetch",
+        fetch_route,
+        data_endpoint: "cpu0.dmem",
+        data_route,
+    })])
+    .unwrap();
+    let taken_branch = b_type(12, 0, 0, 0x0);
+    let training_store = store_with_programs(&[(0x8000, taken_branch)]);
+    cluster
+        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
+            let store = training_store.clone();
+            move |delivery, _context| memory_response(&store, &delivery)
+        })
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+    cluster
+        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
+            let store = training_store.clone();
+            move |delivery, _context| memory_response(&store, &delivery)
+        })
+        .unwrap();
+    let trained = cluster
+        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
+            let store = training_store.clone();
+            move |delivery, _context| memory_response(&store, &delivery)
+        })
+        .unwrap();
+    let Some(RiscvCoreDriveAction::InstructionExecuted(event)) =
+        trained.first().map(RiscvClusterDriveEvent::action)
+    else {
+        panic!("expected training branch to retire");
+    };
+    assert!(event.branch_update().unwrap().actual_taken());
+    cluster
+        .core(CpuId::new(0))
+        .unwrap()
+        .redirect_pc(Address::new(0x8000));
+
+    let fallthrough_branch = b_type(12, 0, 0, 0x1);
+    let store = store_with_programs(&[
+        (0x8000, fallthrough_branch),
+        (0x8004, i_type(1, 0, 0x0, 1, 0x13)),
+        (0x800c, i_type(2, 0, 0x0, 2, 0x13)),
+    ]);
+    cluster
+        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
+            let store = store.clone();
+            move |delivery, _context| memory_response(&store, &delivery)
+        })
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+    cluster
+        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
+            let store = store.clone();
+            move |delivery, _context| memory_response(&store, &delivery)
+        })
+        .unwrap();
+    scheduler.run_until_idle_parallel().unwrap();
+
+    let retired = cluster
+        .drive_ready_cores_parallel_fetch(&mut scheduler, &transport, MemoryTrace::new(), |_cpu| {
+            let store = store.clone();
+            move |delivery, _context| memory_response(&store, &delivery)
+        })
+        .unwrap();
+    let Some(RiscvCoreDriveAction::InstructionExecuted(event)) =
+        retired.first().map(RiscvClusterDriveEvent::action)
+    else {
+        panic!("expected fallthrough branch to retire after predicted target completes");
+    };
+    let update = event.branch_update().unwrap();
+    assert!(update.predicted_taken());
+    assert!(!update.actual_taken());
+    assert_eq!(
+        cluster.core(CpuId::new(0)).unwrap().pc(),
+        Address::new(0x8004)
+    );
+
+    let mut fallthrough = None;
+    for _ in 0..8 {
+        let actions = cluster
+            .drive_ready_cores_parallel_fetch(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+            )
+            .unwrap();
+        if let Some(RiscvCoreDriveAction::InstructionExecuted(event)) =
+            actions.first().map(RiscvClusterDriveEvent::action)
+        {
+            fallthrough = Some(event.clone());
+            break;
+        }
+        assert!(
+            actions
+                .iter()
+                .all(|event| matches!(event.action(), RiscvCoreDriveAction::FetchIssued { .. })),
+            "unexpected cluster action before fallthrough instruction retired"
+        );
+        scheduler.run_until_idle_parallel().unwrap();
+    }
+    let Some(event) = fallthrough else {
+        panic!("expected fallthrough instruction to retire after predicted target squash");
+    };
+    assert_eq!(event.fetch().pc(), Address::new(0x8004));
+    assert_eq!(
+        event.instruction(),
+        RiscvInstruction::decode(i_type(1, 0, 0x0, 1, 0x13)).unwrap()
+    );
+    assert!(cluster
+        .core(CpuId::new(0))
+        .unwrap()
+        .execution_events()
+        .iter()
+        .all(|event| event.fetch().pc() != Address::new(0x800c)));
+}
+
+#[test]
+fn riscv_cluster_parallel_fetch_retires_halfword_aligned_branch_pair() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let data_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.dmem"),
+                PartitionId::new(0),
+                endpoint("memory0"),
+                PartitionId::new(1),
+                2,
+                2,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cluster = RiscvCluster::new([riscv_core(CoreSpec {
+        cpu: 0,
+        partition: 0,
+        agent: 7,
+        entry: 0x8000,
+        fetch_endpoint: "cpu0.ifetch",
+        fetch_route,
+        data_endpoint: "cpu0.dmem",
+        data_route,
+    })])
+    .unwrap();
+    let core = cluster.core(CpuId::new(0)).unwrap();
+    core.write_register(reg(10), 1);
+    core.write_register(reg(15), 0);
+    core.write_register(reg(19), 1);
+    core.write_register(reg(22), 1007);
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&0x894e_u16.to_le_bytes());
+    bytes.extend_from_slice(&0x00a7_f463_u32.to_le_bytes());
+    bytes.extend_from_slice(&0x073b_4263_u32.to_le_bytes());
+    bytes.extend_from_slice(&0x0010_0073_u32.to_le_bytes());
+    let store = store_with_raw_program(0x8000, bytes);
+
+    let mut retired = 0;
+    for _ in 0..32 {
+        let actions = cluster
+            .drive_ready_cores_parallel_fetch(
+                &mut scheduler,
+                &transport,
+                MemoryTrace::new(),
+                |_cpu| {
+                    let store = store.clone();
+                    move |delivery, _context| memory_response(&store, &delivery)
+                },
+            )
+            .unwrap();
+        retired += actions
+            .iter()
+            .filter(|event| matches!(event.action(), RiscvCoreDriveAction::InstructionExecuted(_)))
+            .count();
+        if retired >= 4 {
+            break;
+        }
+        scheduler.run_until_idle_parallel().unwrap();
+    }
+
+    assert_eq!(retired, 4);
+    assert_eq!(
+        core.execution_events()
+            .iter()
+            .map(|event| event.fetch().pc())
+            .collect::<Vec<_>>(),
+        vec![
+            Address::new(0x8000),
+            Address::new(0x8002),
+            Address::new(0x8006),
+            Address::new(0x800a),
+        ]
+    );
+    assert!(core.has_pending_trap());
+    assert_eq!(core.branch_predictor_snapshot().pending_speculations(), &[]);
 }
 
 #[test]

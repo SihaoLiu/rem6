@@ -1,7 +1,7 @@
 use rem6_isa_riscv::{RiscvHartState, RiscvInstruction, RiscvPrivilegeMode};
 use rem6_memory::Address;
 
-use crate::{CpuFetchEventKind, RiscvCore, RiscvCoreState};
+use crate::{CpuFetchEvent, CpuFetchEventKind, RiscvCore, RiscvCoreState, RiscvCpuError};
 
 const COMPLETED_FETCH_WINDOW: usize = 2;
 
@@ -75,13 +75,19 @@ impl RiscvCore {
             .insert(speculation.sequence(), prediction.id());
     }
 
-    pub(crate) fn can_retire_completed_fetch_while_fetch_pending(&self) -> bool {
+    pub(crate) fn can_retire_completed_fetch_while_fetch_pending(
+        &self,
+    ) -> Result<bool, RiscvCpuError> {
         let fetch_events = self.core.fetch_events();
-        let state = self.state.lock().expect("riscv core lock");
-        state.pending_trap.is_none()
-            && state.pending_fetch_prefix.is_none()
-            && can_retire_completed_fetch_with_branch_speculations(&state, &fetch_events)
-            && !hart_has_enabled_pending_interrupt(&state.hart)
+        let mut state = self.state.lock().expect("riscv core lock");
+        if state.pending_trap.is_some()
+            || state.pending_fetch_prefix.is_some()
+            || hart_has_enabled_pending_interrupt(&state.hart)
+        {
+            return Ok(false);
+        }
+
+        can_retire_completed_fetch_with_branch_speculations(&mut state, &fetch_events)
     }
 }
 
@@ -162,15 +168,75 @@ fn hart_has_enabled_pending_interrupt(hart: &RiscvHartState) -> bool {
 }
 
 fn can_retire_completed_fetch_with_branch_speculations(
-    state: &RiscvCoreState,
-    fetch_events: &[crate::CpuFetchEvent],
-) -> bool {
+    state: &mut RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+) -> Result<bool, RiscvCpuError> {
+    discard_stale_branch_speculations_before_architectural_fetch(state, fetch_events)?;
     let Some(oldest_speculation_sequence) = state.branch_speculations.keys().next().copied() else {
-        return true;
+        return Ok(true);
     };
 
-    next_completed_fetch_sequence_for_architectural_pc(state, fetch_events)
-        == Some(oldest_speculation_sequence)
+    Ok(
+        next_completed_fetch_sequence_for_architectural_pc(state, fetch_events)
+            == Some(oldest_speculation_sequence),
+    )
+}
+
+fn discard_stale_branch_speculations_before_architectural_fetch(
+    state: &mut RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+) -> Result<(), RiscvCpuError> {
+    loop {
+        let Some(oldest_sequence) = state.branch_speculations.keys().next().copied() else {
+            return Ok(());
+        };
+        let Some(architectural_sequence) =
+            next_completed_fetch_sequence_for_architectural_pc(state, fetch_events)
+        else {
+            return Ok(());
+        };
+        if oldest_sequence >= architectural_sequence {
+            return Ok(());
+        }
+        if branch_speculation_sequence_has_live_fetch(state, fetch_events, oldest_sequence) {
+            return Ok(());
+        }
+        discard_branch_speculation_mapping(state, oldest_sequence)?;
+    }
+}
+
+fn branch_speculation_sequence_has_live_fetch(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    sequence: u64,
+) -> bool {
+    fetch_events.iter().any(|event| {
+        matches!(
+            event.kind(),
+            CpuFetchEventKind::Issued | CpuFetchEventKind::Completed
+        ) && event.request_id().sequence() == sequence
+            && !state.executed_fetches.contains(&event.request_id())
+    })
+}
+
+fn discard_branch_speculation_mapping(
+    state: &mut RiscvCoreState,
+    sequence: u64,
+) -> Result<(), RiscvCpuError> {
+    let Some(speculation) = state.branch_speculations.remove(&sequence) else {
+        return Ok(());
+    };
+    let discard = state
+        .branch_predictor
+        .discard_speculation(speculation)
+        .map_err(RiscvCpuError::BranchPredictor)?;
+    state.branch_speculations.retain(|_, pending| {
+        !discard
+            .removed_youngers()
+            .iter()
+            .any(|removed| removed.id() == *pending)
+    });
+    Ok(())
 }
 
 fn next_completed_fetch_sequence_for_architectural_pc(
@@ -357,4 +423,50 @@ fn instruction_is_conditional_branch(instruction: RiscvInstruction) -> bool {
             | RiscvInstruction::Bltu { .. }
             | RiscvInstruction::Bgeu { .. }
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::CpuFetchRecord;
+    use rem6_kernel::PartitionId;
+    use rem6_memory::{AccessSize, AgentId, MemoryRequestId};
+    use rem6_transport::{MemoryRouteId, TransportEndpointId};
+
+    fn request(sequence: u64) -> MemoryRequestId {
+        MemoryRequestId::new(AgentId::new(7), sequence)
+    }
+
+    fn completed(sequence: u64, pc: u64) -> crate::CpuFetchEvent {
+        crate::CpuFetchEvent::completed(
+            CpuFetchRecord::new(
+                0,
+                PartitionId::new(0),
+                MemoryRouteId::new(0),
+                TransportEndpointId::new("cpu0.ifetch").unwrap(),
+                request(sequence),
+                Address::new(pc),
+                AccessSize::new(4).unwrap(),
+            ),
+            vec![0; 4],
+        )
+    }
+
+    #[test]
+    fn retired_fetch_gate_repairs_stale_oldest_branch_speculation() {
+        let mut state = RiscvCoreState::new(0x1186a, 0);
+        let stale = state
+            .branch_predictor
+            .predict_speculative(Address::new(0x1000));
+        state.branch_speculations.insert(1, stale.id());
+        state.executed_fetches.insert(request(1));
+
+        assert!(can_retire_completed_fetch_with_branch_speculations(
+            &mut state,
+            &[completed(2, 0x1186a)]
+        )
+        .unwrap());
+        assert!(state.branch_speculations.is_empty());
+        assert!(state.branch_predictor.pending_speculations().is_empty());
+    }
 }

@@ -2853,6 +2853,86 @@ fn riscv_core_driver_retires_fallthrough_branch_before_predicted_target_fetch_ah
 }
 
 #[test]
+fn riscv_core_driver_retires_fallthrough_branch_after_predicted_target_fetch_ahead_completes() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let taken_branch = b_type(12, 0, 0, 0x0);
+    fetch_one(
+        &core,
+        loaded_store(0x8000, taken_branch),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    let trained = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert!(trained.branch_update().unwrap().actual_taken());
+    core.redirect_pc(Address::new(0x8000));
+
+    let fallthrough_branch = b_type(12, 0, 0, 0x1);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            fallthrough_branch,
+            i_type(1, 0, 0x0, 1, 0x13),
+            i_type(2, 0, 0x0, 2, 0x13),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(retired) = action else {
+        panic!("expected fall-through branch to retire after predicted target fetch completes");
+    };
+    let update = retired.branch_update().unwrap();
+    assert!(update.predicted_taken());
+    assert!(!update.actual_taken());
+    assert_eq!(retired.execution().next_pc(), 0x8004);
+    assert_eq!(core.branch_predictor_snapshot().pending_speculations(), &[]);
+    assert_eq!(core.inner().pc(), Address::new(0x8004));
+
+    let mut fallthrough = None;
+    for _ in 0..8 {
+        match drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap() {
+            RiscvCoreDriveAction::FetchIssued { .. } => {
+                scheduler.run_until_idle_conservative();
+            }
+            RiscvCoreDriveAction::InstructionExecuted(event) => {
+                fallthrough = Some(event);
+                break;
+            }
+            RiscvCoreDriveAction::DataAccessIssued { .. } => {
+                panic!("unexpected data access before fall-through instruction retired");
+            }
+        }
+    }
+    let Some(fallthrough) = fallthrough else {
+        panic!("expected fall-through instruction to retire after predicted target squash");
+    };
+    assert_eq!(fallthrough.fetch().pc(), Address::new(0x8004));
+    assert_eq!(
+        fallthrough.instruction(),
+        RiscvInstruction::decode(i_type(1, 0, 0x0, 1, 0x13)).unwrap()
+    );
+    assert!(core
+        .execution_events()
+        .iter()
+        .all(|event| event.fetch().pc() != Address::new(0x800c)));
+}
+
+#[test]
 fn riscv_core_driver_blocks_pending_fetch_retire_when_interrupt_can_redirect() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);

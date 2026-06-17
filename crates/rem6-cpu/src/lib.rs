@@ -1018,6 +1018,19 @@ impl RiscvCore {
             .clone()
     }
 
+    pub fn data_access_event_count(&self) -> usize {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .data_events
+            .len()
+    }
+
+    pub fn data_access_events_from(&self, cursor: usize) -> Vec<RiscvDataAccessEvent> {
+        let state = self.state.lock().expect("riscv core lock");
+        state.data_events.get(cursor..).unwrap_or_default().to_vec()
+    }
+
     pub fn load_reservation(&self) -> Option<RiscvLoadReservation> {
         self.state.lock().expect("riscv core lock").reservation
     }

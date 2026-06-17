@@ -198,7 +198,7 @@ impl RiscvDataAccessStats {
 
     pub(crate) fn record_data_access_events<I>(&self, events_by_cpu: I) -> Result<(), StatsError>
     where
-        I: IntoIterator<Item = (CpuId, Vec<RiscvDataAccessEvent>)>,
+        I: IntoIterator<Item = (CpuId, usize, Vec<RiscvDataAccessEvent>)>,
     {
         self.probes
             .lock()
@@ -211,6 +211,13 @@ impl RiscvDataAccessStats {
             .lock()
             .expect("data access probe recorder lock")
             .snapshot()
+    }
+
+    pub(crate) fn cursors(&self) -> BTreeMap<CpuId, usize> {
+        self.probes
+            .lock()
+            .expect("data access probe recorder lock")
+            .cursors()
     }
 }
 
@@ -255,32 +262,39 @@ impl RiscvSystemRunDriver {
         let Some(data_access_stats) = &self.data_access_stats else {
             return Ok(());
         };
+        let cursors = data_access_stats.cursors();
         data_access_stats
-            .record_data_access_events(data_access_event_snapshots(cluster)?)
+            .record_data_access_events(data_access_event_snapshots_from_cursors(cluster, &cursors)?)
             .map_err(SystemError::Stats)
     }
 }
 
 fn data_access_event_cursors(cluster: &RiscvCluster) -> Result<Vec<(CpuId, usize)>, SystemError> {
-    data_access_event_snapshots(cluster).map(|events| {
-        events
-            .into_iter()
-            .map(|(cpu, events)| (cpu, events.len()))
-            .collect()
-    })
-}
-
-fn data_access_event_snapshots(
-    cluster: &RiscvCluster,
-) -> Result<Vec<(CpuId, Vec<RiscvDataAccessEvent>)>, SystemError> {
     cluster
         .core_ids()
         .into_iter()
         .map(|cpu| {
             cluster
                 .core(cpu)
-                .map(|core| (cpu, core.data_access_events()))
+                .map(|core| (cpu, core.data_access_event_count()))
                 .map_err(SystemError::RiscvCluster)
+        })
+        .collect()
+}
+
+fn data_access_event_snapshots_from_cursors(
+    cluster: &RiscvCluster,
+    cursors: &BTreeMap<CpuId, usize>,
+) -> Result<Vec<(CpuId, usize, Vec<RiscvDataAccessEvent>)>, SystemError> {
+    cluster
+        .core_ids()
+        .into_iter()
+        .map(|cpu| {
+            let core = cluster.core(cpu).map_err(SystemError::RiscvCluster)?;
+            let cursor = cursors.get(&cpu).copied().unwrap_or(0);
+            let events = core.data_access_events_from(cursor);
+            let next_cursor = cursor.saturating_add(events.len());
+            Ok((cpu, next_cursor, events))
         })
         .collect()
 }
@@ -436,16 +450,20 @@ impl RiscvDataAccessProbeRecorder {
 
     fn record_data_access_events<I>(&mut self, events_by_cpu: I) -> Result<(), StatsError>
     where
-        I: IntoIterator<Item = (CpuId, Vec<RiscvDataAccessEvent>)>,
+        I: IntoIterator<Item = (CpuId, usize, Vec<RiscvDataAccessEvent>)>,
     {
         let mut new_events = Vec::new();
         let mut new_cursors = Vec::new();
-        for (cpu, events) in events_by_cpu {
-            let cursor = self.cursors.get(&cpu).copied().unwrap_or(0);
-            for event in events.iter().skip(cursor) {
+        for (cpu, next_cursor, events) in events_by_cpu {
+            let current_cursor = self.cursors.get(&cpu).copied().unwrap_or(0);
+            let event_start_cursor = next_cursor.saturating_sub(events.len());
+            let skip = current_cursor
+                .saturating_sub(event_start_cursor)
+                .min(events.len());
+            for event in events.iter().skip(skip) {
                 new_events.push((cpu, event.clone()));
             }
-            new_cursors.push((cpu, events.len()));
+            new_cursors.push((cpu, current_cursor.max(next_cursor)));
         }
 
         new_events.sort_by_key(|(cpu, event)| (event.tick(), *cpu));
@@ -678,6 +696,10 @@ impl RiscvDataAccessProbeRecorder {
     fn line_layouts(&self) -> &[RiscvDataAccessProbeLineLayout] {
         &self.line_layouts
     }
+
+    fn cursors(&self) -> BTreeMap<CpuId, usize> {
+        self.cursors.clone()
+    }
 }
 
 fn mem_checker_tracks_access(access: &MemoryAccessKind) -> bool {
@@ -766,5 +788,75 @@ fn memory_operation_trace_command(operation: MemoryOperation) -> u32 {
         MemoryOperation::CleanEvict => 22,
         MemoryOperation::Invalidate => 23,
         MemoryOperation::InvalidateWritable => 24,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rem6_cpu::{RiscvDataAccessRecord, RiscvDataAccessTarget};
+    use rem6_isa_riscv::{MemoryWidth, Register};
+    use rem6_kernel::PartitionId;
+    use rem6_memory::{AccessSize, AgentId, MemoryRequestId};
+    use rem6_stats::{MemTraceProbeHeader, StackDistProbeConfig};
+    use rem6_transport::{MemoryRouteId, TransportEndpointId};
+
+    fn stack_distance_config() -> StackDistProbeConfig {
+        StackDistProbeConfig::builder(16, 16).build().unwrap()
+    }
+
+    fn mem_trace_config() -> MemTraceProbeConfig {
+        MemTraceProbeConfig::new(
+            MemTraceProbeHeader::new("riscv_data", 1, vec![(0, "cpu0".to_string())]).unwrap(),
+            true,
+        )
+    }
+
+    fn load_event(sequence: u64) -> RiscvDataAccessEvent {
+        RiscvDataAccessEvent::issued(RiscvDataAccessRecord::new(
+            sequence,
+            PartitionId::new(0),
+            RiscvDataAccessTarget::Memory {
+                route: MemoryRouteId::new(0),
+                endpoint: TransportEndpointId::new("cpu0.dmem").unwrap(),
+            },
+            MemoryRequestId::new(AgentId::new(0), sequence),
+            MemoryRequestId::new(AgentId::new(0), 100 + sequence),
+            MemoryAccessKind::Load {
+                rd: Register::new(10).unwrap(),
+                address: 0x9000 + sequence,
+                width: MemoryWidth::Doubleword,
+                signed: false,
+            },
+            AccessSize::new(8).unwrap(),
+            Address::new(0x9000 + sequence),
+        ))
+    }
+
+    #[test]
+    fn data_access_recorder_ignores_stale_cursor_overlap() {
+        let mut recorder = RiscvDataAccessProbeRecorder::new(
+            stack_distance_config(),
+            Some(mem_trace_config()),
+            None,
+            None,
+            false,
+            Vec::new(),
+        );
+        let event = load_event(0);
+
+        recorder
+            .record_data_access_events([(CpuId::new(0), 1, vec![event.clone()])])
+            .unwrap();
+        recorder
+            .record_data_access_events([(CpuId::new(0), 1, vec![event])])
+            .unwrap();
+
+        let snapshot = recorder.snapshot();
+        assert_eq!(
+            snapshot.memory_trace().unwrap().records().len(),
+            1,
+            "stale cursor replay must not duplicate probe events"
+        );
     }
 }
