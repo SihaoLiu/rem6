@@ -200,8 +200,10 @@ pub(super) fn with_riscv_syscall_data_cache_memory_io(
 ) -> RiscvSystemRunDriver {
     let read_memory = memory.clone();
     let write_memory = memory.clone();
+    let probe_memory = memory.clone();
+    let map_memory = memory.clone();
     let write_data_cache = data_cache.clone();
-    driver.with_riscv_syscall_emulation_and_guest_memory_io_map_handler(
+    driver.with_riscv_syscall_emulation_and_guest_memory_io_probe_map_handler(
         move |address, bytes| read_memory.read_guest_memory(address, bytes, line_layout),
         move |address, bytes| {
             write_guest_memory_with_data_cache_invalidation(
@@ -212,9 +214,10 @@ pub(super) fn with_riscv_syscall_data_cache_memory_io(
                 line_layout,
             )
         },
+        move |address, bytes| probe_memory.can_write_guest_memory(address, bytes, line_layout),
         move |request| {
             map_guest_memory_with_data_cache_invalidation(
-                &memory,
+                &map_memory,
                 data_cache.as_ref(),
                 request,
                 line_layout,
@@ -232,6 +235,9 @@ fn write_guest_memory_with_data_cache_invalidation(
 ) -> bool {
     if !memory.write_guest_memory(address, bytes, line_layout) {
         return false;
+    }
+    if bytes.is_empty() {
+        return true;
     }
     data_cache
         .map(CliDataCacheRuntime::invalidate_cached_guest_memory)

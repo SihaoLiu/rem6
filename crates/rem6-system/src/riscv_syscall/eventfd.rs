@@ -167,7 +167,7 @@ impl RiscvSyscallState {
     }
 
     fn open_guest_eventfd(&mut self, initial: u64, flags: u64) -> Result<GuestFd, GuestFdError> {
-        let fd = self.next_eventfd_fd()?;
+        let fd = self.next_guest_fd_excluding(&[])?;
         let description = self.next_open_description()?;
         let close_on_exec = flags & RISCV_LINUX_O_CLOEXEC != 0;
         let status_flags = RISCV_LINUX_O_RDWR | (flags & RISCV_LINUX_O_NONBLOCK);
@@ -215,20 +215,6 @@ impl RiscvSyscallState {
 
     fn eventfd_nonblocking(&self, fd: GuestFd) -> Result<bool, GuestFdError> {
         Ok(self.guest_fds.status_flags(fd)?.bits() & RISCV_LINUX_O_NONBLOCK as u32 != 0)
-    }
-
-    fn next_eventfd_fd(&self) -> Result<GuestFd, GuestFdError> {
-        let snapshot = self.guest_fds.snapshot();
-        let mut candidate = 0_i32;
-        loop {
-            let fd = GuestFd::new(candidate)?;
-            if snapshot.entries().iter().all(|entry| entry.fd() != fd) {
-                return Ok(fd);
-            }
-            candidate = candidate
-                .checked_add(1)
-                .ok_or(GuestFdError::FdSpaceExhausted)?;
-        }
     }
 }
 

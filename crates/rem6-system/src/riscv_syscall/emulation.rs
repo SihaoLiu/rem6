@@ -70,31 +70,35 @@ impl RiscvSyscallEmulation {
         self
     }
 
-    pub fn with_guest_memory_writer<F>(mut self, write: F) -> Self
+    pub fn with_guest_memory_writer<F>(self, write: F) -> Self
     where
         F: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
     {
-        self.guest_memory_writer = Some(RiscvGuestMemoryWriter::new(write));
-        self
+        self.with_guest_memory_writer_object(RiscvGuestMemoryWriter::new(write))
     }
 
-    pub fn with_mapped_guest_memory_writer<W, M>(mut self, write: W, map_region: M) -> Self
+    pub fn with_mapped_guest_memory_writer<W, M>(self, write: W, map_region: M) -> Self
     where
         W: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
         M: Fn(u64, u64) -> bool + Send + Sync + 'static,
     {
-        self.guest_memory_writer =
-            Some(RiscvGuestMemoryWriter::new(write).with_region_mapper(map_region));
-        self
+        self.with_guest_memory_writer_object(
+            RiscvGuestMemoryWriter::new(write).with_region_mapper(map_region),
+        )
     }
 
-    pub fn with_guest_memory_map_handler<W, M>(mut self, write: W, map_region: M) -> Self
+    pub fn with_guest_memory_map_handler<W, M>(self, write: W, map_region: M) -> Self
     where
         W: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
         M: Fn(RiscvGuestMemoryMapRequest) -> RiscvGuestMemoryMapResult + Send + Sync + 'static,
     {
-        self.guest_memory_writer =
-            Some(RiscvGuestMemoryWriter::new(write).with_region_map_handler(map_region));
+        self.with_guest_memory_writer_object(
+            RiscvGuestMemoryWriter::new(write).with_region_map_handler(map_region),
+        )
+    }
+
+    fn with_guest_memory_writer_object(mut self, writer: RiscvGuestMemoryWriter) -> Self {
+        self.guest_memory_writer = Some(writer);
         self
     }
 
@@ -230,10 +234,38 @@ impl RiscvSystemRunDriver {
         R: Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync + 'static,
         W: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
     {
+        let read = Arc::new(read);
+        let reader = Arc::clone(&read);
+        let write_probe = Arc::clone(&read);
+        let emulation = self
+            .take_riscv_syscall_emulation_or_linux_user()
+            .with_guest_memory_reader(move |address, bytes| (*reader)(address, bytes))
+            .with_guest_memory_writer_object(
+                RiscvGuestMemoryWriter::new(write).with_write_probe(move |address, bytes| {
+                    (*write_probe)(address, bytes).is_some()
+                }),
+            );
+        self.riscv_syscall_emulation = Some(emulation);
+        self
+    }
+
+    pub fn with_riscv_syscall_emulation_and_guest_memory_io_probe<R, W, P>(
+        mut self,
+        read: R,
+        write: W,
+        write_probe: P,
+    ) -> Self
+    where
+        R: Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync + 'static,
+        W: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
+        P: Fn(u64, usize) -> bool + Send + Sync + 'static,
+    {
         let emulation = self
             .take_riscv_syscall_emulation_or_linux_user()
             .with_guest_memory_reader(read)
-            .with_guest_memory_writer(write);
+            .with_guest_memory_writer_object(
+                RiscvGuestMemoryWriter::new(write).with_write_probe(write_probe),
+            );
         self.riscv_syscall_emulation = Some(emulation);
         self
     }
@@ -249,10 +281,19 @@ impl RiscvSystemRunDriver {
         W: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
         M: Fn(u64, u64) -> bool + Send + Sync + 'static,
     {
+        let read = Arc::new(read);
+        let reader = Arc::clone(&read);
+        let write_probe = Arc::clone(&read);
         let emulation = self
             .take_riscv_syscall_emulation_or_linux_user()
-            .with_guest_memory_reader(read)
-            .with_mapped_guest_memory_writer(write, map_region);
+            .with_guest_memory_reader(move |address, bytes| (*reader)(address, bytes))
+            .with_guest_memory_writer_object(
+                RiscvGuestMemoryWriter::new(write)
+                    .with_region_mapper(map_region)
+                    .with_write_probe(move |address, bytes| {
+                        (*write_probe)(address, bytes).is_some()
+                    }),
+            );
         self.riscv_syscall_emulation = Some(emulation);
         self
     }
@@ -268,10 +309,44 @@ impl RiscvSystemRunDriver {
         W: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
         M: Fn(RiscvGuestMemoryMapRequest) -> RiscvGuestMemoryMapResult + Send + Sync + 'static,
     {
+        let read = Arc::new(read);
+        let reader = Arc::clone(&read);
+        let write_probe = Arc::clone(&read);
+        let emulation = self
+            .take_riscv_syscall_emulation_or_linux_user()
+            .with_guest_memory_reader(move |address, bytes| (*reader)(address, bytes))
+            .with_guest_memory_writer_object(
+                RiscvGuestMemoryWriter::new(write)
+                    .with_region_map_handler(map_region)
+                    .with_write_probe(move |address, bytes| {
+                        (*write_probe)(address, bytes).is_some()
+                    }),
+            );
+        self.riscv_syscall_emulation = Some(emulation);
+        self
+    }
+
+    pub fn with_riscv_syscall_emulation_and_guest_memory_io_probe_map_handler<R, W, P, M>(
+        mut self,
+        read: R,
+        write: W,
+        write_probe: P,
+        map_region: M,
+    ) -> Self
+    where
+        R: Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync + 'static,
+        W: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
+        P: Fn(u64, usize) -> bool + Send + Sync + 'static,
+        M: Fn(RiscvGuestMemoryMapRequest) -> RiscvGuestMemoryMapResult + Send + Sync + 'static,
+    {
         let emulation = self
             .take_riscv_syscall_emulation_or_linux_user()
             .with_guest_memory_reader(read)
-            .with_guest_memory_map_handler(write, map_region);
+            .with_guest_memory_writer_object(
+                RiscvGuestMemoryWriter::new(write)
+                    .with_region_map_handler(map_region)
+                    .with_write_probe(write_probe),
+            );
         self.riscv_syscall_emulation = Some(emulation);
         self
     }

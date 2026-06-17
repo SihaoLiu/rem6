@@ -20,6 +20,7 @@ mod cwd;
 mod directory;
 mod dirent;
 mod emulation;
+mod epoll;
 mod eventfd;
 mod exit;
 mod fcntl;
@@ -79,6 +80,10 @@ use dirent::{
     RISCV_LINUX_GETDENTS64,
 };
 pub use emulation::RiscvSyscallEmulation;
+use epoll::{
+    syscall_epoll_create1, syscall_epoll_ctl, syscall_epoll_pwait, RiscvGuestEpoll,
+    RISCV_LINUX_EPOLL_CREATE1, RISCV_LINUX_EPOLL_CTL, RISCV_LINUX_EPOLL_PWAIT,
+};
 use eventfd::{syscall_eventfd2, RiscvGuestEventFd, RISCV_LINUX_EVENTFD2};
 use exit::{syscall_exit, RISCV_LINUX_EXIT, RISCV_LINUX_EXIT_GROUP};
 use fcntl::{syscall_fcntl, RISCV_LINUX_FCNTL};
@@ -304,6 +309,7 @@ pub struct RiscvSyscallState {
     guest_pipe_read_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
     guest_pipe_write_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
     guest_eventfds: BTreeMap<GuestFileDescriptionId, RiscvGuestEventFd>,
+    guest_epolls: BTreeMap<GuestFileDescriptionId, RiscvGuestEpoll>,
     guest_opens: Vec<RiscvGuestOpenRecord>,
     stdin_fds: BTreeSet<GuestFd>,
     guest_file_descriptions: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
@@ -389,6 +395,7 @@ impl RiscvSyscallState {
             guest_pipe_read_descriptions: BTreeMap::new(),
             guest_pipe_write_descriptions: BTreeMap::new(),
             guest_eventfds: BTreeMap::new(),
+            guest_epolls: BTreeMap::new(),
             guest_opens: Vec::new(),
             stdin_fds,
             guest_file_descriptions: BTreeMap::new(),
@@ -898,6 +905,8 @@ impl RiscvSyscallState {
             self.guest_file_stats.remove(&description.id());
             self.remove_guest_pipe_description(description.id());
             self.remove_guest_eventfd_description(description.id());
+            self.remove_guest_epoll_target_description(description.id());
+            self.remove_guest_epoll_description(description.id());
         }
     }
 
@@ -919,6 +928,8 @@ impl RiscvSyscallState {
                 self.guest_file_stats.remove(&description.id());
                 self.remove_guest_pipe_description(description.id());
                 self.remove_guest_eventfd_description(description.id());
+                self.remove_guest_epoll_target_description(description.id());
+                self.remove_guest_epoll_description(description.id());
             }
         }
     }
@@ -1029,11 +1040,15 @@ impl RiscvSyscallState {
     }
 
     fn next_open_fd(&self) -> Result<GuestFd, GuestFdError> {
+        self.next_guest_fd_excluding(&[])
+    }
+
+    fn next_guest_fd_excluding(&self, reserved: &[GuestFd]) -> Result<GuestFd, GuestFdError> {
         let snapshot = self.guest_fds.snapshot();
         let mut candidate = 0_i32;
         loop {
             let fd = GuestFd::new(candidate)?;
-            if snapshot.entries().iter().all(|entry| entry.fd() != fd) {
+            if snapshot.entries().iter().all(|entry| entry.fd() != fd) && !reserved.contains(&fd) {
                 return Ok(fd);
             }
             candidate = candidate
@@ -1043,10 +1058,18 @@ impl RiscvSyscallState {
     }
 
     fn next_open_description(&self) -> Result<GuestFileDescriptionId, GuestFdError> {
+        self.next_guest_file_description_excluding(&[])
+    }
+
+    fn next_guest_file_description_excluding(
+        &self,
+        reserved: &[GuestFileDescriptionId],
+    ) -> Result<GuestFileDescriptionId, GuestFdError> {
         let mut candidate = 0_u64;
         loop {
             let description = GuestFileDescriptionId::new(candidate);
-            if self.guest_fds.description(description).is_none() {
+            if self.guest_fds.description(description).is_none() && !reserved.contains(&description)
+            {
                 return Ok(description);
             }
             candidate = candidate
@@ -1141,6 +1164,13 @@ impl RiscvSyscallTable {
             RISCV_LINUX_EVENTFD2 => Some(RiscvSyscallOutcome::Return {
                 value: syscall_eventfd2(request, state),
             }),
+            RISCV_LINUX_EPOLL_CREATE1 => Some(RiscvSyscallOutcome::Return {
+                value: syscall_epoll_create1(request, state),
+            }),
+            RISCV_LINUX_EPOLL_CTL => syscall_epoll_ctl(request, state, guest_memory_reader)
+                .map(|value| RiscvSyscallOutcome::Return { value }),
+            RISCV_LINUX_EPOLL_PWAIT => syscall_epoll_pwait(request, state, guest_memory_writer)
+                .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_FLOCK => Some(RiscvSyscallOutcome::Return {
                 value: syscall_flock(request, state),
             }),

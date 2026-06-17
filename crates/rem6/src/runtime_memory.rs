@@ -205,7 +205,7 @@ impl CliMemoryRuntime {
         line_layout: CacheLineLayout,
     ) -> bool {
         if bytes.is_empty() {
-            return true;
+            return self.can_write_guest_memory(address, 1, line_layout);
         }
         let Some(chunks) = guest_memory_chunks(address, bytes.len(), line_layout) else {
             return false;
@@ -221,6 +221,27 @@ impl CliMemoryRuntime {
             Self::Dram { memory, .. } => {
                 let mut memory = memory.lock().expect("CLI DRAM memory lock");
                 write_guest_memory_to_dram(&mut memory, &requests, &chunks, line_layout)
+            }
+        }
+    }
+
+    pub(super) fn can_write_guest_memory(
+        &self,
+        address: u64,
+        bytes: usize,
+        line_layout: CacheLineLayout,
+    ) -> bool {
+        if bytes == 0 {
+            return true;
+        }
+        match self {
+            Self::Store { store, .. } => {
+                let mut store = store.lock().expect("CLI memory store lock");
+                prevalidate_store_guest_memory_range(&mut store, address, bytes, line_layout)
+            }
+            Self::Dram { memory, .. } => {
+                let memory = memory.lock().expect("CLI DRAM memory lock");
+                prevalidate_dram_guest_memory_range(&memory, address, bytes, line_layout)
             }
         }
     }
@@ -500,19 +521,38 @@ fn prevalidate_store_guest_memory(
     chunks: &[GuestMemoryChunk],
     line_layout: CacheLineLayout,
 ) -> bool {
-    chunks.iter().all(|chunk| {
-        let Some(request) = guest_memory_read_request(chunk.address, chunk.bytes, line_layout)
-        else {
-            return false;
-        };
-        let Ok(outcome) = store.respond(&request) else {
-            return false;
-        };
-        outcome
-            .response()
-            .and_then(|response| response.data())
-            .is_some_and(|data| data.len() == chunk.bytes)
+    chunks
+        .iter()
+        .copied()
+        .all(|chunk| prevalidate_store_guest_memory_chunk(store, chunk, line_layout))
+}
+
+fn prevalidate_store_guest_memory_range(
+    store: &mut PartitionedMemoryStore,
+    address: u64,
+    bytes: usize,
+    line_layout: CacheLineLayout,
+) -> bool {
+    guest_memory_chunks_for_each(address, bytes, line_layout, |chunk| {
+        prevalidate_store_guest_memory_chunk(store, chunk, line_layout)
     })
+}
+
+fn prevalidate_store_guest_memory_chunk(
+    store: &mut PartitionedMemoryStore,
+    chunk: GuestMemoryChunk,
+    line_layout: CacheLineLayout,
+) -> bool {
+    let Some(request) = guest_memory_read_request(chunk.address, chunk.bytes, line_layout) else {
+        return false;
+    };
+    let Ok(outcome) = store.respond(&request) else {
+        return false;
+    };
+    outcome
+        .response()
+        .and_then(|response| response.data())
+        .is_some_and(|data| data.len() == chunk.bytes)
 }
 
 fn prevalidate_dram_guest_memory(
@@ -520,15 +560,34 @@ fn prevalidate_dram_guest_memory(
     chunks: &[GuestMemoryChunk],
     line_layout: CacheLineLayout,
 ) -> bool {
-    chunks.iter().all(|chunk| {
-        let Some(request) = guest_memory_read_request(chunk.address, chunk.bytes, line_layout)
-        else {
-            return false;
-        };
-        memory
-            .response_data(&request)
-            .is_ok_and(|data| data.len() == chunk.bytes)
+    chunks
+        .iter()
+        .copied()
+        .all(|chunk| prevalidate_dram_guest_memory_chunk(memory, chunk, line_layout))
+}
+
+fn prevalidate_dram_guest_memory_range(
+    memory: &DramMemoryController,
+    address: u64,
+    bytes: usize,
+    line_layout: CacheLineLayout,
+) -> bool {
+    guest_memory_chunks_for_each(address, bytes, line_layout, |chunk| {
+        prevalidate_dram_guest_memory_chunk(memory, chunk, line_layout)
     })
+}
+
+fn prevalidate_dram_guest_memory_chunk(
+    memory: &DramMemoryController,
+    chunk: GuestMemoryChunk,
+    line_layout: CacheLineLayout,
+) -> bool {
+    let Some(request) = guest_memory_read_request(chunk.address, chunk.bytes, line_layout) else {
+        return false;
+    };
+    memory
+        .response_data(&request)
+        .is_ok_and(|data| data.len() == chunk.bytes)
 }
 
 fn guest_memory_read_request(
@@ -584,24 +643,53 @@ fn guest_memory_chunks(
     line_layout: CacheLineLayout,
 ) -> Option<Vec<GuestMemoryChunk>> {
     let mut chunks = Vec::new();
+    if !guest_memory_chunks_for_each(address, bytes, line_layout, |chunk| {
+        chunks.push(chunk);
+        true
+    }) {
+        return None;
+    }
+    Some(chunks)
+}
+
+fn guest_memory_chunks_for_each(
+    address: u64,
+    bytes: usize,
+    line_layout: CacheLineLayout,
+    mut handle: impl FnMut(GuestMemoryChunk) -> bool,
+) -> bool {
     let mut cursor = address;
     let mut data_offset = 0usize;
     while data_offset < bytes {
         let line_offset = line_layout.line_offset(Address::new(cursor));
-        let available = usize::try_from(line_layout.bytes().checked_sub(line_offset)?).ok()?;
+        let Some(available) = line_layout
+            .bytes()
+            .checked_sub(line_offset)
+            .and_then(|bytes| usize::try_from(bytes).ok())
+        else {
+            return false;
+        };
         if available == 0 {
-            return None;
+            return false;
         }
         let chunk_bytes = available.min(bytes - data_offset);
-        chunks.push(GuestMemoryChunk {
+        if !handle(GuestMemoryChunk {
             address: cursor,
             data_offset,
             bytes: chunk_bytes,
-        });
-        cursor = cursor.checked_add(u64::try_from(chunk_bytes).ok()?)?;
+        }) {
+            return false;
+        }
+        let Some(next_cursor) = u64::try_from(chunk_bytes)
+            .ok()
+            .and_then(|chunk_bytes| cursor.checked_add(chunk_bytes))
+        else {
+            return false;
+        };
+        cursor = next_cursor;
         data_offset += chunk_bytes;
     }
-    Some(chunks)
+    true
 }
 
 fn write_startup_stack_to_store(

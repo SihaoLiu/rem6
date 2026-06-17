@@ -210,6 +210,9 @@ pub(crate) fn guest_memory_writer(
     store: Arc<Mutex<PartitionedMemoryStore>>,
 ) -> impl Fn(u64, &[u8]) -> bool + Send + Sync + 'static {
     move |address, bytes| {
+        if bytes.is_empty() {
+            return guest_memory_reader(Arc::clone(&store))(address, 1).is_some();
+        }
         let line_layout = layout();
         let mut cursor = address;
         let mut data_offset = 0usize;

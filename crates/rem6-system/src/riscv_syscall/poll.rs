@@ -13,6 +13,10 @@ const RISCV_LINUX_POLLOUT: i16 = 0x0004;
 const RISCV_LINUX_POLLNVAL: i16 = 0x0020;
 const RISCV_LINUX_POLLRDNORM: i16 = 0x0040;
 const RISCV_LINUX_POLLWRNORM: i16 = 0x0100;
+pub(super) const RISCV_LINUX_READ_READY_EVENTS: u32 =
+    RISCV_LINUX_POLLIN as u32 | RISCV_LINUX_POLLRDNORM as u32;
+pub(super) const RISCV_LINUX_WRITE_READY_EVENTS: u32 =
+    RISCV_LINUX_POLLOUT as u32 | RISCV_LINUX_POLLWRNORM as u32;
 
 pub(super) fn syscall_ppoll(
     request: RiscvSyscallRequest,
@@ -81,34 +85,45 @@ fn pollfd_revents(state: &RiscvSyscallState, fd: i32, events: i16) -> i16 {
     let Some(fd) = (fd >= 0).then_some(fd as u64).and_then(guest_fd_argument) else {
         return 0;
     };
+    match ready_events_for_guest_fd(state, fd, events as u32) {
+        Ok(events) => events as i16,
+        Err(_) => RISCV_LINUX_POLLNVAL,
+    }
+}
+
+pub(super) fn ready_events_for_guest_fd(
+    state: &RiscvSyscallState,
+    fd: crate::GuestFd,
+    events: u32,
+) -> Result<u32, crate::GuestFdError> {
     let Ok(status_flags) = state.guest_fds.status_flags(fd) else {
-        return RISCV_LINUX_POLLNVAL;
+        return Err(crate::GuestFdError::BadFd { fd });
     };
 
-    let mut revents = 0;
+    let mut revents = 0_u32;
     let access_mode = u64::from(status_flags.bits()) & RISCV_LINUX_O_ACCMODE;
     match state.guest_eventfd_ready(fd) {
         Ok(Some(ready)) => {
             if ready.readable() {
-                revents |= events & (RISCV_LINUX_POLLIN | RISCV_LINUX_POLLRDNORM);
+                revents |= events & RISCV_LINUX_READ_READY_EVENTS;
             }
             if ready.writable() {
-                revents |= events & (RISCV_LINUX_POLLOUT | RISCV_LINUX_POLLWRNORM);
+                revents |= events & RISCV_LINUX_WRITE_READY_EVENTS;
             }
-            return revents;
+            return Ok(revents);
         }
         Ok(None) => {}
-        Err(_) => return RISCV_LINUX_POLLNVAL,
+        Err(error) => return Err(error),
     }
     if access_mode != RISCV_LINUX_O_WRONLY
         && (!state.stdin_readable(fd) || state.stdin_byte_count() > 0)
     {
-        revents |= events & (RISCV_LINUX_POLLIN | RISCV_LINUX_POLLRDNORM);
+        revents |= events & RISCV_LINUX_READ_READY_EVENTS;
     }
     if access_mode != RISCV_LINUX_O_RDONLY {
-        revents |= events & (RISCV_LINUX_POLLOUT | RISCV_LINUX_POLLWRNORM);
+        revents |= events & RISCV_LINUX_WRITE_READY_EVENTS;
     }
-    revents
+    Ok(revents)
 }
 
 fn read_guest_exact(

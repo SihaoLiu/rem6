@@ -165,38 +165,17 @@ impl RiscvSyscallState {
     }
 
     fn next_pipe_fds(&self) -> Result<(GuestFd, GuestFd), GuestFdError> {
-        let mut fds = Vec::with_capacity(2);
-        let snapshot = self.guest_fds.snapshot();
-        let mut candidate = 0_i32;
-        while fds.len() < 2 {
-            let fd = GuestFd::new(candidate)?;
-            if snapshot.entries().iter().all(|entry| entry.fd() != fd) && !fds.contains(&fd) {
-                fds.push(fd);
-            }
-            candidate = candidate
-                .checked_add(1)
-                .ok_or(GuestFdError::FdSpaceExhausted)?;
-        }
-        Ok((fds[0], fds[1]))
+        let read_fd = self.next_guest_fd_excluding(&[])?;
+        let write_fd = self.next_guest_fd_excluding(&[read_fd])?;
+        Ok((read_fd, write_fd))
     }
 
     fn next_pipe_descriptions(
         &self,
     ) -> Result<(GuestFileDescriptionId, GuestFileDescriptionId), GuestFdError> {
-        let mut descriptions = Vec::with_capacity(2);
-        let mut candidate = 0_u64;
-        while descriptions.len() < 2 {
-            let description = GuestFileDescriptionId::new(candidate);
-            if self.guest_fds.description(description).is_none()
-                && !descriptions.contains(&description)
-            {
-                descriptions.push(description);
-            }
-            candidate = candidate
-                .checked_add(1)
-                .ok_or(GuestFdError::FdSpaceExhausted)?;
-        }
-        Ok((descriptions[0], descriptions[1]))
+        let read_description = self.next_guest_file_description_excluding(&[])?;
+        let write_description = self.next_guest_file_description_excluding(&[read_description])?;
+        Ok((read_description, write_description))
     }
 }
 
