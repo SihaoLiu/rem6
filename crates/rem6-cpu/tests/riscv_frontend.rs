@@ -2716,6 +2716,143 @@ fn riscv_core_driver_discards_outstanding_fetch_ahead_flushed_by_redirect() {
 }
 
 #[test]
+fn riscv_core_driver_retires_branch_before_wrong_path_fetch_ahead_completes() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let branch = b_type(12, 0, 0, 0x0);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            branch,
+            i_type(1, 0, 0x0, 1, 0x13),
+            i_type(2, 0, 0x0, 2, 0x13),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert!(core.has_pending_fetch());
+    assert_eq!(
+        core.branch_predictor_snapshot()
+            .pending_speculations()
+            .len(),
+        1
+    );
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(retired) = action else {
+        panic!("expected branch to retire before wrong-path fetch-ahead completes");
+    };
+    assert_eq!(
+        retired.instruction(),
+        RiscvInstruction::decode(branch).unwrap()
+    );
+    assert_eq!(retired.execution().next_pc(), 0x800c);
+    assert_eq!(
+        retired
+            .in_order_pipeline_cycle()
+            .unwrap()
+            .plan()
+            .flushed_sequences()
+            .collect::<Vec<_>>(),
+        vec![1]
+    );
+    assert_eq!(core.branch_predictor_snapshot().pending_speculations(), &[]);
+    assert_eq!(core.inner().pc(), Address::new(0x800c));
+
+    scheduler.run_until_idle_conservative();
+    assert_eq!(core.inner().pc(), Address::new(0x800c));
+}
+
+#[test]
+fn riscv_core_driver_retires_fallthrough_branch_before_predicted_target_fetch_ahead_completes() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let taken_branch = b_type(12, 0, 0, 0x0);
+    fetch_one(
+        &core,
+        loaded_store(0x8000, taken_branch),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    let trained = core.execute_next_completed_fetch().unwrap().unwrap();
+    assert!(trained.branch_update().unwrap().actual_taken());
+    core.redirect_pc(Address::new(0x8000));
+
+    let fallthrough_branch = b_type(12, 0, 0, 0x1);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            fallthrough_branch,
+            i_type(1, 0, 0x0, 1, 0x13),
+            i_type(2, 0, 0x0, 2, 0x13),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert!(core.has_pending_fetch());
+    assert_eq!(
+        core.branch_predictor_snapshot()
+            .pending_speculations()
+            .len(),
+        1
+    );
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(retired) = action else {
+        panic!(
+            "expected fall-through branch to retire before predicted target fetch-ahead completes"
+        );
+    };
+    let update = retired.branch_update().unwrap();
+    assert!(update.predicted_taken());
+    assert_eq!(update.predicted_target(), Some(Address::new(0x800c)));
+    assert!(!update.actual_taken());
+    assert_eq!(update.actual_target(), None);
+    assert_eq!(
+        retired.instruction(),
+        RiscvInstruction::decode(fallthrough_branch).unwrap()
+    );
+    assert_eq!(retired.execution().next_pc(), 0x8004);
+    assert_eq!(
+        retired
+            .in_order_pipeline_cycle()
+            .unwrap()
+            .plan()
+            .flushed_sequences()
+            .collect::<Vec<_>>(),
+        vec![2]
+    );
+    assert_eq!(core.branch_predictor_snapshot().pending_speculations(), &[]);
+    assert_eq!(core.inner().pc(), Address::new(0x8004));
+
+    scheduler.run_until_idle_conservative();
+    assert_eq!(core.inner().pc(), Address::new(0x8004));
+}
+
+#[test]
 fn riscv_core_driver_blocks_pending_fetch_retire_when_interrupt_can_redirect() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);

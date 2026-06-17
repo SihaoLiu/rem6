@@ -178,8 +178,10 @@ and data-translation drivers issuing a bounded fetch-ahead for completed
 straight-line 4-byte integer instructions and predictor-selected conditional
 branches before retire, branch fetch-ahead speculation history recorded and
 resolved at retire, completed younger fetches consumed by in-order branch
-flushes, bounded normal-driver fetch-ahead requests inserted into the in-order
-timing state when issued and before their memory response, per-retired
+flushes, wrong-path branch fetch-ahead requests from fall-through and
+predicted-target paths squashed even when their memory response is still
+outstanding, bounded normal-driver fetch-ahead requests inserted into the
+in-order timing state when issued and before their memory response, per-retired
 instruction in-order stage advancement with runtime stats, data-response wait
 cycles folded into in-order retire timing, per-core fetch-response and
 data-response wait cycle stats, retired branch prediction and redirect summaries
@@ -208,15 +210,17 @@ branch speculation history commit across serial, translated, and parallel fetch
 paths, pending-fetch retire overlap for older completed straight-line
 instructions across serial, translated, and parallel-fetch drivers, pending
 fetch-ahead occupancy in the in-order stage snapshot immediately after issue and
-before response completion, and a CLI tick-limit stats run with two fetch
-requests, one fetch response, one retired instruction, and nonzero in-order
-pipeline cycles plus `sim.cpu0.pipeline.in_order.in_flight = 1`, plus serial
-trap repair and stream-reset discard coverage, while preserving branch
-speculation, pending-interrupt redirect, and data-access ordering.
+before response completion, normal-driver branch retirement before wrong-path
+fetch-ahead response completion across core and parallel-cluster paths,
+including trained predicted-target to actual-fall-through repair in the core
+path, and a CLI tick-limit stats run with two fetch requests, one fetch
+response, one retired instruction, and nonzero in-order pipeline cycles plus
+`sim.cpu0.pipeline.in_order.in_flight = 1`, plus serial trap repair and
+stream-reset discard coverage, while preserving branch speculation,
+pending-interrupt redirect, and data-access ordering.
 
-**Next evidence:** Broader per-cycle in-order stalls/squashes, branch-predicted
-target fetch with broad speculation snapshots and rollback, then a
-ROB/LSQ-backed O3 run test.
+**Next evidence:** Broader per-cycle in-order stalls/squashes, multi-branch
+speculation snapshots and rollback, then a ROB/LSQ-backed O3 run test.
 
 ### Memory, Cache, Coherence, Fabric, and DRAM - 54% single-axis
 

@@ -76,10 +76,11 @@ impl RiscvCore {
     }
 
     pub(crate) fn can_retire_completed_fetch_while_fetch_pending(&self) -> bool {
+        let fetch_events = self.core.fetch_events();
         let state = self.state.lock().expect("riscv core lock");
         state.pending_trap.is_none()
             && state.pending_fetch_prefix.is_none()
-            && state.branch_speculations.is_empty()
+            && can_retire_completed_fetch_with_branch_speculations(&state, &fetch_events)
             && !hart_has_enabled_pending_interrupt(&state.hart)
     }
 }
@@ -158,6 +159,34 @@ fn hart_has_enabled_pending_interrupt(hart: &RiscvHartState) -> bool {
     }
 
     false
+}
+
+fn can_retire_completed_fetch_with_branch_speculations(
+    state: &RiscvCoreState,
+    fetch_events: &[crate::CpuFetchEvent],
+) -> bool {
+    let Some(oldest_speculation_sequence) = state.branch_speculations.keys().next().copied() else {
+        return true;
+    };
+
+    next_completed_fetch_sequence_for_architectural_pc(state, fetch_events)
+        == Some(oldest_speculation_sequence)
+}
+
+fn next_completed_fetch_sequence_for_architectural_pc(
+    state: &RiscvCoreState,
+    fetch_events: &[crate::CpuFetchEvent],
+) -> Option<u64> {
+    let architectural = Address::new(state.hart.pc());
+    fetch_events
+        .iter()
+        .filter(|event| {
+            event.kind() == CpuFetchEventKind::Completed
+                && event.pc() == architectural
+                && !state.executed_fetches.contains(&event.request_id())
+        })
+        .map(|event| event.request_id().sequence())
+        .min()
 }
 
 fn fetch_ahead_decision(
