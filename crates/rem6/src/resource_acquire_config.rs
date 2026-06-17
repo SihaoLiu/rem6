@@ -430,6 +430,11 @@ fn parse_resource_acquire_resource(
             })?;
     let artifact = resource.artifact.as_deref();
     let (artifact, artifact_member, artifact_remote_locator) = match (artifact, acquisition_kind) {
+        (Some(_), WorkloadResourceAcquisitionKind::Generated) => {
+            return Err(Rem6CliError::Execute {
+                error: format!("generated resource {id} must not declare artifact"),
+            });
+        }
         (Some(artifact), _) => (file_config.resolve_path(artifact), None, None),
         (None, WorkloadResourceAcquisitionKind::HostFile) => (
             file_config.resolve_path(Path::new(&acquisition_locator)),
@@ -460,6 +465,14 @@ fn parse_resource_acquire_resource(
         }
         (None, WorkloadResourceAcquisitionKind::RemoteUri) => {
             (PathBuf::new(), None, Some(acquisition_locator.clone()))
+        }
+        (None, WorkloadResourceAcquisitionKind::Generated) => {
+            if resource.artifact_size.is_none() {
+                return Err(Rem6CliError::MissingRequiredFlag {
+                    flag: "resource_acquire.resources.artifact_size",
+                });
+            }
+            (PathBuf::from(&acquisition_locator), None, None)
         }
         (None, _) => {
             return Err(Rem6CliError::MissingRequiredFlag {

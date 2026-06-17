@@ -13,6 +13,7 @@ use crate::run_resource_config::RunResourcePayloads;
 use crate::{execute_error, Rem6CliError, Rem6LoadBlobSummary};
 
 pub(super) const CLI_MEMORY_TARGET: MemoryTargetId = MemoryTargetId::new(0);
+const CLI_ELF_LOAD_PAGE_BYTES: u64 = 4096;
 const CLI_VOLATILE_REFRESH_INTERVAL: u64 = 32;
 const CLI_VOLATILE_REFRESH_RECOVERY: u64 = 5;
 
@@ -89,6 +90,7 @@ pub(super) fn build_cli_memory_store(
         store
             .map_region(CLI_MEMORY_TARGET, region.start(), region.size())
             .map_err(execute_error)?;
+        zero_cli_memory_region(&mut store, line_layout, region)?;
     }
     image
         .load_into_partitioned_store(&mut store, CLI_MEMORY_TARGET)
@@ -104,7 +106,10 @@ pub(super) fn cli_source_backed_cache_line_ranges(
     load_blobs: &[LoadedBlob],
     line_layout: CacheLineLayout,
 ) -> Result<Vec<AddressRange>, Rem6CliError> {
-    fully_covered_line_ranges(checked_cli_memory_ranges(image, load_blobs)?, line_layout)
+    fully_covered_line_ranges(
+        checked_cli_memory_backing_ranges(image, load_blobs)?,
+        line_layout,
+    )
 }
 
 pub(super) fn cli_fully_covered_cache_line_ranges(
@@ -235,7 +240,7 @@ fn cli_memory_regions(
     load_blobs: &[LoadedBlob],
     line_layout: CacheLineLayout,
 ) -> Result<Vec<AddressRange>, Rem6CliError> {
-    let ranges = checked_cli_memory_ranges(image, load_blobs)?;
+    let ranges = checked_cli_memory_backing_ranges(image, load_blobs)?;
     let mut line_ranges = ranges
         .into_iter()
         .map(|range| line_covered_range(range, line_layout))
@@ -283,6 +288,80 @@ fn checked_cli_memory_ranges(
     }
 
     Ok(merged)
+}
+
+fn zero_cli_memory_region(
+    store: &mut PartitionedMemoryStore,
+    line_layout: CacheLineLayout,
+    region: AddressRange,
+) -> Result<(), Rem6CliError> {
+    let zero_line = vec![0; line_layout.bytes() as usize];
+    let mut line = region.start();
+    while line.get() < region.end().get() {
+        store
+            .insert_line(CLI_MEMORY_TARGET, line, zero_line.clone())
+            .map_err(execute_error)?;
+        let next = line.get().checked_add(line_layout.bytes()).ok_or_else(|| {
+            execute_error(MemoryError::AddressOverflow {
+                start: line,
+                size: AccessSize::new(line_layout.bytes()).expect("line size is nonzero"),
+            })
+        })?;
+        line = Address::new(next);
+    }
+    Ok(())
+}
+
+fn checked_cli_memory_backing_ranges(
+    image: &BootImage,
+    load_blobs: &[LoadedBlob],
+) -> Result<Vec<AddressRange>, Rem6CliError> {
+    checked_cli_memory_ranges(image, load_blobs)?;
+
+    let mut ranges = Vec::with_capacity(image.segments().len() + load_blobs.len());
+    for segment in image.segments() {
+        ranges.push(cli_image_segment_backing_range(image, segment.range())?);
+    }
+    for blob in load_blobs {
+        ranges.push(
+            AddressRange::new(
+                Address::new(blob.summary.address()),
+                AccessSize::new(blob.summary.bytes()).map_err(execute_error)?,
+            )
+            .map_err(execute_error)?,
+        );
+    }
+    ranges.sort_by_key(|range| (range.start(), range.end()));
+    merge_line_ranges(ranges)
+}
+
+fn cli_image_segment_backing_range(
+    image: &BootImage,
+    range: AddressRange,
+) -> Result<AddressRange, Rem6CliError> {
+    if image.elf_metadata().is_none() {
+        return Ok(range);
+    }
+    let end = align_up_to_elf_load_page(range.end().get())?;
+    let bytes = end - range.start().get();
+    AddressRange::new(
+        range.start(),
+        AccessSize::new(bytes).map_err(execute_error)?,
+    )
+    .map_err(execute_error)
+}
+
+fn align_up_to_elf_load_page(value: u64) -> Result<u64, Rem6CliError> {
+    value
+        .checked_add(CLI_ELF_LOAD_PAGE_BYTES - 1)
+        .map(|value| value & !(CLI_ELF_LOAD_PAGE_BYTES - 1))
+        .ok_or_else(|| {
+            execute_error(MemoryError::AddressOverflow {
+                start: Address::new(value),
+                size: AccessSize::new(CLI_ELF_LOAD_PAGE_BYTES)
+                    .expect("ELF load page size is nonzero"),
+            })
+        })
 }
 
 pub(super) fn merge_line_ranges(
@@ -438,6 +517,34 @@ mod tests {
     }
 
     #[test]
+    fn cli_memory_store_maps_elf_load_page_tail_as_zeroes() {
+        let line_layout = CacheLineLayout::new(16).unwrap();
+        let image = BootImage::from_elf64_le(&test_riscv64_elf(
+            0x10000,
+            0x10000,
+            &[0x13, 0x00, 0x00, 0x00],
+        ))
+        .unwrap();
+        let mut store = build_cli_memory_store(&image, &[], line_layout).unwrap();
+        let request = MemoryRequest::read_shared(
+            MemoryRequestId::new(rem6_memory::AgentId::new(1), 0),
+            Address::new(0x10040),
+            AccessSize::new(4).unwrap(),
+            line_layout,
+        )
+        .unwrap();
+
+        let response = store
+            .respond(&request)
+            .unwrap()
+            .response()
+            .cloned()
+            .unwrap();
+
+        assert_eq!(response.data(), Some(&[0, 0, 0, 0][..]));
+    }
+
+    #[test]
     fn cli_memory_store_merges_disjoint_ranges_sharing_a_line() {
         let line_layout = CacheLineLayout::new(16).unwrap();
         let image = BootImage::new(Address::new(0x8000))
@@ -503,5 +610,45 @@ mod tests {
                 AddressRange::new(Address::new(0x8030), AccessSize::new(32).unwrap()).unwrap()
             ]
         );
+    }
+
+    fn test_riscv64_elf(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
+        let payload_offset = 128usize;
+        let mut bytes = vec![0; payload_offset + payload.len()];
+        bytes[0..4].copy_from_slice(b"\x7fELF");
+        bytes[4] = 2;
+        bytes[5] = 1;
+        bytes[6] = 1;
+        write_u16(&mut bytes, 16, 2);
+        write_u16(&mut bytes, 18, 243);
+        write_u32(&mut bytes, 20, 1);
+        write_u64(&mut bytes, 24, entry);
+        write_u64(&mut bytes, 32, 64);
+        write_u16(&mut bytes, 52, 64);
+        write_u16(&mut bytes, 54, 56);
+        write_u16(&mut bytes, 56, 1);
+
+        write_u32(&mut bytes, 64, 1);
+        write_u32(&mut bytes, 68, 5);
+        write_u64(&mut bytes, 72, payload_offset as u64);
+        write_u64(&mut bytes, 80, physical);
+        write_u64(&mut bytes, 88, physical);
+        write_u64(&mut bytes, 96, payload.len() as u64);
+        write_u64(&mut bytes, 104, payload.len() as u64);
+        write_u64(&mut bytes, 112, 0x1000);
+        bytes[payload_offset..].copy_from_slice(payload);
+        bytes
+    }
+
+    fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
+        bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
+        bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
     }
 }

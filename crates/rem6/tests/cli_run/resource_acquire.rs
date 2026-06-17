@@ -146,6 +146,186 @@ artifact_size = 4
 }
 
 #[test]
+fn rem6_resource_acquire_loads_config_manifest_from_generated_zero_fill() {
+    let workspace = temp_workspace("resource-acquire-generated-config");
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        r#"[resource_acquire]
+workload_id = "resource-generated-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:generated-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "generated"
+acquisition_locator = "zero-fill:kernel"
+artifact_digest = "sha256:generated-kernel"
+artifact_size = 4
+
+[[resource_acquire.resources]]
+id = "initrd"
+kind = "initrd"
+digest = "sha256:generated-initrd"
+locator = "resources/initrd.img"
+required = true
+acquisition_kind = "generated"
+acquisition_locator = "zero-fill:initrd"
+artifact_digest = "sha256:generated-initrd"
+artifact_size = 2
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"workload_id\":\"resource-generated-cli\""));
+    assert!(stdout.contains("\"resource\":\"kernel\""));
+    assert!(stdout.contains("\"resource\":\"initrd\""));
+    assert!(stdout.contains("\"size_bytes\":4"));
+    assert!(stdout.contains("\"size_bytes\":2"));
+    assert!(stdout.contains("\"acquisition_kind\":\"generated\""));
+    assert!(stdout.contains("\"acquisition_locator\":\"zero-fill:kernel\""));
+    assert!(stdout.contains("\"acquisition_locator\":\"zero-fill:initrd\""));
+    assert_stat(
+        &stdout,
+        "sim.resource_acquire.acquired_resources",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.resource_acquire.acquired_bytes",
+        "Byte",
+        6,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_resource_acquire_rejects_generated_resource_without_artifact_size() {
+    let workspace = temp_workspace("resource-acquire-generated-missing-size");
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        r#"[resource_acquire]
+workload_id = "resource-generated-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:generated-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "generated"
+acquisition_locator = "zero-fill"
+artifact_digest = "sha256:generated-kernel"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("missing required flag resource_acquire.resources.artifact_size"));
+}
+
+#[test]
+fn rem6_resource_acquire_rejects_generated_resource_with_artifact_path() {
+    let workspace = temp_workspace("resource-acquire-generated-artifact-conflict");
+    fs::write(workspace.join("kernel.bin"), [0x13, 0x00, 0x00, 0x00]).unwrap();
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        r#"[resource_acquire]
+workload_id = "resource-generated-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:generated-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "generated"
+acquisition_locator = "zero-fill:kernel"
+artifact = "kernel.bin"
+artifact_digest = "sha256:generated-kernel"
+artifact_size = 4
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("generated resource kernel must not declare artifact"));
+}
+
+#[test]
+fn rem6_resource_acquire_rejects_unknown_generated_locator() {
+    let workspace = temp_workspace("resource-acquire-generated-unknown-locator");
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        r#"[resource_acquire]
+workload_id = "resource-generated-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:generated-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "generated"
+acquisition_locator = "pattern:kernel"
+artifact_digest = "sha256:generated-kernel"
+artifact_size = 4
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("generated resource kernel supports only zero-fill"));
+}
+
+#[test]
 fn rem6_resource_acquire_loads_config_manifest_from_tar_archive_locator() {
     let workspace = temp_workspace("resource-acquire-archive-tar-config");
     let archive_dir = workspace.join("archives");

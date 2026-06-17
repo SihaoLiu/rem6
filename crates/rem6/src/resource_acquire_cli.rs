@@ -329,7 +329,9 @@ fn build_manifest_and_artifacts(
 fn read_resource_artifact(
     resource: &Rem6ResourceAcquireResourceConfig,
 ) -> Result<Vec<u8>, Rem6CliError> {
-    if let Some(locator) = resource.artifact_remote_locator() {
+    if resource.acquisition_kind() == WorkloadResourceAcquisitionKind::Generated {
+        read_generated_resource_artifact(resource)
+    } else if let Some(locator) = resource.artifact_remote_locator() {
         read_remote_http_resource(locator)
     } else if let Some(member) = resource.artifact_member() {
         match resource.acquisition_kind() {
@@ -354,6 +356,35 @@ fn read_resource_artifact(
             error: error.to_string(),
         })
     }
+}
+
+fn read_generated_resource_artifact(
+    resource: &Rem6ResourceAcquireResourceConfig,
+) -> Result<Vec<u8>, Rem6CliError> {
+    let locator = resource.acquisition_locator();
+    if is_zero_fill_generated_locator(locator) {
+        let size = resource
+            .artifact_size()
+            .ok_or(Rem6CliError::MissingRequiredFlag {
+                flag: "resource_acquire.resources.artifact_size",
+            })?;
+        Ok(vec![0; size])
+    } else {
+        Err(Rem6CliError::ReadResourceArtifact {
+            path: PathBuf::from(locator),
+            error: format!(
+                "generated resource {} supports only zero-fill",
+                resource.id()
+            ),
+        })
+    }
+}
+
+fn is_zero_fill_generated_locator(locator: &str) -> bool {
+    locator == "zero-fill"
+        || locator
+            .strip_prefix("zero-fill:")
+            .is_some_and(|label| !label.is_empty())
 }
 
 fn validate_remote_uri_artifact_digest(

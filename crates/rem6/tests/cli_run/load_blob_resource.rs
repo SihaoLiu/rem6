@@ -99,6 +99,71 @@ artifact_digest = "sha256:slash-load-blob-initrd"
 }
 
 #[test]
+fn rem6_run_loads_generated_zero_fill_load_blob_resource() {
+    let program = riscv64_program(&[0x0000_0073]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let workspace = temp_workspace("run-generated-load-blob-resource");
+    fs::write(workspace.join("kernel.elf"), &elf).unwrap();
+    let resource_config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+workload_id = "generated-load-blob-resource"
+boot_entry = 2147483648
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:generated-load-blob-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel"
+artifact = "kernel.elf"
+artifact_digest = "sha256:generated-load-blob-kernel"
+
+[[resource_acquire.resources]]
+id = "initrd"
+kind = "initrd"
+digest = "sha256:generated-load-blob-initrd"
+locator = "resources/initrd.bin"
+required = true
+acquisition_kind = "generated"
+acquisition_locator = "zero-fill:initrd"
+artifact_digest = "sha256:generated-load-blob-initrd"
+artifact_size = 4
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("run.toml");
+    fs::write(
+        &config,
+        "[run]\nisa = \"riscv\"\nresource_config = \"resource-acquire.toml\"\nmax_tick = 40\nexecute = true\nstats_format = \"json\"\nload_blobs = [\"0x80001000:resource:initrd\"]\nmemory_dumps = [\"0x80001000:4\"]\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains(
+        "\"load_blobs\":[{\"address\":\"0x80001000\",\"bytes\":4,\"path\":\"resource:initrd\"}]"
+    ));
+    assert!(stdout.contains("\"address\":\"0x80001000\""));
+    assert!(stdout.contains("\"hex\":\"00000000\""));
+    assert_stat(&stdout, "sim.load_blobs", "Count", 1, "constant");
+}
+
+#[test]
 fn rem6_run_rejects_ambiguous_suite_load_blob_resource() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x0000_0073]);
     let workspace = temp_workspace("run-suite-load-blob-resource-ambiguous");
