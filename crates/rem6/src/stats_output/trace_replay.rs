@@ -408,6 +408,41 @@ pub(super) fn emit_trace_replay_data_cache_stats(
         "sim.trace_replay.data_cache.unattributed_runs",
         summary.unattributed_data_cache_parallel_run_count() as u64,
     )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.data_cache.scheduler.epochs",
+        summary.data_cache_parallel_scheduler_epoch_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.data_cache.scheduler.empty_epochs",
+        summary.data_cache_parallel_scheduler_empty_epoch_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.data_cache.scheduler.dispatches",
+        summary.data_cache_parallel_scheduler_dispatch_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.data_cache.scheduler.batches",
+        summary.data_cache_parallel_scheduler_batch_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.data_cache.scheduler.active_partitions",
+        summary.active_data_cache_parallel_scheduler_partition_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.data_cache.scheduler.max_workers",
+        summary.data_cache_parallel_scheduler_max_workers() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.data_cache.scheduler.total_workers",
+        summary.data_cache_parallel_scheduler_total_workers() as u64,
+    )?;
     for protocol in [
         WorkloadDataCacheProtocol::Msi,
         WorkloadDataCacheProtocol::Mesi,
@@ -561,7 +596,10 @@ mod tests {
     #[test]
     fn trace_replay_stats_emit_data_cache_protocol_accounting() {
         let summary = WorkloadParallelExecutionSummary::default()
-            .with_data_cache_parallel_counts(5, 0, 0, 0, 0)
+            .with_data_cache_parallel_counts(5, 7, 6, 4, 3)
+            .with_data_cache_parallel_empty_epoch_count(1)
+            .with_data_cache_parallel_partitions(2)
+            .with_data_cache_parallel_worker_count(8)
             .with_data_cache_run_attribution(4, 1)
             .with_data_cache_protocol_counts([
                 WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Msi, 3),
@@ -589,6 +627,48 @@ mod tests {
         assert_stat_value(&json, "sim.trace_replay.data_cache.mesi.runs", "Count", 1);
         assert_stat_value(&json, "sim.trace_replay.data_cache.moesi.runs", "Count", 0);
         assert_stat_value(&json, "sim.trace_replay.data_cache.chi.runs", "Count", 0);
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.data_cache.scheduler.epochs",
+            "Count",
+            7,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.data_cache.scheduler.empty_epochs",
+            "Count",
+            1,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.data_cache.scheduler.dispatches",
+            "Count",
+            6,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.data_cache.scheduler.batches",
+            "Count",
+            4,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.data_cache.scheduler.active_partitions",
+            "Count",
+            2,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.data_cache.scheduler.max_workers",
+            "Count",
+            3,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.data_cache.scheduler.total_workers",
+            "Count",
+            8,
+        );
     }
 
     fn assert_stat_value(json: &str, path: &str, unit: &str, value: u64) {

@@ -1399,6 +1399,48 @@ fn rem6_trace_replay_data_cache_protocol_drives_executable_policy_stats() {
         2,
         "monotonic",
     );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.trace_replay.data_cache.scheduler.epochs",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.trace_replay.data_cache.scheduler.dispatches",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.trace_replay.data_cache.scheduler.batches",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.trace_replay.data_cache.scheduler.active_partitions",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.trace_replay.data_cache.scheduler.max_workers",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.trace_replay.data_cache.scheduler.total_workers",
+        "Count",
+        0,
+        "monotonic",
+    );
 }
 
 fn trace_replay_output(trace: &std::path::Path, max_tick: &str) -> std::process::Output {
