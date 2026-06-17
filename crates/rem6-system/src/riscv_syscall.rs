@@ -1161,7 +1161,9 @@ impl RiscvSyscallTable {
                     state,
                 ),
             }),
-            RISCV_LINUX_FCNTL => syscall_fcntl(request, state),
+            RISCV_LINUX_FCNTL => {
+                syscall_fcntl(request, state, guest_memory_reader, guest_memory_writer)
+            }
             RISCV_LINUX_EVENTFD2 => Some(RiscvSyscallOutcome::Return {
                 value: syscall_eventfd2(request, state),
             }),

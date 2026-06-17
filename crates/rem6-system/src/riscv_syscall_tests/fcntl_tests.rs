@@ -1,7 +1,13 @@
 use super::*;
 
 const RISCV_LINUX_F_DUPFD_FOR_TEST: u64 = 0;
+const RISCV_LINUX_F_GETLK_FOR_TEST: u64 = 5;
+const RISCV_LINUX_F_SETLK_FOR_TEST: u64 = 6;
+const RISCV_LINUX_F_SETLKW_FOR_TEST: u64 = 7;
 const RISCV_LINUX_F_DUPFD_CLOEXEC_FOR_TEST: u64 = 1030;
+const RISCV_LINUX_F_RDLCK_FOR_TEST: u16 = 0;
+const RISCV_LINUX_F_WRLCK_FOR_TEST: u16 = 1;
+const RISCV_LINUX_F_UNLCK_FOR_TEST: u16 = 2;
 const RISCV_LINUX_O_RDWR_FOR_TEST: u64 = 2;
 
 #[test]
@@ -258,4 +264,247 @@ fn linux_table_fcntl_setfl_enables_append_guest_file_writes() {
     );
     assert_eq!(state.guest_path_stat(b"guest.txt").unwrap().size(), 10);
     assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_fcntl_getlk_reports_no_conflict_for_open_fd() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let flock = linux_flock_bytes(RISCV_LINUX_F_WRLCK_FOR_TEST, 0, 0, 0, 41);
+    let guest_memory_reader = linux_flock_reader(0x9000, flock);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETLK_FOR_TEST, 0x9000, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let writes = writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].0, 0x9000);
+    assert_eq!(
+        read_linux_flock_type(&writes[0].1),
+        RISCV_LINUX_F_UNLCK_FOR_TEST
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_fcntl_setlk_and_setlkw_accept_valid_advisory_lock_for_open_fd() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let flock = linux_flock_bytes(RISCV_LINUX_F_WRLCK_FOR_TEST, 0, 0, 0, 0);
+
+    for (index, command) in [RISCV_LINUX_F_SETLK_FOR_TEST, RISCV_LINUX_F_SETLKW_FOR_TEST]
+        .into_iter()
+        .enumerate()
+    {
+        let guest_memory_reader = linux_flock_reader(0x9000, flock.clone());
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(
+                    0x8000 + index as u64 * 4,
+                    RISCV_LINUX_FCNTL,
+                    [1, command, 0x9000, 0, 0, 0],
+                ),
+                &mut state,
+                7 + index as u64,
+                Some(&guest_memory_reader),
+                None,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 0 })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_fcntl_lock_commands_report_pointer_and_type_errors() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let bad_type = linux_flock_bytes(99, 0, 0, 0, 0);
+    let bad_type_reader = linux_flock_reader(0x9000, bad_type);
+    let unlock_probe = linux_flock_bytes(RISCV_LINUX_F_UNLCK_FOR_TEST, 0, 0, 0, 0);
+    let unlock_probe_reader = linux_flock_reader(0x9100, unlock_probe);
+    let sparse_flock = linux_flock_bytes(RISCV_LINUX_F_WRLCK_FOR_TEST, 0, 0, 0, 0);
+    let sparse_reader = sparse_linux_flock_reader(0x9200, sparse_flock);
+    let faulting_reader = RiscvGuestMemoryReader::new(|_, _| None);
+    let writer = RiscvGuestMemoryWriter::new(|_, _| true);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_SETLK_FOR_TEST, 0x9000, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&bad_type_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETLK_FOR_TEST, 0x9100, 0, 0, 0],
+            ),
+            &mut state,
+            8,
+            Some(&unlock_probe_reader),
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_SETLK_FOR_TEST, 0x9200, 0, 0, 0],
+            ),
+            &mut state,
+            9,
+            Some(&sparse_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETLK_FOR_TEST, 0x9000, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            Some(&faulting_reader),
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8010,
+                RISCV_LINUX_FCNTL,
+                [99, RISCV_LINUX_F_GETLK_FOR_TEST, 0x9000, 0, 0, 0],
+            ),
+            &mut state,
+            11,
+            Some(&faulting_reader),
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_fcntl_setlk_enforces_descriptor_access_mode() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let write_lock = linux_flock_bytes(RISCV_LINUX_F_WRLCK_FOR_TEST, 0, 0, 0, 0);
+    let write_lock_reader = linux_flock_reader(0x9000, write_lock);
+    let read_lock = linux_flock_bytes(RISCV_LINUX_F_RDLCK_FOR_TEST, 0, 0, 0, 0);
+    let read_lock_reader = linux_flock_reader(0x9100, read_lock);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCNTL,
+                [0, RISCV_LINUX_F_SETLK_FOR_TEST, 0x9000, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&write_lock_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_SETLK_FOR_TEST, 0x9100, 0, 0, 0],
+            ),
+            &mut state,
+            8,
+            Some(&read_lock_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+fn linux_flock_bytes(lock_type: u16, whence: u16, start: i64, len: i64, pid: i32) -> Vec<u8> {
+    let mut bytes = vec![0; 32];
+    bytes[0..2].copy_from_slice(&lock_type.to_le_bytes());
+    bytes[2..4].copy_from_slice(&whence.to_le_bytes());
+    bytes[8..16].copy_from_slice(&start.to_le_bytes());
+    bytes[16..24].copy_from_slice(&len.to_le_bytes());
+    bytes[24..28].copy_from_slice(&pid.to_le_bytes());
+    bytes
+}
+
+fn read_linux_flock_type(bytes: &[u8]) -> u16 {
+    u16::from_le_bytes(bytes[0..2].try_into().unwrap())
+}
+
+fn linux_flock_reader(base: u64, flock: Vec<u8>) -> RiscvGuestMemoryReader {
+    RiscvGuestMemoryReader::new(move |address, bytes| {
+        let start = usize::try_from(address.checked_sub(base)?).ok()?;
+        let end = start.checked_add(bytes)?;
+        flock.get(start..end).map(Vec::from)
+    })
+}
+
+fn sparse_linux_flock_reader(base: u64, flock: Vec<u8>) -> RiscvGuestMemoryReader {
+    RiscvGuestMemoryReader::new(move |address, bytes| {
+        if bytes != 2 && bytes != 4 && bytes != 8 {
+            return None;
+        }
+        let start = usize::try_from(address.checked_sub(base)?).ok()?;
+        let end = start.checked_add(bytes)?;
+        flock.get(start..end).map(Vec::from)
+    })
 }

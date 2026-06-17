@@ -258,6 +258,158 @@ int main(void) {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_fcntl_locks_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!("skipping static RISC-V SE fcntl lock smoke: riscv64-unknown-elf-gcc not found");
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE fcntl lock smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-fcntl-lock");
+    let source = workspace.join("fcntl-lock.c");
+    let binary = workspace.join("fcntl-lock");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+
+#define AT_FDCWD (-100L)
+#define O_RDWR 02
+#define O_CREAT 0100
+#define O_TRUNC 01000
+#define F_GETLK 5
+#define F_SETLK 6
+#define F_WRLCK 1
+#define F_UNLCK 2
+#define SEEK_SET 0
+
+struct linux_flock {
+    short l_type;
+    short l_whence;
+    long l_start;
+    long l_len;
+    int l_pid;
+};
+
+static long linux_syscall1(long number, long arg0) {
+    register long a0 asm("a0") = arg0;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall4(long number, long arg0, long arg1, long arg2, long arg3) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3), "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    struct linux_flock lock = {F_WRLCK, SEEK_SET, 0, 0, 0};
+    long fd = linux_syscall4(56, AT_FDCWD, (long)"fcntl-lock.txt",
+                             O_RDWR | O_CREAT | O_TRUNC, 0600);
+    long get_status = fd >= 0 ? linux_syscall3(25, fd, F_GETLK, (long)&lock) : -1;
+    int get_type = get_status == 0 ? lock.l_type : -1;
+    lock.l_type = F_WRLCK;
+    long set_status = fd >= 0 ? linux_syscall3(25, fd, F_SETLK, (long)&lock) : -1;
+    lock.l_type = F_UNLCK;
+    long unlock_status = fd >= 0 ? linux_syscall3(25, fd, F_SETLK, (long)&lock) : -1;
+    lock.l_type = 99;
+    long bad_type = fd >= 0 ? linux_syscall3(25, fd, F_SETLK, (long)&lock) : -1;
+    lock.l_type = F_WRLCK;
+    long bad_fd = linux_syscall3(25, 99, F_GETLK, (long)&lock);
+    long close_status = fd >= 0 ? linux_syscall1(57, fd) : -1;
+
+    printf("fcntl-lock:%ld:%d:%ld:%ld:%ld:%ld:%ld\n",
+           fd >= 0 ? 0 : fd, get_type, set_status, unlock_status,
+           bad_type, bad_fd, close_status);
+    return fd >= 0 && get_status == 0 && get_type == F_UNLCK &&
+           set_status == 0 && unlock_status == 0 && bad_type == -22 &&
+           bad_fd == -9 && close_status == 0 ? 47 : 79;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu)
+        .arg(&binary)
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(47),
+        "qemu stdout: {}; qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stdout),
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(qemu_output.stdout, b"fcntl-lock:0:2:0:0:-22:-9:0\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":47"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"fcntl-lock:0:2:0:0:-22:-9:0\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 47, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_sendfile_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!("skipping static RISC-V SE sendfile smoke: riscv64-unknown-elf-gcc not found");
