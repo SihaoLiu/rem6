@@ -43,6 +43,28 @@ impl RiscvSyscallState {
         Ok(Some(buffer.iter().take(count).copied().collect()))
     }
 
+    pub(super) fn guest_pipe_unread_byte_count(
+        &self,
+        fd: GuestFd,
+    ) -> Result<Option<usize>, GuestFdError> {
+        let description = self
+            .guest_fds
+            .entry(fd)
+            .ok_or(GuestFdError::BadFd { fd })?
+            .description();
+        let endpoint = self
+            .guest_pipe_read_descriptions
+            .get(&description)
+            .or_else(|| self.guest_pipe_write_descriptions.get(&description));
+        let Some(endpoint) = endpoint else {
+            return Ok(None);
+        };
+        let Some(buffer) = self.guest_pipe_buffers.get(&endpoint.pipe) else {
+            return Err(GuestFdError::MissingFileDescription { description });
+        };
+        Ok(Some(buffer.len()))
+    }
+
     pub(super) fn consume_guest_pipe_prefix(
         &mut self,
         fd: GuestFd,

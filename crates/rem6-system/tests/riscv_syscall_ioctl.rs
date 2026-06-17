@@ -2,14 +2,72 @@
 #[path = "riscv_syscall_emulation/support.rs"]
 mod support;
 
-use rem6_system::{RiscvSyscallOutcome, RiscvSyscallRequest, RiscvSyscallState, RiscvSyscallTable};
+use rem6_system::{
+    RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallOutcome, RiscvSyscallRequest,
+    RiscvSyscallState, RiscvSyscallTable,
+};
 use support::*;
 
 const RISCV_LINUX_IOCTL: u64 = 29;
+const RISCV_LINUX_PIPE2: u64 = 59;
+const RISCV_LINUX_WRITE: u64 = 64;
 const RISCV_LINUX_TCGETS: u64 = 0x5401;
 const RISCV_LINUX_FIONREAD: u64 = 0x541b;
 const RISCV_LINUX_ENOTTY: u64 = 25;
 const RISCV_LINUX_EBADF: u64 = 9;
+const RISCV_LINUX_EFAULT: u64 = 14;
+
+fn linux_error(errno: u64) -> u64 {
+    0_u64.wrapping_sub(errno)
+}
+
+fn pipe_with_bytes() -> (
+    Arc<Mutex<PartitionedMemoryStore>>,
+    RiscvSyscallState,
+    u64,
+    u64,
+) {
+    let fd_array = [0_u8; 8];
+    let count_area = [0_u8; 4];
+    let store = loaded_program_store_with_data(
+        &[(0x8000, 0)],
+        &[
+            (0x8800, &fd_array),
+            (0x9000, b"ready"),
+            (0x9100, &count_area),
+        ],
+    );
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_PIPE2, [0x8800, 0, 0, 0, 0, 0]),
+            &mut state,
+            0,
+            None,
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    let fds = guest_memory_reader(Arc::clone(&store))(0x8800, 8).unwrap();
+    let read_fd = i32::from_le_bytes(fds[..4].try_into().unwrap()) as u64;
+    let write_fd = i32::from_le_bytes(fds[4..].try_into().unwrap()) as u64;
+
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_WRITE, [write_fd, 0x9000, 5, 0, 0, 0]),
+            &mut state,
+            1,
+            Some(&reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 5 })
+    );
+
+    (store, state, read_fd, write_fd)
+}
 
 #[test]
 fn linux_table_ioctl_tcgets_reports_standard_fd_is_not_tty() {
@@ -55,6 +113,80 @@ fn linux_table_ioctl_fionread_reports_standard_fd_is_not_tty() {
         outcome,
         Some(RiscvSyscallOutcome::Return {
             value: 0u64.wrapping_sub(RISCV_LINUX_ENOTTY),
+        })
+    );
+}
+
+#[test]
+fn linux_table_ioctl_fionread_reports_pipe_buffer_bytes() {
+    let (store, mut state, read_fd, _write_fd) = pipe_with_bytes();
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_IOCTL,
+                [read_fd, RISCV_LINUX_FIONREAD, 0x9100, 0, 0, 0],
+            ),
+            &mut state,
+            2,
+            None,
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        guest_memory_reader(Arc::clone(&store))(0x9100, 4),
+        Some(5_i32.to_le_bytes().to_vec())
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_ioctl_fionread_reports_pipe_write_end_buffer_bytes() {
+    let (store, mut state, _read_fd, write_fd) = pipe_with_bytes();
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_IOCTL,
+                [write_fd, RISCV_LINUX_FIONREAD, 0x9100, 0, 0, 0],
+            ),
+            &mut state,
+            2,
+            None,
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        guest_memory_reader(Arc::clone(&store))(0x9100, 4),
+        Some(5_i32.to_le_bytes().to_vec())
+    );
+}
+
+#[test]
+fn linux_table_ioctl_fionread_faulting_guest_count_pointer_returns_efault() {
+    let (_store, mut state, read_fd, _write_fd) = pipe_with_bytes();
+    let faulting_writer = RiscvGuestMemoryWriter::new(|_address, _bytes| false);
+
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_IOCTL,
+                [read_fd, RISCV_LINUX_FIONREAD, 0x9100, 0, 0, 0],
+            ),
+            &mut state,
+            2,
+            None,
+            Some(&faulting_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
         })
     );
 }

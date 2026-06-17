@@ -1181,7 +1181,7 @@ impl RiscvSyscallTable {
                 value: syscall_ftruncate(request, state),
             }),
             RISCV_LINUX_IOCTL => Some(RiscvSyscallOutcome::Return {
-                value: syscall_ioctl(request, state),
+                value: syscall_ioctl(request, state, guest_memory_writer),
             }),
             RISCV_LINUX_OPENAT => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
