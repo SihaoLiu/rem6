@@ -54,6 +54,17 @@ fn read_readfile_payload(
             })?;
             Ok(payloads.readfile_payload(resource)?.to_vec())
         }
+        ReadfileSource::SuiteResource(selector) => {
+            let payloads = resource_payloads.ok_or_else(|| Rem6CliError::Execute {
+                error: format!(
+                    "readfile suite resource {} requires --resource-config",
+                    selector.qualified_id()
+                ),
+            })?;
+            Ok(payloads
+                .readfile_suite_payload(selector.workload_id(), selector.resource_id())?
+                .to_vec())
+        }
     }
 }
 

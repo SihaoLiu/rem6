@@ -62,6 +62,17 @@ fn read_load_blob_data(
             })?;
             Ok(payloads.blob_payload(resource)?.to_vec())
         }
+        LoadBlobSource::SuiteResource(selector) => {
+            let payloads = resource_payloads.ok_or_else(|| Rem6CliError::Execute {
+                error: format!(
+                    "load blob suite resource {} requires --resource-config",
+                    selector.qualified_id()
+                ),
+            })?;
+            Ok(payloads
+                .blob_suite_payload(selector.workload_id(), selector.resource_id())?
+                .to_vec())
+        }
     }
 }
 

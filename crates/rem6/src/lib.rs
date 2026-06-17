@@ -56,7 +56,7 @@ pub use cli_error::Rem6CliError;
 pub use config::{
     CliCachePrefetcher, CliDramMemoryProfile, LoadBlobRequest, LoadBlobSource, MemoryDumpRequest,
     PowerAnalysisFormat, ReadfileRequest, ReadfileSource, Rem6GupsConfig, Rem6RunConfig,
-    Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, StatsFormat,
+    Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, StatsFormat, SuiteResourceSelector,
 };
 use data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io,
