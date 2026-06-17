@@ -13,8 +13,10 @@ use crate::{
     RiscvSystemRunDriver, ScheduledRiscvTrap, SystemError,
 };
 
+mod advisory;
 mod brk;
 mod clock;
+mod constants;
 mod copy_file_range;
 mod cpu_locality;
 mod cwd;
@@ -65,15 +67,18 @@ mod thread;
 mod time;
 mod unknown;
 mod unlink;
+mod util;
 mod utsname;
 mod wait4;
 mod writev;
 
+use advisory::{syscall_fadvise64, RISCV_LINUX_FADVISE64};
 use brk::syscall_brk;
 use clock::{
     syscall_clock, RISCV_LINUX_CLOCK_GETRES, RISCV_LINUX_CLOCK_GETTIME, RISCV_LINUX_GETTIMEOFDAY,
     RISCV_LINUX_TIMES,
 };
+use constants::*;
 use copy_file_range::{syscall_copy_file_range, RISCV_LINUX_COPY_FILE_RANGE};
 use cpu_locality::{syscall_getcpu, RISCV_LINUX_GETCPU};
 use cwd::{
@@ -129,8 +134,8 @@ use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
 pub use limits::RISCV_LINUX_STACK_LIMIT_BYTES;
 use limits::{syscall_getrlimit, syscall_prlimit64, RISCV_LINUX_GETRLIMIT, RISCV_LINUX_PRLIMIT64};
 use link::{
-    syscall_link_operation, syscall_symlinkat, RISCV_LINUX_LINK, RISCV_LINUX_LINKAT,
-    RISCV_LINUX_SYMLINKAT,
+    syscall_link_operation, syscall_symlinkat, RiscvGuestLinkError, RiscvGuestSymlinkError,
+    RISCV_LINUX_LINK, RISCV_LINUX_LINKAT, RISCV_LINUX_SYMLINKAT,
 };
 use links::syscall_readlinkat;
 use mkdir::{syscall_mkdirat, RISCV_LINUX_MKDIRAT};
@@ -155,7 +160,9 @@ use permissions::{
     syscall_umask, RISCV_LINUX_FCHMOD, RISCV_LINUX_FCHMODAT, RISCV_LINUX_FCHOWN,
     RISCV_LINUX_FCHOWNAT, RISCV_LINUX_UMASK, RISCV_NEWLIB_LEGACY_CHMOD,
 };
-use pipe::{syscall_pipe2, RiscvGuestPipeId, RISCV_LINUX_PIPE2};
+use pipe::{
+    syscall_pipe2, RiscvGuestPipe, RiscvGuestPipeEndpoint, RiscvGuestPipeId, RISCV_LINUX_PIPE2,
+};
 use poll::{syscall_ppoll, syscall_pselect6, RISCV_LINUX_PPOLL, RISCV_LINUX_PSELECT6};
 use process::{
     syscall_getpgid, syscall_getsid, syscall_personality, syscall_prctl, syscall_setpgid,
@@ -198,76 +205,13 @@ use sync::{
 use sysinfo::{syscall_sysinfo, RISCV_LINUX_SYSINFO};
 pub use unknown::RiscvUnknownSyscallRecord;
 use unlink::{syscall_unlink_operation, RISCV_LINUX_UNLINK, RISCV_LINUX_UNLINKAT};
+use util::{guest_fd_argument, linux_error, read_guest_c_string, RiscvGuestCStringError};
 use utsname::write_riscv_linux_utsname;
 use wait4::{
     syscall_getrusage, syscall_process_group_id, syscall_wait4, syscall_waitid,
     RISCV_LINUX_GETRUSAGE, RISCV_LINUX_WAIT4, RISCV_LINUX_WAITID,
 };
 use writev::{syscall_pwritev, syscall_writev, RISCV_LINUX_PWRITEV, RISCV_LINUX_WRITEV};
-
-const RISCV_LINUX_GETCWD: u64 = 17;
-const RISCV_LINUX_OPENAT: u64 = 56;
-const RISCV_LINUX_READLINKAT: u64 = 78;
-const RISCV_LINUX_NEWFSTATAT: u64 = 79;
-const RISCV_LINUX_FSTAT: u64 = 80;
-const RISCV_LINUX_SET_ROBUST_LIST: u64 = 99;
-const RISCV_LINUX_GET_ROBUST_LIST: u64 = 100;
-const RISCV_LINUX_SCHED_YIELD: u64 = 124;
-const RISCV_LINUX_KILL: u64 = 129;
-const RISCV_LINUX_TKILL: u64 = 130;
-const RISCV_LINUX_TGKILL: u64 = 131;
-const RISCV_LINUX_RT_SIGSUSPEND: u64 = 133;
-const RISCV_LINUX_RT_SIGACTION: u64 = 134;
-const RISCV_LINUX_RT_SIGPROCMASK: u64 = 135;
-const RISCV_LINUX_RT_SIGPENDING: u64 = 136;
-const RISCV_LINUX_RT_SIGTIMEDWAIT: u64 = 137;
-const RISCV_LINUX_RT_SIGQUEUEINFO: u64 = 138;
-const RISCV_LINUX_RT_SIGRETURN: u64 = 139;
-const RISCV_LINUX_UNAME: u64 = 160;
-const RISCV_LINUX_SETRLIMIT: u64 = 164;
-const RISCV_LINUX_FUTEX: u64 = 98;
-const RISCV_LINUX_BRK: u64 = 214;
-const RISCV_LINUX_MLOCKALL: u64 = 230;
-const RISCV_LINUX_MUNLOCKALL: u64 = 231;
-const RISCV_LINUX_STAT: u64 = 1038;
-const RISCV_LINUX_EPERM: u64 = 1;
-const RISCV_LINUX_ENOENT: u64 = 2;
-const RISCV_LINUX_ESRCH: u64 = 3;
-const RISCV_LINUX_E2BIG: u64 = 7;
-const RISCV_LINUX_EBADF: u64 = 9;
-const RISCV_LINUX_EAGAIN: u64 = 11;
-const RISCV_LINUX_ENOMEM: u64 = 12;
-const RISCV_LINUX_EACCES: u64 = 13;
-const RISCV_LINUX_EFAULT: u64 = 14;
-const RISCV_LINUX_EBUSY: u64 = 16;
-const RISCV_LINUX_EEXIST: u64 = 17;
-const RISCV_LINUX_ENOTDIR: u64 = 20;
-const RISCV_LINUX_EISDIR: u64 = 21;
-const RISCV_LINUX_EINVAL: u64 = 22;
-const RISCV_LINUX_EMFILE: u64 = 24;
-const RISCV_LINUX_ENOTTY: u64 = 25;
-const RISCV_LINUX_EFBIG: u64 = 27;
-const RISCV_LINUX_ESPIPE: u64 = 29;
-const RISCV_LINUX_ERANGE: u64 = 34;
-const RISCV_LINUX_ENAMETOOLONG: u64 = 36;
-const RISCV_LINUX_ENOSYS: u64 = 38;
-const RISCV_LINUX_ENOTEMPTY: u64 = 39;
-const RISCV_LINUX_ELOOP: u64 = 40;
-const RISCV_LINUX_ENOTSUP: u64 = 95;
-const RISCV_LINUX_O_ACCMODE: u64 = 0x3;
-const RISCV_LINUX_O_CLOEXEC: u64 = 0o2_000_000;
-const RISCV_LINUX_O_RDONLY: u64 = 0;
-const RISCV_LINUX_O_WRONLY: u64 = 1;
-const RISCV_LINUX_O_RDWR: u64 = 2;
-const RISCV_LINUX_O_APPEND: u64 = 0o2000;
-const RISCV_LINUX_O_NONBLOCK: u64 = 0x800;
-const RISCV_LINUX_AT_FDCWD: u64 = (-100_i64) as u64;
-const RISCV_LINUX_AT_EMPTY_PATH: u64 = 0x1000;
-const RISCV_LINUX_AT_NO_AUTOMOUNT: u64 = 0x800;
-const RISCV_LINUX_AT_SYMLINK_NOFOLLOW: u64 = 0x100;
-const RISCV_LINUX_PATH_MAX: usize = 4096;
-const RISCV_LINUX_DEFAULT_SE_MEMORY_CAPACITY_BYTES: u64 = 256 * 1024 * 1024;
-const RISCV_GUEST_SYMLINK_FOLLOW_LIMIT: usize = 40;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvSyscallOutcome {
@@ -276,41 +220,9 @@ pub enum RiscvSyscallOutcome {
     Return { value: u64 },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum RiscvGuestLinkError {
-    SourceMissing,
-    SourceIsDirectory,
-    DestinationExists,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum RiscvGuestSymlinkError {
-    DestinationExists,
-}
-
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct RiscvGuestFileIdentity {
     inode: u64,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct RiscvGuestPipeEndpoint {
-    pipe: RiscvGuestPipeId,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct RiscvGuestPipe {
-    buffer: VecDeque<u8>,
-    capacity: usize,
-}
-
-impl RiscvGuestPipe {
-    fn new(capacity: usize) -> Self {
-        Self {
-            buffer: VecDeque::new(),
-            capacity,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -754,7 +666,7 @@ impl RiscvSyscallState {
         removed_path || removed_file || removed_link
     }
 
-    pub(super) fn link_guest_path(
+    fn link_guest_path(
         &mut self,
         source: &[u8],
         destination: &[u8],
@@ -794,7 +706,7 @@ impl RiscvSyscallState {
         Ok(())
     }
 
-    pub(super) fn symlink_guest_path(
+    fn symlink_guest_path(
         &mut self,
         link_path: &[u8],
         target: &[u8],
@@ -1287,6 +1199,9 @@ impl RiscvSyscallTable {
                 .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_FLOCK => Some(RiscvSyscallOutcome::Return {
                 value: syscall_flock(request, state),
+            }),
+            RISCV_LINUX_FADVISE64 => Some(RiscvSyscallOutcome::Return {
+                value: syscall_fadvise64(request, state),
             }),
             RISCV_LINUX_FTRUNCATE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_ftruncate(request, state),
@@ -1863,45 +1778,6 @@ fn riscv_program_break_for_boot_image(
             page_bytes: RISCV_PAGE_BYTES,
         },
     )
-}
-
-pub(super) fn guest_fd_argument(value: u64) -> Option<GuestFd> {
-    i32::try_from(value)
-        .ok()
-        .and_then(|fd| GuestFd::new(fd).ok())
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RiscvGuestCStringError {
-    Fault,
-    TooLong,
-}
-
-fn read_guest_c_string(
-    guest_memory: &RiscvGuestMemoryReader,
-    address: u64,
-    limit: usize,
-) -> Result<Vec<u8>, RiscvGuestCStringError> {
-    let mut bytes = Vec::new();
-    for offset in 0..limit {
-        let address = address
-            .checked_add(offset as u64)
-            .ok_or(RiscvGuestCStringError::Fault)?;
-        let byte = guest_memory
-            .read(address, 1)
-            .filter(|bytes| bytes.len() == 1)
-            .and_then(|bytes| bytes.first().copied())
-            .ok_or(RiscvGuestCStringError::Fault)?;
-        if byte == 0 {
-            return Ok(bytes);
-        }
-        bytes.push(byte);
-    }
-    Err(RiscvGuestCStringError::TooLong)
-}
-
-fn linux_error(errno: u64) -> u64 {
-    0u64.wrapping_sub(errno)
 }
 
 #[cfg(test)]

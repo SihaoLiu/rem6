@@ -1,8 +1,9 @@
+use std::collections::VecDeque;
+
 use super::{
-    linux_error, RiscvGuestMemoryWriter, RiscvGuestPipe, RiscvGuestPipeEndpoint,
-    RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
-    RISCV_LINUX_EMFILE, RISCV_LINUX_O_CLOEXEC, RISCV_LINUX_O_NONBLOCK, RISCV_LINUX_O_RDONLY,
-    RISCV_LINUX_O_WRONLY,
+    linux_error, RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EMFILE, RISCV_LINUX_O_CLOEXEC,
+    RISCV_LINUX_O_NONBLOCK, RISCV_LINUX_O_RDONLY, RISCV_LINUX_O_WRONLY,
 };
 use crate::{
     GuestFd, GuestFdEntry, GuestFdError, GuestFileDescription, GuestFileDescriptionId,
@@ -19,6 +20,32 @@ pub(super) struct RiscvGuestPipeId(u64);
 impl RiscvGuestPipeId {
     const fn new(value: u64) -> Self {
         Self(value)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(super) struct RiscvGuestPipeEndpoint {
+    pipe: RiscvGuestPipeId,
+}
+
+impl RiscvGuestPipeEndpoint {
+    const fn new(pipe: RiscvGuestPipeId) -> Self {
+        Self { pipe }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct RiscvGuestPipe {
+    buffer: VecDeque<u8>,
+    capacity: usize,
+}
+
+impl RiscvGuestPipe {
+    const fn new(capacity: usize) -> Self {
+        Self {
+            buffer: VecDeque::new(),
+            capacity,
+        }
     }
 }
 
@@ -107,6 +134,18 @@ impl RiscvSyscallState {
             return Err(GuestFdError::MissingFileDescription { description });
         };
         Ok(Some(pipe.capacity))
+    }
+
+    pub(super) fn guest_fd_is_pipe(&self, fd: GuestFd) -> Result<bool, GuestFdError> {
+        let description = self
+            .guest_fds
+            .entry(fd)
+            .ok_or(GuestFdError::BadFd { fd })?
+            .description();
+        Ok(self.guest_pipe_read_descriptions.contains_key(&description)
+            || self
+                .guest_pipe_write_descriptions
+                .contains_key(&description))
     }
 
     pub(super) fn guest_pipe_read_ready(&self, fd: GuestFd) -> Result<Option<bool>, GuestFdError> {
@@ -306,9 +345,9 @@ impl RiscvSyscallState {
             RiscvGuestPipe::new(RISCV_LINUX_DEFAULT_PIPE_CAPACITY_BYTES),
         );
         self.guest_pipe_read_descriptions
-            .insert(read_description, RiscvGuestPipeEndpoint { pipe });
+            .insert(read_description, RiscvGuestPipeEndpoint::new(pipe));
         self.guest_pipe_write_descriptions
-            .insert(write_description, RiscvGuestPipeEndpoint { pipe });
+            .insert(write_description, RiscvGuestPipeEndpoint::new(pipe));
         Ok(())
     }
 

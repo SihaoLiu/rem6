@@ -1,14 +1,26 @@
 use super::{
     guest_fd_argument, linux_error, read_guest_c_string, RiscvGuestCStringError,
-    RiscvGuestLinkError, RiscvGuestMemoryReader, RiscvGuestSymlinkError, RiscvSyscallRequest,
-    RiscvSyscallState, RISCV_LINUX_AT_FDCWD, RISCV_LINUX_EBADF, RISCV_LINUX_EEXIST,
-    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT,
-    RISCV_LINUX_ENOTDIR, RISCV_LINUX_EPERM, RISCV_LINUX_PATH_MAX,
+    RiscvGuestMemoryReader, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_AT_FDCWD,
+    RISCV_LINUX_EBADF, RISCV_LINUX_EEXIST, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
+    RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT, RISCV_LINUX_ENOTDIR, RISCV_LINUX_EPERM,
+    RISCV_LINUX_PATH_MAX,
 };
 
 pub(super) const RISCV_LINUX_SYMLINKAT: u64 = 36;
 pub(super) const RISCV_LINUX_LINKAT: u64 = 37;
 pub(super) const RISCV_LINUX_LINK: u64 = 1025;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RiscvGuestLinkError {
+    SourceMissing,
+    SourceIsDirectory,
+    DestinationExists,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum RiscvGuestSymlinkError {
+    DestinationExists,
+}
 
 pub(super) fn syscall_link_operation(
     request: RiscvSyscallRequest,

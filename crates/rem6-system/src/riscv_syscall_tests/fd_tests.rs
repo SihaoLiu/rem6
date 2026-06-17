@@ -1,10 +1,17 @@
 use super::*;
 
 const RISCV_LINUX_FLOCK_FOR_TEST: u64 = 32;
+const RISCV_LINUX_FADVISE64_FOR_TEST: u64 = 223;
 const RISCV_LINUX_LOCK_SH_FOR_TEST: u64 = 1;
 const RISCV_LINUX_LOCK_EX_FOR_TEST: u64 = 2;
 const RISCV_LINUX_LOCK_NB_FOR_TEST: u64 = 4;
 const RISCV_LINUX_LOCK_UN_FOR_TEST: u64 = 8;
+const RISCV_LINUX_POSIX_FADV_NORMAL_FOR_TEST: u64 = 0;
+const RISCV_LINUX_POSIX_FADV_RANDOM_FOR_TEST: u64 = 1;
+const RISCV_LINUX_POSIX_FADV_SEQUENTIAL_FOR_TEST: u64 = 2;
+const RISCV_LINUX_POSIX_FADV_WILLNEED_FOR_TEST: u64 = 3;
+const RISCV_LINUX_POSIX_FADV_DONTNEED_FOR_TEST: u64 = 4;
+const RISCV_LINUX_POSIX_FADV_NOREUSE_FOR_TEST: u64 = 5;
 
 #[test]
 fn linux_table_dup_preserves_stdin_read_source() {
@@ -325,4 +332,169 @@ fn linux_table_flock_reports_bad_fd_and_invalid_operations() {
             value: linux_error(RISCV_LINUX_EINVAL)
         })
     );
+}
+
+#[test]
+fn linux_table_fadvise64_accepts_known_advice_for_open_fds() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let fd = open_regular_fadvise_fd(&table, &mut state, 0x7100);
+
+    for advice in [
+        RISCV_LINUX_POSIX_FADV_NORMAL_FOR_TEST,
+        RISCV_LINUX_POSIX_FADV_RANDOM_FOR_TEST,
+        RISCV_LINUX_POSIX_FADV_SEQUENTIAL_FOR_TEST,
+        RISCV_LINUX_POSIX_FADV_WILLNEED_FOR_TEST,
+        RISCV_LINUX_POSIX_FADV_DONTNEED_FOR_TEST,
+        RISCV_LINUX_POSIX_FADV_NOREUSE_FOR_TEST,
+    ] {
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x9000,
+                    RISCV_LINUX_FADVISE64_FOR_TEST,
+                    [fd, 0, 4096, advice, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 0 })
+        );
+    }
+}
+
+#[test]
+fn linux_table_fadvise64_rejects_bad_fd_and_advice() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let fd = open_regular_fadvise_fd(&table, &mut state, 0x7100);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x9000,
+                RISCV_LINUX_FADVISE64_FOR_TEST,
+                [99, 0, 4096, RISCV_LINUX_POSIX_FADV_NORMAL_FOR_TEST, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x9004,
+                RISCV_LINUX_FADVISE64_FOR_TEST,
+                [fd, 0, 4096, 6, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+}
+
+#[test]
+fn linux_table_fadvise64_rejects_pipe_fd_and_negative_len() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let fd = open_regular_fadvise_fd(&table, &mut state, 0x7100);
+    let pipe_fds = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let pipe_fds_for_writer = std::sync::Arc::clone(&pipe_fds);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        if address == 0x7000 && bytes.len() == 8 {
+            pipe_fds_for_writer.lock().unwrap().extend_from_slice(bytes);
+            true
+        } else {
+            false
+        }
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x9000, RISCV_LINUX_PIPE2, [0x7000, 0, 0, 0, 0, 0]),
+            &mut state,
+            11,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    let pipe_fds = pipe_fds.lock().unwrap();
+    let read_fd = u32::from_le_bytes(pipe_fds[0..4].try_into().unwrap()) as u64;
+    let write_fd = u32::from_le_bytes(pipe_fds[4..8].try_into().unwrap()) as u64;
+
+    for fd in [read_fd, write_fd] {
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x9004,
+                    RISCV_LINUX_FADVISE64_FOR_TEST,
+                    [fd, 0, 4096, RISCV_LINUX_POSIX_FADV_NORMAL_FOR_TEST, 0, 0,],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_ESPIPE)
+            })
+        );
+    }
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x9008,
+                RISCV_LINUX_FADVISE64_FOR_TEST,
+                [
+                    fd,
+                    0,
+                    u64::MAX,
+                    RISCV_LINUX_POSIX_FADV_NORMAL_FOR_TEST,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+}
+
+fn open_regular_fadvise_fd(
+    table: &RiscvSyscallTable,
+    state: &mut RiscvSyscallState,
+    path_address: u64,
+) -> u64 {
+    state.register_guest_file(b"/fadvise.bin", b"advise\n");
+    let path = b"/fadvise.bin\0".to_vec();
+    let reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        let offset = address.checked_sub(path_address)?;
+        let offset = usize::try_from(offset).ok()?;
+        let end = offset.checked_add(bytes)?;
+        path.get(offset..end).map(<[u8]>::to_vec)
+    });
+    match table.handle_with_guest_memory_io_at_tick(
+        RiscvSyscallRequest::new(
+            0x8ff0,
+            RISCV_LINUX_OPENAT,
+            [
+                RISCV_LINUX_AT_FDCWD,
+                path_address,
+                RISCV_LINUX_O_RDONLY,
+                0,
+                0,
+                0,
+            ],
+        ),
+        state,
+        10,
+        Some(&reader),
+        None,
+    ) {
+        Some(RiscvSyscallOutcome::Return { value }) => value,
+        outcome => panic!("openat for fadvise regular file failed: {outcome:?}"),
+    }
 }

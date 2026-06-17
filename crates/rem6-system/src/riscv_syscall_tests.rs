@@ -61,6 +61,8 @@ mod robust_tests;
 mod scheduler_tests;
 #[path = "riscv_syscall_tests/sendfile_tests.rs"]
 mod sendfile_tests;
+#[path = "riscv_syscall_tests/signal_action_tests.rs"]
+mod signal_action_tests;
 #[path = "riscv_syscall_tests/signal_tests.rs"]
 mod signal_tests;
 #[path = "riscv_syscall_tests/startup_tests.rs"]
@@ -87,11 +89,9 @@ mod wait4_tests;
 fn read_le_u32(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
 }
-
 fn read_le_u64(bytes: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
 }
-
 fn collect_guest_writes(writes: &[(u64, Vec<u8>)], base: u64, len: usize) -> Vec<u8> {
     let mut bytes = vec![0; len];
     for (address, chunk) in writes {
