@@ -107,6 +107,54 @@ pub(crate) fn single_register_bits(value: u64) -> u32 {
     unbox_single(value)
 }
 
+pub(crate) fn min_single_bits(lhs: u32, rhs: u32) -> u32 {
+    if is_nan_single(lhs) && is_nan_single(rhs) {
+        return DEFAULT_NAN_SINGLE_BITS;
+    }
+    if is_nan_single(lhs) {
+        return rhs;
+    }
+    if is_nan_single(rhs) {
+        return lhs;
+    }
+
+    let lhs_value = f32::from_bits(lhs);
+    let rhs_value = f32::from_bits(rhs);
+    if lhs_value < rhs_value || (lhs_value == rhs_value && has_single_sign(lhs)) {
+        lhs
+    } else {
+        rhs
+    }
+}
+
+pub(crate) fn max_single_bits(lhs: u32, rhs: u32) -> u32 {
+    if is_nan_single(lhs) && is_nan_single(rhs) {
+        return DEFAULT_NAN_SINGLE_BITS;
+    }
+    if is_nan_single(lhs) {
+        return rhs;
+    }
+    if is_nan_single(rhs) {
+        return lhs;
+    }
+
+    let lhs_value = f32::from_bits(lhs);
+    let rhs_value = f32::from_bits(rhs);
+    if rhs_value < lhs_value || (lhs_value == rhs_value && has_single_sign(rhs)) {
+        lhs
+    } else {
+        rhs
+    }
+}
+
+pub(crate) fn minmax_exception_flags_single_bits(lhs: u32, rhs: u32) -> u64 {
+    if is_signaling_nan_single(lhs) || is_signaling_nan_single(rhs) {
+        FLOAT_FLAG_INVALID
+    } else {
+        0
+    }
+}
+
 pub(crate) fn binary_register_rounding_mode_is_supported(
     instruction: RiscvInstruction,
     frm: u64,
@@ -537,11 +585,7 @@ fn divide_exception_flags(
 }
 
 fn minmax_exception_flags_single(lhs: u64, rhs: u64) -> u64 {
-    if is_signaling_nan_single(unbox_single(lhs)) || is_signaling_nan_single(unbox_single(rhs)) {
-        FLOAT_FLAG_INVALID
-    } else {
-        0
-    }
+    minmax_exception_flags_single_bits(unbox_single(lhs), unbox_single(rhs))
 }
 
 fn minmax_exception_flags_double(lhs: u64, rhs: u64) -> u64 {
@@ -797,25 +841,7 @@ fn sign_inject_xor_double(lhs: u64, rhs: u64) -> u64 {
 }
 
 fn min_single(lhs: u64, rhs: u64) -> u64 {
-    let lhs = unbox_single(lhs);
-    let rhs = unbox_single(rhs);
-    if is_nan_single(lhs) && is_nan_single(rhs) {
-        return DEFAULT_NAN_SINGLE;
-    }
-    if is_nan_single(lhs) {
-        return box_single(rhs);
-    }
-    if is_nan_single(rhs) {
-        return box_single(lhs);
-    }
-
-    let lhs_value = f32::from_bits(lhs);
-    let rhs_value = f32::from_bits(rhs);
-    if lhs_value < rhs_value || (lhs_value == rhs_value && has_single_sign(lhs)) {
-        box_single(lhs)
-    } else {
-        box_single(rhs)
-    }
+    box_single(min_single_bits(unbox_single(lhs), unbox_single(rhs)))
 }
 
 fn min_double(lhs: u64, rhs: u64) -> u64 {
@@ -839,25 +865,7 @@ fn min_double(lhs: u64, rhs: u64) -> u64 {
 }
 
 fn max_single(lhs: u64, rhs: u64) -> u64 {
-    let lhs = unbox_single(lhs);
-    let rhs = unbox_single(rhs);
-    if is_nan_single(lhs) && is_nan_single(rhs) {
-        return DEFAULT_NAN_SINGLE;
-    }
-    if is_nan_single(lhs) {
-        return box_single(rhs);
-    }
-    if is_nan_single(rhs) {
-        return box_single(lhs);
-    }
-
-    let lhs_value = f32::from_bits(lhs);
-    let rhs_value = f32::from_bits(rhs);
-    if rhs_value < lhs_value || (lhs_value == rhs_value && has_single_sign(rhs)) {
-        box_single(lhs)
-    } else {
-        box_single(rhs)
-    }
+    box_single(max_single_bits(unbox_single(lhs), unbox_single(rhs)))
 }
 
 fn max_double(lhs: u64, rhs: u64) -> u64 {

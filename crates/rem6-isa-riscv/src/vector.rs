@@ -146,6 +146,26 @@ pub enum RiscvVectorFloatInstruction {
         fs1: FloatRegister,
         vs2: VectorRegister,
     },
+    MinVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    MinVf {
+        vd: VectorRegister,
+        fs1: FloatRegister,
+        vs2: VectorRegister,
+    },
+    MaxVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    MaxVf {
+        vd: VectorRegister,
+        fs1: FloatRegister,
+        vs2: VectorRegister,
+    },
     ReverseSubVf {
         vd: VectorRegister,
         fs1: FloatRegister,

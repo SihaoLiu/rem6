@@ -21,6 +21,18 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
         RiscvVectorFloatInstruction::SubVf { vd, fs1, vs2 } => {
             execute_arithmetic_vf(hart, vd, fs1, vs2, FloatBinaryOp::Sub)
         }
+        RiscvVectorFloatInstruction::MinVv { vd, vs1, vs2 } => {
+            execute_minmax_vv(hart, vd, vs1, vs2, FloatMinMaxOp::Min)
+        }
+        RiscvVectorFloatInstruction::MinVf { vd, fs1, vs2 } => {
+            execute_minmax_vf(hart, vd, fs1, vs2, FloatMinMaxOp::Min)
+        }
+        RiscvVectorFloatInstruction::MaxVv { vd, vs1, vs2 } => {
+            execute_minmax_vv(hart, vd, vs1, vs2, FloatMinMaxOp::Max)
+        }
+        RiscvVectorFloatInstruction::MaxVf { vd, fs1, vs2 } => {
+            execute_minmax_vf(hart, vd, fs1, vs2, FloatMinMaxOp::Max)
+        }
         RiscvVectorFloatInstruction::ReverseSubVf { vd, fs1, vs2 } => {
             execute_arithmetic_vf(hart, vd, fs1, vs2, FloatBinaryOp::ReverseSub)
         }
@@ -64,6 +76,12 @@ enum FloatSignInjectOp {
     Inject,
     InjectNeg,
     InjectXor,
+}
+
+#[derive(Clone, Copy)]
+enum FloatMinMaxOp {
+    Min,
+    Max,
 }
 
 fn execute_arithmetic_vv(
@@ -162,6 +180,65 @@ fn execute_sign_inject_vv(
         result[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
     write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
+
+fn execute_minmax_vv(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs1: VectorRegister,
+    vs2: VectorRegister,
+    operation: FloatMinMaxOp,
+) -> bool {
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2, vs1]) else {
+        return false;
+    };
+    if plan.element_bytes != 4 {
+        return false;
+    }
+
+    let left = read_register_group(hart, vs2, plan.group_registers);
+    let right = read_register_group(hart, vs1, plan.group_registers);
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    let mut exception_flags = 0;
+    for offset in (0..plan.active_bytes).step_by(4) {
+        let lhs = u32::from_le_bytes(lane4(&left, offset));
+        let rhs = u32::from_le_bytes(lane4(&right, offset));
+        exception_flags |= float::minmax_exception_flags_single_bits(lhs, rhs);
+        let value = minmax_single_bits(lhs, rhs, operation);
+        result[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    write_register_group(hart, vd, plan.group_registers, &result);
+    hart.raise_float_exception_flags(exception_flags);
+    true
+}
+
+fn execute_minmax_vf(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    fs1: FloatRegister,
+    vs2: VectorRegister,
+    operation: FloatMinMaxOp,
+) -> bool {
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2]) else {
+        return false;
+    };
+    if plan.element_bytes != 4 {
+        return false;
+    }
+
+    let left = read_register_group(hart, vs2, plan.group_registers);
+    let scalar = float::single_register_bits(hart.read_float(fs1));
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    let mut exception_flags = 0;
+    for offset in (0..plan.active_bytes).step_by(4) {
+        let lhs = u32::from_le_bytes(lane4(&left, offset));
+        exception_flags |= float::minmax_exception_flags_single_bits(lhs, scalar);
+        let value = minmax_single_bits(lhs, scalar, operation);
+        result[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    write_register_group(hart, vd, plan.group_registers, &result);
+    hart.raise_float_exception_flags(exception_flags);
     true
 }
 
@@ -281,6 +358,13 @@ fn sign_inject_single_bits(lhs: u32, rhs: u32, operation: FloatSignInjectOp) -> 
         FloatSignInjectOp::InjectXor => (lhs ^ rhs) & SIGN_BIT,
     };
     (lhs & !SIGN_BIT) | sign
+}
+
+fn minmax_single_bits(lhs: u32, rhs: u32, operation: FloatMinMaxOp) -> u32 {
+    match operation {
+        FloatMinMaxOp::Min => float::min_single_bits(lhs, rhs),
+        FloatMinMaxOp::Max => float::max_single_bits(lhs, rhs),
+    }
 }
 
 fn lane4(bytes: &[u8; MAX_VECTOR_GROUP_BYTES], offset: usize) -> [u8; 4] {

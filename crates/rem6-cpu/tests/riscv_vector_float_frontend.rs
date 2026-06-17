@@ -16,6 +16,8 @@ use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TargetOutcome, TransportEndpointId,
 };
 
+const FLOAT_FLAG_INVALID: u64 = 1 << 4;
+
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()
 }
@@ -62,6 +64,22 @@ fn vfsub_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
 
 fn vfsub_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x02, vs2, fs1, vd)
+}
+
+fn vfmin_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x04, vs2, vs1, vd)
+}
+
+fn vfmin_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x04, vs2, fs1, vd)
+}
+
+fn vfmax_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x06, vs2, vs1, vd)
+}
+
+fn vfmax_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x06, vs2, fs1, vd)
 }
 
 fn vfrsub_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
@@ -355,7 +373,7 @@ fn assert_vf_fetch_stream_executes(
 fn assert_vv_fetch_stream_executes_bits(
     instruction: u32,
     decoded: RiscvVectorFloatInstruction,
-    sign_source: [u32; 4],
+    source1: [u32; 4],
     source: [u32; 4],
     initial_destination: [u32; 4],
     expected_destination: [u32; 4],
@@ -363,7 +381,45 @@ fn assert_vv_fetch_stream_executes_bits(
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);
     core.write_register(reg(10), 3);
-    core.write_vector_register(vreg(1), lanes_f32_bits(sign_source));
+    core.write_vector_register(vreg(1), lanes_f32_bits(source1));
+    core.write_vector_register(vreg(2), lanes_f32_bits(source));
+    core.write_vector_register(vreg(3), lanes_f32_bits(initial_destination));
+    let store = loaded_program_store(
+        0x8000,
+        &[vsetvli_type(0xd0, 10, 5), instruction, 0x0010_0073],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(decoded)
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_f32_bits(expected_destination)
+    );
+}
+
+fn assert_vf_fetch_stream_executes_bits(
+    instruction: u32,
+    decoded: RiscvVectorFloatInstruction,
+    scalar: u32,
+    source: [u32; 4],
+    initial_destination: [u32; 4],
+    expected_destination: [u32; 4],
+) {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.write_float_register(freg(1), f32_box_bits(scalar));
     core.write_vector_register(vreg(2), lanes_f32_bits(source));
     core.write_vector_register(vreg(3), lanes_f32_bits(initial_destination));
     let store = loaded_program_store(
@@ -595,6 +651,117 @@ fn riscv_core_driver_executes_vfrsub_vf_from_fetch_stream() {
         [2.0, -4.0, 0.25, 1.0],
         [0.0, 0.0, 0.0, 12.0],
         [8.0, 14.0, 9.75, 12.0],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfmin_vv_from_fetch_stream() {
+    assert_vv_fetch_stream_executes_bits(
+        vfmin_vv_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MinVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        },
+        [0x3f80_0000, 0x0000_0000, 0x40a0_0000, 0],
+        [0x4000_0000, 0x8000_0000, 0x7fc0_1234, 0x40c0_0000],
+        [0, 0, 0, 0x40a0_0000],
+        [0x3f80_0000, 0x8000_0000, 0x40a0_0000, 0x40a0_0000],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfmin_vf_from_fetch_stream() {
+    assert_vf_fetch_stream_executes_bits(
+        vfmin_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MinVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        0x0000_0000,
+        [0x3f80_0000, 0x8000_0000, 0x7fc0_1234, 0x40c0_0000],
+        [0, 0, 0, 0x40a0_0000],
+        [0x0000_0000, 0x8000_0000, 0x0000_0000, 0x40a0_0000],
+    );
+}
+
+#[test]
+fn riscv_core_driver_vfmin_accrues_invalid_for_signaling_nan() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.write_vector_register(
+        vreg(1),
+        lanes_f32_bits([0x7f80_0001, 0x40a0_0000, 0x3f80_0000, 0]),
+    );
+    core.write_vector_register(
+        vreg(2),
+        lanes_f32_bits([0x4080_0000, 0x7fc0_1234, 0x7f80_0001, 0x40c0_0000]),
+    );
+    core.write_vector_register(vreg(3), lanes_f32_bits([0, 0, 0, 0x40a0_0000]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 5),
+            vfmin_vv_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::MinVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_f32_bits([0x4080_0000, 0x40a0_0000, 0x3f80_0000, 0x40a0_0000])
+    );
+    assert_eq!(core.float_status().fflags(), FLOAT_FLAG_INVALID);
+}
+
+#[test]
+fn riscv_core_driver_executes_vfmax_vv_from_fetch_stream() {
+    assert_vv_fetch_stream_executes_bits(
+        vfmax_vv_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MaxVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        },
+        [0xc040_0000, 0x0000_0000, 0x7fc0_5678, 0],
+        [0xc000_0000, 0x8000_0000, 0x7fc0_1234, 0x40c0_0000],
+        [0, 0, 0, 0x40a0_0000],
+        [0xc000_0000, 0x0000_0000, 0x7fc0_0000, 0x40a0_0000],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfmax_vf_from_fetch_stream() {
+    assert_vf_fetch_stream_executes_bits(
+        vfmax_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MaxVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        0x7fc0_5678,
+        [0xc000_0000, 0x8000_0000, 0x7fc0_1234, 0x40c0_0000],
+        [0, 0, 0, 0x40a0_0000],
+        [0xc000_0000, 0x8000_0000, 0x7fc0_0000, 0x40a0_0000],
     );
 }
 
