@@ -77,8 +77,9 @@ pub use types::{
 pub use vector::{
     RiscvInstructionFlags, RiscvVectorCompressPlan, RiscvVectorCompressResult, RiscvVectorElements,
     RiscvVectorError, RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode,
-    RiscvVectorFloatInstruction, RiscvVectorMicroOp, RiscvVectorMicroOpExpansion,
-    RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult, RiscvVectorTailPolicy,
+    RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode, RiscvVectorMicroOp,
+    RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult,
+    RiscvVectorTailPolicy,
 };
 
 impl RiscvInstruction {

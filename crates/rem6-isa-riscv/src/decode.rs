@@ -5,7 +5,8 @@ use crate::{
     FloatRegister, Immediate, RiscvCounterCsr, RiscvCsrOp, RiscvError, RiscvFenceSet,
     RiscvFloatCsr, RiscvInstruction, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr,
     RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvVectorFixedPointCsr,
-    RiscvVectorFixedPointCsrInstruction, RiscvVectorFloatInstruction, VectorRegister,
+    RiscvVectorFixedPointCsrInstruction, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
+    VectorRegister,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -350,11 +351,21 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         (0x5, 0b100100, true) => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::MulVf { vd, fs1, vs2 },
         )),
-        (0x1, 0b101100, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::MulAddVv { vd, vs1, vs2 },
+        (0x1, funct6 @ 0b101100..=0b101111, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::MulAddVv {
+                vd,
+                vs1,
+                vs2,
+                mode: vector_float_mul_add_mode(funct6),
+            },
         )),
-        (0x5, 0b101100, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::MulAddVf { vd, fs1, vs2 },
+        (0x5, funct6 @ 0b101100..=0b101111, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::MulAddVf {
+                vd,
+                fs1,
+                vs2,
+                mode: vector_float_mul_add_mode(funct6),
+            },
         )),
         (0x5, 0b100111, true) => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::ReverseSubVf { vd, fs1, vs2 },
@@ -836,6 +847,16 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vtype: u64::from((raw >> 20) & 0x3ff),
         }),
         _ => Err(RiscvError::UnknownEncoding { raw }),
+    }
+}
+
+fn vector_float_mul_add_mode(funct6: u32) -> RiscvVectorFloatMulAddMode {
+    match funct6 {
+        0b101100 => RiscvVectorFloatMulAddMode::ProductPlusAccumulator,
+        0b101101 => RiscvVectorFloatMulAddMode::NegativeProductMinusAccumulator,
+        0b101110 => RiscvVectorFloatMulAddMode::ProductMinusAccumulator,
+        0b101111 => RiscvVectorFloatMulAddMode::NegativeProductPlusAccumulator,
+        _ => unreachable!("vector FMA mode funct6 is range-checked by decode_vector"),
     }
 }
 

@@ -248,11 +248,13 @@ pub enum RiscvVectorFloatInstruction {
         vd: VectorRegister,
         vs1: VectorRegister,
         vs2: VectorRegister,
+        mode: RiscvVectorFloatMulAddMode,
     },
     MulAddVf {
         vd: VectorRegister,
         fs1: FloatRegister,
         vs2: VectorRegister,
+        mode: RiscvVectorFloatMulAddMode,
     },
     SignInjectVv {
         vd: VectorRegister,
@@ -301,6 +303,30 @@ pub enum RiscvVectorFloatInstruction {
         vd: VectorRegister,
         fs1: FloatRegister,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvVectorFloatMulAddMode {
+    ProductPlusAccumulator,
+    NegativeProductMinusAccumulator,
+    ProductMinusAccumulator,
+    NegativeProductPlusAccumulator,
+}
+
+impl RiscvVectorFloatMulAddMode {
+    pub const fn negates_product(self) -> bool {
+        matches!(
+            self,
+            Self::NegativeProductMinusAccumulator | Self::NegativeProductPlusAccumulator
+        )
+    }
+
+    pub const fn negates_accumulator(self) -> bool {
+        matches!(
+            self,
+            Self::NegativeProductMinusAccumulator | Self::ProductMinusAccumulator
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

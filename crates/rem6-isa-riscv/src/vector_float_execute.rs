@@ -5,7 +5,7 @@ use crate::{
         VectorBinaryPlan, MAX_VECTOR_GROUP_BYTES,
     },
     FloatRegister, RiscvFloatRoundingMode, RiscvHartState, RiscvVectorFloatInstruction,
-    VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
+    RiscvVectorFloatMulAddMode, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 
 pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatInstruction) -> bool {
@@ -78,11 +78,11 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
         RiscvVectorFloatInstruction::MulVf { vd, fs1, vs2 } => {
             execute_arithmetic_vf(hart, vd, fs1, vs2, FloatBinaryOp::Mul)
         }
-        RiscvVectorFloatInstruction::MulAddVv { vd, vs1, vs2 } => {
-            execute_mul_add_vv(hart, vd, vs1, vs2)
+        RiscvVectorFloatInstruction::MulAddVv { vd, vs1, vs2, mode } => {
+            execute_mul_add_vv(hart, vd, vs1, vs2, mode)
         }
-        RiscvVectorFloatInstruction::MulAddVf { vd, fs1, vs2 } => {
-            execute_mul_add_vf(hart, vd, fs1, vs2)
+        RiscvVectorFloatInstruction::MulAddVf { vd, fs1, vs2, mode } => {
+            execute_mul_add_vf(hart, vd, fs1, vs2, mode)
         }
         RiscvVectorFloatInstruction::SignInjectVv { vd, vs1, vs2 } => {
             execute_sign_inject_vv(hart, vd, vs1, vs2, FloatSignInjectOp::Inject)
@@ -281,6 +281,7 @@ fn execute_mul_add_vv(
     vd: VectorRegister,
     vs1: VectorRegister,
     vs2: VectorRegister,
+    mode: RiscvVectorFloatMulAddMode,
 ) -> bool {
     let Some(rounding_mode) = active_rounding_mode(hart) else {
         return false;
@@ -300,6 +301,7 @@ fn execute_mul_add_vv(
         &mut result,
         &multiplicand,
         &multiplier,
+        mode,
         rounding_mode,
     ) {
         return false;
@@ -313,6 +315,7 @@ fn execute_mul_add_vf(
     vd: VectorRegister,
     fs1: FloatRegister,
     vs2: VectorRegister,
+    mode: RiscvVectorFloatMulAddMode,
 ) -> bool {
     let Some(rounding_mode) = active_rounding_mode(hart) else {
         return false;
@@ -327,7 +330,14 @@ fn execute_mul_add_vf(
     let scalar = float::single_register_bits(hart.read_float(fs1));
     let multiplier = read_register_group(hart, vs2, plan.group_registers);
     let mut result = read_register_group(hart, vd, plan.group_registers);
-    if !apply_exact_mul_add_scalar_lanes(&plan, &mut result, scalar, &multiplier, rounding_mode) {
+    if !apply_exact_mul_add_scalar_lanes(
+        &plan,
+        &mut result,
+        scalar,
+        &multiplier,
+        mode,
+        rounding_mode,
+    ) {
         return false;
     }
     write_register_group(hart, vd, plan.group_registers, &result);
@@ -727,12 +737,13 @@ fn apply_exact_mul_add_lanes(
     result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
     multiplicand: &[u8; MAX_VECTOR_GROUP_BYTES],
     multiplier: &[u8; MAX_VECTOR_GROUP_BYTES],
+    mode: RiscvVectorFloatMulAddMode,
     rounding_mode: RiscvFloatRoundingMode,
 ) -> bool {
     for offset in (0..plan.active_bytes).step_by(4) {
-        let lhs = u32::from_le_bytes(lane4(multiplicand, offset));
+        let lhs = mul_add_multiplicand_bits(u32::from_le_bytes(lane4(multiplicand, offset)), mode);
         let rhs = u32::from_le_bytes(lane4(multiplier, offset));
-        let addend = u32::from_le_bytes(lane4(result, offset));
+        let addend = mul_add_accumulator_bits(u32::from_le_bytes(lane4(result, offset)), mode);
         let Some(value) = float::exact_finite_single_mul_add_bits(lhs, rhs, addend, rounding_mode)
         else {
             return false;
@@ -747,11 +758,13 @@ fn apply_exact_mul_add_scalar_lanes(
     result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
     scalar: u32,
     multiplier: &[u8; MAX_VECTOR_GROUP_BYTES],
+    mode: RiscvVectorFloatMulAddMode,
     rounding_mode: RiscvFloatRoundingMode,
 ) -> bool {
+    let scalar = mul_add_multiplicand_bits(scalar, mode);
     for offset in (0..plan.active_bytes).step_by(4) {
         let rhs = u32::from_le_bytes(lane4(multiplier, offset));
-        let addend = u32::from_le_bytes(lane4(result, offset));
+        let addend = mul_add_accumulator_bits(u32::from_le_bytes(lane4(result, offset)), mode);
         let Some(value) =
             float::exact_finite_single_mul_add_bits(scalar, rhs, addend, rounding_mode)
         else {
@@ -760,6 +773,26 @@ fn apply_exact_mul_add_scalar_lanes(
         result[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
     }
     true
+}
+
+fn mul_add_multiplicand_bits(value: u32, mode: RiscvVectorFloatMulAddMode) -> u32 {
+    if mode.negates_product() {
+        flip_single_sign(value)
+    } else {
+        value
+    }
+}
+
+fn mul_add_accumulator_bits(value: u32, mode: RiscvVectorFloatMulAddMode) -> u32 {
+    if mode.negates_accumulator() {
+        flip_single_sign(value)
+    } else {
+        value
+    }
+}
+
+fn flip_single_sign(value: u32) -> u32 {
+    value ^ 0x8000_0000
 }
 
 fn sign_inject_single_bits(lhs: u32, rhs: u32, operation: FloatSignInjectOp) -> u32 {

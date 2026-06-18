@@ -6,7 +6,7 @@ use rem6_cpu::{
 };
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvFloatStatus, RiscvInstruction, RiscvTrapKind, RiscvVectorConfig,
-    RiscvVectorFloatInstruction, VectorRegister,
+    RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode, VectorRegister,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -153,6 +153,30 @@ fn vfmacc_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
 
 fn vfmacc_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x2c, vs2, fs1, vd)
+}
+
+fn vfnmacc_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x2d, vs2, vs1, vd)
+}
+
+fn vfnmacc_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x2d, vs2, fs1, vd)
+}
+
+fn vfmsac_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x2e, vs2, vs1, vd)
+}
+
+fn vfmsac_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x2e, vs2, fs1, vd)
+}
+
+fn vfnmsac_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x2f, vs2, vs1, vd)
+}
+
+fn vfnmsac_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x2f, vs2, fs1, vd)
 }
 
 fn vfsgnj_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
@@ -1465,6 +1489,7 @@ fn riscv_core_driver_executes_vfmacc_vv_from_fetch_stream() {
             vd: vreg(3),
             vs1: vreg(1),
             vs2: vreg(2),
+            mode: RiscvVectorFloatMulAddMode::ProductPlusAccumulator,
         },
         [0x3f80_0000, 0xc000_0000, 0x3f00_0000, 0x4110_0000],
         [0x4000_0000, 0x4080_0000, 0xc100_0000, 0x3f80_0000],
@@ -1481,6 +1506,7 @@ fn riscv_core_driver_executes_vfmacc_vf_from_fetch_stream() {
             vd: vreg(3),
             fs1: freg(1),
             vs2: vreg(2),
+            mode: RiscvVectorFloatMulAddMode::ProductPlusAccumulator,
         },
         0xc000_0000,
         [0x4040_0000, 0xc080_0000, 0x3e80_0000, 0x3f80_0000],
@@ -1531,11 +1557,151 @@ fn riscv_core_driver_executes_vfmacc_vv_round_down_exact_cancellation_to_negativ
             vd: vreg(3),
             vs1: vreg(1),
             vs2: vreg(2),
+            mode: RiscvVectorFloatMulAddMode::ProductPlusAccumulator,
         })
     );
     assert_eq!(
         core.read_vector_register(vreg(3)),
         lanes_f32_bits([0x8000_0000, 0x8000_0000, 0x8000_0000, 0x4110_0000])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfnmacc_vv_from_fetch_stream() {
+    assert_vv_fetch_stream_executes_bits(
+        vfnmacc_vv_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MulAddVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+            mode: RiscvVectorFloatMulAddMode::NegativeProductMinusAccumulator,
+        },
+        [0x3f80_0000, 0xc000_0000, 0x3f00_0000, 0x4110_0000],
+        [0x4000_0000, 0x4080_0000, 0xc100_0000, 0x3f80_0000],
+        [0x4120_0000, 0x3f80_0000, 0xc040_0000, 0x4140_0000],
+        [0xc140_0000, 0x40e0_0000, 0x40e0_0000, 0x4140_0000],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfnmacc_vf_from_fetch_stream() {
+    assert_vf_fetch_stream_executes(
+        vfnmacc_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MulAddVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+            mode: RiscvVectorFloatMulAddMode::NegativeProductMinusAccumulator,
+        },
+        -2.0,
+        [3.0, -4.0, 0.25, 1.0],
+        [1.0, -1.0, 8.0, 12.0],
+        [5.0, -7.0, -7.5, 12.0],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfmsac_vv_from_fetch_stream() {
+    assert_vv_fetch_stream_executes_bits(
+        vfmsac_vv_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MulAddVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+            mode: RiscvVectorFloatMulAddMode::ProductMinusAccumulator,
+        },
+        [0x3f80_0000, 0xc000_0000, 0x3f00_0000, 0x4110_0000],
+        [0x4000_0000, 0x4080_0000, 0xc100_0000, 0x3f80_0000],
+        [0x4120_0000, 0x3f80_0000, 0xc040_0000, 0x4140_0000],
+        [0xc100_0000, 0xc110_0000, 0xbf80_0000, 0x4140_0000],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfmsac_vf_from_fetch_stream() {
+    assert_vf_fetch_stream_executes(
+        vfmsac_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MulAddVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+            mode: RiscvVectorFloatMulAddMode::ProductMinusAccumulator,
+        },
+        -2.0,
+        [3.0, -4.0, 0.25, 1.0],
+        [1.0, -1.0, 8.0, 12.0],
+        [-7.0, 9.0, -8.5, 12.0],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfnmsac_vv_from_fetch_stream() {
+    assert_vv_fetch_stream_executes_bits(
+        vfnmsac_vv_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MulAddVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+            mode: RiscvVectorFloatMulAddMode::NegativeProductPlusAccumulator,
+        },
+        [0x3f80_0000, 0xc000_0000, 0x3f00_0000, 0x4110_0000],
+        [0x4000_0000, 0x4080_0000, 0xc100_0000, 0x3f80_0000],
+        [0x4120_0000, 0x3f80_0000, 0xc040_0000, 0x4140_0000],
+        [0x4100_0000, 0x4110_0000, 0x3f80_0000, 0x4140_0000],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfnmsac_vf_from_fetch_stream() {
+    assert_vf_fetch_stream_executes(
+        vfnmsac_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MulAddVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+            mode: RiscvVectorFloatMulAddMode::NegativeProductPlusAccumulator,
+        },
+        -2.0,
+        [3.0, -4.0, 0.25, 1.0],
+        [1.0, -1.0, 8.0, 12.0],
+        [7.0, -9.0, 8.5, 12.0],
+    );
+}
+
+#[test]
+fn riscv_core_driver_traps_vfnmsac_vf_with_unboxed_scalar_source() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.set_machine_trap_vector(0x9000);
+    core.write_float_register(freg(1), u64::from(0x4000_0000_u32));
+    core.write_vector_register(vreg(2), lanes_f32([3.0, -4.0, 0.25, 1.0]));
+    core.write_vector_register(vreg(3), lanes_f32([1.0, -1.0, 8.0, 12.0]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 5),
+            vfnmsac_vf_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_trap_kind(&core, store, &mut scheduler, &transport),
+        Some(RiscvTrapKind::IllegalInstruction)
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_f32([1.0, -1.0, 8.0, 12.0])
     );
 }
 
