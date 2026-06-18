@@ -91,6 +91,34 @@ pub(crate) fn register_write(
     }
 }
 
+pub(super) fn unsigned_word_to_single_bits(
+    value: u32,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> (u32, u64) {
+    let value = u64::from(value);
+    let bits = round_unsigned_integer_to_single(value, rounding_mode).to_bits();
+    let flags = if unsigned_magnitude_fits_exact_bits(value, SINGLE_EXACT_INTEGER_BITS) {
+        0
+    } else {
+        FLOAT_FLAG_INEXACT
+    };
+    (bits, flags)
+}
+
+pub(super) fn signed_word_to_single_bits(
+    value: u32,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> (u32, u64) {
+    let value = i64::from(value as i32);
+    let bits = round_signed_integer_to_single(value, rounding_mode).to_bits();
+    let flags = if signed_magnitude_fits_exact_bits(value, SINGLE_EXACT_INTEGER_BITS) {
+        0
+    } else {
+        FLOAT_FLAG_INEXACT
+    };
+    (bits, flags)
+}
+
 fn rounding_mode(instruction: RiscvInstruction) -> Option<RiscvFloatRoundingMode> {
     let rounding_mode = match instruction {
         RiscvInstruction::FloatConvertSFromW { rounding_mode, .. }

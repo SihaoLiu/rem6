@@ -84,6 +84,12 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
         RiscvVectorFloatInstruction::MulAddVf { vd, fs1, vs2, mode } => {
             execute_mul_add_vf(hart, vd, fs1, vs2, mode)
         }
+        RiscvVectorFloatInstruction::ConvertFloatFromUnsignedIntV { vd, vs2 } => {
+            execute_int_to_float_v(hart, vd, vs2, VectorIntToFloatOp::Unsigned)
+        }
+        RiscvVectorFloatInstruction::ConvertFloatFromSignedIntV { vd, vs2 } => {
+            execute_int_to_float_v(hart, vd, vs2, VectorIntToFloatOp::Signed)
+        }
         RiscvVectorFloatInstruction::SignInjectVv { vd, vs1, vs2 } => {
             execute_sign_inject_vv(hart, vd, vs1, vs2, FloatSignInjectOp::Inject)
         }
@@ -132,6 +138,12 @@ enum FloatSignInjectOp {
 enum FloatMinMaxOp {
     Min,
     Max,
+}
+
+#[derive(Clone, Copy)]
+enum VectorIntToFloatOp {
+    Unsigned,
+    Signed,
 }
 
 #[derive(Clone, Copy)]
@@ -368,6 +380,41 @@ fn execute_minmax_vv(
         exception_flags |= float::minmax_exception_flags_single_bits(lhs, rhs);
         let value = minmax_single_bits(lhs, rhs, operation);
         result[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    write_register_group(hart, vd, plan.group_registers, &result);
+    hart.raise_float_exception_flags(exception_flags);
+    true
+}
+
+fn execute_int_to_float_v(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    operation: VectorIntToFloatOp,
+) -> bool {
+    let Some(rounding_mode) = active_rounding_mode(hart) else {
+        return false;
+    };
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2]) else {
+        return false;
+    };
+    if plan.element_bytes != 4 {
+        return false;
+    }
+
+    let source = read_register_group(hart, vs2, plan.group_registers);
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    let mut exception_flags = 0;
+    for offset in (0..plan.active_bytes).step_by(4) {
+        let value = u32::from_le_bytes(lane4(&source, offset));
+        let (bits, flags) = match operation {
+            VectorIntToFloatOp::Unsigned => {
+                float::unsigned_word_to_single_bits(value, rounding_mode)
+            }
+            VectorIntToFloatOp::Signed => float::signed_word_to_single_bits(value, rounding_mode),
+        };
+        exception_flags |= flags;
+        result[offset..offset + 4].copy_from_slice(&bits.to_le_bytes());
     }
     write_register_group(hart, vd, plan.group_registers, &result);
     hart.raise_float_exception_flags(exception_flags);

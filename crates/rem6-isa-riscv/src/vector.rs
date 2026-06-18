@@ -256,6 +256,14 @@ pub enum RiscvVectorFloatInstruction {
         vs2: VectorRegister,
         mode: RiscvVectorFloatMulAddMode,
     },
+    ConvertFloatFromUnsignedIntV {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+    },
+    ConvertFloatFromSignedIntV {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+    },
     SignInjectVv {
         vd: VectorRegister,
         vs1: VectorRegister,

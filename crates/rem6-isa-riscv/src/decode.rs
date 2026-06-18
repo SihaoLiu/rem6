@@ -367,50 +367,32 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 mode: vector_float_mul_add_mode(funct6),
             },
         )),
+        (0x1, 0b010010, true) if ((raw >> 15) & 0x1f) == 0x02 => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::ConvertFloatFromUnsignedIntV { vd, vs2 },
+        )),
+        (0x1, 0b010010, true) if ((raw >> 15) & 0x1f) == 0x03 => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::ConvertFloatFromSignedIntV { vd, vs2 },
+        )),
         (0x5, 0b100111, true) => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::ReverseSubVf { vd, fs1, vs2 },
         )),
         (0x1, 0b001000, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::SignInjectVv {
-                vd: vector_register(raw, 7),
-                vs1: vector_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::SignInjectVv { vd, vs1, vs2 },
         )),
         (0x5, 0b001000, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::SignInjectVf {
-                vd: vector_register(raw, 7),
-                fs1: float_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::SignInjectVf { vd, fs1, vs2 },
         )),
         (0x1, 0b001001, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::SignInjectNegVv {
-                vd: vector_register(raw, 7),
-                vs1: vector_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::SignInjectNegVv { vd, vs1, vs2 },
         )),
         (0x5, 0b001001, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::SignInjectNegVf {
-                vd: vector_register(raw, 7),
-                fs1: float_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::SignInjectNegVf { vd, fs1, vs2 },
         )),
         (0x1, 0b001010, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::SignInjectXorVv {
-                vd: vector_register(raw, 7),
-                vs1: vector_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::SignInjectXorVv { vd, vs1, vs2 },
         )),
         (0x5, 0b001010, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::SignInjectXorVf {
-                vd: vector_register(raw, 7),
-                fs1: float_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::SignInjectXorVf { vd, fs1, vs2 },
         )),
         (0x1, 0b010000, true) if ((raw >> 15) & 0x1f) == 0 => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::MoveFv { fd, vs2 },

@@ -112,6 +112,20 @@ pub(crate) fn exact_finite_single_mul_add_bits(
     fused::exact_finite_single_mul_add_bits(lhs, rhs, addend, rounding_mode)
 }
 
+pub(crate) fn unsigned_word_to_single_bits(
+    value: u32,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> (u32, u64) {
+    int_to_float::unsigned_word_to_single_bits(value, rounding_mode)
+}
+
+pub(crate) fn signed_word_to_single_bits(
+    value: u32,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> (u32, u64) {
+    int_to_float::signed_word_to_single_bits(value, rounding_mode)
+}
+
 pub(crate) fn single_register_bits(value: u64) -> u32 {
     unbox_single(value)
 }
