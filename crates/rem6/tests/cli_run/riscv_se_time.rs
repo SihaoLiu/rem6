@@ -204,6 +204,121 @@ int main(void) {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_gettimeofday_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE raw gettimeofday smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE raw gettimeofday smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-gettimeofday");
+    let source = workspace.join("raw-gettimeofday.c");
+    let binary = workspace.join("raw-gettimeofday");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+
+struct timeval64 {
+    long tv_sec;
+    long tv_usec;
+};
+
+struct timezone32 {
+    int tz_minuteswest;
+    int tz_dsttime;
+};
+
+static long linux_syscall2(long number, long arg0, long arg1) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    struct timeval64 tv = {-1, -1};
+    struct timezone32 tz = {-1, -1};
+    long with_tv = linux_syscall2(169, (long)&tv, 0);
+    long null_tv = linux_syscall2(169, 0, 0);
+    long with_tz = linux_syscall2(169, 0, (long)&tz);
+    long bad_tv = linux_syscall2(169, 1, 0);
+    int tv_valid = tv.tv_sec >= 0 && tv.tv_usec >= 0 && tv.tv_usec < 1000000;
+    int tz_written = tz.tz_minuteswest != -1 && tz.tz_dsttime != -1;
+    printf("raw-gettimeofday:%ld:%d:%ld:%ld:%d:%ld\n",
+           with_tv, tv_valid, null_tv, with_tz, tz_written, bad_tv);
+    return 49;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(49),
+        "qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(qemu_output.stdout, b"raw-gettimeofday:0:1:0:0:1:-14\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "200000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":49"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(
+        stdout.contains("\"text\":\"raw-gettimeofday:0:1:0:0:1:-14\\n\""),
+        "{stdout}"
+    );
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_clock_nanosleep_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(

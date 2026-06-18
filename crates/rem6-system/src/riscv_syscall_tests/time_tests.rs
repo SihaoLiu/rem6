@@ -1,6 +1,7 @@
 use super::*;
 
 const RISCV_LINUX_CLOCK_GETRES_FOR_TEST: u64 = 114;
+const RISCV_LINUX_GETTIMEOFDAY_FOR_TEST: u64 = 169;
 const RISCV_LINUX_GETITIMER_FOR_TEST: u64 = 102;
 const RISCV_LINUX_SETITIMER_FOR_TEST: u64 = 103;
 const RISCV_LINUX_ITIMER_REAL_FOR_TEST: u64 = 0;
@@ -34,6 +35,144 @@ fn linux_table_clock_gettime_accepts_tai_clock_id() {
     let bytes = collect_guest_writes(&writes.lock().unwrap(), 0x8ff0, 16);
     assert_eq!(read_le_u64(&bytes, 0), 2);
     assert_eq!(read_le_u64(&bytes, 8), 123);
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_gettimeofday_writes_timeval_and_timezone_from_tick() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x7ff4,
+                RISCV_LINUX_GETTIMEOFDAY_FOR_TEST,
+                [0x9000, 0x9020, 0, 0, 0, 0],
+            ),
+            &mut state,
+            2_000_003_456,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let writes = writes.lock().unwrap();
+    let timeval_writes = writes_in_range(&writes, 0x9000, 16);
+    let timezone_writes = writes_in_range(&writes, 0x9020, 8);
+    assert_eq!(
+        write_addresses(&timeval_writes),
+        (0x9000..0x9010).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        write_addresses(&timezone_writes),
+        (0x9020..0x9028).collect::<Vec<_>>()
+    );
+    let timeval = collect_guest_writes(&timeval_writes, 0x9000, 16);
+    let timezone = collect_guest_writes(&timezone_writes, 0x9020, 8);
+    assert_eq!(read_le_u64(&timeval, 0), 2);
+    assert_eq!(read_le_u64(&timeval, 8), 3);
+    assert_eq!(read_le_u32(&timezone, 0), 0);
+    assert_eq!(read_le_u32(&timezone, 4), 0);
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_gettimeofday_writes_timezone_when_timeval_is_null() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x7ff6,
+                RISCV_LINUX_GETTIMEOFDAY_FOR_TEST,
+                [0, 0x9020, 0, 0, 0, 0],
+            ),
+            &mut state,
+            2_000_003_456,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let writes = writes.lock().unwrap();
+    assert_eq!(
+        write_addresses(&writes),
+        (0x9020..0x9028).collect::<Vec<_>>()
+    );
+    let timezone = collect_guest_writes(&writes, 0x9020, 8);
+    assert_eq!(read_le_u32(&timezone, 0), 0);
+    assert_eq!(read_le_u32(&timezone, 4), 0);
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_gettimeofday_accepts_null_timeval_without_writer_when_timezone_is_null() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x7ff8,
+                RISCV_LINUX_GETTIMEOFDAY_FOR_TEST,
+                [0, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            2_000_003_456,
+            None,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_gettimeofday_reports_guest_write_faults() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    for (pc, arguments, fault_address) in [
+        (0x7ffc, [0x9000, 0, 0, 0, 0, 0], 0x9008),
+        (0x8000, [0, 0x9020, 0, 0, 0, 0], 0x9024),
+    ] {
+        let guest_memory_writer =
+            RiscvGuestMemoryWriter::new(move |address, _bytes| address != fault_address);
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(pc, RISCV_LINUX_GETTIMEOFDAY_FOR_TEST, arguments),
+                &mut state,
+                2_000_003_456,
+                None,
+                Some(&guest_memory_writer),
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EFAULT)
+            })
+        );
+    }
     assert!(state.unknown_syscalls().is_empty());
 }
 
@@ -549,4 +688,17 @@ fn itimerval_bytes(
     bytes.extend_from_slice(&value_seconds.to_le_bytes());
     bytes.extend_from_slice(&value_microseconds.to_le_bytes());
     bytes
+}
+
+fn writes_in_range(writes: &[(u64, Vec<u8>)], base: u64, len: usize) -> Vec<(u64, Vec<u8>)> {
+    let end = base + len as u64;
+    writes
+        .iter()
+        .filter(|(address, _)| (base..end).contains(address))
+        .cloned()
+        .collect()
+}
+
+fn write_addresses(writes: &[(u64, Vec<u8>)]) -> Vec<u64> {
+    writes.iter().map(|(address, _)| *address).collect()
 }

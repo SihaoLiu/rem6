@@ -28,6 +28,7 @@ const RISCV_LINUX_NANOSECONDS_PER_SECOND: u64 = 1_000_000_000;
 const RISCV_LINUX_NANOSECONDS_PER_MICROSECOND: u64 = 1_000;
 const RISCV_LINUX_MICROSECONDS_PER_SECOND: u64 = 1_000_000;
 const RISCV_LINUX_CLOCK_TICKS_PER_SECOND: u64 = 100;
+const RISCV_LINUX_TIMEZONE_BYTES: usize = 8;
 const RISCV_LINUX_NANOSECONDS_PER_CLOCK_TICK: u64 =
     RISCV_LINUX_NANOSECONDS_PER_SECOND / RISCV_LINUX_CLOCK_TICKS_PER_SECOND;
 
@@ -147,13 +148,31 @@ pub(super) fn syscall_clock_getres(
 
 pub(super) fn syscall_gettimeofday(
     timeval_address: u64,
+    timezone_address: u64,
     tick: Tick,
-    guest_memory: &RiscvGuestMemoryWriter,
-) -> u64 {
-    let seconds = tick / RISCV_LINUX_NANOSECONDS_PER_SECOND;
-    let microseconds =
-        (tick % RISCV_LINUX_NANOSECONDS_PER_SECOND) / RISCV_LINUX_NANOSECONDS_PER_MICROSECOND;
-    write_riscv_linux_time_pair(timeval_address, seconds, microseconds, guest_memory)
+    guest_memory: Option<&RiscvGuestMemoryWriter>,
+) -> Option<u64> {
+    if timeval_address == 0 && timezone_address == 0 {
+        return Some(0);
+    }
+
+    let guest_memory = guest_memory?;
+    if timeval_address != 0 {
+        let seconds = tick / RISCV_LINUX_NANOSECONDS_PER_SECOND;
+        let microseconds =
+            (tick % RISCV_LINUX_NANOSECONDS_PER_SECOND) / RISCV_LINUX_NANOSECONDS_PER_MICROSECOND;
+        let timeval_result =
+            write_riscv_linux_time_pair(timeval_address, seconds, microseconds, guest_memory);
+        if timeval_result != 0 {
+            return Some(timeval_result);
+        }
+    }
+
+    if timezone_address != 0 && !write_riscv_linux_timezone(timezone_address, guest_memory) {
+        return Some(linux_error(RISCV_LINUX_EFAULT));
+    }
+
+    Some(0)
 }
 
 const fn riscv_linux_clock_ticks(tick: Tick) -> u64 {
@@ -182,9 +201,10 @@ pub(super) fn syscall_clock(
 ) -> Option<RiscvSyscallOutcome> {
     match request.number() {
         RISCV_LINUX_TIMES => syscall_times(request, tick, guest_memory),
-        RISCV_LINUX_GETTIMEOFDAY => guest_memory.map(|guest_memory| RiscvSyscallOutcome::Return {
-            value: syscall_gettimeofday(request.argument(0), tick, guest_memory),
-        }),
+        RISCV_LINUX_GETTIMEOFDAY => {
+            syscall_gettimeofday(request.argument(0), request.argument(1), tick, guest_memory)
+                .map(|value| RiscvSyscallOutcome::Return { value })
+        }
         RISCV_LINUX_CLOCK_GETTIME => guest_memory.map(|guest_memory| RiscvSyscallOutcome::Return {
             value: syscall_clock_gettime(
                 request.argument(0),
@@ -229,6 +249,10 @@ pub(super) fn write_riscv_linux_time_pair(
     } else {
         linux_error(RISCV_LINUX_EFAULT)
     }
+}
+
+fn write_riscv_linux_timezone(address: u64, guest_memory: &RiscvGuestMemoryWriter) -> bool {
+    write_riscv_linux_bytes(address, &[0; RISCV_LINUX_TIMEZONE_BYTES], guest_memory)
 }
 
 fn write_riscv_linux_bytes(
