@@ -18,7 +18,7 @@ use dram::emit_dram_stats;
 use text::stats_snapshot_text;
 use trace_replay::{
     emit_trace_replay_data_cache_stats, emit_trace_replay_fabric_stats,
-    emit_trace_replay_summary_stats,
+    emit_trace_replay_resource_stats, emit_trace_replay_summary_stats,
 };
 
 const GEM5_COMPAT_SIM_FREQ_HZ: u64 = 1_000_000_000_000;
@@ -1128,6 +1128,7 @@ pub(super) fn trace_replay_stats_output(
     emit_trace_replay_summary_stats(&mut stats, inputs.execution.summary())?;
     emit_trace_replay_data_cache_stats(&mut stats, inputs.execution.parallel_summary())?;
     emit_trace_replay_fabric_stats(&mut stats, inputs.execution.parallel_summary())?;
+    emit_trace_replay_resource_stats(&mut stats, inputs.execution.parallel_summary())?;
 
     let snapshot = stats.snapshot(0);
     Ok(Rem6StatsOutput {

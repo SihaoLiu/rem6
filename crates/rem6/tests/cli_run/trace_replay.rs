@@ -220,6 +220,20 @@ fn rem6_trace_replay_fabric_route_emits_activity_stats() {
         16,
         "monotonic",
     );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.resources.activity",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.resources.active",
+        "Count",
+        1,
+        "monotonic",
+    );
 }
 
 #[test]

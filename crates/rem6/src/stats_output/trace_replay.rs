@@ -512,19 +512,39 @@ pub(super) fn emit_trace_replay_fabric_stats(
     )
 }
 
+pub(super) fn emit_trace_replay_resource_stats(
+    stats: &mut StatsRegistry,
+    summary: &WorkloadParallelExecutionSummary,
+) -> Result<(), Rem6CliError> {
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.resources.activity",
+        summary.resource_activity_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.resources.active",
+        summary.active_resource_count() as u64,
+    )
+}
+
 fn emit_trace_count(stats: &mut StatsRegistry, path: &str, value: u64) -> Result<(), Rem6CliError> {
     increment_stat(stats, path, "Count", StatResetPolicy::Monotonic, value)
 }
 
 #[cfg(test)]
 mod tests {
+    use rem6_kernel::WaitForEdgeKind;
     use rem6_stats::StatsRegistry;
     use rem6_workload::{
         WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount,
         WorkloadParallelExecutionSummary, WorkloadRouteId, WorkloadTrafficTraceReplaySummary,
     };
 
-    use super::{emit_trace_replay_data_cache_stats, emit_trace_replay_summary_stats};
+    use super::{
+        emit_trace_replay_data_cache_stats, emit_trace_replay_resource_stats,
+        emit_trace_replay_summary_stats,
+    };
     use crate::stats_output::stats_snapshot_json;
 
     #[test]
@@ -669,6 +689,19 @@ mod tests {
             "Count",
             8,
         );
+    }
+
+    #[test]
+    fn trace_replay_stats_emit_resource_activity_accounting() {
+        let summary = WorkloadParallelExecutionSummary::default()
+            .with_resource_wait_for_edge_kind_counts([(WaitForEdgeKind::Resource, 7)], []);
+        let mut stats = StatsRegistry::new();
+
+        emit_trace_replay_resource_stats(&mut stats, &summary).unwrap();
+        let json = stats_snapshot_json(&stats.snapshot(0));
+
+        assert_stat_value(&json, "sim.trace_replay.resources.activity", "Count", 7);
+        assert_stat_value(&json, "sim.trace_replay.resources.active", "Count", 1);
     }
 
     fn assert_stat_value(json: &str, path: &str, unit: &str, value: u64) {
