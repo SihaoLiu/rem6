@@ -856,6 +856,61 @@ fn rem6_run_reports_all_output_artifact_paths_when_power_analysis_is_requested()
 }
 
 #[test]
+fn rem6_run_config_creates_nested_output_artifact_layout() {
+    let elf = riscv64_elf(
+        0x8000_0000,
+        0x8000_0000,
+        &riscv64_program(&[
+            0x0070_0293, // addi x5, x0, 7
+            0x0000_0073, // ecall
+        ]),
+    );
+    let workspace = temp_workspace("nested-output-layout");
+    let binary = workspace.join("kernel.elf");
+    fs::write(&binary, elf).unwrap();
+    let config = workspace.join("run.toml");
+    fs::write(
+        &config,
+        "[run]\nisa = \"riscv\"\nbinary = \"kernel.elf\"\nmax_tick = 40\nexecute = true\noutput = \"artifacts/run/run.json\"\nstats_output = \"artifacts/stats/stats.json\"\npower_output = \"artifacts/power/power.xml\"\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let run_path = workspace.join("artifacts/run/run.json");
+    let stats_path = workspace.join("artifacts/stats/stats.json");
+    let power_path = workspace.join("artifacts/power/power.xml");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        format!(
+            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"json\",\"artifact\":\"{}\",\"stats_artifact\":\"{}\",\"power_artifact\":\"{}\"}}\n",
+            run_path.display(),
+            stats_path.display(),
+            power_path.display()
+        )
+    );
+    assert!(fs::read_to_string(&run_path)
+        .unwrap()
+        .contains("\"schema\":\"rem6.cli.run.v1\""));
+    assert!(fs::read_to_string(&stats_path)
+        .unwrap()
+        .contains("\"path\":\"sim.instructions.committed\""));
+    assert!(fs::read_to_string(&power_path)
+        .unwrap()
+        .contains("<component id=\"cpu0.core\""));
+}
+
+#[test]
 fn rem6_run_loads_power_analysis_output_from_toml_config() {
     let elf = riscv64_elf(
         0x8000_0000,

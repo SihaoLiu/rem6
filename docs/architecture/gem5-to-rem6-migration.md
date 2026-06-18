@@ -748,7 +748,7 @@ top-level cache/DRAM micro-run but is not representative, manifest and suite
 acquisition have top-level local-artifact paths, narrow run and trace-replay
 resource handoffs exist, and benchmark orchestration remains absent.
 
-- [x] CLI `run`, `gups`, and `trace-replay` plus TOML configuration have tests; a repository `gups` example config runs through the top-level CLI without recompilation, and `gups` emits traffic profile summaries from the executed controller.
+- [x] CLI `run`, `gups`, and `trace-replay` plus TOML configuration have tests; a repository `gups` example config runs through the top-level CLI without recompilation, TOML-driven `run` output layouts create nested artifact directories for run JSON, stats JSON, and power analysis output, and `gups` emits traffic profile summaries from the executed controller.
 - [x] Workload manifests, resource identity, disk-image construction records, and suite planning exist.
 - [x] CLI workload-resource acquisition consumes a resource executor for manifest required artifacts.
 - [x] CLI workload-resource acquisition consumes a resource executor for suite required artifacts.
@@ -802,7 +802,9 @@ snapshot evidence, visible compute-unit assignment, coalesced memory access
 records, top-level `gpu-run` cache/DRAM micro-run evidence routing recorded
 coalesced global memory requests through direct memory or MSI data-cache and
 DRAM-backed runtime stats after GPU workgroup completion, a checked-in GUPS
-example TOML that runs through the top-level CLI without recompilation, and
+example TOML that runs through the top-level CLI without recompilation,
+top-level `rem6 run --config` creation of nested run, stats, and power-analysis
+artifact directories from TOML-relative paths, and
 top-level GUPS traffic profile JSON/stats output.
 
 **Not migrated:** Full gem5 stdlib ergonomics, host/network/archive resource
@@ -831,7 +833,8 @@ resource-config handoff tests including TOML and CLI
 `suite-resource:<workload>/<resource>` same-name trace selection, `rem6
 trace-replay` remote-uri runtime rejection
 tests, suite tests, resource acquisition executor tests, repository GUPS
-example-config CLI test, `rem6 gups` profile-summary CLI tests, GPU and
+example-config CLI test, `rem6 run --config` nested multi-artifact output
+layout CLI test, `rem6 gups` profile-summary CLI tests, GPU and
 accelerator topology tests, GPU compute tests covering scalar ISA execution,
 coalesced memory records, and snapshot restore of queued ISA programs, and
 `rem6 gpu-run` CLI smoke coverage with
@@ -858,7 +861,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/checkpoint_tests` | `rem6-checkpoint`, subsystem checkpoint banks | 65% representative | Scheduler, memory, devices, storage, VirtIO, timer, interrupt, RISC-V started/stopped/suspended hart run-state, RISC-V in-order pipeline state, platform, workload, and manifest checkpoints exist. | Add O3 and non-quiescent restore evidence. |
 | `tests/gem5/chi_protocol` | `rem6-coherence`, protocol crates, `rem6-cache` | 40% single-axis | CHI-like line, controller, bank, dirty peer sourcing, reservation, and Evict-hazard tests exist. | Add Ruby-scale CHI transactions, topology networks, directory races, and workload checks. |
 | `tests/gem5/chi_tlm_tests` | `rem6-proto`, future adapter crates, `rem6-coherence` | 19% scoped | A library-level co-simulation boundary can register TLM endpoints, validate transaction shape, hand off events, and checkpoint clean adapter state in self-tests. | Add runtime TLM bridge tests with coherence traffic. |
-| `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, and text stats output tests exist. | Add config-driven file layouts for full-system manifests and multi-artifact workloads. |
+| `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, text stats output, and TOML-driven nested run/stats/power artifact directory creation tests exist. | Add config-driven file layouts for full-system manifests and broader multi-artifact workloads. |
 | `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line and conditional-branch fetch-ahead, pending-fetch retire overlap for older completed straight-line fetches, issued fetch-ahead occupancy in in-order timing before response completion, branch speculation history repair/commit, completed younger fetch squash, per-retired-instruction in-order stage timing stats, top-level fetch/data wait stats, top-level in-order cycle-plan advance/block/flush stats, top-level branch redirect/misprediction/branch-prediction-flush stats, and O3 policies exist. | Add broader in-order stalls/squashes and ROB/LSQ-backed O3 execution tests. |
 | `tests/gem5/dram_lowp` | `rem6-dram`, `rem6-power` | 40% single-axis | DRAM/NVM profile counters and low-power constants are surfaced. | Add executable low-power state transition tests through routed requests. |
 | `tests/gem5/example_configs`, `tests/gem5/learning_gem5` | `rem6` CLI, `rem6-platform`, `rem6-workload` | 40% single-axis | CLI and TOML tests cover several execution and trace-replay paths, including a checked-in GUPS example config that runs without recompilation. | Add broader example suites spanning run, trace replay, resources, and full-system handoff. |

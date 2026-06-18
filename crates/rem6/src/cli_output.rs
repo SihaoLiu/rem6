@@ -24,24 +24,13 @@ pub(crate) fn emit_cli_output(
             StatsFormat::Json => format!("{stats_json}\n"),
             StatsFormat::Text => stats_text.to_string(),
         };
-        std::fs::write(path, stats_output).map_err(|error| Rem6CliError::WriteOutput {
-            path: path.to_path_buf(),
-            error: error.to_string(),
-        })?;
+        write_output_file(path, stats_output.as_bytes())?;
     }
     if let Some(artifact) = &extra_artifact {
-        std::fs::write(artifact.path, artifact.contents).map_err(|error| {
-            Rem6CliError::WriteOutput {
-                path: artifact.path.to_path_buf(),
-                error: error.to_string(),
-            }
-        })?;
+        write_output_file(artifact.path, artifact.contents.as_bytes())?;
     }
     if let Some(path) = output_path {
-        std::fs::write(path, output).map_err(|error| Rem6CliError::WriteOutput {
-            path: path.to_path_buf(),
-            error: error.to_string(),
-        })?;
+        write_output_file(path, output.as_bytes())?;
         return Ok(output_envelope_json(
             path,
             stats_output_path,
@@ -50,6 +39,22 @@ pub(crate) fn emit_cli_output(
         ));
     }
     Ok(output)
+}
+
+fn write_output_file(path: &Path, contents: &[u8]) -> Result<(), Rem6CliError> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent).map_err(|error| Rem6CliError::WriteOutput {
+            path: path.to_path_buf(),
+            error: error.to_string(),
+        })?;
+    }
+    std::fs::write(path, contents).map_err(|error| Rem6CliError::WriteOutput {
+        path: path.to_path_buf(),
+        error: error.to_string(),
+    })
 }
 
 fn output_envelope_json(
