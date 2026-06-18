@@ -85,6 +85,48 @@ fn riscv_core_driver_executes_vfcvt_x_f_v_round_toward_zero_with_inexact_flag() 
 }
 
 #[test]
+fn riscv_core_driver_executes_vfcvt_rtz_xu_f_v_with_reserved_frm() {
+    assert_float_to_int_fetch_stream_executes(
+        vfcvt_rtz_xu_f_v_type(2, 3),
+        RiscvVectorFloatInstruction::ConvertUnsignedIntFromFloatTowardZeroV {
+            vd: vreg(3),
+            vs2: vreg(2),
+        },
+        [
+            1.75f32.to_bits(),
+            2.0f32.to_bits(),
+            3.875f32.to_bits(),
+            9.0f32.to_bits(),
+        ],
+        [0xdead_beef, 0xdead_beef, 0xdead_beef, 0x1122_3344],
+        [1, 2, 3, 0x1122_3344],
+        RiscvFloatStatus::new(0).with_frm(5),
+        FLOAT_FLAG_INEXACT,
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfcvt_rtz_x_f_v_with_reserved_frm() {
+    assert_float_to_int_fetch_stream_executes(
+        vfcvt_rtz_x_f_v_type(2, 3),
+        RiscvVectorFloatInstruction::ConvertSignedIntFromFloatTowardZeroV {
+            vd: vreg(3),
+            vs2: vreg(2),
+        },
+        [
+            1.75f32.to_bits(),
+            (-2.75f32).to_bits(),
+            (-0.5f32).to_bits(),
+            9.0f32.to_bits(),
+        ],
+        [0xdead_beef, 0xdead_beef, 0xdead_beef, 0x1122_3344],
+        [1, (-2_i32) as u32, 0, 0x1122_3344],
+        RiscvFloatStatus::new(0).with_frm(5),
+        FLOAT_FLAG_INEXACT,
+    );
+}
+
+#[test]
 fn riscv_core_driver_traps_vfcvt_x_f_v_with_reserved_frm() {
     assert_conversion_traps_without_destination_write(
         vfcvt_x_f_v_type(2, 3),

@@ -272,6 +272,14 @@ pub enum RiscvVectorFloatInstruction {
         vd: VectorRegister,
         vs2: VectorRegister,
     },
+    ConvertUnsignedIntFromFloatTowardZeroV {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+    },
+    ConvertSignedIntFromFloatTowardZeroV {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+    },
     SignInjectVv {
         vd: VectorRegister,
         vs1: VectorRegister,

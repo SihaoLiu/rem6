@@ -195,6 +195,14 @@ pub(crate) fn vfcvt_x_f_v_type(vs2: u8, vd: u8) -> u32 {
     vector_float_vv_type(0x12, vs2, 0x01, vd)
 }
 
+pub(crate) fn vfcvt_rtz_xu_f_v_type(vs2: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x12, vs2, 0x06, vd)
+}
+
+pub(crate) fn vfcvt_rtz_x_f_v_type(vs2: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x12, vs2, 0x07, vd)
+}
+
 pub(crate) fn vfsgnj_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x08, vs2, fs1, vd)
 }

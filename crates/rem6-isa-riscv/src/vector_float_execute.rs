@@ -96,6 +96,12 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
         RiscvVectorFloatInstruction::ConvertSignedIntFromFloatV { vd, vs2 } => {
             execute_float_to_int_v(hart, vd, vs2, VectorFloatToIntOp::Signed)
         }
+        RiscvVectorFloatInstruction::ConvertUnsignedIntFromFloatTowardZeroV { vd, vs2 } => {
+            execute_float_to_int_toward_zero_v(hart, vd, vs2, VectorFloatToIntOp::Unsigned)
+        }
+        RiscvVectorFloatInstruction::ConvertSignedIntFromFloatTowardZeroV { vd, vs2 } => {
+            execute_float_to_int_toward_zero_v(hart, vd, vs2, VectorFloatToIntOp::Signed)
+        }
         RiscvVectorFloatInstruction::SignInjectVv { vd, vs1, vs2 } => {
             execute_sign_inject_vv(hart, vd, vs1, vs2, FloatSignInjectOp::Inject)
         }
@@ -442,6 +448,31 @@ fn execute_float_to_int_v(
     let Some(rounding_mode) = active_rounding_mode(hart) else {
         return false;
     };
+    execute_float_to_int_v_with_rounding_mode(hart, vd, vs2, operation, rounding_mode)
+}
+
+fn execute_float_to_int_toward_zero_v(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    operation: VectorFloatToIntOp,
+) -> bool {
+    execute_float_to_int_v_with_rounding_mode(
+        hart,
+        vd,
+        vs2,
+        operation,
+        RiscvFloatRoundingMode::RoundTowardZero,
+    )
+}
+
+fn execute_float_to_int_v_with_rounding_mode(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    operation: VectorFloatToIntOp,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> bool {
     let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2]) else {
         return false;
     };

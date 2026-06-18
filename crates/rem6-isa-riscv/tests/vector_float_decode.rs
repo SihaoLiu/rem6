@@ -94,6 +94,14 @@ fn vfcvt_x_f_v_type(vs2: u8, vd: u8) -> u32 {
     vector_float_vv_type(0x12, vs2, 0x01, vd)
 }
 
+fn vfcvt_rtz_xu_f_v_type(vs2: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x12, vs2, 0x06, vd)
+}
+
+fn vfcvt_rtz_x_f_v_type(vs2: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x12, vs2, 0x07, vd)
+}
+
 fn vfmv_v_f_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x17, vs2, fs1, vd)
 }
@@ -257,7 +265,31 @@ fn decoder_accepts_vector_integer_from_float_conversions() {
         })
     );
 
-    for vs1 in [0x00, 0x01] {
+    let unsigned_rtz = vfcvt_rtz_xu_f_v_type(2, 3);
+    assert_eq!(unsigned_rtz, 0x4a23_11d7);
+    assert_eq!(
+        RiscvInstruction::decode(unsigned_rtz).unwrap(),
+        RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::ConvertUnsignedIntFromFloatTowardZeroV {
+                vd: vreg(3),
+                vs2: vreg(2),
+            }
+        )
+    );
+
+    let signed_rtz = vfcvt_rtz_x_f_v_type(2, 3);
+    assert_eq!(signed_rtz, 0x4a23_91d7);
+    assert_eq!(
+        RiscvInstruction::decode(signed_rtz).unwrap(),
+        RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::ConvertSignedIntFromFloatTowardZeroV {
+                vd: vreg(3),
+                vs2: vreg(2),
+            }
+        )
+    );
+
+    for vs1 in [0x00, 0x01, 0x06, 0x07] {
         let masked = vector_float_masked_type(0x12, 0b001, 2, vs1, 3);
         assert_eq!(
             RiscvInstruction::decode(masked),

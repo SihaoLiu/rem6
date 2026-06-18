@@ -375,6 +375,12 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         (0x1, 0b010010, true) if ((raw >> 15) & 0x1f) == 0x01 => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::ConvertSignedIntFromFloatV { vd, vs2 },
         )),
+        (0x1, 0b010010, true) if ((raw >> 15) & 0x1f) == 0x06 => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::ConvertUnsignedIntFromFloatTowardZeroV { vd, vs2 },
+        )),
+        (0x1, 0b010010, true) if ((raw >> 15) & 0x1f) == 0x07 => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::ConvertSignedIntFromFloatTowardZeroV { vd, vs2 },
+        )),
         (0x5, 0b100111, true) => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::ReverseSubVf { vd, fs1, vs2 },
         )),
