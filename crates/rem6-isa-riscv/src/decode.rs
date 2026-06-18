@@ -281,80 +281,43 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
         }),
         (0x1, 0, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::AddVv {
-                vd: vector_register(raw, 7),
-                vs1: vector_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::AddVv { vd, vs1, vs2 },
         )),
         (0x5, 0, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::AddVf {
-                vd: vector_register(raw, 7),
-                fs1: float_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::AddVf { vd, fs1, vs2 },
         )),
         (0x1, 0b000010, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::SubVv {
-                vd: vector_register(raw, 7),
-                vs1: vector_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::SubVv { vd, vs1, vs2 },
         )),
         (0x5, 0b000010, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::SubVf {
-                vd: vector_register(raw, 7),
-                fs1: float_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::SubVf { vd, fs1, vs2 },
         )),
         (0x1, 0b000100, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::MinVv {
-                vd: vector_register(raw, 7),
-                vs1: vector_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::MinVv { vd, vs1, vs2 },
         )),
         (0x5, 0b000100, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::MinVf {
-                vd: vector_register(raw, 7),
-                fs1: float_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::MinVf { vd, fs1, vs2 },
         )),
         (0x1, 0b000110, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::MaxVv {
-                vd: vector_register(raw, 7),
-                vs1: vector_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::MaxVv { vd, vs1, vs2 },
         )),
         (0x5, 0b000110, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::MaxVf {
-                vd: vector_register(raw, 7),
-                fs1: float_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::MaxVf { vd, fs1, vs2 },
         )),
         (0x1, 0b010011, true) if ((raw >> 15) & 0x1f) == 0x00 => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::SqrtV {
-                vd: vector_register(raw, 7),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::SqrtV { vd, vs2 },
         )),
         (0x1, 0b011000, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::MaskEqualVv {
-                vd: vector_register(raw, 7),
-                vs1: vector_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::MaskEqualVv { vd, vs1, vs2 },
         )),
         (0x5, 0b011000, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::MaskEqualVf {
-                vd: vector_register(raw, 7),
-                fs1: float_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::MaskEqualVf { vd, fs1, vs2 },
+        )),
+        (0x1, 0b011001, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::MaskLessEqualVv { vd, vs1, vs2 },
+        )),
+        (0x5, 0b011001, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::MaskLessEqualVf { vd, fs1, vs2 },
         )),
         (0x1, 0b011100, true) => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::MaskNotEqualVv { vd, vs1, vs2 },

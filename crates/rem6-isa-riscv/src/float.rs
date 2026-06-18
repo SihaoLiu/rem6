@@ -136,6 +136,10 @@ pub(crate) fn less_than_single_bits(lhs: u32, rhs: u32) -> bool {
     f32::from_bits(lhs) < f32::from_bits(rhs)
 }
 
+pub(crate) fn less_or_equal_single_bits(lhs: u32, rhs: u32) -> bool {
+    f32::from_bits(lhs) <= f32::from_bits(rhs)
+}
+
 pub(crate) fn quiet_compare_exception_flags_single_bits(lhs: u32, rhs: u32) -> u64 {
     if is_signaling_nan_single(lhs) || is_signaling_nan_single(rhs) {
         FLOAT_FLAG_INVALID
@@ -935,7 +939,7 @@ fn max_double(lhs: u64, rhs: u64) -> u64 {
 }
 
 fn less_or_equal_single(lhs: u64, rhs: u64) -> bool {
-    f32::from_bits(unbox_single(lhs)) <= f32::from_bits(unbox_single(rhs))
+    less_or_equal_single_bits(unbox_single(lhs), unbox_single(rhs))
 }
 
 fn less_or_equal_double(lhs: u64, rhs: u64) -> bool {

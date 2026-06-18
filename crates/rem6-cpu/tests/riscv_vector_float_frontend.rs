@@ -106,6 +106,14 @@ fn vmfne_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x1c, vs2, fs1, vd)
 }
 
+fn vmfle_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x19, vs2, vs1, vd)
+}
+
+fn vmfle_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x19, vs2, fs1, vd)
+}
+
 fn vmflt_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_float_vv_type(0x1b, vs2, vs1, vd)
 }
@@ -1038,6 +1046,57 @@ fn riscv_core_driver_vmfne_accrues_invalid_for_signaling_nan_only() {
         [0x3f80_0000, 0x7fc0_1234, 0x7f80_0001, 0x4080_0000],
         0b0101_1000,
         0b0101_1110,
+        FLOAT_FLAG_INVALID,
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vmfle_vv_from_fetch_stream() {
+    assert_vv_mask_fetch_stream_executes(
+        vmfle_vv_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MaskLessEqualVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        },
+        [0x4000_0000, 0x4040_0000, 0xbf80_0000, 0x0000_0000],
+        [0x3f80_0000, 0x4040_0000, 0x0000_0000, 0x4080_0000],
+        0b1111_0000,
+        0b1111_0011,
+        0,
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vmfle_vf_from_fetch_stream() {
+    assert_vf_mask_fetch_stream_executes(
+        vmfle_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MaskLessEqualVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        0x4000_0000,
+        [0x3f80_0000, 0x4000_0000, 0x4040_0000, 0xbf80_0000],
+        0b1010_1000,
+        0b1010_1011,
+        0,
+    );
+}
+
+#[test]
+fn riscv_core_driver_vmfle_vf_accrues_invalid_for_quiet_nan_scalar() {
+    assert_vf_mask_fetch_stream_executes(
+        vmfle_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MaskLessEqualVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        0x7fc0_1234,
+        [0x3f80_0000, 0x4000_0000, 0xbf80_0000, 0x4080_0000],
+        0b1010_1111,
+        0b1010_1000,
         FLOAT_FLAG_INVALID,
     );
 }

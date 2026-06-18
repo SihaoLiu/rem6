@@ -53,6 +53,12 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
         RiscvVectorFloatInstruction::MaskLessThanVf { vd, fs1, vs2 } => {
             execute_mask_compare_vf(hart, vd, fs1, vs2, FloatMaskCompareOp::LessThan)
         }
+        RiscvVectorFloatInstruction::MaskLessEqualVv { vd, vs1, vs2 } => {
+            execute_mask_compare_vv(hart, vd, vs1, vs2, FloatMaskCompareOp::LessEqual)
+        }
+        RiscvVectorFloatInstruction::MaskLessEqualVf { vd, fs1, vs2 } => {
+            execute_mask_compare_vf(hart, vd, fs1, vs2, FloatMaskCompareOp::LessEqual)
+        }
         RiscvVectorFloatInstruction::ReverseSubVf { vd, fs1, vs2 } => {
             execute_arithmetic_vf(hart, vd, fs1, vs2, FloatBinaryOp::ReverseSub)
         }
@@ -109,6 +115,7 @@ enum FloatMaskCompareOp {
     Equal,
     NotEqual,
     LessThan,
+    LessEqual,
 }
 
 struct VectorFloatMaskPlan {
@@ -405,6 +412,7 @@ fn mask_compare(lhs: u32, rhs: u32, operation: FloatMaskCompareOp) -> bool {
         FloatMaskCompareOp::Equal => float::equal_single_bits(lhs, rhs),
         FloatMaskCompareOp::NotEqual => !float::equal_single_bits(lhs, rhs),
         FloatMaskCompareOp::LessThan => float::less_than_single_bits(lhs, rhs),
+        FloatMaskCompareOp::LessEqual => float::less_or_equal_single_bits(lhs, rhs),
     }
 }
 
@@ -413,7 +421,7 @@ fn mask_compare_exception_flags(lhs: u32, rhs: u32, operation: FloatMaskCompareO
         FloatMaskCompareOp::Equal | FloatMaskCompareOp::NotEqual => {
             float::quiet_compare_exception_flags_single_bits(lhs, rhs)
         }
-        FloatMaskCompareOp::LessThan => {
+        FloatMaskCompareOp::LessThan | FloatMaskCompareOp::LessEqual => {
             float::signaling_compare_exception_flags_single_bits(lhs, rhs)
         }
     }
