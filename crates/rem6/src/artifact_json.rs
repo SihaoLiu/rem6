@@ -1197,9 +1197,10 @@ impl Rem6HostCheckpointComponentSummary {
 impl Rem6HostCheckpointChunkSummary {
     fn to_json(&self) -> String {
         format!(
-            "{{\"name\":\"{}\",\"payload_bytes\":{}}}",
+            "{{\"name\":\"{}\",\"payload_bytes\":{},\"payload_checksum\":\"0x{:016x}\"}}",
             json_escape(&self.name),
             self.payload_bytes,
+            self.payload_checksum,
         )
     }
 }

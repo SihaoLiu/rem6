@@ -95,12 +95,10 @@ impl Rem6HostActionSummary {
                     manifest,
                 } => {
                     let manifest_summary = manifest.summary();
-                    let components = manifest_summary
-                        .component_summaries()
+                    let components = manifest
+                        .states()
                         .iter()
-                        .map(|component| {
-                            Rem6HostCheckpointComponentSummary::from_checkpoint_summary(component)
-                        })
+                        .map(Rem6HostCheckpointComponentSummary::from_checkpoint_state)
                         .collect();
                     summary.checkpoints.push(Rem6HostCheckpointSummary {
                         tick: *tick,
@@ -214,19 +212,22 @@ pub(crate) struct Rem6HostCheckpointComponentSummary {
 }
 
 impl Rem6HostCheckpointComponentSummary {
-    fn from_checkpoint_summary(summary: &rem6_checkpoint::CheckpointComponentSummary) -> Self {
-        let chunks = summary
-            .chunk_summaries()
+    fn from_checkpoint_state(state: &rem6_checkpoint::CheckpointState) -> Self {
+        let mut chunks = state
+            .chunks()
             .iter()
             .map(|chunk| Rem6HostCheckpointChunkSummary {
                 name: chunk.name().to_string(),
-                payload_bytes: chunk.payload_bytes() as u64,
+                payload_bytes: chunk.payload().len() as u64,
+                payload_checksum: payload_checksum(chunk.payload()),
             })
-            .collect();
+            .collect::<Vec<_>>();
+        chunks.sort_by(|left, right| left.name.cmp(&right.name));
+        let payload_bytes = chunks.iter().map(|chunk| chunk.payload_bytes).sum();
         Self {
-            component: summary.component().as_str().to_string(),
-            chunk_count: summary.chunk_count() as u64,
-            payload_bytes: summary.payload_bytes() as u64,
+            component: state.component().as_str().to_string(),
+            chunk_count: chunks.len() as u64,
+            payload_bytes,
             chunks,
         }
     }
@@ -236,6 +237,13 @@ impl Rem6HostCheckpointComponentSummary {
 pub(crate) struct Rem6HostCheckpointChunkSummary {
     pub(crate) name: String,
     pub(crate) payload_bytes: u64,
+    pub(crate) payload_checksum: u64,
+}
+
+fn payload_checksum(payload: &[u8]) -> u64 {
+    payload.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

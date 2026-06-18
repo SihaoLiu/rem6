@@ -341,11 +341,159 @@ fn rem6_run_emits_m5_checkpoint_host_action_detail_from_real_riscv_execution() {
             "xregs",
         ],
     );
+    assert_checkpoint_component_chunks(host_actions, 0, 1, "memory0", &["store"]);
     assert_checkpoint_counts_match_nested_details(host_actions, 0);
+}
+
+#[test]
+fn rem6_run_m5_store_checkpoint_chunk_checksum_tracks_live_memory_state() {
+    let (baseline, after_store) =
+        run_m5_checkpoint_memory_checksums("m5-store-checkpoint-live", false);
+
+    assert_ne!(after_store, baseline);
+}
+
+#[test]
+fn rem6_run_emits_m5_dram_checkpoint_host_action_detail_from_real_riscv_execution() {
+    let program = riscv64_program(&[m5op(M5_CHECKPOINT), m5op(M5_EXIT)]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("m5-dram-checkpoint-host-action", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--dram-memory",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/total_action_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions.pointer("/stop_count").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_checkpoint(host_actions, 0, "gem5-m5-checkpoint", 11, 11);
+    assert_checkpoint_component_chunks(
+        host_actions,
+        0,
+        0,
+        "cpu0",
+        &[
+            "fregs",
+            "hart-run-state",
+            "in-order-pipeline",
+            "pc",
+            "pmp",
+            "xregs",
+        ],
+    );
+    assert_checkpoint_component_chunks(host_actions, 0, 1, "memory0", &["dram"]);
+    assert_checkpoint_counts_match_nested_details(host_actions, 0);
+}
+
+#[test]
+fn rem6_run_m5_dram_checkpoint_chunk_checksum_tracks_live_memory_state() {
+    let (baseline, after_store) =
+        run_m5_checkpoint_memory_checksums("m5-dram-checkpoint-live", true);
+
+    assert_ne!(after_store, baseline);
 }
 
 fn m5op(function: u32) -> u32 {
     (function << 25) | 0x7b
+}
+
+fn run_m5_checkpoint_memory_checksums(name: &str, dram_memory: bool) -> (String, String) {
+    let words = [
+        m5op(M5_CHECKPOINT),
+        u_type(0, 2, 0x17),            // auipc x2, 0
+        i_type(24, 2, 0x0, 2, 0x13),   // addi x2, x2, data offset
+        i_type(0x5a, 0, 0x0, 5, 0x13), // addi x5, x0, 0x5a
+        s_type(0, 5, 2, 0x2),          // sw x5, 0(x2)
+        m5op(M5_CHECKPOINT),
+        m5op(M5_EXIT),
+    ];
+    let mut program = riscv64_program(&words);
+    program.extend_from_slice(&0u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary(name, &elf);
+    let mut args = vec![
+        "run",
+        "--isa",
+        "riscv",
+        "--binary",
+        path.to_str().unwrap(),
+        "--max-tick",
+        "120",
+        "--stats-format",
+        "json",
+        "--execute",
+    ];
+    if dram_memory {
+        args.push("--dram-memory");
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(args)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    let chunk_name = if dram_memory { "dram" } else { "store" };
+    (
+        checkpoint_chunk_checksum(host_actions, 0, "memory0", chunk_name),
+        checkpoint_chunk_checksum(host_actions, 1, "memory0", chunk_name),
+    )
 }
 
 fn assert_work_marker(
@@ -510,7 +658,41 @@ fn assert_checkpoint_component_chunks(
                 .is_some_and(|bytes| bytes > 0),
             "checkpoint chunk {chunk_index}: {chunk_summary}"
         );
+        assert!(
+            chunk_summary
+                .pointer("/payload_checksum")
+                .and_then(Value::as_str)
+                .is_some_and(|checksum| checksum.starts_with("0x") && checksum.len() == 18),
+            "checkpoint chunk {chunk_index}: {chunk_summary}"
+        );
     }
+}
+
+fn checkpoint_chunk_checksum(
+    host_actions: &Value,
+    checkpoint_index: usize,
+    component: &str,
+    chunk: &str,
+) -> String {
+    let components = host_actions
+        .pointer(&format!("/checkpoints/{checkpoint_index}/components"))
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing checkpoint components {checkpoint_index}"));
+    let component_summary = components
+        .iter()
+        .find(|summary| summary.pointer("/component").and_then(Value::as_str) == Some(component))
+        .unwrap_or_else(|| panic!("missing checkpoint component {component}"));
+    let chunks = component_summary
+        .pointer("/chunks")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing checkpoint chunks for {component}"));
+    chunks
+        .iter()
+        .find(|summary| summary.pointer("/name").and_then(Value::as_str) == Some(chunk))
+        .and_then(|summary| summary.pointer("/payload_checksum"))
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("missing checkpoint chunk checksum {component}/{chunk}"))
+        .to_string()
 }
 
 fn assert_checkpoint_counts_match_nested_details(host_actions: &Value, checkpoint_index: usize) {

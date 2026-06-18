@@ -38,6 +38,11 @@ pub(super) enum CliMemoryRuntime {
     },
 }
 
+pub(super) enum CliMemoryCheckpointSource {
+    Store(Arc<Mutex<PartitionedMemoryStore>>),
+    Dram(Arc<Mutex<DramMemoryController>>),
+}
+
 impl CliMemoryRuntime {
     pub(super) fn new_mapped_zeroed(
         address: Address,
@@ -129,6 +134,13 @@ impl CliMemoryRuntime {
 
     pub(super) const fn uses_dram(&self) -> bool {
         matches!(self, Self::Dram { .. })
+    }
+
+    pub(super) fn checkpoint_source(&self) -> CliMemoryCheckpointSource {
+        match self {
+            Self::Store { store, .. } => CliMemoryCheckpointSource::Store(Arc::clone(store)),
+            Self::Dram { memory, .. } => CliMemoryCheckpointSource::Dram(Arc::clone(memory)),
+        }
     }
 
     pub(super) fn with_store_mut<R>(

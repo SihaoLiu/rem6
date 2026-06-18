@@ -90,7 +90,9 @@ pub use resource_acquire_cli::{
     run_resource_acquire_config, Rem6ResourceAcquireArtifact, Rem6ResourceAcquireResourceSummary,
 };
 pub use resource_acquire_config::{Rem6ResourceAcquireConfig, Rem6ResourceAcquireResourceConfig};
-use riscv_checkpoint_runtime::attach_cli_riscv_checkpoint_bank;
+use riscv_checkpoint_runtime::{
+    attach_cli_memory_checkpoint_bank, attach_cli_riscv_checkpoint_bank,
+};
 pub(crate) use riscv_guest_output::{Rem6RiscvGuestWriteSummary, Rem6RiscvUnknownSyscallSummary};
 use riscv_run_driver::drive_cli_riscv_run;
 use run_gdb::{serve_riscv_gdb_with_run_control, RiscvGdbServeOutcome};
@@ -741,6 +743,7 @@ fn execute_riscv(
         StatsRegistry::new(),
     )));
     attach_cli_riscv_checkpoint_bank(&controller, &cluster)?;
+    attach_cli_memory_checkpoint_bank(&controller, &memory)?;
     let trap_port = RiscvTrapEventPort::new(
         SystemHostEventPort::with_controller(
             host_partition,
