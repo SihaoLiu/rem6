@@ -103,6 +103,15 @@ pub(crate) fn exact_finite_single_add_sub_bits(
     add_sub::exact_finite_single_bits(lhs, rhs, rounding_mode, subtract)
 }
 
+pub(crate) fn exact_finite_single_mul_add_bits(
+    lhs: u32,
+    rhs: u32,
+    addend: u32,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> Option<u32> {
+    fused::exact_finite_single_mul_add_bits(lhs, rhs, addend, rounding_mode)
+}
+
 pub(crate) fn single_register_bits(value: u64) -> u32 {
     unbox_single(value)
 }

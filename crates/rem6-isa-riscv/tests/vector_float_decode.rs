@@ -45,6 +45,14 @@ fn vfmerge_vfm_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_masked_vf_type(0x17, vs2, fs1, vd)
 }
 
+fn vfmacc_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x2c, vs2, vs1, vd)
+}
+
+fn vfmacc_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x2c, vs2, fs1, vd)
+}
+
 fn vfmv_v_f_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x17, vs2, fs1, vd)
 }
@@ -55,6 +63,43 @@ fn vfmv_f_s_type(vs2: u8, vs1: u8, fd: u8) -> u32 {
 
 fn vfmv_s_f_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x10, vs2, fs1, vd)
+}
+
+#[test]
+fn decoder_accepts_vfmacc_vv_and_vf() {
+    let vv = vfmacc_vv_type(2, 1, 3);
+    assert_eq!(vv, 0xb220_91d7);
+    assert_eq!(
+        RiscvInstruction::decode(vv).unwrap(),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::MulAddVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        })
+    );
+
+    let vf = vfmacc_vf_type(2, 1, 3);
+    assert_eq!(vf, 0xb220_d1d7);
+    assert_eq!(
+        RiscvInstruction::decode(vf).unwrap(),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::MulAddVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        })
+    );
+
+    let masked_vv = vector_float_masked_type(0x2c, 0b001, 2, 1, 3);
+    assert_eq!(
+        RiscvInstruction::decode(masked_vv),
+        Err(RiscvError::UnknownEncoding { raw: masked_vv })
+    );
+
+    let masked_vf = vector_float_masked_type(0x2c, 0b101, 2, 1, 3);
+    assert_eq!(
+        RiscvInstruction::decode(masked_vf),
+        Err(RiscvError::UnknownEncoding { raw: masked_vf })
+    );
 }
 
 #[test]

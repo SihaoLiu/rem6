@@ -350,6 +350,12 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         (0x5, 0b100100, true) => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::MulVf { vd, fs1, vs2 },
         )),
+        (0x1, 0b101100, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::MulAddVv { vd, vs1, vs2 },
+        )),
+        (0x5, 0b101100, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::MulAddVf { vd, fs1, vs2 },
+        )),
         (0x5, 0b100111, true) => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::ReverseSubVf { vd, fs1, vs2 },
         )),

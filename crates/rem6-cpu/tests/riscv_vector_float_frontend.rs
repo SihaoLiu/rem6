@@ -147,6 +147,14 @@ fn vfmul_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x24, vs2, fs1, vd)
 }
 
+fn vfmacc_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x2c, vs2, vs1, vd)
+}
+
+fn vfmacc_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x2c, vs2, fs1, vd)
+}
+
 fn vfsgnj_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x08, vs2, fs1, vd)
 }
@@ -1446,6 +1454,219 @@ fn riscv_core_driver_executes_vfmul_vf_from_fetch_stream() {
         [1.5, -2.0, 0.5, 1.0],
         [0.0, 0.0, 0.0, 12.0],
         [-3.0, 4.0, -1.0, 12.0],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfmacc_vv_from_fetch_stream() {
+    assert_vv_fetch_stream_executes_bits(
+        vfmacc_vv_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MulAddVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        },
+        [0x3f80_0000, 0xc000_0000, 0x3f00_0000, 0x4110_0000],
+        [0x4000_0000, 0x4080_0000, 0xc100_0000, 0x3f80_0000],
+        [0x4120_0000, 0x3f80_0000, 0xc040_0000, 0x4140_0000],
+        [0x4140_0000, 0xc0e0_0000, 0xc0e0_0000, 0x4140_0000],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfmacc_vf_from_fetch_stream() {
+    assert_vf_fetch_stream_executes_bits(
+        vfmacc_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MulAddVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        0xc000_0000,
+        [0x4040_0000, 0xc080_0000, 0x3e80_0000, 0x3f80_0000],
+        [0x3f80_0000, 0xbf80_0000, 0x4100_0000, 0x4140_0000],
+        [0xc0a0_0000, 0x40e0_0000, 0x40f0_0000, 0x4140_0000],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfmacc_vv_round_down_exact_cancellation_to_negative_zero() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.set_float_status(RiscvFloatStatus::new(0).with_frm(2));
+    core.write_vector_register(
+        vreg(1),
+        lanes_f32_bits([0x3f80_0000, 0xbf80_0000, 0x4000_0000, 0x3f80_0000]),
+    );
+    core.write_vector_register(
+        vreg(2),
+        lanes_f32_bits([0x3f80_0000, 0x3f80_0000, 0x4040_0000, 0x3f80_0000]),
+    );
+    core.write_vector_register(
+        vreg(3),
+        lanes_f32_bits([0xbf80_0000, 0x3f80_0000, 0xc0c0_0000, 0x4110_0000]),
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 5),
+            vfmacc_vv_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::MulAddVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_f32_bits([0x8000_0000, 0x8000_0000, 0x8000_0000, 0x4110_0000])
+    );
+}
+
+#[test]
+fn riscv_core_driver_traps_vfmacc_vv_with_reserved_frm() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.set_machine_trap_vector(0x9000);
+    core.set_float_status(RiscvFloatStatus::new(0).with_frm(5));
+    core.write_vector_register(vreg(1), lanes_f32([1.0, 2.0, 3.0, 4.0]));
+    core.write_vector_register(vreg(2), lanes_f32([1.0, 2.0, 3.0, 4.0]));
+    core.write_vector_register(vreg(3), lanes_f32([9.0, 9.0, 9.0, 9.0]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 5),
+            vfmacc_vv_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_trap_kind(&core, store, &mut scheduler, &transport),
+        Some(RiscvTrapKind::IllegalInstruction)
+    );
+    assert_eq!(core.machine_trap_cause(), 2);
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_f32([9.0, 9.0, 9.0, 9.0])
+    );
+}
+
+#[test]
+fn riscv_core_driver_traps_vfmacc_vv_when_tiny_addend_result_is_not_exact_binary32() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.set_machine_trap_vector(0x9000);
+    core.write_vector_register(
+        vreg(1),
+        lanes_f32_bits([0x3f80_0000, 0x4000_0000, 0x4040_0000, 0x4080_0000]),
+    );
+    core.write_vector_register(
+        vreg(2),
+        lanes_f32_bits([0x0000_0001, 0x4000_0000, 0x4040_0000, 0x4080_0000]),
+    );
+    core.write_vector_register(
+        vreg(3),
+        lanes_f32_bits([0x3f80_0000, 0x4110_0000, 0x4110_0000, 0x4110_0000]),
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 5),
+            vfmacc_vv_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_trap_kind(&core, store, &mut scheduler, &transport),
+        Some(RiscvTrapKind::IllegalInstruction)
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_f32_bits([0x3f80_0000, 0x4110_0000, 0x4110_0000, 0x4110_0000])
+    );
+}
+
+#[test]
+fn riscv_core_driver_traps_vfmacc_vv_when_result_is_not_exact_binary32() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.set_machine_trap_vector(0x9000);
+    core.write_vector_register(
+        vreg(1),
+        lanes_f32_bits([0x3f80_0000, 0x4000_0000, 0x4040_0000, 0x4080_0000]),
+    );
+    core.write_vector_register(
+        vreg(2),
+        lanes_f32_bits([0x3380_0000, 0x4000_0000, 0x4040_0000, 0x4080_0000]),
+    );
+    core.write_vector_register(
+        vreg(3),
+        lanes_f32_bits([0x3f80_0000, 0x4110_0000, 0x4110_0000, 0x4110_0000]),
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 5),
+            vfmacc_vv_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_trap_kind(&core, store, &mut scheduler, &transport),
+        Some(RiscvTrapKind::IllegalInstruction)
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_f32_bits([0x3f80_0000, 0x4110_0000, 0x4110_0000, 0x4110_0000])
     );
 }
 

@@ -78,6 +78,17 @@ pub(super) fn single_exception_flags(
     }
 }
 
+pub(super) fn exact_finite_single_mul_add_bits(
+    lhs: u32,
+    rhs: u32,
+    addend: u32,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> Option<u32> {
+    let exact = exact_single_value_from_bits(lhs, rhs, addend)?;
+    exact_is_representable_as_single(exact)
+        .then(|| round_exact_single(lhs, rhs, addend, exact, rounding_mode))
+}
+
 pub(super) fn double_exception_flags(
     lhs: u64,
     rhs: u64,

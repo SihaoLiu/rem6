@@ -78,6 +78,12 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
         RiscvVectorFloatInstruction::MulVf { vd, fs1, vs2 } => {
             execute_arithmetic_vf(hart, vd, fs1, vs2, FloatBinaryOp::Mul)
         }
+        RiscvVectorFloatInstruction::MulAddVv { vd, vs1, vs2 } => {
+            execute_mul_add_vv(hart, vd, vs1, vs2)
+        }
+        RiscvVectorFloatInstruction::MulAddVf { vd, fs1, vs2 } => {
+            execute_mul_add_vf(hart, vd, fs1, vs2)
+        }
         RiscvVectorFloatInstruction::SignInjectVv { vd, vs1, vs2 } => {
             execute_sign_inject_vv(hart, vd, vs1, vs2, FloatSignInjectOp::Inject)
         }
@@ -265,6 +271,64 @@ fn execute_sign_inject_vv(
         let rhs = u32::from_le_bytes(lane4(&right, offset));
         let value = sign_inject_single_bits(lhs, rhs, operation);
         result[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
+
+fn execute_mul_add_vv(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs1: VectorRegister,
+    vs2: VectorRegister,
+) -> bool {
+    let Some(rounding_mode) = active_rounding_mode(hart) else {
+        return false;
+    };
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2, vs1]) else {
+        return false;
+    };
+    if plan.element_bytes != 4 {
+        return false;
+    }
+
+    let multiplier = read_register_group(hart, vs2, plan.group_registers);
+    let multiplicand = read_register_group(hart, vs1, plan.group_registers);
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    if !apply_exact_mul_add_lanes(
+        &plan,
+        &mut result,
+        &multiplicand,
+        &multiplier,
+        rounding_mode,
+    ) {
+        return false;
+    }
+    write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
+
+fn execute_mul_add_vf(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    fs1: FloatRegister,
+    vs2: VectorRegister,
+) -> bool {
+    let Some(rounding_mode) = active_rounding_mode(hart) else {
+        return false;
+    };
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2]) else {
+        return false;
+    };
+    if plan.element_bytes != 4 {
+        return false;
+    }
+
+    let scalar = float::single_register_bits(hart.read_float(fs1));
+    let multiplier = read_register_group(hart, vs2, plan.group_registers);
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    if !apply_exact_mul_add_scalar_lanes(&plan, &mut result, scalar, &multiplier, rounding_mode) {
+        return false;
     }
     write_register_group(hart, vd, plan.group_registers, &result);
     true
@@ -656,6 +720,46 @@ fn exact_f32_binary(
     };
     let rounded = exact as f32;
     (rounded.is_finite() && f64::from(rounded) == exact).then_some(rounded)
+}
+
+fn apply_exact_mul_add_lanes(
+    plan: &VectorBinaryPlan,
+    result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
+    multiplicand: &[u8; MAX_VECTOR_GROUP_BYTES],
+    multiplier: &[u8; MAX_VECTOR_GROUP_BYTES],
+    rounding_mode: RiscvFloatRoundingMode,
+) -> bool {
+    for offset in (0..plan.active_bytes).step_by(4) {
+        let lhs = u32::from_le_bytes(lane4(multiplicand, offset));
+        let rhs = u32::from_le_bytes(lane4(multiplier, offset));
+        let addend = u32::from_le_bytes(lane4(result, offset));
+        let Some(value) = float::exact_finite_single_mul_add_bits(lhs, rhs, addend, rounding_mode)
+        else {
+            return false;
+        };
+        result[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    true
+}
+
+fn apply_exact_mul_add_scalar_lanes(
+    plan: &VectorBinaryPlan,
+    result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
+    scalar: u32,
+    multiplier: &[u8; MAX_VECTOR_GROUP_BYTES],
+    rounding_mode: RiscvFloatRoundingMode,
+) -> bool {
+    for offset in (0..plan.active_bytes).step_by(4) {
+        let rhs = u32::from_le_bytes(lane4(multiplier, offset));
+        let addend = u32::from_le_bytes(lane4(result, offset));
+        let Some(value) =
+            float::exact_finite_single_mul_add_bits(scalar, rhs, addend, rounding_mode)
+        else {
+            return false;
+        };
+        result[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    true
 }
 
 fn sign_inject_single_bits(lhs: u32, rhs: u32, operation: FloatSignInjectOp) -> u32 {
