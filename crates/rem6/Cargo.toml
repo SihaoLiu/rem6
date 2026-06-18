@@ -30,5 +30,8 @@ sha2 = "0.10"
 toml = "0.8"
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2"] }
 
+[dev-dependencies]
+serde_json = "1"
+
 [lints]
 workspace = true

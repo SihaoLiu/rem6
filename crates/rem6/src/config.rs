@@ -7,7 +7,11 @@ use serde::Deserialize;
 
 use crate::Rem6CliError;
 
+mod debug;
 mod trace_replay;
+
+pub use debug::CliDebugFlag;
+use debug::{parse_debug_flag_list, parse_debug_flags};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RequestedIsa {
@@ -196,6 +200,7 @@ pub struct Rem6RunConfig {
     instruction_cache_protocol: Option<RiscvDataCacheProtocol>,
     instruction_cache_prefetcher: Option<CliCachePrefetcher>,
     gdb_listen: Option<String>,
+    debug_flags: Vec<CliDebugFlag>,
     cores: usize,
     parallel_workers: usize,
     memory_dumps: Vec<MemoryDumpRequest>,
@@ -283,6 +288,7 @@ struct Rem6RunFileConfig {
     data_cache_prefetcher: Option<String>,
     instruction_cache_protocol: Option<String>,
     instruction_cache_prefetcher: Option<String>,
+    debug_flags: Option<Vec<String>>,
     cores: Option<usize>,
     parallel_workers: Option<usize>,
     memory_dumps: Option<Vec<String>>,
@@ -506,6 +512,8 @@ impl Rem6RunConfig {
             .map(CliCachePrefetcher::parse_instruction_cache)
             .transpose()?;
         let mut gdb_listen = None;
+        let mut debug_flags =
+            parse_debug_flags(file_config.debug_flags.as_deref().unwrap_or_default())?;
         let mut cores = file_config.cores.unwrap_or(1);
         if cores == 0 {
             return Err(Rem6CliError::InvalidCoreCount {
@@ -558,6 +566,7 @@ impl Rem6RunConfig {
         let mut riscv_se_env_from_cli = false;
         let mut riscv_se_stdin_from_cli = false;
         let mut riscv_se_files_from_cli = false;
+        let mut debug_flags_from_cli = false;
         let mut output = file_config
             .output
             .as_deref()
@@ -734,6 +743,16 @@ impl Rem6RunConfig {
                 "--gdb-listen" => {
                     gdb_listen = Some(required_value(&flag, args.next())?);
                 }
+                "--debug-flags" => {
+                    let value = required_value(&flag, args.next())?;
+                    if !debug_flags_from_cli {
+                        debug_flags.clear();
+                        debug_flags_from_cli = true;
+                    }
+                    debug_flags.extend(parse_debug_flag_list(&value)?);
+                    debug_flags.sort_unstable();
+                    debug_flags.dedup();
+                }
                 "--cores" => {
                     let value = required_value(&flag, args.next())?;
                     cores = value
@@ -903,6 +922,7 @@ impl Rem6RunConfig {
             instruction_cache_protocol,
             instruction_cache_prefetcher,
             gdb_listen,
+            debug_flags,
             cores,
             parallel_workers: parallel_workers.unwrap_or(cores),
             memory_dumps,
@@ -1013,6 +1033,14 @@ impl Rem6RunConfig {
 
     pub fn gdb_listen(&self) -> Option<&str> {
         self.gdb_listen.as_deref()
+    }
+
+    pub fn debug_flags(&self) -> &[CliDebugFlag] {
+        &self.debug_flags
+    }
+
+    pub fn debug_exec_enabled(&self) -> bool {
+        self.debug_flags.contains(&CliDebugFlag::Exec)
     }
 
     pub const fn cores(&self) -> usize {
@@ -1617,6 +1645,7 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--data-cache-prefetcher",
             "--instruction-cache-protocol",
             "--instruction-cache-prefetcher",
+            "--debug-flags",
             "--cores",
             "--parallel-workers",
             "--dump-memory",

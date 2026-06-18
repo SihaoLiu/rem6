@@ -37,6 +37,10 @@ pub enum Rem6CliError {
     UnsupportedStatsFormat {
         format: String,
     },
+    EmptyDebugFlag,
+    UnsupportedDebugFlag {
+        flag: String,
+    },
     UnsupportedPowerAnalysisFormat {
         format: String,
     },
@@ -177,6 +181,8 @@ pub enum Rem6CliError {
     DataCachePrefetcherRequiresExecution,
     InstructionCacheProtocolRequiresExecution,
     InstructionCachePrefetcherRequiresExecution,
+    DebugFlagsRequireExecution,
+    DebugFlagsRequireJsonStats,
     PowerOutputRequiresExecution,
     RiscvSeInputRequiresRiscvSe {
         input: &'static str,
@@ -287,6 +293,10 @@ impl fmt::Display for Rem6CliError {
             Self::UnsupportedIsa { isa } => write!(formatter, "unsupported ISA {isa}"),
             Self::UnsupportedStatsFormat { format } => {
                 write!(formatter, "unsupported stats format {format}")
+            }
+            Self::EmptyDebugFlag => write!(formatter, "empty debug flag entry"),
+            Self::UnsupportedDebugFlag { flag } => {
+                write!(formatter, "unsupported debug flag {flag}")
             }
             Self::UnsupportedPowerAnalysisFormat { format } => {
                 write!(formatter, "unsupported power analysis format {format}")
@@ -458,6 +468,12 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InstructionCachePrefetcherRequiresExecution => {
                 write!(formatter, "--instruction-cache-prefetcher requires --execute")
+            }
+            Self::DebugFlagsRequireExecution => {
+                write!(formatter, "--debug-flags requires --execute")
+            }
+            Self::DebugFlagsRequireJsonStats => {
+                write!(formatter, "--debug-flags requires --stats-format json")
             }
             Self::PowerOutputRequiresExecution => {
                 write!(formatter, "--power-output requires --execute")

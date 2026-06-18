@@ -32,6 +32,7 @@ mod cli_error;
 mod cli_output;
 mod config;
 mod data_cache_runtime;
+mod debug_output;
 mod formatting;
 mod gpu_cli;
 mod guest_memory;
@@ -55,14 +56,16 @@ mod transport_summary_tests;
 
 pub use cli_error::Rem6CliError;
 pub use config::{
-    CliCachePrefetcher, CliDramMemoryProfile, LoadBlobRequest, LoadBlobSource, MemoryDumpRequest,
-    PowerAnalysisFormat, ReadfileRequest, ReadfileSource, Rem6GupsConfig, Rem6RunConfig,
-    Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, StatsFormat, SuiteResourceSelector,
+    CliCachePrefetcher, CliDebugFlag, CliDramMemoryProfile, LoadBlobRequest, LoadBlobSource,
+    MemoryDumpRequest, PowerAnalysisFormat, ReadfileRequest, ReadfileSource, Rem6GupsConfig,
+    Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, StatsFormat,
+    SuiteResourceSelector,
 };
 use data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io,
     CliDataCacheRuntime, CliDataCacheSummary,
 };
+use debug_output::Rem6DebugSummary;
 pub use gpu_cli::{run_gpu_run_config, Rem6GpuRunArtifact, Rem6GpuRunConfig};
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
@@ -182,6 +185,7 @@ pub struct Rem6ExecutionSummary {
     fetch_transport: Rem6MemoryTransportSummary,
     data_transport: Rem6MemoryTransportSummary,
     dram: Rem6DramSummary,
+    debug: Rem6DebugSummary,
     cores: Vec<Rem6CoreSummary>,
     memory_dumps: Vec<Rem6MemoryDump>,
     riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
@@ -1105,6 +1109,7 @@ fn execution_summary(
         fetch_transport: memory_transport_summary(inputs.fetch_trace),
         data_transport: memory_transport_summary(inputs.data_trace),
         dram: inputs.memory.dram_summary_until(final_tick),
+        debug: Rem6DebugSummary::from_run(inputs.config, run),
         cores,
         memory_dumps: read_memory_dumps(
             inputs.memory,

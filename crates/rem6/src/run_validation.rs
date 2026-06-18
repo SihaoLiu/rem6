@@ -1,6 +1,6 @@
 use rem6_system::RiscvDataCacheProtocol;
 
-use crate::config::{Rem6RunConfig, RequestedIsa};
+use crate::config::{Rem6RunConfig, RequestedIsa, StatsFormat};
 use crate::run_gdb::validate_run_gdb_listen_config;
 use crate::Rem6CliError;
 
@@ -8,6 +8,7 @@ pub(super) fn validate_run_config_inputs(config: &Rem6RunConfig) -> Result<(), R
     if !config.execute() {
         validate_non_execution_inputs(config)?;
     }
+    validate_debug_flag_inputs(config)?;
     validate_cache_inputs(config)?;
     validate_readfile_inputs(config)?;
     validate_riscv_se_inputs(config)?;
@@ -45,8 +46,18 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     if config.instruction_cache_prefetcher().is_some() {
         return Err(Rem6CliError::InstructionCachePrefetcherRequiresExecution);
     }
+    if !config.debug_flags().is_empty() {
+        return Err(Rem6CliError::DebugFlagsRequireExecution);
+    }
     if config.power_output().is_some() {
         return Err(Rem6CliError::PowerOutputRequiresExecution);
+    }
+    Ok(())
+}
+
+fn validate_debug_flag_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
+    if !config.debug_flags().is_empty() && config.stats_format() != StatsFormat::Json {
+        return Err(Rem6CliError::DebugFlagsRequireJsonStats);
     }
     Ok(())
 }

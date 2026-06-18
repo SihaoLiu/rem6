@@ -71,6 +71,11 @@ impl Rem6RunArtifact {
             .as_ref()
             .map(Rem6ExecutionSummary::to_transport_json)
             .unwrap_or_else(empty_transport_json);
+        let debug = self
+            .execution
+            .as_ref()
+            .and_then(Rem6ExecutionSummary::debug_json_field)
+            .unwrap_or_default();
         let load_blobs = self
             .load_blobs
             .iter()
@@ -99,7 +104,7 @@ impl Rem6RunArtifact {
             .map(|artifact| format!(",\"power_analysis\":{}", artifact.to_json()))
             .unwrap_or_default();
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"dram\":{},\"transport\":{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -122,6 +127,7 @@ impl Rem6RunArtifact {
             riscv_unknown_syscalls,
             dram,
             transport,
+            debug,
             self.stats_json,
             power_analysis,
         )
@@ -865,6 +871,12 @@ impl Rem6ExecutionSummary {
             final_frontiers,
             ready_partitions,
         )
+    }
+
+    fn debug_json_field(&self) -> Option<String> {
+        self.debug
+            .has_enabled_flags()
+            .then(|| format!(",\"debug\":{}", self.debug.to_json()))
     }
 
     fn to_cores_json(&self) -> String {
