@@ -8,10 +8,12 @@ use serde::Deserialize;
 use crate::Rem6CliError;
 
 mod debug;
+mod riscv_se_input;
 mod trace_replay;
 
 pub use debug::CliDebugFlag;
 use debug::{parse_debug_flag_list, parse_debug_flags};
+pub use riscv_se_input::{RiscvSeFileRequest, RiscvSeInputSource};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RequestedIsa {
@@ -188,7 +190,7 @@ pub struct Rem6RunConfig {
     riscv_se: bool,
     riscv_se_args: Vec<String>,
     riscv_se_env: Vec<String>,
-    riscv_se_stdin: Option<PathBuf>,
+    riscv_se_stdin: Option<RiscvSeInputSource>,
     riscv_se_files: Vec<RiscvSeFileRequest>,
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
@@ -277,7 +279,7 @@ struct Rem6RunFileConfig {
     riscv_se: Option<bool>,
     riscv_se_args: Option<Vec<String>>,
     riscv_se_env: Option<Vec<String>>,
-    riscv_se_stdin: Option<PathBuf>,
+    riscv_se_stdin: Option<String>,
     riscv_se_files: Option<Vec<String>>,
     max_instructions: Option<u64>,
     stats_format: Option<String>,
@@ -444,7 +446,17 @@ impl Rem6RunConfig {
         let mut riscv_se_stdin = file_config
             .riscv_se_stdin
             .as_deref()
-            .map(|path| file_config.resolve_path(path));
+            .map(|source| {
+                RiscvSeInputSource::parse(source).ok_or_else(|| Rem6CliError::InvalidRiscvSeStdin {
+                    value: source.to_string(),
+                })
+            })
+            .transpose()?;
+        if let Some(source) = riscv_se_stdin.as_mut() {
+            if let Some(config_dir) = file_config.config_dir.as_deref() {
+                source.resolve_path(config_dir);
+            }
+        }
         let mut riscv_se_files = file_config
             .riscv_se_files
             .as_deref()
@@ -674,7 +686,11 @@ impl Rem6RunConfig {
                     riscv_se_env.push(value);
                 }
                 "--riscv-se-stdin" => {
-                    riscv_se_stdin = Some(PathBuf::from(required_value(&flag, args.next())?));
+                    let value = required_value(&flag, args.next())?;
+                    riscv_se_stdin = Some(
+                        RiscvSeInputSource::parse(&value)
+                            .ok_or(Rem6CliError::InvalidRiscvSeStdin { value })?,
+                    );
                     riscv_se_stdin_from_cli = true;
                 }
                 "--riscv-se-file" => {
@@ -987,8 +1003,8 @@ impl Rem6RunConfig {
         &self.riscv_se_env
     }
 
-    pub fn riscv_se_stdin(&self) -> Option<&Path> {
-        self.riscv_se_stdin.as_deref()
+    pub fn riscv_se_stdin(&self) -> Option<&RiscvSeInputSource> {
+        self.riscv_se_stdin.as_ref()
     }
 
     pub fn riscv_se_files(&self) -> &[RiscvSeFileRequest] {
@@ -1542,45 +1558,6 @@ impl ReadfileRequest {
         };
         if path.is_relative() {
             *path = base.join(&path);
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvSeFileRequest {
-    guest_path: String,
-    host_path: PathBuf,
-}
-
-impl RiscvSeFileRequest {
-    pub fn parse(value: &str) -> Result<Self, Rem6CliError> {
-        let Some((guest_path, host_path)) = value.split_once('=') else {
-            return Err(Rem6CliError::InvalidRiscvSeFile {
-                value: value.to_string(),
-            });
-        };
-        if guest_path.is_empty() || guest_path.as_bytes().contains(&0) || host_path.is_empty() {
-            return Err(Rem6CliError::InvalidRiscvSeFile {
-                value: value.to_string(),
-            });
-        }
-        Ok(Self {
-            guest_path: guest_path.to_string(),
-            host_path: PathBuf::from(host_path),
-        })
-    }
-
-    pub fn guest_path(&self) -> &str {
-        &self.guest_path
-    }
-
-    pub fn host_path(&self) -> &Path {
-        &self.host_path
-    }
-
-    fn resolve_host_path(&mut self, base: &Path) {
-        if self.host_path.is_relative() {
-            self.host_path = base.join(&self.host_path);
         }
     }
 }

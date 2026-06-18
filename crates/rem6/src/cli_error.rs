@@ -165,6 +165,9 @@ pub enum Rem6CliError {
     InvalidReadfile {
         value: String,
     },
+    InvalidRiscvSeStdin {
+        value: String,
+    },
     InvalidRiscvSeFile {
         value: String,
     },
@@ -432,6 +435,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidReadfile { value } => {
                 write!(formatter, "invalid readfile {value}")
+            }
+            Self::InvalidRiscvSeStdin { value } => {
+                write!(formatter, "invalid RISC-V SE stdin {value}")
             }
             Self::InvalidRiscvSeFile { value } => {
                 write!(formatter, "invalid RISC-V SE file mapping {value}")

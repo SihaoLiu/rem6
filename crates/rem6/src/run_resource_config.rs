@@ -44,11 +44,23 @@ impl RunResourcePayloads {
     }
 
     pub(crate) fn readfile_payload(&self, id: &str) -> Result<&[u8], Rem6CliError> {
-        let payload = self.payload_by_id("readfile", id)?;
+        self.input_payload("readfile", id)
+    }
+
+    pub(crate) fn readfile_suite_payload(
+        &self,
+        workload_id: &str,
+        id: &str,
+    ) -> Result<&[u8], Rem6CliError> {
+        self.input_suite_payload("readfile", workload_id, id)
+    }
+
+    pub(crate) fn input_payload(&self, use_case: &str, id: &str) -> Result<&[u8], Rem6CliError> {
+        let payload = self.payload_by_id(use_case, id)?;
         if payload.kind != WorkloadResourceKind::Input {
             return Err(Rem6CliError::Execute {
                 error: format!(
-                    "readfile resource {id} in run resource config {} has kind {}; expected input",
+                    "{use_case} resource {id} in run resource config {} has kind {}; expected input",
                     self.resource_config.display(),
                     payload.kind.as_str(),
                 ),
@@ -57,16 +69,17 @@ impl RunResourcePayloads {
         Ok(payload.payload.data())
     }
 
-    pub(crate) fn readfile_suite_payload(
+    pub(crate) fn input_suite_payload(
         &self,
+        use_case: &str,
         workload_id: &str,
         id: &str,
     ) -> Result<&[u8], Rem6CliError> {
-        let payload = self.payload_by_suite_id("readfile", workload_id, id)?;
+        let payload = self.payload_by_suite_id(use_case, workload_id, id)?;
         if payload.kind != WorkloadResourceKind::Input {
             return Err(Rem6CliError::Execute {
                 error: format!(
-                    "readfile suite resource {workload_id}/{id} in run resource config {} has kind {}; expected input",
+                    "{use_case} suite resource {workload_id}/{id} in run resource config {} has kind {}; expected input",
                     self.resource_config.display(),
                     payload.kind.as_str(),
                 ),

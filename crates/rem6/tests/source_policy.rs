@@ -76,6 +76,13 @@ struct ScoreCalculation {
 }
 
 #[test]
+fn public_run_config_exports_include_riscv_se_input_source() {
+    let name = std::any::type_name::<rem6::RiscvSeInputSource>();
+
+    assert!(name.ends_with("RiscvSeInputSource"));
+}
+
+#[test]
 fn cli_lib_rs_remains_a_facade() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs");
     let lines = line_count(&path);

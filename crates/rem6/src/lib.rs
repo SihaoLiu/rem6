@@ -46,6 +46,7 @@ mod resource_acquire_config;
 mod riscv_checkpoint_runtime;
 mod riscv_guest_output;
 mod riscv_run_driver;
+mod riscv_se_inputs;
 mod run_gdb;
 mod run_resource_config;
 mod run_validation;
@@ -60,8 +61,8 @@ pub use cli_error::Rem6CliError;
 pub use config::{
     CliCachePrefetcher, CliDebugFlag, CliDramMemoryProfile, LoadBlobRequest, LoadBlobSource,
     MemoryDumpRequest, PowerAnalysisFormat, ReadfileRequest, ReadfileSource, Rem6GupsConfig,
-    Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, StatsFormat,
-    SuiteResourceSelector,
+    Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource,
+    StatsFormat, SuiteResourceSelector,
 };
 use data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io,
@@ -95,6 +96,7 @@ use riscv_checkpoint_runtime::{
 };
 pub(crate) use riscv_guest_output::{Rem6RiscvGuestWriteSummary, Rem6RiscvUnknownSyscallSummary};
 use riscv_run_driver::drive_cli_riscv_run;
+use riscv_se_inputs::{read_riscv_se_file, read_riscv_se_stdin};
 use run_gdb::{serve_riscv_gdb_with_run_control, RiscvGdbServeOutcome};
 use run_resource_config::{run_resource_payloads_from_config, RunResourcePayloads};
 use run_validation::validate_run_config_inputs;
@@ -542,6 +544,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
                 &readfiles,
                 line_layout,
                 Address::new(start_address),
+                resource_payloads.as_ref(),
             )?,
             isa => return Err(Rem6CliError::UnsupportedExecutionIsa { isa }),
         })
@@ -607,6 +610,7 @@ fn execute_riscv(
     readfiles: &[LoadedReadfile],
     line_layout: CacheLineLayout,
     start_address: Address,
+    resource_payloads: Option<&RunResourcePayloads>,
 ) -> Result<Rem6ExecutionSummary, Rem6CliError> {
     let core_count = u32::try_from(config.cores()).map_err(|_| Rem6CliError::InvalidCoreCount {
         value: config.cores().to_string(),
@@ -785,24 +789,15 @@ fn execute_riscv(
             .riscv_syscall_emulation()
             .expect("RISC-V SE syscall emulation was just installed")
             .register_guest_symlink(b"/proc/self/exe", proc_self_exe_target);
-        if let Some(stdin_path) = config.riscv_se_stdin() {
-            let stdin =
-                std::fs::read(stdin_path).map_err(|error| Rem6CliError::ReadRiscvSeStdin {
-                    path: stdin_path.to_path_buf(),
-                    error: error.to_string(),
-                })?;
+        if let Some(stdin_source) = config.riscv_se_stdin() {
+            let stdin = read_riscv_se_stdin(stdin_source, resource_payloads)?;
             driver
                 .riscv_syscall_emulation()
                 .expect("RISC-V SE syscall emulation was just installed")
                 .push_stdin_bytes(&stdin);
         }
         for file in config.riscv_se_files() {
-            let contents =
-                std::fs::read(file.host_path()).map_err(|error| Rem6CliError::ReadRiscvSeFile {
-                    guest_path: file.guest_path().to_string(),
-                    path: file.host_path().to_path_buf(),
-                    error: error.to_string(),
-                })?;
+            let contents = read_riscv_se_file(file, resource_payloads)?;
             driver
                 .riscv_syscall_emulation()
                 .expect("RISC-V SE syscall emulation was just installed")
