@@ -6,7 +6,9 @@ use super::{
 };
 
 pub(super) const RISCV_LINUX_SETGID: u64 = 144;
+pub(super) const RISCV_LINUX_SETREGID: u64 = 143;
 pub(super) const RISCV_LINUX_SETUID: u64 = 146;
+pub(super) const RISCV_LINUX_SETREUID: u64 = 145;
 pub(super) const RISCV_LINUX_SETRESUID: u64 = 147;
 pub(super) const RISCV_LINUX_GETRESUID: u64 = 148;
 pub(super) const RISCV_LINUX_SETRESGID: u64 = 149;
@@ -160,6 +162,17 @@ pub(super) fn syscall_setres_identity(
     }
 }
 
+pub(super) fn syscall_setre_identity(
+    request: RiscvSyscallRequest,
+    identity: &mut RiscvSyscallIdentity,
+) -> u64 {
+    match request.number() {
+        RISCV_LINUX_SETREUID => setre_user_identity(request, identity),
+        RISCV_LINUX_SETREGID => setre_group_identity(request, identity),
+        _ => unreachable!("RISC-V Linux real/effective identity syscall is handled by caller"),
+    }
+}
+
 pub(super) fn syscall_set_identity(
     request: RiscvSyscallRequest,
     identity: &mut RiscvSyscallIdentity,
@@ -222,21 +235,47 @@ fn setres_user_identity(request: RiscvSyscallRequest, identity: &mut RiscvSyscal
         identity.effective_user_id,
         identity.saved_user_id,
     ];
-    let Ok(real_id) = next_identity_id(request.argument(0), identity.user_id, current) else {
-        return linux_error(RISCV_LINUX_EPERM);
-    };
-    let Ok(effective_id) =
-        next_identity_id(request.argument(1), identity.effective_user_id, current)
+    let privileged = identity.effective_user_id == 0;
+    let Ok(real_id) = next_identity_id(request.argument(0), identity.user_id, &current, privileged)
     else {
         return linux_error(RISCV_LINUX_EPERM);
     };
-    let Ok(saved_id) = next_identity_id(request.argument(2), identity.saved_user_id, current)
-    else {
+    let Ok(effective_id) = next_identity_id(
+        request.argument(1),
+        identity.effective_user_id,
+        &current,
+        privileged,
+    ) else {
+        return linux_error(RISCV_LINUX_EPERM);
+    };
+    let Ok(saved_id) = next_identity_id(
+        request.argument(2),
+        identity.saved_user_id,
+        &current,
+        privileged,
+    ) else {
         return linux_error(RISCV_LINUX_EPERM);
     };
     identity.user_id = real_id;
     identity.effective_user_id = effective_id;
     identity.saved_user_id = saved_id;
+    0
+}
+
+fn setre_user_identity(request: RiscvSyscallRequest, identity: &mut RiscvSyscallIdentity) -> u64 {
+    let Ok((user_id, effective_user_id, saved_user_id)) = next_setre_identity(
+        identity.user_id,
+        identity.effective_user_id,
+        identity.saved_user_id,
+        identity.effective_user_id == 0,
+        request.argument(0),
+        request.argument(1),
+    ) else {
+        return linux_error(RISCV_LINUX_EPERM);
+    };
+    identity.user_id = user_id;
+    identity.effective_user_id = effective_user_id;
+    identity.saved_user_id = saved_user_id;
     0
 }
 
@@ -246,16 +285,26 @@ fn setres_group_identity(request: RiscvSyscallRequest, identity: &mut RiscvSysca
         identity.effective_group_id,
         identity.saved_group_id,
     ];
-    let Ok(real_id) = next_identity_id(request.argument(0), identity.group_id, current) else {
-        return linux_error(RISCV_LINUX_EPERM);
-    };
-    let Ok(effective_id) =
-        next_identity_id(request.argument(1), identity.effective_group_id, current)
+    let privileged = identity.effective_user_id == 0;
+    let Ok(real_id) =
+        next_identity_id(request.argument(0), identity.group_id, &current, privileged)
     else {
         return linux_error(RISCV_LINUX_EPERM);
     };
-    let Ok(saved_id) = next_identity_id(request.argument(2), identity.saved_group_id, current)
-    else {
+    let Ok(effective_id) = next_identity_id(
+        request.argument(1),
+        identity.effective_group_id,
+        &current,
+        privileged,
+    ) else {
+        return linux_error(RISCV_LINUX_EPERM);
+    };
+    let Ok(saved_id) = next_identity_id(
+        request.argument(2),
+        identity.saved_group_id,
+        &current,
+        privileged,
+    ) else {
         return linux_error(RISCV_LINUX_EPERM);
     };
     identity.group_id = real_id;
@@ -264,11 +313,73 @@ fn setres_group_identity(request: RiscvSyscallRequest, identity: &mut RiscvSysca
     0
 }
 
-fn next_identity_id(requested: u64, current: u64, allowed: [u64; 3]) -> Result<u64, ()> {
+fn setre_group_identity(request: RiscvSyscallRequest, identity: &mut RiscvSyscallIdentity) -> u64 {
+    let Ok((group_id, effective_group_id, saved_group_id)) = next_setre_identity(
+        identity.group_id,
+        identity.effective_group_id,
+        identity.saved_group_id,
+        identity.effective_user_id == 0,
+        request.argument(0),
+        request.argument(1),
+    ) else {
+        return linux_error(RISCV_LINUX_EPERM);
+    };
+    identity.group_id = group_id;
+    identity.effective_group_id = effective_group_id;
+    identity.saved_group_id = saved_group_id;
+    0
+}
+
+fn next_setre_identity(
+    real_id: u64,
+    effective_id: u64,
+    saved_id: u64,
+    privileged: bool,
+    requested_real_id: u64,
+    requested_effective_id: u64,
+) -> Result<(u64, u64, u64), ()> {
+    let real_id_choices = [real_id, effective_id];
+    let effective_id_choices = [real_id, effective_id, saved_id];
+    let next_real_id = next_identity_id(requested_real_id, real_id, &real_id_choices, privileged)?;
+    let next_effective_id = next_identity_id(
+        requested_effective_id,
+        effective_id,
+        &effective_id_choices,
+        privileged,
+    )?;
+    let next_saved_id = if setre_updates_saved_id(
+        requested_real_id,
+        requested_effective_id,
+        next_effective_id,
+        real_id,
+    ) {
+        next_effective_id
+    } else {
+        saved_id
+    };
+    Ok((next_real_id, next_effective_id, next_saved_id))
+}
+
+fn setre_updates_saved_id(
+    requested_real_id: u64,
+    requested_effective_id: u64,
+    effective_id: u64,
+    previous_real_id: u64,
+) -> bool {
+    !identity_no_change(requested_real_id)
+        || (!identity_no_change(requested_effective_id) && effective_id != previous_real_id)
+}
+
+fn next_identity_id(
+    requested: u64,
+    current: u64,
+    allowed: &[u64],
+    privileged: bool,
+) -> Result<u64, ()> {
     if identity_no_change(requested) {
         return Ok(current);
     }
-    if allowed.contains(&requested) {
+    if privileged || allowed.contains(&requested) {
         Ok(requested)
     } else {
         Err(())

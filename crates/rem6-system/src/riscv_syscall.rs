@@ -126,11 +126,11 @@ use hwprobe::{syscall_riscv_hwprobe, RISCV_LINUX_RISCV_HWPROBE};
 pub(crate) use identity::RiscvSyscallIdentity;
 use identity::{
     syscall_getgroups, syscall_identity, syscall_res_identity, syscall_set_identity,
-    syscall_setgroups, syscall_setres_identity, RISCV_LINUX_GETEGID, RISCV_LINUX_GETEUID,
-    RISCV_LINUX_GETGID, RISCV_LINUX_GETGROUPS, RISCV_LINUX_GETPID, RISCV_LINUX_GETPPID,
-    RISCV_LINUX_GETRESGID, RISCV_LINUX_GETRESUID, RISCV_LINUX_GETTID, RISCV_LINUX_GETUID,
-    RISCV_LINUX_SETGID, RISCV_LINUX_SETGROUPS, RISCV_LINUX_SETRESGID, RISCV_LINUX_SETRESUID,
-    RISCV_LINUX_SETUID,
+    syscall_setgroups, syscall_setre_identity, syscall_setres_identity, RISCV_LINUX_GETEGID,
+    RISCV_LINUX_GETEUID, RISCV_LINUX_GETGID, RISCV_LINUX_GETGROUPS, RISCV_LINUX_GETPID,
+    RISCV_LINUX_GETPPID, RISCV_LINUX_GETRESGID, RISCV_LINUX_GETRESUID, RISCV_LINUX_GETTID,
+    RISCV_LINUX_GETUID, RISCV_LINUX_SETGID, RISCV_LINUX_SETGROUPS, RISCV_LINUX_SETREGID,
+    RISCV_LINUX_SETRESGID, RISCV_LINUX_SETRESUID, RISCV_LINUX_SETREUID, RISCV_LINUX_SETUID,
 };
 use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
 pub use limits::RISCV_LINUX_STACK_LIMIT_BYTES;
@@ -1588,6 +1588,9 @@ impl RiscvSyscallTable {
             }
             RISCV_LINUX_SETRESUID | RISCV_LINUX_SETRESGID => Some(RiscvSyscallOutcome::Return {
                 value: syscall_setres_identity(request, &mut state.identity),
+            }),
+            RISCV_LINUX_SETREUID | RISCV_LINUX_SETREGID => Some(RiscvSyscallOutcome::Return {
+                value: syscall_setre_identity(request, &mut state.identity),
             }),
             RISCV_LINUX_SETUID | RISCV_LINUX_SETGID => Some(RiscvSyscallOutcome::Return {
                 value: syscall_set_identity(request, &mut state.identity),
