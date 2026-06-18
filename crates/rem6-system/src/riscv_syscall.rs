@@ -286,6 +286,7 @@ pub struct RiscvSyscallState {
     unknown_syscalls: Vec<RiscvUnknownSyscallRecord>,
     file_creation_mask: u32,
     signal_mask: u64,
+    pending_signal_mask: u64,
     signal_actions: BTreeMap<u64, RiscvSignalAction>,
     signal_alt_stack: RiscvSignalAltStack,
     resource_limits: limits::RiscvResourceLimits,
@@ -381,6 +382,7 @@ impl RiscvSyscallState {
             unknown_syscalls: Vec::new(),
             file_creation_mask: 0,
             signal_mask: 0,
+            pending_signal_mask: 0,
             signal_actions: BTreeMap::new(),
             signal_alt_stack: RiscvSignalAltStack::disabled(),
             resource_limits: limits::RiscvResourceLimits::linux_single_process(),
@@ -1679,16 +1681,22 @@ impl RiscvSyscallTable {
                 syscall_rt_sigqueueinfo(request, state, tick, guest_memory_reader)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
-            RISCV_LINUX_RT_SIGSUSPEND => syscall_rt_sigsuspend(request, state, guest_memory_reader),
+            RISCV_LINUX_RT_SIGSUSPEND => {
+                syscall_rt_sigsuspend(request, state, tick, guest_memory_reader)
+            }
             RISCV_LINUX_RT_SIGACTION => {
                 syscall_rt_sigaction(request, state, guest_memory_reader, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
-            RISCV_LINUX_RT_SIGPROCMASK => {
-                syscall_rt_sigprocmask(request, state, guest_memory_reader, guest_memory_writer)
-                    .map(|value| RiscvSyscallOutcome::Return { value })
-            }
-            RISCV_LINUX_RT_SIGPENDING => syscall_rt_sigpending(request, guest_memory_writer)
+            RISCV_LINUX_RT_SIGPROCMASK => syscall_rt_sigprocmask(
+                request,
+                state,
+                tick,
+                guest_memory_reader,
+                guest_memory_writer,
+            )
+            .map(|value| RiscvSyscallOutcome::Return { value }),
+            RISCV_LINUX_RT_SIGPENDING => syscall_rt_sigpending(request, state, guest_memory_writer)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_RT_SIGTIMEDWAIT => syscall_rt_sigtimedwait(request, guest_memory_reader)
                 .map(|value| RiscvSyscallOutcome::Return { value }),

@@ -5,6 +5,9 @@ const SIGSTOP_MASK: u64 = 1 << (19 - 1);
 const SIG_IGN: u64 = 1;
 const SIGUSR1: u64 = 10;
 const SIGUSR2: u64 = 12;
+const SIGCHLD: u64 = 17;
+const SIGURG: u64 = 23;
+const SIGWINCH: u64 = 28;
 const SIGRTMAX: u64 = 64;
 const EAGAIN: u64 = 11;
 const RISCV_LINUX_SIGALTSTACK_FOR_TEST: u64 = 132;
@@ -138,6 +141,24 @@ fn linux_table_kill_ignored_nonzero_signal_returns_success() {
         ),
         Some(RiscvSyscallOutcome::Return { value: 0 })
     );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_kill_default_ignored_nonzero_signals_return_success() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    for (pc, signal) in [(0x8004, SIGCHLD), (0x8008, SIGURG), (0x800c, SIGWINCH)] {
+        assert_eq!(
+            table.handle_at_tick(
+                RiscvSyscallRequest::new(pc, RISCV_LINUX_KILL, [100, signal, 0, 0, 0, 0]),
+                &mut state,
+                8,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 0 })
+        );
+    }
     assert!(state.unknown_syscalls().is_empty());
 }
 
@@ -360,6 +381,31 @@ fn linux_table_thread_ignored_nonzero_signal_returns_success() {
     assert_eq!(
         table.handle_at_tick(
             RiscvSyscallRequest::new(0x8008, RISCV_LINUX_TKILL, [42, SIGUSR2, 0, 0, 0, 0]),
+            &mut state,
+            13,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_thread_default_ignored_nonzero_signals_return_success() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+
+    assert_eq!(
+        table.handle_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_TGKILL, [41, 42, SIGURG, 0, 0, 0]),
+            &mut state,
+            12,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_at_tick(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_TKILL, [42, SIGWINCH, 0, 0, 0, 0]),
             &mut state,
             13,
         ),
@@ -1199,12 +1245,36 @@ fn linux_table_rt_sigqueueinfo_ignored_nonzero_signal_returns_success() {
 }
 
 #[test]
-fn linux_table_rt_sigqueueinfo_reports_argument_errors() {
+fn linux_table_rt_sigqueueinfo_default_ignored_nonzero_signal_returns_success() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
     let signal_info_address = 0x40c0;
     let guest_memory_reader = signal_info_reader(signal_info_address, -1);
-    let user_signal_info_address = 0x40d0;
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_RT_SIGQUEUEINFO,
+                [100, SIGCHLD, signal_info_address, 0, 0, 0],
+            ),
+            &mut state,
+            14,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_rt_sigqueueinfo_reports_argument_errors() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let signal_info_address = 0x40e0;
+    let guest_memory_reader = signal_info_reader(signal_info_address, -1);
+    let user_signal_info_address = 0x40f0;
     let user_guest_memory_reader = signal_info_reader(user_signal_info_address, 0);
 
     assert_eq!(

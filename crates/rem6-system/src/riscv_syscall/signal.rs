@@ -21,9 +21,13 @@ const RISCV_LINUX_UNBLOCKABLE_SIGNALS: u64 = RISCV_LINUX_SIGKILL_MASK | RISCV_LI
 const RISCV_LINUX_SIGACTION_BYTES: usize = 24;
 const RISCV_LINUX_FIRST_SIGNAL: u64 = 1;
 const RISCV_LINUX_LAST_SIGNAL: u64 = 64;
+const RISCV_LINUX_SIG_DFL: u64 = 0;
 const RISCV_LINUX_SIG_IGN: u64 = 1;
 const RISCV_LINUX_SIGKILL: u64 = 9;
+const RISCV_LINUX_SIGCHLD: u64 = 17;
 const RISCV_LINUX_SIGSTOP: u64 = 19;
+const RISCV_LINUX_SIGURG: u64 = 23;
+const RISCV_LINUX_SIGWINCH: u64 = 28;
 const RISCV_LINUX_SIGINFO_T_BYTES: usize = 128;
 const RISCV_LINUX_SI_TKILL: i32 = -6;
 const RISCV_LINUX_SA_NOCLDSTOP: u64 = 0x0000_0001;
@@ -69,6 +73,10 @@ impl RiscvSignalAction {
 
     const fn ignores_signal(self) -> bool {
         self.handler == RISCV_LINUX_SIG_IGN
+    }
+
+    const fn uses_default_action(self) -> bool {
+        self.handler == RISCV_LINUX_SIG_DFL
     }
 
     fn to_guest_bytes(self) -> [u8; RISCV_LINUX_SIGACTION_BYTES] {
@@ -139,6 +147,18 @@ impl RiscvSyscallState {
 
     pub(super) fn set_signal_alt_stack(&mut self, alt_stack: RiscvSignalAltStack) {
         self.signal_alt_stack = alt_stack;
+    }
+
+    pub(super) const fn pending_signal_mask(&self) -> u64 {
+        self.pending_signal_mask
+    }
+
+    pub(super) fn insert_pending_signal(&mut self, signal: u64) {
+        self.pending_signal_mask |= signal_bit(signal);
+    }
+
+    pub(super) fn clear_pending_signal_mask(&mut self, mask: u64) {
+        self.pending_signal_mask &= !mask;
     }
 }
 
@@ -234,6 +254,9 @@ pub(super) fn syscall_rt_sigaction(
     let old_action = state.signal_action(signal);
     if let Some(action) = requested_action {
         state.set_signal_action(signal, action);
+        if signal_delivery_is_ignored(signal, action) {
+            state.clear_pending_signal_mask(signal_bit(signal));
+        }
     }
 
     if old_action_address != 0 {
@@ -248,6 +271,7 @@ pub(super) fn syscall_rt_sigaction(
 pub(super) fn syscall_rt_sigprocmask(
     request: RiscvSyscallRequest,
     state: &mut RiscvSyscallState,
+    tick: rem6_kernel::Tick,
     guest_memory_reader: Option<&RiscvGuestMemoryReader>,
     guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
 ) -> Option<u64> {
@@ -278,6 +302,7 @@ pub(super) fn syscall_rt_sigprocmask(
     };
 
     let old_mask = state.signal_mask();
+    let mask_changed = next_mask.is_some();
     if let Some(mask) = next_mask {
         state.set_signal_mask(mask);
     }
@@ -288,11 +313,17 @@ pub(super) fn syscall_rt_sigprocmask(
             return Some(linux_error(RISCV_LINUX_EFAULT));
         }
     }
+    if mask_changed {
+        if let Some(value) = settle_unblocked_pending_signals(request, state, tick) {
+            return Some(value);
+        }
+    }
     Some(0)
 }
 
 pub(super) fn syscall_rt_sigpending(
     request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
     guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
 ) -> Option<u64> {
     let sigsetsize = request.argument(1);
@@ -301,7 +332,7 @@ pub(super) fn syscall_rt_sigpending(
     }
 
     let guest_memory_writer = guest_memory_writer?;
-    let pending_mask = 0_u64.to_le_bytes();
+    let pending_mask = state.pending_signal_mask().to_le_bytes();
     if !guest_memory_writer.write(request.argument(0), &pending_mask[..sigsetsize as usize]) {
         return Some(linux_error(RISCV_LINUX_EFAULT));
     }
@@ -311,6 +342,7 @@ pub(super) fn syscall_rt_sigpending(
 pub(super) fn syscall_rt_sigsuspend(
     request: RiscvSyscallRequest,
     state: &mut RiscvSyscallState,
+    tick: rem6_kernel::Tick,
     guest_memory_reader: Option<&RiscvGuestMemoryReader>,
 ) -> Option<RiscvSyscallOutcome> {
     if request.argument(1) != RISCV_LINUX_SIGSET_BYTES {
@@ -325,7 +357,12 @@ pub(super) fn syscall_rt_sigsuspend(
             value: linux_error(RISCV_LINUX_EFAULT),
         });
     };
+    let old_mask = state.signal_mask();
     state.set_signal_mask(blockable_signal_mask(mask));
+    if let Some(value) = settle_unblocked_pending_signals(request, state, tick) {
+        state.set_signal_mask(old_mask);
+        return Some(RiscvSyscallOutcome::Return { value });
+    }
     Some(RiscvSyscallOutcome::Blocked)
 }
 
@@ -484,6 +521,63 @@ fn kill_target_exists(pid: i32, state: &RiscvSyscallState) -> bool {
         == Some(current_process)
 }
 
+fn signal_default_action_ignores_delivery(signal: u64) -> bool {
+    matches!(
+        signal,
+        RISCV_LINUX_SIGCHLD | RISCV_LINUX_SIGURG | RISCV_LINUX_SIGWINCH
+    )
+}
+
+fn signal_delivery_is_ignored(signal: u64, action: RiscvSignalAction) -> bool {
+    action.ignores_signal()
+        || action.uses_default_action() && signal_default_action_ignores_delivery(signal)
+}
+
+fn signal_bit(signal: u64) -> u64 {
+    1_u64 << (signal - 1)
+}
+
+fn signal_blocked(state: &RiscvSyscallState, signal: u64) -> bool {
+    state.signal_mask() & signal_bit(signal) != 0
+}
+
+fn clear_unblocked_ignored_pending_signals(state: &mut RiscvSyscallState) {
+    let mut clear_mask = 0_u64;
+    let unblocked_pending = state.pending_signal_mask() & !state.signal_mask();
+    for signal in RISCV_LINUX_FIRST_SIGNAL..=RISCV_LINUX_LAST_SIGNAL {
+        let bit = signal_bit(signal);
+        if unblocked_pending & bit != 0
+            && signal_delivery_is_ignored(signal, state.signal_action(signal))
+        {
+            clear_mask |= bit;
+        }
+    }
+    state.clear_pending_signal_mask(clear_mask);
+}
+
+fn first_unblocked_pending_signal(state: &RiscvSyscallState) -> Option<u64> {
+    let unblocked_pending = state.pending_signal_mask() & !state.signal_mask();
+    (RISCV_LINUX_FIRST_SIGNAL..=RISCV_LINUX_LAST_SIGNAL)
+        .find(|signal| unblocked_pending & signal_bit(*signal) != 0)
+}
+
+fn settle_unblocked_pending_signals(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    tick: rem6_kernel::Tick,
+) -> Option<u64> {
+    clear_unblocked_ignored_pending_signals(state);
+    let signal = first_unblocked_pending_signal(state)?;
+    state.clear_pending_signal_mask(signal_bit(signal));
+    state.push_unknown_syscall(super::RiscvUnknownSyscallRecord::new(
+        request.pc(),
+        request.number(),
+        request.arguments(),
+        tick,
+    ));
+    Some(linux_error(RISCV_LINUX_ENOSYS))
+}
+
 fn signal_probe_or_unimplemented_delivery(
     request: RiscvSyscallRequest,
     state: &mut RiscvSyscallState,
@@ -494,7 +588,12 @@ fn signal_probe_or_unimplemented_delivery(
         return 0;
     }
     let signal = signal as u64;
-    if state.signal_action(signal).ignores_signal() {
+    if signal_blocked(state, signal) {
+        state.insert_pending_signal(signal);
+        return 0;
+    }
+    let action = state.signal_action(signal);
+    if signal_delivery_is_ignored(signal, action) {
         return 0;
     }
 

@@ -190,6 +190,240 @@ fn rem6_run_riscv_se_runs_static_raw_ignored_signals() {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_default_ignored_signals() {
+    let program = riscv64_program(&[
+        i_type(172, 0, 0x0, 17, 0x13), // addi a7, x0, getpid
+        0x0000_0073,                   // ecall
+        i_type(17, 0, 0x0, 11, 0x13),  // addi a1, x0, SIGCHLD
+        i_type(129, 0, 0x0, 17, 0x13), // addi a7, x0, kill
+        0x0000_0073,                   // ecall
+        b_type(84, 0, 10, 0x1),        // bne a0, x0, fail
+        i_type(178, 0, 0x0, 17, 0x13), // addi a7, x0, gettid
+        0x0000_0073,                   // ecall
+        i_type(23, 0, 0x0, 11, 0x13),  // addi a1, x0, SIGURG
+        i_type(130, 0, 0x0, 17, 0x13), // addi a7, x0, tkill
+        0x0000_0073,                   // ecall
+        b_type(60, 0, 10, 0x1),        // bne a0, x0, fail
+        i_type(172, 0, 0x0, 17, 0x13), // addi a7, x0, getpid
+        0x0000_0073,                   // ecall
+        i_type(0, 10, 0x0, 13, 0x13),  // addi a3, a0, 0
+        i_type(178, 0, 0x0, 17, 0x13), // addi a7, x0, gettid
+        0x0000_0073,                   // ecall
+        i_type(0, 10, 0x0, 11, 0x13),  // addi a1, a0, 0
+        i_type(0, 13, 0x0, 10, 0x13),  // addi a0, a3, 0
+        i_type(28, 0, 0x0, 12, 0x13),  // addi a2, x0, SIGWINCH
+        i_type(131, 0, 0x0, 17, 0x13), // addi a7, x0, tgkill
+        0x0000_0073,                   // ecall
+        b_type(16, 0, 10, 0x1),        // bne a0, x0, fail
+        i_type(80, 0, 0x0, 10, 0x13),  // addi a0, x0, 80
+        i_type(93, 0, 0x0, 17, 0x13),  // addi a7, x0, exit
+        0x0000_0073,                   // ecall
+        i_type(81, 0, 0x0, 10, 0x13),  // addi a0, x0, 81
+        i_type(93, 0, 0x0, 17, 0x13),  // addi a7, x0, exit
+        0x0000_0073,                   // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-default-ignored-signals", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "320",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":80"));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 80, "constant");
+}
+
+#[test]
+fn rem6_run_riscv_se_runs_static_raw_blocked_default_ignored_signal_pending() {
+    let mut program = riscv64_program(&[
+        u_type(0, 8, 0x17),             // auipc s0, 0
+        i_type(0x100, 8, 0x0, 8, 0x13), // addi s0, s0, signal data offset
+        i_type(0, 0, 0x0, 10, 0x13),    // addi a0, x0, SIG_BLOCK
+        i_type(0, 8, 0x0, 11, 0x13),    // addi a1, s0, 0
+        i_type(0, 0, 0x0, 12, 0x13),    // addi a2, x0, 0
+        i_type(8, 0, 0x0, 13, 0x13),    // addi a3, x0, sigset bytes
+        i_type(135, 0, 0x0, 17, 0x13),  // addi a7, x0, rt_sigprocmask
+        0x0000_0073,                    // ecall
+        b_type(128, 0, 10, 0x1),        // bne a0, x0, fail
+        i_type(172, 0, 0x0, 17, 0x13),  // addi a7, x0, getpid
+        0x0000_0073,                    // ecall
+        i_type(17, 0, 0x0, 11, 0x13),   // addi a1, x0, SIGCHLD
+        i_type(129, 0, 0x0, 17, 0x13),  // addi a7, x0, kill
+        0x0000_0073,                    // ecall
+        b_type(104, 0, 10, 0x1),        // bne a0, x0, fail
+        i_type(8, 8, 0x0, 10, 0x13),    // addi a0, s0, pending offset
+        i_type(8, 0, 0x0, 11, 0x13),    // addi a1, x0, sigset bytes
+        i_type(136, 0, 0x0, 17, 0x13),  // addi a7, x0, rt_sigpending
+        0x0000_0073,                    // ecall
+        b_type(84, 0, 10, 0x1),         // bne a0, x0, fail
+        i_type(8, 8, 0x3, 5, 0x03),     // ld t0, 8(s0)
+        i_type(0, 8, 0x3, 6, 0x03),     // ld t1, 0(s0)
+        b_type(72, 6, 5, 0x1),          // bne t0, t1, fail
+        i_type(1, 0, 0x0, 10, 0x13),    // addi a0, x0, SIG_UNBLOCK
+        i_type(0, 8, 0x0, 11, 0x13),    // addi a1, s0, 0
+        i_type(0, 0, 0x0, 12, 0x13),    // addi a2, x0, 0
+        i_type(8, 0, 0x0, 13, 0x13),    // addi a3, x0, sigset bytes
+        i_type(135, 0, 0x0, 17, 0x13),  // addi a7, x0, rt_sigprocmask
+        0x0000_0073,                    // ecall
+        b_type(44, 0, 10, 0x1),         // bne a0, x0, fail
+        i_type(8, 8, 0x0, 10, 0x13),    // addi a0, s0, pending offset
+        i_type(8, 0, 0x0, 11, 0x13),    // addi a1, x0, sigset bytes
+        i_type(136, 0, 0x0, 17, 0x13),  // addi a7, x0, rt_sigpending
+        0x0000_0073,                    // ecall
+        b_type(24, 0, 10, 0x1),         // bne a0, x0, fail
+        i_type(8, 8, 0x3, 5, 0x03),     // ld t0, 8(s0)
+        b_type(16, 0, 5, 0x1),          // bne t0, x0, fail
+        i_type(82, 0, 0x0, 10, 0x13),   // addi a0, x0, 82
+        i_type(93, 0, 0x0, 17, 0x13),   // addi a7, x0, exit
+        0x0000_0073,                    // ecall
+        i_type(83, 0, 0x0, 10, 0x13),   // addi a0, x0, 83
+        i_type(93, 0, 0x0, 17, 0x13),   // addi a7, x0, exit
+        0x0000_0073,                    // ecall
+    ]);
+    program.resize(0x100, 0);
+    program.extend_from_slice(&(1_u64 << (17 - 1)).to_le_bytes());
+    program.extend_from_slice(&0_u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-blocked-default-ignored-signal", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "520",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":82"));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 82, "constant");
+}
+
+#[test]
+fn rem6_run_riscv_se_runs_static_raw_blocked_nonignored_signal_pending() {
+    let mut program = riscv64_program(&[
+        u_type(0, 8, 0x17),             // auipc s0, 0
+        i_type(0x100, 8, 0x0, 8, 0x13), // addi s0, s0, signal data offset
+        i_type(0, 0, 0x0, 10, 0x13),    // addi a0, x0, SIG_BLOCK
+        i_type(0, 8, 0x0, 11, 0x13),    // addi a1, s0, 0
+        i_type(0, 0, 0x0, 12, 0x13),    // addi a2, x0, 0
+        i_type(8, 0, 0x0, 13, 0x13),    // addi a3, x0, sigset bytes
+        i_type(135, 0, 0x0, 17, 0x13),  // addi a7, x0, rt_sigprocmask
+        0x0000_0073,                    // ecall
+        b_type(104, 0, 10, 0x1),        // bne a0, x0, fail
+        i_type(172, 0, 0x0, 17, 0x13),  // addi a7, x0, getpid
+        0x0000_0073,                    // ecall
+        i_type(10, 0, 0x0, 11, 0x13),   // addi a1, x0, SIGUSR1
+        i_type(129, 0, 0x0, 17, 0x13),  // addi a7, x0, kill
+        0x0000_0073,                    // ecall
+        b_type(80, 0, 10, 0x1),         // bne a0, x0, fail
+        i_type(8, 8, 0x0, 10, 0x13),    // addi a0, s0, pending offset
+        i_type(8, 0, 0x0, 11, 0x13),    // addi a1, x0, sigset bytes
+        i_type(136, 0, 0x0, 17, 0x13),  // addi a7, x0, rt_sigpending
+        0x0000_0073,                    // ecall
+        b_type(60, 0, 10, 0x1),         // bne a0, x0, fail
+        i_type(8, 8, 0x3, 5, 0x03),     // ld t0, 8(s0)
+        i_type(0, 8, 0x3, 6, 0x03),     // ld t1, 0(s0)
+        b_type(48, 6, 5, 0x1),          // bne t0, t1, fail
+        i_type(1, 0, 0x0, 10, 0x13),    // addi a0, x0, SIG_UNBLOCK
+        i_type(0, 8, 0x0, 11, 0x13),    // addi a1, s0, 0
+        i_type(0, 0, 0x0, 12, 0x13),    // addi a2, x0, 0
+        i_type(8, 0, 0x0, 13, 0x13),    // addi a3, x0, sigset bytes
+        i_type(135, 0, 0x0, 17, 0x13),  // addi a7, x0, rt_sigprocmask
+        0x0000_0073,                    // ecall
+        i_type(-38, 0, 0x0, 5, 0x13),   // addi t0, x0, -ENOSYS
+        b_type(16, 5, 10, 0x1),         // bne a0, t0, fail
+        i_type(84, 0, 0x0, 10, 0x13),   // addi a0, x0, 84
+        i_type(93, 0, 0x0, 17, 0x13),   // addi a7, x0, exit
+        0x0000_0073,                    // ecall
+        i_type(85, 0, 0x0, 10, 0x13),   // addi a0, x0, 85
+        i_type(93, 0, 0x0, 17, 0x13),   // addi a7, x0, exit
+        0x0000_0073,                    // ecall
+    ]);
+    program.resize(0x100, 0);
+    program.extend_from_slice(&(1_u64 << (10 - 1)).to_le_bytes());
+    program.extend_from_slice(&0_u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-blocked-nonignored-signal", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "560",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":84"));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[{\"pc\":\"0x80000070\""));
+    assert!(stdout.contains("\"number\":135"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 84, "constant");
+    assert_stat(
+        &stdout,
+        "sim.riscv.unknown_syscalls",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_rt_sigsuspend_invalid_size() {
     let program = riscv64_program(&[
         i_type(0, 0, 0x0, 10, 0x13),   // addi a0, x0, 0

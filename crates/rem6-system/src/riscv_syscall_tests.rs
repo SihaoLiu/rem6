@@ -67,6 +67,8 @@ mod scheduler_tests;
 mod sendfile_tests;
 #[path = "riscv_syscall_tests/signal_action_tests.rs"]
 mod signal_action_tests;
+#[path = "riscv_syscall_tests/signal_pending_tests.rs"]
+mod signal_pending_tests;
 #[path = "riscv_syscall_tests/signal_tests.rs"]
 mod signal_tests;
 #[path = "riscv_syscall_tests/startup_tests.rs"]
