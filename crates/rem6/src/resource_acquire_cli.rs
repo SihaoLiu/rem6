@@ -25,6 +25,8 @@ use crate::resource_acquire_config::{
 use crate::stats_output::{resource_acquire_stats_output, Rem6ResourceAcquireStatsInputs};
 use crate::{execute_error, Rem6CliError};
 
+const MAX_REMOTE_HTTP_REDIRECTS: usize = 5;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6ResourceAcquireArtifact {
     pub(crate) schema: &'static str,
@@ -415,6 +417,28 @@ fn validate_remote_uri_artifact_digest(
 }
 
 fn read_remote_http_resource(locator: &str) -> Result<Vec<u8>, Rem6CliError> {
+    let mut current = locator.to_string();
+    for redirect_count in 0..=MAX_REMOTE_HTTP_REDIRECTS {
+        match read_remote_http_resource_once(&current)? {
+            RemoteHttpResponse::Body(body) => return Ok(body),
+            RemoteHttpResponse::Redirect(location) => {
+                if redirect_count == MAX_REMOTE_HTTP_REDIRECTS {
+                    return Err(remote_resource_error(
+                        &current,
+                        format!("HTTP resource exceeded {MAX_REMOTE_HTTP_REDIRECTS} redirects"),
+                    ));
+                }
+                current = resolve_http_redirect(&current, &location)?;
+            }
+        }
+    }
+    Err(remote_resource_error(
+        locator,
+        "HTTP redirect handling reached an unreachable state",
+    ))
+}
+
+fn read_remote_http_resource_once(locator: &str) -> Result<RemoteHttpResponse, Rem6CliError> {
     let (host, port, path) = parse_http_locator(locator)?;
     let address = format!("{host}:{port}");
     let mut stream =
@@ -435,7 +459,7 @@ fn read_remote_http_resource(locator: &str) -> Result<Vec<u8>, Rem6CliError> {
     stream
         .read_to_end(&mut response)
         .map_err(|error| remote_resource_error(locator, error))?;
-    http_response_body(locator, &response)
+    http_response(locator, &response)
 }
 
 fn parse_http_locator(locator: &str) -> Result<(String, u16, String), Rem6CliError> {
@@ -469,7 +493,13 @@ fn parse_http_locator(locator: &str) -> Result<(String, u16, String), Rem6CliErr
     Ok((host, port, format!("/{path}")))
 }
 
-fn http_response_body(locator: &str, response: &[u8]) -> Result<Vec<u8>, Rem6CliError> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum RemoteHttpResponse {
+    Body(Vec<u8>),
+    Redirect(String),
+}
+
+fn http_response(locator: &str, response: &[u8]) -> Result<RemoteHttpResponse, Rem6CliError> {
     let header_end = response
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
@@ -483,6 +513,15 @@ fn http_response_body(locator: &str, response: &[u8]) -> Result<Vec<u8>, Rem6Cli
         .split_whitespace()
         .nth(1)
         .ok_or_else(|| remote_resource_error(locator, "HTTP response is missing a status code"))?;
+    if is_http_redirect_status(status_code) {
+        let Some(location) = http_header_value(&headers, "location") else {
+            return Err(remote_resource_error(
+                locator,
+                format!("HTTP resource returned redirect status {status_code} without Location"),
+            ));
+        };
+        return Ok(RemoteHttpResponse::Redirect(location));
+    }
     if status_code != "200" {
         return Err(remote_resource_error(
             locator,
@@ -491,9 +530,9 @@ fn http_response_body(locator: &str, response: &[u8]) -> Result<Vec<u8>, Rem6Cli
     }
     let body = &response[header_end + 4..];
     if http_headers_have_chunked_transfer_encoding(&headers) {
-        decode_http_chunked_body(locator, body)
+        decode_http_chunked_body(locator, body).map(RemoteHttpResponse::Body)
     } else {
-        Ok(body.to_vec())
+        Ok(RemoteHttpResponse::Body(body.to_vec()))
     }
 }
 
@@ -514,6 +553,34 @@ fn http_headers_have_chunked_transfer_encoding(headers: &str) -> bool {
                 .split(',')
                 .any(|encoding| encoding.trim().eq_ignore_ascii_case("chunked"))
     })
+}
+
+fn http_header_value(headers: &str, expected_name: &str) -> Option<String> {
+    headers.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case(expected_name)
+            .then(|| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn is_http_redirect_status(status_code: &str) -> bool {
+    matches!(status_code, "301" | "302" | "303" | "307" | "308")
+}
+
+fn resolve_http_redirect(current: &str, location: &str) -> Result<String, Rem6CliError> {
+    if location.starts_with("http://") {
+        parse_http_locator(location)?;
+        return Ok(location.to_string());
+    }
+    if location.starts_with('/') {
+        let (host, port, _) = parse_http_locator(current)?;
+        return Ok(format!("http://{host}:{port}{location}"));
+    }
+    Err(remote_resource_error(
+        current,
+        format!("HTTP redirect Location {location} is not an http:// URL or absolute path"),
+    ))
 }
 
 fn decode_http_chunked_body(locator: &str, body: &[u8]) -> Result<Vec<u8>, Rem6CliError> {

@@ -753,10 +753,10 @@ deterministic generated zero-fill artifact acquisition through the same executor
 validation flow with tagged locators for multiple generated resources,
 top-level HTTP `remote-uri` acquisition requiring an
 `artifact_digest` content SHA-256 and validating response bodies for basic and
-chunked transfer responses through the same executor validation flow for
-explicit pre-simulation `resource-acquire`, runtime `run` and `trace-replay`
-resource handoffs rejecting `remote-uri` resources before artifact reads to keep
-simulation entry points network-free,
+chunked transfer responses plus same-scheme HTTP redirects through the same
+executor validation flow for explicit pre-simulation `resource-acquire`,
+runtime `run` and `trace-replay` resource handoffs rejecting `remote-uri`
+resources before artifact reads to keep simulation entry points network-free,
 top-level `rem6 run` handoff of a manifest-acquired
 kernel resource into the normal ELF load and execution path, top-level
 `rem6 run` handoff of a unique suite-acquired kernel resource into the normal
@@ -776,9 +776,9 @@ records, and top-level GUPS traffic profile JSON/stats output.
 
 **Not migrated:** Full gem5 stdlib ergonomics, host/network/archive resource
 acquisition beyond the host-file, tar-entry, gzip-tar-entry,
-stored/deflated ZIP-entry, generated zero-fill, basic HTTP, and chunked HTTP
-slices, HTTPS, redirects, cache/policy controls, broader archive and artifact
-kinds, broad
+stored/deflated ZIP-entry, generated zero-fill, basic HTTP, chunked HTTP, and
+HTTP redirect slices, HTTPS, cache/policy controls, broader archive and
+artifact kinds, broad
 runtime handoff of acquired suite resources beyond the
 unique run-kernel, `suite-resource:<workload>/<resource>` readfile/load-blob, and selected trace-resource replay
 slices, broad GPU
@@ -792,7 +792,7 @@ resource-config kernel handoff tests, `rem6 run` suite resource-config
 readfile and load-blob handoff tests including `suite-resource:<workload>/<resource>` same-name
 suite resource selection and generated zero-fill load-blob memory dump coverage,
 `rem6 resource-acquire` remote-uri
-content-digest, content-address requirement, chunked-transfer, ZIP
+content-digest, content-address requirement, chunked-transfer, HTTP redirect, ZIP
 archive-entry, and generated zero-fill artifact tests, `rem6
 run` remote-uri runtime rejection tests, `rem6 trace-replay` manifest and suite
 resource-config handoff tests including TOML and CLI
@@ -828,7 +828,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/example_configs`, `tests/gem5/learning_gem5` | `rem6` CLI, `rem6-platform`, `rem6-workload` | 40% single-axis | CLI and TOML tests cover several execution and trace-replay paths. | Add rem6 examples that run from data files without recompilation. |
 | `tests/gem5/fdp_tests` | `rem6-cache` | 45% single-axis | Fetch-directed prefetcher state, errors, and cache-local queue/translation counters have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |
 | `tests/gem5/fs` | `rem6-platform`, `rem6-system`, device crates | 15% scoped | Generic device and handoff slices exist, but the gem5 row is mainly full-system boot. | Add full-system Linux boot with SBI, console, storage, network, timer, and shutdown evidence. |
-| `tests/gem5/gem5_resources` | `rem6-workload`, `rem6` CLI | 58% single-axis | Resource declarations, identity, provenance, disk-image construction records, library-level in-memory acquisition executor records, manifest/suite-level `rem6 resource-acquire` execution with local-artifact, host-file, uncompressed/gzip tar-entry, stored/deflated ZIP-entry, generated zero-fill artifact, and content-checked basic plus chunked HTTP remote inputs, plus manifest run-kernel, unique-suite run-kernel, `suite-resource:<workload>/<resource>` suite readfile/load-blob payloads, generated zero-fill load-blob memory dump coverage, and manifest plus unique/selected-suite trace-replay resource-config handoff through TOML or CLI selector exist. | Add broader network-backed, broader archive/artifact acquisition, and suite runtime handoff beyond the current selector-based slices. |
+| `tests/gem5/gem5_resources` | `rem6-workload`, `rem6` CLI | 58% single-axis | Resource declarations, identity, provenance, disk-image construction records, library-level in-memory acquisition executor records, manifest/suite-level `rem6 resource-acquire` execution with local-artifact, host-file, uncompressed/gzip tar-entry, stored/deflated ZIP-entry, generated zero-fill artifact, and content-checked basic, chunked, and redirected HTTP remote inputs, plus manifest run-kernel, unique-suite run-kernel, `suite-resource:<workload>/<resource>` suite readfile/load-blob payloads, generated zero-fill load-blob memory dump coverage, and manifest plus unique/selected-suite trace-replay resource-config handoff through TOML or CLI selector exist. | Add broader network-backed, broader archive/artifact acquisition, and suite runtime handoff beyond the current selector-based slices. |
 | `tests/gem5/gpu` | `rem6-gpu`, `rem6-accelerator`, `rem6-transport` | 35% unit-slice | GPU and accelerator topology, command, DMA route, scalar ISA, CU assignment, and coalesced memory-record tests exist. | Add representative CU scheduling and cache/DRAM interactions. |
 | `tests/gem5/insttest_se` | future SPARC owner, ISA crates | 10% scoped | Current RISC-V evidence belongs under `asmtest`; this gem5 anchor is SPARC SE focused. | Add SPARC or explicitly retire the row as out of scope. |
 | `tests/gem5/kvm_fork_tests`, `tests/gem5/kvm_switch_tests` | `rem6-system`, future host adapters | 10% scoped | Host-assisted takeover admission rejects unsafe switch shapes. | Add explicit fast-forward adapter and KVM-like switch/fork tests. |
