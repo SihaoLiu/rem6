@@ -524,12 +524,20 @@ fn rem6_run_gdb_listen_reads_counter_csrs_after_single_step() {
         csr_description.contains("instret"),
         "missing instret in {csr_description}"
     );
+    assert!(
+        csr_description.contains("time"),
+        "missing time in {csr_description}"
+    );
     assert_eq!(
         send_gdb_packet(&mut stream, b"p7c"),
         gdb_response(b"0000000000000000")
     );
     assert_eq!(
         send_gdb_packet(&mut stream, b"p7d"),
+        gdb_response(b"0000000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p7e"),
         gdb_response(b"0000000000000000")
     );
     assert_eq!(send_gdb_packet(&mut stream, b"s"), gdb_response(b"S05"));
@@ -539,6 +547,10 @@ fn rem6_run_gdb_listen_reads_counter_csrs_after_single_step() {
     );
     assert_eq!(
         send_gdb_packet(&mut stream, b"p7d"),
+        gdb_response(b"0100000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p7e"),
         gdb_response(b"0100000000000000")
     );
     assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
@@ -1711,7 +1723,7 @@ fn rv64_all_register_write_packet(x5: u64, pc: u64) -> Vec<u8> {
     const RV64_FLOAT_REGISTERS: usize = 32;
     const RV64_FLOAT_CSR_AND_PLACEHOLDER_REGISTERS: usize = 4;
     const RV64_CSR_REGISTERS: usize = 20;
-    const RV64_CSR_EXTENSION_REGISTERS: usize = 4;
+    const RV64_CSR_EXTENSION_REGISTERS: usize = 5;
     const RV64_VECTOR_REGISTERS: usize = 32;
     const RV64_VECTOR_REGISTER_BYTES: usize = 16;
     const RV64_REGISTER_BYTES: usize = (RV64_INTEGER_AND_PC_REGISTERS

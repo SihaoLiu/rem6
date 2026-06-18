@@ -35,7 +35,8 @@ const RISCV_GDB_SUPERVISOR_INTERRUPT_ENABLE_REGISTER: u64 = 122;
 const RISCV_GDB_SUPERVISOR_INTERRUPT_PENDING_REGISTER: u64 = 123;
 const RISCV_GDB_COUNTER_CYCLE_REGISTER: u64 = 124;
 const RISCV_GDB_COUNTER_INSTRET_REGISTER: u64 = 125;
-const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 4;
+const RISCV_GDB_COUNTER_TIME_REGISTER: u64 = 126;
+const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 5;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1041,6 +1042,9 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     if number == RISCV_GDB_COUNTER_INSTRET_REGISTER {
         return RiscvGdbCsrRegister::Counter(RiscvCounterCsr::Instret);
     }
+    if number == RISCV_GDB_COUNTER_TIME_REGISTER {
+        return RiscvGdbCsrRegister::Counter(RiscvCounterCsr::Time);
+    }
 
     match number - riscv_gdb_csr_register_base(xlen) {
         0 => RiscvGdbCsrRegister::Status(RiscvStatusCsr::Sstatus),
@@ -1093,7 +1097,7 @@ fn counter_snapshot_with_value(
     match csr {
         RiscvCounterCsr::Cycle => RiscvCounterSnapshot::new(value, snapshot.instret()),
         RiscvCounterCsr::Instret => RiscvCounterSnapshot::new(snapshot.cycle(), value),
-        RiscvCounterCsr::Time => snapshot,
+        RiscvCounterCsr::Time => RiscvCounterSnapshot::new(value, snapshot.instret()),
     }
 }
 
@@ -1242,6 +1246,7 @@ fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
             RISCV_GDB_SUPERVISOR_INTERRUPT_PENDING_REGISTER,
             RISCV_GDB_COUNTER_CYCLE_REGISTER,
             RISCV_GDB_COUNTER_INSTRET_REGISTER,
+            RISCV_GDB_COUNTER_TIME_REGISTER,
         ])
 }
 
@@ -1304,6 +1309,7 @@ const fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool {
         || number == RISCV_GDB_SUPERVISOR_INTERRUPT_PENDING_REGISTER
         || number == RISCV_GDB_COUNTER_CYCLE_REGISTER
         || number == RISCV_GDB_COUNTER_INSTRET_REGISTER
+        || number == RISCV_GDB_COUNTER_TIME_REGISTER
 }
 
 fn encode_register_value(xlen: RiscvGdbXlen, number: u64, value: u64) -> Vec<u8> {

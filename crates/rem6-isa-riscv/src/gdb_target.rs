@@ -362,4 +362,5 @@ const RV64_CSR_REGISTERS: &[CsrRegister] = &[
     CsrRegister::new("sip", Some(123)),
     CsrRegister::new("cycle", Some(124)),
     CsrRegister::new("instret", Some(125)),
+    CsrRegister::new("time", Some(126)),
 ];
