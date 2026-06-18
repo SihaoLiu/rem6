@@ -4,13 +4,11 @@ use std::{
 };
 
 use rem6_boot::BootImage;
-use rem6_cpu::{CpuId, RiscvCore};
-use rem6_kernel::{PartitionedScheduler, Tick};
+use rem6_kernel::Tick;
 
 use crate::{
-    GuestEventId, GuestFd, GuestFdCloseRecord, GuestFdDup2Record, GuestFdEntry, GuestFdError,
-    GuestFdTable, GuestFileDescription, GuestFileDescriptionId, GuestFutexTable, GuestWaitQueue,
-    RiscvSystemRunDriver, ScheduledRiscvTrap, SystemError,
+    GuestFd, GuestFdCloseRecord, GuestFdDup2Record, GuestFdEntry, GuestFdError, GuestFdTable,
+    GuestFileDescription, GuestFileDescriptionId, GuestFutexTable, GuestWaitQueue,
 };
 
 mod advisory;
@@ -55,6 +53,7 @@ mod readv;
 mod rename;
 mod request;
 mod robust;
+mod run_events;
 mod scheduler;
 mod seek;
 mod sendfile;
@@ -72,6 +71,7 @@ mod util;
 mod utsname;
 mod wait4;
 mod writev;
+mod xattr;
 
 use advisory::{syscall_fadvise64, RISCV_LINUX_FADVISE64};
 use brk::syscall_brk;
@@ -235,6 +235,8 @@ struct RiscvOpenGuestFileStat {
     permissions: u32,
 }
 
+const RISCV_GUEST_ALLOCATED_INODE_BASE: u64 = 1 << 63;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvSyscallState {
     identity: RiscvSyscallIdentity,
@@ -248,13 +250,16 @@ pub struct RiscvSyscallState {
     guest_wait: GuestWaitQueue,
     session_id: u64,
     process_name: [u8; 16],
+    next_guest_inode: u64,
     guest_paths: BTreeSet<Vec<u8>>,
     guest_directories: BTreeSet<Vec<u8>>,
+    guest_directory_identities: BTreeMap<Vec<u8>, RiscvGuestFileIdentity>,
     guest_directory_modes: BTreeMap<Vec<u8>, u32>,
     guest_files: BTreeMap<Vec<u8>, Vec<u8>>,
     guest_links: BTreeMap<Vec<u8>, Vec<u8>>,
     guest_file_identities: BTreeMap<Vec<u8>, RiscvGuestFileIdentity>,
     guest_file_modes: BTreeMap<RiscvGuestFileIdentity, u32>,
+    guest_xattrs: BTreeMap<RiscvGuestFileIdentity, BTreeMap<Vec<u8>, Vec<u8>>>,
     guest_pipes: BTreeMap<RiscvGuestPipeId, RiscvGuestPipe>,
     guest_pipe_read_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
     guest_pipe_write_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
@@ -336,13 +341,16 @@ impl RiscvSyscallState {
             guest_wait: GuestWaitQueue::new(current_process_group),
             session_id: u64::from(current_process_group.get()),
             process_name: *b"rem6\0\0\0\0\0\0\0\0\0\0\0\0",
+            next_guest_inode: RISCV_GUEST_ALLOCATED_INODE_BASE,
             guest_paths: BTreeSet::new(),
             guest_directories: BTreeSet::new(),
+            guest_directory_identities: BTreeMap::new(),
             guest_directory_modes: BTreeMap::new(),
             guest_files: BTreeMap::new(),
             guest_links: BTreeMap::new(),
             guest_file_identities: BTreeMap::new(),
             guest_file_modes: BTreeMap::new(),
+            guest_xattrs: BTreeMap::new(),
             guest_pipes: BTreeMap::new(),
             guest_pipe_read_descriptions: BTreeMap::new(),
             guest_pipe_write_descriptions: BTreeMap::new(),
@@ -413,12 +421,7 @@ impl RiscvSyscallState {
     pub fn register_guest_path(&mut self, path: impl AsRef<[u8]>) {
         let path = path.as_ref().to_vec();
         self.guest_paths.insert(path.clone());
-        self.guest_file_identities
-            .entry(path.clone())
-            .or_insert_with(|| RiscvGuestFileIdentity {
-                inode: guest_path_inode(&path),
-            });
-        let identity = self.guest_file_identity(&path);
+        let identity = self.ensure_guest_file_identity(&path);
         self.guest_file_modes
             .entry(identity)
             .or_insert(RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS);
@@ -429,12 +432,7 @@ impl RiscvSyscallState {
         self.guest_paths.insert(path.clone());
         self.guest_files
             .insert(path.clone(), contents.as_ref().to_vec());
-        self.guest_file_identities
-            .entry(path.clone())
-            .or_insert_with(|| RiscvGuestFileIdentity {
-                inode: guest_path_inode(&path),
-            });
-        let identity = self.guest_file_identity(&path);
+        let identity = self.ensure_guest_file_identity(&path);
         self.guest_file_modes
             .entry(identity)
             .or_insert(RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS);
@@ -444,11 +442,7 @@ impl RiscvSyscallState {
         let path = path.as_ref().to_vec();
         self.guest_links
             .insert(path.clone(), target.as_ref().to_vec());
-        self.guest_file_identities
-            .entry(path.clone())
-            .or_insert_with(|| RiscvGuestFileIdentity {
-                inode: guest_path_inode(&path),
-            });
+        self.ensure_guest_file_identity(&path);
     }
 
     pub fn push_stdin_bytes(&mut self, bytes: &[u8]) {
@@ -594,6 +588,36 @@ impl RiscvSyscallState {
         self.guest_files.get(path).map(Vec::as_slice)
     }
 
+    fn allocate_guest_file_identity(&mut self) -> RiscvGuestFileIdentity {
+        let identity = RiscvGuestFileIdentity {
+            inode: self.next_guest_inode,
+        };
+        self.next_guest_inode = self
+            .next_guest_inode
+            .checked_add(1)
+            .expect("guest inode allocator exhausted");
+        identity
+    }
+
+    fn ensure_guest_file_identity(&mut self, path: &[u8]) -> RiscvGuestFileIdentity {
+        if let Some(identity) = self.guest_file_identities.get(path).copied() {
+            return identity;
+        }
+        let identity = self.allocate_guest_file_identity();
+        self.guest_file_identities.insert(path.to_vec(), identity);
+        identity
+    }
+
+    fn ensure_guest_directory_identity(&mut self, path: &[u8]) -> RiscvGuestFileIdentity {
+        if let Some(identity) = self.guest_directory_identities.get(path).copied() {
+            return identity;
+        }
+        let identity = self.allocate_guest_file_identity();
+        self.guest_directory_identities
+            .insert(path.to_vec(), identity);
+        identity
+    }
+
     fn guest_link_target(&self, path: &[u8]) -> Option<&[u8]> {
         self.guest_link_target_result(path).ok().flatten()
     }
@@ -611,6 +635,15 @@ impl RiscvSyscallState {
 
     fn guest_file_identity(&self, path: &[u8]) -> RiscvGuestFileIdentity {
         self.guest_file_identities
+            .get(path)
+            .copied()
+            .unwrap_or_else(|| RiscvGuestFileIdentity {
+                inode: guest_path_inode(path),
+            })
+    }
+
+    fn guest_directory_identity(&self, path: &[u8]) -> RiscvGuestFileIdentity {
+        self.guest_directory_identities
             .get(path)
             .copied()
             .unwrap_or_else(|| RiscvGuestFileIdentity {
@@ -664,6 +697,7 @@ impl RiscvSyscallState {
         let removed_link = self.guest_links.remove(path).is_some();
         if let Some(identity) = self.guest_file_identities.remove(path) {
             self.drop_guest_file_mode_if_unlinked(identity);
+            self.drop_guest_xattrs_if_unlinked(identity);
         }
         removed_path || removed_file || removed_link
     }
@@ -720,11 +754,7 @@ impl RiscvSyscallState {
         }
         let link_path = link_path.to_vec();
         self.guest_links.insert(link_path.clone(), target.to_vec());
-        self.guest_file_identities
-            .entry(link_path.clone())
-            .or_insert_with(|| RiscvGuestFileIdentity {
-                inode: guest_path_inode(&link_path),
-            });
+        self.ensure_guest_file_identity(&link_path);
         Ok(())
     }
 
@@ -774,9 +804,10 @@ impl RiscvSyscallState {
             );
         }
         if self.guest_directory_entries(&path).is_some() {
+            let identity = self.guest_directory_identity(&path);
             return Some(RiscvGuestStat::directory(
                 self.identity(),
-                guest_path_inode(&path),
+                identity.inode,
                 self.guest_directory_permissions(&path),
             ));
         }
@@ -874,7 +905,11 @@ impl RiscvSyscallState {
         } = request;
         let fd = self.next_open_fd()?;
         let description = self.next_open_description()?;
-        let identity = self.guest_file_identity(&path);
+        let identity = if node_kind == RiscvGuestNodeKind::Directory {
+            self.guest_directory_identity(&path)
+        } else {
+            self.guest_file_identity(&path)
+        };
         let size = file_contents
             .as_ref()
             .map(|contents| contents.len() as u64)
@@ -924,15 +959,7 @@ impl RiscvSyscallState {
     fn close_fd_sources(&mut self, record: &GuestFdCloseRecord) {
         self.stdin_fds.remove(&record.fd());
         if let Some(description) = record.released_description() {
-            self.guest_file_descriptions.remove(&description.id());
-            self.guest_file_description_paths.remove(&description.id());
-            self.guest_directory_descriptions.remove(&description.id());
-            self.guest_directory_paths.remove(&description.id());
-            self.guest_file_stats.remove(&description.id());
-            self.remove_guest_pipe_description(description.id());
-            self.remove_guest_eventfd_description(description.id());
-            self.remove_guest_epoll_target_description(description.id());
-            self.remove_guest_epoll_description(description.id());
+            self.release_guest_description_sources(description.id());
         }
     }
 
@@ -947,16 +974,26 @@ impl RiscvSyscallState {
     fn release_replaced_fd_sources(&mut self, record: &GuestFdDup2Record) {
         if let Some(replaced) = record.replaced() {
             if let Some(description) = replaced.released_description() {
-                self.guest_file_descriptions.remove(&description.id());
-                self.guest_file_description_paths.remove(&description.id());
-                self.guest_directory_descriptions.remove(&description.id());
-                self.guest_directory_paths.remove(&description.id());
-                self.guest_file_stats.remove(&description.id());
-                self.remove_guest_pipe_description(description.id());
-                self.remove_guest_eventfd_description(description.id());
-                self.remove_guest_epoll_target_description(description.id());
-                self.remove_guest_epoll_description(description.id());
+                self.release_guest_description_sources(description.id());
             }
+        }
+    }
+
+    fn release_guest_description_sources(&mut self, description: GuestFileDescriptionId) {
+        let closed_guest_file_identity = self
+            .guest_file_stats
+            .remove(&description)
+            .map(|stat| stat.identity);
+        self.guest_file_descriptions.remove(&description);
+        self.guest_file_description_paths.remove(&description);
+        self.guest_directory_descriptions.remove(&description);
+        self.guest_directory_paths.remove(&description);
+        self.remove_guest_pipe_description(description);
+        self.remove_guest_eventfd_description(description);
+        self.remove_guest_epoll_target_description(description);
+        self.remove_guest_epoll_description(description);
+        if let Some(identity) = closed_guest_file_identity {
+            self.drop_guest_xattrs_if_unlinked(identity);
         }
     }
 
@@ -1157,6 +1194,9 @@ impl RiscvSyscallTable {
         guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
     ) -> Option<RiscvSyscallOutcome> {
         match request.number() {
+            5..=16 => {
+                xattr::syscall_xattr(request, state, guest_memory_reader, guest_memory_writer)
+            }
             RISCV_LINUX_GETCWD => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_getcwd(
@@ -1718,66 +1758,6 @@ impl fmt::Display for RiscvSyscallImageLayoutError {
 }
 
 impl std::error::Error for RiscvSyscallImageLayoutError {}
-
-impl RiscvSystemRunDriver {
-    pub(crate) fn schedule_pending_core_events<F>(
-        &self,
-        scheduler: &mut PartitionedScheduler,
-        cores: Vec<RiscvCore>,
-        event_for: F,
-    ) -> Result<Vec<ScheduledRiscvTrap>, SystemError>
-    where
-        F: FnMut(CpuId) -> GuestEventId,
-    {
-        if self.riscv_sbi_firmware.is_some() {
-            self.trap_port
-                .schedule_pending_core_traps_with_riscv_emulation(
-                    scheduler,
-                    cores,
-                    self.riscv_sbi_firmware.as_ref(),
-                    self.riscv_syscall_emulation.as_ref(),
-                    event_for,
-                )
-        } else if let Some(syscalls) = self.riscv_syscall_emulation.as_ref() {
-            self.trap_port
-                .schedule_pending_core_traps_with_syscall_emulation(
-                    scheduler, cores, syscalls, event_for,
-                )
-        } else {
-            self.trap_port
-                .schedule_pending_core_traps(scheduler, cores, event_for)
-        }
-    }
-
-    pub(crate) fn schedule_pending_core_events_parallel<F>(
-        &self,
-        scheduler: &mut PartitionedScheduler,
-        cores: Vec<RiscvCore>,
-        event_for: F,
-    ) -> Result<Vec<ScheduledRiscvTrap>, SystemError>
-    where
-        F: FnMut(CpuId) -> GuestEventId,
-    {
-        if self.riscv_sbi_firmware.is_some() {
-            self.trap_port
-                .schedule_pending_core_traps_with_riscv_emulation_parallel(
-                    scheduler,
-                    cores,
-                    self.riscv_sbi_firmware.as_ref(),
-                    self.riscv_syscall_emulation.as_ref(),
-                    event_for,
-                )
-        } else if let Some(syscalls) = self.riscv_syscall_emulation.as_ref() {
-            self.trap_port
-                .schedule_pending_core_traps_with_syscall_emulation_parallel(
-                    scheduler, cores, syscalls, event_for,
-                )
-        } else {
-            self.trap_port
-                .schedule_pending_core_traps_parallel(scheduler, cores, event_for)
-        }
-    }
-}
 
 fn riscv_program_break_for_boot_image(
     image: &BootImage,

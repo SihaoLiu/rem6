@@ -2,13 +2,12 @@ use super::{
     eventfd::{eventfd_write_bytes_written, eventfd_write_result},
     guest_fd_argument, linux_error,
     pipe::RiscvGuestPipeWrite,
-    read_guest_c_string,
-    stat::guest_path_inode,
-    RiscvGuestCStringError, RiscvGuestFileIdentity, RiscvGuestMemoryReader, RiscvGuestNodeKind,
-    RiscvGuestWriteRecord, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAGAIN,
-    RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG, RISCV_LINUX_EINVAL,
-    RISCV_LINUX_EISDIR, RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT, RISCV_LINUX_ESPIPE,
-    RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND, RISCV_LINUX_O_RDONLY, RISCV_LINUX_PATH_MAX,
+    read_guest_c_string, RiscvGuestCStringError, RiscvGuestFileIdentity, RiscvGuestMemoryReader,
+    RiscvGuestNodeKind, RiscvGuestWriteRecord, RiscvSyscallRequest, RiscvSyscallState,
+    RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG,
+    RISCV_LINUX_EINVAL, RISCV_LINUX_EISDIR, RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT,
+    RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND, RISCV_LINUX_O_RDONLY,
+    RISCV_LINUX_PATH_MAX,
 };
 use crate::{GuestFd, GuestFdError, GuestFileOffset};
 use rem6_kernel::Tick;
@@ -49,12 +48,7 @@ impl RiscvSyscallState {
     pub(super) fn replace_guest_file_contents(&mut self, path: &[u8], contents: Vec<u8>) {
         let path = path.to_vec();
         self.guest_paths.insert(path.clone());
-        self.guest_file_identities
-            .entry(path.clone())
-            .or_insert_with(|| RiscvGuestFileIdentity {
-                inode: guest_path_inode(&path),
-            });
-        let identity = self.guest_file_identity(&path);
+        let identity = self.ensure_guest_file_identity(&path);
         self.guest_file_modes
             .entry(identity)
             .or_insert(super::stat::RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS);

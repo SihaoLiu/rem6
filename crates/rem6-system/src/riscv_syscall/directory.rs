@@ -22,6 +22,7 @@ impl RiscvSyscallState {
     pub fn register_guest_directory(&mut self, path: impl AsRef<[u8]>) {
         let path = registered_guest_directory_key(path.as_ref());
         self.guest_directories.insert(path.clone());
+        self.ensure_guest_directory_identity(&path);
         self.guest_directory_modes
             .entry(path)
             .or_insert(RISCV_LINUX_DEFAULT_DIRECTORY_PERMISSIONS);
@@ -59,7 +60,7 @@ impl RiscvSyscallState {
             let inode = if nested {
                 guest_path_inode(&name)
             } else {
-                guest_path_inode(registered_path)
+                self.guest_directory_identity(registered_path).inode
             };
             children.entry(name.clone()).or_insert_with(|| {
                 RiscvGuestDirectoryEntry::new(name, RiscvGuestNodeKind::Directory, inode)
@@ -107,6 +108,7 @@ impl RiscvSyscallState {
             return Err(RiscvGuestMkdirError::Exists);
         }
         self.guest_directories.insert(path.to_vec());
+        self.ensure_guest_directory_identity(path);
         self.guest_directory_modes
             .insert(path.to_vec(), apply_file_creation_mask(mode, self));
         Ok(())
@@ -126,7 +128,11 @@ impl RiscvSyscallState {
             return Err(RiscvGuestRmdirError::NotEmpty);
         }
         if self.guest_directories.remove(path) {
+            let identity = self.guest_directory_identities.remove(path);
             self.guest_directory_modes.remove(path);
+            if let Some(identity) = identity {
+                self.drop_guest_xattrs_if_unlinked(identity);
+            }
             Ok(())
         } else {
             Err(RiscvGuestRmdirError::Missing)

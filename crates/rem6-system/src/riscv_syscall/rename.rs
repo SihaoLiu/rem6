@@ -124,6 +124,7 @@ impl RiscvSyscallState {
             self.remove_guest_node_exact(destination);
             move_rebased_set(&mut self.guest_paths, source, destination);
             move_rebased_set(&mut self.guest_directories, source, destination);
+            move_rebased_map(&mut self.guest_directory_identities, source, destination);
             move_rebased_map(&mut self.guest_directory_modes, source, destination);
             move_rebased_map(&mut self.guest_files, source, destination);
             move_rebased_map(&mut self.guest_links, source, destination);
@@ -171,12 +172,19 @@ impl RiscvSyscallState {
 
     fn remove_guest_node_exact(&mut self, path: &[u8]) {
         self.guest_paths.remove(path);
-        self.guest_directories.remove(path);
+        let removed_directory = self.guest_directories.remove(path);
+        let removed_directory_identity = self.guest_directory_identities.remove(path);
         self.guest_directory_modes.remove(path);
         self.guest_files.remove(path);
         self.guest_links.remove(path);
         if let Some(identity) = self.guest_file_identities.remove(path) {
             self.drop_guest_file_mode_if_unlinked(identity);
+            self.drop_guest_xattrs_if_unlinked(identity);
+        }
+        if removed_directory {
+            if let Some(identity) = removed_directory_identity {
+                self.drop_guest_xattrs_if_unlinked(identity);
+            }
         }
     }
 }

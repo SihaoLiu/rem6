@@ -85,6 +85,8 @@ mod unlink_tests;
 mod utsname_tests;
 #[path = "riscv_syscall_tests/wait4_tests.rs"]
 mod wait4_tests;
+#[path = "riscv_syscall_tests/xattr_tests.rs"]
+mod xattr_tests;
 
 fn read_le_u32(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
