@@ -112,3 +112,122 @@ int main(void) {
     assert!(stdout.contains("\"text\":\"raw-getrusage:ok:1:1\\n\""));
     assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
 }
+
+#[test]
+fn rem6_run_riscv_se_runs_static_raw_prlimit64_set_through_cli() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE raw prlimit64 smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-prlimit64");
+    let source = workspace.join("raw-prlimit64.c");
+    let binary = workspace.join("raw-prlimit64");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+
+#define RLIMIT_STACK 3
+
+struct rlimit64 {
+    unsigned long cur;
+    unsigned long max;
+};
+
+static long linux_syscall4(long number, long arg0, long arg1, long arg2, long arg3) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3), "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    struct rlimit64 old_limit = {0, 0};
+    struct rlimit64 requested = {0, 0};
+    struct rlimit64 after = {0, 0};
+
+    long initial = linux_syscall4(261, 0, RLIMIT_STACK, 0, (long)&old_limit);
+    unsigned long new_current = old_limit.cur;
+    if (new_current == ~0UL || new_current > 16UL * 1024UL * 1024UL) {
+        new_current = 8UL * 1024UL * 1024UL;
+    } else if (new_current >= 8192UL) {
+        new_current /= 2;
+    }
+
+    requested.cur = new_current;
+    requested.max = old_limit.max;
+    long set = initial == 0
+        ? linux_syscall4(261, 0, RLIMIT_STACK, (long)&requested, 0)
+        : -999;
+    long query = set == 0
+        ? linux_syscall4(261, 0, RLIMIT_STACK, 0, (long)&after)
+        : -999;
+
+    int ok = initial == 0
+        && set == 0
+        && query == 0
+        && after.cur == new_current
+        && after.max == old_limit.max;
+    printf("raw-prlimit64:%s:%d:%d:%d:%d\n",
+           ok ? "ok" : "fail",
+           initial == 0,
+           set == 0,
+           query == 0,
+           after.cur == new_current);
+    return ok ? 41 : 74;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "250000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":41"));
+    assert!(stdout.contains("\"text\":\"raw-prlimit64:ok:1:1:1:1\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}

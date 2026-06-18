@@ -324,18 +324,349 @@ fn linux_table_rt_sigreturn_records_unsupported_frame_restore() {
 }
 
 #[test]
-fn linux_table_ignores_gem5_resource_advisory_syscalls() {
+fn linux_table_setrlimit_updates_stack_limit() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
+    let requested_limit = [2_u64 * 1024 * 1024, RISCV_LINUX_STACK_LIMIT_BYTES]
+        .into_iter()
+        .flat_map(u64::to_le_bytes)
+        .collect::<Vec<_>>();
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == 0x9000 && bytes == 16 {
+            Some(requested_limit.clone())
+        } else {
+            None
+        }
+    });
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
 
     assert_eq!(
-        table.handle(
+        table.handle_with_guest_memory_io_at_tick(
             RiscvSyscallRequest::new(0x8000, RISCV_LINUX_SETRLIMIT, [3, 0x9000, 0, 0, 0, 0]),
             &mut state,
+            10,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_GETRLIMIT, [3, 0x9100, 0, 0, 0, 0]),
+            &mut state,
+            11,
+            None,
+            Some(&guest_memory_writer),
         ),
         Some(RiscvSyscallOutcome::Return { value: 0 })
     );
     assert!(state.unknown_syscalls().is_empty());
+
+    let after = collect_guest_writes(&writes.lock().unwrap(), 0x9100, 16);
+    assert_eq!(read_le_u64(&after, 0), 2 * 1024 * 1024);
+    assert_eq!(read_le_u64(&after, 8), RISCV_LINUX_STACK_LIMIT_BYTES);
+}
+
+#[test]
+fn linux_table_setrlimit_null_limit_returns_efault() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_SETRLIMIT, [3, 0, 0, 0, 0, 0]),
+            &mut state,
+            10,
+            None,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+}
+
+#[test]
+fn linux_table_setrlimit_bad_limit_precedes_invalid_resource() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_reader = RiscvGuestMemoryReader::new(|address, bytes| {
+        assert_eq!(address, 0x9000);
+        assert_eq!(bytes, 16);
+        None
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_SETRLIMIT, [999, 0x9000, 0, 0, 0, 0]),
+            &mut state,
+            10,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+}
+
+#[test]
+fn linux_table_prlimit64_updates_stack_limit_and_reports_previous_limit() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let requested_limit = [4_u64 * 1024 * 1024, RISCV_LINUX_STACK_LIMIT_BYTES]
+        .into_iter()
+        .flat_map(u64::to_le_bytes)
+        .collect::<Vec<_>>();
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == 0x9000 && bytes == 16 {
+            Some(requested_limit.clone())
+        } else {
+            None
+        }
+    });
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_PRLIMIT64, [0, 3, 0x9000, 0x9100, 0, 0],),
+            &mut state,
+            10,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_PRLIMIT64, [0, 3, 0, 0x9200, 0, 0],),
+            &mut state,
+            11,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+
+    let writes = writes.lock().unwrap();
+    let previous_writes = writes
+        .iter()
+        .filter(|(address, _)| *address >= 0x9100 && *address < 0x9110)
+        .cloned()
+        .collect::<Vec<_>>();
+    let after_writes = writes
+        .iter()
+        .filter(|(address, _)| *address >= 0x9200 && *address < 0x9210)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let previous = collect_guest_writes(&previous_writes, 0x9100, 16);
+    assert_eq!(read_le_u64(&previous, 0), RISCV_LINUX_STACK_LIMIT_BYTES);
+    assert_eq!(read_le_u64(&previous, 8), RISCV_LINUX_STACK_LIMIT_BYTES);
+    let after = collect_guest_writes(&after_writes, 0x9200, 16);
+    assert_eq!(read_le_u64(&after, 0), 4 * 1024 * 1024);
+    assert_eq!(read_le_u64(&after, 8), RISCV_LINUX_STACK_LIMIT_BYTES);
+}
+
+#[test]
+fn linux_table_prlimit64_write_fault_after_set_commits_stack_limit() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let requested_limit = [4_u64 * 1024 * 1024, RISCV_LINUX_STACK_LIMIT_BYTES]
+        .into_iter()
+        .flat_map(u64::to_le_bytes)
+        .collect::<Vec<_>>();
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == 0x9000 && bytes == 16 {
+            Some(requested_limit.clone())
+        } else {
+            None
+        }
+    });
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        if (0x9100..0x9110).contains(&address) {
+            return false;
+        }
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_PRLIMIT64, [0, 3, 0x9000, 0x9100, 0, 0],),
+            &mut state,
+            10,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_PRLIMIT64, [0, 3, 0, 0x9200, 0, 0],),
+            &mut state,
+            11,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let after = collect_guest_writes(&writes.lock().unwrap(), 0x9200, 16);
+    assert_eq!(read_le_u64(&after, 0), 4 * 1024 * 1024);
+    assert_eq!(read_le_u64(&after, 8), RISCV_LINUX_STACK_LIMIT_BYTES);
+}
+
+#[test]
+fn linux_table_prlimit64_bad_limit_precedes_missing_pid_and_invalid_resource() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_reader = RiscvGuestMemoryReader::new(|address, bytes| {
+        assert_eq!(address, 0x9000);
+        assert_eq!(bytes, 16);
+        None
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_PRLIMIT64, [999_999, 3, 0x9000, 0, 0, 0],),
+            &mut state,
+            10,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_PRLIMIT64, [0, 999, 0x9000, 0, 0, 0],),
+            &mut state,
+            11,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+}
+
+#[test]
+fn linux_table_prlimit64_updates_data_and_nproc_limits() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let data_limit = [128_u64 * 1024 * 1024, 256_u64 * 1024 * 1024]
+        .into_iter()
+        .flat_map(u64::to_le_bytes)
+        .collect::<Vec<_>>();
+    let nproc_limit = [0_u64, 1_u64]
+        .into_iter()
+        .flat_map(u64::to_le_bytes)
+        .collect::<Vec<_>>();
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == 0x9000 && bytes == 16 {
+            Some(data_limit.clone())
+        } else if address == 0xa000 && bytes == 16 {
+            Some(nproc_limit.clone())
+        } else {
+            None
+        }
+    });
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_PRLIMIT64, [0, 2, 0x9000, 0, 0, 0]),
+            &mut state,
+            10,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_PRLIMIT64, [0, 6, 0xa000, 0, 0, 0]),
+            &mut state,
+            11,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_PRLIMIT64, [0, 2, 0, 0x9100, 0, 0]),
+            &mut state,
+            12,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x800c, RISCV_LINUX_PRLIMIT64, [0, 6, 0, 0x9200, 0, 0]),
+            &mut state,
+            13,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let writes = writes.lock().unwrap();
+    let data_writes = writes
+        .iter()
+        .filter(|(address, _)| *address >= 0x9100 && *address < 0x9110)
+        .cloned()
+        .collect::<Vec<_>>();
+    let nproc_writes = writes
+        .iter()
+        .filter(|(address, _)| *address >= 0x9200 && *address < 0x9210)
+        .cloned()
+        .collect::<Vec<_>>();
+    let data = collect_guest_writes(&data_writes, 0x9100, 16);
+    let nproc = collect_guest_writes(&nproc_writes, 0x9200, 16);
+
+    assert_eq!(read_le_u64(&data, 0), 128 * 1024 * 1024);
+    assert_eq!(read_le_u64(&data, 8), 256 * 1024 * 1024);
+    assert_eq!(read_le_u64(&nproc, 0), 0);
+    assert_eq!(read_le_u64(&nproc, 8), 1);
 }
 
 #[test]

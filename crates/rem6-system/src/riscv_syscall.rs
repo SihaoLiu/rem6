@@ -133,7 +133,10 @@ use identity::{
 };
 use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
 pub use limits::RISCV_LINUX_STACK_LIMIT_BYTES;
-use limits::{syscall_getrlimit, syscall_prlimit64, RISCV_LINUX_GETRLIMIT, RISCV_LINUX_PRLIMIT64};
+use limits::{
+    syscall_getrlimit, syscall_prlimit64, syscall_setrlimit, RISCV_LINUX_GETRLIMIT,
+    RISCV_LINUX_PRLIMIT64,
+};
 use link::{
     syscall_link_operation, syscall_symlinkat, RiscvGuestLinkError, RiscvGuestSymlinkError,
     RISCV_LINUX_LINK, RISCV_LINUX_LINKAT, RISCV_LINUX_SYMLINKAT,
@@ -278,6 +281,7 @@ pub struct RiscvSyscallState {
     signal_mask: u64,
     signal_actions: BTreeMap<u64, RiscvSignalAction>,
     signal_alt_stack: RiscvSignalAltStack,
+    resource_limits: limits::RiscvResourceLimits,
     membarrier_registrations: u64,
     rseq_registration: Option<thread::RiscvSyscallRseqRegistration>,
     stdin: VecDeque<u8>,
@@ -369,6 +373,7 @@ impl RiscvSyscallState {
             signal_mask: 0,
             signal_actions: BTreeMap::new(),
             signal_alt_stack: RiscvSignalAltStack::disabled(),
+            resource_limits: limits::RiscvResourceLimits::linux_single_process(),
             membarrier_registrations: 0,
             rseq_registration: None,
             stdin: VecDeque::new(),
@@ -1581,10 +1586,12 @@ impl RiscvSyscallTable {
             RISCV_LINUX_SETGROUPS => Some(RiscvSyscallOutcome::Return {
                 value: syscall_setgroups(),
             }),
-            RISCV_LINUX_GETRLIMIT => syscall_getrlimit(request, guest_memory_writer)
+            RISCV_LINUX_GETRLIMIT => syscall_getrlimit(request, state, guest_memory_writer)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
-            RISCV_LINUX_PRLIMIT64 => syscall_prlimit64(request, state, guest_memory_writer)
-                .map(|value| RiscvSyscallOutcome::Return { value }),
+            RISCV_LINUX_PRLIMIT64 => {
+                syscall_prlimit64(request, state, guest_memory_reader, guest_memory_writer)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
             RISCV_LINUX_SET_ROBUST_LIST => Some(RiscvSyscallOutcome::Return {
                 value: syscall_set_robust_list(request, state),
             }),
@@ -1688,7 +1695,8 @@ impl RiscvSyscallTable {
             RISCV_LINUX_MBIND => Some(RiscvSyscallOutcome::Return {
                 value: syscall_mbind(request, state, guest_memory_reader),
             }),
-            RISCV_LINUX_SETRLIMIT => Some(RiscvSyscallOutcome::Return { value: 0 }),
+            RISCV_LINUX_SETRLIMIT => syscall_setrlimit(request, state, guest_memory_reader)
+                .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_EXIT | RISCV_LINUX_EXIT_GROUP => Some(syscall_exit(
                 request.argument(0),
                 state,
