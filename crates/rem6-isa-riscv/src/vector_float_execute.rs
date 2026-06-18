@@ -62,6 +62,15 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
         RiscvVectorFloatInstruction::ReverseSubVf { vd, fs1, vs2 } => {
             execute_arithmetic_vf(hart, vd, fs1, vs2, FloatBinaryOp::ReverseSub)
         }
+        RiscvVectorFloatInstruction::DivVv { vd, vs1, vs2 } => {
+            execute_arithmetic_vv(hart, vd, vs1, vs2, FloatBinaryOp::Div)
+        }
+        RiscvVectorFloatInstruction::DivVf { vd, fs1, vs2 } => {
+            execute_arithmetic_vf(hart, vd, fs1, vs2, FloatBinaryOp::Div)
+        }
+        RiscvVectorFloatInstruction::ReverseDivVf { vd, fs1, vs2 } => {
+            execute_arithmetic_vf(hart, vd, fs1, vs2, FloatBinaryOp::ReverseDiv)
+        }
         RiscvVectorFloatInstruction::MulVv { vd, vs1, vs2 } => {
             execute_arithmetic_vv(hart, vd, vs1, vs2, FloatBinaryOp::Mul)
         }
@@ -94,6 +103,8 @@ enum FloatBinaryOp {
     Add,
     Sub,
     ReverseSub,
+    Div,
+    ReverseDiv,
     Mul,
 }
 
@@ -490,11 +501,12 @@ fn apply_exact_scalar_lanes(
 
     for offset in (0..plan.active_bytes).step_by(4) {
         let lhs = f32::from_bits(u32::from_le_bytes(lane4(left, offset)));
-        let value = if matches!(operation, FloatBinaryOp::ReverseSub) {
-            exact_f32_binary(scalar, lhs, FloatBinaryOp::Sub, rounding_mode)
-        } else {
-            exact_f32_binary(lhs, scalar, operation, rounding_mode)
+        let (left, right, lane_operation) = match operation {
+            FloatBinaryOp::ReverseSub => (scalar, lhs, FloatBinaryOp::Sub),
+            FloatBinaryOp::ReverseDiv => (scalar, lhs, FloatBinaryOp::Div),
+            _ => (lhs, scalar, operation),
         };
+        let value = exact_f32_binary(left, right, lane_operation, rounding_mode);
         let Some(value) = value else {
             return false;
         };
@@ -525,10 +537,12 @@ fn exact_f32_binary(
         return Some(f32::from_bits(bits));
     }
     let exact = match operation {
+        FloatBinaryOp::Div => f64::from(lhs) / f64::from(rhs),
         FloatBinaryOp::Mul => f64::from(lhs) * f64::from(rhs),
         FloatBinaryOp::Add | FloatBinaryOp::Sub | FloatBinaryOp::ReverseSub => {
             unreachable!("handled above")
         }
+        FloatBinaryOp::ReverseDiv => unreachable!("converted to div before dispatch"),
     };
     let rounded = exact as f32;
     (rounded.is_finite() && f64::from(rounded) == exact).then_some(rounded)

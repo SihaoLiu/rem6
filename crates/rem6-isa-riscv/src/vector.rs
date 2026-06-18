@@ -215,6 +215,21 @@ pub enum RiscvVectorFloatInstruction {
         fs1: FloatRegister,
         vs2: VectorRegister,
     },
+    DivVv {
+        vd: VectorRegister,
+        vs1: VectorRegister,
+        vs2: VectorRegister,
+    },
+    DivVf {
+        vd: VectorRegister,
+        fs1: FloatRegister,
+        vs2: VectorRegister,
+    },
+    ReverseDivVf {
+        vd: VectorRegister,
+        fs1: FloatRegister,
+        vs2: VectorRegister,
+    },
     MulVv {
         vd: VectorRegister,
         vs1: VectorRegister,

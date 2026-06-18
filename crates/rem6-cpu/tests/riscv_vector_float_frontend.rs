@@ -86,6 +86,18 @@ fn vfrsub_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x27, vs2, fs1, vd)
 }
 
+fn vfdiv_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x20, vs2, vs1, vd)
+}
+
+fn vfdiv_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x20, vs2, fs1, vd)
+}
+
+fn vfrdiv_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x21, vs2, fs1, vd)
+}
+
 fn vfsqrt_v_type(vs2: u8, vd: u8) -> u32 {
     vector_float_type(0x13, 0b001, vs2, 0x00, vd)
 }
@@ -1333,6 +1345,54 @@ fn riscv_core_driver_executes_vfmul_vf_from_fetch_stream() {
         [1.5, -2.0, 0.5, 1.0],
         [0.0, 0.0, 0.0, 12.0],
         [-3.0, 4.0, -1.0, 12.0],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfdiv_vv_from_fetch_stream() {
+    assert_vv_fetch_stream_executes_bits(
+        vfdiv_vv_type(2, 1, 3),
+        RiscvVectorFloatInstruction::DivVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        },
+        [0x4000_0000, 0xc080_0000, 0x3f00_0000, 0x4100_0000],
+        [0x4100_0000, 0x4180_0000, 0xbf80_0000, 0x3f80_0000],
+        [0, 0, 0, 0x4140_0000],
+        [0x4080_0000, 0xc080_0000, 0xc000_0000, 0x4140_0000],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfdiv_vf_from_fetch_stream() {
+    assert_vf_fetch_stream_executes(
+        vfdiv_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::DivVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        -2.0,
+        [8.0, -4.0, 1.0, 1.0],
+        [0.0, 0.0, 0.0, 12.0],
+        [-4.0, 2.0, -0.5, 12.0],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfrdiv_vf_from_fetch_stream() {
+    assert_vf_fetch_stream_executes(
+        vfrdiv_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::ReverseDivVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        8.0,
+        [2.0, -4.0, 16.0, 1.0],
+        [0.0, 0.0, 0.0, 12.0],
+        [4.0, -2.0, 0.5, 12.0],
     );
 }
 

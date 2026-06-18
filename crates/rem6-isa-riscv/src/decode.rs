@@ -331,26 +331,23 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         (0x5, 0b011011, true) => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::MaskLessThanVf { vd, fs1, vs2 },
         )),
+        (0x1, 0b100000, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::DivVv { vd, vs1, vs2 },
+        )),
+        (0x5, 0b100000, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::DivVf { vd, fs1, vs2 },
+        )),
+        (0x5, 0b100001, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::ReverseDivVf { vd, fs1, vs2 },
+        )),
         (0x1, 0b100100, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::MulVv {
-                vd: vector_register(raw, 7),
-                vs1: vector_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::MulVv { vd, vs1, vs2 },
         )),
         (0x5, 0b100100, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::MulVf {
-                vd: vector_register(raw, 7),
-                fs1: float_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::MulVf { vd, fs1, vs2 },
         )),
         (0x5, 0b100111, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::ReverseSubVf {
-                vd: vector_register(raw, 7),
-                fs1: float_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::ReverseSubVf { vd, fs1, vs2 },
         )),
         (0x1, 0b001000, true) => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::SignInjectVv {
