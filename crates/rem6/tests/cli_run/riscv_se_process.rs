@@ -684,6 +684,132 @@ int main(void) {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_sched_setters_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE raw scheduler setter smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE raw scheduler setter smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-scheduler-setter");
+    let source = workspace.join("raw-scheduler-setter.c");
+    let binary = workspace.join("raw-scheduler-setter");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+
+struct sched_param {
+    int sched_priority;
+};
+
+static long linux_syscall2(long number, long arg0, long arg1) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a7 asm("a7") = number;
+    asm volatile("ecall" : "+r"(a0) : "r"(a1), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    struct sched_param zero = {0};
+    struct sched_param one = {1};
+    long set_batch = linux_syscall3(119, 0, 3, (long)&zero);
+    long get_batch = linux_syscall2(120, 0, 0);
+    long set_param = linux_syscall2(118, 0, (long)&zero);
+    long bad_getparam = linux_syscall2(121, 999, (long)&zero);
+    long bad_priority = linux_syscall3(119, 0, 0, (long)&one);
+    long bad_policy = linux_syscall3(119, 0, 4, (long)&zero);
+
+    printf("raw-scheduler-setter:%ld:%ld:%ld:%ld:%ld:%ld\n",
+           set_batch, get_batch, set_param, bad_getparam, bad_priority, bad_policy);
+    return set_batch == 0 &&
+           get_batch == 3 &&
+           set_param == 0 &&
+           bad_getparam == -3 &&
+           bad_priority == -22 &&
+           bad_policy == -22 ? 78 : 79;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(78),
+        "qemu stdout: {}; qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stdout),
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(
+        qemu_output.stdout,
+        b"raw-scheduler-setter:0:3:0:-3:-22:-22\n"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":78"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"raw-scheduler-setter:0:3:0:-3:-22:-22\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 78, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_futex_wake_op_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(

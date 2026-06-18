@@ -249,6 +249,7 @@ pub struct RiscvSyscallState {
     robust_list: RiscvRobustList,
     personality: u32,
     process_nice: i32,
+    sched_policy: i32,
     guest_fds: GuestFdTable,
     guest_futexes: GuestFutexTable,
     guest_wait: GuestWaitQueue,
@@ -343,6 +344,7 @@ impl RiscvSyscallState {
             robust_list: RiscvRobustList::new(0, 0),
             personality: 0,
             process_nice: 0,
+            sched_policy: scheduler::RISCV_LINUX_DEFAULT_SCHED_POLICY,
             guest_fds: linux_standard_guest_fds(),
             guest_futexes: GuestFutexTable::new(),
             guest_wait: GuestWaitQueue::new(current_process_group),
@@ -395,35 +397,27 @@ impl RiscvSyscallState {
     const fn identity(&self) -> RiscvSyscallIdentity {
         self.identity
     }
-
     pub fn current_directory(&self) -> &[u8] {
         &self.current_directory
     }
-
     pub fn set_current_directory(&mut self, path: impl AsRef<[u8]>) {
         self.current_directory = path.as_ref().to_vec();
     }
-
     pub const fn child_clear_tid(&self) -> Option<u64> {
         self.child_clear_tid
     }
-
     pub const fn guest_fds(&self) -> &GuestFdTable {
         &self.guest_fds
     }
-
     pub const fn guest_futexes(&self) -> &GuestFutexTable {
         &self.guest_futexes
     }
-
     pub fn guest_writes(&self) -> &[RiscvGuestWriteRecord] {
         &self.guest_writes
     }
-
     pub fn unknown_syscalls(&self) -> &[RiscvUnknownSyscallRecord] {
         &self.unknown_syscalls
     }
-
     pub fn guest_opens(&self) -> &[RiscvGuestOpenRecord] {
         &self.guest_opens
     }
@@ -454,57 +448,44 @@ impl RiscvSyscallState {
             .insert(path.clone(), target.as_ref().to_vec());
         self.ensure_guest_file_identity(&path);
     }
-
     pub fn push_stdin_bytes(&mut self, bytes: &[u8]) {
         self.stdin.extend(bytes.iter().copied());
     }
-
     pub fn stdin_byte_count(&self) -> usize {
         self.stdin.len()
     }
-
     #[cfg(test)]
     fn guest_futexes_mut(&mut self) -> &mut GuestFutexTable {
         &mut self.guest_futexes
     }
-
     pub const fn program_break(&self) -> u64 {
         self.program_break
     }
-
     pub(super) const fn initial_program_break(&self) -> u64 {
         self.initial_program_break
     }
-
     pub(super) const fn program_break_backing_end(&self) -> u64 {
         self.program_break_backing_end
     }
-
     pub const fn with_linux_se_memory_capacity(mut self, bytes: u64) -> Self {
         self.linux_se_memory_capacity_bytes = bytes;
         self
     }
-
     const fn linux_se_memory_capacity(&self) -> u64 {
         self.linux_se_memory_capacity_bytes
     }
-
     pub const fn mmap_next(&self) -> u64 {
         self.mmap_next
     }
-
     pub fn mmap_regions(&self) -> &[RiscvMmapRegion] {
         &self.mmap_regions
     }
-
     fn set_program_break(&mut self, value: u64) {
         self.program_break = value;
     }
-
     pub(super) fn set_program_break_backing_end(&mut self, value: u64) {
         self.program_break_backing_end = value;
     }
-
     fn set_child_clear_tid(&mut self, value: u64) {
         self.child_clear_tid = (value != 0).then_some(value);
     }
@@ -1631,6 +1612,14 @@ impl RiscvSyscallTable {
             RISCV_LINUX_UMASK => Some(RiscvSyscallOutcome::Return {
                 value: syscall_umask(request.argument(0), state),
             }),
+            scheduler::RISCV_LINUX_SCHED_SETPARAM => {
+                scheduler::syscall_sched_setparam(request, state, guest_memory_reader)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
+            scheduler::RISCV_LINUX_SCHED_SETSCHEDULER => {
+                scheduler::syscall_sched_setscheduler(request, state, guest_memory_reader)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
             scheduler::RISCV_LINUX_SCHED_SETAFFINITY => {
                 scheduler::syscall_sched_setaffinity(request, state, guest_memory_reader)
                     .map(|value| RiscvSyscallOutcome::Return { value })
@@ -1639,7 +1628,7 @@ impl RiscvSyscallTable {
                 value: scheduler::syscall_sched_getscheduler(request, state),
             }),
             scheduler::RISCV_LINUX_SCHED_GETPARAM => {
-                scheduler::syscall_sched_getparam(request, guest_memory_writer)
+                scheduler::syscall_sched_getparam(request, state, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
             scheduler::RISCV_LINUX_SCHED_GETAFFINITY => {

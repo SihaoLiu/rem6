@@ -1795,7 +1795,6 @@ impl Error for RiscvWorkloadReplayError {
         }
     }
 }
-
 #[cfg(test)]
 #[path = "workload_replay/tests.rs"]
 mod tests;

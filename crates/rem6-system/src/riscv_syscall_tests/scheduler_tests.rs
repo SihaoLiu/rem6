@@ -2,6 +2,8 @@ use super::*;
 
 const RISCV_LINUX_SCHED_GETSCHEDULER_FOR_TEST: u64 = 120;
 const RISCV_LINUX_SCHED_GETPARAM_FOR_TEST: u64 = 121;
+const RISCV_LINUX_SCHED_SETPARAM_FOR_TEST: u64 = 118;
+const RISCV_LINUX_SCHED_SETSCHEDULER_FOR_TEST: u64 = 119;
 const RISCV_LINUX_SCHED_SETAFFINITY_FOR_TEST: u64 = 122;
 const RISCV_LINUX_SCHED_GETAFFINITY_FOR_TEST: u64 = 123;
 const RISCV_LINUX_SCHED_GET_PRIORITY_MAX_FOR_TEST: u64 = 125;
@@ -94,6 +96,269 @@ fn linux_table_sched_getscheduler_rejects_32_bit_negative_pid() {
         Some(RiscvSyscallOutcome::Return {
             value: linux_error(RISCV_LINUX_EINVAL)
         })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_setscheduler_updates_current_process_policy() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+    let parameter_address = 0x9000;
+    let guest_memory_reader = sched_param_reader(parameter_address, 0);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SCHED_SETSCHEDULER_FOR_TEST,
+                [
+                    0,
+                    RISCV_LINUX_SCHED_BATCH_FOR_TEST,
+                    parameter_address,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            10,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_SCHED_GETSCHEDULER_FOR_TEST,
+                [41, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            11,
+            None,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_SCHED_BATCH_FOR_TEST
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_setparam_accepts_current_process_zero_priority() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+    let parameter_address = 0x9010;
+    let guest_memory_reader = sched_param_reader(parameter_address, 0);
+
+    for (pc, pid) in [(0x8000, 0), (0x8004, 41), (0x8008, 42)] {
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(
+                    pc,
+                    RISCV_LINUX_SCHED_SETPARAM_FOR_TEST,
+                    [pid, parameter_address, 0, 0, 0, 0],
+                ),
+                &mut state,
+                12,
+                Some(&guest_memory_reader),
+                None,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 0 })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_setparam_and_setscheduler_reject_invalid_requests() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+
+    for (pc, number, arguments, errno) in [
+        (
+            0x8000,
+            RISCV_LINUX_SCHED_SETPARAM_FOR_TEST,
+            [999, 0x9000, 0, 0, 0, 0],
+            RISCV_LINUX_ESRCH_FOR_TEST,
+        ),
+        (
+            0x8004,
+            RISCV_LINUX_SCHED_SETPARAM_FOR_TEST,
+            [0, 0, 0, 0, 0, 0],
+            RISCV_LINUX_EINVAL,
+        ),
+        (
+            0x8008,
+            RISCV_LINUX_SCHED_SETSCHEDULER_FOR_TEST,
+            [0, 4, 0x9000, 0, 0, 0],
+            RISCV_LINUX_EINVAL,
+        ),
+        (
+            0x800c,
+            RISCV_LINUX_SCHED_SETSCHEDULER_FOR_TEST,
+            [0, RISCV_LINUX_SCHED_OTHER_FOR_TEST, 0x9008, 0, 0, 0],
+            RISCV_LINUX_EINVAL,
+        ),
+        (
+            0x8010,
+            RISCV_LINUX_SCHED_SETSCHEDULER_FOR_TEST,
+            [999, RISCV_LINUX_SCHED_OTHER_FOR_TEST, 0x9000, 0, 0, 0],
+            RISCV_LINUX_ESRCH_FOR_TEST,
+        ),
+    ] {
+        let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+            if address == 0x9000 && bytes == RISCV_LINUX_SCHED_PRIORITY_BYTES_FOR_TEST {
+                Some(0_i32.to_le_bytes().to_vec())
+            } else if address == 0x9008 && bytes == RISCV_LINUX_SCHED_PRIORITY_BYTES_FOR_TEST {
+                Some(1_i32.to_le_bytes().to_vec())
+            } else {
+                None
+            }
+        });
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(pc, number, arguments),
+                &mut state,
+                13,
+                Some(&guest_memory_reader),
+                None,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(errno)
+            })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_param_rejects_null_pointer_before_target_checks() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+    let guest_memory_writer =
+        RiscvGuestMemoryWriter::new(|_, _| panic!("null sched_getparam must not write"));
+
+    for (pc, number, arguments) in [
+        (
+            0x8000,
+            RISCV_LINUX_SCHED_GETPARAM_FOR_TEST,
+            [999, 0, 0, 0, 0, 0],
+        ),
+        (
+            0x8004,
+            RISCV_LINUX_SCHED_SETPARAM_FOR_TEST,
+            [999, 0, 0, 0, 0, 0],
+        ),
+        (
+            0x8008,
+            RISCV_LINUX_SCHED_SETSCHEDULER_FOR_TEST,
+            [999, RISCV_LINUX_SCHED_OTHER_FOR_TEST, 0, 0, 0, 0],
+        ),
+        (
+            0x800c,
+            RISCV_LINUX_SCHED_SETSCHEDULER_FOR_TEST,
+            [0, 4, 0, 0, 0, 0],
+        ),
+    ] {
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(pc, number, arguments),
+                &mut state,
+                13,
+                None,
+                Some(&guest_memory_writer),
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL)
+            })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_setters_report_parameter_fault_before_target_and_policy_checks() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+    let read_addresses = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let read_addresses_for_reader = std::sync::Arc::clone(&read_addresses);
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        read_addresses_for_reader
+            .lock()
+            .unwrap()
+            .push((address, bytes));
+        None
+    });
+
+    for (pc, number, arguments) in [
+        (
+            0x8000,
+            RISCV_LINUX_SCHED_SETPARAM_FOR_TEST,
+            [999, 0x9000, 0, 0, 0, 0],
+        ),
+        (
+            0x8004,
+            RISCV_LINUX_SCHED_SETSCHEDULER_FOR_TEST,
+            [999, RISCV_LINUX_SCHED_OTHER_FOR_TEST, 0x9004, 0, 0, 0],
+        ),
+        (
+            0x8008,
+            RISCV_LINUX_SCHED_SETSCHEDULER_FOR_TEST,
+            [0, 4, 0x9008, 0, 0, 0],
+        ),
+        (
+            0x800c,
+            RISCV_LINUX_SCHED_SETSCHEDULER_FOR_TEST,
+            [999, 4, 0x900c, 0, 0, 0],
+        ),
+    ] {
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(pc, number, arguments),
+                &mut state,
+                13,
+                Some(&guest_memory_reader),
+                None,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EFAULT)
+            })
+        );
+    }
+    assert_eq!(
+        *read_addresses.lock().unwrap(),
+        vec![(0x9000, 4), (0x9004, 4), (0x9008, 4), (0x900c, 4)]
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_setscheduler_without_guest_reader_stays_unhandled() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SCHED_SETSCHEDULER_FOR_TEST,
+                [0, RISCV_LINUX_SCHED_OTHER_FOR_TEST, 0x9000, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            None,
+            None,
+        ),
+        None
     );
     assert!(state.unknown_syscalls().is_empty());
 }
@@ -523,9 +788,10 @@ fn linux_table_sched_rr_get_interval_without_guest_writer_stays_unhandled() {
 }
 
 #[test]
-fn linux_table_sched_getparam_writes_zero_priority_for_any_nonnegative_pid() {
+fn linux_table_sched_getparam_writes_zero_priority_for_current_process() {
     let table = RiscvSyscallTable::new();
-    let mut state = RiscvSyscallState::new(0);
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
     let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let writes_for_writer = std::sync::Arc::clone(&writes);
     let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
@@ -536,7 +802,11 @@ fn linux_table_sched_getparam_writes_zero_priority_for_any_nonnegative_pid() {
         true
     });
 
-    for (pc, pid, parameter_address) in [(0x8000, 0, 0x9000), (0x8004, 999, 0x9010)] {
+    for (pc, pid, parameter_address) in [
+        (0x8000, 0, 0x9000),
+        (0x8004, 41, 0x9010),
+        (0x8008, 42, 0x9020),
+    ] {
         assert_eq!(
             table.handle_with_guest_memory_io_at_tick(
                 RiscvSyscallRequest::new(
@@ -556,6 +826,33 @@ fn linux_table_sched_getparam_writes_zero_priority_for_any_nonnegative_pid() {
             0
         );
     }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_sched_getparam_rejects_unknown_pid_without_writing() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+    let guest_memory_writer =
+        RiscvGuestMemoryWriter::new(|_, _| panic!("unknown pid must not write sched parameter"));
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SCHED_GETPARAM_FOR_TEST,
+                [999, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ESRCH_FOR_TEST)
+        })
+    );
     assert!(state.unknown_syscalls().is_empty());
 }
 
@@ -1230,4 +1527,22 @@ fn affinity_reader_at(address: u64, mask: u64) -> RiscvGuestMemoryReader {
         assert_eq!(bytes, RISCV_LINUX_DEFAULT_AFFINITY_BYTES_FOR_TEST as usize);
         Some(mask.to_le_bytes().to_vec())
     })
+}
+
+fn sched_param_reader_at(
+    address: u64,
+    priority: i32,
+    expected_reads: std::sync::Arc<std::sync::Mutex<Vec<usize>>>,
+) -> RiscvGuestMemoryReader {
+    RiscvGuestMemoryReader::new(move |read_address, bytes| {
+        assert_eq!(read_address, address);
+        expected_reads.lock().unwrap().push(bytes);
+        (bytes == RISCV_LINUX_SCHED_PRIORITY_BYTES_FOR_TEST)
+            .then(|| priority.to_le_bytes().to_vec())
+    })
+}
+
+fn sched_param_reader(address: u64, priority: i32) -> RiscvGuestMemoryReader {
+    let reads = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    sched_param_reader_at(address, priority, reads)
 }

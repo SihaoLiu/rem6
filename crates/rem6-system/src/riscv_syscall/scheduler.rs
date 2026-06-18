@@ -8,6 +8,8 @@ use super::{
 
 pub(super) const RISCV_LINUX_SCHED_GETSCHEDULER: u64 = 120;
 pub(super) const RISCV_LINUX_SCHED_GETPARAM: u64 = 121;
+pub(super) const RISCV_LINUX_SCHED_SETPARAM: u64 = 118;
+pub(super) const RISCV_LINUX_SCHED_SETSCHEDULER: u64 = 119;
 pub(super) const RISCV_LINUX_SCHED_SETAFFINITY: u64 = 122;
 pub(super) const RISCV_LINUX_SCHED_GETAFFINITY: u64 = 123;
 pub(super) const RISCV_LINUX_SCHED_GET_PRIORITY_MAX: u64 = 125;
@@ -16,7 +18,9 @@ pub(super) const RISCV_LINUX_SCHED_RR_GET_INTERVAL: u64 = 127;
 pub(super) const RISCV_LINUX_SETPRIORITY: u64 = 140;
 pub(super) const RISCV_LINUX_GETPRIORITY: u64 = 141;
 
+pub(super) const RISCV_LINUX_DEFAULT_SCHED_POLICY: i32 = RISCV_LINUX_SCHED_OTHER;
 const RISCV_LINUX_DEFAULT_SCHED_PRIORITY: i32 = 0;
+const RISCV_LINUX_SCHED_PARAM_BYTES: usize = mem::size_of::<i32>();
 const RISCV_LINUX_NICE_MIN: i32 = -20;
 const RISCV_LINUX_NICE_MAX: i32 = 19;
 const RISCV_LINUX_PRIO_PROCESS: i32 = 0;
@@ -46,7 +50,7 @@ pub(super) fn syscall_sched_getscheduler(
         return linux_error(RISCV_LINUX_ESRCH);
     }
 
-    RISCV_LINUX_SCHED_OTHER as u64
+    state.sched_policy() as u64
 }
 
 pub(super) fn syscall_sched_get_priority_max(request: RiscvSyscallRequest) -> u64 {
@@ -117,20 +121,76 @@ pub(super) fn syscall_sched_rr_get_interval(
 
 pub(super) fn syscall_sched_getparam(
     request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
     guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
 ) -> Option<u64> {
-    if linux_int_argument(request.argument(0)) < 0 || request.argument(1) == 0 {
+    let parameter_address = request.argument(1);
+    if parameter_address == 0 {
         return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+    if let Err(errno) = scheduler_target(request.argument(0), state) {
+        return Some(linux_error(errno));
     }
 
     let guest_memory_writer = guest_memory_writer?;
     if !guest_memory_writer.write(
-        request.argument(1),
+        parameter_address,
         &RISCV_LINUX_DEFAULT_SCHED_PRIORITY.to_le_bytes(),
     ) {
         return Some(linux_error(RISCV_LINUX_EFAULT));
     }
 
+    Some(0)
+}
+
+pub(super) fn syscall_sched_setparam(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+) -> Option<u64> {
+    let parameter_address = request.argument(1);
+    if parameter_address == 0 {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+    let guest_memory_reader = guest_memory_reader?;
+    let Some(priority) = read_sched_priority(guest_memory_reader, parameter_address) else {
+        return Some(linux_error(RISCV_LINUX_EFAULT));
+    };
+    if let Err(errno) = scheduler_target(request.argument(0), state) {
+        return Some(linux_error(errno));
+    }
+    if priority != RISCV_LINUX_DEFAULT_SCHED_PRIORITY {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+
+    Some(0)
+}
+
+pub(super) fn syscall_sched_setscheduler(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+) -> Option<u64> {
+    let parameter_address = request.argument(2);
+    if parameter_address == 0 {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+    let guest_memory_reader = guest_memory_reader?;
+    let Some(priority) = read_sched_priority(guest_memory_reader, parameter_address) else {
+        return Some(linux_error(RISCV_LINUX_EFAULT));
+    };
+    if let Err(errno) = scheduler_target(request.argument(0), state) {
+        return Some(linux_error(errno));
+    }
+    let policy = linux_int_argument(request.argument(1));
+    if !settable_scheduler_policy(policy) {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+    if priority != RISCV_LINUX_DEFAULT_SCHED_PRIORITY {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+
+    state.set_sched_policy(policy);
     Some(0)
 }
 
@@ -199,6 +259,14 @@ pub(super) fn syscall_sched_getaffinity(
 }
 
 impl RiscvSyscallState {
+    fn sched_policy(&self) -> i32 {
+        self.sched_policy
+    }
+
+    fn set_sched_policy(&mut self, policy: i32) {
+        self.sched_policy = policy;
+    }
+
     fn process_nice(&self) -> i32 {
         self.process_nice
     }
@@ -229,6 +297,18 @@ fn priority_target(request: RiscvSyscallRequest, state: &RiscvSyscallState) -> R
     }
 }
 
+fn scheduler_target(pid_argument: u64, state: &RiscvSyscallState) -> Result<(), u64> {
+    let requested_pid = linux_int_argument(pid_argument);
+    if requested_pid < 0 {
+        return Err(RISCV_LINUX_EINVAL);
+    }
+    if matches_current_process(requested_pid as u64, state) {
+        Ok(())
+    } else {
+        Err(RISCV_LINUX_ESRCH)
+    }
+}
+
 fn matches_current_process(requested_pid: u64, state: &RiscvSyscallState) -> bool {
     requested_pid == 0
         || requested_pid == state.identity().thread_id()
@@ -248,6 +328,18 @@ fn scheduler_priority_range(policy_argument: u64) -> Option<(u64, u64)> {
         RISCV_LINUX_SCHED_FIFO | RISCV_LINUX_SCHED_RR => Some((1, 99)),
         _ => None,
     }
+}
+
+const fn settable_scheduler_policy(policy: i32) -> bool {
+    matches!(
+        policy,
+        RISCV_LINUX_SCHED_OTHER | RISCV_LINUX_SCHED_BATCH | RISCV_LINUX_SCHED_IDLE
+    )
+}
+
+fn read_sched_priority(guest_memory_reader: &RiscvGuestMemoryReader, address: u64) -> Option<i32> {
+    let bytes = read_guest_exact(guest_memory_reader, address, RISCV_LINUX_SCHED_PARAM_BYTES)?;
+    Some(i32::from_le_bytes(bytes.as_slice().try_into().ok()?))
 }
 
 fn read_guest_exact(
