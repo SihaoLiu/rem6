@@ -925,7 +925,8 @@ fn exact_f64_binary(
             rounding_mode,
             matches!(operation, FloatBinaryOp::Sub),
         ),
-        FloatBinaryOp::Mul | FloatBinaryOp::Div => None,
+        FloatBinaryOp::Mul => float::exact_finite_double_mul_bits(lhs, rhs),
+        FloatBinaryOp::Div => None,
         FloatBinaryOp::ReverseSub | FloatBinaryOp::ReverseDiv => {
             unreachable!("reverse operations are scalar-only")
         }

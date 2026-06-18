@@ -6,3 +6,5 @@ mod common;
 mod conversions;
 #[path = "riscv_vector_float_frontend/fused_move.rs"]
 mod fused_move;
+#[path = "riscv_vector_float_frontend/multiply_divide.rs"]
+mod multiply_divide;

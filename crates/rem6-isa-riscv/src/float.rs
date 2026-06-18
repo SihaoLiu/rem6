@@ -6,6 +6,7 @@ use crate::{
 mod add_sub;
 mod convert_flags;
 mod decode;
+mod double_exact;
 mod fused;
 mod int_to_float;
 mod ternary;
@@ -120,6 +121,10 @@ pub(crate) fn exact_finite_double_add_sub_bits(
     }
     let result_exact = finite_double_scaled_integer(result, target_shift)?;
     (exact == result_exact).then_some(result)
+}
+
+pub(crate) fn exact_finite_double_mul_bits(lhs: u64, rhs: u64) -> Option<u64> {
+    double_exact::mul_bits(lhs, rhs)
 }
 
 pub(crate) fn exact_finite_single_mul_add_bits(
