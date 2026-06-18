@@ -293,8 +293,9 @@ counts, byte counts, row hits/misses, commands, and refresh cycles. CLI trace
 replay can route packet traces through an explicit workload fabric link and
 configure request/response virtual networks and link credit depth from CLI or
 TOML config while emitting active-lane, active-virtual-network, transfer, byte,
-occupancy, queue-delay, and contention stats from the resulting workload
-parallel summary. CLI trace replay with an explicit data-cache protocol emits
+occupancy, queue-delay, contention, per-lane, and per-hop activity stats from
+the resulting workload parallel summary. CLI trace replay with an explicit
+data-cache protocol emits
 data-cache run accounting, per-protocol run stats, and scheduler epoch,
 dispatch, batch, active-partition, and worker-count stats from the same
 executed workload summary.
@@ -334,7 +335,8 @@ low-power timing and precharge-powerdown residency stats from routed RISC-V
 fetch requests. CLI
 trace-replay fabric-route smoke coverage exposes nonzero active-lane,
 active-virtual-network, transfer, and byte stats plus request/response virtual
-network and credit-depth config fields from the top-level replay command; CLI
+network and credit-depth config fields plus per-lane and per-hop activity JSON
+from the top-level replay command; CLI
 trace-replay data-cache protocol smoke coverage exposes data-cache run and
 protocol stats plus data-cache scheduler resource stats from the top-level
 replay command. CLI `run` data-cache and instruction-cache prefetch smoke
@@ -741,10 +743,10 @@ from an executed RISC-V run. CLI trace-replay fabric-route tests include
 nonzero fabric active-lane, active-virtual-network, transfer, and byte stats
 from an executed packet replay, request/response virtual-network and
 credit-depth config fields from CLI and TOML entry points, while occupancy,
-queue-delay, and contention counters are emitted from the same workload
-parallel summary. CLI trace-replay data-cache protocol tests include data-cache
-run, protocol, and scheduler resource counters emitted from the executed
-workload parallel summary.
+queue-delay, contention, per-lane, and per-hop activity details are emitted
+from the same workload parallel summary. CLI trace-replay data-cache protocol
+tests include data-cache run, protocol, and scheduler resource counters emitted
+from the executed workload parallel summary.
 
 **Next evidence:** Broader gem5 text-stat compatibility, remaining
 cache/bank/fabric runtime resource counters, remaining CSR register-cache

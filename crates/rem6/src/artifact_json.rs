@@ -429,6 +429,14 @@ fn traffic_trace_summary_json(
         "contended_fabric_lane_count",
         parallel_summary.contended_fabric_lane_count(),
     );
+    fields.push(format!(
+        "\"fabric_lane_activities\":[{}]",
+        fabric_lane_activities_json(parallel_summary)
+    ));
+    fields.push(format!(
+        "\"fabric_hop_activities\":[{}]",
+        fabric_hop_activities_json(parallel_summary)
+    ));
     push_json_usize(
         &mut fields,
         "trace_data_cache_response_count",
@@ -705,6 +713,54 @@ fn traffic_trace_summary_json(
         summary.trace_htm_abort_count(),
     );
     format!("{{{}}}", fields.join(","))
+}
+
+fn fabric_lane_activities_json(
+    summary: &rem6_workload::WorkloadParallelExecutionSummary,
+) -> String {
+    summary
+        .fabric_lane_activities()
+        .iter()
+        .map(|activity| {
+            format!(
+                "{{\"link\":\"{}\",\"virtual_network\":{},\"transfer_count\":{},\"byte_count\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                json_escape(activity.link().as_str()),
+                activity.virtual_network().get(),
+                activity.transfer_count(),
+                activity.byte_count(),
+                activity.occupied_ticks(),
+                activity.queue_delay_ticks(),
+                activity.max_queue_delay_ticks(),
+                activity.first_tick(),
+                activity.last_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn fabric_hop_activities_json(summary: &rem6_workload::WorkloadParallelExecutionSummary) -> String {
+    summary
+        .fabric_hop_activities()
+        .iter()
+        .map(|activity| {
+            format!(
+                "{{\"packet\":{},\"hop_index\":{},\"link\":\"{}\",\"virtual_network\":{},\"bytes\":{},\"ready_tick\":{},\"start_tick\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"depart_tick\":{},\"arrival_tick\":{}}}",
+                activity.packet().get(),
+                activity.hop_index(),
+                json_escape(activity.link().as_str()),
+                activity.virtual_network().get(),
+                activity.bytes(),
+                activity.ready_tick(),
+                activity.start_tick(),
+                activity.occupied_ticks(),
+                activity.queue_delay_ticks(),
+                activity.depart_tick(),
+                activity.arrival_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn push_json_usize(fields: &mut Vec<String>, name: &str, value: usize) {
