@@ -55,6 +55,7 @@ mod riscv_fetch;
 mod riscv_fetch_ahead;
 mod riscv_hart_run_state;
 mod riscv_htm;
+mod riscv_in_order_config;
 mod riscv_reservation;
 mod riscv_sc_progress;
 mod riscv_sv39_memory_walker;
@@ -828,7 +829,8 @@ impl RiscvCore {
     }
 
     pub fn default_in_order_pipeline_snapshot() -> InOrderPipelineSnapshot {
-        InOrderPipelineState::new(default_riscv_in_order_pipeline_config()).snapshot()
+        InOrderPipelineState::new(riscv_in_order_config::default_riscv_in_order_pipeline_config())
+            .snapshot()
     }
 
     pub fn restore_in_order_pipeline_snapshot(
@@ -1272,7 +1274,9 @@ impl RiscvCoreState {
                 )
                 .expect("default RISC-V tournament branch predictor config is valid"),
             ),
-            in_order_pipeline: InOrderPipelineState::new(default_riscv_in_order_pipeline_config()),
+            in_order_pipeline: InOrderPipelineState::new(
+                riscv_in_order_config::default_riscv_in_order_pipeline_config(),
+            ),
             events: Vec::new(),
             data_events: Vec::new(),
             pma: RiscvPmaTable::new(),
@@ -1287,22 +1291,6 @@ impl RiscvCoreState {
         self.branch_predictor.discard_all_speculations();
         self.branch_speculations.clear();
     }
-}
-
-fn default_riscv_in_order_pipeline_config() -> InOrderPipelineConfig {
-    InOrderPipelineConfig::new([
-        InOrderPipelineStageWidth::new(InOrderPipelineStage::Fetch1, 1)
-            .expect("default RISC-V fetch1 width is valid"),
-        InOrderPipelineStageWidth::new(InOrderPipelineStage::Fetch2, 1)
-            .expect("default RISC-V fetch2 width is valid"),
-        InOrderPipelineStageWidth::new(InOrderPipelineStage::Decode, 1)
-            .expect("default RISC-V decode width is valid"),
-        InOrderPipelineStageWidth::new(InOrderPipelineStage::Execute, 1)
-            .expect("default RISC-V execute width is valid"),
-        InOrderPipelineStageWidth::new(InOrderPipelineStage::Commit, 1)
-            .expect("default RISC-V commit width is valid"),
-    ])
-    .expect("default RISC-V in-order pipeline config covers every stage")
 }
 
 pub fn is_fetch_request(request: &MemoryRequest) -> bool {

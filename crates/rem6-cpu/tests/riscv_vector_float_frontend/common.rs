@@ -187,6 +187,14 @@ pub(crate) fn vfcvt_f_x_v_type(vs2: u8, vd: u8) -> u32 {
     vector_float_vv_type(0x12, vs2, 0x03, vd)
 }
 
+pub(crate) fn vfcvt_xu_f_v_type(vs2: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x12, vs2, 0x00, vd)
+}
+
+pub(crate) fn vfcvt_x_f_v_type(vs2: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x12, vs2, 0x01, vd)
+}
+
 pub(crate) fn vfsgnj_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x08, vs2, fs1, vd)
 }
@@ -641,6 +649,26 @@ pub(crate) fn assert_unary_fetch_stream_executes_bits_with_float_status(
 }
 
 pub(crate) fn assert_int_to_float_fetch_stream_executes(
+    instruction: u32,
+    decoded: RiscvVectorFloatInstruction,
+    source: [u32; 4],
+    initial_destination: [u32; 4],
+    expected_destination: [u32; 4],
+    initial_float_status: RiscvFloatStatus,
+    expected_fflags: u64,
+) {
+    assert_unary_fetch_stream_executes_bits_with_float_status(
+        instruction,
+        decoded,
+        source,
+        initial_destination,
+        expected_destination,
+        initial_float_status,
+        expected_fflags,
+    );
+}
+
+pub(crate) fn assert_float_to_int_fetch_stream_executes(
     instruction: u32,
     decoded: RiscvVectorFloatInstruction,
     source: [u32; 4],

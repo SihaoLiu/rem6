@@ -126,6 +126,28 @@ pub(crate) fn signed_word_to_single_bits(
     int_to_float::signed_word_to_single_bits(value, rounding_mode)
 }
 
+pub(crate) fn single_to_unsigned_word_bits(
+    value: u32,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> (u32, u64) {
+    let boxed = box_single(value);
+    (
+        convert_single_to_unsigned_word(boxed, rounding_mode) as u32,
+        convert_flags::single_to_unsigned_word(boxed, rounding_mode),
+    )
+}
+
+pub(crate) fn single_to_signed_word_bits(
+    value: u32,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> (u32, u64) {
+    let boxed = box_single(value);
+    (
+        convert_single_to_signed_word(boxed, rounding_mode) as u32,
+        convert_flags::single_to_signed_word(boxed, rounding_mode),
+    )
+}
+
 pub(crate) fn single_register_bits(value: u64) -> u32 {
     unbox_single(value)
 }

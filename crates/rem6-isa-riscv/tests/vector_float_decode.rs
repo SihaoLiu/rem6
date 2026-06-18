@@ -86,6 +86,14 @@ fn vfcvt_f_x_v_type(vs2: u8, vd: u8) -> u32 {
     vector_float_vv_type(0x12, vs2, 0x03, vd)
 }
 
+fn vfcvt_xu_f_v_type(vs2: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x12, vs2, 0x00, vd)
+}
+
+fn vfcvt_x_f_v_type(vs2: u8, vd: u8) -> u32 {
+    vector_float_vv_type(0x12, vs2, 0x01, vd)
+}
+
 fn vfmv_v_f_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x17, vs2, fs1, vd)
 }
@@ -212,7 +220,7 @@ fn decoder_accepts_vector_float_from_integer_conversions() {
         );
     }
 
-    for unsupported_vs1 in [0x00, 0x01, 0x04, 0x1f] {
+    for unsupported_vs1 in [0x04, 0x1f] {
         let raw = vector_float_vv_type(0x12, 2, unsupported_vs1, 3);
         assert_eq!(
             RiscvInstruction::decode(raw),
@@ -225,6 +233,37 @@ fn decoder_accepts_vector_float_from_integer_conversions() {
         RiscvInstruction::decode(opfvf),
         Err(RiscvError::UnknownEncoding { raw: opfvf })
     );
+}
+
+#[test]
+fn decoder_accepts_vector_integer_from_float_conversions() {
+    let unsigned = vfcvt_xu_f_v_type(2, 3);
+    assert_eq!(unsigned, 0x4a20_11d7);
+    assert_eq!(
+        RiscvInstruction::decode(unsigned).unwrap(),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::ConvertUnsignedIntFromFloatV {
+            vd: vreg(3),
+            vs2: vreg(2),
+        })
+    );
+
+    let signed = vfcvt_x_f_v_type(2, 3);
+    assert_eq!(signed, 0x4a20_91d7);
+    assert_eq!(
+        RiscvInstruction::decode(signed).unwrap(),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::ConvertSignedIntFromFloatV {
+            vd: vreg(3),
+            vs2: vreg(2),
+        })
+    );
+
+    for vs1 in [0x00, 0x01] {
+        let masked = vector_float_masked_type(0x12, 0b001, 2, vs1, 3);
+        assert_eq!(
+            RiscvInstruction::decode(masked),
+            Err(RiscvError::UnknownEncoding { raw: masked })
+        );
+    }
 }
 
 #[test]
