@@ -405,18 +405,7 @@ impl RiscvSbiFirmware {
         targets: Vec<RiscvCore>,
         parallel: bool,
     ) -> Result<(), SchedulerError> {
-        let source_now = scheduler.partition_now(source.partition())?;
-        let delay = scheduler.min_remote_delay();
-        let source_deadline =
-            source_now
-                .checked_add(delay)
-                .ok_or(SchedulerError::TickOverflow {
-                    now: source_now,
-                    delay,
-                })?;
-        for target in targets {
-            let target_now = scheduler.partition_now(target.partition())?;
-            let deadline = source_deadline.max(target_now);
+        for (target, deadline) in remote_target_deadlines(scheduler, source, targets)? {
             if parallel {
                 scheduler.schedule_parallel_at(target.partition(), deadline, move |_context| {
                     target.set_machine_interrupt_pending_bits(SSIP);
@@ -636,18 +625,7 @@ impl RiscvSbiFirmware {
         targets: Vec<RiscvCore>,
         parallel: bool,
     ) -> Result<(), SchedulerError> {
-        let source_now = scheduler.partition_now(source.partition())?;
-        let delay = scheduler.min_remote_delay();
-        let source_deadline =
-            source_now
-                .checked_add(delay)
-                .ok_or(SchedulerError::TickOverflow {
-                    now: source_now,
-                    delay,
-                })?;
-        for target in targets {
-            let target_now = scheduler.partition_now(target.partition())?;
-            let deadline = source_deadline.max(target_now);
+        for (target, deadline) in remote_target_deadlines(scheduler, source, targets)? {
             if parallel {
                 scheduler.schedule_parallel_at(target.partition(), deadline, move |_context| {
                     target.reset_instruction_fetch_stream();
@@ -732,18 +710,7 @@ impl RiscvSbiFirmware {
         address_space: Option<TranslationAddressSpaceId>,
         parallel: bool,
     ) -> Result<(), SchedulerError> {
-        let source_now = scheduler.partition_now(source.partition())?;
-        let delay = scheduler.min_remote_delay();
-        let source_deadline =
-            source_now
-                .checked_add(delay)
-                .ok_or(SchedulerError::TickOverflow {
-                    now: source_now,
-                    delay,
-                })?;
-        for target in targets {
-            let target_now = scheduler.partition_now(target.partition())?;
-            let deadline = source_deadline.max(target_now);
+        for (target, deadline) in remote_target_deadlines(scheduler, source, targets)? {
             if parallel {
                 scheduler.schedule_parallel_at(target.partition(), deadline, move |_context| {
                     target.flush_data_translation_tlb_range(virtual_range, address_space);
@@ -829,6 +796,28 @@ impl RiscvSbiFirmware {
         }
         Ok(())
     }
+}
+
+fn remote_target_deadlines(
+    scheduler: &PartitionedScheduler,
+    source: &RiscvCore,
+    targets: Vec<RiscvCore>,
+) -> Result<Vec<(RiscvCore, u64)>, SchedulerError> {
+    let source_now = scheduler.partition_now(source.partition())?;
+    let delay = scheduler.min_remote_delay();
+    let source_deadline = source_now
+        .checked_add(delay)
+        .ok_or(SchedulerError::TickOverflow {
+            now: source_now,
+            delay,
+        })?;
+    targets
+        .into_iter()
+        .map(|target| {
+            let target_now = scheduler.partition_now(target.partition())?;
+            Ok((target, source_deadline.max(target_now)))
+        })
+        .collect()
 }
 
 fn valid_rfence_range(start_addr: u64, size: u64) -> bool {

@@ -524,6 +524,92 @@ fn parallel_handle_pending_core_trap_schedules_ipi_completion_event() {
 }
 
 #[test]
+fn send_ipi_scheduler_error_leaves_no_partial_target_events() {
+    let mut scheduler =
+        PartitionedScheduler::with_min_remote_delay(2, 2).expect("valid test scheduler");
+    let mut transport = MemoryTransport::new();
+    let cpu0_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .expect("valid CPU 0 route"),
+        )
+        .expect("registered CPU 0 route");
+    let cpu1_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .expect("valid CPU 1 route"),
+        )
+        .expect("registered CPU 1 route");
+    let cpu2_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu2.ifetch"),
+                PartitionId::new(7),
+                endpoint("l1i"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .expect("valid CPU 2 route"),
+        )
+        .expect("registered CPU 2 route");
+    let core0 = test_core(0, 0, 7, "cpu0.ifetch", cpu0_route, 0x8000);
+    let core1 = test_core(1, 1, 8, "cpu1.ifetch", cpu1_route, 0x8800);
+    let core2 = test_core(2, 7, 9, "cpu2.ifetch", cpu2_route, 0x9000);
+    core0.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    core1.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    core2.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    let cluster =
+        RiscvCluster::new([core0.clone(), core1.clone(), core2.clone()]).expect("valid cluster");
+    let firmware = RiscvSbiFirmware::new();
+    firmware
+        .register_cluster(&cluster)
+        .expect("cluster registers with SBI firmware");
+    execute_sbi_ecall(
+        &mut scheduler,
+        &transport,
+        &core0,
+        SBI_IPI_EXTENSION,
+        SBI_IPI_SEND_IPI,
+        [0b110, 0, 0, 0, 0],
+    );
+
+    let error = firmware
+        .handle_pending_core_trap(&mut scheduler, &core0, false)
+        .expect_err("unknown target partition rejects IPI scheduling");
+
+    assert_eq!(
+        error,
+        SystemError::Scheduler(SchedulerError::UnknownPartition {
+            partition: PartitionId::new(7),
+            partitions: 2,
+        })
+    );
+    assert_eq!(
+        scheduler
+            .next_pending_tick(PartitionId::new(1))
+            .expect("known partition"),
+        None
+    );
+    assert_eq!(core1.machine_interrupt_pending() & SSIP, 0);
+    assert_eq!(core2.machine_interrupt_pending() & SSIP, 0);
+}
+
+#[test]
 fn remote_hfence_gvma_rejects_missing_target_before_scheduling_flush() {
     let (mut scheduler, transport, firmware, core0, _core1) = registered_rfence_pair();
 
