@@ -2,8 +2,9 @@ use rem6_kernel::{PartitionId, Tick};
 
 use super::time::read_timespec64;
 use super::{
-    linux_error, RiscvGuestMemoryReader, RiscvSyscallOutcome, RiscvSyscallRequest,
-    RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ENOSYS,
+    linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallOutcome,
+    RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
+    RISCV_LINUX_ENOSYS,
 };
 use crate::{
     GuestFutexAddress, GuestFutexKey, GuestFutexWaitOutcome, GuestFutexWaitRequest,
@@ -16,10 +17,23 @@ const RISCV_LINUX_FUTEX_WAIT: u32 = 0;
 const RISCV_LINUX_FUTEX_WAKE: u32 = 1;
 const RISCV_LINUX_FUTEX_REQUEUE: u32 = 3;
 const RISCV_LINUX_FUTEX_CMP_REQUEUE: u32 = 4;
+const RISCV_LINUX_FUTEX_WAKE_OP: u32 = 5;
 const RISCV_LINUX_FUTEX_WAIT_BITSET: u32 = 9;
 const RISCV_LINUX_FUTEX_WAKE_BITSET: u32 = 10;
 const RISCV_LINUX_FUTEX_PRIVATE_FLAG: u32 = 128;
 const RISCV_LINUX_FUTEX_CLOCK_REALTIME_FLAG: u32 = 256;
+const RISCV_LINUX_FUTEX_OP_SET: u32 = 0;
+const RISCV_LINUX_FUTEX_OP_ADD: u32 = 1;
+const RISCV_LINUX_FUTEX_OP_OR: u32 = 2;
+const RISCV_LINUX_FUTEX_OP_ANDN: u32 = 3;
+const RISCV_LINUX_FUTEX_OP_XOR: u32 = 4;
+const RISCV_LINUX_FUTEX_OP_ARG_SHIFT: u32 = 8;
+const RISCV_LINUX_FUTEX_OP_CMP_EQ: u32 = 0;
+const RISCV_LINUX_FUTEX_OP_CMP_NE: u32 = 1;
+const RISCV_LINUX_FUTEX_OP_CMP_LT: u32 = 2;
+const RISCV_LINUX_FUTEX_OP_CMP_LE: u32 = 3;
+const RISCV_LINUX_FUTEX_OP_CMP_GT: u32 = 4;
+const RISCV_LINUX_FUTEX_OP_CMP_GE: u32 = 5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RiscvFutexWaitRequest {
@@ -45,11 +59,24 @@ impl RiscvFutexWaitRequest {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvFutexWakeOperation {
+    operation: u32,
+    operand: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvFutexWakeComparison {
+    compare: u32,
+    operand: i32,
+}
+
 pub(super) fn syscall_futex(
     request: RiscvSyscallRequest,
     state: &mut RiscvSyscallState,
     tick: Tick,
     guest_memory: Option<&RiscvGuestMemoryReader>,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
 ) -> Option<RiscvSyscallOutcome> {
     let raw_op = request.argument(1) as u32;
     let op = raw_op & !RISCV_LINUX_FUTEX_PRIVATE_FLAG;
@@ -113,6 +140,19 @@ pub(super) fn syscall_futex(
         RISCV_LINUX_FUTEX_CMP_REQUEUE => guest_memory.map(|guest_memory| {
             syscall_futex_cmp_requeue(request, state, tick, address, thread_group, guest_memory)
         }),
+        RISCV_LINUX_FUTEX_WAKE_OP => guest_memory.and_then(|guest_memory| {
+            guest_memory_writer.map(|guest_memory_writer| {
+                syscall_futex_wake_op(
+                    request,
+                    state,
+                    tick,
+                    address,
+                    thread_group,
+                    guest_memory,
+                    guest_memory_writer,
+                )
+            })
+        }),
         RISCV_LINUX_FUTEX_WAKE_BITSET => {
             let bitset = request.argument(5) as u32;
             if bitset == 0 {
@@ -130,6 +170,60 @@ pub(super) fn syscall_futex(
             })
         }
         _ => None,
+    }
+}
+
+fn syscall_futex_wake_op(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    tick: Tick,
+    address: GuestFutexAddress,
+    thread_group: GuestThreadGroupId,
+    guest_memory: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> RiscvSyscallOutcome {
+    let wake_count = futex_wake_count(request.argument(2));
+    let second_wake_count = futex_wake_count(request.argument(3));
+    let target_address = GuestFutexAddress::new(request.argument(4));
+    let encoded_operation = request.argument(5) as u32;
+    let Some(operation) = decode_futex_wake_operation(encoded_operation) else {
+        return RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOSYS),
+        };
+    };
+    let Some(observed) = read_guest_i32(guest_memory, target_address.get()) else {
+        return RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT),
+        };
+    };
+    let updated = apply_futex_wake_operation(operation.operation, observed, operation.operand);
+    if !write_guest_i32(guest_memory_writer, target_address.get(), updated) {
+        return RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT),
+        };
+    }
+    let Some(comparison) = decode_futex_wake_comparison(encoded_operation) else {
+        return RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOSYS),
+        };
+    };
+
+    let primary = state
+        .guest_futexes
+        .wake(address, thread_group, wake_count, tick)
+        .expect("guest futex wake-op primary wake cannot fail");
+    let secondary_woken =
+        if futex_wake_operation_compare(comparison.compare, observed, comparison.operand) {
+            state
+                .guest_futexes
+                .wake(target_address, thread_group, second_wake_count, tick)
+                .expect("guest futex wake-op secondary wake cannot fail")
+                .woken_count()
+        } else {
+            0
+        };
+    RiscvSyscallOutcome::Return {
+        value: (primary.woken_count() + secondary_woken) as u64,
     }
 }
 
@@ -267,6 +361,79 @@ fn read_guest_i32(guest_memory: &RiscvGuestMemoryReader, address: u64) -> Option
     Some(i32::from_le_bytes(bytes))
 }
 
+fn write_guest_i32(guest_memory_writer: &RiscvGuestMemoryWriter, address: u64, value: i32) -> bool {
+    guest_memory_writer.write(address, &value.to_le_bytes())
+}
+
+fn decode_futex_wake_operation(encoded: u32) -> Option<RiscvFutexWakeOperation> {
+    let raw_operation = (encoded >> 28) & 0xf;
+    let operation = raw_operation & !RISCV_LINUX_FUTEX_OP_ARG_SHIFT;
+    if !matches!(
+        operation,
+        RISCV_LINUX_FUTEX_OP_SET
+            | RISCV_LINUX_FUTEX_OP_ADD
+            | RISCV_LINUX_FUTEX_OP_OR
+            | RISCV_LINUX_FUTEX_OP_ANDN
+            | RISCV_LINUX_FUTEX_OP_XOR
+    ) {
+        return None;
+    }
+
+    let raw_operand = (encoded >> 12) & 0xfff;
+    let mut operand = sign_extend_futex_operand(raw_operand);
+    if raw_operation & RISCV_LINUX_FUTEX_OP_ARG_SHIFT != 0 {
+        operand = 1_i32.wrapping_shl(raw_operand & 31);
+    }
+    Some(RiscvFutexWakeOperation { operation, operand })
+}
+
+fn decode_futex_wake_comparison(encoded: u32) -> Option<RiscvFutexWakeComparison> {
+    let compare = (encoded >> 24) & 0xf;
+    if !matches!(
+        compare,
+        RISCV_LINUX_FUTEX_OP_CMP_EQ
+            | RISCV_LINUX_FUTEX_OP_CMP_NE
+            | RISCV_LINUX_FUTEX_OP_CMP_LT
+            | RISCV_LINUX_FUTEX_OP_CMP_LE
+            | RISCV_LINUX_FUTEX_OP_CMP_GT
+            | RISCV_LINUX_FUTEX_OP_CMP_GE
+    ) {
+        return None;
+    }
+
+    Some(RiscvFutexWakeComparison {
+        compare,
+        operand: sign_extend_futex_operand(encoded & 0xfff),
+    })
+}
+
+fn sign_extend_futex_operand(value: u32) -> i32 {
+    ((value << 20) as i32) >> 20
+}
+
+fn apply_futex_wake_operation(operation: u32, observed: i32, operand: i32) -> i32 {
+    match operation {
+        RISCV_LINUX_FUTEX_OP_SET => operand,
+        RISCV_LINUX_FUTEX_OP_ADD => observed.wrapping_add(operand),
+        RISCV_LINUX_FUTEX_OP_OR => observed | operand,
+        RISCV_LINUX_FUTEX_OP_ANDN => observed & !operand,
+        RISCV_LINUX_FUTEX_OP_XOR => observed ^ operand,
+        _ => unreachable!("futex wake-op decoder rejects unknown operations"),
+    }
+}
+
+fn futex_wake_operation_compare(compare: u32, observed: i32, operand: i32) -> bool {
+    match compare {
+        RISCV_LINUX_FUTEX_OP_CMP_EQ => observed == operand,
+        RISCV_LINUX_FUTEX_OP_CMP_NE => observed != operand,
+        RISCV_LINUX_FUTEX_OP_CMP_LT => observed < operand,
+        RISCV_LINUX_FUTEX_OP_CMP_LE => observed <= operand,
+        RISCV_LINUX_FUTEX_OP_CMP_GT => observed > operand,
+        RISCV_LINUX_FUTEX_OP_CMP_GE => observed >= operand,
+        _ => unreachable!("futex wake-op decoder rejects unknown comparisons"),
+    }
+}
+
 fn futex_wake_count(value: u64) -> usize {
     let count = value as i32;
     if count <= 0 {
@@ -289,6 +456,6 @@ fn futex_clock_realtime_is_invalid(op: u32) -> bool {
     op & RISCV_LINUX_FUTEX_CLOCK_REALTIME_FLAG != 0
         && matches!(
             op & !RISCV_LINUX_FUTEX_CLOCK_REALTIME_FLAG,
-            RISCV_LINUX_FUTEX_REQUEUE | RISCV_LINUX_FUTEX_CMP_REQUEUE
+            RISCV_LINUX_FUTEX_REQUEUE | RISCV_LINUX_FUTEX_CMP_REQUEUE | RISCV_LINUX_FUTEX_WAKE_OP
         )
 }

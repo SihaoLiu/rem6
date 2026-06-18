@@ -1548,7 +1548,13 @@ impl RiscvSyscallTable {
                     ),
                 })
             }
-            RISCV_LINUX_FUTEX => syscall_futex(request, state, tick, guest_memory_reader),
+            RISCV_LINUX_FUTEX => syscall_futex(
+                request,
+                state,
+                tick,
+                guest_memory_reader,
+                guest_memory_writer,
+            ),
             RISCV_LINUX_WAIT4 => Some(RiscvSyscallOutcome::Return {
                 value: syscall_wait4(request, state, guest_memory_writer),
             }),
