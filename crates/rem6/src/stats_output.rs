@@ -692,6 +692,13 @@ pub(super) fn run_stats_output(
             )?;
             increment_stat(
                 &mut stats,
+                &format!("sim.cpu{}.pipeline.in_order.flushed", core.cpu),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.in_order_pipeline_flushed,
+            )?;
+            increment_stat(
+                &mut stats,
                 &format!("sim.cpu{}.pipeline.in_order.in_flight", core.cpu),
                 "Count",
                 StatResetPolicy::Constant,

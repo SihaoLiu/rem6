@@ -373,6 +373,7 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let branch_predictions = json_u64_field(&stdout, "\"branch_predictions\":");
     let branch_mispredictions = json_u64_field(&stdout, "\"branch_mispredictions\":");
+    let flushed = json_u64_field(&stdout, "\"flushed\":");
     let branch_prediction_flushes = json_u64_field(&stdout, "\"branch_prediction_flushes\":");
     let redirects = json_u64_field(&stdout, "\"redirects\":");
 
@@ -383,6 +384,10 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     assert_eq!(
         stat_value(&stdout, "sim.cpu0.pipeline.in_order.branch_mispredictions"),
         branch_mispredictions
+    );
+    assert_eq!(
+        stat_value(&stdout, "sim.cpu0.pipeline.in_order.flushed"),
+        flushed
     );
     assert_eq!(
         stat_value(
@@ -397,6 +402,8 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     );
     assert!(branch_predictions > 0);
     assert!(branch_mispredictions > 0);
+    assert!(flushed > 0);
+    assert!(flushed >= branch_prediction_flushes);
     assert!(branch_prediction_flushes > 0);
     assert!(redirects > 0);
     assert!(stdout.contains("\"x5\":\"0x7\""));

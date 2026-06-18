@@ -1160,13 +1160,14 @@ impl Rem6CoreSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"in_order_pipeline\":{{\"cycles\":{},\"in_flight\":{},\"retired\":{},\"fetch_wait_cycles\":{},\"data_wait_cycles\":{},\"branch_predictions\":{},\"branch_mispredictions\":{},\"branch_prediction_flushes\":{},\"redirects\":{}}},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{},\"registers\":{{{}}}}}",
+            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"in_order_pipeline\":{{\"cycles\":{},\"in_flight\":{},\"retired\":{},\"flushed\":{},\"fetch_wait_cycles\":{},\"data_wait_cycles\":{},\"branch_predictions\":{},\"branch_mispredictions\":{},\"branch_prediction_flushes\":{},\"redirects\":{}}},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{},\"registers\":{{{}}}}}",
             self.cpu,
             self.pc,
             self.committed_instructions,
             self.in_order_pipeline_cycles,
             self.in_order_pipeline_in_flight,
             self.in_order_pipeline_retired,
+            self.in_order_pipeline_flushed,
             self.in_order_pipeline_fetch_wait_cycles,
             self.in_order_pipeline_data_wait_cycles,
             self.in_order_pipeline_branch_predictions,
