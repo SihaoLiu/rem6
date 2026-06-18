@@ -76,8 +76,9 @@ mod xattr;
 use advisory::{syscall_fadvise64, RISCV_LINUX_FADVISE64};
 use brk::syscall_brk;
 use clock::{
-    syscall_clock, RISCV_LINUX_CLOCK_GETRES, RISCV_LINUX_CLOCK_GETTIME, RISCV_LINUX_GETTIMEOFDAY,
-    RISCV_LINUX_TIMES,
+    syscall_clock, syscall_getitimer, syscall_setitimer, RiscvLinuxItimerval,
+    RISCV_LINUX_CLOCK_GETRES, RISCV_LINUX_CLOCK_GETTIME, RISCV_LINUX_GETITIMER,
+    RISCV_LINUX_GETTIMEOFDAY, RISCV_LINUX_SETITIMER, RISCV_LINUX_TIMES,
 };
 use constants::*;
 use copy_file_range::{syscall_copy_file_range, RISCV_LINUX_COPY_FILE_RANGE};
@@ -254,6 +255,7 @@ pub struct RiscvSyscallState {
     session_id: u64,
     process_name: [u8; 16],
     no_new_privs: bool,
+    interval_timers: [RiscvLinuxItimerval; 3],
     next_guest_inode: u64,
     guest_paths: BTreeSet<Vec<u8>>,
     guest_directories: BTreeSet<Vec<u8>>,
@@ -347,6 +349,7 @@ impl RiscvSyscallState {
             session_id: u64::from(current_process_group.get()),
             process_name: *b"rem6\0\0\0\0\0\0\0\0\0\0\0\0",
             no_new_privs: false,
+            interval_timers: Self::initial_interval_timers(),
             next_guest_inode: RISCV_GUEST_ALLOCATED_INODE_BASE,
             guest_paths: BTreeSet::new(),
             guest_directories: BTreeSet::new(),
@@ -1521,6 +1524,15 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_GETTIMEOFDAY
             | RISCV_LINUX_CLOCK_GETTIME
             | RISCV_LINUX_CLOCK_GETRES => syscall_clock(request, tick, guest_memory_writer),
+            RISCV_LINUX_GETITIMER => {
+                guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_getitimer(request, state, guest_memory),
+                })
+            }
+            RISCV_LINUX_SETITIMER => guest_memory_reader.and_then(|reader| {
+                syscall_setitimer(request, state, reader, guest_memory_writer)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }),
             RISCV_LINUX_SETPGID => Some(RiscvSyscallOutcome::Return {
                 value: syscall_setpgid(request, state),
             }),

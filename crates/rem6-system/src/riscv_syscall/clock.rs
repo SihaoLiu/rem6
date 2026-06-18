@@ -2,13 +2,19 @@ use rem6_kernel::Tick;
 
 use super::{
     linux_error, RiscvGuestMemoryWriter, RiscvSyscallOutcome, RiscvSyscallRequest,
-    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
+    RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
 };
 
+pub(super) const RISCV_LINUX_GETITIMER: u64 = 102;
+pub(super) const RISCV_LINUX_SETITIMER: u64 = 103;
 pub(super) const RISCV_LINUX_CLOCK_GETTIME: u64 = 113;
 pub(super) const RISCV_LINUX_CLOCK_GETRES: u64 = 114;
 pub(super) const RISCV_LINUX_TIMES: u64 = 153;
 pub(super) const RISCV_LINUX_GETTIMEOFDAY: u64 = 169;
+const RISCV_LINUX_ITIMER_REAL: u64 = 0;
+const RISCV_LINUX_ITIMER_VIRTUAL: u64 = 1;
+const RISCV_LINUX_ITIMER_PROF: u64 = 2;
+const RISCV_LINUX_ITIMERVAL_BYTES: usize = 32;
 const RISCV_LINUX_CLOCK_REALTIME: u64 = 0;
 const RISCV_LINUX_CLOCK_MONOTONIC: u64 = 1;
 const RISCV_LINUX_CLOCK_PROCESS_CPUTIME_ID: u64 = 2;
@@ -20,9 +26,92 @@ const RISCV_LINUX_CLOCK_BOOTTIME: u64 = 7;
 const RISCV_LINUX_CLOCK_TAI: u64 = 11;
 const RISCV_LINUX_NANOSECONDS_PER_SECOND: u64 = 1_000_000_000;
 const RISCV_LINUX_NANOSECONDS_PER_MICROSECOND: u64 = 1_000;
+const RISCV_LINUX_MICROSECONDS_PER_SECOND: u64 = 1_000_000;
 const RISCV_LINUX_CLOCK_TICKS_PER_SECOND: u64 = 100;
 const RISCV_LINUX_NANOSECONDS_PER_CLOCK_TICK: u64 =
     RISCV_LINUX_NANOSECONDS_PER_SECOND / RISCV_LINUX_CLOCK_TICKS_PER_SECOND;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct RiscvLinuxItimerval {
+    interval_seconds: u64,
+    interval_microseconds: u64,
+    value_seconds: u64,
+    value_microseconds: u64,
+}
+
+impl RiscvLinuxItimerval {
+    pub(super) const fn zero() -> Self {
+        Self {
+            interval_seconds: 0,
+            interval_microseconds: 0,
+            value_seconds: 0,
+            value_microseconds: 0,
+        }
+    }
+
+    fn encode(self) -> [u8; RISCV_LINUX_ITIMERVAL_BYTES] {
+        let mut bytes = [0; RISCV_LINUX_ITIMERVAL_BYTES];
+        bytes[0..8].copy_from_slice(&self.interval_seconds.to_le_bytes());
+        bytes[8..16].copy_from_slice(&self.interval_microseconds.to_le_bytes());
+        bytes[16..24].copy_from_slice(&self.value_seconds.to_le_bytes());
+        bytes[24..32].copy_from_slice(&self.value_microseconds.to_le_bytes());
+        bytes
+    }
+}
+
+impl RiscvSyscallState {
+    pub(super) const fn initial_interval_timers() -> [RiscvLinuxItimerval; 3] {
+        [
+            RiscvLinuxItimerval::zero(),
+            RiscvLinuxItimerval::zero(),
+            RiscvLinuxItimerval::zero(),
+        ]
+    }
+}
+
+pub(super) fn syscall_getitimer(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let Some(index) = interval_timer_index(request.argument(0)) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    write_riscv_linux_itimerval(
+        request.argument(1),
+        state.interval_timers[index],
+        guest_memory,
+    )
+}
+
+pub(super) fn syscall_setitimer(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory_reader: &super::RiscvGuestMemoryReader,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> Option<u64> {
+    let Some(index) = interval_timer_index(request.argument(0)) else {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    };
+    let new_value = match read_riscv_linux_itimerval(request.argument(1), guest_memory_reader) {
+        Ok(value) => value,
+        Err(error) => return Some(linux_error(error)),
+    };
+    let old_value_address = request.argument(2);
+    if old_value_address != 0 {
+        let guest_memory_writer = guest_memory_writer?;
+        let old_write = write_riscv_linux_itimerval(
+            old_value_address,
+            state.interval_timers[index],
+            guest_memory_writer,
+        );
+        if old_write != 0 {
+            return Some(old_write);
+        }
+    }
+    state.interval_timers[index] = new_value;
+    Some(0)
+}
 
 pub(super) fn syscall_clock_gettime(
     clock_id: u64,
@@ -156,6 +245,66 @@ fn write_riscv_linux_bytes(
         }
     }
     true
+}
+
+fn interval_timer_index(which: u64) -> Option<usize> {
+    match which {
+        RISCV_LINUX_ITIMER_REAL => Some(0),
+        RISCV_LINUX_ITIMER_VIRTUAL => Some(1),
+        RISCV_LINUX_ITIMER_PROF => Some(2),
+        _ => None,
+    }
+}
+
+fn read_riscv_linux_itimerval(
+    address: u64,
+    guest_memory: &super::RiscvGuestMemoryReader,
+) -> Result<RiscvLinuxItimerval, u64> {
+    let bytes = guest_memory
+        .read(address, RISCV_LINUX_ITIMERVAL_BYTES)
+        .filter(|bytes| bytes.len() == RISCV_LINUX_ITIMERVAL_BYTES)
+        .ok_or(RISCV_LINUX_EFAULT)?;
+    Ok(RiscvLinuxItimerval {
+        interval_seconds: read_nonnegative_timeval_field(&bytes, 0, None)?,
+        interval_microseconds: read_nonnegative_timeval_field(
+            &bytes,
+            8,
+            Some(RISCV_LINUX_MICROSECONDS_PER_SECOND),
+        )?,
+        value_seconds: read_nonnegative_timeval_field(&bytes, 16, None)?,
+        value_microseconds: read_nonnegative_timeval_field(
+            &bytes,
+            24,
+            Some(RISCV_LINUX_MICROSECONDS_PER_SECOND),
+        )?,
+    })
+}
+
+fn read_nonnegative_timeval_field(
+    bytes: &[u8],
+    offset: usize,
+    exclusive_limit: Option<u64>,
+) -> Result<u64, u64> {
+    let value = i64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap());
+    let Ok(value) = u64::try_from(value) else {
+        return Err(RISCV_LINUX_EINVAL);
+    };
+    if exclusive_limit.is_some_and(|limit| value >= limit) {
+        return Err(RISCV_LINUX_EINVAL);
+    }
+    Ok(value)
+}
+
+fn write_riscv_linux_itimerval(
+    address: u64,
+    value: RiscvLinuxItimerval,
+    guest_memory: &RiscvGuestMemoryWriter,
+) -> u64 {
+    if write_riscv_linux_bytes(address, &value.encode(), guest_memory) {
+        0
+    } else {
+        linux_error(RISCV_LINUX_EFAULT)
+    }
 }
 
 fn valid_clock_id(clock_id: u64) -> bool {

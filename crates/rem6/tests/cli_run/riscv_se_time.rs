@@ -441,3 +441,145 @@ int main(void) {
     ));
     assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
 }
+
+#[test]
+fn rem6_run_riscv_se_runs_static_raw_interval_timers_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE raw interval timer smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE raw interval timer smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-interval-timers");
+    let source = workspace.join("raw-interval-timers.c");
+    let binary = workspace.join("raw-interval-timers");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+
+struct timeval64 {
+    long tv_sec;
+    long tv_usec;
+};
+
+struct itimerval64 {
+    struct timeval64 it_interval;
+    struct timeval64 it_value;
+};
+
+static long linux_syscall2(long number, long arg0, long arg1) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    struct itimerval64 initial = {{-1, -1}, {-1, -1}};
+    struct itimerval64 old_value = {{-1, -1}, {-1, -1}};
+    struct itimerval64 zero = {{0, 0}, {0, 0}};
+    struct itimerval64 invalid_usec = {{0, 1000000}, {0, 0}};
+
+    long get_initial = linux_syscall2(102, 0, (long)&initial);
+    long set_zero = linux_syscall3(103, 1, (long)&zero, (long)&old_value);
+    long invalid_which = linux_syscall3(103, 99, (long)&zero, 0);
+    long invalid_time = linux_syscall3(103, 0, (long)&invalid_usec, 0);
+
+    int initial_zero = initial.it_interval.tv_sec == 0 &&
+        initial.it_interval.tv_usec == 0 &&
+        initial.it_value.tv_sec == 0 &&
+        initial.it_value.tv_usec == 0;
+    int old_zero = old_value.it_interval.tv_sec == 0 &&
+        old_value.it_interval.tv_usec == 0 &&
+        old_value.it_value.tv_sec == 0 &&
+        old_value.it_value.tv_usec == 0;
+    int ok = get_initial == 0 &&
+        set_zero == 0 &&
+        invalid_which == -22 &&
+        invalid_time == -22 &&
+        initial_zero &&
+        old_zero;
+
+    printf("raw-interval-timers:%ld:%ld:%ld:%ld:%d:%d:%d\n",
+           get_initial, set_zero, invalid_which, invalid_time,
+           initial_zero, old_zero, ok);
+    return ok ? 48 : 80;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(48),
+        "qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(
+        qemu_output.stdout,
+        b"raw-interval-timers:0:0:-22:-22:1:1:1\n"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "200000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":48"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"raw-interval-timers:0:0:-22:-22:1:1:1\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}
