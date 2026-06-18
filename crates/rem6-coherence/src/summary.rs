@@ -23,6 +23,10 @@ pub struct ParallelCoherenceRunSummary {
     cpu_response_count: usize,
     directory_decision_count: usize,
     dram_access_count: usize,
+    bank_accepted_count: usize,
+    bank_immediate_hit_count: usize,
+    bank_scheduled_miss_count: usize,
+    bank_coalesced_miss_count: usize,
     fabric_activity: Vec<FabricLaneActivity>,
     dram_activity: Vec<DramTargetActivity>,
     initial_wait_for: WaitForGraphSnapshot,
@@ -112,11 +116,29 @@ impl ParallelCoherenceRunSummary {
             cpu_response_count,
             directory_decision_count,
             dram_access_count,
+            bank_accepted_count: 0,
+            bank_immediate_hit_count: 0,
+            bank_scheduled_miss_count: 0,
+            bank_coalesced_miss_count: 0,
             fabric_activity,
             dram_activity,
             initial_wait_for: wait_for_graphs.initial.snapshot(),
             remaining_wait_for: wait_for_graphs.remaining.snapshot(),
         }
+    }
+
+    pub fn with_bank_activity(
+        mut self,
+        accepted_count: usize,
+        immediate_hit_count: usize,
+        scheduled_miss_count: usize,
+        coalesced_miss_count: usize,
+    ) -> Self {
+        self.bank_accepted_count = accepted_count;
+        self.bank_immediate_hit_count = immediate_hit_count;
+        self.bank_scheduled_miss_count = scheduled_miss_count;
+        self.bank_coalesced_miss_count = coalesced_miss_count;
+        self
     }
 
     pub const fn scheduler_run(&self) -> &RecordedConservativeRunSummary {
@@ -221,6 +243,22 @@ impl ParallelCoherenceRunSummary {
 
     pub const fn dram_access_count(&self) -> usize {
         self.dram_access_count
+    }
+
+    pub const fn bank_accepted_count(&self) -> usize {
+        self.bank_accepted_count
+    }
+
+    pub const fn bank_immediate_hit_count(&self) -> usize {
+        self.bank_immediate_hit_count
+    }
+
+    pub const fn bank_scheduled_miss_count(&self) -> usize {
+        self.bank_scheduled_miss_count
+    }
+
+    pub const fn bank_coalesced_miss_count(&self) -> usize {
+        self.bank_coalesced_miss_count
     }
 
     pub fn dram_qos_access_count(&self) -> usize {

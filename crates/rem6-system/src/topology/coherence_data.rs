@@ -590,6 +590,12 @@ fn msi_bank_cycle_run_summary(
         Vec::new(),
         ParallelCoherenceWaitForGraphs::new(WaitForGraph::new(), WaitForGraph::new()),
     )
+    .with_bank_activity(
+        run.accepted_count(),
+        run.immediate_hit_count(),
+        run.scheduled_miss_count(),
+        run.coalesced_miss_count(),
+    )
 }
 
 trait DataCacheCpuResponseRecord {

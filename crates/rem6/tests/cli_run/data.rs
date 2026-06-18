@@ -185,14 +185,18 @@ fn rem6_run_executes_riscv_elf_fetches_through_msi_instruction_cache() {
 
 #[test]
 fn rem6_run_executes_riscv_elf_load_store_through_msi_data_cache() {
+    const DATA_OFFSET: usize = 32;
+
     let mut program = riscv64_program(&[
-        u_type(0, 2, 0x17),          // auipc x2, 0
-        i_type(24, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
-        i_type(0, 2, 0x3, 5, 0x03),  // ld x5, 0(x2)
-        i_type(1, 5, 0x0, 6, 0x13),  // addi x6, x5, 1
-        s_type(8, 6, 2, 0x3),        // sd x6, 8(x2)
-        0x0000_0073,                 // ecall
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        i_type(0, 2, 0x3, 7, 0x03),                  // ld x7, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),                  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),                        // sd x6, 8(x2)
+        0x0000_0073,                                 // ecall
     ]);
+    program.resize(DATA_OFFSET, 0);
     program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
     program.extend_from_slice(&0u64.to_le_bytes());
     program.extend_from_slice(&[0; 16]);
@@ -216,7 +220,7 @@ fn rem6_run_executes_riscv_elf_load_store_through_msi_data_cache() {
             "--data-cache-protocol",
             "msi",
             "--dump-memory",
-            "0x80000020:8",
+            "0x80000028:8",
         ])
         .output()
         .unwrap();
@@ -230,22 +234,27 @@ fn rem6_run_executes_riscv_elf_load_store_through_msi_data_cache() {
     assert!(stdout.contains("\"status\":\"executed_until_trap\""));
     assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
     assert!(stdout.contains("\"x6\":\"0x1122334455667789\""));
-    assert!(stdout.contains("\"data_loads\":1"));
+    assert!(stdout.contains("\"x7\":\"0x1122334455667788\""));
+    assert!(stdout.contains("\"data_loads\":2"));
     assert!(stdout.contains("\"data_stores\":1"));
-    assert!(stdout.contains("\"data_cache_runs\":2"));
-    assert!(stdout.contains("\"data_cache_msi_runs\":2"));
-    assert!(stdout.contains("\"data_cache_cpu_responses\":2"));
+    assert!(stdout.contains("\"data_cache_runs\":3"));
+    assert!(stdout.contains("\"data_cache_msi_runs\":3"));
+    assert!(stdout.contains("\"data_cache_cpu_responses\":3"));
     assert!(stdout.contains("\"data_cache_directory_decisions\":2"));
     assert!(stdout.contains("\"data_cache_dram_accesses\":0"));
-    assert!(stdout.contains("\"address\":\"0x80000020\""));
+    assert!(stdout.contains("\"data_cache_bank_accepted\":3"));
+    assert!(stdout.contains("\"data_cache_bank_immediate_hits\":1"));
+    assert!(stdout.contains("\"data_cache_bank_scheduled_misses\":2"));
+    assert!(stdout.contains("\"data_cache_bank_coalesced_misses\":0"));
+    assert!(stdout.contains("\"address\":\"0x80000028\""));
     assert!(stdout.contains("\"hex\":\"8977665544332211\""));
-    assert_stat(&stdout, "sim.data_cache.runs", "Count", 2, "monotonic");
-    assert_stat(&stdout, "sim.data_cache.msi.runs", "Count", 2, "monotonic");
+    assert_stat(&stdout, "sim.data_cache.runs", "Count", 3, "monotonic");
+    assert_stat(&stdout, "sim.data_cache.msi.runs", "Count", 3, "monotonic");
     assert_stat(
         &stdout,
         "sim.data_cache.cpu_responses",
         "Count",
-        2,
+        3,
         "monotonic",
     );
     assert_stat(
@@ -262,8 +271,36 @@ fn rem6_run_executes_riscv_elf_load_store_through_msi_data_cache() {
         0,
         "monotonic",
     );
-    assert_transport_stats(&stdout, "sim.memory.fetch", 6, 12, 2);
-    assert_transport_stats(&stdout, "sim.memory.data", 2, 4, 2);
+    assert_stat(
+        &stdout,
+        "sim.data_cache.bank.accepted",
+        "Count",
+        3,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.bank.immediate_hits",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.bank.scheduled_misses",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.bank.coalesced_misses",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_transport_stats(&stdout, "sim.memory.fetch", 7, 14, 2);
+    assert_transport_stats(&stdout, "sim.memory.data", 3, 6, 2);
 }
 
 #[test]

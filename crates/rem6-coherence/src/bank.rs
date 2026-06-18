@@ -663,6 +663,13 @@ impl MsiBankCycleRun {
             .count()
     }
 
+    pub fn coalesced_miss_count(&self) -> usize {
+        self.accepted
+            .iter()
+            .filter(|accepted| accepted.result.kind() == SubmitKind::CoalescedMiss)
+            .count()
+    }
+
     pub fn mshr_qos_accepted_count(&self) -> usize {
         self.accepted_mshr_qos().count()
     }

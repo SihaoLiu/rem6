@@ -96,6 +96,10 @@ pub(crate) struct CliDataCacheSummary {
     pub(crate) cpu_responses: u64,
     pub(crate) directory_decisions: u64,
     pub(crate) dram_accesses: u64,
+    pub(crate) bank_accepted: u64,
+    pub(crate) bank_immediate_hits: u64,
+    pub(crate) bank_scheduled_misses: u64,
+    pub(crate) bank_coalesced_misses: u64,
     pub(crate) prefetch_identified: u64,
     pub(crate) prefetch_issued: u64,
     pub(crate) prefetch_queue_enqueued: u64,
@@ -142,6 +146,22 @@ impl CliDataCacheSummary {
             dram_accesses: records
                 .iter()
                 .map(|record| record.summary().dram_access_count() as u64)
+                .sum(),
+            bank_accepted: records
+                .iter()
+                .map(|record| record.summary().bank_accepted_count() as u64)
+                .sum(),
+            bank_immediate_hits: records
+                .iter()
+                .map(|record| record.summary().bank_immediate_hit_count() as u64)
+                .sum(),
+            bank_scheduled_misses: records
+                .iter()
+                .map(|record| record.summary().bank_scheduled_miss_count() as u64)
+                .sum(),
+            bank_coalesced_misses: records
+                .iter()
+                .map(|record| record.summary().bank_coalesced_miss_count() as u64)
                 .sum(),
             prefetch_identified: 0,
             prefetch_issued: 0,
@@ -1257,6 +1277,12 @@ fn msi_bank_cycle_run_summary(
         cpu_response_count,
         directory_decision_count,
         dram_access_count,
+    )
+    .with_bank_activity(
+        run.accepted_count(),
+        run.immediate_hit_count(),
+        run.scheduled_miss_count(),
+        run.coalesced_miss_count(),
     )
 }
 
