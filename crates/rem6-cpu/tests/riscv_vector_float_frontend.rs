@@ -171,6 +171,10 @@ fn vfsgnjx_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_float_vv_type(0x0a, vs2, vs1, vd)
 }
 
+fn vfmv_v_f_type(fs1: u8, vd: u8) -> u32 {
+    vector_float_vf_type(0x17, 0, fs1, vd)
+}
+
 fn vector_float_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_float_type(funct6, 0b001, vs2, vs1, vd)
 }
@@ -1593,6 +1597,59 @@ fn riscv_core_driver_executes_vfsgnjx_vv_from_fetch_stream() {
         [0, 0, 0, 0x40a0_0000],
         [0xbf80_0000, 0xc000_0000, 0xbe80_0000, 0x40a0_0000],
     );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfmv_v_f_from_fetch_stream() {
+    assert_vf_fetch_stream_executes_bits(
+        vfmv_v_f_type(1, 3),
+        RiscvVectorFloatInstruction::MoveVf {
+            vd: vreg(3),
+            fs1: freg(1),
+        },
+        0x7fc0_1234,
+        [0x3f80_0000, 0xc000_0000, 0x3e80_0000, 0x40c0_0000],
+        [0, 0, 0, 0xdead_beef],
+        [0x7fc0_1234, 0x7fc0_1234, 0x7fc0_1234, 0xdead_beef],
+    );
+}
+
+#[test]
+fn riscv_core_driver_vfmv_v_f_nan_boxes_scalar_source() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.write_float_register(freg(1), u64::from(0x3f80_0000_u32));
+    core.write_vector_register(
+        vreg(3),
+        lanes_f32_bits([0x0102_0304, 0x1112_1314, 0x2122_2324, 0xdead_beef]),
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[vsetvli_type(0xd0, 10, 5), vfmv_v_f_type(1, 3), 0x0010_0073],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::MoveVf {
+            vd: vreg(3),
+            fs1: freg(1),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_f32_bits([0x7fc0_0000, 0x7fc0_0000, 0x7fc0_0000, 0xdead_beef])
+    );
+    assert_eq!(core.float_status().fflags(), 0);
 }
 
 #[test]

@@ -394,6 +394,9 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 vs2: vector_register(raw, 20),
             },
         )),
+        (0x5, 0b010111, true) if vector_vs2_is_zero(raw) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::MoveVf { vd, fs1 },
+        )),
         (0x0, 0b000010, true) => Ok(RiscvInstruction::VectorSubVv {
             vd: vector_register(raw, 7),
             vs1: vector_register(raw, 15),

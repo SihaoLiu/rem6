@@ -96,6 +96,7 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
         RiscvVectorFloatInstruction::SignInjectXorVf { vd, fs1, vs2 } => {
             execute_sign_inject_vf(hart, vd, fs1, vs2, FloatSignInjectOp::InjectXor)
         }
+        RiscvVectorFloatInstruction::MoveVf { vd, fs1 } => execute_move_vf(hart, vd, fs1),
     }
 }
 
@@ -370,6 +371,23 @@ fn execute_class_v(hart: &mut RiscvHartState, vd: VectorRegister, vs2: VectorReg
         let value = u32::from_le_bytes(lane4(&source, offset));
         let class = float::class_single_bits(value);
         result[offset..offset + 4].copy_from_slice(&class.to_le_bytes());
+    }
+    write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
+
+fn execute_move_vf(hart: &mut RiscvHartState, vd: VectorRegister, fs1: FloatRegister) -> bool {
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[]) else {
+        return false;
+    };
+    if plan.element_bytes != 4 {
+        return false;
+    }
+
+    let scalar = float::single_register_bits(hart.read_float(fs1));
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    for offset in (0..plan.active_bytes).step_by(4) {
+        result[offset..offset + 4].copy_from_slice(&scalar.to_le_bytes());
     }
     write_register_group(hart, vd, plan.group_registers, &result);
     true

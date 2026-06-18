@@ -274,6 +274,10 @@ pub enum RiscvVectorFloatInstruction {
         fs1: FloatRegister,
         vs2: VectorRegister,
     },
+    MoveVf {
+        vd: VectorRegister,
+        fs1: FloatRegister,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
