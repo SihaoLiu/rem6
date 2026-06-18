@@ -7,6 +7,8 @@ use rem6_kernel::PartitionId;
 
 #[path = "riscv_syscall_tests/boot_image_tests.rs"]
 mod boot_image_tests;
+#[path = "riscv_syscall_tests/capability_tests.rs"]
+mod capability_tests;
 #[path = "riscv_syscall_tests/copy_file_range_tests.rs"]
 mod copy_file_range_tests;
 #[path = "riscv_syscall_tests/cpu_tests.rs"]

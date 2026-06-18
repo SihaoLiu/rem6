@@ -3,6 +3,196 @@ use std::{fs, process::Command};
 use crate::support::{assert_stat, find_riscv_tool, temp_workspace};
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_capability_syscalls_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE raw capability smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE raw capability smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-capability");
+    let source = workspace.join("raw-capability.c");
+    let binary = workspace.join("raw-capability");
+    fs::write(
+        &source,
+        r#"struct cap_header {
+    unsigned int version;
+    int pid;
+};
+
+struct cap_data {
+    unsigned int effective;
+    unsigned int permitted;
+    unsigned int inheritable;
+};
+
+static const char pass_text[] = "raw-capability:ok\n";
+static const char fail_text[] = "raw-capability:fail\n";
+
+static long linux_syscall1(long number, long arg0) {
+    register long a0 asm("a0") = arg0;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall2(long number, long arg0, long arg1) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+static void finish(int ok) {
+    if (ok) {
+        linux_syscall3(64, 1, (long)pass_text, sizeof(pass_text) - 1);
+        linux_syscall1(93, 53);
+    } else {
+        linux_syscall3(64, 1, (long)fail_text, sizeof(fail_text) - 1);
+        linux_syscall1(93, 84);
+    }
+    __builtin_unreachable();
+}
+
+void _start(void) {
+    struct cap_header header = {0x20080522u, 0};
+    struct cap_data data[2] = {
+        {0xffffffffu, 0xffffffffu, 0xffffffffu},
+        {0xffffffffu, 0xffffffffu, 0xffffffffu},
+    };
+    long capget_ok = linux_syscall2(90, (long)&header, (long)data);
+
+    struct cap_header bad_version = {0x12345678u, 0};
+    long capget_bad_version = linux_syscall2(90, (long)&bad_version, (long)data);
+
+    struct cap_header missing_pid = {0x20080522u, 999999};
+    long capget_missing_pid = linux_syscall2(90, (long)&missing_pid, (long)data);
+    long capget_null_header = linux_syscall2(90, 0, (long)data);
+
+    struct cap_header null_data_header = {0x20080522u, 0};
+    long capget_null_data = linux_syscall2(90, (long)&null_data_header, 0);
+
+    struct cap_header capset_header = {0x20080522u, 0};
+    struct cap_data zero[2] = {{0, 0, 0}, {0, 0, 0}};
+    long capset_zero = linux_syscall2(91, (long)&capset_header, (long)zero);
+
+    struct cap_header nonzero_header = {0x20080522u, 0};
+    struct cap_data one[2] = {{1, 0, 0}, {0, 0, 0}};
+    long capset_nonzero = linux_syscall2(91, (long)&nonzero_header, (long)one);
+
+    long capset_null_data = linux_syscall2(91, (long)&capset_header, 0);
+
+    struct cap_header capset_bad_version = {0x12345678u, 0};
+    long capset_bad_version_status = linux_syscall2(91, (long)&capset_bad_version, (long)zero);
+
+    finish(capget_ok == 0 &&
+           header.version == 0x20080522u &&
+           header.pid == 0 &&
+           data[0].effective == 0 &&
+           data[0].permitted == 0 &&
+           data[0].inheritable == 0 &&
+           data[1].effective == 0 &&
+           data[1].permitted == 0 &&
+           data[1].inheritable == 0 &&
+           capget_bad_version == -22 &&
+           bad_version.version == 0x20080522u &&
+           capget_missing_pid == -3 &&
+           capget_null_header == -14 &&
+           capget_null_data == 0 &&
+           null_data_header.version == 0x20080522u &&
+           capset_zero == 0 &&
+           capset_nonzero == -1 &&
+           capset_null_data == -14 &&
+           capset_bad_version_status == -22 &&
+           capset_bad_version.version == 0x20080522u);
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-nostdlib",
+            "-nostartfiles",
+            "-ffreestanding",
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu)
+        .arg(&binary)
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(53),
+        "qemu stdout: {}; qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stdout),
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    let qemu_stdout = String::from_utf8(qemu_output.stdout).unwrap();
+    assert_eq!(qemu_stdout, "raw-capability:ok\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "350000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":53"));
+    assert!(stdout.contains("\"text\":\"raw-capability:ok\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 53, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_umask_mkdirat_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!("skipping static RISC-V SE raw umask smoke: riscv64-unknown-elf-gcc not found");

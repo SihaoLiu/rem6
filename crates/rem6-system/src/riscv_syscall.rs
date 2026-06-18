@@ -1,8 +1,6 @@
-use std::{
-    collections::{BTreeMap, BTreeSet, VecDeque},
-    fmt,
-};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+#[cfg(test)]
 use rem6_boot::BootImage;
 use rem6_kernel::Tick;
 
@@ -13,6 +11,7 @@ use crate::{
 
 mod advisory;
 mod brk;
+mod capability;
 mod clock;
 mod constants;
 mod copy_file_range;
@@ -34,6 +33,7 @@ mod guest_memory;
 mod guest_write;
 mod hwprobe;
 mod identity;
+mod image_layout;
 mod ioctl;
 mod iovec;
 mod limits;
@@ -75,6 +75,7 @@ mod xattr;
 
 use advisory::{syscall_fadvise64, RISCV_LINUX_FADVISE64};
 use brk::syscall_brk;
+use capability::{syscall_capget, syscall_capset, RISCV_LINUX_CAPGET, RISCV_LINUX_CAPSET};
 use clock::{
     syscall_clock, syscall_getitimer, syscall_setitimer, RiscvLinuxItimerval,
     RISCV_LINUX_CLOCK_GETRES, RISCV_LINUX_CLOCK_GETTIME, RISCV_LINUX_GETITIMER,
@@ -132,6 +133,8 @@ use identity::{
     RISCV_LINUX_GETUID, RISCV_LINUX_SETGID, RISCV_LINUX_SETGROUPS, RISCV_LINUX_SETREGID,
     RISCV_LINUX_SETRESGID, RISCV_LINUX_SETRESUID, RISCV_LINUX_SETREUID, RISCV_LINUX_SETUID,
 };
+use image_layout::riscv_program_break_for_boot_image;
+pub use image_layout::RiscvSyscallImageLayoutError;
 use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
 pub use limits::RISCV_LINUX_STACK_LIMIT_BYTES;
 use limits::{
@@ -1206,6 +1209,12 @@ impl RiscvSyscallTable {
             RISCV_LINUX_FCHDIR => Some(RiscvSyscallOutcome::Return {
                 value: syscall_fchdir(request, state),
             }),
+            RISCV_LINUX_CAPGET => Some(RiscvSyscallOutcome::Return {
+                value: syscall_capget(request, state, guest_memory_reader, guest_memory_writer),
+            }),
+            RISCV_LINUX_CAPSET => Some(RiscvSyscallOutcome::Return {
+                value: syscall_capset(request, state, guest_memory_reader, guest_memory_writer),
+            }),
             RISCV_LINUX_DUP => Some(RiscvSyscallOutcome::Return {
                 value: syscall_dup(request.argument(0), state),
             }),
@@ -1753,43 +1762,6 @@ fn unsupported_syscall_outcome(
     RiscvSyscallOutcome::Return {
         value: linux_error(RISCV_LINUX_ENOSYS),
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RiscvSyscallImageLayoutError {
-    UnrepresentableProgramBreak {
-        loaded_segment_end: u64,
-        page_bytes: u64,
-    },
-}
-
-impl fmt::Display for RiscvSyscallImageLayoutError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UnrepresentableProgramBreak {
-                loaded_segment_end,
-                page_bytes,
-            } => write!(
-                formatter,
-                "loaded image end {loaded_segment_end:#x} cannot be rounded up to {page_bytes:#x}"
-            ),
-        }
-    }
-}
-
-impl std::error::Error for RiscvSyscallImageLayoutError {}
-
-fn riscv_program_break_for_boot_image(
-    image: &BootImage,
-) -> Result<u64, RiscvSyscallImageLayoutError> {
-    let end = image.loaded_segment_end().get();
-    let mask = RISCV_PAGE_BYTES - 1;
-    end.checked_add(mask).map(|value| value & !mask).ok_or(
-        RiscvSyscallImageLayoutError::UnrepresentableProgramBreak {
-            loaded_segment_end: end,
-            page_bytes: RISCV_PAGE_BYTES,
-        },
-    )
 }
 
 #[cfg(test)]
