@@ -384,7 +384,7 @@ fn execute_minmax_vv(
     let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2, vs1]) else {
         return false;
     };
-    if plan.element_bytes != 4 {
+    if !matches!(plan.element_bytes, 4 | 8) {
         return false;
     }
 
@@ -392,12 +392,26 @@ fn execute_minmax_vv(
     let right = read_register_group(hart, vs1, plan.group_registers);
     let mut result = read_register_group(hart, vd, plan.group_registers);
     let mut exception_flags = 0;
-    for offset in (0..plan.active_bytes).step_by(4) {
-        let lhs = u32::from_le_bytes(lane4(&left, offset));
-        let rhs = u32::from_le_bytes(lane4(&right, offset));
-        exception_flags |= float::minmax_exception_flags_single_bits(lhs, rhs);
-        let value = minmax_single_bits(lhs, rhs, operation);
-        result[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    match plan.element_bytes {
+        4 => {
+            for offset in (0..plan.active_bytes).step_by(4) {
+                let lhs = u32::from_le_bytes(lane4(&left, offset));
+                let rhs = u32::from_le_bytes(lane4(&right, offset));
+                exception_flags |= float::minmax_exception_flags_single_bits(lhs, rhs);
+                let value = minmax_single_bits(lhs, rhs, operation);
+                result[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+            }
+        }
+        8 => {
+            for offset in (0..plan.active_bytes).step_by(8) {
+                let lhs = u64::from_le_bytes(lane8(&left, offset));
+                let rhs = u64::from_le_bytes(lane8(&right, offset));
+                exception_flags |= float::minmax_exception_flags_double_bits(lhs, rhs);
+                let value = minmax_double_bits(lhs, rhs, operation);
+                result[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+            }
+        }
+        _ => unreachable!("unsupported vector float min/max element width was rejected"),
     }
     write_register_group(hart, vd, plan.group_registers, &result);
     hart.raise_float_exception_flags(exception_flags);
@@ -553,19 +567,33 @@ fn execute_minmax_vf(
     let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2]) else {
         return false;
     };
-    if plan.element_bytes != 4 {
+    if !matches!(plan.element_bytes, 4 | 8) {
         return false;
     }
 
     let left = read_register_group(hart, vs2, plan.group_registers);
-    let scalar = float::single_register_bits(hart.read_float(fs1));
+    let scalar = hart.read_float(fs1);
     let mut result = read_register_group(hart, vd, plan.group_registers);
     let mut exception_flags = 0;
-    for offset in (0..plan.active_bytes).step_by(4) {
-        let lhs = u32::from_le_bytes(lane4(&left, offset));
-        exception_flags |= float::minmax_exception_flags_single_bits(lhs, scalar);
-        let value = minmax_single_bits(lhs, scalar, operation);
-        result[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    match plan.element_bytes {
+        4 => {
+            let scalar = float::single_register_bits(scalar);
+            for offset in (0..plan.active_bytes).step_by(4) {
+                let lhs = u32::from_le_bytes(lane4(&left, offset));
+                exception_flags |= float::minmax_exception_flags_single_bits(lhs, scalar);
+                let value = minmax_single_bits(lhs, scalar, operation);
+                result[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+            }
+        }
+        8 => {
+            for offset in (0..plan.active_bytes).step_by(8) {
+                let lhs = u64::from_le_bytes(lane8(&left, offset));
+                exception_flags |= float::minmax_exception_flags_double_bits(lhs, scalar);
+                let value = minmax_double_bits(lhs, scalar, operation);
+                result[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+            }
+        }
+        _ => unreachable!("unsupported vector float min/max element width was rejected"),
     }
     write_register_group(hart, vd, plan.group_registers, &result);
     hart.raise_float_exception_flags(exception_flags);
@@ -1028,6 +1056,13 @@ fn minmax_single_bits(lhs: u32, rhs: u32, operation: FloatMinMaxOp) -> u32 {
     match operation {
         FloatMinMaxOp::Min => float::min_single_bits(lhs, rhs),
         FloatMinMaxOp::Max => float::max_single_bits(lhs, rhs),
+    }
+}
+
+fn minmax_double_bits(lhs: u64, rhs: u64, operation: FloatMinMaxOp) -> u64 {
+    match operation {
+        FloatMinMaxOp::Min => float::min_double_bits(lhs, rhs),
+        FloatMinMaxOp::Max => float::max_double_bits(lhs, rhs),
     }
 }
 

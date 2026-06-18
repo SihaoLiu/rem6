@@ -311,6 +311,18 @@ pub(crate) fn minmax_exception_flags_single_bits(lhs: u32, rhs: u32) -> u64 {
     }
 }
 
+pub(crate) fn min_double_bits(lhs: u64, rhs: u64) -> u64 {
+    min_double(lhs, rhs)
+}
+
+pub(crate) fn max_double_bits(lhs: u64, rhs: u64) -> u64 {
+    max_double(lhs, rhs)
+}
+
+pub(crate) fn minmax_exception_flags_double_bits(lhs: u64, rhs: u64) -> u64 {
+    minmax_exception_flags_double(lhs, rhs)
+}
+
 pub(crate) fn binary_register_rounding_mode_is_supported(
     instruction: RiscvInstruction,
     frm: u64,

@@ -1073,6 +1073,22 @@ fn riscv_core_driver_executes_vfmin_vv_from_fetch_stream() {
 }
 
 #[test]
+fn riscv_core_driver_executes_vfmin_vv_e64_from_fetch_stream() {
+    assert_vv_e64_fetch_stream_executes_bits(
+        vfmin_vv_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MinVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        },
+        [2.0f64.to_bits(), (-0.0f64).to_bits()],
+        [1.0f64.to_bits(), 0.0f64.to_bits()],
+        [0xdead_beef_dead_beef, 12.0f64.to_bits()],
+        [1.0f64.to_bits(), (-0.0f64).to_bits()],
+    );
+}
+
+#[test]
 fn riscv_core_driver_executes_vfmin_vf_from_fetch_stream() {
     assert_vf_fetch_stream_executes_bits(
         vfmin_vf_type(2, 1, 3),
@@ -1085,6 +1101,22 @@ fn riscv_core_driver_executes_vfmin_vf_from_fetch_stream() {
         [0x3f80_0000, 0x8000_0000, 0x7fc0_1234, 0x40c0_0000],
         [0, 0, 0, 0x40a0_0000],
         [0x0000_0000, 0x8000_0000, 0x0000_0000, 0x40a0_0000],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfmin_vf_e64_from_fetch_stream() {
+    assert_vf_e64_fetch_stream_executes_bits(
+        vfmin_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MinVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        2.0f64.to_bits(),
+        [1.0f64.to_bits(), 0x7ff8_0000_0000_1234],
+        [0xdead_beef_dead_beef, 12.0f64.to_bits()],
+        [1.0f64.to_bits(), 2.0f64.to_bits()],
     );
 }
 
@@ -1136,6 +1168,56 @@ fn riscv_core_driver_vfmin_accrues_invalid_for_signaling_nan() {
 }
 
 #[test]
+fn riscv_core_driver_vfmin_e64_accrues_invalid_for_signaling_nan() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 2);
+    core.write_vector_register(
+        vreg(1),
+        lanes_u64_bits([0x7ff0_0000_0000_0001, 5.0f64.to_bits()]),
+    );
+    core.write_vector_register(
+        vreg(2),
+        lanes_u64_bits([4.0f64.to_bits(), 0x7ff8_0000_0000_1234]),
+    );
+    core.write_vector_register(
+        vreg(3),
+        lanes_u64_bits([0xdead_beef_dead_beef, 12.0f64.to_bits()]),
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd8, 10, 5),
+            vfmin_vv_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd8,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::MinVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_u64_bits([4.0f64.to_bits(), 5.0f64.to_bits()])
+    );
+    assert_eq!(core.float_status().fflags(), FLOAT_FLAG_INVALID);
+}
+
+#[test]
 fn riscv_core_driver_executes_vfmax_vv_from_fetch_stream() {
     assert_vv_fetch_stream_executes_bits(
         vfmax_vv_type(2, 1, 3),
@@ -1148,6 +1230,22 @@ fn riscv_core_driver_executes_vfmax_vv_from_fetch_stream() {
         [0xc000_0000, 0x8000_0000, 0x7fc0_1234, 0x40c0_0000],
         [0, 0, 0, 0x40a0_0000],
         [0xc000_0000, 0x0000_0000, 0x7fc0_0000, 0x40a0_0000],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfmax_vv_e64_from_fetch_stream() {
+    assert_vv_e64_fetch_stream_executes_bits(
+        vfmax_vv_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MaxVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        },
+        [(-2.0f64).to_bits(), (-0.0f64).to_bits()],
+        [(-3.0f64).to_bits(), 0.0f64.to_bits()],
+        [0xdead_beef_dead_beef, 12.0f64.to_bits()],
+        [(-2.0f64).to_bits(), 0.0f64.to_bits()],
     );
 }
 
@@ -1165,4 +1263,70 @@ fn riscv_core_driver_executes_vfmax_vf_from_fetch_stream() {
         [0, 0, 0, 0x40a0_0000],
         [0xc000_0000, 0x8000_0000, 0x7fc0_0000, 0x40a0_0000],
     );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfmax_vf_e64_from_fetch_stream() {
+    assert_vf_e64_fetch_stream_executes_bits(
+        vfmax_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::MaxVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        (-2.0f64).to_bits(),
+        [(-3.0f64).to_bits(), 0.0f64.to_bits()],
+        [0xdead_beef_dead_beef, 12.0f64.to_bits()],
+        [(-2.0f64).to_bits(), 0.0f64.to_bits()],
+    );
+}
+
+#[test]
+fn riscv_core_driver_vfmax_e64_accrues_invalid_for_signaling_nan() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 2);
+    core.write_vector_register(
+        vreg(1),
+        lanes_u64_bits([0x7ff0_0000_0000_0001, (-5.0f64).to_bits()]),
+    );
+    core.write_vector_register(
+        vreg(2),
+        lanes_u64_bits([4.0f64.to_bits(), 0x7ff8_0000_0000_1234]),
+    );
+    core.write_vector_register(
+        vreg(3),
+        lanes_u64_bits([0xdead_beef_dead_beef, 12.0f64.to_bits()]),
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd8, 10, 5),
+            vfmax_vv_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd8,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::MaxVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_u64_bits([4.0f64.to_bits(), (-5.0f64).to_bits()])
+    );
+    assert_eq!(core.float_status().fflags(), FLOAT_FLAG_INVALID);
 }

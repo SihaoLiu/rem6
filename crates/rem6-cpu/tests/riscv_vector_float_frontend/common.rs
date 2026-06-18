@@ -567,6 +567,45 @@ pub(crate) fn assert_vv_fetch_stream_executes_bits(
     );
 }
 
+pub(crate) fn assert_vv_e64_fetch_stream_executes_bits(
+    instruction: u32,
+    decoded: RiscvVectorFloatInstruction,
+    source1: [u64; 2],
+    source: [u64; 2],
+    initial_destination: [u64; 2],
+    expected_destination: [u64; 2],
+) {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 2);
+    core.write_vector_register(vreg(1), lanes_u64_bits(source1));
+    core.write_vector_register(vreg(2), lanes_u64_bits(source));
+    core.write_vector_register(vreg(3), lanes_u64_bits(initial_destination));
+    let store = loaded_program_store(
+        0x8000,
+        &[vsetvli_type(0xd8, 10, 5), instruction, 0x0010_0073],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd8,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(decoded)
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_u64_bits(expected_destination)
+    );
+    assert_eq!(core.float_status().fflags(), 0);
+}
+
 pub(crate) fn assert_vf_fetch_stream_executes_bits(
     instruction: u32,
     decoded: RiscvVectorFloatInstruction,
@@ -641,6 +680,7 @@ pub(crate) fn assert_vf_e64_fetch_stream_executes_bits(
         core.read_vector_register(vreg(3)),
         lanes_u64_bits(expected_destination)
     );
+    assert_eq!(core.float_status().fflags(), 0);
 }
 
 pub(crate) fn assert_vf_e64_fetch_stream_traps_without_destination_write(
