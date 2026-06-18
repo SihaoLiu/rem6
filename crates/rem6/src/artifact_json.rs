@@ -3,7 +3,8 @@ use super::formatting::{
 };
 use super::{
     Rem6CoreSummary, Rem6DataAccessProbeSummary, Rem6DramSummary, Rem6ExecutionStop,
-    Rem6ExecutionSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary, Rem6InstructionProbeSummary,
+    Rem6ExecutionSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary, Rem6HostActionSummary,
+    Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary, Rem6InstructionProbeSummary,
     Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
     Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary,
     Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6ReadfileSummary,
@@ -61,6 +62,11 @@ impl Rem6RunArtifact {
             .as_ref()
             .map(Rem6ExecutionSummary::to_riscv_unknown_syscalls_json)
             .unwrap_or_else(|| "[]".to_string());
+        let host_actions = self
+            .execution
+            .as_ref()
+            .map(Rem6ExecutionSummary::to_host_actions_json)
+            .unwrap_or_else(|| Rem6HostActionSummary::default().to_json());
         let dram = self
             .execution
             .as_ref()
@@ -104,7 +110,7 @@ impl Rem6RunArtifact {
             .map(|artifact| format!(",\"power_analysis\":{}", artifact.to_json()))
             .unwrap_or_default();
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"host_actions\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -125,6 +131,7 @@ impl Rem6RunArtifact {
             memory,
             riscv_guest_writes,
             riscv_unknown_syscalls,
+            host_actions,
             dram,
             transport,
             debug,
@@ -991,6 +998,10 @@ impl Rem6ExecutionSummary {
         )
     }
 
+    fn to_host_actions_json(&self) -> String {
+        self.host_actions.to_json()
+    }
+
     fn to_dram_json(&self) -> String {
         self.dram.to_json()
     }
@@ -1024,6 +1035,64 @@ impl Rem6RiscvUnknownSyscallSummary {
         format!(
             "{{\"pc\":\"0x{:x}\",\"number\":{},\"tick\":{},\"arguments\":[{}]}}",
             self.pc, self.number, self.tick, arguments
+        )
+    }
+}
+
+impl Rem6HostActionSummary {
+    fn to_json(&self) -> String {
+        let roi_begin = self
+            .roi_begin
+            .iter()
+            .map(Rem6HostWorkMarkerSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        let roi_end = self
+            .roi_end
+            .iter()
+            .map(Rem6HostWorkMarkerSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        let stops = self
+            .stops
+            .iter()
+            .map(Rem6HostStopActionSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "{{\"total_action_count\":{},\"injected_command_count\":{},\"guest_host_call_count\":{},\"roi_begin_count\":{},\"roi_end_count\":{},\"stats_reset_count\":{},\"stats_dump_count\":{},\"checkpoint_count\":{},\"checkpoint_restored_count\":{},\"execution_mode_switch_count\":{},\"stop_count\":{},\"roi_begin\":[{}],\"roi_end\":[{}],\"stops\":[{}]}}",
+            self.total_action_count,
+            self.injected_command_count,
+            self.guest_host_call_count,
+            self.roi_begin.len(),
+            self.roi_end.len(),
+            self.stats_reset_count,
+            self.stats_dump_count,
+            self.checkpoint_count,
+            self.checkpoint_restored_count,
+            self.execution_mode_switch_count,
+            self.stops.len(),
+            roi_begin,
+            roi_end,
+            stops,
+        )
+    }
+}
+
+impl Rem6HostWorkMarkerSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"tick\":{},\"event\":{},\"source\":{},\"work_id\":{},\"thread_id\":{}}}",
+            self.tick, self.event, self.source, self.work_id, self.thread_id
+        )
+    }
+}
+
+impl Rem6HostStopActionSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"tick\":{},\"event\":{},\"source\":{},\"code\":{}}}",
+            self.tick, self.event, self.source, self.code
         )
     }
 }

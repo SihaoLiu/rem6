@@ -24,6 +24,8 @@ mod gups;
 mod load;
 #[path = "cli_run/load_blob_resource.rs"]
 mod load_blob_resource;
+#[path = "cli_run/m5_host_actions.rs"]
+mod m5_host_actions;
 #[path = "cli_run/readfile_resource.rs"]
 mod readfile_resource;
 #[path = "cli_run/resource_acquire.rs"]

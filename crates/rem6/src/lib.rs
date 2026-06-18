@@ -17,11 +17,10 @@ use rem6_stats::{
     StatsRegistry,
 };
 use rem6_system::{
-    GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats, RiscvGuestWriteRecord,
-    RiscvInstructionStats, RiscvRetiredInstructionProbeSnapshot, RiscvSeAuxvEntry,
-    RiscvSeStartupConfig, RiscvSystemRun, RiscvSystemRunDriver, RiscvSystemRunStopReason,
-    RiscvTrapEventPort, RiscvUnknownSyscallRecord, SystemHostController, SystemHostEventPort,
-    RISCV_LINUX_AT_ENTRY,
+    GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats, RiscvInstructionStats,
+    RiscvRetiredInstructionProbeSnapshot, RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun,
+    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, SystemHostController,
+    SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TransportEndpointId,
@@ -37,12 +36,14 @@ mod formatting;
 mod gpu_cli;
 mod guest_memory;
 mod gups_cli;
+mod host_actions;
 mod parallel_stats;
 mod pipeline_stats;
 mod power_output;
 mod readfile_runtime;
 mod resource_acquire_cli;
 mod resource_acquire_config;
+mod riscv_guest_output;
 mod riscv_run_driver;
 mod run_gdb;
 mod run_resource_config;
@@ -69,6 +70,9 @@ use debug_output::Rem6DebugSummary;
 pub use gpu_cli::{run_gpu_run_config, Rem6GpuRunArtifact, Rem6GpuRunConfig};
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
+pub(crate) use host_actions::{
+    Rem6HostActionSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
+};
 use parallel_stats::{
     parallel_frontier_summaries, parallel_partition_summaries, parallel_ready_partition_summaries,
     parallel_worker_lane_summaries, parallel_worker_slot_summaries,
@@ -83,6 +87,7 @@ pub use resource_acquire_cli::{
     run_resource_acquire_config, Rem6ResourceAcquireArtifact, Rem6ResourceAcquireResourceSummary,
 };
 pub use resource_acquire_config::{Rem6ResourceAcquireConfig, Rem6ResourceAcquireResourceConfig};
+pub(crate) use riscv_guest_output::{Rem6RiscvGuestWriteSummary, Rem6RiscvUnknownSyscallSummary};
 use riscv_run_driver::drive_cli_riscv_run;
 use run_gdb::{serve_riscv_gdb_with_run_control, RiscvGdbServeOutcome};
 use run_resource_config::{run_resource_payloads_from_config, RunResourcePayloads};
@@ -190,6 +195,7 @@ pub struct Rem6ExecutionSummary {
     memory_dumps: Vec<Rem6MemoryDump>,
     riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
     riscv_unknown_syscalls: Vec<Rem6RiscvUnknownSyscallSummary>,
+    host_actions: Rem6HostActionSummary,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -215,44 +221,6 @@ pub struct Rem6DataAccessProbeSummary {
     memory_footprint_cache_line_total_bytes: u64,
     memory_footprint_page_bytes: u64,
     memory_footprint_page_total_bytes: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Rem6RiscvGuestWriteSummary {
-    fd: u32,
-    address: u64,
-    tick: u64,
-    bytes: Vec<u8>,
-}
-
-impl Rem6RiscvGuestWriteSummary {
-    fn from_record(record: &RiscvGuestWriteRecord) -> Self {
-        Self {
-            fd: record.fd().get(),
-            address: record.address(),
-            tick: record.tick(),
-            bytes: record.bytes().to_vec(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Rem6RiscvUnknownSyscallSummary {
-    pc: u64,
-    number: u64,
-    arguments: [u64; 6],
-    tick: u64,
-}
-
-impl Rem6RiscvUnknownSyscallSummary {
-    fn from_record(record: &RiscvUnknownSyscallRecord) -> Self {
-        Self {
-            pc: record.pc(),
-            number: record.number(),
-            arguments: record.arguments(),
-            tick: record.tick(),
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -433,6 +401,7 @@ struct ExecutionSummaryInputs<'a> {
     data_trace: &'a MemoryTrace,
     riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
     riscv_unknown_syscalls: Vec<Rem6RiscvUnknownSyscallSummary>,
+    host_actions: Rem6HostActionSummary,
     prior_committed_by_cpu: BTreeMap<CpuId, u64>,
 }
 
@@ -917,6 +886,12 @@ fn execute_riscv(
             (guest_writes, unknown_syscalls)
         })
         .unwrap_or_default();
+    let host_actions = {
+        let controller = controller
+            .lock()
+            .map_err(|error| execute_error(format!("host controller lock poisoned: {error}")))?;
+        Rem6HostActionSummary::from_outcomes(controller.run().action_outcomes())
+    };
 
     let summary_inputs = ExecutionSummaryInputs {
         core_count,
@@ -940,6 +915,7 @@ fn execute_riscv(
         data_trace: &data_trace,
         riscv_guest_writes,
         riscv_unknown_syscalls,
+        host_actions,
         prior_committed_by_cpu: gdb_outcome.retired_by_cpu().clone(),
     };
 
@@ -1126,6 +1102,7 @@ fn execution_summary(
         )?,
         riscv_guest_writes: inputs.riscv_guest_writes,
         riscv_unknown_syscalls: inputs.riscv_unknown_syscalls,
+        host_actions: inputs.host_actions,
     })
 }
 
