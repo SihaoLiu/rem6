@@ -115,6 +115,15 @@ impl RiscvCore {
         self.sync_in_order_fetch_state()
     }
 
+    pub fn reset_instruction_fetch_stream(&self) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        let pc = Address::new(state.hart.pc());
+        state.pending_fetch_prefix = None;
+        state.discard_branch_speculations();
+        drop(state);
+        self.inner().reset_fetch_stream_to_pc(pc);
+    }
+
     pub fn record_fetch_failure(
         &self,
         request_id: MemoryRequestId,

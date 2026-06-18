@@ -446,6 +446,43 @@ fn remote_sfence_vma_flushes_target_tlb_when_completion_event_runs() {
 }
 
 #[test]
+fn remote_fence_i_resets_target_fetch_stream_when_completion_event_runs() {
+    let (mut scheduler, transport, firmware, core0, core1) = registered_rfence_pair();
+
+    execute_rfence_ecall(
+        &mut scheduler,
+        &transport,
+        &core0,
+        rfence_request(SBI_RFENCE_REMOTE_FENCE_I, 0b10, 0, 0, 0, 0),
+    );
+    core1
+        .issue_next_fetch(
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            responder(ecall_store(0x8800)),
+        )
+        .expect("issued target fetch");
+
+    assert!(core1.has_pending_fetch());
+
+    let outcome = firmware
+        .handle_pending_core_trap(&mut scheduler, &core0, false)
+        .expect("handled SBI trap")
+        .expect("SBI outcome");
+
+    assert_eq!(outcome, RiscvSbiOutcome::success(0));
+    assert!(core1.has_pending_fetch());
+
+    scheduler.run_until_idle_conservative();
+
+    assert!(!core1.has_pending_fetch());
+    assert_eq!(core1.pc(), Address::new(0x8800));
+    assert_eq!(core1.inner().pc(), Address::new(0x8800));
+    assert!(core1.inner().fetch_events().is_empty());
+}
+
+#[test]
 fn remote_hfence_gvma_rejects_missing_target_before_scheduling_flush() {
     let (mut scheduler, transport, firmware, core0, _core1) = registered_rfence_pair();
 
