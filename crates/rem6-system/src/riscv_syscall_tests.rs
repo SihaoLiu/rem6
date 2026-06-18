@@ -79,6 +79,8 @@ mod sysinfo_tests;
 mod time_tests;
 #[path = "riscv_syscall_tests/truncate_tests.rs"]
 mod truncate_tests;
+#[path = "riscv_syscall_tests/unknown_syscall_tests.rs"]
+mod unknown_syscall_tests;
 #[path = "riscv_syscall_tests/unlink_tests.rs"]
 mod unlink_tests;
 #[path = "riscv_syscall_tests/utsname_tests.rs"]
@@ -1776,26 +1778,4 @@ fn linux_table_newfstatat_empty_path_stats_guest_fd() {
     let stat = collect_guest_writes(&writes, 0x9100, 128);
     assert_eq!(read_le_u64(&stat, 48), 0);
     assert_eq!(read_le_u32(&stat, 16), 0o020666);
-}
-
-#[test]
-fn linux_table_unknown_numbers_return_enosys_and_record_request() {
-    let mut state = RiscvSyscallState::new(0);
-
-    assert_eq!(
-        RiscvSyscallTable::new().handle_at_tick(
-            RiscvSyscallRequest::new(0x8000, 9999, [0; 6]),
-            &mut state,
-            43
-        ),
-        Some(RiscvSyscallOutcome::Return {
-            value: linux_error(RISCV_LINUX_ENOSYS)
-        })
-    );
-    assert_eq!(state.program_break(), 0);
-    assert!(state.guest_writes().is_empty());
-    assert_eq!(
-        state.unknown_syscalls(),
-        &[RiscvUnknownSyscallRecord::new(0x8000, 9999, [0; 6], 43)]
-    );
 }

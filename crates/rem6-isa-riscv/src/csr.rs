@@ -330,6 +330,154 @@ impl RiscvMachineIdentityCsr {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RiscvMachineIsaCsr {
+    Misa,
+}
+
+impl RiscvMachineIsaCsr {
+    const EXTENSIONS: u64 =
+        (1 << 0) | (1 << 2) | (1 << 3) | (1 << 5) | (1 << 8) | (1 << 12) | (1 << 18) | (1 << 20);
+
+    pub const RV32_MISA: u64 = (1 << 30) | Self::EXTENSIONS;
+    pub const RV64_MISA: u64 = (2 << 62) | Self::EXTENSIONS;
+
+    pub const fn address(self) -> u16 {
+        match self {
+            Self::Misa => 0x301,
+        }
+    }
+
+    pub const fn from_address(address: u16) -> Option<Self> {
+        match address {
+            0x301 => Some(Self::Misa),
+            _ => None,
+        }
+    }
+
+    pub const fn read_rv64(self) -> u64 {
+        match self {
+            Self::Misa => Self::RV64_MISA,
+        }
+    }
+
+    pub const fn read_for_xlen_bits(self, xlen_bits: u8) -> u64 {
+        match (self, xlen_bits) {
+            (Self::Misa, 32) => Self::RV32_MISA,
+            (Self::Misa, _) => Self::RV64_MISA,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RiscvMachineInformationCsr {
+    Identity(RiscvMachineIdentityCsr),
+    Isa(RiscvMachineIsaCsr),
+}
+
+impl RiscvMachineInformationCsr {
+    pub const fn address(self) -> u16 {
+        match self {
+            Self::Identity(csr) => csr.address(),
+            Self::Isa(csr) => csr.address(),
+        }
+    }
+
+    pub const fn from_address(address: u16) -> Option<Self> {
+        if let Some(csr) = RiscvMachineIdentityCsr::from_address(address) {
+            return Some(Self::Identity(csr));
+        }
+        if let Some(csr) = RiscvMachineIsaCsr::from_address(address) {
+            return Some(Self::Isa(csr));
+        }
+        None
+    }
+
+    pub const fn read_rv64(self, hart_id: u64) -> u64 {
+        match self {
+            Self::Identity(csr) => csr.read(hart_id),
+            Self::Isa(csr) => csr.read_rv64(),
+        }
+    }
+
+    pub const fn read_for_xlen_bits(self, hart_id: u64, xlen_bits: u8) -> u64 {
+        match self {
+            Self::Identity(csr) => csr.read(hart_id),
+            Self::Isa(csr) => csr.read_for_xlen_bits(xlen_bits),
+        }
+    }
+
+    pub const fn write_traps(self) -> bool {
+        match self {
+            Self::Identity(_) => true,
+            Self::Isa(_) => false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RiscvMachineInformationCsrInstruction {
+    rd: Register,
+    csr: RiscvMachineInformationCsr,
+    op: RiscvCsrOp,
+    operand: RiscvCsrOperand,
+}
+
+impl RiscvMachineInformationCsrInstruction {
+    pub const fn read(rd: Register, csr: RiscvMachineInformationCsr) -> Self {
+        Self {
+            rd,
+            csr,
+            op: RiscvCsrOp::Read,
+            operand: RiscvCsrOperand::Immediate(0),
+        }
+    }
+
+    pub const fn register(
+        rd: Register,
+        csr: RiscvMachineInformationCsr,
+        op: RiscvCsrOp,
+        rs1: Register,
+    ) -> Self {
+        Self {
+            rd,
+            csr,
+            op,
+            operand: RiscvCsrOperand::Register(rs1),
+        }
+    }
+
+    pub const fn immediate(
+        rd: Register,
+        csr: RiscvMachineInformationCsr,
+        op: RiscvCsrOp,
+        zimm: u8,
+    ) -> Self {
+        Self {
+            rd,
+            csr,
+            op,
+            operand: RiscvCsrOperand::Immediate(zimm),
+        }
+    }
+
+    pub const fn rd(self) -> Register {
+        self.rd
+    }
+
+    pub const fn csr(self) -> RiscvMachineInformationCsr {
+        self.csr
+    }
+
+    pub const fn op(self) -> RiscvCsrOp {
+        self.op
+    }
+
+    pub const fn operand(self) -> RiscvCsrOperand {
+        self.operand
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RiscvCounterCsrWord {
     CycleLow,
     CycleHigh,

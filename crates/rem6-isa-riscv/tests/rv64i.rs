@@ -1,8 +1,9 @@
 use rem6_isa_riscv::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryAccessKind, MemoryWidth, Register,
     RegisterWrite, RiscvCounterBank, RiscvCounterCsr, RiscvCounterSnapshot, RiscvCsrError,
-    RiscvError, RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction,
-    RiscvMachineIdentityCsr, RiscvMachineTrapCsr, RiscvMemoryOrdering, RiscvPrivilegeMode,
+    RiscvCsrOp, RiscvError, RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction,
+    RiscvMachineIdentityCsr, RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction,
+    RiscvMachineIsaCsr, RiscvMachineTrapCsr, RiscvMemoryOrdering, RiscvPrivilegeMode,
     RiscvPseudoOp, RiscvStatusCsr, RiscvStatusWord, RiscvSupervisorTrapCsr, RiscvSv39AccessContext,
     RiscvSystemEvent, RiscvTranslationCsr, RiscvTrap, RiscvTrapKind,
 };
@@ -37,6 +38,14 @@ fn csr_read_type(csr: u32, rd: u8) -> u32 {
 
 fn csr_type(csr: u32, rs1_or_zimm: u8, funct3: u32, rd: u8) -> u32 {
     (csr << 20) | (u32::from(rs1_or_zimm) << 15) | (funct3 << 12) | (u32::from(rd) << 7) | 0x73
+}
+
+fn machine_identity(csr: RiscvMachineIdentityCsr) -> RiscvMachineInformationCsr {
+    RiscvMachineInformationCsr::Identity(csr)
+}
+
+fn machine_isa(csr: RiscvMachineIsaCsr) -> RiscvMachineInformationCsr {
+    RiscvMachineInformationCsr::Isa(csr)
 }
 
 fn sfence_vma_type(rs1: u8, rs2: u8, rd: u8, funct3: u32) -> u32 {
@@ -395,10 +404,10 @@ fn hart_reads_machine_hart_id_csr() {
     let instruction = RiscvInstruction::decode(csr_read_type(0xf14, 5)).unwrap();
     assert_eq!(
         instruction,
-        RiscvInstruction::ReadMachineIdentityCsr {
-            rd: reg(5),
-            csr: RiscvMachineIdentityCsr::HartId,
-        }
+        RiscvInstruction::MachineInformationCsr(RiscvMachineInformationCsrInstruction::read(
+            reg(5),
+            machine_identity(RiscvMachineIdentityCsr::HartId),
+        ))
     );
 
     let mut hart = RiscvHartState::with_hart_id(0x2000, 7);
@@ -424,6 +433,112 @@ fn hart_reads_machine_identity_csrs() {
     assert_eq!(hart.read(reg(6)), 0);
     assert_eq!(hart.read(reg(7)), 0);
     assert_eq!(record.next_pc(), 0x220c);
+}
+
+#[test]
+fn hart_reads_and_ignores_writes_to_machine_isa_csr() {
+    let read = RiscvInstruction::decode(csr_read_type(0x301, 5)).unwrap();
+    let write = RiscvInstruction::decode(csr_type(0x301, 2, 0x1, 6)).unwrap();
+    let set = RiscvInstruction::decode(csr_type(0x301, 2, 0x2, 7)).unwrap();
+    let clear = RiscvInstruction::decode(csr_type(0x301, 2, 0x3, 8)).unwrap();
+    let write_immediate = RiscvInstruction::decode(csr_type(0x301, 0x1f, 0x5, 9)).unwrap();
+    let set_immediate = RiscvInstruction::decode(csr_type(0x301, 0x1f, 0x6, 10)).unwrap();
+    let clear_immediate = RiscvInstruction::decode(csr_type(0x301, 0x1f, 0x7, 11)).unwrap();
+
+    assert_eq!(
+        read,
+        RiscvInstruction::MachineInformationCsr(RiscvMachineInformationCsrInstruction::read(
+            reg(5),
+            machine_isa(RiscvMachineIsaCsr::Misa),
+        ))
+    );
+    assert_eq!(
+        write,
+        RiscvInstruction::MachineInformationCsr(RiscvMachineInformationCsrInstruction::register(
+            reg(6),
+            machine_isa(RiscvMachineIsaCsr::Misa),
+            RiscvCsrOp::Write,
+            reg(2),
+        ))
+    );
+    assert_eq!(
+        set,
+        RiscvInstruction::MachineInformationCsr(RiscvMachineInformationCsrInstruction::register(
+            reg(7),
+            machine_isa(RiscvMachineIsaCsr::Misa),
+            RiscvCsrOp::Set,
+            reg(2),
+        ))
+    );
+    assert_eq!(
+        clear,
+        RiscvInstruction::MachineInformationCsr(RiscvMachineInformationCsrInstruction::register(
+            reg(8),
+            machine_isa(RiscvMachineIsaCsr::Misa),
+            RiscvCsrOp::Clear,
+            reg(2),
+        ))
+    );
+    assert_eq!(
+        write_immediate,
+        RiscvInstruction::MachineInformationCsr(RiscvMachineInformationCsrInstruction::immediate(
+            reg(9),
+            machine_isa(RiscvMachineIsaCsr::Misa),
+            RiscvCsrOp::Write,
+            0x1f,
+        ))
+    );
+    assert_eq!(
+        set_immediate,
+        RiscvInstruction::MachineInformationCsr(RiscvMachineInformationCsrInstruction::immediate(
+            reg(10),
+            machine_isa(RiscvMachineIsaCsr::Misa),
+            RiscvCsrOp::Set,
+            0x1f,
+        ))
+    );
+    assert_eq!(
+        clear_immediate,
+        RiscvInstruction::MachineInformationCsr(RiscvMachineInformationCsrInstruction::immediate(
+            reg(11),
+            machine_isa(RiscvMachineIsaCsr::Misa),
+            RiscvCsrOp::Clear,
+            0x1f,
+        ))
+    );
+
+    let mut hart = RiscvHartState::new(0x2300);
+    hart.write(reg(2), 0);
+    for instruction in [
+        read,
+        write,
+        set,
+        clear,
+        write_immediate,
+        set_immediate,
+        clear_immediate,
+    ] {
+        hart.execute(instruction).unwrap();
+    }
+
+    assert_eq!(hart.read(reg(5)), RiscvMachineIsaCsr::RV64_MISA);
+    assert_eq!(hart.read(reg(6)), RiscvMachineIsaCsr::RV64_MISA);
+    assert_eq!(hart.read(reg(7)), RiscvMachineIsaCsr::RV64_MISA);
+    assert_eq!(hart.read(reg(8)), RiscvMachineIsaCsr::RV64_MISA);
+    assert_eq!(hart.read(reg(9)), RiscvMachineIsaCsr::RV64_MISA);
+    assert_eq!(hart.read(reg(10)), RiscvMachineIsaCsr::RV64_MISA);
+    assert_eq!(hart.read(reg(11)), RiscvMachineIsaCsr::RV64_MISA);
+    assert_eq!(hart.pc(), 0x231c);
+
+    let record = hart
+        .execute(RiscvInstruction::decode(csr_read_type(0x301, 12)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        record.register_writes(),
+        &[RegisterWrite::new(reg(12), RiscvMachineIsaCsr::RV64_MISA)]
+    );
+    assert_eq!(hart.read(reg(12)), RiscvMachineIsaCsr::RV64_MISA);
 }
 
 #[test]
@@ -505,10 +620,10 @@ fn hart_reads_counter_csrs_through_read_only_csr_aliases() {
     );
     assert_eq!(
         hart_id_clear,
-        RiscvInstruction::ReadMachineIdentityCsr {
-            rd: reg(8),
-            csr: RiscvMachineIdentityCsr::HartId,
-        }
+        RiscvInstruction::MachineInformationCsr(RiscvMachineInformationCsrInstruction::read(
+            reg(8),
+            machine_identity(RiscvMachineIdentityCsr::HartId),
+        ))
     );
 
     let mut hart = RiscvHartState::with_hart_id(0x2800, 11);

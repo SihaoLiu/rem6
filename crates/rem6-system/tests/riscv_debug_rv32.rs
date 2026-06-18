@@ -27,7 +27,7 @@ fn riscv_gdb_remote_session_reports_rv32_hart_csr_snapshot_and_writes() {
             .handle_packet(&GdbRemotePacket::new(b"g".to_vec()).unwrap())
             .unwrap(),
     );
-    assert_eq!(registers.len(), rv32_register_hex_offset(131));
+    assert_eq!(registers.len(), rv32_register_hex_offset(132));
     assert_eq!(&registers[0..8], b"00000000");
     assert_eq!(&registers[2 * 8..3 * 8], b"efcdab89");
     assert_eq!(&registers[32 * 8..33 * 8], b"11223344");
@@ -40,6 +40,7 @@ fn riscv_gdb_remote_session_reports_rv32_hart_csr_snapshot_and_writes() {
     assert_eq!(&registers[rv32_register_hex_range(128)], b"00000000");
     assert_eq!(&registers[rv32_register_hex_range(129)], b"00000000");
     assert_eq!(&registers[rv32_register_hex_range(130)], b"00000000");
+    assert_eq!(&registers[rv32_register_hex_range(131)], b"2d111440");
 
     assert_eq!(
         packet_payload(
@@ -106,6 +107,42 @@ fn riscv_gdb_remote_session_reports_rv32_hart_csr_snapshot_and_writes() {
             .unwrap(),
         ),
         b"22020000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"p83".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"2d111440",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"P83=00000000".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"p83".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"2d111440",
     );
     assert_eq!(
         packet_payload(
@@ -269,7 +306,7 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_rv32d_float_registers_and_cs
         )
         .unwrap(),
     );
-    assert_eq!(registers.len(), rv32_register_hex_offset(131));
+    assert_eq!(registers.len(), rv32_register_hex_offset(132));
     assert_eq!(&registers[rv32_register_hex_range(33)], b"8877665544332211");
     assert_eq!(&registers[rv32_register_hex_range(64)], b"1032547698badcfe");
     assert_eq!(&registers[rv32_register_hex_range(67)], b"03000000");
@@ -279,6 +316,7 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_rv32d_float_registers_and_cs
     assert_eq!(&registers[rv32_register_hex_range(128)], b"00000000");
     assert_eq!(&registers[rv32_register_hex_range(129)], b"00000000");
     assert_eq!(&registers[rv32_register_hex_range(130)], b"00000000");
+    assert_eq!(&registers[rv32_register_hex_range(131)], b"2d111440");
 }
 
 #[test]
@@ -380,7 +418,7 @@ fn rv32_register_hex_offset(number: u64) -> usize {
         66..=69 => (33 * 4) + (32 * 8) + ((number - 66) * 4),
         70..=89 => (33 * 4) + (32 * 8) + (4 * 4) + ((number - 70) * 4),
         90..=121 => (33 * 4) + (32 * 8) + (4 * 4) + (20 * 4) + ((number - 90) * 16),
-        122..=131 => (33 * 4) + (32 * 8) + (4 * 4) + (20 * 4) + (32 * 16) + ((number - 122) * 4),
+        122..=132 => (33 * 4) + (32 * 8) + (4 * 4) + (20 * 4) + (32 * 16) + ((number - 122) * 4),
         _ => panic!("unsupported RV32 GDB register number"),
     };
     byte_offset as usize * 2
@@ -413,6 +451,7 @@ fn rv32_register_set_write_bytes() -> Vec<u8> {
     bytes.extend_from_slice(&7_u32.to_le_bytes());
     bytes.extend_from_slice(&11_u32.to_le_bytes());
     bytes.extend_from_slice(&7_u32.to_le_bytes());
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
     bytes.extend_from_slice(&0_u32.to_le_bytes());
     bytes.extend_from_slice(&0_u32.to_le_bytes());
     bytes.extend_from_slice(&0_u32.to_le_bytes());

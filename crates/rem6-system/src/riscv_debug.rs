@@ -8,8 +8,9 @@ use rem6_debug::{
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvCounterCsr, RiscvCounterSnapshot, RiscvFloatCsr,
     RiscvGdbTargetDescription, RiscvGdbXlen, RiscvHartState, RiscvInterruptCsr,
-    RiscvMachineIdentityCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvSupervisorTrapCsr,
-    RiscvTranslationCsr, RiscvVectorFixedPointCsr, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
+    RiscvMachineIdentityCsr, RiscvMachineIsaCsr, RiscvMachineTrapCsr, RiscvStatusCsr,
+    RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvVectorFixedPointCsr, VectorRegister,
+    RISCV_VECTOR_REGISTER_BYTES,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, MemoryError, MemoryRequest, MemoryRequestId,
@@ -40,7 +41,8 @@ const RISCV_GDB_MACHINE_HART_ID_REGISTER: u64 = 127;
 const RISCV_GDB_MACHINE_VENDOR_ID_REGISTER: u64 = 128;
 const RISCV_GDB_MACHINE_ARCHITECTURE_ID_REGISTER: u64 = 129;
 const RISCV_GDB_MACHINE_IMPLEMENTATION_ID_REGISTER: u64 = 130;
-const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 9;
+const RISCV_GDB_MACHINE_ISA_REGISTER: u64 = 131;
+const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 10;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,6 +55,7 @@ enum RiscvGdbCsrRegister {
     VectorFixedPoint(RiscvVectorFixedPointCsr),
     Counter(RiscvCounterCsr),
     MachineIdentity(RiscvMachineIdentityCsr),
+    MachineIsa(RiscvMachineIsaCsr),
 }
 
 pub fn riscv_gdb_remote_session(xlen: RiscvGdbXlen) -> GdbRemoteSession {
@@ -975,6 +978,7 @@ fn read_hart_csr_register_value(xlen: RiscvGdbXlen, hart: &RiscvHartState, numbe
         RiscvGdbCsrRegister::VectorFixedPoint(csr) => csr.read(hart.vector_fixed_point()),
         RiscvGdbCsrRegister::Counter(csr) => read_hart_counter_csr(hart, csr),
         RiscvGdbCsrRegister::MachineIdentity(csr) => csr.read(hart.hart_id()),
+        RiscvGdbCsrRegister::MachineIsa(csr) => csr.read_for_xlen_bits(riscv_gdb_xlen_bits(xlen)),
     }
 }
 
@@ -1007,6 +1011,7 @@ fn write_hart_csr_register_value(
             write_hart_counter_csr(hart, csr, value);
         }
         RiscvGdbCsrRegister::MachineIdentity(_) => {}
+        RiscvGdbCsrRegister::MachineIsa(_) => {}
     }
 }
 
@@ -1034,6 +1039,7 @@ fn write_core_csr_register_value(xlen: RiscvGdbXlen, core: &RiscvCore, number: u
             write_core_counter_csr(core, csr, value);
         }
         RiscvGdbCsrRegister::MachineIdentity(_) => {}
+        RiscvGdbCsrRegister::MachineIsa(_) => {}
     }
 }
 
@@ -1064,6 +1070,9 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     }
     if number == RISCV_GDB_MACHINE_IMPLEMENTATION_ID_REGISTER {
         return RiscvGdbCsrRegister::MachineIdentity(RiscvMachineIdentityCsr::ImplementationId);
+    }
+    if number == RISCV_GDB_MACHINE_ISA_REGISTER {
+        return RiscvGdbCsrRegister::MachineIsa(RiscvMachineIsaCsr::Misa);
     }
 
     match number - riscv_gdb_csr_register_base(xlen) {
@@ -1271,6 +1280,7 @@ fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
             RISCV_GDB_MACHINE_VENDOR_ID_REGISTER,
             RISCV_GDB_MACHINE_ARCHITECTURE_ID_REGISTER,
             RISCV_GDB_MACHINE_IMPLEMENTATION_ID_REGISTER,
+            RISCV_GDB_MACHINE_ISA_REGISTER,
         ])
 }
 
@@ -1338,6 +1348,7 @@ const fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool {
         || number == RISCV_GDB_MACHINE_VENDOR_ID_REGISTER
         || number == RISCV_GDB_MACHINE_ARCHITECTURE_ID_REGISTER
         || number == RISCV_GDB_MACHINE_IMPLEMENTATION_ID_REGISTER
+        || number == RISCV_GDB_MACHINE_ISA_REGISTER
 }
 
 fn encode_register_value(xlen: RiscvGdbXlen, number: u64, value: u64) -> Vec<u8> {
@@ -1358,6 +1369,13 @@ const fn byte_len(xlen: RiscvGdbXlen) -> usize {
     match xlen {
         RiscvGdbXlen::Rv32 => 4,
         RiscvGdbXlen::Rv64 => 8,
+    }
+}
+
+const fn riscv_gdb_xlen_bits(xlen: RiscvGdbXlen) -> u8 {
+    match xlen {
+        RiscvGdbXlen::Rv32 => 32,
+        RiscvGdbXlen::Rv64 => 64,
     }
 }
 

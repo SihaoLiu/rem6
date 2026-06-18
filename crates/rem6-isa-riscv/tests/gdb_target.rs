@@ -77,6 +77,7 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "  <reg name=\"mvendorid\" bitsize=\"64\" regnum=\"128\"/>\n",
             "  <reg name=\"marchid\" bitsize=\"64\" regnum=\"129\"/>\n",
             "  <reg name=\"mimpid\" bitsize=\"64\" regnum=\"130\"/>\n",
+            "  <reg name=\"misa\" bitsize=\"64\" regnum=\"131\"/>\n",
             "</feature>\n",
         ),
     );
@@ -112,9 +113,10 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "mvendorid",
             "marchid",
             "mimpid",
+            "misa",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 29);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 30);
 }
 
 #[test]
@@ -348,6 +350,7 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "  <reg name=\"mvendorid\" bitsize=\"32\" regnum=\"128\"/>\n",
             "  <reg name=\"marchid\" bitsize=\"32\" regnum=\"129\"/>\n",
             "  <reg name=\"mimpid\" bitsize=\"32\" regnum=\"130\"/>\n",
+            "  <reg name=\"misa\" bitsize=\"32\" regnum=\"131\"/>\n",
             "</feature>\n",
         ),
     );
@@ -383,9 +386,10 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "mvendorid",
             "marchid",
             "mimpid",
+            "misa",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"32\"").count(), 29);
+    assert_eq!(csr.matches("bitsize=\"32\"").count(), 30);
 }
 
 #[test]
