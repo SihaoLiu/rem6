@@ -3,10 +3,10 @@ use crate::encoding::{
 };
 use crate::{
     FloatRegister, Immediate, RiscvCounterCsr, RiscvCsrOp, RiscvError, RiscvFenceSet,
-    RiscvFloatCsr, RiscvInstruction, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr,
-    RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvVectorFixedPointCsr,
-    RiscvVectorFixedPointCsrInstruction, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
-    VectorRegister,
+    RiscvFloatCsr, RiscvInstruction, RiscvInterruptCsr, RiscvMachineIdentityCsr,
+    RiscvMachineTrapCsr, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
+    RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction, RiscvVectorFloatInstruction,
+    RiscvVectorFloatMulAddMode, VectorRegister,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -921,47 +921,57 @@ pub(crate) fn decode_jalr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
 pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     let csr_address = csr(raw);
     if is_csr_no_write_read(raw) {
-        return match csr_address {
-            0xf14 => Ok(RiscvInstruction::ReadMachineHartId { rd: rd(raw) }),
-            csr_address => RiscvCounterCsr::from_user_address(csr_address)
-                .ok()
-                .map(|csr| RiscvInstruction::ReadCounterCsr { rd: rd(raw), csr })
-                .or_else(|| {
-                    machine_counter_csr(csr_address)
-                        .map(|csr| RiscvInstruction::ReadMachineCounterCsr { rd: rd(raw), csr })
+        return RiscvMachineIdentityCsr::from_address(csr_address)
+            .map(|csr| RiscvInstruction::ReadMachineIdentityCsr { rd: rd(raw), csr })
+            .or_else(|| {
+                RiscvCounterCsr::from_user_address(csr_address)
+                    .ok()
+                    .map(|csr| RiscvInstruction::ReadCounterCsr { rd: rd(raw), csr })
+            })
+            .or_else(|| {
+                machine_counter_csr(csr_address)
+                    .map(|csr| RiscvInstruction::ReadMachineCounterCsr { rd: rd(raw), csr })
+            })
+            .or_else(|| {
+                RiscvFloatCsr::from_address(csr_address)
+                    .map(|csr| RiscvInstruction::ReadFloatCsr { rd: rd(raw), csr })
+            })
+            .or_else(|| {
+                RiscvVectorFixedPointCsr::from_address(csr_address).map(|csr| {
+                    RiscvInstruction::VectorFixedPointCsr(
+                        RiscvVectorFixedPointCsrInstruction::read(rd(raw), csr),
+                    )
                 })
-                .or_else(|| {
-                    RiscvFloatCsr::from_address(csr_address)
-                        .map(|csr| RiscvInstruction::ReadFloatCsr { rd: rd(raw), csr })
-                })
-                .or_else(|| {
-                    RiscvVectorFixedPointCsr::from_address(csr_address).map(|csr| {
-                        RiscvInstruction::VectorFixedPointCsr(
-                            RiscvVectorFixedPointCsrInstruction::read(rd(raw), csr),
-                        )
-                    })
-                })
-                .or_else(|| {
-                    RiscvStatusCsr::from_address(csr_address)
-                        .map(|csr| RiscvInstruction::ReadStatusCsr { rd: rd(raw), csr })
-                })
-                .or_else(|| {
-                    RiscvInterruptCsr::from_address(csr_address)
-                        .map(|csr| RiscvInstruction::ReadInterruptCsr { rd: rd(raw), csr })
-                })
-                .or_else(|| {
-                    RiscvMachineTrapCsr::from_address(csr_address)
-                        .map(|csr| RiscvInstruction::ReadMachineTrapCsr { rd: rd(raw), csr })
-                })
-                .or_else(|| {
-                    RiscvSupervisorTrapCsr::from_address(csr_address)
-                        .map(|csr| RiscvInstruction::ReadSupervisorTrapCsr { rd: rd(raw), csr })
-                })
-                .or_else(|| {
-                    RiscvTranslationCsr::from_address(csr_address)
-                        .map(|csr| RiscvInstruction::ReadTranslationCsr { rd: rd(raw), csr })
-                })
-                .ok_or(RiscvError::UnknownEncoding { raw }),
+            })
+            .or_else(|| {
+                RiscvStatusCsr::from_address(csr_address)
+                    .map(|csr| RiscvInstruction::ReadStatusCsr { rd: rd(raw), csr })
+            })
+            .or_else(|| {
+                RiscvInterruptCsr::from_address(csr_address)
+                    .map(|csr| RiscvInstruction::ReadInterruptCsr { rd: rd(raw), csr })
+            })
+            .or_else(|| {
+                RiscvMachineTrapCsr::from_address(csr_address)
+                    .map(|csr| RiscvInstruction::ReadMachineTrapCsr { rd: rd(raw), csr })
+            })
+            .or_else(|| {
+                RiscvSupervisorTrapCsr::from_address(csr_address)
+                    .map(|csr| RiscvInstruction::ReadSupervisorTrapCsr { rd: rd(raw), csr })
+            })
+            .or_else(|| {
+                RiscvTranslationCsr::from_address(csr_address)
+                    .map(|csr| RiscvInstruction::ReadTranslationCsr { rd: rd(raw), csr })
+            })
+            .ok_or(RiscvError::UnknownEncoding { raw });
+    }
+
+    if let Some(csr) = RiscvMachineIdentityCsr::from_address(csr_address) {
+        return match funct3(raw) {
+            0x1 | 0x2 | 0x3 | 0x5 | 0x6 | 0x7 => {
+                Ok(RiscvInstruction::WriteMachineIdentityCsr { csr })
+            }
+            _ => Err(RiscvError::UnknownEncoding { raw }),
         };
     }
 

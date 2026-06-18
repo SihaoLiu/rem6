@@ -146,3 +146,73 @@ fn hart_traps_supervisor_machine_counter_csr_read() {
     assert_eq!(record.register_writes(), &[]);
     assert_eq!(hart.read(reg(5)), 0);
 }
+
+#[test]
+fn hart_traps_lower_privilege_machine_identity_csr_reads() {
+    let cases = [
+        (RiscvPrivilegeMode::Supervisor, 0xf11, 0x7d00),
+        (RiscvPrivilegeMode::User, 0xf12, 0x7d10),
+        (RiscvPrivilegeMode::Supervisor, 0xf13, 0x7d20),
+        (RiscvPrivilegeMode::User, 0xf14, 0x7d30),
+    ];
+
+    for (mode, csr, pc) in cases {
+        let mut hart = RiscvHartState::new(pc);
+        hart.set_privilege_mode(mode);
+        hart.set_machine_trap_vector(0x9000);
+
+        let record = hart
+            .execute(RiscvInstruction::decode(csr_read_type(csr, 5)).unwrap())
+            .unwrap();
+
+        assert_eq!(record.pc(), pc);
+        assert_eq!(record.next_pc(), 0x9000);
+        assert_eq!(hart.pc(), 0x9000);
+        assert_eq!(hart.privilege_mode(), RiscvPrivilegeMode::Machine);
+        assert_eq!(hart.machine_exception_pc(), pc);
+        assert_eq!(hart.machine_trap_cause(), 2);
+        assert_eq!(hart.machine_trap_value(), 0);
+        assert_eq!(hart.status().mpp(), mode);
+        assert_eq!(
+            record.trap(),
+            Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, pc))
+        );
+        assert_eq!(record.register_writes(), &[]);
+        assert_eq!(hart.read(reg(5)), 0);
+    }
+}
+
+#[test]
+fn hart_traps_machine_identity_csr_write_attempts() {
+    let identity_csrs = [0xf11, 0xf12, 0xf13, 0xf14];
+    let write_forms = [(1, 0x1), (1, 0x2), (1, 0x3), (1, 0x5), (1, 0x6), (1, 0x7)];
+    let mut pc = 0x7e00;
+
+    for csr in identity_csrs {
+        for (operand, funct3) in write_forms {
+            let raw = csr_type(csr, operand, funct3, 5);
+            let mut hart = RiscvHartState::new(pc);
+            hart.set_machine_trap_vector(0x9000);
+            hart.write(reg(1), 0xffff);
+
+            let record = hart
+                .execute(RiscvInstruction::decode(raw).unwrap())
+                .unwrap();
+
+            assert_eq!(
+                record.trap(),
+                Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, pc))
+            );
+            assert_eq!(record.pc(), pc);
+            assert_eq!(record.next_pc(), 0x9000);
+            assert_eq!(record.register_writes(), &[]);
+            assert_eq!(hart.pc(), 0x9000);
+            assert_eq!(hart.machine_exception_pc(), pc);
+            assert_eq!(hart.machine_trap_cause(), 2);
+            assert_eq!(hart.machine_trap_value(), 0);
+            assert_eq!(hart.read(reg(5)), 0);
+
+            pc += 4;
+        }
+    }
+}

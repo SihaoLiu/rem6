@@ -294,6 +294,42 @@ impl RiscvCounterCsr {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RiscvMachineIdentityCsr {
+    VendorId,
+    ArchitectureId,
+    ImplementationId,
+    HartId,
+}
+
+impl RiscvMachineIdentityCsr {
+    pub const fn address(self) -> u16 {
+        match self {
+            Self::VendorId => 0xf11,
+            Self::ArchitectureId => 0xf12,
+            Self::ImplementationId => 0xf13,
+            Self::HartId => 0xf14,
+        }
+    }
+
+    pub const fn from_address(address: u16) -> Option<Self> {
+        match address {
+            0xf11 => Some(Self::VendorId),
+            0xf12 => Some(Self::ArchitectureId),
+            0xf13 => Some(Self::ImplementationId),
+            0xf14 => Some(Self::HartId),
+            _ => None,
+        }
+    }
+
+    pub const fn read(self, hart_id: u64) -> u64 {
+        match self {
+            Self::VendorId | Self::ArchitectureId | Self::ImplementationId => 0,
+            Self::HartId => hart_id,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RiscvCounterCsrWord {
     CycleLow,
     CycleHigh,

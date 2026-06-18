@@ -3,7 +3,9 @@ use crate::{instruction::RiscvInstruction, RiscvPrivilegeMode};
 impl RiscvInstruction {
     pub(crate) const fn required_csr_privilege(self) -> Option<RiscvPrivilegeMode> {
         match self {
-            Self::ReadMachineHartId { .. } => Some(RiscvPrivilegeMode::Machine),
+            Self::ReadMachineIdentityCsr { csr, .. } | Self::WriteMachineIdentityCsr { csr } => {
+                Some(required_csr_privilege(csr.address()))
+            }
             Self::ReadCounterCsr { .. } => Some(RiscvPrivilegeMode::User),
             Self::ReadMachineCounterCsr { .. }
             | Self::WriteCounterCsr { .. }

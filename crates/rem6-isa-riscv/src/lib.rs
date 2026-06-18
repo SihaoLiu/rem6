@@ -47,8 +47,9 @@ pub use control_flow::{
 pub use csr::{
     RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterSnapshot, RiscvCsrOp,
     RiscvCsrOperand, RiscvFloatCsr, RiscvFloatRoundingMode, RiscvFloatStatus, RiscvInterruptCsr,
-    RiscvMachineTrapCsr, RiscvStatusCsr, RiscvStatusWord, RiscvSupervisorTrapCsr,
-    RiscvTranslationCsr, RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction,
+    RiscvMachineIdentityCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvStatusWord,
+    RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvVectorFixedPointCsr,
+    RiscvVectorFixedPointCsrInstruction,
 };
 pub use error::{RiscvCsrError, RiscvError};
 pub use gdb_target::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
@@ -797,8 +798,17 @@ impl RiscvHartState {
                 system_event = Some(pseudo::gem5_pseudo_system_event(op, pc, self));
                 write_register(self, &mut register_writes, Register::from_field(10), 0);
             }
-            RiscvInstruction::ReadMachineHartId { rd } => {
-                write_register(self, &mut register_writes, rd, self.hart_id);
+            RiscvInstruction::ReadMachineIdentityCsr { rd, csr } => {
+                write_register(self, &mut register_writes, rd, csr.read(self.hart_id));
+            }
+            RiscvInstruction::WriteMachineIdentityCsr { .. } => {
+                return Ok(enter_synchronous_trap(
+                    self,
+                    instruction,
+                    instruction_bytes_u8,
+                    pc,
+                    RiscvTrapKind::IllegalInstruction,
+                ));
             }
             RiscvInstruction::ReadCounterCsr { rd, csr } => {
                 let value = self.counters.read_machine(csr);

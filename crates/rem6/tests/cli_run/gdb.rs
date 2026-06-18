@@ -434,6 +434,76 @@ fn rem6_run_gdb_listen_reads_mhartid_before_execution() {
 }
 
 #[test]
+fn rem6_run_gdb_listen_reads_machine_identity_csrs_before_execution() {
+    let program = riscv64_program(&[
+        csr_read(0xf11, 5),         // csrr x5, mvendorid
+        csr_read(0xf12, 6),         // csrr x6, marchid
+        csr_read(0xf13, 7),         // csrr x7, mimpid
+        i_type(1, 5, 0x0, 5, 0x13), // addi x5, x5, 1
+        i_type(2, 6, 0x0, 6, 0x13), // addi x6, x6, 2
+        i_type(3, 7, 0x0, 7, 0x13), // addi x7, x7, 3
+        0x0000_0073,                // ecall
+    ]);
+    let (child, mut stream) = start_riscv_gdb_run("gdb-listen-machine-identity", program, 80);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    let mut csr_description = String::new();
+    for payload in [
+        b"qXfer:features:read:riscv-64bit-csr.xml:0,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:a0,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:140,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:1e0,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:280,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:320,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:3c0,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:460,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:500,a0".as_slice(),
+    ] {
+        csr_description.push_str(&String::from_utf8_lossy(&send_gdb_packet(
+            &mut stream,
+            payload,
+        )));
+    }
+    for register in ["mvendorid", "marchid", "mimpid"] {
+        assert!(
+            csr_description.contains(register),
+            "missing {register} in {csr_description}"
+        );
+    }
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p80"),
+        gdb_response(b"0000000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p81"),
+        gdb_response(b"0000000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p82"),
+        gdb_response(b"0000000000000000")
+    );
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("\"status\":\"executed_until_trap\""),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("\"x5\":\"0x1\""), "stdout: {stdout}");
+    assert!(stdout.contains("\"x6\":\"0x2\""), "stdout: {stdout}");
+    assert!(stdout.contains("\"x7\":\"0x3\""), "stdout: {stdout}");
+}
+
+#[test]
 fn rem6_run_gdb_listen_writes_sie_before_execution() {
     let program = riscv64_program(&[
         0x1040_22f3, // csrr x5, sie
@@ -1780,7 +1850,7 @@ fn rv64_all_register_write_packet(x5: u64, pc: u64) -> Vec<u8> {
     const RV64_FLOAT_REGISTERS: usize = 32;
     const RV64_FLOAT_CSR_AND_PLACEHOLDER_REGISTERS: usize = 4;
     const RV64_CSR_REGISTERS: usize = 20;
-    const RV64_CSR_EXTENSION_REGISTERS: usize = 6;
+    const RV64_CSR_EXTENSION_REGISTERS: usize = 9;
     const RV64_VECTOR_REGISTERS: usize = 32;
     const RV64_VECTOR_REGISTER_BYTES: usize = 16;
     const RV64_REGISTER_BYTES: usize = (RV64_INTEGER_AND_PC_REGISTERS

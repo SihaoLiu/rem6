@@ -251,11 +251,27 @@ fn riscv_gdb_remote_session_reports_rv64_hart_register_snapshot() {
             .handle_packet(&GdbRemotePacket::new(b"g".to_vec()).unwrap())
             .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(128));
+    assert_eq!(registers.len(), rv64_register_hex_offset(131));
     assert_eq!(&registers[0..16], b"0000000000000000");
     assert_eq!(&registers[16..32], b"efcdab8967452301");
     assert_eq!(&registers[10 * 16..11 * 16], b"1032547698badcfe");
     assert_eq!(&registers[32 * 16..33 * 16], b"1122334455667788");
+    assert_eq!(
+        &registers[rv64_register_hex_range(127)],
+        b"0000000000000000"
+    );
+    assert_eq!(
+        &registers[rv64_register_hex_range(128)],
+        b"0000000000000000"
+    );
+    assert_eq!(
+        &registers[rv64_register_hex_range(129)],
+        b"0000000000000000"
+    );
+    assert_eq!(
+        &registers[rv64_register_hex_range(130)],
+        b"0000000000000000"
+    );
 
     assert_eq!(
         packet_payload(
@@ -291,6 +307,12 @@ fn riscv_gdb_remote_session_reports_rv64_hart_register_snapshot() {
     );
 }
 
+fn rv64_register_hex_range(number: u64) -> std::ops::Range<usize> {
+    let start = rv64_register_hex_offset(number);
+    let end = rv64_register_hex_offset(number + 1);
+    start..end
+}
+
 fn rv64_register_hex_offset(number: u64) -> usize {
     let byte_offset = match number {
         0..=32 => number * 8,
@@ -298,7 +320,7 @@ fn rv64_register_hex_offset(number: u64) -> usize {
         66..=69 => (33 * 8) + (32 * 8) + ((number - 66) * 4),
         70..=89 => (33 * 8) + (32 * 8) + (4 * 4) + ((number - 70) * 8),
         90..=121 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + ((number - 90) * 16),
-        122..=128 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
+        122..=131 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
         _ => panic!("unsupported RV64 GDB register number"),
     };
     byte_offset as usize * 2

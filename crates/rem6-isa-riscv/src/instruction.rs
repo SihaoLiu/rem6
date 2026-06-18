@@ -1,7 +1,8 @@
 use crate::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryWidth, Register, RiscvCounterCsr,
-    RiscvFenceSet, RiscvFloatCsr, RiscvFloatRoundingMode, RiscvInterruptCsr, RiscvMachineTrapCsr,
-    RiscvPseudoOp, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr, VectorRegister,
+    RiscvFenceSet, RiscvFloatCsr, RiscvFloatRoundingMode, RiscvInterruptCsr,
+    RiscvMachineIdentityCsr, RiscvMachineTrapCsr, RiscvPseudoOp, RiscvStatusCsr,
+    RiscvSupervisorTrapCsr, RiscvTranslationCsr, VectorRegister,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1049,8 +1050,12 @@ pub enum RiscvInstruction {
     Gem5PseudoOp {
         op: RiscvPseudoOp,
     },
-    ReadMachineHartId {
+    ReadMachineIdentityCsr {
         rd: Register,
+        csr: RiscvMachineIdentityCsr,
+    },
+    WriteMachineIdentityCsr {
+        csr: RiscvMachineIdentityCsr,
     },
     ReadCounterCsr {
         rd: Register,

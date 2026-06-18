@@ -29,6 +29,10 @@ fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
         | opcode
 }
 
+fn csr_type(csr: u32, rs1_or_zimm: u8, funct3: u32, rd: u8) -> u32 {
+    (csr << 20) | (u32::from(rs1_or_zimm) << 15) | (funct3 << 12) | (u32::from(rd) << 7) | 0x73
+}
+
 fn word(raw: u32) -> Vec<u8> {
     raw.to_le_bytes().to_vec()
 }
@@ -265,6 +269,38 @@ fn riscv_core_supervisor_syscall_return_resets_fetch_stream_to_return_pc() {
         drive_one_action(&core, store, &mut scheduler, &transport),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
+}
+
+#[test]
+fn riscv_core_traps_machine_identity_csr_write_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.set_machine_trap_vector(0x9000);
+    core.write_register(reg(1), 0xffff);
+    let raw = csr_type(0xf11, 1, 0x1, 5);
+    let store = loaded_program(0x8000, &[raw, i_type(7, 0, 0x0, 6, 0x13)]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(event) = action else {
+        panic!("expected illegal CSR write to retire as a trap");
+    };
+
+    assert_eq!(event.instruction(), RiscvInstruction::decode(raw).unwrap());
+    assert_eq!(
+        event.execution().trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8000))
+    );
+    assert_eq!(core.pc(), Address::new(0x9000));
+    assert_eq!(core.inner().pc(), Address::new(0x9000));
+    assert_eq!(core.machine_exception_pc(), 0x8000);
+    assert_eq!(core.machine_trap_cause(), 2);
+    assert_eq!(core.pending_trap(), event.execution().trap().copied());
+    assert_eq!(core.read_register(reg(5)), 0);
 }
 
 #[test]
