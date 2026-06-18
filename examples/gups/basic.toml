@@ -1,0 +1,8 @@
+[gups]
+memory_start = 4096
+memory_size = 8
+updates = 2
+max_tick = 40
+stats_format = "json"
+rng_state = 0
+memory_dumps = ["0x1000:8"]

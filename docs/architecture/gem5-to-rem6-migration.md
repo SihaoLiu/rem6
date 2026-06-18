@@ -748,7 +748,7 @@ top-level cache/DRAM micro-run but is not representative, manifest and suite
 acquisition have top-level local-artifact paths, narrow run and trace-replay
 resource handoffs exist, and benchmark orchestration remains absent.
 
-- [x] CLI `run`, `gups`, and `trace-replay` plus TOML configuration have tests; `gups` emits traffic profile summaries from the executed controller.
+- [x] CLI `run`, `gups`, and `trace-replay` plus TOML configuration have tests; a repository `gups` example config runs through the top-level CLI without recompilation, and `gups` emits traffic profile summaries from the executed controller.
 - [x] Workload manifests, resource identity, disk-image construction records, and suite planning exist.
 - [x] CLI workload-resource acquisition consumes a resource executor for manifest required artifacts.
 - [x] CLI workload-resource acquisition consumes a resource executor for suite required artifacts.
@@ -801,8 +801,9 @@ minimal GPU scalar ISA program execution path with completion, queued-workgroup
 snapshot evidence, visible compute-unit assignment, coalesced memory access
 records, top-level `gpu-run` cache/DRAM micro-run evidence routing recorded
 coalesced global memory requests through direct memory or MSI data-cache and
-DRAM-backed runtime stats after GPU workgroup completion, and top-level GUPS
-traffic profile JSON/stats output.
+DRAM-backed runtime stats after GPU workgroup completion, a checked-in GUPS
+example TOML that runs through the top-level CLI without recompilation, and
+top-level GUPS traffic profile JSON/stats output.
 
 **Not migrated:** Full gem5 stdlib ergonomics, host/network/archive resource
 acquisition beyond the host-file, tar-entry, gzip-tar-entry,
@@ -829,10 +830,11 @@ run` remote-uri runtime rejection tests, `rem6 trace-replay` manifest and suite
 resource-config handoff tests including TOML and CLI
 `suite-resource:<workload>/<resource>` same-name trace selection, `rem6
 trace-replay` remote-uri runtime rejection
-tests, suite tests, resource acquisition executor tests, `rem6 gups`
-profile-summary CLI tests, GPU and accelerator topology tests, GPU compute
-tests covering scalar ISA execution, coalesced memory records, and snapshot
-restore of queued ISA programs, and `rem6 gpu-run` CLI smoke coverage with
+tests, suite tests, resource acquisition executor tests, repository GUPS
+example-config CLI test, `rem6 gups` profile-summary CLI tests, GPU and
+accelerator topology tests, GPU compute tests covering scalar ISA execution,
+coalesced memory records, and snapshot restore of queued ISA programs, and
+`rem6 gpu-run` CLI smoke coverage with
 direct-memory store/dump evidence plus MSI cache-run, DRAM read, and transport
 stats from recorded coalesced GPU global memory requests.
 
@@ -859,7 +861,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, and text stats output tests exist. | Add config-driven file layouts for full-system manifests and multi-artifact workloads. |
 | `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line and conditional-branch fetch-ahead, pending-fetch retire overlap for older completed straight-line fetches, issued fetch-ahead occupancy in in-order timing before response completion, branch speculation history repair/commit, completed younger fetch squash, per-retired-instruction in-order stage timing stats, top-level fetch/data wait stats, top-level in-order cycle-plan advance/block/flush stats, top-level branch redirect/misprediction/branch-prediction-flush stats, and O3 policies exist. | Add broader in-order stalls/squashes and ROB/LSQ-backed O3 execution tests. |
 | `tests/gem5/dram_lowp` | `rem6-dram`, `rem6-power` | 40% single-axis | DRAM/NVM profile counters and low-power constants are surfaced. | Add executable low-power state transition tests through routed requests. |
-| `tests/gem5/example_configs`, `tests/gem5/learning_gem5` | `rem6` CLI, `rem6-platform`, `rem6-workload` | 40% single-axis | CLI and TOML tests cover several execution and trace-replay paths. | Add rem6 examples that run from data files without recompilation. |
+| `tests/gem5/example_configs`, `tests/gem5/learning_gem5` | `rem6` CLI, `rem6-platform`, `rem6-workload` | 40% single-axis | CLI and TOML tests cover several execution and trace-replay paths, including a checked-in GUPS example config that runs without recompilation. | Add broader example suites spanning run, trace replay, resources, and full-system handoff. |
 | `tests/gem5/fdp_tests` | `rem6-cache` | 45% single-axis | Fetch-directed prefetcher state, errors, and cache-local queue/translation counters have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |
 | `tests/gem5/fs` | `rem6-platform`, `rem6-system`, device crates | 15% scoped | Generic device and handoff slices exist, but the gem5 row is mainly full-system boot. | Add full-system Linux boot with SBI, console, storage, network, timer, and shutdown evidence. |
 | `tests/gem5/gem5_resources` | `rem6-workload`, `rem6` CLI | 58% single-axis | Resource declarations, identity, provenance, disk-image construction records, library-level in-memory acquisition executor records, manifest/suite-level `rem6 resource-acquire` execution with local-artifact, host-file, uncompressed/gzip tar-entry, stored/deflated ZIP-entry, generated zero-fill artifact, and content-checked basic, chunked, and redirected HTTP remote inputs, plus manifest run-kernel, unique-suite run-kernel, `suite-resource:<workload>/<resource>` suite readfile/load-blob payloads, generated zero-fill load-blob memory dump coverage, and manifest plus unique/selected-suite trace-replay resource-config handoff through TOML or CLI selector exist. | Add broader network-backed, broader archive/artifact acquisition, and suite runtime handoff beyond the current selector-based slices. |

@@ -6,6 +6,8 @@ mod data;
 mod data_cache_multicore;
 #[path = "cli_run/debug_flags.rs"]
 mod debug_flags;
+#[path = "cli_run/examples.rs"]
+mod examples;
 #[path = "cli_run/execution.rs"]
 mod execution;
 #[path = "cli_run/gdb.rs"]
