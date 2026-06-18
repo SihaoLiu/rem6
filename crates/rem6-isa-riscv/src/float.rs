@@ -103,11 +103,13 @@ pub(crate) fn exact_finite_single_add_sub_bits(
     add_sub::exact_finite_single_bits(lhs, rhs, rounding_mode, subtract)
 }
 
-pub(crate) fn exact_finite_double_add_bits(
+pub(crate) fn exact_finite_double_add_sub_bits(
     lhs: u64,
     rhs: u64,
     rounding_mode: RiscvFloatRoundingMode,
+    subtract: bool,
 ) -> Option<u64> {
+    let rhs = if subtract { rhs ^ DOUBLE_SIGN_BIT } else { rhs };
     let result = (f64::from_bits(lhs) + f64::from_bits(rhs)).to_bits();
     let target_shift = finite_double_common_shift([lhs, rhs, result])?;
     let lhs_exact = finite_double_scaled_integer(lhs, target_shift)?;

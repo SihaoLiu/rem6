@@ -919,8 +919,13 @@ fn exact_f64_binary(
     rounding_mode: RiscvFloatRoundingMode,
 ) -> Option<u64> {
     match operation {
-        FloatBinaryOp::Add => float::exact_finite_double_add_bits(lhs, rhs, rounding_mode),
-        FloatBinaryOp::Sub | FloatBinaryOp::Mul | FloatBinaryOp::Div => None,
+        FloatBinaryOp::Add | FloatBinaryOp::Sub => float::exact_finite_double_add_sub_bits(
+            lhs,
+            rhs,
+            rounding_mode,
+            matches!(operation, FloatBinaryOp::Sub),
+        ),
+        FloatBinaryOp::Mul | FloatBinaryOp::Div => None,
         FloatBinaryOp::ReverseSub | FloatBinaryOp::ReverseDiv => {
             unreachable!("reverse operations are scalar-only")
         }

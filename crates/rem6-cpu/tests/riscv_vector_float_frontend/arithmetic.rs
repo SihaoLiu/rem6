@@ -421,7 +421,107 @@ fn riscv_core_driver_executes_vfsub_vv_from_fetch_stream() {
 }
 
 #[test]
-fn riscv_core_driver_traps_vfsub_vv_e64_without_destination_write() {
+fn riscv_core_driver_executes_vfsub_vv_e64_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 2);
+    core.write_vector_register(
+        vreg(1),
+        lanes_u64_bits([0.5f64.to_bits(), 5.5f64.to_bits()]),
+    );
+    core.write_vector_register(
+        vreg(2),
+        lanes_u64_bits([1.0f64.to_bits(), 2.0f64.to_bits()]),
+    );
+    core.write_vector_register(
+        vreg(3),
+        lanes_u64_bits([0xdead_beef_dead_beef, 12.0f64.to_bits()]),
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd8, 10, 5),
+            vfsub_vv_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd8,
+        }
+    );
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(2, 0xd8));
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::SubVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_u64_bits([0.5f64.to_bits(), (-3.5f64).to_bits()])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfsub_vv_e64_round_down_cancellation_to_negative_zero() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 2);
+    core.set_float_status(RiscvFloatStatus::new(0).with_frm(2));
+    core.write_vector_register(
+        vreg(1),
+        lanes_u64_bits([1.0f64.to_bits(), (-2.5f64).to_bits()]),
+    );
+    core.write_vector_register(
+        vreg(2),
+        lanes_u64_bits([1.0f64.to_bits(), (-2.5f64).to_bits()]),
+    );
+    core.write_vector_register(
+        vreg(3),
+        lanes_u64_bits([0xdead_beef_dead_beef, 12.0f64.to_bits()]),
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd8, 10, 5),
+            vfsub_vv_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd8,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::SubVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_u64_bits([(-0.0f64).to_bits(), (-0.0f64).to_bits()])
+    );
+}
+
+#[test]
+fn riscv_core_driver_traps_vfsub_vv_e64_inexact_without_destination_write() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);
     core.write_register(reg(10), 2);
@@ -432,7 +532,7 @@ fn riscv_core_driver_traps_vfsub_vv_e64_without_destination_write() {
     );
     core.write_vector_register(
         vreg(2),
-        lanes_u64_bits([0.5f64.to_bits(), 1.0f64.to_bits()]),
+        lanes_u64_bits([(f64::EPSILON / 4.0).to_bits(), 1.0f64.to_bits()]),
     );
     core.write_vector_register(
         vreg(3),
