@@ -4,7 +4,7 @@ use rem6_system::SystemActionOutcome;
 pub(crate) struct Rem6HostActionSummary {
     pub(crate) total_action_count: u64,
     pub(crate) injected_command_count: u64,
-    pub(crate) guest_host_call_count: u64,
+    pub(crate) guest_host_calls: Vec<Rem6GuestHostCallSummary>,
     pub(crate) roi_begin: Vec<Rem6HostWorkMarkerSummary>,
     pub(crate) roi_end: Vec<Rem6HostWorkMarkerSummary>,
     pub(crate) stats_reset_count: u64,
@@ -26,8 +26,26 @@ impl Rem6HostActionSummary {
                 SystemActionOutcome::InjectedCommand { .. } => {
                     summary.injected_command_count += 1;
                 }
-                SystemActionOutcome::GuestHostCall { .. } => {
-                    summary.guest_host_call_count += 1;
+                SystemActionOutcome::GuestHostCall {
+                    tick,
+                    event,
+                    source,
+                    selector,
+                    arguments,
+                    payload,
+                    response,
+                } => {
+                    summary.guest_host_calls.push(Rem6GuestHostCallSummary {
+                        tick: *tick,
+                        event: event.get(),
+                        source: source.get(),
+                        selector: *selector,
+                        argument_count: arguments.len() as u64,
+                        payload_bytes: payload.len() as u64,
+                        response_status: response.status(),
+                        response_return_count: response.return_values().len() as u64,
+                        response_payload_bytes: response.payload().len() as u64,
+                    });
                 }
                 SystemActionOutcome::RoiBegin {
                     tick,
@@ -86,6 +104,19 @@ impl Rem6HostActionSummary {
         }
         summary
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6GuestHostCallSummary {
+    pub(crate) tick: u64,
+    pub(crate) event: u64,
+    pub(crate) source: u32,
+    pub(crate) selector: u64,
+    pub(crate) argument_count: u64,
+    pub(crate) payload_bytes: u64,
+    pub(crate) response_status: i32,
+    pub(crate) response_return_count: u64,
+    pub(crate) response_payload_bytes: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

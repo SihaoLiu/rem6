@@ -3,9 +3,9 @@ use super::formatting::{
 };
 use super::{
     Rem6CoreSummary, Rem6DataAccessProbeSummary, Rem6DramSummary, Rem6ExecutionStop,
-    Rem6ExecutionSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary, Rem6HostActionSummary,
-    Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary, Rem6InstructionProbeSummary,
-    Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
+    Rem6ExecutionSummary, Rem6GuestHostCallSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary,
+    Rem6HostActionSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
+    Rem6InstructionProbeSummary, Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
     Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary,
     Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6ReadfileSummary,
     Rem6RiscvGuestWriteSummary, Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact,
@@ -1041,6 +1041,12 @@ impl Rem6RiscvUnknownSyscallSummary {
 
 impl Rem6HostActionSummary {
     fn to_json(&self) -> String {
+        let guest_host_calls = self
+            .guest_host_calls
+            .iter()
+            .map(Rem6GuestHostCallSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         let roi_begin = self
             .roi_begin
             .iter()
@@ -1060,10 +1066,10 @@ impl Rem6HostActionSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"total_action_count\":{},\"injected_command_count\":{},\"guest_host_call_count\":{},\"roi_begin_count\":{},\"roi_end_count\":{},\"stats_reset_count\":{},\"stats_dump_count\":{},\"checkpoint_count\":{},\"checkpoint_restored_count\":{},\"execution_mode_switch_count\":{},\"stop_count\":{},\"roi_begin\":[{}],\"roi_end\":[{}],\"stops\":[{}]}}",
+            "{{\"total_action_count\":{},\"injected_command_count\":{},\"guest_host_call_count\":{},\"roi_begin_count\":{},\"roi_end_count\":{},\"stats_reset_count\":{},\"stats_dump_count\":{},\"checkpoint_count\":{},\"checkpoint_restored_count\":{},\"execution_mode_switch_count\":{},\"stop_count\":{},\"guest_host_calls\":[{}],\"roi_begin\":[{}],\"roi_end\":[{}],\"stops\":[{}]}}",
             self.total_action_count,
             self.injected_command_count,
-            self.guest_host_call_count,
+            self.guest_host_calls.len(),
             self.roi_begin.len(),
             self.roi_end.len(),
             self.stats_reset_count,
@@ -1072,9 +1078,27 @@ impl Rem6HostActionSummary {
             self.checkpoint_restored_count,
             self.execution_mode_switch_count,
             self.stops.len(),
+            guest_host_calls,
             roi_begin,
             roi_end,
             stops,
+        )
+    }
+}
+
+impl Rem6GuestHostCallSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"tick\":{},\"event\":{},\"source\":{},\"selector\":{},\"argument_count\":{},\"payload_bytes\":{},\"response_status\":{},\"response_return_count\":{},\"response_payload_bytes\":{}}}",
+            self.tick,
+            self.event,
+            self.source,
+            self.selector,
+            self.argument_count,
+            self.payload_bytes,
+            self.response_status,
+            self.response_return_count,
+            self.response_payload_bytes,
         )
     }
 }
