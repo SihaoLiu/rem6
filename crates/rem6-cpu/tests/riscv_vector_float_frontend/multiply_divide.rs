@@ -250,11 +250,10 @@ fn riscv_core_driver_executes_vfdiv_vv_from_fetch_stream() {
 }
 
 #[test]
-fn riscv_core_driver_traps_vfdiv_vv_e64_without_destination_write() {
+fn riscv_core_driver_executes_vfdiv_vv_e64_from_fetch_stream() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);
     core.write_register(reg(10), 2);
-    core.set_machine_trap_vector(0x9000);
     core.write_vector_register(
         vreg(1),
         lanes_u64_bits([2.0f64.to_bits(), (-4.0f64).to_bits()]),
@@ -263,6 +262,209 @@ fn riscv_core_driver_traps_vfdiv_vv_e64_without_destination_write() {
         vreg(2),
         lanes_u64_bits([8.0f64.to_bits(), 8.0f64.to_bits()]),
     );
+    core.write_vector_register(
+        vreg(3),
+        lanes_u64_bits([0xdead_beef_dead_beef, 12.0f64.to_bits()]),
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd8, 10, 5),
+            vfdiv_vv_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd8,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::DivVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_u64_bits([4.0f64.to_bits(), (-2.0f64).to_bits()])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfdiv_vv_e64_signed_zero_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 2);
+    core.write_vector_register(
+        vreg(1),
+        lanes_u64_bits([2.0f64.to_bits(), (-2.0f64).to_bits()]),
+    );
+    core.write_vector_register(
+        vreg(2),
+        lanes_u64_bits([(-0.0f64).to_bits(), 0.0f64.to_bits()]),
+    );
+    core.write_vector_register(
+        vreg(3),
+        lanes_u64_bits([0xdead_beef_dead_beef, 12.0f64.to_bits()]),
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd8, 10, 5),
+            vfdiv_vv_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd8,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::DivVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_u64_bits([(-0.0f64).to_bits(), (-0.0f64).to_bits()])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfdiv_vv_e64_exact_subnormal_quotient_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 2);
+    core.write_vector_register(
+        vreg(1),
+        lanes_u64_bits([2.0f64.to_bits(), 4.0f64.to_bits()]),
+    );
+    core.write_vector_register(
+        vreg(2),
+        lanes_u64_bits([
+            f64::from_bits(0x0000_0000_0000_0002).to_bits(),
+            f64::from_bits(0x0000_0000_0000_0004).to_bits(),
+        ]),
+    );
+    core.write_vector_register(
+        vreg(3),
+        lanes_u64_bits([0xdead_beef_dead_beef, 12.0f64.to_bits()]),
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd8, 10, 5),
+            vfdiv_vv_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd8,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::DivVv {
+            vd: vreg(3),
+            vs1: vreg(1),
+            vs2: vreg(2),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_u64_bits([
+            f64::from_bits(0x0000_0000_0000_0001).to_bits(),
+            f64::from_bits(0x0000_0000_0000_0001).to_bits(),
+        ])
+    );
+}
+
+#[test]
+fn riscv_core_driver_traps_vfdiv_vv_e64_inexact_without_destination_write() {
+    assert_vfdiv_vv_e64_traps_without_destination_write(
+        [3.0f64.to_bits(), 2.0f64.to_bits()],
+        [1.0f64.to_bits(), 8.0f64.to_bits()],
+    );
+}
+
+#[test]
+fn riscv_core_driver_traps_vfdiv_vv_e64_late_inexact_without_partial_destination_write() {
+    assert_vfdiv_vv_e64_traps_without_destination_write(
+        [2.0f64.to_bits(), 3.0f64.to_bits()],
+        [8.0f64.to_bits(), 1.0f64.to_bits()],
+    );
+}
+
+#[test]
+fn riscv_core_driver_traps_vfdiv_vv_e64_zero_divisor_without_destination_write() {
+    assert_vfdiv_vv_e64_traps_without_destination_write(
+        [0.0f64.to_bits(), 2.0f64.to_bits()],
+        [1.0f64.to_bits(), 8.0f64.to_bits()],
+    );
+}
+
+#[test]
+fn riscv_core_driver_traps_vfdiv_vv_e64_negative_zero_divisor_without_destination_write() {
+    assert_vfdiv_vv_e64_traps_without_destination_write(
+        [(-0.0f64).to_bits(), 2.0f64.to_bits()],
+        [1.0f64.to_bits(), 8.0f64.to_bits()],
+    );
+}
+
+#[test]
+fn riscv_core_driver_traps_vfdiv_vv_e64_nonfinite_without_destination_write() {
+    assert_vfdiv_vv_e64_traps_without_destination_write(
+        [1.0f64.to_bits(), 2.0f64.to_bits()],
+        [f64::INFINITY.to_bits(), 8.0f64.to_bits()],
+    );
+}
+
+#[test]
+fn riscv_core_driver_traps_vfdiv_vv_e64_overflow_without_destination_write() {
+    assert_vfdiv_vv_e64_traps_without_destination_write(
+        [0.5f64.to_bits(), 2.0f64.to_bits()],
+        [f64::MAX.to_bits(), 8.0f64.to_bits()],
+    );
+}
+
+#[test]
+fn riscv_core_driver_traps_vfdiv_vv_e64_underflow_to_zero_without_destination_write() {
+    assert_vfdiv_vv_e64_traps_without_destination_write(
+        [f64::MAX.to_bits(), 2.0f64.to_bits()],
+        [f64::MIN_POSITIVE.to_bits(), 8.0f64.to_bits()],
+    );
+}
+
+fn assert_vfdiv_vv_e64_traps_without_destination_write(denominator: [u64; 2], numerator: [u64; 2]) {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 2);
+    core.set_machine_trap_vector(0x9000);
+    core.write_vector_register(vreg(1), lanes_u64_bits(denominator));
+    core.write_vector_register(vreg(2), lanes_u64_bits(numerator));
     core.write_vector_register(
         vreg(3),
         lanes_u64_bits([0xdead_beef_dead_beef, 12.0f64.to_bits()]),

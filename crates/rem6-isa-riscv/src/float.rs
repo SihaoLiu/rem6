@@ -127,6 +127,10 @@ pub(crate) fn exact_finite_double_mul_bits(lhs: u64, rhs: u64) -> Option<u64> {
     double_exact::mul_bits(lhs, rhs)
 }
 
+pub(crate) fn exact_finite_double_div_bits(lhs: u64, rhs: u64) -> Option<u64> {
+    double_exact::div_bits(lhs, rhs)
+}
+
 pub(crate) fn exact_finite_single_mul_add_bits(
     lhs: u32,
     rhs: u32,
