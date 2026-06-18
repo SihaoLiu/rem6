@@ -43,6 +43,7 @@ mod power_output;
 mod readfile_runtime;
 mod resource_acquire_cli;
 mod resource_acquire_config;
+mod riscv_checkpoint_runtime;
 mod riscv_guest_output;
 mod riscv_run_driver;
 mod run_gdb;
@@ -71,8 +72,9 @@ pub use gpu_cli::{run_gpu_run_config, Rem6GpuRunArtifact, Rem6GpuRunConfig};
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
 pub(crate) use host_actions::{
-    Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostStatsDumpSummary,
-    Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
+    Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointSummary,
+    Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary, Rem6HostStopActionSummary,
+    Rem6HostWorkMarkerSummary,
 };
 use parallel_stats::{
     parallel_frontier_summaries, parallel_partition_summaries, parallel_ready_partition_summaries,
@@ -88,6 +90,7 @@ pub use resource_acquire_cli::{
     run_resource_acquire_config, Rem6ResourceAcquireArtifact, Rem6ResourceAcquireResourceSummary,
 };
 pub use resource_acquire_config::{Rem6ResourceAcquireConfig, Rem6ResourceAcquireResourceConfig};
+use riscv_checkpoint_runtime::attach_cli_riscv_checkpoint_bank;
 pub(crate) use riscv_guest_output::{Rem6RiscvGuestWriteSummary, Rem6RiscvUnknownSyscallSummary};
 use riscv_run_driver::drive_cli_riscv_run;
 use run_gdb::{serve_riscv_gdb_with_run_control, RiscvGdbServeOutcome};
@@ -737,6 +740,7 @@ fn execute_riscv(
         HostEventPolicy,
         StatsRegistry::new(),
     )));
+    attach_cli_riscv_checkpoint_bank(&controller, &cluster)?;
     let trap_port = RiscvTrapEventPort::new(
         SystemHostEventPort::with_controller(
             host_partition,

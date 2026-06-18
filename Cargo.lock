@@ -156,6 +156,7 @@ dependencies = [
  "flate2",
  "rem6-boot",
  "rem6-cache",
+ "rem6-checkpoint",
  "rem6-coherence",
  "rem6-cpu",
  "rem6-debug",

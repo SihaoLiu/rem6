@@ -10,7 +10,7 @@ pub(crate) struct Rem6HostActionSummary {
     pub(crate) roi_end: Vec<Rem6HostWorkMarkerSummary>,
     pub(crate) stats_resets: Vec<Rem6HostStatsResetSummary>,
     pub(crate) stats_dumps: Vec<Rem6HostStatsDumpSummary>,
-    pub(crate) checkpoint_count: u64,
+    pub(crate) checkpoints: Vec<Rem6HostCheckpointSummary>,
     pub(crate) checkpoint_restored_count: u64,
     pub(crate) execution_mode_switch_count: u64,
     pub(crate) stops: Vec<Rem6HostStopActionSummary>,
@@ -88,8 +88,23 @@ impl Rem6HostActionSummary {
                         .stats_dumps
                         .push(Rem6HostStatsDumpSummary::from_record(record));
                 }
-                SystemActionOutcome::Checkpoint { .. } => {
-                    summary.checkpoint_count += 1;
+                SystemActionOutcome::Checkpoint {
+                    tick,
+                    event,
+                    source,
+                    manifest,
+                } => {
+                    let manifest_summary = manifest.summary();
+                    summary.checkpoints.push(Rem6HostCheckpointSummary {
+                        tick: *tick,
+                        event: event.get(),
+                        source: source.get(),
+                        label: manifest.label().to_string(),
+                        manifest_tick: manifest.tick(),
+                        component_count: manifest_summary.component_count() as u64,
+                        chunk_count: manifest_summary.chunk_count() as u64,
+                        payload_bytes: manifest_summary.payload_bytes() as u64,
+                    });
                 }
                 SystemActionOutcome::CheckpointRestored { .. } => {
                     summary.checkpoint_restored_count += 1;
@@ -167,6 +182,18 @@ impl Rem6HostStatsDumpSummary {
             reset_tick: record.reset_tick(),
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6HostCheckpointSummary {
+    pub(crate) tick: u64,
+    pub(crate) event: u64,
+    pub(crate) source: u32,
+    pub(crate) label: String,
+    pub(crate) manifest_tick: u64,
+    pub(crate) component_count: u64,
+    pub(crate) chunk_count: u64,
+    pub(crate) payload_bytes: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
