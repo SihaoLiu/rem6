@@ -1,15 +1,17 @@
 use std::cmp;
+use std::path::Path;
 
 use rem6_boot::BootImage;
 use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout};
 use rem6_system::RiscvWorkloadReplay;
 use rem6_traffic::TrafficTrace;
 use rem6_workload::{
-    WorkloadDataCacheProtocol, WorkloadHostPlacement, WorkloadId, WorkloadManifest,
-    WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadParallelExecutionSummary,
-    WorkloadReplayPlan, WorkloadResolvedResources, WorkloadResource, WorkloadResourceId,
-    WorkloadResourceKind, WorkloadResourcePayload, WorkloadRiscvDataCache, WorkloadRouteFabric,
-    WorkloadRouteId, WorkloadTopology, WorkloadTrafficTraceReplayRun,
+    WorkloadAcquiredResource, WorkloadAcquiredSuiteResource, WorkloadDataCacheProtocol,
+    WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResolvedResources,
+    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResourcePayload,
+    WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteId, WorkloadTopology,
+    WorkloadTrafficTraceReplayRun,
 };
 use sha2::{Digest, Sha256};
 
@@ -168,33 +170,30 @@ fn trace_replay_payload(
         reject_runtime_remote_uri_resources("trace-replay", resource_config, &acquire_config)?;
         if acquire_config.suite_id().is_some() {
             let (_plan, acquired) = acquire_suite_required_resources(&acquire_config)?;
-            let mut trace_payloads = if let Some(selector) = config.trace_resource() {
+            let mut trace_resources = if let Some(selector) = config.trace_resource() {
                 acquired
                     .into_iter()
                     .filter(|resource| {
                         resource.workload_id().as_str() == selector.workload_id()
                             && resource.acquired().resource().as_str() == selector.resource_id()
                     })
-                    .map(|resource| resource.into_acquired().into_payload())
                     .collect::<Vec<_>>()
             } else {
                 acquired
                     .into_iter()
                     .filter(|resource| resource.acquired().resource() == trace_resource)
-                    .map(|resource| resource.into_acquired().into_payload())
                     .collect::<Vec<_>>()
             };
-            if trace_payloads.len() != 1 {
+            if trace_resources.len() != 1 {
                 return Err(Rem6CliError::Execute {
                     error: format!(
                         "trace replay suite resource config {} acquired {} required trace resources; expected exactly one",
                         resource_config.display(),
-                        trace_payloads.len(),
+                        trace_resources.len(),
                     ),
                 });
             }
-            let payload = trace_payloads.remove(0);
-            return Ok(payload.data().to_vec());
+            return trace_payload_from_suite_resource(resource_config, trace_resources.remove(0));
         }
         if let Some(selector) = config.trace_resource() {
             return Err(Rem6CliError::Execute {
@@ -205,7 +204,7 @@ fn trace_replay_payload(
             });
         }
         let (_manifest, acquired) = acquire_manifest_required_resources(&acquire_config)?;
-        let payload = acquired
+        let resource = acquired
             .into_iter()
             .find(|resource| resource.resource() == trace_resource)
             .ok_or_else(|| Rem6CliError::Execute {
@@ -213,15 +212,51 @@ fn trace_replay_payload(
                     "trace replay resource config {} did not acquire required trace resource",
                     resource_config.display()
                 ),
-            })?
-            .into_payload();
-        return Ok(payload.data().to_vec());
+            })?;
+        return trace_payload_from_resource(resource_config, resource);
     }
 
     std::fs::read(config.trace()).map_err(|error| Rem6CliError::ReadBinary {
         path: config.trace().to_path_buf(),
         error: error.to_string(),
     })
+}
+
+fn trace_payload_from_resource(
+    resource_config: &Path,
+    resource: WorkloadAcquiredResource,
+) -> Result<Vec<u8>, Rem6CliError> {
+    let resource_id = resource.resource().as_str().to_string();
+    let kind = resource.kind();
+    if kind != WorkloadResourceKind::Input {
+        return Err(Rem6CliError::Execute {
+            error: format!(
+                "trace resource {resource_id} in trace replay resource config {} has kind {}; expected input",
+                resource_config.display(),
+                kind.as_str(),
+            ),
+        });
+    }
+    Ok(resource.into_payload().data().to_vec())
+}
+
+fn trace_payload_from_suite_resource(
+    resource_config: &Path,
+    resource: WorkloadAcquiredSuiteResource,
+) -> Result<Vec<u8>, Rem6CliError> {
+    let workload_id = resource.workload_id().as_str().to_string();
+    let resource_id = resource.acquired().resource().as_str().to_string();
+    let kind = resource.acquired().kind();
+    if kind != WorkloadResourceKind::Input {
+        return Err(Rem6CliError::Execute {
+            error: format!(
+                "trace suite resource {workload_id}/{resource_id} in trace replay resource config {} has kind {}; expected input",
+                resource_config.display(),
+                kind.as_str(),
+            ),
+        });
+    }
+    Ok(resource.into_acquired().into_payload().data().to_vec())
 }
 
 fn trace_replay_manifest(

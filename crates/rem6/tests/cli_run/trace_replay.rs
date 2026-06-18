@@ -687,6 +687,76 @@ fn rem6_trace_replay_loads_trace_payload_from_resource_config() {
 }
 
 #[test]
+fn rem6_trace_replay_rejects_non_input_trace_resource_config() {
+    let workspace = temp_workspace("trace-replay-resource-config-non-input");
+    let trace_dir = workspace.join("artifacts");
+    std::fs::create_dir(&trace_dir).unwrap();
+    std::fs::write(
+        trace_dir.join("trace.pb"),
+        packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    )
+    .unwrap();
+    let resource_config = workspace.join("resource-acquire.toml");
+    std::fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+workload_id = "trace-resource-cli"
+boot_entry = 4096
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "trace"
+kind = "kernel"
+digest = "sha256:trace-resource"
+locator = "resources/trace.pb"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://trace"
+artifact = "artifacts/trace.pb"
+artifact_digest = "sha256:trace-resource"
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("trace-replay.toml");
+    std::fs::write(
+        &config,
+        "[trace_replay]\nresource_config = \"resource-acquire.toml\"\nroute = \"cpu0.resource\"\nmemory_start = 4096\nmemory_size = 4096\nmax_tick = 64\ntick_frequency = 1000\nline_bytes = 64\nagent = 7\ncontrol_partition = 2\nstats_format = \"json\"\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args(["trace-replay", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("trace resource trace"));
+    assert!(stderr.contains("has kind kernel"));
+    assert!(stderr.contains("expected input"));
+}
+
+#[test]
 fn rem6_trace_replay_loads_trace_payload_from_suite_resource_config() {
     let workspace = temp_workspace("trace-replay-suite-resource-config");
     let trace_dir = workspace.join("artifacts");
@@ -788,6 +858,79 @@ artifact_size = 4
         1,
         "monotonic",
     );
+}
+
+#[test]
+fn rem6_trace_replay_rejects_non_input_suite_trace_resource_config() {
+    let workspace = temp_workspace("trace-replay-suite-resource-config-non-input");
+    let trace_dir = workspace.join("artifacts");
+    std::fs::create_dir(&trace_dir).unwrap();
+    std::fs::write(
+        trace_dir.join("trace.pb"),
+        packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    )
+    .unwrap();
+    let resource_config = workspace.join("resource-acquire-suite.toml");
+    std::fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+suite_id = "trace-suite-cli"
+stats_format = "json"
+
+[[resource_acquire.manifests]]
+workload_id = "trace-workload"
+boot_entry = 4096
+
+[[resource_acquire.manifests.resources]]
+id = "trace"
+kind = "kernel"
+digest = "sha256:trace-resource"
+locator = "resources/trace.pb"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://trace"
+artifact = "artifacts/trace.pb"
+artifact_digest = "sha256:trace-resource"
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("trace-replay.toml");
+    std::fs::write(
+        &config,
+        "[trace_replay]\nresource_config = \"resource-acquire-suite.toml\"\ntrace_resource = \"suite-resource:trace-workload/trace\"\nroute = \"cpu0.suite-resource\"\nmemory_start = 4096\nmemory_size = 4096\nmax_tick = 64\ntick_frequency = 1000\nline_bytes = 64\nagent = 7\ncontrol_partition = 2\nstats_format = \"json\"\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args(["trace-replay", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("trace suite resource trace-workload/trace"));
+    assert!(stderr.contains("has kind kernel"));
+    assert!(stderr.contains("expected input"));
 }
 
 #[test]

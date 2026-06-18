@@ -87,6 +87,17 @@ impl RiscvSbiTimerState {
         generation
     }
 
+    fn cancel(&mut self, cpu: CpuId) {
+        let generation = self
+            .generations
+            .get(&cpu)
+            .copied()
+            .unwrap_or_default()
+            .wrapping_add(1);
+        self.generations.insert(cpu, generation);
+        self.deadlines.remove(&cpu);
+    }
+
     fn generation_matches(&self, cpu: CpuId, generation: u64) -> bool {
         self.generations.get(&cpu).copied() == Some(generation)
     }
@@ -695,12 +706,20 @@ impl RiscvSbiFirmware {
         parallel: bool,
     ) -> Result<(), SchedulerError> {
         let cpu = core.id();
+        core.clear_machine_interrupt_pending_bits(STIP);
+        if deadline == u64::MAX {
+            self.timer
+                .lock()
+                .expect("RISC-V SBI timer state lock")
+                .cancel(cpu);
+            return Ok(());
+        }
+
         let generation = self
             .timer
             .lock()
             .expect("RISC-V SBI timer state lock")
             .program(cpu, deadline);
-        core.clear_machine_interrupt_pending_bits(STIP);
 
         let partition = core.partition();
         let now = scheduler.partition_now(partition)?;
