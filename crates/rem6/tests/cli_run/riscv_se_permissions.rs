@@ -360,9 +360,11 @@ int main(void) {
     unsigned char fd_stat_bytes[160];
     unsigned char path_stat_bytes[160];
     unsigned char child_stat_bytes[160];
+    unsigned char fchmodat2_stat_bytes[160];
     fill_bytes(fd_stat_bytes, sizeof(fd_stat_bytes), 0xa5);
     fill_bytes(path_stat_bytes, sizeof(path_stat_bytes), 0xa5);
     fill_bytes(child_stat_bytes, sizeof(child_stat_bytes), 0xa5);
+    fill_bytes(fchmodat2_stat_bytes, sizeof(fchmodat2_stat_bytes), 0xa5);
 
     long fd = linux_syscall4(56, AT_FDCWD, (long)"created.txt",
                              O_WRONLY | O_CREAT | O_TRUNC, 0666);
@@ -386,6 +388,13 @@ int main(void) {
     unsigned int child_mode = child_stat == 0 ? read_u32_le(child_stat_bytes, 16) : 0;
     long dir_close_status = dirfd >= 0 ? linux_syscall1(57, dirfd) : -99;
 
+    long fchmodat2_status = linux_syscall4(452, AT_FDCWD, (long)"sub/mapped.txt", 0660, 0);
+    long fchmodat2_fallback = fchmodat2_status == -38 ?
+        linux_syscall4(53, AT_FDCWD, (long)"sub/mapped.txt", 0660, 0) : 0;
+    long fchmodat2_stat = linux_syscall4(79, AT_FDCWD, (long)"sub/mapped.txt",
+                                         (long)fchmodat2_stat_bytes, 0);
+    unsigned int fchmodat2_mode = fchmodat2_stat == 0 ? read_u32_le(fchmodat2_stat_bytes, 16) : 0;
+
     int ok = fd >= 0 &&
              fchmod_status == 0 &&
              fd_stat == 0 &&
@@ -399,11 +408,23 @@ int main(void) {
              fchmodat_status == 0 &&
              child_stat == 0 &&
              child_mode == 0100640 &&
-             dir_close_status == 0;
-    if (ok && chmod_status == 0) {
-        write_stdout("raw-chmod:direct\n", sizeof("raw-chmod:direct\n") - 1);
-    } else if (ok && chmod_status == -38) {
-        write_stdout("raw-chmod:fallback\n", sizeof("raw-chmod:fallback\n") - 1);
+             dir_close_status == 0 &&
+             ((fchmodat2_status == 0 && fchmodat2_fallback == 0) ||
+              (fchmodat2_status == -38 && fchmodat2_fallback == 0)) &&
+             fchmodat2_stat == 0 &&
+             fchmodat2_mode == 0100660;
+    if (ok && chmod_status == 0 && fchmodat2_status == 0) {
+        write_stdout("raw-chmod:direct:fchmodat2-direct\n",
+                     sizeof("raw-chmod:direct:fchmodat2-direct\n") - 1);
+    } else if (ok && chmod_status == -38 && fchmodat2_status == 0) {
+        write_stdout("raw-chmod:fallback:fchmodat2-direct\n",
+                     sizeof("raw-chmod:fallback:fchmodat2-direct\n") - 1);
+    } else if (ok && chmod_status == 0 && fchmodat2_status == -38) {
+        write_stdout("raw-chmod:direct:fchmodat2-fallback\n",
+                     sizeof("raw-chmod:direct:fchmodat2-fallback\n") - 1);
+    } else if (ok && chmod_status == -38 && fchmodat2_status == -38) {
+        write_stdout("raw-chmod:fallback:fchmodat2-fallback\n",
+                     sizeof("raw-chmod:fallback:fchmodat2-fallback\n") - 1);
     } else {
         write_stdout("raw-chmod:fail\n", sizeof("raw-chmod:fail\n") - 1);
     }
@@ -446,7 +467,12 @@ int main(void) {
         String::from_utf8_lossy(&qemu_output.stdout),
         String::from_utf8_lossy(&qemu_output.stderr)
     );
-    assert_eq!(qemu_output.stdout, b"raw-chmod:fallback\n");
+    let qemu_stdout = String::from_utf8(qemu_output.stdout).unwrap();
+    assert!(
+        qemu_stdout == "raw-chmod:fallback:fchmodat2-direct\n"
+            || qemu_stdout == "raw-chmod:fallback:fchmodat2-fallback\n",
+        "unexpected qemu stdout: {qemu_stdout}"
+    );
 
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
@@ -476,7 +502,7 @@ int main(void) {
     assert!(stdout.contains("\"status\":\"stopped_by_host\""));
     assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
     assert!(stdout.contains("\"stop_code\":54"));
-    assert!(stdout.contains("\"text\":\"raw-chmod:direct\\n\""));
+    assert!(stdout.contains("\"text\":\"raw-chmod:direct:fchmodat2-direct\\n\""));
     assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
     assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
     assert_stat(&stdout, "sim.stop_code", "Count", 54, "constant");

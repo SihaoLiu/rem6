@@ -15,7 +15,10 @@ pub(super) const RISCV_LINUX_FCHMODAT: u64 = 53;
 pub(super) const RISCV_LINUX_FCHOWNAT: u64 = 54;
 pub(super) const RISCV_LINUX_FCHOWN: u64 = 55;
 pub(super) const RISCV_LINUX_UMASK: u64 = 166;
+pub(super) const RISCV_LINUX_FCHMODAT2: u64 = 452;
 pub(super) const RISCV_NEWLIB_LEGACY_CHMOD: u64 = 1028;
+const RISCV_LINUX_CHMODAT2_VALID_FLAGS: u64 =
+    RISCV_LINUX_AT_EMPTY_PATH | RISCV_LINUX_AT_SYMLINK_NOFOLLOW;
 const RISCV_LINUX_CHOWNAT_VALID_FLAGS: u64 =
     RISCV_LINUX_AT_EMPTY_PATH | RISCV_LINUX_AT_SYMLINK_NOFOLLOW;
 const RISCV_LINUX_CHOWN_NO_CHANGE: u64 = u64::MAX;
@@ -71,6 +74,40 @@ pub(super) fn syscall_fchmodat(
         Ok(path) => path,
         Err(error) => return error,
     };
+    let path = match resolve_chmod_path(request.argument(0), &path, state) {
+        Ok(path) => path,
+        Err(error) => return error,
+    };
+    chmod_path(&path, request.argument(2), state)
+}
+
+pub(super) fn syscall_fchmodat2(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> u64 {
+    let flags = request.argument(3);
+    if flags & !RISCV_LINUX_CHMODAT2_VALID_FLAGS != 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+
+    let path = match read_chmod_path(request.argument(1), guest_memory) {
+        Ok(path) => path,
+        Err(error) => return error,
+    };
+    if path.is_empty() {
+        if flags & RISCV_LINUX_AT_EMPTY_PATH == 0 {
+            return linux_error(RISCV_LINUX_ENOENT);
+        }
+        let Some(fd) = guest_fd_argument(request.argument(0)) else {
+            return linux_error(RISCV_LINUX_EBADF);
+        };
+        return match state.chmod_guest_fd(fd, chmod_permissions(request.argument(2))) {
+            Ok(()) => 0,
+            Err(error) => linux_error(error.linux_error_code()),
+        };
+    }
+
     let path = match resolve_chmod_path(request.argument(0), &path, state) {
         Ok(path) => path,
         Err(error) => return error,

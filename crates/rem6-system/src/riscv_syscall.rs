@@ -157,9 +157,10 @@ use open::{
     RISCV_LINUX_OPENAT2,
 };
 use permissions::{
-    syscall_chmod, syscall_fchmod, syscall_fchmodat, syscall_fchown, syscall_fchownat,
-    syscall_umask, RISCV_LINUX_FCHMOD, RISCV_LINUX_FCHMODAT, RISCV_LINUX_FCHOWN,
-    RISCV_LINUX_FCHOWNAT, RISCV_LINUX_UMASK, RISCV_NEWLIB_LEGACY_CHMOD,
+    syscall_chmod, syscall_fchmod, syscall_fchmodat, syscall_fchmodat2, syscall_fchown,
+    syscall_fchownat, syscall_umask, RISCV_LINUX_FCHMOD, RISCV_LINUX_FCHMODAT,
+    RISCV_LINUX_FCHMODAT2, RISCV_LINUX_FCHOWN, RISCV_LINUX_FCHOWNAT, RISCV_LINUX_UMASK,
+    RISCV_NEWLIB_LEGACY_CHMOD,
 };
 use pipe::{
     syscall_pipe2, RiscvGuestPipe, RiscvGuestPipeEndpoint, RiscvGuestPipeId, RISCV_LINUX_PIPE2,
@@ -1363,6 +1364,11 @@ impl RiscvSyscallTable {
             RISCV_LINUX_FCHMODAT => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_fchmodat(request, state, guest_memory),
+                })
+            }
+            RISCV_LINUX_FCHMODAT2 => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_fchmodat2(request, state, guest_memory),
                 })
             }
             RISCV_LINUX_FCHOWNAT => {

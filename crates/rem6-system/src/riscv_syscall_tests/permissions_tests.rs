@@ -2,6 +2,7 @@ use super::*;
 
 const RISCV_LINUX_FCHMOD_FOR_TEST: u64 = 52;
 const RISCV_LINUX_FCHMODAT_FOR_TEST: u64 = 53;
+const RISCV_LINUX_FCHMODAT2_FOR_TEST: u64 = 452;
 const RISCV_LINUX_FCHOWNAT_FOR_TEST: u64 = 54;
 const RISCV_LINUX_FCHOWN_FOR_TEST: u64 = 55;
 const RISCV_LINUX_OPENAT_FOR_PERMISSIONS_TEST: u64 = 56;
@@ -213,6 +214,62 @@ fn linux_table_fchmodat_ignores_fourth_argument_for_syscall_53() {
     assert_eq!(
         stat_mode(&table, &mut state, &guest_memory_reader, 0x8004),
         0o100640
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_fchmodat2_updates_registered_file_permissions() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"file-backed input\n");
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"guest.txt")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCHMODAT2_FOR_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0o640, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        stat_mode(&table, &mut state, &guest_memory_reader, 0x8004),
+        0o100640
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_fchmodat2_rejects_unknown_flags() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"guest.txt", b"file-backed input\n");
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"guest.txt")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCHMODAT2_FOR_TEST,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0o640, 0x8000, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert_eq!(
+        stat_mode(&table, &mut state, &guest_memory_reader, 0x8004),
+        0o100444
     );
     assert!(state.unknown_syscalls().is_empty());
 }
