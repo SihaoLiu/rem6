@@ -97,6 +97,8 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
             execute_sign_inject_vf(hart, vd, fs1, vs2, FloatSignInjectOp::InjectXor)
         }
         RiscvVectorFloatInstruction::MoveVf { vd, fs1 } => execute_move_vf(hart, vd, fs1),
+        RiscvVectorFloatInstruction::MoveFv { fd, vs2 } => execute_move_fv(hart, fd, vs2),
+        RiscvVectorFloatInstruction::MoveSv { vd, fs1 } => execute_move_sv(hart, vd, fs1),
     }
 }
 
@@ -393,6 +395,40 @@ fn execute_move_vf(hart: &mut RiscvHartState, vd: VectorRegister, fs1: FloatRegi
     true
 }
 
+fn execute_move_fv(hart: &mut RiscvHartState, fd: FloatRegister, vs2: VectorRegister) -> bool {
+    let config = hart.vector_config();
+    let Some(element_bytes) = config.element_width_bytes() else {
+        return false;
+    };
+    if element_bytes != 4 {
+        return false;
+    }
+
+    let source = hart.read_vector(vs2);
+    let value = u32::from_le_bytes([source[0], source[1], source[2], source[3]]);
+    hart.write_float(fd, box_single_bits(value));
+    true
+}
+
+fn execute_move_sv(hart: &mut RiscvHartState, vd: VectorRegister, fs1: FloatRegister) -> bool {
+    let config = hart.vector_config();
+    let Some(element_bytes) = config.element_width_bytes() else {
+        return false;
+    };
+    if element_bytes != 4 {
+        return false;
+    }
+    if config.vl() == 0 {
+        return true;
+    }
+
+    let scalar = float::single_register_bits(hart.read_float(fs1));
+    let mut destination = hart.read_vector(vd);
+    destination[..4].copy_from_slice(&scalar.to_le_bytes());
+    hart.write_vector(vd, destination);
+    true
+}
+
 fn execute_mask_compare_vv(
     hart: &mut RiscvHartState,
     vd: VectorRegister,
@@ -610,6 +646,10 @@ fn value_is_nan(value: u32) -> bool {
 
 fn value_is_positive_infinity(value: u32) -> bool {
     value == 0x7f80_0000
+}
+
+fn box_single_bits(value: u32) -> u64 {
+    0xffff_ffff_0000_0000 | u64::from(value)
 }
 
 fn write_mask_bit(mask: &mut [u8; RISCV_VECTOR_REGISTER_BYTES], element_index: usize, value: bool) {
