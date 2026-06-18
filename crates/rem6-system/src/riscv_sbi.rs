@@ -338,7 +338,9 @@ impl RiscvSbiFirmware {
                 }
                 outcome
             }
-            (SBI_IPI_EXTENSION, SBI_IPI_SEND_IPI) => self.send_ipi(request),
+            (SBI_IPI_EXTENSION, SBI_IPI_SEND_IPI) => self
+                .send_ipi(scheduler, core, request, parallel)
+                .map_err(SystemError::Scheduler)?,
             (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_FENCE_I) => self
                 .remote_fence_i(scheduler, core, request, parallel)
                 .map_err(SystemError::Scheduler)?,
@@ -381,15 +383,51 @@ impl RiscvSbiFirmware {
         }
     }
 
-    fn send_ipi(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+    fn send_ipi(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        source: &RiscvCore,
+        request: RiscvSbiRequest,
+        parallel: bool,
+    ) -> Result<RiscvSbiOutcome, SchedulerError> {
         let Some(targets) = self.hart_mask_targets(request.arg0(), request.arg1()) else {
-            return RiscvSbiOutcome::invalid_param();
+            return Ok(RiscvSbiOutcome::invalid_param());
         };
 
+        self.schedule_remote_ipi(scheduler, source, targets, parallel)?;
+        Ok(RiscvSbiOutcome::success(0))
+    }
+
+    fn schedule_remote_ipi(
+        &self,
+        scheduler: &mut PartitionedScheduler,
+        source: &RiscvCore,
+        targets: Vec<RiscvCore>,
+        parallel: bool,
+    ) -> Result<(), SchedulerError> {
+        let source_now = scheduler.partition_now(source.partition())?;
+        let delay = scheduler.min_remote_delay();
+        let source_deadline =
+            source_now
+                .checked_add(delay)
+                .ok_or(SchedulerError::TickOverflow {
+                    now: source_now,
+                    delay,
+                })?;
         for target in targets {
-            target.set_machine_interrupt_pending_bits(SSIP);
+            let target_now = scheduler.partition_now(target.partition())?;
+            let deadline = source_deadline.max(target_now);
+            if parallel {
+                scheduler.schedule_parallel_at(target.partition(), deadline, move |_context| {
+                    target.set_machine_interrupt_pending_bits(SSIP);
+                })?;
+            } else {
+                scheduler.schedule_at(target.partition(), deadline, move |_context| {
+                    target.set_machine_interrupt_pending_bits(SSIP);
+                })?;
+            }
         }
-        RiscvSbiOutcome::success(0)
+        Ok(())
     }
 
     fn hart_start(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {

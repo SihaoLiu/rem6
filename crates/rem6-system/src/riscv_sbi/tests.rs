@@ -482,6 +482,47 @@ fn remote_fence_i_resets_target_fetch_stream_when_completion_event_runs() {
     assert!(core1.inner().fetch_events().is_empty());
 }
 
+fn assert_send_ipi_sets_target_ssip_when_completion_event_runs(parallel: bool) {
+    let (mut scheduler, transport, firmware, core0, core1) = registered_hsm_pair();
+
+    execute_sbi_ecall(
+        &mut scheduler,
+        &transport,
+        &core0,
+        SBI_IPI_EXTENSION,
+        SBI_IPI_SEND_IPI,
+        [0b10, 0, 0, 0, 0],
+    );
+
+    let outcome = firmware
+        .handle_pending_core_trap(&mut scheduler, &core0, parallel)
+        .expect("handled SBI trap")
+        .expect("SBI outcome");
+
+    assert_eq!(outcome, RiscvSbiOutcome::success(0));
+    assert_eq!(core1.machine_interrupt_pending() & SSIP, 0);
+
+    if parallel {
+        scheduler
+            .run_until_idle_parallel()
+            .expect("parallel IPI event");
+    } else {
+        scheduler.run_until_idle_conservative();
+    }
+
+    assert_eq!(core1.machine_interrupt_pending() & SSIP, SSIP);
+}
+
+#[test]
+fn handle_pending_core_trap_schedules_ipi_completion_event() {
+    assert_send_ipi_sets_target_ssip_when_completion_event_runs(false);
+}
+
+#[test]
+fn parallel_handle_pending_core_trap_schedules_ipi_completion_event() {
+    assert_send_ipi_sets_target_ssip_when_completion_event_runs(true);
+}
+
 #[test]
 fn remote_hfence_gvma_rejects_missing_target_before_scheduling_flush() {
     let (mut scheduler, transport, firmware, core0, _core1) = registered_rfence_pair();
