@@ -962,8 +962,7 @@ fn equal_double(lhs: u64, rhs: u64) -> bool {
     f64::from_bits(lhs) == f64::from_bits(rhs)
 }
 
-fn class_single(value: u64) -> u64 {
-    let value = unbox_single(value);
+pub(crate) fn class_single_bits(value: u32) -> u32 {
     let exponent = value & SINGLE_EXP_MASK;
     let fraction = value & SINGLE_FRACTION_MASK;
     let sign = has_single_sign(value);
@@ -991,6 +990,10 @@ fn class_single(value: u64) -> u64 {
     } else {
         1 << 6
     }
+}
+
+fn class_single(value: u64) -> u64 {
+    u64::from(class_single_bits(unbox_single(value)))
 }
 
 fn class_double(value: u64) -> u64 {

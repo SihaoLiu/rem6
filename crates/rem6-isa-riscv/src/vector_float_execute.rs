@@ -35,6 +35,7 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
             execute_minmax_vf(hart, vd, fs1, vs2, FloatMinMaxOp::Max)
         }
         RiscvVectorFloatInstruction::SqrtV { vd, vs2 } => execute_sqrt_v(hart, vd, vs2),
+        RiscvVectorFloatInstruction::ClassV { vd, vs2 } => execute_class_v(hart, vd, vs2),
         RiscvVectorFloatInstruction::MaskEqualVv { vd, vs1, vs2 } => {
             execute_mask_compare_vv(hart, vd, vs1, vs2, FloatMaskCompareOp::Equal)
         }
@@ -352,6 +353,25 @@ fn execute_sqrt_v(hart: &mut RiscvHartState, vd: VectorRegister, vs2: VectorRegi
     }
     write_register_group(hart, vd, plan.group_registers, &result);
     hart.raise_float_exception_flags(exception_flags);
+    true
+}
+
+fn execute_class_v(hart: &mut RiscvHartState, vd: VectorRegister, vs2: VectorRegister) -> bool {
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2]) else {
+        return false;
+    };
+    if plan.element_bytes != 4 {
+        return false;
+    }
+
+    let source = read_register_group(hart, vs2, plan.group_registers);
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    for offset in (0..plan.active_bytes).step_by(4) {
+        let value = u32::from_le_bytes(lane4(&source, offset));
+        let class = float::class_single_bits(value);
+        result[offset..offset + 4].copy_from_slice(&class.to_le_bytes());
+    }
+    write_register_group(hart, vd, plan.group_registers, &result);
     true
 }
 

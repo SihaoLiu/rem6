@@ -170,6 +170,10 @@ pub enum RiscvVectorFloatInstruction {
         vd: VectorRegister,
         vs2: VectorRegister,
     },
+    ClassV {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+    },
     MaskEqualVv {
         vd: VectorRegister,
         vs1: VectorRegister,

@@ -17,6 +17,7 @@ use rem6_transport::{
 };
 
 const FLOAT_FLAG_INVALID: u64 = 1 << 4;
+const FLOAT_FLAG_INEXACT: u64 = 1 << 0;
 
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()
@@ -100,6 +101,10 @@ fn vfrdiv_vf_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
 
 fn vfsqrt_v_type(vs2: u8, vd: u8) -> u32 {
     vector_float_type(0x13, 0b001, vs2, 0x00, vd)
+}
+
+fn vfclass_v_type(vs2: u8, vd: u8) -> u32 {
+    vector_float_type(0x13, 0b001, vs2, 0x10, vd)
 }
 
 fn vmfeq_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -508,9 +513,30 @@ fn assert_unary_fetch_stream_executes_bits(
     expected_destination: [u32; 4],
     expected_fflags: u64,
 ) {
+    assert_unary_fetch_stream_executes_bits_with_float_status(
+        instruction,
+        decoded,
+        source,
+        initial_destination,
+        expected_destination,
+        RiscvFloatStatus::new(0),
+        expected_fflags,
+    );
+}
+
+fn assert_unary_fetch_stream_executes_bits_with_float_status(
+    instruction: u32,
+    decoded: RiscvVectorFloatInstruction,
+    source: [u32; 4],
+    initial_destination: [u32; 4],
+    expected_destination: [u32; 4],
+    initial_float_status: RiscvFloatStatus,
+    expected_fflags: u64,
+) {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);
     core.write_register(reg(10), 3);
+    core.set_float_status(initial_float_status);
     core.write_vector_register(vreg(2), lanes_f32_bits(source));
     core.write_vector_register(vreg(3), lanes_f32_bits(initial_destination));
     let store = loaded_program_store(
@@ -883,6 +909,52 @@ fn riscv_core_driver_vfsqrt_quiet_nan_does_not_accrue_invalid() {
         [0, 0, 0, 0x40a0_0000],
         [0x7fc0_0000, 0x7f80_0000, 0x0000_0000, 0x40a0_0000],
         0,
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfclass_v_from_fetch_stream() {
+    assert_unary_fetch_stream_executes_bits(
+        vfclass_v_type(2, 3),
+        RiscvVectorFloatInstruction::ClassV {
+            vd: vreg(3),
+            vs2: vreg(2),
+        },
+        [0xff80_0000, 0x8000_0001, 0x0000_0000, 0x7f80_0000],
+        [0, 0, 0, 0xdead_beef],
+        [0x0000_0001, 0x0000_0004, 0x0000_0010, 0xdead_beef],
+        0,
+    );
+}
+
+#[test]
+fn riscv_core_driver_vfclass_v_classifies_nan_lanes_without_invalid_flag() {
+    assert_unary_fetch_stream_executes_bits(
+        vfclass_v_type(2, 3),
+        RiscvVectorFloatInstruction::ClassV {
+            vd: vreg(3),
+            vs2: vreg(2),
+        },
+        [0x7f80_0001, 0x7fc0_1234, 0x7f80_0000, 0xffc0_5678],
+        [0, 0, 0, 0xcafe_beef],
+        [0x0000_0100, 0x0000_0200, 0x0000_0080, 0xcafe_beef],
+        0,
+    );
+}
+
+#[test]
+fn riscv_core_driver_vfclass_v_preserves_existing_float_flags() {
+    assert_unary_fetch_stream_executes_bits_with_float_status(
+        vfclass_v_type(2, 3),
+        RiscvVectorFloatInstruction::ClassV {
+            vd: vreg(3),
+            vs2: vreg(2),
+        },
+        [0x7f80_0001, 0x7fc0_1234, 0x7f80_0000, 0xffc0_5678],
+        [0, 0, 0, 0xcafe_beef],
+        [0x0000_0100, 0x0000_0200, 0x0000_0080, 0xcafe_beef],
+        RiscvFloatStatus::new(0).with_fflags(FLOAT_FLAG_INEXACT),
+        FLOAT_FLAG_INEXACT,
     );
 }
 

@@ -307,6 +307,9 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         (0x1, 0b010011, true) if ((raw >> 15) & 0x1f) == 0x00 => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::SqrtV { vd, vs2 },
         )),
+        (0x1, 0b010011, true) if ((raw >> 15) & 0x1f) == 0x10 => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::ClassV { vd, vs2 },
+        )),
         (0x1, 0b011000, true) => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::MaskEqualVv { vd, vs1, vs2 },
         )),
