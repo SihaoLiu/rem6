@@ -14,8 +14,9 @@ use rem6_transport::{RequestDelivery, TargetOutcome};
 
 use crate::config::CliDramMemoryProfile;
 use crate::guest_memory::{
-    build_cli_dram_memory, build_cli_memory_store, cli_fully_covered_cache_line_ranges,
-    cli_source_backed_cache_line_ranges, merge_line_ranges, CLI_MEMORY_TARGET,
+    build_cli_dram_memory, build_cli_dram_profile, build_cli_memory_store,
+    cli_fully_covered_cache_line_ranges, cli_source_backed_cache_line_ranges, merge_line_ranges,
+    CLI_MEMORY_TARGET,
 };
 use crate::{
     execute_error, LoadedBlob, MemoryDumpRequest, Rem6CliError, Rem6DramBankSummary,
@@ -38,6 +39,50 @@ pub(super) enum CliMemoryRuntime {
 }
 
 impl CliMemoryRuntime {
+    pub(super) fn new_mapped_zeroed(
+        address: Address,
+        bytes: u64,
+        line_layout: CacheLineLayout,
+        use_dram: bool,
+        dram_profile: CliDramMemoryProfile,
+    ) -> Result<Self, Rem6CliError> {
+        let size = AccessSize::new(bytes).map_err(execute_error)?;
+        let full_line_backing = Arc::new(Mutex::new(Vec::new()));
+        if use_dram {
+            let mut memory = DramMemoryController::new();
+            memory
+                .add_profile(build_cli_dram_profile(line_layout, dram_profile)?)
+                .map_err(execute_error)?;
+            memory
+                .map_region(CLI_MEMORY_TARGET, address, size)
+                .map_err(execute_error)?;
+            if !insert_zero_guest_lines_in_dram(&mut memory, address.get(), bytes, line_layout) {
+                return Err(execute_error("failed to install zeroed DRAM backing"));
+            }
+            insert_full_line_backing(&full_line_backing, address.get(), bytes, line_layout)?;
+            return Ok(Self::Dram {
+                memory: Arc::new(Mutex::new(memory)),
+                full_line_backing,
+            });
+        }
+
+        let mut store = PartitionedMemoryStore::new();
+        store
+            .add_partition(CLI_MEMORY_TARGET, line_layout)
+            .map_err(execute_error)?;
+        store
+            .map_region(CLI_MEMORY_TARGET, address, size)
+            .map_err(execute_error)?;
+        if !insert_zero_guest_lines_in_store(&mut store, address.get(), bytes, line_layout) {
+            return Err(execute_error("failed to install zeroed memory backing"));
+        }
+        insert_full_line_backing(&full_line_backing, address.get(), bytes, line_layout)?;
+        Ok(Self::Store {
+            store: Arc::new(Mutex::new(store)),
+            full_line_backing,
+        })
+    }
+
     pub(super) fn new(
         image: &rem6_boot::BootImage,
         load_blobs: &[LoadedBlob],

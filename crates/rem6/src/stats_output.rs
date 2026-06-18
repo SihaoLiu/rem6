@@ -5,12 +5,14 @@ mod text;
 mod trace_replay;
 
 use super::formatting::json_escape;
+use crate::gpu_cli::Rem6GpuRunExecutionSummary;
+
 use super::{
-    parallel_stats, stats_error, Rem6CliError, Rem6ExecutionStop, Rem6ExecutionSummary,
-    Rem6GupsConfig, Rem6GupsExecutionSummary, Rem6LoadBlobSummary, Rem6MemoryDump,
-    Rem6MemoryTransportCounters, Rem6MemoryTransportSummary, Rem6ReadfileSummary,
-    Rem6ResourceAcquireArtifact, Rem6RunConfig, Rem6TraceReplayConfig,
-    Rem6TraceReplayExecutionSummary, RequestedIsa,
+    parallel_stats, stats_error, CliDataCacheSummary, Rem6CliError, Rem6DramSummary,
+    Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GpuRunConfig, Rem6GupsConfig,
+    Rem6GupsExecutionSummary, Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
+    Rem6MemoryTransportSummary, Rem6ReadfileSummary, Rem6ResourceAcquireArtifact, Rem6RunConfig,
+    Rem6TraceReplayConfig, Rem6TraceReplayExecutionSummary, RequestedIsa,
 };
 use dram::emit_dram_stats;
 use text::stats_snapshot_text;
@@ -40,6 +42,15 @@ pub(super) struct Rem6StatsInputs<'a> {
 pub(super) struct Rem6GupsStatsInputs<'a> {
     pub(super) config: &'a Rem6GupsConfig,
     pub(super) execution: &'a Rem6GupsExecutionSummary,
+    pub(super) transport: &'a Rem6MemoryTransportSummary,
+    pub(super) memory_dumps: &'a [Rem6MemoryDump],
+}
+
+pub(super) struct Rem6GpuRunStatsInputs<'a> {
+    pub(super) config: &'a Rem6GpuRunConfig,
+    pub(super) execution: &'a Rem6GpuRunExecutionSummary,
+    pub(super) data_cache: &'a CliDataCacheSummary,
+    pub(super) dram: &'a Rem6DramSummary,
     pub(super) transport: &'a Rem6MemoryTransportSummary,
     pub(super) memory_dumps: &'a [Rem6MemoryDump],
 }
@@ -977,6 +988,147 @@ pub(super) fn gups_stats_output(
     })
 }
 
+pub(super) fn gpu_run_stats_output(
+    inputs: Rem6GpuRunStatsInputs<'_>,
+) -> Result<Rem6StatsOutput, Rem6CliError> {
+    let mut stats = StatsRegistry::new();
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.workgroups",
+        "Count",
+        StatResetPolicy::Constant,
+        u64::from(inputs.config.workgroups()),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.compute_units",
+        "Count",
+        StatResetPolicy::Constant,
+        u64::from(inputs.config.compute_units()),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.memory_start",
+        "Address",
+        StatResetPolicy::Constant,
+        inputs.config.memory_start(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.memory_size",
+        "Byte",
+        StatResetPolicy::Constant,
+        inputs.config.memory_size(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.max_tick",
+        "Tick",
+        StatResetPolicy::Constant,
+        inputs.config.max_tick(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.scheduler.min_remote_delay",
+        "Tick",
+        StatResetPolicy::Constant,
+        inputs.config.min_remote_delay(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.memory.route_delay",
+        "Tick",
+        StatResetPolicy::Constant,
+        inputs.config.memory_route_delay(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.memory.dumps",
+        "Count",
+        StatResetPolicy::Constant,
+        inputs.memory_dumps.len() as u64,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.final_tick",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        inputs.execution.final_tick(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.workgroup_completions",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.execution.workgroup_completions(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.memory_accesses",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.execution.memory_accesses(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.coalesced_memory_accesses",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.execution.coalesced_memory_accesses(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.global_memory_requests",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.execution.global_memory_requests(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.memory_responses",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.execution.memory_responses(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.scheduler.epochs",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.execution.scheduler_epochs(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.scheduler.dispatches",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.execution.scheduler_dispatches(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.memory_scheduler.epochs",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.execution.memory_scheduler_epochs(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.memory_scheduler.dispatches",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.execution.memory_scheduler_dispatches(),
+    )?;
+    emit_data_cache_summary_stats(&mut stats, "sim.gpu_run.data_cache", inputs.data_cache)?;
+    emit_dram_stats(&mut stats, "sim.gpu_run.memory.dram", inputs.dram)?;
+    emit_transport_stats(&mut stats, "sim.gpu_run.transport", inputs.transport)?;
+
+    let snapshot = stats.snapshot(0);
+    Ok(Rem6StatsOutput {
+        json: stats_snapshot_json(&snapshot),
+        text: stats_snapshot_text(&snapshot),
+    })
+}
+
 pub(super) fn trace_replay_stats_output(
     inputs: Rem6TraceReplayStatsInputs<'_>,
 ) -> Result<Rem6StatsOutput, Rem6CliError> {
@@ -1395,6 +1547,70 @@ fn emit_transport_stats(
         );
         emit_transport_counters(stats, &route_prefix, &route.counters)?;
     }
+    Ok(())
+}
+
+fn emit_data_cache_summary_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    summary: &CliDataCacheSummary,
+) -> Result<(), Rem6CliError> {
+    increment_stat(
+        stats,
+        &format!("{prefix}.runs"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.runs,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.msi.runs"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.msi_runs,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.mesi.runs"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.mesi_runs,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.moesi.runs"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.moesi_runs,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.chi.runs"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.chi_runs,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.cpu_responses"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.cpu_responses,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.directory_decisions"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.directory_decisions,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.dram_accesses"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.dram_accesses,
+    )?;
     Ok(())
 }
 

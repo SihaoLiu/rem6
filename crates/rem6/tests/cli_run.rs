@@ -12,6 +12,8 @@ mod gdb;
 mod gdb_cache;
 #[path = "cli_run/gdb_support.rs"]
 mod gdb_support;
+#[path = "cli_run/gpu.rs"]
+mod gpu;
 #[path = "cli_run/gups.rs"]
 mod gups;
 #[path = "cli_run/load.rs"]

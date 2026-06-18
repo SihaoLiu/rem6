@@ -151,7 +151,7 @@ pub(super) fn build_cli_dram_memory(
     Ok(memory)
 }
 
-fn build_cli_dram_profile(
+pub(super) fn build_cli_dram_profile(
     line_layout: CacheLineLayout,
     profile: CliDramMemoryProfile,
 ) -> Result<ExternalMemoryProfile, Rem6CliError> {

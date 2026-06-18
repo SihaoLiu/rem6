@@ -33,6 +33,7 @@ mod cli_output;
 mod config;
 mod data_cache_runtime;
 mod formatting;
+mod gpu_cli;
 mod guest_memory;
 mod gups_cli;
 mod parallel_stats;
@@ -62,6 +63,7 @@ use data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io,
     CliDataCacheRuntime, CliDataCacheSummary,
 };
+pub use gpu_cli::{run_gpu_run_config, Rem6GpuRunArtifact, Rem6GpuRunConfig};
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
 use parallel_stats::{
@@ -470,6 +472,7 @@ where
     };
     match command.as_str() {
         "run" => run_run_cli(args),
+        "gpu-run" => gpu_cli::run_gpu_run_cli(args),
         "gups" => gups_cli::run_gups_cli(args),
         "trace-replay" => trace_replay_cli::run_trace_replay_cli(args),
         "resource-acquire" => resource_acquire_cli::run_resource_acquire_cli(args),

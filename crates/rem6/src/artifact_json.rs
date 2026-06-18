@@ -982,7 +982,7 @@ impl Rem6DataAccessProbeSummary {
 }
 
 impl Rem6DramSummary {
-    fn to_json(&self) -> String {
+    pub(crate) fn to_json(&self) -> String {
         let profile_technology = optional_string_json(self.profile_technology);
         let profile_parallel_port_label = optional_string_json(self.profile_parallel_port_label);
         let profile_topology_unit_label = optional_string_json(self.profile_topology_unit_label);
@@ -1165,7 +1165,7 @@ impl Rem6CoreSummary {
 }
 
 impl Rem6MemoryDump {
-    fn to_json(&self) -> String {
+    pub(crate) fn to_json(&self) -> String {
         format!(
             "{{\"address\":\"0x{:x}\",\"bytes\":{},\"hex\":\"{}\"}}",
             self.address,
@@ -1188,7 +1188,7 @@ fn empty_transport_scope_json() -> String {
 }
 
 impl Rem6MemoryTransportSummary {
-    fn to_json(&self) -> String {
+    pub(crate) fn to_json(&self) -> String {
         let routes = self
             .routes
             .iter()
