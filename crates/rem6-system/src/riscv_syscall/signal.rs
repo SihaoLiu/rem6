@@ -21,6 +21,7 @@ const RISCV_LINUX_UNBLOCKABLE_SIGNALS: u64 = RISCV_LINUX_SIGKILL_MASK | RISCV_LI
 const RISCV_LINUX_SIGACTION_BYTES: usize = 24;
 const RISCV_LINUX_FIRST_SIGNAL: u64 = 1;
 const RISCV_LINUX_LAST_SIGNAL: u64 = 64;
+const RISCV_LINUX_SIG_IGN: u64 = 1;
 const RISCV_LINUX_SIGKILL: u64 = 9;
 const RISCV_LINUX_SIGSTOP: u64 = 19;
 const RISCV_LINUX_SIGINFO_T_BYTES: usize = 128;
@@ -64,6 +65,10 @@ impl RiscvSignalAction {
             flags: self.flags & RISCV_LINUX_UAPI_SA_FLAGS,
             mask: blockable_signal_mask(self.mask),
         }
+    }
+
+    const fn ignores_signal(self) -> bool {
+        self.handler == RISCV_LINUX_SIG_IGN
     }
 
     fn to_guest_bytes(self) -> [u8; RISCV_LINUX_SIGACTION_BYTES] {
@@ -486,6 +491,10 @@ fn signal_probe_or_unimplemented_delivery(
     signal: i32,
 ) -> u64 {
     if signal == 0 {
+        return 0;
+    }
+    let signal = signal as u64;
+    if state.signal_action(signal).ignores_signal() {
         return 0;
     }
 

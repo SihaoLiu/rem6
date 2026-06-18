@@ -2,6 +2,7 @@ use super::*;
 
 const SIGKILL_MASK: u64 = 1 << (9 - 1);
 const SIGSTOP_MASK: u64 = 1 << (19 - 1);
+const SIG_IGN: u64 = 1;
 const SIGUSR1: u64 = 10;
 const SIGUSR2: u64 = 12;
 const SIGRTMAX: u64 = 64;
@@ -121,6 +122,23 @@ fn linux_table_kill_nonzero_signal_is_not_silently_delivered() {
             7
         )]
     );
+}
+
+#[test]
+fn linux_table_kill_ignored_nonzero_signal_returns_success() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    install_signal_handler(&table, &mut state, SIGUSR1, SIG_IGN);
+
+    assert_eq!(
+        table.handle_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_KILL, [100, SIGUSR1, 0, 0, 0, 0]),
+            &mut state,
+            8,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
 }
 
 #[test]
@@ -322,6 +340,32 @@ fn linux_table_thread_signal_nonzero_records_unimplemented_delivery() {
             ),
         ]
     );
+}
+
+#[test]
+fn linux_table_thread_ignored_nonzero_signal_returns_success() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+    install_signal_handler(&table, &mut state, SIGUSR2, SIG_IGN);
+
+    assert_eq!(
+        table.handle_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_TGKILL, [41, 42, SIGUSR2, 0, 0, 0]),
+            &mut state,
+            12,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_at_tick(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_TKILL, [42, SIGUSR2, 0, 0, 0, 0]),
+            &mut state,
+            13,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
 }
 
 #[test]
@@ -1130,6 +1174,31 @@ fn linux_table_rt_sigqueueinfo_nonzero_signal_is_not_silently_delivered() {
 }
 
 #[test]
+fn linux_table_rt_sigqueueinfo_ignored_nonzero_signal_returns_success() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let signal_info_address = 0x40b0;
+    let guest_memory_reader = signal_info_reader(signal_info_address, -1);
+    install_signal_handler(&table, &mut state, SIGUSR1, SIG_IGN);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_RT_SIGQUEUEINFO,
+                [100, SIGUSR1, signal_info_address, 0, 0, 0],
+            ),
+            &mut state,
+            14,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
 fn linux_table_rt_sigqueueinfo_reports_argument_errors() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
@@ -1399,6 +1468,46 @@ fn timespec64_bytes(seconds: i64, nanoseconds: i64) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(16);
     bytes.extend_from_slice(&seconds.to_le_bytes());
     bytes.extend_from_slice(&nanoseconds.to_le_bytes());
+    bytes
+}
+
+fn install_signal_handler(
+    table: &RiscvSyscallTable,
+    state: &mut RiscvSyscallState,
+    signal: u64,
+    handler: u64,
+) {
+    let action_address = 0x7000;
+    let action = sigaction_bytes(handler, 0, 0);
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == action_address && bytes == 24 {
+            Some(action.clone())
+        } else {
+            None
+        }
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_RT_SIGACTION,
+                [signal, action_address, 0, 8, 0, 0],
+            ),
+            state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+}
+
+fn sigaction_bytes(handler: u64, flags: u64, mask: u64) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(24);
+    bytes.extend_from_slice(&handler.to_le_bytes());
+    bytes.extend_from_slice(&flags.to_le_bytes());
+    bytes.extend_from_slice(&mask.to_le_bytes());
     bytes
 }
 
