@@ -2,17 +2,20 @@ use super::{
     eventfd::{eventfd_write_bytes_written, eventfd_write_result},
     guest_fd_argument, linux_error,
     pipe::RiscvGuestPipeWrite,
+    read_guest_c_string,
     stat::guest_path_inode,
-    RiscvGuestFileIdentity, RiscvGuestMemoryReader, RiscvGuestNodeKind, RiscvGuestWriteRecord,
-    RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF,
-    RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG, RISCV_LINUX_EINVAL, RISCV_LINUX_ESPIPE,
-    RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND, RISCV_LINUX_O_RDONLY,
+    RiscvGuestCStringError, RiscvGuestFileIdentity, RiscvGuestMemoryReader, RiscvGuestNodeKind,
+    RiscvGuestWriteRecord, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAGAIN,
+    RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG, RISCV_LINUX_EINVAL,
+    RISCV_LINUX_EISDIR, RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT, RISCV_LINUX_ESPIPE,
+    RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND, RISCV_LINUX_O_RDONLY, RISCV_LINUX_PATH_MAX,
 };
 use crate::{GuestFd, GuestFdError, GuestFileOffset};
 use rem6_kernel::Tick;
 
 const RISCV_GUEST_FILE_DENSE_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 
+pub(super) const RISCV_LINUX_TRUNCATE: u64 = 45;
 pub(super) const RISCV_LINUX_FTRUNCATE: u64 = 46;
 pub(super) const RISCV_LINUX_WRITE: u64 = 64;
 pub(super) const RISCV_LINUX_PWRITE64: u64 = 68;
@@ -228,6 +231,29 @@ impl RiscvSyscallState {
         Ok(())
     }
 
+    pub(super) fn truncate_guest_file_path(
+        &mut self,
+        path: &[u8],
+        length: u64,
+    ) -> Result<(), RiscvGuestFileResizeError> {
+        if (length as i64) < 0 {
+            return Err(RiscvGuestFileResizeError::NotRegularWritableFile);
+        }
+        if length > RISCV_GUEST_FILE_DENSE_LIMIT_BYTES {
+            return Err(RiscvGuestFileResizeError::FileTooLarge);
+        }
+        let length =
+            usize::try_from(length).map_err(|_| RiscvGuestFileResizeError::FileTooLarge)?;
+        let identity = self.guest_file_identity(path);
+        let mut contents = self
+            .guest_file_contents(path)
+            .map(Vec::from)
+            .unwrap_or_default();
+        contents.resize(length, 0);
+        self.synchronize_guest_file_contents(identity, contents);
+        Ok(())
+    }
+
     pub(super) fn guest_file_write_exceeds_dense_limit(
         &self,
         fd: GuestFd,
@@ -274,6 +300,41 @@ impl RiscvSyscallState {
 
     fn guest_fd_appends_to_file(&self, fd: GuestFd) -> Result<bool, GuestFdError> {
         Ok(self.guest_fds.status_flags(fd)?.bits() & RISCV_LINUX_O_APPEND as u32 != 0)
+    }
+}
+
+pub(super) fn syscall_truncate(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> u64 {
+    let path = match read_guest_c_string(guest_memory, request.argument(0), RISCV_LINUX_PATH_MAX) {
+        Ok(path) => path,
+        Err(RiscvGuestCStringError::Fault) => return linux_error(RISCV_LINUX_EFAULT),
+        Err(RiscvGuestCStringError::TooLong) => return linux_error(RISCV_LINUX_ENAMETOOLONG),
+    };
+    if path.is_empty() {
+        return linux_error(RISCV_LINUX_ENOENT);
+    }
+    if (request.argument(1) as i64) < 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    let path = match state.resolve_guest_path_following_symlinks(&path) {
+        Ok(path) => path,
+        Err(error) => return linux_error(error.linux_error_code()),
+    };
+    let path = state.existing_guest_path_key(&path).unwrap_or(path);
+    if state.guest_directory_entries(&path).is_some() {
+        return linux_error(RISCV_LINUX_EISDIR);
+    }
+    if !state.guest_path_registered(&path) {
+        return linux_error(RISCV_LINUX_ENOENT);
+    }
+    match state.truncate_guest_file_path(&path, request.argument(1)) {
+        Ok(()) => 0,
+        Err(RiscvGuestFileResizeError::FileTooLarge) => linux_error(RISCV_LINUX_EFBIG),
+        Err(RiscvGuestFileResizeError::NotRegularWritableFile) => linux_error(RISCV_LINUX_EINVAL),
+        Err(RiscvGuestFileResizeError::Fd(_)) => linux_error(RISCV_LINUX_EBADF),
     }
 }
 

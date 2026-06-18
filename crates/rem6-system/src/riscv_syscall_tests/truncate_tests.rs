@@ -1,12 +1,38 @@
 use super::*;
 use std::sync::Arc;
 
+const RISCV_LINUX_TRUNCATE_FOR_TEST: u64 = 45;
 const RISCV_LINUX_FTRUNCATE_FOR_TEST: u64 = 46;
 const RISCV_LINUX_O_DIRECTORY_FOR_TEST: u64 = 0o200000;
 const RISCV_LINUX_O_RDWR_FOR_TEST: u64 = 2;
 const RISCV_LINUX_SEEK_SET_FOR_TEST: u64 = 0;
 
 type RecordedWrites = std::sync::Arc<std::sync::Mutex<Vec<(u64, Vec<u8>)>>>;
+
+#[test]
+fn linux_table_truncate_path_shrinks_guest_file() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"/data.bin", b"abcdef");
+    let path = b"/data.bin\0".to_vec();
+    let reader = path_reader(path, 0x9000);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_TRUNCATE_FOR_TEST,
+                [0x9000, 3, 0, 0, 0, 0]
+            ),
+            &mut state,
+            1,
+            Some(&reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(state.guest_path_stat(b"/data.bin").unwrap().size(), 3);
+}
 
 #[test]
 fn linux_table_ftruncate_shrinks_guest_file_and_preserves_offset() {

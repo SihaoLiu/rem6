@@ -64,6 +64,8 @@ mod riscv_se_sync;
 mod riscv_se_sysinfo;
 #[path = "cli_run/riscv_se_time.rs"]
 mod riscv_se_time;
+#[path = "cli_run/riscv_se_truncate.rs"]
+mod riscv_se_truncate;
 #[path = "cli_run/stats_compat.rs"]
 mod stats_compat;
 #[path = "cli_run/support.rs"]
