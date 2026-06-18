@@ -286,6 +286,14 @@ pub(crate) fn lanes_f32_bits(lanes: [u32; 4]) -> [u8; 16] {
     bytes
 }
 
+pub(crate) fn lanes_u64_bits(lanes: [u64; 2]) -> [u8; 16] {
+    let mut bytes = [0; 16];
+    for (index, lane) in lanes.into_iter().enumerate() {
+        bytes[index * 8..index * 8 + 8].copy_from_slice(&lane.to_le_bytes());
+    }
+    bytes
+}
+
 pub(crate) fn mask_bytes(first: u8) -> [u8; 16] {
     let mut bytes = [0; 16];
     bytes[0] = first;
@@ -652,6 +660,46 @@ pub(crate) fn assert_unary_fetch_stream_executes_bits_with_float_status(
     assert_eq!(
         core.read_vector_register(vreg(3)),
         lanes_f32_bits(expected_destination)
+    );
+    assert_eq!(core.float_status().fflags(), expected_fflags);
+}
+
+pub(crate) fn assert_unary_e64_fetch_stream_executes_bits_with_float_status(
+    instruction: u32,
+    decoded: RiscvVectorFloatInstruction,
+    source: [u64; 2],
+    initial_destination: [u64; 2],
+    expected_destination: [u64; 2],
+    initial_float_status: RiscvFloatStatus,
+    expected_fflags: u64,
+) {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 2);
+    core.set_float_status(initial_float_status);
+    core.write_vector_register(vreg(2), lanes_u64_bits(source));
+    core.write_vector_register(vreg(3), lanes_u64_bits(initial_destination));
+    let store = loaded_program_store(
+        0x8000,
+        &[vsetvli_type(0xd8, 10, 5), instruction, 0x0010_0073],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd8,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(decoded)
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_u64_bits(expected_destination)
     );
     assert_eq!(core.float_status().fflags(), expected_fflags);
 }

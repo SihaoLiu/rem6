@@ -126,6 +126,20 @@ pub(crate) fn signed_word_to_single_bits(
     int_to_float::signed_word_to_single_bits(value, rounding_mode)
 }
 
+pub(crate) fn unsigned_doubleword_to_double_bits(
+    value: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> (u64, u64) {
+    int_to_float::unsigned_doubleword_to_double_bits(value, rounding_mode)
+}
+
+pub(crate) fn signed_doubleword_to_double_bits(
+    value: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> (u64, u64) {
+    int_to_float::signed_doubleword_to_double_bits(value, rounding_mode)
+}
+
 pub(crate) fn single_to_unsigned_word_bits(
     value: u32,
     rounding_mode: RiscvFloatRoundingMode,
@@ -145,6 +159,26 @@ pub(crate) fn single_to_signed_word_bits(
     (
         convert_single_to_signed_word(boxed, rounding_mode) as u32,
         convert_flags::single_to_signed_word(boxed, rounding_mode),
+    )
+}
+
+pub(crate) fn double_to_unsigned_doubleword_bits(
+    value: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> (u64, u64) {
+    (
+        convert_double_to_unsigned_doubleword(value, rounding_mode),
+        convert_flags::double_to_unsigned_doubleword(value, rounding_mode),
+    )
+}
+
+pub(crate) fn double_to_signed_doubleword_bits(
+    value: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> (u64, u64) {
+    (
+        convert_double_to_signed_doubleword(value, rounding_mode),
+        convert_flags::double_to_signed_doubleword(value, rounding_mode),
     )
 }
 

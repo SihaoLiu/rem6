@@ -43,6 +43,38 @@ fn riscv_core_driver_executes_vfcvt_f_x_v_from_fetch_stream() {
 }
 
 #[test]
+fn riscv_core_driver_executes_vfcvt_f_xu_v_e64_from_fetch_stream() {
+    assert_unary_e64_fetch_stream_executes_bits_with_float_status(
+        vfcvt_f_xu_v_type(2, 3),
+        RiscvVectorFloatInstruction::ConvertFloatFromUnsignedIntV {
+            vd: vreg(3),
+            vs2: vreg(2),
+        },
+        [0, 9_007_199_254_740_992],
+        [0xdead_beef_dead_beef, 0x1122_3344_5566_7788],
+        [0.0f64.to_bits(), 9_007_199_254_740_992.0f64.to_bits()],
+        RiscvFloatStatus::new(0),
+        0,
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfcvt_f_x_v_e64_from_fetch_stream() {
+    assert_unary_e64_fetch_stream_executes_bits_with_float_status(
+        vfcvt_f_x_v_type(2, 3),
+        RiscvVectorFloatInstruction::ConvertFloatFromSignedIntV {
+            vd: vreg(3),
+            vs2: vreg(2),
+        },
+        [(-2_i64) as u64, i64::MIN as u64],
+        [0xdead_beef_dead_beef, 0x1122_3344_5566_7788],
+        [(-2.0f64).to_bits(), (i64::MIN as f64).to_bits()],
+        RiscvFloatStatus::new(0),
+        0,
+    );
+}
+
+#[test]
 fn riscv_core_driver_executes_vfcvt_xu_f_v_round_down_with_inexact_flag() {
     assert_float_to_int_fetch_stream_executes(
         vfcvt_xu_f_v_type(2, 3),
@@ -58,6 +90,22 @@ fn riscv_core_driver_executes_vfcvt_xu_f_v_round_down_with_inexact_flag() {
         ],
         [0xdead_beef, 0xdead_beef, 0xdead_beef, 0x1122_3344],
         [1, 2, 3, 0x1122_3344],
+        RiscvFloatStatus::new(0).with_frm(2),
+        FLOAT_FLAG_INEXACT,
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfcvt_xu_f_v_e64_round_down_with_inexact_flag() {
+    assert_unary_e64_fetch_stream_executes_bits_with_float_status(
+        vfcvt_xu_f_v_type(2, 3),
+        RiscvVectorFloatInstruction::ConvertUnsignedIntFromFloatV {
+            vd: vreg(3),
+            vs2: vreg(2),
+        },
+        [1.75f64.to_bits(), 3.875f64.to_bits()],
+        [0xdead_beef_dead_beef, 0x1122_3344_5566_7788],
+        [1, 3],
         RiscvFloatStatus::new(0).with_frm(2),
         FLOAT_FLAG_INEXACT,
     );
@@ -80,6 +128,54 @@ fn riscv_core_driver_executes_vfcvt_x_f_v_round_toward_zero_with_inexact_flag() 
         [0xdead_beef, 0xdead_beef, 0xdead_beef, 0x1122_3344],
         [1, (-2_i32) as u32, 0, 0x1122_3344],
         RiscvFloatStatus::new(0).with_frm(1),
+        FLOAT_FLAG_INEXACT,
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfcvt_x_f_v_e64_round_toward_zero_with_inexact_flag() {
+    assert_unary_e64_fetch_stream_executes_bits_with_float_status(
+        vfcvt_x_f_v_type(2, 3),
+        RiscvVectorFloatInstruction::ConvertSignedIntFromFloatV {
+            vd: vreg(3),
+            vs2: vreg(2),
+        },
+        [1.75f64.to_bits(), (-2.75f64).to_bits()],
+        [0xdead_beef_dead_beef, 0x1122_3344_5566_7788],
+        [1, (-2_i64) as u64],
+        RiscvFloatStatus::new(0).with_frm(1),
+        FLOAT_FLAG_INEXACT,
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfcvt_rtz_xu_f_v_e64_with_reserved_frm() {
+    assert_unary_e64_fetch_stream_executes_bits_with_float_status(
+        vfcvt_rtz_xu_f_v_type(2, 3),
+        RiscvVectorFloatInstruction::ConvertUnsignedIntFromFloatTowardZeroV {
+            vd: vreg(3),
+            vs2: vreg(2),
+        },
+        [1.75f64.to_bits(), 3.875f64.to_bits()],
+        [0xdead_beef_dead_beef, 0x1122_3344_5566_7788],
+        [1, 3],
+        RiscvFloatStatus::new(0).with_frm(5),
+        FLOAT_FLAG_INEXACT,
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfcvt_rtz_x_f_v_e64_with_reserved_frm() {
+    assert_unary_e64_fetch_stream_executes_bits_with_float_status(
+        vfcvt_rtz_x_f_v_type(2, 3),
+        RiscvVectorFloatInstruction::ConvertSignedIntFromFloatTowardZeroV {
+            vd: vreg(3),
+            vs2: vreg(2),
+        },
+        [1.75f64.to_bits(), (-2.75f64).to_bits()],
+        [0xdead_beef_dead_beef, 0x1122_3344_5566_7788],
+        [1, (-2_i64) as u64],
+        RiscvFloatStatus::new(0).with_frm(5),
         FLOAT_FLAG_INEXACT,
     );
 }
@@ -146,7 +242,7 @@ fn riscv_core_driver_traps_vfcvt_x_f_v_with_reserved_frm() {
 fn riscv_core_driver_traps_vfcvt_xu_f_v_for_unsupported_element_width() {
     assert_conversion_traps_without_destination_write(
         vfcvt_xu_f_v_type(2, 3),
-        0xd8,
+        0xc8,
         1,
         RiscvFloatStatus::new(0),
         [
@@ -238,7 +334,7 @@ fn riscv_core_driver_traps_vfcvt_f_x_v_with_reserved_frm() {
 fn riscv_core_driver_traps_vfcvt_f_xu_v_for_unsupported_element_width() {
     assert_conversion_traps_without_destination_write(
         vfcvt_f_xu_v_type(2, 3),
-        0xd8,
+        0xc8,
         1,
         RiscvFloatStatus::new(0),
         [0, 1, 2, 3],
