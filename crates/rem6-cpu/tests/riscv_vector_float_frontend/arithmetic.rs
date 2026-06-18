@@ -344,6 +344,31 @@ fn riscv_core_driver_executes_vfadd_vf_from_fetch_stream() {
 }
 
 #[test]
+fn riscv_core_driver_executes_vfadd_vf_e64_from_fetch_stream() {
+    assert_vf_e64_fetch_stream_executes_bits(
+        vfadd_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::AddVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        1.5f64.to_bits(),
+        [2.0f64.to_bits(), (-4.0f64).to_bits()],
+        [0xdead_beef_dead_beef, 12.0f64.to_bits()],
+        [3.5f64.to_bits(), (-2.5f64).to_bits()],
+    );
+}
+
+#[test]
+fn riscv_core_driver_traps_vfadd_vf_e64_late_inexact_without_partial_destination_write() {
+    assert_vf_e64_fetch_stream_traps_without_destination_write(
+        vfadd_vf_type(2, 1, 3),
+        (f64::EPSILON / 2.0).to_bits(),
+        [0.0f64.to_bits(), 1.0f64.to_bits()],
+    );
+}
+
+#[test]
 fn riscv_core_driver_traps_vfadd_vf_with_unboxed_scalar_source() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);
@@ -583,6 +608,22 @@ fn riscv_core_driver_executes_vfsub_vf_from_fetch_stream() {
 }
 
 #[test]
+fn riscv_core_driver_executes_vfsub_vf_e64_from_fetch_stream() {
+    assert_vf_e64_fetch_stream_executes_bits(
+        vfsub_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::SubVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        1.5f64.to_bits(),
+        [5.0f64.to_bits(), (-2.0f64).to_bits()],
+        [0xdead_beef_dead_beef, 12.0f64.to_bits()],
+        [3.5f64.to_bits(), (-3.5f64).to_bits()],
+    );
+}
+
+#[test]
 fn riscv_core_driver_executes_vfrsub_vf_from_fetch_stream() {
     assert_vf_fetch_stream_executes(
         vfrsub_vf_type(2, 1, 3),
@@ -595,6 +636,22 @@ fn riscv_core_driver_executes_vfrsub_vf_from_fetch_stream() {
         [2.0, -4.0, 0.25, 1.0],
         [0.0, 0.0, 0.0, 12.0],
         [8.0, 14.0, 9.75, 12.0],
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vfrsub_vf_e64_from_fetch_stream() {
+    assert_vf_e64_fetch_stream_executes_bits(
+        vfrsub_vf_type(2, 1, 3),
+        RiscvVectorFloatInstruction::ReverseSubVf {
+            vd: vreg(3),
+            fs1: freg(1),
+            vs2: vreg(2),
+        },
+        10.0f64.to_bits(),
+        [2.0f64.to_bits(), (-4.0f64).to_bits()],
+        [0xdead_beef_dead_beef, 12.0f64.to_bits()],
+        [8.0f64.to_bits(), 14.0f64.to_bits()],
     );
 }
 

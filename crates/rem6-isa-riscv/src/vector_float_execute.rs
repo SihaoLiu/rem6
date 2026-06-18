@@ -270,7 +270,7 @@ fn execute_binary_vf(
         return false;
     };
     let left = read_register_group(hart, vs2, plan.group_registers);
-    let scalar = f32::from_bits(float::single_register_bits(hart.read_float(fs1)));
+    let scalar = hart.read_float(fs1);
     let mut result = read_register_group(hart, vd, plan.group_registers);
     if !apply_exact_scalar_lanes(&plan, &mut result, &left, scalar, operation, rounding_mode) {
         return false;
@@ -855,26 +855,43 @@ fn apply_exact_scalar_lanes(
     plan: &VectorBinaryPlan,
     result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
     left: &[u8; MAX_VECTOR_GROUP_BYTES],
-    scalar: f32,
+    scalar: u64,
     operation: FloatBinaryOp,
     rounding_mode: RiscvFloatRoundingMode,
 ) -> bool {
-    if plan.element_bytes != 4 {
-        return false;
-    }
-
-    for offset in (0..plan.active_bytes).step_by(4) {
-        let lhs = f32::from_bits(u32::from_le_bytes(lane4(left, offset)));
-        let (left, right, lane_operation) = match operation {
-            FloatBinaryOp::ReverseSub => (scalar, lhs, FloatBinaryOp::Sub),
-            FloatBinaryOp::ReverseDiv => (scalar, lhs, FloatBinaryOp::Div),
-            _ => (lhs, scalar, operation),
-        };
-        let value = exact_f32_binary(left, right, lane_operation, rounding_mode);
-        let Some(value) = value else {
-            return false;
-        };
-        result[offset..offset + 4].copy_from_slice(&value.to_bits().to_le_bytes());
+    match plan.element_bytes {
+        4 => {
+            let scalar = f32::from_bits(float::single_register_bits(scalar));
+            for offset in (0..plan.active_bytes).step_by(4) {
+                let lhs = f32::from_bits(u32::from_le_bytes(lane4(left, offset)));
+                let (left, right, lane_operation) = match operation {
+                    FloatBinaryOp::ReverseSub => (scalar, lhs, FloatBinaryOp::Sub),
+                    FloatBinaryOp::ReverseDiv => (scalar, lhs, FloatBinaryOp::Div),
+                    _ => (lhs, scalar, operation),
+                };
+                let value = exact_f32_binary(left, right, lane_operation, rounding_mode);
+                let Some(value) = value else {
+                    return false;
+                };
+                result[offset..offset + 4].copy_from_slice(&value.to_bits().to_le_bytes());
+            }
+        }
+        8 => {
+            for offset in (0..plan.active_bytes).step_by(8) {
+                let lhs = u64::from_le_bytes(lane8(left, offset));
+                let (left, right, lane_operation) = match operation {
+                    FloatBinaryOp::ReverseSub => (scalar, lhs, FloatBinaryOp::Sub),
+                    FloatBinaryOp::ReverseDiv => (scalar, lhs, FloatBinaryOp::Div),
+                    _ => (lhs, scalar, operation),
+                };
+                let Some(value) = exact_f64_binary(left, right, lane_operation, rounding_mode)
+                else {
+                    return false;
+                };
+                result[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+            }
+        }
+        _ => return false,
     }
     true
 }
