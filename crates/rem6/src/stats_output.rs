@@ -692,10 +692,31 @@ pub(super) fn run_stats_output(
             )?;
             increment_stat(
                 &mut stats,
+                &format!("sim.cpu{}.pipeline.in_order.advanced", core.cpu),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.in_order_pipeline_advanced,
+            )?;
+            increment_stat(
+                &mut stats,
                 &format!("sim.cpu{}.pipeline.in_order.flushed", core.cpu),
                 "Count",
                 StatResetPolicy::Monotonic,
                 core.in_order_pipeline_flushed,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!("sim.cpu{}.pipeline.in_order.resource_blocked", core.cpu),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.in_order_pipeline_resource_blocked,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!("sim.cpu{}.pipeline.in_order.ordering_blocked", core.cpu),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.in_order_pipeline_ordering_blocked,
             )?;
             increment_stat(
                 &mut stats,
