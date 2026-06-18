@@ -282,6 +282,8 @@ CLI external-memory profiles carry refresh interval/recovery timing, DDR4,
 DDR5, and HBM preset constructors validate `tREFI`/`tRFC` cycles through
 existing timing checks and controller refresh scheduling, and a DDR CLI RISC-V
 DRAM execution path emits nonzero refresh counters from real fetch traffic.
+LPDDR CLI RISC-V fetch traffic carries low-power timing into the DRAM runtime
+and emits nonzero precharge-powerdown residency counters from routed requests.
 DRAM target activity exposes per-bank resource counters for access/read/write
 counts, byte counts, row hits/misses, commands, and refresh cycles. CLI trace
 replay can route packet traces through an explicit workload fabric link and
@@ -323,7 +325,9 @@ instruction-cache fetch smoke coverage. DRAM
 memory-profile tests cover bank-level resource
 counters, resource-activity stats, and activity-window counter deltas.
 CLI `run` also has DDR profile refresh smoke coverage that exposes refresh
-timing fields and nonzero refresh stats from RISC-V DRAM execution. CLI
+timing fields and nonzero refresh stats from RISC-V DRAM execution, plus LPDDR
+low-power timing and precharge-powerdown residency stats from routed RISC-V
+fetch requests. CLI
 trace-replay fabric-route smoke coverage exposes nonzero active-lane,
 active-virtual-network, transfer, and byte stats plus request/response virtual
 network and credit-depth config fields from the top-level replay command; CLI
@@ -336,8 +340,8 @@ from real RISC-V loads and fetches.
 
 **Next evidence:** RISC-V instruction/data execution through a coherent
 multi-level cache and DRAM path with unified resource accounting, plus
-validated DDR4/DDR5/HBM refresh presets and hierarchy-level prefetch
-translation consumers.
+validated DDR4/DDR5/HBM refresh presets, broader low-power state-transition
+coverage, and hierarchy-level prefetch translation consumers.
 
 ### RISC-V SE, Workloads, and Linux Boot - 45% single-axis
 
@@ -863,7 +867,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/chi_tlm_tests` | `rem6-proto`, future adapter crates, `rem6-coherence` | 19% scoped | A library-level co-simulation boundary can register TLM endpoints, validate transaction shape, hand off events, and checkpoint clean adapter state in self-tests. | Add runtime TLM bridge tests with coherence traffic. |
 | `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, text stats output, and TOML-driven nested run/stats/power artifact directory creation tests exist. | Add config-driven file layouts for full-system manifests and broader multi-artifact workloads. |
 | `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line and conditional-branch fetch-ahead, pending-fetch retire overlap for older completed straight-line fetches, issued fetch-ahead occupancy in in-order timing before response completion, branch speculation history repair/commit, completed younger fetch squash, per-retired-instruction in-order stage timing stats, top-level fetch/data wait stats, top-level in-order cycle-plan advance/block/flush stats, top-level branch redirect/misprediction/branch-prediction-flush stats, and O3 policies exist. | Add broader in-order stalls/squashes and ROB/LSQ-backed O3 execution tests. |
-| `tests/gem5/dram_lowp` | `rem6-dram`, `rem6-power` | 40% single-axis | DRAM/NVM profile counters and low-power constants are surfaced. | Add executable low-power state transition tests through routed requests. |
+| `tests/gem5/dram_lowp` | `rem6-dram`, `rem6-power` | 40% single-axis | DRAM/NVM profile counters, low-power constants, and top-level LPDDR routed-request precharge-powerdown residency stats are surfaced. | Add broader executable low-power state-transition tests across profiles and power states. |
 | `tests/gem5/example_configs`, `tests/gem5/learning_gem5` | `rem6` CLI, `rem6-platform`, `rem6-workload` | 40% single-axis | CLI and TOML tests cover several execution and trace-replay paths, including a checked-in GUPS example config that runs without recompilation. | Add broader example suites spanning run, trace replay, resources, and full-system handoff. |
 | `tests/gem5/fdp_tests` | `rem6-cache` | 45% single-axis | Fetch-directed prefetcher state, errors, and cache-local queue/translation counters have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |
 | `tests/gem5/fs` | `rem6-platform`, `rem6-system`, device crates | 15% scoped | Generic device and handoff slices exist, but the gem5 row is mainly full-system boot. | Add full-system Linux boot with SBI, console, storage, network, timer, and shutdown evidence. |
