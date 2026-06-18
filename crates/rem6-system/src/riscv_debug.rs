@@ -6,9 +6,10 @@ use rem6_debug::{
     DEFAULT_GDB_REMOTE_MAX_PAYLOAD_BYTES,
 };
 use rem6_isa_riscv::{
-    FloatRegister, Register, RiscvFloatCsr, RiscvGdbTargetDescription, RiscvGdbXlen,
-    RiscvHartState, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvSupervisorTrapCsr,
-    RiscvTranslationCsr, RiscvVectorFixedPointCsr, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
+    FloatRegister, Register, RiscvCounterCsr, RiscvCounterSnapshot, RiscvFloatCsr,
+    RiscvGdbTargetDescription, RiscvGdbXlen, RiscvHartState, RiscvInterruptCsr,
+    RiscvMachineTrapCsr, RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr,
+    RiscvVectorFixedPointCsr, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, MemoryError, MemoryRequest, MemoryRequestId,
@@ -32,6 +33,9 @@ const RISCV_GDB_VECTOR_REGISTER_BASE: u64 = 90;
 const RISCV_GDB_VECTOR_REGISTER_COUNT: u8 = 32;
 const RISCV_GDB_SUPERVISOR_INTERRUPT_ENABLE_REGISTER: u64 = 122;
 const RISCV_GDB_SUPERVISOR_INTERRUPT_PENDING_REGISTER: u64 = 123;
+const RISCV_GDB_COUNTER_CYCLE_REGISTER: u64 = 124;
+const RISCV_GDB_COUNTER_INSTRET_REGISTER: u64 = 125;
+const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 4;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -42,6 +46,7 @@ enum RiscvGdbCsrRegister {
     SupervisorTrap(RiscvSupervisorTrapCsr),
     Translation(RiscvTranslationCsr),
     VectorFixedPoint(RiscvVectorFixedPointCsr),
+    Counter(RiscvCounterCsr),
 }
 
 pub fn riscv_gdb_remote_session(xlen: RiscvGdbXlen) -> GdbRemoteSession {
@@ -723,6 +728,7 @@ fn riscv_gdb_hart_snapshot_from_core(core: &RiscvCore) -> RiscvHartState {
         hart.write_vector(register, core.read_vector_register(register));
     }
     hart.set_float_status(core.float_status());
+    hart.restore_counter_snapshot(&core.counter_snapshot());
     hart.set_status(core.status());
     hart.set_machine_exception_delegation(core.machine_trap_csr(RiscvMachineTrapCsr::Medeleg));
     hart.set_machine_interrupt_delegation(core.machine_trap_csr(RiscvMachineTrapCsr::Mideleg));
@@ -961,6 +967,7 @@ fn read_hart_csr_register_value(xlen: RiscvGdbXlen, hart: &RiscvHartState, numbe
         RiscvGdbCsrRegister::SupervisorTrap(csr) => read_hart_supervisor_trap_csr(hart, csr),
         RiscvGdbCsrRegister::Translation(csr) => read_hart_translation_csr(hart, csr),
         RiscvGdbCsrRegister::VectorFixedPoint(csr) => csr.read(hart.vector_fixed_point()),
+        RiscvGdbCsrRegister::Counter(csr) => read_hart_counter_csr(hart, csr),
     }
 }
 
@@ -989,6 +996,9 @@ fn write_hart_csr_register_value(
         RiscvGdbCsrRegister::VectorFixedPoint(csr) => {
             hart.set_vector_fixed_point(csr.write(hart.vector_fixed_point(), value));
         }
+        RiscvGdbCsrRegister::Counter(csr) => {
+            write_hart_counter_csr(hart, csr, value);
+        }
     }
 }
 
@@ -1012,6 +1022,9 @@ fn write_core_csr_register_value(xlen: RiscvGdbXlen, core: &RiscvCore, number: u
         RiscvGdbCsrRegister::VectorFixedPoint(csr) => {
             core.set_vector_fixed_point(csr.write(core.vector_fixed_point(), value));
         }
+        RiscvGdbCsrRegister::Counter(csr) => {
+            write_core_counter_csr(core, csr, value);
+        }
     }
 }
 
@@ -1021,6 +1034,12 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     }
     if number == RISCV_GDB_SUPERVISOR_INTERRUPT_PENDING_REGISTER {
         return RiscvGdbCsrRegister::Interrupt(RiscvInterruptCsr::SupervisorInterruptPending);
+    }
+    if number == RISCV_GDB_COUNTER_CYCLE_REGISTER {
+        return RiscvGdbCsrRegister::Counter(RiscvCounterCsr::Cycle);
+    }
+    if number == RISCV_GDB_COUNTER_INSTRET_REGISTER {
+        return RiscvGdbCsrRegister::Counter(RiscvCounterCsr::Instret);
     }
 
     match number - riscv_gdb_csr_register_base(xlen) {
@@ -1045,6 +1064,36 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
         18 => RiscvGdbCsrRegister::VectorFixedPoint(RiscvVectorFixedPointCsr::Vxrm),
         19 => RiscvGdbCsrRegister::VectorFixedPoint(RiscvVectorFixedPointCsr::Vcsr),
         _ => unreachable!("validated RISC-V GDB CSR register"),
+    }
+}
+
+fn read_hart_counter_csr(hart: &RiscvHartState, csr: RiscvCounterCsr) -> u64 {
+    let snapshot = hart.counter_snapshot();
+    match csr {
+        RiscvCounterCsr::Cycle | RiscvCounterCsr::Time => snapshot.cycle(),
+        RiscvCounterCsr::Instret => snapshot.instret(),
+    }
+}
+
+fn write_hart_counter_csr(hart: &mut RiscvHartState, csr: RiscvCounterCsr, value: u64) {
+    let snapshot = counter_snapshot_with_value(hart.counter_snapshot(), csr, value);
+    hart.restore_counter_snapshot(&snapshot);
+}
+
+fn write_core_counter_csr(core: &RiscvCore, csr: RiscvCounterCsr, value: u64) {
+    let snapshot = counter_snapshot_with_value(core.counter_snapshot(), csr, value);
+    core.restore_counter_snapshot(&snapshot);
+}
+
+fn counter_snapshot_with_value(
+    snapshot: RiscvCounterSnapshot,
+    csr: RiscvCounterCsr,
+    value: u64,
+) -> RiscvCounterSnapshot {
+    match csr {
+        RiscvCounterCsr::Cycle => RiscvCounterSnapshot::new(value, snapshot.instret()),
+        RiscvCounterCsr::Instret => RiscvCounterSnapshot::new(snapshot.cycle(), value),
+        RiscvCounterCsr::Time => snapshot,
     }
 }
 
@@ -1191,6 +1240,8 @@ fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
         .chain([
             RISCV_GDB_SUPERVISOR_INTERRUPT_ENABLE_REGISTER,
             RISCV_GDB_SUPERVISOR_INTERRUPT_PENDING_REGISTER,
+            RISCV_GDB_COUNTER_CYCLE_REGISTER,
+            RISCV_GDB_COUNTER_INSTRET_REGISTER,
         ])
 }
 
@@ -1202,7 +1253,7 @@ const fn register_count(_xlen: RiscvGdbXlen) -> usize {
         + 1
         + RISCV_GDB_CSR_REGISTER_COUNT as usize
         + RISCV_GDB_VECTOR_REGISTER_COUNT as usize
-        + 2
+        + RISCV_GDB_SPARSE_CSR_REGISTER_COUNT
 }
 
 fn register_set_byte_len(xlen: RiscvGdbXlen) -> usize {
@@ -1251,6 +1302,8 @@ const fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool {
         && number < riscv_gdb_csr_register_base(xlen) + RISCV_GDB_CSR_REGISTER_COUNT as u64)
         || number == RISCV_GDB_SUPERVISOR_INTERRUPT_ENABLE_REGISTER
         || number == RISCV_GDB_SUPERVISOR_INTERRUPT_PENDING_REGISTER
+        || number == RISCV_GDB_COUNTER_CYCLE_REGISTER
+        || number == RISCV_GDB_COUNTER_INSTRET_REGISTER
 }
 
 fn encode_register_value(xlen: RiscvGdbXlen, number: u64, value: u64) -> Vec<u8> {

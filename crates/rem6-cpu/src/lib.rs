@@ -3,8 +3,8 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_isa_riscv::{
-    FloatRegister, MemoryAccessKind, Register, RiscvHartState, RiscvPmaError, RiscvPmaRange,
-    RiscvPmaTable, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot, RiscvPmpTable,
+    FloatRegister, MemoryAccessKind, Register, RiscvCounterSnapshot, RiscvHartState, RiscvPmaError,
+    RiscvPmaRange, RiscvPmaTable, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot, RiscvPmpTable,
     RiscvPrivilegeMode, RiscvTrap, RiscvTrapKind, RiscvVectorConfig, VectorRegister,
     RISCV_VECTOR_REGISTER_BYTES,
 };
@@ -734,6 +734,22 @@ impl RiscvCore {
             .expect("riscv core lock")
             .hart
             .read_vector(register)
+    }
+
+    pub fn counter_snapshot(&self) -> RiscvCounterSnapshot {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .counter_snapshot()
+    }
+
+    pub fn restore_counter_snapshot(&self, snapshot: &RiscvCounterSnapshot) {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .hart
+            .restore_counter_snapshot(snapshot);
     }
 
     pub fn write_vector_register(

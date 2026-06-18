@@ -70,6 +70,8 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "  <reg name=\"vcsr\" bitsize=\"64\"/>\n",
             "  <reg name=\"sie\" bitsize=\"64\" regnum=\"122\"/>\n",
             "  <reg name=\"sip\" bitsize=\"64\" regnum=\"123\"/>\n",
+            "  <reg name=\"cycle\" bitsize=\"64\" regnum=\"124\"/>\n",
+            "  <reg name=\"instret\" bitsize=\"64\" regnum=\"125\"/>\n",
             "</feature>\n",
         ),
     );
@@ -78,10 +80,10 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
         vec![
             "sstatus", "stvec", "sscratch", "sepc", "scause", "stval", "satp", "mstatus",
             "medeleg", "mideleg", "mie", "mtvec", "mscratch", "mepc", "mcause", "mtval", "mip",
-            "vxsat", "vxrm", "vcsr", "sie", "sip",
+            "vxsat", "vxrm", "vcsr", "sie", "sip", "cycle", "instret",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 22);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 24);
 }
 
 #[test]
@@ -308,6 +310,8 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "  <reg name=\"vcsr\" bitsize=\"32\"/>\n",
             "  <reg name=\"sie\" bitsize=\"32\" regnum=\"122\"/>\n",
             "  <reg name=\"sip\" bitsize=\"32\" regnum=\"123\"/>\n",
+            "  <reg name=\"cycle\" bitsize=\"32\" regnum=\"124\"/>\n",
+            "  <reg name=\"instret\" bitsize=\"32\" regnum=\"125\"/>\n",
             "</feature>\n",
         ),
     );
@@ -316,10 +320,10 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
         vec![
             "sstatus", "stvec", "sscratch", "sepc", "scause", "stval", "satp", "mstatus",
             "medeleg", "mideleg", "mie", "mtvec", "mscratch", "mepc", "mcause", "mtval", "mip",
-            "vxsat", "vxrm", "vcsr", "sie", "sip",
+            "vxsat", "vxrm", "vcsr", "sie", "sip", "cycle", "instret",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"32\"").count(), 22);
+    assert_eq!(csr.matches("bitsize=\"32\"").count(), 24);
 }
 
 #[test]

@@ -85,6 +85,10 @@ impl RiscvHartState {
         self.counters.snapshot()
     }
 
+    pub fn restore_counter_snapshot(&mut self, snapshot: &RiscvCounterSnapshot) {
+        self.counters.restore(snapshot);
+    }
+
     pub const fn translation_satp(&self) -> u64 {
         self.translation_satp
     }

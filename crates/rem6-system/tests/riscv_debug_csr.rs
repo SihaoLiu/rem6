@@ -269,7 +269,7 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_advertised_rv64_csr_register
         )
         .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(124));
+    assert_eq!(registers.len(), rv64_register_hex_offset(126));
     assert_eq!(&registers[rv64_register_hex_range(70)], b"0000080000000000");
     assert_eq!(&registers[rv64_register_hex_range(71)], b"8877665544332211");
     assert_eq!(&registers[rv64_register_hex_range(72)], b"8877665544332211");
@@ -289,6 +289,14 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_advertised_rv64_csr_register
     assert_eq!(
         &registers[rv64_register_hex_range(123)],
         b"aa0a000000000000"
+    );
+    assert_eq!(
+        &registers[rv64_register_hex_range(124)],
+        b"0000000000000000"
+    );
+    assert_eq!(
+        &registers[rv64_register_hex_range(125)],
+        b"0000000000000000"
     );
 }
 
@@ -311,8 +319,8 @@ fn rv64_register_hex_offset(number: u64) -> usize {
         33..=65 => (33 * 8) + ((number - 33) * 8),
         66..=69 => (33 * 8) + (32 * 8) + ((number - 66) * 4),
         70..=89 => (33 * 8) + (32 * 8) + (4 * 4) + ((number - 70) * 8),
-        90..=122 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + ((number - 90) * 16),
-        123..=124 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
+        90..=121 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + ((number - 90) * 16),
+        122..=126 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
         _ => panic!("unexpected RV64 GDB register number {number}"),
     };
     byte_offset as usize * 2
