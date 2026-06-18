@@ -345,6 +345,9 @@ impl RiscvWorkloadReplay {
             GuestSourceId::new(topology.host().source()),
         );
         let mut driver = RiscvSystemRunDriver::with_instruction_stats(trap_port, instruction_stats);
+        if self.plan.linux_boot_handoff().is_some() {
+            driver = driver.with_riscv_sbi_firmware();
+        }
         if let Some(data_access_stats) = data_access_stats {
             driver = driver.with_data_access_stats(data_access_stats);
         }
@@ -664,6 +667,10 @@ impl RiscvWorkloadReplay {
                 ))
             })
             .collect::<Result<Vec<_>, RiscvWorkloadReplayError>>()?;
+
+        if let Some(handoff) = self.plan.linux_boot_handoff() {
+            apply_linux_boot_handoff(&cores, handoff.dtb_addr());
+        }
 
         RiscvCluster::new(cores).map_err(RiscvWorkloadReplayError::RiscvCluster)
     }
@@ -1315,6 +1322,17 @@ impl RiscvWorkloadReplay {
                 ),
             host_action_outcomes,
         ))
+    }
+}
+
+fn apply_linux_boot_handoff(cores: &[RiscvCore], dtb_addr: Address) {
+    let Some((boot, secondaries)) = cores.split_first() else {
+        return;
+    };
+
+    boot.start_supervisor_hart(boot.pc(), dtb_addr.get());
+    for core in secondaries {
+        core.set_hart_stopped();
     }
 }
 

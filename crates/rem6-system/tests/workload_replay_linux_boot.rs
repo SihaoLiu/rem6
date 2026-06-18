@@ -1,4 +1,6 @@
 use rem6_boot::BootImage;
+use rem6_cpu::{CpuId, RiscvHartRunState};
+use rem6_isa_riscv::Register;
 use rem6_memory::{
     AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId, PartitionedMemorySnapshot,
 };
@@ -33,9 +35,33 @@ fn word(raw: u32) -> Vec<u8> {
 
 fn boot_image() -> BootImage {
     BootImage::new(Address::new(0x8000))
-        .add_segment(Address::new(0x8000), word(0x0000_0073))
+        .add_segment(Address::new(0x8000), word(0x0010_0073))
         .unwrap()
         .add_segment(Address::new(0x9000), word(0x0010_0073))
+        .unwrap()
+}
+
+fn sbi_boot_image() -> BootImage {
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), word(0x0005_0e13))
+        .unwrap()
+        .add_segment(Address::new(0x8004), word(0x0005_8e93))
+        .unwrap()
+        .add_segment(Address::new(0x8008), word(0x0100_0893))
+        .unwrap()
+        .add_segment(Address::new(0x800c), word(0x0000_0813))
+        .unwrap()
+        .add_segment(Address::new(0x8010), word(0x0000_0073))
+        .unwrap()
+        .add_segment(Address::new(0x8014), word(0x0005_0293))
+        .unwrap()
+        .add_segment(Address::new(0x8018), word(0x0005_8313))
+        .unwrap()
+        .add_segment(Address::new(0x801c), word(0x0010_0073))
+        .unwrap()
+        .add_segment(Address::new(0x9000), word(0x0090_0f93))
+        .unwrap()
+        .add_segment(Address::new(0x9004), word(0x0010_0073))
         .unwrap()
 }
 
@@ -141,6 +167,31 @@ fn replay_manifest_with_bootargs(bootargs: &str) -> WorkloadManifest {
         .unwrap()
 }
 
+fn replay_manifest_with_sbi_linux_boot_handoff() -> WorkloadManifest {
+    WorkloadManifest::builder(workload_id("riscv-linux-sbi-replay"), sbi_boot_image())
+        .with_topology(replay_topology())
+        .add_resource(device_tree_resource())
+        .unwrap()
+        .add_resource(initrd_resource())
+        .unwrap()
+        .with_linux_boot_handoff(
+            WorkloadLinuxBootHandoff::new(Address::new(0x97c0))
+                .with_device_tree_resource(resource_id("dtb"))
+                .with_bootargs("console=ttyS0 root=/dev/vda")
+                .with_initrd(
+                    WorkloadLinuxInitrd::new(
+                        resource_id("initrd"),
+                        Address::new(0x9804),
+                        AccessSize::new(20).unwrap(),
+                    )
+                    .unwrap(),
+                ),
+        )
+        .with_expected_stop_reason("host-stop")
+        .build()
+        .unwrap()
+}
+
 fn snapshot_blob(
     snapshot: &PartitionedMemorySnapshot,
     target: MemoryTargetId,
@@ -215,6 +266,40 @@ fn workload_replay_installs_resolved_linux_boot_payloads() {
         ),
         initrd_data
     );
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_linux_boot_handoff_enters_supervisor_sbi() {
+    let manifest = replay_manifest_with_sbi_linux_boot_handoff();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let resources = WorkloadResolvedResources::from_manifest(
+        &manifest,
+        [
+            WorkloadResourcePayload::new(resource_id("dtb"), "sha256:dtb", vec![0xd0, 0x0d])
+                .unwrap(),
+            WorkloadResourcePayload::new(resource_id("initrd"), "sha256:initrd", vec![0; 20])
+                .unwrap(),
+        ],
+    )
+    .unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_resolved_resources(resources)
+        .with_max_turns(64)
+        .run_parallel()
+        .unwrap();
+
+    let boot = outcome.cluster().core(CpuId::new(0)).unwrap();
+    let secondary = outcome.cluster().core(CpuId::new(1)).unwrap();
+
+    assert_eq!(boot.read_register(Register::new(28).unwrap()), 0);
+    assert_eq!(boot.read_register(Register::new(29).unwrap()), 0x97c0);
+    assert_eq!(boot.read_register(Register::new(5).unwrap()), 0);
+    assert_eq!(boot.read_register(Register::new(6).unwrap()), 3);
+    assert_eq!(secondary.hart_run_state(), RiscvHartRunState::Stopped);
+    assert_eq!(secondary.read_register(Register::new(31).unwrap()), 0);
+    assert_eq!(outcome.run().scheduled_traps()[0].trap().pc(), 0x801c);
     plan.verify_result(outcome.result()).unwrap();
 }
 
