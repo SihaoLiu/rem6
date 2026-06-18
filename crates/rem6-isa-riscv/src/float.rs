@@ -103,6 +103,23 @@ pub(crate) fn exact_finite_single_add_sub_bits(
     add_sub::exact_finite_single_bits(lhs, rhs, rounding_mode, subtract)
 }
 
+pub(crate) fn exact_finite_double_add_bits(
+    lhs: u64,
+    rhs: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> Option<u64> {
+    let result = (f64::from_bits(lhs) + f64::from_bits(rhs)).to_bits();
+    let target_shift = finite_double_common_shift([lhs, rhs, result])?;
+    let lhs_exact = finite_double_scaled_integer(lhs, target_shift)?;
+    let rhs_exact = finite_double_scaled_integer(rhs, target_shift)?;
+    let exact = lhs_exact.checked_add(rhs_exact)?;
+    if exact == 0 && f64::from_bits(result) == 0.0 {
+        return Some(exact_zero_double_add_bits(lhs, rhs, result, rounding_mode));
+    }
+    let result_exact = finite_double_scaled_integer(result, target_shift)?;
+    (exact == result_exact).then_some(result)
+}
+
 pub(crate) fn exact_finite_single_mul_add_bits(
     lhs: u32,
     rhs: u32,
@@ -402,6 +419,63 @@ fn add_sub_double_is_identity(lhs: u64, rhs: u64) -> bool {
     let lhs = f64::from_bits(lhs);
     let rhs = f64::from_bits(rhs);
     lhs.is_finite() && rhs.is_finite() && ((lhs != 0.0 && rhs == 0.0) || (lhs == 0.0 && rhs != 0.0))
+}
+
+fn finite_double_common_shift(values: [u64; 3]) -> Option<i32> {
+    let mut common = None;
+    for value in values {
+        let (_negative, significand, shift) = finite_double_significand_shift(value)?;
+        if significand == 0 {
+            continue;
+        }
+        common = Some(common.map_or(shift, |current: i32| current.min(shift)));
+    }
+    Some(common.unwrap_or(0))
+}
+
+fn finite_double_scaled_integer(value: u64, target_shift: i32) -> Option<i128> {
+    let (negative, significand, shift) = finite_double_significand_shift(value)?;
+    if significand == 0 {
+        return Some(0);
+    }
+    let shift_delta = shift.checked_sub(target_shift)?;
+    let magnitude = significand.checked_shl(shift_delta.try_into().ok()?)?;
+    if magnitude > i128::MAX as u128 {
+        return None;
+    }
+    let magnitude = magnitude as i128;
+    Some(if negative { -magnitude } else { magnitude })
+}
+
+fn exact_zero_double_add_bits(
+    lhs: u64,
+    rhs: u64,
+    result: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> u64 {
+    let opposite_signs = (lhs ^ rhs) & DOUBLE_SIGN_BIT != 0;
+    if opposite_signs && rounding_mode == RiscvFloatRoundingMode::RoundDown {
+        DOUBLE_SIGN_BIT
+    } else {
+        result
+    }
+}
+
+fn finite_double_significand_shift(value: u64) -> Option<(bool, u128, i32)> {
+    if !f64::from_bits(value).is_finite() {
+        return None;
+    }
+    let negative = value & DOUBLE_SIGN_BIT != 0;
+    let exponent = (value & DOUBLE_EXP_MASK) >> 52;
+    let fraction = value & DOUBLE_FRACTION_MASK;
+    if exponent == 0 {
+        return Some((negative, u128::from(fraction), -1074));
+    }
+    Some((
+        negative,
+        u128::from((1_u64 << 52) | fraction),
+        exponent as i32 - 1023 - 52,
+    ))
 }
 
 fn multiply_single_is_identity(lhs: u64, rhs: u64) -> bool {

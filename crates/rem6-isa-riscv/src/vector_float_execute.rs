@@ -825,17 +825,28 @@ fn apply_exact_lanes(
     operation: FloatBinaryOp,
     rounding_mode: RiscvFloatRoundingMode,
 ) -> bool {
-    if plan.element_bytes != 4 {
-        return false;
-    }
-
-    for offset in (0..plan.active_bytes).step_by(4) {
-        let lhs = f32::from_bits(u32::from_le_bytes(lane4(left, offset)));
-        let rhs = f32::from_bits(u32::from_le_bytes(lane4(right, offset)));
-        let Some(value) = exact_f32_binary(lhs, rhs, operation, rounding_mode) else {
-            return false;
-        };
-        result[offset..offset + 4].copy_from_slice(&value.to_bits().to_le_bytes());
+    match plan.element_bytes {
+        4 => {
+            for offset in (0..plan.active_bytes).step_by(4) {
+                let lhs = f32::from_bits(u32::from_le_bytes(lane4(left, offset)));
+                let rhs = f32::from_bits(u32::from_le_bytes(lane4(right, offset)));
+                let Some(value) = exact_f32_binary(lhs, rhs, operation, rounding_mode) else {
+                    return false;
+                };
+                result[offset..offset + 4].copy_from_slice(&value.to_bits().to_le_bytes());
+            }
+        }
+        8 => {
+            for offset in (0..plan.active_bytes).step_by(8) {
+                let lhs = u64::from_le_bytes(lane8(left, offset));
+                let rhs = u64::from_le_bytes(lane8(right, offset));
+                let Some(value) = exact_f64_binary(lhs, rhs, operation, rounding_mode) else {
+                    return false;
+                };
+                result[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+            }
+        }
+        _ => return false,
     }
     true
 }
@@ -899,6 +910,21 @@ fn exact_f32_binary(
     };
     let rounded = exact as f32;
     (rounded.is_finite() && f64::from(rounded) == exact).then_some(rounded)
+}
+
+fn exact_f64_binary(
+    lhs: u64,
+    rhs: u64,
+    operation: FloatBinaryOp,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> Option<u64> {
+    match operation {
+        FloatBinaryOp::Add => float::exact_finite_double_add_bits(lhs, rhs, rounding_mode),
+        FloatBinaryOp::Sub | FloatBinaryOp::Mul | FloatBinaryOp::Div => None,
+        FloatBinaryOp::ReverseSub | FloatBinaryOp::ReverseDiv => {
+            unreachable!("reverse operations are scalar-only")
+        }
+    }
 }
 
 fn apply_exact_mul_add_lanes(
