@@ -3,6 +3,161 @@ use std::{fs, process::Command};
 use crate::support::{assert_stat, find_riscv_tool, temp_workspace};
 
 #[test]
+fn rem6_run_riscv_se_reads_proc_self_maps_after_mmap_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE proc-self-maps smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE proc-self-maps smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-proc-self-maps");
+    let source = workspace.join("proc-self-maps.c");
+    let binary = workspace.join("proc-self-maps");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+#include <string.h>
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall4(long number, long arg0, long arg1, long arg2, long arg3) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall6(
+    long number,
+    long arg0,
+    long arg1,
+    long arg2,
+    long arg3,
+    long arg4,
+    long arg5
+) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a4 asm("a4") = arg4;
+    register long a5 asm("a5") = arg5;
+    register long a7 asm("a7") = number;
+    asm volatile (
+        "ecall"
+        : "+r"(a0)
+        : "r"(a1), "r"(a2), "r"(a3), "r"(a4), "r"(a5), "r"(a7)
+        : "memory"
+    );
+    return a0;
+}
+
+int main(void) {
+    char chunk[16385];
+    char needle[32];
+    char padded[32];
+    long mapped = linux_syscall6(222, 0, 8192, 3, 0x22, -1, 0);
+    int mmap_ok = mapped > 0;
+    snprintf(needle, sizeof(needle), "%lx", (unsigned long)mapped);
+    snprintf(padded, sizeof(padded), "%016lx", (unsigned long)mapped);
+
+    long fd = linux_syscall4(56, -100, (long)"/proc/self/maps", 0, 0);
+    long total = 0;
+    int found = 0;
+    if (fd >= 0) {
+        for (int i = 0; i < 32 && !found; i++) {
+            long count = linux_syscall3(63, fd, (long)chunk, sizeof(chunk) - 1);
+            if (count <= 0) {
+                break;
+            }
+            chunk[count] = 0;
+            total += count;
+            found = strstr(chunk, needle) != 0 || strstr(chunk, padded) != 0;
+        }
+    }
+
+    printf("proc-self-maps:%d:%d:%d:%d\n", mmap_ok, fd >= 0, total > 0, found);
+    return mmap_ok && fd >= 0 && total > 0 && found ? 48 : 79;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(48),
+        "qemu stdout: {}; qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stdout),
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(qemu_output.stdout, b"proc-self-maps:1:1:1:1\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "500000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":48"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"proc-self-maps:1:1:1:1\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 48, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_newlib_readlink_proc_self_exe_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(

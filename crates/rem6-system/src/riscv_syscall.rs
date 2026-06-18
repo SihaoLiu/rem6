@@ -49,6 +49,7 @@ mod pipe;
 mod poll;
 mod positioned;
 mod process;
+mod procfs;
 mod random;
 mod readv;
 mod rename;

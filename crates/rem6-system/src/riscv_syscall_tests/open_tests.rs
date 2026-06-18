@@ -29,6 +29,150 @@ const RISCV_LINUX_EACCES_FOR_OPEN_TEST: u64 = 13;
 const RISCV_LINUX_EEXIST_FOR_OPEN_TEST: u64 = 17;
 const RISCV_LINUX_EINVAL_FOR_OPEN_TEST: u64 = 22;
 const RISCV_LINUX_ELOOP_FOR_OPEN_TEST: u64 = 40;
+const RISCV_LINUX_MAP_ANONYMOUS_FOR_OPEN_TEST: u64 = 0x20;
+
+#[test]
+fn linux_table_openat_reads_virtual_proc_self_maps() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0x20000);
+    let guest_memory_reader = c_string_reader(0x9000, b"/proc/self/maps");
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_BRK, [0x24000, 0, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0x24000 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_MMAP,
+                [
+                    0,
+                    RISCV_PAGE_BYTES + 7,
+                    3,
+                    RISCV_LINUX_MAP_PRIVATE | RISCV_LINUX_MAP_ANONYMOUS_FOR_OPEN_TEST,
+                    u64::MAX,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_OPENAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+
+    let expected_maps = concat!(
+        "0000000000020000-0000000000024000 rw-p 00000000 00:00 0 [heap]\n",
+        "4000000000000000-4000000000002000 rw-p 00000000 00:00 0 [anon]\n",
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_READ,
+                [3, 0xa000, expected_maps.len() as u64 + 64, 0, 0, 0],
+            ),
+            &mut state,
+            8,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: expected_maps.len() as u64
+        })
+    );
+    assert_eq!(
+        &*writes.lock().unwrap(),
+        &[(0xa000, expected_maps.as_bytes().to_vec())]
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_openat_rejects_virtual_proc_maps_through_missing_parent() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0x20000);
+    let guest_memory_reader = c_string_reader(0x9000, b"missing/../proc/self/maps");
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPENAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOENT)
+        })
+    );
+    assert!(state.guest_opens().is_empty());
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_openat_rejects_writable_virtual_proc_self_maps() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0x20000);
+    let guest_memory_reader = c_string_reader(0x9000, b"/proc/self/maps");
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPENAT,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_O_WRONLY_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EACCES_FOR_OPEN_TEST)
+        })
+    );
+    assert!(state.guest_opens().is_empty());
+    assert!(state.unknown_syscalls().is_empty());
+}
 
 #[test]
 fn linux_table_openat_append_writes_at_guest_file_end() {

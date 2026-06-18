@@ -4,11 +4,11 @@ use super::permissions::apply_file_creation_mask;
 use super::{
     linux_error, read_guest_c_string, RiscvGuestCStringError, RiscvGuestMemoryReader,
     RiscvGuestNodeKind, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_AT_FDCWD,
-    RISCV_LINUX_E2BIG, RISCV_LINUX_EBADF, RISCV_LINUX_EEXIST, RISCV_LINUX_EFAULT,
-    RISCV_LINUX_EINVAL, RISCV_LINUX_EISDIR, RISCV_LINUX_EMFILE, RISCV_LINUX_ENAMETOOLONG,
-    RISCV_LINUX_ENOENT, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND, RISCV_LINUX_O_CLOEXEC,
-    RISCV_LINUX_O_NONBLOCK, RISCV_LINUX_O_RDONLY, RISCV_LINUX_O_WRONLY, RISCV_LINUX_PATH_MAX,
-    RISCV_PAGE_BYTES,
+    RISCV_LINUX_E2BIG, RISCV_LINUX_EACCES, RISCV_LINUX_EBADF, RISCV_LINUX_EEXIST,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EISDIR, RISCV_LINUX_EMFILE,
+    RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT, RISCV_LINUX_ENOTDIR, RISCV_LINUX_O_ACCMODE,
+    RISCV_LINUX_O_APPEND, RISCV_LINUX_O_CLOEXEC, RISCV_LINUX_O_NONBLOCK, RISCV_LINUX_O_RDONLY,
+    RISCV_LINUX_O_WRONLY, RISCV_LINUX_PATH_MAX, RISCV_PAGE_BYTES,
 };
 
 pub(super) const RISCV_LINUX_OPEN: u64 = 1024;
@@ -332,67 +332,77 @@ fn syscall_open_registered_path(
     }
 
     let open_directory = flags & RISCV_LINUX_O_DIRECTORY != 0;
-    let (path, node_kind, file_contents, directory_contents) = if open_directory {
-        if writable || creates_file || truncates_file {
-            return linux_error(RISCV_LINUX_EINVAL);
-        }
-        let path = match state.guest_directory_path(&path) {
-            Ok(path) => path,
-            Err(error) => return linux_error(error.linux_error_code()),
-        };
-        let entries = state
-            .guest_directory_entries(&path)
-            .expect("resolved guest directory has entries");
-        (
-            path,
-            RiscvGuestNodeKind::Directory,
-            None,
-            Some(super::riscv_linux_dirent64_bytes(&entries)),
-        )
-    } else if writable || creates_file || truncates_file {
-        let path = match state.resolve_guest_path(&path) {
-            Ok(path) => path,
-            Err(error) => return linux_error(error.linux_error_code()),
-        };
-        if state.guest_directory_entries(&path).is_some() {
-            return linux_error(RISCV_LINUX_EISDIR);
-        }
-        if state.guest_link_target(&path).is_some() {
-            return linux_error(RISCV_LINUX_EEXIST);
-        }
-        let path = state.existing_guest_path_key(&path).unwrap_or(path);
-        let path_exists = state.guest_path_registered(&path);
-        let existing = state.guest_file_contents(&path).map(Vec::from);
-        if exclusive_create && path_exists {
-            return linux_error(RISCV_LINUX_EEXIST);
-        }
-        if existing.is_none() && !path_exists && !creates_file {
-            return linux_error(RISCV_LINUX_ENOENT);
-        }
-        let contents = if truncates_file {
-            Vec::new()
+    let virtual_file = state.virtual_proc_file_contents_for_path(&path);
+    let (path, node_kind, file_contents, directory_contents) =
+        if let Some((path, contents)) = virtual_file {
+            if open_directory {
+                return linux_error(RISCV_LINUX_ENOTDIR);
+            }
+            if writable || creates_file || truncates_file {
+                return linux_error(RISCV_LINUX_EACCES);
+            }
+            (path, RiscvGuestNodeKind::RegularFile, Some(contents), None)
+        } else if open_directory {
+            if writable || creates_file || truncates_file {
+                return linux_error(RISCV_LINUX_EINVAL);
+            }
+            let path = match state.guest_directory_path(&path) {
+                Ok(path) => path,
+                Err(error) => return linux_error(error.linux_error_code()),
+            };
+            let entries = state
+                .guest_directory_entries(&path)
+                .expect("resolved guest directory has entries");
+            (
+                path,
+                RiscvGuestNodeKind::Directory,
+                None,
+                Some(super::riscv_linux_dirent64_bytes(&entries)),
+            )
+        } else if writable || creates_file || truncates_file {
+            let path = match state.resolve_guest_path(&path) {
+                Ok(path) => path,
+                Err(error) => return linux_error(error.linux_error_code()),
+            };
+            if state.guest_directory_entries(&path).is_some() {
+                return linux_error(RISCV_LINUX_EISDIR);
+            }
+            if state.guest_link_target(&path).is_some() {
+                return linux_error(RISCV_LINUX_EEXIST);
+            }
+            let path = state.existing_guest_path_key(&path).unwrap_or(path);
+            let path_exists = state.guest_path_registered(&path);
+            let existing = state.guest_file_contents(&path).map(Vec::from);
+            if exclusive_create && path_exists {
+                return linux_error(RISCV_LINUX_EEXIST);
+            }
+            if existing.is_none() && !path_exists && !creates_file {
+                return linux_error(RISCV_LINUX_ENOENT);
+            }
+            let contents = if truncates_file {
+                Vec::new()
+            } else {
+                existing.unwrap_or_default()
+            };
+            let created_new_file = creates_file && !path_exists;
+            state.replace_guest_file_contents(&path, contents.clone());
+            if created_new_file {
+                state.set_guest_file_permissions(&path, apply_file_creation_mask(mode, state));
+            }
+            (path, RiscvGuestNodeKind::RegularFile, Some(contents), None)
         } else {
-            existing.unwrap_or_default()
+            let path = match state.resolve_existing_guest_regular_path(&path) {
+                Ok(Some(path)) => path,
+                Ok(None) => return linux_error(RISCV_LINUX_ENOENT),
+                Err(error) => return linux_error(error.linux_error_code()),
+            };
+            (
+                path.clone(),
+                RiscvGuestNodeKind::RegularFile,
+                state.guest_file_contents(&path).map(Vec::from),
+                None,
+            )
         };
-        let created_new_file = creates_file && !path_exists;
-        state.replace_guest_file_contents(&path, contents.clone());
-        if created_new_file {
-            state.set_guest_file_permissions(&path, apply_file_creation_mask(mode, state));
-        }
-        (path, RiscvGuestNodeKind::RegularFile, Some(contents), None)
-    } else {
-        let path = match state.resolve_existing_guest_regular_path(&path) {
-            Ok(Some(path)) => path,
-            Ok(None) => return linux_error(RISCV_LINUX_ENOENT),
-            Err(error) => return linux_error(error.linux_error_code()),
-        };
-        (
-            path.clone(),
-            RiscvGuestNodeKind::RegularFile,
-            state.guest_file_contents(&path).map(Vec::from),
-            None,
-        )
-    };
     let status_flags = GuestFileStatusFlags::new(
         (flags & !(RISCV_LINUX_O_CLOEXEC | RISCV_LINUX_O_NOCTTY | RISCV_LINUX_O_NOFOLLOW)) as u32,
     );
