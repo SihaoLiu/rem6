@@ -269,6 +269,11 @@ pub(crate) fn decode_op_32(raw: u32) -> Result<RiscvInstruction, RiscvError> {
 }
 
 pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    let vd = vector_register(raw, 7);
+    let vs1 = vector_register(raw, 15);
+    let vs2 = vector_register(raw, 20);
+    let fs1 = float_register(raw, 15);
+
     match (funct3(raw), vector_funct6(raw), vector_unmasked(raw)) {
         (0x0, 0, true) => Ok(RiscvInstruction::VectorAddVv {
             vd: vector_register(raw, 7),
@@ -352,18 +357,16 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             },
         )),
         (0x1, 0b011100, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::MaskNotEqualVv {
-                vd: vector_register(raw, 7),
-                vs1: vector_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::MaskNotEqualVv { vd, vs1, vs2 },
         )),
         (0x5, 0b011100, true) => Ok(RiscvInstruction::VectorFloat(
-            RiscvVectorFloatInstruction::MaskNotEqualVf {
-                vd: vector_register(raw, 7),
-                fs1: float_register(raw, 15),
-                vs2: vector_register(raw, 20),
-            },
+            RiscvVectorFloatInstruction::MaskNotEqualVf { vd, fs1, vs2 },
+        )),
+        (0x1, 0b011011, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::MaskLessThanVv { vd, vs1, vs2 },
+        )),
+        (0x5, 0b011011, true) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::MaskLessThanVf { vd, fs1, vs2 },
         )),
         (0x1, 0b100100, true) => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::MulVv {

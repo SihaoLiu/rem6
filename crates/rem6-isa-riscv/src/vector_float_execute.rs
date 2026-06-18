@@ -47,6 +47,12 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
         RiscvVectorFloatInstruction::MaskNotEqualVf { vd, fs1, vs2 } => {
             execute_mask_compare_vf(hart, vd, fs1, vs2, FloatMaskCompareOp::NotEqual)
         }
+        RiscvVectorFloatInstruction::MaskLessThanVv { vd, vs1, vs2 } => {
+            execute_mask_compare_vv(hart, vd, vs1, vs2, FloatMaskCompareOp::LessThan)
+        }
+        RiscvVectorFloatInstruction::MaskLessThanVf { vd, fs1, vs2 } => {
+            execute_mask_compare_vf(hart, vd, fs1, vs2, FloatMaskCompareOp::LessThan)
+        }
         RiscvVectorFloatInstruction::ReverseSubVf { vd, fs1, vs2 } => {
             execute_arithmetic_vf(hart, vd, fs1, vs2, FloatBinaryOp::ReverseSub)
         }
@@ -102,6 +108,7 @@ enum FloatMinMaxOp {
 enum FloatMaskCompareOp {
     Equal,
     NotEqual,
+    LessThan,
 }
 
 struct VectorFloatMaskPlan {
@@ -352,7 +359,7 @@ fn execute_mask_compare_vv(
         let offset = element_index * plan.element_bytes;
         let lhs = u32::from_le_bytes(lane4(&left, offset));
         let rhs = u32::from_le_bytes(lane4(&right, offset));
-        exception_flags |= float::quiet_compare_exception_flags_single_bits(lhs, rhs);
+        exception_flags |= mask_compare_exception_flags(lhs, rhs, operation);
         write_mask_bit(&mut mask, element_index, mask_compare(lhs, rhs, operation));
     }
     hart.write_vector(vd, mask);
@@ -381,7 +388,7 @@ fn execute_mask_compare_vf(
     for element_index in 0..plan.active_elements {
         let offset = element_index * plan.element_bytes;
         let lhs = u32::from_le_bytes(lane4(&left, offset));
-        exception_flags |= float::quiet_compare_exception_flags_single_bits(lhs, scalar);
+        exception_flags |= mask_compare_exception_flags(lhs, scalar, operation);
         write_mask_bit(
             &mut mask,
             element_index,
@@ -394,10 +401,21 @@ fn execute_mask_compare_vf(
 }
 
 fn mask_compare(lhs: u32, rhs: u32, operation: FloatMaskCompareOp) -> bool {
-    let equal = float::equal_single_bits(lhs, rhs);
     match operation {
-        FloatMaskCompareOp::Equal => equal,
-        FloatMaskCompareOp::NotEqual => !equal,
+        FloatMaskCompareOp::Equal => float::equal_single_bits(lhs, rhs),
+        FloatMaskCompareOp::NotEqual => !float::equal_single_bits(lhs, rhs),
+        FloatMaskCompareOp::LessThan => float::less_than_single_bits(lhs, rhs),
+    }
+}
+
+fn mask_compare_exception_flags(lhs: u32, rhs: u32, operation: FloatMaskCompareOp) -> u64 {
+    match operation {
+        FloatMaskCompareOp::Equal | FloatMaskCompareOp::NotEqual => {
+            float::quiet_compare_exception_flags_single_bits(lhs, rhs)
+        }
+        FloatMaskCompareOp::LessThan => {
+            float::signaling_compare_exception_flags_single_bits(lhs, rhs)
+        }
     }
 }
 
