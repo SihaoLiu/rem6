@@ -1,3 +1,4 @@
+use rem6_stats::{StatDumpRecord, StatsResetRecord};
 use rem6_system::SystemActionOutcome;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -7,8 +8,8 @@ pub(crate) struct Rem6HostActionSummary {
     pub(crate) guest_host_calls: Vec<Rem6GuestHostCallSummary>,
     pub(crate) roi_begin: Vec<Rem6HostWorkMarkerSummary>,
     pub(crate) roi_end: Vec<Rem6HostWorkMarkerSummary>,
-    pub(crate) stats_reset_count: u64,
-    pub(crate) stats_dump_count: u64,
+    pub(crate) stats_resets: Vec<Rem6HostStatsResetSummary>,
+    pub(crate) stats_dumps: Vec<Rem6HostStatsDumpSummary>,
     pub(crate) checkpoint_count: u64,
     pub(crate) checkpoint_restored_count: u64,
     pub(crate) execution_mode_switch_count: u64,
@@ -77,11 +78,15 @@ impl Rem6HostActionSummary {
                         thread_id: *thread_id,
                     });
                 }
-                SystemActionOutcome::StatsReset(_) => {
-                    summary.stats_reset_count += 1;
+                SystemActionOutcome::StatsReset(record) => {
+                    summary
+                        .stats_resets
+                        .push(Rem6HostStatsResetSummary::from_record(record));
                 }
-                SystemActionOutcome::StatsDump(_) => {
-                    summary.stats_dump_count += 1;
+                SystemActionOutcome::StatsDump(record) => {
+                    summary
+                        .stats_dumps
+                        .push(Rem6HostStatsDumpSummary::from_record(record));
                 }
                 SystemActionOutcome::Checkpoint { .. } => {
                     summary.checkpoint_count += 1;
@@ -126,6 +131,42 @@ pub(crate) struct Rem6HostWorkMarkerSummary {
     pub(crate) source: u32,
     pub(crate) work_id: u64,
     pub(crate) thread_id: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6HostStatsResetSummary {
+    pub(crate) id: u64,
+    pub(crate) tick: u64,
+    pub(crate) epoch: u64,
+}
+
+impl Rem6HostStatsResetSummary {
+    fn from_record(record: &StatsResetRecord) -> Self {
+        Self {
+            id: record.id().get(),
+            tick: record.tick(),
+            epoch: record.epoch(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6HostStatsDumpSummary {
+    pub(crate) id: u64,
+    pub(crate) tick: u64,
+    pub(crate) epoch: u64,
+    pub(crate) reset_tick: u64,
+}
+
+impl Rem6HostStatsDumpSummary {
+    fn from_record(record: &StatDumpRecord) -> Self {
+        Self {
+            id: record.id().get(),
+            tick: record.tick(),
+            epoch: record.epoch(),
+            reset_tick: record.reset_tick(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

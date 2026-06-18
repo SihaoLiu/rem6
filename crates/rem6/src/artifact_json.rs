@@ -4,8 +4,9 @@ use super::formatting::{
 use super::{
     Rem6CoreSummary, Rem6DataAccessProbeSummary, Rem6DramSummary, Rem6ExecutionStop,
     Rem6ExecutionSummary, Rem6GuestHostCallSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary,
-    Rem6HostActionSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
-    Rem6InstructionProbeSummary, Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
+    Rem6HostActionSummary, Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary,
+    Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary, Rem6InstructionProbeSummary,
+    Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
     Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary,
     Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6ReadfileSummary,
     Rem6RiscvGuestWriteSummary, Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact,
@@ -1059,6 +1060,18 @@ impl Rem6HostActionSummary {
             .map(Rem6HostWorkMarkerSummary::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let stats_resets = self
+            .stats_resets
+            .iter()
+            .map(Rem6HostStatsResetSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        let stats_dumps = self
+            .stats_dumps
+            .iter()
+            .map(Rem6HostStatsDumpSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         let stops = self
             .stops
             .iter()
@@ -1066,14 +1079,14 @@ impl Rem6HostActionSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"total_action_count\":{},\"injected_command_count\":{},\"guest_host_call_count\":{},\"roi_begin_count\":{},\"roi_end_count\":{},\"stats_reset_count\":{},\"stats_dump_count\":{},\"checkpoint_count\":{},\"checkpoint_restored_count\":{},\"execution_mode_switch_count\":{},\"stop_count\":{},\"guest_host_calls\":[{}],\"roi_begin\":[{}],\"roi_end\":[{}],\"stops\":[{}]}}",
+            "{{\"total_action_count\":{},\"injected_command_count\":{},\"guest_host_call_count\":{},\"roi_begin_count\":{},\"roi_end_count\":{},\"stats_reset_count\":{},\"stats_dump_count\":{},\"checkpoint_count\":{},\"checkpoint_restored_count\":{},\"execution_mode_switch_count\":{},\"stop_count\":{},\"guest_host_calls\":[{}],\"roi_begin\":[{}],\"roi_end\":[{}],\"stats_resets\":[{}],\"stats_dumps\":[{}],\"stops\":[{}]}}",
             self.total_action_count,
             self.injected_command_count,
             self.guest_host_calls.len(),
             self.roi_begin.len(),
             self.roi_end.len(),
-            self.stats_reset_count,
-            self.stats_dump_count,
+            self.stats_resets.len(),
+            self.stats_dumps.len(),
             self.checkpoint_count,
             self.checkpoint_restored_count,
             self.execution_mode_switch_count,
@@ -1081,6 +1094,8 @@ impl Rem6HostActionSummary {
             guest_host_calls,
             roi_begin,
             roi_end,
+            stats_resets,
+            stats_dumps,
             stops,
         )
     }
@@ -1108,6 +1123,24 @@ impl Rem6HostWorkMarkerSummary {
         format!(
             "{{\"tick\":{},\"event\":{},\"source\":{},\"work_id\":{},\"thread_id\":{}}}",
             self.tick, self.event, self.source, self.work_id, self.thread_id
+        )
+    }
+}
+
+impl Rem6HostStatsResetSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"id\":{},\"tick\":{},\"epoch\":{}}}",
+            self.id, self.tick, self.epoch
+        )
+    }
+}
+
+impl Rem6HostStatsDumpSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"id\":{},\"tick\":{},\"epoch\":{},\"reset_tick\":{}}}",
+            self.id, self.tick, self.epoch, self.reset_tick
         )
     }
 }
