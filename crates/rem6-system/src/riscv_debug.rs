@@ -36,7 +36,8 @@ const RISCV_GDB_SUPERVISOR_INTERRUPT_PENDING_REGISTER: u64 = 123;
 const RISCV_GDB_COUNTER_CYCLE_REGISTER: u64 = 124;
 const RISCV_GDB_COUNTER_INSTRET_REGISTER: u64 = 125;
 const RISCV_GDB_COUNTER_TIME_REGISTER: u64 = 126;
-const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 5;
+const RISCV_GDB_MACHINE_HART_ID_REGISTER: u64 = 127;
+const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 6;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -48,6 +49,7 @@ enum RiscvGdbCsrRegister {
     Translation(RiscvTranslationCsr),
     VectorFixedPoint(RiscvVectorFixedPointCsr),
     Counter(RiscvCounterCsr),
+    HartId,
 }
 
 pub fn riscv_gdb_remote_session(xlen: RiscvGdbXlen) -> GdbRemoteSession {
@@ -969,6 +971,7 @@ fn read_hart_csr_register_value(xlen: RiscvGdbXlen, hart: &RiscvHartState, numbe
         RiscvGdbCsrRegister::Translation(csr) => read_hart_translation_csr(hart, csr),
         RiscvGdbCsrRegister::VectorFixedPoint(csr) => csr.read(hart.vector_fixed_point()),
         RiscvGdbCsrRegister::Counter(csr) => read_hart_counter_csr(hart, csr),
+        RiscvGdbCsrRegister::HartId => hart.hart_id(),
     }
 }
 
@@ -1000,6 +1003,7 @@ fn write_hart_csr_register_value(
         RiscvGdbCsrRegister::Counter(csr) => {
             write_hart_counter_csr(hart, csr, value);
         }
+        RiscvGdbCsrRegister::HartId => {}
     }
 }
 
@@ -1026,6 +1030,7 @@ fn write_core_csr_register_value(xlen: RiscvGdbXlen, core: &RiscvCore, number: u
         RiscvGdbCsrRegister::Counter(csr) => {
             write_core_counter_csr(core, csr, value);
         }
+        RiscvGdbCsrRegister::HartId => {}
     }
 }
 
@@ -1044,6 +1049,9 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     }
     if number == RISCV_GDB_COUNTER_TIME_REGISTER {
         return RiscvGdbCsrRegister::Counter(RiscvCounterCsr::Time);
+    }
+    if number == RISCV_GDB_MACHINE_HART_ID_REGISTER {
+        return RiscvGdbCsrRegister::HartId;
     }
 
     match number - riscv_gdb_csr_register_base(xlen) {
@@ -1247,6 +1255,7 @@ fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
             RISCV_GDB_COUNTER_CYCLE_REGISTER,
             RISCV_GDB_COUNTER_INSTRET_REGISTER,
             RISCV_GDB_COUNTER_TIME_REGISTER,
+            RISCV_GDB_MACHINE_HART_ID_REGISTER,
         ])
 }
 
@@ -1310,6 +1319,7 @@ const fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool {
         || number == RISCV_GDB_COUNTER_CYCLE_REGISTER
         || number == RISCV_GDB_COUNTER_INSTRET_REGISTER
         || number == RISCV_GDB_COUNTER_TIME_REGISTER
+        || number == RISCV_GDB_MACHINE_HART_ID_REGISTER
 }
 
 fn encode_register_value(xlen: RiscvGdbXlen, number: u64, value: u64) -> Vec<u8> {

@@ -7,7 +7,7 @@ use rem6_system::{handle_riscv_gdb_remote_packet, riscv_gdb_remote_session_from_
 
 #[test]
 fn riscv_gdb_remote_packet_handler_reads_and_writes_advertised_rv64_csr_registers() {
-    let mut hart = RiscvHartState::new(0x1000);
+    let mut hart = RiscvHartState::with_hart_id(0x1000, 9);
     hart.set_status(RiscvStatusWord::new(0x0008_0000));
     hart.set_supervisor_trap_vector(0x0123_4567_89ab_cdef);
     hart.set_supervisor_scratch(0x0102_0304_0506_0708);
@@ -73,6 +73,42 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_advertised_rv64_csr_register
             .unwrap(),
         ),
         b"08090a0b0c0d0e0f",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"p7f".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"0900000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"P7f=aa00000000000000".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"p7f".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"0900000000000000",
     );
     assert_eq!(
         packet_payload(
@@ -269,7 +305,7 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_advertised_rv64_csr_register
         )
         .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(127));
+    assert_eq!(registers.len(), rv64_register_hex_offset(128));
     assert_eq!(&registers[rv64_register_hex_range(70)], b"0000080000000000");
     assert_eq!(&registers[rv64_register_hex_range(71)], b"8877665544332211");
     assert_eq!(&registers[rv64_register_hex_range(72)], b"8877665544332211");
@@ -302,6 +338,10 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_advertised_rv64_csr_register
         &registers[rv64_register_hex_range(126)],
         b"0000000000000000"
     );
+    assert_eq!(
+        &registers[rv64_register_hex_range(127)],
+        b"0900000000000000"
+    );
 }
 
 fn packet_payload(frames: Vec<GdbRemoteFrame>) -> Vec<u8> {
@@ -324,7 +364,7 @@ fn rv64_register_hex_offset(number: u64) -> usize {
         66..=69 => (33 * 8) + (32 * 8) + ((number - 66) * 4),
         70..=89 => (33 * 8) + (32 * 8) + (4 * 4) + ((number - 70) * 8),
         90..=121 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + ((number - 90) * 16),
-        122..=127 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
+        122..=128 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
         _ => panic!("unexpected RV64 GDB register number {number}"),
     };
     byte_offset as usize * 2

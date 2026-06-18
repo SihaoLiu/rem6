@@ -73,6 +73,7 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "  <reg name=\"cycle\" bitsize=\"64\" regnum=\"124\"/>\n",
             "  <reg name=\"instret\" bitsize=\"64\" regnum=\"125\"/>\n",
             "  <reg name=\"time\" bitsize=\"64\" regnum=\"126\"/>\n",
+            "  <reg name=\"mhartid\" bitsize=\"64\" regnum=\"127\"/>\n",
             "</feature>\n",
         ),
     );
@@ -81,10 +82,10 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
         vec![
             "sstatus", "stvec", "sscratch", "sepc", "scause", "stval", "satp", "mstatus",
             "medeleg", "mideleg", "mie", "mtvec", "mscratch", "mepc", "mcause", "mtval", "mip",
-            "vxsat", "vxrm", "vcsr", "sie", "sip", "cycle", "instret", "time",
+            "vxsat", "vxrm", "vcsr", "sie", "sip", "cycle", "instret", "time", "mhartid",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 25);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 26);
 }
 
 #[test]
@@ -314,6 +315,7 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "  <reg name=\"cycle\" bitsize=\"32\" regnum=\"124\"/>\n",
             "  <reg name=\"instret\" bitsize=\"32\" regnum=\"125\"/>\n",
             "  <reg name=\"time\" bitsize=\"32\" regnum=\"126\"/>\n",
+            "  <reg name=\"mhartid\" bitsize=\"32\" regnum=\"127\"/>\n",
             "</feature>\n",
         ),
     );
@@ -322,10 +324,10 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
         vec![
             "sstatus", "stvec", "sscratch", "sepc", "scause", "stval", "satp", "mstatus",
             "medeleg", "mideleg", "mie", "mtvec", "mscratch", "mepc", "mcause", "mtval", "mip",
-            "vxsat", "vxrm", "vcsr", "sie", "sip", "cycle", "instret", "time",
+            "vxsat", "vxrm", "vcsr", "sie", "sip", "cycle", "instret", "time", "mhartid",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"32\"").count(), 25);
+    assert_eq!(csr.matches("bitsize=\"32\"").count(), 26);
 }
 
 #[test]
