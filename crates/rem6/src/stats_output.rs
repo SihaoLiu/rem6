@@ -507,6 +507,42 @@ pub(super) fn run_stats_output(
         )?;
         increment_stat(
             &mut stats,
+            "sim.instruction_cache.prefetch.translation_queue.enqueued",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution
+                .instruction_cache
+                .prefetch_translation_queue_enqueued,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.instruction_cache.prefetch.translation_queue.issued",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution
+                .instruction_cache
+                .prefetch_translation_queue_issued,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.instruction_cache.prefetch.translation_queue.translated",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution
+                .instruction_cache
+                .prefetch_translation_queue_translated,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.instruction_cache.prefetch.translation_queue.dropped",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution
+                .instruction_cache
+                .prefetch_translation_queue_dropped,
+        )?;
+        increment_stat(
+            &mut stats,
             "sim.data_cache.runs",
             "Count",
             StatResetPolicy::Monotonic,
@@ -595,6 +631,34 @@ pub(super) fn run_stats_output(
             "Count",
             StatResetPolicy::Monotonic,
             execution.data_cache.prefetch_queue_dropped,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data_cache.prefetch.translation_queue.enqueued",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.prefetch_translation_queue_enqueued,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data_cache.prefetch.translation_queue.issued",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.prefetch_translation_queue_issued,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data_cache.prefetch.translation_queue.translated",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.prefetch_translation_queue_translated,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data_cache.prefetch.translation_queue.dropped",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.prefetch_translation_queue_dropped,
         )?;
         increment_stat(
             &mut stats,

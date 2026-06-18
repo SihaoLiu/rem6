@@ -14,7 +14,7 @@ use rem6_coherence::{
 use rem6_kernel::{RecordedConservativeRunSummary, WaitForGraph};
 use rem6_memory::{
     Address, AgentId, CacheLineLayout, MemoryOperation, MemoryRequest, MemoryRequestId,
-    MemoryResponse, ResponseStatus,
+    MemoryResponse, ResponseStatus, TranslationResolution,
 };
 use rem6_system::{
     RiscvDataCacheProtocol, RiscvDataCacheRunRecord, RiscvGuestMemoryMapRequest,
@@ -27,6 +27,7 @@ use crate::runtime_memory::{cli_memory_response, CliMemoryRuntime};
 use crate::{execute_error, Rem6CliError};
 
 const PREFETCH_REQUEST_SEQUENCE_BASE: u64 = 1 << 63;
+const CLI_PREFETCH_TRANSLATION_PAGE_BYTES: u64 = 4096;
 
 #[derive(Clone)]
 pub(super) struct CliDataCacheRuntime {
@@ -79,6 +80,10 @@ pub(crate) struct CliDataCachePrefetchSummary {
     pub(crate) queue_enqueued: u64,
     pub(crate) queue_issued: u64,
     pub(crate) queue_dropped: u64,
+    pub(crate) translation_queue_enqueued: u64,
+    pub(crate) translation_queue_issued: u64,
+    pub(crate) translation_queue_translated: u64,
+    pub(crate) translation_queue_dropped: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -96,6 +101,10 @@ pub(crate) struct CliDataCacheSummary {
     pub(crate) prefetch_queue_enqueued: u64,
     pub(crate) prefetch_queue_issued: u64,
     pub(crate) prefetch_queue_dropped: u64,
+    pub(crate) prefetch_translation_queue_enqueued: u64,
+    pub(crate) prefetch_translation_queue_issued: u64,
+    pub(crate) prefetch_translation_queue_translated: u64,
+    pub(crate) prefetch_translation_queue_dropped: u64,
 }
 
 impl CliDataCacheSummary {
@@ -139,6 +148,10 @@ impl CliDataCacheSummary {
             prefetch_queue_enqueued: 0,
             prefetch_queue_issued: 0,
             prefetch_queue_dropped: 0,
+            prefetch_translation_queue_enqueued: 0,
+            prefetch_translation_queue_issued: 0,
+            prefetch_translation_queue_translated: 0,
+            prefetch_translation_queue_dropped: 0,
         }
     }
 
@@ -151,6 +164,10 @@ impl CliDataCacheSummary {
         self.prefetch_queue_enqueued = summary.queue_enqueued;
         self.prefetch_queue_issued = summary.queue_issued;
         self.prefetch_queue_dropped = summary.queue_dropped;
+        self.prefetch_translation_queue_enqueued = summary.translation_queue_enqueued;
+        self.prefetch_translation_queue_issued = summary.translation_queue_issued;
+        self.prefetch_translation_queue_translated = summary.translation_queue_translated;
+        self.prefetch_translation_queue_dropped = summary.translation_queue_dropped;
         self
     }
 }
@@ -919,6 +936,10 @@ impl CliDataCachePrefetchRuntime {
                 );
                 let queue_config =
                     QueuedPrefetchConfig::with_line_size(8, 0, 1, true, layout.bytes())
+                        .and_then(|config| {
+                            config.with_page_size(CLI_PREFETCH_TRANSLATION_PAGE_BYTES)
+                        })
+                        .and_then(|config| config.with_missing_translation_capacity(8))
                         .map_err(execute_error)?;
                 Ok(Self {
                     tagged,
@@ -958,6 +979,7 @@ impl CliDataCachePrefetchRuntime {
         self.queue
             .enqueue_candidates_filtered(tick, &backed_candidates, &[])
             .map_err(execute_error)?;
+        self.process_identity_translations(tick)?;
         let issues = self.queue.issue_ready(tick);
         let mut sequenced_issues = Vec::with_capacity(issues.len());
         for issue in issues {
@@ -968,6 +990,24 @@ impl CliDataCachePrefetchRuntime {
             sequenced_issues.push((issue, sequence));
         }
         Ok(sequenced_issues)
+    }
+
+    fn process_identity_translations(&mut self, tick: u64) -> Result<(), Rem6CliError> {
+        let translations = self
+            .queue
+            .process_missing_translations(usize::MAX)
+            .map_err(execute_error)?;
+        for translation in translations {
+            self.queue
+                .complete_translation(
+                    tick,
+                    translation.request().id(),
+                    TranslationResolution::mapped(translation.request().virtual_address()),
+                    &[],
+                )
+                .map_err(execute_error)?;
+        }
+        Ok(())
     }
 
     fn mark_issued(&mut self, address: Address, layout: CacheLineLayout) {
@@ -986,6 +1026,10 @@ impl CliDataCachePrefetchRuntime {
             queue_enqueued: stats.prefetch_queue().enqueued(),
             queue_issued: stats.prefetch_queue().issued(),
             queue_dropped: stats.prefetch_queue().dropped(),
+            translation_queue_enqueued: stats.translation_queue().enqueued(),
+            translation_queue_issued: stats.translation_queue().issued(),
+            translation_queue_translated: stats.translation_queue().translated(),
+            translation_queue_dropped: stats.translation_queue().dropped(),
         }
     }
 }

@@ -237,9 +237,9 @@ pending-interrupt redirect, and data-access ordering.
 **Next evidence:** Broader per-cycle in-order stalls/squashes, multi-branch
 speculation snapshots and rollback, then a ROB/LSQ-backed O3 run test.
 
-### Memory, Cache, Coherence, Fabric, and DRAM - 54% single-axis
+### Memory, Cache, Coherence, Fabric, and DRAM - 57% single-axis
 
-**Score calculation:** 7 of 13 items have executable evidence, or 54% raw. The
+**Score calculation:** 8 of 14 items have executable evidence, or 57% raw. The
 bucket cap is single-axis because full CPU-facing L1/L2/L3 plus NoC and DRAM is
 not the default instruction/data path.
 
@@ -250,19 +250,21 @@ not the default instruction/data path.
 - [x] Fabric and transport expose multi-hop routing, credits, virtual networks, and activity records.
 - [x] Named DDR4, DDR5, and HBM JEDEC-style refresh presets validate `tREFI`/`tRFC` cycles through profile constructors, controller refresh scheduling, and `rem6 run --dram-memory-profile` stats.
 - [x] Cache-local prefetch queues expose enqueue, issue, drop, and translation counters from queued prefetch and translation flows.
+- [x] Top-level CLI instruction-cache and data-cache prefetch consume identity-mapped page-crossing translation requests and emit queue-level stats from executed RISC-V runs.
 - [ ] Normal CPU instruction/data traffic uses a complete L1/L2/L3 hierarchy.
 - [ ] Ruby-scale protocol transactions and topology races are migrated.
 - [ ] NoC router, flit, virtual-channel, and routing detail match gem5-class coverage.
 - [ ] Broader DRAM refresh modes and full JEDEC timing tables are complete.
-- [ ] Prefetch translation consumers and queue-level stats are complete.
+- [ ] Prefetch translation consumers and queue-level stats are complete across hierarchy paths.
 - [ ] Bank/cache/fabric/DRAM resource counters are complete enough for full-system studies.
 
 **Migrated:** Typed memory primitives, cache banks, protocol harnesses, DRAM
 profiles, controller-level refresh timing slices, routed topology slices,
 CLI-selectable JEDEC refresh presets,
 cache-local queued-prefetch and missing-translation queue counters, top-level
-CLI RISC-V tagged next-line data-cache and instruction-cache prefetch issue
-stats, and trace replay consumers; optional CLI RISC-V data traffic can drive MSI-bank,
+CLI RISC-V tagged next-line data-cache and instruction-cache prefetch issue and
+identity-mapped page-crossing translation stats, and trace replay
+consumers; optional CLI RISC-V data traffic can drive MSI-bank,
 MESI-line, MOESI-line, and CHI-line data-cache runs and emit CPU response and
 directory decision counters from those runs; three-core CLI RISC-V runs can share
 MSI, MESI, MOESI, and CHI data-cache runtimes, observe cross-core data
@@ -287,16 +289,20 @@ data-cache run accounting, per-protocol run stats, and scheduler epoch,
 dispatch, batch, active-partition, and worker-count stats from the same
 executed workload summary.
 CLI `run` with `--data-cache-prefetcher tagged-next-line` consumes real RISC-V
-data loads, issues prefetch reads through the selected data-cache protocol, and
-emits prefetch identified/enqueued/issued stats from the executed run. CLI
+data loads, issues prefetch reads through the selected data-cache protocol,
+routes page-crossing next-line candidates through the queued missing-translation
+flow with identity completion, and emits prefetch identified/enqueued/issued
+plus translation queue stats from the executed run. CLI
 `run` with `--instruction-cache-prefetcher tagged-next-line` consumes real
 RISC-V instruction fetches, issues prefetch reads through the selected
-instruction-cache protocol, suppresses repeated next-line issues, and emits the
-same prefetch queue stats from the executed run.
+instruction-cache protocol, routes page-crossing next-line candidates through
+the same identity-completed queue flow, suppresses repeated next-line issues,
+and emits the same prefetch queue and translation queue stats from the executed
+run.
 
 **Not migrated:** Broad CPU-facing hierarchy, Ruby-scale protocol networks,
-flit-level NoC, broad JEDEC preset validation, system-level prefetch
-translation consumers, and broad DRAM refresh/preset breadth.
+flit-level NoC, broad JEDEC preset validation, broader hierarchy-level
+prefetch translation consumers, and broad DRAM refresh/preset breadth.
 
 **Evidence:** `MsiCacheBank`, `MsiCacheController`, protocol directory
 harnesses, `DramController`, `DramMemoryController`, `FabricModel`,
@@ -318,11 +324,13 @@ trace-replay data-cache protocol smoke coverage exposes data-cache run and
 protocol stats plus data-cache scheduler resource stats from the top-level
 replay command. CLI `run` data-cache and instruction-cache prefetch smoke
 coverage exposes tagged next-line queue enqueue/issue stats from real RISC-V
-loads and fetches.
+loads and fetches, plus identity-mapped page-crossing translation queue stats
+from real RISC-V loads and fetches.
 
 **Next evidence:** RISC-V instruction/data execution through a coherent
 multi-level cache and DRAM path with unified resource accounting, plus
-validated DDR4/DDR5/HBM refresh presets.
+validated DDR4/DDR5/HBM refresh presets and hierarchy-level prefetch
+translation consumers.
 
 ### RISC-V SE, Workloads, and Linux Boot - 45% single-axis
 
@@ -827,7 +835,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/m5_util`, `tests/test-progs/m5-exit` | `rem6-isa-riscv`, `rem6-system`, `rem6-workload` | 50% single-axis | RISC-V m5 exit, fail, stats, checkpoint, and work markers reach typed host actions. | Add payload breadth, repeat scheduling, other ISA entries, and clock-domain behavior. |
 | `tests/gem5/m5threads_test_atomic` | `rem6-isa-riscv`, `rem6-cpu`, `rem6-coherence` | 40% single-axis | RISC-V LR/SC and AMO plus coherence reservation invalidation tests exist. | Add multi-threaded SE or full-system atomic tests through shared memory. |
 | `tests/gem5/se_mode` | `rem6-system`, `rem6` CLI | 50% single-axis | RISC-V SE startup, ecalls, static newlib smokes including `fopen("w+")` create/write/readback, `/proc/self/exe` readlink through direct `readlinkat` ecall, `/proc/self/maps` open/read after raw `mmap`, pipe roundtrip through direct `pipe2`/`write`/`read`/`close` ecalls, pipe-size `fcntl(F_GETPIPE_SZ/F_SETPIPE_SZ)`, `open` directory traversal with `O_DIRECTORY` and `O_CLOEXEC`, and `open` regular-file access with `O_NOCTTY` and `O_NOFOLLOW` through legacy `open` with newlib/libgloss flags, selected syscalls including `sendfile`, `copy_file_range`, `statx`, `faccessat2`, `utimensat`, advisory `flock`, `fadvise64`, `fcntl` byte-range advisory lock no-conflict slices, `symlinkat` creation consumed by `readlinkat` and followed by `faccessat`, and `fchownat`/`fchown`, `statfs`/`fstatfs`, `sysinfo`, `uname` `new_utsname`, value-mode `riscv_hwprobe`, `prctl` process-name set/get, `personality` query/set state, `getresuid`/`getresgid` identity triples, current-credential `setresuid`/`setresgid` validation and identity updates, current-credential `setuid`/`setgid` validation and effective-identity updates, empty supplementary `getgroups` reporting and `setgroups` `EPERM`, `sigaltstack` query/set/disable state, `ppoll`, `pselect6` fd-set readiness, `eventfd2` counter/semaphore/nonblock/close-on-exec/poll behavior plus direct ecall readback, `epoll_create1`/`epoll_ctl`/`epoll_pwait` eventfd readiness plus direct ecall smoke, in-place `mremap`, `mprotect`, `madvise` known-advice and mapped-range validation, `msync` flags and mapped-range validation, `sync`/`fsync`/`fdatasync`/`syncfs`, `mlock`/`munlock` `mmap`/`brk` range validation, `mlockall` flag validation, single-node `mbind` mapped-range/nodemask validation slice, `ftruncate`, `pread64`, `pwrite64`, `preadv`, `pwritev`, `sched_getscheduler`, `sched_getparam`, `sched_get_priority_max/min`, `sched_rr_get_interval`, single-word `sched_setaffinity`/`sched_getaffinity`, single CPU/node `getcpu`, single-process `membarrier` slice, current-thread `rseq` register/unregister with guest struct initialization and validation, `set_tid_address` exit clear-child-tid write and futex wake behavior, `waitid` no-child behavior and `siginfo_t` writeback, zero-duration `nanosleep` and `clock_nanosleep` validation, `clock_getres`, `CLOCK_TAI` `clock_gettime`, `kill(..., 0)`, `tkill(..., 0)`, and `tgkill(..., 0)` existence checks, current-process scoped process-group/session `setpgid`/`getpgid`/`getsid`/`setsid` slices, gem5-style advisory `setrlimit` success returns, legacy `getrlimit` stack/data/NPROC limits, `prlimit64` stack/data and unknown-pid rejection, basic `rt_sigaction`/`rt_sigprocmask`, empty `rt_sigpending` mask reporting, no-pending zero-timeout `rt_sigtimedwait`, `rt_sigqueueinfo` target and guest `siginfo_t` validation with non-delivery `ENOSYS` records, futex mismatch, zero-timeout wait, and wake-bitset count/bitset behavior, `close_range` close and `CLOSE_RANGE_CLOEXEC` behavior, `openat2` `open_how` parsing, mode validation, and close-on-exec behavior, `umask` masking for `mkdirat` directories and `openat(O_CREAT)` regular files, cwd-aware registered paths, guest-backed file output/readback and open visibility, at-family file and directory mutation, registered-directory enumeration, `ENOSYS` records including unsupported `rt_sigreturn`, and guest writes exist. | Split hello, multicore SE, RVV intrinsic, and other-ISA subrows; add broader libc and lifecycle behavior. |
-| `tests/gem5/memory` | `rem6-memory`, `rem6-cache`, `rem6-dram`, `rem6-fabric` | 56% single-axis | Stores, page maps, cache banks, topology slices, optional CLI RISC-V MSI-bank, MESI-line, MOESI-line, and CHI-line data-cache routing, three-core shared MSI/MESI/MOESI/CHI data-cache coherence routing, three-core MSI/MESI/MOESI/CHI instruction-cache fetch routing, DRAM-backed MSI fill accounting, DRAM/NVM counters, CLI-selectable JEDEC-style refresh presets, cache-local prefetch queue counters, top-level CLI RISC-V tagged next-line data-cache and instruction-cache prefetch issue stats, top-level trace-replay fabric-route activity and virtual-network config stats, and top-level trace-replay data-cache run/protocol/scheduler stats exist. | Add CPU-facing multi-level cache, NoC, broader DRAM refresh breadth, and full preset coverage. |
+| `tests/gem5/memory` | `rem6-memory`, `rem6-cache`, `rem6-dram`, `rem6-fabric` | 57% single-axis | Stores, page maps, cache banks, topology slices, optional CLI RISC-V MSI-bank, MESI-line, MOESI-line, and CHI-line data-cache routing, three-core shared MSI/MESI/MOESI/CHI data-cache coherence routing, three-core MSI/MESI/MOESI/CHI instruction-cache fetch routing, DRAM-backed MSI fill accounting, DRAM/NVM counters, CLI-selectable JEDEC-style refresh presets, cache-local prefetch queue counters, top-level CLI RISC-V tagged next-line data-cache and instruction-cache prefetch issue stats, top-level instruction-cache and data-cache identity-mapped prefetch translation queue stats, top-level trace-replay fabric-route activity and virtual-network config stats, and top-level trace-replay data-cache run/protocol/scheduler stats exist. | Add CPU-facing multi-level cache, NoC, broader DRAM refresh breadth, full preset coverage, and hierarchy-level prefetch translation consumers. |
 | `tests/gem5/multisim`, `tests/gem5/suite_tests` | `rem6-workload`, `rem6-kernel` | 45% single-axis | Suite planning, dispatch, execution summaries, and occupancy contracts exist. | Split multisim checkpoint restore from suite dispatch and add multi-run orchestration. |
 | `tests/gem5/parsec_benchmarks` | `rem6-workload`, `rem6-system`, ISA crates | 0% open | Workload suites exist, but PARSEC-class programs do not run. | Add static or dynamic user workload support and ROI/stat hooks. |
 | `tests/gem5/processor_switch_tests` | `rem6-system`, `rem6-cpu` | 20% unit-slice | Host-assisted switch admission and execution-mode metadata exist. | Add executable CPU model switching with quiescence and state transfer. |
@@ -838,7 +846,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/regression_tests` | all rem6 crates | 35% unit-slice | Workspace tests act as the current regression suite. | Add migration tags or per-family regression rows. |
 | `tests/gem5/replacement_policies` | `rem6-cache` | 60% representative | Multiple replacement, indexing, dueling, compressed, and sector tag tests exist. | Add remaining policies and exact trace/reference parity where useful. |
 | `tests/gem5/riscv_boot_tests` | `rem6-platform`, `rem6-system`, `rem6-isa-riscv`, `rem6-cpu`, `rem6-kernel` | 35% unit-slice | DTB/initrd handoff, CLINT/PLIC, traps, CSRs, page-fault causes, translated faults, SBI base read-only ecalls, minimal TIME `set_timer` STIP scheduling, IPI `send_ipi` SSIP pending-bit injection, standard SRST shutdown stop requests, RFENCE remote SFENCE.VMA data TLB flushes with finite-range, ASID scope, and scheduled completion events, HFENCE.GVMA conservative whole modeled data TLB flush execution, HFENCE.VVMA range-scoped flush, HFENCE.VVMA.ASID scoped flush preservation, HFENCE validation, and HSM start entry-state, `START_PENDING`, status, no-return stop, retentive-suspend, default-non-retentive `RESUME_PENDING`/resume, and IPI-wake slices are tested. | Add broader SBI timer/IPI/reset power-state behavior, remaining HSM wake semantics, VMID/G-stage/range-precise HFENCE.GVMA completion coverage beyond conservative modeled data TLB invalidation, and a real Linux boot smoke. |
-| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 66% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, top-level retired-instruction probe stats, power bindings, instruction/data cache counters, cache-local and top-level data-cache and instruction-cache prefetch queue counters, top-level trace-replay fabric-route counters including active virtual networks, top-level trace-replay data-cache run/protocol/scheduler counters, CLI stat output with gem5-style final-tick, committed-instruction, sim-ops, sim-seconds, and sim-frequency aliases, CLI GDB attach-before-execute register/memory smoke coverage plus pre-execution writes including RV64 vector data registers, RV64 supervisor CSR `sscratch`, supervisor interrupt CSR `sie`, translation CSR `satp`, machine CSR `mscratch`, RV64 vector fixed-point CSR `vxsat`/`vxrm`/`vcsr`, RV32 CSR register-cache read/write coverage, and RV32/RV64 vector data register-cache read/write coverage exist, with selected CSR writes consumed by guest execution, plus software and hardware breakpoints, single-step execution consumed by the following run, continue and `vCont;c` execution with completed-run summary handoff, cache-backed GDB run-control summary stats, data watchpoints stopping after real RISC-V load/store data-access completion, and library-level plus run-CLI McPAT/DSENT-shaped export tests exist. | Add more hierarchy counters, calibrated power/thermal activity, exact gem5 stat naming breadth, and broader CSR GDB register-cache coverage. |
+| `tests/gem5/stats` | `rem6-stats`, `rem6` CLI, `rem6-power` | 66% representative | Hierarchical counters, reset/dump histories, deltas, first-class histogram buckets, real probe producers, top-level retired-instruction probe stats, power bindings, instruction/data cache counters, cache-local and top-level data-cache and instruction-cache prefetch queue counters, top-level instruction-cache and data-cache identity-mapped prefetch translation queue counters, top-level trace-replay fabric-route counters including active virtual networks, top-level trace-replay data-cache run/protocol/scheduler counters, CLI stat output with gem5-style final-tick, committed-instruction, sim-ops, sim-seconds, and sim-frequency aliases, CLI GDB attach-before-execute register/memory smoke coverage plus pre-execution writes including RV64 vector data registers, RV64 supervisor CSR `sscratch`, supervisor interrupt CSR `sie`, translation CSR `satp`, machine CSR `mscratch`, RV64 vector fixed-point CSR `vxsat`/`vxrm`/`vcsr`, RV32 CSR register-cache read/write coverage, and RV32/RV64 vector data register-cache read/write coverage exist, with selected CSR writes consumed by guest execution, plus software and hardware breakpoints, single-step execution consumed by the following run, continue and `vCont;c` execution with completed-run summary handoff, cache-backed GDB run-control summary stats, data watchpoints stopping after real RISC-V load/store data-access completion, and library-level plus run-CLI McPAT/DSENT-shaped export tests exist. | Add more hierarchy counters, calibrated power/thermal activity, exact gem5 stat naming breadth, and broader CSR GDB register-cache coverage. |
 | `tests/gem5/stdlib` | `rem6-workload`, `rem6-platform`, `rem6` CLI | 54% single-axis | Workload manifests, resource payloads, manifest/suite-level CLI resource acquisition including host-file and uncompressed/gzip tar-entry inputs, manifest-acquired and unique-suite run kernel handoff, `suite-resource:<workload>/<resource>` suite readfile/load-blob/trace runtime handoff, suite dispatch plans, Linux handoff intent, and TOML/CLI tests exist. | Add broader stdlib object coverage, remote/cache policy acquisition, and ergonomic topology/workload definitions. |
 | `tests/test-progs` | `rem6-system`, `rem6` CLI, ISA crates | 35% unit-slice | Static RISC-V no-libc, newlib, and raw syscall smoke binaries, including `sendfile`, `copy_file_range`, `statx`, `faccessat2`, `utimensat`, advisory `flock`, `fadvise64`, `fcntl` byte-range advisory lock, pipe-size `fcntl`, `preadv`/`pwritev`, `symlinkat`, and `fchownat`/`fchown`, `waitid`, `sysinfo`, newlib file-create roundtrip, newlib `/proc/self/exe` readlink coverage, raw `/proc/self/maps` after `mmap` coverage, newlib pipe2 roundtrip coverage, newlib directory-open coverage, and newlib open-flag coverage, are generated when tools exist. | Add durable generated fixtures for hello, threads, and m5 utility shapes across ISAs. |
 | `tests/gem5/traffic_gen` | `rem6-traffic`, `rem6-system`, `rem6-workload`, `rem6` CLI | 55% single-axis | Text config parsing, GUPS, packet trace replay including manifest and unique or TOML/CLI `suite-resource:<workload>/<resource>` suite resource-config trace handoff, flags, maintenance, HTM, responses, workload summaries, typed generator/memory-profile summaries, top-level trace-replay fabric-route activity stats with virtual-network and credit-depth config, top-level trace-replay data-cache run/protocol/scheduler stats, and top-level GUPS profile JSON/stats output exist. | Add cache hierarchy matrix and broader trusted stats. |

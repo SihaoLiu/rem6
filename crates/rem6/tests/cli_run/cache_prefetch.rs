@@ -61,6 +61,63 @@ fn run_tagged_next_line_prefetch(
 }
 
 #[test]
+fn rem6_run_data_cache_prefetcher_translates_page_crossing_next_line() {
+    const DATA_OFFSET: usize = 0xff0;
+
+    let mut program = riscv64_program(&[
+        u_type(0x1000, 2, 0x17),      // auipc x2, 0x1000
+        i_type(-16, 2, 0x0, 2, 0x13), // addi x2, x2, -16
+        i_type(0, 2, 0x3, 5, 0x03),   // ld x5, 0(x2)
+        0x0000_0073,                  // ecall
+    ]);
+    program.resize(DATA_OFFSET + 64, 0);
+    program[DATA_OFFSET..DATA_OFFSET + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("data-cache-prefetch-translation-queue", &elf);
+    let stdout = run_tagged_next_line_prefetch(&path, 180, false, false);
+
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
+    assert!(stdout.contains("\"data_loads\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_identified\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_issued\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_queue_enqueued\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_queue_issued\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_translation_queue_enqueued\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_translation_queue_issued\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_translation_queue_translated\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_translation_queue_dropped\":0"));
+    assert_stat(
+        &stdout,
+        "sim.data_cache.prefetch.translation_queue.enqueued",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.prefetch.translation_queue.issued",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.prefetch.translation_queue.translated",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.prefetch.translation_queue.dropped",
+        "Count",
+        0,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_data_cache_prefetcher_issues_tagged_next_line_prefetches() {
     let elf = tagged_next_line_prefetch_two_load_elf();
     let path = temp_binary("data-cache-prefetch-tagged-next-line", &elf);
@@ -258,6 +315,81 @@ fn rem6_run_instruction_cache_prefetcher_issues_tagged_next_line_prefetch() {
         "sim.instruction_cache.prefetch.issued",
         "Count",
         1,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_instruction_cache_prefetcher_translates_page_crossing_next_line() {
+    let mut program = riscv64_program(&[
+        0x0000_0073, // ecall
+    ]);
+    program.resize(64, 0);
+    let elf = riscv64_elf(0x8000_0ff0, 0x8000_0ff0, &program);
+    let path = temp_binary("instruction-cache-prefetch-translation-queue", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--instruction-cache-protocol",
+            "msi",
+            "--instruction-cache-prefetcher",
+            "tagged-next-line",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"committed_instructions\":1"));
+    assert!(stdout.contains("\"instruction_cache_prefetch_identified\":1"));
+    assert!(stdout.contains("\"instruction_cache_prefetch_issued\":1"));
+    assert!(stdout.contains("\"instruction_cache_prefetch_queue_enqueued\":1"));
+    assert!(stdout.contains("\"instruction_cache_prefetch_queue_issued\":1"));
+    assert!(stdout.contains("\"instruction_cache_prefetch_translation_queue_enqueued\":1"));
+    assert!(stdout.contains("\"instruction_cache_prefetch_translation_queue_issued\":1"));
+    assert!(stdout.contains("\"instruction_cache_prefetch_translation_queue_translated\":1"));
+    assert!(stdout.contains("\"instruction_cache_prefetch_translation_queue_dropped\":0"));
+    assert_stat(
+        &stdout,
+        "sim.instruction_cache.prefetch.translation_queue.enqueued",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.instruction_cache.prefetch.translation_queue.issued",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.instruction_cache.prefetch.translation_queue.translated",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.instruction_cache.prefetch.translation_queue.dropped",
+        "Count",
+        0,
         "monotonic",
     );
 }
