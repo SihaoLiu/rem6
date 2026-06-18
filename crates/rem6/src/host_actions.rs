@@ -95,6 +95,13 @@ impl Rem6HostActionSummary {
                     manifest,
                 } => {
                     let manifest_summary = manifest.summary();
+                    let components = manifest_summary
+                        .component_summaries()
+                        .iter()
+                        .map(|component| {
+                            Rem6HostCheckpointComponentSummary::from_checkpoint_summary(component)
+                        })
+                        .collect();
                     summary.checkpoints.push(Rem6HostCheckpointSummary {
                         tick: *tick,
                         event: event.get(),
@@ -104,6 +111,7 @@ impl Rem6HostActionSummary {
                         component_count: manifest_summary.component_count() as u64,
                         chunk_count: manifest_summary.chunk_count() as u64,
                         payload_bytes: manifest_summary.payload_bytes() as u64,
+                        components,
                     });
                 }
                 SystemActionOutcome::CheckpointRestored { .. } => {
@@ -193,6 +201,40 @@ pub(crate) struct Rem6HostCheckpointSummary {
     pub(crate) manifest_tick: u64,
     pub(crate) component_count: u64,
     pub(crate) chunk_count: u64,
+    pub(crate) payload_bytes: u64,
+    pub(crate) components: Vec<Rem6HostCheckpointComponentSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6HostCheckpointComponentSummary {
+    pub(crate) component: String,
+    pub(crate) chunk_count: u64,
+    pub(crate) payload_bytes: u64,
+    pub(crate) chunks: Vec<Rem6HostCheckpointChunkSummary>,
+}
+
+impl Rem6HostCheckpointComponentSummary {
+    fn from_checkpoint_summary(summary: &rem6_checkpoint::CheckpointComponentSummary) -> Self {
+        let chunks = summary
+            .chunk_summaries()
+            .iter()
+            .map(|chunk| Rem6HostCheckpointChunkSummary {
+                name: chunk.name().to_string(),
+                payload_bytes: chunk.payload_bytes() as u64,
+            })
+            .collect();
+        Self {
+            component: summary.component().as_str().to_string(),
+            chunk_count: summary.chunk_count() as u64,
+            payload_bytes: summary.payload_bytes() as u64,
+            chunks,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6HostCheckpointChunkSummary {
+    pub(crate) name: String,
     pub(crate) payload_bytes: u64,
 }
 

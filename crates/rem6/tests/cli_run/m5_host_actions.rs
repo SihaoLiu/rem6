@@ -327,6 +327,21 @@ fn rem6_run_emits_m5_checkpoint_host_action_detail_from_real_riscv_execution() {
         Some(1)
     );
     assert_checkpoint(host_actions, 0, "gem5-m5-checkpoint", 3, 3);
+    assert_checkpoint_component_chunks(
+        host_actions,
+        0,
+        0,
+        "cpu0",
+        &[
+            "fregs",
+            "hart-run-state",
+            "in-order-pipeline",
+            "pc",
+            "pmp",
+            "xregs",
+        ],
+    );
+    assert_checkpoint_counts_match_nested_details(host_actions, 0);
 }
 
 fn m5op(function: u32) -> u32 {
@@ -444,5 +459,88 @@ fn assert_checkpoint(
             .and_then(Value::as_u64)
             .is_some_and(|bytes| bytes > 0),
         "checkpoint action {index}: {action}"
+    );
+}
+
+fn assert_checkpoint_component_chunks(
+    host_actions: &Value,
+    checkpoint_index: usize,
+    component_index: usize,
+    component: &str,
+    chunks: &[&str],
+) {
+    let component_summary = host_actions
+        .pointer(&format!(
+            "/checkpoints/{checkpoint_index}/components/{component_index}"
+        ))
+        .unwrap_or_else(|| {
+            panic!("missing checkpoint component {checkpoint_index}/{component_index}")
+        });
+    assert_eq!(
+        component_summary
+            .pointer("/component")
+            .and_then(Value::as_str),
+        Some(component)
+    );
+    assert_eq!(
+        component_summary
+            .pointer("/chunk_count")
+            .and_then(Value::as_u64),
+        Some(chunks.len() as u64)
+    );
+    assert!(
+        component_summary
+            .pointer("/payload_bytes")
+            .and_then(Value::as_u64)
+            .is_some_and(|bytes| bytes > 0),
+        "checkpoint component {component_index}: {component_summary}"
+    );
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        let chunk_summary = component_summary
+            .pointer(&format!("/chunks/{chunk_index}"))
+            .unwrap_or_else(|| panic!("missing checkpoint chunk {chunk_index}"));
+        assert_eq!(
+            chunk_summary.pointer("/name").and_then(Value::as_str),
+            Some(*chunk)
+        );
+        assert!(
+            chunk_summary
+                .pointer("/payload_bytes")
+                .and_then(Value::as_u64)
+                .is_some_and(|bytes| bytes > 0),
+            "checkpoint chunk {chunk_index}: {chunk_summary}"
+        );
+    }
+}
+
+fn assert_checkpoint_counts_match_nested_details(host_actions: &Value, checkpoint_index: usize) {
+    let checkpoint = host_actions
+        .pointer(&format!("/checkpoints/{checkpoint_index}"))
+        .unwrap_or_else(|| panic!("missing checkpoint action {checkpoint_index}"));
+    let components = checkpoint
+        .pointer("/components")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing checkpoint components {checkpoint_index}"));
+    let component_count = components.len() as u64;
+    let chunk_count = components
+        .iter()
+        .map(|component| {
+            component
+                .pointer("/chunks")
+                .and_then(Value::as_array)
+                .map_or(0, |chunks| chunks.len() as u64)
+        })
+        .sum::<u64>();
+    assert_eq!(
+        checkpoint
+            .pointer("/component_count")
+            .and_then(Value::as_u64),
+        Some(component_count),
+        "checkpoint action {checkpoint_index}: {checkpoint}"
+    );
+    assert_eq!(
+        checkpoint.pointer("/chunk_count").and_then(Value::as_u64),
+        Some(chunk_count),
+        "checkpoint action {checkpoint_index}: {checkpoint}"
     );
 }

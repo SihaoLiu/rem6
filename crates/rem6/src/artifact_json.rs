@@ -4,9 +4,10 @@ use super::formatting::{
 use super::{
     Rem6CoreSummary, Rem6DataAccessProbeSummary, Rem6DramSummary, Rem6ExecutionStop,
     Rem6ExecutionSummary, Rem6GuestHostCallSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary,
-    Rem6HostActionSummary, Rem6HostCheckpointSummary, Rem6HostStatsDumpSummary,
-    Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
-    Rem6InstructionProbeSummary, Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
+    Rem6HostActionSummary, Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary,
+    Rem6HostCheckpointSummary, Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary,
+    Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary, Rem6InstructionProbeSummary,
+    Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
     Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary,
     Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6ReadfileSummary,
     Rem6RiscvGuestWriteSummary, Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact,
@@ -1154,8 +1155,14 @@ impl Rem6HostStatsDumpSummary {
 
 impl Rem6HostCheckpointSummary {
     fn to_json(&self) -> String {
+        let components = self
+            .components
+            .iter()
+            .map(Rem6HostCheckpointComponentSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
-            "{{\"tick\":{},\"event\":{},\"source\":{},\"label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{}}}",
+            "{{\"tick\":{},\"event\":{},\"source\":{},\"label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"components\":[{}]}}",
             self.tick,
             self.event,
             self.source,
@@ -1163,6 +1170,35 @@ impl Rem6HostCheckpointSummary {
             self.manifest_tick,
             self.component_count,
             self.chunk_count,
+            self.payload_bytes,
+            components,
+        )
+    }
+}
+
+impl Rem6HostCheckpointComponentSummary {
+    fn to_json(&self) -> String {
+        let chunks = self
+            .chunks
+            .iter()
+            .map(Rem6HostCheckpointChunkSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "{{\"component\":\"{}\",\"chunk_count\":{},\"payload_bytes\":{},\"chunks\":[{}]}}",
+            json_escape(&self.component),
+            self.chunk_count,
+            self.payload_bytes,
+            chunks,
+        )
+    }
+}
+
+impl Rem6HostCheckpointChunkSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"name\":\"{}\",\"payload_bytes\":{}}}",
+            json_escape(&self.name),
             self.payload_bytes,
         )
     }
