@@ -10,6 +10,9 @@ const RISCV_LINUX_SETRESGID_FOR_TEST: u64 = 149;
 const RISCV_LINUX_GETRESGID_FOR_TEST: u64 = 150;
 const RISCV_LINUX_GETGROUPS_FOR_TEST: u64 = 158;
 const RISCV_LINUX_SETGROUPS_FOR_TEST: u64 = 159;
+const RISCV_LINUX_PRCTL_FOR_TEST: u64 = 167;
+const RISCV_LINUX_PR_SET_NO_NEW_PRIVS_FOR_TEST: u64 = 38;
+const RISCV_LINUX_PR_GET_NO_NEW_PRIVS_FOR_TEST: u64 = 39;
 
 fn child(pid: u32, process_group: u32, status: GuestWaitStatus) -> GuestChildStatus {
     GuestChildStatus::new(
@@ -1118,6 +1121,90 @@ fn linux_table_prctl_set_name_reports_efault_on_guest_address_overflow() {
         Some(RiscvSyscallOutcome::Return {
             value: linux_error(RISCV_LINUX_EFAULT)
         })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_prctl_no_new_privs_queries_and_sets_state() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_PRCTL_FOR_TEST,
+                [RISCV_LINUX_PR_GET_NO_NEW_PRIVS_FOR_TEST, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_PRCTL_FOR_TEST,
+                [RISCV_LINUX_PR_SET_NO_NEW_PRIVS_FOR_TEST, 1, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_PRCTL_FOR_TEST,
+                [RISCV_LINUX_PR_GET_NO_NEW_PRIVS_FOR_TEST, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 1 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_prctl_no_new_privs_rejects_invalid_arguments() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    for (pc, arguments) in [
+        (
+            0x8000,
+            [RISCV_LINUX_PR_SET_NO_NEW_PRIVS_FOR_TEST, 0, 0, 0, 0, 0],
+        ),
+        (
+            0x8004,
+            [RISCV_LINUX_PR_SET_NO_NEW_PRIVS_FOR_TEST, 1, 1, 0, 0, 0],
+        ),
+        (
+            0x8008,
+            [RISCV_LINUX_PR_GET_NO_NEW_PRIVS_FOR_TEST, 1, 0, 0, 0, 0],
+        ),
+    ] {
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(pc, RISCV_LINUX_PRCTL_FOR_TEST, arguments),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL)
+            })
+        );
+    }
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_PRCTL_FOR_TEST,
+                [RISCV_LINUX_PR_GET_NO_NEW_PRIVS_FOR_TEST, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
     );
     assert!(state.unknown_syscalls().is_empty());
 }

@@ -16,6 +16,8 @@ pub(super) const RISCV_LINUX_PERSONALITY: u64 = 92;
 const RISCV_LINUX_PERSONALITY_QUERY: u32 = 0xffff_ffff;
 const RISCV_LINUX_PR_SET_NAME: u64 = 15;
 const RISCV_LINUX_PR_GET_NAME: u64 = 16;
+const RISCV_LINUX_PR_SET_NO_NEW_PRIVS: u64 = 38;
+const RISCV_LINUX_PR_GET_NO_NEW_PRIVS: u64 = 39;
 const RISCV_LINUX_TASK_COMM_BYTES: usize = 16;
 
 impl RiscvSyscallState {
@@ -33,6 +35,14 @@ impl RiscvSyscallState {
 
     pub(super) fn set_process_name(&mut self, name: [u8; RISCV_LINUX_TASK_COMM_BYTES]) {
         self.process_name = name;
+    }
+
+    pub(super) const fn no_new_privs(&self) -> bool {
+        self.no_new_privs
+    }
+
+    pub(super) fn set_no_new_privs(&mut self) {
+        self.no_new_privs = true;
     }
 
     pub(super) const fn personality(&self) -> u32 {
@@ -117,8 +127,36 @@ pub(super) fn syscall_prctl(
             .map(|guest_memory| syscall_prctl_set_name(request.argument(1), state, guest_memory)),
         RISCV_LINUX_PR_GET_NAME => guest_memory_writer
             .map(|guest_memory| syscall_prctl_get_name(request.argument(1), state, guest_memory)),
+        RISCV_LINUX_PR_SET_NO_NEW_PRIVS => Some(syscall_prctl_set_no_new_privs(request, state)),
+        RISCV_LINUX_PR_GET_NO_NEW_PRIVS => Some(syscall_prctl_get_no_new_privs(request, state)),
         _ => Some(linux_error(RISCV_LINUX_EINVAL)),
     }
+}
+
+fn syscall_prctl_set_no_new_privs(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+) -> u64 {
+    if request.argument(1) != 1
+        || request.argument(2) != 0
+        || request.argument(3) != 0
+        || request.argument(4) != 0
+    {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    state.set_no_new_privs();
+    0
+}
+
+fn syscall_prctl_get_no_new_privs(request: RiscvSyscallRequest, state: &RiscvSyscallState) -> u64 {
+    if request.argument(1) != 0
+        || request.argument(2) != 0
+        || request.argument(3) != 0
+        || request.argument(4) != 0
+    {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    u64::from(state.no_new_privs())
 }
 
 fn syscall_prctl_set_name(
