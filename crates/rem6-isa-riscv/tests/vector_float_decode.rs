@@ -18,6 +18,10 @@ fn vector_float_vf_type(funct6: u32, vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_type(funct6, 0b101, vs2, fs1, vd)
 }
 
+fn vector_float_masked_vf_type(funct6: u32, vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_masked_type(funct6, 0b101, vs2, fs1, vd)
+}
+
 fn vector_float_type(funct6: u32, funct3: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
     (funct6 << 26)
         | (1 << 25)
@@ -26,6 +30,19 @@ fn vector_float_type(funct6: u32, funct3: u32, vs2: u8, rs1: u8, vd: u8) -> u32 
         | (funct3 << 12)
         | (u32::from(vd) << 7)
         | 0x57
+}
+
+fn vector_float_masked_type(funct6: u32, funct3: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vfmerge_vfm_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_masked_vf_type(0x17, vs2, fs1, vd)
 }
 
 fn vfmv_v_f_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
@@ -38,6 +55,29 @@ fn vfmv_f_s_type(vs2: u8, vs1: u8, fd: u8) -> u32 {
 
 fn vfmv_s_f_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x10, vs2, fs1, vd)
+}
+
+#[test]
+fn decoder_accepts_vfmerge_vfm_only_masked() {
+    let valid = vfmerge_vfm_type(2, 1, 3);
+    assert_eq!(valid, 0x5c20_d1d7);
+    assert_eq!(
+        RiscvInstruction::decode(valid).unwrap(),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::MergeVf {
+            vd: vreg(3),
+            vs2: vreg(2),
+            fs1: freg(1),
+        })
+    );
+
+    let unmasked_move = vfmv_v_f_type(0, 1, 3);
+    assert_eq!(
+        RiscvInstruction::decode(unmasked_move).unwrap(),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::MoveVf {
+            vd: vreg(3),
+            fs1: freg(1),
+        })
+    );
 }
 
 #[test]

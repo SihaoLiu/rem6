@@ -274,6 +274,11 @@ pub enum RiscvVectorFloatInstruction {
         fs1: FloatRegister,
         vs2: VectorRegister,
     },
+    MergeVf {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        fs1: FloatRegister,
+    },
     MoveVf {
         vd: VectorRegister,
         fs1: FloatRegister,

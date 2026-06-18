@@ -401,6 +401,9 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         (0x5, 0b010000, true) if vector_vs2_is_zero(raw) => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::MoveSv { vd, fs1 },
         )),
+        (0x5, 0b010111, false) => Ok(RiscvInstruction::VectorFloat(
+            RiscvVectorFloatInstruction::MergeVf { vd, vs2, fs1 },
+        )),
         (0x5, 0b010111, true) if vector_vs2_is_zero(raw) => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::MoveVf { vd, fs1 },
         )),

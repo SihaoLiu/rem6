@@ -175,6 +175,10 @@ fn vfmv_v_f_type(fs1: u8, vd: u8) -> u32 {
     vector_float_vf_type(0x17, 0, fs1, vd)
 }
 
+fn vfmerge_vfm_type(vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_masked_vf_type(0x17, vs2, fs1, vd)
+}
+
 fn vfmv_f_s_type(vs2: u8, fd: u8) -> u32 {
     vector_float_vv_type(0x10, vs2, 0, fd)
 }
@@ -191,9 +195,22 @@ fn vector_float_vf_type(funct6: u32, vs2: u8, fs1: u8, vd: u8) -> u32 {
     vector_float_type(funct6, 0b101, vs2, fs1, vd)
 }
 
+fn vector_float_masked_vf_type(funct6: u32, vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_masked_type(funct6, 0b101, vs2, fs1, vd)
+}
+
 fn vector_float_type(funct6: u32, funct3: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
     (funct6 << 26)
         | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vector_float_masked_type(funct6: u32, funct3: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
         | (u32::from(vs2) << 20)
         | (u32::from(rs1) << 15)
         | (funct3 << 12)
@@ -1658,6 +1675,137 @@ fn riscv_core_driver_vfmv_v_f_nan_boxes_scalar_source() {
         lanes_f32_bits([0x7fc0_0000, 0x7fc0_0000, 0x7fc0_0000, 0xdead_beef])
     );
     assert_eq!(core.float_status().fflags(), 0);
+}
+
+#[test]
+fn riscv_core_driver_executes_vfmerge_vfm_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.write_float_register(freg(1), f32_box_bits(0x7fc0_1234));
+    core.write_vector_register(vreg(0), mask_bytes(0b0000_0101));
+    core.write_vector_register(
+        vreg(2),
+        lanes_f32_bits([0x3f80_0000, 0xc000_0000, 0x3e80_0000, 0x40c0_0000]),
+    );
+    core.write_vector_register(vreg(3), lanes_f32_bits([0, 0, 0, 0xdead_beef]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 5),
+            vfmerge_vfm_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::MergeVf {
+            vd: vreg(3),
+            vs2: vreg(2),
+            fs1: freg(1),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_f32_bits([0x7fc0_1234, 0xc000_0000, 0x7fc0_1234, 0xdead_beef])
+    );
+    assert_eq!(core.float_status().fflags(), 0);
+}
+
+#[test]
+fn riscv_core_driver_vfmerge_vfm_nan_boxes_scalar_source() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.write_float_register(freg(1), u64::from(0x3f80_0000_u32));
+    core.write_vector_register(vreg(0), mask_bytes(0b0000_0111));
+    core.write_vector_register(
+        vreg(2),
+        lanes_f32_bits([0x3f80_0000, 0xc000_0000, 0x3e80_0000, 0x40c0_0000]),
+    );
+    core.write_vector_register(vreg(3), lanes_f32_bits([0, 0, 0, 0xdead_beef]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 5),
+            vfmerge_vfm_type(2, 1, 3),
+            0x0010_0073,
+        ],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFloat(RiscvVectorFloatInstruction::MergeVf {
+            vd: vreg(3),
+            vs2: vreg(2),
+            fs1: freg(1),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_f32_bits([0x7fc0_0000, 0x7fc0_0000, 0x7fc0_0000, 0xdead_beef])
+    );
+    assert_eq!(core.float_status().fflags(), 0);
+}
+
+#[test]
+fn riscv_core_driver_vfmerge_vfm_traps_when_mask_register_overlaps_destination() {
+    assert_vfmerge_vfm_overlap_trap(vfmerge_vfm_type(2, 1, 0));
+}
+
+#[test]
+fn riscv_core_driver_vfmerge_vfm_traps_when_mask_register_overlaps_source() {
+    assert_vfmerge_vfm_overlap_trap(vfmerge_vfm_type(0, 1, 3));
+}
+
+fn assert_vfmerge_vfm_overlap_trap(instruction: u32) {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.write_float_register(freg(1), f32_box_bits(0x3f80_0000));
+    core.write_vector_register(vreg(0), mask_bytes(0b0000_0101));
+    core.write_vector_register(
+        vreg(2),
+        lanes_f32_bits([0x3f80_0000, 0xc000_0000, 0x3e80_0000, 0x40c0_0000]),
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[vsetvli_type(0xd0, 10, 5), instruction, 0x0010_0073],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+
+    assert_eq!(
+        drive_until_trap_kind(&core, store, &mut scheduler, &transport),
+        Some(RiscvTrapKind::IllegalInstruction)
+    );
+    assert_eq!(core.read_vector_register(vreg(0)), mask_bytes(0b0000_0101));
 }
 
 #[test]

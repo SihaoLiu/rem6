@@ -1,8 +1,8 @@
 use crate::{
     float,
     vector_group::{
-        read_register_group, valid_register_group, write_register_group, VectorBinaryPlan,
-        MAX_VECTOR_GROUP_BYTES,
+        read_mask_bit, read_register_group, valid_register_group, write_register_group,
+        VectorBinaryPlan, MAX_VECTOR_GROUP_BYTES,
     },
     FloatRegister, RiscvFloatRoundingMode, RiscvHartState, RiscvVectorFloatInstruction,
     VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
@@ -95,6 +95,9 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorFloatIn
         }
         RiscvVectorFloatInstruction::SignInjectXorVf { vd, fs1, vs2 } => {
             execute_sign_inject_vf(hart, vd, fs1, vs2, FloatSignInjectOp::InjectXor)
+        }
+        RiscvVectorFloatInstruction::MergeVf { vd, vs2, fs1 } => {
+            execute_merge_vf(hart, vd, vs2, fs1)
         }
         RiscvVectorFloatInstruction::MoveVf { vd, fs1 } => execute_move_vf(hart, vd, fs1),
         RiscvVectorFloatInstruction::MoveFv { fd, vs2 } => execute_move_fv(hart, fd, vs2),
@@ -395,6 +398,39 @@ fn execute_move_vf(hart: &mut RiscvHartState, vd: VectorRegister, fs1: FloatRegi
     true
 }
 
+fn execute_merge_vf(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    fs1: FloatRegister,
+) -> bool {
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2]) else {
+        return false;
+    };
+    if plan.element_bytes != 4
+        || register_group_overlaps_v0(vd, plan.group_registers)
+        || register_group_overlaps_v0(vs2, plan.group_registers)
+    {
+        return false;
+    }
+
+    let scalar = float::single_register_bits(hart.read_float(fs1));
+    let scalar_bytes = scalar.to_le_bytes();
+    let mask = hart.read_vector(VectorRegister::from_field(0));
+    let fallback = read_register_group(hart, vs2, plan.group_registers);
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    for element_index in 0..plan.active_element_count() {
+        let offset = element_index * 4;
+        if read_mask_bit(&mask, element_index) {
+            result[offset..offset + 4].copy_from_slice(&scalar_bytes);
+        } else {
+            result[offset..offset + 4].copy_from_slice(&fallback[offset..offset + 4]);
+        }
+    }
+    write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
+
 fn execute_move_fv(hart: &mut RiscvHartState, fd: FloatRegister, vs2: VectorRegister) -> bool {
     let config = hart.vector_config();
     let Some(element_bytes) = config.element_width_bytes() else {
@@ -650,6 +686,10 @@ fn value_is_positive_infinity(value: u32) -> bool {
 
 fn box_single_bits(value: u32) -> u64 {
     0xffff_ffff_0000_0000 | u64::from(value)
+}
+
+fn register_group_overlaps_v0(register: VectorRegister, group_registers: usize) -> bool {
+    register.index() == 0 && group_registers > 0
 }
 
 fn write_mask_bit(mask: &mut [u8; RISCV_VECTOR_REGISTER_BYTES], element_index: usize, value: bool) {
