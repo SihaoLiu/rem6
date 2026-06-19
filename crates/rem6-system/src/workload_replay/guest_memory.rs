@@ -26,6 +26,19 @@ impl WorkloadGuestMemoryReadTarget {
     }
 }
 
+enum WorkloadGuestMemoryWritePatch {
+    Memory {
+        target: MemoryTargetId,
+        line: Address,
+        data: Vec<u8>,
+    },
+    DataCache {
+        target: MemoryTargetId,
+        line: Address,
+        data: Vec<u8>,
+    },
+}
+
 pub(super) fn workload_functional_guest_memory_reader(
     memory: WorkloadMemoryBackend,
     data_cache: Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
@@ -133,31 +146,61 @@ fn write_workload_guest_memory(
         let line_offset = usize::try_from(target.layout.line_offset(address)).ok()?;
         let line_bytes = usize::try_from(target.layout.bytes()).ok()?;
         let take = (line_bytes - line_offset).min(remaining);
-        if let Some(data_cache) = data_cache {
-            if data_cache
-                .lock()
-                .expect("workload data cache lock")
-                .functional_line_data(target.target, line)
-                .is_some()
-            {
-                return None;
-            }
-        }
-        let mut line_data = memory.line_data(target.target, line).ok()?;
+        let (mut line_data, cache_resident) =
+            write_workload_guest_memory_line(memory, data_cache, target.target, line)?;
         let end = line_offset.checked_add(take)?;
         if line_data.len() < end {
             return None;
         }
         line_data[line_offset..end].copy_from_slice(&bytes[offset..offset + take]);
-        patches.push((target.target, line, line_data));
+        patches.push(if cache_resident {
+            WorkloadGuestMemoryWritePatch::DataCache {
+                target: target.target,
+                line,
+                data: line_data,
+            }
+        } else {
+            WorkloadGuestMemoryWritePatch::Memory {
+                target: target.target,
+                line,
+                data: line_data,
+            }
+        });
         cursor = cursor.checked_add(u64::try_from(take).ok()?)?;
         offset += take;
         remaining -= take;
     }
-    for (target, line, line_data) in patches {
-        memory.insert_line(target, line, line_data).ok()?;
+    for patch in patches {
+        match patch {
+            WorkloadGuestMemoryWritePatch::Memory { target, line, data } => {
+                memory.insert_line(target, line, data).ok()?;
+            }
+            WorkloadGuestMemoryWritePatch::DataCache { target, line, data } => {
+                data_cache?
+                    .lock()
+                    .expect("workload data cache lock")
+                    .functional_replace_line_data(target, line, data)
+                    .ok()?
+                    .then_some(())?;
+            }
+        }
     }
     Some(())
+}
+
+fn write_workload_guest_memory_line(
+    memory: &WorkloadMemoryBackend,
+    data_cache: Option<&Arc<Mutex<WorkloadDataCacheBackend>>>,
+    target: MemoryTargetId,
+    line: Address,
+) -> Option<(Vec<u8>, bool)> {
+    if let Some(data_cache) = data_cache {
+        let data_cache = data_cache.lock().expect("workload data cache lock");
+        if let Some(line_data) = data_cache.functional_line_data(target, line) {
+            return Some((line_data, true));
+        }
+    }
+    Some((memory.line_data(target, line).ok()?, false))
 }
 
 fn readable_workload_guest_memory_target(

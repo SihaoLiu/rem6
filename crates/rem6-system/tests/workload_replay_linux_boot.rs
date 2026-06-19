@@ -704,7 +704,7 @@ fn workload_replay_sbi_debug_console_read_consumes_input_resource() {
 }
 
 #[test]
-fn workload_replay_sbi_debug_console_read_rejects_cached_destination() {
+fn workload_replay_sbi_debug_console_read_updates_cached_destination() {
     let manifest =
         replay_manifest_with_sbi_debug_console_read_cached_destination_linux_boot_handoff();
     let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
@@ -733,11 +733,17 @@ fn workload_replay_sbi_debug_console_read_rejects_cached_destination() {
 
     let boot = outcome.cluster().core(CpuId::new(0)).unwrap();
 
+    assert_eq!(boot.read_register(Register::new(7).unwrap()), 0);
+    assert_eq!(boot.read_register(Register::new(8).unwrap()), 4);
     assert_eq!(
-        boot.read_register(Register::new(7).unwrap()),
-        (-5_i64) as u64
+        snapshot_blob(
+            outcome.memory_snapshot(),
+            MemoryTargetId::new(0),
+            Address::new(0x9600),
+            4,
+        ),
+        b"cmd\n"
     );
-    assert_eq!(boot.read_register(Register::new(8).unwrap()), 0);
     assert!(outcome.run().riscv_debug_console_bytes().is_empty());
     plan.verify_result(outcome.result()).unwrap();
 }
