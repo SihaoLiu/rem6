@@ -39,6 +39,7 @@ mod iovec;
 mod limits;
 mod link;
 mod links;
+mod memfd;
 mod mkdir;
 mod mmap;
 mod open;
@@ -147,6 +148,7 @@ use link::{
     RISCV_LINUX_LINK, RISCV_LINUX_LINKAT, RISCV_LINUX_SYMLINKAT,
 };
 use links::syscall_readlinkat;
+use memfd::{syscall_memfd_create, RISCV_LINUX_MEMFD_CREATE};
 use mkdir::{syscall_mkdirat, RISCV_LINUX_MKDIRAT};
 pub use mmap::RiscvMmapRegion;
 use mmap::{
@@ -283,6 +285,7 @@ pub struct RiscvSyscallState {
     guest_directory_descriptions: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
     guest_directory_paths: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
     guest_file_stats: BTreeMap<GuestFileDescriptionId, RiscvOpenGuestFileStat>,
+    guest_file_seals: BTreeMap<GuestFileDescriptionId, u32>,
     guest_writes: Vec<RiscvGuestWriteRecord>,
     unknown_syscalls: Vec<RiscvUnknownSyscallRecord>,
     file_creation_mask: u32,
@@ -379,6 +382,7 @@ impl RiscvSyscallState {
             guest_directory_descriptions: BTreeMap::new(),
             guest_directory_paths: BTreeMap::new(),
             guest_file_stats: BTreeMap::new(),
+            guest_file_seals: BTreeMap::new(),
             guest_writes: Vec::new(),
             unknown_syscalls: Vec::new(),
             file_creation_mask: 0,
@@ -981,6 +985,7 @@ impl RiscvSyscallState {
             .guest_file_stats
             .remove(&description)
             .map(|stat| stat.identity);
+        self.guest_file_seals.remove(&description);
         self.guest_file_descriptions.remove(&description);
         self.guest_file_description_paths.remove(&description);
         self.guest_directory_descriptions.remove(&description);
@@ -1235,6 +1240,11 @@ impl RiscvSyscallTable {
             RISCV_LINUX_EVENTFD2 => Some(RiscvSyscallOutcome::Return {
                 value: syscall_eventfd2(request, state),
             }),
+            RISCV_LINUX_MEMFD_CREATE => {
+                guest_memory_reader.map(|reader| RiscvSyscallOutcome::Return {
+                    value: syscall_memfd_create(request, state, reader),
+                })
+            }
             RISCV_LINUX_EPOLL_CREATE1 => Some(RiscvSyscallOutcome::Return {
                 value: syscall_epoll_create1(request, state),
             }),

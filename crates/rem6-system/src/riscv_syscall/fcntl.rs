@@ -1,4 +1,4 @@
-use crate::{GuestFdError, GuestFileStatusFlags};
+use crate::{GuestFd, GuestFdError, GuestFileStatusFlags};
 
 use super::{
     guest_fd_argument, linux_error, pipe::RiscvGuestPipeCapacityError, RiscvGuestMemoryReader,
@@ -20,7 +20,19 @@ pub(super) const RISCV_LINUX_F_SETLKW: u64 = 7;
 pub(super) const RISCV_LINUX_F_DUPFD_CLOEXEC: u64 = 1030;
 pub(super) const RISCV_LINUX_F_SETPIPE_SZ: u64 = 1031;
 pub(super) const RISCV_LINUX_F_GETPIPE_SZ: u64 = 1032;
+const RISCV_LINUX_F_ADD_SEALS: u64 = 1033;
+const RISCV_LINUX_F_GET_SEALS: u64 = 1034;
 pub(super) const RISCV_LINUX_FD_CLOEXEC: u64 = 1;
+pub(super) const RISCV_LINUX_F_SEAL_SEAL: u32 = 0x0001;
+const RISCV_LINUX_F_SEAL_SHRINK: u32 = 0x0002;
+const RISCV_LINUX_F_SEAL_GROW: u32 = 0x0004;
+const RISCV_LINUX_F_SEAL_WRITE: u32 = 0x0008;
+const RISCV_LINUX_F_SEAL_FUTURE_WRITE: u32 = 0x0010;
+const RISCV_LINUX_F_SEAL_SUPPORTED: u32 = RISCV_LINUX_F_SEAL_SEAL
+    | RISCV_LINUX_F_SEAL_SHRINK
+    | RISCV_LINUX_F_SEAL_GROW
+    | RISCV_LINUX_F_SEAL_WRITE
+    | RISCV_LINUX_F_SEAL_FUTURE_WRITE;
 
 const RISCV_LINUX_F_RDLCK: u16 = 0;
 const RISCV_LINUX_F_WRLCK: u16 = 1;
@@ -131,6 +143,8 @@ pub(super) fn syscall_fcntl(
             Ok(None) => Err(RiscvFcntlError::Linux(RISCV_LINUX_EBADF)),
             Err(error) => Err(RiscvFcntlError::GuestFd(error)),
         },
+        RiscvFcntlCommand::GetSeals => get_memfd_seals(fd, state),
+        RiscvFcntlCommand::AddSeals => add_memfd_seals(fd, request.argument(2), state),
         RiscvFcntlCommand::SetPipeSize => {
             match state.set_guest_pipe_capacity(fd, request.argument(2)) {
                 Ok(Some(capacity)) => Ok(capacity as u64),
@@ -182,6 +196,8 @@ enum RiscvFcntlCommand {
     SetLock,
     GetPipeSize,
     SetPipeSize,
+    GetSeals,
+    AddSeals,
 }
 
 impl RiscvFcntlCommand {
@@ -201,8 +217,85 @@ impl RiscvFcntlCommand {
             }),
             RISCV_LINUX_F_SETPIPE_SZ => Some(Self::SetPipeSize),
             RISCV_LINUX_F_GETPIPE_SZ => Some(Self::GetPipeSize),
+            RISCV_LINUX_F_ADD_SEALS => Some(Self::AddSeals),
+            RISCV_LINUX_F_GET_SEALS => Some(Self::GetSeals),
             _ => None,
         }
+    }
+}
+
+impl RiscvSyscallState {
+    pub(super) fn guest_fd_write_denied_by_file_seal(
+        &self,
+        fd: GuestFd,
+    ) -> Result<bool, GuestFdError> {
+        let Some(seals) = self.guest_fd_file_seals(fd)? else {
+            return Ok(false);
+        };
+        Ok(seals & (RISCV_LINUX_F_SEAL_WRITE | RISCV_LINUX_F_SEAL_FUTURE_WRITE) != 0)
+    }
+
+    pub(super) fn guest_fd_resize_denied_by_file_seal(
+        &self,
+        fd: GuestFd,
+        length: u64,
+    ) -> Result<bool, GuestFdError> {
+        let description = self.guest_fds.description_for_fd(fd)?.id();
+        let Some(seals) = self.guest_file_seals.get(&description).copied() else {
+            return Ok(false);
+        };
+        let Some(contents) = self.guest_file_descriptions.get(&description) else {
+            return Ok(false);
+        };
+        let current = contents.len() as u64;
+        Ok((length < current && seals & RISCV_LINUX_F_SEAL_SHRINK != 0)
+            || (length > current && seals & RISCV_LINUX_F_SEAL_GROW != 0))
+    }
+
+    fn guest_fd_file_seals(&self, fd: GuestFd) -> Result<Option<u32>, GuestFdError> {
+        let description = self.guest_fds.description_for_fd(fd)?.id();
+        Ok(self.guest_file_seals.get(&description).copied())
+    }
+
+    fn set_guest_fd_file_seals(&mut self, fd: GuestFd, seals: u32) -> Result<bool, GuestFdError> {
+        let description = self.guest_fds.description_for_fd(fd)?.id();
+        let Some(current) = self.guest_file_seals.get_mut(&description) else {
+            return Ok(false);
+        };
+        *current = seals;
+        Ok(true)
+    }
+}
+
+fn get_memfd_seals(fd: GuestFd, state: &RiscvSyscallState) -> RiscvFcntlResult {
+    match state.guest_fd_file_seals(fd) {
+        Ok(Some(seals)) => Ok(u64::from(seals)),
+        Ok(None) => Err(RiscvFcntlError::Linux(RISCV_LINUX_EINVAL)),
+        Err(error) => Err(RiscvFcntlError::GuestFd(error)),
+    }
+}
+
+fn add_memfd_seals(
+    fd: GuestFd,
+    seals_argument: u64,
+    state: &mut RiscvSyscallState,
+) -> RiscvFcntlResult {
+    let seals = seals_argument as u32;
+    if seals & !RISCV_LINUX_F_SEAL_SUPPORTED != 0 {
+        return Err(RiscvFcntlError::Linux(RISCV_LINUX_EINVAL));
+    }
+    let current = match state.guest_fd_file_seals(fd) {
+        Ok(Some(seals)) => seals,
+        Ok(None) => return Err(RiscvFcntlError::Linux(RISCV_LINUX_EINVAL)),
+        Err(error) => return Err(RiscvFcntlError::GuestFd(error)),
+    };
+    if seals != 0 && current & RISCV_LINUX_F_SEAL_SEAL != 0 {
+        return Err(RiscvFcntlError::Linux(RISCV_LINUX_EPERM));
+    }
+    match state.set_guest_fd_file_seals(fd, current | seals) {
+        Ok(true) => Ok(0),
+        Ok(false) => Err(RiscvFcntlError::Linux(RISCV_LINUX_EINVAL)),
+        Err(error) => Err(RiscvFcntlError::GuestFd(error)),
     }
 }
 

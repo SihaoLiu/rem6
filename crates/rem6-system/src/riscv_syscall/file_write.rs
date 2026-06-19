@@ -6,8 +6,8 @@ use super::{
     RiscvGuestNodeKind, RiscvGuestWriteRecord, RiscvSyscallRequest, RiscvSyscallState,
     RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG,
     RISCV_LINUX_EINVAL, RISCV_LINUX_EISDIR, RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT,
-    RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND, RISCV_LINUX_O_RDONLY,
-    RISCV_LINUX_PATH_MAX,
+    RISCV_LINUX_EPERM, RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND,
+    RISCV_LINUX_O_RDONLY, RISCV_LINUX_PATH_MAX,
 };
 use crate::{GuestFd, GuestFdError, GuestFileOffset};
 use rem6_kernel::Tick;
@@ -24,6 +24,7 @@ pub(super) const RISCV_LINUX_PWRITE64: u64 = 68;
 pub(super) enum RiscvGuestFileWriteError {
     Fd(GuestFdError),
     FileTooLarge,
+    Permission,
 }
 
 impl From<GuestFdError> for RiscvGuestFileWriteError {
@@ -37,6 +38,7 @@ pub(super) enum RiscvGuestFileResizeError {
     Fd(GuestFdError),
     FileTooLarge,
     NotRegularWritableFile,
+    Permission,
 }
 
 impl From<GuestFdError> for RiscvGuestFileResizeError {
@@ -104,6 +106,9 @@ impl RiscvSyscallState {
             .entry(fd)
             .ok_or(GuestFdError::BadFd { fd })?
             .description();
+        if self.guest_fd_write_denied_by_file_seal(fd)? {
+            return Err(RiscvGuestFileWriteError::Permission);
+        }
         let append = self.guest_fd_appends_to_file(fd)?;
         let offset = if append {
             let Some(contents) = self.guest_file_descriptions.get(&description) else {
@@ -152,6 +157,9 @@ impl RiscvSyscallState {
             .entry(fd)
             .ok_or(GuestFdError::BadFd { fd })?
             .description();
+        if self.guest_fd_write_denied_by_file_seal(fd)? {
+            return Err(RiscvGuestFileWriteError::Permission);
+        }
         let Some(contents) = self.guest_file_descriptions.get_mut(&description) else {
             return Ok(false);
         };
@@ -205,6 +213,9 @@ impl RiscvSyscallState {
             .entry(fd)
             .ok_or(GuestFdError::BadFd { fd })?
             .description();
+        if self.guest_fd_resize_denied_by_file_seal(fd, length)? {
+            return Err(RiscvGuestFileResizeError::Permission);
+        }
         let Some(contents) = self.guest_file_descriptions.get_mut(&description) else {
             return Err(RiscvGuestFileResizeError::NotRegularWritableFile);
         };
@@ -236,6 +247,9 @@ impl RiscvSyscallState {
             .entry(fd)
             .ok_or(GuestFdError::BadFd { fd })?
             .description();
+        if self.guest_fd_resize_denied_by_file_seal(fd, length)? {
+            return Err(RiscvGuestFileResizeError::Permission);
+        }
         let Some(contents) = self.guest_file_descriptions.get_mut(&description) else {
             return Err(RiscvGuestFileResizeError::NotRegularWritableFile);
         };
@@ -360,6 +374,7 @@ pub(super) fn syscall_truncate(
         Ok(()) => 0,
         Err(RiscvGuestFileResizeError::FileTooLarge) => linux_error(RISCV_LINUX_EFBIG),
         Err(RiscvGuestFileResizeError::NotRegularWritableFile) => linux_error(RISCV_LINUX_EINVAL),
+        Err(RiscvGuestFileResizeError::Permission) => linux_error(RISCV_LINUX_EPERM),
         Err(RiscvGuestFileResizeError::Fd(_)) => linux_error(RISCV_LINUX_EBADF),
     }
 }
@@ -375,6 +390,7 @@ pub(super) fn syscall_ftruncate(
         Ok(()) => 0,
         Err(RiscvGuestFileResizeError::FileTooLarge) => linux_error(RISCV_LINUX_EFBIG),
         Err(RiscvGuestFileResizeError::NotRegularWritableFile) => linux_error(RISCV_LINUX_EINVAL),
+        Err(RiscvGuestFileResizeError::Permission) => linux_error(RISCV_LINUX_EPERM),
         Err(RiscvGuestFileResizeError::Fd(_)) => linux_error(RISCV_LINUX_EBADF),
     }
 }
@@ -405,6 +421,7 @@ pub(super) fn syscall_fallocate(
         Ok(()) => 0,
         Err(RiscvGuestFileResizeError::FileTooLarge) => linux_error(RISCV_LINUX_EFBIG),
         Err(RiscvGuestFileResizeError::NotRegularWritableFile) => linux_error(RISCV_LINUX_EINVAL),
+        Err(RiscvGuestFileResizeError::Permission) => linux_error(RISCV_LINUX_EPERM),
         Err(RiscvGuestFileResizeError::Fd(_)) => linux_error(RISCV_LINUX_EBADF),
     }
 }
@@ -487,6 +504,9 @@ pub(super) fn syscall_write(
         Err(RiscvGuestFileWriteError::FileTooLarge) => {
             return Some(linux_error(RISCV_LINUX_EFBIG));
         }
+        Err(RiscvGuestFileWriteError::Permission) => {
+            return Some(linux_error(RISCV_LINUX_EPERM));
+        }
         Err(RiscvGuestFileWriteError::Fd(_)) => return Some(linux_error(RISCV_LINUX_EBADF)),
     }
     if state.guest_fds.advance_file_offset(fd, count).is_err() {
@@ -550,6 +570,7 @@ pub(super) fn syscall_pwrite64(
         Ok(true) => {}
         Ok(false) => return linux_error(RISCV_LINUX_ESPIPE),
         Err(RiscvGuestFileWriteError::FileTooLarge) => return linux_error(RISCV_LINUX_EFBIG),
+        Err(RiscvGuestFileWriteError::Permission) => return linux_error(RISCV_LINUX_EPERM),
         Err(RiscvGuestFileWriteError::Fd(_)) => return linux_error(RISCV_LINUX_EBADF),
     }
 

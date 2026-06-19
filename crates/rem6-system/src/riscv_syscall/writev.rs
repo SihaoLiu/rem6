@@ -8,7 +8,8 @@ use super::{
     positioned::riscv_linux_split_offset,
     RiscvGuestMemoryReader, RiscvGuestWriteRecord, RiscvSyscallRequest, RiscvSyscallState,
     RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG,
-    RISCV_LINUX_EINVAL, RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_RDONLY,
+    RISCV_LINUX_EINVAL, RISCV_LINUX_EPERM, RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE,
+    RISCV_LINUX_O_RDONLY,
 };
 use crate::Tick;
 
@@ -110,6 +111,9 @@ pub(super) fn syscall_writev(
         Err(RiscvGuestFileWriteError::FileTooLarge) => {
             return Some(linux_error(RISCV_LINUX_EFBIG));
         }
+        Err(RiscvGuestFileWriteError::Permission) => {
+            return Some(linux_error(RISCV_LINUX_EPERM));
+        }
         Err(RiscvGuestFileWriteError::Fd(_)) => return Some(linux_error(RISCV_LINUX_EBADF)),
     }
     if state.guest_fds.advance_file_offset(fd, total).is_err() {
@@ -176,6 +180,7 @@ pub(super) fn syscall_pwritev(
         Ok(true) => {}
         Ok(false) => return linux_error(RISCV_LINUX_ESPIPE),
         Err(RiscvGuestFileWriteError::FileTooLarge) => return linux_error(RISCV_LINUX_EFBIG),
+        Err(RiscvGuestFileWriteError::Permission) => return linux_error(RISCV_LINUX_EPERM),
         Err(RiscvGuestFileWriteError::Fd(_)) => return linux_error(RISCV_LINUX_EBADF),
     }
 

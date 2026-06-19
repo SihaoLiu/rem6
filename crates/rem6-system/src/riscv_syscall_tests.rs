@@ -33,6 +33,8 @@ mod hwprobe_tests;
 mod link_tests;
 #[path = "riscv_syscall_tests/madvise_tests.rs"]
 mod madvise_tests;
+#[path = "riscv_syscall_tests/memfd_tests.rs"]
+mod memfd_tests;
 #[path = "riscv_syscall_tests/memory_policy_tests.rs"]
 mod memory_policy_tests;
 #[path = "riscv_syscall_tests/mkdir_tests.rs"]

@@ -3,8 +3,9 @@ use crate::{GuestFd, GuestFileOffset};
 use super::{
     file_write::RiscvGuestFileWriteError, guest_fd_argument, linux_error, RiscvGuestMemoryReader,
     RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EBADF,
-    RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG, RISCV_LINUX_EINVAL, RISCV_LINUX_ESPIPE,
-    RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND, RISCV_LINUX_O_RDONLY, RISCV_LINUX_O_WRONLY,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG, RISCV_LINUX_EINVAL, RISCV_LINUX_EPERM,
+    RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND, RISCV_LINUX_O_RDONLY,
+    RISCV_LINUX_O_WRONLY,
 };
 
 pub(super) const RISCV_LINUX_SENDFILE: u64 = 71;
@@ -84,6 +85,7 @@ pub(super) fn syscall_sendfile(
         Ok(true) => {}
         Ok(false) => return linux_error(RISCV_LINUX_EINVAL),
         Err(RiscvGuestFileWriteError::FileTooLarge) => return linux_error(RISCV_LINUX_EFBIG),
+        Err(RiscvGuestFileWriteError::Permission) => return linux_error(RISCV_LINUX_EPERM),
         Err(RiscvGuestFileWriteError::Fd(_)) => return linux_error(RISCV_LINUX_EBADF),
     }
     if state.guest_fds.advance_file_offset(out_fd, copied).is_err() {
