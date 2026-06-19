@@ -85,6 +85,7 @@ pub struct GuestFileDescription {
     host_fd: Option<GuestHostFd>,
     status_flags: GuestFileStatusFlags,
     file_offset: GuestFileOffset,
+    signal_owner: i32,
 }
 
 impl GuestFileDescription {
@@ -97,6 +98,7 @@ impl GuestFileDescription {
             host_fd: None,
             status_flags,
             file_offset: GuestFileOffset::new(0),
+            signal_owner: 0,
         }
     }
 
@@ -110,6 +112,7 @@ impl GuestFileDescription {
             host_fd: Some(host_fd),
             status_flags,
             file_offset: GuestFileOffset::new(0),
+            signal_owner: 0,
         }
     }
 
@@ -135,6 +138,14 @@ impl GuestFileDescription {
 
     pub const fn set_file_offset(&mut self, file_offset: GuestFileOffset) {
         self.file_offset = file_offset;
+    }
+
+    pub const fn signal_owner(&self) -> i32 {
+        self.signal_owner
+    }
+
+    pub const fn set_signal_owner(&mut self, owner: i32) {
+        self.signal_owner = owner;
     }
 }
 
@@ -500,6 +511,16 @@ impl GuestFdTable {
             })?;
         description_record.set_file_offset(advanced);
         Ok(advanced)
+    }
+
+    pub fn signal_owner(&self, fd: GuestFd) -> Result<i32, GuestFdError> {
+        Ok(self.description_for_fd(fd)?.signal_owner())
+    }
+
+    pub fn set_signal_owner(&mut self, fd: GuestFd, owner: i32) -> Result<(), GuestFdError> {
+        let (_, description) = self.description_for_fd_mut(fd)?;
+        description.set_signal_owner(owner);
+        Ok(())
     }
 
     pub fn close_descriptor(&mut self, fd: GuestFd) -> Result<GuestFdCloseRecord, GuestFdError> {

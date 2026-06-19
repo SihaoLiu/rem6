@@ -1,4 +1,5 @@
 use super::*;
+use crate::GuestProcessGroupId;
 
 const RISCV_LINUX_FLOCK_FOR_TEST: u64 = 32;
 const RISCV_LINUX_FADVISE64_FOR_TEST: u64 = 223;
@@ -12,6 +13,9 @@ const RISCV_LINUX_POSIX_FADV_SEQUENTIAL_FOR_TEST: u64 = 2;
 const RISCV_LINUX_POSIX_FADV_WILLNEED_FOR_TEST: u64 = 3;
 const RISCV_LINUX_POSIX_FADV_DONTNEED_FOR_TEST: u64 = 4;
 const RISCV_LINUX_POSIX_FADV_NOREUSE_FOR_TEST: u64 = 5;
+const RISCV_LINUX_F_SETOWN_FOR_TEST: u64 = 8;
+const RISCV_LINUX_F_GETOWN_FOR_TEST: u64 = 9;
+const RISCV_LINUX_UNSUPPORTED_FCNTL_FOR_TEST: u64 = 0x7fff_ffff;
 
 #[test]
 fn linux_table_dup_preserves_stdin_read_source() {
@@ -216,8 +220,6 @@ fn linux_table_returns_ebadf_for_fcntl_on_out_of_range_fd() {
 
 #[test]
 fn linux_table_reports_bad_fd_before_unsupported_fcntl_command() {
-    const RISCV_LINUX_F_SETOWN_FOR_TEST: u64 = 8;
-
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
 
@@ -226,12 +228,253 @@ fn linux_table_reports_bad_fd_before_unsupported_fcntl_command() {
             RiscvSyscallRequest::new(
                 0x8000,
                 RISCV_LINUX_FCNTL,
-                [99, RISCV_LINUX_F_SETOWN_FOR_TEST, 0, 0, 0, 0],
+                [99, RISCV_LINUX_UNSUPPORTED_FCNTL_FOR_TEST, 0, 0, 0, 0],
             ),
             &mut state,
         ),
         Some(RiscvSyscallOutcome::Return {
             value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+}
+
+#[test]
+fn linux_table_fcntl_setown_getown_tracks_shared_file_description_owner() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let current_process = RiscvSyscallIdentity::linux_single_process().thread_group_id();
+    let current_process_group = -(current_process as i64) as u64;
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETOWN_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_SETOWN_FOR_TEST, current_process, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETOWN_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: current_process
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x800c, RISCV_LINUX_DUP, [1, 0, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8010,
+                RISCV_LINUX_FCNTL,
+                [3, RISCV_LINUX_F_GETOWN_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: current_process
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8014,
+                RISCV_LINUX_FCNTL,
+                [
+                    3,
+                    RISCV_LINUX_F_SETOWN_FOR_TEST,
+                    current_process_group,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8018,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETOWN_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: current_process_group
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x801c,
+                RISCV_LINUX_FCNTL,
+                [
+                    1,
+                    RISCV_LINUX_F_SETOWN_FOR_TEST,
+                    (1_u64 << 32) | current_process,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8020,
+                RISCV_LINUX_FCNTL,
+                [3, RISCV_LINUX_F_GETOWN_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: current_process
+        })
+    );
+}
+
+#[test]
+fn linux_table_fcntl_setown_validates_owner_targets() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::with_identity_process_group_and_session(
+        0,
+        RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10),
+        GuestProcessGroupId::new(77).unwrap(),
+        77,
+    );
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_SETOWN_FOR_TEST, 41, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETOWN_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 41 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_SETOWN_FOR_TEST, 999, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ESRCH)
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_SETOWN_FOR_TEST, (-999_i64) as u64, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ESRCH)
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8010,
+                RISCV_LINUX_FCNTL,
+                [
+                    1,
+                    RISCV_LINUX_F_SETOWN_FOR_TEST,
+                    (i32::MIN as i64) as u64,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8014,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETOWN_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 41 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8018,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_SETOWN_FOR_TEST, (-77_i64) as u64, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x801c,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETOWN_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: (-77_i64) as u64
         })
     );
 }

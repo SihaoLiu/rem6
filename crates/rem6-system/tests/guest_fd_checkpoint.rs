@@ -11,7 +11,7 @@ use rem6_system::{
 };
 
 const GUEST_FD_CHUNK: &str = "guest-fd";
-const GUEST_FD_CHECKPOINT_VERSION: u64 = 1;
+const GUEST_FD_CHECKPOINT_VERSION: u64 = 2;
 
 fn checkpoint_component(name: &str) -> CheckpointComponentId {
     CheckpointComponentId::new(name).unwrap()
@@ -46,6 +46,7 @@ fn guest_fd_checkpoint_payload(
         }
         push_u32(&mut payload, *status_flags);
         push_u64(&mut payload, *file_offset);
+        push_u64(&mut payload, 0);
     }
     push_u64(&mut payload, entries.len() as u64);
     for (fd, description, close_on_exec) in entries {
@@ -84,6 +85,7 @@ fn populated_guest_fd_table() -> (Arc<Mutex<GuestFdTable>>, GuestFd, GuestFd) {
         locked
             .set_file_offset(original, GuestFileOffset::new(4096))
             .unwrap();
+        locked.set_signal_owner(original, -123).unwrap();
         let duplicate = locked.dup(original).unwrap();
         (table.clone(), original, duplicate)
     }
@@ -153,6 +155,27 @@ fn guest_fd_checkpoint_bank_round_trips_shared_description_aliases() {
             .unwrap()
             .get(),
         4128
+    );
+    assert_eq!(
+        restore_table
+            .lock()
+            .unwrap()
+            .signal_owner(duplicate)
+            .unwrap(),
+        -123
+    );
+    restore_table
+        .lock()
+        .unwrap()
+        .set_signal_owner(duplicate, 77)
+        .unwrap();
+    assert_eq!(
+        restore_table
+            .lock()
+            .unwrap()
+            .signal_owner(original)
+            .unwrap(),
+        77
     );
 }
 

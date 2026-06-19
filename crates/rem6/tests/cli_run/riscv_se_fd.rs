@@ -569,6 +569,129 @@ int main(void) {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_fcntl_owner_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!("skipping static RISC-V SE fcntl owner smoke: riscv64-unknown-elf-gcc not found");
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE fcntl owner smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-fcntl-owner");
+    let source = workspace.join("fcntl-owner.c");
+    let binary = workspace.join("fcntl-owner");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+
+#define F_SETOWN 8
+#define F_GETOWN 9
+
+static long linux_syscall1(long number, long arg0) {
+    register long a0 asm("a0") = arg0;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    long pid = linux_syscall1(172, 0);
+    long pgid = linux_syscall1(155, 0);
+    long initial_owner = linux_syscall3(25, 1, F_GETOWN, 0);
+    long set_owner = linux_syscall3(25, 1, F_SETOWN, pid);
+    long owner = linux_syscall3(25, 1, F_GETOWN, 0);
+    long set_group_owner = pgid > 0 ? linux_syscall3(25, 1, F_SETOWN, -pgid) : -1;
+    long group_owner = linux_syscall3(25, 1, F_GETOWN, 0);
+    long dup_fd = linux_syscall1(23, 1);
+    long dup_owner = dup_fd >= 0 ? linux_syscall3(25, dup_fd, F_GETOWN, 0) : -1;
+    long set_dup_owner = dup_fd >= 0 ? linux_syscall3(25, dup_fd, F_SETOWN, 0) : -1;
+    long owner_after_dup_set = linux_syscall3(25, 1, F_GETOWN, 0);
+    long close_status = dup_fd >= 0 ? linux_syscall1(57, dup_fd) : -1;
+
+    printf("fcntl-owner:%ld:%ld:%ld:%ld:%ld:%ld:%ld:%ld:%ld:%ld:%ld\n",
+           initial_owner, set_owner, owner == pid, dup_fd >= 0 ? 0 : dup_fd,
+           pgid > 0 ? 0 : pgid, set_group_owner, group_owner == -pgid,
+           dup_owner == -pgid, set_dup_owner, owner_after_dup_set, close_status);
+    return initial_owner == 0 && set_owner == 0 && owner == pid && dup_fd >= 0 &&
+           pgid > 0 && set_group_owner == 0 && group_owner == -pgid &&
+           dup_owner == -pgid && set_dup_owner == 0 && owner_after_dup_set == 0 &&
+           close_status == 0 ? 48 : 80;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(48),
+        "qemu stdout: {}; qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stdout),
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(qemu_output.stdout, b"fcntl-owner:0:0:1:0:0:0:1:1:0:0:0\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":48"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"fcntl-owner:0:0:1:0:0:0:1:1:0:0:0\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 48, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_sendfile_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!("skipping static RISC-V SE sendfile smoke: riscv64-unknown-elf-gcc not found");

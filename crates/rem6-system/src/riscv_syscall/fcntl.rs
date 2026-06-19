@@ -4,8 +4,8 @@ use super::{
     guest_fd_argument, linux_error, pipe::RiscvGuestPipeCapacityError, RiscvGuestMemoryReader,
     RiscvGuestMemoryWriter, RiscvSyscallOutcome, RiscvSyscallRequest, RiscvSyscallState,
     RISCV_LINUX_EBADF, RISCV_LINUX_EBUSY, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
-    RISCV_LINUX_EMFILE, RISCV_LINUX_EPERM, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND,
-    RISCV_LINUX_O_NONBLOCK, RISCV_LINUX_O_RDONLY, RISCV_LINUX_O_WRONLY,
+    RISCV_LINUX_EMFILE, RISCV_LINUX_EPERM, RISCV_LINUX_ESRCH, RISCV_LINUX_O_ACCMODE,
+    RISCV_LINUX_O_APPEND, RISCV_LINUX_O_NONBLOCK, RISCV_LINUX_O_RDONLY, RISCV_LINUX_O_WRONLY,
 };
 
 pub(super) const RISCV_LINUX_FCNTL: u64 = 25;
@@ -17,6 +17,8 @@ pub(super) const RISCV_LINUX_F_SETFL: u64 = 4;
 pub(super) const RISCV_LINUX_F_GETLK: u64 = 5;
 pub(super) const RISCV_LINUX_F_SETLK: u64 = 6;
 pub(super) const RISCV_LINUX_F_SETLKW: u64 = 7;
+const RISCV_LINUX_F_SETOWN: u64 = 8;
+const RISCV_LINUX_F_GETOWN: u64 = 9;
 pub(super) const RISCV_LINUX_F_DUPFD_CLOEXEC: u64 = 1030;
 pub(super) const RISCV_LINUX_F_SETPIPE_SZ: u64 = 1031;
 pub(super) const RISCV_LINUX_F_GETPIPE_SZ: u64 = 1032;
@@ -123,6 +125,21 @@ pub(super) fn syscall_fcntl(
                 .map(|()| 0)
                 .map_err(RiscvFcntlError::GuestFd)
         }
+        RiscvFcntlCommand::SetOwner => {
+            signal_owner_argument(request.argument(2)).and_then(|owner| {
+                validate_signal_owner_target(owner, state)?;
+                state
+                    .guest_fds
+                    .set_signal_owner(fd, owner)
+                    .map(|()| 0)
+                    .map_err(RiscvFcntlError::GuestFd)
+            })
+        }
+        RiscvFcntlCommand::GetOwner => state
+            .guest_fds
+            .signal_owner(fd)
+            .map(|owner| owner as i64 as u64)
+            .map_err(RiscvFcntlError::GuestFd),
         RiscvFcntlCommand::GetLock => {
             advisory_lock_request(fd, request.argument(2), state, guest_memory_reader)
                 .and_then(validate_get_lock_request)
@@ -192,6 +209,8 @@ enum RiscvFcntlCommand {
     SetFdFlags,
     GetStatusFlags,
     SetStatusFlags,
+    SetOwner,
+    GetOwner,
     GetLock,
     SetLock,
     GetPipeSize,
@@ -212,6 +231,8 @@ impl RiscvFcntlCommand {
             RISCV_LINUX_F_SETFL => Some(Self::SetStatusFlags),
             RISCV_LINUX_F_GETLK => Some(Self::GetLock),
             RISCV_LINUX_F_SETLK | RISCV_LINUX_F_SETLKW => Some(Self::SetLock),
+            RISCV_LINUX_F_SETOWN => Some(Self::SetOwner),
+            RISCV_LINUX_F_GETOWN => Some(Self::GetOwner),
             RISCV_LINUX_F_DUPFD_CLOEXEC => Some(Self::DuplicateFd {
                 close_on_exec: true,
             }),
@@ -222,6 +243,38 @@ impl RiscvFcntlCommand {
             _ => None,
         }
     }
+}
+
+fn signal_owner_argument(argument: u64) -> Result<i32, RiscvFcntlError> {
+    let owner = argument as u32 as i32;
+    if owner == i32::MIN {
+        return Err(RiscvFcntlError::Linux(RISCV_LINUX_EINVAL));
+    }
+    Ok(owner)
+}
+
+fn validate_signal_owner_target(
+    owner: i32,
+    state: &RiscvSyscallState,
+) -> Result<(), RiscvFcntlError> {
+    if signal_owner_target_exists(owner, state) {
+        Ok(())
+    } else {
+        Err(RiscvFcntlError::Linux(RISCV_LINUX_ESRCH))
+    }
+}
+
+fn signal_owner_target_exists(owner: i32, state: &RiscvSyscallState) -> bool {
+    if owner == 0 {
+        return true;
+    }
+    if owner > 0 {
+        return u64::try_from(owner).ok() == Some(state.identity().thread_group_id());
+    }
+    owner
+        .checked_abs()
+        .and_then(|process_group| u64::try_from(process_group).ok())
+        == Some(u64::from(state.guest_wait.current_process_group().get()))
 }
 
 impl RiscvSyscallState {
