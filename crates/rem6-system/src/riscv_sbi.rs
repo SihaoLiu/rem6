@@ -6,7 +6,7 @@ use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvTrapKind};
 use rem6_kernel::{PartitionedScheduler, SchedulerError};
 use rem6_memory::{AccessSize, Address, AddressRange, TranslationAddressSpaceId};
 
-use crate::{RiscvSystemRunDriver, SystemError};
+use crate::{riscv_syscall::RiscvGuestMemoryReader, RiscvSystemRunDriver, SystemError};
 
 const SBI_SUCCESS: u64 = 0;
 const SBI_ERR_NOT_SUPPORTED: u64 = (-2_i64) as u64;
@@ -49,6 +49,7 @@ const SBI_RFENCE_REMOTE_HFENCE_GVMA: u64 = 4;
 const SBI_RFENCE_REMOTE_HFENCE_VVMA_ASID: u64 = 5;
 const SBI_RFENCE_REMOTE_HFENCE_VVMA: u64 = 6;
 const SBI_SRST_SYSTEM_RESET: u64 = 0;
+const SBI_DEBUG_CONSOLE_WRITE: u64 = 0;
 const SBI_DEBUG_CONSOLE_WRITE_BYTE: u64 = 2;
 const SBI_SPEC_VERSION_2_0: u64 = 2 << 24;
 const REM6_SBI_IMPL_ID: u64 = 0x7265_6d36;
@@ -69,6 +70,7 @@ pub struct RiscvSbiFirmware {
     cores: Arc<Mutex<BTreeMap<u64, RiscvCore>>>,
     timer: Arc<Mutex<RiscvSbiTimerState>>,
     debug_console: Arc<Mutex<Vec<u8>>>,
+    functional_guest_memory_reader: Option<RiscvGuestMemoryReader>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -235,7 +237,16 @@ impl RiscvSbiFirmware {
                 deadlines: BTreeMap::new(),
             })),
             debug_console: Arc::new(Mutex::new(Vec::new())),
+            functional_guest_memory_reader: None,
         }
+    }
+
+    pub fn with_functional_guest_memory_reader<F>(mut self, read: F) -> Self
+    where
+        F: Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync + 'static,
+    {
+        self.functional_guest_memory_reader = Some(RiscvGuestMemoryReader::new(read));
+        self
     }
 
     pub(crate) fn register_cluster(&self, cluster: &RiscvCluster) -> Result<(), SystemError> {
@@ -370,11 +381,59 @@ impl RiscvSbiFirmware {
                 .remote_hfence(scheduler, core, request, parallel)
                 .map_err(SystemError::Scheduler)?,
             (SBI_SRST_EXTENSION, SBI_SRST_SYSTEM_RESET) => self.system_reset(request),
+            (SBI_DEBUG_CONSOLE_EXTENSION, SBI_DEBUG_CONSOLE_WRITE) => {
+                self.debug_console_write(request)
+            }
             (SBI_DEBUG_CONSOLE_EXTENSION, SBI_DEBUG_CONSOLE_WRITE_BYTE) => {
                 self.debug_console_write_byte(request)
             }
             _ => RiscvSbiOutcome::not_supported(),
         }))
+    }
+
+    fn debug_console_write(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+        let bytes = match self.read_debug_console_payload(request) {
+            Ok(bytes) => bytes,
+            Err(outcome) => return outcome,
+        };
+        let written = bytes.len() as u64;
+        self.debug_console
+            .lock()
+            .expect("RISC-V SBI debug console lock")
+            .extend_from_slice(&bytes);
+        RiscvSbiOutcome::success(written)
+    }
+
+    fn read_debug_console_payload(
+        &self,
+        request: RiscvSbiRequest,
+    ) -> Result<Vec<u8>, RiscvSbiOutcome> {
+        let bytes =
+            usize::try_from(request.arg0()).map_err(|_| RiscvSbiOutcome::invalid_param())?;
+        if bytes == 0 {
+            return Ok(Vec::new());
+        }
+        if request.arg2() != 0 {
+            return Err(RiscvSbiOutcome::invalid_param());
+        }
+        let last_offset = u64::try_from(bytes)
+            .ok()
+            .and_then(|bytes| bytes.checked_sub(1))
+            .ok_or_else(RiscvSbiOutcome::invalid_param)?;
+        request
+            .arg1()
+            .checked_add(last_offset)
+            .ok_or_else(RiscvSbiOutcome::invalid_param)?;
+        let Some(reader) = &self.functional_guest_memory_reader else {
+            return Err(RiscvSbiOutcome::invalid_address());
+        };
+        let Some(payload) = reader.read(request.arg1(), bytes) else {
+            return Err(RiscvSbiOutcome::invalid_address());
+        };
+        if payload.len() != bytes {
+            return Err(RiscvSbiOutcome::invalid_address());
+        }
+        Ok(payload)
     }
 
     fn debug_console_write_byte(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
@@ -908,6 +967,19 @@ fn rfence_virtual_range(start_addr: u64, size: u64) -> Option<Option<AddressRang
 impl RiscvSystemRunDriver {
     pub fn with_riscv_sbi_firmware(mut self) -> Self {
         self.riscv_sbi_firmware = Some(RiscvSbiFirmware::new());
+        self
+    }
+
+    pub fn with_riscv_sbi_firmware_and_functional_guest_memory_reader<F>(mut self, read: F) -> Self
+    where
+        F: Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync + 'static,
+    {
+        let firmware = self
+            .riscv_sbi_firmware
+            .take()
+            .unwrap_or_else(RiscvSbiFirmware::new)
+            .with_functional_guest_memory_reader(read);
+        self.riscv_sbi_firmware = Some(firmware);
         self
     }
 

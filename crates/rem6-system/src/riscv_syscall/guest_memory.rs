@@ -17,7 +17,7 @@ impl RiscvGuestMemoryReader {
         }
     }
 
-    pub(in crate::riscv_syscall) fn read(&self, address: u64, bytes: usize) -> Option<Vec<u8>> {
+    pub(crate) fn read(&self, address: u64, bytes: usize) -> Option<Vec<u8>> {
         (self.read)(address, bytes)
     }
 }

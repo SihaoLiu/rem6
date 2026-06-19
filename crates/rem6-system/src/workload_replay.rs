@@ -4,7 +4,7 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_accelerator::{AcceleratorEngineId, AcceleratorEngineSnapshot, AcceleratorError};
-use rem6_boot::{BootError, BootImage};
+use rem6_boot::BootError;
 use rem6_checkpoint::CheckpointManifest;
 use rem6_coherence::{
     ChiHarnessError, HarnessError, MesiHarnessError, MoesiHarnessError,
@@ -50,8 +50,10 @@ use rem6_workload::{
 mod cache_response;
 mod data_cache_backend;
 mod dma_scheduler_evidence;
+mod guest_memory;
 mod manifest_traffic_trace;
 mod memory_backend;
+mod payload;
 mod qos;
 mod sinic_mmio_backend;
 mod stats;
@@ -77,8 +79,10 @@ use self::dma_scheduler_evidence::{
     dma_scheduler_recorded_batch_worker_slot_tick_summaries, dma_scheduler_remote_flows,
     dma_scheduler_remote_sends, DmaSchedulerEvidence,
 };
+use self::guest_memory::workload_functional_guest_memory_reader;
 use self::manifest_traffic_trace::build_traffic_trace_replays;
 use self::memory_backend::{memory_response, WorkloadDramBackend, WorkloadMemoryBackend};
+use self::payload::load_payload_at;
 use self::qos::{dram_scheduling_policy, priority_policy, queue_arbiter};
 use self::sinic_mmio_backend::WorkloadSinicPciMmioBackend;
 use self::stats::{workload_data_access_stats, workload_instruction_stats};
@@ -168,19 +172,6 @@ impl WorkloadGpuDmaActivity {
         self.deadlock_diagnostic_count = wait_for.deadlock_diagnostic().into_iter().count();
         self
     }
-}
-
-fn load_payload_at(
-    store: &mut PartitionedMemoryStore,
-    address: Address,
-    payload: &[u8],
-) -> Result<(), RiscvWorkloadReplayError> {
-    BootImage::new(address)
-        .add_segment(address, payload.to_vec())
-        .map_err(RiscvWorkloadReplayError::Boot)?
-        .load_into_partitioned_store_by_address(store)
-        .map(|_| ())
-        .map_err(RiscvWorkloadReplayError::Boot)
 }
 
 #[derive(Clone, Debug)]
@@ -346,7 +337,13 @@ impl RiscvWorkloadReplay {
         );
         let mut driver = RiscvSystemRunDriver::with_instruction_stats(trap_port, instruction_stats);
         if self.plan.linux_boot_handoff().is_some() {
-            driver = driver.with_riscv_sbi_firmware();
+            driver = driver.with_riscv_sbi_firmware_and_functional_guest_memory_reader(
+                workload_functional_guest_memory_reader(
+                    memory.clone(),
+                    data_cache.clone(),
+                    topology,
+                )?,
+            );
         }
         if let Some(data_access_stats) = data_access_stats {
             driver = driver.with_data_access_stats(data_access_stats);

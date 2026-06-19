@@ -6,11 +6,12 @@ use rem6_memory::{
 };
 use rem6_system::{RiscvWorkloadReplay, RiscvWorkloadReplayError};
 use rem6_workload::{
-    HostEventIntent, WorkloadError, WorkloadHostEvent, WorkloadHostPlacement, WorkloadId,
-    WorkloadLinuxBootHandoff, WorkloadLinuxInitrd, WorkloadManifest, WorkloadMemoryRoute,
-    WorkloadMemoryTarget, WorkloadReplayPlan, WorkloadResolvedResources, WorkloadResource,
-    WorkloadResourceId, WorkloadResourceKind, WorkloadResourcePayload, WorkloadRiscvCore,
-    WorkloadRouteId, WorkloadTopology,
+    HostEventIntent, WorkloadDataCacheProtocol, WorkloadError, WorkloadHostEvent,
+    WorkloadHostPlacement, WorkloadId, WorkloadLinuxBootHandoff, WorkloadLinuxInitrd,
+    WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadReplayPlan,
+    WorkloadResolvedResources, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
+    WorkloadResourcePayload, WorkloadRiscvCore, WorkloadRiscvDataCache, WorkloadRouteId,
+    WorkloadTopology,
 };
 
 fn workload_id(value: &str) -> WorkloadId {
@@ -41,6 +42,16 @@ fn lui(rd: u32, imm20: u32) -> u32 {
     (imm20 << 12) | (rd << 7) | 0x37
 }
 
+fn sw(rs2: u32, rs1: u32, imm: i32) -> u32 {
+    let imm = imm as u32;
+    (((imm >> 5) & 0x7f) << 25)
+        | (rs2 << 20)
+        | (rs1 << 15)
+        | (0x2 << 12)
+        | ((imm & 0x1f) << 7)
+        | 0x23
+}
+
 fn lui_addi_parts(value: u64) -> (u32, i32) {
     let hi = ((value + 0x800) >> 12) as u32;
     let lo = (value as i64 - ((u64::from(hi) << 12) as i64)) as i32;
@@ -68,12 +79,15 @@ fn sbi_boot_image() -> BootImage {
         (0x8018, addi(6, 11, 0)),
         (0x801c, lui(17, dbcn_hi)),
         (0x8020, addi(17, 17, dbcn_lo)),
-        (0x8024, addi(16, 0, 2)),
-        (0x8028, addi(10, 0, i32::from(b'B'))),
-        (0x802c, 0x0000_0073),
-        (0x8030, addi(7, 10, 0)),
-        (0x8034, addi(8, 11, 0)),
-        (0x8038, 0x0010_0073),
+        (0x8024, addi(16, 0, 0)),
+        (0x8028, addi(10, 0, 5)),
+        (0x802c, lui(11, 9)),
+        (0x8030, addi(11, 11, 0x600)),
+        (0x8034, addi(12, 0, 0)),
+        (0x8038, 0x0000_0073),
+        (0x803c, addi(7, 10, 0)),
+        (0x8040, addi(8, 11, 0)),
+        (0x8044, 0x0010_0073),
         (0x9000, addi(31, 0, 9)),
         (0x9004, 0x0010_0073),
     ] {
@@ -82,6 +96,46 @@ fn sbi_boot_image() -> BootImage {
             .unwrap();
     }
     image
+        .add_segment(Address::new(0x9600), b"boot\n".to_vec())
+        .unwrap()
+}
+
+fn sbi_data_cache_boot_image() -> BootImage {
+    let (dbcn_hi, dbcn_lo) = lui_addi_parts(0x4442_434e);
+    let (word_hi, word_lo) = lui_addi_parts(0x746f_6f62);
+    let mut image = BootImage::new(Address::new(0x8000));
+    for (address, instruction) in [
+        (0x8000, addi(28, 10, 0)),
+        (0x8004, addi(29, 11, 0)),
+        (0x8008, addi(17, 0, 0x10)),
+        (0x800c, addi(16, 0, 0)),
+        (0x8010, 0x0000_0073),
+        (0x8014, addi(5, 10, 0)),
+        (0x8018, addi(6, 11, 0)),
+        (0x801c, lui(17, dbcn_hi)),
+        (0x8020, addi(17, 17, dbcn_lo)),
+        (0x8024, addi(16, 0, 0)),
+        (0x8028, lui(11, 9)),
+        (0x802c, addi(11, 11, 0x600)),
+        (0x8030, lui(9, word_hi)),
+        (0x8034, addi(9, 9, word_lo)),
+        (0x8038, sw(9, 11, 0)),
+        (0x803c, addi(10, 0, 4)),
+        (0x8040, addi(12, 0, 0)),
+        (0x8044, 0x0000_0073),
+        (0x8048, addi(7, 10, 0)),
+        (0x804c, addi(8, 11, 0)),
+        (0x8050, 0x0010_0073),
+        (0x9000, addi(31, 0, 9)),
+        (0x9004, 0x0010_0073),
+    ] {
+        image = image
+            .add_segment(Address::new(address), word(instruction))
+            .unwrap();
+    }
+    image
+        .add_segment(Address::new(0x9600), b"old!".to_vec())
+        .unwrap()
 }
 
 fn initrd_resource() -> WorkloadResource {
@@ -152,6 +206,86 @@ fn replay_topology() -> WorkloadTopology {
         .unwrap()
 }
 
+fn replay_topology_with_sbi_data_cache() -> WorkloadTopology {
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.data"), "cpu0.dmem", 0, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu1.fetch"), "cpu1.ifetch", 1, "memory", 2, 2, 3)
+                .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(
+                route_id("dcache.backing"),
+                "dcache.dir",
+                2,
+                "memory",
+                2,
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap()
+            .with_data("cpu0.dmem", route_id("cpu0.data"))
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                1,
+                1,
+                8,
+                Address::new(0x9000),
+                "cpu1.ifetch",
+                route_id("cpu1.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .with_riscv_data_cache(
+            WorkloadRiscvDataCache::new(
+                WorkloadDataCacheProtocol::Msi,
+                0,
+                Address::new(0x9600),
+                2,
+                "dcache.dir",
+                route_id("dcache.backing"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
 fn replay_manifest_with_linux_boot_handoff() -> WorkloadManifest {
     replay_manifest_with_bootargs("console=ttyS0 root=/dev/vda")
 }
@@ -209,6 +343,34 @@ fn replay_manifest_with_sbi_linux_boot_handoff() -> WorkloadManifest {
         .with_expected_stop_reason("host-stop")
         .build()
         .unwrap()
+}
+
+fn replay_manifest_with_sbi_data_cache_linux_boot_handoff() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-linux-sbi-cache-replay"),
+        sbi_data_cache_boot_image(),
+    )
+    .with_topology(replay_topology_with_sbi_data_cache())
+    .add_resource(device_tree_resource())
+    .unwrap()
+    .add_resource(initrd_resource())
+    .unwrap()
+    .with_linux_boot_handoff(
+        WorkloadLinuxBootHandoff::new(Address::new(0x97c0))
+            .with_device_tree_resource(resource_id("dtb"))
+            .with_bootargs("console=ttyS0 root=/dev/vda")
+            .with_initrd(
+                WorkloadLinuxInitrd::new(
+                    resource_id("initrd"),
+                    Address::new(0x9804),
+                    AccessSize::new(20).unwrap(),
+                )
+                .unwrap(),
+            ),
+    )
+    .with_expected_stop_reason("host-stop")
+    .build()
+    .unwrap()
 }
 
 fn snapshot_blob(
@@ -317,11 +479,41 @@ fn workload_replay_linux_boot_handoff_enters_supervisor_sbi() {
     assert_eq!(boot.read_register(Register::new(5).unwrap()), 0);
     assert_eq!(boot.read_register(Register::new(6).unwrap()), 2 << 24);
     assert_eq!(boot.read_register(Register::new(7).unwrap()), 0);
-    assert_eq!(boot.read_register(Register::new(8).unwrap()), 0);
+    assert_eq!(boot.read_register(Register::new(8).unwrap()), 5);
     assert_eq!(secondary.hart_run_state(), RiscvHartRunState::Stopped);
     assert_eq!(secondary.read_register(Register::new(31).unwrap()), 0);
-    assert_eq!(outcome.run().scheduled_traps()[0].trap().pc(), 0x8038);
-    assert_eq!(outcome.run().riscv_debug_console_bytes(), b"B");
+    assert_eq!(outcome.run().scheduled_traps()[0].trap().pc(), 0x8044);
+    assert_eq!(outcome.run().riscv_debug_console_bytes(), b"boot\n");
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_sbi_debug_console_write_reads_cached_guest_payload() {
+    let manifest = replay_manifest_with_sbi_data_cache_linux_boot_handoff();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let resources = WorkloadResolvedResources::from_manifest(
+        &manifest,
+        [
+            WorkloadResourcePayload::new(resource_id("dtb"), "sha256:dtb", vec![0xd0, 0x0d])
+                .unwrap(),
+            WorkloadResourcePayload::new(resource_id("initrd"), "sha256:initrd", vec![0; 20])
+                .unwrap(),
+        ],
+    )
+    .unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_resolved_resources(resources)
+        .with_max_turns(200)
+        .run_parallel()
+        .unwrap();
+
+    let boot = outcome.cluster().core(CpuId::new(0)).unwrap();
+
+    assert_eq!(boot.read_register(Register::new(7).unwrap()), 0);
+    assert_eq!(boot.read_register(Register::new(8).unwrap()), 4);
+    assert_eq!(outcome.run().scheduled_traps()[0].trap().pc(), 0x8050);
+    assert_eq!(outcome.run().riscv_debug_console_bytes(), b"boot");
     plan.verify_result(outcome.result()).unwrap();
 }
 

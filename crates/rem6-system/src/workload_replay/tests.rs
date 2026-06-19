@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use rem6_boot::BootImage;
 use rem6_coherence::{
     HarnessError, PartitionedCacheAgentConfig, PartitionedChiDirectoryLineHarness,
     PartitionedDirectoryLineHarness, PartitionedMesiDirectoryLineHarness,

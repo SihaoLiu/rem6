@@ -442,6 +442,10 @@ impl WorkloadDataCacheLineBackend {
         }
     }
 
+    fn functional_line_data(&self) -> Option<Vec<u8>> {
+        self.final_line_data(0).ok()
+    }
+
     fn apply_trace_cache_event(
         &mut self,
         event: TrafficTraceCacheEvent,
@@ -1172,6 +1176,17 @@ impl WorkloadDataCacheBackend {
             .values()
             .map(|line| Ok((line.target(), line.line(), line.final_line_data(tick)?)))
             .collect()
+    }
+
+    pub(super) fn functional_line_data(
+        &self,
+        target: MemoryTargetId,
+        line: Address,
+    ) -> Option<Vec<u8>> {
+        self.lines
+            .get(&line)
+            .filter(|line| line.target() == target)
+            .and_then(WorkloadDataCacheLineBackend::functional_line_data)
     }
 
     pub(super) fn respond(&mut self, delivery: &RequestDelivery) -> Option<TargetOutcome> {
