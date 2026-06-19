@@ -1,5 +1,6 @@
 use super::*;
 
+const FUTEX_WAIT_BITSET: u64 = 9;
 const FUTEX_WAKE_OP: u64 = 5;
 const FUTEX_OP_ADD: u32 = 1;
 const FUTEX_OP_XOR: u32 = 4;
@@ -1033,6 +1034,48 @@ fn linux_table_futex_wait_mismatch_with_zero_timeout_returns_eagain() {
         ),
         Some(RiscvSyscallOutcome::Return {
             value: linux_error(11)
+        })
+    );
+    assert_eq!(state.guest_futexes().waiter_count(address, thread_group), 0);
+}
+
+#[test]
+fn linux_table_futex_wait_bitset_zero_timeout_returns_etimedout_without_queueing() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let address = GuestFutexAddress::new(0x18d);
+    let timeout_address = 0x3030;
+    let thread_group = GuestThreadGroupId::new(100);
+    let guest_memory = RiscvGuestMemoryReader::new(move |read_address, bytes| {
+        if read_address == address.get() && bytes == 4 {
+            Some(2_i32.to_le_bytes().to_vec())
+        } else if read_address == timeout_address && bytes == 16 {
+            Some(vec![0; 16])
+        } else {
+            None
+        }
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                98,
+                [
+                    address.get(),
+                    FUTEX_WAIT_BITSET,
+                    2,
+                    timeout_address,
+                    0,
+                    u32::MAX as u64,
+                ],
+            ),
+            &mut state,
+            43,
+            Some(&guest_memory),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(110)
         })
     );
     assert_eq!(state.guest_futexes().waiter_count(address, thread_group), 0);

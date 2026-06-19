@@ -115,7 +115,12 @@ pub(super) fn syscall_futex(
                     request,
                     state,
                     tick,
-                    RiscvFutexWaitRequest::new(address, thread_group, bitset, None),
+                    RiscvFutexWaitRequest::new(
+                        address,
+                        thread_group,
+                        bitset,
+                        Some(request.argument(3)),
+                    ),
                     guest_memory,
                 )
             })
