@@ -1180,7 +1180,7 @@ fn hash_linux_boot_handoff(hash: &mut u64, handoff: Option<&WorkloadLinuxBootHan
         return;
     };
 
-    hash_str(hash, "linux.boot_handoff.v2");
+    hash_str(hash, "linux.boot_handoff.v3");
     hash_u64(hash, handoff.dtb_addr().get());
     match handoff.device_tree_resource() {
         Some(resource) => {
@@ -1195,6 +1195,13 @@ fn hash_linux_boot_handoff(hash: &mut u64, handoff: Option<&WorkloadLinuxBootHan
             hash_str(hash, bootargs);
         }
         None => hash_str(hash, "bootargs.none"),
+    }
+    match handoff.debug_console_input_resource() {
+        Some(resource) => {
+            hash_str(hash, "debug_console_input.some");
+            hash_str(hash, resource.as_str());
+        }
+        None => hash_str(hash, "debug_console_input.none"),
     }
     match handoff.initrd() {
         Some(initrd) => {

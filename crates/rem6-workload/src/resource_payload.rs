@@ -87,6 +87,7 @@ impl WorkloadResolvedResources {
         }
         validate_linux_device_tree_payload(manifest, &resolved)?;
         validate_linux_initrd_payload(manifest, &resolved)?;
+        validate_linux_debug_console_input_payload(manifest, &resolved)?;
 
         Ok(Self {
             manifest_identity: manifest.identity(),
@@ -113,6 +114,14 @@ impl WorkloadResolvedResources {
 
     pub fn linux_device_tree_data(&self, handoff: &WorkloadLinuxBootHandoff) -> Option<&[u8]> {
         let resource = handoff.device_tree_resource()?;
+        self.payload_data(resource)
+    }
+
+    pub fn linux_debug_console_input_data(
+        &self,
+        handoff: &WorkloadLinuxBootHandoff,
+    ) -> Option<&[u8]> {
+        let resource = handoff.debug_console_input_resource()?;
         self.payload_data(resource)
     }
 }
@@ -176,6 +185,37 @@ fn validate_linux_device_tree_payload(
         return Err(WorkloadError::ResourceKindMismatch {
             resource: resource.id().clone(),
             expected: WorkloadResourceKind::DeviceTree,
+            actual: resource.kind(),
+        });
+    }
+    if !resolved.contains_key(resource_id) {
+        return Err(WorkloadError::MissingResourcePayload {
+            resource: resource_id.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn validate_linux_debug_console_input_payload(
+    manifest: &WorkloadManifest,
+    resolved: &BTreeMap<WorkloadResourceId, WorkloadResourcePayload>,
+) -> Result<(), WorkloadError> {
+    let Some(resource_id) = manifest
+        .linux_boot_handoff()
+        .and_then(WorkloadLinuxBootHandoff::debug_console_input_resource)
+    else {
+        return Ok(());
+    };
+    let resource =
+        manifest
+            .resource(resource_id)
+            .ok_or_else(|| WorkloadError::MissingRequiredResource {
+                resource: resource_id.clone(),
+            })?;
+    if resource.kind() != WorkloadResourceKind::Input {
+        return Err(WorkloadError::ResourceKindMismatch {
+            resource: resource.id().clone(),
+            expected: WorkloadResourceKind::Input,
             actual: resource.kind(),
         });
     }

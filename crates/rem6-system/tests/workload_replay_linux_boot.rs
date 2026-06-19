@@ -77,17 +77,24 @@ fn sbi_boot_image() -> BootImage {
         (0x8010, 0x0000_0073),
         (0x8014, addi(5, 10, 0)),
         (0x8018, addi(6, 11, 0)),
-        (0x801c, lui(17, dbcn_hi)),
-        (0x8020, addi(17, 17, dbcn_lo)),
-        (0x8024, addi(16, 0, 0)),
-        (0x8028, addi(10, 0, 5)),
-        (0x802c, lui(11, 9)),
-        (0x8030, addi(11, 11, 0x600)),
-        (0x8034, addi(12, 0, 0)),
-        (0x8038, 0x0000_0073),
-        (0x803c, addi(7, 10, 0)),
-        (0x8040, addi(8, 11, 0)),
-        (0x8044, 0x0010_0073),
+        (0x801c, addi(17, 0, 0x10)),
+        (0x8020, addi(16, 0, 3)),
+        (0x8024, lui(10, dbcn_hi)),
+        (0x8028, addi(10, 10, dbcn_lo)),
+        (0x802c, 0x0000_0073),
+        (0x8030, addi(9, 10, 0)),
+        (0x8034, addi(30, 11, 0)),
+        (0x8038, lui(17, dbcn_hi)),
+        (0x803c, addi(17, 17, dbcn_lo)),
+        (0x8040, addi(16, 0, 0)),
+        (0x8044, addi(10, 0, 5)),
+        (0x8048, lui(11, 9)),
+        (0x804c, addi(11, 11, 0x600)),
+        (0x8050, addi(12, 0, 0)),
+        (0x8054, 0x0000_0073),
+        (0x8058, addi(7, 10, 0)),
+        (0x805c, addi(8, 11, 0)),
+        (0x8060, 0x0010_0073),
         (0x9000, addi(31, 0, 9)),
         (0x9004, 0x0010_0073),
     ] {
@@ -138,12 +145,82 @@ fn sbi_data_cache_boot_image() -> BootImage {
         .unwrap()
 }
 
+fn sbi_debug_console_read_boot_image() -> BootImage {
+    let (dbcn_hi, dbcn_lo) = lui_addi_parts(0x4442_434e);
+    let mut image = BootImage::new(Address::new(0x8000));
+    for (address, instruction) in [
+        (0x8000, addi(28, 10, 0)),
+        (0x8004, addi(29, 11, 0)),
+        (0x8008, lui(17, dbcn_hi)),
+        (0x800c, addi(17, 17, dbcn_lo)),
+        (0x8010, addi(16, 0, 1)),
+        (0x8014, addi(10, 0, 8)),
+        (0x8018, lui(11, 9)),
+        (0x801c, addi(11, 11, 0x600)),
+        (0x8020, addi(12, 0, 0)),
+        (0x8024, 0x0000_0073),
+        (0x8028, addi(7, 10, 0)),
+        (0x802c, addi(8, 11, 0)),
+        (0x8030, 0x0010_0073),
+        (0x9000, addi(31, 0, 9)),
+        (0x9004, 0x0010_0073),
+    ] {
+        image = image
+            .add_segment(Address::new(address), word(instruction))
+            .unwrap();
+    }
+    image.add_segment(Address::new(0x9600), vec![0; 8]).unwrap()
+}
+
+fn sbi_debug_console_read_cached_destination_boot_image() -> BootImage {
+    let (dbcn_hi, dbcn_lo) = lui_addi_parts(0x4442_434e);
+    let (word_hi, word_lo) = lui_addi_parts(0x2164_6c6f);
+    let mut image = BootImage::new(Address::new(0x8000));
+    for (address, instruction) in [
+        (0x8000, addi(28, 10, 0)),
+        (0x8004, addi(29, 11, 0)),
+        (0x8008, lui(11, 9)),
+        (0x800c, addi(11, 11, 0x600)),
+        (0x8010, lui(9, word_hi)),
+        (0x8014, addi(9, 9, word_lo)),
+        (0x8018, sw(9, 11, 0)),
+        (0x801c, lui(17, dbcn_hi)),
+        (0x8020, addi(17, 17, dbcn_lo)),
+        (0x8024, addi(16, 0, 1)),
+        (0x8028, addi(10, 0, 4)),
+        (0x802c, addi(12, 0, 0)),
+        (0x8030, 0x0000_0073),
+        (0x8034, addi(7, 10, 0)),
+        (0x8038, addi(8, 11, 0)),
+        (0x803c, 0x0010_0073),
+        (0x9000, addi(31, 0, 9)),
+        (0x9004, 0x0010_0073),
+    ] {
+        image = image
+            .add_segment(Address::new(address), word(instruction))
+            .unwrap();
+    }
+    image
+        .add_segment(Address::new(0x9600), b"base".to_vec())
+        .unwrap()
+}
+
 fn initrd_resource() -> WorkloadResource {
     WorkloadResource::new(
         resource_id("initrd"),
         WorkloadResourceKind::Initrd,
         "sha256:initrd",
         "resources/initrd.cpio",
+    )
+    .unwrap()
+}
+
+fn debug_console_input_resource() -> WorkloadResource {
+    WorkloadResource::new(
+        resource_id("dbcn-input"),
+        WorkloadResourceKind::Input,
+        "sha256:dbcn-input",
+        "resources/dbcn-input.txt",
     )
     .unwrap()
 }
@@ -373,6 +450,69 @@ fn replay_manifest_with_sbi_data_cache_linux_boot_handoff() -> WorkloadManifest 
     .unwrap()
 }
 
+fn replay_manifest_with_sbi_debug_console_read_linux_boot_handoff() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-linux-sbi-dbcn-read-replay"),
+        sbi_debug_console_read_boot_image(),
+    )
+    .with_topology(replay_topology())
+    .add_resource(device_tree_resource())
+    .unwrap()
+    .add_resource(initrd_resource())
+    .unwrap()
+    .add_resource(debug_console_input_resource())
+    .unwrap()
+    .with_linux_boot_handoff(
+        WorkloadLinuxBootHandoff::new(Address::new(0x97c0))
+            .with_device_tree_resource(resource_id("dtb"))
+            .with_bootargs("console=ttyS0 root=/dev/vda")
+            .with_debug_console_input_resource(resource_id("dbcn-input"))
+            .with_initrd(
+                WorkloadLinuxInitrd::new(
+                    resource_id("initrd"),
+                    Address::new(0x9804),
+                    AccessSize::new(20).unwrap(),
+                )
+                .unwrap(),
+            ),
+    )
+    .with_expected_stop_reason("host-stop")
+    .build()
+    .unwrap()
+}
+
+fn replay_manifest_with_sbi_debug_console_read_cached_destination_linux_boot_handoff(
+) -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-linux-sbi-dbcn-read-cache-replay"),
+        sbi_debug_console_read_cached_destination_boot_image(),
+    )
+    .with_topology(replay_topology_with_sbi_data_cache())
+    .add_resource(device_tree_resource())
+    .unwrap()
+    .add_resource(initrd_resource())
+    .unwrap()
+    .add_resource(debug_console_input_resource())
+    .unwrap()
+    .with_linux_boot_handoff(
+        WorkloadLinuxBootHandoff::new(Address::new(0x97c0))
+            .with_device_tree_resource(resource_id("dtb"))
+            .with_bootargs("console=ttyS0 root=/dev/vda")
+            .with_debug_console_input_resource(resource_id("dbcn-input"))
+            .with_initrd(
+                WorkloadLinuxInitrd::new(
+                    resource_id("initrd"),
+                    Address::new(0x9804),
+                    AccessSize::new(20).unwrap(),
+                )
+                .unwrap(),
+            ),
+    )
+    .with_expected_stop_reason("host-stop")
+    .build()
+    .unwrap()
+}
+
 fn snapshot_blob(
     snapshot: &PartitionedMemorySnapshot,
     target: MemoryTargetId,
@@ -478,11 +618,13 @@ fn workload_replay_linux_boot_handoff_enters_supervisor_sbi() {
     assert_eq!(boot.read_register(Register::new(29).unwrap()), 0x97c0);
     assert_eq!(boot.read_register(Register::new(5).unwrap()), 0);
     assert_eq!(boot.read_register(Register::new(6).unwrap()), 2 << 24);
+    assert_eq!(boot.read_register(Register::new(9).unwrap()), 0);
+    assert_eq!(boot.read_register(Register::new(30).unwrap()), 1);
     assert_eq!(boot.read_register(Register::new(7).unwrap()), 0);
     assert_eq!(boot.read_register(Register::new(8).unwrap()), 5);
     assert_eq!(secondary.hart_run_state(), RiscvHartRunState::Stopped);
     assert_eq!(secondary.read_register(Register::new(31).unwrap()), 0);
-    assert_eq!(outcome.run().scheduled_traps()[0].trap().pc(), 0x8044);
+    assert_eq!(outcome.run().scheduled_traps()[0].trap().pc(), 0x8060);
     assert_eq!(outcome.run().riscv_debug_console_bytes(), b"boot\n");
     plan.verify_result(outcome.result()).unwrap();
 }
@@ -514,6 +656,89 @@ fn workload_replay_sbi_debug_console_write_reads_cached_guest_payload() {
     assert_eq!(boot.read_register(Register::new(8).unwrap()), 4);
     assert_eq!(outcome.run().scheduled_traps()[0].trap().pc(), 0x8050);
     assert_eq!(outcome.run().riscv_debug_console_bytes(), b"boot");
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_sbi_debug_console_read_consumes_input_resource() {
+    let manifest = replay_manifest_with_sbi_debug_console_read_linux_boot_handoff();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let resources = WorkloadResolvedResources::from_manifest(
+        &manifest,
+        [
+            WorkloadResourcePayload::new(resource_id("dtb"), "sha256:dtb", vec![0xd0, 0x0d])
+                .unwrap(),
+            WorkloadResourcePayload::new(resource_id("initrd"), "sha256:initrd", vec![0; 20])
+                .unwrap(),
+            WorkloadResourcePayload::new(
+                resource_id("dbcn-input"),
+                "sha256:dbcn-input",
+                b"cmd\n".to_vec(),
+            )
+            .unwrap(),
+        ],
+    )
+    .unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_resolved_resources(resources)
+        .with_max_turns(160)
+        .run_parallel()
+        .unwrap();
+
+    let boot = outcome.cluster().core(CpuId::new(0)).unwrap();
+
+    assert_eq!(boot.read_register(Register::new(7).unwrap()), 0);
+    assert_eq!(boot.read_register(Register::new(8).unwrap()), 4);
+    assert_eq!(
+        snapshot_blob(
+            outcome.memory_snapshot(),
+            MemoryTargetId::new(0),
+            Address::new(0x9600),
+            8,
+        ),
+        b"cmd\n\0\0\0\0"
+    );
+    assert!(outcome.run().riscv_debug_console_bytes().is_empty());
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_sbi_debug_console_read_rejects_cached_destination() {
+    let manifest =
+        replay_manifest_with_sbi_debug_console_read_cached_destination_linux_boot_handoff();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let resources = WorkloadResolvedResources::from_manifest(
+        &manifest,
+        [
+            WorkloadResourcePayload::new(resource_id("dtb"), "sha256:dtb", vec![0xd0, 0x0d])
+                .unwrap(),
+            WorkloadResourcePayload::new(resource_id("initrd"), "sha256:initrd", vec![0; 20])
+                .unwrap(),
+            WorkloadResourcePayload::new(
+                resource_id("dbcn-input"),
+                "sha256:dbcn-input",
+                b"cmd\n".to_vec(),
+            )
+            .unwrap(),
+        ],
+    )
+    .unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_resolved_resources(resources)
+        .with_max_turns(200)
+        .run_parallel()
+        .unwrap();
+
+    let boot = outcome.cluster().core(CpuId::new(0)).unwrap();
+
+    assert_eq!(
+        boot.read_register(Register::new(7).unwrap()),
+        (-5_i64) as u64
+    );
+    assert_eq!(boot.read_register(Register::new(8).unwrap()), 0);
+    assert!(outcome.run().riscv_debug_console_bytes().is_empty());
     plan.verify_result(outcome.result()).unwrap();
 }
 

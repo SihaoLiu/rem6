@@ -6,6 +6,7 @@ use rem6_workload::{WorkloadMemoryTarget, WorkloadTopology};
 use super::data_cache_backend::WorkloadDataCacheBackend;
 use super::memory_backend::WorkloadMemoryBackend;
 use super::RiscvWorkloadReplayError;
+use crate::riscv_syscall::RiscvGuestMemoryWriter;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct WorkloadGuestMemoryReadTarget {
@@ -40,6 +41,23 @@ pub(super) fn workload_functional_guest_memory_reader(
     Ok(move |address, bytes| {
         read_workload_guest_memory(&memory, data_cache.as_ref(), &targets, address, bytes)
     })
+}
+
+pub(super) fn workload_functional_guest_memory_writer(
+    memory: WorkloadMemoryBackend,
+    data_cache: Option<Arc<Mutex<WorkloadDataCacheBackend>>>,
+    topology: &WorkloadTopology,
+) -> Result<RiscvGuestMemoryWriter, RiscvWorkloadReplayError> {
+    let targets = topology
+        .memory_targets()
+        .iter()
+        .copied()
+        .map(WorkloadGuestMemoryReadTarget::from_target)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(RiscvGuestMemoryWriter::new(move |address, bytes| {
+        write_workload_guest_memory(&memory, data_cache.as_ref(), &targets, address, bytes)
+            .is_some()
+    }))
 }
 
 fn read_workload_guest_memory(
@@ -91,4 +109,66 @@ fn read_workload_guest_memory_line(
         }
     }
     memory.line_data(target, line).ok()
+}
+
+fn write_workload_guest_memory(
+    memory: &WorkloadMemoryBackend,
+    data_cache: Option<&Arc<Mutex<WorkloadDataCacheBackend>>>,
+    targets: &[WorkloadGuestMemoryReadTarget],
+    address: u64,
+    bytes: &[u8],
+) -> Option<()> {
+    if bytes.is_empty() {
+        readable_workload_guest_memory_target(targets, address, 1)?;
+        return Some(());
+    }
+    let target = readable_workload_guest_memory_target(targets, address, bytes.len())?;
+    let mut cursor = address;
+    let mut remaining = bytes.len();
+    let mut offset = 0usize;
+    let mut patches = Vec::new();
+    while remaining != 0 {
+        let address = Address::new(cursor);
+        let line = target.layout.line_address(address);
+        let line_offset = usize::try_from(target.layout.line_offset(address)).ok()?;
+        let line_bytes = usize::try_from(target.layout.bytes()).ok()?;
+        let take = (line_bytes - line_offset).min(remaining);
+        if let Some(data_cache) = data_cache {
+            if data_cache
+                .lock()
+                .expect("workload data cache lock")
+                .functional_line_data(target.target, line)
+                .is_some()
+            {
+                return None;
+            }
+        }
+        let mut line_data = memory.line_data(target.target, line).ok()?;
+        let end = line_offset.checked_add(take)?;
+        if line_data.len() < end {
+            return None;
+        }
+        line_data[line_offset..end].copy_from_slice(&bytes[offset..offset + take]);
+        patches.push((target.target, line, line_data));
+        cursor = cursor.checked_add(u64::try_from(take).ok()?)?;
+        offset += take;
+        remaining -= take;
+    }
+    for (target, line, line_data) in patches {
+        memory.insert_line(target, line, line_data).ok()?;
+    }
+    Some(())
+}
+
+fn readable_workload_guest_memory_target(
+    targets: &[WorkloadGuestMemoryReadTarget],
+    address: u64,
+    bytes: usize,
+) -> Option<WorkloadGuestMemoryReadTarget> {
+    let size = AccessSize::new(u64::try_from(bytes).ok()?).ok()?;
+    let range = AddressRange::new(Address::new(address), size).ok()?;
+    targets
+        .iter()
+        .copied()
+        .find(|target| target.range.contains_range(range))
 }

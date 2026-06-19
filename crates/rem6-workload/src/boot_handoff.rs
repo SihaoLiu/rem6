@@ -44,6 +44,7 @@ pub struct WorkloadLinuxBootHandoff {
     dtb_addr: Address,
     device_tree_resource: Option<WorkloadResourceId>,
     bootargs: Option<String>,
+    debug_console_input_resource: Option<WorkloadResourceId>,
     initrd: Option<WorkloadLinuxInitrd>,
 }
 
@@ -53,6 +54,7 @@ impl WorkloadLinuxBootHandoff {
             dtb_addr,
             device_tree_resource: None,
             bootargs: None,
+            debug_console_input_resource: None,
             initrd: None,
         }
     }
@@ -64,6 +66,11 @@ impl WorkloadLinuxBootHandoff {
 
     pub fn with_bootargs(mut self, bootargs: impl Into<String>) -> Self {
         self.bootargs = Some(bootargs.into());
+        self
+    }
+
+    pub fn with_debug_console_input_resource(mut self, resource: WorkloadResourceId) -> Self {
+        self.debug_console_input_resource = Some(resource);
         self
     }
 
@@ -82,6 +89,10 @@ impl WorkloadLinuxBootHandoff {
 
     pub fn bootargs(&self) -> Option<&str> {
         self.bootargs.as_deref()
+    }
+
+    pub const fn debug_console_input_resource(&self) -> Option<&WorkloadResourceId> {
+        self.debug_console_input_resource.as_ref()
     }
 
     pub const fn initrd(&self) -> Option<&WorkloadLinuxInitrd> {

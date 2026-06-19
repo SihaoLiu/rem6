@@ -62,6 +62,26 @@ fn device_tree_resource() -> WorkloadResource {
     .unwrap()
 }
 
+fn debug_console_input_resource() -> WorkloadResource {
+    WorkloadResource::new(
+        resource_id("dbcn-input"),
+        WorkloadResourceKind::Input,
+        "sha256:dbcn-input",
+        "resources/dbcn-input.txt",
+    )
+    .unwrap()
+}
+
+fn alternate_debug_console_input_resource() -> WorkloadResource {
+    WorkloadResource::new(
+        resource_id("dbcn-input-alt"),
+        WorkloadResourceKind::Input,
+        "sha256:dbcn-input-alt",
+        "resources/dbcn-input-alt.txt",
+    )
+    .unwrap()
+}
+
 fn linux_handoff() -> WorkloadLinuxBootHandoff {
     WorkloadLinuxBootHandoff::new(Address::new(0x87e0_0000))
         .with_device_tree_resource(resource_id("dtb"))
@@ -76,6 +96,10 @@ fn linux_handoff() -> WorkloadLinuxBootHandoff {
         )
 }
 
+fn linux_handoff_with_debug_console_input() -> WorkloadLinuxBootHandoff {
+    linux_handoff().with_debug_console_input_resource(resource_id("dbcn-input"))
+}
+
 fn linux_manifest() -> WorkloadManifest {
     WorkloadManifest::builder(id("linux-handoff"), boot_image())
         .add_resource(kernel_resource())
@@ -86,6 +110,22 @@ fn linux_manifest() -> WorkloadManifest {
         .unwrap()
         .add_required_resource(resource_id("kernel"))
         .with_linux_boot_handoff(linux_handoff())
+        .build()
+        .unwrap()
+}
+
+fn linux_manifest_with_debug_console_input() -> WorkloadManifest {
+    WorkloadManifest::builder(id("linux-handoff-dbcn-input"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_resource(device_tree_resource())
+        .unwrap()
+        .add_resource(initrd_resource())
+        .unwrap()
+        .add_resource(debug_console_input_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .with_linux_boot_handoff(linux_handoff_with_debug_console_input())
         .build()
         .unwrap()
 }
@@ -125,6 +165,33 @@ fn workload_manifest_records_linux_boot_handoff_resources() {
 }
 
 #[test]
+fn workload_manifest_records_linux_debug_console_input_resource() {
+    let manifest = linux_manifest_with_debug_console_input();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let handoff = manifest.linux_boot_handoff().unwrap();
+
+    assert_eq!(
+        handoff.debug_console_input_resource(),
+        Some(&resource_id("dbcn-input"))
+    );
+    assert_eq!(
+        manifest.required_resources(),
+        &[
+            resource_id("dbcn-input"),
+            resource_id("dtb"),
+            resource_id("initrd"),
+            resource_id("kernel"),
+        ]
+    );
+    assert!(plan
+        .required_resources()
+        .iter()
+        .any(|resource| resource.id() == &resource_id("dbcn-input")
+            && resource.kind() == WorkloadResourceKind::Input));
+    assert_eq!(plan.linux_boot_handoff(), Some(handoff));
+}
+
+#[test]
 fn workload_resolved_resources_validate_linux_initrd_payload() {
     let manifest = linux_manifest();
     let resources = WorkloadResolvedResources::from_manifest(
@@ -157,6 +224,58 @@ fn workload_resolved_resources_validate_linux_initrd_payload() {
     assert_eq!(
         resources.linux_initrd_data(handoff).unwrap(),
         &[0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7]
+    );
+}
+
+#[test]
+fn workload_resolved_resources_validate_linux_debug_console_input_payload() {
+    let manifest = linux_manifest_with_debug_console_input();
+    let resources = WorkloadResolvedResources::from_manifest(
+        &manifest,
+        [
+            WorkloadResourcePayload::new(resource_id("kernel"), "sha256:kernel", vec![0x13])
+                .unwrap(),
+            WorkloadResourcePayload::new(resource_id("dtb"), "sha256:dtb", vec![0xd0]).unwrap(),
+            WorkloadResourcePayload::new(resource_id("initrd"), "sha256:initrd", vec![0; 8])
+                .unwrap(),
+            WorkloadResourcePayload::new(
+                resource_id("dbcn-input"),
+                "sha256:dbcn-input",
+                b"boot\n".to_vec(),
+            )
+            .unwrap(),
+        ],
+    )
+    .unwrap();
+    let handoff = manifest.linux_boot_handoff().unwrap();
+
+    assert_eq!(
+        resources.linux_debug_console_input_data(handoff).unwrap(),
+        b"boot\n"
+    );
+}
+
+#[test]
+fn workload_resolved_resources_reject_missing_linux_debug_console_input_payload() {
+    let manifest = linux_manifest_with_debug_console_input();
+
+    let missing = WorkloadResolvedResources::from_manifest(
+        &manifest,
+        [
+            WorkloadResourcePayload::new(resource_id("kernel"), "sha256:kernel", vec![0x13])
+                .unwrap(),
+            WorkloadResourcePayload::new(resource_id("dtb"), "sha256:dtb", vec![0xd0]).unwrap(),
+            WorkloadResourcePayload::new(resource_id("initrd"), "sha256:initrd", vec![0; 8])
+                .unwrap(),
+        ],
+    )
+    .unwrap_err();
+
+    assert_eq!(
+        missing,
+        WorkloadError::MissingResourcePayload {
+            resource: resource_id("dbcn-input"),
+        }
     );
 }
 
@@ -312,6 +431,32 @@ fn workload_manifest_identity_changes_with_linux_boot_handoff() {
 }
 
 #[test]
+fn workload_manifest_identity_changes_with_linux_debug_console_input() {
+    let without_input = linux_manifest();
+    let with_input = linux_manifest_with_debug_console_input();
+    let different_input = WorkloadManifest::builder(id("linux-handoff-dbcn-input"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_resource(device_tree_resource())
+        .unwrap()
+        .add_resource(initrd_resource())
+        .unwrap()
+        .add_resource(debug_console_input_resource())
+        .unwrap()
+        .add_resource(alternate_debug_console_input_resource())
+        .unwrap()
+        .add_required_resource(resource_id("kernel"))
+        .with_linux_boot_handoff(
+            linux_handoff().with_debug_console_input_resource(resource_id("dbcn-input-alt")),
+        )
+        .build()
+        .unwrap();
+
+    assert_ne!(without_input.identity(), with_input.identity());
+    assert_ne!(with_input.identity(), different_input.identity());
+}
+
+#[test]
 fn workload_linux_boot_handoff_rejects_missing_or_wrong_initrd_resource() {
     let missing = WorkloadManifest::builder(id("missing-initrd"), boot_image())
         .add_resource(kernel_resource())
@@ -352,6 +497,49 @@ fn workload_linux_boot_handoff_rejects_missing_or_wrong_initrd_resource() {
         WorkloadError::ResourceKindMismatch {
             resource: resource_id("disk"),
             expected: WorkloadResourceKind::Initrd,
+            actual: WorkloadResourceKind::DiskImage,
+        }
+    );
+}
+
+#[test]
+fn workload_linux_boot_handoff_rejects_missing_or_wrong_debug_console_input_resource() {
+    let missing = WorkloadManifest::builder(id("missing-dbcn-input"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_resource(device_tree_resource())
+        .unwrap()
+        .add_resource(initrd_resource())
+        .unwrap()
+        .with_linux_boot_handoff(linux_handoff_with_debug_console_input())
+        .build()
+        .unwrap_err();
+    assert_eq!(
+        missing,
+        WorkloadError::MissingRequiredResource {
+            resource: resource_id("dbcn-input"),
+        }
+    );
+
+    let wrong_kind = WorkloadManifest::builder(id("wrong-dbcn-input-kind"), boot_image())
+        .add_resource(kernel_resource())
+        .unwrap()
+        .add_resource(device_tree_resource())
+        .unwrap()
+        .add_resource(initrd_resource())
+        .unwrap()
+        .add_resource(disk_resource())
+        .unwrap()
+        .with_linux_boot_handoff(
+            linux_handoff().with_debug_console_input_resource(resource_id("disk")),
+        )
+        .build()
+        .unwrap_err();
+    assert_eq!(
+        wrong_kind,
+        WorkloadError::ResourceKindMismatch {
+            resource: resource_id("disk"),
+            expected: WorkloadResourceKind::Input,
             actual: WorkloadResourceKind::DiskImage,
         }
     );

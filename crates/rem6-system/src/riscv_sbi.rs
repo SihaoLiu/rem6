@@ -265,6 +265,14 @@ impl RiscvSbiFirmware {
         self
     }
 
+    pub fn with_functional_guest_memory_writer_object(
+        mut self,
+        writer: RiscvGuestMemoryWriter,
+    ) -> Self {
+        self.functional_guest_memory_writer = Some(writer);
+        self
+    }
+
     pub fn with_debug_console_input(mut self, input: Vec<u8>) -> Self {
         self.debug_console_input = Arc::new(Mutex::new(VecDeque::from(input)));
         self
@@ -1061,6 +1069,19 @@ impl RiscvSystemRunDriver {
             .take()
             .unwrap_or_else(RiscvSbiFirmware::new)
             .with_functional_guest_memory_writer(write);
+        self.riscv_sbi_firmware = Some(firmware);
+        self
+    }
+
+    pub fn with_riscv_sbi_firmware_and_functional_guest_memory_writer_object(
+        mut self,
+        writer: RiscvGuestMemoryWriter,
+    ) -> Self {
+        let firmware = self
+            .riscv_sbi_firmware
+            .take()
+            .unwrap_or_else(RiscvSbiFirmware::new)
+            .with_functional_guest_memory_writer_object(writer);
         self.riscv_sbi_firmware = Some(firmware);
         self
     }

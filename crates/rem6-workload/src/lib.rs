@@ -1022,6 +1022,13 @@ impl WorkloadManifestBuilder {
         {
             self.required_resources.insert(initrd.resource().clone());
         }
+        if let Some(resource) = self
+            .linux_boot_handoff
+            .as_ref()
+            .and_then(WorkloadLinuxBootHandoff::debug_console_input_resource)
+        {
+            self.required_resources.insert(resource.clone());
+        }
         for replay in &self.traffic_trace_replays {
             self.required_resources.insert(replay.resource().clone());
         }
@@ -1063,6 +1070,23 @@ impl WorkloadManifestBuilder {
                 return Err(WorkloadError::ResourceKindMismatch {
                     resource: resource.id().clone(),
                     expected: WorkloadResourceKind::DeviceTree,
+                    actual: resource.kind(),
+                });
+            }
+        }
+        if let Some(resource_id) = self
+            .linux_boot_handoff
+            .as_ref()
+            .and_then(WorkloadLinuxBootHandoff::debug_console_input_resource)
+        {
+            let resource = self
+                .resources
+                .get(resource_id)
+                .expect("required resource was checked above");
+            if resource.kind() != WorkloadResourceKind::Input {
+                return Err(WorkloadError::ResourceKindMismatch {
+                    resource: resource.id().clone(),
+                    expected: WorkloadResourceKind::Input,
                     actual: resource.kind(),
                 });
             }

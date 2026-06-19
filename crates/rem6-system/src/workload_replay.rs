@@ -51,6 +51,7 @@ mod cache_response;
 mod data_cache_backend;
 mod dma_scheduler_evidence;
 mod guest_memory;
+mod linux_handoff;
 mod manifest_traffic_trace;
 mod memory_backend;
 mod payload;
@@ -79,10 +80,11 @@ use self::dma_scheduler_evidence::{
     dma_scheduler_recorded_batch_worker_slot_tick_summaries, dma_scheduler_remote_flows,
     dma_scheduler_remote_sends, DmaSchedulerEvidence,
 };
-use self::guest_memory::workload_functional_guest_memory_reader;
+use self::guest_memory::{
+    workload_functional_guest_memory_reader, workload_functional_guest_memory_writer,
+};
 use self::manifest_traffic_trace::build_traffic_trace_replays;
 use self::memory_backend::{memory_response, WorkloadDramBackend, WorkloadMemoryBackend};
-use self::payload::load_payload_at;
 use self::qos::{dram_scheduling_policy, priority_policy, queue_arbiter};
 use self::sinic_mmio_backend::WorkloadSinicPciMmioBackend;
 use self::stats::{workload_data_access_stats, workload_instruction_stats};
@@ -336,14 +338,25 @@ impl RiscvWorkloadReplay {
             GuestSourceId::new(topology.host().source()),
         );
         let mut driver = RiscvSystemRunDriver::with_instruction_stats(trap_port, instruction_stats);
-        if self.plan.linux_boot_handoff().is_some() {
-            driver = driver.with_riscv_sbi_firmware_and_functional_guest_memory_reader(
-                workload_functional_guest_memory_reader(
-                    memory.clone(),
-                    data_cache.clone(),
-                    topology,
-                )?,
-            );
+        if let Some(handoff) = self.plan.linux_boot_handoff() {
+            driver = driver
+                .with_riscv_sbi_firmware_and_functional_guest_memory_reader(
+                    workload_functional_guest_memory_reader(
+                        memory.clone(),
+                        data_cache.clone(),
+                        topology,
+                    )?,
+                )
+                .with_riscv_sbi_firmware_and_functional_guest_memory_writer_object(
+                    workload_functional_guest_memory_writer(
+                        memory.clone(),
+                        data_cache.clone(),
+                        topology,
+                    )?,
+                );
+            if let Some(input) = self.debug_console_input_payload(handoff)? {
+                driver = driver.with_riscv_sbi_debug_console_input(input);
+            }
         }
         if let Some(data_access_stats) = data_access_stats {
             driver = driver.with_data_access_stats(data_access_stats);
@@ -1161,52 +1174,6 @@ impl RiscvWorkloadReplay {
         self.load_linux_device_tree_payload(&mut store)?;
         self.load_linux_initrd_payload(&mut store)?;
         Ok(store)
-    }
-
-    fn load_linux_device_tree_payload(
-        &self,
-        store: &mut PartitionedMemoryStore,
-    ) -> Result<(), RiscvWorkloadReplayError> {
-        let Some(handoff) = self.plan.linux_boot_handoff() else {
-            return Ok(());
-        };
-        let Some(resource) = handoff.device_tree_resource() else {
-            return Ok(());
-        };
-        let payload = self
-            .resolved_resources
-            .as_ref()
-            .and_then(|resources| resources.linux_device_tree_data(handoff))
-            .ok_or_else(|| {
-                RiscvWorkloadReplayError::Workload(WorkloadError::MissingResourcePayload {
-                    resource: resource.clone(),
-                })
-            })?;
-
-        load_payload_at(store, handoff.dtb_addr(), payload)
-    }
-
-    fn load_linux_initrd_payload(
-        &self,
-        store: &mut PartitionedMemoryStore,
-    ) -> Result<(), RiscvWorkloadReplayError> {
-        let Some(handoff) = self.plan.linux_boot_handoff() else {
-            return Ok(());
-        };
-        let Some(initrd) = handoff.initrd() else {
-            return Ok(());
-        };
-        let payload = self
-            .resolved_resources
-            .as_ref()
-            .and_then(|resources| resources.linux_initrd_data(handoff))
-            .ok_or_else(|| {
-                RiscvWorkloadReplayError::Workload(WorkloadError::MissingResourcePayload {
-                    resource: initrd.resource().clone(),
-                })
-            })?;
-
-        load_payload_at(store, initrd.start(), payload)
     }
 
     fn result_from_run(
