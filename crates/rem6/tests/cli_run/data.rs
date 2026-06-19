@@ -50,6 +50,7 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
     assert!(stdout.contains("\"data_loads\":1"));
     assert!(stdout.contains("\"data_stores\":1"));
     assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":23,\"in_flight\":0,\"retired\":6,"));
+    assert!(stdout.contains("\"stall_cycles\":4"));
     assert!(stdout.contains("\"data_wait_cycles\":4"));
     assert!(stdout.contains("\"address\":\"0x80000020\""));
     assert!(stdout.contains("\"bytes\":8"));
@@ -75,6 +76,13 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
         "sim.cpu0.pipeline.in_order.retired",
         "Count",
         6,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.stall_cycles",
+        "Cycle",
+        4,
         "monotonic",
     );
     assert_stat(

@@ -208,9 +208,9 @@ predicted-target paths squashed even when their memory response is still
 outstanding, bounded normal-driver fetch-ahead requests inserted into the
 in-order timing state when issued and before their memory response, per-retired
 instruction in-order stage advancement with runtime stats, data-response wait
-cycles folded into in-order retire timing, per-core fetch-response and
-data-response wait cycle stats, retired branch prediction and redirect summaries
-in normal in-order timing records, a RISC-V checker CPU option that runs an
+cycles folded into in-order retire timing, explicit data-stall cycle stats,
+per-core fetch-response and data-response wait cycle stats, retired branch
+prediction and redirect summaries in normal in-order timing records, a RISC-V checker CPU option that runs an
 independent reference hart at retire, records structured execution/state
 mismatches, and exposes checked/mismatch counts through `rem6 run --checker-cpu`
 stats, and O3 policy helpers.
@@ -227,7 +227,7 @@ CPU frontend, checker, and O3 tests.
 CLI run stats include per-core in-order pipeline cycle, retired, and
 fetch-response wait counters from executed RISC-V instructions, and CLI data
 stats show load/store response wait changing the in-order pipeline cycle
-counter and data-wait cycle stat; CLI run stats also expose per-core
+counter, data-stall cycle stat, and data-wait cycle stat; CLI run stats also expose per-core
 in-order cycle-plan advance, general flush, resource-blocked,
 ordering-blocked, branch-prediction, branch-misprediction,
 branch-prediction flush, and redirect counters from the same executed RISC-V

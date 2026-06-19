@@ -606,6 +606,7 @@ fn riscv_completed_mmio_data_access_records_in_order_pipeline_cycle() {
         data_wait_cycles
     );
     assert_eq!(record.cycle(), 4 + data_wait_cycles);
+    assert_eq!(record.summary().stall_cycle_count(), data_wait_cycles);
     assert_eq!(record.summary().retired_count(), 1);
     assert_eq!(record.summary().advanced_count(), 1);
     assert!(record.after().in_flight().is_empty());
@@ -650,6 +651,7 @@ fn riscv_completed_data_access_records_in_order_pipeline_cycle() {
     );
     assert_eq!(record.cycle(), 4 + data_wait_cycles);
     assert_eq!(record.before().cycle(), 4 + data_wait_cycles);
+    assert_eq!(record.summary().stall_cycle_count(), data_wait_cycles);
     assert_eq!(
         record
             .before()

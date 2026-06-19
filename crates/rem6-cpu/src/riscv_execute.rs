@@ -381,7 +381,7 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
                 .map_err(RiscvCpuError::InOrderPipeline)?;
         }
         if record_retires_sequence(&record, sequence) {
-            return Ok(record);
+            return Ok(record.with_stall_cycle_count(wait_cycles));
         }
     }
 

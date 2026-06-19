@@ -1449,7 +1449,7 @@ impl Rem6CoreSummary {
             })
             .unwrap_or_default();
         format!(
-            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"in_order_pipeline\":{{\"cycles\":{},\"in_flight\":{},\"retired\":{},\"advanced\":{},\"flushed\":{},\"resource_blocked\":{},\"ordering_blocked\":{},\"fetch_wait_cycles\":{},\"data_wait_cycles\":{},\"branch_predictions\":{},\"branch_mispredictions\":{},\"branch_prediction_flushes\":{},\"redirects\":{}}},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{}{},\"registers\":{{{}}}}}",
+            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"in_order_pipeline\":{{\"cycles\":{},\"in_flight\":{},\"retired\":{},\"advanced\":{},\"flushed\":{},\"resource_blocked\":{},\"ordering_blocked\":{},\"stall_cycles\":{},\"fetch_wait_cycles\":{},\"data_wait_cycles\":{},\"branch_predictions\":{},\"branch_mispredictions\":{},\"branch_prediction_flushes\":{},\"redirects\":{}}},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{}{},\"registers\":{{{}}}}}",
             self.cpu,
             self.pc,
             self.committed_instructions,
@@ -1460,6 +1460,7 @@ impl Rem6CoreSummary {
             self.in_order_pipeline_flushed,
             self.in_order_pipeline_resource_blocked,
             self.in_order_pipeline_ordering_blocked,
+            self.in_order_pipeline_stall_cycles,
             self.in_order_pipeline_fetch_wait_cycles,
             self.in_order_pipeline_data_wait_cycles,
             self.in_order_pipeline_branch_predictions,

@@ -551,6 +551,7 @@ pub struct InOrderPipelineState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InOrderPipelineCycleRecord {
     cycle: u64,
+    stall_cycle_count: u64,
     before: InOrderPipelineSnapshot,
     plan: InOrderPipelinePlan,
     branch_predictions: Vec<InOrderBranchPredictionRecord>,
@@ -560,6 +561,7 @@ pub struct InOrderPipelineCycleRecord {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InOrderPipelineCycleSummary {
     cycle: u64,
+    stall_cycle_count: u64,
     advanced_count: usize,
     retired_count: usize,
     flushed_count: usize,
@@ -578,6 +580,7 @@ pub struct InOrderPipelineRunSummary {
     cycle_count: usize,
     first_cycle: Option<u64>,
     last_cycle: Option<u64>,
+    stall_cycle_count: u64,
     advanced_count: usize,
     retired_count: usize,
     flushed_count: usize,
@@ -596,6 +599,7 @@ impl InOrderPipelineRunSummary {
         cycle_count: 0,
         first_cycle: None,
         last_cycle: None,
+        stall_cycle_count: 0,
         advanced_count: 0,
         retired_count: 0,
         flushed_count: 0,
@@ -635,6 +639,7 @@ impl InOrderPipelineRunSummary {
                     .map_or(cycle.cycle(), |last| last.max(cycle.cycle())),
             );
             summary.advanced_count += cycle.advanced_count();
+            summary.stall_cycle_count += cycle.stall_cycle_count();
             summary.retired_count += cycle.retired_count();
             summary.flushed_count += cycle.flushed_count();
             summary.resource_blocked_count += cycle.resource_blocked_count();
@@ -661,6 +666,7 @@ impl InOrderPipelineRunSummary {
             cycle_count: self.cycle_count + other.cycle_count,
             first_cycle: merge_min_cycle(self.first_cycle, other.first_cycle),
             last_cycle: merge_max_cycle(self.last_cycle, other.last_cycle),
+            stall_cycle_count: self.stall_cycle_count + other.stall_cycle_count,
             advanced_count: self.advanced_count + other.advanced_count,
             retired_count: self.retired_count + other.retired_count,
             flushed_count: self.flushed_count + other.flushed_count,
@@ -697,6 +703,10 @@ impl InOrderPipelineRunSummary {
 
     pub const fn advanced_count(self) -> usize {
         self.advanced_count
+    }
+
+    pub const fn stall_cycle_count(self) -> u64 {
+        self.stall_cycle_count
     }
 
     pub const fn retired_count(self) -> usize {
@@ -835,6 +845,10 @@ impl InOrderPipelineCycleSummary {
         self.advanced_count
     }
 
+    pub const fn stall_cycle_count(self) -> u64 {
+        self.stall_cycle_count
+    }
+
     pub const fn retired_count(self) -> usize {
         self.retired_count
     }
@@ -885,6 +899,15 @@ impl InOrderPipelineCycleRecord {
         &self.before
     }
 
+    pub const fn stall_cycle_count(&self) -> u64 {
+        self.stall_cycle_count
+    }
+
+    pub fn with_stall_cycle_count(mut self, cycles: u64) -> Self {
+        self.stall_cycle_count = cycles;
+        self
+    }
+
     pub const fn plan(&self) -> &InOrderPipelinePlan {
         &self.plan
     }
@@ -918,6 +941,7 @@ impl InOrderPipelineCycleRecord {
 
         InOrderPipelineCycleSummary {
             cycle: self.cycle,
+            stall_cycle_count: self.stall_cycle_count,
             advanced_count: self.plan.advanced().len(),
             retired_count,
             flushed_count: self.plan.flushed().len(),
@@ -1033,6 +1057,7 @@ impl InOrderPipelineState {
 
         Ok(InOrderPipelineCycleRecord {
             cycle: before.cycle(),
+            stall_cycle_count: 0,
             before,
             plan,
             branch_predictions: Vec::new(),
@@ -1059,6 +1084,7 @@ impl InOrderPipelineState {
 
         Ok(InOrderPipelineCycleRecord {
             cycle: before.cycle(),
+            stall_cycle_count: 0,
             before,
             plan,
             branch_predictions,
