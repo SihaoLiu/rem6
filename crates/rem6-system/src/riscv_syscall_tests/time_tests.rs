@@ -4,6 +4,7 @@ const RISCV_LINUX_CLOCK_GETRES_FOR_TEST: u64 = 114;
 const RISCV_LINUX_GETTIMEOFDAY_FOR_TEST: u64 = 169;
 const RISCV_LINUX_GETITIMER_FOR_TEST: u64 = 102;
 const RISCV_LINUX_SETITIMER_FOR_TEST: u64 = 103;
+const RISCV_NEWLIB_CLOCK_GETTIME64_FOR_TEST: u64 = 403;
 const RISCV_NEWLIB_LEGACY_TIME_FOR_TEST: u64 = 1062;
 const RISCV_LINUX_ITIMER_REAL_FOR_TEST: u64 = 0;
 const RISCV_LINUX_ITIMER_VIRTUAL_FOR_TEST: u64 = 1;
@@ -36,6 +37,40 @@ fn linux_table_clock_gettime_accepts_tai_clock_id() {
     let bytes = collect_guest_writes(&writes.lock().unwrap(), 0x8ff0, 16);
     assert_eq!(read_le_u64(&bytes, 0), 2);
     assert_eq!(read_le_u64(&bytes, 8), 123);
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_newlib_clock_gettime64_writes_deterministic_timespec() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x7ff2,
+                RISCV_NEWLIB_CLOCK_GETTIME64_FOR_TEST,
+                [0, 0x8fe0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            6_000_000_789,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    let bytes = collect_guest_writes(&writes.lock().unwrap(), 0x8fe0, 16);
+    assert_eq!(read_le_u64(&bytes, 0), 6);
+    assert_eq!(read_le_u64(&bytes, 8), 789);
     assert!(state.unknown_syscalls().is_empty());
 }
 

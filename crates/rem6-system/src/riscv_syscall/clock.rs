@@ -11,6 +11,7 @@ pub(super) const RISCV_LINUX_CLOCK_GETTIME: u64 = 113;
 pub(super) const RISCV_LINUX_CLOCK_GETRES: u64 = 114;
 pub(super) const RISCV_LINUX_TIMES: u64 = 153;
 pub(super) const RISCV_LINUX_GETTIMEOFDAY: u64 = 169;
+pub(super) const RISCV_NEWLIB_CLOCK_GETTIME64: u64 = 403;
 pub(super) const RISCV_NEWLIB_LEGACY_TIME: u64 = 1062;
 const RISCV_LINUX_ITIMER_REAL: u64 = 0;
 const RISCV_LINUX_ITIMER_VIRTUAL: u64 = 1;
@@ -226,14 +227,16 @@ pub(super) fn syscall_clock(
             syscall_gettimeofday(request.argument(0), request.argument(1), tick, guest_memory)
                 .map(|value| RiscvSyscallOutcome::Return { value })
         }
-        RISCV_LINUX_CLOCK_GETTIME => guest_memory.map(|guest_memory| RiscvSyscallOutcome::Return {
-            value: syscall_clock_gettime(
-                request.argument(0),
-                request.argument(1),
-                tick,
-                guest_memory,
-            ),
-        }),
+        RISCV_LINUX_CLOCK_GETTIME | RISCV_NEWLIB_CLOCK_GETTIME64 => {
+            guest_memory.map(|guest_memory| RiscvSyscallOutcome::Return {
+                value: syscall_clock_gettime(
+                    request.argument(0),
+                    request.argument(1),
+                    tick,
+                    guest_memory,
+                ),
+            })
+        }
         RISCV_LINUX_CLOCK_GETRES => {
             syscall_clock_getres(request.argument(0), request.argument(1), guest_memory)
                 .map(|value| RiscvSyscallOutcome::Return { value })

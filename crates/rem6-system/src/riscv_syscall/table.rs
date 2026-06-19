@@ -380,6 +380,7 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_GETTIMEOFDAY
             | RISCV_LINUX_CLOCK_GETTIME
             | RISCV_LINUX_CLOCK_GETRES
+            | clock::RISCV_NEWLIB_CLOCK_GETTIME64
             | clock::RISCV_NEWLIB_LEGACY_TIME => syscall_clock(request, tick, guest_memory_writer),
             RISCV_LINUX_GETITIMER => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
