@@ -117,6 +117,18 @@ pub(crate) fn float_register_write_binary(
                     .expect("binary float rounding mode is valid"),
             ),
         ),
+        RiscvInstruction::FloatDivD {
+            rd, rounding_mode, ..
+        } => (
+            rd,
+            div::register_write_double(
+                lhs,
+                rhs,
+                rounding_mode
+                    .resolve(frm)
+                    .expect("binary float rounding mode is valid"),
+            ),
+        ),
         _ => float_register_write(instruction, lhs, rhs),
     }
 }
@@ -345,12 +357,21 @@ pub(crate) fn binary_register_rounding_mode_is_supported(
     lhs: u64,
     rhs: u64,
 ) -> bool {
-    register_rounding_mode_is_supported(
-        instruction,
-        frm,
-        binary_result_is_rounding_insensitive(instruction, lhs, rhs),
-        binary_rounding_mode_is_implemented(instruction, lhs, rhs),
-    )
+    let Some(rounding_mode) = register_rounding_mode(instruction) else {
+        return true;
+    };
+
+    match rounding_mode.resolve(frm) {
+        Some(RiscvFloatRoundingMode::RoundNearestEven) => true,
+        Some(
+            mode @ (RiscvFloatRoundingMode::RoundTowardZero
+            | RiscvFloatRoundingMode::RoundDown
+            | RiscvFloatRoundingMode::RoundUp
+            | RiscvFloatRoundingMode::RoundNearestMaxMagnitude),
+        ) if binary_rounding_mode_is_implemented(instruction, lhs, rhs, mode) => true,
+        Some(_) => binary_result_is_rounding_insensitive(instruction, lhs, rhs),
+        None => false,
+    }
 }
 
 pub(crate) fn unary_register_rounding_mode_is_supported(
@@ -414,12 +435,20 @@ fn register_rounding_mode(instruction: RiscvInstruction) -> Option<RiscvFloatRou
     Some(rounding_mode)
 }
 
-fn binary_rounding_mode_is_implemented(instruction: RiscvInstruction, lhs: u64, rhs: u64) -> bool {
+fn binary_rounding_mode_is_implemented(
+    instruction: RiscvInstruction,
+    lhs: u64,
+    rhs: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> bool {
     match instruction {
         RiscvInstruction::FloatAddS { .. } => add_sub::add_directed_rounding_is_supported(lhs, rhs),
         RiscvInstruction::FloatSubS { .. } => add_sub::sub_directed_rounding_is_supported(lhs, rhs),
         RiscvInstruction::FloatMulS { .. } => mul::directed_rounding_is_supported(lhs, rhs),
         RiscvInstruction::FloatDivS { .. } => div::directed_rounding_is_supported(lhs, rhs),
+        RiscvInstruction::FloatDivD { .. } => {
+            div::double_directed_rounding_is_supported(lhs, rhs, rounding_mode)
+        }
         _ => false,
     }
 }
@@ -717,7 +746,13 @@ pub(crate) fn binary_exception_flags(
                 .resolve(frm)
                 .expect("binary float rounding mode is valid"),
         ),
-        RiscvInstruction::FloatDivD { .. } => divide_exception_flags_double(lhs, rhs),
+        RiscvInstruction::FloatDivD { rounding_mode, .. } => div::exception_flags_double(
+            lhs,
+            rhs,
+            rounding_mode
+                .resolve(frm)
+                .expect("binary float rounding mode is valid"),
+        ),
         RiscvInstruction::FloatMulS { rounding_mode, .. } => mul::exception_flags(
             lhs,
             rhs,
@@ -769,26 +804,6 @@ fn div_double(lhs: u64, rhs: u64) -> u64 {
 
 fn div_single(lhs: u64, rhs: u64) -> u64 {
     box_canonical_single(f32::from_bits(unbox_single(lhs)) / f32::from_bits(unbox_single(rhs)))
-}
-
-fn divide_exception_flags_double(lhs: u64, rhs: u64) -> u64 {
-    let lhs = f64::from_bits(lhs);
-    let rhs = f64::from_bits(rhs);
-    divide_exception_flags(rhs == 0.0, lhs == 0.0, lhs.is_finite() && lhs != 0.0)
-}
-
-fn divide_exception_flags(
-    rhs_is_zero: bool,
-    lhs_is_zero: bool,
-    lhs_is_finite_nonzero: bool,
-) -> u64 {
-    if rhs_is_zero && lhs_is_zero {
-        FLOAT_FLAG_INVALID
-    } else if rhs_is_zero && lhs_is_finite_nonzero {
-        FLOAT_FLAG_DIVIDE_BY_ZERO
-    } else {
-        0
-    }
 }
 
 fn minmax_exception_flags_single(lhs: u64, rhs: u64) -> u64 {

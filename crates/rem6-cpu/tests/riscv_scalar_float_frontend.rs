@@ -46,6 +46,10 @@ fn fdiv_s_round_down(rs2: u8, rs1: u8, rd: u8) -> u32 {
     r_type(0x0c, rs2, rs1, 0x2, rd, 0x53)
 }
 
+fn fdiv_d_round_down(rs2: u8, rs1: u8, rd: u8) -> u32 {
+    r_type(0x0d, rs2, rs1, 0x2, rd, 0x53)
+}
+
 fn core(route: MemoryRouteId, entry: u64) -> RiscvCore {
     RiscvCore::new(
         CpuCore::new(
@@ -157,7 +161,7 @@ fn drive_until_execution(
                 return event.instruction();
             }
             Some(RiscvCoreDriveAction::DataAccessIssued { .. }) => {
-                panic!("scalar fdiv.s should not issue data access")
+                panic!("scalar floating-point instruction should not issue data access")
             }
         }
     }
@@ -184,5 +188,28 @@ fn riscv_core_driver_executes_fdiv_s_round_down_from_fetch_stream() {
         }
     );
     assert_eq!(core.read_float_register(freg(3)), box_single(0x3eaa_aaaa));
+    assert_eq!(core.float_status().fflags(), FLOAT_FLAG_INEXACT);
+}
+
+#[test]
+fn riscv_core_driver_executes_fdiv_d_round_down_from_fetch_stream() {
+    let (mut scheduler, transport, route) = fetch_route();
+    let core = core(route, 0x8000);
+    core.write_float_register(freg(1), 1.0f64.to_bits());
+    core.write_float_register(freg(2), 10.0f64.to_bits());
+    let store = loaded_program(0x8000, &[fdiv_d_round_down(2, 1, 3)]);
+
+    let instruction = drive_until_execution(&core, store, &mut scheduler, &transport);
+
+    assert_eq!(
+        instruction,
+        RiscvInstruction::FloatDivD {
+            rd: freg(3),
+            rs1: freg(1),
+            rs2: freg(2),
+            rounding_mode: RiscvFloatRoundingMode::RoundDown,
+        }
+    );
+    assert_eq!(core.read_float_register(freg(3)), 0x3fb9_9999_9999_9999);
     assert_eq!(core.float_status().fflags(), FLOAT_FLAG_INEXACT);
 }

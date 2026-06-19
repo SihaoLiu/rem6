@@ -753,6 +753,44 @@ fn hart_executes_rv64d_rne_arithmetic_and_records_float_writes() {
 }
 
 #[test]
+fn hart_executes_rv64d_fdiv_directed_rounding_when_inexact() {
+    for (rounding_mode, divisor, expected_bits) in [
+        (
+            RiscvFloatRoundingMode::RoundTowardZero,
+            10.0f64,
+            0x3fb9_9999_9999_9999,
+        ),
+        (
+            RiscvFloatRoundingMode::RoundDown,
+            10.0f64,
+            0x3fb9_9999_9999_9999,
+        ),
+        (
+            RiscvFloatRoundingMode::RoundUp,
+            3.0f64,
+            0x3fd5_5555_5555_5556,
+        ),
+    ] {
+        let mut hart = RiscvHartState::new(0xd000);
+        hart.write_float(freg(1), 1.0f64.to_bits());
+        hart.write_float(freg(2), divisor.to_bits());
+
+        let divide = hart
+            .execute(RiscvInstruction::FloatDivD {
+                rd: freg(3),
+                rs1: freg(1),
+                rs2: freg(2),
+                rounding_mode,
+            })
+            .unwrap();
+
+        assert_eq!(divide.trap(), None);
+        assert_eq!(hart.read_float(freg(3)), expected_bits);
+        assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INEXACT);
+    }
+}
+
+#[test]
 fn hart_executes_rv64d_sign_injection_with_raw_bits() {
     let mut hart = RiscvHartState::new(0x8000);
     let positive = 1.25f64.to_bits();
