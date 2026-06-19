@@ -145,6 +145,17 @@ fn cli_runtime_inputs_live_in_focused_modules() {
 }
 
 #[test]
+fn cli_stats_output_root_stays_focused() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/stats_output.rs");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_FACADE_LINES,
+        "src/stats_output.rs should remain a facade over focused stats-output modules, but it has {lines} lines"
+    );
+}
+
+#[test]
 fn architecture_docs_have_clear_boundaries() {
     let repo_root = repo_root();
     let architecture = repo_root.join("docs/architecture/rem6-architecture.md");
