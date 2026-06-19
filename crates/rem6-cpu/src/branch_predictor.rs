@@ -36,6 +36,59 @@ pub enum BranchPredictorError {
         expected: BranchSpeculationId,
         actual: BranchSpeculationId,
     },
+    InvalidCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidCheckpointMagic,
+    UnsupportedCheckpointVersion {
+        version: u8,
+    },
+    CheckpointValueTooLarge {
+        name: &'static str,
+        value: usize,
+        max: usize,
+    },
+    InvalidCheckpointCounter {
+        value: u8,
+    },
+    InvalidCheckpointFlag {
+        name: &'static str,
+        value: u8,
+    },
+    InvalidCheckpointSpeculationIndex {
+        index: usize,
+        table_entries: usize,
+    },
+    InvalidCheckpointSpeculationPcIndex {
+        pc: Address,
+        index: usize,
+        expected: usize,
+    },
+    InvalidCheckpointSpeculationOrder {
+        sequence: u64,
+        id: BranchSpeculationId,
+        expected: BranchSpeculationId,
+    },
+    InvalidCheckpointNextSpeculation {
+        next: BranchSpeculationId,
+        pending: BranchSpeculationId,
+    },
+    InvalidCheckpointNextSpeculationOverflow {
+        next: BranchSpeculationId,
+    },
+    DuplicateCheckpointSpeculationSequence {
+        sequence: u64,
+    },
+    DuplicateCheckpointSpeculationId {
+        id: BranchSpeculationId,
+    },
+    MissingCheckpointSpeculation {
+        id: BranchSpeculationId,
+    },
+    UnmappedCheckpointSpeculation {
+        id: BranchSpeculationId,
+    },
 }
 
 impl fmt::Display for BranchPredictorError {
@@ -72,6 +125,85 @@ impl fmt::Display for BranchPredictorError {
                 "branch predictor speculation {} cannot commit before pending speculation {}",
                 actual.get(),
                 expected.get()
+            ),
+            Self::InvalidCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "branch predictor checkpoint has {actual} bytes; expected {expected}"
+            ),
+            Self::InvalidCheckpointMagic => {
+                write!(formatter, "branch predictor checkpoint magic is invalid")
+            }
+            Self::UnsupportedCheckpointVersion { version } => write!(
+                formatter,
+                "branch predictor checkpoint version {version} is not supported"
+            ),
+            Self::CheckpointValueTooLarge { name, value, max } => write!(
+                formatter,
+                "branch predictor checkpoint {name} value {value} exceeds {max}"
+            ),
+            Self::InvalidCheckpointCounter { value } => write!(
+                formatter,
+                "branch predictor checkpoint counter value {value} is invalid"
+            ),
+            Self::InvalidCheckpointFlag { name, value } => write!(
+                formatter,
+                "branch predictor checkpoint flag {name} has invalid value {value}"
+            ),
+            Self::InvalidCheckpointSpeculationIndex {
+                index,
+                table_entries,
+            } => write!(
+                formatter,
+                "branch predictor checkpoint speculation index {index} is outside {table_entries} entries"
+            ),
+            Self::InvalidCheckpointSpeculationPcIndex {
+                pc,
+                index,
+                expected,
+            } => write!(
+                formatter,
+                "branch predictor checkpoint speculation for PC {} has index {index}; expected {expected}",
+                pc.get()
+            ),
+            Self::InvalidCheckpointSpeculationOrder {
+                sequence,
+                id,
+                expected,
+            } => write!(
+                formatter,
+                "branch predictor checkpoint sequence {sequence} maps speculation {}; expected {}",
+                id.get(),
+                expected.get()
+            ),
+            Self::InvalidCheckpointNextSpeculation { next, pending } => write!(
+                formatter,
+                "branch predictor checkpoint next speculation {} does not advance beyond pending speculation {}",
+                next.get(),
+                pending.get()
+            ),
+            Self::InvalidCheckpointNextSpeculationOverflow { next } => write!(
+                formatter,
+                "branch predictor checkpoint next speculation {} cannot advance",
+                next.get()
+            ),
+            Self::DuplicateCheckpointSpeculationSequence { sequence } => write!(
+                formatter,
+                "branch predictor checkpoint repeats active speculation sequence {sequence}"
+            ),
+            Self::DuplicateCheckpointSpeculationId { id } => write!(
+                formatter,
+                "branch predictor checkpoint repeats active speculation id {}",
+                id.get()
+            ),
+            Self::MissingCheckpointSpeculation { id } => write!(
+                formatter,
+                "branch predictor checkpoint maps unknown speculation id {}",
+                id.get()
+            ),
+            Self::UnmappedCheckpointSpeculation { id } => write!(
+                formatter,
+                "branch predictor checkpoint leaves speculation id {} without an active sequence",
+                id.get()
             ),
         }
     }
@@ -439,11 +571,11 @@ impl BranchSpeculationId {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BranchPrediction {
-    pc: Address,
-    index: usize,
-    predicted_taken: bool,
-    target: Option<Address>,
-    counter: u8,
+    pub(crate) pc: Address,
+    pub(crate) index: usize,
+    pub(crate) predicted_taken: bool,
+    pub(crate) target: Option<Address>,
+    pub(crate) counter: u8,
 }
 
 impl BranchPrediction {
@@ -470,12 +602,12 @@ impl BranchPrediction {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BranchSpeculation {
-    id: BranchSpeculationId,
-    prediction: BranchPrediction,
-    history_before: u64,
-    history_after: u64,
-    history_taken: bool,
-    repaired: bool,
+    pub(crate) id: BranchSpeculationId,
+    pub(crate) prediction: BranchPrediction,
+    pub(crate) history_before: u64,
+    pub(crate) history_after: u64,
+    pub(crate) history_taken: bool,
+    pub(crate) repaired: bool,
 }
 
 impl BranchSpeculation {
@@ -625,14 +757,14 @@ impl BranchUpdate {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BranchPredictorSnapshot {
-    config: BranchPredictorConfig,
-    counters: Vec<u8>,
-    targets: Vec<Option<Address>>,
-    update_count: u64,
-    committed_history: u64,
-    speculative_history: u64,
-    next_speculation: BranchSpeculationId,
-    pending_speculations: Vec<BranchSpeculation>,
+    pub(crate) config: BranchPredictorConfig,
+    pub(crate) counters: Vec<u8>,
+    pub(crate) targets: Vec<Option<Address>>,
+    pub(crate) update_count: u64,
+    pub(crate) committed_history: u64,
+    pub(crate) speculative_history: u64,
+    pub(crate) next_speculation: BranchSpeculationId,
+    pub(crate) pending_speculations: Vec<BranchSpeculation>,
 }
 
 impl BranchPredictorSnapshot {

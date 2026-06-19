@@ -4,8 +4,8 @@ use std::fmt;
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_cpu::{
-    InOrderPipelineCheckpointPayload, InOrderPipelineError, InOrderPipelineSnapshot, RiscvCore,
-    RiscvHartRunState,
+    BranchPredictorCheckpointPayload, BranchPredictorError, InOrderPipelineCheckpointPayload,
+    InOrderPipelineError, InOrderPipelineSnapshot, RiscvCore, RiscvHartRunState,
 };
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot,
@@ -14,6 +14,7 @@ use rem6_isa_riscv::{
 use rem6_memory::Address;
 
 const FREGS_CHUNK: &str = "fregs";
+const BRANCH_PREDICTOR_CHUNK: &str = "branch-predictor";
 const HART_RUN_STATE_CHUNK: &str = "hart-run-state";
 const IN_ORDER_PIPELINE_CHUNK: &str = "in-order-pipeline";
 const PC_CHUNK: &str = "pc";
@@ -36,6 +37,7 @@ pub struct RiscvCoreCheckpointRecord {
     pmp_snapshot: RiscvPmpSnapshot,
     hart_run_state: RiscvHartRunState,
     in_order_pipeline_snapshot: InOrderPipelineSnapshot,
+    branch_predictor_payload: BranchPredictorCheckpointPayload,
 }
 
 impl RiscvCoreCheckpointRecord {
@@ -53,6 +55,7 @@ impl RiscvCoreCheckpointRecord {
             pmp_snapshot,
             RiscvHartRunState::Started,
             RiscvCore::default_in_order_pipeline_snapshot(),
+            RiscvCore::default_branch_predictor_checkpoint_payload(),
         )
     }
 
@@ -64,6 +67,7 @@ impl RiscvCoreCheckpointRecord {
         pmp_snapshot: RiscvPmpSnapshot,
         hart_run_state: RiscvHartRunState,
         in_order_pipeline_snapshot: InOrderPipelineSnapshot,
+        branch_predictor_payload: BranchPredictorCheckpointPayload,
     ) -> Self {
         Self {
             component,
@@ -73,6 +77,7 @@ impl RiscvCoreCheckpointRecord {
             pmp_snapshot,
             hart_run_state,
             in_order_pipeline_snapshot,
+            branch_predictor_payload,
         }
     }
 
@@ -102,6 +107,10 @@ impl RiscvCoreCheckpointRecord {
 
     pub const fn in_order_pipeline_snapshot(&self) -> &InOrderPipelineSnapshot {
         &self.in_order_pipeline_snapshot
+    }
+
+    pub const fn branch_predictor_payload(&self) -> &BranchPredictorCheckpointPayload {
+        &self.branch_predictor_payload
     }
 
     pub fn register(&self, register: Register) -> Option<u64> {
@@ -175,6 +184,11 @@ impl RiscvCoreCheckpointPort {
             IN_ORDER_PIPELINE_CHUNK,
             encode_in_order_pipeline_snapshot(record.in_order_pipeline_snapshot()),
         )?;
+        registry.write_chunk(
+            &self.component,
+            BRANCH_PREDICTOR_CHUNK,
+            encode_branch_predictor_payload(record.branch_predictor_payload()),
+        )?;
         Ok(record)
     }
 
@@ -232,6 +246,19 @@ impl RiscvCoreCheckpointPort {
                 Some(payload) => decode_in_order_pipeline_snapshot(&self.component, payload)?,
                 None => RiscvCore::default_in_order_pipeline_snapshot(),
             };
+        let branch_predictor_payload = match registry.chunk(&self.component, BRANCH_PREDICTOR_CHUNK)
+        {
+            Some(payload) => decode_branch_predictor_payload(&self.component, payload)?,
+            None => RiscvCore::default_branch_predictor_checkpoint_payload(),
+        };
+        self.core
+            .validate_branch_predictor_checkpoint_payload(&branch_predictor_payload)
+            .map_err(
+                |error| RiscvCoreCheckpointError::InvalidBranchPredictorSnapshot {
+                    component: self.component.clone(),
+                    error,
+                },
+            )?;
 
         Ok(RiscvCoreCheckpointRecord::new_with_float_registers(
             self.component.clone(),
@@ -241,6 +268,7 @@ impl RiscvCoreCheckpointPort {
             pmp_snapshot,
             hart_run_state,
             in_order_pipeline_snapshot,
+            branch_predictor_payload,
         ))
     }
 
@@ -278,6 +306,14 @@ impl RiscvCoreCheckpointPort {
                     error,
                 },
             )?;
+        self.core
+            .restore_branch_predictor_checkpoint_payload(record.branch_predictor_payload().clone())
+            .map_err(
+                |error| RiscvCoreCheckpointError::InvalidBranchPredictorSnapshot {
+                    component: self.component.clone(),
+                    error,
+                },
+            )?;
         Ok(())
     }
 
@@ -290,6 +326,7 @@ impl RiscvCoreCheckpointPort {
             self.core.pmp_snapshot(),
             self.core.hart_run_state(),
             self.core.in_order_pipeline_snapshot(),
+            self.core.branch_predictor_checkpoint_payload(),
         )
     }
 }
@@ -401,6 +438,10 @@ pub enum RiscvCoreCheckpointError {
         component: CheckpointComponentId,
         error: InOrderPipelineError,
     },
+    InvalidBranchPredictorSnapshot {
+        component: CheckpointComponentId,
+        error: BranchPredictorError,
+    },
 }
 
 impl fmt::Display for RiscvCoreCheckpointError {
@@ -444,6 +485,11 @@ impl fmt::Display for RiscvCoreCheckpointError {
             Self::InvalidInOrderPipelineSnapshot { component, error } => write!(
                 formatter,
                 "RISC-V core checkpoint component {} has invalid in-order pipeline snapshot: {error}",
+                component.as_str()
+            ),
+            Self::InvalidBranchPredictorSnapshot { component, error } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has invalid branch predictor snapshot: {error}",
                 component.as_str()
             ),
         }
@@ -552,6 +598,22 @@ fn encode_in_order_pipeline_snapshot(snapshot: &InOrderPipelineSnapshot) -> Vec<
     InOrderPipelineCheckpointPayload::from_snapshot(snapshot.clone())
         .expect("captured RISC-V core in-order pipeline snapshot is valid")
         .encode()
+}
+
+fn encode_branch_predictor_payload(payload: &BranchPredictorCheckpointPayload) -> Vec<u8> {
+    payload.encode()
+}
+
+fn decode_branch_predictor_payload(
+    component: &CheckpointComponentId,
+    payload: &[u8],
+) -> Result<BranchPredictorCheckpointPayload, RiscvCoreCheckpointError> {
+    BranchPredictorCheckpointPayload::decode(payload).map_err(|error| {
+        RiscvCoreCheckpointError::InvalidBranchPredictorSnapshot {
+            component: component.clone(),
+            error,
+        }
+    })
 }
 
 fn decode_in_order_pipeline_snapshot(

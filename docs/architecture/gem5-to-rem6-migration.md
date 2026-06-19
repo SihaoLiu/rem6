@@ -213,7 +213,9 @@ intermediate retire-loop cycle records retained in per-core in-order pipeline
 history and consumed by top-level stats, data-response wait cycles folded into
 in-order retire timing, explicit data-stall cycle stats,
 per-core fetch-response and data-response wait cycle stats, retired branch
-prediction and redirect summaries in normal in-order timing records, a RISC-V checker CPU option that runs an
+prediction and redirect summaries in normal in-order timing records, RISC-V
+core checkpoints preserving the fetch-steering branch predictor payload,
+including live fetch-ahead pending branch speculation state, a RISC-V checker CPU option that runs an
 independent reference hart at retire, records structured execution/state
 mismatches, and exposes checked/mismatch counts through `rem6 run --checker-cpu`
 stats, and O3 policy helpers.
@@ -721,7 +723,8 @@ pipeline and cache/DRAM runtime state.
 - [x] First-class histogram stats have registry snapshots, deltas, resets,
   CLI JSON/text bucket output, and real data-access stack-distance producer
   output.
-- [x] RISC-V in-order pipeline timing state is captured and restored by core checkpoints.
+- [x] RISC-V in-order pipeline timing state and fetch-steering branch predictor
+  state are captured and restored by core checkpoints.
 - [x] GDB packet byte streams drive typed step/resume and break/watch control state in memory-backed sessions.
 - [x] CLI `run --gdb-listen` applies pre-execution RISC-V register writes,
   memory writes, and software breakpoint packets before the normal run consumes
@@ -775,7 +778,8 @@ system GDB memory handler, gem5-style final-tick, committed-instruction, and
 sim-frequency stat aliases, text output with gem5-compatible no-leading-blank
 headers plus `simOps` and deterministic `simSeconds` aliases,
 target/port/bank-level DRAM runtime resource counters, RISC-V in-order pipeline
-checkpoint capture/restore, GDB byte-stream packet handling, debug
+and fetch-steering branch predictor checkpoint capture/restore including live
+fetch-ahead pending speculation, GDB byte-stream packet handling, debug
 execution-control state for packet-stream step/resume and break/watch requests,
 CLI `run --gdb-listen` attach-before-execute socket handoff for RISC-V
 stop-reason, register, memory, and detach packets, pre-execution register and
@@ -809,7 +813,9 @@ ROB/LSQ/rename checkpoint ownership.
 **Evidence:** `StatsRegistry`, `ProbeRegistry`, `RiscvInstructionStats`,
 `RiscvDataAccessStats`, `SystemActionExecutor`, `GdbRemoteSession`,
 `cli_run::pc_count_probes::rem6_run_emits_riscv_pc_count_probe_stats`,
-checkpoint tests including RISC-V hart run-state and in-order pipeline restore,
+checkpoint tests including RISC-V hart run-state, in-order pipeline restore,
+and fetch-steering branch predictor restore with live fetch-ahead pending
+speculation,
 O3 writeback transfer deferred-state payload tests, GDB byte-stream,
 RV64D FP, FP CSR, RV64 CSR register-cache including supervisor `sscratch`,
 translation `satp`, interrupt aliases `sie`/`sip`, and counter
@@ -976,7 +982,7 @@ checklist-backed component sections above define the auditable percentages.
 | --- | --- | --- | --- | --- |
 | `tests/gem5/arm_boot_tests` | future ARM ISA crate, `rem6-platform` | 0% open | ARM device slices exist, but this row requires Arm ISA boot. | Add Arm ISA, board handoff, device tree, and kernel boot tests. |
 | `tests/gem5/asmtest` | ISA crates, `rem6` CLI | 50% single-axis | RISC-V no-libc, ISA unit tests, and CPU fetch-stream tests cover selected instruction, ecall, scalar FP directed integer-to-float, `fmul.s` exact-product directed-rounding, and `fdiv.s`/`fdiv.d` finite-quotient directed-rounding paths, RVV vector configuration, unmasked integer `vadd.vv` LMUL=1 plus m2, `vadd.vx`, `vadd.vi`, `vsub.vv` LMUL=1 plus m2, `vsub.vx`, bitwise `vand`/`vor`/`vxor` vv/vx/vi, shift `vsll`/`vsrl`/`vsra` vv/vx/vi, min/max `vminu`/`vmin`/`vmaxu`/`vmax` vv/vx, multiply `vmul`/`vmulhu`/`vmulhsu`/`vmulh` vv/vx, divide/remainder `vdivu`/`vdiv`/`vremu`/`vrem` vv/vx, equality mask compare `vmseq`/`vmsne` vv/vx/vi, ordered mask compare `vmsltu`/`vmslt`/`vmsleu`/`vmsle`/`vmsgtu`/`vmsgt` supported vv/vx/vi, merge/move/compress `vmerge`/`vmv.v`/`vcompress.vm`, fixed-point narrow clip `vnclipu.wi`, `vxrm`/`vxsat`/`vcsr`, mask logical `.mm`, and floating-point `vfadd`, `vfsub`, `vfmin`, `vfmax`, `vfmul`, and `vfdiv` vv/vf forms plus `vfrsub.vf`, `vfrdiv.vf`, `vfmacc`, `vfnmacc`, `vfmsac`, and `vfnmsac` vv/vf exact finite SEW=32 lane slices, E64 `vfadd.vv/vf`, `vfsub.vv/vf`, `vfrsub.vf`, `vfmul.vv/vf`, `vfdiv.vv/vf`, and `vfrdiv.vf` exact finite CPU fetch-stream slices, E64 `vfmin.vv/vf` and `vfmax.vv/vf` signed-zero and NaN CPU fetch-stream slices, `vfclass.v` SEW=32 classification slices, `vfmv.v.f` SEW=32 scalar splat slices, `vfmerge.vfm` SEW=32 masked scalar merge slice, `vfmv.s.f` SEW=32 scalar-to-lane-zero slice, `vfmv.f.s` SEW=32 lane-zero-to-scalar slice, integer-to-float `vfcvt.f.xu.v` and `vfcvt.f.x.v` plus float-to-integer `vfcvt.xu.f.v`, `vfcvt.x.f.v`, `vfcvt.rtz.xu.f.v`, and `vfcvt.rtz.x.f.v` dynamic/directed SEW=32 slices with NX accrual, E64 `vfcvt.f.xu.v`, `vfcvt.f.x.v`, `vfcvt.xu.f.v`, `vfcvt.x.f.v`, `vfcvt.rtz.xu.f.v`, and `vfcvt.rtz.x.f.v` CPU fetch-stream slices, FP mask compare `vmfeq`, `vmfne`, `vmflt`, and `vmfle` vv/vf SEW=32 mask slices, `vfmin`, `vfsqrt.v`, and FP compare invalid-flag accrual, `vfsqrt.v` non-exact finite rejection, and `vfsgnj`, `vfsgnjn`, and `vfsgnjx` vv/vf sign-bit slices with reserved-`frm` and NaN-boxing trap coverage. | Split RV32/RV64 and extension families with architectural-state comparison. |
-| `tests/gem5/checkpoint_tests` | `rem6-checkpoint`, subsystem checkpoint banks | 65% representative | Scheduler, memory, devices, storage, VirtIO, timer, interrupt, RISC-V started/stopped/suspended hart run-state, RISC-V in-order pipeline state, platform, workload, and manifest checkpoints exist. | Add O3 and non-quiescent restore evidence. |
+| `tests/gem5/checkpoint_tests` | `rem6-checkpoint`, subsystem checkpoint banks | 65% representative | Scheduler, memory, devices, storage, VirtIO, timer, interrupt, RISC-V started/stopped/suspended hart run-state, RISC-V in-order pipeline state, RISC-V fetch-steering branch predictor state including live fetch-ahead pending speculation, platform, workload, and manifest checkpoints exist. | Add O3 and non-quiescent restore evidence. |
 | `tests/gem5/chi_protocol` | `rem6-coherence`, protocol crates, `rem6-cache` | 40% single-axis | CHI-like line, controller, bank, dirty peer sourcing, reservation, and Evict-hazard tests exist. | Add Ruby-scale CHI transactions, topology networks, directory races, and workload checks. |
 | `tests/gem5/chi_tlm_tests` | `rem6-proto`, future adapter crates, `rem6-coherence` | 19% scoped | A library-level co-simulation boundary can register TLM endpoints, validate transaction shape, hand off events, and checkpoint clean adapter state in self-tests. | Add runtime TLM bridge tests with coherence traffic. |
 | `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, text stats output, and TOML-driven nested run/stats/power artifact directory creation tests exist. | Add config-driven file layouts for full-system manifests and broader multi-artifact workloads. |

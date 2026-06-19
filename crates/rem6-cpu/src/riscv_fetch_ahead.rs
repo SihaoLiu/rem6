@@ -443,6 +443,18 @@ mod tests {
         MemoryRequestId::new(AgentId::new(7), sequence)
     }
 
+    fn b_type(offset: i32, rs1: u8, rs2: u8, funct3: u32) -> u32 {
+        let imm = offset as u32;
+        ((imm & 0x1000) << 19)
+            | ((imm & 0x07e0) << 20)
+            | (u32::from(rs2) << 20)
+            | (u32::from(rs1) << 15)
+            | (funct3 << 12)
+            | ((imm & 0x001e) << 7)
+            | ((imm & 0x0800) >> 4)
+            | 0x63
+    }
+
     fn completed(sequence: u64, pc: u64) -> crate::CpuFetchEvent {
         crate::CpuFetchEvent::completed(
             CpuFetchRecord::new(
@@ -505,6 +517,43 @@ mod tests {
                 .map(RiscvFetchAheadDecision::pc),
             Some(Address::new(0x8002))
         );
+    }
+
+    #[test]
+    fn checkpoint_payload_restores_live_fetch_ahead_branch_speculation() {
+        let branch = b_type(8, 0, 0, 0).to_le_bytes().to_vec();
+        let core = core_with_completed_fetch(branch);
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+        assert_eq!(decision.pc(), Address::new(0x8004));
+        assert_eq!(
+            decision
+                .branch_speculation()
+                .map(|speculation| { (speculation.sequence(), speculation.pc()) }),
+            Some((0, Address::new(0x8000)))
+        );
+
+        core.record_fetch_ahead_speculation(&decision);
+        let captured = core.branch_predictor_checkpoint_payload();
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            assert_eq!(state.branch_speculations.len(), 1);
+            assert_eq!(state.branch_predictor.pending_speculation_count(), 1);
+            state.discard_branch_speculations();
+            assert!(state.branch_speculations.is_empty());
+            assert!(state.branch_predictor.pending_speculations().is_empty());
+        }
+
+        core.restore_branch_predictor_checkpoint_payload(captured)
+            .unwrap();
+
+        assert!(core
+            .can_retire_completed_fetch_while_fetch_pending()
+            .unwrap());
+        core.execute_next_completed_fetch().unwrap().unwrap();
+        let state = core.state.lock().expect("riscv core lock");
+        assert!(state.branch_speculations.is_empty());
+        assert!(state.branch_predictor.pending_speculations().is_empty());
     }
 
     #[test]

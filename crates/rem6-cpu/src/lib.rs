@@ -22,6 +22,7 @@ use rem6_transport::{
 
 mod bimode_predictor;
 mod branch_predictor;
+mod branch_predictor_checkpoint;
 mod cpu_cluster;
 mod cpu_identity;
 mod data_config;
@@ -83,6 +84,7 @@ pub use branch_predictor::{
     ReturnAddressStackOperation, ReturnAddressStackOperationId, ReturnAddressStackOperationKind,
     ReturnAddressStackRepair, ReturnAddressStackSnapshot,
 };
+pub use branch_predictor_checkpoint::BranchPredictorCheckpointPayload;
 pub use cpu_cluster::CpuCluster;
 pub use cpu_identity::{CpuId, CpuResetState};
 pub use data_config::CpuDataConfig;
@@ -1025,6 +1027,51 @@ impl RiscvCore {
             .expect("riscv core lock")
             .branch_predictor
             .snapshot()
+    }
+
+    pub fn branch_predictor_checkpoint_payload(&self) -> BranchPredictorCheckpointPayload {
+        let state = self.state.lock().expect("riscv core lock");
+        BranchPredictorCheckpointPayload::from_snapshot(
+            state.branch_predictor.snapshot(),
+            state
+                .branch_speculations
+                .iter()
+                .map(|(sequence, id)| (*sequence, *id)),
+        )
+        .expect("captured RISC-V branch predictor checkpoint is internally consistent")
+    }
+
+    pub fn default_branch_predictor_checkpoint_payload() -> BranchPredictorCheckpointPayload {
+        BranchPredictorCheckpointPayload::from_snapshot(
+            BranchPredictor::new(
+                BranchPredictorConfig::new(DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES)
+                    .expect("default RISC-V branch predictor entries are valid"),
+            )
+            .snapshot(),
+            [],
+        )
+        .expect("default RISC-V branch predictor checkpoint is valid")
+    }
+
+    pub fn restore_branch_predictor_checkpoint_payload(
+        &self,
+        payload: BranchPredictorCheckpointPayload,
+    ) -> Result<(), BranchPredictorError> {
+        let (snapshot, active_speculations) = payload.into_parts();
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.branch_predictor.restore(&snapshot)?;
+        state.branch_speculations.clear();
+        state.branch_speculations.extend(active_speculations);
+        Ok(())
+    }
+
+    pub fn validate_branch_predictor_checkpoint_payload(
+        &self,
+        payload: &BranchPredictorCheckpointPayload,
+    ) -> Result<(), BranchPredictorError> {
+        let state = self.state.lock().expect("riscv core lock");
+        let mut branch_predictor = state.branch_predictor.clone();
+        branch_predictor.restore(payload.snapshot())
     }
 
     pub fn gshare_branch_predictor_snapshot(&self) -> GShareBranchPredictorSnapshot {

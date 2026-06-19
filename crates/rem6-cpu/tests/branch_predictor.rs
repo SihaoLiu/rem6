@@ -1,7 +1,7 @@
 use rem6_cpu::{
-    BranchPredictor, BranchPredictorConfig, BranchPredictorError, BranchSpeculationId,
-    BranchTargetBuffer, BranchTargetBufferConfig, BranchTargetBufferError, BranchTargetKind,
-    BranchTargetSafetyConfig, BranchTargetSafetyProfile, ReturnAddressStack,
+    BranchPredictor, BranchPredictorCheckpointPayload, BranchPredictorConfig, BranchPredictorError,
+    BranchSpeculationId, BranchTargetBuffer, BranchTargetBufferConfig, BranchTargetBufferError,
+    BranchTargetKind, BranchTargetSafetyConfig, BranchTargetSafetyProfile, ReturnAddressStack,
     ReturnAddressStackConfig, ReturnAddressStackError, ReturnAddressStackOperationId,
     ReturnAddressStackOperationKind,
 };
@@ -362,6 +362,119 @@ fn snapshot_restore_preserves_pending_speculation_history() {
     assert_eq!(predictor.speculative_history(), 2);
     assert_eq!(predictor.pending_speculations(), &[first, second]);
     assert_eq!(predictor.predict(second_pc).counter(), 1);
+}
+
+#[test]
+fn checkpoint_payload_round_trips_snapshot_and_active_mapping() {
+    let mut predictor =
+        BranchPredictor::new(BranchPredictorConfig::with_history_bits(8, 3).unwrap());
+    let taken_pc = Address::new(0x1000);
+    let skipped_pc = Address::new(0x1004);
+
+    predictor.update(taken_pc, true, Some(Address::new(0x1080)));
+    let first = predictor.predict_speculative(taken_pc);
+    let second = predictor.predict_speculative(skipped_pc);
+    let snapshot = predictor.snapshot();
+
+    let payload = BranchPredictorCheckpointPayload::from_snapshot(
+        snapshot.clone(),
+        [(22, second.id()), (21, first.id())],
+    )
+    .unwrap();
+
+    assert_eq!(
+        payload.active_speculations(),
+        &[(21, first.id()), (22, second.id())]
+    );
+
+    let decoded = BranchPredictorCheckpointPayload::decode(&payload.encode()).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(decoded.active_speculations(), payload.active_speculations());
+}
+
+#[test]
+fn checkpoint_payload_rejects_invalid_counter_encoding() {
+    const FIRST_COUNTER_OFFSET: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4 * 2;
+    let payload = BranchPredictorCheckpointPayload::from_snapshot(
+        predictor(8).snapshot(),
+        std::iter::empty::<(u64, BranchSpeculationId)>(),
+    )
+    .unwrap();
+    let mut encoded = payload.encode();
+
+    encoded[FIRST_COUNTER_OFFSET] = 4;
+
+    assert_eq!(
+        BranchPredictorCheckpointPayload::decode(&encoded),
+        Err(BranchPredictorError::InvalidCheckpointCounter { value: 4 })
+    );
+}
+
+#[test]
+fn checkpoint_payload_rejects_unmapped_pending_speculation() {
+    let mut predictor = predictor(8);
+    let pending = predictor.predict_speculative(Address::new(0x1000));
+
+    assert_eq!(
+        BranchPredictorCheckpointPayload::from_snapshot(
+            predictor.snapshot(),
+            std::iter::empty::<(u64, BranchSpeculationId)>(),
+        ),
+        Err(BranchPredictorError::UnmappedCheckpointSpeculation { id: pending.id() })
+    );
+}
+
+#[test]
+fn checkpoint_payload_rejects_active_mapping_order_that_cannot_commit() {
+    const ACTIVE_SPECULATION_BYTES: usize = 16;
+    let mut predictor = predictor(8);
+    let first = predictor.predict_speculative(Address::new(0x1000));
+    let second = predictor.predict_speculative(Address::new(0x1004));
+    let payload = BranchPredictorCheckpointPayload::from_snapshot(
+        predictor.snapshot(),
+        [(21, first.id()), (22, second.id())],
+    )
+    .unwrap();
+    let mut encoded = payload.encode();
+    let active_start = encoded.len() - ACTIVE_SPECULATION_BYTES * 2;
+
+    encoded[active_start + 8..active_start + 16].copy_from_slice(&second.id().get().to_le_bytes());
+    encoded[active_start + 24..active_start + 32].copy_from_slice(&first.id().get().to_le_bytes());
+
+    assert_eq!(
+        BranchPredictorCheckpointPayload::decode(&encoded),
+        Err(BranchPredictorError::InvalidCheckpointSpeculationOrder {
+            sequence: 21,
+            id: second.id(),
+            expected: first.id(),
+        })
+    );
+}
+
+#[test]
+fn checkpoint_payload_rejects_next_speculation_that_reuses_pending_id() {
+    const NEXT_SPECULATION_OFFSET: usize = 4 + 1 + 4 + 1 + 8 * 3;
+    let mut predictor = predictor(8);
+    let first = predictor.predict_speculative(Address::new(0x1000));
+    let second = predictor.predict_speculative(Address::new(0x1004));
+    let payload = BranchPredictorCheckpointPayload::from_snapshot(
+        predictor.snapshot(),
+        [(21, first.id()), (22, second.id())],
+    )
+    .unwrap();
+    let mut encoded = payload.encode();
+
+    encoded[NEXT_SPECULATION_OFFSET..NEXT_SPECULATION_OFFSET + 8]
+        .copy_from_slice(&second.id().get().to_le_bytes());
+
+    assert_eq!(
+        BranchPredictorCheckpointPayload::decode(&encoded),
+        Err(BranchPredictorError::InvalidCheckpointNextSpeculation {
+            next: second.id(),
+            pending: second.id(),
+        })
+    );
 }
 
 #[test]
