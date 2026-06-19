@@ -58,6 +58,10 @@ fn rem6_gpu_run_routes_coalesced_global_memory_through_cache_and_dram() {
     assert!(stdout.contains("\"data_cache_runs\":2"));
     assert!(stdout.contains("\"data_cache_msi_runs\":2"));
     assert!(stdout.contains("\"data_cache_dram_accesses\":1"));
+    assert!(stdout.contains("\"data_cache_bank_accepted\":2"));
+    assert!(stdout.contains("\"data_cache_bank_immediate_hits\":0"));
+    assert!(stdout.contains("\"data_cache_bank_scheduled_misses\":2"));
+    assert!(stdout.contains("\"data_cache_bank_coalesced_misses\":0"));
     assert!(stdout.contains("\"accesses\":1"));
     assert!(stdout.contains("\"reads\":1"));
     assert_transport_stats(&stdout, "sim.gpu_run.transport", 2, 4, 2);
@@ -87,6 +91,20 @@ fn rem6_gpu_run_routes_coalesced_global_memory_through_cache_and_dram() {
         "sim.gpu_run.data_cache.dram_accesses",
         "Count",
         1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.data_cache.bank.accepted",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.data_cache.bank.scheduled_misses",
+        "Count",
+        2,
         "monotonic",
     );
     assert_stat(

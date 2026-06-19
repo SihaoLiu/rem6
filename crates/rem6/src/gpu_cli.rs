@@ -1227,7 +1227,7 @@ fn gpu_memory_request(
 
 fn data_cache_summary_json(summary: &CliDataCacheSummary) -> String {
     format!(
-        "{{\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{}}}",
+        "{{\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_cache_bank_accepted\":{},\"data_cache_bank_immediate_hits\":{},\"data_cache_bank_scheduled_misses\":{},\"data_cache_bank_coalesced_misses\":{}}}",
         summary.runs,
         summary.msi_runs,
         summary.mesi_runs,
@@ -1236,6 +1236,10 @@ fn data_cache_summary_json(summary: &CliDataCacheSummary) -> String {
         summary.cpu_responses,
         summary.directory_decisions,
         summary.dram_accesses,
+        summary.bank_accepted,
+        summary.bank_immediate_hits,
+        summary.bank_scheduled_misses,
+        summary.bank_coalesced_misses,
     )
 }
 
