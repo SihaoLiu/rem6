@@ -12,6 +12,7 @@ use rem6_memory::{
 };
 use rem6_system::RiscvDataCacheProtocol;
 use rem6_transport::{MemoryRoute, MemoryTrace, MemoryTransport, ParallelMemoryTransaction};
+use serde::Deserialize;
 
 use crate::cli_output;
 use crate::config::{CliDramMemoryProfile, MemoryDumpRequest, StatsFormat};
@@ -52,6 +53,50 @@ pub struct Rem6GpuRunConfig {
     global_accesses: Vec<GpuGlobalAccessSpec>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rem6GpuRunRootFileConfig {
+    gpu_run: Option<Rem6GpuRunFileConfig>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rem6GpuRunFileConfig {
+    workgroups: Option<u32>,
+    compute_units: Option<u32>,
+    wave_slots_per_compute_unit: Option<u32>,
+    workgroup_cycles: Option<u64>,
+    memory_start: Option<u64>,
+    memory_size: Option<u64>,
+    max_tick: Option<u64>,
+    min_remote_delay: Option<u64>,
+    memory_route_delay: Option<u64>,
+    stats_format: Option<String>,
+    dram_memory: Option<bool>,
+    dram_memory_profile: Option<String>,
+    data_cache_protocol: Option<String>,
+    output: Option<PathBuf>,
+    stats_output: Option<PathBuf>,
+    memory_dumps: Option<Vec<String>>,
+    global_loads: Option<Vec<String>>,
+    global_stores: Option<Vec<String>>,
+    #[serde(skip)]
+    config_dir: Option<PathBuf>,
+}
+
+impl Rem6GpuRunFileConfig {
+    fn resolve_path(&self, path: &Path) -> PathBuf {
+        if path.is_relative() {
+            self.config_dir
+                .as_deref()
+                .map(|dir| dir.join(path))
+                .unwrap_or_else(|| path.to_path_buf())
+        } else {
+            path.to_path_buf()
+        }
+    }
+}
+
 impl Rem6GpuRunConfig {
     pub fn parse_args<I, S>(args: I) -> Result<Self, Rem6CliError>
     where
@@ -65,28 +110,102 @@ impl Rem6GpuRunConfig {
         if command != "gpu-run" {
             return Err(Rem6CliError::UnsupportedCommand { command });
         }
+        let remaining_args = args.collect::<Vec<_>>();
+        let file_config = gpu_run_file_config_from_args(&remaining_args)?
+            .map(|path| load_gpu_run_file_config(&path))
+            .transpose()?
+            .unwrap_or_default();
 
-        let mut workgroups = None;
-        let mut compute_units = 1;
-        let mut wave_slots_per_compute_unit = 1;
-        let mut workgroup_cycles = 3;
-        let mut memory_start = None;
-        let mut memory_size = None;
-        let mut max_tick = 100;
-        let mut min_remote_delay = 1;
-        let mut memory_route_delay = 1;
-        let mut stats_format = StatsFormat::Json;
-        let mut dram_memory = false;
-        let mut dram_memory_profile = CliDramMemoryProfile::Ddr;
-        let mut dram_memory_profile_was_set = false;
-        let mut data_cache_protocol = None;
-        let mut output = None;
-        let mut stats_output = None;
-        let mut memory_dumps = Vec::new();
-        let mut global_accesses = Vec::new();
+        let mut workgroups = file_config
+            .workgroups
+            .map(|value| validate_positive_u32("--workgroups", value))
+            .transpose()?;
+        let mut compute_units = file_config
+            .compute_units
+            .map(|value| validate_positive_u32("--compute-units", value))
+            .transpose()?
+            .unwrap_or(1);
+        let mut wave_slots_per_compute_unit = file_config
+            .wave_slots_per_compute_unit
+            .map(|value| validate_positive_u32("--wave-slots-per-compute-unit", value))
+            .transpose()?
+            .unwrap_or(1);
+        let mut workgroup_cycles = file_config
+            .workgroup_cycles
+            .map(|value| validate_positive_u64("--workgroup-cycles", value))
+            .transpose()?
+            .unwrap_or(3);
+        let mut memory_start = file_config.memory_start;
+        let mut memory_size = file_config
+            .memory_size
+            .map(|value| validate_positive_u64("--memory-size", value))
+            .transpose()?;
+        let mut max_tick = file_config
+            .max_tick
+            .map(|value| validate_positive_u64("--max-tick", value))
+            .transpose()?
+            .unwrap_or(100);
+        let mut min_remote_delay = file_config
+            .min_remote_delay
+            .map(|value| validate_positive_u64("--min-remote-delay", value))
+            .transpose()?
+            .unwrap_or(1);
+        let mut memory_route_delay = file_config
+            .memory_route_delay
+            .map(|value| validate_positive_u64("--memory-route-delay", value))
+            .transpose()?
+            .unwrap_or(1);
+        let mut stats_format = file_config
+            .stats_format
+            .as_deref()
+            .map(StatsFormat::parse)
+            .transpose()?
+            .unwrap_or(StatsFormat::Json);
+        let mut dram_memory = file_config.dram_memory.unwrap_or(false);
+        let mut dram_memory_profile = file_config
+            .dram_memory_profile
+            .as_deref()
+            .map(CliDramMemoryProfile::parse)
+            .transpose()?
+            .unwrap_or(CliDramMemoryProfile::Ddr);
+        let mut dram_memory_profile_was_set = file_config.dram_memory_profile.is_some();
+        let mut data_cache_protocol = file_config
+            .data_cache_protocol
+            .as_deref()
+            .map(|value| {
+                parse_data_cache_protocol(value).ok_or_else(|| {
+                    Rem6CliError::InvalidRunDataCacheProtocol {
+                        value: value.to_string(),
+                    }
+                })
+            })
+            .transpose()?;
+        let mut output = file_config
+            .output
+            .as_deref()
+            .map(|path| file_config.resolve_path(path));
+        let mut stats_output = file_config
+            .stats_output
+            .as_deref()
+            .map(|path| file_config.resolve_path(path));
+        let mut memory_dumps = file_config
+            .memory_dumps
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|request| MemoryDumpRequest::parse(request))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut global_accesses = gpu_global_accesses_from_file_config(&file_config)?;
+        let mut memory_dumps_from_cli = false;
+        let mut global_loads_from_cli = false;
+        let mut global_stores_from_cli = false;
 
+        let mut args = remaining_args.into_iter();
         while let Some(flag) = args.next() {
             match flag.as_str() {
+                "--config" => {
+                    let _ = required_value(&flag, args.next())?;
+                }
                 "--workgroups" => {
                     workgroups = Some(parse_positive_u32(
                         "--workgroups",
@@ -167,12 +286,20 @@ impl Rem6GpuRunConfig {
                         })?);
                 }
                 "--global-load" => {
+                    if !global_loads_from_cli {
+                        global_accesses.retain(|access| access.kind != GpuMemoryAccessKind::Read);
+                        global_loads_from_cli = true;
+                    }
                     global_accesses.push(GpuGlobalAccessSpec::parse(
                         GpuMemoryAccessKind::Read,
                         &required_value(&flag, args.next())?,
                     )?);
                 }
                 "--global-store" => {
+                    if !global_stores_from_cli {
+                        global_accesses.retain(|access| access.kind != GpuMemoryAccessKind::Write);
+                        global_stores_from_cli = true;
+                    }
                     global_accesses.push(GpuGlobalAccessSpec::parse(
                         GpuMemoryAccessKind::Write,
                         &required_value(&flag, args.next())?,
@@ -185,6 +312,10 @@ impl Rem6GpuRunConfig {
                     stats_output = Some(PathBuf::from(required_value(&flag, args.next())?));
                 }
                 "--dump-memory" => {
+                    if !memory_dumps_from_cli {
+                        memory_dumps.clear();
+                        memory_dumps_from_cli = true;
+                    }
                     memory_dumps.push(MemoryDumpRequest::parse(&required_value(
                         &flag,
                         args.next(),
@@ -202,6 +333,13 @@ impl Rem6GpuRunConfig {
                 memory_route_delay,
                 min_remote_delay,
             });
+        }
+        if let (Some(output), Some(stats_output)) = (&output, &stats_output) {
+            if output == stats_output {
+                return Err(Rem6CliError::ConflictingOutputPaths {
+                    path: output.to_path_buf(),
+                });
+            }
         }
         if global_accesses.is_empty() {
             return Err(Rem6CliError::MissingRequiredFlag {
@@ -331,6 +469,87 @@ impl Rem6GpuRunConfig {
     pub fn memory_dumps(&self) -> &[MemoryDumpRequest] {
         &self.memory_dumps
     }
+}
+
+fn gpu_run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
+    const VALUE_FLAGS: &[&str] = &[
+        "--workgroups",
+        "--compute-units",
+        "--wave-slots-per-compute-unit",
+        "--workgroup-cycles",
+        "--memory-start",
+        "--memory-size",
+        "--max-tick",
+        "--min-remote-delay",
+        "--memory-route-delay",
+        "--stats-format",
+        "--dram-memory-profile",
+        "--data-cache-protocol",
+        "--global-load",
+        "--global-store",
+        "--output",
+        "--stats-output",
+        "--dump-memory",
+    ];
+    const BOOL_FLAGS: &[&str] = &["--dram-memory"];
+
+    let mut path = None;
+    let mut index = 0;
+    while let Some(flag) = args.get(index) {
+        match flag.as_str() {
+            "--config" => {
+                path = Some(PathBuf::from(required_value(
+                    flag,
+                    args.get(index + 1).cloned(),
+                )?));
+                index += 2;
+            }
+            flag if VALUE_FLAGS.contains(&flag) => {
+                index += 2;
+            }
+            flag if BOOL_FLAGS.contains(&flag) => {
+                index += 1;
+            }
+            _ => {
+                index += 1;
+            }
+        }
+    }
+    Ok(path)
+}
+
+fn load_gpu_run_file_config(path: &Path) -> Result<Rem6GpuRunFileConfig, Rem6CliError> {
+    let text = std::fs::read_to_string(path).map_err(|error| Rem6CliError::ReadConfig {
+        path: path.to_path_buf(),
+        error: error.to_string(),
+    })?;
+    let root = toml::from_str::<Rem6GpuRunRootFileConfig>(&text).map_err(|error| {
+        Rem6CliError::ParseConfig {
+            path: path.to_path_buf(),
+            error: error.to_string(),
+        }
+    })?;
+    let mut config = root.gpu_run.unwrap_or_default();
+    config.config_dir = path.parent().map(Path::to_path_buf);
+    Ok(config)
+}
+
+fn gpu_global_accesses_from_file_config(
+    config: &Rem6GpuRunFileConfig,
+) -> Result<Vec<GpuGlobalAccessSpec>, Rem6CliError> {
+    let loads = config
+        .global_loads
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .map(|value| GpuGlobalAccessSpec::parse(GpuMemoryAccessKind::Read, value));
+    let stores = config
+        .global_stores
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .map(|value| GpuGlobalAccessSpec::parse(GpuMemoryAccessKind::Write, value));
+    loads.chain(stores).collect()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -796,6 +1015,14 @@ fn parse_positive_u64(name: &str, value: String) -> Result<u64, Rem6CliError> {
         )));
     }
     Ok(parsed)
+}
+
+fn validate_positive_u64(name: &str, value: u64) -> Result<u64, Rem6CliError> {
+    parse_positive_u64(name, value.to_string())
+}
+
+fn validate_positive_u32(name: &str, value: u32) -> Result<u32, Rem6CliError> {
+    parse_positive_u32(name, value.to_string())
 }
 
 fn parse_positive_u32(name: &str, value: String) -> Result<u32, Rem6CliError> {
