@@ -126,7 +126,8 @@ static RoundUp and dynamic RoundDown exact-window inexact rounding with
 directed zero-sign and overflow-flag boundary slices, plus
 `fadd.s`/`fsub.s` signaling-NaN, infinity invalid, overflow, and wider finite
 NX flag slices, compressed double FP load/store decoding, compressed FP load
-CPU data access, RVV vector-configuration decode and unmasked integer
+CPU data access, privileged interrupt fixed-priority machine and delegated
+supervisor trap entry, RVV vector-configuration decode and unmasked integer
 `vadd.vv` LMUL=1 plus m2 register-group execution, unmasked integer
 `vadd.vx`, signed-immediate `vadd.vi`, unmasked integer `vsub.vv` LMUL=1 plus
 m2 register-group execution, `vsub.vx`, and unmasked integer bitwise

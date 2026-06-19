@@ -5,7 +5,11 @@ use rem6_isa_riscv::{
 
 const INTERRUPT_BIT: u64 = 1_u64 << 63;
 const SSIP: u64 = 1 << 1;
+const MSIP: u64 = 1 << 3;
 const STIP: u64 = 1 << 5;
+const MTIP: u64 = 1 << 7;
+const SEIP: u64 = 1 << 9;
+const MEIP: u64 = 1 << 11;
 
 fn reg(index: u8) -> Register {
     Register::new(index).unwrap()
@@ -110,6 +114,28 @@ fn hart_vectors_machine_interrupts_when_mtvec_is_vectored() {
 }
 
 #[test]
+fn hart_prioritizes_external_machine_interrupt_over_lower_pending_machine_interrupts() {
+    let mut hart = RiscvHartState::new(0x5080);
+    hart.set_machine_trap_vector(0x9001);
+    let pending = MEIP | MSIP | MTIP;
+    hart.set_machine_interrupt_enable(pending);
+    hart.set_machine_interrupt_pending(pending);
+    hart.set_privilege_mode(RiscvPrivilegeMode::User);
+    hart.set_pc(0x7080);
+
+    let record = hart.execute(addi(5, 0, 1)).unwrap();
+
+    assert_eq!(record.pc(), 0x7080);
+    assert_eq!(record.next_pc(), 0x902c);
+    assert_eq!(hart.pc(), 0x902c);
+    assert_eq!(hart.privilege_mode(), RiscvPrivilegeMode::Machine);
+    assert_eq!(hart.machine_exception_pc(), 0x7080);
+    assert_eq!(hart.machine_trap_cause(), INTERRUPT_BIT | 11);
+    assert_eq!(record.register_writes(), &[]);
+    assert_eq!(hart.read(reg(5)), 0);
+}
+
+#[test]
 fn hart_delegates_user_supervisor_software_interrupt_to_supervisor_vector() {
     let mut hart = RiscvHartState::new(0x5100);
     hart.set_supervisor_trap_vector(0x8100);
@@ -136,6 +162,32 @@ fn hart_delegates_user_supervisor_software_interrupt_to_supervisor_vector() {
     assert_eq!(record.register_writes(), &[]);
     assert_eq!(hart.read(reg(5)), 0);
     assert_eq!(record.trap().unwrap().pc(), 0x7100);
+}
+
+#[test]
+fn hart_prioritizes_external_delegated_supervisor_interrupt_over_lower_pending_interrupts() {
+    let mut hart = RiscvHartState::new(0x5180);
+    hart.set_supervisor_trap_vector(0x8101);
+    hart.set_machine_trap_vector(0x9000);
+    let pending = SEIP | SSIP | STIP;
+    hart.set_machine_interrupt_delegation(pending);
+    hart.set_machine_interrupt_enable(pending);
+    hart.set_machine_interrupt_pending(pending);
+    hart.set_privilege_mode(RiscvPrivilegeMode::User);
+    hart.set_pc(0x7180);
+
+    let record = hart.execute(addi(5, 0, 1)).unwrap();
+
+    assert_eq!(record.pc(), 0x7180);
+    assert_eq!(record.next_pc(), 0x8124);
+    assert_eq!(hart.pc(), 0x8124);
+    assert_eq!(hart.privilege_mode(), RiscvPrivilegeMode::Supervisor);
+    assert_eq!(hart.supervisor_exception_pc(), 0x7180);
+    assert_eq!(hart.supervisor_trap_cause(), INTERRUPT_BIT | 9);
+    assert_eq!(hart.machine_exception_pc(), 0);
+    assert_eq!(hart.machine_trap_cause(), 0);
+    assert_eq!(record.register_writes(), &[]);
+    assert_eq!(hart.read(reg(5)), 0);
 }
 
 #[test]

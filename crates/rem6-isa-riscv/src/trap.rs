@@ -176,6 +176,13 @@ fn supervisor_interrupt_allowed(hart: &RiscvHartState, privilege: RiscvPrivilege
 }
 
 fn interrupt_code(pending: u64) -> Option<u64> {
+    const STANDARD_INTERRUPT_PRIORITY: [u64; 7] = [11, 3, 7, 9, 1, 5, 13];
+
+    for code in STANDARD_INTERRUPT_PRIORITY {
+        if pending & (1_u64 << code) != 0 {
+            return Some(code);
+        }
+    }
     (pending != 0).then(|| u64::from(pending.trailing_zeros()))
 }
 

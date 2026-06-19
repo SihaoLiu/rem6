@@ -2974,6 +2974,46 @@ fn riscv_core_driver_blocks_pending_fetch_retire_when_interrupt_can_redirect() {
 }
 
 #[test]
+fn riscv_core_driver_prioritizes_machine_external_interrupt_over_software_interrupt() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let software_interrupt = 1_u64 << 3;
+    let external_interrupt = 1_u64 << 11;
+    let pending = software_interrupt | external_interrupt;
+    core.set_machine_trap_vector(0x9001);
+    core.set_privilege_mode(RiscvPrivilegeMode::User);
+    core.set_machine_interrupt_pending(pending);
+    core.set_machine_interrupt_enable(pending);
+    let store = loaded_program_store(0x8000, &[i_type(7, 0, 0x0, 1, 0x13)], &[]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(interrupted) = action else {
+        panic!("expected interrupt redirect after fetched instruction completes");
+    };
+    assert_eq!(
+        interrupted.instruction(),
+        RiscvInstruction::decode(i_type(7, 0, 0x0, 1, 0x13)).unwrap()
+    );
+    assert_eq!(interrupted.execution().next_pc(), 0x902c);
+    assert_eq!(
+        interrupted.execution().trap(),
+        Some(&RiscvTrap::new(
+            RiscvTrapKind::Interrupt { code: 11 },
+            0x8000
+        ))
+    );
+    assert_eq!(core.pc(), Address::new(0x902c));
+    assert_eq!(core.privilege_mode(), RiscvPrivilegeMode::Machine);
+    assert_eq!(core.read_register(reg(1)), 0);
+}
+
+#[test]
 fn riscv_core_driver_fetch_ahead_does_not_reissue_completed_successor_pc() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);
