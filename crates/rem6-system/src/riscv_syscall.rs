@@ -211,8 +211,9 @@ use stat::{
     RISCV_LINUX_STATFS, RISCV_LINUX_STATX, RISCV_LINUX_UTIMENSAT,
 };
 use sync::{
-    syscall_fd_sync, syscall_sync, syscall_sync_file_range, RISCV_LINUX_FDATASYNC,
-    RISCV_LINUX_FSYNC, RISCV_LINUX_SYNC, RISCV_LINUX_SYNCFS, RISCV_LINUX_SYNC_FILE_RANGE,
+    syscall_fd_sync, syscall_readahead, syscall_sync, syscall_sync_file_range,
+    RISCV_LINUX_FDATASYNC, RISCV_LINUX_FSYNC, RISCV_LINUX_READAHEAD, RISCV_LINUX_SYNC,
+    RISCV_LINUX_SYNCFS, RISCV_LINUX_SYNC_FILE_RANGE,
 };
 use sysinfo::{syscall_sysinfo, RISCV_LINUX_SYSINFO};
 pub use table::RiscvSyscallTable;

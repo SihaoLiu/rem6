@@ -356,6 +356,9 @@ impl RiscvSyscallTable {
             RISCV_LINUX_SYNC_FILE_RANGE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_sync_file_range(request, state),
             }),
+            RISCV_LINUX_READAHEAD => Some(RiscvSyscallOutcome::Return {
+                value: syscall_readahead(request, state),
+            }),
             RISCV_LINUX_GETRANDOM => {
                 let flags = request.argument(2);
                 if invalid_getrandom_flags(flags) {

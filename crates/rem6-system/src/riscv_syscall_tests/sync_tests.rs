@@ -4,6 +4,7 @@ const RISCV_LINUX_SYNC_FOR_TEST: u64 = 81;
 const RISCV_LINUX_FSYNC_FOR_TEST: u64 = 82;
 const RISCV_LINUX_FDATASYNC_FOR_TEST: u64 = 83;
 const RISCV_LINUX_SYNC_FILE_RANGE_FOR_TEST: u64 = 84;
+const RISCV_LINUX_READAHEAD_FOR_TEST: u64 = 213;
 const RISCV_LINUX_SYNCFS_FOR_TEST: u64 = 267;
 
 #[test]
@@ -142,4 +143,73 @@ fn linux_table_handles_sync_file_range_without_unknown_records() {
     }
 
     assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_readahead_accepts_regular_guest_file_and_rejects_bad_fds() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let fd = open_regular_readahead_fd(&table, &mut state, 0x7100);
+
+    for (pc, arguments, value) in [
+        (0x9200, [fd, 0, 16, 0, 0, 0], 0),
+        (0x9204, [fd, 0, 0, 0, 0, 0], 0),
+        (
+            0x9206,
+            [fd, u64::MAX, 16, 0, 0, 0],
+            linux_error(RISCV_LINUX_EINVAL),
+        ),
+        (0x9208, [99, 0, 16, 0, 0, 0], linux_error(RISCV_LINUX_EBADF)),
+        (
+            0x920c,
+            [(1_u64 << 32) | 1, 0, 16, 0, 0, 0],
+            linux_error(RISCV_LINUX_EBADF),
+        ),
+    ] {
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(pc, RISCV_LINUX_READAHEAD_FOR_TEST, arguments),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value })
+        );
+    }
+
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+fn open_regular_readahead_fd(
+    table: &RiscvSyscallTable,
+    state: &mut RiscvSyscallState,
+    path_address: u64,
+) -> u64 {
+    state.register_guest_file(b"/readahead.bin", b"prefetch\n");
+    let path = b"/readahead.bin\0".to_vec();
+    let reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        let offset = address.checked_sub(path_address)?;
+        let offset = usize::try_from(offset).ok()?;
+        let end = offset.checked_add(bytes)?;
+        path.get(offset..end).map(<[u8]>::to_vec)
+    });
+    match table.handle_with_guest_memory_io_at_tick(
+        RiscvSyscallRequest::new(
+            0x91f0,
+            RISCV_LINUX_OPENAT,
+            [
+                RISCV_LINUX_AT_FDCWD,
+                path_address,
+                RISCV_LINUX_O_RDONLY,
+                0,
+                0,
+                0,
+            ],
+        ),
+        state,
+        10,
+        Some(&reader),
+        None,
+    ) {
+        Some(RiscvSyscallOutcome::Return { value }) => value,
+        outcome => panic!("openat for readahead regular file failed: {outcome:?}"),
+    }
 }
