@@ -863,7 +863,7 @@ families, and O3 checkpoint capture/restore.
 
 ### Configuration, Resources, Suites, GPU, and Accelerators - 59% single-axis
 
-**Score calculation:** 13 of 18 items have executable evidence, or 72% raw.
+**Score calculation:** 14 of 19 items have executable evidence, or 74% raw.
 The bucket cap is single-axis because GPU memory behavior now has a narrow
 top-level cache/DRAM micro-run but is not representative, manifest and suite
 acquisition have top-level local-artifact paths, narrow run and trace-replay
@@ -884,6 +884,7 @@ resource handoffs exist, and benchmark orchestration remains absent.
 - [x] GPU ISA-level execution exists.
 - [x] GPU queued workgroups expose compute-unit assignment and coalesced memory access records from scalar ISA memory intents.
 - [x] CLI `gpu-run` routes recorded coalesced scalar GPU global memory requests through direct memory or MSI data-cache and DRAM-backed runtime stats after GPU workgroup completion.
+- [x] CLI `gpu-run` reports per-compute-unit workgroup completion and busy-cycle activity from real scheduled completions.
 - [ ] GPU CU scheduling, memory coalescing, and cache/DRAM interactions are representative.
 - [ ] Multi-run simulator orchestration and artifact compatibility are complete.
 - [ ] PARSEC or comparable workload suites run end to end.
@@ -924,7 +925,9 @@ snapshot evidence, visible compute-unit assignment, coalesced memory access
 records, top-level `gpu-run` cache/DRAM micro-run evidence routing recorded
 coalesced global memory requests through direct memory or MSI data-cache and
 DRAM-backed runtime stats after GPU workgroup completion, TOML-driven
-`gpu-run` cache/DRAM execution and config-value validation, a checked-in GUPS
+`gpu-run` cache/DRAM execution and config-value validation, top-level
+`gpu-run` per-CU completion and busy-cycle activity derived from scheduled
+workgroup completions, a checked-in GUPS
 example TOML that runs through the top-level CLI without recompilation,
 top-level `rem6 run --config` creation of nested run, stats, and power-analysis
 artifact directories from TOML-relative paths, and
@@ -964,7 +967,8 @@ accelerator topology tests, GPU compute tests covering scalar ISA execution,
 coalesced memory records, and snapshot restore of queued ISA programs, and
 `rem6 gpu-run` CLI smoke coverage with TOML and flag-driven
 direct-memory store/dump evidence plus MSI cache-run, DRAM read, and transport
-stats from recorded coalesced GPU global memory requests.
+stats from recorded coalesced GPU global memory requests, plus per-CU completion
+and busy-cycle JSON/stat evidence from the top-level scheduled GPU run.
 
 **Next evidence:** Broader suite-level workload replay beyond run-kernel,
 `suite-resource:<workload>/<resource>` readfile/load-blob, RISC-V SE guest-file,

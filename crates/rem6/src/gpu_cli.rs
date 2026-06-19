@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use rem6_gpu::{
     GpuComputeConfig, GpuDevice, GpuDeviceId, GpuIsaInstruction, GpuIsaProgram, GpuKernelId,
-    GpuKernelLaunch, GpuMemoryAccessKind,
+    GpuKernelLaunch, GpuMemoryAccessKind, GpuWorkgroupCompletion,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -645,6 +645,65 @@ pub(crate) struct Rem6GpuRunExecutionSummary {
     scheduler_dispatches: u64,
     memory_scheduler_epochs: u64,
     memory_scheduler_dispatches: u64,
+    compute_unit_activity: Vec<Rem6GpuComputeUnitActivity>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6GpuComputeUnitActivity {
+    compute_unit: u32,
+    workgroup_completions: u64,
+    busy_cycles: u64,
+    first_started_at: Option<u64>,
+    last_completed_at: Option<u64>,
+}
+
+impl Rem6GpuComputeUnitActivity {
+    const fn new(compute_unit: u32) -> Self {
+        Self {
+            compute_unit,
+            workgroup_completions: 0,
+            busy_cycles: 0,
+            first_started_at: None,
+            last_completed_at: None,
+        }
+    }
+
+    fn record_completion(&mut self, completion: &GpuWorkgroupCompletion) {
+        self.workgroup_completions += 1;
+        self.first_started_at = Some(
+            self.first_started_at
+                .map(|tick| tick.min(completion.started_at()))
+                .unwrap_or(completion.started_at()),
+        );
+        self.last_completed_at = Some(
+            self.last_completed_at
+                .map(|tick| tick.max(completion.completed_at()))
+                .unwrap_or(completion.completed_at()),
+        );
+    }
+
+    pub(crate) const fn compute_unit(&self) -> u32 {
+        self.compute_unit
+    }
+
+    pub(crate) const fn workgroup_completions(&self) -> u64 {
+        self.workgroup_completions
+    }
+
+    pub(crate) const fn busy_cycles(&self) -> u64 {
+        self.busy_cycles
+    }
+
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"compute_unit\":{},\"workgroup_completions\":{},\"busy_cycles\":{},\"first_started_at\":{},\"last_completed_at\":{}}}",
+            self.compute_unit,
+            self.workgroup_completions,
+            self.busy_cycles,
+            optional_tick_json(self.first_started_at),
+            optional_tick_json(self.last_completed_at),
+        )
+    }
 }
 
 impl Rem6GpuRunExecutionSummary {
@@ -686,6 +745,10 @@ impl Rem6GpuRunExecutionSummary {
 
     pub(crate) const fn memory_scheduler_dispatches(&self) -> u64 {
         self.memory_scheduler_dispatches
+    }
+
+    pub(crate) fn compute_unit_activity(&self) -> &[Rem6GpuComputeUnitActivity] {
+        &self.compute_unit_activity
     }
 }
 
@@ -776,7 +839,10 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
         .map_err(execute_error)?;
     let trace = MemoryTrace::new();
     let memory_responses = Arc::new(Mutex::new(Vec::new()));
-    let accesses = gpu.snapshot().coalesced_memory_accesses().to_vec();
+    let snapshot = gpu.snapshot();
+    let compute_unit_activity =
+        gpu_compute_unit_activity(config.compute_units(), snapshot.completions())?;
+    let accesses = snapshot.coalesced_memory_accesses().to_vec();
     let memory_end = config.memory_end()?;
     let transactions = accesses
         .iter()
@@ -874,6 +940,7 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
         scheduler_dispatches: gpu_summary.dispatch_count() as u64,
         memory_scheduler_epochs: memory_scheduler_run.epoch_count() as u64,
         memory_scheduler_dispatches: memory_scheduler_run.dispatch_count() as u64,
+        compute_unit_activity,
     };
     let stats = gpu_run_stats_output(Rem6GpuRunStatsInputs {
         config: &config,
@@ -934,7 +1001,7 @@ impl Rem6GpuRunArtifact {
 impl Rem6GpuRunExecutionSummary {
     fn to_json(&self) -> String {
         format!(
-            "{{\"status\":\"completed\",\"final_tick\":{},\"workgroup_completions\":{},\"memory_accesses\":{},\"coalesced_memory_accesses\":{},\"global_memory_requests\":{},\"memory_responses\":{},\"scheduler_epochs\":{},\"scheduler_dispatches\":{},\"memory_scheduler_epochs\":{},\"memory_scheduler_dispatches\":{}}}",
+            "{{\"status\":\"completed\",\"final_tick\":{},\"workgroup_completions\":{},\"memory_accesses\":{},\"coalesced_memory_accesses\":{},\"global_memory_requests\":{},\"memory_responses\":{},\"scheduler_epochs\":{},\"scheduler_dispatches\":{},\"memory_scheduler_epochs\":{},\"memory_scheduler_dispatches\":{},\"compute_unit_activity\":[{}]}}",
             self.final_tick,
             self.workgroup_completions,
             self.memory_accesses,
@@ -945,8 +1012,70 @@ impl Rem6GpuRunExecutionSummary {
             self.scheduler_dispatches,
             self.memory_scheduler_epochs,
             self.memory_scheduler_dispatches,
+            self.compute_unit_activity
+                .iter()
+                .map(Rem6GpuComputeUnitActivity::to_json)
+                .collect::<Vec<_>>()
+                .join(","),
         )
     }
+}
+
+fn gpu_compute_unit_activity(
+    compute_units: u32,
+    completions: &[GpuWorkgroupCompletion],
+) -> Result<Vec<Rem6GpuComputeUnitActivity>, Rem6CliError> {
+    let mut activity = (0..compute_units)
+        .map(Rem6GpuComputeUnitActivity::new)
+        .collect::<Vec<_>>();
+    let mut active_intervals = vec![Vec::new(); activity.len()];
+    for completion in completions {
+        let compute_unit = usize::try_from(completion.compute_unit())
+            .map_err(|_| execute_error("GPU compute unit index does not fit usize"))?;
+        let Some(activity) = activity.get_mut(compute_unit) else {
+            return Err(execute_error(format!(
+                "GPU completion used compute unit {} outside configured count {}",
+                completion.compute_unit(),
+                compute_units
+            )));
+        };
+        if completion.completed_at() < completion.started_at() {
+            return Err(execute_error("GPU completion ended before it started"));
+        }
+        activity.record_completion(completion);
+        active_intervals[compute_unit].push((completion.started_at(), completion.completed_at()));
+    }
+    for (activity, intervals) in activity.iter_mut().zip(active_intervals) {
+        activity.busy_cycles = merged_interval_cycles(intervals);
+    }
+    Ok(activity)
+}
+
+fn merged_interval_cycles(mut intervals: Vec<(u64, u64)>) -> u64 {
+    intervals.sort_unstable_by_key(|(start, end)| (*start, *end));
+    let mut merged_cycles = 0;
+    let mut current: Option<(u64, u64)> = None;
+    for (start, end) in intervals {
+        match current {
+            Some((current_start, current_end)) if start <= current_end => {
+                current = Some((current_start, current_end.max(end)));
+            }
+            Some((current_start, current_end)) => {
+                merged_cycles += current_end - current_start;
+                current = Some((start, end));
+            }
+            None => current = Some((start, end)),
+        }
+    }
+    if let Some((start, end)) = current {
+        merged_cycles += end - start;
+    }
+    merged_cycles
+}
+
+fn optional_tick_json(tick: Option<u64>) -> String {
+    tick.map(|tick| tick.to_string())
+        .unwrap_or_else(|| "null".to_string())
 }
 
 fn gpu_memory_request(

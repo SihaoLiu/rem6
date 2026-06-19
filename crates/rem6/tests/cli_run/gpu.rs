@@ -157,6 +157,119 @@ fn rem6_gpu_run_routes_recorded_store_to_direct_memory_and_dumps_result() {
 }
 
 #[test]
+fn rem6_gpu_run_reports_per_compute_unit_activity() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "5",
+            "--compute-units",
+            "2",
+            "--wave-slots-per-compute-unit",
+            "1",
+            "--workgroup-cycles",
+            "4",
+            "--global-load",
+            "0x3000:4:4:4",
+            "--memory-start",
+            "0x3000",
+            "--memory-size",
+            "64",
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"workgroup_completions\":5"));
+    assert!(stdout.contains(
+        "\"compute_unit_activity\":[{\"compute_unit\":0,\"workgroup_completions\":3,\"busy_cycles\":12"
+    ));
+    assert!(stdout.contains("{\"compute_unit\":1,\"workgroup_completions\":2,\"busy_cycles\":8"));
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu0.workgroup_completions",
+        "Count",
+        3,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu0.busy_cycles",
+        "Cycle",
+        12,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu1.workgroup_completions",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu1.busy_cycles",
+        "Cycle",
+        8,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_gpu_run_merges_overlapping_wave_slots_for_compute_unit_busy_cycles() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "2",
+            "--compute-units",
+            "1",
+            "--wave-slots-per-compute-unit",
+            "2",
+            "--workgroup-cycles",
+            "4",
+            "--global-load",
+            "0x3400:4:4:4",
+            "--memory-start",
+            "0x3400",
+            "--memory-size",
+            "64",
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains(
+        "\"compute_unit_activity\":[{\"compute_unit\":0,\"workgroup_completions\":2,\"busy_cycles\":4,\"first_started_at\":1,\"last_completed_at\":5"
+    ));
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu0.busy_cycles",
+        "Cycle",
+        4,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_gpu_run_accepts_toml_config_for_top_level_execution() {
     let temp_dir = unique_gpu_temp_dir("config");
     std::fs::create_dir_all(&temp_dir).unwrap();

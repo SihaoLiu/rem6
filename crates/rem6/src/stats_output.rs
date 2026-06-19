@@ -1007,6 +1007,23 @@ pub(super) fn gpu_run_stats_output(
         StatResetPolicy::Monotonic,
         inputs.execution.workgroup_completions(),
     )?;
+    for activity in inputs.execution.compute_unit_activity() {
+        let prefix = format!("sim.gpu_run.compute_unit.cu{}", activity.compute_unit());
+        increment_stat(
+            &mut stats,
+            &format!("{prefix}.workgroup_completions"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            activity.workgroup_completions(),
+        )?;
+        increment_stat(
+            &mut stats,
+            &format!("{prefix}.busy_cycles"),
+            "Cycle",
+            StatResetPolicy::Monotonic,
+            activity.busy_cycles(),
+        )?;
+    }
     increment_stat(
         &mut stats,
         "sim.gpu_run.memory_accesses",
