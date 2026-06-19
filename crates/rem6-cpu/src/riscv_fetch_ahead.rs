@@ -40,9 +40,6 @@ impl RiscvCore {
         let Ok(decoded) = RiscvInstruction::decode_with_length(raw) else {
             return None;
         };
-        if decoded.bytes() != 4 {
-            return None;
-        }
         let sequential_pc = Address::new(fetch.pc().get().wrapping_add(u64::from(decoded.bytes())));
 
         fetch_ahead_decision(
@@ -429,10 +426,18 @@ fn instruction_is_conditional_branch(instruction: RiscvInstruction) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::CpuFetchRecord;
+    use crate::{CpuCore, CpuFetchConfig, CpuFetchRecord, CpuId, CpuResetState};
     use rem6_kernel::PartitionId;
-    use rem6_memory::{AccessSize, AgentId, MemoryRequestId};
+    use rem6_memory::{AccessSize, AgentId, CacheLineLayout, MemoryRequestId};
     use rem6_transport::{MemoryRouteId, TransportEndpointId};
+
+    fn endpoint(name: &str) -> TransportEndpointId {
+        TransportEndpointId::new(name).unwrap()
+    }
+
+    fn layout() -> CacheLineLayout {
+        CacheLineLayout::new(16).unwrap()
+    }
 
     fn request(sequence: u64) -> MemoryRequestId {
         MemoryRequestId::new(AgentId::new(7), sequence)
@@ -451,6 +456,55 @@ mod tests {
             ),
             vec![0; 4],
         )
+    }
+
+    fn core_with_completed_fetch(data: Vec<u8>) -> RiscvCore {
+        let core = RiscvCore::new(
+            CpuCore::new(
+                CpuResetState::new(
+                    CpuId::new(0),
+                    PartitionId::new(0),
+                    AgentId::new(7),
+                    Address::new(0x8000),
+                ),
+                CpuFetchConfig::new(
+                    endpoint("cpu0.ifetch"),
+                    MemoryRouteId::new(0),
+                    layout(),
+                    AccessSize::new(4).unwrap(),
+                ),
+            )
+            .unwrap(),
+        );
+        core.core.state.lock().expect("cpu core lock").events.push(
+            crate::CpuFetchEvent::completed(
+                CpuFetchRecord::new(
+                    4,
+                    PartitionId::new(0),
+                    MemoryRouteId::new(0),
+                    endpoint("cpu0.ifetch"),
+                    request(0),
+                    Address::new(0x8000),
+                    AccessSize::new(4).unwrap(),
+                ),
+                data,
+            ),
+        );
+        core
+    }
+
+    #[test]
+    fn fetch_ahead_accepts_compressed_straight_line_instruction() {
+        let mut fetch_data = Vec::new();
+        fetch_data.extend_from_slice(&0x0001_u16.to_le_bytes());
+        fetch_data.extend_from_slice(&0x0000_0073_u32.to_le_bytes()[..2]);
+        let core = core_with_completed_fetch(fetch_data);
+
+        assert_eq!(
+            core.next_fetch_ahead_before_retire()
+                .map(RiscvFetchAheadDecision::pc),
+            Some(Address::new(0x8002))
+        );
     }
 
     #[test]

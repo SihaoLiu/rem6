@@ -201,7 +201,8 @@ state and retired training, directly issued completed 4-byte fetches occupying
 the in-order timing state before retire, normal `drive_next_action`, cluster,
 and data-translation drivers issuing a bounded fetch-ahead for completed
 straight-line 4-byte integer instructions and predictor-selected conditional
-branches before retire, branch fetch-ahead speculation history recorded and
+branches before retire, compressed straight-line instructions reaching the same
+normal parallel-cluster fetch-ahead path, branch fetch-ahead speculation history recorded and
 resolved at retire, completed younger fetches consumed by in-order branch
 flushes, wrong-path branch fetch-ahead requests from fall-through and
 predicted-target paths squashed even when their memory response is still
@@ -241,7 +242,8 @@ conditional branch instructions, including trained taken-branch target fetch and
 branch speculation history commit across serial, translated, and parallel fetch
 paths, pending-fetch retire overlap for older completed straight-line
 instructions across serial, translated, and parallel-fetch drivers, pending
-fetch-ahead occupancy in the in-order stage snapshot immediately after issue and
+compressed straight-line fetch-ahead through the normal parallel-cluster driver,
+pending fetch-ahead occupancy in the in-order stage snapshot immediately after issue and
 before response completion, normal-driver branch retirement before wrong-path
 fetch-ahead response completion across core and parallel-cluster paths,
 including trained predicted-target to actual-fall-through repair in the core
@@ -971,7 +973,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/chi_protocol` | `rem6-coherence`, protocol crates, `rem6-cache` | 40% single-axis | CHI-like line, controller, bank, dirty peer sourcing, reservation, and Evict-hazard tests exist. | Add Ruby-scale CHI transactions, topology networks, directory races, and workload checks. |
 | `tests/gem5/chi_tlm_tests` | `rem6-proto`, future adapter crates, `rem6-coherence` | 19% scoped | A library-level co-simulation boundary can register TLM endpoints, validate transaction shape, hand off events, and checkpoint clean adapter state in self-tests. | Add runtime TLM bridge tests with coherence traffic. |
 | `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, text stats output, and TOML-driven nested run/stats/power artifact directory creation tests exist. | Add config-driven file layouts for full-system manifests and broader multi-artifact workloads. |
-| `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line and conditional-branch fetch-ahead, pending-fetch retire overlap for older completed straight-line fetches, issued fetch-ahead occupancy in in-order timing before response completion, branch speculation history repair/commit, completed younger fetch squash, per-retired-instruction in-order stage timing stats, top-level fetch/data wait stats, top-level in-order cycle-plan advance/block/flush stats, top-level branch redirect/misprediction/branch-prediction-flush stats, and O3 policies exist. | Add broader in-order stalls/squashes and ROB/LSQ-backed O3 execution tests. |
+| `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line and conditional-branch fetch-ahead including compressed straight-line fetch-ahead through the normal parallel-cluster path, pending-fetch retire overlap for older completed straight-line fetches, issued fetch-ahead occupancy in in-order timing before response completion, branch speculation history repair/commit, completed younger fetch squash, per-retired-instruction in-order stage timing stats, top-level fetch/data wait stats, top-level in-order cycle-plan advance/block/flush stats, top-level branch redirect/misprediction/branch-prediction-flush stats, and O3 policies exist. | Add broader in-order stalls/squashes and ROB/LSQ-backed O3 execution tests. |
 | `tests/gem5/dram_lowp` | `rem6-dram`, `rem6-power` | 40% single-axis | DRAM/NVM profile counters, low-power constants, and top-level LPDDR routed-request precharge-powerdown residency stats are surfaced. | Add broader executable low-power state-transition tests across profiles and power states. |
 | `tests/gem5/example_configs`, `tests/gem5/learning_gem5` | `rem6` CLI, `rem6-platform`, `rem6-workload` | 40% single-axis | CLI and TOML tests cover several execution and trace-replay paths, including a checked-in GUPS example config that runs without recompilation. | Add broader example suites spanning run, trace replay, resources, and full-system handoff. |
 | `tests/gem5/fdp_tests` | `rem6-cache` | 45% single-axis | Fetch-directed prefetcher state, errors, and cache-local queue/translation counters have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |
