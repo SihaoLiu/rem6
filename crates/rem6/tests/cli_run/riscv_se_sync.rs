@@ -36,6 +36,14 @@ static long linux_syscall1(long number, long arg0) {
     return a0;
 }
 
+static long linux_syscall2(long number, long arg0, long arg1) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a7) : "memory");
+    return a0;
+}
+
 static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
     register long a0 asm("a0") = arg0;
     register long a1 asm("a1") = arg1;
@@ -65,8 +73,17 @@ int main(void) {
     long write_status = fd >= 0 ? linux_syscall3(64, fd, (long)"sync-data\n", 10) : -99;
     long fsync_status = fd >= 0 ? linux_syscall1(82, fd) : -99;
     long fdatasync_status = fd >= 0 ? linux_syscall1(83, fd) : -99;
+    long sync_file_range_status = fd >= 0 ? linux_syscall4(84, fd, 0, 0, 0) : -99;
+    long bad_sync_file_range = linux_syscall4(84, 99, 0, 0, 0);
+    long invalid_sync_file_range = fd >= 0 ? linux_syscall4(84, fd, 0, 0, 8) : -99;
+    long negative_sync_file_range = fd >= 0 ? linux_syscall4(84, fd, -1, 0, 0) : -99;
+    int pipe_fds[2] = {-1, -1};
+    long pipe_status = linux_syscall2(59, (long)pipe_fds, 0);
+    long pipe_sync_file_range = pipe_status == 0 ? linux_syscall4(84, pipe_fds[0], 0, 0, 0) : -99;
     long syncfs_status = fd >= 0 ? linux_syscall1(267, fd) : -99;
     long close_status = fd >= 0 ? linux_syscall1(57, fd) : -99;
+    long pipe_close_status = pipe_status == 0 ?
+        (linux_syscall1(57, pipe_fds[0]) | linux_syscall1(57, pipe_fds[1])) : -99;
     long sync_status = linux_syscall0(81);
     long bad_fsync = linux_syscall1(82, 99);
     long bad_fdatasync = linux_syscall1(83, 99);
@@ -76,8 +93,15 @@ int main(void) {
              write_status == 10 &&
              fsync_status == 0 &&
              fdatasync_status == 0 &&
+             sync_file_range_status == 0 &&
+             bad_sync_file_range == -9 &&
+             invalid_sync_file_range == -22 &&
+             negative_sync_file_range == -22 &&
+             pipe_status == 0 &&
+             pipe_sync_file_range == -29 &&
              syncfs_status == 0 &&
              close_status == 0 &&
+             pipe_close_status == 0 &&
              sync_status == 0 &&
              bad_fsync == -9 &&
              bad_fdatasync == -9 &&

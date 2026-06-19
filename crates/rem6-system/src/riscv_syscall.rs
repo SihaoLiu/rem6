@@ -209,8 +209,8 @@ use stat::{
     RISCV_LINUX_STATFS, RISCV_LINUX_STATX, RISCV_LINUX_UTIMENSAT,
 };
 use sync::{
-    syscall_fd_sync, syscall_sync, RISCV_LINUX_FDATASYNC, RISCV_LINUX_FSYNC, RISCV_LINUX_SYNC,
-    RISCV_LINUX_SYNCFS,
+    syscall_fd_sync, syscall_sync, syscall_sync_file_range, RISCV_LINUX_FDATASYNC,
+    RISCV_LINUX_FSYNC, RISCV_LINUX_SYNC, RISCV_LINUX_SYNCFS, RISCV_LINUX_SYNC_FILE_RANGE,
 };
 use sysinfo::{syscall_sysinfo, RISCV_LINUX_SYSINFO};
 pub use unknown::RiscvUnknownSyscallRecord;
@@ -1495,6 +1495,9 @@ impl RiscvSyscallTable {
                     value: syscall_fd_sync(request.argument(0), state),
                 })
             }
+            RISCV_LINUX_SYNC_FILE_RANGE => Some(RiscvSyscallOutcome::Return {
+                value: syscall_sync_file_range(request, state),
+            }),
             RISCV_LINUX_GETRANDOM => {
                 let flags = request.argument(2);
                 if invalid_getrandom_flags(flags) {
