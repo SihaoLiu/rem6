@@ -361,7 +361,7 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
                     && instruction.stage() == redirect.resolved_stage()
             })
         });
-        let record = if active_prediction.is_some() {
+        let mut record = if active_prediction.is_some() {
             state
                 .in_order_pipeline
                 .try_advance_cycle_recorded_with_prediction(active_prediction)
@@ -381,8 +381,11 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
                 .map_err(RiscvCpuError::InOrderPipeline)?;
         }
         if record_retires_sequence(&record, sequence) {
-            return Ok(record.with_stall_cycle_count(wait_cycles));
+            record = record.with_stall_cycle_count(wait_cycles);
+            state.in_order_pipeline_cycle_records.push(record.clone());
+            return Ok(record);
         }
+        state.in_order_pipeline_cycle_records.push(record);
     }
 
     unreachable!("default in-order pipeline retires an instruction within its stage count")

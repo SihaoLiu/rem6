@@ -300,6 +300,12 @@ fn rem6_run_stats_include_issued_fetch_ahead_before_response() {
     assert!(stdout.contains("\"status\":\"stopped_at_tick_limit\""));
     assert_eq!(json_u64_field(&stdout, "\"committed_instructions\":"), 1);
     assert_eq!(json_u64_field(&stdout, "\"in_flight\":"), 1);
+    let advanced = json_u64_field(&stdout, "\"advanced\":");
+    let retired = json_u64_field(&stdout, "\"retired\":");
+    assert!(
+        advanced > retired,
+        "pipeline advance history should include non-retire cycles: {stdout}"
+    );
     assert_stat_greater_than(
         &stdout,
         "sim.cpu0.pipeline.in_order.cycles",
@@ -312,6 +318,13 @@ fn rem6_run_stats_include_issued_fetch_ahead_before_response() {
         "sim.cpu0.pipeline.in_order.retired",
         "Count",
         1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.advanced",
+        "Count",
+        advanced,
         "monotonic",
     );
     assert_stat(

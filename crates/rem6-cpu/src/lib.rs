@@ -835,10 +835,13 @@ impl RiscvCore {
         &self,
         snapshot: InOrderPipelineSnapshot,
     ) -> Result<(), InOrderPipelineError> {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .in_order_pipeline = InOrderPipelineState::restore(snapshot)?;
+        let restored = InOrderPipelineState::restore(snapshot)?;
+        let restored_cycle = restored.snapshot().cycle();
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.in_order_pipeline = restored;
+        state
+            .in_order_pipeline_cycle_records
+            .retain(|record| record.cycle() < restored_cycle);
         Ok(())
     }
 
@@ -1036,6 +1039,14 @@ impl RiscvCore {
             .snapshot()
     }
 
+    pub fn in_order_pipeline_cycle_records(&self) -> Vec<InOrderPipelineCycleRecord> {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .in_order_pipeline_cycle_records
+            .clone()
+    }
+
     pub(crate) fn invalidate_load_reservation_if_overlaps(
         &self,
         address: Address,
@@ -1100,10 +1111,13 @@ fn sync_in_order_fetch_state(
     fetches.sort_by_key(|event| event.request_id().sequence());
 
     for fetch in fetches {
-        state
+        if let Some(record) = state
             .in_order_pipeline
-            .enqueue_fetch(fetch.request_id().sequence())
-            .map_err(RiscvCpuError::InOrderPipeline)?;
+            .enqueue_fetch_recorded(fetch.request_id().sequence())
+            .map_err(RiscvCpuError::InOrderPipeline)?
+        {
+            state.in_order_pipeline_cycle_records.push(record);
+        }
     }
     Ok(())
 }
@@ -1153,6 +1167,7 @@ struct RiscvCoreState {
     gshare_branch_predictor: GShareBranchPredictor,
     tournament_branch_predictor: TournamentBranchPredictor,
     in_order_pipeline: InOrderPipelineState,
+    in_order_pipeline_cycle_records: Vec<InOrderPipelineCycleRecord>,
     events: Vec<RiscvCpuExecutionEvent>,
     data_events: Vec<RiscvDataAccessEvent>,
     pma: RiscvPmaTable,
@@ -1202,6 +1217,7 @@ impl RiscvCoreState {
             in_order_pipeline: InOrderPipelineState::new(
                 riscv_in_order_config::default_riscv_in_order_pipeline_config(),
             ),
+            in_order_pipeline_cycle_records: Vec::new(),
             events: Vec::new(),
             data_events: Vec::new(),
             pma: RiscvPmaTable::new(),

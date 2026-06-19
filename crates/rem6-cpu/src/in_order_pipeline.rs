@@ -1001,22 +1001,31 @@ impl InOrderPipelineState {
     }
 
     pub fn enqueue_fetch(&mut self, sequence: u64) -> Result<(), InOrderPipelineError> {
+        self.enqueue_fetch_recorded(sequence).map(|_| ())
+    }
+
+    pub fn enqueue_fetch_recorded(
+        &mut self,
+        sequence: u64,
+    ) -> Result<Option<InOrderPipelineCycleRecord>, InOrderPipelineError> {
         if self.contains_sequence(sequence) {
-            return Ok(());
+            return Ok(None);
         }
         let commit_busy = self
             .in_flight
             .iter()
             .any(|instruction| instruction.stage() == InOrderPipelineStage::Commit);
-        if !self.in_flight.is_empty() && !commit_busy {
-            self.try_advance_cycle()?;
-        }
+        let record = if !self.in_flight.is_empty() && !commit_busy {
+            Some(self.try_advance_cycle_recorded()?)
+        } else {
+            None
+        };
         self.in_flight.push(InOrderPipelineInstruction::new(
             sequence,
             InOrderPipelineStage::Fetch1,
         ));
         self.in_flight = canonical_in_flight(self.in_flight.iter().copied())?;
-        Ok(())
+        Ok(record)
     }
 
     pub fn plan_cycle(&self) -> InOrderPipelinePlan {

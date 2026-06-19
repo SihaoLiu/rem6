@@ -330,6 +330,39 @@ fn riscv_retired_instruction_records_in_order_pipeline_cycle() {
 }
 
 #[test]
+fn riscv_pipeline_snapshot_restore_discards_later_cycle_history() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let raw = i_type(5, 0, 0x0, 1, 0x13);
+    let core = RiscvCore::new(core(route, 0x8000));
+    let snapshot = core.in_order_pipeline_snapshot();
+
+    fetch_one(&core, loaded_store(0x8000, raw), &mut scheduler, &transport);
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert!(event.in_order_pipeline_cycle().is_some());
+    assert!(!core.in_order_pipeline_cycle_records().is_empty());
+
+    core.restore_in_order_pipeline_snapshot(snapshot).unwrap();
+
+    assert_eq!(core.in_order_pipeline_snapshot().cycle(), 0);
+    assert!(core.in_order_pipeline_cycle_records().is_empty());
+}
+
+#[test]
 fn riscv_completed_fetches_overlap_in_order_pipeline_before_retire() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
     let mut transport = MemoryTransport::new();

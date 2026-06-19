@@ -2537,6 +2537,20 @@ fn riscv_core_driver_retires_completed_fetch_while_fetch_ahead_is_pending() {
             (1, InOrderPipelineStage::Fetch1)
         ]
     );
+    let records = core.in_order_pipeline_cycle_records();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].cycle(), 0);
+    assert_eq!(records[0].summary().advanced_count(), 1);
+    assert_eq!(records[0].summary().retired_count(), 0);
+    assert_eq!(
+        records[0]
+            .after()
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![(0, InOrderPipelineStage::Fetch2)]
+    );
 
     let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
     let RiscvCoreDriveAction::InstructionExecuted(first) = action else {
@@ -2559,6 +2573,25 @@ fn riscv_core_driver_retires_completed_fetch_while_fetch_ahead_is_pending() {
     );
     assert_eq!(core.read_register(reg(1)), 7);
     assert_eq!(core.pc(), Address::new(0x8004));
+    let records = core.in_order_pipeline_cycle_records();
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.cycle())
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2, 3, 4]
+    );
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.summary().retired_count())
+            .sum::<usize>(),
+        1
+    );
+    assert_eq!(
+        records.last().unwrap().cycle(),
+        first.in_order_pipeline_cycle().unwrap().cycle()
+    );
 
     scheduler.run_until_idle_conservative();
 
