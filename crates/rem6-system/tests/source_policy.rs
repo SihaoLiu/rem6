@@ -145,6 +145,28 @@ fn host_execution_mode_checkpoint_lives_in_focused_module() {
     }
 }
 
+#[test]
+fn riscv_syscall_table_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root_rs = fs::read_to_string(crate_dir.join("src/riscv_syscall.rs")).unwrap();
+    let table_rs = crate_dir.join("src/riscv_syscall/table.rs");
+
+    assert!(
+        table_rs.exists(),
+        "RISC-V syscall dispatch table belongs in src/riscv_syscall/table.rs"
+    );
+    for anchor in [
+        "pub struct RiscvSyscallTable",
+        "impl RiscvSyscallTable",
+        "fn unsupported_syscall_outcome(",
+    ] {
+        assert!(
+            !root_rs.contains(anchor),
+            "src/riscv_syscall.rs should delegate {anchor} to a focused dispatch-table module"
+        );
+    }
+}
+
 fn rust_source_files(root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     collect_rust_source_files(root, &mut paths);
