@@ -175,9 +175,9 @@ use pipe::{
 };
 use poll::{syscall_ppoll, syscall_pselect6, RISCV_LINUX_PPOLL, RISCV_LINUX_PSELECT6};
 use process::{
-    syscall_getpgid, syscall_getsid, syscall_personality, syscall_prctl, syscall_setpgid,
-    syscall_setsid, RISCV_LINUX_GETPGID, RISCV_LINUX_GETSID, RISCV_LINUX_PERSONALITY,
-    RISCV_LINUX_PRCTL, RISCV_LINUX_SETPGID, RISCV_LINUX_SETSID,
+    syscall_execve_error_path, syscall_getpgid, syscall_getsid, syscall_personality, syscall_prctl,
+    syscall_setpgid, syscall_setsid, RISCV_LINUX_EXECVE, RISCV_LINUX_GETPGID, RISCV_LINUX_GETSID,
+    RISCV_LINUX_PERSONALITY, RISCV_LINUX_PRCTL, RISCV_LINUX_SETPGID, RISCV_LINUX_SETSID,
 };
 use random::{invalid_getrandom_flags, syscall_getrandom, RISCV_LINUX_GETRANDOM};
 use readv::{syscall_preadv, syscall_readv, RISCV_LINUX_PREADV, RISCV_LINUX_READV};
@@ -1547,6 +1547,12 @@ impl RiscvSyscallTable {
                 syscall_prctl(request, state, guest_memory_reader, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
+            RISCV_LINUX_EXECVE => guest_memory_reader.map(|guest_memory| {
+                match syscall_execve_error_path(request, state, guest_memory) {
+                    Some(value) => RiscvSyscallOutcome::Return { value },
+                    None => unsupported_syscall_outcome(request, state, tick),
+                }
+            }),
             RISCV_LINUX_UNAME => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: write_riscv_linux_utsname(request.argument(0), guest_memory),

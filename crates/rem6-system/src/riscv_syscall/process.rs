@@ -1,9 +1,10 @@
 use crate::GuestProcessGroupId;
 
 use super::{
-    linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallRequest,
-    RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EPERM,
-    RISCV_LINUX_ESRCH,
+    linux_error, read_guest_c_string, RiscvGuestCStringError, RiscvGuestMemoryReader,
+    RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EFAULT,
+    RISCV_LINUX_EINVAL, RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT, RISCV_LINUX_EPERM,
+    RISCV_LINUX_ESRCH, RISCV_LINUX_PATH_MAX,
 };
 
 pub(super) const RISCV_LINUX_SETPGID: u64 = 154;
@@ -11,6 +12,7 @@ pub(super) const RISCV_LINUX_GETPGID: u64 = 155;
 pub(super) const RISCV_LINUX_GETSID: u64 = 156;
 pub(super) const RISCV_LINUX_SETSID: u64 = 157;
 pub(super) const RISCV_LINUX_PRCTL: u64 = 167;
+pub(super) const RISCV_LINUX_EXECVE: u64 = 221;
 pub(super) const RISCV_LINUX_PERSONALITY: u64 = 92;
 
 const RISCV_LINUX_PERSONALITY_QUERY: u32 = 0xffff_ffff;
@@ -64,6 +66,27 @@ pub(super) fn syscall_personality(
         state.set_personality(requested);
     }
     u64::from(previous)
+}
+
+pub(super) fn syscall_execve_error_path(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> Option<u64> {
+    let path = match read_guest_c_string(guest_memory, request.argument(0), RISCV_LINUX_PATH_MAX) {
+        Ok(path) => path,
+        Err(RiscvGuestCStringError::Fault) => return Some(linux_error(RISCV_LINUX_EFAULT)),
+        Err(RiscvGuestCStringError::TooLong) => {
+            return Some(linux_error(RISCV_LINUX_ENAMETOOLONG));
+        }
+    };
+    if path.is_empty() {
+        return Some(linux_error(RISCV_LINUX_ENOENT));
+    }
+    let Some(_path) = state.resolve_existing_guest_path(&path).ok().flatten() else {
+        return Some(linux_error(RISCV_LINUX_ENOENT));
+    };
+    None
 }
 
 pub(super) fn syscall_setpgid(request: RiscvSyscallRequest, state: &mut RiscvSyscallState) -> u64 {

@@ -1247,7 +1247,7 @@ impl Rem6PcCountTrackerSummary {
 }
 
 impl Rem6PcCountPairSummary {
-    fn to_json(&self) -> String {
+    fn to_json(self) -> String {
         format!("{{\"pc\":\"0x{:x}\",\"count\":{}}}", self.pc, self.count)
     }
 }
@@ -1257,6 +1257,7 @@ fn pc_count_pair_slice_to_json(pairs: &[Rem6PcCountPairSummary]) -> String {
         "[{}]",
         pairs
             .iter()
+            .copied()
             .map(Rem6PcCountPairSummary::to_json)
             .collect::<Vec<_>>()
             .join(",")

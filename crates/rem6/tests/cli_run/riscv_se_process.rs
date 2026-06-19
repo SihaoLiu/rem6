@@ -3,6 +3,61 @@ use std::{fs, process::Command};
 use crate::support::*;
 
 #[test]
+fn rem6_run_riscv_se_execve_missing_guest_path_returns_enoent() {
+    const PATH_OFFSET: usize = 0x80;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 10, 0x17),                           // auipc a0, 0
+        i_type(PATH_OFFSET as i32, 10, 0x0, 10, 0x13), // addi a0, a0, path
+        i_type(0, 0, 0x0, 11, 0x13),                   // addi a1, x0, 0
+        i_type(0, 0, 0x0, 12, 0x13),                   // addi a2, x0, 0
+        i_type(221, 0, 0x0, 17, 0x13),                 // addi a7, x0, execve
+        0x0000_0073,                                   // ecall
+        i_type(-2, 0, 0x0, 5, 0x13),                   // addi x5, x0, -ENOENT
+        b_type(16, 5, 10, 0x1),                        // bne a0, x5, fail
+        i_type(75, 0, 0x0, 10, 0x13),                  // addi a0, x0, 75
+        i_type(93, 0, 0x0, 17, 0x13),                  // addi a7, x0, exit
+        0x0000_0073,                                   // ecall
+        i_type(76, 0, 0x0, 10, 0x13),                  // addi a0, x0, 76
+        i_type(93, 0, 0x0, 17, 0x13),                  // addi a7, x0, exit
+        0x0000_0073,                                   // ecall
+    ]);
+    program.resize(PATH_OFFSET, 0);
+    program.extend_from_slice(b"/missing\0");
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-execve-missing-path", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":75"));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 75, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_process_group_session_syscalls() {
     let program = riscv64_program(&[
         i_type(172, 0, 0x0, 17, 0x13), // addi a7, x0, getpid

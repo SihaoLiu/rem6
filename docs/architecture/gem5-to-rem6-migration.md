@@ -382,6 +382,9 @@ tool-detected, and broad workload coverage is not present.
   `capget`/`capset` zero-capability, version-probe, pid, null-pointer, and
   nonzero-set error paths are covered by syscall table tests and a no-libc
   static CLI/qemu smoke.
+  `execve` missing-path and guest-path fault error slices are covered by
+  syscall table tests, and missing-path `execve` is covered by a direct
+  `rem6 run --riscv-se` ecall smoke without unknown-syscall diagnostics.
 - [x] Unknown syscall and unsupported signal-frame restore (`rt_sigreturn`) return `ENOSYS` and record typed diagnostics.
 - [x] Static no-libc and newlib smoke binaries can be generated and compared with qemu when tools exist; shared CLI smoke support detects RISC-V tools from `PATH` and the local module toolchain path, tool-detected newlib directory-open and `O_NOCTTY`/`O_NOFOLLOW` coverage runs through the legacy `open` syscall and registered guest files, while `/proc/self/exe` readlink, `/proc/self/maps` open/read after raw `mmap`, and pipe roundtrip coverage run through direct ecalls.
 - [x] Linux at-family hard-link, `symlinkat`, `renameat`, `renameat2` flags=0, unlink, `mkdirat`, `unlinkat` with `AT_REMOVEDIR`, and registered-directory `getdents64` syscalls mutate or expose registered guest files and directories and have raw smoke evidence. Current qemu-riscv64 reports `ENOSYS` for raw `renameat`, so that smoke test records the qemu boundary and verifies rem6 registered-file rename behavior directly.
@@ -513,7 +516,9 @@ supervisor mode with `a0=hartid` and `a1=dtb_addr`, keeps secondary harts
 stopped before HSM start, and routes replay SBI base ecalls through firmware;
 typed
 unknown-syscall records, including raw `rt_sigreturn` CLI records instead of
-silent success; static smoke coverage; a static newlib
+silent success; `execve` missing-path/fault error returns without
+unknown-syscall record pollution and direct ecall CLI coverage for the
+missing-path case; static smoke coverage; a static newlib
 `fopen("w+")` create, write, seek, readback, and exit-code roundtrip; and a
 static newlib program that reads `/proc/self/exe` through a direct
 `readlinkat` ecall and compares the exit path with qemu; a static raw program
