@@ -11,6 +11,7 @@ pub(super) const RISCV_LINUX_CLOCK_GETTIME: u64 = 113;
 pub(super) const RISCV_LINUX_CLOCK_GETRES: u64 = 114;
 pub(super) const RISCV_LINUX_TIMES: u64 = 153;
 pub(super) const RISCV_LINUX_GETTIMEOFDAY: u64 = 169;
+pub(super) const RISCV_NEWLIB_LEGACY_TIME: u64 = 1062;
 const RISCV_LINUX_ITIMER_REAL: u64 = 0;
 const RISCV_LINUX_ITIMER_VIRTUAL: u64 = 1;
 const RISCV_LINUX_ITIMER_PROF: u64 = 2;
@@ -175,6 +176,25 @@ pub(super) fn syscall_gettimeofday(
     Some(0)
 }
 
+pub(super) fn syscall_legacy_time(
+    request: RiscvSyscallRequest,
+    tick: Tick,
+    guest_memory: Option<&RiscvGuestMemoryWriter>,
+) -> Option<RiscvSyscallOutcome> {
+    let seconds = tick / RISCV_LINUX_NANOSECONDS_PER_SECOND;
+    let time_address = request.argument(0);
+    if time_address == 0 {
+        return Some(RiscvSyscallOutcome::Return { value: seconds });
+    }
+    let guest_memory = guest_memory?;
+    let value = if write_riscv_linux_bytes(time_address, &seconds.to_le_bytes(), guest_memory) {
+        seconds
+    } else {
+        linux_error(RISCV_LINUX_EFAULT)
+    };
+    Some(RiscvSyscallOutcome::Return { value })
+}
+
 const fn riscv_linux_clock_ticks(tick: Tick) -> u64 {
     tick / RISCV_LINUX_NANOSECONDS_PER_CLOCK_TICK
 }
@@ -200,6 +220,7 @@ pub(super) fn syscall_clock(
     guest_memory: Option<&RiscvGuestMemoryWriter>,
 ) -> Option<RiscvSyscallOutcome> {
     match request.number() {
+        RISCV_NEWLIB_LEGACY_TIME => syscall_legacy_time(request, tick, guest_memory),
         RISCV_LINUX_TIMES => syscall_times(request, tick, guest_memory),
         RISCV_LINUX_GETTIMEOFDAY => {
             syscall_gettimeofday(request.argument(0), request.argument(1), tick, guest_memory)

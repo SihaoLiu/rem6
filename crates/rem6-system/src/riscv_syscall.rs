@@ -1,13 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-#[cfg(test)]
-use rem6_boot::BootImage;
-use rem6_kernel::Tick;
-
 use crate::{
     GuestFd, GuestFdCloseRecord, GuestFdDup2Record, GuestFdEntry, GuestFdError, GuestFdTable,
     GuestFileDescription, GuestFileDescriptionId, GuestFutexTable, GuestWaitQueue,
 };
+#[cfg(test)]
+use rem6_boot::BootImage;
+use rem6_kernel::Tick;
 
 mod advisory;
 mod brk;
@@ -1532,7 +1531,8 @@ impl RiscvSyscallTable {
             RISCV_LINUX_TIMES
             | RISCV_LINUX_GETTIMEOFDAY
             | RISCV_LINUX_CLOCK_GETTIME
-            | RISCV_LINUX_CLOCK_GETRES => syscall_clock(request, tick, guest_memory_writer),
+            | RISCV_LINUX_CLOCK_GETRES
+            | clock::RISCV_NEWLIB_LEGACY_TIME => syscall_clock(request, tick, guest_memory_writer),
             RISCV_LINUX_GETITIMER => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_getitimer(request, state, guest_memory),

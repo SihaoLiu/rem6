@@ -204,6 +204,128 @@ int main(void) {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_legacy_time_with_qemu_probe() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!("skipping static RISC-V SE legacy time smoke: riscv64-unknown-elf-gcc not found");
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE legacy time smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-legacy-time");
+    let source = workspace.join("raw-legacy-time.c");
+    let binary = workspace.join("raw-legacy-time");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+
+static long linux_syscall1(long number, long arg0) {
+    register long a0 asm("a0") = arg0;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    long slot = -1;
+    long ret = linux_syscall1(1062, (long)&slot);
+    long null_ret = linux_syscall1(1062, 0);
+    long fault = linux_syscall1(1062, 1);
+    int ok = ret == 0 && slot == 0 && null_ret == 0 && fault == -14;
+
+    printf("raw-time:%ld:%ld:%ld:%ld:%d\n", ret, slot, null_ret, fault, ok);
+    return ok ? 50 : 82;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    let qemu_stdout = String::from_utf8_lossy(&qemu_output.stdout);
+    let qemu_matches_rem6_zero =
+        qemu_output.status.code() == Some(50) && qemu_stdout == "raw-time:0:0:0:-14:1\n";
+    let qemu_reports_enosys =
+        qemu_output.status.code() == Some(82) && qemu_stdout == "raw-time:-38:-1:-38:-38:0\n";
+    if qemu_reports_enosys {
+        eprintln!("qemu-riscv64 reports ENOSYS for raw legacy time; checking rem6 SE coverage");
+    } else if !qemu_matches_rem6_zero {
+        let fields = qemu_stdout.trim_end().split(':').collect::<Vec<_>>();
+        assert_eq!(
+            fields.len(),
+            6,
+            "qemu stdout: {qemu_stdout}; qemu stderr: {}",
+            String::from_utf8_lossy(&qemu_output.stderr)
+        );
+        assert_eq!(fields[0], "raw-time");
+        let ret = fields[1].parse::<i64>().expect("ret field");
+        let slot = fields[2].parse::<i64>().expect("slot field");
+        let null_ret = fields[3].parse::<i64>().expect("null ret field");
+        let fault = fields[4].parse::<i64>().expect("fault field");
+        assert!(
+            ret >= 0 && slot == ret && null_ret >= ret && fault == -14,
+            "qemu stdout: {qemu_stdout}; qemu stderr: {}",
+            String::from_utf8_lossy(&qemu_output.stderr)
+        );
+        assert_eq!(
+            qemu_output.status.code(),
+            Some(82),
+            "qemu stdout: {}; qemu stderr: {}",
+            qemu_stdout,
+            String::from_utf8_lossy(&qemu_output.stderr)
+        );
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "200000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":50"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"raw-time:0:0:0:-14:1\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_gettimeofday_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(

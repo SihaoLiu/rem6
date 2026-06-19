@@ -4,6 +4,7 @@ const RISCV_LINUX_CLOCK_GETRES_FOR_TEST: u64 = 114;
 const RISCV_LINUX_GETTIMEOFDAY_FOR_TEST: u64 = 169;
 const RISCV_LINUX_GETITIMER_FOR_TEST: u64 = 102;
 const RISCV_LINUX_SETITIMER_FOR_TEST: u64 = 103;
+const RISCV_NEWLIB_LEGACY_TIME_FOR_TEST: u64 = 1062;
 const RISCV_LINUX_ITIMER_REAL_FOR_TEST: u64 = 0;
 const RISCV_LINUX_ITIMER_VIRTUAL_FOR_TEST: u64 = 1;
 const RISCV_LINUX_ITIMER_PROF_FOR_TEST: u64 = 2;
@@ -145,6 +146,74 @@ fn linux_table_gettimeofday_accepts_null_timeval_without_writer_when_timezone_is
             None,
         ),
         Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_legacy_time_returns_seconds_and_writes_optional_time_t() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x7ffa,
+                RISCV_NEWLIB_LEGACY_TIME_FOR_TEST,
+                [0x9000, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            3_000_000_123,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    let bytes = collect_guest_writes(&writes.lock().unwrap(), 0x9000, 8);
+    assert_eq!(read_le_u64(&bytes, 0), 3);
+    writes.lock().unwrap().clear();
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x7ffb,
+                RISCV_NEWLIB_LEGACY_TIME_FOR_TEST,
+                [0, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            4_000_000_456,
+            None,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 4 })
+    );
+    assert!(writes.lock().unwrap().is_empty());
+
+    let faulting_writer = RiscvGuestMemoryWriter::new(|_, _| false);
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x7ffc,
+                RISCV_NEWLIB_LEGACY_TIME_FOR_TEST,
+                [0x9008, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            5_000_000_789,
+            None,
+            Some(&faulting_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
     );
     assert!(state.unknown_syscalls().is_empty());
 }
