@@ -444,99 +444,52 @@ fn rem6_gpu_run_writes_nomali_adapter_output() {
         serde_json::from_str(&std::fs::read_to_string(&nomali_path).unwrap()).unwrap();
     std::fs::remove_dir_all(&temp_dir).unwrap();
 
-    assert_eq!(
-        adapter.get("schema").and_then(Value::as_str),
-        Some("rem6.nomali.gpu-adapter.v1")
-    );
-    assert_eq!(
-        adapter.pointer("/gpu/type").and_then(Value::as_str),
-        Some("T760")
-    );
-    assert_eq!(
-        adapter.pointer("/gpu/api_version").and_then(Value::as_u64),
-        Some(0)
-    );
-    assert_eq!(
-        adapter
-            .pointer("/gpu/register_window_bytes")
-            .and_then(Value::as_u64),
-        Some(0x4000)
-    );
-    assert_eq!(
-        adapter.pointer("/pio/reset_count").and_then(Value::as_u64),
-        Some(1)
-    );
-    assert_eq!(
-        adapter
-            .pointer("/pio/checkpoint/word_count")
-            .and_then(Value::as_u64),
-        Some(4096)
-    );
-    assert_eq!(
-        adapter
-            .pointer("/pio/register_reads/0/name")
-            .and_then(Value::as_str),
-        Some("gpu_id")
-    );
-    assert_eq!(
-        adapter
-            .pointer("/pio/register_reads/0/offset")
-            .and_then(Value::as_str),
-        Some("0x000")
-    );
-    assert_eq!(
-        adapter
-            .pointer("/pio/register_reads/0/value")
-            .and_then(Value::as_str),
-        Some("0x07500000")
-    );
+    let string_fields = [
+        ("/schema", "rem6.nomali.gpu-adapter.v1"),
+        ("/gpu/type", "T760"),
+        ("/pio/command_writes/0/name", "gpu_command"),
+        ("/pio/command_writes/0/offset", "0x030"),
+        ("/pio/command_writes/0/value", "0x00000001"),
+        ("/pio/command_writes/0/command", "soft_reset"),
+        ("/pio/command_writes/0/effect", "reset_completed_interrupt"),
+        ("/pio/irq/rawstat", "0x00000100"),
+        ("/pio/irq/mask", "0x00000100"),
+        ("/pio/irq/status", "0x00000100"),
+        ("/pio/register_reads/0/name", "gpu_id"),
+        ("/pio/register_reads/0/offset", "0x000"),
+        ("/pio/register_reads/0/value", "0x07500000"),
+        ("/pio/register_reads/3/name", "thread_features"),
+        ("/pio/register_reads/3/value", "0x0a040400"),
+        ("/pio/register_reads/5/name", "shader_present_hi"),
+        ("/pio/register_reads/5/value", "0x00000000"),
+    ];
+    for (pointer, expected) in string_fields {
+        assert_eq!(
+            adapter.pointer(pointer).and_then(Value::as_str),
+            Some(expected)
+        );
+    }
+    let numeric_fields = [
+        ("/gpu/api_version", 0),
+        ("/gpu/register_window_bytes", 0x4000),
+        ("/pio/reset_count", 2),
+        ("/pio/checkpoint/word_count", 4096),
+        ("/interface/interrupts/job/nomali_int", 1),
+        ("/execution/workgroup_completions", 2),
+        ("/execution/global_memory_reads", 2),
+        ("/execution/global_memory_writes", 2),
+    ];
+    for (pointer, expected) in numeric_fields {
+        assert_eq!(
+            adapter.pointer(pointer).and_then(Value::as_u64),
+            Some(expected)
+        );
+    }
     assert_eq!(
         adapter
-            .pointer("/pio/register_reads/3/name")
-            .and_then(Value::as_str),
-        Some("thread_features")
-    );
-    assert_eq!(
-        adapter
-            .pointer("/pio/register_reads/3/value")
-            .and_then(Value::as_str),
-        Some("0x0a040400")
-    );
-    assert_eq!(
-        adapter
-            .pointer("/pio/register_reads/5/name")
-            .and_then(Value::as_str),
-        Some("shader_present_hi")
-    );
-    assert_eq!(
-        adapter
-            .pointer("/pio/register_reads/5/value")
-            .and_then(Value::as_str),
-        Some("0x00000000")
-    );
-    assert_eq!(
-        adapter
-            .pointer("/interface/interrupts/job/nomali_int")
-            .and_then(Value::as_u64),
-        Some(1)
-    );
-    assert_eq!(
-        adapter
-            .pointer("/execution/workgroup_completions")
-            .and_then(Value::as_u64),
-        Some(2)
-    );
-    assert_eq!(
-        adapter
-            .pointer("/execution/global_memory_reads")
-            .and_then(Value::as_u64),
-        Some(2)
-    );
-    assert_eq!(
-        adapter
-            .pointer("/execution/global_memory_writes")
-            .and_then(Value::as_u64),
-        Some(2)
+            .pointer("/pio/irq/asserted")
+            .and_then(Value::as_bool),
+        Some(true)
     );
 }
 

@@ -19,6 +19,11 @@ const MEM_FEATURES: u32 = 0x010;
 const MMU_FEATURES: u32 = 0x014;
 const AS_PRESENT: u32 = 0x018;
 const JS_PRESENT: u32 = 0x01c;
+const GPU_IRQ_RAWSTAT: u32 = 0x020;
+const GPU_IRQ_CLEAR: u32 = 0x024;
+const GPU_IRQ_MASK: u32 = 0x028;
+const GPU_IRQ_STATUS: u32 = 0x02c;
+const GPU_COMMAND: u32 = 0x030;
 const THREAD_MAX_THREADS: u32 = 0x0a0;
 const THREAD_MAX_WORKGROUP_SIZE: u32 = 0x0a4;
 const THREAD_MAX_BARRIER_SIZE: u32 = 0x0a8;
@@ -35,6 +40,10 @@ const TILER_PRESENT_LO: u32 = 0x110;
 const TILER_PRESENT_HI: u32 = 0x114;
 const L2_PRESENT_LO: u32 = 0x120;
 const L2_PRESENT_HI: u32 = 0x124;
+
+const RESET_COMPLETED: u32 = 1 << 8;
+const GPU_COMMAND_SOFT_RESET: u32 = 0x01;
+const GPU_COMMAND_HARD_RESET: u32 = 0x02;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct NoMaliRegister {
@@ -171,9 +180,19 @@ const NOMALI_OBSERVED_PIO_READS: &[(&str, u32)] = &[
 ];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct NoMaliCommandWrite {
+    name: &'static str,
+    offset: u32,
+    value: u32,
+    command: &'static str,
+    effect: &'static str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct NoMaliT760RegisterFile {
     registers: Vec<u32>,
     reset_count: u64,
+    command_writes: Vec<NoMaliCommandWrite>,
 }
 
 impl NoMaliT760RegisterFile {
@@ -181,6 +200,7 @@ impl NoMaliT760RegisterFile {
         Self {
             registers: vec![0; NOMALI_REGISTER_WINDOW_WORDS],
             reset_count: 0,
+            command_writes: Vec::new(),
         }
     }
 
@@ -198,6 +218,69 @@ impl NoMaliT760RegisterFile {
 
     fn write_raw(&mut self, offset: u32, value: u32) {
         self.registers[(offset / 4) as usize] = value;
+    }
+
+    fn write_reg(&mut self, offset: u32, value: u32) {
+        match offset {
+            GPU_IRQ_RAWSTAT => self.raise_interrupt(value),
+            GPU_IRQ_CLEAR => self.clear_interrupt(value),
+            GPU_IRQ_MASK => self.write_raw(offset, value),
+            GPU_IRQ_STATUS => {}
+            GPU_COMMAND => self.gpu_command(value),
+            _ => self.write_raw(offset, value),
+        }
+    }
+
+    fn gpu_command(&mut self, value: u32) {
+        match value {
+            GPU_COMMAND_SOFT_RESET => {
+                self.command_writes.push(NoMaliCommandWrite {
+                    name: "gpu_command",
+                    offset: GPU_COMMAND,
+                    value,
+                    command: "soft_reset",
+                    effect: "reset_completed_interrupt",
+                });
+                self.reset();
+                self.raise_interrupt(RESET_COMPLETED);
+            }
+            GPU_COMMAND_HARD_RESET => {
+                self.command_writes.push(NoMaliCommandWrite {
+                    name: "gpu_command",
+                    offset: GPU_COMMAND,
+                    value,
+                    command: "hard_reset",
+                    effect: "reset_completed_interrupt",
+                });
+                self.reset();
+                self.raise_interrupt(RESET_COMPLETED);
+            }
+            _ => {
+                self.command_writes.push(NoMaliCommandWrite {
+                    name: "gpu_command",
+                    offset: GPU_COMMAND,
+                    value,
+                    command: "unsupported",
+                    effect: "ignored",
+                });
+            }
+        }
+    }
+
+    fn raise_interrupt(&mut self, flags: u32) {
+        self.write_raw(GPU_IRQ_RAWSTAT, self.read_raw(GPU_IRQ_RAWSTAT) | flags);
+    }
+
+    fn clear_interrupt(&mut self, flags: u32) {
+        self.write_raw(GPU_IRQ_RAWSTAT, self.read_raw(GPU_IRQ_RAWSTAT) & !flags);
+    }
+
+    fn irq_status(&self) -> u32 {
+        self.read_raw(GPU_IRQ_RAWSTAT) & self.read_raw(GPU_IRQ_MASK)
+    }
+
+    fn irq_asserted(&self) -> bool {
+        self.irq_status() != 0
     }
 
     fn checkpoint_word_count(&self) -> usize {
@@ -251,6 +334,8 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
         .join(",");
     let mut pio = NoMaliT760RegisterFile::new();
     pio.reset();
+    pio.write_reg(GPU_COMMAND, GPU_COMMAND_SOFT_RESET);
+    pio.write_reg(GPU_IRQ_MASK, RESET_COMPLETED);
     let contents = format!(
         "{{\"schema\":\"rem6.nomali.gpu-adapter.v1\",\"source_schema\":\"rem6.cli.gpu-run.v1\",\"scope\":\"gpu-run-execution-summary-adapter\",\"gpu\":{},\"interface\":{},\"pio\":{},\"execution\":{{\"status\":\"completed\",\"final_tick\":{},\"compute_units\":{},\"workgroup_completions\":{},\"coalesced_memory_accesses\":{},\"global_memory_reads\":{},\"global_memory_writes\":{},\"memory_read_callback_observations\":{},\"memory_write_callback_observations\":{},\"job_event_observations\":{},\"compute_unit_activity\":[{}]}}}}\n",
         nomali_gpu_json(&pio),
@@ -314,6 +399,21 @@ fn nomali_t760_config_registers_json(pio: &NoMaliT760RegisterFile) -> String {
 }
 
 fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
+    let command_writes = pio
+        .command_writes
+        .iter()
+        .map(|write| {
+            format!(
+                "{{\"name\":\"{}\",\"offset\":\"0x{:03x}\",\"value\":\"{}\",\"command\":\"{}\",\"effect\":\"{}\"}}",
+                write.name,
+                write.offset,
+                register_hex(write.value),
+                write.command,
+                write.effect,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     let register_reads = NOMALI_OBSERVED_PIO_READS
         .iter()
         .map(|(name, offset)| {
@@ -327,9 +427,14 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"register_window_bytes\":{},\"reset_count\":{},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}]}}",
+        "{{\"register_window_bytes\":{},\"reset_count\":{},\"command_writes\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}]}}",
         NOMALI_REGISTER_WINDOW_BYTES,
         pio.reset_count,
+        command_writes,
+        register_hex(pio.read_raw(GPU_IRQ_RAWSTAT)),
+        register_hex(pio.read_raw(GPU_IRQ_MASK)),
+        register_hex(pio.irq_status()),
+        pio.irq_asserted(),
         pio.checkpoint_word_count(),
         register_reads,
     )
