@@ -136,6 +136,216 @@ fn rem6_gpu_run_routes_coalesced_global_memory_through_cache_and_dram() {
 }
 
 #[test]
+fn rem6_gpu_run_data_cache_prefetcher_issues_tagged_next_line_prefetch() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "1",
+            "--compute-units",
+            "1",
+            "--global-load",
+            "0x4000:4:4:4",
+            "--memory-start",
+            "0x4000",
+            "--memory-size",
+            "128",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
+    let data_cache = artifact.get("data_cache").unwrap();
+    assert_eq!(
+        data_cache
+            .get("data_cache_prefetch_identified")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        data_cache
+            .get("data_cache_prefetch_issued")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        data_cache
+            .get("data_cache_prefetch_queue_enqueued")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        data_cache
+            .get("data_cache_prefetch_queue_issued")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        data_cache
+            .get("data_cache_prefetch_queue_dropped")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        data_cache.get("data_cache_runs").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.data_cache.prefetch.identified",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.data_cache.prefetch.issued",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.data_cache.prefetch.queue.enqueued",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.data_cache.prefetch.queue.issued",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_gpu_run_loads_data_cache_prefetcher_from_toml_config() {
+    let temp_dir = unique_gpu_temp_dir("prefetcher-toml");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let config_path = temp_dir.join("gpu.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+[gpu_run]
+workgroups = 1
+compute_units = 1
+memory_start = 16640
+memory_size = 128
+data_cache_protocol = "msi"
+data_cache_prefetcher = "tagged-next-line"
+max_tick = 80
+stats_format = "json"
+global_loads = ["0x4100:4:4:4"]
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["gpu-run", "--config"])
+        .arg(&config_path)
+        .output()
+        .unwrap();
+
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
+    let data_cache = artifact.get("data_cache").unwrap();
+    assert_eq!(
+        data_cache
+            .get("data_cache_prefetch_issued")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.data_cache.prefetch.issued",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_gpu_run_rejects_data_cache_prefetcher_without_data_cache_protocol() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "1",
+            "--global-load",
+            "0x4200:4:4:4",
+            "--memory-start",
+            "0x4200",
+            "--memory-size",
+            "128",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
+            "--max-tick",
+            "80",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--data-cache-prefetcher requires --data-cache-protocol"));
+}
+
+#[test]
+fn rem6_gpu_run_rejects_toml_data_cache_prefetcher_without_data_cache_protocol() {
+    let temp_dir = unique_gpu_temp_dir("prefetcher-toml-missing-protocol");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let config_path = temp_dir.join("gpu.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+[gpu_run]
+workgroups = 1
+memory_start = 17152
+memory_size = 128
+data_cache_prefetcher = "tagged-next-line"
+max_tick = 80
+global_loads = ["0x4300:4:4:4"]
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["gpu-run", "--config"])
+        .arg(&config_path)
+        .output()
+        .unwrap();
+
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--data-cache-prefetcher requires --data-cache-protocol"));
+}
+
+#[test]
 fn rem6_gpu_run_writes_power_analysis_output() {
     let temp_dir = unique_gpu_temp_dir("power-output");
     std::fs::create_dir_all(&temp_dir).unwrap();

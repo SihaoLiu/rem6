@@ -1,0 +1,166 @@
+use rem6_stats::{StatResetPolicy, StatsRegistry};
+
+use super::{increment_stat, CliDataCacheSummary, Rem6CliError};
+
+pub(super) fn emit_data_cache_summary_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    summary: &CliDataCacheSummary,
+) -> Result<(), Rem6CliError> {
+    increment_stat(
+        stats,
+        &format!("{prefix}.runs"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.runs,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.msi.runs"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.msi_runs,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.mesi.runs"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.mesi_runs,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.moesi.runs"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.moesi_runs,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.chi.runs"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.chi_runs,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.cpu_responses"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.cpu_responses,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.directory_decisions"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.directory_decisions,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.dram_accesses"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.dram_accesses,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.bank.accepted"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.bank_accepted,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.bank.immediate_hits"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.bank_immediate_hits,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.bank.scheduled_misses"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.bank_scheduled_misses,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.bank.coalesced_misses"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.bank_coalesced_misses,
+    )?;
+    Ok(())
+}
+
+pub(super) fn emit_data_cache_prefetch_summary_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    summary: &CliDataCacheSummary,
+) -> Result<(), Rem6CliError> {
+    increment_stat(
+        stats,
+        &format!("{prefix}.prefetch.identified"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_identified,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.prefetch.issued"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_issued,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.prefetch.queue.enqueued"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_queue_enqueued,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.prefetch.queue.issued"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_queue_issued,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.prefetch.queue.dropped"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_queue_dropped,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.prefetch.translation_queue.enqueued"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_translation_queue_enqueued,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.prefetch.translation_queue.issued"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_translation_queue_issued,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.prefetch.translation_queue.translated"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_translation_queue_translated,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.prefetch.translation_queue.dropped"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_translation_queue_dropped,
+    )?;
+    Ok(())
+}

@@ -3,8 +3,8 @@ use rem6_stats::{StatResetPolicy, StatsRegistry};
 use super::dram::emit_dram_stats;
 use super::text::stats_snapshot_text;
 use super::{
-    emit_data_cache_summary_stats, emit_transport_stats, increment_stat, stats_snapshot_json,
-    Rem6CliError, Rem6GpuRunStatsInputs, Rem6StatsOutput,
+    emit_data_cache_prefetch_summary_stats, emit_data_cache_summary_stats, emit_transport_stats,
+    increment_stat, stats_snapshot_json, Rem6CliError, Rem6GpuRunStatsInputs, Rem6StatsOutput,
 };
 
 pub(crate) fn gpu_run_stats_output(
@@ -194,6 +194,11 @@ pub(crate) fn gpu_run_stats_output(
         inputs.execution.memory_scheduler_dispatches(),
     )?;
     emit_data_cache_summary_stats(&mut stats, "sim.gpu_run.data_cache", inputs.data_cache)?;
+    emit_data_cache_prefetch_summary_stats(
+        &mut stats,
+        "sim.gpu_run.data_cache",
+        inputs.data_cache,
+    )?;
     emit_dram_stats(&mut stats, "sim.gpu_run.memory.dram", inputs.dram)?;
     emit_transport_stats(&mut stats, "sim.gpu_run.transport", inputs.transport)?;
     emit_gpu_fabric_stats(&mut stats, "sim.gpu_run.fabric", inputs.fabric)?;

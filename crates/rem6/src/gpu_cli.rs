@@ -17,7 +17,9 @@ use serde::Deserialize;
 mod fabric;
 
 use crate::cli_output;
-use crate::config::{CliDramMemoryProfile, MemoryDumpRequest, PowerAnalysisFormat, StatsFormat};
+use crate::config::{
+    CliCachePrefetcher, CliDramMemoryProfile, MemoryDumpRequest, PowerAnalysisFormat, StatsFormat,
+};
 use crate::data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, cli_data_memory_response, CliDataCacheSummary,
 };
@@ -57,6 +59,7 @@ pub struct Rem6GpuRunConfig {
     dram_memory: bool,
     dram_memory_profile: CliDramMemoryProfile,
     data_cache_protocol: Option<RiscvDataCacheProtocol>,
+    data_cache_prefetcher: Option<CliCachePrefetcher>,
     fabric: Option<GpuFabricConfig>,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
@@ -88,6 +91,7 @@ struct Rem6GpuRunFileConfig {
     dram_memory: Option<bool>,
     dram_memory_profile: Option<String>,
     data_cache_protocol: Option<String>,
+    data_cache_prefetcher: Option<String>,
     fabric_link: Option<String>,
     fabric_bandwidth_bytes_per_tick: Option<u64>,
     fabric_request_virtual_network: Option<u16>,
@@ -207,6 +211,11 @@ impl Rem6GpuRunConfig {
                     }
                 })
             })
+            .transpose()?;
+        let mut data_cache_prefetcher = file_config
+            .data_cache_prefetcher
+            .as_deref()
+            .map(CliCachePrefetcher::parse_data_cache)
             .transpose()?;
         let mut fabric_link = file_config.fabric_link.clone();
         let mut fabric_bandwidth_bytes_per_tick = file_config.fabric_bandwidth_bytes_per_tick;
@@ -335,6 +344,11 @@ impl Rem6GpuRunConfig {
                             }
                         })?);
                 }
+                "--data-cache-prefetcher" => {
+                    data_cache_prefetcher = Some(CliCachePrefetcher::parse_data_cache(
+                        &required_value(&flag, args.next())?,
+                    )?);
+                }
                 "--fabric-link" => {
                     fabric_link = Some(required_value(&flag, args.next())?);
                 }
@@ -405,6 +419,9 @@ impl Rem6GpuRunConfig {
                 min_remote_delay,
             });
         }
+        if data_cache_prefetcher.is_some() && data_cache_protocol.is_none() {
+            return Err(Rem6CliError::DataCachePrefetcherRequiresDataCacheProtocol);
+        }
         let fabric = gpu_fabric_config_from_parts(
             fabric_link,
             fabric_bandwidth_bytes_per_tick,
@@ -455,6 +472,7 @@ impl Rem6GpuRunConfig {
             dram_memory,
             dram_memory_profile,
             data_cache_protocol,
+            data_cache_prefetcher,
             fabric,
             output,
             stats_output,
@@ -551,6 +569,10 @@ impl Rem6GpuRunConfig {
         self.data_cache_protocol
     }
 
+    pub const fn data_cache_prefetcher(&self) -> Option<CliCachePrefetcher> {
+        self.data_cache_prefetcher
+    }
+
     pub(crate) fn fabric(&self) -> Option<&GpuFabricConfig> {
         self.fabric.as_ref()
     }
@@ -588,6 +610,7 @@ fn gpu_run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem
         "--power-output",
         "--dram-memory-profile",
         "--data-cache-protocol",
+        "--data-cache-prefetcher",
         "--fabric-link",
         "--fabric-bandwidth-bytes-per-tick",
         "--fabric-request-virtual-network",
@@ -977,7 +1000,7 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
         config.data_cache_protocol(),
         line_layout,
         config.compute_units(),
-        None,
+        config.data_cache_prefetcher(),
     )?;
     let mut transport = gpu_memory_transport(&config);
     let memory_route = transport
@@ -1071,7 +1094,10 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
     }
     let data_cache_summary = data_cache
         .as_ref()
-        .map(|cache| CliDataCacheSummary::from_records(&cache.records()))
+        .map(|cache| {
+            CliDataCacheSummary::from_records(&cache.records())
+                .with_prefetch_summary(cache.prefetch_summary())
+        })
         .unwrap_or_default();
     let dram = memory.dram_summary_until(final_tick);
     let fabric = match fabric_activity_start {
@@ -1144,6 +1170,11 @@ impl Rem6GpuRunArtifact {
             .data_cache_protocol()
             .map(|protocol| format!("\"{}\"", data_cache_protocol_name(protocol)))
             .unwrap_or_else(|| "null".to_string());
+        let data_cache_prefetcher = self
+            .config
+            .data_cache_prefetcher()
+            .map(|prefetcher| format!("\"{}\"", prefetcher.as_str()))
+            .unwrap_or_else(|| "null".to_string());
         let memory_dumps = self
             .memory_dumps
             .iter()
@@ -1156,7 +1187,7 @@ impl Rem6GpuRunArtifact {
             .map(Rem6PowerAnalysisArtifact::to_json)
             .unwrap_or_else(|| "null".to_string());
         format!(
-            "{{\"schema\":\"{}\",\"status\":\"completed\",\"workgroups\":{},\"compute_units\":{},\"wave_slots_per_compute_unit\":{},\"workgroup_cycles\":{},\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"dram_memory\":{},\"data_cache_protocol\":{},\"simulation\":{},\"data_cache\":{},\"dram\":{},\"transport\":{},\"fabric\":{},\"memory\":[{}],\"power_analysis\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"status\":\"completed\",\"workgroups\":{},\"compute_units\":{},\"wave_slots_per_compute_unit\":{},\"workgroup_cycles\":{},\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"dram_memory\":{},\"data_cache_protocol\":{},\"data_cache_prefetcher\":{},\"simulation\":{},\"data_cache\":{},\"dram\":{},\"transport\":{},\"fabric\":{},\"memory\":[{}],\"power_analysis\":{},\"stats\":{}}}\n",
             self.schema,
             self.config.workgroups(),
             self.config.compute_units(),
@@ -1166,6 +1197,7 @@ impl Rem6GpuRunArtifact {
             self.config.memory_size(),
             self.config.dram_memory(),
             data_cache_protocol,
+            data_cache_prefetcher,
             self.execution.to_json(),
             data_cache_summary_json(&self.data_cache),
             self.dram.to_json(),
@@ -1299,7 +1331,7 @@ fn gpu_memory_request(
 
 fn data_cache_summary_json(summary: &CliDataCacheSummary) -> String {
     format!(
-        "{{\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_cache_bank_accepted\":{},\"data_cache_bank_immediate_hits\":{},\"data_cache_bank_scheduled_misses\":{},\"data_cache_bank_coalesced_misses\":{}}}",
+        "{{\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_cache_bank_accepted\":{},\"data_cache_bank_immediate_hits\":{},\"data_cache_bank_scheduled_misses\":{},\"data_cache_bank_coalesced_misses\":{},\"data_cache_prefetch_identified\":{},\"data_cache_prefetch_issued\":{},\"data_cache_prefetch_queue_enqueued\":{},\"data_cache_prefetch_queue_issued\":{},\"data_cache_prefetch_queue_dropped\":{},\"data_cache_prefetch_translation_queue_enqueued\":{},\"data_cache_prefetch_translation_queue_issued\":{},\"data_cache_prefetch_translation_queue_translated\":{},\"data_cache_prefetch_translation_queue_dropped\":{}}}",
         summary.runs,
         summary.msi_runs,
         summary.mesi_runs,
@@ -1312,6 +1344,15 @@ fn data_cache_summary_json(summary: &CliDataCacheSummary) -> String {
         summary.bank_immediate_hits,
         summary.bank_scheduled_misses,
         summary.bank_coalesced_misses,
+        summary.prefetch_identified,
+        summary.prefetch_issued,
+        summary.prefetch_queue_enqueued,
+        summary.prefetch_queue_issued,
+        summary.prefetch_queue_dropped,
+        summary.prefetch_translation_queue_enqueued,
+        summary.prefetch_translation_queue_issued,
+        summary.prefetch_translation_queue_translated,
+        summary.prefetch_translation_queue_dropped,
     )
 }
 
