@@ -196,10 +196,74 @@ pub(crate) fn gpu_run_stats_output(
     emit_data_cache_summary_stats(&mut stats, "sim.gpu_run.data_cache", inputs.data_cache)?;
     emit_dram_stats(&mut stats, "sim.gpu_run.memory.dram", inputs.dram)?;
     emit_transport_stats(&mut stats, "sim.gpu_run.transport", inputs.transport)?;
+    emit_gpu_fabric_stats(&mut stats, "sim.gpu_run.fabric", inputs.fabric)?;
 
     let snapshot = stats.snapshot(0);
     Ok(Rem6StatsOutput {
         json: stats_snapshot_json(&snapshot),
         text: stats_snapshot_text(&snapshot),
     })
+}
+
+fn emit_gpu_fabric_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    summary: &crate::gpu_cli::Rem6GpuFabricSummary,
+) -> Result<(), Rem6CliError> {
+    increment_stat(
+        stats,
+        &format!("{prefix}.active_lanes"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.active_lane_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.active_virtual_networks"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.active_virtual_network_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.transfers"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.transfer_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.bytes"),
+        "Byte",
+        StatResetPolicy::Monotonic,
+        summary.byte_count(),
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.occupied_ticks"),
+        "Tick",
+        StatResetPolicy::Monotonic,
+        summary.occupied_ticks(),
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.queue_delay_ticks"),
+        "Tick",
+        StatResetPolicy::Monotonic,
+        summary.queue_delay_ticks(),
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.max_queue_delay_ticks"),
+        "Tick",
+        StatResetPolicy::Monotonic,
+        summary.max_queue_delay_ticks(),
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.contended_lanes"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.contended_lane_count() as u64,
+    )
 }

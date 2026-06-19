@@ -11,8 +11,10 @@ use rem6_memory::{
     ResponseStatus,
 };
 use rem6_system::RiscvDataCacheProtocol;
-use rem6_transport::{MemoryRoute, MemoryTrace, MemoryTransport, ParallelMemoryTransaction};
+use rem6_transport::{MemoryTrace, ParallelMemoryTransaction};
 use serde::Deserialize;
+
+mod fabric;
 
 use crate::cli_output;
 use crate::config::{CliDramMemoryProfile, MemoryDumpRequest, PowerAnalysisFormat, StatsFormat};
@@ -24,8 +26,13 @@ use crate::runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use crate::stats_output::{gpu_run_stats_output, Rem6GpuRunStatsInputs};
 use crate::transport_summary::{memory_transport_summary, Rem6MemoryTransportSummary};
 use crate::{
-    execute_error, transport_endpoint, Rem6CliError, Rem6DramSummary, Rem6MemoryDump,
-    DEFAULT_CACHE_LINE_BYTES,
+    execute_error, Rem6CliError, Rem6DramSummary, Rem6MemoryDump, DEFAULT_CACHE_LINE_BYTES,
+};
+pub(crate) use fabric::Rem6GpuFabricSummary;
+use fabric::{
+    gpu_fabric_config_from_parts, gpu_fabric_summary_json, gpu_memory_route, gpu_memory_transport,
+    parse_gpu_fabric_bandwidth, parse_gpu_fabric_credit_depth, parse_gpu_fabric_virtual_network,
+    GpuFabricConfig,
 };
 
 const GPU_RUN_CPU_PARTITION: PartitionId = PartitionId::new(0);
@@ -50,6 +57,7 @@ pub struct Rem6GpuRunConfig {
     dram_memory: bool,
     dram_memory_profile: CliDramMemoryProfile,
     data_cache_protocol: Option<RiscvDataCacheProtocol>,
+    fabric: Option<GpuFabricConfig>,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
     memory_dumps: Vec<MemoryDumpRequest>,
@@ -80,6 +88,11 @@ struct Rem6GpuRunFileConfig {
     dram_memory: Option<bool>,
     dram_memory_profile: Option<String>,
     data_cache_protocol: Option<String>,
+    fabric_link: Option<String>,
+    fabric_bandwidth_bytes_per_tick: Option<u64>,
+    fabric_request_virtual_network: Option<u16>,
+    fabric_response_virtual_network: Option<u16>,
+    fabric_credit_depth: Option<u32>,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
     memory_dumps: Option<Vec<String>>,
@@ -195,6 +208,21 @@ impl Rem6GpuRunConfig {
                 })
             })
             .transpose()?;
+        let mut fabric_link = file_config.fabric_link.clone();
+        let mut fabric_bandwidth_bytes_per_tick = file_config.fabric_bandwidth_bytes_per_tick;
+        if fabric_bandwidth_bytes_per_tick == Some(0) {
+            return Err(Rem6CliError::InvalidGpuRunFabricBandwidth {
+                value: "0".to_string(),
+            });
+        }
+        let mut fabric_request_virtual_network = file_config.fabric_request_virtual_network;
+        let mut fabric_response_virtual_network = file_config.fabric_response_virtual_network;
+        let mut fabric_credit_depth = file_config.fabric_credit_depth;
+        if fabric_credit_depth == Some(0) {
+            return Err(Rem6CliError::InvalidGpuRunFabricCreditDepth {
+                value: "0".to_string(),
+            });
+        }
         let mut output = file_config
             .output
             .as_deref()
@@ -307,6 +335,27 @@ impl Rem6GpuRunConfig {
                             }
                         })?);
                 }
+                "--fabric-link" => {
+                    fabric_link = Some(required_value(&flag, args.next())?);
+                }
+                "--fabric-bandwidth-bytes-per-tick" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_bandwidth_bytes_per_tick = Some(parse_gpu_fabric_bandwidth(&value)?);
+                }
+                "--fabric-request-virtual-network" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_request_virtual_network =
+                        Some(parse_gpu_fabric_virtual_network(&value)?);
+                }
+                "--fabric-response-virtual-network" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_response_virtual_network =
+                        Some(parse_gpu_fabric_virtual_network(&value)?);
+                }
+                "--fabric-credit-depth" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_credit_depth = Some(parse_gpu_fabric_credit_depth(&value)?);
+                }
                 "--global-load" => {
                     if !global_loads_from_cli {
                         global_accesses.retain(|access| access.kind != GpuMemoryAccessKind::Read);
@@ -356,6 +405,13 @@ impl Rem6GpuRunConfig {
                 min_remote_delay,
             });
         }
+        let fabric = gpu_fabric_config_from_parts(
+            fabric_link,
+            fabric_bandwidth_bytes_per_tick,
+            fabric_request_virtual_network,
+            fabric_response_virtual_network,
+            fabric_credit_depth,
+        )?;
         if let (Some(output), Some(stats_output)) = (&output, &stats_output) {
             if output == stats_output {
                 return Err(Rem6CliError::ConflictingOutputPaths {
@@ -399,6 +455,7 @@ impl Rem6GpuRunConfig {
             dram_memory,
             dram_memory_profile,
             data_cache_protocol,
+            fabric,
             output,
             stats_output,
             memory_dumps,
@@ -494,6 +551,10 @@ impl Rem6GpuRunConfig {
         self.data_cache_protocol
     }
 
+    pub(crate) fn fabric(&self) -> Option<&GpuFabricConfig> {
+        self.fabric.as_ref()
+    }
+
     pub fn output(&self) -> Option<&Path> {
         self.output.as_deref()
     }
@@ -527,6 +588,11 @@ fn gpu_run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem
         "--power-output",
         "--dram-memory-profile",
         "--data-cache-protocol",
+        "--fabric-link",
+        "--fabric-bandwidth-bytes-per-tick",
+        "--fabric-request-virtual-network",
+        "--fabric-response-virtual-network",
+        "--fabric-credit-depth",
         "--global-load",
         "--global-store",
         "--output",
@@ -670,6 +736,7 @@ pub struct Rem6GpuRunArtifact {
     data_cache: CliDataCacheSummary,
     dram: Rem6DramSummary,
     transport: Rem6MemoryTransportSummary,
+    fabric: Rem6GpuFabricSummary,
     memory_dumps: Vec<Rem6MemoryDump>,
     stats_json: String,
     stats_text: String,
@@ -912,19 +979,9 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
         config.compute_units(),
         None,
     )?;
-    let mut transport = MemoryTransport::new();
+    let mut transport = gpu_memory_transport(&config);
     let memory_route = transport
-        .add_route(
-            MemoryRoute::new(
-                transport_endpoint("gpu.global".to_string())?,
-                GPU_RUN_GPU_PARTITION,
-                transport_endpoint("memory".to_string())?,
-                GPU_RUN_MEMORY_PARTITION,
-                config.memory_route_delay(),
-                config.memory_route_delay(),
-            )
-            .map_err(execute_error)?,
-        )
+        .add_route(gpu_memory_route(&config)?)
         .map_err(execute_error)?;
     let trace = MemoryTrace::new();
     let memory_responses = Arc::new(Mutex::new(Vec::new()));
@@ -975,6 +1032,7 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
             ))
         })
         .collect::<Result<Vec<_>, Rem6CliError>>()?;
+    let fabric_activity_start = transport.mark_fabric_activity();
     if !transactions.is_empty() {
         transport
             .submit_parallel_batch(&mut scheduler, transactions)
@@ -1016,6 +1074,17 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
         .map(|cache| CliDataCacheSummary::from_records(&cache.records()))
         .unwrap_or_default();
     let dram = memory.dram_summary_until(final_tick);
+    let fabric = match fabric_activity_start {
+        Some(marker) => Rem6GpuFabricSummary::new(
+            transport
+                .fabric_lane_activities_since(marker)
+                .unwrap_or_default(),
+            transport
+                .fabric_hop_activities_since(marker)
+                .unwrap_or_default(),
+        ),
+        None => Rem6GpuFabricSummary::empty(),
+    };
     let transport = memory_transport_summary(&trace);
     let memory_dumps = read_memory_dumps(&memory, line_layout, config.memory_dumps())?;
     let execution = Rem6GpuRunExecutionSummary {
@@ -1037,6 +1106,7 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
         data_cache: &data_cache_summary,
         dram: &dram,
         transport: &transport,
+        fabric: &fabric,
         memory_dumps: &memory_dumps,
     })?;
     let power_analysis = config
@@ -1059,6 +1129,7 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
         data_cache: data_cache_summary,
         dram,
         transport,
+        fabric,
         memory_dumps,
         stats_json: stats.json,
         stats_text: stats.text,
@@ -1085,7 +1156,7 @@ impl Rem6GpuRunArtifact {
             .map(Rem6PowerAnalysisArtifact::to_json)
             .unwrap_or_else(|| "null".to_string());
         format!(
-            "{{\"schema\":\"{}\",\"status\":\"completed\",\"workgroups\":{},\"compute_units\":{},\"wave_slots_per_compute_unit\":{},\"workgroup_cycles\":{},\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"dram_memory\":{},\"data_cache_protocol\":{},\"simulation\":{},\"data_cache\":{},\"dram\":{},\"transport\":{},\"memory\":[{}],\"power_analysis\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"status\":\"completed\",\"workgroups\":{},\"compute_units\":{},\"wave_slots_per_compute_unit\":{},\"workgroup_cycles\":{},\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"dram_memory\":{},\"data_cache_protocol\":{},\"simulation\":{},\"data_cache\":{},\"dram\":{},\"transport\":{},\"fabric\":{},\"memory\":[{}],\"power_analysis\":{},\"stats\":{}}}\n",
             self.schema,
             self.config.workgroups(),
             self.config.compute_units(),
@@ -1099,6 +1170,7 @@ impl Rem6GpuRunArtifact {
             data_cache_summary_json(&self.data_cache),
             self.dram.to_json(),
             self.transport.to_json(),
+            gpu_fabric_summary_json(self.config.fabric(), &self.fabric),
             memory_dumps,
             power_analysis,
             self.stats_json,

@@ -8,7 +8,7 @@ mod text;
 mod trace_replay;
 
 use super::formatting::json_escape;
-use crate::gpu_cli::Rem6GpuRunExecutionSummary;
+use crate::gpu_cli::{Rem6GpuFabricSummary, Rem6GpuRunExecutionSummary};
 
 use super::{
     parallel_stats, stats_error, CliDataCacheSummary, Rem6CliError, Rem6DramSummary,
@@ -58,6 +58,7 @@ pub(super) struct Rem6GpuRunStatsInputs<'a> {
     pub(super) data_cache: &'a CliDataCacheSummary,
     pub(super) dram: &'a Rem6DramSummary,
     pub(super) transport: &'a Rem6MemoryTransportSummary,
+    pub(super) fabric: &'a Rem6GpuFabricSummary,
     pub(super) memory_dumps: &'a [Rem6MemoryDump],
 }
 

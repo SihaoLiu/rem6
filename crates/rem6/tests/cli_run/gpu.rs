@@ -3,6 +3,7 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rem6::Rem6GpuRunConfig;
+use serde_json::Value;
 
 use crate::support::{assert_stat, assert_transport_stats};
 
@@ -14,6 +15,24 @@ fn unique_gpu_temp_dir(prefix: &str) -> PathBuf {
             .unwrap()
             .as_nanos()
     ))
+}
+
+fn assert_gpu_fabric_lane(lanes: &[Value], link: &str, virtual_network: u64, byte_count: u64) {
+    let lane = lanes
+        .iter()
+        .find(|lane| {
+            lane.get("link").and_then(Value::as_str) == Some(link)
+                && lane.get("virtual_network").and_then(Value::as_u64) == Some(virtual_network)
+        })
+        .expect("fabric lane activity");
+    assert_eq!(lane.get("transfer_count").and_then(Value::as_u64), Some(1));
+    assert_eq!(
+        lane.get("byte_count").and_then(Value::as_u64),
+        Some(byte_count)
+    );
+    assert!(lane.get("occupied_ticks").and_then(Value::as_u64).is_some());
+    assert!(lane.get("first_tick").and_then(Value::as_u64).is_some());
+    assert!(lane.get("last_tick").and_then(Value::as_u64).is_some());
 }
 
 #[test]
@@ -404,6 +423,214 @@ fn rem6_gpu_run_routes_recorded_store_to_direct_memory_and_dumps_result() {
         "monotonic",
     );
     assert_stat(&stdout, "sim.gpu_run.memory.dumps", "Count", 1, "constant");
+}
+
+#[test]
+fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "1",
+            "--compute-units",
+            "1",
+            "--global-load",
+            "0x2e00:4:4:4",
+            "--memory-start",
+            "0x2e00",
+            "--memory-size",
+            "64",
+            "--memory-route-delay",
+            "4",
+            "--fabric-link",
+            "gpu_mem",
+            "--fabric-bandwidth-bytes-per-tick",
+            "32",
+            "--fabric-request-virtual-network",
+            "7",
+            "--fabric-response-virtual-network",
+            "8",
+            "--fabric-credit-depth",
+            "2",
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
+    let fabric = artifact.get("fabric").unwrap();
+    assert_eq!(fabric.get("link").and_then(Value::as_str), Some("gpu_mem"));
+    assert_eq!(
+        fabric
+            .get("bandwidth_bytes_per_tick")
+            .and_then(Value::as_u64),
+        Some(32)
+    );
+    assert_eq!(
+        fabric
+            .get("request_virtual_network")
+            .and_then(Value::as_u64),
+        Some(7)
+    );
+    assert_eq!(
+        fabric
+            .get("response_virtual_network")
+            .and_then(Value::as_u64),
+        Some(8)
+    );
+    assert_eq!(fabric.get("credit_depth").and_then(Value::as_u64), Some(2));
+    assert_eq!(fabric.get("active_lanes").and_then(Value::as_u64), Some(2));
+    assert_eq!(
+        fabric
+            .get("active_virtual_networks")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(fabric.get("transfers").and_then(Value::as_u64), Some(2));
+    assert_eq!(fabric.get("bytes").and_then(Value::as_u64), Some(32));
+    let lanes = fabric
+        .get("lane_activities")
+        .and_then(Value::as_array)
+        .unwrap();
+    assert_eq!(lanes.len(), 2);
+    assert_gpu_fabric_lane(lanes, "gpu_mem", 7, 16);
+    assert_gpu_fabric_lane(lanes, "gpu_mem", 8, 16);
+    let hops = fabric
+        .get("hop_activities")
+        .and_then(Value::as_array)
+        .unwrap();
+    assert_eq!(hops.len(), 2);
+    assert!(hops.iter().any(|hop| {
+        hop.get("link").and_then(Value::as_str) == Some("gpu_mem")
+            && hop.get("virtual_network").and_then(Value::as_u64) == Some(7)
+    }));
+    assert!(hops.iter().any(|hop| {
+        hop.get("link").and_then(Value::as_str) == Some("gpu_mem")
+            && hop.get("virtual_network").and_then(Value::as_u64) == Some(8)
+    }));
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.fabric.active_virtual_networks",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.fabric.transfers",
+        "Count",
+        2,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_gpu_run_loads_configured_fabric_from_toml_config() {
+    let temp_dir = unique_gpu_temp_dir("fabric-toml");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let config_path = temp_dir.join("gpu.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+[gpu_run]
+workgroups = 1
+compute_units = 1
+memory_start = 12288
+memory_size = 64
+memory_route_delay = 4
+fabric_link = "gpu_mem_toml"
+fabric_bandwidth_bytes_per_tick = 64
+fabric_request_virtual_network = 5
+fabric_response_virtual_network = 6
+fabric_credit_depth = 3
+max_tick = 80
+stats_format = "json"
+global_loads = ["0x3000:4:4:4"]
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["gpu-run", "--config"])
+        .arg(&config_path)
+        .output()
+        .unwrap();
+
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
+    let fabric = artifact.get("fabric").unwrap();
+    assert_eq!(
+        fabric.get("link").and_then(Value::as_str),
+        Some("gpu_mem_toml")
+    );
+    assert_eq!(
+        fabric
+            .get("request_virtual_network")
+            .and_then(Value::as_u64),
+        Some(5)
+    );
+    assert_eq!(
+        fabric
+            .get("response_virtual_network")
+            .and_then(Value::as_u64),
+        Some(6)
+    );
+    assert_eq!(fabric.get("credit_depth").and_then(Value::as_u64), Some(3));
+    assert_eq!(
+        fabric
+            .get("active_virtual_networks")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.fabric.active_virtual_networks",
+        "Count",
+        2,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_gpu_run_rejects_fabric_virtual_network_without_link() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "1",
+            "--global-load",
+            "0x3400:4:4:4",
+            "--memory-start",
+            "0x3400",
+            "--memory-size",
+            "64",
+            "--fabric-request-virtual-network",
+            "2",
+            "--max-tick",
+            "80",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("missing required flag --fabric-link"));
 }
 
 #[test]

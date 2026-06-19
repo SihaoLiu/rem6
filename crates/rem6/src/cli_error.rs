@@ -111,6 +111,15 @@ pub enum Rem6CliError {
     InvalidTraceReplayFabricCreditDepth {
         value: String,
     },
+    InvalidGpuRunFabricBandwidth {
+        value: String,
+    },
+    InvalidGpuRunFabricVirtualNetwork {
+        value: String,
+    },
+    InvalidGpuRunFabricCreditDepth {
+        value: String,
+    },
     InvalidTraceReplayResource {
         value: String,
     },
@@ -380,6 +389,15 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidTraceReplayFabricCreditDepth { value } => {
                 write!(formatter, "invalid trace replay fabric credit depth {value}")
+            }
+            Self::InvalidGpuRunFabricBandwidth { value } => {
+                write!(formatter, "invalid gpu run fabric bandwidth {value}")
+            }
+            Self::InvalidGpuRunFabricVirtualNetwork { value } => {
+                write!(formatter, "invalid gpu run fabric virtual network {value}")
+            }
+            Self::InvalidGpuRunFabricCreditDepth { value } => {
+                write!(formatter, "invalid gpu run fabric credit depth {value}")
             }
             Self::InvalidTraceReplayResource { value } => {
                 write!(
