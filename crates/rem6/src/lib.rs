@@ -433,7 +433,14 @@ pub struct Rem6CoreSummary {
     data_load_bytes: u64,
     data_store_bytes: u64,
     data_atomic_bytes: u64,
+    checker: Option<Rem6CheckerSummary>,
     registers: Vec<(u8, u64)>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6CheckerSummary {
+    checked_instructions: u64,
+    mismatches: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -734,6 +741,9 @@ fn execute_riscv(
                 startup.initial_stack_pointer().get(),
             );
         }
+        if config.checker_cpu() {
+            core.enable_checker_cpu();
+        }
         cores.push(core);
     }
     let cluster = RiscvCluster::new(cores).map_err(execute_error)?;
@@ -1016,6 +1026,12 @@ fn execution_summary(
         }
         let pipeline_summary = in_order_pipeline_run_summary(&core);
         let pipeline_snapshot = core.in_order_pipeline_snapshot();
+        let checker = core
+            .checker_cpu_snapshot()
+            .map(|snapshot| Rem6CheckerSummary {
+                checked_instructions: snapshot.checked_instructions(),
+                mismatches: snapshot.mismatches().len() as u64,
+            });
         cores.push(Rem6CoreSummary {
             cpu: cpu_index,
             pc: core.pc().get(),
@@ -1042,6 +1058,7 @@ fn execution_summary(
             data_load_bytes: data.load_bytes,
             data_store_bytes: data.store_bytes,
             data_atomic_bytes: data.atomic_bytes,
+            checker,
             registers,
         });
     }

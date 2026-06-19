@@ -1437,8 +1437,18 @@ impl Rem6CoreSummary {
             .map(|(register, value)| format!("\"x{}\":\"0x{:x}\"", register, value))
             .collect::<Vec<_>>()
             .join(",");
+        let checker = self
+            .checker
+            .as_ref()
+            .map(|checker| {
+                format!(
+                    ",\"checker\":{{\"checked_instructions\":{},\"mismatches\":{}}}",
+                    checker.checked_instructions, checker.mismatches
+                )
+            })
+            .unwrap_or_default();
         format!(
-            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"in_order_pipeline\":{{\"cycles\":{},\"in_flight\":{},\"retired\":{},\"advanced\":{},\"flushed\":{},\"resource_blocked\":{},\"ordering_blocked\":{},\"fetch_wait_cycles\":{},\"data_wait_cycles\":{},\"branch_predictions\":{},\"branch_mispredictions\":{},\"branch_prediction_flushes\":{},\"redirects\":{}}},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{},\"registers\":{{{}}}}}",
+            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"in_order_pipeline\":{{\"cycles\":{},\"in_flight\":{},\"retired\":{},\"advanced\":{},\"flushed\":{},\"resource_blocked\":{},\"ordering_blocked\":{},\"fetch_wait_cycles\":{},\"data_wait_cycles\":{},\"branch_predictions\":{},\"branch_mispredictions\":{},\"branch_prediction_flushes\":{},\"redirects\":{}}},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{}{},\"registers\":{{{}}}}}",
             self.cpu,
             self.pc,
             self.committed_instructions,
@@ -1461,6 +1471,7 @@ impl Rem6CoreSummary {
             self.data_load_bytes,
             self.data_store_bytes,
             self.data_atomic_bytes,
+            checker,
             registers
         )
     }

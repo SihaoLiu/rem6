@@ -167,6 +167,26 @@ fn riscv_core_htm_abort_restores_architectural_checkpoint() {
 }
 
 #[test]
+fn riscv_core_htm_abort_restores_checker_checkpoint() {
+    let core = core(0x8000);
+    core.write_register(reg(5), 0x1111);
+    core.redirect_pc(Address::new(0x8010));
+    core.enable_checker_cpu();
+
+    let begin = core.begin_htm_transaction().unwrap();
+    core.write_register(reg(5), 0x2222);
+    core.redirect_pc(Address::new(0x9000));
+
+    core.abort_htm_transaction(begin.uid(), HtmFailureCause::Memory)
+        .unwrap();
+
+    let snapshot = core.checker_cpu_snapshot().unwrap();
+    assert_eq!(snapshot.hart().read(reg(5)), 0x1111);
+    assert_eq!(snapshot.hart().pc(), 0x8010);
+    assert!(snapshot.mismatches().is_empty());
+}
+
+#[test]
 fn riscv_core_htm_commit_keeps_architectural_updates() {
     let core = core(0x8000);
     core.write_register(reg(6), 0x11);

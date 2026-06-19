@@ -9,11 +9,13 @@ use serde::Deserialize;
 use crate::Rem6CliError;
 
 mod debug;
+mod output_format;
 mod riscv_se_input;
 mod trace_replay;
 
 pub use debug::CliDebugFlag;
 use debug::{parse_debug_flag_list, parse_debug_flags};
+pub use output_format::{PowerAnalysisFormat, StatsFormat};
 pub use riscv_se_input::{RiscvSeFileRequest, RiscvSeInputSource};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -51,56 +53,6 @@ impl RequestedIsa {
                 BootElfArchitecture::I386 | BootElfArchitecture::X8664
             )
         )
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum StatsFormat {
-    Json,
-    Text,
-}
-
-impl StatsFormat {
-    pub fn parse(value: &str) -> Result<Self, Rem6CliError> {
-        match value {
-            "json" => Ok(Self::Json),
-            "text" => Ok(Self::Text),
-            _ => Err(Rem6CliError::UnsupportedStatsFormat {
-                format: value.to_string(),
-            }),
-        }
-    }
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Json => "json",
-            Self::Text => "text",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PowerAnalysisFormat {
-    McpatXml,
-    DsentCsv,
-}
-
-impl PowerAnalysisFormat {
-    pub fn parse(value: &str) -> Result<Self, Rem6CliError> {
-        match value {
-            "mcpat-xml" => Ok(Self::McpatXml),
-            "dsent-csv" => Ok(Self::DsentCsv),
-            _ => Err(Rem6CliError::UnsupportedPowerAnalysisFormat {
-                format: value.to_string(),
-            }),
-        }
-    }
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::McpatXml => "mcpat-xml",
-            Self::DsentCsv => "dsent-csv",
-        }
     }
 }
 
@@ -197,6 +149,7 @@ pub struct Rem6RunConfig {
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
+    checker_cpu: bool,
     dram_memory: bool,
     dram_memory_profile: CliDramMemoryProfile,
     data_cache_protocol: Option<RiscvDataCacheProtocol>,
@@ -287,6 +240,7 @@ struct Rem6RunFileConfig {
     max_instructions: Option<u64>,
     stats_format: Option<String>,
     execute: Option<bool>,
+    checker_cpu: Option<bool>,
     dram_memory: Option<bool>,
     dram_memory_profile: Option<String>,
     data_cache_protocol: Option<String>,
@@ -493,6 +447,7 @@ impl Rem6RunConfig {
             .transpose()?
             .unwrap_or(StatsFormat::Json);
         let mut execute = file_config.execute.unwrap_or(false);
+        let mut checker_cpu = file_config.checker_cpu.unwrap_or(false);
         let mut dram_memory = file_config.dram_memory.unwrap_or(false);
         let mut dram_memory_profile = file_config
             .dram_memory_profile
@@ -738,6 +693,9 @@ impl Rem6RunConfig {
                 "--execute" => {
                     execute = true;
                 }
+                "--checker-cpu" => {
+                    checker_cpu = true;
+                }
                 "--dram-memory" => {
                     dram_memory = true;
                 }
@@ -951,6 +909,7 @@ impl Rem6RunConfig {
             max_instructions,
             stats_format,
             execute,
+            checker_cpu,
             dram_memory,
             dram_memory_profile,
             data_cache_protocol,
@@ -1045,6 +1004,10 @@ impl Rem6RunConfig {
 
     pub const fn execute(&self) -> bool {
         self.execute
+    }
+
+    pub const fn checker_cpu(&self) -> bool {
+        self.checker_cpu
     }
 
     pub const fn dram_memory(&self) -> bool {
@@ -1677,7 +1640,7 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--power-format",
             "--power-output",
         ],
-        &["--execute", "--dram-memory", "--riscv-se"],
+        &["--execute", "--checker-cpu", "--dram-memory", "--riscv-se"],
     )
 }
 

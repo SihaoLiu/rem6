@@ -176,20 +176,21 @@ tests `rv64i`, `rv64m`, `rv64f`, `rv64f_add`, `rv64f_sub`, `rv64f_fma`,
 **Next evidence:** Generated or imported RV64GC/vector instruction tests plus
 privileged Linux trap and interrupt smoke tests.
 
-### CPU Execution Models - 30% unit-slice
+### CPU Execution Models - 39% unit-slice
 
-**Score calculation:** 3 of 10 items have executable evidence, or 30% raw. The
-bucket cap is unit-slice because RISC-V core timing has direct completed-fetch
-overlap and a bounded normal-driver fetch-ahead slice, but not broad top-level
-stalls/squashes, and O3 state is not yet an executable cycle-visible engine.
+**Score calculation:** 4 of 10 items have executable evidence, or 40% raw,
+capped to 39% by the unit-slice bucket. The bucket cap is unit-slice because
+RISC-V core timing has direct completed-fetch overlap and a bounded
+normal-driver fetch-ahead slice, but not broad top-level stalls/squashes, and
+O3 state is not yet an executable cycle-visible engine.
 
 - [x] RISC-V atomic execution and parallel clusters execute real instructions.
 - [x] Data access issue/response and store-conditional progress diagnostics have tests.
 - [x] Basic, GShare, and Tournament branch predictors are trained from retired control flow.
+- [x] Checker CPU support exists as a RISC-V retire-path reference hart with CLI-visible counts.
 - [ ] Minor-like fetch/decode/execute/commit timing is wired into normal CPU execution.
 - [ ] Branch predictors steer fetch with speculation snapshots, squash, and rollback.
 - [ ] A running O3 engine owns ROB, LSQ, rename map, commit, store-to-load forwarding, and FU latency.
-- [ ] Checker CPU support exists.
 - [ ] CPU mode switching transfers live architectural and timing authority.
 - [ ] KVM or equivalent fast-forward execution exists.
 - [ ] CPU instruction/data traffic uses the full cache, NoC, and DRAM hierarchy by default.
@@ -208,15 +209,20 @@ in-order timing state when issued and before their memory response, per-retired
 instruction in-order stage advancement with runtime stats, data-response wait
 cycles folded into in-order retire timing, per-core fetch-response and
 data-response wait cycle stats, retired branch prediction and redirect summaries
-in normal in-order timing records, and O3 policy helpers.
+in normal in-order timing records, a RISC-V checker CPU option that runs an
+independent reference hart at retire, records structured execution/state
+mismatches, and exposes checked/mismatch counts through `rem6 run --checker-cpu`
+stats, and O3 policy helpers.
 
 **Not migrated:** Full Minor-like in-order timing with realistic stalls and
 squashes, executable O3 timing, broad multi-branch speculation snapshots and
-rollback, checker, and KVM equivalents.
+rollback, gem5-class checker coverage across future timing CPU modes, and KVM
+equivalents.
 
 **Evidence:** `RiscvCore::execute_next_completed_fetch`,
-`RiscvClusterRun`, `record_data_retire_cycle`, `InOrderPipelineState`,
-`O3DistributedIssueScheduler`, `O3SourceRenamePlan`, CPU frontend and O3 tests.
+`RiscvClusterRun`, `record_data_retire_cycle`, `RiscvCheckerCpu`,
+`InOrderPipelineState`, `O3DistributedIssueScheduler`, `O3SourceRenamePlan`,
+CPU frontend, checker, and O3 tests.
 CLI run stats include per-core in-order pipeline cycle, retired, and
 fetch-response wait counters from executed RISC-V instructions, and CLI data
 stats show load/store response wait changing the in-order pipeline cycle
@@ -243,9 +249,14 @@ response, one retired instruction, and nonzero in-order pipeline cycles plus
 `sim.cpu0.pipeline.in_order.in_flight = 1`, plus serial trap repair and
 stream-reset discard coverage, while preserving branch speculation,
 pending-interrupt redirect, and data-access ordering.
+CLI `rem6 run --checker-cpu` executes the same RISC-V retire path and emits
+per-core checked-instruction and mismatch counters from the checker snapshot;
+checker tests cover retire comparison, data writeback sync, environment-call
+completion sync, public register writes, and HTM abort rollback.
 
 **Next evidence:** Broader per-cycle in-order stalls/squashes, multi-branch
-speculation snapshots and rollback, then a ROB/LSQ-backed O3 run test.
+speculation snapshots and rollback, full checker integration for future timing
+CPU modes, then a ROB/LSQ-backed O3 run test.
 
 ### Memory, Cache, Coherence, Fabric, and DRAM - 57% single-axis
 

@@ -27,10 +27,11 @@ use crate::riscv_data_issue::{
     PreparedDataParallelAccess,
 };
 use crate::{
-    riscv_data_access, CpuDataConfig, CpuTranslatedMemoryOperation, CpuTranslatedMemoryRequest,
-    CpuTranslationFaultRecord, CpuTranslationFrontend, CpuTranslationFrontendError,
-    CpuTranslationOutcome, CpuTranslationRequest, RiscvCore, RiscvCoreDriveAction, RiscvCoreState,
-    RiscvCpuError, RiscvCpuExecutionEvent, RiscvDataAccessTarget, RiscvHartRunState,
+    riscv_checker, riscv_data_access, CpuDataConfig, CpuTranslatedMemoryOperation,
+    CpuTranslatedMemoryRequest, CpuTranslationFaultRecord, CpuTranslationFrontend,
+    CpuTranslationFrontendError, CpuTranslationOutcome, CpuTranslationRequest, RiscvCore,
+    RiscvCoreDriveAction, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent,
+    RiscvDataAccessTarget, RiscvHartRunState,
 };
 
 const RISCV_SV39_PTE_ACCESS_BYTES: u64 = 8;
@@ -640,17 +641,16 @@ impl RiscvCore {
     }
 
     pub fn set_machine_interrupt_enable(&self, enable: u64) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_machine_interrupt_enable(enable);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_machine_interrupt_enable(enable);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn set_machine_interrupt_pending(&self, pending: u64) {
         let mut state = self.state.lock().expect("riscv core lock");
         state.hart.set_machine_interrupt_pending(pending);
         wake_suspended_hart_on_pending_interrupt(&mut state, pending);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn set_machine_interrupt_pending_bits(&self, bits: u64) {
@@ -658,12 +658,14 @@ impl RiscvCore {
         let pending = state.hart.machine_interrupt_pending() | bits;
         state.hart.set_machine_interrupt_pending(pending);
         wake_suspended_hart_on_pending_interrupt(&mut state, pending);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn clear_machine_interrupt_pending_bits(&self, bits: u64) {
         let mut state = self.state.lock().expect("riscv core lock");
         let pending = state.hart.machine_interrupt_pending() & !bits;
         state.hart.set_machine_interrupt_pending(pending);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn supervisor_exception_pc(&self) -> u64 {
@@ -758,62 +760,49 @@ impl RiscvCore {
     pub fn set_machine_trap_csr(&self, csr: RiscvMachineTrapCsr, value: u64) {
         let mut state = self.state.lock().expect("riscv core lock");
         write_machine_trap_csr(&mut state.hart, csr, value);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn set_machine_exception_delegation(&self, delegation: u64) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_machine_exception_delegation(delegation);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_machine_exception_delegation(delegation);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn set_supervisor_trap_vector(&self, vector: u64) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_supervisor_trap_vector(vector);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_supervisor_trap_vector(vector);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn set_supervisor_scratch(&self, value: u64) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_supervisor_scratch(value);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_supervisor_scratch(value);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn set_supervisor_exception_pc(&self, pc: u64) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_supervisor_exception_pc(pc);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_supervisor_exception_pc(pc);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn set_supervisor_trap_cause(&self, cause: u64) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_supervisor_trap_cause(cause);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_supervisor_trap_cause(cause);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn set_supervisor_trap_value(&self, value: u64) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_supervisor_trap_value(value);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_supervisor_trap_value(value);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn set_machine_trap_vector(&self, vector: u64) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_machine_trap_vector(vector);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_machine_trap_vector(vector);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub(crate) fn take_pending_trap_event(&self) -> Option<RiscvCpuExecutionEvent> {
@@ -853,59 +842,47 @@ impl RiscvCore {
     }
 
     pub fn set_translation_satp(&self, value: u64) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_translation_satp(value);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_translation_satp(value);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn set_data_translation_address_space(&self, address_space: TranslationAddressSpaceId) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
+        let mut state = self.state.lock().expect("riscv core lock");
+        state
             .hart
             .set_translation_address_space(address_space.get());
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn set_sv39_access_context(&self, context: RiscvSv39AccessContext) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_sv39_access_context(context);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_sv39_access_context(context);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn set_privilege_mode(&self, privilege: RiscvPrivilegeMode) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_privilege_mode(privilege);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_privilege_mode(privilege);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn set_status(&self, status: RiscvStatusWord) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_status(status);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_status(status);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn set_float_status(&self, status: rem6_isa_riscv::RiscvFloatStatus) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_float_status(status);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_float_status(status);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn set_vector_fixed_point(&self, state: RiscvVectorFixedPointState) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .set_vector_fixed_point(state);
+        let mut core_state = self.state.lock().expect("riscv core lock");
+        core_state.hart.set_vector_fixed_point(state);
+        riscv_checker::sync_checker_hart(&mut core_state);
     }
 
     pub fn ready_data_translation_requests(&self, tick: Tick) -> Vec<CpuTranslationRequest> {
@@ -1729,6 +1706,7 @@ fn record_data_translation_fault_state(
     state.issued_data_for_fetches.insert(fetch_request);
     state.ready_translated_data.remove(&fetch_request);
     state.events[original_index] = event;
+    riscv_checker::sync_checker_hart(state);
     Ok(Address::new(state.hart.pc()))
 }
 

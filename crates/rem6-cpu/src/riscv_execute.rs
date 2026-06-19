@@ -132,6 +132,18 @@ impl RiscvCore {
             .hart
             .execute_decoded(decoded)
             .map_err(RiscvCpuError::Isa)?;
+        let primary_hart = state.hart.clone();
+        if let Some(checker) = &mut state.checker {
+            checker
+                .check_retired(
+                    fetch.request_id().sequence(),
+                    fetch.pc(),
+                    decoded,
+                    &execution,
+                    &primary_hart,
+                )
+                .map_err(RiscvCpuError::Isa)?;
+        }
         let next_pc = Address::new(execution.next_pc());
         let sequential_next_pc = fetch
             .pc()

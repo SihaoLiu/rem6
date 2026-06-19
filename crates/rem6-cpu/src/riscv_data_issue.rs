@@ -16,8 +16,9 @@ use rem6_transport::{
 };
 
 use crate::{
-    riscv_data_access, riscv_execute, CpuId, RiscvCore, RiscvCoreState, RiscvCpuError,
-    RiscvDataAccessEvent, RiscvDataAccessRecord, RiscvDataAccessTarget, RiscvLoadReservation,
+    riscv_checker, riscv_data_access, riscv_execute, CpuId, RiscvCore, RiscvCoreState,
+    RiscvCpuError, RiscvDataAccessEvent, RiscvDataAccessRecord, RiscvDataAccessTarget,
+    RiscvLoadReservation,
 };
 
 impl RiscvCore {
@@ -436,6 +437,7 @@ impl RiscvCore {
         state
             .sc_progress
             .record_failure(self.id(), tick, access.physical_address, access.size);
+        riscv_checker::sync_checker_hart(&mut state);
         record_data_retire_cycle(&mut state, &access, tick);
         state
             .data_events
@@ -463,6 +465,7 @@ impl RiscvCore {
                     data.as_deref(),
                     "load response data",
                 );
+                riscv_checker::sync_checker_hart(&mut state);
                 record_data_retire_cycle(&mut state, &access, delivery.tick());
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(delivery.tick()),
@@ -490,6 +493,7 @@ impl RiscvCore {
                     access.physical_address,
                     access.size,
                 );
+                riscv_checker::sync_checker_hart(&mut state);
                 record_data_retire_cycle(&mut state, &access, delivery.tick());
                 state
                     .data_events
@@ -530,6 +534,7 @@ impl RiscvCore {
                     data.as_deref(),
                     "MMIO load response data",
                 );
+                riscv_checker::sync_checker_hart(&mut state);
                 record_data_retire_cycle(&mut state, &access, completion.tick());
                 state.data_events.push(RiscvDataAccessEvent::completed(
                     access.record(completion.tick()),

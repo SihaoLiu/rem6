@@ -183,6 +183,7 @@ pub enum Rem6CliError {
     ReadfileRequiresExecution,
     ReadfileRequiresRiscv,
     RiscvSeRequiresExecution,
+    CheckerCpuRequiresExecution,
     DataCacheProtocolRequiresExecution,
     DataCachePrefetcherRequiresExecution,
     InstructionCacheProtocolRequiresExecution,
@@ -201,6 +202,7 @@ pub enum Rem6CliError {
     InstructionCachePrefetcherRequiresRiscv,
     InstructionCachePrefetcherRequiresInstructionCacheProtocol,
     RiscvPcCountTargetRequiresRiscv,
+    CheckerCpuRequiresRiscv,
     DataCacheProtocolLargeMulticoreRequiresMsi {
         protocol: RiscvDataCacheProtocol,
         cores: usize,
@@ -474,6 +476,9 @@ impl fmt::Display for Rem6CliError {
             Self::RiscvSeRequiresExecution => {
                 write!(formatter, "--riscv-se requires --execute")
             }
+            Self::CheckerCpuRequiresExecution => {
+                write!(formatter, "--checker-cpu requires --execute")
+            }
             Self::DataCacheProtocolRequiresExecution => {
                 write!(formatter, "--data-cache-protocol requires --execute")
             }
@@ -527,6 +532,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::RiscvPcCountTargetRequiresRiscv => {
                 write!(formatter, "--riscv-pc-count-target requires --isa riscv")
+            }
+            Self::CheckerCpuRequiresRiscv => {
+                write!(formatter, "--checker-cpu requires --isa riscv")
             }
             Self::DataCacheProtocolLargeMulticoreRequiresMsi { protocol, cores } => {
                 write!(

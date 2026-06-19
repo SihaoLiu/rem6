@@ -1,7 +1,7 @@
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvStatusWord};
 use rem6_memory::Address;
 
-use crate::RiscvCore;
+use crate::{riscv_checker, RiscvCore};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvHartRunState {
@@ -158,6 +158,7 @@ impl RiscvCore {
         state.pending_trap = None;
         state.pending_trap_event = None;
         state.reservation = None;
+        riscv_checker::sync_checker_hart(&mut state);
         drop(state);
         self.core.reset_fetch_stream_to_pc(entry);
         true

@@ -773,6 +773,22 @@ pub(super) fn run_stats_output(
                 StatResetPolicy::Monotonic,
                 core.in_order_pipeline_redirects,
             )?;
+            if let Some(checker) = &core.checker {
+                increment_stat(
+                    &mut stats,
+                    &format!("sim.cpu{}.checker.checked_instructions", core.cpu),
+                    "Count",
+                    StatResetPolicy::Monotonic,
+                    checker.checked_instructions,
+                )?;
+                increment_stat(
+                    &mut stats,
+                    &format!("sim.cpu{}.checker.mismatches", core.cpu),
+                    "Count",
+                    StatResetPolicy::Monotonic,
+                    checker.mismatches,
+                )?;
+            }
             increment_stat(
                 &mut stats,
                 &format!("sim.cpu{}.data.loads", core.cpu),

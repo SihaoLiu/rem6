@@ -5,8 +5,7 @@ use std::sync::{Arc, Mutex};
 use rem6_isa_riscv::{
     FloatRegister, MemoryAccessKind, Register, RiscvCounterSnapshot, RiscvHartState, RiscvPmaError,
     RiscvPmaRange, RiscvPmaTable, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot, RiscvPmpTable,
-    RiscvPrivilegeMode, RiscvTrap, RiscvTrapKind, RiscvVectorConfig, VectorRegister,
-    RISCV_VECTOR_REGISTER_BYTES,
+    RiscvPrivilegeMode, RiscvTrap, RiscvVectorConfig, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler,
@@ -40,6 +39,7 @@ mod o3_dependency;
 mod o3_pipeline;
 mod parallel_flow;
 mod riscv_activity;
+mod riscv_checker;
 mod riscv_cluster;
 mod riscv_cluster_drive;
 mod riscv_cluster_error;
@@ -49,6 +49,7 @@ mod riscv_cluster_scheduler;
 mod riscv_data_access;
 mod riscv_data_issue;
 mod riscv_drive;
+mod riscv_environment_call;
 mod riscv_execute;
 mod riscv_execution_event;
 mod riscv_fetch;
@@ -146,6 +147,7 @@ pub use o3_pipeline::{
     O3WritebackTransferPlan, O3WritebackTransferPolicy, O3WritebackTransferSnapshot,
 };
 pub use riscv_activity::RiscvCoreDriveActivity;
+pub use riscv_checker::{RiscvCheckerMismatch, RiscvCheckerSnapshot};
 pub use riscv_cluster::{
     RiscvCluster, RiscvClusterError, RiscvClusterHtmAbortOutcome, RiscvClusterHtmBeginOutcome,
 };
@@ -746,11 +748,9 @@ impl RiscvCore {
     }
 
     pub fn restore_counter_snapshot(&self, snapshot: &RiscvCounterSnapshot) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .restore_counter_snapshot(snapshot);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.restore_counter_snapshot(snapshot);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn write_vector_register(
@@ -758,11 +758,9 @@ impl RiscvCore {
         register: VectorRegister,
         value: [u8; RISCV_VECTOR_REGISTER_BYTES],
     ) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .write_vector(register, value);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.write_vector(register, value);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn vector_config(&self) -> RiscvVectorConfig {
@@ -896,78 +894,6 @@ impl RiscvCore {
         })
     }
 
-    pub fn complete_pending_user_environment_call(&self, return_value: u64) -> Option<RiscvTrap> {
-        let mut state = self.state.lock().expect("riscv core lock");
-        let trap = state.pending_trap?;
-        if !matches!(trap.kind(), RiscvTrapKind::EnvironmentCall) {
-            return None;
-        }
-        let return_privilege = match state.hart.privilege_mode() {
-            RiscvPrivilegeMode::Machine => state.hart.status().mpp(),
-            RiscvPrivilegeMode::Supervisor => state.hart.status().spp(),
-            RiscvPrivilegeMode::User => RiscvPrivilegeMode::User,
-        };
-        if return_privilege != RiscvPrivilegeMode::User {
-            return None;
-        }
-
-        state.pending_trap = None;
-        state.pending_trap_event = None;
-        state.pending_fetch_prefix = None;
-        state.discard_branch_speculations();
-        state.hart.set_privilege_mode(RiscvPrivilegeMode::User);
-        state.hart.write(
-            Register::new(10).expect("valid RISC-V integer register"),
-            return_value,
-        );
-        let next_pc = Address::new(trap.pc().wrapping_add(4));
-        state.hart.set_pc(next_pc.get());
-        drop(state);
-        self.core.reset_fetch_stream_to_pc(next_pc);
-        Some(trap)
-    }
-
-    pub fn complete_pending_supervisor_environment_call(
-        &self,
-        error: u64,
-        value: u64,
-    ) -> Option<RiscvTrap> {
-        let mut state = self.state.lock().expect("riscv core lock");
-        let trap = state.pending_trap?;
-        if !matches!(trap.kind(), RiscvTrapKind::EnvironmentCall) {
-            return None;
-        }
-        let return_privilege = match state.hart.privilege_mode() {
-            RiscvPrivilegeMode::Machine => state.hart.status().mpp(),
-            RiscvPrivilegeMode::Supervisor => state.hart.status().spp(),
-            RiscvPrivilegeMode::User => RiscvPrivilegeMode::User,
-        };
-        if return_privilege != RiscvPrivilegeMode::Supervisor {
-            return None;
-        }
-
-        state.pending_trap = None;
-        state.pending_trap_event = None;
-        state.pending_fetch_prefix = None;
-        state.discard_branch_speculations();
-        state
-            .hart
-            .set_privilege_mode(RiscvPrivilegeMode::Supervisor);
-        state.hart.write(
-            Register::new(10).expect("valid RISC-V integer register"),
-            error,
-        );
-        state.hart.write(
-            Register::new(11).expect("valid RISC-V integer register"),
-            value,
-        );
-        let next_pc = Address::new(trap.pc().wrapping_add(4));
-        state.hart.set_pc(next_pc.get());
-        drop(state);
-        self.core.reset_fetch_stream_to_pc(next_pc);
-        Some(trap)
-    }
-
     pub fn has_pending_fetch(&self) -> bool {
         self.core.has_pending_fetch()
     }
@@ -993,19 +919,15 @@ impl RiscvCore {
     }
 
     pub fn write_register(&self, register: Register, value: u64) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .write(register, value);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.write(register, value);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn write_float_register(&self, register: FloatRegister, value: u64) {
-        self.state
-            .lock()
-            .expect("riscv core lock")
-            .hart
-            .write_float(register, value);
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.write_float(register, value);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn redirect_pc(&self, pc: Address) {
@@ -1013,6 +935,7 @@ impl RiscvCore {
         state.hart.set_pc(pc.get());
         state.pending_fetch_prefix = None;
         state.discard_branch_speculations();
+        riscv_checker::sync_checker_hart(&mut state);
         drop(state);
         self.core.reset_fetch_stream_to_pc(pc);
     }
@@ -1224,6 +1147,7 @@ struct RiscvCoreState {
     sc_progress: RiscvStoreConditionalProgress,
     htm: HtmTransactionState,
     htm_hart_checkpoint: Option<RiscvHartState>,
+    checker: Option<riscv_checker::RiscvCheckerCpu>,
     branch_predictor: BranchPredictor,
     branch_speculations: BTreeMap<u64, BranchSpeculationId>,
     gshare_branch_predictor: GShareBranchPredictor,
@@ -1255,6 +1179,7 @@ impl RiscvCoreState {
             sc_progress: RiscvStoreConditionalProgress::default(),
             htm: HtmTransactionState::new(),
             htm_hart_checkpoint: None,
+            checker: None,
             branch_predictor: BranchPredictor::new(
                 BranchPredictorConfig::new(DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES)
                     .expect("default RISC-V branch predictor entries are valid"),

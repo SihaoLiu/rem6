@@ -34,6 +34,9 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     if config.riscv_se() {
         return Err(Rem6CliError::RiscvSeRequiresExecution);
     }
+    if config.checker_cpu() {
+        return Err(Rem6CliError::CheckerCpuRequiresExecution);
+    }
     if config.data_cache_protocol().is_some() {
         return Err(Rem6CliError::DataCacheProtocolRequiresExecution);
     }
@@ -90,6 +93,9 @@ fn validate_cache_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
     }
     if !config.riscv_pc_count_targets().is_empty() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::RiscvPcCountTargetRequiresRiscv);
+    }
+    if config.checker_cpu() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::CheckerCpuRequiresRiscv);
     }
     if config.instruction_cache_prefetcher().is_some()
         && config.instruction_cache_protocol().is_none()

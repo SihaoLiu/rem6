@@ -216,6 +216,55 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
 }
 
 #[test]
+fn rem6_run_stats_emit_checker_cpu_counts_from_execution() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("checker-cpu-stats", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--checker-cpu",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"checker\":{\"checked_instructions\":2,\"mismatches\":0}"));
+    assert_stat(
+        &stdout,
+        "sim.cpu0.checker.checked_instructions",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.cpu0.checker.mismatches",
+        "Count",
+        0,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_stats_include_issued_fetch_ahead_before_response() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7

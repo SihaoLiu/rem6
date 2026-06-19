@@ -1,6 +1,6 @@
 use crate::{
-    Address, HtmAbortRecord, HtmBeginRecord, HtmCommitRecord, HtmFailureCause, HtmTransactionError,
-    HtmTransactionSnapshot, HtmTransactionUid, RiscvCore,
+    riscv_checker, Address, HtmAbortRecord, HtmBeginRecord, HtmCommitRecord, HtmFailureCause,
+    HtmTransactionError, HtmTransactionSnapshot, HtmTransactionUid, RiscvCore,
 };
 
 impl RiscvCore {
@@ -40,6 +40,7 @@ impl RiscvCore {
         state.pending_trap = None;
         state.pending_fetch_prefix = None;
         state.discard_branch_speculations();
+        riscv_checker::sync_checker_hart(&mut state);
         drop(state);
         self.core
             .reset_fetch_stream_to_pc(Address::new(restored_pc));
