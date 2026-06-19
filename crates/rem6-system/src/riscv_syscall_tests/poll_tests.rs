@@ -75,7 +75,7 @@ fn linux_table_ppoll_marks_ready_stdio_and_invalid_fd() {
 }
 
 #[test]
-fn linux_table_ppoll_zero_nfds_returns_without_guest_memory() {
+fn linux_table_ppoll_zero_nfds_with_null_timeout_blocks_without_guest_memory() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
 
@@ -85,7 +85,7 @@ fn linux_table_ppoll_zero_nfds_returns_without_guest_memory() {
             &mut state,
             12,
         ),
-        Some(RiscvSyscallOutcome::Return { value: 0 })
+        Some(RiscvSyscallOutcome::Blocked)
     );
     assert!(state.unknown_syscalls().is_empty());
 }
@@ -168,9 +168,13 @@ fn linux_table_ppoll_does_not_report_full_guest_pipe_as_writable() {
     let payload = vec![b'x'; RISCV_LINUX_PIPE_PAGE_BYTES_FOR_TEST as usize];
     let pollfd = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let pollfd_for_reader = std::sync::Arc::clone(&pollfd);
+    let zero_timeout = timespec_bytes(0, 0);
     let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
         if address == 0xa000 && bytes == payload.len() {
             return Some(payload.clone());
+        }
+        if address == 0xc000 && bytes == zero_timeout.len() {
+            return Some(zero_timeout.clone());
         }
         if address >= 0xb000 {
             let pollfd = pollfd_for_reader.lock().unwrap();
@@ -249,7 +253,11 @@ fn linux_table_ppoll_does_not_report_full_guest_pipe_as_writable() {
 
     assert_eq!(
         table.handle_with_guest_memory_io_at_tick(
-            RiscvSyscallRequest::new(0x800c, RISCV_LINUX_PPOLL_FOR_TEST, [0xb000, 1, 0, 0, 0, 0],),
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_PPOLL_FOR_TEST,
+                [0xb000, 1, 0xc000, 0, 0, 0],
+            ),
             &mut state,
             9,
             Some(&guest_memory_reader),
@@ -259,7 +267,10 @@ fn linux_table_ppoll_does_not_report_full_guest_pipe_as_writable() {
     );
     assert_eq!(
         &*poll_writes.lock().unwrap(),
-        &[(0xb006, 0_i16.to_le_bytes().to_vec())]
+        &[
+            (0xb006, 0_i16.to_le_bytes().to_vec()),
+            (0xc000, timespec_bytes(0, 0)),
+        ]
     );
     assert!(state.unknown_syscalls().is_empty());
 }
@@ -268,5 +279,12 @@ fn pollfd_bytes(fd: i32, events: i16) -> [u8; 8] {
     let mut bytes = [0; 8];
     bytes[..4].copy_from_slice(&fd.to_le_bytes());
     bytes[4..6].copy_from_slice(&events.to_le_bytes());
+    bytes
+}
+
+fn timespec_bytes(seconds: i64, nanoseconds: i64) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(16);
+    bytes.extend_from_slice(&seconds.to_le_bytes());
+    bytes.extend_from_slice(&nanoseconds.to_le_bytes());
     bytes
 }

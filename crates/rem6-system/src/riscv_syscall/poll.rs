@@ -71,67 +71,183 @@ enum PselectInput<T> {
     Value(T),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PpollTimeout {
+    address: Option<u64>,
+    state: PselectTimeout,
+    original_bytes: [u8; RISCV_LINUX_TIMESPEC_BYTES],
+}
+
+impl PpollTimeout {
+    const fn indefinite() -> Self {
+        Self {
+            address: None,
+            state: PselectTimeout::Indefinite,
+            original_bytes: [0; RISCV_LINUX_TIMESPEC_BYTES],
+        }
+    }
+
+    fn finite(address: u64, state: PselectTimeout, original_bytes: Vec<u8>) -> Self {
+        Self {
+            address: Some(address),
+            state,
+            original_bytes: original_bytes
+                .try_into()
+                .expect("timespec reader returns fixed-width bytes"),
+        }
+    }
+
+    const fn blocks_when_unready(&self) -> bool {
+        matches!(self.state, PselectTimeout::Indefinite)
+    }
+
+    const fn expires_when_unready(&self) -> bool {
+        matches!(
+            self.state,
+            PselectTimeout::Expired | PselectTimeout::Pending
+        )
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PpollReadySet {
+    entries: Vec<(u64, i16)>,
+    ready_count: u64,
+}
+
+impl PpollReadySet {
+    fn write_revents(&self, guest_memory_writer: &RiscvGuestMemoryWriter) -> Result<(), u64> {
+        for (pollfd_address, revents) in &self.entries {
+            let Some(revents_address) = pollfd_address.checked_add(6) else {
+                return Err(RISCV_LINUX_EFAULT);
+            };
+            if !guest_memory_writer.write(revents_address, &revents.to_le_bytes()) {
+                return Err(RISCV_LINUX_EFAULT);
+            }
+        }
+        Ok(())
+    }
+}
+
 pub(super) fn syscall_ppoll(
     request: RiscvSyscallRequest,
     state: &RiscvSyscallState,
     guest_memory_reader: Option<&RiscvGuestMemoryReader>,
     guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
-) -> Option<u64> {
+) -> Option<RiscvSyscallOutcome> {
     let pollfd_count = request.argument(1);
     if pollfd_count > RISCV_LINUX_POLLFD_MAX {
-        return Some(linux_error(RISCV_LINUX_EINVAL));
+        return Some(ppoll_return(linux_error(RISCV_LINUX_EINVAL)));
+    }
+    let timeout = match ppoll_timeout(request.argument(2), guest_memory_reader) {
+        PselectInput::Value(timeout) => timeout,
+        PselectInput::Errno(errno) => return Some(ppoll_return(linux_error(errno))),
+        PselectInput::MissingGuestReader => return None,
+    };
+    match validate_ppoll_sigmask(
+        request.argument(3),
+        request.argument(4),
+        guest_memory_reader,
+    ) {
+        PselectInput::Value(()) => {}
+        PselectInput::Errno(errno) => return Some(ppoll_return(linux_error(errno))),
+        PselectInput::MissingGuestReader => return None,
     }
     if pollfd_count == 0 {
-        return Some(0);
+        return if timeout.blocks_when_unready() {
+            Some(RiscvSyscallOutcome::Blocked)
+        } else {
+            ppoll_return_with_timeout(
+                0,
+                &timeout,
+                guest_memory_writer,
+                timeout.expires_when_unready(),
+            )
+        };
     }
 
-    Some(syscall_ppoll_with_memory(
+    let ready_set = match ppoll_ready_set(
         request.argument(0),
         pollfd_count,
         state,
         guest_memory_reader?,
-        guest_memory_writer?,
-    ))
+    ) {
+        Ok(ready_set) => ready_set,
+        Err(errno) => return Some(ppoll_return(linux_error(errno))),
+    };
+    if ready_set.ready_count == 0 && timeout.blocks_when_unready() {
+        Some(RiscvSyscallOutcome::Blocked)
+    } else {
+        let guest_memory_writer = guest_memory_writer?;
+        if let Err(errno) = ready_set.write_revents(guest_memory_writer) {
+            return Some(ppoll_return(linux_error(errno)));
+        }
+        ppoll_return_with_timeout(
+            ready_set.ready_count,
+            &timeout,
+            Some(guest_memory_writer),
+            ready_set.ready_count == 0 && timeout.expires_when_unready(),
+        )
+    }
 }
 
-fn syscall_ppoll_with_memory(
+fn ppoll_return(value: u64) -> RiscvSyscallOutcome {
+    RiscvSyscallOutcome::Return { value }
+}
+
+fn ppoll_return_with_timeout(
+    value: u64,
+    timeout: &PpollTimeout,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+    timeout_expired: bool,
+) -> Option<RiscvSyscallOutcome> {
+    if let Some(timeout_address) = timeout.address {
+        let guest_memory_writer = guest_memory_writer?;
+        let zero_timeout = [0_u8; RISCV_LINUX_TIMESPEC_BYTES];
+        let remaining = if timeout_expired {
+            &zero_timeout[..]
+        } else {
+            &timeout.original_bytes[..]
+        };
+        if !guest_memory_writer.write(timeout_address, remaining) {
+            return Some(ppoll_return(linux_error(RISCV_LINUX_EFAULT)));
+        }
+    }
+    Some(ppoll_return(value))
+}
+
+fn ppoll_ready_set(
     pollfds_address: u64,
     pollfd_count: u64,
     state: &RiscvSyscallState,
     guest_memory_reader: &RiscvGuestMemoryReader,
-    guest_memory_writer: &RiscvGuestMemoryWriter,
-) -> u64 {
+) -> Result<PpollReadySet, u64> {
     let mut entries = Vec::with_capacity(pollfd_count as usize);
+    let mut ready_count = 0_u64;
     for index in 0..pollfd_count {
         let Some(pollfd_address) =
             pollfds_address.checked_add(index * RISCV_LINUX_POLLFD_BYTES as u64)
         else {
-            return linux_error(RISCV_LINUX_EFAULT);
+            return Err(RISCV_LINUX_EFAULT);
         };
         let Some(pollfd) = read_guest_exact(
             guest_memory_reader,
             pollfd_address,
             RISCV_LINUX_POLLFD_BYTES,
         ) else {
-            return linux_error(RISCV_LINUX_EFAULT);
+            return Err(RISCV_LINUX_EFAULT);
         };
         let revents = pollfd_revents(state, pollfd_fd(&pollfd), pollfd_events(&pollfd));
-        entries.push((pollfd_address, revents));
-    }
-
-    let mut ready_count = 0_u64;
-    for (pollfd_address, revents) in entries {
-        let Some(revents_address) = pollfd_address.checked_add(6) else {
-            return linux_error(RISCV_LINUX_EFAULT);
-        };
-        if !guest_memory_writer.write(revents_address, &revents.to_le_bytes()) {
-            return linux_error(RISCV_LINUX_EFAULT);
-        }
         if revents != 0 {
             ready_count += 1;
         }
+        entries.push((pollfd_address, revents));
     }
-    ready_count
+
+    Ok(PpollReadySet {
+        entries,
+        ready_count,
+    })
 }
 
 pub(super) fn syscall_pselect6(
@@ -356,6 +472,53 @@ fn pselect_timeout(
     } else {
         PselectInput::Value(PselectTimeout::Pending)
     }
+}
+
+fn ppoll_timeout(
+    timeout_address: u64,
+    guest_memory: Option<&RiscvGuestMemoryReader>,
+) -> PselectInput<PpollTimeout> {
+    if timeout_address == 0 {
+        return PselectInput::Value(PpollTimeout::indefinite());
+    }
+    let Some(guest_memory) = guest_memory else {
+        return PselectInput::MissingGuestReader;
+    };
+    let Some(timeout) = read_guest_exact(guest_memory, timeout_address, RISCV_LINUX_TIMESPEC_BYTES)
+    else {
+        return PselectInput::Errno(RISCV_LINUX_EFAULT);
+    };
+    let seconds = read_i64_le(&timeout[..8]);
+    let nanoseconds = read_i64_le(&timeout[8..]);
+    if seconds < 0 || !(0..1_000_000_000).contains(&nanoseconds) {
+        return PselectInput::Errno(RISCV_LINUX_EINVAL);
+    }
+    let state = if seconds == 0 && nanoseconds == 0 {
+        PselectTimeout::Expired
+    } else {
+        PselectTimeout::Pending
+    };
+    PselectInput::Value(PpollTimeout::finite(timeout_address, state, timeout))
+}
+
+fn validate_ppoll_sigmask(
+    sigmask_address: u64,
+    sigset_bytes: u64,
+    guest_memory: Option<&RiscvGuestMemoryReader>,
+) -> PselectInput<()> {
+    if sigmask_address == 0 {
+        return PselectInput::Value(());
+    }
+    if sigset_bytes != RISCV_LINUX_SIGSET_BYTES as u64 {
+        return PselectInput::Errno(RISCV_LINUX_EINVAL);
+    }
+    let Some(guest_memory) = guest_memory else {
+        return PselectInput::MissingGuestReader;
+    };
+    if read_guest_exact(guest_memory, sigmask_address, RISCV_LINUX_SIGSET_BYTES).is_none() {
+        return PselectInput::Errno(RISCV_LINUX_EFAULT);
+    }
+    PselectInput::Value(())
 }
 
 fn validate_pselect_sigmask(

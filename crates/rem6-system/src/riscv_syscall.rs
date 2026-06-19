@@ -1399,7 +1399,6 @@ impl RiscvSyscallTable {
             }),
             RISCV_LINUX_PPOLL => {
                 syscall_ppoll(request, state, guest_memory_reader, guest_memory_writer)
-                    .map(|value| RiscvSyscallOutcome::Return { value })
             }
             RISCV_LINUX_PSELECT6 => {
                 syscall_pselect6(request, state, guest_memory_reader, guest_memory_writer)

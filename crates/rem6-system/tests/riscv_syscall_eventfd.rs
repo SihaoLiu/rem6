@@ -69,9 +69,28 @@ fn pollfd_bytes(fd: i32, events: i16) -> [u8; 8] {
     bytes
 }
 
+fn timespec(seconds: i64, nanoseconds: i64) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(16);
+    bytes.extend_from_slice(&seconds.to_le_bytes());
+    bytes.extend_from_slice(&nanoseconds.to_le_bytes());
+    bytes
+}
+
+fn sigset_bytes(value: u64) -> [u8; 8] {
+    value.to_le_bytes()
+}
+
 fn memory_u64(store: &Arc<Mutex<PartitionedMemoryStore>>, address: u64) -> u64 {
     let bytes = guest_memory_reader(Arc::clone(store))(address, 8).unwrap();
     u64::from_le_bytes(bytes.try_into().unwrap())
+}
+
+fn memory_timespec(store: &Arc<Mutex<PartitionedMemoryStore>>, address: u64) -> (i64, i64) {
+    let bytes = guest_memory_reader(Arc::clone(store))(address, 16).unwrap();
+    (
+        i64::from_le_bytes(bytes[..8].try_into().unwrap()),
+        i64::from_le_bytes(bytes[8..].try_into().unwrap()),
+    )
 }
 
 fn pollfd_revents(store: &Arc<Mutex<PartitionedMemoryStore>>, address: u64) -> i16 {
@@ -124,6 +143,145 @@ fn return_value(outcome: RiscvSyscallOutcome) -> u64 {
         RiscvSyscallOutcome::Return { value } => value,
         outcome => panic!("unexpected syscall outcome: {outcome:?}"),
     }
+}
+
+#[test]
+fn linux_table_ppoll_validates_timeout_and_sigmask_before_polling() {
+    let store = eventfd_store();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9200,
+        &timespec(0, 1_000_000_000)
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_PPOLL,
+            [0, 0, 0x9200, 0, 0, 0],
+            Some(&reader),
+            Some(&writer),
+        )),
+        linux_error(RISCV_LINUX_EINVAL)
+    );
+
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9200,
+        &timespec(0, 0)
+    ));
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9210,
+        &sigset_bytes(0xa5)
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_PPOLL,
+            [0, 0, 0x9200, 0x9210, 4, 0],
+            Some(&reader),
+            Some(&writer),
+        )),
+        linux_error(RISCV_LINUX_EINVAL)
+    );
+}
+
+#[test]
+fn linux_table_ppoll_blocks_with_indefinite_timeout_when_no_fd_is_ready() {
+    let store = eventfd_store();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+    let fd = return_value(handle(
+        &mut state,
+        RISCV_LINUX_EVENTFD2,
+        [0, RISCV_LINUX_O_NONBLOCK, 0, 0, 0, 0],
+    ));
+    let initial_revents = 0x55_i16;
+    let mut pollfd = pollfd_bytes(fd as i32, RISCV_LINUX_POLLIN);
+    pollfd[6..].copy_from_slice(&initial_revents.to_le_bytes());
+    assert!(guest_memory_writer(Arc::clone(&store))(0x9030, &pollfd));
+
+    assert_eq!(
+        handle_with_memory(
+            &mut state,
+            RISCV_LINUX_PPOLL,
+            [0x9030, 1, 0, 0, 0, 0],
+            Some(&reader),
+            Some(&writer),
+        ),
+        RiscvSyscallOutcome::Blocked
+    );
+    assert_eq!(pollfd_revents(&store, 0x9030), initial_revents);
+}
+
+#[test]
+fn linux_table_ppoll_expires_finite_timeout_when_no_fd_is_ready() {
+    let store = eventfd_store();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+    let fd = return_value(handle(
+        &mut state,
+        RISCV_LINUX_EVENTFD2,
+        [0, RISCV_LINUX_O_NONBLOCK, 0, 0, 0, 0],
+    ));
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9030,
+        &pollfd_bytes(fd as i32, RISCV_LINUX_POLLIN)
+    ));
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9200,
+        &timespec(0, 1)
+    ));
+
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_PPOLL,
+            [0x9030, 1, 0x9200, 0, 0, 0],
+            Some(&reader),
+            Some(&writer),
+        )),
+        0
+    );
+    assert_eq!(pollfd_revents(&store, 0x9030), 0);
+    assert_eq!(memory_timespec(&store, 0x9200), (0, 0));
+}
+
+#[test]
+fn linux_table_ppoll_writes_deterministic_remaining_timeout_when_ready() {
+    let store = eventfd_store();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+    let fd = return_value(handle(
+        &mut state,
+        RISCV_LINUX_EVENTFD2,
+        [1, RISCV_LINUX_O_NONBLOCK, 0, 0, 0, 0],
+    ));
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9030,
+        &pollfd_bytes(fd as i32, RISCV_LINUX_POLLIN)
+    ));
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9200,
+        &timespec(2, 3)
+    ));
+
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_PPOLL,
+            [0x9030, 1, 0x9200, 0, 0, 0],
+            Some(&reader),
+            Some(&writer),
+        )),
+        1
+    );
+    assert_eq!(pollfd_revents(&store, 0x9030), RISCV_LINUX_POLLIN);
+    assert_eq!(memory_timespec(&store, 0x9200), (2, 3));
 }
 
 #[test]
