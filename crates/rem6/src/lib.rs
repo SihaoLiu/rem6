@@ -1111,7 +1111,7 @@ fn execution_summary(
         fetch_transport: memory_transport_summary(inputs.fetch_trace),
         data_transport: memory_transport_summary(inputs.data_trace),
         dram: inputs.memory.dram_summary_until(final_tick),
-        debug: Rem6DebugSummary::from_run(inputs.config, run),
+        debug: Rem6DebugSummary::from_run(inputs.config, cluster, run),
         cores,
         memory_dumps: read_memory_dumps(
             inputs.memory,

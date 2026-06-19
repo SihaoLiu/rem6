@@ -271,6 +271,10 @@ impl CpuCore {
         self.state.lock().expect("cpu core lock").events.clone()
     }
 
+    pub fn fetch_history(&self) -> Vec<CpuFetchEvent> {
+        self.state.lock().expect("cpu core lock").history.clone()
+    }
+
     fn has_pending_fetch(&self) -> bool {
         !self
             .state
@@ -473,7 +477,7 @@ impl CpuCore {
         state
             .outstanding
             .insert(issue.request_id, issue.clone_without_layout());
-        state.events.push(CpuFetchEvent::issued(CpuFetchRecord::new(
+        let event = CpuFetchEvent::issued(CpuFetchRecord::new(
             issue.tick,
             issue.partition,
             issue.route,
@@ -481,7 +485,9 @@ impl CpuCore {
             issue.request_id,
             issue.pc,
             issue.size,
-        )));
+        ));
+        state.events.push(event.clone());
+        state.history.push(event);
     }
 
     pub(crate) fn record_response(&self, delivery: ResponseDelivery) {
@@ -496,21 +502,25 @@ impl CpuCore {
                 if let Some(next_pc) = fetch.pc.get().checked_add(data.len() as u64) {
                     state.pc = Address::new(next_pc);
                 }
-                state.events.push(CpuFetchEvent::completed(
+                let event = CpuFetchEvent::completed(
                     fetch.record(
                         delivery.tick(),
                         delivery.route(),
                         delivery.endpoint().clone(),
                     ),
                     data,
-                ));
+                );
+                state.events.push(event.clone());
+                state.history.push(event);
             }
             ResponseStatus::Retry | ResponseStatus::StoreConditionalFailed => {
-                state.events.push(CpuFetchEvent::retry(fetch.record(
+                let event = CpuFetchEvent::retry(fetch.record(
                     delivery.tick(),
                     delivery.route(),
                     delivery.endpoint().clone(),
-                )));
+                ));
+                state.events.push(event.clone());
+                state.history.push(event);
             }
         }
     }
@@ -536,9 +546,9 @@ impl CpuCore {
         let Some(fetch) = state.outstanding.remove(&request_id) else {
             return;
         };
-        state
-            .events
-            .push(CpuFetchEvent::failed(fetch.record(tick, route, endpoint)));
+        let event = CpuFetchEvent::failed(fetch.record(tick, route, endpoint));
+        state.events.push(event.clone());
+        state.history.push(event);
     }
 }
 
@@ -563,6 +573,7 @@ struct CpuCoreState {
     next_sequence: u64,
     outstanding: BTreeMap<MemoryRequestId, IssuedFetch>,
     events: Vec<CpuFetchEvent>,
+    history: Vec<CpuFetchEvent>,
 }
 
 impl CpuCoreState {
@@ -575,6 +586,7 @@ impl CpuCoreState {
             next_sequence: 0,
             outstanding: BTreeMap::new(),
             events: Vec::new(),
+            history: Vec::new(),
         }
     }
 }

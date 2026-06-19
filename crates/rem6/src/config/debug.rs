@@ -3,6 +3,7 @@ use crate::Rem6CliError;
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum CliDebugFlag {
     Exec,
+    Fetch,
 }
 
 impl CliDebugFlag {
@@ -12,6 +13,7 @@ impl CliDebugFlag {
         }
         match value {
             "Exec" => Ok(Self::Exec),
+            "Fetch" => Ok(Self::Fetch),
             _ => Err(Rem6CliError::UnsupportedDebugFlag {
                 flag: value.to_string(),
             }),
@@ -21,6 +23,7 @@ impl CliDebugFlag {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Exec => "Exec",
+            Self::Fetch => "Fetch",
         }
     }
 }
