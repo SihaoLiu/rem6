@@ -10,6 +10,7 @@ const SBI_BASE_GET_SPEC_VERSION: i32 = 0;
 const SBI_BASE_PROBE_EXTENSION: i32 = 3;
 const SBI_DEBUG_CONSOLE_EXTENSION: u64 = 0x4442_434e;
 const SBI_DEBUG_CONSOLE_WRITE: i32 = 0;
+const SBI_DEBUG_CONSOLE_READ: i32 = 1;
 const SBI_DEBUG_CONSOLE_WRITE_BYTE: i32 = 2;
 const SBI_ERR_INVALID_ADDRESS: u64 = (-5_i64) as u64;
 const SBI_SPEC_VERSION_2_0: u64 = 2 << 24;
@@ -265,5 +266,181 @@ fn supervisor_sbi_debug_console_write_rejects_unreadable_guest_memory() {
         .unwrap()
         .debug_console_bytes()
         .is_empty());
+    assert!(run.riscv_debug_console_bytes().is_empty());
+}
+
+#[test]
+fn supervisor_sbi_debug_console_read_writes_guest_memory_and_advertises_dbcn() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(74);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
+    core.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    let cluster = RiscvCluster::new([core.clone()]).unwrap();
+    let (dbcn_hi, dbcn_lo) = lui_addi_parts(SBI_DEBUG_CONSOLE_EXTENSION);
+    let store = loaded_program_store_with_data(
+        &[
+            (0x8000, addi(17, 0, SBI_BASE_EXTENSION as i32)),
+            (0x8004, addi(16, 0, SBI_BASE_PROBE_EXTENSION)),
+            (0x8008, lui(10, dbcn_hi)),
+            (0x800c, addi(10, 10, dbcn_lo)),
+            (0x8010, 0x0000_0073),
+            (0x8014, addi(5, 10, 0)),
+            (0x8018, addi(6, 11, 0)),
+            (0x801c, lui(17, dbcn_hi)),
+            (0x8020, addi(17, 17, dbcn_lo)),
+            (0x8024, addi(16, 0, SBI_DEBUG_CONSOLE_READ)),
+            (0x8028, addi(10, 0, 8)),
+            (0x802c, lui(11, 9)),
+            (0x8030, addi(12, 0, 0)),
+            (0x8034, 0x0000_0073),
+            (0x8038, addi(7, 10, 0)),
+            (0x803c, addi(8, 11, 0)),
+            (0x8040, 0x0010_0073),
+        ],
+        &[(0x9000, &[0u8; 8])],
+    );
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_riscv_sbi_firmware_and_functional_guest_memory_reader(guest_memory_reader(
+            Arc::clone(&store),
+        ))
+        .with_riscv_sbi_firmware_and_functional_guest_memory_writer(guest_memory_writer(
+            Arc::clone(&store),
+        ))
+        .with_riscv_sbi_debug_console_input(b"xyz".to_vec())
+        .with_riscv_syscall_emulation();
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            100,
+            |cpu| GuestEventId::new(740 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(740), source, 1);
+    assert_eq!(run.host_stop(), Some(stop));
+    assert_eq!(core.read_register(reg(5)), 0);
+    assert_eq!(core.read_register(reg(6)), 1);
+    assert_eq!(core.read_register(reg(7)), 0);
+    assert_eq!(core.read_register(reg(8)), 3);
+    assert_eq!(
+        guest_memory_reader(Arc::clone(&store))(0x9000, 8).unwrap(),
+        {
+            let mut bytes = b"xyz".to_vec();
+            bytes.extend_from_slice(&[0, 0, 0, 0, 0]);
+            bytes
+        }
+    );
+    assert!(run.riscv_debug_console_bytes().is_empty());
+}
+
+#[test]
+fn supervisor_sbi_debug_console_read_rejects_unwritable_requested_range() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(75);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
+    core.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    let cluster = RiscvCluster::new([core.clone()]).unwrap();
+    let (dbcn_hi, dbcn_lo) = lui_addi_parts(SBI_DEBUG_CONSOLE_EXTENSION);
+    let store = loaded_program_store_with_data(
+        &[
+            (0x8000, lui(17, dbcn_hi)),
+            (0x8004, addi(17, 17, dbcn_lo)),
+            (0x8008, addi(16, 0, SBI_DEBUG_CONSOLE_READ)),
+            (0x800c, addi(10, 0, 8)),
+            (0x8010, lui(11, 9)),
+            (0x8014, addi(12, 0, 0)),
+            (0x8018, 0x0000_0073),
+            (0x801c, addi(5, 10, 0)),
+            (0x8020, addi(6, 11, 0)),
+            (0x8024, 0x0010_0073),
+        ],
+        &[(0x9000, &[0u8; 8])],
+    );
+    let writer_store = Arc::clone(&store);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_riscv_sbi_firmware_and_functional_guest_memory_writer(move |address, bytes| {
+            if bytes.is_empty() && address == 0x9007 {
+                return false;
+            }
+            guest_memory_writer(Arc::clone(&writer_store))(address, bytes)
+        })
+        .with_riscv_sbi_debug_console_input(b"xyz".to_vec())
+        .with_riscv_syscall_emulation();
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            80,
+            |cpu| GuestEventId::new(750 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(750), source, 1);
+    assert_eq!(run.host_stop(), Some(stop));
+    assert_eq!(core.read_register(reg(5)), SBI_ERR_INVALID_ADDRESS);
+    assert_eq!(core.read_register(reg(6)), 0);
+    assert_eq!(
+        guest_memory_reader(Arc::clone(&store))(0x9000, 8).unwrap(),
+        vec![0; 8]
+    );
     assert!(run.riscv_debug_console_bytes().is_empty());
 }

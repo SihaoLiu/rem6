@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use rem6_cpu::{CpuId, RiscvCluster, RiscvCore, RiscvHartRunState};
@@ -6,7 +6,10 @@ use rem6_isa_riscv::{Register, RiscvPrivilegeMode, RiscvTrapKind};
 use rem6_kernel::{PartitionedScheduler, SchedulerError};
 use rem6_memory::{AccessSize, Address, AddressRange, TranslationAddressSpaceId};
 
-use crate::{riscv_syscall::RiscvGuestMemoryReader, RiscvSystemRunDriver, SystemError};
+use crate::{
+    riscv_syscall::{RiscvGuestMemoryReader, RiscvGuestMemoryWriter},
+    RiscvSystemRunDriver, SystemError,
+};
 
 const SBI_SUCCESS: u64 = 0;
 const SBI_ERR_NOT_SUPPORTED: u64 = (-2_i64) as u64;
@@ -50,6 +53,7 @@ const SBI_RFENCE_REMOTE_HFENCE_VVMA_ASID: u64 = 5;
 const SBI_RFENCE_REMOTE_HFENCE_VVMA: u64 = 6;
 const SBI_SRST_SYSTEM_RESET: u64 = 0;
 const SBI_DEBUG_CONSOLE_WRITE: u64 = 0;
+const SBI_DEBUG_CONSOLE_READ: u64 = 1;
 const SBI_DEBUG_CONSOLE_WRITE_BYTE: u64 = 2;
 const SBI_SPEC_VERSION_2_0: u64 = 2 << 24;
 const REM6_SBI_IMPL_ID: u64 = 0x7265_6d36;
@@ -70,7 +74,9 @@ pub struct RiscvSbiFirmware {
     cores: Arc<Mutex<BTreeMap<u64, RiscvCore>>>,
     timer: Arc<Mutex<RiscvSbiTimerState>>,
     debug_console: Arc<Mutex<Vec<u8>>>,
+    debug_console_input: Arc<Mutex<VecDeque<u8>>>,
     functional_guest_memory_reader: Option<RiscvGuestMemoryReader>,
+    functional_guest_memory_writer: Option<RiscvGuestMemoryWriter>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -237,7 +243,9 @@ impl RiscvSbiFirmware {
                 deadlines: BTreeMap::new(),
             })),
             debug_console: Arc::new(Mutex::new(Vec::new())),
+            debug_console_input: Arc::new(Mutex::new(VecDeque::new())),
             functional_guest_memory_reader: None,
+            functional_guest_memory_writer: None,
         }
     }
 
@@ -246,6 +254,19 @@ impl RiscvSbiFirmware {
         F: Fn(u64, usize) -> Option<Vec<u8>> + Send + Sync + 'static,
     {
         self.functional_guest_memory_reader = Some(RiscvGuestMemoryReader::new(read));
+        self
+    }
+
+    pub fn with_functional_guest_memory_writer<F>(mut self, write: F) -> Self
+    where
+        F: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
+    {
+        self.functional_guest_memory_writer = Some(RiscvGuestMemoryWriter::new(write));
+        self
+    }
+
+    pub fn with_debug_console_input(mut self, input: Vec<u8>) -> Self {
+        self.debug_console_input = Arc::new(Mutex::new(VecDeque::from(input)));
         self
     }
 
@@ -313,7 +334,9 @@ impl RiscvSbiFirmware {
                     || request.arg0() == SBI_HSM_EXTENSION
                     || request.arg0() == SBI_IPI_EXTENSION
                     || request.arg0() == SBI_RFENCE_EXTENSION
-                    || request.arg0() == SBI_SRST_EXTENSION,
+                    || request.arg0() == SBI_SRST_EXTENSION
+                    || (request.arg0() == SBI_DEBUG_CONSOLE_EXTENSION
+                        && self.supports_debug_console_extension()),
             )),
             (SBI_BASE_EXTENSION, SBI_BASE_GET_MVENDORID)
             | (SBI_BASE_EXTENSION, SBI_BASE_GET_MARCHID)
@@ -384,11 +407,19 @@ impl RiscvSbiFirmware {
             (SBI_DEBUG_CONSOLE_EXTENSION, SBI_DEBUG_CONSOLE_WRITE) => {
                 self.debug_console_write(request)
             }
+            (SBI_DEBUG_CONSOLE_EXTENSION, SBI_DEBUG_CONSOLE_READ) => {
+                self.debug_console_read(request)
+            }
             (SBI_DEBUG_CONSOLE_EXTENSION, SBI_DEBUG_CONSOLE_WRITE_BYTE) => {
                 self.debug_console_write_byte(request)
             }
             _ => RiscvSbiOutcome::not_supported(),
         }))
+    }
+
+    fn supports_debug_console_extension(&self) -> bool {
+        self.functional_guest_memory_reader.is_some()
+            && self.functional_guest_memory_writer.is_some()
     }
 
     fn debug_console_write(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
@@ -408,32 +439,50 @@ impl RiscvSbiFirmware {
         &self,
         request: RiscvSbiRequest,
     ) -> Result<Vec<u8>, RiscvSbiOutcome> {
-        let bytes =
-            usize::try_from(request.arg0()).map_err(|_| RiscvSbiOutcome::invalid_param())?;
+        let (bytes, address) = debug_console_shared_memory_request(request)?;
         if bytes == 0 {
             return Ok(Vec::new());
         }
-        if request.arg2() != 0 {
-            return Err(RiscvSbiOutcome::invalid_param());
-        }
-        let last_offset = u64::try_from(bytes)
-            .ok()
-            .and_then(|bytes| bytes.checked_sub(1))
-            .ok_or_else(RiscvSbiOutcome::invalid_param)?;
-        request
-            .arg1()
-            .checked_add(last_offset)
-            .ok_or_else(RiscvSbiOutcome::invalid_param)?;
         let Some(reader) = &self.functional_guest_memory_reader else {
             return Err(RiscvSbiOutcome::invalid_address());
         };
-        let Some(payload) = reader.read(request.arg1(), bytes) else {
+        let Some(payload) = reader.read(address, bytes) else {
             return Err(RiscvSbiOutcome::invalid_address());
         };
         if payload.len() != bytes {
             return Err(RiscvSbiOutcome::invalid_address());
         }
         Ok(payload)
+    }
+
+    fn debug_console_read(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+        let (bytes, address) = match debug_console_shared_memory_request(request) {
+            Ok(range) => range,
+            Err(outcome) => return outcome,
+        };
+        if bytes == 0 {
+            return RiscvSbiOutcome::success(0);
+        }
+        let Some(writer) = &self.functional_guest_memory_writer else {
+            return RiscvSbiOutcome::invalid_address();
+        };
+        if !writer.can_write(address, bytes) {
+            return RiscvSbiOutcome::invalid_address();
+        }
+        let mut input = self
+            .debug_console_input
+            .lock()
+            .expect("RISC-V SBI debug console input lock");
+        let readable = bytes.min(input.len());
+        if readable == 0 {
+            return RiscvSbiOutcome::success(0);
+        }
+        let payload = input.iter().take(readable).copied().collect::<Vec<_>>();
+        if !writer.write(address, &payload) {
+            return RiscvSbiOutcome::invalid_address();
+        }
+        input.drain(..readable);
+        RiscvSbiOutcome::success(readable as u64)
     }
 
     fn debug_console_write_byte(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
@@ -964,6 +1013,26 @@ fn rfence_virtual_range(start_addr: u64, size: u64) -> Option<Option<AddressRang
     }
 }
 
+fn debug_console_shared_memory_request(
+    request: RiscvSbiRequest,
+) -> Result<(usize, u64), RiscvSbiOutcome> {
+    let bytes = usize::try_from(request.arg0()).map_err(|_| RiscvSbiOutcome::invalid_param())?;
+    if request.arg2() != 0 {
+        return Err(RiscvSbiOutcome::invalid_param());
+    }
+    if bytes != 0 {
+        let last_offset = u64::try_from(bytes)
+            .ok()
+            .and_then(|bytes| bytes.checked_sub(1))
+            .ok_or_else(RiscvSbiOutcome::invalid_param)?;
+        request
+            .arg1()
+            .checked_add(last_offset)
+            .ok_or_else(RiscvSbiOutcome::invalid_param)?;
+    }
+    Ok((bytes, request.arg1()))
+}
+
 impl RiscvSystemRunDriver {
     pub fn with_riscv_sbi_firmware(mut self) -> Self {
         self.riscv_sbi_firmware = Some(RiscvSbiFirmware::new());
@@ -979,6 +1048,29 @@ impl RiscvSystemRunDriver {
             .take()
             .unwrap_or_else(RiscvSbiFirmware::new)
             .with_functional_guest_memory_reader(read);
+        self.riscv_sbi_firmware = Some(firmware);
+        self
+    }
+
+    pub fn with_riscv_sbi_firmware_and_functional_guest_memory_writer<F>(mut self, write: F) -> Self
+    where
+        F: Fn(u64, &[u8]) -> bool + Send + Sync + 'static,
+    {
+        let firmware = self
+            .riscv_sbi_firmware
+            .take()
+            .unwrap_or_else(RiscvSbiFirmware::new)
+            .with_functional_guest_memory_writer(write);
+        self.riscv_sbi_firmware = Some(firmware);
+        self
+    }
+
+    pub fn with_riscv_sbi_debug_console_input(mut self, input: Vec<u8>) -> Self {
+        let firmware = self
+            .riscv_sbi_firmware
+            .take()
+            .unwrap_or_else(RiscvSbiFirmware::new)
+            .with_debug_console_input(input);
         self.riscv_sbi_firmware = Some(firmware);
         self
     }

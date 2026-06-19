@@ -124,11 +124,11 @@ impl RiscvGuestMemoryWriter {
         self
     }
 
-    pub(in crate::riscv_syscall) fn write(&self, address: u64, bytes: &[u8]) -> bool {
+    pub(crate) fn write(&self, address: u64, bytes: &[u8]) -> bool {
         (self.write)(address, bytes)
     }
 
-    pub(in crate::riscv_syscall) fn can_write(&self, address: u64, bytes: usize) -> bool {
+    pub(crate) fn can_write(&self, address: u64, bytes: usize) -> bool {
         (self.write_probe)(address, bytes)
     }
 
