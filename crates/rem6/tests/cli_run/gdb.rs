@@ -646,6 +646,62 @@ fn rem6_run_gdb_listen_reads_counter_csrs_after_single_step() {
 }
 
 #[test]
+fn rem6_run_gdb_listen_counter_csr_writes_keep_time_independent() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let (child, mut stream) = start_riscv_gdb_run("gdb-listen-counter-csr-writes", program, 80);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P7c=4000000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p7c"),
+        gdb_response(b"4000000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p7d"),
+        gdb_response(b"0000000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P7d=0200000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p7c"),
+        gdb_response(b"4000000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p7d"),
+        gdb_response(b"0200000000000000")
+    );
+    assert_eq!(send_gdb_packet(&mut stream, b"s"), gdb_response(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p7c"),
+        gdb_response(b"4100000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p7d"),
+        gdb_response(b"0300000000000000")
+    );
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"stop_code\":0"));
+    assert!(stdout.contains("\"x5\":\"0x7\""));
+}
+
+#[test]
 fn rem6_run_gdb_listen_continues_until_guest_stop() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7

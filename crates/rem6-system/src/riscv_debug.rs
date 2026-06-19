@@ -1103,7 +1103,8 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
 fn read_hart_counter_csr(hart: &RiscvHartState, csr: RiscvCounterCsr) -> u64 {
     let snapshot = hart.counter_snapshot();
     match csr {
-        RiscvCounterCsr::Cycle | RiscvCounterCsr::Time => snapshot.cycle(),
+        RiscvCounterCsr::Cycle => snapshot.cycle(),
+        RiscvCounterCsr::Time => snapshot.time(),
         RiscvCounterCsr::Instret => snapshot.instret(),
     }
 }
@@ -1124,9 +1125,15 @@ fn counter_snapshot_with_value(
     value: u64,
 ) -> RiscvCounterSnapshot {
     match csr {
-        RiscvCounterCsr::Cycle => RiscvCounterSnapshot::new(value, snapshot.instret()),
-        RiscvCounterCsr::Instret => RiscvCounterSnapshot::new(snapshot.cycle(), value),
-        RiscvCounterCsr::Time => RiscvCounterSnapshot::new(value, snapshot.instret()),
+        RiscvCounterCsr::Cycle => {
+            RiscvCounterSnapshot::with_time(value, snapshot.time(), snapshot.instret())
+        }
+        RiscvCounterCsr::Instret => {
+            RiscvCounterSnapshot::with_time(snapshot.cycle(), snapshot.time(), value)
+        }
+        RiscvCounterCsr::Time => {
+            RiscvCounterSnapshot::with_time(snapshot.cycle(), value, snapshot.instret())
+        }
     }
 }
 

@@ -290,10 +290,7 @@ fn counter_csrs_preserve_machine_writes_and_user_read_aliases() {
         counters.read_user(RiscvCounterCsr::Cycle),
         0x1234_5678_9abc_def0
     );
-    assert_eq!(
-        counters.read_user(RiscvCounterCsr::Time),
-        0x1234_5678_9abc_def0
-    );
+    assert_eq!(counters.read_user(RiscvCounterCsr::Time), 0);
     assert_eq!(
         counters.read_machine(RiscvCounterCsr::Instret),
         0x0102_0304_0506_0708
@@ -313,6 +310,7 @@ fn counter_csrs_preserve_machine_writes_and_user_read_aliases() {
         counters.read_machine(RiscvCounterCsr::Instret),
         0x0102_0304_0506_070b
     );
+    assert_eq!(counters.read_user(RiscvCounterCsr::Time), 0x10);
 }
 
 #[test]
@@ -368,12 +366,13 @@ fn counter_csrs_reject_user_writes_and_restore_snapshots() {
         .write_machine(RiscvCounterCsr::Instret, 0xfeed)
         .unwrap();
     let snapshot = counters.snapshot();
-    assert_eq!(snapshot, RiscvCounterSnapshot::new(1, 0xfeed));
+    assert_eq!(snapshot, RiscvCounterSnapshot::with_time(1, 2, 0xfeed));
 
     let mut restored = RiscvCounterBank::new();
     restored.restore(&snapshot);
     assert_eq!(restored.snapshot(), snapshot);
     assert_eq!(restored.read_user(RiscvCounterCsr::Cycle), 1);
+    assert_eq!(restored.read_user(RiscvCounterCsr::Time), 2);
     assert_eq!(restored.read_user(RiscvCounterCsr::Instret), 0xfeed);
 }
 
@@ -794,33 +793,60 @@ fn hart_executes_machine_counter_csr_read_modify_write_operations() {
 
     hart.execute(write_cycle).unwrap();
     assert_eq!(hart.read(reg(5)), 0);
-    assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(0x41, 1));
+    assert_eq!(
+        hart.counter_snapshot(),
+        RiscvCounterSnapshot::with_time(0x41, 1, 1)
+    );
 
     hart.execute(set_instret).unwrap();
     assert_eq!(hart.read(reg(6)), 1);
     assert_eq!(
         hart.counter_snapshot(),
-        RiscvCounterSnapshot::new(0x42, 0x12)
+        RiscvCounterSnapshot::with_time(0x42, 2, 0x12)
     );
 
     hart.execute(clear_cycle).unwrap();
     assert_eq!(hart.read(reg(7)), 0x42);
     assert_eq!(
         hart.counter_snapshot(),
-        RiscvCounterSnapshot::new(0x41, 0x13)
+        RiscvCounterSnapshot::with_time(0x41, 3, 0x13)
     );
 
     hart.execute(write_instret_imm).unwrap();
     assert_eq!(hart.read(reg(8)), 0x13);
-    assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(0x42, 8));
+    assert_eq!(
+        hart.counter_snapshot(),
+        RiscvCounterSnapshot::with_time(0x42, 4, 8)
+    );
 
     hart.execute(set_cycle_imm).unwrap();
     assert_eq!(hart.read(reg(9)), 0x42);
-    assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(0x53, 9));
+    assert_eq!(
+        hart.counter_snapshot(),
+        RiscvCounterSnapshot::with_time(0x53, 5, 9)
+    );
 
     hart.execute(clear_instret_imm).unwrap();
     assert_eq!(hart.read(reg(10)), 9);
-    assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(0x54, 9));
+    assert_eq!(
+        hart.counter_snapshot(),
+        RiscvCounterSnapshot::with_time(0x54, 6, 9)
+    );
+}
+
+#[test]
+fn hart_machine_cycle_writes_do_not_change_time_counter() {
+    let write_cycle = RiscvInstruction::decode(csr_type(0xb00, 2, 0x1, 5)).unwrap();
+    let read_time = RiscvInstruction::decode(csr_read_type(0xc01, 6)).unwrap();
+
+    let mut hart = RiscvHartState::new(0x3200);
+    hart.write(reg(2), 0x40);
+
+    hart.execute(write_cycle).unwrap();
+    hart.execute(read_time).unwrap();
+
+    assert_eq!(hart.read(reg(5)), 0);
+    assert_eq!(hart.read(reg(6)), 1);
 }
 
 #[test]

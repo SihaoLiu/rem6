@@ -1054,7 +1054,7 @@ impl RiscvSystemRunDriver {
         let firmware = self
             .riscv_sbi_firmware
             .take()
-            .unwrap_or_else(RiscvSbiFirmware::new)
+            .unwrap_or_default()
             .with_functional_guest_memory_reader(read);
         self.riscv_sbi_firmware = Some(firmware);
         self
@@ -1067,7 +1067,7 @@ impl RiscvSystemRunDriver {
         let firmware = self
             .riscv_sbi_firmware
             .take()
-            .unwrap_or_else(RiscvSbiFirmware::new)
+            .unwrap_or_default()
             .with_functional_guest_memory_writer(write);
         self.riscv_sbi_firmware = Some(firmware);
         self
@@ -1080,7 +1080,7 @@ impl RiscvSystemRunDriver {
         let firmware = self
             .riscv_sbi_firmware
             .take()
-            .unwrap_or_else(RiscvSbiFirmware::new)
+            .unwrap_or_default()
             .with_functional_guest_memory_writer_object(writer);
         self.riscv_sbi_firmware = Some(firmware);
         self
@@ -1090,7 +1090,7 @@ impl RiscvSystemRunDriver {
         let firmware = self
             .riscv_sbi_firmware
             .take()
-            .unwrap_or_else(RiscvSbiFirmware::new)
+            .unwrap_or_default()
             .with_debug_console_input(input);
         self.riscv_sbi_firmware = Some(firmware);
         self

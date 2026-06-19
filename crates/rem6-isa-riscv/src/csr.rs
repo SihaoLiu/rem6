@@ -831,16 +831,33 @@ impl RiscvStatusWord {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvCounterSnapshot {
     cycle: u64,
+    time: u64,
     instret: u64,
 }
 
 impl RiscvCounterSnapshot {
     pub const fn new(cycle: u64, instret: u64) -> Self {
-        Self { cycle, instret }
+        Self {
+            cycle,
+            time: cycle,
+            instret,
+        }
+    }
+
+    pub const fn with_time(cycle: u64, time: u64, instret: u64) -> Self {
+        Self {
+            cycle,
+            time,
+            instret,
+        }
     }
 
     pub const fn cycle(&self) -> u64 {
         self.cycle
+    }
+
+    pub const fn time(&self) -> u64 {
+        self.time
     }
 
     pub const fn instret(&self) -> u64 {
@@ -851,6 +868,7 @@ impl RiscvCounterSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvCounterBank {
     cycle: u64,
+    time: u64,
     instret: u64,
 }
 
@@ -858,6 +876,7 @@ impl RiscvCounterBank {
     pub const fn new() -> Self {
         Self {
             cycle: 0,
+            time: 0,
             instret: 0,
         }
     }
@@ -924,6 +943,7 @@ impl RiscvCounterBank {
 
     pub fn add_cycles(&mut self, cycles: u64) {
         self.cycle = self.cycle.wrapping_add(cycles);
+        self.time = self.time.wrapping_add(cycles);
     }
 
     pub fn retire_instructions(&mut self, instructions: u64) {
@@ -931,17 +951,19 @@ impl RiscvCounterBank {
     }
 
     pub const fn snapshot(&self) -> RiscvCounterSnapshot {
-        RiscvCounterSnapshot::new(self.cycle, self.instret)
+        RiscvCounterSnapshot::with_time(self.cycle, self.time, self.instret)
     }
 
     pub fn restore(&mut self, snapshot: &RiscvCounterSnapshot) {
         self.cycle = snapshot.cycle;
+        self.time = snapshot.time;
         self.instret = snapshot.instret;
     }
 
     const fn read(&self, csr: RiscvCounterCsr) -> u64 {
         match csr {
-            RiscvCounterCsr::Cycle | RiscvCounterCsr::Time => self.cycle,
+            RiscvCounterCsr::Cycle => self.cycle,
+            RiscvCounterCsr::Time => self.time,
             RiscvCounterCsr::Instret => self.instret,
         }
     }

@@ -712,9 +712,9 @@ fn path_reader(path: Vec<u8>, base: u64) -> RiscvGuestMemoryReader {
     })
 }
 
-fn recording_writer(
-    writes: &std::sync::Arc<std::sync::Mutex<Vec<(u64, Vec<u8>)>>>,
-) -> RiscvGuestMemoryWriter {
+type GuestWriteLog = std::sync::Arc<std::sync::Mutex<Vec<(u64, Vec<u8>)>>>;
+
+fn recording_writer(writes: &GuestWriteLog) -> RiscvGuestMemoryWriter {
     let writes_for_writer = std::sync::Arc::clone(writes);
     RiscvGuestMemoryWriter::new(move |address, bytes| {
         writes_for_writer

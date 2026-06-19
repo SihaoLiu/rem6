@@ -67,14 +67,8 @@ fn rv32_counter_word_reads_and_machine_writes_preserve_other_half() {
         counters.read_user_word(RiscvCounterCsrWord::CycleHigh),
         0x1234_5678
     );
-    assert_eq!(
-        counters.read_user_word(RiscvCounterCsrWord::TimeLow),
-        0x9abc_def0
-    );
-    assert_eq!(
-        counters.read_user_word(RiscvCounterCsrWord::TimeHigh),
-        0x1234_5678
-    );
+    assert_eq!(counters.read_user_word(RiscvCounterCsrWord::TimeLow), 0);
+    assert_eq!(counters.read_user_word(RiscvCounterCsrWord::TimeHigh), 0);
     assert_eq!(
         counters.read_machine_word(RiscvCounterCsrWord::InstretLow),
         0x0506_0708
@@ -93,7 +87,7 @@ fn rv32_counter_word_reads_and_machine_writes_preserve_other_half() {
 
     assert_eq!(
         counters.snapshot(),
-        RiscvCounterSnapshot::new(0x1234_5678_1111_2222, 0xaabb_ccdd_0506_0708)
+        RiscvCounterSnapshot::with_time(0x1234_5678_1111_2222, 0, 0xaabb_ccdd_0506_0708)
     );
 }
 
