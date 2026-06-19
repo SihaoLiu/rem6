@@ -15,6 +15,7 @@ use rem6_transport::{MemoryTrace, ParallelMemoryTransaction};
 use serde::Deserialize;
 
 mod fabric;
+mod nomali;
 
 use crate::cli_output;
 use crate::config::{
@@ -36,6 +37,7 @@ use fabric::{
     parse_gpu_fabric_bandwidth, parse_gpu_fabric_credit_depth, parse_gpu_fabric_virtual_network,
     GpuFabricConfig,
 };
+use nomali::{gpu_run_nomali_adapter_artifact, Rem6GpuNoMaliAdapterArtifact};
 
 const GPU_RUN_CPU_PARTITION: PartitionId = PartitionId::new(0);
 const GPU_RUN_GPU_PARTITION: PartitionId = PartitionId::new(1);
@@ -56,6 +58,7 @@ pub struct Rem6GpuRunConfig {
     stats_format: StatsFormat,
     power_format: PowerAnalysisFormat,
     power_output: Option<PathBuf>,
+    nomali_output: Option<PathBuf>,
     dram_memory: bool,
     dram_memory_profile: CliDramMemoryProfile,
     data_cache_protocol: Option<RiscvDataCacheProtocol>,
@@ -88,6 +91,7 @@ struct Rem6GpuRunFileConfig {
     stats_format: Option<String>,
     power_format: Option<String>,
     power_output: Option<PathBuf>,
+    nomali_output: Option<PathBuf>,
     dram_memory: Option<bool>,
     dram_memory_profile: Option<String>,
     data_cache_protocol: Option<String>,
@@ -191,6 +195,10 @@ impl Rem6GpuRunConfig {
             .unwrap_or(PowerAnalysisFormat::McpatXml);
         let mut power_output = file_config
             .power_output
+            .as_deref()
+            .map(|path| file_config.resolve_path(path));
+        let mut nomali_output = file_config
+            .nomali_output
             .as_deref()
             .map(|path| file_config.resolve_path(path));
         let mut dram_memory = file_config.dram_memory.unwrap_or(false);
@@ -327,6 +335,9 @@ impl Rem6GpuRunConfig {
                 "--power-output" => {
                     power_output = Some(PathBuf::from(required_value(&flag, args.next())?));
                 }
+                "--nomali-output" => {
+                    nomali_output = Some(PathBuf::from(required_value(&flag, args.next())?));
+                }
                 "--dram-memory" => {
                     dram_memory = true;
                 }
@@ -444,6 +455,16 @@ impl Rem6GpuRunConfig {
                 });
             }
         }
+        if let Some(nomali_output) = &nomali_output {
+            if output.as_ref() == Some(nomali_output)
+                || stats_output.as_ref() == Some(nomali_output)
+                || power_output.as_ref() == Some(nomali_output)
+            {
+                return Err(Rem6CliError::ConflictingRunOutputPaths {
+                    path: nomali_output.to_path_buf(),
+                });
+            }
+        }
         if global_accesses.is_empty() {
             return Err(Rem6CliError::MissingRequiredFlag {
                 flag: "--global-load",
@@ -469,6 +490,7 @@ impl Rem6GpuRunConfig {
             stats_format,
             power_format,
             power_output,
+            nomali_output,
             dram_memory,
             dram_memory_profile,
             data_cache_protocol,
@@ -557,6 +579,10 @@ impl Rem6GpuRunConfig {
         self.power_output.as_deref()
     }
 
+    pub fn nomali_output(&self) -> Option<&Path> {
+        self.nomali_output.as_deref()
+    }
+
     pub const fn dram_memory(&self) -> bool {
         self.dram_memory
     }
@@ -608,6 +634,7 @@ fn gpu_run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem
         "--stats-format",
         "--power-format",
         "--power-output",
+        "--nomali-output",
         "--dram-memory-profile",
         "--data-cache-protocol",
         "--data-cache-prefetcher",
@@ -764,6 +791,7 @@ pub struct Rem6GpuRunArtifact {
     stats_json: String,
     stats_text: String,
     power_analysis: Option<Rem6PowerAnalysisArtifact>,
+    nomali_adapter: Option<Rem6GpuNoMaliAdapterArtifact>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -930,15 +958,21 @@ pub(crate) fn run_gpu_run_cli(args: Vec<String>) -> Result<String, Rem6CliError>
         StatsFormat::Json => artifact.to_json(),
         StatsFormat::Text => artifact.stats_text.clone(),
     };
-    let power_artifact =
-        artifact
-            .power_analysis
-            .as_ref()
-            .map(|artifact| cli_output::ExtraCliArtifact {
-                name: "power_artifact",
-                path: artifact.output(),
-                contents: artifact.contents(),
-            });
+    let mut extra_artifacts = Vec::new();
+    if let Some(artifact) = artifact.power_analysis.as_ref() {
+        extra_artifacts.push(cli_output::ExtraCliArtifact {
+            name: "power_artifact",
+            path: artifact.output(),
+            contents: artifact.contents(),
+        });
+    }
+    if let Some(artifact) = artifact.nomali_adapter.as_ref() {
+        extra_artifacts.push(cli_output::ExtraCliArtifact {
+            name: "nomali_artifact",
+            path: artifact.output(),
+            contents: artifact.contents(),
+        });
+    }
     cli_output::emit_cli_output(
         output,
         &artifact.stats_json,
@@ -946,7 +980,7 @@ pub(crate) fn run_gpu_run_cli(args: Vec<String>) -> Result<String, Rem6CliError>
         artifact.config.output(),
         artifact.config.stats_output(),
         stats_format,
-        power_artifact,
+        &extra_artifacts,
     )
 }
 
@@ -1147,6 +1181,9 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
             )
         })
         .transpose()?;
+    let nomali_adapter = config
+        .nomali_output()
+        .map(|path| gpu_run_nomali_adapter_artifact(path.to_path_buf(), &execution));
 
     Ok(Rem6GpuRunArtifact {
         schema: "rem6.cli.gpu-run.v1",
@@ -1160,6 +1197,7 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
         stats_json: stats.json,
         stats_text: stats.text,
         power_analysis,
+        nomali_adapter,
     })
 }
 
@@ -1186,8 +1224,13 @@ impl Rem6GpuRunArtifact {
             .as_ref()
             .map(Rem6PowerAnalysisArtifact::to_json)
             .unwrap_or_else(|| "null".to_string());
+        let nomali_adapter = self
+            .nomali_adapter
+            .as_ref()
+            .map(Rem6GpuNoMaliAdapterArtifact::to_json)
+            .unwrap_or_else(|| "null".to_string());
         format!(
-            "{{\"schema\":\"{}\",\"status\":\"completed\",\"workgroups\":{},\"compute_units\":{},\"wave_slots_per_compute_unit\":{},\"workgroup_cycles\":{},\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"dram_memory\":{},\"data_cache_protocol\":{},\"data_cache_prefetcher\":{},\"simulation\":{},\"data_cache\":{},\"dram\":{},\"transport\":{},\"fabric\":{},\"memory\":[{}],\"power_analysis\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"status\":\"completed\",\"workgroups\":{},\"compute_units\":{},\"wave_slots_per_compute_unit\":{},\"workgroup_cycles\":{},\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"dram_memory\":{},\"data_cache_protocol\":{},\"data_cache_prefetcher\":{},\"simulation\":{},\"data_cache\":{},\"dram\":{},\"transport\":{},\"fabric\":{},\"memory\":[{}],\"power_analysis\":{},\"nomali_adapter\":{},\"stats\":{}}}\n",
             self.schema,
             self.config.workgroups(),
             self.config.compute_units(),
@@ -1205,6 +1248,7 @@ impl Rem6GpuRunArtifact {
             gpu_fabric_summary_json(self.config.fabric(), &self.fabric),
             memory_dumps,
             power_analysis,
+            nomali_adapter,
             self.stats_json,
         )
     }

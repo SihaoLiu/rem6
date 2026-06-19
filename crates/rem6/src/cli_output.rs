@@ -17,7 +17,7 @@ pub(crate) fn emit_cli_output(
     output_path: Option<&Path>,
     stats_output_path: Option<&Path>,
     stats_format: StatsFormat,
-    extra_artifact: Option<ExtraCliArtifact<'_>>,
+    extra_artifacts: &[ExtraCliArtifact<'_>],
 ) -> Result<String, Rem6CliError> {
     if let Some(path) = stats_output_path {
         let stats_output = match stats_format {
@@ -26,7 +26,7 @@ pub(crate) fn emit_cli_output(
         };
         write_output_file(path, stats_output.as_bytes())?;
     }
-    if let Some(artifact) = &extra_artifact {
+    for artifact in extra_artifacts {
         write_output_file(artifact.path, artifact.contents.as_bytes())?;
     }
     if let Some(path) = output_path {
@@ -35,7 +35,7 @@ pub(crate) fn emit_cli_output(
             path,
             stats_output_path,
             stats_format,
-            extra_artifact.as_ref(),
+            extra_artifacts,
         ));
     }
     Ok(output)
@@ -61,7 +61,7 @@ fn output_envelope_json(
     artifact: &Path,
     stats_artifact: Option<&Path>,
     format: StatsFormat,
-    extra_artifact: Option<&ExtraCliArtifact<'_>>,
+    extra_artifacts: &[ExtraCliArtifact<'_>],
 ) -> String {
     let mut fields = vec![
         "\"schema\":\"rem6.cli.output.v1\"".to_string(),
@@ -77,7 +77,7 @@ fn output_envelope_json(
             json_escape(&stats_artifact.display().to_string())
         ));
     }
-    if let Some(extra_artifact) = extra_artifact {
+    for extra_artifact in extra_artifacts {
         fields.push(format!(
             "\"{}\":\"{}\"",
             extra_artifact.name,

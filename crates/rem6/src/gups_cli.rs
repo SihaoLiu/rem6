@@ -64,7 +64,7 @@ pub(crate) fn run_gups_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
         artifact.config.output(),
         artifact.config.stats_output(),
         stats_format,
-        None,
+        &[],
     )
 }
 

@@ -479,6 +479,17 @@ fn run_run_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
         StatsFormat::Json => artifact.to_json(),
         StatsFormat::Text => artifact.stats_text.clone(),
     };
+    let extra_artifacts = artifact
+        .power_analysis
+        .as_ref()
+        .map(|artifact| {
+            vec![cli_output::ExtraCliArtifact {
+                name: "power_artifact",
+                path: artifact.output(),
+                contents: artifact.contents(),
+            }]
+        })
+        .unwrap_or_default();
     cli_output::emit_cli_output(
         output,
         &artifact.stats_json,
@@ -486,14 +497,7 @@ fn run_run_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
         artifact.config.output(),
         artifact.config.stats_output(),
         stats_format,
-        artifact
-            .power_analysis
-            .as_ref()
-            .map(|artifact| cli_output::ExtraCliArtifact {
-                name: "power_artifact",
-                path: artifact.output(),
-                contents: artifact.contents(),
-            }),
+        &extra_artifacts,
     )
 }
 

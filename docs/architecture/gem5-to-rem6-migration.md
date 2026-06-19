@@ -870,7 +870,7 @@ top-level cache/DRAM/fabric micro-runs but is not representative, manifest and s
 acquisition have top-level local-artifact paths, narrow run and trace-replay
 resource handoffs exist, and benchmark orchestration remains absent.
 
-- [x] CLI `run`, `gups`, `trace-replay`, and `gpu-run` plus TOML configuration have tests; a repository `gups` example config runs through the top-level CLI without recompilation, TOML-driven `run` output layouts create nested artifact directories for run JSON, stats JSON, and power analysis output, `gups` emits traffic profile summaries from the executed controller, and TOML-driven `gpu-run` executes recorded GPU global memory traffic through cache/DRAM and writes activity-derived power-analysis output.
+- [x] CLI `run`, `gups`, `trace-replay`, and `gpu-run` plus TOML configuration have tests; a repository `gups` example config runs through the top-level CLI without recompilation, TOML-driven `run` output layouts create nested artifact directories for run JSON, stats JSON, and power analysis output, `gups` emits traffic profile summaries from the executed controller, and TOML-driven `gpu-run` executes recorded GPU global memory traffic through cache/DRAM and writes activity-derived power-analysis and NoMali-compatible adapter output.
 - [x] Workload manifests, resource identity, disk-image construction records, and suite planning exist.
 - [x] CLI workload-resource acquisition consumes a resource executor for manifest required artifacts.
 - [x] CLI workload-resource acquisition consumes a resource executor for suite required artifacts.
@@ -998,14 +998,14 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/checkpoint_tests` | `rem6-checkpoint`, subsystem checkpoint banks | 65% representative | Scheduler, memory, devices, storage, VirtIO, timer, interrupt, RISC-V started/stopped/suspended hart run-state, RISC-V in-order pipeline state, RISC-V fetch-steering branch predictor state including live fetch-ahead pending speculation, platform, workload, and manifest checkpoints exist. | Add O3 and non-quiescent restore evidence. |
 | `tests/gem5/chi_protocol` | `rem6-coherence`, protocol crates, `rem6-cache` | 40% single-axis | CHI-like line, controller, bank, dirty peer sourcing, reservation, and Evict-hazard tests exist. | Add Ruby-scale CHI transactions, topology networks, directory races, and workload checks. |
 | `tests/gem5/chi_tlm_tests` | `rem6-proto`, future adapter crates, `rem6-coherence` | 19% scoped | A library-level co-simulation boundary can register TLM endpoints, validate transaction shape, hand off events, and checkpoint clean adapter state in self-tests. | Add runtime TLM bridge tests with coherence traffic. |
-| `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, text stats output, TOML-driven nested run/stats/power artifact directory creation, TOML-driven GPU run config tests, and TOML-driven GPU power-output artifact creation exist. | Add config-driven file layouts for full-system manifests and broader multi-artifact workloads. |
+| `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, text stats output, TOML-driven nested run/stats/power artifact directory creation, TOML-driven GPU run config tests, and TOML-driven GPU power-output plus NoMali adapter artifact creation exist. | Add config-driven file layouts for full-system manifests and broader multi-artifact workloads. |
 | `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line and conditional-branch fetch-ahead including compressed straight-line fetch-ahead through the normal parallel-cluster path, pending-fetch retire overlap for older completed straight-line fetches, issued fetch-ahead occupancy in in-order timing before response completion, retained non-retire in-order cycle history consumed by top-level stats, branch speculation history repair/commit, completed younger fetch squash, per-retired-instruction in-order stage timing stats, top-level fetch/data wait stats, top-level in-order cycle-plan advance/block/flush stats, top-level branch redirect/misprediction/branch-prediction-flush stats, and O3 policies exist. | Add broader in-order stalls/squashes and ROB/LSQ-backed O3 execution tests. |
 | `tests/gem5/dram_lowp` | `rem6-dram`, `rem6-power` | 40% single-axis | DRAM/NVM profile counters, low-power constants, and top-level LPDDR routed-request precharge-powerdown residency stats are surfaced. | Add broader executable low-power state-transition tests across profiles and power states. |
 | `tests/gem5/example_configs`, `tests/gem5/learning_gem5` | `rem6` CLI, `rem6-platform`, `rem6-workload` | 40% single-axis | CLI and TOML tests cover several execution, trace-replay, and GPU micro-run paths, including a checked-in GUPS example config that runs without recompilation. | Add broader example suites spanning run, trace replay, resources, and full-system handoff. |
 | `tests/gem5/fdp_tests` | `rem6-cache` | 45% single-axis | Fetch-directed prefetcher state, errors, and cache-local queue/translation counters have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |
 | `tests/gem5/fs` | `rem6-platform`, `rem6-system`, device crates | 15% scoped | Generic device and handoff slices exist, but the gem5 row is mainly full-system boot. | Add full-system Linux boot with SBI, console, storage, network, timer, and shutdown evidence. |
 | `tests/gem5/gem5_resources` | `rem6-workload`, `rem6` CLI | 58% single-axis | Resource declarations, identity, provenance, disk-image construction records, library-level in-memory acquisition executor records, manifest/suite-level `rem6 resource-acquire` execution with local-artifact, host-file, uncompressed/gzip tar-entry, stored/deflated ZIP-entry, generated zero-fill artifact, and content-checked basic, chunked, and redirected HTTP remote inputs, plus manifest run-kernel, unique-suite run-kernel, `suite-resource:<workload>/<resource>` suite readfile/load-blob payloads, manifest RISC-V SE stdin handoff, suite-selected RISC-V SE guest-file handoff, generated zero-fill load-blob memory dump coverage, and manifest plus unique/selected-suite trace-replay resource-config handoff through TOML or CLI selector exist. | Add broader network-backed, broader archive/artifact acquisition, and suite runtime handoff beyond the current selector-based slices. |
-| `tests/gem5/gpu` | `rem6-gpu`, `rem6-accelerator`, `rem6-transport`, `rem6` CLI | 40% single-axis | GPU and accelerator topology, command, DMA route, scalar ISA, CU assignment, coalesced memory-record tests, flag/TOML top-level `gpu-run` recorded-memory cache/DRAM/fabric micro-runs, tagged next-line data-cache prefetch counters from GPU global loads, and per-CU coalesced read/write stats exist. | Add representative CU scheduling and broader cache/DRAM interactions. |
+| `tests/gem5/gpu` | `rem6-gpu`, `rem6-accelerator`, `rem6-transport`, `rem6` CLI | 40% single-axis | GPU and accelerator topology, command, DMA route, scalar ISA, CU assignment, coalesced memory-record tests, flag/TOML top-level `gpu-run` recorded-memory cache/DRAM/fabric micro-runs, tagged next-line data-cache prefetch counters from GPU global loads, per-CU coalesced read/write stats, and top-level NoMali-compatible adapter artifacts exist. | Add representative CU scheduling, broader cache/DRAM interactions, and register-level GPU device modeling. |
 | `tests/gem5/insttest_se` | future SPARC owner, ISA crates | 10% scoped | Current RISC-V evidence belongs under `asmtest`; this gem5 anchor is SPARC SE focused. | Add SPARC or explicitly retire the row as out of scope. |
 | `tests/gem5/kvm_fork_tests`, `tests/gem5/kvm_switch_tests` | `rem6-system`, future host adapters | 10% scoped | Host-assisted takeover admission rejects unsafe switch shapes. | Add explicit fast-forward adapter and KVM-like switch/fork tests. |
 | `tests/gem5/m5_util`, `tests/test-progs/m5-exit` | `rem6-isa-riscv`, `rem6-system`, `rem6-workload` | 50% single-axis | RISC-V m5 exit, fail, stats, checkpoint, hypercall, and work markers reach typed host actions; direct `rem6 run` JSON records repeated work-marker payloads, stats reset/dump id and tick metadata, nonempty RISC-V core plus store-backed and DRAM-backed memory checkpoint component/chunk metadata, checkpoint chunk checksum changes after guest stores, and hypercall selector/response metadata. | Add broader payload breadth, other ISA entries, and clock-domain behavior. |
@@ -1075,12 +1075,13 @@ external adapter contract in `rem6-proto` self-tests.
 
 **Next evidence:** SST-specific checkpoint and runtime handoff tests.
 
-### Power and Physical-Design Export Adapters - 57% single-axis
+### Power and Physical-Design Export Adapters - 59% single-axis
 
-**Score calculation:** 4 of 7 items have executable evidence, or 57% raw. The
-bucket cap is single-axis because McPAT-shaped and DSENT-shaped exports can be
-written from a top-level run, but external-tool ingestion, full schema parity,
-calibrated activity, and NoMali evidence remain absent.
+**Score calculation:** 5 of 7 items have executable evidence, or 71% raw. The
+bucket cap is single-axis because McPAT-shaped, DSENT-shaped, and
+NoMali-compatible artifacts can be written from a top-level run, but
+external-tool ingestion, full schema parity, calibrated activity, and the
+complete NoMali register/PIO device model remain absent.
 
 - [x] rem6-power can export typed power-analysis records.
 - [x] McPAT-shaped XML export serializes power, thermal, and residency records.
@@ -1088,7 +1089,7 @@ calibrated activity, and NoMali evidence remain absent.
 - [x] `rem6 run --power-output` and `rem6 gpu-run --power-output` write executed-run activity-derived power-analysis artifacts.
 - [ ] McPAT-compatible ingestion/export parity is complete.
 - [ ] DSENT-compatible ingestion/export parity is complete.
-- [ ] NoMali-compatible GPU adapter evidence exists.
+- [x] NoMali-compatible GPU adapter evidence exists.
 
 **Migrated:** Typed power-analysis export records and deterministic library-level
 custom XML smoke coverage for totals, components, and residency entries, plus
@@ -1097,19 +1098,28 @@ Top-level `rem6 run --power-output` emits an activity-derived McPAT-shaped or
 DSENT-shaped artifact from executed CPU and DRAM summaries. Top-level
 `rem6 gpu-run --power-output` emits activity-derived GPU compute-unit,
 GPU data-cache, and DRAM power records, with the artifact path reported in
-the run JSON or CLI output envelope.
+the run JSON or CLI output envelope. Top-level `rem6 gpu-run --nomali-output`
+emits a deterministic NoMali-compatible T760 adapter artifact from executed
+GPU run summaries, including API version, register-window size, T760
+configuration-register values, callback and interrupt identifiers, and
+observed workgroup plus memory activity; TOML and flag-driven runs both report
+the artifact path in JSON or the CLI output envelope.
 
 **Not migrated:** Complete `ext/nomali`, `ext/mcpat`, and `ext/dsent` parity,
+NoMali PIO register execution, register checkpointing, real interrupt delivery,
 external-tool ingestion, full external schema parity, and calibrated
 power/thermal activity.
 
 **Evidence:** rem6-power power-analysis export self-tests including custom XML,
 McPAT-shaped XML, and DSENT-shaped CSV output; `rem6 run` CLI tests for
 `--power-output`, envelope reporting, and load-only rejection; `rem6 gpu-run`
-CLI and TOML tests for McPAT-shaped and DSENT-shaped activity-derived output.
+CLI and TOML tests for McPAT-shaped and DSENT-shaped activity-derived output;
+`rem6 gpu-run --nomali-output` CLI and TOML tests for NoMali-compatible adapter
+artifacts, multi-artifact envelope reporting, and output-path conflict
+rejection.
 
-**Next evidence:** Adapter ingestion, calibrated activity models, and stricter
-external schema parity tests.
+**Next evidence:** Adapter ingestion, NoMali PIO/register execution, calibrated
+activity models, and stricter external schema parity tests.
 
 ### Native Loader and Math Replacement - 50% single-axis
 

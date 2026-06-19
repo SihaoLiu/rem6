@@ -398,6 +398,97 @@ fn rem6_gpu_run_writes_power_analysis_output() {
 }
 
 #[test]
+fn rem6_gpu_run_writes_nomali_adapter_output() {
+    let temp_dir = unique_gpu_temp_dir("nomali-output");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let nomali_path = temp_dir.join("gpu-nomali.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "2",
+            "--compute-units",
+            "2",
+            "--global-load",
+            "0x3400:4:4:4",
+            "--global-store",
+            "0x3420:4:4:4",
+            "--memory-start",
+            "0x3400",
+            "--memory-size",
+            "128",
+            "--data-cache-protocol",
+            "msi",
+            "--dram-memory",
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--nomali-output",
+            nomali_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"nomali_adapter\":{\"schema\":\"rem6.nomali.gpu-adapter.v1\""));
+    assert!(stdout.contains(&format!("\"artifact\":\"{}\"", nomali_path.display())));
+
+    let adapter: Value =
+        serde_json::from_str(&std::fs::read_to_string(&nomali_path).unwrap()).unwrap();
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+
+    assert_eq!(
+        adapter.get("schema").and_then(Value::as_str),
+        Some("rem6.nomali.gpu-adapter.v1")
+    );
+    assert_eq!(
+        adapter.pointer("/gpu/type").and_then(Value::as_str),
+        Some("T760")
+    );
+    assert_eq!(
+        adapter.pointer("/gpu/api_version").and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        adapter
+            .pointer("/gpu/register_window_bytes")
+            .and_then(Value::as_u64),
+        Some(0x4000)
+    );
+    assert_eq!(
+        adapter
+            .pointer("/interface/interrupts/job/nomali_int")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        adapter
+            .pointer("/execution/workgroup_completions")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        adapter
+            .pointer("/execution/global_memory_reads")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        adapter
+            .pointer("/execution/global_memory_writes")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+}
+
+#[test]
 fn rem6_gpu_run_loads_power_analysis_output_from_toml_config() {
     let temp_dir = unique_gpu_temp_dir("power-output-toml");
     std::fs::create_dir_all(&temp_dir).unwrap();
@@ -443,6 +534,52 @@ global_loads = ["0x2000:4:4:4"]
     assert!(power.contains("<component id=\"gpu.compute_unit1\""));
     assert!(power.contains("<component id=\"gpu.data_cache\""));
     assert!(power.contains("<component id=\"memory.dram\""));
+}
+
+#[test]
+fn rem6_gpu_run_loads_nomali_output_from_toml_config() {
+    let temp_dir = unique_gpu_temp_dir("nomali-output-toml");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let config_path = temp_dir.join("gpu.toml");
+    let nomali_path = temp_dir.join("artifacts/gpu-nomali.json");
+    std::fs::write(
+        &config_path,
+        r#"
+[gpu_run]
+workgroups = 2
+compute_units = 2
+memory_start = 16384
+memory_size = 128
+max_tick = 80
+stats_format = "json"
+dram_memory = true
+data_cache_protocol = "msi"
+nomali_output = "artifacts/gpu-nomali.json"
+global_loads = ["0x4000:4:4:4"]
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["gpu-run", "--config"])
+        .arg(&config_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"nomali_adapter\":{\"schema\":\"rem6.nomali.gpu-adapter.v1\""));
+    assert!(stdout.contains(&format!("\"artifact\":\"{}\"", nomali_path.display())));
+
+    let adapter = std::fs::read_to_string(&nomali_path).unwrap();
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+    assert!(adapter.contains("\"schema\":\"rem6.nomali.gpu-adapter.v1\""));
+    assert!(adapter.contains("\"register_window_bytes\":16384"));
+    assert!(adapter.contains("\"workgroup_completions\":2"));
 }
 
 #[test]
@@ -518,6 +655,85 @@ fn rem6_gpu_run_reports_all_output_artifact_paths_when_power_analysis_is_request
 }
 
 #[test]
+fn rem6_gpu_run_reports_all_output_artifact_paths_when_power_and_nomali_are_requested() {
+    let temp_dir = unique_gpu_temp_dir("power-nomali-output-envelope");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let artifact_path = temp_dir.join("gpu.json");
+    let stats_path = temp_dir.join("gpu-stats.json");
+    let power_path = temp_dir.join("gpu-power.csv");
+    let nomali_path = temp_dir.join("gpu-nomali.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "2",
+            "--compute-units",
+            "2",
+            "--global-load",
+            "0x3800:4:4:4",
+            "--memory-start",
+            "0x3800",
+            "--memory-size",
+            "64",
+            "--data-cache-protocol",
+            "msi",
+            "--dram-memory",
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--output",
+            artifact_path.to_str().unwrap(),
+            "--stats-output",
+            stats_path.to_str().unwrap(),
+            "--power-format",
+            "dsent-csv",
+            "--power-output",
+            power_path.to_str().unwrap(),
+            "--nomali-output",
+            nomali_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        format!(
+            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"json\",\"artifact\":\"{}\",\"stats_artifact\":\"{}\",\"power_artifact\":\"{}\",\"nomali_artifact\":\"{}\"}}\n",
+            artifact_path.display(),
+            stats_path.display(),
+            power_path.display(),
+            nomali_path.display(),
+        )
+    );
+    let artifact = std::fs::read_to_string(&artifact_path).unwrap();
+    let stats = std::fs::read_to_string(&stats_path).unwrap();
+    let power = std::fs::read_to_string(&power_path).unwrap();
+    let nomali = std::fs::read_to_string(&nomali_path).unwrap();
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+
+    assert!(artifact.contains("\"power_analysis\":{\"format\":\"dsent-csv\""));
+    assert!(artifact.contains("\"nomali_adapter\":{\"schema\":\"rem6.nomali.gpu-adapter.v1\""));
+    assert_stat(
+        &stats,
+        "sim.gpu_run.workgroup_completions",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert!(power.contains("gpu.compute_unit0"));
+    assert!(nomali.contains("\"schema\":\"rem6.nomali.gpu-adapter.v1\""));
+    assert!(nomali.contains("\"workgroup_completions\":2"));
+}
+
+#[test]
 fn rem6_gpu_run_rejects_overlapping_power_output_paths() {
     let output_path = unique_gpu_temp_dir("power-output-conflict-json").join("gpu.json");
     let stats_path = unique_gpu_temp_dir("power-output-conflict-stats").join("gpu-stats.json");
@@ -575,6 +791,66 @@ fn rem6_gpu_run_rejects_overlapping_power_output_paths() {
     let stderr = String::from_utf8(stats_conflict.stderr).unwrap();
     assert!(stderr.contains("run output artifacts must use different paths"));
     assert!(!stats_path.exists());
+}
+
+#[test]
+fn rem6_gpu_run_rejects_overlapping_nomali_output_paths() {
+    let output_path = unique_gpu_temp_dir("nomali-output-conflict-json").join("gpu.json");
+    let power_path = unique_gpu_temp_dir("nomali-output-conflict-power").join("gpu-power.json");
+
+    let output_conflict = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "1",
+            "--global-load",
+            "0x3c00:4:4:4",
+            "--memory-start",
+            "0x3c00",
+            "--memory-size",
+            "64",
+            "--max-tick",
+            "80",
+            "--output",
+            output_path.to_str().unwrap(),
+            "--nomali-output",
+            output_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output_conflict.status.success());
+    assert!(output_conflict.stdout.is_empty());
+    let stderr = String::from_utf8(output_conflict.stderr).unwrap();
+    assert!(stderr.contains("run output artifacts must use different paths"));
+    assert!(!output_path.exists());
+
+    let power_conflict = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "1",
+            "--global-load",
+            "0x4400:4:4:4",
+            "--memory-start",
+            "0x4400",
+            "--memory-size",
+            "64",
+            "--max-tick",
+            "80",
+            "--power-output",
+            power_path.to_str().unwrap(),
+            "--nomali-output",
+            power_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!power_conflict.status.success());
+    assert!(power_conflict.stdout.is_empty());
+    let stderr = String::from_utf8(power_conflict.stderr).unwrap();
+    assert!(stderr.contains("run output artifacts must use different paths"));
+    assert!(!power_path.exists());
 }
 
 #[test]
@@ -1374,6 +1650,41 @@ global_loads = ["0x1000:4:4:4"]
 
     assert_eq!(
         config.power_output().unwrap(),
+        std::path::Path::new("--config")
+    );
+    assert_eq!(config.workgroups(), 1);
+}
+
+#[test]
+fn rem6_gpu_run_config_scan_treats_nomali_output_value_as_a_value() {
+    let temp_dir = unique_gpu_temp_dir("nomali-output-config-scan");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let config_path = temp_dir.join("gpu.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+[gpu_run]
+workgroups = 1
+memory_start = 4096
+memory_size = 64
+global_loads = ["0x1000:4:4:4"]
+"#,
+    )
+    .unwrap();
+
+    let config = Rem6GpuRunConfig::parse_args(vec![
+        "gpu-run".to_string(),
+        "--nomali-output".to_string(),
+        "--config".to_string(),
+        "--config".to_string(),
+        config_path.display().to_string(),
+    ])
+    .unwrap();
+
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+
+    assert_eq!(
+        config.nomali_output().unwrap(),
         std::path::Path::new("--config")
     );
     assert_eq!(config.workgroups(), 1);

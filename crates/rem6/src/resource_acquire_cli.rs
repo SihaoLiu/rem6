@@ -77,7 +77,7 @@ pub(crate) fn run_resource_acquire_cli(args: Vec<String>) -> Result<String, Rem6
         artifact.config.output(),
         artifact.config.stats_output(),
         stats_format,
-        None,
+        &[],
     )
 }
 
