@@ -253,6 +253,92 @@ fn rem6_gpu_run_reports_per_compute_unit_activity() {
 }
 
 #[test]
+fn rem6_gpu_run_reports_per_compute_unit_memory_activity() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "3",
+            "--compute-units",
+            "2",
+            "--wave-slots-per-compute-unit",
+            "1",
+            "--workgroup-cycles",
+            "4",
+            "--global-load",
+            "0x3200:4:4:4",
+            "--global-store",
+            "0x3240:4:4:4",
+            "--memory-start",
+            "0x3200",
+            "--memory-size",
+            "128",
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"global_memory_requests\":6"));
+    assert!(stdout.contains(
+        "{\"compute_unit\":0,\"workgroup_completions\":2,\"busy_cycles\":8,\"coalesced_memory_accesses\":4,\"global_memory_reads\":2,\"global_memory_writes\":2"
+    ));
+    assert!(stdout.contains(
+        "{\"compute_unit\":1,\"workgroup_completions\":1,\"busy_cycles\":4,\"coalesced_memory_accesses\":2,\"global_memory_reads\":1,\"global_memory_writes\":1"
+    ));
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu0.coalesced_memory_accesses",
+        "Count",
+        4,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu0.global_memory_reads",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu0.global_memory_writes",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu1.coalesced_memory_accesses",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu1.global_memory_reads",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu1.global_memory_writes",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_gpu_run_merges_overlapping_wave_slots_for_compute_unit_busy_cycles() {
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
@@ -286,7 +372,7 @@ fn rem6_gpu_run_merges_overlapping_wave_slots_for_compute_unit_busy_cycles() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains(
-        "\"compute_unit_activity\":[{\"compute_unit\":0,\"workgroup_completions\":2,\"busy_cycles\":4,\"first_started_at\":1,\"last_completed_at\":5"
+        "\"compute_unit_activity\":[{\"compute_unit\":0,\"workgroup_completions\":2,\"busy_cycles\":4,\"coalesced_memory_accesses\":2,\"global_memory_reads\":2,\"global_memory_writes\":0,\"first_started_at\":1,\"last_completed_at\":5"
     ));
     assert_stat(
         &stdout,
@@ -331,7 +417,7 @@ fn rem6_gpu_run_omits_activity_window_stats_for_inactive_compute_units() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains(
-        "{\"compute_unit\":1,\"workgroup_completions\":0,\"busy_cycles\":0,\"first_started_at\":null,\"last_completed_at\":null}"
+        "{\"compute_unit\":1,\"workgroup_completions\":0,\"busy_cycles\":0,\"coalesced_memory_accesses\":0,\"global_memory_reads\":0,\"global_memory_writes\":0,\"first_started_at\":null,\"last_completed_at\":null}"
     ));
     assert_stat(
         &stdout,

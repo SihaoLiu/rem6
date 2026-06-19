@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use rem6_gpu::{
-    GpuComputeConfig, GpuDevice, GpuDeviceId, GpuIsaInstruction, GpuIsaProgram, GpuKernelId,
-    GpuKernelLaunch, GpuMemoryAccessKind, GpuWorkgroupCompletion,
+    GpuCoalescedMemoryAccess, GpuComputeConfig, GpuDevice, GpuDeviceId, GpuIsaInstruction,
+    GpuIsaProgram, GpuKernelId, GpuKernelLaunch, GpuMemoryAccessKind, GpuWorkgroupCompletion,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -653,6 +653,9 @@ pub(crate) struct Rem6GpuComputeUnitActivity {
     compute_unit: u32,
     workgroup_completions: u64,
     busy_cycles: u64,
+    coalesced_memory_accesses: u64,
+    global_memory_reads: u64,
+    global_memory_writes: u64,
     first_started_at: Option<u64>,
     last_completed_at: Option<u64>,
 }
@@ -663,6 +666,9 @@ impl Rem6GpuComputeUnitActivity {
             compute_unit,
             workgroup_completions: 0,
             busy_cycles: 0,
+            coalesced_memory_accesses: 0,
+            global_memory_reads: 0,
+            global_memory_writes: 0,
             first_started_at: None,
             last_completed_at: None,
         }
@@ -682,6 +688,14 @@ impl Rem6GpuComputeUnitActivity {
         );
     }
 
+    fn record_memory_access(&mut self, access: &GpuCoalescedMemoryAccess) {
+        self.coalesced_memory_accesses += 1;
+        match access.kind() {
+            GpuMemoryAccessKind::Read => self.global_memory_reads += 1,
+            GpuMemoryAccessKind::Write => self.global_memory_writes += 1,
+        }
+    }
+
     pub(crate) const fn compute_unit(&self) -> u32 {
         self.compute_unit
     }
@@ -694,6 +708,18 @@ impl Rem6GpuComputeUnitActivity {
         self.busy_cycles
     }
 
+    pub(crate) const fn coalesced_memory_accesses(&self) -> u64 {
+        self.coalesced_memory_accesses
+    }
+
+    pub(crate) const fn global_memory_reads(&self) -> u64 {
+        self.global_memory_reads
+    }
+
+    pub(crate) const fn global_memory_writes(&self) -> u64 {
+        self.global_memory_writes
+    }
+
     pub(crate) const fn first_started_at(&self) -> Option<u64> {
         self.first_started_at
     }
@@ -704,10 +730,13 @@ impl Rem6GpuComputeUnitActivity {
 
     fn to_json(&self) -> String {
         format!(
-            "{{\"compute_unit\":{},\"workgroup_completions\":{},\"busy_cycles\":{},\"first_started_at\":{},\"last_completed_at\":{}}}",
+            "{{\"compute_unit\":{},\"workgroup_completions\":{},\"busy_cycles\":{},\"coalesced_memory_accesses\":{},\"global_memory_reads\":{},\"global_memory_writes\":{},\"first_started_at\":{},\"last_completed_at\":{}}}",
             self.compute_unit,
             self.workgroup_completions,
             self.busy_cycles,
+            self.coalesced_memory_accesses,
+            self.global_memory_reads,
+            self.global_memory_writes,
             optional_tick_json(self.first_started_at),
             optional_tick_json(self.last_completed_at),
         )
@@ -848,9 +877,9 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
     let trace = MemoryTrace::new();
     let memory_responses = Arc::new(Mutex::new(Vec::new()));
     let snapshot = gpu.snapshot();
-    let compute_unit_activity =
-        gpu_compute_unit_activity(config.compute_units(), snapshot.completions())?;
     let accesses = snapshot.coalesced_memory_accesses().to_vec();
+    let compute_unit_activity =
+        gpu_compute_unit_activity(config.compute_units(), snapshot.completions(), &accesses)?;
     let memory_end = config.memory_end()?;
     let transactions = accesses
         .iter()
@@ -1032,6 +1061,7 @@ impl Rem6GpuRunExecutionSummary {
 fn gpu_compute_unit_activity(
     compute_units: u32,
     completions: &[GpuWorkgroupCompletion],
+    accesses: &[GpuCoalescedMemoryAccess],
 ) -> Result<Vec<Rem6GpuComputeUnitActivity>, Rem6CliError> {
     let mut activity = (0..compute_units)
         .map(Rem6GpuComputeUnitActivity::new)
@@ -1052,6 +1082,19 @@ fn gpu_compute_unit_activity(
         }
         activity.record_completion(completion);
         active_intervals[compute_unit].push((completion.started_at(), completion.completed_at()));
+    }
+    for access in accesses {
+        let compute_unit = usize::try_from(access.compute_unit()).map_err(|_| {
+            execute_error("GPU memory access compute unit index does not fit usize")
+        })?;
+        let Some(activity) = activity.get_mut(compute_unit) else {
+            return Err(execute_error(format!(
+                "GPU memory access used compute unit {} outside configured count {}",
+                access.compute_unit(),
+                compute_units
+            )));
+        };
+        activity.record_memory_access(access);
     }
     for (activity, intervals) in activity.iter_mut().zip(active_intervals) {
         activity.busy_cycles = merged_interval_cycles(intervals);

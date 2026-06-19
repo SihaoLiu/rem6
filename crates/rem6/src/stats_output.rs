@@ -1023,6 +1023,27 @@ pub(super) fn gpu_run_stats_output(
             StatResetPolicy::Monotonic,
             activity.busy_cycles(),
         )?;
+        increment_stat(
+            &mut stats,
+            &format!("{prefix}.coalesced_memory_accesses"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            activity.coalesced_memory_accesses(),
+        )?;
+        increment_stat(
+            &mut stats,
+            &format!("{prefix}.global_memory_reads"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            activity.global_memory_reads(),
+        )?;
+        increment_stat(
+            &mut stats,
+            &format!("{prefix}.global_memory_writes"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            activity.global_memory_writes(),
+        )?;
         if let Some(first_started_at) = activity.first_started_at() {
             increment_stat(
                 &mut stats,

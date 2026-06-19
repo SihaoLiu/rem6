@@ -884,7 +884,7 @@ resource handoffs exist, and benchmark orchestration remains absent.
 - [x] GPU ISA-level execution exists.
 - [x] GPU queued workgroups expose compute-unit assignment and coalesced memory access records from scalar ISA memory intents.
 - [x] CLI `gpu-run` routes recorded coalesced scalar GPU global memory requests through direct memory or MSI data-cache and DRAM-backed runtime stats after GPU workgroup completion.
-- [x] CLI `gpu-run` reports per-compute-unit workgroup completion, busy-cycle, and activity-window stats from real scheduled completions.
+- [x] CLI `gpu-run` reports per-compute-unit workgroup completion, busy-cycle, activity-window, and coalesced global-memory read/write stats from real scheduled completions and recorded memory accesses.
 - [ ] GPU CU scheduling, memory coalescing, and cache/DRAM interactions are representative.
 - [ ] Multi-run simulator orchestration and artifact compatibility are complete.
 - [ ] PARSEC or comparable workload suites run end to end.
@@ -926,8 +926,9 @@ records, top-level `gpu-run` cache/DRAM micro-run evidence routing recorded
 coalesced global memory requests through direct memory or MSI data-cache and
 DRAM-backed runtime stats after GPU workgroup completion, TOML-driven
 `gpu-run` cache/DRAM execution and config-value validation, top-level
-`gpu-run` per-CU completion, busy-cycle, and activity-window stats derived from
-scheduled workgroup completions, a checked-in GUPS
+`gpu-run` per-CU completion, busy-cycle, activity-window, and coalesced
+global-memory read/write stats derived from scheduled workgroup completions and
+recorded memory accesses, a checked-in GUPS
 example TOML that runs through the top-level CLI without recompilation,
 top-level `rem6 run --config` creation of nested run, stats, and power-analysis
 artifact directories from TOML-relative paths, and
@@ -968,8 +969,8 @@ coalesced memory records, and snapshot restore of queued ISA programs, and
 `rem6 gpu-run` CLI smoke coverage with TOML and flag-driven
 direct-memory store/dump evidence plus MSI cache-run, DRAM read, and transport
 stats from recorded coalesced GPU global memory requests, plus per-CU
-completion, busy-cycle, and activity-window JSON/stat evidence from the
-top-level scheduled GPU run.
+completion, busy-cycle, activity-window, and coalesced global-memory read/write
+JSON/stat evidence from the top-level scheduled GPU run.
 
 **Next evidence:** Broader suite-level workload replay beyond run-kernel,
 `suite-resource:<workload>/<resource>` readfile/load-blob, RISC-V SE guest-file,
@@ -999,7 +1000,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/fdp_tests` | `rem6-cache` | 45% single-axis | Fetch-directed prefetcher state, errors, and cache-local queue/translation counters have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |
 | `tests/gem5/fs` | `rem6-platform`, `rem6-system`, device crates | 15% scoped | Generic device and handoff slices exist, but the gem5 row is mainly full-system boot. | Add full-system Linux boot with SBI, console, storage, network, timer, and shutdown evidence. |
 | `tests/gem5/gem5_resources` | `rem6-workload`, `rem6` CLI | 58% single-axis | Resource declarations, identity, provenance, disk-image construction records, library-level in-memory acquisition executor records, manifest/suite-level `rem6 resource-acquire` execution with local-artifact, host-file, uncompressed/gzip tar-entry, stored/deflated ZIP-entry, generated zero-fill artifact, and content-checked basic, chunked, and redirected HTTP remote inputs, plus manifest run-kernel, unique-suite run-kernel, `suite-resource:<workload>/<resource>` suite readfile/load-blob payloads, manifest RISC-V SE stdin handoff, suite-selected RISC-V SE guest-file handoff, generated zero-fill load-blob memory dump coverage, and manifest plus unique/selected-suite trace-replay resource-config handoff through TOML or CLI selector exist. | Add broader network-backed, broader archive/artifact acquisition, and suite runtime handoff beyond the current selector-based slices. |
-| `tests/gem5/gpu` | `rem6-gpu`, `rem6-accelerator`, `rem6-transport`, `rem6` CLI | 40% single-axis | GPU and accelerator topology, command, DMA route, scalar ISA, CU assignment, coalesced memory-record tests, and flag/TOML top-level `gpu-run` recorded-memory cache/DRAM micro-runs exist. | Add representative CU scheduling and broader cache/DRAM interactions. |
+| `tests/gem5/gpu` | `rem6-gpu`, `rem6-accelerator`, `rem6-transport`, `rem6` CLI | 40% single-axis | GPU and accelerator topology, command, DMA route, scalar ISA, CU assignment, coalesced memory-record tests, flag/TOML top-level `gpu-run` recorded-memory cache/DRAM micro-runs, and per-CU coalesced read/write stats exist. | Add representative CU scheduling and broader cache/DRAM interactions. |
 | `tests/gem5/insttest_se` | future SPARC owner, ISA crates | 10% scoped | Current RISC-V evidence belongs under `asmtest`; this gem5 anchor is SPARC SE focused. | Add SPARC or explicitly retire the row as out of scope. |
 | `tests/gem5/kvm_fork_tests`, `tests/gem5/kvm_switch_tests` | `rem6-system`, future host adapters | 10% scoped | Host-assisted takeover admission rejects unsafe switch shapes. | Add explicit fast-forward adapter and KVM-like switch/fork tests. |
 | `tests/gem5/m5_util`, `tests/test-progs/m5-exit` | `rem6-isa-riscv`, `rem6-system`, `rem6-workload` | 50% single-axis | RISC-V m5 exit, fail, stats, checkpoint, hypercall, and work markers reach typed host actions; direct `rem6 run` JSON records repeated work-marker payloads, stats reset/dump id and tick metadata, nonempty RISC-V core plus store-backed and DRAM-backed memory checkpoint component/chunk metadata, checkpoint chunk checksum changes after guest stores, and hypercall selector/response metadata. | Add broader payload breadth, other ISA entries, and clock-domain behavior. |
