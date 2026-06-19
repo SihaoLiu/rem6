@@ -677,7 +677,13 @@ pub(super) fn run_stats_output(
         emit_transport_stats(&mut stats, "sim.memory.fetch", &execution.fetch_transport)?;
         emit_transport_stats(&mut stats, "sim.memory.data", &execution.data_transport)?;
         emit_dram_stats(&mut stats, "sim.memory.dram", &execution.dram)?;
+        let single_cpu_run = execution.cores.len() == 1;
         for core in &execution.cores {
+            let gem5_cpu_alias_prefix = if single_cpu_run {
+                "system.cpu".to_string()
+            } else {
+                format!("system.cpu{}", core.cpu)
+            };
             increment_stat(
                 &mut stats,
                 &format!("sim.cpu{}.instructions.committed", core.cpu),
@@ -687,7 +693,21 @@ pub(super) fn run_stats_output(
             )?;
             increment_stat(
                 &mut stats,
+                &format!("{gem5_cpu_alias_prefix}.numInsts"),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.committed_instructions,
+            )?;
+            increment_stat(
+                &mut stats,
                 &format!("sim.cpu{}.pipeline.in_order.cycles", core.cpu),
+                "Cycle",
+                StatResetPolicy::Monotonic,
+                core.in_order_pipeline_cycles,
+            )?;
+            increment_stat(
+                &mut stats,
+                &format!("{gem5_cpu_alias_prefix}.numCycles"),
                 "Cycle",
                 StatResetPolicy::Monotonic,
                 core.in_order_pipeline_cycles,

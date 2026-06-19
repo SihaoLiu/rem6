@@ -114,6 +114,96 @@ fn rem6_run_text_stats_emit_gem5_instruction_alias() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_cpu_numinsts_and_numcycles_aliases() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("gem5-cpu-aliases", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "text",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.numInsts"),
+        text_stat_value(&stdout, "sim.cpu0.instructions.committed")
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.numCycles"),
+        text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.cycles")
+    );
+}
+
+#[test]
+fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_without_ambiguous_cpu_path() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("gem5-multicore-cpu-aliases", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    for cpu in [0, 1] {
+        assert_eq!(
+            text_stat_value(&stdout, &format!("system.cpu{cpu}.numInsts")),
+            text_stat_value(&stdout, &format!("sim.cpu{cpu}.instructions.committed"))
+        );
+        assert_eq!(
+            text_stat_value(&stdout, &format!("system.cpu{cpu}.numCycles")),
+            text_stat_value(&stdout, &format!("sim.cpu{cpu}.pipeline.in_order.cycles"))
+        );
+    }
+    assert!(!has_text_stat(&stdout, "system.cpu.numInsts"));
+    assert!(!has_text_stat(&stdout, "system.cpu.numCycles"));
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_seconds_and_ops_aliases() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
@@ -526,4 +616,10 @@ fn text_stat_value(stdout: &str, path: &str) -> u64 {
             fields.next()?.parse().ok()
         })
         .unwrap_or_else(|| panic!("missing text stat {path} in output:\n{stdout}"))
+}
+
+fn has_text_stat(stdout: &str, path: &str) -> bool {
+    stdout
+        .lines()
+        .any(|line| line.split_whitespace().next() == Some(path))
 }
