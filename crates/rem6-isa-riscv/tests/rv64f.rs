@@ -74,6 +74,8 @@ const FRM_CSR: u16 = 0x002;
 const FCSR_CSR: u16 = 0x003;
 const FLOAT_FLAG_INVALID: u64 = 1 << 4;
 const FLOAT_FLAG_DIVIDE_BY_ZERO: u64 = 1 << 3;
+const FLOAT_FLAG_OVERFLOW: u64 = 1 << 2;
+const FLOAT_FLAG_UNDERFLOW: u64 = 1 << 1;
 const FLOAT_FLAG_INEXACT: u64 = 1 << 0;
 
 #[test]
@@ -601,6 +603,90 @@ fn hart_executes_rv64f_rne_arithmetic_and_records_nan_boxed_writes() {
         .unwrap();
     assert_eq!(hart.read_float(freg(5)), f32_box(11.0));
     assert_eq!(add.register_writes(), &[]);
+}
+
+#[test]
+fn hart_executes_rv64f_single_mul_directed_rounding_when_inexact() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.write_float(freg(1), box_single(0x3f80_0001));
+    hart.write_float(freg(2), box_single(0x3f80_0001));
+
+    let record = hart
+        .execute(RiscvInstruction::FloatMulS {
+            rd: freg(3),
+            rs1: freg(1),
+            rs2: freg(2),
+            rounding_mode: RiscvFloatRoundingMode::RoundUp,
+        })
+        .unwrap();
+
+    assert_eq!(record.trap(), None);
+    assert_eq!(hart.read_float(freg(3)), box_single(0x3f80_0003));
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INEXACT);
+}
+
+#[test]
+fn hart_rv64f_single_mul_raises_invalid_for_infinity_times_zero() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.write_float(freg(1), f32_box(f32::INFINITY));
+    hart.write_float(freg(2), f32_box(0.0));
+
+    hart.execute(RiscvInstruction::FloatMulS {
+        rd: freg(3),
+        rs1: freg(1),
+        rs2: freg(2),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
+    })
+    .unwrap();
+
+    assert_eq!(hart.read_float(freg(3)), box_single(0x7fc0_0000));
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
+}
+
+#[test]
+fn hart_rv64f_single_mul_raises_overflow_for_directed_boundary_product() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.write_float(freg(1), f32_box(f32::MAX));
+    hart.write_float(freg(2), f32_box(2.0));
+
+    let record = hart
+        .execute(RiscvInstruction::FloatMulS {
+            rd: freg(3),
+            rs1: freg(1),
+            rs2: freg(2),
+            rounding_mode: RiscvFloatRoundingMode::RoundTowardZero,
+        })
+        .unwrap();
+
+    assert_eq!(record.trap(), None);
+    assert_eq!(hart.read_float(freg(3)), f32_box(f32::MAX));
+    assert_eq!(
+        hart.float_status().fflags(),
+        FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
+    );
+}
+
+#[test]
+fn hart_rv64f_single_mul_raises_underflow_for_tiny_inexact_product() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.write_float(freg(1), box_single(0x0080_0000));
+    hart.write_float(freg(2), box_single(0x3f7f_fffd));
+
+    let record = hart
+        .execute(RiscvInstruction::FloatMulS {
+            rd: freg(3),
+            rs1: freg(1),
+            rs2: freg(2),
+            rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
+        })
+        .unwrap();
+
+    assert_eq!(record.trap(), None);
+    assert_eq!(hart.read_float(freg(3)), box_single(0x007f_fffe));
+    assert_eq!(
+        hart.float_status().fflags(),
+        FLOAT_FLAG_UNDERFLOW | FLOAT_FLAG_INEXACT
+    );
 }
 
 #[test]
