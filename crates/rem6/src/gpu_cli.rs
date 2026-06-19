@@ -15,10 +15,11 @@ use rem6_transport::{MemoryRoute, MemoryTrace, MemoryTransport, ParallelMemoryTr
 use serde::Deserialize;
 
 use crate::cli_output;
-use crate::config::{CliDramMemoryProfile, MemoryDumpRequest, StatsFormat};
+use crate::config::{CliDramMemoryProfile, MemoryDumpRequest, PowerAnalysisFormat, StatsFormat};
 use crate::data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, cli_data_memory_response, CliDataCacheSummary,
 };
+use crate::power_output::{gpu_run_power_analysis_artifact, Rem6PowerAnalysisArtifact};
 use crate::runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use crate::stats_output::{gpu_run_stats_output, Rem6GpuRunStatsInputs};
 use crate::transport_summary::{memory_transport_summary, Rem6MemoryTransportSummary};
@@ -44,6 +45,8 @@ pub struct Rem6GpuRunConfig {
     min_remote_delay: u64,
     memory_route_delay: u64,
     stats_format: StatsFormat,
+    power_format: PowerAnalysisFormat,
+    power_output: Option<PathBuf>,
     dram_memory: bool,
     dram_memory_profile: CliDramMemoryProfile,
     data_cache_protocol: Option<RiscvDataCacheProtocol>,
@@ -72,6 +75,8 @@ struct Rem6GpuRunFileConfig {
     min_remote_delay: Option<u64>,
     memory_route_delay: Option<u64>,
     stats_format: Option<String>,
+    power_format: Option<String>,
+    power_output: Option<PathBuf>,
     dram_memory: Option<bool>,
     dram_memory_profile: Option<String>,
     data_cache_protocol: Option<String>,
@@ -161,6 +166,16 @@ impl Rem6GpuRunConfig {
             .map(StatsFormat::parse)
             .transpose()?
             .unwrap_or(StatsFormat::Json);
+        let mut power_format = file_config
+            .power_format
+            .as_deref()
+            .map(PowerAnalysisFormat::parse)
+            .transpose()?
+            .unwrap_or(PowerAnalysisFormat::McpatXml);
+        let mut power_output = file_config
+            .power_output
+            .as_deref()
+            .map(|path| file_config.resolve_path(path));
         let mut dram_memory = file_config.dram_memory.unwrap_or(false);
         let mut dram_memory_profile = file_config
             .dram_memory_profile
@@ -268,6 +283,13 @@ impl Rem6GpuRunConfig {
                 "--stats-format" => {
                     stats_format = StatsFormat::parse(&required_value(&flag, args.next())?)?;
                 }
+                "--power-format" => {
+                    power_format =
+                        PowerAnalysisFormat::parse(&required_value(&flag, args.next())?)?;
+                }
+                "--power-output" => {
+                    power_output = Some(PathBuf::from(required_value(&flag, args.next())?));
+                }
                 "--dram-memory" => {
                     dram_memory = true;
                 }
@@ -341,6 +363,14 @@ impl Rem6GpuRunConfig {
                 });
             }
         }
+        if let Some(power_output) = &power_output {
+            if output.as_ref() == Some(power_output) || stats_output.as_ref() == Some(power_output)
+            {
+                return Err(Rem6CliError::ConflictingRunOutputPaths {
+                    path: power_output.to_path_buf(),
+                });
+            }
+        }
         if global_accesses.is_empty() {
             return Err(Rem6CliError::MissingRequiredFlag {
                 flag: "--global-load",
@@ -364,6 +394,8 @@ impl Rem6GpuRunConfig {
             min_remote_delay,
             memory_route_delay,
             stats_format,
+            power_format,
+            power_output,
             dram_memory,
             dram_memory_profile,
             data_cache_protocol,
@@ -442,6 +474,14 @@ impl Rem6GpuRunConfig {
         self.stats_format
     }
 
+    pub const fn power_format(&self) -> PowerAnalysisFormat {
+        self.power_format
+    }
+
+    pub fn power_output(&self) -> Option<&Path> {
+        self.power_output.as_deref()
+    }
+
     pub const fn dram_memory(&self) -> bool {
         self.dram_memory
     }
@@ -483,6 +523,8 @@ fn gpu_run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem
         "--min-remote-delay",
         "--memory-route-delay",
         "--stats-format",
+        "--power-format",
+        "--power-output",
         "--dram-memory-profile",
         "--data-cache-protocol",
         "--global-load",
@@ -631,6 +673,7 @@ pub struct Rem6GpuRunArtifact {
     memory_dumps: Vec<Rem6MemoryDump>,
     stats_json: String,
     stats_text: String,
+    power_analysis: Option<Rem6PowerAnalysisArtifact>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -797,6 +840,15 @@ pub(crate) fn run_gpu_run_cli(args: Vec<String>) -> Result<String, Rem6CliError>
         StatsFormat::Json => artifact.to_json(),
         StatsFormat::Text => artifact.stats_text.clone(),
     };
+    let power_artifact =
+        artifact
+            .power_analysis
+            .as_ref()
+            .map(|artifact| cli_output::ExtraCliArtifact {
+                name: "power_artifact",
+                path: artifact.output(),
+                contents: artifact.contents(),
+            });
     cli_output::emit_cli_output(
         output,
         &artifact.stats_json,
@@ -804,7 +856,7 @@ pub(crate) fn run_gpu_run_cli(args: Vec<String>) -> Result<String, Rem6CliError>
         artifact.config.output(),
         artifact.config.stats_output(),
         stats_format,
-        None,
+        power_artifact,
     )
 }
 
@@ -987,6 +1039,18 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
         transport: &transport,
         memory_dumps: &memory_dumps,
     })?;
+    let power_analysis = config
+        .power_output()
+        .map(|path| {
+            gpu_run_power_analysis_artifact(
+                config.power_format(),
+                path.to_path_buf(),
+                &execution,
+                &data_cache_summary,
+                &dram,
+            )
+        })
+        .transpose()?;
 
     Ok(Rem6GpuRunArtifact {
         schema: "rem6.cli.gpu-run.v1",
@@ -998,6 +1062,7 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
         memory_dumps,
         stats_json: stats.json,
         stats_text: stats.text,
+        power_analysis,
     })
 }
 
@@ -1014,8 +1079,13 @@ impl Rem6GpuRunArtifact {
             .map(Rem6MemoryDump::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let power_analysis = self
+            .power_analysis
+            .as_ref()
+            .map(Rem6PowerAnalysisArtifact::to_json)
+            .unwrap_or_else(|| "null".to_string());
         format!(
-            "{{\"schema\":\"{}\",\"status\":\"completed\",\"workgroups\":{},\"compute_units\":{},\"wave_slots_per_compute_unit\":{},\"workgroup_cycles\":{},\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"dram_memory\":{},\"data_cache_protocol\":{},\"simulation\":{},\"data_cache\":{},\"dram\":{},\"transport\":{},\"memory\":[{}],\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"status\":\"completed\",\"workgroups\":{},\"compute_units\":{},\"wave_slots_per_compute_unit\":{},\"workgroup_cycles\":{},\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"dram_memory\":{},\"data_cache_protocol\":{},\"simulation\":{},\"data_cache\":{},\"dram\":{},\"transport\":{},\"memory\":[{}],\"power_analysis\":{},\"stats\":{}}}\n",
             self.schema,
             self.config.workgroups(),
             self.config.compute_units(),
@@ -1030,6 +1100,7 @@ impl Rem6GpuRunArtifact {
             self.dram.to_json(),
             self.transport.to_json(),
             memory_dumps,
+            power_analysis,
             self.stats_json,
         )
     }

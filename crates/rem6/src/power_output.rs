@@ -5,6 +5,8 @@ use rem6_power::{
     PowerResidency, PowerStateKind,
 };
 
+use crate::data_cache_runtime::CliDataCacheSummary;
+use crate::gpu_cli::{Rem6GpuComputeUnitActivity, Rem6GpuRunExecutionSummary};
 use crate::{PowerAnalysisFormat, Rem6CliError, Rem6CoreSummary, Rem6DramSummary};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -37,11 +39,36 @@ pub(crate) fn run_power_analysis_artifact(
     output: PathBuf,
     execution: &crate::Rem6ExecutionSummary,
 ) -> Result<Rem6PowerAnalysisArtifact, Rem6CliError> {
-    let kind = match format {
-        PowerAnalysisFormat::McpatXml => ExternalPowerAnalysisKind::McPat,
-        PowerAnalysisFormat::DsentCsv => ExternalPowerAnalysisKind::Dsent,
-    };
-    let export = PowerAnalysisExport::new(kind, execution.final_tick, records_for_run(execution))
+    build_power_analysis_artifact(
+        format,
+        output,
+        execution.final_tick,
+        records_for_run(execution),
+    )
+}
+
+pub(crate) fn gpu_run_power_analysis_artifact(
+    format: PowerAnalysisFormat,
+    output: PathBuf,
+    execution: &Rem6GpuRunExecutionSummary,
+    data_cache: &CliDataCacheSummary,
+    dram: &Rem6DramSummary,
+) -> Result<Rem6PowerAnalysisArtifact, Rem6CliError> {
+    build_power_analysis_artifact(
+        format,
+        output,
+        execution.final_tick(),
+        records_for_gpu_run(execution, data_cache, dram),
+    )
+}
+
+fn build_power_analysis_artifact(
+    format: PowerAnalysisFormat,
+    output: PathBuf,
+    tick: u64,
+    records: Vec<PowerAnalysisRecord>,
+) -> Result<Rem6PowerAnalysisArtifact, Rem6CliError> {
+    let export = PowerAnalysisExport::new(power_analysis_kind(format), tick, records)
         .map_err(power_error)?;
     let contents = match format {
         PowerAnalysisFormat::McpatXml => export.to_mcpat_compatible_xml(),
@@ -55,6 +82,13 @@ pub(crate) fn run_power_analysis_artifact(
     })
 }
 
+fn power_analysis_kind(format: PowerAnalysisFormat) -> ExternalPowerAnalysisKind {
+    match format {
+        PowerAnalysisFormat::McpatXml => ExternalPowerAnalysisKind::McPat,
+        PowerAnalysisFormat::DsentCsv => ExternalPowerAnalysisKind::Dsent,
+    }
+}
+
 fn records_for_run(execution: &crate::Rem6ExecutionSummary) -> Vec<PowerAnalysisRecord> {
     let mut records = execution
         .cores
@@ -62,6 +96,26 @@ fn records_for_run(execution: &crate::Rem6ExecutionSummary) -> Vec<PowerAnalysis
         .map(|core| cpu_power_record(core, execution.final_tick))
         .collect::<Vec<_>>();
     if let Some(record) = dram_power_record(&execution.dram, execution.final_tick) {
+        records.push(record);
+    }
+    records
+}
+
+fn records_for_gpu_run(
+    execution: &Rem6GpuRunExecutionSummary,
+    data_cache: &CliDataCacheSummary,
+    dram: &Rem6DramSummary,
+) -> Vec<PowerAnalysisRecord> {
+    let mut records = execution
+        .compute_unit_activity()
+        .iter()
+        .filter(|activity| gpu_compute_unit_is_active(activity))
+        .map(gpu_compute_unit_power_record)
+        .collect::<Vec<_>>();
+    if let Some(record) = gpu_data_cache_power_record(data_cache, execution.final_tick()) {
+        records.push(record);
+    }
+    if let Some(record) = dram_power_record(dram, execution.final_tick()) {
         records.push(record);
     }
     records
@@ -97,6 +151,87 @@ fn cpu_power_record(core: &Rem6CoreSummary, final_tick: u64) -> PowerAnalysisRec
         PowerEstimate::new(dynamic_watts, 0.025),
     )
     .expect("run CPU power records use non-empty names, valid residency, and finite watts")
+}
+
+fn gpu_compute_unit_is_active(activity: &Rem6GpuComputeUnitActivity) -> bool {
+    activity.workgroup_completions() > 0
+        || activity.busy_cycles() > 0
+        || activity.coalesced_memory_accesses() > 0
+}
+
+fn gpu_compute_unit_power_record(activity: &Rem6GpuComputeUnitActivity) -> PowerAnalysisRecord {
+    let active_window = match (activity.first_started_at(), activity.last_completed_at()) {
+        (Some(start), Some(end)) if end > start => end - start,
+        _ => 0,
+    };
+    let residency_ticks = activity
+        .busy_cycles()
+        .max(active_window)
+        .max(activity.workgroup_completions())
+        .max(activity.coalesced_memory_accesses())
+        .max(1);
+    let memory_ops = activity
+        .global_memory_reads()
+        .saturating_add(activity.global_memory_writes());
+    let dynamic_watts = watts_from_activity(
+        activity.workgroup_completions(),
+        activity
+            .coalesced_memory_accesses()
+            .saturating_add(memory_ops),
+        memory_ops.saturating_mul(64),
+        0.000_020,
+        0.000_015,
+        0.000_000_5,
+    );
+    PowerAnalysisRecord::new(
+        format!("gpu.compute_unit{}", activity.compute_unit()),
+        PowerStateKind::On,
+        PowerResidency::new(vec![(PowerStateKind::On, residency_ticks)]),
+        42.0 + dynamic_watts.min(12.0),
+        PowerEstimate::new(dynamic_watts, 0.020),
+    )
+    .expect("GPU compute-unit power records use non-empty names, valid residency, and finite watts")
+}
+
+fn gpu_data_cache_power_record(
+    data_cache: &CliDataCacheSummary,
+    final_tick: u64,
+) -> Option<PowerAnalysisRecord> {
+    if data_cache.runs == 0
+        && data_cache.directory_decisions == 0
+        && data_cache.dram_accesses == 0
+        && data_cache.bank_accepted == 0
+        && data_cache.prefetch_issued == 0
+    {
+        return None;
+    }
+    let operations = data_cache
+        .directory_decisions
+        .saturating_add(data_cache.bank_accepted)
+        .saturating_add(data_cache.bank_scheduled_misses)
+        .saturating_add(data_cache.bank_coalesced_misses)
+        .saturating_add(data_cache.prefetch_issued);
+    let dynamic_watts = watts_from_activity(
+        data_cache.runs,
+        operations,
+        data_cache.dram_accesses.saturating_mul(64),
+        0.000_006,
+        0.000_004,
+        0.000_000_5,
+    );
+    Some(
+        PowerAnalysisRecord::new(
+            "gpu.data_cache",
+            PowerStateKind::On,
+            PowerResidency::new(vec![(
+                PowerStateKind::On,
+                final_tick.max(data_cache.runs).max(1),
+            )]),
+            39.0 + dynamic_watts.min(6.0),
+            PowerEstimate::new(dynamic_watts, 0.012),
+        )
+        .expect("GPU data-cache power records use valid residency and finite watts"),
+    )
 }
 
 fn dram_power_record(dram: &Rem6DramSummary, final_tick: u64) -> Option<PowerAnalysisRecord> {

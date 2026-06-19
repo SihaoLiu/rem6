@@ -99,6 +99,238 @@ fn rem6_gpu_run_routes_coalesced_global_memory_through_cache_and_dram() {
 }
 
 #[test]
+fn rem6_gpu_run_writes_power_analysis_output() {
+    let temp_dir = unique_gpu_temp_dir("power-output");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let power_path = temp_dir.join("gpu-power.csv");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "2",
+            "--compute-units",
+            "2",
+            "--global-load",
+            "0x1800:4:4:4",
+            "--memory-start",
+            "0x1800",
+            "--memory-size",
+            "64",
+            "--data-cache-protocol",
+            "msi",
+            "--dram-memory",
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--power-format",
+            "dsent-csv",
+            "--power-output",
+            power_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"power_analysis\":{\"format\":\"dsent-csv\""));
+    assert!(stdout.contains(&format!("\"artifact\":\"{}\"", power_path.display())));
+
+    let power = std::fs::read_to_string(&power_path).unwrap();
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+    assert!(power.starts_with("record_type,tick,target,state,temperature_c"));
+    assert!(power.contains("gpu.compute_unit0"));
+    assert!(power.contains("gpu.compute_unit1"));
+    assert!(power.contains("gpu.data_cache"));
+    assert!(power.contains("memory.dram"));
+}
+
+#[test]
+fn rem6_gpu_run_loads_power_analysis_output_from_toml_config() {
+    let temp_dir = unique_gpu_temp_dir("power-output-toml");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let config_path = temp_dir.join("gpu.toml");
+    let power_path = temp_dir.join("artifacts/gpu-power.xml");
+    std::fs::write(
+        &config_path,
+        r#"
+[gpu_run]
+workgroups = 2
+compute_units = 2
+memory_start = 8192
+memory_size = 64
+max_tick = 80
+stats_format = "json"
+dram_memory = true
+data_cache_protocol = "msi"
+power_format = "mcpat-xml"
+power_output = "artifacts/gpu-power.xml"
+global_loads = ["0x2000:4:4:4"]
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["gpu-run", "--config"])
+        .arg(&config_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"power_analysis\":{\"format\":\"mcpat-xml\""));
+    assert!(stdout.contains(&format!("\"artifact\":\"{}\"", power_path.display())));
+
+    let power = std::fs::read_to_string(&power_path).unwrap();
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+    assert!(power.contains("<component id=\"gpu.compute_unit0\""));
+    assert!(power.contains("<component id=\"gpu.compute_unit1\""));
+    assert!(power.contains("<component id=\"gpu.data_cache\""));
+    assert!(power.contains("<component id=\"memory.dram\""));
+}
+
+#[test]
+fn rem6_gpu_run_reports_all_output_artifact_paths_when_power_analysis_is_requested() {
+    let temp_dir = unique_gpu_temp_dir("power-output-envelope");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let artifact_path = temp_dir.join("gpu.json");
+    let stats_path = temp_dir.join("gpu-stats.json");
+    let power_path = temp_dir.join("gpu-power.csv");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "2",
+            "--compute-units",
+            "2",
+            "--global-load",
+            "0x2400:4:4:4",
+            "--memory-start",
+            "0x2400",
+            "--memory-size",
+            "64",
+            "--data-cache-protocol",
+            "msi",
+            "--dram-memory",
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--output",
+            artifact_path.to_str().unwrap(),
+            "--stats-output",
+            stats_path.to_str().unwrap(),
+            "--power-format",
+            "dsent-csv",
+            "--power-output",
+            power_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        format!(
+            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"json\",\"artifact\":\"{}\",\"stats_artifact\":\"{}\",\"power_artifact\":\"{}\"}}\n",
+            artifact_path.display(),
+            stats_path.display(),
+            power_path.display(),
+        )
+    );
+    let artifact = std::fs::read_to_string(&artifact_path).unwrap();
+    let stats = std::fs::read_to_string(&stats_path).unwrap();
+    let power = std::fs::read_to_string(&power_path).unwrap();
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+
+    assert!(artifact.contains("\"power_analysis\":{\"format\":\"dsent-csv\""));
+    assert_stat(
+        &stats,
+        "sim.gpu_run.workgroup_completions",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert!(power.contains("gpu.compute_unit0"));
+    assert!(power.contains("gpu.data_cache"));
+}
+
+#[test]
+fn rem6_gpu_run_rejects_overlapping_power_output_paths() {
+    let output_path = unique_gpu_temp_dir("power-output-conflict-json").join("gpu.json");
+    let stats_path = unique_gpu_temp_dir("power-output-conflict-stats").join("gpu-stats.json");
+
+    let output_conflict = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "1",
+            "--global-load",
+            "0x2800:4:4:4",
+            "--memory-start",
+            "0x2800",
+            "--memory-size",
+            "64",
+            "--max-tick",
+            "80",
+            "--output",
+            output_path.to_str().unwrap(),
+            "--power-output",
+            output_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output_conflict.status.success());
+    assert!(output_conflict.stdout.is_empty());
+    let stderr = String::from_utf8(output_conflict.stderr).unwrap();
+    assert!(stderr.contains("run output artifacts must use different paths"));
+    assert!(!output_path.exists());
+
+    let stats_conflict = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "1",
+            "--global-load",
+            "0x2c00:4:4:4",
+            "--memory-start",
+            "0x2c00",
+            "--memory-size",
+            "64",
+            "--max-tick",
+            "80",
+            "--stats-output",
+            stats_path.to_str().unwrap(),
+            "--power-output",
+            stats_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!stats_conflict.status.success());
+    assert!(stats_conflict.stdout.is_empty());
+    let stderr = String::from_utf8(stats_conflict.stderr).unwrap();
+    assert!(stderr.contains("run output artifacts must use different paths"));
+    assert!(!stats_path.exists());
+}
+
+#[test]
 fn rem6_gpu_run_routes_recorded_store_to_direct_memory_and_dumps_result() {
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
@@ -654,6 +886,41 @@ global_loads = ["0x1000:4:4:4"]
     std::fs::remove_dir_all(&temp_dir).unwrap();
 
     assert_eq!(config.output().unwrap(), std::path::Path::new("--config"));
+    assert_eq!(config.workgroups(), 1);
+}
+
+#[test]
+fn rem6_gpu_run_config_scan_treats_power_output_value_as_a_value() {
+    let temp_dir = unique_gpu_temp_dir("power-output-config-scan");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let config_path = temp_dir.join("gpu.toml");
+    std::fs::write(
+        &config_path,
+        r#"
+[gpu_run]
+workgroups = 1
+memory_start = 4096
+memory_size = 64
+global_loads = ["0x1000:4:4:4"]
+"#,
+    )
+    .unwrap();
+
+    let config = Rem6GpuRunConfig::parse_args(vec![
+        "gpu-run".to_string(),
+        "--power-output".to_string(),
+        "--config".to_string(),
+        "--config".to_string(),
+        config_path.display().to_string(),
+    ])
+    .unwrap();
+
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+
+    assert_eq!(
+        config.power_output().unwrap(),
+        std::path::Path::new("--config")
+    );
     assert_eq!(config.workgroups(), 1);
 }
 
