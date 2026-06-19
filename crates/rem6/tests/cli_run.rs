@@ -34,6 +34,8 @@ mod resource_acquire;
 mod riscv_se_chdir;
 #[path = "cli_run/riscv_se_fadvise.rs"]
 mod riscv_se_fadvise;
+#[path = "cli_run/riscv_se_fallocate.rs"]
+mod riscv_se_fallocate;
 #[path = "cli_run/riscv_se_fd.rs"]
 mod riscv_se_fd;
 #[path = "cli_run/riscv_se_getdents.rs"]

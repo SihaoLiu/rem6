@@ -113,8 +113,9 @@ use fd::{
 };
 use file_read::{syscall_pread64, syscall_read, RISCV_LINUX_PREAD64, RISCV_LINUX_READ};
 use file_write::{
-    syscall_ftruncate, syscall_pwrite64, syscall_truncate, syscall_write, RISCV_LINUX_FTRUNCATE,
-    RISCV_LINUX_PWRITE64, RISCV_LINUX_TRUNCATE, RISCV_LINUX_WRITE,
+    syscall_fallocate, syscall_ftruncate, syscall_pwrite64, syscall_truncate, syscall_write,
+    RISCV_LINUX_FALLOCATE, RISCV_LINUX_FTRUNCATE, RISCV_LINUX_PWRITE64, RISCV_LINUX_TRUNCATE,
+    RISCV_LINUX_WRITE,
 };
 use flock::{syscall_flock, RISCV_LINUX_FLOCK};
 use futex::syscall_futex;
@@ -1249,6 +1250,9 @@ impl RiscvSyscallTable {
             }),
             RISCV_LINUX_FTRUNCATE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_ftruncate(request, state),
+            }),
+            RISCV_LINUX_FALLOCATE => Some(RiscvSyscallOutcome::Return {
+                value: syscall_fallocate(request, state),
             }),
             RISCV_LINUX_TRUNCATE => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
