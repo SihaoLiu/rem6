@@ -6,6 +6,7 @@ use crate::{
 mod add_sub;
 mod convert_flags;
 mod decode;
+mod div;
 mod double_exact;
 mod fused;
 mod int_to_float;
@@ -97,6 +98,18 @@ pub(crate) fn float_register_write_binary(
         } => (
             rd,
             mul::register_write(
+                lhs,
+                rhs,
+                rounding_mode
+                    .resolve(frm)
+                    .expect("binary float rounding mode is valid"),
+            ),
+        ),
+        RiscvInstruction::FloatDivS {
+            rd, rounding_mode, ..
+        } => (
+            rd,
+            div::register_write(
                 lhs,
                 rhs,
                 rounding_mode
@@ -406,6 +419,7 @@ fn binary_rounding_mode_is_implemented(instruction: RiscvInstruction, lhs: u64, 
         RiscvInstruction::FloatAddS { .. } => add_sub::add_directed_rounding_is_supported(lhs, rhs),
         RiscvInstruction::FloatSubS { .. } => add_sub::sub_directed_rounding_is_supported(lhs, rhs),
         RiscvInstruction::FloatMulS { .. } => mul::directed_rounding_is_supported(lhs, rhs),
+        RiscvInstruction::FloatDivS { .. } => div::directed_rounding_is_supported(lhs, rhs),
         _ => false,
     }
 }
@@ -696,7 +710,13 @@ pub(crate) fn binary_exception_flags(
                 .resolve(frm)
                 .expect("binary float rounding mode is valid"),
         ),
-        RiscvInstruction::FloatDivS { .. } => divide_exception_flags_single(lhs, rhs),
+        RiscvInstruction::FloatDivS { rounding_mode, .. } => div::exception_flags(
+            lhs,
+            rhs,
+            rounding_mode
+                .resolve(frm)
+                .expect("binary float rounding mode is valid"),
+        ),
         RiscvInstruction::FloatDivD { .. } => divide_exception_flags_double(lhs, rhs),
         RiscvInstruction::FloatMulS { rounding_mode, .. } => mul::exception_flags(
             lhs,
@@ -749,12 +769,6 @@ fn div_double(lhs: u64, rhs: u64) -> u64 {
 
 fn div_single(lhs: u64, rhs: u64) -> u64 {
     box_canonical_single(f32::from_bits(unbox_single(lhs)) / f32::from_bits(unbox_single(rhs)))
-}
-
-fn divide_exception_flags_single(lhs: u64, rhs: u64) -> u64 {
-    let lhs = f32::from_bits(unbox_single(lhs));
-    let rhs = f32::from_bits(unbox_single(rhs));
-    divide_exception_flags(rhs == 0.0, lhs == 0.0, lhs.is_finite() && lhs != 0.0)
 }
 
 fn divide_exception_flags_double(lhs: u64, rhs: u64) -> u64 {

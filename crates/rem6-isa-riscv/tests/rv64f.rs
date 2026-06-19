@@ -626,6 +626,26 @@ fn hart_executes_rv64f_single_mul_directed_rounding_when_inexact() {
 }
 
 #[test]
+fn hart_executes_rv64f_single_div_round_down_when_inexact() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.write_float(freg(1), f32_box(1.0));
+    hart.write_float(freg(2), f32_box(3.0));
+
+    let record = hart
+        .execute(RiscvInstruction::FloatDivS {
+            rd: freg(3),
+            rs1: freg(1),
+            rs2: freg(2),
+            rounding_mode: RiscvFloatRoundingMode::RoundDown,
+        })
+        .unwrap();
+
+    assert_eq!(record.trap(), None);
+    assert_eq!(hart.read_float(freg(3)), box_single(0x3eaa_aaaa));
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INEXACT);
+}
+
+#[test]
 fn hart_rv64f_single_mul_raises_invalid_for_infinity_times_zero() {
     let mut hart = RiscvHartState::new(0x8000);
     hart.write_float(freg(1), f32_box(f32::INFINITY));
