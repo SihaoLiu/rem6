@@ -66,6 +66,7 @@ mod sysinfo;
 mod table;
 mod thread;
 mod time;
+mod timerfd;
 mod unknown;
 mod unlink;
 mod util;
@@ -217,6 +218,10 @@ use sync::{
 };
 use sysinfo::{syscall_sysinfo, RISCV_LINUX_SYSINFO};
 pub use table::RiscvSyscallTable;
+use timerfd::{
+    syscall_timerfd_create, syscall_timerfd_gettime, syscall_timerfd_settime, RiscvGuestTimerFd,
+    RISCV_LINUX_TIMERFD_CREATE, RISCV_LINUX_TIMERFD_GETTIME, RISCV_LINUX_TIMERFD_SETTIME,
+};
 pub use unknown::RiscvUnknownSyscallRecord;
 use unlink::{syscall_unlink_operation, RISCV_LINUX_UNLINK, RISCV_LINUX_UNLINKAT};
 use util::{guest_fd_argument, linux_error, read_guest_c_string, RiscvGuestCStringError};
@@ -279,6 +284,7 @@ pub struct RiscvSyscallState {
     guest_pipe_read_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
     guest_pipe_write_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
     guest_eventfds: BTreeMap<GuestFileDescriptionId, RiscvGuestEventFd>,
+    guest_timerfds: BTreeMap<GuestFileDescriptionId, RiscvGuestTimerFd>,
     guest_epolls: BTreeMap<GuestFileDescriptionId, RiscvGuestEpoll>,
     guest_opens: Vec<RiscvGuestOpenRecord>,
     stdin_fds: BTreeSet<GuestFd>,
@@ -377,6 +383,7 @@ impl RiscvSyscallState {
             guest_pipe_read_descriptions: BTreeMap::new(),
             guest_pipe_write_descriptions: BTreeMap::new(),
             guest_eventfds: BTreeMap::new(),
+            guest_timerfds: BTreeMap::new(),
             guest_epolls: BTreeMap::new(),
             guest_opens: Vec::new(),
             stdin_fds,
@@ -995,6 +1002,7 @@ impl RiscvSyscallState {
         self.guest_directory_paths.remove(&description);
         self.remove_guest_pipe_description(description);
         self.remove_guest_eventfd_description(description);
+        self.remove_guest_timerfd_description(description);
         self.remove_guest_epoll_target_description(description);
         self.remove_guest_epoll_description(description);
         if let Some(identity) = closed_guest_file_identity {

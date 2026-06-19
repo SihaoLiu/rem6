@@ -89,6 +89,8 @@ mod sync_tests;
 mod sysinfo_tests;
 #[path = "riscv_syscall_tests/time_tests.rs"]
 mod time_tests;
+#[path = "riscv_syscall_tests/timerfd_tests.rs"]
+mod timerfd_tests;
 #[path = "riscv_syscall_tests/truncate_tests.rs"]
 mod truncate_tests;
 #[path = "riscv_syscall_tests/unknown_syscall_tests.rs"]

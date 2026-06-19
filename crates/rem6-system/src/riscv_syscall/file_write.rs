@@ -2,12 +2,14 @@ use super::{
     eventfd::{eventfd_write_bytes_written, eventfd_write_result},
     guest_fd_argument, linux_error,
     pipe::RiscvGuestPipeWrite,
-    read_guest_c_string, RiscvGuestCStringError, RiscvGuestFileIdentity, RiscvGuestMemoryReader,
-    RiscvGuestNodeKind, RiscvGuestWriteRecord, RiscvSyscallRequest, RiscvSyscallState,
-    RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG,
-    RISCV_LINUX_EINVAL, RISCV_LINUX_EISDIR, RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT,
-    RISCV_LINUX_EPERM, RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND,
-    RISCV_LINUX_O_RDONLY, RISCV_LINUX_PATH_MAX,
+    read_guest_c_string,
+    timerfd::timerfd_write_result,
+    RiscvGuestCStringError, RiscvGuestFileIdentity, RiscvGuestMemoryReader, RiscvGuestNodeKind,
+    RiscvGuestWriteRecord, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAGAIN,
+    RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG, RISCV_LINUX_EINVAL,
+    RISCV_LINUX_EISDIR, RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT, RISCV_LINUX_EPERM,
+    RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_APPEND, RISCV_LINUX_O_RDONLY,
+    RISCV_LINUX_PATH_MAX,
 };
 use crate::{GuestFd, GuestFdError, GuestFileOffset};
 use rem6_kernel::Tick;
@@ -461,6 +463,11 @@ pub(super) fn syscall_write(
                 Ok(None) | Err(_) => Some(linux_error(RISCV_LINUX_EBADF)),
             };
         }
+        Ok(None) => {}
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    }
+    match state.guest_timerfd_ready(fd) {
+        Ok(Some(_ready)) => return Some(timerfd_write_result()),
         Ok(None) => {}
         Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
     }

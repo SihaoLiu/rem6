@@ -1,8 +1,10 @@
 use super::{
     eventfd::{eventfd_read_bytes, RiscvGuestEventFdRead},
-    guest_fd_argument, linux_error, RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState,
-    RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
-    RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_WRONLY,
+    guest_fd_argument, linux_error,
+    timerfd::{timerfd_read_bytes, timerfd_read_result, RiscvGuestTimerFdRead},
+    RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAGAIN,
+    RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ESPIPE,
+    RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_WRONLY,
 };
 use crate::{GuestFd, GuestFdError};
 
@@ -53,6 +55,27 @@ pub(super) fn syscall_read(
                 return Some(linux_error(RISCV_LINUX_EFAULT));
             }
             if state.consume_guest_eventfd_read(fd).is_err() {
+                return Some(linux_error(RISCV_LINUX_EBADF));
+            }
+            return Some(bytes.len() as u64);
+        }
+        Ok(None) => {}
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    }
+    match state.guest_timerfd_read(fd, count) {
+        Ok(Some(read)) => {
+            let value = match read {
+                RiscvGuestTimerFdRead::Value(value) => value,
+                RiscvGuestTimerFdRead::Blocked => return None,
+                RiscvGuestTimerFdRead::WouldBlock | RiscvGuestTimerFdRead::InvalidSize => {
+                    return timerfd_read_result(read);
+                }
+            };
+            let bytes = timerfd_read_bytes(value);
+            if !guest_memory.write(request.argument(1), &bytes) {
+                return Some(linux_error(RISCV_LINUX_EFAULT));
+            }
+            if state.consume_guest_timerfd_read(fd).is_err() {
                 return Some(linux_error(RISCV_LINUX_EBADF));
             }
             return Some(bytes.len() as u64);
