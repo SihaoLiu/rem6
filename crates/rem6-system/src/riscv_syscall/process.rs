@@ -16,11 +16,14 @@ pub(super) const RISCV_LINUX_EXECVE: u64 = 221;
 pub(super) const RISCV_LINUX_PERSONALITY: u64 = 92;
 
 const RISCV_LINUX_PERSONALITY_QUERY: u32 = 0xffff_ffff;
+const RISCV_LINUX_PR_SET_PDEATHSIG: u64 = 1;
+const RISCV_LINUX_PR_GET_PDEATHSIG: u64 = 2;
 const RISCV_LINUX_PR_SET_NAME: u64 = 15;
 const RISCV_LINUX_PR_GET_NAME: u64 = 16;
 const RISCV_LINUX_PR_SET_NO_NEW_PRIVS: u64 = 38;
 const RISCV_LINUX_PR_GET_NO_NEW_PRIVS: u64 = 39;
 const RISCV_LINUX_TASK_COMM_BYTES: usize = 16;
+const RISCV_LINUX_SIGNAL_MAX: u64 = 64;
 
 impl RiscvSyscallState {
     pub(super) const fn session_id(&self) -> u64 {
@@ -45,6 +48,14 @@ impl RiscvSyscallState {
 
     pub(super) fn set_no_new_privs(&mut self) {
         self.no_new_privs = true;
+    }
+
+    pub(super) const fn pdeath_signal(&self) -> u32 {
+        self.pdeath_signal
+    }
+
+    pub(super) fn set_pdeath_signal(&mut self, signal: u32) {
+        self.pdeath_signal = signal;
     }
 
     pub(super) const fn personality(&self) -> u32 {
@@ -146,6 +157,10 @@ pub(super) fn syscall_prctl(
     guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
 ) -> Option<u64> {
     match request.argument(0) {
+        RISCV_LINUX_PR_SET_PDEATHSIG => Some(syscall_prctl_set_pdeathsig(request, state)),
+        RISCV_LINUX_PR_GET_PDEATHSIG => guest_memory_writer.map(|guest_memory| {
+            syscall_prctl_get_pdeathsig(request.argument(1), state, guest_memory)
+        }),
         RISCV_LINUX_PR_SET_NAME => guest_memory_reader
             .map(|guest_memory| syscall_prctl_set_name(request.argument(1), state, guest_memory)),
         RISCV_LINUX_PR_GET_NAME => guest_memory_writer
@@ -153,6 +168,28 @@ pub(super) fn syscall_prctl(
         RISCV_LINUX_PR_SET_NO_NEW_PRIVS => Some(syscall_prctl_set_no_new_privs(request, state)),
         RISCV_LINUX_PR_GET_NO_NEW_PRIVS => Some(syscall_prctl_get_no_new_privs(request, state)),
         _ => Some(linux_error(RISCV_LINUX_EINVAL)),
+    }
+}
+
+fn syscall_prctl_set_pdeathsig(request: RiscvSyscallRequest, state: &mut RiscvSyscallState) -> u64 {
+    let signal = request.argument(1);
+    if signal > RISCV_LINUX_SIGNAL_MAX {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    state.set_pdeath_signal(signal as u32);
+    0
+}
+
+fn syscall_prctl_get_pdeathsig(
+    address: u64,
+    state: &RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let signal = state.pdeath_signal() as i32;
+    if guest_memory.write(address, &signal.to_le_bytes()) {
+        0
+    } else {
+        linux_error(RISCV_LINUX_EFAULT)
     }
 }
 

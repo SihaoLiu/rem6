@@ -467,3 +467,197 @@ int main(void) {
     assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
     assert_stat(&stdout, "sim.stop_code", "Count", 47, "constant");
 }
+
+#[test]
+fn rem6_run_riscv_se_runs_static_raw_prctl_pdeathsig_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!("skipping static RISC-V SE pdeathsig smoke: riscv64-unknown-elf-gcc not found");
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE pdeathsig smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-prctl-pdeathsig");
+    let source = workspace.join("raw-prctl-pdeathsig.c");
+    let binary = workspace.join("raw-prctl-pdeathsig");
+    fs::write(
+        &source,
+        r#"#define PR_SET_PDEATHSIG 1
+#define PR_GET_PDEATHSIG 2
+#define SIGUSR1 10
+
+static long linux_syscall1(long number, long arg0) {
+    register long a0 asm("a0") = arg0;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall5(long number, long arg0, long arg1, long arg2, long arg3, long arg4) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a4 asm("a4") = arg4;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3), "r"(a4), "r"(a7) : "memory");
+    return a0;
+}
+
+static void append_char(char **cursor, char value) {
+    **cursor = value;
+    *cursor = *cursor + 1;
+}
+
+static void append_text(char **cursor, const char *text) {
+    while (*text != 0) {
+        append_char(cursor, *text);
+        text++;
+    }
+}
+
+static void append_long(char **cursor, long value) {
+    char digits[24];
+    int count = 0;
+    unsigned long magnitude;
+    if (value < 0) {
+        append_char(cursor, '-');
+        magnitude = (unsigned long)(-value);
+    } else {
+        magnitude = (unsigned long)value;
+    }
+    do {
+        digits[count++] = (char)('0' + (magnitude % 10));
+        magnitude /= 10;
+    } while (magnitude != 0);
+    while (count > 0) {
+        append_char(cursor, digits[--count]);
+    }
+}
+
+static void append_field(char **cursor, long value) {
+    append_char(cursor, ':');
+    append_long(cursor, value);
+}
+
+void _start(void) {
+    int initial = -1;
+    int after_set = -1;
+    int after_invalid = -1;
+    int after_clear = -1;
+    long get_initial = linux_syscall5(167, PR_GET_PDEATHSIG, (long)&initial, 1, 2, 3);
+    long set = linux_syscall5(167, PR_SET_PDEATHSIG, SIGUSR1, 1, 2, 3);
+    long get_after_set = linux_syscall5(167, PR_GET_PDEATHSIG, (long)&after_set, 0, 0, 0);
+    long invalid_negative = linux_syscall5(167, PR_SET_PDEATHSIG, -1, 0, 0, 0);
+    long invalid_high = linux_syscall5(167, PR_SET_PDEATHSIG, 65, 0, 0, 0);
+    long get_after_invalid = linux_syscall5(167, PR_GET_PDEATHSIG, (long)&after_invalid, 0, 0, 0);
+    long clear = linux_syscall5(167, PR_SET_PDEATHSIG, 0, 0, 0, 0);
+    long get_after_clear = linux_syscall5(167, PR_GET_PDEATHSIG, (long)&after_clear, 0, 0, 0);
+    long get_fault = linux_syscall5(167, PR_GET_PDEATHSIG, 0, 0, 0, 0);
+
+    long ok = get_initial == 0 && initial == 0 &&
+        set == 0 && get_after_set == 0 && after_set == SIGUSR1 &&
+        invalid_negative == -22 && invalid_high == -22 &&
+        get_after_invalid == 0 && after_invalid == SIGUSR1 &&
+        clear == 0 && get_after_clear == 0 && after_clear == 0 &&
+        get_fault == -14;
+
+    char output[256];
+    char *cursor = output;
+    append_text(&cursor, "prctl-pdeathsig");
+    append_field(&cursor, get_initial);
+    append_field(&cursor, initial);
+    append_field(&cursor, set);
+    append_field(&cursor, get_after_set);
+    append_field(&cursor, after_set);
+    append_field(&cursor, invalid_negative);
+    append_field(&cursor, invalid_high);
+    append_field(&cursor, get_after_invalid);
+    append_field(&cursor, after_invalid);
+    append_field(&cursor, clear);
+    append_field(&cursor, get_after_clear);
+    append_field(&cursor, after_clear);
+    append_field(&cursor, get_fault);
+    append_field(&cursor, ok);
+    append_char(&cursor, '\n');
+    linux_syscall3(64, 1, (long)output, cursor - output);
+    linux_syscall1(93, ok ? 48 : 80);
+    while (1) {}
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-nostdlib",
+            "-static",
+            "-fno-builtin",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(48),
+        "qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(
+        qemu_output.stdout,
+        b"prctl-pdeathsig:0:0:0:0:10:-22:-22:0:10:0:0:0:-14:1\n"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":48"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"prctl-pdeathsig:0:0:0:0:10:-22:-22:0:10:0:0:0:-14:1\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 48, "constant");
+}

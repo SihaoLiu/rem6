@@ -231,7 +231,6 @@ pub enum RiscvSyscallOutcome {
     Exit { code: i32 },
     Return { value: u64 },
 }
-
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct RiscvGuestFileIdentity {
     inode: u64,
@@ -262,6 +261,7 @@ pub struct RiscvSyscallState {
     session_id: u64,
     process_name: [u8; 16],
     no_new_privs: bool,
+    pdeath_signal: u32,
     interval_timers: [RiscvLinuxItimerval; 3],
     next_guest_inode: u64,
     guest_paths: BTreeSet<Vec<u8>>,
@@ -359,6 +359,7 @@ impl RiscvSyscallState {
             session_id: u64::from(current_process_group.get()),
             process_name: *b"rem6\0\0\0\0\0\0\0\0\0\0\0\0",
             no_new_privs: false,
+            pdeath_signal: 0,
             interval_timers: Self::initial_interval_timers(),
             next_guest_inode: RISCV_GUEST_ALLOCATED_INODE_BASE,
             guest_paths: BTreeSet::new(),

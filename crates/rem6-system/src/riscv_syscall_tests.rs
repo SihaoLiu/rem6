@@ -55,6 +55,8 @@ mod permissions_tests;
 mod poll_tests;
 #[path = "riscv_syscall_tests/positioned_io_tests.rs"]
 mod positioned_io_tests;
+#[path = "riscv_syscall_tests/prctl_tests.rs"]
+mod prctl_tests;
 #[path = "riscv_syscall_tests/process_tests.rs"]
 mod process_tests;
 #[path = "riscv_syscall_tests/random_tests.rs"]
