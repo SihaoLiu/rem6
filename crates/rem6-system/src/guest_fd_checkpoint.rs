@@ -7,15 +7,15 @@ use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry
 
 use crate::{
     GuestFd, GuestFdEntry, GuestFdError, GuestFdSnapshotEntry, GuestFdTable, GuestFdTableSnapshot,
-    GuestFileDescription, GuestFileDescriptionId, GuestFileOffset, GuestFileStatusFlags,
-    GuestHostFd,
+    GuestFileDescription, GuestFileDescriptionId, GuestFileOffset, GuestFileSignalOwner,
+    GuestFileSignalOwnerKind, GuestFileStatusFlags, GuestHostFd,
 };
 
 const GUEST_FD_CHUNK: &str = "guest-fd";
-const GUEST_FD_CHECKPOINT_VERSION: u64 = 2;
+const GUEST_FD_CHECKPOINT_VERSION: u64 = 3;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
-const DESCRIPTION_RECORD_MIN_BYTES: usize = U64_BYTES * 5 + U32_BYTES;
+const DESCRIPTION_RECORD_MIN_BYTES: usize = U64_BYTES * 5 + U32_BYTES * 2;
 const ENTRY_RECORD_BYTES: usize = U32_BYTES + U64_BYTES * 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -274,7 +274,9 @@ fn encode_guest_fd_table(snapshot: &GuestFdTableSnapshot) -> Vec<u8> {
         }
         push_u32(&mut payload, description.status_flags().bits());
         push_u64(&mut payload, description.file_offset().get());
-        push_u64(&mut payload, description.signal_owner() as i64 as u64);
+        let signal_owner = description.signal_owner();
+        push_u64(&mut payload, signal_owner.id() as i64 as u64);
+        push_u32(&mut payload, signal_owner.kind().checkpoint_tag());
     }
     push_u64(&mut payload, snapshot.entries().len() as u64);
     for entry in snapshot.entries() {
@@ -323,8 +325,16 @@ fn read_description(
     let host_fd = cursor.read_u64("guest fd host fd")?;
     let status_flags = GuestFileStatusFlags::new(cursor.read_u32("guest fd status flags")?);
     let file_offset = GuestFileOffset::new(cursor.read_u64("guest fd file offset")?);
-    let signal_owner = i32::try_from(cursor.read_u64("guest fd signal owner")? as i64)
+    let signal_owner_id = i32::try_from(cursor.read_u64("guest fd signal owner")? as i64)
         .map_err(|_| cursor.invalid("guest fd signal owner is outside i32 range"))?;
+    let signal_owner_kind = cursor.read_u32("guest fd signal owner kind")?;
+    let signal_owner_kind = GuestFileSignalOwnerKind::from_checkpoint_tag(signal_owner_kind)
+        .ok_or_else(|| cursor.invalid("guest fd signal owner kind is invalid"))?;
+    if signal_owner_id < 0 {
+        return Err(cursor.invalid("guest fd signal owner id is negative"));
+    }
+    let signal_owner = GuestFileSignalOwner::from_kind_and_id(signal_owner_kind, signal_owner_id)
+        .map_err(|error| cursor.invalid(error.to_string()))?;
 
     let mut description = if host_present {
         let host_fd = i32::try_from(host_fd)
@@ -342,7 +352,7 @@ fn read_description(
         GuestFileDescription::guest_backed(id, status_flags)
     };
     description.set_file_offset(file_offset);
-    description.set_signal_owner(signal_owner);
+    description.set_typed_signal_owner(signal_owner);
     Ok(description)
 }
 

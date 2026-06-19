@@ -583,10 +583,18 @@ fn rem6_run_riscv_se_runs_static_raw_fcntl_owner_against_qemu() {
     let binary = workspace.join("fcntl-owner");
     fs::write(
         &source,
-        r#"#include <stdio.h>
-
-#define F_SETOWN 8
+        r#"#define F_SETOWN 8
 #define F_GETOWN 9
+#define F_SETOWN_EX 15
+#define F_GETOWN_EX 16
+#define F_OWNER_TID 0
+#define F_OWNER_PID 1
+#define F_OWNER_PGRP 2
+
+struct f_owner_ex_raw {
+    int type;
+    int pid;
+};
 
 static long linux_syscall1(long number, long arg0) {
     register long a0 asm("a0") = arg0;
@@ -604,28 +612,111 @@ static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
     return a0;
 }
 
-int main(void) {
+static void append_char(char **cursor, char value) {
+    **cursor = value;
+    *cursor = *cursor + 1;
+}
+
+static void append_text(char **cursor, const char *text) {
+    while (*text != 0) {
+        append_char(cursor, *text);
+        text++;
+    }
+}
+
+static void append_long(char **cursor, long value) {
+    char digits[24];
+    int count = 0;
+    unsigned long magnitude;
+    if (value < 0) {
+        append_char(cursor, '-');
+        magnitude = (unsigned long)(-value);
+    } else {
+        magnitude = (unsigned long)value;
+    }
+    do {
+        digits[count++] = (char)('0' + (magnitude % 10));
+        magnitude /= 10;
+    } while (magnitude != 0);
+    while (count > 0) {
+        append_char(cursor, digits[--count]);
+    }
+}
+
+static void append_field(char **cursor, long value) {
+    append_char(cursor, ':');
+    append_long(cursor, value);
+}
+
+static void write_summary(const long *fields, int count) {
+    char output[256];
+    char *cursor = output;
+    append_text(&cursor, "fcntl-owner");
+    for (int index = 0; index < count; index++) {
+        append_field(&cursor, fields[index]);
+    }
+    append_char(&cursor, '\n');
+    linux_syscall3(64, 1, (long)output, cursor - output);
+}
+
+void _start(void) {
     long pid = linux_syscall1(172, 0);
+    long tid = linux_syscall1(178, 0);
     long pgid = linux_syscall1(155, 0);
     long initial_owner = linux_syscall3(25, 1, F_GETOWN, 0);
+    struct f_owner_ex_raw initial_owner_ex = { -1, -1 };
+    long get_initial_owner_ex = linux_syscall3(25, 1, F_GETOWN_EX, (long)&initial_owner_ex);
     long set_owner = linux_syscall3(25, 1, F_SETOWN, pid);
     long owner = linux_syscall3(25, 1, F_GETOWN, 0);
     long set_group_owner = pgid > 0 ? linux_syscall3(25, 1, F_SETOWN, -pgid) : -1;
     long group_owner = linux_syscall3(25, 1, F_GETOWN, 0);
+    struct f_owner_ex_raw group_owner_ex = { -1, -1 };
+    long get_group_owner_ex = linux_syscall3(25, 1, F_GETOWN_EX, (long)&group_owner_ex);
     long dup_fd = linux_syscall1(23, 1);
     long dup_owner = dup_fd >= 0 ? linux_syscall3(25, dup_fd, F_GETOWN, 0) : -1;
+    struct f_owner_ex_raw tid_owner_ex = { F_OWNER_TID, (int)tid };
+    long set_tid_owner_ex = dup_fd >= 0 && tid > 0 ?
+        linux_syscall3(25, dup_fd, F_SETOWN_EX, (long)&tid_owner_ex) : -1;
+    struct f_owner_ex_raw got_tid_owner_ex = { -1, -1 };
+    long get_tid_owner_ex = linux_syscall3(25, 1, F_GETOWN_EX, (long)&got_tid_owner_ex);
+    long tid_legacy_owner = linux_syscall3(25, 1, F_GETOWN, 0);
     long set_dup_owner = dup_fd >= 0 ? linux_syscall3(25, dup_fd, F_SETOWN, 0) : -1;
     long owner_after_dup_set = linux_syscall3(25, 1, F_GETOWN, 0);
     long close_status = dup_fd >= 0 ? linux_syscall1(57, dup_fd) : -1;
-
-    printf("fcntl-owner:%ld:%ld:%ld:%ld:%ld:%ld:%ld:%ld:%ld:%ld:%ld\n",
-           initial_owner, set_owner, owner == pid, dup_fd >= 0 ? 0 : dup_fd,
-           pgid > 0 ? 0 : pgid, set_group_owner, group_owner == -pgid,
-           dup_owner == -pgid, set_dup_owner, owner_after_dup_set, close_status);
-    return initial_owner == 0 && set_owner == 0 && owner == pid && dup_fd >= 0 &&
-           pgid > 0 && set_group_owner == 0 && group_owner == -pgid &&
-           dup_owner == -pgid && set_dup_owner == 0 && owner_after_dup_set == 0 &&
-           close_status == 0 ? 48 : 80;
+    long fields[] = {
+        initial_owner,
+        get_initial_owner_ex,
+        initial_owner_ex.type == F_OWNER_TID && initial_owner_ex.pid == 0,
+        set_owner,
+        owner == pid,
+        dup_fd >= 0 ? 0 : dup_fd,
+        pgid > 0 ? 0 : pgid,
+        set_group_owner,
+        group_owner == -pgid,
+        get_group_owner_ex,
+        group_owner_ex.type == F_OWNER_PGRP && group_owner_ex.pid == pgid,
+        dup_owner == -pgid,
+        set_tid_owner_ex,
+        get_tid_owner_ex,
+        got_tid_owner_ex.type == F_OWNER_TID && got_tid_owner_ex.pid == tid,
+        tid_legacy_owner == tid,
+        set_dup_owner,
+        owner_after_dup_set,
+        close_status,
+    };
+    write_summary(fields, 19);
+    long ok = initial_owner == 0 && get_initial_owner_ex == 0 &&
+              initial_owner_ex.type == F_OWNER_TID && initial_owner_ex.pid == 0 &&
+              set_owner == 0 && owner == pid && dup_fd >= 0 &&
+              pgid > 0 && set_group_owner == 0 && group_owner == -pgid &&
+              get_group_owner_ex == 0 && group_owner_ex.type == F_OWNER_PGRP &&
+              group_owner_ex.pid == pgid && dup_owner == -pgid &&
+              set_tid_owner_ex == 0 && get_tid_owner_ex == 0 &&
+              got_tid_owner_ex.type == F_OWNER_TID && got_tid_owner_ex.pid == tid &&
+              tid_legacy_owner == tid && set_dup_owner == 0 && owner_after_dup_set == 0 &&
+              close_status == 0;
+    linux_syscall1(93, ok ? 48 : 80);
+    while (1) {}
 }
 "#,
     )
@@ -634,7 +725,9 @@ int main(void) {
     let compile = Command::new(&gcc)
         .args([
             "-O1",
+            "-nostdlib",
             "-static",
+            "-fno-builtin",
             "-march=rv64gc",
             "-mabi=lp64d",
             source.to_str().unwrap(),
@@ -657,7 +750,10 @@ int main(void) {
         String::from_utf8_lossy(&qemu_output.stdout),
         String::from_utf8_lossy(&qemu_output.stderr)
     );
-    assert_eq!(qemu_output.stdout, b"fcntl-owner:0:0:1:0:0:0:1:1:0:0:0\n");
+    assert_eq!(
+        qemu_output.stdout,
+        b"fcntl-owner:0:0:1:0:1:0:0:0:1:0:1:1:0:0:1:1:0:0:0\n"
+    );
 
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
@@ -685,7 +781,7 @@ int main(void) {
     assert!(stdout.contains("\"status\":\"stopped_by_host\""));
     assert!(stdout.contains("\"stop_code\":48"));
     assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
-    assert!(stdout.contains("\"text\":\"fcntl-owner:0:0:1:0:0:0:1:1:0:0:0\\n\""));
+    assert!(stdout.contains("\"text\":\"fcntl-owner:0:0:1:0:1:0:0:0:1:0:1:1:0:0:1:1:0:0:0\\n\""));
     assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
     assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
     assert_stat(&stdout, "sim.stop_code", "Count", 48, "constant");

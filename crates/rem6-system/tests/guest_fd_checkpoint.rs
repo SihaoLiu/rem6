@@ -6,12 +6,13 @@ use rem6_stats::StatsRegistry;
 use rem6_system::{
     GuestEventId, GuestFd, GuestFdCheckpointBank, GuestFdCheckpointError, GuestFdCheckpointPort,
     GuestFdEntry, GuestFdTable, GuestFileDescription, GuestFileDescriptionId, GuestFileOffset,
-    GuestFileStatusFlags, GuestHostFd, GuestSourceId, HostAction, HostActionRecord,
-    SystemActionExecutor, SystemActionOutcome, SystemError,
+    GuestFileSignalOwner, GuestFileStatusFlags, GuestHostFd, GuestSourceId, HostAction,
+    HostActionRecord, SystemActionExecutor, SystemActionOutcome, SystemError,
 };
 
 const GUEST_FD_CHUNK: &str = "guest-fd";
-const GUEST_FD_CHECKPOINT_VERSION: u64 = 2;
+const GUEST_FD_CHECKPOINT_VERSION: u64 = 3;
+const GUEST_FD_SIGNAL_OWNER_PROCESS_KIND: u32 = 1;
 
 fn checkpoint_component(name: &str) -> CheckpointComponentId {
     CheckpointComponentId::new(name).unwrap()
@@ -47,6 +48,7 @@ fn guest_fd_checkpoint_payload(
         push_u32(&mut payload, *status_flags);
         push_u64(&mut payload, *file_offset);
         push_u64(&mut payload, 0);
+        push_u32(&mut payload, GUEST_FD_SIGNAL_OWNER_PROCESS_KIND);
     }
     push_u64(&mut payload, entries.len() as u64);
     for (fd, description, close_on_exec) in entries {
@@ -177,6 +179,68 @@ fn guest_fd_checkpoint_bank_round_trips_shared_description_aliases() {
             .unwrap(),
         77
     );
+}
+
+#[test]
+fn guest_fd_checkpoint_round_trips_typed_signal_owner_kinds() {
+    let owners = [
+        (GuestFileSignalOwner::thread(42).unwrap(), 42),
+        (GuestFileSignalOwner::process(41).unwrap(), 41),
+        (GuestFileSignalOwner::process_group(77).unwrap(), -77),
+    ];
+
+    for (index, (owner, legacy_owner)) in owners.into_iter().enumerate() {
+        let component = checkpoint_component(&format!("guest.fd.owner-kind.{index}"));
+        let table = Arc::new(Mutex::new(GuestFdTable::new()));
+        let fd = GuestFd::new(10 + index as i32).unwrap();
+        let description = GuestFileDescriptionId::new(900 + index as u64);
+        {
+            let mut locked = table.lock().unwrap();
+            locked
+                .insert_description(GuestFileDescription::guest_backed(
+                    description,
+                    GuestFileStatusFlags::new(0x02),
+                ))
+                .unwrap();
+            locked.insert(fd, GuestFdEntry::new(description)).unwrap();
+            locked.set_typed_signal_owner(fd, owner).unwrap();
+        }
+
+        let capture_bank =
+            GuestFdCheckpointBank::new([GuestFdCheckpointPort::new(component.clone(), table)])
+                .unwrap();
+        let mut registry = CheckpointRegistry::new();
+        capture_bank.register_all(&mut registry).unwrap();
+        capture_bank.capture_all_into(&mut registry).unwrap();
+
+        let restored_table = Arc::new(Mutex::new(GuestFdTable::new()));
+        let restore_bank = GuestFdCheckpointBank::new([GuestFdCheckpointPort::new(
+            component,
+            restored_table.clone(),
+        )])
+        .unwrap();
+
+        restore_bank.restore_all_from(&registry).unwrap();
+        assert_eq!(
+            restored_table
+                .lock()
+                .unwrap()
+                .typed_signal_owner(fd)
+                .unwrap(),
+            owner
+        );
+        assert_eq!(
+            restored_table.lock().unwrap().signal_owner(fd).unwrap(),
+            legacy_owner
+        );
+    }
+}
+
+#[test]
+fn guest_file_signal_owner_rejects_negative_ids() {
+    assert!(GuestFileSignalOwner::thread(-1).is_err());
+    assert!(GuestFileSignalOwner::process(-1).is_err());
+    assert!(GuestFileSignalOwner::process_group(-1).is_err());
 }
 
 #[test]
@@ -324,6 +388,7 @@ fn guest_fd_checkpoint_restore_rejects_unexpected_absent_host_fd_payload() {
     push_u32(&mut malformed, 0x01);
     push_u64(&mut malformed, 0);
     push_u64(&mut malformed, 0);
+    push_u32(&mut malformed, GUEST_FD_SIGNAL_OWNER_PROCESS_KIND);
     registry
         .write_chunk(&component, GUEST_FD_CHUNK, malformed)
         .unwrap();
@@ -359,6 +424,31 @@ fn guest_fd_checkpoint_restore_rejects_present_host_fd_outside_i32() {
     push_u32(&mut malformed, 0x01);
     push_u64(&mut malformed, 0);
     push_u64(&mut malformed, 0);
+    push_u32(&mut malformed, GUEST_FD_SIGNAL_OWNER_PROCESS_KIND);
+    registry
+        .write_chunk(&component, GUEST_FD_CHUNK, malformed)
+        .unwrap();
+
+    assert!(matches!(
+        bank.restore_all_from(&registry).unwrap_err(),
+        GuestFdCheckpointError::InvalidChunk { .. }
+    ));
+    assert_eq!(table.lock().unwrap().snapshot(), before);
+}
+
+#[test]
+fn guest_fd_checkpoint_restore_rejects_invalid_signal_owner_kind() {
+    let component = checkpoint_component("guest.fd.owner-kind");
+    let (table, _, _) = populated_guest_fd_table();
+    let before = table.lock().unwrap().snapshot();
+    let bank =
+        GuestFdCheckpointBank::new([GuestFdCheckpointPort::new(component.clone(), table.clone())])
+            .unwrap();
+    let mut registry = CheckpointRegistry::new();
+    bank.register_all(&mut registry).unwrap();
+    let mut malformed = guest_fd_checkpoint_payload(&[(920, None, 0x01, 0)], &[]);
+    let owner_kind_offset = 8 + 8 + 8 + 8 + 8 + 4 + 8 + 8;
+    malformed[owner_kind_offset..owner_kind_offset + 4].copy_from_slice(&99_u32.to_le_bytes());
     registry
         .write_chunk(&component, GUEST_FD_CHUNK, malformed)
         .unwrap();

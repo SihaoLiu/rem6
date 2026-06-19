@@ -111,7 +111,8 @@ pub use guest_event::{
 pub use guest_fd::{
     GuestFd, GuestFdCloseRecord, GuestFdDup2Record, GuestFdEntry, GuestFdError,
     GuestFdSnapshotEntry, GuestFdTable, GuestFdTableSnapshot, GuestFileDescription,
-    GuestFileDescriptionId, GuestFileOffset, GuestFileStatusFlags, GuestHostFd,
+    GuestFileDescriptionId, GuestFileOffset, GuestFileSignalOwner, GuestFileSignalOwnerError,
+    GuestFileSignalOwnerKind, GuestFileStatusFlags, GuestHostFd,
 };
 pub use guest_fd_checkpoint::{
     GuestFdCheckpointBank, GuestFdCheckpointError, GuestFdCheckpointPort, GuestFdCheckpointRecord,

@@ -15,6 +15,11 @@ const RISCV_LINUX_POSIX_FADV_DONTNEED_FOR_TEST: u64 = 4;
 const RISCV_LINUX_POSIX_FADV_NOREUSE_FOR_TEST: u64 = 5;
 const RISCV_LINUX_F_SETOWN_FOR_TEST: u64 = 8;
 const RISCV_LINUX_F_GETOWN_FOR_TEST: u64 = 9;
+const RISCV_LINUX_F_SETOWN_EX_FOR_TEST: u64 = 15;
+const RISCV_LINUX_F_GETOWN_EX_FOR_TEST: u64 = 16;
+const RISCV_LINUX_F_OWNER_TID_FOR_TEST: i32 = 0;
+const RISCV_LINUX_F_OWNER_PID_FOR_TEST: i32 = 1;
+const RISCV_LINUX_F_OWNER_PGRP_FOR_TEST: i32 = 2;
 const RISCV_LINUX_UNSUPPORTED_FCNTL_FOR_TEST: u64 = 0x7fff_ffff;
 
 #[test]
@@ -480,6 +485,305 @@ fn linux_table_fcntl_setown_validates_owner_targets() {
 }
 
 #[test]
+fn linux_table_fcntl_owner_ex_round_trips_typed_targets_and_shared_description() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::with_identity_process_group_and_session(
+        0,
+        RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10),
+        GuestProcessGroupId::new(77).unwrap(),
+        77,
+    );
+    let stdout = GuestFd::new(1).unwrap();
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x7ffc,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETOWN_EX_FOR_TEST, 0x8f00, 0, 0, 0],
+            ),
+            &mut state,
+            6,
+            None,
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    {
+        let writes = writes.lock().unwrap();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].0, 0x8f00);
+        assert_eq!(
+            read_linux_owner_ex(&writes[0].1),
+            (RISCV_LINUX_F_OWNER_TID_FOR_TEST, 0)
+        );
+    }
+    writes.lock().unwrap().clear();
+
+    let process_group_reader = linux_owner_ex_reader(0x9000, RISCV_LINUX_F_OWNER_PGRP_FOR_TEST, 77);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_SETOWN_EX_FOR_TEST, 0x9000, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&process_group_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(state.guest_fds().signal_owner(stdout).unwrap(), -77);
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETOWN_EX_FOR_TEST, 0x9100, 0, 0, 0],
+            ),
+            &mut state,
+            8,
+            None,
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    {
+        let writes = writes.lock().unwrap();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].0, 0x9100);
+        assert_eq!(
+            read_linux_owner_ex(&writes[0].1),
+            (RISCV_LINUX_F_OWNER_PGRP_FOR_TEST, 77)
+        );
+    }
+    writes.lock().unwrap().clear();
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_DUP, [1, 0, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    let thread_reader = linux_owner_ex_reader(0x9200, RISCV_LINUX_F_OWNER_TID_FOR_TEST, 42);
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_FCNTL,
+                [3, RISCV_LINUX_F_SETOWN_EX_FOR_TEST, 0x9200, 0, 0, 0],
+            ),
+            &mut state,
+            9,
+            Some(&thread_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8010,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETOWN_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 42 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8014,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETOWN_EX_FOR_TEST, 0x9300, 0, 0, 0],
+            ),
+            &mut state,
+            10,
+            None,
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    {
+        let writes = writes.lock().unwrap();
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].0, 0x9300);
+        assert_eq!(
+            read_linux_owner_ex(&writes[0].1),
+            (RISCV_LINUX_F_OWNER_TID_FOR_TEST, 42)
+        );
+    }
+    writes.lock().unwrap().clear();
+
+    let process_reader = linux_owner_ex_reader(0x9400, RISCV_LINUX_F_OWNER_PID_FOR_TEST, 41);
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8018,
+                RISCV_LINUX_FCNTL,
+                [3, RISCV_LINUX_F_SETOWN_EX_FOR_TEST, 0x9400, 0, 0, 0],
+            ),
+            &mut state,
+            11,
+            Some(&process_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x801c,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETOWN_EX_FOR_TEST, 0x9500, 0, 0, 0],
+            ),
+            &mut state,
+            12,
+            None,
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    let writes = writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    assert_eq!(writes[0].0, 0x9500);
+    assert_eq!(
+        read_linux_owner_ex(&writes[0].1),
+        (RISCV_LINUX_F_OWNER_PID_FOR_TEST, 41)
+    );
+}
+
+#[test]
+fn linux_table_fcntl_owner_ex_validates_memory_type_and_targets() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::with_identity_process_group_and_session(
+        0,
+        RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10),
+        GuestProcessGroupId::new(77).unwrap(),
+        77,
+    );
+    let valid_reader = linux_owner_ex_reader(0x9000, RISCV_LINUX_F_OWNER_PID_FOR_TEST, 41);
+    let bad_type_reader = linux_owner_ex_reader(0x9100, 99, 41);
+    let negative_pid_reader = linux_owner_ex_reader(0x9200, RISCV_LINUX_F_OWNER_PID_FOR_TEST, -1);
+    let missing_thread_reader =
+        linux_owner_ex_reader(0x9300, RISCV_LINUX_F_OWNER_TID_FOR_TEST, 999);
+    let faulting_reader = RiscvGuestMemoryReader::new(|_, _| None);
+    let faulting_writer = RiscvGuestMemoryWriter::new(|_, _| false);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_SETOWN_EX_FOR_TEST, 0x9000, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&valid_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    for (pc, address, reader, error) in [
+        (
+            0x8004,
+            0x9100,
+            &bad_type_reader,
+            linux_error(RISCV_LINUX_EINVAL),
+        ),
+        (
+            0x8008,
+            0x9200,
+            &negative_pid_reader,
+            linux_error(RISCV_LINUX_ESRCH),
+        ),
+        (
+            0x800c,
+            0x9300,
+            &missing_thread_reader,
+            linux_error(RISCV_LINUX_ESRCH),
+        ),
+        (
+            0x8010,
+            0x9400,
+            &faulting_reader,
+            linux_error(RISCV_LINUX_EFAULT),
+        ),
+    ] {
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(
+                    pc,
+                    RISCV_LINUX_FCNTL,
+                    [1, RISCV_LINUX_F_SETOWN_EX_FOR_TEST, address, 0, 0, 0],
+                ),
+                &mut state,
+                8,
+                Some(reader),
+                None,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: error })
+        );
+    }
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8014,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETOWN_EX_FOR_TEST, 0x9500, 0, 0, 0],
+            ),
+            &mut state,
+            12,
+            None,
+            Some(&faulting_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8018,
+                RISCV_LINUX_FCNTL,
+                [99, RISCV_LINUX_F_GETOWN_EX_FOR_TEST, 0x9500, 0, 0, 0],
+            ),
+            &mut state,
+            13,
+            None,
+            Some(&faulting_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x801c,
+                RISCV_LINUX_FCNTL,
+                [1, RISCV_LINUX_F_GETOWN_FOR_TEST, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 41 })
+    );
+}
+
+#[test]
 fn linux_table_flock_accepts_advisory_locks_for_open_fds() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
@@ -740,4 +1044,27 @@ fn open_regular_fadvise_fd(
         Some(RiscvSyscallOutcome::Return { value }) => value,
         outcome => panic!("openat for fadvise regular file failed: {outcome:?}"),
     }
+}
+
+fn linux_owner_ex_reader(base: u64, owner_type: i32, pid: i32) -> RiscvGuestMemoryReader {
+    let owner = linux_owner_ex_bytes(owner_type, pid);
+    RiscvGuestMemoryReader::new(move |address, bytes| {
+        let start = usize::try_from(address.checked_sub(base)?).ok()?;
+        let end = start.checked_add(bytes)?;
+        owner.get(start..end).map(<[u8]>::to_vec)
+    })
+}
+
+fn linux_owner_ex_bytes(owner_type: i32, pid: i32) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(8);
+    bytes.extend_from_slice(&owner_type.to_le_bytes());
+    bytes.extend_from_slice(&pid.to_le_bytes());
+    bytes
+}
+
+fn read_linux_owner_ex(bytes: &[u8]) -> (i32, i32) {
+    (
+        i32::from_le_bytes(bytes[0..4].try_into().unwrap()),
+        i32::from_le_bytes(bytes[4..8].try_into().unwrap()),
+    )
 }

@@ -1,4 +1,6 @@
-use crate::{GuestFd, GuestFdError, GuestFileStatusFlags};
+use crate::{
+    GuestFd, GuestFdError, GuestFileSignalOwner, GuestFileSignalOwnerKind, GuestFileStatusFlags,
+};
 
 use super::{
     guest_fd_argument, linux_error, pipe::RiscvGuestPipeCapacityError, RiscvGuestMemoryReader,
@@ -19,6 +21,8 @@ pub(super) const RISCV_LINUX_F_SETLK: u64 = 6;
 pub(super) const RISCV_LINUX_F_SETLKW: u64 = 7;
 const RISCV_LINUX_F_SETOWN: u64 = 8;
 const RISCV_LINUX_F_GETOWN: u64 = 9;
+const RISCV_LINUX_F_SETOWN_EX: u64 = 15;
+const RISCV_LINUX_F_GETOWN_EX: u64 = 16;
 pub(super) const RISCV_LINUX_F_DUPFD_CLOEXEC: u64 = 1030;
 pub(super) const RISCV_LINUX_F_SETPIPE_SZ: u64 = 1031;
 pub(super) const RISCV_LINUX_F_GETPIPE_SZ: u64 = 1032;
@@ -48,6 +52,12 @@ const RISCV_LINUX_FLOCK_WHENCE_OFFSET: usize = 2;
 const RISCV_LINUX_FLOCK_START_OFFSET: usize = 8;
 const RISCV_LINUX_FLOCK_LEN_OFFSET: usize = 16;
 const RISCV_LINUX_FLOCK_PID_OFFSET: usize = 24;
+const RISCV_LINUX_F_OWNER_EX_BYTES: usize = 8;
+const RISCV_LINUX_F_OWNER_EX_TYPE_OFFSET: usize = 0;
+const RISCV_LINUX_F_OWNER_EX_PID_OFFSET: usize = 4;
+const RISCV_LINUX_F_OWNER_TID: i32 = 0;
+const RISCV_LINUX_F_OWNER_PID: i32 = 1;
+const RISCV_LINUX_F_OWNER_PGRP: i32 = 2;
 
 pub(super) fn syscall_fcntl(
     request: RiscvSyscallRequest,
@@ -130,7 +140,7 @@ pub(super) fn syscall_fcntl(
                 validate_signal_owner_target(owner, state)?;
                 state
                     .guest_fds
-                    .set_signal_owner(fd, owner)
+                    .set_typed_signal_owner(fd, owner)
                     .map(|()| 0)
                     .map_err(RiscvFcntlError::GuestFd)
             })
@@ -140,6 +150,26 @@ pub(super) fn syscall_fcntl(
             .signal_owner(fd)
             .map(|owner| owner as i64 as u64)
             .map_err(RiscvFcntlError::GuestFd),
+        RiscvFcntlCommand::SetOwnerEx => {
+            read_linux_owner_ex(request.argument(2), guest_memory_reader)
+                .map_err(RiscvFcntlError::Linux)
+                .and_then(|owner| {
+                    validate_signal_owner_target(owner, state)?;
+                    state
+                        .guest_fds
+                        .set_typed_signal_owner(fd, owner)
+                        .map(|()| 0)
+                        .map_err(RiscvFcntlError::GuestFd)
+                })
+        }
+        RiscvFcntlCommand::GetOwnerEx => state
+            .guest_fds
+            .typed_signal_owner(fd)
+            .map_err(RiscvFcntlError::GuestFd)
+            .and_then(|owner| {
+                write_linux_owner_ex(owner, request.argument(2), guest_memory_writer)
+                    .map_err(RiscvFcntlError::Linux)
+            }),
         RiscvFcntlCommand::GetLock => {
             advisory_lock_request(fd, request.argument(2), state, guest_memory_reader)
                 .and_then(validate_get_lock_request)
@@ -211,6 +241,8 @@ enum RiscvFcntlCommand {
     SetStatusFlags,
     SetOwner,
     GetOwner,
+    SetOwnerEx,
+    GetOwnerEx,
     GetLock,
     SetLock,
     GetPipeSize,
@@ -233,6 +265,8 @@ impl RiscvFcntlCommand {
             RISCV_LINUX_F_SETLK | RISCV_LINUX_F_SETLKW => Some(Self::SetLock),
             RISCV_LINUX_F_SETOWN => Some(Self::SetOwner),
             RISCV_LINUX_F_GETOWN => Some(Self::GetOwner),
+            RISCV_LINUX_F_SETOWN_EX => Some(Self::SetOwnerEx),
+            RISCV_LINUX_F_GETOWN_EX => Some(Self::GetOwnerEx),
             RISCV_LINUX_F_DUPFD_CLOEXEC => Some(Self::DuplicateFd {
                 close_on_exec: true,
             }),
@@ -245,16 +279,13 @@ impl RiscvFcntlCommand {
     }
 }
 
-fn signal_owner_argument(argument: u64) -> Result<i32, RiscvFcntlError> {
+fn signal_owner_argument(argument: u64) -> Result<GuestFileSignalOwner, RiscvFcntlError> {
     let owner = argument as u32 as i32;
-    if owner == i32::MIN {
-        return Err(RiscvFcntlError::Linux(RISCV_LINUX_EINVAL));
-    }
-    Ok(owner)
+    GuestFileSignalOwner::from_legacy(owner).ok_or(RiscvFcntlError::Linux(RISCV_LINUX_EINVAL))
 }
 
 fn validate_signal_owner_target(
-    owner: i32,
+    owner: GuestFileSignalOwner,
     state: &RiscvSyscallState,
 ) -> Result<(), RiscvFcntlError> {
     if signal_owner_target_exists(owner, state) {
@@ -264,17 +295,95 @@ fn validate_signal_owner_target(
     }
 }
 
-fn signal_owner_target_exists(owner: i32, state: &RiscvSyscallState) -> bool {
-    if owner == 0 {
+fn signal_owner_target_exists(owner: GuestFileSignalOwner, state: &RiscvSyscallState) -> bool {
+    if owner.id() == 0 {
         return true;
     }
-    if owner > 0 {
-        return u64::try_from(owner).ok() == Some(state.identity().thread_group_id());
+    if owner.id() < 0 {
+        return false;
     }
-    owner
-        .checked_abs()
-        .and_then(|process_group| u64::try_from(process_group).ok())
-        == Some(u64::from(state.guest_wait.current_process_group().get()))
+    match owner.kind() {
+        GuestFileSignalOwnerKind::Thread => {
+            u64::try_from(owner.id()).ok() == Some(state.identity().thread_id())
+        }
+        GuestFileSignalOwnerKind::Process => {
+            u64::try_from(owner.id()).ok() == Some(state.identity().thread_group_id())
+        }
+        GuestFileSignalOwnerKind::ProcessGroup => {
+            u64::try_from(owner.id()).ok()
+                == Some(u64::from(state.guest_wait.current_process_group().get()))
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvLinuxOwnerEx {
+    owner_type: i32,
+    pid: i32,
+}
+
+impl RiscvLinuxOwnerEx {
+    fn into_signal_owner(self) -> Result<GuestFileSignalOwner, u64> {
+        let kind = match self.owner_type {
+            RISCV_LINUX_F_OWNER_TID => Ok(GuestFileSignalOwnerKind::Thread),
+            RISCV_LINUX_F_OWNER_PID => Ok(GuestFileSignalOwnerKind::Process),
+            RISCV_LINUX_F_OWNER_PGRP => Ok(GuestFileSignalOwnerKind::ProcessGroup),
+            _ => Err(RISCV_LINUX_EINVAL),
+        }?;
+        GuestFileSignalOwner::from_kind_and_id(kind, self.pid).map_err(|_| RISCV_LINUX_ESRCH)
+    }
+
+    const fn from_signal_owner(owner: GuestFileSignalOwner) -> Self {
+        let owner_type = match owner.kind() {
+            GuestFileSignalOwnerKind::Thread => RISCV_LINUX_F_OWNER_TID,
+            GuestFileSignalOwnerKind::Process => RISCV_LINUX_F_OWNER_PID,
+            GuestFileSignalOwnerKind::ProcessGroup => RISCV_LINUX_F_OWNER_PGRP,
+        };
+        Self {
+            owner_type,
+            pid: owner.id(),
+        }
+    }
+}
+
+fn read_linux_owner_ex(
+    address: u64,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+) -> Result<GuestFileSignalOwner, u64> {
+    let Some(guest_memory) = guest_memory_reader else {
+        return Err(RISCV_LINUX_EFAULT);
+    };
+    let bytes = read_guest_bytes(guest_memory, address, RISCV_LINUX_F_OWNER_EX_BYTES)?;
+    RiscvLinuxOwnerEx {
+        owner_type: read_i32(&bytes, RISCV_LINUX_F_OWNER_EX_TYPE_OFFSET),
+        pid: read_i32(&bytes, RISCV_LINUX_F_OWNER_EX_PID_OFFSET),
+    }
+    .into_signal_owner()
+}
+
+fn write_linux_owner_ex(
+    owner: GuestFileSignalOwner,
+    address: u64,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> Result<u64, u64> {
+    let Some(guest_memory) = guest_memory_writer else {
+        return Err(RISCV_LINUX_EFAULT);
+    };
+    if guest_memory.write(address, &encode_linux_owner_ex(owner)) {
+        Ok(0)
+    } else {
+        Err(RISCV_LINUX_EFAULT)
+    }
+}
+
+fn encode_linux_owner_ex(owner: GuestFileSignalOwner) -> [u8; RISCV_LINUX_F_OWNER_EX_BYTES] {
+    let owner = RiscvLinuxOwnerEx::from_signal_owner(owner);
+    let mut bytes = [0; RISCV_LINUX_F_OWNER_EX_BYTES];
+    bytes[RISCV_LINUX_F_OWNER_EX_TYPE_OFFSET..RISCV_LINUX_F_OWNER_EX_TYPE_OFFSET + 4]
+        .copy_from_slice(&owner.owner_type.to_le_bytes());
+    bytes[RISCV_LINUX_F_OWNER_EX_PID_OFFSET..RISCV_LINUX_F_OWNER_EX_PID_OFFSET + 4]
+        .copy_from_slice(&owner.pid.to_le_bytes());
+    bytes
 }
 
 impl RiscvSyscallState {

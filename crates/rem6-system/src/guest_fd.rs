@@ -79,13 +79,127 @@ impl GuestFileOffset {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum GuestFileSignalOwnerKind {
+    Thread,
+    Process,
+    ProcessGroup,
+}
+
+impl GuestFileSignalOwnerKind {
+    pub const fn checkpoint_tag(self) -> u32 {
+        match self {
+            Self::Thread => 0,
+            Self::Process => 1,
+            Self::ProcessGroup => 2,
+        }
+    }
+
+    pub const fn from_checkpoint_tag(tag: u32) -> Option<Self> {
+        match tag {
+            0 => Some(Self::Thread),
+            1 => Some(Self::Process),
+            2 => Some(Self::ProcessGroup),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GuestFileSignalOwnerError {
+    NegativeId { id: i32 },
+}
+
+impl fmt::Display for GuestFileSignalOwnerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NegativeId { id } => write!(formatter, "negative guest signal owner id {id}"),
+        }
+    }
+}
+
+impl Error for GuestFileSignalOwnerError {}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct GuestFileSignalOwner {
+    kind: GuestFileSignalOwnerKind,
+    id: i32,
+}
+
+impl GuestFileSignalOwner {
+    pub const fn none() -> Self {
+        Self {
+            kind: GuestFileSignalOwnerKind::Thread,
+            id: 0,
+        }
+    }
+
+    pub fn thread(id: i32) -> Result<Self, GuestFileSignalOwnerError> {
+        Self::new(GuestFileSignalOwnerKind::Thread, id)
+    }
+
+    pub fn process(id: i32) -> Result<Self, GuestFileSignalOwnerError> {
+        Self::new(GuestFileSignalOwnerKind::Process, id)
+    }
+
+    pub fn process_group(id: i32) -> Result<Self, GuestFileSignalOwnerError> {
+        Self::new(GuestFileSignalOwnerKind::ProcessGroup, id)
+    }
+
+    pub fn from_kind_and_id(
+        kind: GuestFileSignalOwnerKind,
+        id: i32,
+    ) -> Result<Self, GuestFileSignalOwnerError> {
+        Self::new(kind, id)
+    }
+
+    fn new(kind: GuestFileSignalOwnerKind, id: i32) -> Result<Self, GuestFileSignalOwnerError> {
+        if id < 0 {
+            return Err(GuestFileSignalOwnerError::NegativeId { id });
+        }
+        Ok(Self { kind, id })
+    }
+
+    pub fn from_legacy(owner: i32) -> Option<Self> {
+        if owner == i32::MIN {
+            return None;
+        }
+        if owner < 0 {
+            Self::process_group(-owner).ok()
+        } else {
+            Self::process(owner).ok()
+        }
+    }
+
+    pub const fn kind(self) -> GuestFileSignalOwnerKind {
+        self.kind
+    }
+
+    pub const fn id(self) -> i32 {
+        self.id
+    }
+
+    pub const fn legacy_value(self) -> i32 {
+        match self.kind {
+            GuestFileSignalOwnerKind::ProcessGroup => -self.id,
+            GuestFileSignalOwnerKind::Thread | GuestFileSignalOwnerKind::Process => self.id,
+        }
+    }
+}
+
+impl Default for GuestFileSignalOwner {
+    fn default() -> Self {
+        Self::none()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GuestFileDescription {
     id: GuestFileDescriptionId,
     host_fd: Option<GuestHostFd>,
     status_flags: GuestFileStatusFlags,
     file_offset: GuestFileOffset,
-    signal_owner: i32,
+    signal_owner: GuestFileSignalOwner,
 }
 
 impl GuestFileDescription {
@@ -98,7 +212,7 @@ impl GuestFileDescription {
             host_fd: None,
             status_flags,
             file_offset: GuestFileOffset::new(0),
-            signal_owner: 0,
+            signal_owner: GuestFileSignalOwner::none(),
         }
     }
 
@@ -112,7 +226,7 @@ impl GuestFileDescription {
             host_fd: Some(host_fd),
             status_flags,
             file_offset: GuestFileOffset::new(0),
-            signal_owner: 0,
+            signal_owner: GuestFileSignalOwner::none(),
         }
     }
 
@@ -140,11 +254,16 @@ impl GuestFileDescription {
         self.file_offset = file_offset;
     }
 
-    pub const fn signal_owner(&self) -> i32 {
+    pub const fn signal_owner(&self) -> GuestFileSignalOwner {
         self.signal_owner
     }
 
-    pub const fn set_signal_owner(&mut self, owner: i32) {
+    pub fn set_signal_owner(&mut self, owner: i32) {
+        self.signal_owner =
+            GuestFileSignalOwner::from_legacy(owner).expect("guest signal owner is valid");
+    }
+
+    pub const fn set_typed_signal_owner(&mut self, owner: GuestFileSignalOwner) {
         self.signal_owner = owner;
     }
 }
@@ -514,12 +633,26 @@ impl GuestFdTable {
     }
 
     pub fn signal_owner(&self, fd: GuestFd) -> Result<i32, GuestFdError> {
+        Ok(self.description_for_fd(fd)?.signal_owner().legacy_value())
+    }
+
+    pub fn typed_signal_owner(&self, fd: GuestFd) -> Result<GuestFileSignalOwner, GuestFdError> {
         Ok(self.description_for_fd(fd)?.signal_owner())
     }
 
     pub fn set_signal_owner(&mut self, fd: GuestFd, owner: i32) -> Result<(), GuestFdError> {
         let (_, description) = self.description_for_fd_mut(fd)?;
         description.set_signal_owner(owner);
+        Ok(())
+    }
+
+    pub fn set_typed_signal_owner(
+        &mut self,
+        fd: GuestFd,
+        owner: GuestFileSignalOwner,
+    ) -> Result<(), GuestFdError> {
+        let (_, description) = self.description_for_fd_mut(fd)?;
+        description.set_typed_signal_owner(owner);
         Ok(())
     }
 
