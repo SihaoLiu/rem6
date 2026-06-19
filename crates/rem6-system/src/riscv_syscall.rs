@@ -58,6 +58,7 @@ mod scheduler;
 mod seek;
 mod sendfile;
 mod signal;
+mod signalfd;
 mod sleep;
 mod startup;
 mod stat;
@@ -194,6 +195,7 @@ use signal::{
     syscall_rt_sigqueueinfo, syscall_rt_sigsuspend, syscall_rt_sigtimedwait, syscall_sigaltstack,
     syscall_tgkill, syscall_tkill, RiscvSignalAction, RiscvSignalAltStack, RISCV_LINUX_SIGALTSTACK,
 };
+use signalfd::{syscall_signalfd4, RiscvGuestSignalFd, RISCV_LINUX_SIGNALFD4};
 use sleep::{
     syscall_clock_nanosleep, syscall_nanosleep, RISCV_LINUX_CLOCK_NANOSLEEP, RISCV_LINUX_NANOSLEEP,
 };
@@ -285,6 +287,7 @@ pub struct RiscvSyscallState {
     guest_pipe_write_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
     guest_eventfds: BTreeMap<GuestFileDescriptionId, RiscvGuestEventFd>,
     guest_timerfds: BTreeMap<GuestFileDescriptionId, RiscvGuestTimerFd>,
+    guest_signalfds: BTreeMap<GuestFileDescriptionId, RiscvGuestSignalFd>,
     guest_epolls: BTreeMap<GuestFileDescriptionId, RiscvGuestEpoll>,
     guest_opens: Vec<RiscvGuestOpenRecord>,
     stdin_fds: BTreeSet<GuestFd>,
@@ -384,6 +387,7 @@ impl RiscvSyscallState {
             guest_pipe_write_descriptions: BTreeMap::new(),
             guest_eventfds: BTreeMap::new(),
             guest_timerfds: BTreeMap::new(),
+            guest_signalfds: BTreeMap::new(),
             guest_epolls: BTreeMap::new(),
             guest_opens: Vec::new(),
             stdin_fds,
@@ -1003,6 +1007,7 @@ impl RiscvSyscallState {
         self.remove_guest_pipe_description(description);
         self.remove_guest_eventfd_description(description);
         self.remove_guest_timerfd_description(description);
+        self.remove_guest_signalfd_description(description);
         self.remove_guest_epoll_target_description(description);
         self.remove_guest_epoll_description(description);
         if let Some(identity) = closed_guest_file_identity {

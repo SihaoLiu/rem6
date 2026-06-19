@@ -3,6 +3,7 @@ use super::{
     guest_fd_argument, linux_error,
     pipe::RiscvGuestPipeWrite,
     read_guest_c_string,
+    signalfd::signalfd_write_result,
     timerfd::timerfd_write_result,
     RiscvGuestCStringError, RiscvGuestFileIdentity, RiscvGuestMemoryReader, RiscvGuestNodeKind,
     RiscvGuestWriteRecord, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAGAIN,
@@ -468,6 +469,11 @@ pub(super) fn syscall_write(
     }
     match state.guest_timerfd_ready(fd) {
         Ok(Some(_ready)) => return Some(timerfd_write_result()),
+        Ok(None) => {}
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    }
+    match state.guest_signalfd_ready(fd) {
+        Ok(Some(_ready)) => return Some(signalfd_write_result()),
         Ok(None) => {}
         Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
     }

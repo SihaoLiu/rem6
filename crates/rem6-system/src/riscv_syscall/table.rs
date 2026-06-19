@@ -104,6 +104,8 @@ impl RiscvSyscallTable {
                 syscall_timerfd_gettime(request, state, tick, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
+            RISCV_LINUX_SIGNALFD4 => syscall_signalfd4(request, state, guest_memory_reader)
+                .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_MEMFD_CREATE => {
                 guest_memory_reader.map(|reader| RiscvSyscallOutcome::Return {
                     value: syscall_memfd_create(request, state, reader),

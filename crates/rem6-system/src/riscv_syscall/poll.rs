@@ -610,6 +610,16 @@ pub(super) fn ready_events_for_guest_fd(
         Ok(None) => {}
         Err(error) => return Err(error),
     }
+    match state.guest_signalfd_ready(fd) {
+        Ok(Some(ready)) => {
+            if ready.readable() {
+                revents |= events & RISCV_LINUX_READ_READY_EVENTS;
+            }
+            return Ok(revents);
+        }
+        Ok(None) => {}
+        Err(error) => return Err(error),
+    }
     let mut pipe_endpoint = false;
     match state.guest_pipe_read_ready(fd) {
         Ok(Some(ready)) => {

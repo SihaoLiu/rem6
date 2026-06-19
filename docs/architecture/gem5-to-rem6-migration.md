@@ -388,6 +388,8 @@ tool-detected, and broad workload coverage is not present.
   `copy_file_range` guest-file copy, explicit offset writeback, and selected Linux error slices are covered by syscall table tests and a static raw CLI/qemu smoke.
   Signal pending coverage includes blocked ignored, default-ignored, and nonignored deliveries,
   with unsupported nonignored delivery recorded when the pending signal is unblocked.
+  `signalfd4` coverage consumes blocked pending signals through a guest fd with
+  read, nonblock, write-rejection, poll-readiness, and close-cleanup behavior.
   `waitid` no-child behavior, option validation, and `siginfo_t` writeback are covered by syscall table tests and a no-libc static CLI/qemu smoke.
   `capget`/`capset` zero-capability, version-probe, pid, null-pointer, and
   nonzero-set error paths are covered by syscall table tests and a no-libc
@@ -427,8 +429,10 @@ mode-zero `fallocate`, and `copy_file_range`, `waitid`, `ppoll` timeout,
 sigmask, expiration/writeback, indefinite blocking, and readiness behavior, `pselect6`,
 `eventfd2` counter, semaphore, nonblock, close-on-exec, poll-readiness, and
 actual ecall read-to-exit smoke slices, `epoll_create1`, `epoll_ctl`, and
-`epoll_pwait` eventfd-readiness slices, plus `timerfd` create, set/gettime,
-read, nonblock, write-rejection, and poll-readiness slices with direct ecall smoke coverage,
+`epoll_pwait` eventfd-readiness slices, `signalfd4` blocked pending-signal
+read, nonblock, write-rejection, poll-readiness, and close-cleanup slices with
+direct ecall smoke coverage, plus `timerfd` create, set/gettime, read,
+nonblock, write-rejection, and poll-readiness slices with direct ecall smoke coverage,
 `sched_setparam`, `sched_setscheduler`, `sched_getscheduler`, `sched_getparam`,
 `sched_get_priority_max/min`, `sched_rr_get_interval`,
 single-word `sched_setaffinity` and `sched_getaffinity`, current-process
@@ -628,6 +632,8 @@ shared RISC-V CLI tool detection in `cli_run::support`,
 `riscv_syscall_eventfd`,
 `riscv_syscall::tests::timerfd_tests`,
 `riscv_se_timerfd`,
+`riscv_syscall_signalfd`,
+`riscv_se_signalfd`,
 `riscv_syscall_epoll`,
 `riscv_syscall_pselect`,
 `riscv_syscall::tests::mlock_tests`,

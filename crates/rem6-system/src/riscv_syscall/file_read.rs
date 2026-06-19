@@ -1,6 +1,7 @@
 use super::{
     eventfd::{eventfd_read_bytes, RiscvGuestEventFdRead},
     guest_fd_argument, linux_error,
+    signalfd::{signalfd_read_result, signalfd_siginfo_bytes, RiscvGuestSignalFdRead},
     timerfd::{timerfd_read_bytes, timerfd_read_result, RiscvGuestTimerFdRead},
     RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAGAIN,
     RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ESPIPE,
@@ -76,6 +77,30 @@ pub(super) fn syscall_read(
                 return Some(linux_error(RISCV_LINUX_EFAULT));
             }
             if state.consume_guest_timerfd_read(fd).is_err() {
+                return Some(linux_error(RISCV_LINUX_EBADF));
+            }
+            return Some(bytes.len() as u64);
+        }
+        Ok(None) => {}
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    }
+    match state.guest_signalfd_read(fd, count) {
+        Ok(Some(read)) => {
+            let signals = match read {
+                RiscvGuestSignalFdRead::Signals(signals) => signals,
+                RiscvGuestSignalFdRead::Blocked => return None,
+                RiscvGuestSignalFdRead::WouldBlock | RiscvGuestSignalFdRead::InvalidSize => {
+                    return signalfd_read_result(read);
+                }
+            };
+            let mut bytes = Vec::with_capacity(signals.len() * 128);
+            for signal in &signals {
+                bytes.extend_from_slice(&signalfd_siginfo_bytes(state, *signal));
+            }
+            if !guest_memory.write(request.argument(1), &bytes) {
+                return Some(linux_error(RISCV_LINUX_EFAULT));
+            }
+            if state.consume_guest_signalfd_read(fd, &signals).is_err() {
                 return Some(linux_error(RISCV_LINUX_EBADF));
             }
             return Some(bytes.len() as u64);
