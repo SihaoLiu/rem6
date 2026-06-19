@@ -463,6 +463,58 @@ fn rem6_gpu_run_writes_nomali_adapter_output() {
         Some(0x4000)
     );
     assert_eq!(
+        adapter.pointer("/pio/reset_count").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        adapter
+            .pointer("/pio/checkpoint/word_count")
+            .and_then(Value::as_u64),
+        Some(4096)
+    );
+    assert_eq!(
+        adapter
+            .pointer("/pio/register_reads/0/name")
+            .and_then(Value::as_str),
+        Some("gpu_id")
+    );
+    assert_eq!(
+        adapter
+            .pointer("/pio/register_reads/0/offset")
+            .and_then(Value::as_str),
+        Some("0x000")
+    );
+    assert_eq!(
+        adapter
+            .pointer("/pio/register_reads/0/value")
+            .and_then(Value::as_str),
+        Some("0x07500000")
+    );
+    assert_eq!(
+        adapter
+            .pointer("/pio/register_reads/3/name")
+            .and_then(Value::as_str),
+        Some("thread_features")
+    );
+    assert_eq!(
+        adapter
+            .pointer("/pio/register_reads/3/value")
+            .and_then(Value::as_str),
+        Some("0x0a040400")
+    );
+    assert_eq!(
+        adapter
+            .pointer("/pio/register_reads/5/name")
+            .and_then(Value::as_str),
+        Some("shader_present_hi")
+    );
+    assert_eq!(
+        adapter
+            .pointer("/pio/register_reads/5/value")
+            .and_then(Value::as_str),
+        Some("0x00000000")
+    );
+    assert_eq!(
         adapter
             .pointer("/interface/interrupts/job/nomali_int")
             .and_then(Value::as_u64),

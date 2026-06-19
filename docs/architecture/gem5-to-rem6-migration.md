@@ -1081,7 +1081,7 @@ external adapter contract in `rem6-proto` self-tests.
 bucket cap is single-axis because McPAT-shaped, DSENT-shaped, and
 NoMali-compatible artifacts can be written from a top-level run, but
 external-tool ingestion, full schema parity, calibrated activity, and the
-complete NoMali register/PIO device model remain absent.
+complete side-effecting NoMali PIO device model remain absent.
 
 - [x] rem6-power can export typed power-analysis records.
 - [x] McPAT-shaped XML export serializes power, thermal, and residency records.
@@ -1101,25 +1101,26 @@ GPU data-cache, and DRAM power records, with the artifact path reported in
 the run JSON or CLI output envelope. Top-level `rem6 gpu-run --nomali-output`
 emits a deterministic NoMali-compatible T760 adapter artifact from executed
 GPU run summaries, including API version, register-window size, T760
-configuration-register values, callback and interrupt identifiers, and
-observed workgroup plus memory activity; TOML and flag-driven runs both report
-the artifact path in JSON or the CLI output envelope.
+configuration-register values, a reset/read/checkpoint register-file snapshot,
+callback and interrupt identifiers, and observed workgroup plus memory
+activity; TOML and flag-driven runs both report the artifact path in JSON or
+the CLI output envelope.
 
 **Not migrated:** Complete `ext/nomali`, `ext/mcpat`, and `ext/dsent` parity,
-NoMali PIO register execution, register checkpointing, real interrupt delivery,
-external-tool ingestion, full external schema parity, and calibrated
-power/thermal activity.
+side-effecting NoMali PIO command writes, register fault behavior, real
+interrupt delivery, external-tool ingestion, full external schema parity, and
+calibrated power/thermal activity.
 
 **Evidence:** rem6-power power-analysis export self-tests including custom XML,
 McPAT-shaped XML, and DSENT-shaped CSV output; `rem6 run` CLI tests for
 `--power-output`, envelope reporting, and load-only rejection; `rem6 gpu-run`
 CLI and TOML tests for McPAT-shaped and DSENT-shaped activity-derived output;
 `rem6 gpu-run --nomali-output` CLI and TOML tests for NoMali-compatible adapter
-artifacts, multi-artifact envelope reporting, and output-path conflict
-rejection.
+artifacts with T760 reset/read/checkpoint register-file evidence,
+multi-artifact envelope reporting, and output-path conflict rejection.
 
-**Next evidence:** Adapter ingestion, NoMali PIO/register execution, calibrated
-activity models, and stricter external schema parity tests.
+**Next evidence:** Adapter ingestion, side-effecting NoMali PIO command writes,
+calibrated activity models, and stricter external schema parity tests.
 
 ### Native Loader and Math Replacement - 50% single-axis
 
