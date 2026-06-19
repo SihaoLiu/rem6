@@ -1104,14 +1104,16 @@ GPU run summaries, including API version, register-window size, T760
 configuration-register values, a reset/read/checkpoint register-file snapshot,
 minimal side-effecting `GPU_COMMAND_SOFT_RESET` PIO command-write evidence with
 `RESET_COMPLETED` IRQ raw/mask/status state plus `GPU_IRQ_CLEAR` clear-state
-evidence, callback and interrupt identifiers, and observed workgroup plus
-memory activity; TOML and flag-driven runs both report the artifact path in
-JSON or the CLI output envelope.
+evidence, a shader power-on/off PIO slice that updates `SHADER_READY_LO` and
+raises `POWER_CHANGED_SINGLE` plus `POWER_CHANGED_ALL` IRQ state, callback and
+interrupt identifiers, and observed workgroup plus memory activity; TOML and
+flag-driven runs both report the artifact path in JSON or the CLI output
+envelope.
 
 **Not migrated:** Complete `ext/nomali`, `ext/mcpat`, and `ext/dsent` parity,
-the full NoMali PIO command surface beyond the soft-reset slice, register fault
-behavior, real interrupt delivery, external-tool ingestion, full external
-schema parity, and calibrated power/thermal activity.
+the full NoMali PIO command surface beyond the soft-reset and shader-power
+slices, register fault behavior, real interrupt delivery, external-tool
+ingestion, full external schema parity, and calibrated power/thermal activity.
 
 **Evidence:** rem6-power power-analysis export self-tests including custom XML,
 McPAT-shaped XML, and DSENT-shaped CSV output; `rem6 run` CLI tests for
@@ -1119,7 +1121,8 @@ McPAT-shaped XML, and DSENT-shaped CSV output; `rem6 run` CLI tests for
 CLI and TOML tests for McPAT-shaped and DSENT-shaped activity-derived output;
 `rem6 gpu-run --nomali-output` CLI and TOML tests for NoMali-compatible adapter
 artifacts with T760 reset/read/checkpoint register-file evidence plus
-soft-reset command-write and IRQ-clear state evidence,
+soft-reset command-write, IRQ-clear state evidence, and shader power-on/off
+ready-state plus POWER_CHANGED IRQ evidence,
 multi-artifact envelope reporting, and output-path conflict rejection.
 
 **Next evidence:** Adapter ingestion, broader NoMali PIO command/register

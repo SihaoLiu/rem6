@@ -40,8 +40,13 @@ const TILER_PRESENT_LO: u32 = 0x110;
 const TILER_PRESENT_HI: u32 = 0x114;
 const L2_PRESENT_LO: u32 = 0x120;
 const L2_PRESENT_HI: u32 = 0x124;
+const SHADER_READY_LO: u32 = 0x140;
+const SHADER_PWRON_LO: u32 = 0x180;
+const SHADER_PWROFF_LO: u32 = 0x1c0;
 
 const RESET_COMPLETED: u32 = 1 << 8;
+const POWER_CHANGED_SINGLE: u32 = 1 << 9;
+const POWER_CHANGED_ALL: u32 = 1 << 10;
 const GPU_COMMAND_SOFT_RESET: u32 = 0x01;
 const GPU_COMMAND_HARD_RESET: u32 = 0x02;
 
@@ -197,6 +202,17 @@ struct NoMaliIrqWrite {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct NoMaliPowerWrite {
+    name: &'static str,
+    offset: u32,
+    value: u32,
+    ready_register: &'static str,
+    ready_offset: u32,
+    ready_value: u32,
+    effect: &'static str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct NoMaliIrqSnapshot {
     name: &'static str,
     rawstat: u32,
@@ -211,6 +227,7 @@ struct NoMaliT760RegisterFile {
     reset_count: u64,
     command_writes: Vec<NoMaliCommandWrite>,
     irq_writes: Vec<NoMaliIrqWrite>,
+    power_writes: Vec<NoMaliPowerWrite>,
     irq_snapshots: Vec<NoMaliIrqSnapshot>,
 }
 
@@ -221,6 +238,7 @@ impl NoMaliT760RegisterFile {
             reset_count: 0,
             command_writes: Vec::new(),
             irq_writes: Vec::new(),
+            power_writes: Vec::new(),
             irq_snapshots: Vec::new(),
         }
     }
@@ -256,6 +274,8 @@ impl NoMaliT760RegisterFile {
             GPU_IRQ_MASK => self.write_raw(offset, value),
             GPU_IRQ_STATUS => {}
             GPU_COMMAND => self.gpu_command(value),
+            SHADER_PWRON_LO => self.shader_power_on(value),
+            SHADER_PWROFF_LO => self.shader_power_off(value),
             _ => self.write_raw(offset, value),
         }
     }
@@ -294,6 +314,40 @@ impl NoMaliT760RegisterFile {
                 });
             }
         }
+    }
+
+    fn shader_power_on(&mut self, value: u32) {
+        let ready = self.read_raw(SHADER_READY_LO) | (value & self.read_raw(SHADER_PRESENT_LO));
+        self.write_raw(SHADER_READY_LO, ready);
+        self.raise_power_changed_interrupt();
+        self.power_writes.push(NoMaliPowerWrite {
+            name: "shader_pwron_lo",
+            offset: SHADER_PWRON_LO,
+            value,
+            ready_register: "shader_ready_lo",
+            ready_offset: SHADER_READY_LO,
+            ready_value: ready,
+            effect: "power_changed_interrupt",
+        });
+    }
+
+    fn shader_power_off(&mut self, value: u32) {
+        let ready = self.read_raw(SHADER_READY_LO) & !value;
+        self.write_raw(SHADER_READY_LO, ready);
+        self.raise_power_changed_interrupt();
+        self.power_writes.push(NoMaliPowerWrite {
+            name: "shader_pwroff_lo",
+            offset: SHADER_PWROFF_LO,
+            value,
+            ready_register: "shader_ready_lo",
+            ready_offset: SHADER_READY_LO,
+            ready_value: ready,
+            effect: "power_changed_interrupt",
+        });
+    }
+
+    fn raise_power_changed_interrupt(&mut self) {
+        self.raise_interrupt(POWER_CHANGED_SINGLE | POWER_CHANGED_ALL);
     }
 
     fn raise_interrupt(&mut self, flags: u32) {
@@ -378,6 +432,16 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
     pio.record_irq_snapshot("after_soft_reset_masked");
     pio.write_reg(GPU_IRQ_CLEAR, RESET_COMPLETED);
     pio.record_irq_snapshot("after_irq_clear");
+    pio.write_reg(
+        GPU_IRQ_MASK,
+        RESET_COMPLETED | POWER_CHANGED_SINGLE | POWER_CHANGED_ALL,
+    );
+    pio.write_reg(SHADER_PWRON_LO, pio.read_raw(SHADER_PRESENT_LO));
+    pio.record_irq_snapshot("after_shader_power_on");
+    pio.write_reg(GPU_IRQ_CLEAR, POWER_CHANGED_SINGLE | POWER_CHANGED_ALL);
+    pio.record_irq_snapshot("after_power_irq_clear");
+    pio.write_reg(SHADER_PWROFF_LO, 0x0000_0003);
+    pio.record_irq_snapshot("after_shader_power_off");
     let contents = format!(
         "{{\"schema\":\"rem6.nomali.gpu-adapter.v1\",\"source_schema\":\"rem6.cli.gpu-run.v1\",\"scope\":\"gpu-run-execution-summary-adapter\",\"gpu\":{},\"interface\":{},\"pio\":{},\"execution\":{{\"status\":\"completed\",\"final_tick\":{},\"compute_units\":{},\"workgroup_completions\":{},\"coalesced_memory_accesses\":{},\"global_memory_reads\":{},\"global_memory_writes\":{},\"memory_read_callback_observations\":{},\"memory_write_callback_observations\":{},\"job_event_observations\":{},\"compute_unit_activity\":[{}]}}}}\n",
         nomali_gpu_json(&pio),
@@ -470,6 +534,23 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         })
         .collect::<Vec<_>>()
         .join(",");
+    let power_writes = pio
+        .power_writes
+        .iter()
+        .map(|write| {
+            format!(
+                "{{\"name\":\"{}\",\"offset\":\"0x{:03x}\",\"value\":\"{}\",\"ready_register\":\"{}\",\"ready_offset\":\"0x{:03x}\",\"ready_value\":\"{}\",\"effect\":\"{}\"}}",
+                write.name,
+                write.offset,
+                register_hex(write.value),
+                write.ready_register,
+                write.ready_offset,
+                register_hex(write.ready_value),
+                write.effect,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     let irq_snapshots = pio
         .irq_snapshots
         .iter()
@@ -498,11 +579,12 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"register_window_bytes\":{},\"reset_count\":{},\"command_writes\":[{}],\"irq_writes\":[{}],\"irq_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}]}}",
+        "{{\"register_window_bytes\":{},\"reset_count\":{},\"command_writes\":[{}],\"irq_writes\":[{}],\"power_writes\":[{}],\"irq_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}]}}",
         NOMALI_REGISTER_WINDOW_BYTES,
         pio.reset_count,
         command_writes,
         irq_writes,
+        power_writes,
         irq_snapshots,
         register_hex(pio.read_raw(GPU_IRQ_RAWSTAT)),
         register_hex(pio.read_raw(GPU_IRQ_MASK)),
@@ -520,6 +602,8 @@ fn register_hex(value: u32) -> String {
 fn irq_clear_effect(value: u32) -> &'static str {
     if value & RESET_COMPLETED != 0 {
         "clear_reset_completed"
+    } else if value & (POWER_CHANGED_SINGLE | POWER_CHANGED_ALL) != 0 {
+        "clear_power_changed"
     } else {
         "clear_irq_bits"
     }

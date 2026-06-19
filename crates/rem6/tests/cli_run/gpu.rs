@@ -456,6 +456,10 @@ fn rem6_gpu_run_writes_nomali_adapter_output() {
         ("/pio/irq_writes/0/offset", "0x024"),
         ("/pio/irq_writes/0/value", "0x00000100"),
         ("/pio/irq_writes/0/effect", "clear_reset_completed"),
+        ("/pio/irq_writes/1/name", "gpu_irq_clear"),
+        ("/pio/irq_writes/1/offset", "0x024"),
+        ("/pio/irq_writes/1/value", "0x00000600"),
+        ("/pio/irq_writes/1/effect", "clear_power_changed"),
         ("/pio/irq_snapshots/0/name", "after_soft_reset_masked"),
         ("/pio/irq_snapshots/0/rawstat", "0x00000100"),
         ("/pio/irq_snapshots/0/mask", "0x00000100"),
@@ -464,9 +468,34 @@ fn rem6_gpu_run_writes_nomali_adapter_output() {
         ("/pio/irq_snapshots/1/rawstat", "0x00000000"),
         ("/pio/irq_snapshots/1/mask", "0x00000100"),
         ("/pio/irq_snapshots/1/status", "0x00000000"),
-        ("/pio/irq/rawstat", "0x00000000"),
-        ("/pio/irq/mask", "0x00000100"),
-        ("/pio/irq/status", "0x00000000"),
+        ("/pio/irq_snapshots/2/name", "after_shader_power_on"),
+        ("/pio/irq_snapshots/2/rawstat", "0x00000600"),
+        ("/pio/irq_snapshots/2/mask", "0x00000700"),
+        ("/pio/irq_snapshots/2/status", "0x00000600"),
+        ("/pio/irq_snapshots/3/name", "after_power_irq_clear"),
+        ("/pio/irq_snapshots/3/rawstat", "0x00000000"),
+        ("/pio/irq_snapshots/3/mask", "0x00000700"),
+        ("/pio/irq_snapshots/3/status", "0x00000000"),
+        ("/pio/irq_snapshots/4/name", "after_shader_power_off"),
+        ("/pio/irq_snapshots/4/rawstat", "0x00000600"),
+        ("/pio/irq_snapshots/4/mask", "0x00000700"),
+        ("/pio/irq_snapshots/4/status", "0x00000600"),
+        ("/pio/power_writes/0/name", "shader_pwron_lo"),
+        ("/pio/power_writes/0/offset", "0x180"),
+        ("/pio/power_writes/0/value", "0x0000000f"),
+        ("/pio/power_writes/0/ready_register", "shader_ready_lo"),
+        ("/pio/power_writes/0/ready_offset", "0x140"),
+        ("/pio/power_writes/0/ready_value", "0x0000000f"),
+        ("/pio/power_writes/0/effect", "power_changed_interrupt"),
+        ("/pio/power_writes/1/name", "shader_pwroff_lo"),
+        ("/pio/power_writes/1/offset", "0x1c0"),
+        ("/pio/power_writes/1/value", "0x00000003"),
+        ("/pio/power_writes/1/ready_register", "shader_ready_lo"),
+        ("/pio/power_writes/1/ready_value", "0x0000000c"),
+        ("/pio/power_writes/1/effect", "power_changed_interrupt"),
+        ("/pio/irq/rawstat", "0x00000600"),
+        ("/pio/irq/mask", "0x00000700"),
+        ("/pio/irq/status", "0x00000600"),
         ("/pio/register_reads/0/name", "gpu_id"),
         ("/pio/register_reads/0/offset", "0x000"),
         ("/pio/register_reads/0/value", "0x07500000"),
@@ -497,24 +526,20 @@ fn rem6_gpu_run_writes_nomali_adapter_output() {
             Some(expected)
         );
     }
-    assert_eq!(
-        adapter
-            .pointer("/pio/irq/asserted")
-            .and_then(Value::as_bool),
-        Some(false)
-    );
-    assert_eq!(
-        adapter
-            .pointer("/pio/irq_snapshots/0/asserted")
-            .and_then(Value::as_bool),
-        Some(true)
-    );
-    assert_eq!(
-        adapter
-            .pointer("/pio/irq_snapshots/1/asserted")
-            .and_then(Value::as_bool),
-        Some(false)
-    );
+    let bool_fields = [
+        ("/pio/irq/asserted", true),
+        ("/pio/irq_snapshots/0/asserted", true),
+        ("/pio/irq_snapshots/1/asserted", false),
+        ("/pio/irq_snapshots/2/asserted", true),
+        ("/pio/irq_snapshots/3/asserted", false),
+        ("/pio/irq_snapshots/4/asserted", true),
+    ];
+    for (pointer, expected) in bool_fields {
+        assert_eq!(
+            adapter.pointer(pointer).and_then(Value::as_bool),
+            Some(expected)
+        );
+    }
 }
 
 #[test]
