@@ -210,6 +210,20 @@ fn rem6_gpu_run_reports_per_compute_unit_activity() {
     );
     assert_stat(
         &stdout,
+        "sim.gpu_run.compute_unit.cu0.first_started_at",
+        "Tick",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu0.last_completed_at",
+        "Tick",
+        13,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
         "sim.gpu_run.compute_unit.cu1.workgroup_completions",
         "Count",
         2,
@@ -220,6 +234,20 @@ fn rem6_gpu_run_reports_per_compute_unit_activity() {
         "sim.gpu_run.compute_unit.cu1.busy_cycles",
         "Cycle",
         8,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu1.first_started_at",
+        "Tick",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu1.last_completed_at",
+        "Tick",
+        9,
         "monotonic",
     );
 }
@@ -267,6 +295,60 @@ fn rem6_gpu_run_merges_overlapping_wave_slots_for_compute_unit_busy_cycles() {
         4,
         "monotonic",
     );
+}
+
+#[test]
+fn rem6_gpu_run_omits_activity_window_stats_for_inactive_compute_units() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "1",
+            "--compute-units",
+            "2",
+            "--wave-slots-per-compute-unit",
+            "1",
+            "--workgroup-cycles",
+            "4",
+            "--global-load",
+            "0x3800:4:4:4",
+            "--memory-start",
+            "0x3800",
+            "--memory-size",
+            "64",
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains(
+        "{\"compute_unit\":1,\"workgroup_completions\":0,\"busy_cycles\":0,\"first_started_at\":null,\"last_completed_at\":null}"
+    ));
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu1.workgroup_completions",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu1.busy_cycles",
+        "Cycle",
+        0,
+        "monotonic",
+    );
+    assert!(!stdout.contains("sim.gpu_run.compute_unit.cu1.first_started_at"));
+    assert!(!stdout.contains("sim.gpu_run.compute_unit.cu1.last_completed_at"));
 }
 
 #[test]

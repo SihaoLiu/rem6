@@ -1023,6 +1023,24 @@ pub(super) fn gpu_run_stats_output(
             StatResetPolicy::Monotonic,
             activity.busy_cycles(),
         )?;
+        if let Some(first_started_at) = activity.first_started_at() {
+            increment_stat(
+                &mut stats,
+                &format!("{prefix}.first_started_at"),
+                "Tick",
+                StatResetPolicy::Monotonic,
+                first_started_at,
+            )?;
+        }
+        if let Some(last_completed_at) = activity.last_completed_at() {
+            increment_stat(
+                &mut stats,
+                &format!("{prefix}.last_completed_at"),
+                "Tick",
+                StatResetPolicy::Monotonic,
+                last_completed_at,
+            )?;
+        }
     }
     increment_stat(
         &mut stats,

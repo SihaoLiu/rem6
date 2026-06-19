@@ -694,6 +694,14 @@ impl Rem6GpuComputeUnitActivity {
         self.busy_cycles
     }
 
+    pub(crate) const fn first_started_at(&self) -> Option<u64> {
+        self.first_started_at
+    }
+
+    pub(crate) const fn last_completed_at(&self) -> Option<u64> {
+        self.last_completed_at
+    }
+
     fn to_json(&self) -> String {
         format!(
             "{{\"compute_unit\":{},\"workgroup_completions\":{},\"busy_cycles\":{},\"first_started_at\":{},\"last_completed_at\":{}}}",
