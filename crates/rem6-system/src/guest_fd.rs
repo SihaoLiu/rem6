@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
+pub const GUEST_FILE_SIGNAL_NUMBER_MAX: u32 = 64;
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct GuestFd(u32);
 
@@ -200,6 +202,7 @@ pub struct GuestFileDescription {
     status_flags: GuestFileStatusFlags,
     file_offset: GuestFileOffset,
     signal_owner: GuestFileSignalOwner,
+    signal_number: u32,
 }
 
 impl GuestFileDescription {
@@ -213,6 +216,7 @@ impl GuestFileDescription {
             status_flags,
             file_offset: GuestFileOffset::new(0),
             signal_owner: GuestFileSignalOwner::none(),
+            signal_number: 0,
         }
     }
 
@@ -227,6 +231,7 @@ impl GuestFileDescription {
             status_flags,
             file_offset: GuestFileOffset::new(0),
             signal_owner: GuestFileSignalOwner::none(),
+            signal_number: 0,
         }
     }
 
@@ -258,6 +263,10 @@ impl GuestFileDescription {
         self.signal_owner
     }
 
+    pub const fn signal_number(&self) -> u32 {
+        self.signal_number
+    }
+
     pub fn set_signal_owner(&mut self, owner: i32) {
         self.signal_owner =
             GuestFileSignalOwner::from_legacy(owner).expect("guest signal owner is valid");
@@ -265,6 +274,14 @@ impl GuestFileDescription {
 
     pub const fn set_typed_signal_owner(&mut self, owner: GuestFileSignalOwner) {
         self.signal_owner = owner;
+    }
+
+    pub fn set_signal_number(&mut self, signal: u32) -> Result<(), GuestFdError> {
+        if signal > GUEST_FILE_SIGNAL_NUMBER_MAX {
+            return Err(GuestFdError::InvalidSignalNumber { signal });
+        }
+        self.signal_number = signal;
+        Ok(())
     }
 }
 
@@ -442,6 +459,9 @@ pub enum GuestFdError {
     MissingFileDescription {
         description: GuestFileDescriptionId,
     },
+    InvalidSignalNumber {
+        signal: u32,
+    },
     FileOffsetOverflow {
         description: GuestFileDescriptionId,
         offset: GuestFileOffset,
@@ -476,6 +496,9 @@ impl fmt::Display for GuestFdError {
                     "guest file description {} is missing",
                     description.get()
                 )
+            }
+            Self::InvalidSignalNumber { signal } => {
+                write!(formatter, "guest signal number {signal} is invalid")
             }
             Self::FileOffsetOverflow {
                 description,
@@ -640,6 +663,10 @@ impl GuestFdTable {
         Ok(self.description_for_fd(fd)?.signal_owner())
     }
 
+    pub fn signal_number(&self, fd: GuestFd) -> Result<u32, GuestFdError> {
+        Ok(self.description_for_fd(fd)?.signal_number())
+    }
+
     pub fn set_signal_owner(&mut self, fd: GuestFd, owner: i32) -> Result<(), GuestFdError> {
         let (_, description) = self.description_for_fd_mut(fd)?;
         description.set_signal_owner(owner);
@@ -654,6 +681,11 @@ impl GuestFdTable {
         let (_, description) = self.description_for_fd_mut(fd)?;
         description.set_typed_signal_owner(owner);
         Ok(())
+    }
+
+    pub fn set_signal_number(&mut self, fd: GuestFd, signal: u32) -> Result<(), GuestFdError> {
+        let (_, description) = self.description_for_fd_mut(fd)?;
+        description.set_signal_number(signal)
     }
 
     pub fn close_descriptor(&mut self, fd: GuestFd) -> Result<GuestFdCloseRecord, GuestFdError> {

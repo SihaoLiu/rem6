@@ -12,10 +12,10 @@ use crate::{
 };
 
 const GUEST_FD_CHUNK: &str = "guest-fd";
-const GUEST_FD_CHECKPOINT_VERSION: u64 = 3;
+const GUEST_FD_CHECKPOINT_VERSION: u64 = 4;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
-const DESCRIPTION_RECORD_MIN_BYTES: usize = U64_BYTES * 5 + U32_BYTES * 2;
+const DESCRIPTION_RECORD_MIN_BYTES: usize = U64_BYTES * 5 + U32_BYTES * 3;
 const ENTRY_RECORD_BYTES: usize = U32_BYTES + U64_BYTES * 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -277,6 +277,7 @@ fn encode_guest_fd_table(snapshot: &GuestFdTableSnapshot) -> Vec<u8> {
         let signal_owner = description.signal_owner();
         push_u64(&mut payload, signal_owner.id() as i64 as u64);
         push_u32(&mut payload, signal_owner.kind().checkpoint_tag());
+        push_u32(&mut payload, description.signal_number());
     }
     push_u64(&mut payload, snapshot.entries().len() as u64);
     for entry in snapshot.entries() {
@@ -330,6 +331,7 @@ fn read_description(
     let signal_owner_kind = cursor.read_u32("guest fd signal owner kind")?;
     let signal_owner_kind = GuestFileSignalOwnerKind::from_checkpoint_tag(signal_owner_kind)
         .ok_or_else(|| cursor.invalid("guest fd signal owner kind is invalid"))?;
+    let signal_number = cursor.read_u32("guest fd signal number")?;
     if signal_owner_id < 0 {
         return Err(cursor.invalid("guest fd signal owner id is negative"));
     }
@@ -353,6 +355,9 @@ fn read_description(
     };
     description.set_file_offset(file_offset);
     description.set_typed_signal_owner(signal_owner);
+    description
+        .set_signal_number(signal_number)
+        .map_err(|error| cursor.invalid(guest_fd_error_reason(error)))?;
     Ok(description)
 }
 

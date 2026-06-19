@@ -21,6 +21,8 @@ pub(super) const RISCV_LINUX_F_SETLK: u64 = 6;
 pub(super) const RISCV_LINUX_F_SETLKW: u64 = 7;
 const RISCV_LINUX_F_SETOWN: u64 = 8;
 const RISCV_LINUX_F_GETOWN: u64 = 9;
+const RISCV_LINUX_F_SETSIG: u64 = 10;
+const RISCV_LINUX_F_GETSIG: u64 = 11;
 const RISCV_LINUX_F_SETOWN_EX: u64 = 15;
 const RISCV_LINUX_F_GETOWN_EX: u64 = 16;
 pub(super) const RISCV_LINUX_F_DUPFD_CLOEXEC: u64 = 1030;
@@ -58,6 +60,7 @@ const RISCV_LINUX_F_OWNER_EX_PID_OFFSET: usize = 4;
 const RISCV_LINUX_F_OWNER_TID: i32 = 0;
 const RISCV_LINUX_F_OWNER_PID: i32 = 1;
 const RISCV_LINUX_F_OWNER_PGRP: i32 = 2;
+const RISCV_LINUX_SIGNAL_MAX: i32 = 64;
 
 pub(super) fn syscall_fcntl(
     request: RiscvSyscallRequest,
@@ -150,6 +153,20 @@ pub(super) fn syscall_fcntl(
             .signal_owner(fd)
             .map(|owner| owner as i64 as u64)
             .map_err(RiscvFcntlError::GuestFd),
+        RiscvFcntlCommand::SetSignal => {
+            signal_number_argument(request.argument(2)).and_then(|signal| {
+                state
+                    .guest_fds
+                    .set_signal_number(fd, signal)
+                    .map(|()| 0)
+                    .map_err(RiscvFcntlError::GuestFd)
+            })
+        }
+        RiscvFcntlCommand::GetSignal => state
+            .guest_fds
+            .signal_number(fd)
+            .map(u64::from)
+            .map_err(RiscvFcntlError::GuestFd),
         RiscvFcntlCommand::SetOwnerEx => {
             read_linux_owner_ex(request.argument(2), guest_memory_reader)
                 .map_err(RiscvFcntlError::Linux)
@@ -217,6 +234,11 @@ pub(super) fn syscall_fcntl(
                 value: linux_error(RISCV_LINUX_EMFILE),
             }
         }
+        Err(RiscvFcntlError::GuestFd(GuestFdError::InvalidSignalNumber { .. })) => {
+            RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_EINVAL),
+            }
+        }
         Err(RiscvFcntlError::GuestFd(_error)) => guest_fd_error_return(),
         Err(RiscvFcntlError::Linux(error)) => RiscvSyscallOutcome::Return {
             value: linux_error(error),
@@ -241,6 +263,8 @@ enum RiscvFcntlCommand {
     SetStatusFlags,
     SetOwner,
     GetOwner,
+    SetSignal,
+    GetSignal,
     SetOwnerEx,
     GetOwnerEx,
     GetLock,
@@ -265,6 +289,8 @@ impl RiscvFcntlCommand {
             RISCV_LINUX_F_SETLK | RISCV_LINUX_F_SETLKW => Some(Self::SetLock),
             RISCV_LINUX_F_SETOWN => Some(Self::SetOwner),
             RISCV_LINUX_F_GETOWN => Some(Self::GetOwner),
+            RISCV_LINUX_F_SETSIG => Some(Self::SetSignal),
+            RISCV_LINUX_F_GETSIG => Some(Self::GetSignal),
             RISCV_LINUX_F_SETOWN_EX => Some(Self::SetOwnerEx),
             RISCV_LINUX_F_GETOWN_EX => Some(Self::GetOwnerEx),
             RISCV_LINUX_F_DUPFD_CLOEXEC => Some(Self::DuplicateFd {
@@ -282,6 +308,15 @@ impl RiscvFcntlCommand {
 fn signal_owner_argument(argument: u64) -> Result<GuestFileSignalOwner, RiscvFcntlError> {
     let owner = argument as u32 as i32;
     GuestFileSignalOwner::from_legacy(owner).ok_or(RiscvFcntlError::Linux(RISCV_LINUX_EINVAL))
+}
+
+fn signal_number_argument(argument: u64) -> Result<u32, RiscvFcntlError> {
+    let signal = argument as u32 as i32;
+    if (0..=RISCV_LINUX_SIGNAL_MAX).contains(&signal) {
+        Ok(signal as u32)
+    } else {
+        Err(RiscvFcntlError::Linux(RISCV_LINUX_EINVAL))
+    }
 }
 
 fn validate_signal_owner_target(

@@ -11,7 +11,7 @@ use rem6_system::{
 };
 
 const GUEST_FD_CHUNK: &str = "guest-fd";
-const GUEST_FD_CHECKPOINT_VERSION: u64 = 3;
+const GUEST_FD_CHECKPOINT_VERSION: u64 = 4;
 const GUEST_FD_SIGNAL_OWNER_PROCESS_KIND: u32 = 1;
 
 fn checkpoint_component(name: &str) -> CheckpointComponentId {
@@ -49,6 +49,7 @@ fn guest_fd_checkpoint_payload(
         push_u64(&mut payload, *file_offset);
         push_u64(&mut payload, 0);
         push_u32(&mut payload, GUEST_FD_SIGNAL_OWNER_PROCESS_KIND);
+        push_u32(&mut payload, 0);
     }
     push_u64(&mut payload, entries.len() as u64);
     for (fd, description, close_on_exec) in entries {
@@ -88,6 +89,7 @@ fn populated_guest_fd_table() -> (Arc<Mutex<GuestFdTable>>, GuestFd, GuestFd) {
             .set_file_offset(original, GuestFileOffset::new(4096))
             .unwrap();
         locked.set_signal_owner(original, -123).unwrap();
+        locked.set_signal_number(original, 10).unwrap();
         let duplicate = locked.dup(original).unwrap();
         (table.clone(), original, duplicate)
     }
@@ -166,10 +168,23 @@ fn guest_fd_checkpoint_bank_round_trips_shared_description_aliases() {
             .unwrap(),
         -123
     );
+    assert_eq!(
+        restore_table
+            .lock()
+            .unwrap()
+            .signal_number(duplicate)
+            .unwrap(),
+        10
+    );
     restore_table
         .lock()
         .unwrap()
         .set_signal_owner(duplicate, 77)
+        .unwrap();
+    restore_table
+        .lock()
+        .unwrap()
+        .set_signal_number(duplicate, 12)
         .unwrap();
     assert_eq!(
         restore_table
@@ -178,6 +193,14 @@ fn guest_fd_checkpoint_bank_round_trips_shared_description_aliases() {
             .signal_owner(original)
             .unwrap(),
         77
+    );
+    assert_eq!(
+        restore_table
+            .lock()
+            .unwrap()
+            .signal_number(original)
+            .unwrap(),
+        12
     );
 }
 
@@ -389,6 +412,7 @@ fn guest_fd_checkpoint_restore_rejects_unexpected_absent_host_fd_payload() {
     push_u64(&mut malformed, 0);
     push_u64(&mut malformed, 0);
     push_u32(&mut malformed, GUEST_FD_SIGNAL_OWNER_PROCESS_KIND);
+    push_u32(&mut malformed, 0);
     registry
         .write_chunk(&component, GUEST_FD_CHUNK, malformed)
         .unwrap();
@@ -425,6 +449,7 @@ fn guest_fd_checkpoint_restore_rejects_present_host_fd_outside_i32() {
     push_u64(&mut malformed, 0);
     push_u64(&mut malformed, 0);
     push_u32(&mut malformed, GUEST_FD_SIGNAL_OWNER_PROCESS_KIND);
+    push_u32(&mut malformed, 0);
     registry
         .write_chunk(&component, GUEST_FD_CHUNK, malformed)
         .unwrap();

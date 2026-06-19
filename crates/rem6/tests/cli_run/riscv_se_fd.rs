@@ -585,11 +585,14 @@ fn rem6_run_riscv_se_runs_static_raw_fcntl_owner_against_qemu() {
         &source,
         r#"#define F_SETOWN 8
 #define F_GETOWN 9
+#define F_SETSIG 10
+#define F_GETSIG 11
 #define F_SETOWN_EX 15
 #define F_GETOWN_EX 16
 #define F_OWNER_TID 0
 #define F_OWNER_PID 1
 #define F_OWNER_PGRP 2
+#define SIGUSR1 10
 
 struct f_owner_ex_raw {
     int type;
@@ -666,6 +669,9 @@ void _start(void) {
     long initial_owner = linux_syscall3(25, 1, F_GETOWN, 0);
     struct f_owner_ex_raw initial_owner_ex = { -1, -1 };
     long get_initial_owner_ex = linux_syscall3(25, 1, F_GETOWN_EX, (long)&initial_owner_ex);
+    long initial_signal = linux_syscall3(25, 1, F_GETSIG, 0);
+    long set_signal = linux_syscall3(25, 1, F_SETSIG, SIGUSR1);
+    long signal_number = linux_syscall3(25, 1, F_GETSIG, 0);
     long set_owner = linux_syscall3(25, 1, F_SETOWN, pid);
     long owner = linux_syscall3(25, 1, F_GETOWN, 0);
     long set_group_owner = pgid > 0 ? linux_syscall3(25, 1, F_SETOWN, -pgid) : -1;
@@ -674,12 +680,20 @@ void _start(void) {
     long get_group_owner_ex = linux_syscall3(25, 1, F_GETOWN_EX, (long)&group_owner_ex);
     long dup_fd = linux_syscall1(23, 1);
     long dup_owner = dup_fd >= 0 ? linux_syscall3(25, dup_fd, F_GETOWN, 0) : -1;
+    long dup_signal = dup_fd >= 0 ? linux_syscall3(25, dup_fd, F_GETSIG, 0) : -1;
+    long invalid_negative_signal = dup_fd >= 0 ?
+        linux_syscall3(25, dup_fd, F_SETSIG, -1) : -1;
+    long signal_after_negative = linux_syscall3(25, 1, F_GETSIG, 0);
+    long invalid_high_signal = linux_syscall3(25, 1, F_SETSIG, 65);
+    long signal_after_high = linux_syscall3(25, 1, F_GETSIG, 0);
     struct f_owner_ex_raw tid_owner_ex = { F_OWNER_TID, (int)tid };
     long set_tid_owner_ex = dup_fd >= 0 && tid > 0 ?
         linux_syscall3(25, dup_fd, F_SETOWN_EX, (long)&tid_owner_ex) : -1;
     struct f_owner_ex_raw got_tid_owner_ex = { -1, -1 };
     long get_tid_owner_ex = linux_syscall3(25, 1, F_GETOWN_EX, (long)&got_tid_owner_ex);
     long tid_legacy_owner = linux_syscall3(25, 1, F_GETOWN, 0);
+    long clear_signal = dup_fd >= 0 ? linux_syscall3(25, dup_fd, F_SETSIG, 0) : -1;
+    long signal_after_clear = linux_syscall3(25, 1, F_GETSIG, 0);
     long set_dup_owner = dup_fd >= 0 ? linux_syscall3(25, dup_fd, F_SETOWN, 0) : -1;
     long owner_after_dup_set = linux_syscall3(25, 1, F_GETOWN, 0);
     long close_status = dup_fd >= 0 ? linux_syscall1(57, dup_fd) : -1;
@@ -687,6 +701,9 @@ void _start(void) {
         initial_owner,
         get_initial_owner_ex,
         initial_owner_ex.type == F_OWNER_TID && initial_owner_ex.pid == 0,
+        initial_signal,
+        set_signal,
+        signal_number == SIGUSR1,
         set_owner,
         owner == pid,
         dup_fd >= 0 ? 0 : dup_fd,
@@ -696,24 +713,36 @@ void _start(void) {
         get_group_owner_ex,
         group_owner_ex.type == F_OWNER_PGRP && group_owner_ex.pid == pgid,
         dup_owner == -pgid,
+        dup_signal == SIGUSR1,
+        invalid_negative_signal,
+        signal_after_negative == SIGUSR1,
+        invalid_high_signal,
+        signal_after_high == SIGUSR1,
         set_tid_owner_ex,
         get_tid_owner_ex,
         got_tid_owner_ex.type == F_OWNER_TID && got_tid_owner_ex.pid == tid,
         tid_legacy_owner == tid,
+        clear_signal,
+        signal_after_clear,
         set_dup_owner,
         owner_after_dup_set,
         close_status,
     };
-    write_summary(fields, 19);
+    write_summary(fields, 29);
     long ok = initial_owner == 0 && get_initial_owner_ex == 0 &&
               initial_owner_ex.type == F_OWNER_TID && initial_owner_ex.pid == 0 &&
+              initial_signal == 0 && set_signal == 0 && signal_number == SIGUSR1 &&
               set_owner == 0 && owner == pid && dup_fd >= 0 &&
               pgid > 0 && set_group_owner == 0 && group_owner == -pgid &&
               get_group_owner_ex == 0 && group_owner_ex.type == F_OWNER_PGRP &&
               group_owner_ex.pid == pgid && dup_owner == -pgid &&
+              dup_signal == SIGUSR1 && invalid_negative_signal == -22 &&
+              signal_after_negative == SIGUSR1 && invalid_high_signal == -22 &&
+              signal_after_high == SIGUSR1 &&
               set_tid_owner_ex == 0 && get_tid_owner_ex == 0 &&
               got_tid_owner_ex.type == F_OWNER_TID && got_tid_owner_ex.pid == tid &&
-              tid_legacy_owner == tid && set_dup_owner == 0 && owner_after_dup_set == 0 &&
+              tid_legacy_owner == tid && clear_signal == 0 && signal_after_clear == 0 &&
+              set_dup_owner == 0 && owner_after_dup_set == 0 &&
               close_status == 0;
     linux_syscall1(93, ok ? 48 : 80);
     while (1) {}
@@ -752,7 +781,7 @@ void _start(void) {
     );
     assert_eq!(
         qemu_output.stdout,
-        b"fcntl-owner:0:0:1:0:1:0:0:0:1:0:1:1:0:0:1:1:0:0:0\n"
+        b"fcntl-owner:0:0:1:0:0:1:0:1:0:0:0:1:0:1:1:1:-22:1:-22:1:0:0:1:1:0:0:0:0:0\n"
     );
 
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
@@ -781,7 +810,9 @@ void _start(void) {
     assert!(stdout.contains("\"status\":\"stopped_by_host\""));
     assert!(stdout.contains("\"stop_code\":48"));
     assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
-    assert!(stdout.contains("\"text\":\"fcntl-owner:0:0:1:0:1:0:0:0:1:0:1:1:0:0:1:1:0:0:0\\n\""));
+    assert!(stdout.contains(
+        "\"text\":\"fcntl-owner:0:0:1:0:0:1:0:1:0:0:0:1:0:1:1:1:-22:1:-22:1:0:0:1:1:0:0:0:0:0\\n\""
+    ));
     assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
     assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
     assert_stat(&stdout, "sim.stop_code", "Count", 48, "constant");
