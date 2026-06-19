@@ -149,7 +149,7 @@ use link::{
 };
 use links::syscall_readlinkat;
 use memfd::{syscall_memfd_create, RISCV_LINUX_MEMFD_CREATE};
-use mkdir::{syscall_mkdirat, RISCV_LINUX_MKDIRAT};
+use mkdir::{syscall_mkdir, RISCV_LINUX_MKDIRAT, RISCV_NEWLIB_LEGACY_MKDIR};
 pub use mmap::RiscvMmapRegion;
 use mmap::{
     syscall_madvise, syscall_mbind, syscall_memory_lock_range, syscall_mincore, syscall_mlockall,
@@ -1293,9 +1293,9 @@ impl RiscvSyscallTable {
                     value: syscall_getdents64(request, state, guest_memory),
                 })
             }
-            RISCV_LINUX_MKDIRAT => {
+            RISCV_LINUX_MKDIRAT | RISCV_NEWLIB_LEGACY_MKDIR => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
-                    value: syscall_mkdirat(request, state, guest_memory),
+                    value: syscall_mkdir(request, state, guest_memory),
                 })
             }
             RISCV_LINUX_LINK | RISCV_LINUX_LINKAT => {

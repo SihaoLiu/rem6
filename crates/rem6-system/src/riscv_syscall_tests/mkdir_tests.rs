@@ -1,6 +1,7 @@
 use super::*;
 
 const RISCV_LINUX_MKDIRAT_FOR_TEST: u64 = 34;
+const RISCV_NEWLIB_LEGACY_MKDIR_FOR_TEST: u64 = 1030;
 const RISCV_LINUX_ACCESS_FOR_MKDIR_TEST: u64 = 1033;
 const RISCV_LINUX_CHDIR_FOR_TEST: u64 = 49;
 const RISCV_LINUX_OPENAT_FOR_MKDIR_TEST: u64 = 56;
@@ -58,6 +59,29 @@ fn linux_table_mkdirat_creates_empty_guest_directory_for_chdir_and_open() {
         Some(RiscvSyscallOutcome::Return { value: 0 })
     );
     assert_eq!(state.current_directory(), b"/made");
+}
+
+#[test]
+fn linux_table_newlib_legacy_mkdir_creates_cwd_directory() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_reader = c_string_reader(&[(0x9000, b"legacy")]);
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_NEWLIB_LEGACY_MKDIR_FOR_TEST,
+                [0x9000, 0o755, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.guest_path_stat(b"legacy").is_some());
+    assert!(state.unknown_syscalls().is_empty());
 }
 
 #[test]

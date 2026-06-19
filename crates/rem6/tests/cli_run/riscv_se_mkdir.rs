@@ -125,3 +125,129 @@ int main(void) {
     assert!(stdout.contains("\"text\":\"raw-mkdirat:0:3:0:0:-2\\n\""));
     assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
 }
+
+#[test]
+fn rem6_run_riscv_se_runs_static_raw_legacy_mkdir_with_qemu_probe() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE legacy mkdir smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE legacy mkdir smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-legacy-mkdir");
+    let source = workspace.join("raw-legacy-mkdir.c");
+    let binary = workspace.join("raw-legacy-mkdir");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+
+#define O_RDONLY 0
+#define O_DIRECTORY 0x200000
+
+static long linux_syscall1(long number, long arg0) {
+    register long a0 asm("a0") = arg0;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall2(long number, long arg0, long arg1) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    long made = linux_syscall2(1030, (long)"legacy-made", 0755);
+    long fd = linux_syscall3(1024, (long)"legacy-made", O_RDONLY | O_DIRECTORY, 0);
+    long closed = fd >= 0 ? linux_syscall1(57, fd) : -1;
+
+    printf("raw-legacy-mkdir:%ld:%ld:%ld\n", made, fd, closed);
+    return made == 0 && fd == 3 && closed == 0 ? 49 : 79;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu)
+        .arg(&binary)
+        .current_dir(&workspace)
+        .output()
+        .unwrap();
+    if qemu_output.status.code() == Some(49) {
+        assert_eq!(qemu_output.stdout, b"raw-legacy-mkdir:0:3:0\n");
+    } else {
+        assert_eq!(
+            qemu_output.status.code(),
+            Some(79),
+            "qemu stdout: {}; qemu stderr: {}",
+            String::from_utf8_lossy(&qemu_output.stdout),
+            String::from_utf8_lossy(&qemu_output.stderr)
+        );
+        assert_eq!(qemu_output.stdout, b"raw-legacy-mkdir:-38:-38:-1\n");
+        eprintln!(
+            "qemu-riscv64 reports ENOSYS for raw legacy mkdir/open; checking rem6 SE coverage"
+        );
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":49"));
+    assert!(stdout.contains("\"text\":\"raw-legacy-mkdir:0:3:0\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}
