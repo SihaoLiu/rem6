@@ -1260,3 +1260,31 @@ fn scheduled_hart_start_does_not_complete_after_state_changes() {
     );
     assert_eq!(core1.pc(), Address::new(0x8800));
 }
+
+#[test]
+fn debug_console_clears_when_cluster_registers_for_next_run() {
+    let (mut scheduler, transport, firmware, core0, core1) = registered_hsm_pair();
+    execute_sbi_ecall(
+        &mut scheduler,
+        &transport,
+        &core0,
+        SBI_DEBUG_CONSOLE_EXTENSION,
+        SBI_DEBUG_CONSOLE_WRITE_BYTE,
+        [u64::from(b'R'), 0, 0, 0, 0],
+    );
+
+    let outcome = firmware
+        .handle_pending_core_trap(&mut scheduler, &core0, false)
+        .expect("handled SBI trap")
+        .expect("SBI outcome");
+
+    assert_eq!(outcome, RiscvSbiOutcome::success(0));
+    assert_eq!(firmware.debug_console_bytes(), b"R");
+
+    let cluster = RiscvCluster::new([core0.clone(), core1.clone()]).expect("valid cluster");
+    firmware
+        .register_cluster(&cluster)
+        .expect("cluster registers with SBI firmware");
+
+    assert!(firmware.debug_console_bytes().is_empty());
+}

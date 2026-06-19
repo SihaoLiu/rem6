@@ -18,6 +18,7 @@ const SBI_HSM_EXTENSION: u64 = 0x0048_534d;
 const SBI_IPI_EXTENSION: u64 = 0x0073_5049;
 const SBI_RFENCE_EXTENSION: u64 = 0x5246_4e43;
 const SBI_SRST_EXTENSION: u64 = 0x5352_5354;
+const SBI_DEBUG_CONSOLE_EXTENSION: u64 = 0x4442_434e;
 const SBI_BASE_GET_SPEC_VERSION: u64 = 0;
 const SBI_BASE_GET_IMPL_ID: u64 = 1;
 const SBI_BASE_GET_IMPL_VERSION: u64 = 2;
@@ -48,7 +49,8 @@ const SBI_RFENCE_REMOTE_HFENCE_GVMA: u64 = 4;
 const SBI_RFENCE_REMOTE_HFENCE_VVMA_ASID: u64 = 5;
 const SBI_RFENCE_REMOTE_HFENCE_VVMA: u64 = 6;
 const SBI_SRST_SYSTEM_RESET: u64 = 0;
-const SBI_SPEC_VERSION_0_3: u64 = 3;
+const SBI_DEBUG_CONSOLE_WRITE_BYTE: u64 = 2;
+const SBI_SPEC_VERSION_2_0: u64 = 2 << 24;
 const REM6_SBI_IMPL_ID: u64 = 0x7265_6d36;
 const REM6_SBI_IMPL_VERSION: u64 = 0;
 const SBI_ERR_INVALID_ADDRESS: u64 = (-5_i64) as u64;
@@ -66,6 +68,7 @@ const STIP: u64 = 1 << 5;
 pub struct RiscvSbiFirmware {
     cores: Arc<Mutex<BTreeMap<u64, RiscvCore>>>,
     timer: Arc<Mutex<RiscvSbiTimerState>>,
+    debug_console: Arc<Mutex<Vec<u8>>>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -231,10 +234,15 @@ impl RiscvSbiFirmware {
                 generations: BTreeMap::new(),
                 deadlines: BTreeMap::new(),
             })),
+            debug_console: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
     pub(crate) fn register_cluster(&self, cluster: &RiscvCluster) -> Result<(), SystemError> {
+        self.debug_console
+            .lock()
+            .expect("RISC-V SBI debug console lock")
+            .clear();
         let mut cores = self.cores.lock().expect("RISC-V SBI core registry lock");
         cores.clear();
         for cpu in cluster.core_ids() {
@@ -262,6 +270,13 @@ impl RiscvSbiFirmware {
             .deadline(cpu)
     }
 
+    pub fn debug_console_bytes(&self) -> Vec<u8> {
+        self.debug_console
+            .lock()
+            .expect("RISC-V SBI debug console lock")
+            .clone()
+    }
+
     pub(crate) fn handle_pending_core_trap(
         &self,
         scheduler: &mut PartitionedScheduler,
@@ -273,7 +288,7 @@ impl RiscvSbiFirmware {
         };
         Ok(Some(match (request.extension(), request.function()) {
             (SBI_BASE_EXTENSION, SBI_BASE_GET_SPEC_VERSION) => {
-                RiscvSbiOutcome::success(SBI_SPEC_VERSION_0_3)
+                RiscvSbiOutcome::success(SBI_SPEC_VERSION_2_0)
             }
             (SBI_BASE_EXTENSION, SBI_BASE_GET_IMPL_ID) => {
                 RiscvSbiOutcome::success(REM6_SBI_IMPL_ID)
@@ -355,8 +370,20 @@ impl RiscvSbiFirmware {
                 .remote_hfence(scheduler, core, request, parallel)
                 .map_err(SystemError::Scheduler)?,
             (SBI_SRST_EXTENSION, SBI_SRST_SYSTEM_RESET) => self.system_reset(request),
+            (SBI_DEBUG_CONSOLE_EXTENSION, SBI_DEBUG_CONSOLE_WRITE_BYTE) => {
+                self.debug_console_write_byte(request)
+            }
             _ => RiscvSbiOutcome::not_supported(),
         }))
+    }
+
+    fn debug_console_write_byte(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+        let byte = request.arg0() as u8;
+        self.debug_console
+            .lock()
+            .expect("RISC-V SBI debug console lock")
+            .push(byte);
+        RiscvSbiOutcome::success(0)
     }
 
     fn system_reset(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {

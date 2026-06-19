@@ -33,6 +33,20 @@ fn word(raw: u32) -> Vec<u8> {
     raw.to_le_bytes().to_vec()
 }
 
+fn addi(rd: u32, rs1: u32, imm: i32) -> u32 {
+    (((imm as u32) & 0x0fff) << 20) | (rs1 << 15) | (rd << 7) | 0x13
+}
+
+fn lui(rd: u32, imm20: u32) -> u32 {
+    (imm20 << 12) | (rd << 7) | 0x37
+}
+
+fn lui_addi_parts(value: u64) -> (u32, i32) {
+    let hi = ((value + 0x800) >> 12) as u32;
+    let lo = (value as i64 - ((u64::from(hi) << 12) as i64)) as i32;
+    (hi, lo)
+}
+
 fn boot_image() -> BootImage {
     BootImage::new(Address::new(0x8000))
         .add_segment(Address::new(0x8000), word(0x0010_0073))
@@ -42,27 +56,32 @@ fn boot_image() -> BootImage {
 }
 
 fn sbi_boot_image() -> BootImage {
-    BootImage::new(Address::new(0x8000))
-        .add_segment(Address::new(0x8000), word(0x0005_0e13))
-        .unwrap()
-        .add_segment(Address::new(0x8004), word(0x0005_8e93))
-        .unwrap()
-        .add_segment(Address::new(0x8008), word(0x0100_0893))
-        .unwrap()
-        .add_segment(Address::new(0x800c), word(0x0000_0813))
-        .unwrap()
-        .add_segment(Address::new(0x8010), word(0x0000_0073))
-        .unwrap()
-        .add_segment(Address::new(0x8014), word(0x0005_0293))
-        .unwrap()
-        .add_segment(Address::new(0x8018), word(0x0005_8313))
-        .unwrap()
-        .add_segment(Address::new(0x801c), word(0x0010_0073))
-        .unwrap()
-        .add_segment(Address::new(0x9000), word(0x0090_0f93))
-        .unwrap()
-        .add_segment(Address::new(0x9004), word(0x0010_0073))
-        .unwrap()
+    let (dbcn_hi, dbcn_lo) = lui_addi_parts(0x4442_434e);
+    let mut image = BootImage::new(Address::new(0x8000));
+    for (address, instruction) in [
+        (0x8000, addi(28, 10, 0)),
+        (0x8004, addi(29, 11, 0)),
+        (0x8008, addi(17, 0, 0x10)),
+        (0x800c, addi(16, 0, 0)),
+        (0x8010, 0x0000_0073),
+        (0x8014, addi(5, 10, 0)),
+        (0x8018, addi(6, 11, 0)),
+        (0x801c, lui(17, dbcn_hi)),
+        (0x8020, addi(17, 17, dbcn_lo)),
+        (0x8024, addi(16, 0, 2)),
+        (0x8028, addi(10, 0, i32::from(b'B'))),
+        (0x802c, 0x0000_0073),
+        (0x8030, addi(7, 10, 0)),
+        (0x8034, addi(8, 11, 0)),
+        (0x8038, 0x0010_0073),
+        (0x9000, addi(31, 0, 9)),
+        (0x9004, 0x0010_0073),
+    ] {
+        image = image
+            .add_segment(Address::new(address), word(instruction))
+            .unwrap();
+    }
+    image
 }
 
 fn initrd_resource() -> WorkloadResource {
@@ -286,7 +305,7 @@ fn workload_replay_linux_boot_handoff_enters_supervisor_sbi() {
 
     let outcome = RiscvWorkloadReplay::new(plan.clone())
         .with_resolved_resources(resources)
-        .with_max_turns(64)
+        .with_max_turns(160)
         .run_parallel()
         .unwrap();
 
@@ -296,10 +315,13 @@ fn workload_replay_linux_boot_handoff_enters_supervisor_sbi() {
     assert_eq!(boot.read_register(Register::new(28).unwrap()), 0);
     assert_eq!(boot.read_register(Register::new(29).unwrap()), 0x97c0);
     assert_eq!(boot.read_register(Register::new(5).unwrap()), 0);
-    assert_eq!(boot.read_register(Register::new(6).unwrap()), 3);
+    assert_eq!(boot.read_register(Register::new(6).unwrap()), 2 << 24);
+    assert_eq!(boot.read_register(Register::new(7).unwrap()), 0);
+    assert_eq!(boot.read_register(Register::new(8).unwrap()), 0);
     assert_eq!(secondary.hart_run_state(), RiscvHartRunState::Stopped);
     assert_eq!(secondary.read_register(Register::new(31).unwrap()), 0);
-    assert_eq!(outcome.run().scheduled_traps()[0].trap().pc(), 0x801c);
+    assert_eq!(outcome.run().scheduled_traps()[0].trap().pc(), 0x8038);
+    assert_eq!(outcome.run().riscv_debug_console_bytes(), b"B");
     plan.verify_result(outcome.result()).unwrap();
 }
 

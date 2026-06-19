@@ -349,6 +349,7 @@ pub struct RiscvSystemRun {
     pub(crate) store_conditional_failure_diagnostics: Vec<RiscvStoreConditionalFailureDiagnostic>,
     retired_instruction_probes: Option<RiscvRetiredInstructionProbeSnapshot>,
     data_access_probes: Option<RiscvDataAccessProbeSnapshot>,
+    riscv_debug_console: Vec<u8>,
 }
 
 impl RiscvSystemRun {
@@ -375,6 +376,7 @@ impl RiscvSystemRun {
             store_conditional_failure_diagnostics: Vec::new(),
             retired_instruction_probes: None,
             data_access_probes: None,
+            riscv_debug_console: Vec::new(),
         }
     }
 
@@ -423,6 +425,15 @@ impl RiscvSystemRun {
 
     pub fn scheduled_traps(&self) -> &[ScheduledRiscvTrap] {
         &self.scheduled_traps
+    }
+
+    pub fn with_riscv_debug_console_bytes(mut self, bytes: Vec<u8>) -> Self {
+        self.riscv_debug_console = bytes;
+        self
+    }
+
+    pub fn riscv_debug_console_bytes(&self) -> &[u8] {
+        &self.riscv_debug_console
     }
 
     pub fn cpu_activity(&self, cpu: CpuId) -> Option<RiscvSystemRunCpuActivity> {
@@ -741,6 +752,12 @@ impl RiscvSystemRunDriver {
                 self.data_access_stats
                     .as_ref()
                     .map(RiscvDataAccessStats::data_access_probe_snapshot),
+            )
+            .with_riscv_debug_console_bytes(
+                self.riscv_sbi_firmware
+                    .as_ref()
+                    .map(RiscvSbiFirmware::debug_console_bytes)
+                    .unwrap_or_default(),
             )
     }
 
