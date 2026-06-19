@@ -171,6 +171,9 @@ pub enum Rem6CliError {
     InvalidRiscvSeFile {
         value: String,
     },
+    InvalidRiscvPcCountTarget {
+        value: String,
+    },
     EmptyLoadBlob {
         source: String,
     },
@@ -184,6 +187,7 @@ pub enum Rem6CliError {
     DataCachePrefetcherRequiresExecution,
     InstructionCacheProtocolRequiresExecution,
     InstructionCachePrefetcherRequiresExecution,
+    RiscvPcCountTargetRequiresExecution,
     DebugFlagsRequireExecution,
     DebugFlagsRequireJsonStats,
     PowerOutputRequiresExecution,
@@ -196,6 +200,7 @@ pub enum Rem6CliError {
     InstructionCacheProtocolRequiresRiscv,
     InstructionCachePrefetcherRequiresRiscv,
     InstructionCachePrefetcherRequiresInstructionCacheProtocol,
+    RiscvPcCountTargetRequiresRiscv,
     DataCacheProtocolLargeMulticoreRequiresMsi {
         protocol: RiscvDataCacheProtocol,
         cores: usize,
@@ -442,6 +447,12 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidRiscvSeFile { value } => {
                 write!(formatter, "invalid RISC-V SE file mapping {value}")
             }
+            Self::InvalidRiscvPcCountTarget { value } => {
+                write!(
+                    formatter,
+                    "invalid RISC-V PC count target {value}; expected <pc>:<positive-count>"
+                )
+            }
             Self::EmptyLoadBlob { source } => {
                 write!(formatter, "load blob {source} is empty")
             }
@@ -474,6 +485,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InstructionCachePrefetcherRequiresExecution => {
                 write!(formatter, "--instruction-cache-prefetcher requires --execute")
+            }
+            Self::RiscvPcCountTargetRequiresExecution => {
+                write!(formatter, "--riscv-pc-count-target requires --execute")
             }
             Self::DebugFlagsRequireExecution => {
                 write!(formatter, "--debug-flags requires --execute")
@@ -510,6 +524,9 @@ impl fmt::Display for Rem6CliError {
                     formatter,
                     "--instruction-cache-prefetcher requires --instruction-cache-protocol"
                 )
+            }
+            Self::RiscvPcCountTargetRequiresRiscv => {
+                write!(formatter, "--riscv-pc-count-target requires --isa riscv")
             }
             Self::DataCacheProtocolLargeMulticoreRequiresMsi { protocol, cores } => {
                 write!(

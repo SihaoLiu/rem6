@@ -9,9 +9,10 @@ use super::{
     Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary, Rem6InstructionProbeSummary,
     Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
     Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary,
-    Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6ReadfileSummary,
-    Rem6RiscvGuestWriteSummary, Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact,
-    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary, RequestedIsa,
+    Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary,
+    Rem6PcCountTrackerSummary, Rem6ReadfileSummary, Rem6RiscvGuestWriteSummary,
+    Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact, Rem6TraceReplayArtifact,
+    Rem6TraceReplayExecutionSummary, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -1216,15 +1217,50 @@ impl Rem6HostStopActionSummary {
 
 impl Rem6InstructionProbeSummary {
     fn to_json(&self) -> String {
+        let pc_count = self
+            .pc_count
+            .as_ref()
+            .map(Rem6PcCountTrackerSummary::to_instruction_probe_json_suffix)
+            .unwrap_or_default();
         format!(
-            "{{\"event_count\":{},\"retired_instruction_events\":{},\"tracked_instructions\":{},\"pc_sample_events\":{},\"pc_target_counters\":{}}}",
+            "{{\"event_count\":{},\"retired_instruction_events\":{},\"tracked_instructions\":{},\"pc_sample_events\":{},\"pc_target_counters\":{}{}}}",
             self.event_count,
             self.retired_instruction_events,
             self.tracked_instructions,
             self.pc_sample_events,
             self.pc_target_counters,
+            pc_count,
         )
     }
+}
+
+impl Rem6PcCountTrackerSummary {
+    fn to_instruction_probe_json_suffix(&self) -> String {
+        format!(
+            ",\"pc_target_armed\":{},\"pc_current_pair\":{},\"pc_target_counts\":{},\"pc_pending_targets\":{}",
+            self.armed,
+            self.current_pair.to_json(),
+            pc_count_pair_slice_to_json(&self.counters),
+            pc_count_pair_slice_to_json(&self.pending_targets),
+        )
+    }
+}
+
+impl Rem6PcCountPairSummary {
+    fn to_json(&self) -> String {
+        format!("{{\"pc\":\"0x{:x}\",\"count\":{}}}", self.pc, self.count)
+    }
+}
+
+fn pc_count_pair_slice_to_json(pairs: &[Rem6PcCountPairSummary]) -> String {
+    format!(
+        "[{}]",
+        pairs
+            .iter()
+            .map(Rem6PcCountPairSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",")
+    )
 }
 
 impl Rem6DataAccessProbeSummary {

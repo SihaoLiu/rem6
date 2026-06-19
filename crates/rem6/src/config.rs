@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use rem6_boot::BootElfArchitecture;
+use rem6_stats::PcCountPair;
 use rem6_system::RiscvDataCacheProtocol;
 use rem6_workload::WorkloadDataCacheProtocol;
 use serde::Deserialize;
@@ -192,6 +193,7 @@ pub struct Rem6RunConfig {
     riscv_se_env: Vec<String>,
     riscv_se_stdin: Option<RiscvSeInputSource>,
     riscv_se_files: Vec<RiscvSeFileRequest>,
+    riscv_pc_count_targets: Vec<PcCountPair>,
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
@@ -281,6 +283,7 @@ struct Rem6RunFileConfig {
     riscv_se_env: Option<Vec<String>>,
     riscv_se_stdin: Option<String>,
     riscv_se_files: Option<Vec<String>>,
+    riscv_pc_count_targets: Option<Vec<String>>,
     max_instructions: Option<u64>,
     stats_format: Option<String>,
     execute: Option<bool>,
@@ -470,6 +473,13 @@ impl Rem6RunConfig {
                 Ok(request)
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let mut riscv_pc_count_targets = file_config
+            .riscv_pc_count_targets
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|target| parse_riscv_pc_count_target(target))
+            .collect::<Result<Vec<_>, _>>()?;
         let mut max_instructions = file_config.max_instructions;
         if max_instructions == Some(0) {
             return Err(Rem6CliError::InvalidMaxInstructions {
@@ -578,6 +588,7 @@ impl Rem6RunConfig {
         let mut riscv_se_env_from_cli = false;
         let mut riscv_se_stdin_from_cli = false;
         let mut riscv_se_files_from_cli = false;
+        let mut riscv_pc_count_targets_from_cli = false;
         let mut debug_flags_from_cli = false;
         let mut output = file_config
             .output
@@ -700,6 +711,14 @@ impl Rem6RunConfig {
                         riscv_se_files_from_cli = true;
                     }
                     riscv_se_files.push(RiscvSeFileRequest::parse(&value)?);
+                }
+                "--riscv-pc-count-target" => {
+                    let value = required_value(&flag, args.next())?;
+                    if !riscv_pc_count_targets_from_cli {
+                        riscv_pc_count_targets.clear();
+                        riscv_pc_count_targets_from_cli = true;
+                    }
+                    riscv_pc_count_targets.push(parse_riscv_pc_count_target(&value)?);
                 }
                 "--max-instructions" => {
                     let value = required_value(&flag, args.next())?;
@@ -928,6 +947,7 @@ impl Rem6RunConfig {
             riscv_se_env,
             riscv_se_stdin,
             riscv_se_files,
+            riscv_pc_count_targets,
             max_instructions,
             stats_format,
             execute,
@@ -1009,6 +1029,10 @@ impl Rem6RunConfig {
 
     pub fn riscv_se_files(&self) -> &[RiscvSeFileRequest] {
         &self.riscv_se_files
+    }
+
+    pub fn riscv_pc_count_targets(&self) -> &[PcCountPair] {
+        &self.riscv_pc_count_targets
     }
 
     pub const fn max_instructions(&self) -> Option<u64> {
@@ -1577,6 +1601,25 @@ fn parse_positive_u64(value: &str) -> Option<u64> {
     value.parse().ok().filter(|value| *value > 0)
 }
 
+fn parse_riscv_pc_count_target(value: &str) -> Result<PcCountPair, Rem6CliError> {
+    let Some((pc, count)) = value.split_once(':') else {
+        return Err(Rem6CliError::InvalidRiscvPcCountTarget {
+            value: value.to_string(),
+        });
+    };
+    let Some(pc) = parse_number(pc) else {
+        return Err(Rem6CliError::InvalidRiscvPcCountTarget {
+            value: value.to_string(),
+        });
+    };
+    let Some(count) = parse_positive_u64(count) else {
+        return Err(Rem6CliError::InvalidRiscvPcCountTarget {
+            value: value.to_string(),
+        });
+    };
+    Ok(PcCountPair::new(pc, count))
+}
+
 fn parse_data_cache_protocol(value: &str) -> Option<WorkloadDataCacheProtocol> {
     match value {
         "msi" => Some(WorkloadDataCacheProtocol::Msi),
@@ -1615,6 +1658,7 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--riscv-se-env",
             "--riscv-se-stdin",
             "--riscv-se-file",
+            "--riscv-pc-count-target",
             "--max-instructions",
             "--stats-format",
             "--dram-memory-profile",

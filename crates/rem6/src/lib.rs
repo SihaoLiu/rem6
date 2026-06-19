@@ -13,14 +13,14 @@ use rem6_isa_riscv::{Register, RiscvPrivilegeMode};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation};
 use rem6_stats::{
-    MemFootprintAddressRange, MemFootprintProbeConfig, ProbePayload, StackDistProbeConfig,
+    MemFootprintAddressRange, MemFootprintProbeConfig, PcCountPair, StackDistProbeConfig,
     StatsRegistry,
 };
 use rem6_system::{
     GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats, RiscvInstructionStats,
-    RiscvRetiredInstructionProbeSnapshot, RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun,
-    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, SystemHostController,
-    SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
+    RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun, RiscvSystemRunDriver,
+    RiscvSystemRunStopReason, RiscvTrapEventPort, SystemHostController, SystemHostEventPort,
+    RISCV_LINUX_AT_ENTRY,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TransportEndpointId,
@@ -37,6 +37,7 @@ mod gpu_cli;
 mod guest_memory;
 mod gups_cli;
 mod host_actions;
+mod instruction_probe_summary;
 mod parallel_stats;
 mod pipeline_stats;
 mod power_output;
@@ -76,6 +77,10 @@ pub(crate) use host_actions::{
     Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
     Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary, Rem6HostStatsDumpSummary,
     Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
+};
+pub(crate) use instruction_probe_summary::{
+    instruction_probe_summary, Rem6InstructionProbeSummary, Rem6PcCountPairSummary,
+    Rem6PcCountTrackerSummary,
 };
 use parallel_stats::{
     parallel_frontier_summaries, parallel_partition_summaries, parallel_ready_partition_summaries,
@@ -204,15 +209,6 @@ pub struct Rem6ExecutionSummary {
     riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
     riscv_unknown_syscalls: Vec<Rem6RiscvUnknownSyscallSummary>,
     host_actions: Rem6HostActionSummary,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Rem6InstructionProbeSummary {
-    event_count: u64,
-    retired_instruction_events: u64,
-    tracked_instructions: u64,
-    pc_sample_events: u64,
-    pc_target_counters: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -741,7 +737,7 @@ fn execute_riscv(
         cores.push(core);
     }
     let cluster = RiscvCluster::new(cores).map_err(execute_error)?;
-    let instruction_stats = cli_instruction_stats(core_count);
+    let instruction_stats = cli_instruction_stats(core_count, config.riscv_pc_count_targets());
     let controller = Arc::new(Mutex::new(SystemHostController::new(
         HostEventPolicy,
         StatsRegistry::new(),
@@ -1109,43 +1105,12 @@ fn execution_summary(
     })
 }
 
-fn cli_instruction_stats(core_count: u32) -> RiscvInstructionStats {
+fn cli_instruction_stats(
+    core_count: u32,
+    pc_count_targets: &[PcCountPair],
+) -> RiscvInstructionStats {
     RiscvInstructionStats::for_cpus((0..core_count).map(CpuId::new))
-}
-
-fn instruction_probe_summary(run: &RiscvSystemRun) -> Rem6InstructionProbeSummary {
-    run.retired_instruction_probes()
-        .map(instruction_probe_snapshot_summary)
-        .unwrap_or_default()
-}
-
-fn instruction_probe_snapshot_summary(
-    probes: &RiscvRetiredInstructionProbeSnapshot,
-) -> Rem6InstructionProbeSummary {
-    let mut retired_instruction_events = 0_u64;
-    let mut pc_sample_events = 0_u64;
-    for event in probes.probes().events() {
-        match event.payload() {
-            ProbePayload::Counter { .. } => {
-                retired_instruction_events = retired_instruction_events.saturating_add(1);
-            }
-            ProbePayload::ProgramCounter { .. } => {
-                pc_sample_events = pc_sample_events.saturating_add(1);
-            }
-            ProbePayload::Unit | ProbePayload::MemoryPacket(_) => {}
-        }
-    }
-
-    Rem6InstructionProbeSummary {
-        event_count: probes.probes().events().len() as u64,
-        retired_instruction_events,
-        tracked_instructions: probes.tracker().counter(),
-        pc_sample_events,
-        pc_target_counters: probes
-            .pc_count()
-            .map(|pc_count| pc_count.counters().len() as u64)
-            .unwrap_or(0),
-    }
+        .with_pc_count_targets(pc_count_targets.iter().copied())
 }
 
 fn data_access_probe_summary(

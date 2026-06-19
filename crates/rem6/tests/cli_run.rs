@@ -26,6 +26,8 @@ mod load;
 mod load_blob_resource;
 #[path = "cli_run/m5_host_actions.rs"]
 mod m5_host_actions;
+#[path = "cli_run/pc_count_probes.rs"]
+mod pc_count_probes;
 #[path = "cli_run/readfile_resource.rs"]
 mod readfile_resource;
 #[path = "cli_run/resource_acquire.rs"]
