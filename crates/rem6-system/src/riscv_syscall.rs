@@ -1753,7 +1753,7 @@ impl RiscvSyscallTable {
                 value: syscall_mincore(request, state, guest_memory_writer),
             }),
             RISCV_LINUX_MADVISE => Some(RiscvSyscallOutcome::Return {
-                value: syscall_madvise(request, state),
+                value: syscall_madvise(request, state, guest_memory_writer),
             }),
             _ => Some(unsupported_syscall_outcome(request, state, tick)),
         }

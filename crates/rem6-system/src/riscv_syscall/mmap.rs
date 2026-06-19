@@ -85,7 +85,7 @@ const RISCV_LINUX_MADV_COLLAPSE: u64 = 25;
 const RISCV_LINUX_MADV_GUARD_INSTALL: u64 = 102;
 const RISCV_LINUX_MADV_GUARD_REMOVE: u64 = 103;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct RiscvMmapRegion {
     start: u64,
     length: u64,
@@ -93,16 +93,133 @@ pub struct RiscvMmapRegion {
     flags: u64,
     fd: u64,
     offset: u64,
+    backing: RiscvMmapRegionBacking,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum RiscvMmapRegionBacking {
+    Anonymous,
+    File { contents: Vec<u8> },
+}
+
+impl PartialEq for RiscvMmapRegion {
+    fn eq(&self, other: &Self) -> bool {
+        self.start == other.start
+            && self.length == other.length
+            && self.protection == other.protection
+            && self.flags == other.flags
+            && self.fd == other.fd
+            && self.offset == other.offset
+    }
+}
+
+impl Eq for RiscvMmapRegion {}
+
+impl RiscvMmapRegionBacking {
+    fn from_mmap_backing(backing: &MmapBacking) -> Self {
+        match backing {
+            MmapBacking::Anonymous => Self::Anonymous,
+            MmapBacking::File { contents } => Self::File {
+                contents: contents.clone(),
+            },
+        }
+    }
+
+    fn fragment(&self, delta: u64, _length: u64) -> Self {
+        match self {
+            Self::Anonymous => Self::Anonymous,
+            // Keep the file tail so a later mremap growth can materialize bytes
+            // beyond the fragment's current mapped length.
+            Self::File { contents } => Self::File {
+                contents: file_backing_slice(contents, delta, u64::MAX).to_vec(),
+            },
+        }
+    }
+
+    fn mmap_backing_fragment(&self, delta: u64, length: u64) -> MmapBacking {
+        match self {
+            Self::Anonymous => MmapBacking::Anonymous,
+            Self::File { contents } => MmapBacking::File {
+                contents: file_backing_slice(contents, delta, length).to_vec(),
+            },
+        }
+    }
+
+    fn write_madvise_dontneed(
+        &self,
+        start: u64,
+        delta: u64,
+        length: u64,
+        guest_memory_writer: &RiscvGuestMemoryWriter,
+    ) -> RiscvGuestMemoryMapResult {
+        match self {
+            Self::Anonymous => write_zeroed_backing(start, length, guest_memory_writer),
+            Self::File { contents } => {
+                let slice_start = usize::try_from(delta).unwrap_or(usize::MAX);
+                let contents = if slice_start >= contents.len() {
+                    &[]
+                } else {
+                    let slice_length = usize::try_from(length).unwrap_or(usize::MAX);
+                    let slice_end = slice_start.saturating_add(slice_length).min(contents.len());
+                    &contents[slice_start..slice_end]
+                };
+                write_file_backing(start, length, contents, guest_memory_writer)
+            }
+        }
+    }
+}
+
+fn file_backing_slice(contents: &[u8], delta: u64, length: u64) -> &[u8] {
+    let start = usize::try_from(delta).unwrap_or(usize::MAX);
+    if start >= contents.len() {
+        return &[];
+    }
+    let length = usize::try_from(length).unwrap_or(usize::MAX);
+    let end = start.saturating_add(length).min(contents.len());
+    &contents[start..end]
 }
 
 impl RiscvMmapRegion {
-    pub const fn new(
+    pub fn new(start: u64, length: u64, protection: u64, flags: u64, fd: u64, offset: u64) -> Self {
+        Self::new_with_backing(
+            start,
+            length,
+            protection,
+            flags,
+            fd,
+            offset,
+            RiscvMmapRegionBacking::Anonymous,
+        )
+    }
+
+    fn from_mmap_backing(
         start: u64,
         length: u64,
         protection: u64,
         flags: u64,
         fd: u64,
         offset: u64,
+        backing: &MmapBacking,
+    ) -> Self {
+        Self::new_with_backing(
+            start,
+            length,
+            protection,
+            flags,
+            fd,
+            offset,
+            RiscvMmapRegionBacking::from_mmap_backing(backing),
+        )
+    }
+
+    fn new_with_backing(
+        start: u64,
+        length: u64,
+        protection: u64,
+        flags: u64,
+        fd: u64,
+        offset: u64,
+        backing: RiscvMmapRegionBacking,
     ) -> Self {
         Self {
             start,
@@ -111,34 +228,35 @@ impl RiscvMmapRegion {
             flags,
             fd,
             offset,
+            backing,
         }
     }
 
-    pub const fn start(self) -> u64 {
+    pub const fn start(&self) -> u64 {
         self.start
     }
 
-    pub const fn length(self) -> u64 {
+    pub const fn length(&self) -> u64 {
         self.length
     }
 
-    pub const fn protection(self) -> u64 {
+    pub const fn protection(&self) -> u64 {
         self.protection
     }
 
-    pub const fn flags(self) -> u64 {
+    pub const fn flags(&self) -> u64 {
         self.flags
     }
 
-    pub const fn fd(self) -> u64 {
+    pub const fn fd(&self) -> u64 {
         self.fd
     }
 
-    pub const fn offset(self) -> u64 {
+    pub const fn offset(&self) -> u64 {
         self.offset
     }
 
-    pub(super) fn overlaps(self, start: u64, length: u64) -> bool {
+    pub(super) fn overlaps(&self, start: u64, length: u64) -> bool {
         let Some(end) = start.checked_add(length) else {
             return true;
         };
@@ -165,26 +283,59 @@ impl RiscvMmapRegion {
             return;
         }
         if self.start < start {
-            output.push(Self::new(
-                self.start,
-                start - self.start,
-                self.protection,
-                self.flags,
-                self.fd,
-                self.offset,
-            ));
+            let left_length = start - self.start;
+            output.push(
+                Self::new(
+                    self.start,
+                    left_length,
+                    self.protection,
+                    self.flags,
+                    self.fd,
+                    self.offset,
+                )
+                .with_backing(self.backing.fragment(0, left_length)),
+            );
         }
         if end < region_end {
             let delta = end - self.start;
-            output.push(Self::new(
-                end,
-                region_end - end,
-                self.protection,
-                self.flags,
-                self.fd,
-                self.offset.saturating_add(delta),
-            ));
+            let right_length = region_end - end;
+            output.push(
+                Self::new(
+                    end,
+                    right_length,
+                    self.protection,
+                    self.flags,
+                    self.fd,
+                    self.offset.saturating_add(delta),
+                )
+                .with_backing(self.backing.fragment(delta, right_length)),
+            );
         }
+    }
+
+    fn with_backing(mut self, backing: RiscvMmapRegionBacking) -> Self {
+        self.backing = backing;
+        self
+    }
+
+    fn with_length(mut self, length: u64) -> Self {
+        self.length = length;
+        self
+    }
+
+    fn write_madvise_dontneed(
+        &self,
+        start: u64,
+        length: u64,
+        guest_memory_writer: &RiscvGuestMemoryWriter,
+    ) -> RiscvGuestMemoryMapResult {
+        let delta = start.saturating_sub(self.start);
+        self.backing
+            .write_madvise_dontneed(start, delta, length, guest_memory_writer)
+    }
+
+    fn backing_fragment(&self, delta: u64, length: u64) -> MmapBacking {
+        self.backing.mmap_backing_fragment(delta, length)
     }
 
     pub(super) fn push_fragments_after_mprotect(
@@ -207,38 +358,50 @@ impl RiscvMmapRegion {
             return;
         }
         if self.start < start {
-            output.push(Self::new(
-                self.start,
-                start - self.start,
-                self.protection,
-                self.flags,
-                self.fd,
-                self.offset,
-            ));
+            let left_length = start - self.start;
+            output.push(
+                Self::new(
+                    self.start,
+                    left_length,
+                    self.protection,
+                    self.flags,
+                    self.fd,
+                    self.offset,
+                )
+                .with_backing(self.backing.fragment(0, left_length)),
+            );
         }
 
         let protect_start = self.start.max(start);
         let protect_end = region_end.min(end);
         let protect_delta = protect_start - self.start;
-        output.push(Self::new(
-            protect_start,
-            protect_end - protect_start,
-            protection,
-            self.flags,
-            self.fd,
-            self.offset.saturating_add(protect_delta),
-        ));
+        let protect_length = protect_end - protect_start;
+        output.push(
+            Self::new(
+                protect_start,
+                protect_length,
+                protection,
+                self.flags,
+                self.fd,
+                self.offset.saturating_add(protect_delta),
+            )
+            .with_backing(self.backing.fragment(protect_delta, protect_length)),
+        );
 
         if end < region_end {
             let delta = end - self.start;
-            output.push(Self::new(
-                end,
-                region_end - end,
-                self.protection,
-                self.flags,
-                self.fd,
-                self.offset.saturating_add(delta),
-            ));
+            let right_length = region_end - end;
+            output.push(
+                Self::new(
+                    end,
+                    right_length,
+                    self.protection,
+                    self.flags,
+                    self.fd,
+                    self.offset.saturating_add(delta),
+                )
+                .with_backing(self.backing.fragment(delta, right_length)),
+            );
         }
     }
 }
@@ -269,7 +432,7 @@ pub(super) fn syscall_mmap(
     if start.checked_add(length).is_none() {
         return linux_error(RISCV_LINUX_EINVAL);
     }
-    let backing = match mmap_backing(flags, fd, offset, length, state) {
+    let backing = match mmap_backing(flags, fd, offset, state) {
         Some(backing) => backing,
         None => return linux_error(RISCV_LINUX_EBADF),
     };
@@ -289,8 +452,8 @@ pub(super) fn syscall_mmap(
         if start != 0 && state.is_mmap_range_available(start, length) {
             match install_mmap_backing(start, length, guest_memory_writer, false, &backing) {
                 RiscvGuestMemoryMapResult::Mapped => {
-                    state.push_mmap_region(RiscvMmapRegion::new(
-                        start, length, protection, flags, fd, offset,
+                    state.push_mmap_region(RiscvMmapRegion::from_mmap_backing(
+                        start, length, protection, flags, fd, offset, &backing,
                     ));
                     return start;
                 }
@@ -324,13 +487,14 @@ pub(super) fn syscall_mmap(
             }
         }
     };
-    state.push_mmap_region(RiscvMmapRegion::new(
+    state.push_mmap_region(RiscvMmapRegion::from_mmap_backing(
         mapped_start,
         length,
         protection,
         flags,
         fd,
         offset,
+        &backing,
     ));
     mapped_start
 }
@@ -339,7 +503,6 @@ fn mmap_backing(
     flags: u64,
     fd: u64,
     offset: u64,
-    length: u64,
     state: &RiscvSyscallState,
 ) -> Option<MmapBacking> {
     if flags & RISCV_LINUX_MAP_ANONYMOUS != 0 {
@@ -347,8 +510,7 @@ fn mmap_backing(
     }
 
     let fd = guest_fd_argument(fd)?;
-    let byte_count = usize::try_from(length).unwrap_or(usize::MAX);
-    let contents = state.guest_file_slice_at(fd, offset, byte_count).ok()??;
+    let contents = state.guest_file_slice_at(fd, offset, usize::MAX).ok()??;
     Some(MmapBacking::File { contents })
 }
 
@@ -492,27 +654,21 @@ pub(super) fn syscall_mremap(
     if !state.is_mmap_range_available(extra_start, extra_length) {
         return linux_error(RISCV_LINUX_ENOMEM);
     }
+    let region = state.mmap_regions[region_index].clone();
+    let extra_backing = region.backing_fragment(old_length, extra_length);
     match install_mmap_backing(
         extra_start,
         extra_length,
         guest_memory_writer,
         false,
-        &MmapBacking::Anonymous,
+        &extra_backing,
     ) {
         RiscvGuestMemoryMapResult::Mapped => {}
         RiscvGuestMemoryMapResult::Overlap => return linux_error(RISCV_LINUX_ENOMEM),
         RiscvGuestMemoryMapResult::Failed => return linux_error(RISCV_LINUX_EFAULT),
     }
 
-    let region = state.mmap_regions[region_index];
-    state.mmap_regions[region_index] = RiscvMmapRegion::new(
-        region.start(),
-        new_length,
-        region.protection(),
-        region.flags(),
-        region.fd(),
-        region.offset(),
-    );
+    state.mmap_regions[region_index] = region.with_length(new_length);
     start
 }
 
@@ -811,7 +967,11 @@ fn mbind_default_range_has_mapping(state: &RiscvSyscallState, start: u64, length
         || brk_backed_range_overlaps_mapping(state, start, length)
 }
 
-pub(super) fn syscall_madvise(request: RiscvSyscallRequest, state: &RiscvSyscallState) -> u64 {
+pub(super) fn syscall_madvise(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> u64 {
     let start = request.argument(0);
     let requested_length = request.argument(1);
     let advice = request.argument(2);
@@ -831,7 +991,58 @@ pub(super) fn syscall_madvise(request: RiscvSyscallRequest, state: &RiscvSyscall
     if !mmap_range_is_mapped(state, start, length) {
         return linux_error(RISCV_LINUX_ENOMEM);
     }
+    if advice == RISCV_LINUX_MADV_DONTNEED {
+        let Some(guest_memory_writer) = guest_memory_writer else {
+            return 0;
+        };
+        if write_madvise_dontneed_backing(state, start, length, guest_memory_writer)
+            != RiscvGuestMemoryMapResult::Mapped
+        {
+            return linux_error(RISCV_LINUX_EFAULT);
+        }
+    }
     0
+}
+
+fn write_madvise_dontneed_backing(
+    state: &RiscvSyscallState,
+    start: u64,
+    length: u64,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> RiscvGuestMemoryMapResult {
+    let Some(end) = start.checked_add(length) else {
+        return RiscvGuestMemoryMapResult::Failed;
+    };
+    let mut cursor = start;
+    for region in &state.mmap_regions {
+        if cursor >= end {
+            return RiscvGuestMemoryMapResult::Mapped;
+        }
+        let Some(region_end) = region.start().checked_add(region.length()) else {
+            return RiscvGuestMemoryMapResult::Failed;
+        };
+        if region_end <= cursor {
+            continue;
+        }
+        if region.start() > cursor {
+            return RiscvGuestMemoryMapResult::Failed;
+        }
+
+        let segment_start = cursor.max(region.start());
+        let segment_end = end.min(region_end);
+        let segment_length = segment_end - segment_start;
+        match region.write_madvise_dontneed(segment_start, segment_length, guest_memory_writer) {
+            RiscvGuestMemoryMapResult::Mapped => {
+                cursor = segment_end;
+            }
+            result => return result,
+        }
+    }
+    if cursor == end {
+        RiscvGuestMemoryMapResult::Mapped
+    } else {
+        RiscvGuestMemoryMapResult::Failed
+    }
 }
 
 pub(super) fn syscall_mincore(

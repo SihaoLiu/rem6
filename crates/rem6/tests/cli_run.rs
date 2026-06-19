@@ -44,6 +44,8 @@ mod riscv_se_getdents;
 mod riscv_se_links;
 #[path = "cli_run/riscv_se_mkdir.rs"]
 mod riscv_se_mkdir;
+#[path = "cli_run/riscv_se_mmap.rs"]
+mod riscv_se_mmap;
 #[path = "cli_run/riscv_se_open_flags.rs"]
 mod riscv_se_open_flags;
 #[path = "cli_run/riscv_se_permissions.rs"]

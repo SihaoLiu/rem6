@@ -29,13 +29,13 @@ impl RiscvSyscallState {
             );
         }
         for region in self.mmap_regions() {
-            push_mmap_region_line(&mut output, *region);
+            push_mmap_region_line(&mut output, region);
         }
         output.into_bytes()
     }
 }
 
-fn push_mmap_region_line(output: &mut String, region: RiscvMmapRegion) {
+fn push_mmap_region_line(output: &mut String, region: &RiscvMmapRegion) {
     let Some(end) = region.start().checked_add(region.length()) else {
         return;
     };

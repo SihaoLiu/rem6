@@ -31,6 +31,8 @@ mod guest_file_io_tests;
 mod hwprobe_tests;
 #[path = "riscv_syscall_tests/link_tests.rs"]
 mod link_tests;
+#[path = "riscv_syscall_tests/madvise_tests.rs"]
+mod madvise_tests;
 #[path = "riscv_syscall_tests/memory_policy_tests.rs"]
 mod memory_policy_tests;
 #[path = "riscv_syscall_tests/mkdir_tests.rs"]
