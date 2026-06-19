@@ -452,9 +452,21 @@ fn rem6_gpu_run_writes_nomali_adapter_output() {
         ("/pio/command_writes/0/value", "0x00000001"),
         ("/pio/command_writes/0/command", "soft_reset"),
         ("/pio/command_writes/0/effect", "reset_completed_interrupt"),
-        ("/pio/irq/rawstat", "0x00000100"),
+        ("/pio/irq_writes/0/name", "gpu_irq_clear"),
+        ("/pio/irq_writes/0/offset", "0x024"),
+        ("/pio/irq_writes/0/value", "0x00000100"),
+        ("/pio/irq_writes/0/effect", "clear_reset_completed"),
+        ("/pio/irq_snapshots/0/name", "after_soft_reset_masked"),
+        ("/pio/irq_snapshots/0/rawstat", "0x00000100"),
+        ("/pio/irq_snapshots/0/mask", "0x00000100"),
+        ("/pio/irq_snapshots/0/status", "0x00000100"),
+        ("/pio/irq_snapshots/1/name", "after_irq_clear"),
+        ("/pio/irq_snapshots/1/rawstat", "0x00000000"),
+        ("/pio/irq_snapshots/1/mask", "0x00000100"),
+        ("/pio/irq_snapshots/1/status", "0x00000000"),
+        ("/pio/irq/rawstat", "0x00000000"),
         ("/pio/irq/mask", "0x00000100"),
-        ("/pio/irq/status", "0x00000100"),
+        ("/pio/irq/status", "0x00000000"),
         ("/pio/register_reads/0/name", "gpu_id"),
         ("/pio/register_reads/0/offset", "0x000"),
         ("/pio/register_reads/0/value", "0x07500000"),
@@ -489,7 +501,19 @@ fn rem6_gpu_run_writes_nomali_adapter_output() {
         adapter
             .pointer("/pio/irq/asserted")
             .and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        adapter
+            .pointer("/pio/irq_snapshots/0/asserted")
+            .and_then(Value::as_bool),
         Some(true)
+    );
+    assert_eq!(
+        adapter
+            .pointer("/pio/irq_snapshots/1/asserted")
+            .and_then(Value::as_bool),
+        Some(false)
     );
 }
 
