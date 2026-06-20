@@ -438,31 +438,74 @@ pub(super) fn syscall_sigaltstack(
 
 pub(super) fn syscall_rt_sigtimedwait(
     request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
     guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
 ) -> Option<u64> {
     if request.argument(3) != RISCV_LINUX_SIGSET_BYTES {
         return Some(linux_error(RISCV_LINUX_EINVAL));
     }
 
     let guest_memory_reader = guest_memory_reader?;
-    if read_signal_mask(guest_memory_reader, request.argument(0)).is_none() {
-        return Some(linux_error(RISCV_LINUX_EFAULT));
-    }
-
-    let timeout_address = request.argument(2);
-    if timeout_address == 0 {
-        return None;
-    }
-    match read_timespec64(guest_memory_reader, timeout_address) {
-        Some(timeout) if timeout.is_zero() => {}
-        Some(timeout) if timeout.is_valid() => {
-            return None;
-        }
-        Some(_) => return Some(linux_error(RISCV_LINUX_EINVAL)),
+    let signal_mask = match read_signal_mask(guest_memory_reader, request.argument(0)) {
+        Some(mask) => mask,
         None => return Some(linux_error(RISCV_LINUX_EFAULT)),
+    };
+    let timeout = match read_sigtimedwait_timeout(guest_memory_reader, request.argument(2)) {
+        Ok(timeout) => timeout,
+        Err(error) => return Some(linux_error(error)),
+    };
+
+    let waited_signals = blockable_signal_mask(signal_mask);
+    if let Some(signal) = first_signal_in_mask(state.pending_signal_mask() & waited_signals) {
+        let siginfo_address = request.argument(1);
+        if siginfo_address != 0 {
+            let guest_memory_writer = guest_memory_writer?;
+            if !guest_memory_writer.write(siginfo_address, &signal_info_bytes(signal)) {
+                return Some(linux_error(RISCV_LINUX_EFAULT));
+            }
+        }
+        state.clear_pending_signal_mask(signal_bit(signal));
+        return Some(signal);
     }
 
-    Some(linux_error(RISCV_LINUX_EAGAIN))
+    match timeout {
+        SigtimedwaitTimeout::Indefinite | SigtimedwaitTimeout::Finite => None,
+        SigtimedwaitTimeout::Zero => Some(linux_error(RISCV_LINUX_EAGAIN)),
+    }
+}
+
+fn first_signal_in_mask(mask: u64) -> Option<u64> {
+    (RISCV_LINUX_FIRST_SIGNAL..=RISCV_LINUX_LAST_SIGNAL)
+        .find(|signal| mask & signal_bit(*signal) != 0)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SigtimedwaitTimeout {
+    Indefinite,
+    Zero,
+    Finite,
+}
+
+fn read_sigtimedwait_timeout(
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    address: u64,
+) -> Result<SigtimedwaitTimeout, u64> {
+    if address == 0 {
+        return Ok(SigtimedwaitTimeout::Indefinite);
+    }
+    match read_timespec64(guest_memory_reader, address) {
+        Some(timeout) if timeout.is_zero() => Ok(SigtimedwaitTimeout::Zero),
+        Some(timeout) if timeout.is_valid() => Ok(SigtimedwaitTimeout::Finite),
+        Some(_) => Err(RISCV_LINUX_EINVAL),
+        None => Err(RISCV_LINUX_EFAULT),
+    }
+}
+
+fn signal_info_bytes(signal: u64) -> [u8; RISCV_LINUX_SIGINFO_T_BYTES] {
+    let mut bytes = [0; RISCV_LINUX_SIGINFO_T_BYTES];
+    bytes[0..4].copy_from_slice(&(signal as i32).to_le_bytes());
+    bytes
 }
 
 fn read_signal_mask(guest_memory_reader: &RiscvGuestMemoryReader, address: u64) -> Option<u64> {

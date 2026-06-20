@@ -590,6 +590,151 @@ fn rem6_run_riscv_se_runs_static_raw_rt_sigqueueinfo_nonzero_signal() {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_rt_sigtimedwait_pending_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE raw rt_sigtimedwait smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE raw rt_sigtimedwait smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-rt-sigtimedwait");
+    let source = workspace.join("raw-rt-sigtimedwait.c");
+    let binary = workspace.join("raw-rt-sigtimedwait");
+    fs::write(
+        &source,
+        r#"struct linux_timespec {
+    long tv_sec;
+    long tv_nsec;
+};
+
+struct linux_siginfo {
+    int si_signo;
+    int si_errno;
+    int si_code;
+    char rest[116];
+};
+
+static long linux_syscall2(long number, long arg0, long arg1) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall4(long number, long arg0, long arg1, long arg2, long arg3) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3), "r"(a7) : "memory");
+    return a0;
+}
+
+static void finish(int ok) {
+    static const char pass[] = "raw-rt-sigtimedwait:10:10:0\n";
+    static const char fail[] = "raw-rt-sigtimedwait:fail\n";
+    if (ok) {
+        linux_syscall3(64, 1, (long)pass, sizeof(pass) - 1);
+        linux_syscall2(93, 86, 0);
+    } else {
+        linux_syscall3(64, 1, (long)fail, sizeof(fail) - 1);
+        linux_syscall2(93, 87, 0);
+    }
+    for (;;) {
+    }
+}
+
+int main(void) {
+    const unsigned long sigusr1_mask = 1UL << (10 - 1);
+    unsigned long pending_after = 0;
+    struct linux_siginfo info = {0};
+    struct linux_timespec timeout = {0, 0};
+    long block = linux_syscall4(135, 0, (long)&sigusr1_mask, 0, 8);
+    long pid = linux_syscall2(172, 0, 0);
+    long queued = linux_syscall2(129, pid, 10);
+    long waited = linux_syscall4(137, (long)&sigusr1_mask, (long)&info, (long)&timeout, 8);
+    long pending = linux_syscall2(136, (long)&pending_after, 8);
+    finish(block == 0 && queued == 0 && waited == 10 &&
+           info.si_signo == 10 && pending == 0 && pending_after == 0);
+    return 87;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(86),
+        "qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(qemu_output.stdout, b"raw-rt-sigtimedwait:10:10:0\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":86"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"raw-rt-sigtimedwait:10:10:0\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_sigaltstack_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(

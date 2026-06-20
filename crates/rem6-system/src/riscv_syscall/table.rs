@@ -601,8 +601,10 @@ impl RiscvSyscallTable {
             .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_RT_SIGPENDING => syscall_rt_sigpending(request, state, guest_memory_writer)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
-            RISCV_LINUX_RT_SIGTIMEDWAIT => syscall_rt_sigtimedwait(request, guest_memory_reader)
-                .map(|value| RiscvSyscallOutcome::Return { value }),
+            RISCV_LINUX_RT_SIGTIMEDWAIT => {
+                syscall_rt_sigtimedwait(request, state, guest_memory_reader, guest_memory_writer)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
             RISCV_LINUX_MPROTECT => Some(RiscvSyscallOutcome::Return {
                 value: syscall_mprotect(request, state),
             }),
