@@ -284,6 +284,9 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
     assert!(stdout.contains(
         "\"stage_in_flight\":{\"fetch1\":0,\"fetch2\":0,\"decode\":0,\"execute\":0,\"commit\":0}"
     ));
+    assert!(stdout.contains(
+        "\"stage_max_in_flight\":{\"fetch1\":1,\"fetch2\":1,\"decode\":1,\"execute\":1,\"commit\":1}"
+    ));
     assert!(stdout.contains("\"retired\":2"));
     assert!(stdout.contains("\"data_wait_cycles\":0"));
     assert_stat(
@@ -300,6 +303,15 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
         2,
         "monotonic",
     );
+    for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+        assert_stat(
+            &stdout,
+            &format!("sim.cpu0.pipeline.in_order.stage.{stage}.max_in_flight"),
+            "Count",
+            1,
+            "monotonic",
+        );
+    }
     assert_stat(
         &stdout,
         "sim.cpu0.pipeline.in_order.data_wait_cycles",
@@ -441,6 +453,33 @@ fn rem6_run_stats_include_issued_fetch_ahead_before_response() {
     ];
     assert_eq!(stage_in_flight.iter().sum::<u64>(), 1);
     assert!(stage_in_flight.iter().any(|count| *count == 1));
+    let stage_max_in_flight = [
+        stat_value(
+            &stdout,
+            "sim.cpu0.pipeline.in_order.stage.fetch1.max_in_flight",
+        ),
+        stat_value(
+            &stdout,
+            "sim.cpu0.pipeline.in_order.stage.fetch2.max_in_flight",
+        ),
+        stat_value(
+            &stdout,
+            "sim.cpu0.pipeline.in_order.stage.decode.max_in_flight",
+        ),
+        stat_value(
+            &stdout,
+            "sim.cpu0.pipeline.in_order.stage.execute.max_in_flight",
+        ),
+        stat_value(
+            &stdout,
+            "sim.cpu0.pipeline.in_order.stage.commit.max_in_flight",
+        ),
+    ];
+    assert!(stage_max_in_flight
+        .iter()
+        .zip(stage_in_flight)
+        .all(|(max, current)| *max >= current));
+    assert!(stage_max_in_flight.iter().sum::<u64>() >= 1);
     assert_stat(
         &stdout,
         "sim.memory.fetch.requests",

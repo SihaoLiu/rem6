@@ -92,7 +92,7 @@ use parallel_stats::{
 use pipeline_stats::{
     in_order_pipeline_data_wait_cycles, in_order_pipeline_fetch_wait_cycles,
     in_order_pipeline_run_summary, in_order_pipeline_stage_in_flight,
-    Rem6InOrderPipelineStageInFlightSummary,
+    in_order_pipeline_stage_max_in_flight, Rem6InOrderPipelineStageInFlightSummary,
 };
 use power_output::{run_power_analysis_artifact, Rem6PowerAnalysisArtifact};
 use readfile_runtime::{read_readfiles, readfile_mmio_bus, LoadedReadfile, Rem6ReadfileSummary};
@@ -422,6 +422,7 @@ pub struct Rem6CoreSummary {
     in_order_pipeline_cycles: u64,
     in_order_pipeline_in_flight: u64,
     in_order_pipeline_stage_in_flight: Rem6InOrderPipelineStageInFlightSummary,
+    in_order_pipeline_stage_max_in_flight: Rem6InOrderPipelineStageInFlightSummary,
     in_order_pipeline_retired: u64,
     in_order_pipeline_advanced: u64,
     in_order_pipeline_flushed: u64,
@@ -1038,6 +1039,8 @@ fn execution_summary(
         let pipeline_summary = in_order_pipeline_run_summary(&core);
         let pipeline_snapshot = core.in_order_pipeline_snapshot();
         let pipeline_stage_in_flight = in_order_pipeline_stage_in_flight(&pipeline_snapshot);
+        let pipeline_stage_max_in_flight =
+            in_order_pipeline_stage_max_in_flight(&core, &pipeline_snapshot);
         let checker = core
             .checker_cpu_snapshot()
             .map(|snapshot| Rem6CheckerSummary {
@@ -1051,6 +1054,7 @@ fn execution_summary(
             in_order_pipeline_cycles: pipeline_snapshot.cycle(),
             in_order_pipeline_in_flight: pipeline_snapshot.in_flight().len() as u64,
             in_order_pipeline_stage_in_flight: pipeline_stage_in_flight,
+            in_order_pipeline_stage_max_in_flight: pipeline_stage_max_in_flight,
             in_order_pipeline_retired: pipeline_summary.retired_count() as u64,
             in_order_pipeline_advanced: pipeline_summary.advanced_count() as u64,
             in_order_pipeline_flushed: pipeline_summary.flushed_count() as u64,

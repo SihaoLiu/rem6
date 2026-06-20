@@ -14,11 +14,43 @@ pub(crate) struct Rem6InOrderPipelineStageInFlightSummary {
     pub(crate) commit: u64,
 }
 
+impl Rem6InOrderPipelineStageInFlightSummary {
+    fn max_with(self, other: Self) -> Self {
+        Self {
+            fetch1: self.fetch1.max(other.fetch1),
+            fetch2: self.fetch2.max(other.fetch2),
+            decode: self.decode.max(other.decode),
+            execute: self.execute.max(other.execute),
+            commit: self.commit.max(other.commit),
+        }
+    }
+}
+
 pub(super) fn in_order_pipeline_run_summary(core: &RiscvCore) -> InOrderPipelineRunSummary {
     InOrderPipelineRunSummary::from_cycle_records(core.in_order_pipeline_cycle_records())
 }
 
 pub(super) fn in_order_pipeline_stage_in_flight(
+    snapshot: &InOrderPipelineSnapshot,
+) -> Rem6InOrderPipelineStageInFlightSummary {
+    stage_in_flight_from_snapshot(snapshot)
+}
+
+pub(super) fn in_order_pipeline_stage_max_in_flight(
+    core: &RiscvCore,
+    final_snapshot: &InOrderPipelineSnapshot,
+) -> Rem6InOrderPipelineStageInFlightSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        stage_in_flight_from_snapshot(final_snapshot),
+        |summary, record| {
+            summary
+                .max_with(stage_in_flight_from_snapshot(record.before()))
+                .max_with(stage_in_flight_from_snapshot(record.after()))
+        },
+    )
+}
+
+fn stage_in_flight_from_snapshot(
     snapshot: &InOrderPipelineSnapshot,
 ) -> Rem6InOrderPipelineStageInFlightSummary {
     let mut summary = Rem6InOrderPipelineStageInFlightSummary::default();

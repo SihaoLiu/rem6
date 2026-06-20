@@ -756,7 +756,32 @@ pub(super) fn run_stats_output(
                 StatResetPolicy::Constant,
                 core.in_order_pipeline_in_flight,
             )?;
-            emit_in_order_stage_in_flight_stats(&mut stats, core)?;
+            emit_in_order_stage_in_flight_stats(
+                &mut stats,
+                core,
+                "in_flight",
+                StatResetPolicy::Constant,
+                [
+                    core.in_order_pipeline_stage_in_flight.fetch1,
+                    core.in_order_pipeline_stage_in_flight.fetch2,
+                    core.in_order_pipeline_stage_in_flight.decode,
+                    core.in_order_pipeline_stage_in_flight.execute,
+                    core.in_order_pipeline_stage_in_flight.commit,
+                ],
+            )?;
+            emit_in_order_stage_in_flight_stats(
+                &mut stats,
+                core,
+                "max_in_flight",
+                StatResetPolicy::Monotonic,
+                [
+                    core.in_order_pipeline_stage_max_in_flight.fetch1,
+                    core.in_order_pipeline_stage_max_in_flight.fetch2,
+                    core.in_order_pipeline_stage_max_in_flight.decode,
+                    core.in_order_pipeline_stage_max_in_flight.execute,
+                    core.in_order_pipeline_stage_max_in_flight.commit,
+                ],
+            )?;
             increment_stat(
                 &mut stats,
                 &format!("sim.cpu{}.pipeline.in_order.stall_cycles", core.cpu),
@@ -1212,22 +1237,19 @@ fn emit_memory_resource_stats(
 fn emit_in_order_stage_in_flight_stats(
     stats: &mut StatsRegistry,
     core: &Rem6CoreSummary,
+    name: &str,
+    reset_policy: StatResetPolicy,
+    values: [u64; 5],
 ) -> Result<(), Rem6CliError> {
-    for (stage, value) in [
-        ("fetch1", core.in_order_pipeline_stage_in_flight.fetch1),
-        ("fetch2", core.in_order_pipeline_stage_in_flight.fetch2),
-        ("decode", core.in_order_pipeline_stage_in_flight.decode),
-        ("execute", core.in_order_pipeline_stage_in_flight.execute),
-        ("commit", core.in_order_pipeline_stage_in_flight.commit),
-    ] {
+    for (stage, value) in ["fetch1", "fetch2", "decode", "execute", "commit"]
+        .into_iter()
+        .zip(values)
+    {
         increment_stat(
             stats,
-            &format!(
-                "sim.cpu{}.pipeline.in_order.stage.{stage}.in_flight",
-                core.cpu
-            ),
+            &format!("sim.cpu{}.pipeline.in_order.stage.{stage}.{name}", core.cpu),
             "Count",
-            StatResetPolicy::Constant,
+            reset_policy,
             value,
         )?;
     }

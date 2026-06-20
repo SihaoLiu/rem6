@@ -254,7 +254,7 @@ fetch-ahead response completion across core and parallel-cluster paths,
 including trained predicted-target to actual-fall-through repair in the core
 path, and a CLI tick-limit stats run with two fetch requests, one fetch
 response, one retired instruction, and nonzero in-order pipeline cycles plus
-`sim.cpu0.pipeline.in_order.in_flight = 1` with matching per-stage in-flight
+`sim.cpu0.pipeline.in_order.in_flight = 1` with matching per-stage current/max
 stats and in-order advanced count greater than retired count from recorded non-retire cycles, plus serial trap repair and
 stream-reset discard coverage; a direct `JAL` CLI tick-limit run records the jump retired with the target fetch still in flight, three total fetch requests, two fetch responses, and no committed fall-through register update. These paths preserve branch speculation,
 pending-interrupt redirect, and data-access ordering.
@@ -807,7 +807,7 @@ headers plus `simOps`, deterministic `simSeconds`, single-core
 `system.cpu.numInsts`/`system.cpu.numCycles` aliases, and multicore
 `system.cpuN.numInsts`/`system.cpuN.numCycles` aliases,
 target/port/bank-level DRAM runtime resource counters, RISC-V in-order pipeline
-per-stage in-flight stats, and fetch-steering branch predictor checkpoint
+per-stage current/max in-flight stats, and fetch-steering branch predictor checkpoint
 capture/restore including live fetch-ahead pending speculation, GDB byte-stream packet handling, debug
 execution-control state for packet-stream step/resume and break/watch requests,
 CLI run aggregate memory-resource activity and active-resource stats derived
