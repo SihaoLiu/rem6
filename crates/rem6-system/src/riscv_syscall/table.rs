@@ -441,6 +441,12 @@ impl RiscvSyscallTable {
                 syscall_prctl(request, state, guest_memory_reader, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
+            RISCV_LINUX_PIDFD_OPEN => Some(RiscvSyscallOutcome::Return {
+                value: syscall_pidfd_open(request, state),
+            }),
+            RISCV_LINUX_PIDFD_SEND_SIGNAL => Some(RiscvSyscallOutcome::Return {
+                value: syscall_pidfd_send_signal(request, state, tick),
+            }),
             RISCV_LINUX_EXECVE => guest_memory_reader.map(|guest_memory| {
                 match syscall_execve_error_path(request, state, guest_memory) {
                     Some(value) => RiscvSyscallOutcome::Return { value },

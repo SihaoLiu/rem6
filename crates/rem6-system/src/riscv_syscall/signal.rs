@@ -533,7 +533,7 @@ fn valid_signal(signal: u64) -> bool {
     (RISCV_LINUX_FIRST_SIGNAL..=RISCV_LINUX_LAST_SIGNAL).contains(&signal)
 }
 
-fn valid_signal_i32(signal: i32) -> bool {
+pub(super) fn valid_signal_i32(signal: i32) -> bool {
     signal > 0 && (signal as u64) <= RISCV_LINUX_LAST_SIGNAL
 }
 
@@ -621,7 +621,7 @@ fn settle_unblocked_pending_signals(
     Some(linux_error(RISCV_LINUX_ENOSYS))
 }
 
-fn signal_probe_or_unimplemented_delivery(
+pub(super) fn signal_probe_or_unimplemented_delivery(
     request: RiscvSyscallRequest,
     state: &mut RiscvSyscallState,
     tick: rem6_kernel::Tick,

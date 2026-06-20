@@ -58,6 +58,8 @@ mod riscv_se_mmap;
 mod riscv_se_open_flags;
 #[path = "cli_run/riscv_se_permissions.rs"]
 mod riscv_se_permissions;
+#[path = "cli_run/riscv_se_pidfd.rs"]
+mod riscv_se_pidfd;
 #[path = "cli_run/riscv_se_poll.rs"]
 mod riscv_se_poll;
 #[path = "cli_run/riscv_se_proc.rs"]

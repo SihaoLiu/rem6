@@ -44,6 +44,7 @@ mod mkdir;
 mod mmap;
 mod open;
 mod permissions;
+mod pidfd;
 mod pipe;
 mod poll;
 mod positioned;
@@ -180,6 +181,10 @@ use permissions::{
     RISCV_LINUX_FCHMODAT2, RISCV_LINUX_FCHOWN, RISCV_LINUX_FCHOWNAT, RISCV_LINUX_UMASK,
     RISCV_NEWLIB_LEGACY_CHMOD,
 };
+use pidfd::{
+    syscall_pidfd_open, syscall_pidfd_send_signal, RiscvGuestPidFd, RISCV_LINUX_PIDFD_OPEN,
+    RISCV_LINUX_PIDFD_SEND_SIGNAL,
+};
 use pipe::{
     syscall_pipe2, RiscvGuestPipe, RiscvGuestPipeEndpoint, RiscvGuestPipeId, RISCV_LINUX_PIPE2,
 };
@@ -295,6 +300,7 @@ pub struct RiscvSyscallState {
     guest_eventfds: BTreeMap<GuestFileDescriptionId, RiscvGuestEventFd>,
     guest_timerfds: BTreeMap<GuestFileDescriptionId, RiscvGuestTimerFd>,
     guest_signalfds: BTreeMap<GuestFileDescriptionId, RiscvGuestSignalFd>,
+    guest_pidfds: BTreeMap<GuestFileDescriptionId, RiscvGuestPidFd>,
     guest_inotifies: BTreeMap<GuestFileDescriptionId, RiscvGuestInotify>,
     guest_epolls: BTreeMap<GuestFileDescriptionId, RiscvGuestEpoll>,
     guest_opens: Vec<RiscvGuestOpenRecord>,
@@ -399,6 +405,7 @@ impl RiscvSyscallState {
             guest_eventfds: BTreeMap::new(),
             guest_timerfds: BTreeMap::new(),
             guest_signalfds: BTreeMap::new(),
+            guest_pidfds: BTreeMap::new(),
             guest_inotifies: BTreeMap::new(),
             guest_epolls: BTreeMap::new(),
             guest_opens: Vec::new(),
@@ -1022,6 +1029,7 @@ impl RiscvSyscallState {
         self.remove_guest_eventfd_description(description);
         self.remove_guest_timerfd_description(description);
         self.remove_guest_signalfd_description(description);
+        self.remove_guest_pidfd_description(description);
         self.remove_guest_inotify_description(description);
         self.remove_guest_epoll_target_description(description);
         self.remove_guest_epoll_description(description);
