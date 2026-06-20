@@ -3177,6 +3177,83 @@ fn riscv_core_driver_fetch_ahead_uses_trained_branch_target() {
 }
 
 #[test]
+fn riscv_core_driver_preserves_direct_jal_fetch_ahead_at_retire() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let jump = j_type(8, 0);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            i_type(7, 0, 0x0, 5, 0x13),
+            jump,
+            i_type(1, 0, 0x0, 6, 0x13),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(first) = action else {
+        panic!("expected first instruction to retire before direct jump fetch-ahead");
+    };
+    assert_eq!(
+        first.instruction(),
+        RiscvInstruction::decode(i_type(7, 0, 0x0, 5, 0x13)).unwrap()
+    );
+    assert_eq!(core.read_register(reg(5)), 7);
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::FetchIssued { .. } = action else {
+        panic!("expected direct jal target fetch-ahead before retiring the jump");
+    };
+    assert!(core.inner().fetch_events().iter().any(|event| {
+        event.kind() == CpuFetchEventKind::Issued && event.pc() == Address::new(0x800c)
+    }));
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(retired_jump) = action else {
+        panic!("expected jump to retire while the direct target fetch is pending");
+    };
+    assert_eq!(
+        retired_jump.instruction(),
+        RiscvInstruction::decode(jump).unwrap()
+    );
+    assert_eq!(retired_jump.execution().next_pc(), 0x800c);
+    let cycle = retired_jump.in_order_pipeline_cycle().unwrap();
+    assert_eq!(
+        cycle.plan().flushed_sequences().collect::<Vec<_>>(),
+        Vec::<u64>::new()
+    );
+    let prediction = &cycle.branch_predictions()[0];
+    assert!(prediction.predicted_taken());
+    assert_eq!(prediction.predicted_target_pc(), Some(0x800c));
+    assert!(prediction.resolved_taken());
+    assert_eq!(prediction.resolved_target_pc(), Some(0x800c));
+    assert!(!prediction.mispredicted());
+    assert!(core.has_pending_fetch());
+
+    scheduler.run_until_idle_conservative();
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(target) = action else {
+        panic!("expected preserved direct target fetch to retire next");
+    };
+    assert_eq!(target.instruction(), RiscvInstruction::Ebreak);
+    assert_eq!(core.read_register(reg(6)), 0);
+}
+
+#[test]
 fn riscv_core_driver_fetch_ahead_commits_branch_speculation_history() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);

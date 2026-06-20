@@ -175,11 +175,20 @@ impl RiscvCore {
             state.pending_trap = Some(trap);
         }
         state.apply_riscv_system_event(execution.system_event());
+        let fetch_events = self.core.fetch_events();
+        let direct_jump_fetch_ahead_target = direct_jump_fetch_ahead_prediction_target(
+            state,
+            &fetch_events,
+            fetch.request_id(),
+            instruction,
+            next_pc,
+        );
         let pipeline_branch_prediction = in_order_pipeline_branch_prediction(
             fetch.request_id().sequence(),
             fetch.pc(),
             next_pc,
             retired_branch.branch_update(),
+            direct_jump_fetch_ahead_target,
         );
         let pipeline_redirect = execution.trap().is_some().then(|| {
             InOrderBranchRedirect::new(
@@ -208,7 +217,6 @@ impl RiscvCore {
             0,
             true,
         );
-        let fetch_events = self.core.fetch_events();
         let squashed_requests = event
             .in_order_pipeline_cycle()
             .map(|cycle| squashed_fetch_requests(state, &fetch_events, cycle, consumed_requests))
@@ -426,12 +434,49 @@ fn squashed_fetch_requests(
         .collect()
 }
 
+fn direct_jump_fetch_ahead_prediction_target(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    retired_request: MemoryRequestId,
+    instruction: RiscvInstruction,
+    actual_next_pc: Address,
+) -> Option<Address> {
+    if !matches!(instruction, RiscvInstruction::Jal { .. }) {
+        return None;
+    }
+
+    fetch_events
+        .iter()
+        .any(|event| {
+            matches!(
+                event.kind(),
+                CpuFetchEventKind::Issued | CpuFetchEventKind::Completed
+            ) && event.request_id().sequence() > retired_request.sequence()
+                && event.pc() == actual_next_pc
+                && !state.executed_fetches.contains(&event.request_id())
+        })
+        .then_some(actual_next_pc)
+}
+
 fn in_order_pipeline_branch_prediction(
     sequence: u64,
     fetch_pc: Address,
     actual_next_pc: Address,
     branch_update: Option<&crate::BranchUpdate>,
+    direct_jump_fetch_ahead_target: Option<Address>,
 ) -> Option<InOrderBranchPrediction> {
+    if let Some(predicted_target) = direct_jump_fetch_ahead_target {
+        return Some(InOrderBranchPrediction::new(
+            sequence,
+            InOrderPipelineStage::Commit,
+            fetch_pc.get(),
+            true,
+            Some(predicted_target.get()),
+            true,
+            Some(actual_next_pc.get()),
+        ));
+    }
+
     let update = branch_update?;
     let resolved_target_pc =
         (update.actual_taken() || update.predicted_taken()).then_some(actual_next_pc.get());

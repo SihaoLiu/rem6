@@ -262,6 +262,9 @@ fn fetch_ahead_decision(
     if instruction_allows_straight_line_fetch_ahead(instruction) {
         return Some(RiscvFetchAheadDecision::straight_line(sequential_pc));
     }
+    if let Some(target) = direct_jump_fetch_ahead_target(fetch_pc, instruction) {
+        return Some(RiscvFetchAheadDecision::straight_line(target));
+    }
     if !instruction_is_conditional_branch(instruction) {
         return None;
     }
@@ -273,6 +276,27 @@ fn fetch_ahead_decision(
         sequential_pc
     };
     Some(RiscvFetchAheadDecision::branch(pc, sequence, fetch_pc))
+}
+
+fn direct_jump_fetch_ahead_target(
+    fetch_pc: Address,
+    instruction: RiscvInstruction,
+) -> Option<Address> {
+    match instruction {
+        RiscvInstruction::Jal { offset, .. } => {
+            checked_add_signed(fetch_pc.get(), offset.value()).map(Address::new)
+        }
+        RiscvInstruction::Jalr { .. } => None,
+        _ => None,
+    }
+}
+
+fn checked_add_signed(value: u64, offset: i64) -> Option<u64> {
+    if offset >= 0 {
+        value.checked_add(offset as u64)
+    } else {
+        value.checked_sub(offset.unsigned_abs())
+    }
 }
 
 fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -> bool {
@@ -455,6 +479,16 @@ mod tests {
             | 0x63
     }
 
+    fn j_type(offset: i32, rd: u8) -> u32 {
+        let imm = offset as u32;
+        (((imm >> 20) & 0x1) << 31)
+            | (((imm >> 1) & 0x3ff) << 21)
+            | (((imm >> 11) & 0x1) << 20)
+            | (((imm >> 12) & 0xff) << 12)
+            | (u32::from(rd) << 7)
+            | 0x6f
+    }
+
     fn completed(sequence: u64, pc: u64) -> crate::CpuFetchEvent {
         crate::CpuFetchEvent::completed(
             CpuFetchRecord::new(
@@ -517,6 +551,16 @@ mod tests {
                 .map(RiscvFetchAheadDecision::pc),
             Some(Address::new(0x8002))
         );
+    }
+
+    #[test]
+    fn fetch_ahead_uses_direct_jal_target() {
+        let core = core_with_completed_fetch(j_type(12, 0).to_le_bytes().to_vec());
+
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+        assert_eq!(decision.pc(), Address::new(0x800c));
+        assert_eq!(decision.branch_speculation(), None);
     }
 
     #[test]

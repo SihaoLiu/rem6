@@ -118,6 +118,16 @@ pub(crate) fn b_type(imm: i32, rs2: u8, rs1: u8, funct3: u32) -> u32 {
         | 0x63
 }
 
+pub(crate) fn j_type(imm: i32, rd: u8) -> u32 {
+    let imm = imm as u32;
+    (((imm >> 20) & 0x1) << 31)
+        | (((imm >> 1) & 0x3ff) << 21)
+        | (((imm >> 11) & 0x1) << 20)
+        | (((imm >> 12) & 0xff) << 12)
+        | (u32::from(rd) << 7)
+        | 0x6f
+}
+
 pub(crate) fn atomic_type(
     funct5: u32,
     aq: bool,
