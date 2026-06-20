@@ -7,6 +7,46 @@ use rem6_kernel::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GpuComputeUnitQueueWaitSummary {
+    compute_unit: u32,
+    waited_workgroups: u64,
+    wait_ticks: Tick,
+    max_wait_ticks: Tick,
+}
+
+impl GpuComputeUnitQueueWaitSummary {
+    pub const fn new(
+        compute_unit: u32,
+        waited_workgroups: u64,
+        wait_ticks: Tick,
+        max_wait_ticks: Tick,
+    ) -> Self {
+        Self {
+            compute_unit,
+            waited_workgroups,
+            wait_ticks,
+            max_wait_ticks,
+        }
+    }
+
+    pub const fn compute_unit(&self) -> u32 {
+        self.compute_unit
+    }
+
+    pub const fn waited_workgroups(&self) -> u64 {
+        self.waited_workgroups
+    }
+
+    pub const fn wait_ticks(&self) -> Tick {
+        self.wait_ticks
+    }
+
+    pub const fn max_wait_ticks(&self) -> Tick {
+        self.max_wait_ticks
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ParallelGpuRunSummary {
     scheduler_run: RecordedConservativeRunSummary,
     trace_event_count: usize,
@@ -15,10 +55,15 @@ pub struct ParallelGpuRunSummary {
     dma_completion_count: usize,
     memory_access_count: usize,
     coalesced_memory_access_count: usize,
+    workgroup_queue_wait_count: u64,
+    workgroup_queue_wait_ticks: Tick,
+    max_workgroup_queue_wait_ticks: Tick,
+    compute_unit_queue_waits: Vec<GpuComputeUnitQueueWaitSummary>,
 }
 
 impl ParallelGpuRunSummary {
-    pub const fn new(
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
         scheduler_run: RecordedConservativeRunSummary,
         trace_event_count: usize,
         workgroup_completion_count: usize,
@@ -26,6 +71,10 @@ impl ParallelGpuRunSummary {
         dma_completion_count: usize,
         memory_access_count: usize,
         coalesced_memory_access_count: usize,
+        workgroup_queue_wait_count: u64,
+        workgroup_queue_wait_ticks: Tick,
+        max_workgroup_queue_wait_ticks: Tick,
+        compute_unit_queue_waits: Vec<GpuComputeUnitQueueWaitSummary>,
     ) -> Self {
         Self {
             scheduler_run,
@@ -35,6 +84,10 @@ impl ParallelGpuRunSummary {
             dma_completion_count,
             memory_access_count,
             coalesced_memory_access_count,
+            workgroup_queue_wait_count,
+            workgroup_queue_wait_ticks,
+            max_workgroup_queue_wait_ticks,
+            compute_unit_queue_waits,
         }
     }
 
@@ -136,6 +189,22 @@ impl ParallelGpuRunSummary {
 
     pub const fn coalesced_memory_access_count(&self) -> usize {
         self.coalesced_memory_access_count
+    }
+
+    pub const fn workgroup_queue_wait_count(&self) -> u64 {
+        self.workgroup_queue_wait_count
+    }
+
+    pub const fn workgroup_queue_wait_ticks(&self) -> Tick {
+        self.workgroup_queue_wait_ticks
+    }
+
+    pub const fn max_workgroup_queue_wait_ticks(&self) -> Tick {
+        self.max_workgroup_queue_wait_ticks
+    }
+
+    pub fn compute_unit_queue_waits(&self) -> &[GpuComputeUnitQueueWaitSummary] {
+        &self.compute_unit_queue_waits
     }
 
     pub const fn device_activity_count(&self) -> usize {

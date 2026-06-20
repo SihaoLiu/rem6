@@ -1206,11 +1206,87 @@ fn rem6_gpu_run_reports_per_compute_unit_activity() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
+    let simulation = artifact.get("simulation").unwrap();
+    let compute_units = simulation
+        .get("compute_unit_activity")
+        .and_then(Value::as_array)
+        .unwrap();
     assert!(stdout.contains("\"workgroup_completions\":5"));
-    assert!(stdout.contains(
-        "\"compute_unit_activity\":[{\"compute_unit\":0,\"workgroup_completions\":3,\"busy_cycles\":12"
-    ));
-    assert!(stdout.contains("{\"compute_unit\":1,\"workgroup_completions\":2,\"busy_cycles\":8"));
+    assert_eq!(
+        compute_units[0]
+            .get("workgroup_completions")
+            .and_then(Value::as_u64),
+        Some(3)
+    );
+    assert_eq!(
+        compute_units[0].get("busy_cycles").and_then(Value::as_u64),
+        Some(12)
+    );
+    assert_eq!(
+        compute_units[1]
+            .get("workgroup_completions")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        compute_units[1].get("busy_cycles").and_then(Value::as_u64),
+        Some(8)
+    );
+    assert_eq!(
+        simulation
+            .get("workgroup_queue_wait_count")
+            .and_then(Value::as_u64),
+        Some(3)
+    );
+    assert_eq!(
+        simulation
+            .get("workgroup_queue_wait_ticks")
+            .and_then(Value::as_u64),
+        Some(16)
+    );
+    assert_eq!(
+        simulation
+            .get("max_workgroup_queue_wait_ticks")
+            .and_then(Value::as_u64),
+        Some(8)
+    );
+    assert_eq!(
+        compute_units[0]
+            .get("workgroup_queue_wait_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        compute_units[0]
+            .get("workgroup_queue_wait_ticks")
+            .and_then(Value::as_u64),
+        Some(12)
+    );
+    assert_eq!(
+        compute_units[0]
+            .get("max_workgroup_queue_wait_ticks")
+            .and_then(Value::as_u64),
+        Some(8)
+    );
+    assert_eq!(
+        compute_units[1]
+            .get("workgroup_queue_wait_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        compute_units[1]
+            .get("workgroup_queue_wait_ticks")
+            .and_then(Value::as_u64),
+        Some(4)
+    );
+    assert_eq!(
+        compute_units[1]
+            .get("max_workgroup_queue_wait_ticks")
+            .and_then(Value::as_u64),
+        Some(4)
+    );
     assert_stat(
         &stdout,
         "sim.gpu_run.compute_unit.cu0.workgroup_completions",
@@ -1241,6 +1317,27 @@ fn rem6_gpu_run_reports_per_compute_unit_activity() {
     );
     assert_stat(
         &stdout,
+        "sim.gpu_run.compute_unit.cu0.workgroup_queue_wait_count",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu0.workgroup_queue_wait_ticks",
+        "Tick",
+        12,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu0.max_workgroup_queue_wait_ticks",
+        "Tick",
+        8,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
         "sim.gpu_run.compute_unit.cu1.workgroup_completions",
         "Count",
         2,
@@ -1265,6 +1362,48 @@ fn rem6_gpu_run_reports_per_compute_unit_activity() {
         "sim.gpu_run.compute_unit.cu1.last_completed_at",
         "Tick",
         9,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu1.workgroup_queue_wait_count",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu1.workgroup_queue_wait_ticks",
+        "Tick",
+        4,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.compute_unit.cu1.max_workgroup_queue_wait_ticks",
+        "Tick",
+        4,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.workgroup_queue_wait_count",
+        "Count",
+        3,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.workgroup_queue_wait_ticks",
+        "Tick",
+        16,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.max_workgroup_queue_wait_ticks",
+        "Tick",
+        8,
         "monotonic",
     );
 }
@@ -1304,13 +1443,74 @@ fn rem6_gpu_run_reports_per_compute_unit_memory_activity() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("\"global_memory_requests\":6"));
-    assert!(stdout.contains(
-        "{\"compute_unit\":0,\"workgroup_completions\":2,\"busy_cycles\":8,\"coalesced_memory_accesses\":4,\"global_memory_reads\":2,\"global_memory_writes\":2"
-    ));
-    assert!(stdout.contains(
-        "{\"compute_unit\":1,\"workgroup_completions\":1,\"busy_cycles\":4,\"coalesced_memory_accesses\":2,\"global_memory_reads\":1,\"global_memory_writes\":1"
-    ));
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
+    let simulation = artifact.get("simulation").unwrap();
+    let compute_units = simulation
+        .get("compute_unit_activity")
+        .and_then(Value::as_array)
+        .unwrap();
+    assert_eq!(
+        simulation
+            .get("global_memory_requests")
+            .and_then(Value::as_u64),
+        Some(6)
+    );
+    assert_eq!(
+        compute_units[0]
+            .get("workgroup_completions")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        compute_units[0].get("busy_cycles").and_then(Value::as_u64),
+        Some(8)
+    );
+    assert_eq!(
+        compute_units[0]
+            .get("coalesced_memory_accesses")
+            .and_then(Value::as_u64),
+        Some(4)
+    );
+    assert_eq!(
+        compute_units[0]
+            .get("global_memory_reads")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        compute_units[0]
+            .get("global_memory_writes")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        compute_units[1]
+            .get("workgroup_completions")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        compute_units[1].get("busy_cycles").and_then(Value::as_u64),
+        Some(4)
+    );
+    assert_eq!(
+        compute_units[1]
+            .get("coalesced_memory_accesses")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        compute_units[1]
+            .get("global_memory_reads")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        compute_units[1]
+            .get("global_memory_writes")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
     assert_stat(
         &stdout,
         "sim.gpu_run.compute_unit.cu0.coalesced_memory_accesses",
@@ -1388,9 +1588,52 @@ fn rem6_gpu_run_merges_overlapping_wave_slots_for_compute_unit_busy_cycles() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains(
-        "\"compute_unit_activity\":[{\"compute_unit\":0,\"workgroup_completions\":2,\"busy_cycles\":4,\"coalesced_memory_accesses\":2,\"global_memory_reads\":2,\"global_memory_writes\":0,\"first_started_at\":1,\"last_completed_at\":5"
-    ));
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
+    let simulation = artifact.get("simulation").unwrap();
+    let compute_units = simulation
+        .get("compute_unit_activity")
+        .and_then(Value::as_array)
+        .unwrap();
+    assert_eq!(
+        compute_units[0]
+            .get("workgroup_completions")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        compute_units[0].get("busy_cycles").and_then(Value::as_u64),
+        Some(4)
+    );
+    assert_eq!(
+        compute_units[0]
+            .get("coalesced_memory_accesses")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        compute_units[0]
+            .get("global_memory_reads")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        compute_units[0]
+            .get("global_memory_writes")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        compute_units[0]
+            .get("first_started_at")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        compute_units[0]
+            .get("last_completed_at")
+            .and_then(Value::as_u64),
+        Some(5)
+    );
     assert_stat(
         &stdout,
         "sim.gpu_run.compute_unit.cu0.busy_cycles",
@@ -1433,9 +1676,48 @@ fn rem6_gpu_run_omits_activity_window_stats_for_inactive_compute_units() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains(
-        "{\"compute_unit\":1,\"workgroup_completions\":0,\"busy_cycles\":0,\"coalesced_memory_accesses\":0,\"global_memory_reads\":0,\"global_memory_writes\":0,\"first_started_at\":null,\"last_completed_at\":null}"
-    ));
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
+    let simulation = artifact.get("simulation").unwrap();
+    let compute_units = simulation
+        .get("compute_unit_activity")
+        .and_then(Value::as_array)
+        .unwrap();
+    assert_eq!(
+        compute_units[1]
+            .get("workgroup_completions")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        compute_units[1].get("busy_cycles").and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        compute_units[1]
+            .get("coalesced_memory_accesses")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        compute_units[1]
+            .get("global_memory_reads")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        compute_units[1]
+            .get("global_memory_writes")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        compute_units[1].get("first_started_at").unwrap(),
+        &Value::Null
+    );
+    assert_eq!(
+        compute_units[1].get("last_completed_at").unwrap(),
+        &Value::Null
+    );
     assert_stat(
         &stdout,
         "sim.gpu_run.compute_unit.cu1.workgroup_completions",

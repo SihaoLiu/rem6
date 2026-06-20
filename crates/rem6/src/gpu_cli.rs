@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use rem6_gpu::{
-    GpuCoalescedMemoryAccess, GpuComputeConfig, GpuDevice, GpuDeviceId, GpuIsaInstruction,
-    GpuIsaProgram, GpuKernelId, GpuKernelLaunch, GpuMemoryAccessKind, GpuWorkgroupCompletion,
+    GpuCoalescedMemoryAccess, GpuComputeConfig, GpuComputeUnitQueueWaitSummary, GpuDevice,
+    GpuDeviceId, GpuIsaInstruction, GpuIsaProgram, GpuKernelId, GpuKernelLaunch,
+    GpuMemoryAccessKind, GpuWorkgroupCompletion,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -798,6 +799,9 @@ pub struct Rem6GpuRunArtifact {
 pub(crate) struct Rem6GpuRunExecutionSummary {
     final_tick: u64,
     workgroup_completions: u64,
+    workgroup_queue_wait_count: u64,
+    workgroup_queue_wait_ticks: u64,
+    max_workgroup_queue_wait_ticks: u64,
     memory_accesses: u64,
     coalesced_memory_accesses: u64,
     global_memory_requests: u64,
@@ -813,6 +817,9 @@ pub(crate) struct Rem6GpuRunExecutionSummary {
 pub(crate) struct Rem6GpuComputeUnitActivity {
     compute_unit: u32,
     workgroup_completions: u64,
+    workgroup_queue_wait_count: u64,
+    workgroup_queue_wait_ticks: u64,
+    max_workgroup_queue_wait_ticks: u64,
     busy_cycles: u64,
     coalesced_memory_accesses: u64,
     global_memory_reads: u64,
@@ -826,6 +833,9 @@ impl Rem6GpuComputeUnitActivity {
         Self {
             compute_unit,
             workgroup_completions: 0,
+            workgroup_queue_wait_count: 0,
+            workgroup_queue_wait_ticks: 0,
+            max_workgroup_queue_wait_ticks: 0,
             busy_cycles: 0,
             coalesced_memory_accesses: 0,
             global_memory_reads: 0,
@@ -833,6 +843,14 @@ impl Rem6GpuComputeUnitActivity {
             first_started_at: None,
             last_completed_at: None,
         }
+    }
+
+    fn record_queue_wait(&mut self, summary: &GpuComputeUnitQueueWaitSummary) {
+        self.workgroup_queue_wait_count += summary.waited_workgroups();
+        self.workgroup_queue_wait_ticks += summary.wait_ticks();
+        self.max_workgroup_queue_wait_ticks = self
+            .max_workgroup_queue_wait_ticks
+            .max(summary.max_wait_ticks());
     }
 
     fn record_completion(&mut self, completion: &GpuWorkgroupCompletion) {
@@ -865,6 +883,18 @@ impl Rem6GpuComputeUnitActivity {
         self.workgroup_completions
     }
 
+    pub(crate) const fn workgroup_queue_wait_count(&self) -> u64 {
+        self.workgroup_queue_wait_count
+    }
+
+    pub(crate) const fn workgroup_queue_wait_ticks(&self) -> u64 {
+        self.workgroup_queue_wait_ticks
+    }
+
+    pub(crate) const fn max_workgroup_queue_wait_ticks(&self) -> u64 {
+        self.max_workgroup_queue_wait_ticks
+    }
+
     pub(crate) const fn busy_cycles(&self) -> u64 {
         self.busy_cycles
     }
@@ -891,9 +921,12 @@ impl Rem6GpuComputeUnitActivity {
 
     fn to_json(&self) -> String {
         format!(
-            "{{\"compute_unit\":{},\"workgroup_completions\":{},\"busy_cycles\":{},\"coalesced_memory_accesses\":{},\"global_memory_reads\":{},\"global_memory_writes\":{},\"first_started_at\":{},\"last_completed_at\":{}}}",
+            "{{\"compute_unit\":{},\"workgroup_completions\":{},\"workgroup_queue_wait_count\":{},\"workgroup_queue_wait_ticks\":{},\"max_workgroup_queue_wait_ticks\":{},\"busy_cycles\":{},\"coalesced_memory_accesses\":{},\"global_memory_reads\":{},\"global_memory_writes\":{},\"first_started_at\":{},\"last_completed_at\":{}}}",
             self.compute_unit,
             self.workgroup_completions,
+            self.workgroup_queue_wait_count,
+            self.workgroup_queue_wait_ticks,
+            self.max_workgroup_queue_wait_ticks,
             self.busy_cycles,
             self.coalesced_memory_accesses,
             self.global_memory_reads,
@@ -911,6 +944,18 @@ impl Rem6GpuRunExecutionSummary {
 
     pub(crate) const fn workgroup_completions(&self) -> u64 {
         self.workgroup_completions
+    }
+
+    pub(crate) const fn workgroup_queue_wait_count(&self) -> u64 {
+        self.workgroup_queue_wait_count
+    }
+
+    pub(crate) const fn workgroup_queue_wait_ticks(&self) -> u64 {
+        self.workgroup_queue_wait_ticks
+    }
+
+    pub(crate) const fn max_workgroup_queue_wait_ticks(&self) -> u64 {
+        self.max_workgroup_queue_wait_ticks
     }
 
     pub(crate) const fn memory_accesses(&self) -> u64 {
@@ -1044,8 +1089,12 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
     let memory_responses = Arc::new(Mutex::new(Vec::new()));
     let snapshot = gpu.snapshot();
     let accesses = snapshot.coalesced_memory_accesses().to_vec();
-    let compute_unit_activity =
-        gpu_compute_unit_activity(config.compute_units(), snapshot.completions(), &accesses)?;
+    let compute_unit_activity = gpu_compute_unit_activity(
+        config.compute_units(),
+        snapshot.completions(),
+        &accesses,
+        gpu_summary.compute_unit_queue_waits(),
+    )?;
     let memory_end = config.memory_end()?;
     let transactions = accesses
         .iter()
@@ -1150,6 +1199,9 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
     let execution = Rem6GpuRunExecutionSummary {
         final_tick,
         workgroup_completions: gpu_summary.workgroup_completion_count() as u64,
+        workgroup_queue_wait_count: gpu_summary.workgroup_queue_wait_count(),
+        workgroup_queue_wait_ticks: gpu_summary.workgroup_queue_wait_ticks(),
+        max_workgroup_queue_wait_ticks: gpu_summary.max_workgroup_queue_wait_ticks(),
         memory_accesses: gpu_summary.memory_access_count() as u64,
         coalesced_memory_accesses: gpu_summary.coalesced_memory_access_count() as u64,
         global_memory_requests: accesses.len() as u64,
@@ -1257,9 +1309,12 @@ impl Rem6GpuRunArtifact {
 impl Rem6GpuRunExecutionSummary {
     fn to_json(&self) -> String {
         format!(
-            "{{\"status\":\"completed\",\"final_tick\":{},\"workgroup_completions\":{},\"memory_accesses\":{},\"coalesced_memory_accesses\":{},\"global_memory_requests\":{},\"memory_responses\":{},\"scheduler_epochs\":{},\"scheduler_dispatches\":{},\"memory_scheduler_epochs\":{},\"memory_scheduler_dispatches\":{},\"compute_unit_activity\":[{}]}}",
+            "{{\"status\":\"completed\",\"final_tick\":{},\"workgroup_completions\":{},\"workgroup_queue_wait_count\":{},\"workgroup_queue_wait_ticks\":{},\"max_workgroup_queue_wait_ticks\":{},\"memory_accesses\":{},\"coalesced_memory_accesses\":{},\"global_memory_requests\":{},\"memory_responses\":{},\"scheduler_epochs\":{},\"scheduler_dispatches\":{},\"memory_scheduler_epochs\":{},\"memory_scheduler_dispatches\":{},\"compute_unit_activity\":[{}]}}",
             self.final_tick,
             self.workgroup_completions,
+            self.workgroup_queue_wait_count,
+            self.workgroup_queue_wait_ticks,
+            self.max_workgroup_queue_wait_ticks,
             self.memory_accesses,
             self.coalesced_memory_accesses,
             self.global_memory_requests,
@@ -1281,6 +1336,7 @@ fn gpu_compute_unit_activity(
     compute_units: u32,
     completions: &[GpuWorkgroupCompletion],
     accesses: &[GpuCoalescedMemoryAccess],
+    queue_waits: &[GpuComputeUnitQueueWaitSummary],
 ) -> Result<Vec<Rem6GpuComputeUnitActivity>, Rem6CliError> {
     let mut activity = (0..compute_units)
         .map(Rem6GpuComputeUnitActivity::new)
@@ -1314,6 +1370,18 @@ fn gpu_compute_unit_activity(
             )));
         };
         activity.record_memory_access(access);
+    }
+    for queue_wait in queue_waits {
+        let compute_unit = usize::try_from(queue_wait.compute_unit())
+            .map_err(|_| execute_error("GPU queue wait compute unit index does not fit usize"))?;
+        let Some(activity) = activity.get_mut(compute_unit) else {
+            return Err(execute_error(format!(
+                "GPU queue wait used compute unit {} outside configured count {}",
+                queue_wait.compute_unit(),
+                compute_units
+            )));
+        };
+        activity.record_queue_wait(queue_wait);
     }
     for (activity, intervals) in activity.iter_mut().zip(active_intervals) {
         activity.busy_cycles = merged_interval_cycles(intervals);

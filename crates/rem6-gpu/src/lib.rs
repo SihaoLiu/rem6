@@ -7,7 +7,7 @@ mod summary;
 mod topology;
 mod trace;
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
 pub use command::{
@@ -31,7 +31,7 @@ use rem6_transport::{
 pub use snapshot::{
     GpuDeviceSnapshot, GpuQueuedIsaProgramSnapshot, GpuQueuedWorkgroupSnapshot, GpuSlotSnapshot,
 };
-pub use summary::ParallelGpuRunSummary;
+pub use summary::{GpuComputeUnitQueueWaitSummary, ParallelGpuRunSummary};
 
 pub use topology::{GpuCommandPath, GpuTopologyConfig, GpuTopologyDevice};
 pub use trace::{GpuTraceEvent, GpuTraceKind, GpuWorkgroupCompletion};
@@ -430,12 +430,19 @@ impl GpuDevice {
     ) -> Result<ParallelGpuRunSummary, GpuError> {
         let before = self.snapshot();
         let before_memory_access_count = snapshot_memory_access_count(&before);
+        let mut queue_wait_records = snapshot_queued_workgroups(&before);
+        let before_wait_log_count = self.state.lock().expect("GPU state lock").wait_log.len();
         self.schedule_queued_slots_from_scheduler(scheduler)?;
         let scheduler_run = scheduler
             .run_until_idle_parallel_recorded()
             .map_err(GpuError::Scheduler)?;
         let after = self.snapshot();
         let after_memory_access_count = snapshot_memory_access_count(&after);
+        let queue_waits = {
+            let state = self.state.lock().expect("GPU state lock");
+            queue_wait_records.extend_from_slice(&state.wait_log[before_wait_log_count..]);
+            gpu_queue_wait_summary(&queue_wait_records)
+        };
 
         Ok(ParallelGpuRunSummary::new(
             scheduler_run,
@@ -454,6 +461,10 @@ impl GpuDevice {
                 .coalesced_memory_accesses()
                 .len()
                 .saturating_sub(before.coalesced_memory_accesses().len()),
+            queue_waits.waited_workgroups,
+            queue_waits.wait_ticks,
+            queue_waits.max_wait_ticks,
+            queue_waits.compute_units,
         ))
     }
 
@@ -1006,6 +1017,57 @@ impl GpuDeviceState {
             .map(|(index, _slot)| index)
             .expect("GPU has at least one execution slot")
     }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct GpuQueueWaitSummary {
+    waited_workgroups: u64,
+    wait_ticks: Tick,
+    max_wait_ticks: Tick,
+    compute_units: Vec<GpuComputeUnitQueueWaitSummary>,
+}
+
+fn gpu_queue_wait_summary(records: &[GpuQueuedWorkgroup]) -> GpuQueueWaitSummary {
+    let mut summary = GpuQueueWaitSummary::default();
+    let mut per_compute_unit: BTreeMap<u32, (u64, Tick, Tick)> = BTreeMap::new();
+    for record in records {
+        let delay = record.started_at.saturating_sub(record.queued_at);
+        if delay == 0 {
+            continue;
+        }
+        summary.waited_workgroups += 1;
+        summary.wait_ticks += delay;
+        summary.max_wait_ticks = summary.max_wait_ticks.max(delay);
+
+        let entry = per_compute_unit
+            .entry(record.compute_unit)
+            .or_insert((0, 0, 0));
+        entry.0 += 1;
+        entry.1 += delay;
+        entry.2 = entry.2.max(delay);
+    }
+    summary.compute_units = per_compute_unit
+        .into_iter()
+        .map(
+            |(compute_unit, (waited_workgroups, wait_ticks, max_wait_ticks))| {
+                GpuComputeUnitQueueWaitSummary::new(
+                    compute_unit,
+                    waited_workgroups,
+                    wait_ticks,
+                    max_wait_ticks,
+                )
+            },
+        )
+        .collect();
+    summary
+}
+
+fn snapshot_queued_workgroups(snapshot: &GpuDeviceSnapshot) -> Vec<GpuQueuedWorkgroup> {
+    snapshot
+        .slots()
+        .iter()
+        .flat_map(|slot| slot.queued().iter().map(GpuQueuedWorkgroup::from_snapshot))
+        .collect()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

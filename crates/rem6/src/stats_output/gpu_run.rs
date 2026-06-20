@@ -81,6 +81,27 @@ pub(crate) fn gpu_run_stats_output(
         StatResetPolicy::Monotonic,
         inputs.execution.workgroup_completions(),
     )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.workgroup_queue_wait_count",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.execution.workgroup_queue_wait_count(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.workgroup_queue_wait_ticks",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        inputs.execution.workgroup_queue_wait_ticks(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.gpu_run.max_workgroup_queue_wait_ticks",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        inputs.execution.max_workgroup_queue_wait_ticks(),
+    )?;
     for activity in inputs.execution.compute_unit_activity() {
         let prefix = format!("sim.gpu_run.compute_unit.cu{}", activity.compute_unit());
         increment_stat(
@@ -89,6 +110,27 @@ pub(crate) fn gpu_run_stats_output(
             "Count",
             StatResetPolicy::Monotonic,
             activity.workgroup_completions(),
+        )?;
+        increment_stat(
+            &mut stats,
+            &format!("{prefix}.workgroup_queue_wait_count"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            activity.workgroup_queue_wait_count(),
+        )?;
+        increment_stat(
+            &mut stats,
+            &format!("{prefix}.workgroup_queue_wait_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            activity.workgroup_queue_wait_ticks(),
+        )?;
+        increment_stat(
+            &mut stats,
+            &format!("{prefix}.max_workgroup_queue_wait_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            activity.max_workgroup_queue_wait_ticks(),
         )?;
         increment_stat(
             &mut stats,

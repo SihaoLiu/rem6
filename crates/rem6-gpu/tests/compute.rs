@@ -518,6 +518,14 @@ fn gpu_snapshot_restore_rearms_queued_workgroups_on_fresh_scheduler() {
         .unwrap();
 
     assert_eq!(summary.workgroup_completion_count(), queued_count);
+    assert_eq!(summary.workgroup_queue_wait_count(), 2);
+    assert_eq!(summary.workgroup_queue_wait_ticks(), 12);
+    assert_eq!(summary.max_workgroup_queue_wait_ticks(), 8);
+    assert_eq!(summary.compute_unit_queue_waits().len(), 1);
+    assert_eq!(summary.compute_unit_queue_waits()[0].compute_unit(), 0);
+    assert_eq!(summary.compute_unit_queue_waits()[0].waited_workgroups(), 2);
+    assert_eq!(summary.compute_unit_queue_waits()[0].wait_ticks(), 12);
+    assert_eq!(summary.compute_unit_queue_waits()[0].max_wait_ticks(), 8);
     assert_eq!(gpu.completions().len(), queued_count);
     assert_eq!(
         gpu.completions()[queued_count - 1]
@@ -525,6 +533,41 @@ fn gpu_snapshot_restore_rearms_queued_workgroups_on_fresh_scheduler() {
             .scalar_register(result_register),
         Some(44)
     );
+}
+
+#[test]
+fn gpu_summary_does_not_double_count_live_prequeued_waits() {
+    let cpu_partition = PartitionId::new(0);
+    let gpu_partition = PartitionId::new(1);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let gpu =
+        GpuDevice::new(GpuComputeConfig::new(GpuDeviceId::new(18), gpu_partition, 1, 1).unwrap());
+    let launch = GpuKernelLaunch::new(GpuKernelId::new(56), 3, 4).unwrap();
+
+    gpu.submit_kernel_from_partition(&mut scheduler, cpu_partition, 2, launch)
+        .unwrap();
+    scheduler.run_next_epoch_parallel_recorded().unwrap();
+    assert_eq!(
+        gpu.snapshot()
+            .slots()
+            .iter()
+            .map(|slot| slot.queued().len())
+            .sum::<usize>(),
+        2
+    );
+
+    let summary = gpu
+        .run_until_idle_parallel_recorded(&mut scheduler)
+        .unwrap();
+
+    assert_eq!(summary.workgroup_completion_count(), 3);
+    assert_eq!(summary.workgroup_queue_wait_count(), 2);
+    assert_eq!(summary.workgroup_queue_wait_ticks(), 12);
+    assert_eq!(summary.max_workgroup_queue_wait_ticks(), 8);
+    assert_eq!(summary.compute_unit_queue_waits().len(), 1);
+    assert_eq!(summary.compute_unit_queue_waits()[0].waited_workgroups(), 2);
+    assert_eq!(summary.compute_unit_queue_waits()[0].wait_ticks(), 12);
+    assert_eq!(summary.compute_unit_queue_waits()[0].max_wait_ticks(), 8);
 }
 
 #[test]
