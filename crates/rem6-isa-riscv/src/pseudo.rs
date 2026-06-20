@@ -1,11 +1,13 @@
 use crate::{
-    instruction::RiscvInstruction, record::RiscvSystemEvent, Register, RiscvError, RiscvHartState,
+    instruction::RiscvInstruction, record::RiscvSystemEvent, write_register, Register,
+    RegisterWrite, RiscvError, RiscvHartState,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvPseudoOp {
     Exit,
     Fail,
+    Sum,
     ResetStats,
     DumpStats,
     DumpResetStats,
@@ -25,6 +27,9 @@ pub(crate) fn decode_gem5_pseudo_op(raw: u32) -> Result<RiscvInstruction, RiscvE
         }),
         0x22 => Ok(RiscvInstruction::Gem5PseudoOp {
             op: RiscvPseudoOp::Fail,
+        }),
+        0x23 => Ok(RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::Sum,
         }),
         0x40 => Ok(RiscvInstruction::Gem5PseudoOp {
             op: RiscvPseudoOp::ResetStats,
@@ -51,50 +56,60 @@ pub(crate) fn decode_gem5_pseudo_op(raw: u32) -> Result<RiscvInstruction, RiscvE
     }
 }
 
-pub(crate) fn gem5_pseudo_system_event(
+pub(crate) fn execute_gem5_pseudo_op(
     op: RiscvPseudoOp,
     pc: u64,
-    hart: &RiscvHartState,
-) -> RiscvSystemEvent {
+    hart: &mut RiscvHartState,
+    register_writes: &mut Vec<RegisterWrite>,
+) -> Option<RiscvSystemEvent> {
     let a0 = hart.read(Register::from_field(10));
     let a1 = hart.read(Register::from_field(11));
-    match op {
-        RiscvPseudoOp::Exit => RiscvSystemEvent::Gem5Exit { pc, delay: a0 },
-        RiscvPseudoOp::Fail => RiscvSystemEvent::Gem5Fail {
+    let event = match op {
+        RiscvPseudoOp::Exit => Some(RiscvSystemEvent::Gem5Exit { pc, delay: a0 }),
+        RiscvPseudoOp::Fail => Some(RiscvSystemEvent::Gem5Fail {
             pc,
             delay: a0,
             code: a1,
-        },
-        RiscvPseudoOp::ResetStats => RiscvSystemEvent::Gem5ResetStats {
+        }),
+        RiscvPseudoOp::Sum => {
+            let sum = (10..=15)
+                .map(|index| hart.read(Register::from_field(index)))
+                .fold(0_u64, u64::wrapping_add);
+            write_register(hart, register_writes, Register::from_field(10), sum);
+            return None;
+        }
+        RiscvPseudoOp::ResetStats => Some(RiscvSystemEvent::Gem5ResetStats {
             pc,
             delay: a0,
             period: a1,
-        },
-        RiscvPseudoOp::DumpStats => RiscvSystemEvent::Gem5DumpStats {
+        }),
+        RiscvPseudoOp::DumpStats => Some(RiscvSystemEvent::Gem5DumpStats {
             pc,
             delay: a0,
             period: a1,
-        },
-        RiscvPseudoOp::DumpResetStats => RiscvSystemEvent::Gem5DumpResetStats {
+        }),
+        RiscvPseudoOp::DumpResetStats => Some(RiscvSystemEvent::Gem5DumpResetStats {
             pc,
             delay: a0,
             period: a1,
-        },
-        RiscvPseudoOp::Checkpoint => RiscvSystemEvent::Gem5Checkpoint {
+        }),
+        RiscvPseudoOp::Checkpoint => Some(RiscvSystemEvent::Gem5Checkpoint {
             pc,
             delay: a0,
             period: a1,
-        },
-        RiscvPseudoOp::Hypercall => RiscvSystemEvent::Gem5Hypercall { pc, selector: a0 },
-        RiscvPseudoOp::WorkBegin => RiscvSystemEvent::Gem5WorkBegin {
+        }),
+        RiscvPseudoOp::Hypercall => Some(RiscvSystemEvent::Gem5Hypercall { pc, selector: a0 }),
+        RiscvPseudoOp::WorkBegin => Some(RiscvSystemEvent::Gem5WorkBegin {
             pc,
             work_id: a0,
             thread_id: a1,
-        },
-        RiscvPseudoOp::WorkEnd => RiscvSystemEvent::Gem5WorkEnd {
+        }),
+        RiscvPseudoOp::WorkEnd => Some(RiscvSystemEvent::Gem5WorkEnd {
             pc,
             work_id: a0,
             thread_id: a1,
-        },
-    }
+        }),
+    };
+    write_register(hart, register_writes, Register::from_field(10), 0);
+    event
 }

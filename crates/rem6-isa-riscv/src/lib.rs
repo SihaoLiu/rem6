@@ -797,8 +797,7 @@ impl RiscvHartState {
                 });
             }
             RiscvInstruction::Gem5PseudoOp { op } => {
-                system_event = Some(pseudo::gem5_pseudo_system_event(op, pc, self));
-                write_register(self, &mut register_writes, Register::from_field(10), 0);
+                system_event = pseudo::execute_gem5_pseudo_op(op, pc, self, &mut register_writes);
             }
             RiscvInstruction::MachineInformationCsr(csr_instruction) => {
                 if machine_information_csr::execute(self, &mut register_writes, csr_instruction)

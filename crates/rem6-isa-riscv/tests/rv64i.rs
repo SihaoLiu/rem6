@@ -2704,6 +2704,31 @@ fn hart_decodes_and_records_gem5_exit_fail_pseudo_ops() {
 }
 
 #[test]
+fn hart_decodes_and_executes_gem5_sum_pseudo_op() {
+    let sum = RiscvInstruction::decode(gem5_m5op_type(0x23)).unwrap();
+
+    assert_eq!(
+        sum,
+        RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::Sum
+        }
+    );
+
+    let mut hart = RiscvHartState::new(0x7310);
+    for (index, value) in (10..=15).zip([1, 2, 3, 4, 5, 6]) {
+        hart.write(reg(index), value);
+    }
+
+    let record = hart.execute(sum).unwrap();
+    assert_eq!(record.pc(), 0x7310);
+    assert_eq!(record.next_pc(), 0x7314);
+    assert_eq!(hart.pc(), 0x7314);
+    assert_eq!(record.system_event(), None);
+    assert_eq!(record.register_writes(), &[RegisterWrite::new(reg(10), 21)]);
+    assert_eq!(hart.read(reg(10)), 21);
+}
+
+#[test]
 fn hart_decodes_and_records_gem5_stats_pseudo_ops() {
     let reset = RiscvInstruction::decode(gem5_m5op_type(0x40)).unwrap();
     let dump = RiscvInstruction::decode(gem5_m5op_type(0x41)).unwrap();

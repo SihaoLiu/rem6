@@ -7,6 +7,8 @@ use crate::support::*;
 const M5_WORK_BEGIN: u32 = 0x5a;
 const M5_WORK_END: u32 = 0x5b;
 const M5_EXIT: u32 = 0x21;
+const M5_FAIL: u32 = 0x22;
+const M5_SUM: u32 = 0x23;
 const M5_RESET_STATS: u32 = 0x40;
 const M5_DUMP_STATS: u32 = 0x41;
 const M5_DUMP_RESET_STATS: u32 = 0x42;
@@ -201,6 +203,79 @@ fn rem6_run_emits_m5_hypercall_host_action_detail_from_real_riscv_execution() {
         Some(0)
     );
     assert!(call.pointer("/tick").and_then(Value::as_u64).is_some());
+}
+
+#[test]
+fn rem6_run_executes_m5_sum_return_value_from_real_riscv_execution() {
+    let program = riscv64_program(&[
+        i_type(1, 0, 0x0, 10, 0x13), // addi a0, x0, 1
+        i_type(2, 0, 0x0, 11, 0x13), // addi a1, x0, 2
+        i_type(3, 0, 0x0, 12, 0x13), // addi a2, x0, 3
+        i_type(4, 0, 0x0, 13, 0x13), // addi a3, x0, 4
+        i_type(5, 0, 0x0, 14, 0x13), // addi a4, x0, 5
+        i_type(6, 0, 0x0, 15, 0x13), // addi a5, x0, 6
+        m5op(M5_SUM),
+        i_type(21, 0, 0x0, 5, 0x13), // addi t0, x0, 21
+        b_type(12, 5, 10, 0x1),      // bne a0, t0, fail
+        i_type(0, 0, 0x0, 10, 0x13), // addi a0, x0, 0
+        m5op(M5_EXIT),
+        i_type(99, 0, 0x0, 11, 0x13), // addi a1, x0, 99
+        m5op(M5_FAIL),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("m5-sum-return-value", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/simulation/stop_reason")
+            .and_then(Value::as_str),
+        Some("host_stop")
+    );
+    assert_eq!(
+        json.pointer("/simulation/stop_code")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/total_action_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions.pointer("/stop_count").and_then(Value::as_u64),
+        Some(1)
+    );
 }
 
 #[test]
