@@ -18,6 +18,8 @@ pub(super) const RISCV_LINUX_PERSONALITY: u64 = 92;
 const RISCV_LINUX_PERSONALITY_QUERY: u32 = 0xffff_ffff;
 const RISCV_LINUX_PR_SET_PDEATHSIG: u64 = 1;
 const RISCV_LINUX_PR_GET_PDEATHSIG: u64 = 2;
+const RISCV_LINUX_PR_GET_DUMPABLE: u64 = 3;
+const RISCV_LINUX_PR_SET_DUMPABLE: u64 = 4;
 const RISCV_LINUX_PR_SET_NAME: u64 = 15;
 const RISCV_LINUX_PR_GET_NAME: u64 = 16;
 const RISCV_LINUX_PR_SET_NO_NEW_PRIVS: u64 = 38;
@@ -48,6 +50,14 @@ impl RiscvSyscallState {
 
     pub(super) fn set_no_new_privs(&mut self) {
         self.no_new_privs = true;
+    }
+
+    pub(super) const fn dumpable(&self) -> u64 {
+        self.dumpable
+    }
+
+    pub(super) fn set_dumpable(&mut self, value: u64) {
+        self.dumpable = value;
     }
 
     pub(super) const fn pdeath_signal(&self) -> u32 {
@@ -161,6 +171,8 @@ pub(super) fn syscall_prctl(
         RISCV_LINUX_PR_GET_PDEATHSIG => guest_memory_writer.map(|guest_memory| {
             syscall_prctl_get_pdeathsig(request.argument(1), state, guest_memory)
         }),
+        RISCV_LINUX_PR_GET_DUMPABLE => Some(state.dumpable()),
+        RISCV_LINUX_PR_SET_DUMPABLE => Some(syscall_prctl_set_dumpable(request, state)),
         RISCV_LINUX_PR_SET_NAME => guest_memory_reader
             .map(|guest_memory| syscall_prctl_set_name(request.argument(1), state, guest_memory)),
         RISCV_LINUX_PR_GET_NAME => guest_memory_writer
@@ -169,6 +181,15 @@ pub(super) fn syscall_prctl(
         RISCV_LINUX_PR_GET_NO_NEW_PRIVS => Some(syscall_prctl_get_no_new_privs(request, state)),
         _ => Some(linux_error(RISCV_LINUX_EINVAL)),
     }
+}
+
+fn syscall_prctl_set_dumpable(request: RiscvSyscallRequest, state: &mut RiscvSyscallState) -> u64 {
+    let value = request.argument(1);
+    if value > 1 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    state.set_dumpable(value);
+    0
 }
 
 fn syscall_prctl_set_pdeathsig(request: RiscvSyscallRequest, state: &mut RiscvSyscallState) -> u64 {
