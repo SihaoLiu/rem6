@@ -1,4 +1,5 @@
-use rem6_cpu::{CpuFetchEventKind, RiscvCluster, RiscvCoreDriveAction};
+use rem6_cpu::{CpuFetchEventKind, RiscvCluster, RiscvCoreDriveAction, RiscvDataAccessEventKind};
+use rem6_memory::MemoryOperation;
 use rem6_system::RiscvSystemRun;
 
 use crate::formatting::{bytes_to_hex, json_escape};
@@ -9,6 +10,7 @@ pub(crate) struct Rem6DebugSummary {
     flags: Vec<CliDebugFlag>,
     exec_trace: Vec<Rem6ExecTraceRecord>,
     fetch_trace: Vec<Rem6FetchTraceRecord>,
+    data_trace: Vec<Rem6DataTraceRecord>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -31,6 +33,15 @@ struct Rem6FetchTraceRecord {
     endpoint: String,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Rem6DataTraceRecord {
+    cpu: u32,
+    tick: u64,
+    kind: &'static str,
+    address: u64,
+    size: u64,
+}
+
 impl Rem6DebugSummary {
     pub(crate) fn from_run(
         config: &Rem6RunConfig,
@@ -48,10 +59,16 @@ impl Rem6DebugSummary {
         } else {
             Vec::new()
         };
+        let data_trace = if config.debug_data_enabled() {
+            data_trace_records(cluster, config.cores() as u32)
+        } else {
+            Vec::new()
+        };
         Self {
             flags,
             exec_trace,
             fetch_trace,
+            data_trace,
         }
     }
 
@@ -78,9 +95,15 @@ impl Rem6DebugSummary {
             .map(Rem6FetchTraceRecord::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let data_trace = self
+            .data_trace
+            .iter()
+            .map(Rem6DataTraceRecord::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
-            "{{\"flags\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}]}}",
-            flags, exec_trace, fetch_trace
+            "{{\"flags\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"data_trace\":[{}]}}",
+            flags, exec_trace, fetch_trace, data_trace
         )
     }
 }
@@ -113,6 +136,15 @@ impl Rem6FetchTraceRecord {
     }
 }
 
+impl Rem6DataTraceRecord {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"cpu\":{},\"tick\":{},\"kind\":\"{}\",\"address\":\"0x{:x}\",\"size\":{}}}",
+            self.cpu, self.tick, self.kind, self.address, self.size,
+        )
+    }
+}
+
 fn exec_trace_records(run: &RiscvSystemRun) -> Vec<Rem6ExecTraceRecord> {
     let mut records = Vec::new();
     for event in run.turns().iter().flat_map(|turn| turn.core_events()) {
@@ -128,6 +160,59 @@ fn exec_trace_records(run: &RiscvSystemRun) -> Vec<Rem6ExecTraceRecord> {
         });
     }
     records
+}
+
+fn data_trace_records(cluster: &RiscvCluster, core_count: u32) -> Vec<Rem6DataTraceRecord> {
+    let mut records = Vec::new();
+    for cpu_index in 0..core_count {
+        let cpu = rem6_cpu::CpuId::new(cpu_index);
+        let Ok(core) = cluster.core(cpu) else {
+            continue;
+        };
+        records.extend(core.data_access_events().into_iter().filter_map(|event| {
+            if event.kind() != RiscvDataAccessEventKind::Completed {
+                return None;
+            }
+            Some(Rem6DataTraceRecord {
+                cpu: cpu.get(),
+                tick: event.tick(),
+                kind: data_trace_kind(event.operation())?,
+                address: event.physical_address().get(),
+                size: event.size().bytes(),
+            })
+        }));
+    }
+    records.sort_by_key(|record| (record.tick, record.cpu, record.address, record.size));
+    records
+}
+
+fn data_trace_kind(operation: MemoryOperation) -> Option<&'static str> {
+    match operation {
+        MemoryOperation::ReadShared
+        | MemoryOperation::ReadUnique
+        | MemoryOperation::LoadLocked
+        | MemoryOperation::LockedRmwRead => Some("load"),
+        MemoryOperation::Write
+        | MemoryOperation::StoreConditional
+        | MemoryOperation::StoreConditionalFail
+        | MemoryOperation::StoreConditionalUpgrade
+        | MemoryOperation::StoreConditionalUpgradeFail
+        | MemoryOperation::LockedRmwWrite => Some("store"),
+        MemoryOperation::Atomic | MemoryOperation::AtomicNoReturn => Some("atomic"),
+        MemoryOperation::NoAccess
+        | MemoryOperation::InstructionFetch
+        | MemoryOperation::CacheBlockZero
+        | MemoryOperation::Upgrade
+        | MemoryOperation::PrefetchRead
+        | MemoryOperation::PrefetchWrite
+        | MemoryOperation::WriteClean
+        | MemoryOperation::WritebackClean
+        | MemoryOperation::WritebackDirty
+        | MemoryOperation::CleanShared
+        | MemoryOperation::CleanEvict
+        | MemoryOperation::Invalidate
+        | MemoryOperation::InvalidateWritable => None,
+    }
 }
 
 fn fetch_trace_records(cluster: &RiscvCluster, core_count: u32) -> Vec<Rem6FetchTraceRecord> {

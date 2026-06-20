@@ -188,6 +188,65 @@ fn rem6_run_fetch_debug_flag_keeps_fetches_across_riscv_se_stream_reset() {
 }
 
 #[test]
+fn rem6_run_data_debug_flag_emits_real_data_access_trace() {
+    let mut program = riscv64_program(&[
+        0x0000_0297, // auipc x5, 0
+        0x0402_8293, // addi x5, x5, 64
+        0x0052_b023, // sd x5, 0(x5)
+        0x0002_b303, // ld x6, 0(x5)
+        0x0000_0073, // ecall
+    ]);
+    program.resize(0x50, 0);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-data", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--debug-flags",
+            "Data",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = stdout_json(output.stdout);
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![Value::String("Data".to_string())])
+    );
+    let trace = json
+        .pointer("/debug/data_trace")
+        .and_then(Value::as_array)
+        .expect("debug data trace array");
+    assert_eq!(trace.len(), 2);
+    assert_eq!(trace[0].get("kind").and_then(Value::as_str), Some("store"));
+    assert_eq!(trace[1].get("kind").and_then(Value::as_str), Some("load"));
+    for record in trace {
+        assert_eq!(record.get("cpu").and_then(Value::as_u64), Some(0));
+        assert_eq!(
+            record.get("address").and_then(Value::as_str),
+            Some("0x80000040")
+        );
+        assert_eq!(record.get("size").and_then(Value::as_u64), Some(8));
+        assert!(record.get("tick").and_then(Value::as_u64).is_some());
+    }
+}
+
+#[test]
 fn rem6_run_loads_debug_flags_from_toml_config() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7

@@ -772,9 +772,9 @@ pipeline and cache/DRAM runtime state.
 - [x] CLI `run --gdb-listen` hardware breakpoints accept `Z1`/`z1`, stop before
   a matching RISC-V instruction retires, and continue after removal without
   patching guest memory.
-- [x] CLI `run --execute --stats-format json --debug-flags Exec,Fetch` emits
-  deterministic instruction and fetch trace records from real RISC-V execution
-  paths.
+- [x] CLI `run --execute --stats-format json --debug-flags Exec,Fetch,Data`
+  emits deterministic instruction, fetch, and data-access trace records from
+  real RISC-V execution paths.
 - [x] Stricter gem5 text-stat compatibility exists.
 - [ ] Cache/bank/fabric/DRAM hierarchy counters are complete.
 - [ ] Broader GDB CSR register-cache coverage exists.
@@ -823,9 +823,10 @@ runtime GDB data-watchpoint execution through real RISC-V load and store
 data-access completions with detach-time continuation of later guest
 instructions, runtime GDB hardware breakpoints that stop before the matching
 RISC-V instruction retires without patching guest memory,
-top-level `rem6 run --execute --stats-format json --debug-flags Exec,Fetch`
-execution-trace JSON emitted from real RISC-V instruction execution events and
-fetch-trace JSON emitted from real RISC-V fetch issue records,
+top-level `rem6 run --execute --stats-format json --debug-flags Exec,Fetch,Data`
+execution-trace JSON emitted from real RISC-V instruction execution events,
+fetch-trace JSON emitted from real RISC-V fetch issue records, and data-trace
+JSON emitted from completed RISC-V data-access records,
 target-description-aligned register-cache seeding, top-level trace-replay
 fabric-route activity counters, top-level trace-replay aggregate resource
 activity counters, top-level trace-replay data-cache run and protocol

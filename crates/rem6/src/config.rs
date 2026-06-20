@@ -1052,6 +1052,10 @@ impl Rem6RunConfig {
         self.debug_flags.contains(&CliDebugFlag::Fetch)
     }
 
+    pub fn debug_data_enabled(&self) -> bool {
+        self.debug_flags.contains(&CliDebugFlag::Data)
+    }
+
     pub const fn cores(&self) -> usize {
         self.cores
     }
