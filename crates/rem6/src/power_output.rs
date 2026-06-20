@@ -95,6 +95,14 @@ fn records_for_run(execution: &crate::Rem6ExecutionSummary) -> Vec<PowerAnalysis
         .iter()
         .map(|core| cpu_power_record(core, execution.final_tick))
         .collect::<Vec<_>>();
+    if let Some(record) =
+        cpu_instruction_cache_power_record(&execution.instruction_cache, execution.final_tick)
+    {
+        records.push(record);
+    }
+    if let Some(record) = cpu_data_cache_power_record(&execution.data_cache, execution.final_tick) {
+        records.push(record);
+    }
     if let Some(record) = dram_power_record(&execution.dram, execution.final_tick) {
         records.push(record);
     }
@@ -197,41 +205,68 @@ fn gpu_data_cache_power_record(
     data_cache: &CliDataCacheSummary,
     final_tick: u64,
 ) -> Option<PowerAnalysisRecord> {
-    if data_cache.runs == 0
-        && data_cache.directory_decisions == 0
-        && data_cache.dram_accesses == 0
-        && data_cache.bank_accepted == 0
-        && data_cache.prefetch_issued == 0
-    {
+    cache_power_record("gpu.data_cache", data_cache, final_tick, 39.0, 0.012)
+}
+
+fn cpu_instruction_cache_power_record(
+    cache: &CliDataCacheSummary,
+    final_tick: u64,
+) -> Option<PowerAnalysisRecord> {
+    cache_power_record("cpu.instruction_cache", cache, final_tick, 39.0, 0.010)
+}
+
+fn cpu_data_cache_power_record(
+    cache: &CliDataCacheSummary,
+    final_tick: u64,
+) -> Option<PowerAnalysisRecord> {
+    cache_power_record("cpu.data_cache", cache, final_tick, 39.0, 0.012)
+}
+
+fn cache_power_record(
+    component: &str,
+    cache: &CliDataCacheSummary,
+    final_tick: u64,
+    base_temperature_celsius: f64,
+    static_watts: f64,
+) -> Option<PowerAnalysisRecord> {
+    if !cache_power_summary_is_active(cache) {
         return None;
     }
-    let operations = data_cache
+    let operations = cache
         .directory_decisions
-        .saturating_add(data_cache.bank_accepted)
-        .saturating_add(data_cache.bank_scheduled_misses)
-        .saturating_add(data_cache.bank_coalesced_misses)
-        .saturating_add(data_cache.prefetch_issued);
+        .saturating_add(cache.bank_accepted)
+        .saturating_add(cache.bank_scheduled_misses)
+        .saturating_add(cache.bank_coalesced_misses)
+        .saturating_add(cache.prefetch_issued);
     let dynamic_watts = watts_from_activity(
-        data_cache.runs,
+        cache.runs,
         operations,
-        data_cache.dram_accesses.saturating_mul(64),
+        cache.dram_accesses.saturating_mul(64),
         0.000_006,
         0.000_004,
         0.000_000_5,
     );
     Some(
         PowerAnalysisRecord::new(
-            "gpu.data_cache",
+            component,
             PowerStateKind::On,
             PowerResidency::new(vec![(
                 PowerStateKind::On,
-                final_tick.max(data_cache.runs).max(1),
+                final_tick.max(cache.runs).max(1),
             )]),
-            39.0 + dynamic_watts.min(6.0),
-            PowerEstimate::new(dynamic_watts, 0.012),
+            base_temperature_celsius + dynamic_watts.min(6.0),
+            PowerEstimate::new(dynamic_watts, static_watts),
         )
-        .expect("GPU data-cache power records use valid residency and finite watts"),
+        .expect("cache power records use non-empty names, valid residency, and finite watts"),
     )
+}
+
+fn cache_power_summary_is_active(cache: &CliDataCacheSummary) -> bool {
+    cache.runs != 0
+        || cache.directory_decisions != 0
+        || cache.dram_accesses != 0
+        || cache.bank_accepted != 0
+        || cache.prefetch_issued != 0
 }
 
 fn dram_power_record(dram: &Rem6DramSummary, final_tick: u64) -> Option<PowerAnalysisRecord> {

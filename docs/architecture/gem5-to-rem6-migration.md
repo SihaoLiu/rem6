@@ -1123,20 +1123,15 @@ complete NoMali PIO device model remain absent.
 custom XML smoke coverage for totals, components, and residency entries, plus
 deterministic library-level McPAT-shaped XML and DSENT-shaped CSV exports.
 Top-level `rem6 run --power-output` emits an activity-derived McPAT-shaped or
-DSENT-shaped artifact from executed CPU and DRAM summaries. Top-level
-`rem6 gpu-run --power-output` emits activity-derived GPU compute-unit,
-GPU data-cache, and DRAM power records, with the artifact path reported in
-the run JSON or CLI output envelope. Top-level `rem6 gpu-run --nomali-output`
-emits a deterministic NoMali-compatible T760 adapter artifact from executed
-GPU run summaries, including API version, register-window size, T760
-configuration-register values, a reset/read/checkpoint register-file snapshot,
-minimal side-effecting `GPU_COMMAND_SOFT_RESET` PIO command-write evidence with
-`RESET_COMPLETED` IRQ raw/mask/status state plus `GPU_IRQ_CLEAR` clear-state
-evidence, a shader power-on/off PIO slice that updates `SHADER_READY_LO` and
-raises `POWER_CHANGED_SINGLE` plus `POWER_CHANGED_ALL` IRQ state, callback and
-interrupt identifiers, and observed workgroup plus memory activity; TOML and
-flag-driven runs both report the artifact path in JSON or the CLI output
-envelope.
+DSENT-shaped artifact from executed CPU, instruction-cache, data-cache, and
+DRAM summaries. Top-level `rem6 gpu-run --power-output` emits
+activity-derived GPU compute-unit, GPU data-cache, and DRAM power records,
+with the artifact path reported in the run JSON or CLI output envelope.
+Top-level `rem6 gpu-run --nomali-output` emits a deterministic
+NoMali-compatible T760 adapter artifact from executed GPU run summaries,
+including register-file checkpoint evidence, soft-reset and IRQ-clear state,
+shader power-state IRQ evidence, callback identifiers, and observed workgroup
+plus memory activity; TOML and flag-driven runs both report the artifact path.
 
 **Not migrated:** Complete `ext/nomali`, `ext/mcpat`, and `ext/dsent` parity,
 the full NoMali PIO command surface beyond the soft-reset and shader-power
@@ -1145,13 +1140,12 @@ ingestion, full external schema parity, and calibrated power/thermal activity.
 
 **Evidence:** rem6-power power-analysis export self-tests including custom XML,
 McPAT-shaped XML, and DSENT-shaped CSV output; `rem6 run` CLI tests for
-`--power-output`, envelope reporting, and load-only rejection; `rem6 gpu-run`
-CLI and TOML tests for McPAT-shaped and DSENT-shaped activity-derived output;
-`rem6 gpu-run --nomali-output` CLI and TOML tests for NoMali-compatible adapter
-artifacts with T760 reset/read/checkpoint register-file evidence plus
-soft-reset command-write, IRQ-clear state evidence, and shader power-on/off
-ready-state plus POWER_CHANGED IRQ evidence,
-multi-artifact envelope reporting, and output-path conflict rejection.
+`--power-output`, executed instruction-cache and data-cache activity records,
+envelope reporting, and load-only rejection; `rem6 gpu-run` CLI and TOML tests
+for McPAT-shaped and DSENT-shaped activity-derived output; CLI and TOML tests
+for `rem6 gpu-run --nomali-output` NoMali-compatible adapter artifacts with
+T760 register-file, soft-reset, IRQ-clear, shader power, multi-artifact
+envelope, and output-path conflict evidence.
 
 **Next evidence:** Adapter ingestion, broader NoMali PIO command/register
 behavior, calibrated activity models, and stricter external schema parity tests.
