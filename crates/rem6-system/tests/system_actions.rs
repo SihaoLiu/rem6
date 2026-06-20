@@ -583,6 +583,10 @@ fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest()
         .checkpoints()
         .chunk(&component, "in-order-pipeline")
         .unwrap();
+    let branch_predictor = executor
+        .checkpoints()
+        .chunk(&component, "branch-predictor")
+        .unwrap();
     assert_eq!(
         outcome,
         SystemActionOutcome::Checkpoint {
@@ -595,6 +599,7 @@ fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest()
                 vec![CheckpointState::new(
                     component,
                     vec![
+                        CheckpointChunk::new("branch-predictor", branch_predictor.to_vec()),
                         CheckpointChunk::new("fregs", fregs.to_vec()),
                         CheckpointChunk::new("hart-run-state", hart_run_state.to_vec()),
                         CheckpointChunk::new("in-order-pipeline", in_order_pipeline.to_vec()),
