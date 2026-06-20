@@ -287,6 +287,7 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
     assert!(stdout.contains(
         "\"stage_max_in_flight\":{\"fetch1\":1,\"fetch2\":1,\"decode\":1,\"execute\":1,\"commit\":1}"
     ));
+    assert!(stdout.contains("\"stage_occupied_cycles\":{\"fetch1\":"));
     assert!(stdout.contains("\"retired\":2"));
     assert!(stdout.contains("\"data_wait_cycles\":0"));
     assert_stat(
@@ -309,6 +310,13 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
             &format!("sim.cpu0.pipeline.in_order.stage.{stage}.max_in_flight"),
             "Count",
             1,
+            "monotonic",
+        );
+        assert_stat_greater_than(
+            &stdout,
+            &format!("sim.cpu0.pipeline.in_order.stage.{stage}.occupied_cycles"),
+            "Cycle",
+            0,
             "monotonic",
         );
     }

@@ -756,31 +756,29 @@ pub(super) fn run_stats_output(
                 StatResetPolicy::Constant,
                 core.in_order_pipeline_in_flight,
             )?;
-            emit_in_order_stage_in_flight_stats(
+            emit_in_order_stage_stats(
                 &mut stats,
                 core,
                 "in_flight",
+                "Count",
                 StatResetPolicy::Constant,
-                [
-                    core.in_order_pipeline_stage_in_flight.fetch1,
-                    core.in_order_pipeline_stage_in_flight.fetch2,
-                    core.in_order_pipeline_stage_in_flight.decode,
-                    core.in_order_pipeline_stage_in_flight.execute,
-                    core.in_order_pipeline_stage_in_flight.commit,
-                ],
+                core.in_order_pipeline_stage_in_flight.values(),
             )?;
-            emit_in_order_stage_in_flight_stats(
+            emit_in_order_stage_stats(
                 &mut stats,
                 core,
                 "max_in_flight",
+                "Count",
                 StatResetPolicy::Monotonic,
-                [
-                    core.in_order_pipeline_stage_max_in_flight.fetch1,
-                    core.in_order_pipeline_stage_max_in_flight.fetch2,
-                    core.in_order_pipeline_stage_max_in_flight.decode,
-                    core.in_order_pipeline_stage_max_in_flight.execute,
-                    core.in_order_pipeline_stage_max_in_flight.commit,
-                ],
+                core.in_order_pipeline_stage_max_in_flight.values(),
+            )?;
+            emit_in_order_stage_stats(
+                &mut stats,
+                core,
+                "occupied_cycles",
+                "Cycle",
+                StatResetPolicy::Monotonic,
+                core.in_order_pipeline_stage_occupied_cycles.values(),
             )?;
             increment_stat(
                 &mut stats,
@@ -1234,10 +1232,11 @@ fn emit_memory_resource_stats(
     )
 }
 
-fn emit_in_order_stage_in_flight_stats(
+fn emit_in_order_stage_stats(
     stats: &mut StatsRegistry,
     core: &Rem6CoreSummary,
     name: &str,
+    unit: &'static str,
     reset_policy: StatResetPolicy,
     values: [u64; 5],
 ) -> Result<(), Rem6CliError> {
@@ -1248,7 +1247,7 @@ fn emit_in_order_stage_in_flight_stats(
         increment_stat(
             stats,
             &format!("sim.cpu{}.pipeline.in_order.stage.{stage}.{name}", core.cpu),
-            "Count",
+            unit,
             reset_policy,
             value,
         )?;

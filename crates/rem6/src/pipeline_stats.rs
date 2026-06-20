@@ -24,6 +24,26 @@ impl Rem6InOrderPipelineStageInFlightSummary {
             commit: self.commit.max(other.commit),
         }
     }
+
+    fn saturating_add(self, other: Self) -> Self {
+        Self {
+            fetch1: self.fetch1.saturating_add(other.fetch1),
+            fetch2: self.fetch2.saturating_add(other.fetch2),
+            decode: self.decode.saturating_add(other.decode),
+            execute: self.execute.saturating_add(other.execute),
+            commit: self.commit.saturating_add(other.commit),
+        }
+    }
+
+    pub(crate) fn values(self) -> [u64; 5] {
+        [
+            self.fetch1,
+            self.fetch2,
+            self.decode,
+            self.execute,
+            self.commit,
+        ]
+    }
 }
 
 pub(super) fn in_order_pipeline_run_summary(core: &RiscvCore) -> InOrderPipelineRunSummary {
@@ -47,6 +67,15 @@ pub(super) fn in_order_pipeline_stage_max_in_flight(
                 .max_with(stage_in_flight_from_snapshot(record.before()))
                 .max_with(stage_in_flight_from_snapshot(record.after()))
         },
+    )
+}
+
+pub(super) fn in_order_pipeline_stage_occupied_cycles(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageInFlightSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageInFlightSummary::default(),
+        |summary, record| summary.saturating_add(stage_in_flight_from_snapshot(record.before())),
     )
 }
 
