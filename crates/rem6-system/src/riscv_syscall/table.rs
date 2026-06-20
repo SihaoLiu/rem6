@@ -444,6 +444,9 @@ impl RiscvSyscallTable {
             RISCV_LINUX_PIDFD_OPEN => Some(RiscvSyscallOutcome::Return {
                 value: syscall_pidfd_open(request, state),
             }),
+            RISCV_LINUX_PIDFD_GETFD => Some(RiscvSyscallOutcome::Return {
+                value: syscall_pidfd_getfd(request, state),
+            }),
             RISCV_LINUX_PIDFD_SEND_SIGNAL => Some(RiscvSyscallOutcome::Return {
                 value: syscall_pidfd_send_signal(request, state, tick),
             }),

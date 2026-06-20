@@ -182,8 +182,8 @@ use permissions::{
     RISCV_NEWLIB_LEGACY_CHMOD,
 };
 use pidfd::{
-    syscall_pidfd_open, syscall_pidfd_send_signal, RiscvGuestPidFd, RISCV_LINUX_PIDFD_OPEN,
-    RISCV_LINUX_PIDFD_SEND_SIGNAL,
+    syscall_pidfd_getfd, syscall_pidfd_open, syscall_pidfd_send_signal, RiscvGuestPidFd,
+    RISCV_LINUX_PIDFD_GETFD, RISCV_LINUX_PIDFD_OPEN, RISCV_LINUX_PIDFD_SEND_SIGNAL,
 };
 use pipe::{
     syscall_pipe2, RiscvGuestPipe, RiscvGuestPipeEndpoint, RiscvGuestPipeId, RISCV_LINUX_PIPE2,
