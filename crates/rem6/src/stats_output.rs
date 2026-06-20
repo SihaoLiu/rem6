@@ -12,8 +12,8 @@ use super::formatting::json_escape;
 use crate::gpu_cli::{Rem6GpuFabricSummary, Rem6GpuRunExecutionSummary};
 
 use super::{
-    parallel_stats, stats_error, CliDataCacheSummary, Rem6CliError, Rem6DramSummary,
-    Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GpuRunConfig, Rem6GupsConfig,
+    parallel_stats, stats_error, CliDataCacheSummary, Rem6CliError, Rem6CoreSummary,
+    Rem6DramSummary, Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GpuRunConfig, Rem6GupsConfig,
     Rem6GupsExecutionSummary, Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
     Rem6MemoryTransportSummary, Rem6ReadfileSummary, Rem6ResourceAcquireArtifact, Rem6RunConfig,
     Rem6TraceReplayConfig, Rem6TraceReplayExecutionSummary, RequestedIsa,
@@ -756,6 +756,7 @@ pub(super) fn run_stats_output(
                 StatResetPolicy::Constant,
                 core.in_order_pipeline_in_flight,
             )?;
+            emit_in_order_stage_in_flight_stats(&mut stats, core)?;
             increment_stat(
                 &mut stats,
                 &format!("sim.cpu{}.pipeline.in_order.stall_cycles", core.cpu),
@@ -1206,6 +1207,31 @@ fn emit_memory_resource_stats(
         StatResetPolicy::Monotonic,
         execution.memory_resources.active_dram_resources,
     )
+}
+
+fn emit_in_order_stage_in_flight_stats(
+    stats: &mut StatsRegistry,
+    core: &Rem6CoreSummary,
+) -> Result<(), Rem6CliError> {
+    for (stage, value) in [
+        ("fetch1", core.in_order_pipeline_stage_in_flight.fetch1),
+        ("fetch2", core.in_order_pipeline_stage_in_flight.fetch2),
+        ("decode", core.in_order_pipeline_stage_in_flight.decode),
+        ("execute", core.in_order_pipeline_stage_in_flight.execute),
+        ("commit", core.in_order_pipeline_stage_in_flight.commit),
+    ] {
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.pipeline.in_order.stage.{stage}.in_flight",
+                core.cpu
+            ),
+            "Count",
+            StatResetPolicy::Constant,
+            value,
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

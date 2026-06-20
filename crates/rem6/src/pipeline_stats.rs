@@ -1,9 +1,37 @@
 use std::collections::BTreeMap;
 
-use rem6_cpu::{CpuFetchEventKind, InOrderPipelineRunSummary, RiscvCore};
+use rem6_cpu::{
+    CpuFetchEventKind, InOrderPipelineRunSummary, InOrderPipelineSnapshot, InOrderPipelineStage,
+    RiscvCore,
+};
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct Rem6InOrderPipelineStageInFlightSummary {
+    pub(crate) fetch1: u64,
+    pub(crate) fetch2: u64,
+    pub(crate) decode: u64,
+    pub(crate) execute: u64,
+    pub(crate) commit: u64,
+}
 
 pub(super) fn in_order_pipeline_run_summary(core: &RiscvCore) -> InOrderPipelineRunSummary {
     InOrderPipelineRunSummary::from_cycle_records(core.in_order_pipeline_cycle_records())
+}
+
+pub(super) fn in_order_pipeline_stage_in_flight(
+    snapshot: &InOrderPipelineSnapshot,
+) -> Rem6InOrderPipelineStageInFlightSummary {
+    let mut summary = Rem6InOrderPipelineStageInFlightSummary::default();
+    for instruction in snapshot.in_flight() {
+        match instruction.stage() {
+            InOrderPipelineStage::Fetch1 => summary.fetch1 += 1,
+            InOrderPipelineStage::Fetch2 => summary.fetch2 += 1,
+            InOrderPipelineStage::Decode => summary.decode += 1,
+            InOrderPipelineStage::Execute => summary.execute += 1,
+            InOrderPipelineStage::Commit => summary.commit += 1,
+        }
+    }
+    summary
 }
 
 pub(super) fn in_order_pipeline_fetch_wait_cycles(core: &RiscvCore) -> u64 {

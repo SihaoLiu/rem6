@@ -280,7 +280,11 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"committed_instructions\":2"));
-    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":6,\"in_flight\":0,\"retired\":2,"));
+    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":6,\"in_flight\":0,"));
+    assert!(stdout.contains(
+        "\"stage_in_flight\":{\"fetch1\":0,\"fetch2\":0,\"decode\":0,\"execute\":0,\"commit\":0}"
+    ));
+    assert!(stdout.contains("\"retired\":2"));
     assert!(stdout.contains("\"data_wait_cycles\":0"));
     assert_stat(
         &stdout,
@@ -390,6 +394,7 @@ fn rem6_run_stats_include_issued_fetch_ahead_before_response() {
     assert!(stdout.contains("\"status\":\"stopped_at_tick_limit\""));
     assert_eq!(json_u64_field(&stdout, "\"committed_instructions\":"), 1);
     assert_eq!(json_u64_field(&stdout, "\"in_flight\":"), 1);
+    assert!(stdout.contains("\"stage_in_flight\":{\"fetch1\":"));
     let advanced = json_u64_field(&stdout, "\"advanced\":");
     let retired = json_u64_field(&stdout, "\"retired\":");
     assert!(
@@ -424,6 +429,18 @@ fn rem6_run_stats_include_issued_fetch_ahead_before_response() {
         1,
         "constant",
     );
+    let stage_in_flight = [
+        stat_value(&stdout, "sim.cpu0.pipeline.in_order.stage.fetch1.in_flight"),
+        stat_value(&stdout, "sim.cpu0.pipeline.in_order.stage.fetch2.in_flight"),
+        stat_value(&stdout, "sim.cpu0.pipeline.in_order.stage.decode.in_flight"),
+        stat_value(
+            &stdout,
+            "sim.cpu0.pipeline.in_order.stage.execute.in_flight",
+        ),
+        stat_value(&stdout, "sim.cpu0.pipeline.in_order.stage.commit.in_flight"),
+    ];
+    assert_eq!(stage_in_flight.iter().sum::<u64>(), 1);
+    assert!(stage_in_flight.iter().any(|count| *count == 1));
     assert_stat(
         &stdout,
         "sim.memory.fetch.requests",
