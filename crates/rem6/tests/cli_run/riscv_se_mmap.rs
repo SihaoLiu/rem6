@@ -3,6 +3,128 @@ use std::{fs, process::Command};
 use crate::support::{find_riscv_tool, temp_workspace};
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_get_mempolicy_with_qemu_probe() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE raw get_mempolicy smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE raw get_mempolicy smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-get-mempolicy");
+    let source = workspace.join("raw-get-mempolicy.c");
+    let binary = workspace.join("raw-get-mempolicy");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+
+static long linux_syscall5(long number, long arg0, long arg1, long arg2, long arg3, long arg4) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a4 asm("a4") = arg4;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3), "r"(a4), "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    int mode = -1;
+    int mode_only_value = -1;
+    unsigned long mask = ~0UL;
+    long full = linux_syscall5(236, (long)&mode, (long)&mask, 64, 0, 0);
+    long mode_only = linux_syscall5(236, (long)&mode_only_value, 0, 0, 0, 0);
+    long invalid_maxnode = linux_syscall5(236, 0, (long)&mask, 0, 0, 0);
+    long invalid_flags = linux_syscall5(236, 0, 0, 0, 0, 1);
+
+    int ok = full == 0
+        && mode == 0
+        && mask == 0
+        && mode_only == 0
+        && mode_only_value == 0
+        && invalid_maxnode == -22
+        && invalid_flags == -22;
+    printf("raw-get-mempolicy:%ld:%d:%lu:%ld:%d:%ld:%ld:%d\n",
+           full, mode, mask, mode_only, mode_only_value, invalid_maxnode, invalid_flags, ok);
+    return ok ? 70 : 90;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    if qemu_output.status.code() == Some(70) {
+        assert_eq!(
+            qemu_output.stdout,
+            b"raw-get-mempolicy:0:0:0:0:0:-22:-22:1\n"
+        );
+    } else {
+        assert_eq!(
+            qemu_output.status.code(),
+            Some(90),
+            "qemu stdout: {}; qemu stderr: {}",
+            String::from_utf8_lossy(&qemu_output.stdout),
+            String::from_utf8_lossy(&qemu_output.stderr)
+        );
+        assert_eq!(
+            qemu_output.stdout,
+            b"raw-get-mempolicy:-38:-1:18446744073709551615:-38:-1:-38:-38:0\n"
+        );
+        eprintln!("qemu-riscv64 reports ENOSYS for raw get_mempolicy; checking rem6 SE coverage");
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":70"));
+    assert!(stdout.contains("\"text\":\"raw-get-mempolicy:0:0:0:0:0:-22:-22:1\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_madvise_dontneed_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!("skipping static RISC-V SE raw madvise smoke: riscv64-unknown-elf-gcc not found");

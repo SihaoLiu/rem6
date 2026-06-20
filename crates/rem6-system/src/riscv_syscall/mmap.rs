@@ -17,6 +17,7 @@ pub(super) const RISCV_LINUX_MUNLOCK: u64 = 229;
 pub(super) const RISCV_LINUX_MINCORE: u64 = 232;
 pub(super) const RISCV_LINUX_MADVISE: u64 = 233;
 pub(super) const RISCV_LINUX_MBIND: u64 = 235;
+pub(super) const RISCV_LINUX_GET_MEMPOLICY: u64 = 236;
 pub(super) const RISCV_LINUX_MAP_SHARED: u64 = 0x01;
 pub(super) const RISCV_LINUX_MAP_PRIVATE: u64 = 0x02;
 pub(super) const RISCV_LINUX_MAP_FIXED: u64 = 0x10;
@@ -46,6 +47,7 @@ const RISCV_LINUX_MPOL_MODE_FLAGS: u64 = RISCV_LINUX_MPOL_F_NUMA_BALANCING
     | RISCV_LINUX_MPOL_F_STATIC_NODES;
 const RISCV_LINUX_MPOL_SUPPORTED_MODE_FLAGS: u64 =
     RISCV_LINUX_MPOL_F_RELATIVE_NODES | RISCV_LINUX_MPOL_F_STATIC_NODES;
+const RISCV_LINUX_GET_MEMPOLICY_SUPPORTED_FLAGS: u64 = 0;
 const RISCV_LINUX_MPOL_MF_STRICT: u64 = 1;
 const RISCV_LINUX_MPOL_MF_MOVE: u64 = 1 << 1;
 const RISCV_LINUX_MPOL_MF_MOVE_ALL: u64 = 1 << 2;
@@ -813,6 +815,51 @@ pub(super) fn syscall_mbind(
         return linux_error(RISCV_LINUX_EFAULT);
     }
     0
+}
+
+pub(super) fn syscall_get_mempolicy(
+    request: RiscvSyscallRequest,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> Option<u64> {
+    let mode_address = request.argument(0);
+    let nodemask_address = request.argument(1);
+    let maxnode = request.argument(2);
+    let flags = request.argument(4);
+    if flags & !RISCV_LINUX_GET_MEMPOLICY_SUPPORTED_FLAGS != 0 {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+    if mode_address == 0 && nodemask_address == 0 {
+        return Some(0);
+    }
+    let nodemask_bytes = if nodemask_address == 0 {
+        None
+    } else {
+        if maxnode == 0 {
+            return Some(linux_error(RISCV_LINUX_EINVAL));
+        }
+        if maxnode > RISCV_LINUX_MBIND_MAXNODE_BITS {
+            return Some(linux_error(RISCV_LINUX_EINVAL));
+        }
+        let bytes = match mbind_nodemask_bytes(maxnode) {
+            Ok(bytes) => bytes,
+            Err(errno) => return Some(linux_error(errno)),
+        };
+        Some(bytes)
+    };
+
+    let guest_memory = guest_memory_writer?;
+    if mode_address != 0 {
+        let mode = RISCV_LINUX_MPOL_DEFAULT as i32;
+        if !guest_memory.write(mode_address, &mode.to_le_bytes()) {
+            return Some(linux_error(RISCV_LINUX_EFAULT));
+        }
+    }
+    if let Some(bytes) = nodemask_bytes {
+        if !guest_memory.write(nodemask_address, &vec![0; bytes]) {
+            return Some(linux_error(RISCV_LINUX_EFAULT));
+        }
+    }
+    Some(0)
 }
 
 fn mlockall_flags_are_valid(flags: u64) -> bool {

@@ -623,6 +623,8 @@ impl RiscvSyscallTable {
             RISCV_LINUX_MBIND => Some(RiscvSyscallOutcome::Return {
                 value: syscall_mbind(request, state, guest_memory_reader),
             }),
+            RISCV_LINUX_GET_MEMPOLICY => syscall_get_mempolicy(request, guest_memory_writer)
+                .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_SETRLIMIT => syscall_setrlimit(request, state, guest_memory_reader)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_EXIT | RISCV_LINUX_EXIT_GROUP => Some(syscall_exit(

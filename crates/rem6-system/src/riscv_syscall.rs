@@ -159,12 +159,12 @@ use memfd::{syscall_memfd_create, RISCV_LINUX_MEMFD_CREATE};
 use mkdir::{syscall_mkdir, RISCV_LINUX_MKDIRAT, RISCV_NEWLIB_LEGACY_MKDIR};
 pub use mmap::RiscvMmapRegion;
 use mmap::{
-    syscall_madvise, syscall_mbind, syscall_memory_lock_range, syscall_mincore, syscall_mlockall,
-    syscall_mmap, syscall_mprotect, syscall_mremap, syscall_msync, syscall_munlockall,
-    syscall_munmap, RISCV64_LINUX_MMAP_BASE, RISCV_LINUX_MADVISE, RISCV_LINUX_MBIND,
-    RISCV_LINUX_MINCORE, RISCV_LINUX_MLOCK, RISCV_LINUX_MMAP, RISCV_LINUX_MPROTECT,
-    RISCV_LINUX_MREMAP, RISCV_LINUX_MSYNC, RISCV_LINUX_MUNLOCK, RISCV_LINUX_MUNMAP,
-    RISCV_PAGE_BYTES,
+    syscall_get_mempolicy, syscall_madvise, syscall_mbind, syscall_memory_lock_range,
+    syscall_mincore, syscall_mlockall, syscall_mmap, syscall_mprotect, syscall_mremap,
+    syscall_msync, syscall_munlockall, syscall_munmap, RISCV64_LINUX_MMAP_BASE,
+    RISCV_LINUX_GET_MEMPOLICY, RISCV_LINUX_MADVISE, RISCV_LINUX_MBIND, RISCV_LINUX_MINCORE,
+    RISCV_LINUX_MLOCK, RISCV_LINUX_MMAP, RISCV_LINUX_MPROTECT, RISCV_LINUX_MREMAP,
+    RISCV_LINUX_MSYNC, RISCV_LINUX_MUNLOCK, RISCV_LINUX_MUNMAP, RISCV_PAGE_BYTES,
 };
 #[cfg(test)]
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
