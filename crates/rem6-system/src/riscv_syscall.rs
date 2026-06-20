@@ -62,6 +62,7 @@ mod sendfile;
 mod signal;
 mod signalfd;
 mod sleep;
+mod splice;
 mod startup;
 mod stat;
 mod sync;
@@ -211,6 +212,7 @@ use signalfd::{syscall_signalfd4, RiscvGuestSignalFd, RISCV_LINUX_SIGNALFD4};
 use sleep::{
     syscall_clock_nanosleep, syscall_nanosleep, RISCV_LINUX_CLOCK_NANOSLEEP, RISCV_LINUX_NANOSLEEP,
 };
+use splice::{syscall_splice, RISCV_LINUX_SPLICE};
 pub use startup::{
     RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSeStartupError, RiscvSeStartupImage,
     RiscvSeStartupStringField, RISCV_LINUX_AT_ENTRY, RISCV_LINUX_AT_NULL, RISCV_LINUX_AT_PAGESZ,

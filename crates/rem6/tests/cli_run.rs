@@ -78,6 +78,8 @@ mod riscv_se_resource;
 mod riscv_se_signal;
 #[path = "cli_run/riscv_se_signalfd.rs"]
 mod riscv_se_signalfd;
+#[path = "cli_run/riscv_se_splice.rs"]
+mod riscv_se_splice;
 #[path = "cli_run/riscv_se_statx.rs"]
 mod riscv_se_statx;
 #[path = "cli_run/riscv_se_stdio.rs"]

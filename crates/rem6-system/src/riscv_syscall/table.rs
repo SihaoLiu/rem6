@@ -258,6 +258,12 @@ impl RiscvSyscallTable {
                     }
                 }
             }
+            RISCV_LINUX_SPLICE => Some(syscall_splice(
+                request,
+                state,
+                guest_memory_reader,
+                guest_memory_writer,
+            )),
             RISCV_LINUX_COPY_FILE_RANGE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_copy_file_range(
                     request,

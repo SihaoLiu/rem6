@@ -62,6 +62,14 @@ pub(super) enum RiscvGuestPipeWrite {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum RiscvGuestPipeRead {
+    NotPipe,
+    Bytes(Vec<u8>),
+    WouldBlock,
+    Blocked,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum RiscvGuestPipeCapacityError {
     Fd(GuestFdError),
     Busy,
@@ -146,6 +154,29 @@ impl RiscvSyscallState {
             || self
                 .guest_pipe_write_descriptions
                 .contains_key(&description))
+    }
+
+    pub(super) fn guest_fds_share_pipe(
+        &self,
+        left: GuestFd,
+        right: GuestFd,
+    ) -> Result<bool, GuestFdError> {
+        let left_description = self
+            .guest_fds
+            .entry(left)
+            .ok_or(GuestFdError::BadFd { fd: left })?
+            .description();
+        let right_description = self
+            .guest_fds
+            .entry(right)
+            .ok_or(GuestFdError::BadFd { fd: right })?
+            .description();
+        let left_endpoint = self.guest_pipe_endpoint(left_description);
+        let right_endpoint = self.guest_pipe_endpoint(right_description);
+        Ok(matches!(
+            (left_endpoint, right_endpoint),
+            (Some(left_endpoint), Some(right_endpoint)) if left_endpoint.pipe == right_endpoint.pipe
+        ))
     }
 
     pub(super) fn guest_pipe_read_ready(&self, fd: GuestFd) -> Result<Option<bool>, GuestFdError> {
@@ -239,10 +270,57 @@ impl RiscvSyscallState {
         Ok(())
     }
 
+    pub(super) fn guest_pipe_read_with_nonblocking_hint(
+        &self,
+        fd: GuestFd,
+        count: usize,
+        force_nonblocking: bool,
+    ) -> Result<RiscvGuestPipeRead, GuestFdError> {
+        let description = self
+            .guest_fds
+            .entry(fd)
+            .ok_or(GuestFdError::BadFd { fd })?
+            .description();
+        let Some(endpoint) = self.guest_pipe_read_descriptions.get(&description) else {
+            return Ok(RiscvGuestPipeRead::NotPipe);
+        };
+        let Some(pipe) = self.guest_pipes.get(&endpoint.pipe) else {
+            return Err(GuestFdError::MissingFileDescription { description });
+        };
+        let bytes = pipe.buffer.iter().take(count).copied().collect::<Vec<_>>();
+        if !bytes.is_empty() || count == 0 {
+            return Ok(RiscvGuestPipeRead::Bytes(bytes));
+        }
+        let write_live = self
+            .guest_pipe_write_descriptions
+            .values()
+            .any(|candidate| candidate.pipe == endpoint.pipe);
+        if !write_live {
+            return Ok(RiscvGuestPipeRead::Bytes(Vec::new()));
+        }
+        let status_flags = self.guest_fds.status_flags(fd)?;
+        let nonblocking =
+            force_nonblocking || status_flags.bits() & RISCV_LINUX_O_NONBLOCK as u32 != 0;
+        Ok(if nonblocking {
+            RiscvGuestPipeRead::WouldBlock
+        } else {
+            RiscvGuestPipeRead::Blocked
+        })
+    }
+
     pub(super) fn guest_pipe_write_plan(
         &self,
         fd: GuestFd,
         byte_count: usize,
+    ) -> Result<RiscvGuestPipeWrite, GuestFdError> {
+        self.guest_pipe_write_plan_with_nonblocking_hint(fd, byte_count, false)
+    }
+
+    pub(super) fn guest_pipe_write_plan_with_nonblocking_hint(
+        &self,
+        fd: GuestFd,
+        byte_count: usize,
+        force_nonblocking: bool,
     ) -> Result<RiscvGuestPipeWrite, GuestFdError> {
         let description = self
             .guest_fds
@@ -257,7 +335,8 @@ impl RiscvSyscallState {
             return Ok(RiscvGuestPipeWrite::NotPipe);
         };
         let status_flags = self.guest_fds.status_flags(fd)?;
-        let nonblocking = status_flags.bits() & RISCV_LINUX_O_NONBLOCK as u32 != 0;
+        let nonblocking =
+            force_nonblocking || status_flags.bits() & RISCV_LINUX_O_NONBLOCK as u32 != 0;
         let pipe = self
             .guest_pipes
             .get(&endpoint.pipe)
@@ -288,7 +367,17 @@ impl RiscvSyscallState {
         fd: GuestFd,
         bytes: &[u8],
     ) -> Result<RiscvGuestPipeWrite, GuestFdError> {
-        let write = self.guest_pipe_write_plan(fd, bytes.len())?;
+        self.write_guest_pipe_from_fd_with_nonblocking_hint(fd, bytes, false)
+    }
+
+    pub(super) fn write_guest_pipe_from_fd_with_nonblocking_hint(
+        &mut self,
+        fd: GuestFd,
+        bytes: &[u8],
+        force_nonblocking: bool,
+    ) -> Result<RiscvGuestPipeWrite, GuestFdError> {
+        let write =
+            self.guest_pipe_write_plan_with_nonblocking_hint(fd, bytes.len(), force_nonblocking)?;
         let RiscvGuestPipeWrite::Written(written) = write else {
             return Ok(write);
         };
@@ -369,6 +458,16 @@ impl RiscvSyscallState {
                 self.guest_pipes.remove(&endpoint.pipe);
             }
         }
+    }
+
+    fn guest_pipe_endpoint(
+        &self,
+        description: GuestFileDescriptionId,
+    ) -> Option<RiscvGuestPipeEndpoint> {
+        self.guest_pipe_read_descriptions
+            .get(&description)
+            .or_else(|| self.guest_pipe_write_descriptions.get(&description))
+            .copied()
     }
 
     fn next_guest_pipe_id(&self) -> Result<RiscvGuestPipeId, GuestFdError> {
