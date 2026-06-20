@@ -1,3 +1,5 @@
+use crate::GuestFd;
+
 use super::{
     linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallRequest,
     RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EPERM,
@@ -9,10 +11,15 @@ pub(super) const RISCV_LINUX_GETRLIMIT: u64 = 163;
 
 const RISCV_LINUX_RLIMIT_DATA: u64 = 2;
 const RISCV_LINUX_RLIMIT_STACK: u64 = 3;
+const RISCV_LINUX_RLIMIT_CORE: u64 = 4;
 const RISCV_LINUX_RLIMIT_NPROC: u64 = 6;
+const RISCV_LINUX_RLIMIT_NOFILE: u64 = 7;
+const RISCV_LINUX_RLIMIT_AS: u64 = 9;
+const RISCV_LINUX_RLIMIT_COUNT: usize = 16;
 const RISCV_LINUX_RLIMIT_BYTES: usize = 16;
 const RISCV_LINUX_DATA_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
 const RISCV_LINUX_SINGLE_PROCESS_COUNT: u64 = 1;
+const RISCV_LINUX_OPEN_FILE_LIMIT: u64 = 1024;
 
 pub const RISCV_LINUX_STACK_LIMIT_BYTES: u64 = 8 * 1024 * 1024;
 
@@ -24,16 +31,30 @@ pub(super) struct RiscvResourceLimit {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct RiscvResourceLimits {
-    data: RiscvResourceLimit,
-    stack: RiscvResourceLimit,
-    nproc: RiscvResourceLimit,
+    limits: [Option<RiscvResourceLimit>; RISCV_LINUX_RLIMIT_COUNT],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RiscvResourceLimitKind {
     Data,
     Stack,
+    Core,
     Nproc,
+    NoFile,
+    AddressSpace,
+}
+
+impl RiscvResourceLimitKind {
+    const fn index(self) -> usize {
+        match self {
+            Self::Data => RISCV_LINUX_RLIMIT_DATA as usize,
+            Self::Stack => RISCV_LINUX_RLIMIT_STACK as usize,
+            Self::Core => RISCV_LINUX_RLIMIT_CORE as usize,
+            Self::Nproc => RISCV_LINUX_RLIMIT_NPROC as usize,
+            Self::NoFile => RISCV_LINUX_RLIMIT_NOFILE as usize,
+            Self::AddressSpace => RISCV_LINUX_RLIMIT_AS as usize,
+        }
+    }
 }
 
 impl RiscvResourceLimit {
@@ -52,36 +73,39 @@ impl RiscvResourceLimit {
 
 impl RiscvResourceLimits {
     pub(super) const fn linux_single_process() -> Self {
-        Self {
-            data: RiscvResourceLimit::new(
-                RISCV_LINUX_DATA_LIMIT_BYTES,
-                RISCV_LINUX_DATA_LIMIT_BYTES,
-            ),
-            stack: RiscvResourceLimit::new(
-                RISCV_LINUX_STACK_LIMIT_BYTES,
-                RISCV_LINUX_STACK_LIMIT_BYTES,
-            ),
-            nproc: RiscvResourceLimit::new(
-                RISCV_LINUX_SINGLE_PROCESS_COUNT,
-                RISCV_LINUX_SINGLE_PROCESS_COUNT,
-            ),
-        }
+        let mut limits = [None; RISCV_LINUX_RLIMIT_COUNT];
+        limits[RiscvResourceLimitKind::Data.index()] = Some(RiscvResourceLimit::new(
+            RISCV_LINUX_DATA_LIMIT_BYTES,
+            RISCV_LINUX_DATA_LIMIT_BYTES,
+        ));
+        limits[RiscvResourceLimitKind::Stack.index()] = Some(RiscvResourceLimit::new(
+            RISCV_LINUX_STACK_LIMIT_BYTES,
+            RISCV_LINUX_STACK_LIMIT_BYTES,
+        ));
+        limits[RiscvResourceLimitKind::Core.index()] =
+            Some(RiscvResourceLimit::new(u64::MAX, u64::MAX));
+        limits[RiscvResourceLimitKind::Nproc.index()] = Some(RiscvResourceLimit::new(
+            RISCV_LINUX_SINGLE_PROCESS_COUNT,
+            RISCV_LINUX_SINGLE_PROCESS_COUNT,
+        ));
+        limits[RiscvResourceLimitKind::NoFile.index()] = Some(RiscvResourceLimit::new(
+            RISCV_LINUX_OPEN_FILE_LIMIT,
+            RISCV_LINUX_OPEN_FILE_LIMIT,
+        ));
+        limits[RiscvResourceLimitKind::AddressSpace.index()] =
+            Some(RiscvResourceLimit::new(u64::MAX, u64::MAX));
+        Self { limits }
     }
 
     const fn get(&self, kind: RiscvResourceLimitKind) -> RiscvResourceLimit {
-        match kind {
-            RiscvResourceLimitKind::Data => self.data,
-            RiscvResourceLimitKind::Stack => self.stack,
-            RiscvResourceLimitKind::Nproc => self.nproc,
+        match self.limits[kind.index()] {
+            Some(limit) => limit,
+            None => RiscvResourceLimit::new(u64::MAX, u64::MAX),
         }
     }
 
     fn set(&mut self, kind: RiscvResourceLimitKind, limit: RiscvResourceLimit) {
-        match kind {
-            RiscvResourceLimitKind::Data => self.data = limit,
-            RiscvResourceLimitKind::Stack => self.stack = limit,
-            RiscvResourceLimitKind::Nproc => self.nproc = limit,
-        }
+        self.limits[kind.index()] = Some(limit);
     }
 }
 
@@ -92,6 +116,22 @@ impl RiscvSyscallState {
 
     fn set_resource_limit(&mut self, kind: RiscvResourceLimitKind, limit: RiscvResourceLimit) {
         self.resource_limits.set(kind, limit);
+    }
+
+    pub(super) fn open_file_soft_limit(&self) -> u64 {
+        self.resource_limit(RiscvResourceLimitKind::NoFile)
+            .current()
+    }
+
+    pub(super) fn guest_fd_is_below_open_file_limit(&self, fd: GuestFd) -> bool {
+        u64::try_from(fd.get()).is_ok_and(|raw| raw < self.open_file_soft_limit())
+    }
+
+    pub(super) fn has_open_file_capacity(&self, additional_fds: usize) -> bool {
+        let Some(open_after) = self.guest_fds().len().checked_add(additional_fds) else {
+            return false;
+        };
+        u64::try_from(open_after).is_ok_and(|open_after| open_after <= self.open_file_soft_limit())
     }
 }
 
@@ -247,7 +287,10 @@ fn resource_limit_kind(resource: u64) -> Option<RiscvResourceLimitKind> {
     match resource {
         RISCV_LINUX_RLIMIT_DATA => Some(RiscvResourceLimitKind::Data),
         RISCV_LINUX_RLIMIT_STACK => Some(RiscvResourceLimitKind::Stack),
+        RISCV_LINUX_RLIMIT_CORE => Some(RiscvResourceLimitKind::Core),
         RISCV_LINUX_RLIMIT_NPROC => Some(RiscvResourceLimitKind::Nproc),
+        RISCV_LINUX_RLIMIT_NOFILE => Some(RiscvResourceLimitKind::NoFile),
+        RISCV_LINUX_RLIMIT_AS => Some(RiscvResourceLimitKind::AddressSpace),
         _ => None,
     }
 }

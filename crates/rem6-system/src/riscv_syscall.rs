@@ -1153,10 +1153,28 @@ impl RiscvSyscallState {
     }
 
     fn next_guest_fd_excluding(&self, reserved: &[GuestFd]) -> Result<GuestFd, GuestFdError> {
+        self.next_guest_fd_from_excluding(GuestFd::new(0)?, reserved)
+    }
+
+    fn next_guest_fd_from_excluding(
+        &self,
+        minimum: GuestFd,
+        reserved: &[GuestFd],
+    ) -> Result<GuestFd, GuestFdError> {
+        if !self.has_open_file_capacity(reserved.len() + 1) {
+            return Err(GuestFdError::FdSpaceExhausted);
+        }
+        if !self.guest_fd_is_below_open_file_limit(minimum) {
+            return Err(GuestFdError::FdSpaceExhausted);
+        }
         let snapshot = self.guest_fds.snapshot();
-        let mut candidate = 0_i32;
+        let mut candidate =
+            i32::try_from(minimum.get()).map_err(|_| GuestFdError::FdSpaceExhausted)?;
         loop {
             let fd = GuestFd::new(candidate)?;
+            if !self.guest_fd_is_below_open_file_limit(fd) {
+                return Err(GuestFdError::FdSpaceExhausted);
+            }
             if snapshot.entries().iter().all(|entry| entry.fd() != fd) && !reserved.contains(&fd) {
                 return Ok(fd);
             }

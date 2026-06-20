@@ -1,6 +1,6 @@
 use crate::{
-    GuestFd, GuestFdEntry, GuestFdError, GuestFdTable, GuestFileDescription,
-    GuestFileDescriptionId, GuestFileStatusFlags,
+    GuestFd, GuestFdEntry, GuestFdTable, GuestFileDescription, GuestFileDescriptionId,
+    GuestFileStatusFlags,
 };
 
 use super::{
@@ -81,12 +81,18 @@ pub(super) fn syscall_dup(old_fd_argument: u64, state: &mut RiscvSyscallState) -
     let Some(old_fd) = guest_fd_argument(old_fd_argument) else {
         return linux_error(RISCV_LINUX_EBADF);
     };
-    match state.guest_fds.dup(old_fd) {
+    if state.guest_fds.entry(old_fd).is_none() {
+        return linux_error(RISCV_LINUX_EBADF);
+    }
+    let new_fd = match state.next_guest_fd_excluding(&[]) {
+        Ok(new_fd) => new_fd,
+        Err(_) => return linux_error(RISCV_LINUX_EMFILE),
+    };
+    match state.guest_fds.dup2(old_fd, new_fd) {
         Ok(new_fd) => {
             state.duplicate_fd_source(old_fd, new_fd);
             u64::from(new_fd.get())
         }
-        Err(GuestFdError::FdSpaceExhausted) => linux_error(RISCV_LINUX_EMFILE),
         Err(_error) => linux_error(RISCV_LINUX_EBADF),
     }
 }
@@ -108,6 +114,15 @@ pub(super) fn syscall_dup3(
     };
     if old_fd == new_fd {
         return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if state.guest_fds.entry(old_fd).is_none() {
+        return linux_error(RISCV_LINUX_EBADF);
+    }
+    if !state.guest_fd_is_below_open_file_limit(new_fd) {
+        return linux_error(RISCV_LINUX_EBADF);
+    }
+    if state.guest_fds.entry(new_fd).is_none() && !state.has_open_file_capacity(1) {
+        return linux_error(RISCV_LINUX_EMFILE);
     }
     match state.guest_fds.dup2_with_replacement(old_fd, new_fd) {
         Ok(record) => {

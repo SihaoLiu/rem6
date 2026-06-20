@@ -351,3 +351,140 @@ int main(void) {
     assert!(stdout.contains("\"text\":\"raw-prlimit64:ok:1:1:1:1\\n\""));
     assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
 }
+
+#[test]
+fn rem6_run_riscv_se_runs_static_raw_prlimit64_nofile_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE raw prlimit64 nofile smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE raw prlimit64 nofile smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-prlimit64-nofile");
+    let source = workspace.join("raw-prlimit64-nofile.c");
+    let binary = workspace.join("raw-prlimit64-nofile");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+
+#define RLIMIT_NOFILE 7
+
+struct rlimit64 {
+    unsigned long cur;
+    unsigned long max;
+};
+
+static long linux_syscall4(long number, long arg0, long arg1, long arg2, long arg3) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3), "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    struct rlimit64 old_limit = {0, 0};
+    struct rlimit64 requested = {0, 0};
+    struct rlimit64 after = {0, 0};
+    int pipe_fds[2] = {-1, -1};
+
+    long initial = linux_syscall4(261, 0, RLIMIT_NOFILE, 0, (long)&old_limit);
+    unsigned long new_current = old_limit.max >= 3 ? 3 : old_limit.cur;
+    requested.cur = new_current;
+    requested.max = old_limit.max;
+    long set = initial == 0
+        ? linux_syscall4(261, 0, RLIMIT_NOFILE, (long)&requested, 0)
+        : -999;
+    long query = set == 0
+        ? linux_syscall4(261, 0, RLIMIT_NOFILE, 0, (long)&after)
+        : -999;
+    long pipe_status = query == 0 && after.cur == 3
+        ? linux_syscall4(59, (long)pipe_fds, 0, 0, 0)
+        : -999;
+
+    int ok = initial == 0
+        && set == 0
+        && query == 0
+        && old_limit.cur > 0
+        && old_limit.cur <= old_limit.max
+        && after.cur == new_current
+        && after.max == old_limit.max
+        && pipe_status == -24
+        && pipe_fds[0] == -1
+        && pipe_fds[1] == -1;
+    printf("raw-prlimit64-nofile:%s:%d:%d:%d:%d:%d\n",
+           ok ? "ok" : "fail",
+           initial == 0,
+           set == 0,
+           query == 0,
+           after.cur == new_current,
+           pipe_status == -24);
+    return ok ? 43 : 76;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(43),
+        "qemu stdout: {}; qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stdout),
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(qemu_output.stdout, b"raw-prlimit64-nofile:ok:1:1:1:1:1\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "250000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":43"));
+    assert!(stdout.contains("\"text\":\"raw-prlimit64-nofile:ok:1:1:1:1:1\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}

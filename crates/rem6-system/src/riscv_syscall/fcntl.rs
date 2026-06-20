@@ -92,7 +92,23 @@ pub(super) fn syscall_fcntl(
                     value: linux_error(RISCV_LINUX_EINVAL),
                 });
             };
-            match state.guest_fds.dup_from_min(fd, minimum_fd) {
+            if !state.guest_fd_is_below_open_file_limit(minimum_fd) {
+                return Some(RiscvSyscallOutcome::Return {
+                    value: linux_error(RISCV_LINUX_EINVAL),
+                });
+            }
+            let new_fd = match state.next_guest_fd_from_excluding(minimum_fd, &[]) {
+                Ok(new_fd) => new_fd,
+                Err(error) => {
+                    return Some(RiscvSyscallOutcome::Return {
+                        value: match error {
+                            GuestFdError::FdSpaceExhausted => linux_error(RISCV_LINUX_EMFILE),
+                            _ => guest_fd_error_return_value(),
+                        },
+                    });
+                }
+            };
+            match state.guest_fds.dup2(fd, new_fd) {
                 Ok(new_fd) => {
                     state.duplicate_fd_source(fd, new_fd);
                     if close_on_exec && state.guest_fds.set_close_on_exec(new_fd, true).is_err() {
@@ -660,6 +676,10 @@ fn read_i64(bytes: &[u8], offset: usize) -> i64 {
 
 fn guest_fd_error_return() -> RiscvSyscallOutcome {
     RiscvSyscallOutcome::Return {
-        value: linux_error(RISCV_LINUX_EBADF),
+        value: guest_fd_error_return_value(),
     }
+}
+
+fn guest_fd_error_return_value() -> u64 {
+    linux_error(RISCV_LINUX_EBADF)
 }
