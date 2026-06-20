@@ -74,6 +74,8 @@ mod riscv_se_pvec;
 mod riscv_se_rename;
 #[path = "cli_run/riscv_se_resource.rs"]
 mod riscv_se_resource;
+#[path = "cli_run/riscv_se_riscv.rs"]
+mod riscv_se_riscv;
 #[path = "cli_run/riscv_se_signal.rs"]
 mod riscv_se_signal;
 #[path = "cli_run/riscv_se_signalfd.rs"]

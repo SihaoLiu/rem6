@@ -535,6 +535,9 @@ impl RiscvSyscallTable {
             RISCV_LINUX_RISCV_HWPROBE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_riscv_hwprobe(request, guest_memory_reader, guest_memory_writer),
             }),
+            RISCV_LINUX_RISCV_FLUSH_ICACHE => Some(RiscvSyscallOutcome::Return {
+                value: syscall_riscv_flush_icache(request),
+            }),
             RISCV_LINUX_NANOSLEEP => syscall_nanosleep(request, guest_memory_reader)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_CLOCK_NANOSLEEP => {

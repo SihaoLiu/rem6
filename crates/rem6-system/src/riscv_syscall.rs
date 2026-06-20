@@ -10,6 +10,7 @@ use rem6_kernel::Tick;
 
 mod advisory;
 mod brk;
+mod cache;
 mod capability;
 mod clock;
 mod constants;
@@ -81,6 +82,7 @@ mod xattr;
 
 use advisory::{syscall_fadvise64, RISCV_LINUX_FADVISE64};
 use brk::syscall_brk;
+use cache::{syscall_riscv_flush_icache, RISCV_LINUX_RISCV_FLUSH_ICACHE};
 use capability::{syscall_capget, syscall_capset, RISCV_LINUX_CAPGET, RISCV_LINUX_CAPSET};
 use clock::{
     syscall_clock, syscall_getitimer, syscall_setitimer, RiscvLinuxItimerval,
