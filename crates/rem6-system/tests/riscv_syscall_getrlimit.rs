@@ -18,7 +18,8 @@ const RISCV_LINUX_RLIMIT_AS: u64 = 9;
 const RISCV_LINUX_STACK_LIMIT_BYTES: u64 = 8 * 1024 * 1024;
 const RISCV_LINUX_DATA_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
 const RISCV_LINUX_SINGLE_PROCESS_COUNT: u64 = 1;
-const RISCV_LINUX_OPEN_FILE_LIMIT: u64 = 1024;
+const RISCV_LINUX_OPEN_FILE_SOFT_LIMIT: u64 = 1024;
+const RISCV_LINUX_OPEN_FILE_HARD_LIMIT: u64 = 4096;
 
 #[test]
 fn linux_table_getrlimit_writes_stack_limit() {
@@ -120,8 +121,8 @@ fn linux_table_getrlimit_writes_open_file_limit() {
     assert_eq!(outcome, Some(RiscvSyscallOutcome::Return { value: 0 }));
     assert!(state.unknown_syscalls().is_empty());
     let bytes = guest_memory_reader(Arc::clone(&store))(0x9000, 16).unwrap();
-    assert_eq!(read_u64(&bytes, 0), RISCV_LINUX_OPEN_FILE_LIMIT);
-    assert_eq!(read_u64(&bytes, 8), RISCV_LINUX_OPEN_FILE_LIMIT);
+    assert_eq!(read_u64(&bytes, 0), RISCV_LINUX_OPEN_FILE_SOFT_LIMIT);
+    assert_eq!(read_u64(&bytes, 8), RISCV_LINUX_OPEN_FILE_HARD_LIMIT);
 }
 
 #[test]

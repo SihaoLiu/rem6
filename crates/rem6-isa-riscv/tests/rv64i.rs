@@ -1,11 +1,12 @@
 use rem6_isa_riscv::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryAccessKind, MemoryWidth, Register,
     RegisterWrite, RiscvCounterBank, RiscvCounterCsr, RiscvCounterSnapshot, RiscvCsrError,
-    RiscvCsrOp, RiscvError, RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction,
-    RiscvMachineIdentityCsr, RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction,
-    RiscvMachineIsaCsr, RiscvMachineTrapCsr, RiscvMemoryOrdering, RiscvPrivilegeMode,
-    RiscvPseudoOp, RiscvStatusCsr, RiscvStatusWord, RiscvSupervisorTrapCsr, RiscvSv39AccessContext,
-    RiscvSystemEvent, RiscvTranslationCsr, RiscvTrap, RiscvTrapKind,
+    RiscvCsrOp, RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction, RiscvError,
+    RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMachineIdentityCsr,
+    RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction, RiscvMachineIsaCsr,
+    RiscvMachineTrapCsr, RiscvMemoryOrdering, RiscvPrivilegeMode, RiscvPseudoOp, RiscvStatusCsr,
+    RiscvStatusWord, RiscvSupervisorTrapCsr, RiscvSv39AccessContext, RiscvSystemEvent,
+    RiscvTranslationCsr, RiscvTrap, RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -1110,6 +1111,115 @@ fn hart_decodes_and_executes_supervisor_trap_csrs() {
     hart.execute(clear_sscratch).unwrap();
     assert_eq!(hart.read(reg(19)), 0xaaaa);
     assert_eq!(hart.supervisor_scratch(), 0xaaa2);
+}
+
+#[test]
+fn hart_decodes_and_executes_environment_config_csrs() {
+    let mut hart = RiscvHartState::new(0x3480);
+    hart.set_supervisor_environment_config(0x1200);
+    hart.write(reg(2), 0x00ff);
+    hart.write(reg(3), 0x0f0f);
+    hart.write(reg(4), 0x00f0);
+
+    let read = RiscvInstruction::decode(csr_read_type(0x10a, 5)).unwrap();
+    let write = RiscvInstruction::decode(csr_type(0x10a, 2, 0x1, 6)).unwrap();
+    let set = RiscvInstruction::decode(csr_type(0x10a, 3, 0x2, 7)).unwrap();
+    let clear = RiscvInstruction::decode(csr_type(0x10a, 4, 0x3, 8)).unwrap();
+    let write_immediate = RiscvInstruction::decode(csr_type(0x10a, 0x1d, 0x5, 9)).unwrap();
+    let set_immediate = RiscvInstruction::decode(csr_type(0x10a, 0x02, 0x6, 10)).unwrap();
+    let clear_immediate = RiscvInstruction::decode(csr_type(0x10a, 0x01, 0x7, 11)).unwrap();
+    let set_read_only = RiscvInstruction::decode(csr_type(0x10a, 0, 0x2, 12)).unwrap();
+    let clear_read_only = RiscvInstruction::decode(csr_type(0x10a, 0, 0x3, 13)).unwrap();
+    let set_immediate_read_only = RiscvInstruction::decode(csr_type(0x10a, 0, 0x6, 14)).unwrap();
+    let clear_immediate_read_only = RiscvInstruction::decode(csr_type(0x10a, 0, 0x7, 15)).unwrap();
+
+    assert_eq!(
+        read,
+        RiscvInstruction::EnvironmentConfigCsr(RiscvEnvironmentConfigCsrInstruction::read(
+            reg(5),
+            RiscvEnvironmentConfigCsr::Senvcfg
+        ))
+    );
+    assert_eq!(
+        write,
+        RiscvInstruction::EnvironmentConfigCsr(RiscvEnvironmentConfigCsrInstruction::register(
+            reg(6),
+            RiscvEnvironmentConfigCsr::Senvcfg,
+            RiscvCsrOp::Write,
+            reg(2)
+        ))
+    );
+    assert_eq!(
+        set_read_only,
+        RiscvInstruction::EnvironmentConfigCsr(RiscvEnvironmentConfigCsrInstruction::read(
+            reg(12),
+            RiscvEnvironmentConfigCsr::Senvcfg
+        ))
+    );
+    assert_eq!(
+        clear_read_only,
+        RiscvInstruction::EnvironmentConfigCsr(RiscvEnvironmentConfigCsrInstruction::read(
+            reg(13),
+            RiscvEnvironmentConfigCsr::Senvcfg
+        ))
+    );
+    assert_eq!(
+        set_immediate_read_only,
+        RiscvInstruction::EnvironmentConfigCsr(RiscvEnvironmentConfigCsrInstruction::read(
+            reg(14),
+            RiscvEnvironmentConfigCsr::Senvcfg
+        ))
+    );
+    assert_eq!(
+        clear_immediate_read_only,
+        RiscvInstruction::EnvironmentConfigCsr(RiscvEnvironmentConfigCsrInstruction::read(
+            reg(15),
+            RiscvEnvironmentConfigCsr::Senvcfg
+        ))
+    );
+
+    hart.execute(read).unwrap();
+    assert_eq!(hart.read(reg(5)), 0x1200);
+    assert_eq!(hart.supervisor_environment_config(), 0x1200);
+
+    hart.execute(write).unwrap();
+    assert_eq!(hart.read(reg(6)), 0x1200);
+    assert_eq!(hart.supervisor_environment_config(), 0x00ff);
+
+    hart.execute(set).unwrap();
+    assert_eq!(hart.read(reg(7)), 0x00ff);
+    assert_eq!(hart.supervisor_environment_config(), 0x0fff);
+
+    hart.execute(clear).unwrap();
+    assert_eq!(hart.read(reg(8)), 0x0fff);
+    assert_eq!(hart.supervisor_environment_config(), 0x0f0f);
+
+    hart.execute(write_immediate).unwrap();
+    assert_eq!(hart.read(reg(9)), 0x0f0f);
+    assert_eq!(hart.supervisor_environment_config(), 0x1d);
+
+    hart.execute(set_immediate).unwrap();
+    assert_eq!(hart.read(reg(10)), 0x1d);
+    assert_eq!(hart.supervisor_environment_config(), 0x1f);
+
+    hart.execute(clear_immediate).unwrap();
+    assert_eq!(hart.read(reg(11)), 0x1f);
+    assert_eq!(hart.supervisor_environment_config(), 0x1e);
+
+    for instruction in [
+        set_read_only,
+        clear_read_only,
+        set_immediate_read_only,
+        clear_immediate_read_only,
+    ] {
+        let before_read = hart.supervisor_environment_config();
+        hart.execute(instruction).unwrap();
+        assert_eq!(hart.supervisor_environment_config(), before_read);
+    }
+    assert_eq!(hart.read(reg(12)), 0x1e);
+    assert_eq!(hart.read(reg(13)), 0x1e);
+    assert_eq!(hart.read(reg(14)), 0x1e);
+    assert_eq!(hart.read(reg(15)), 0x1e);
 }
 
 #[test]

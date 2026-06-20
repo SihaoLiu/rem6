@@ -1,8 +1,9 @@
 use crate::encoding::{csr, funct3, rd, rs1};
 use crate::{
-    RiscvCounterCsr, RiscvCsrOp, RiscvError, RiscvFloatCsr, RiscvInstruction, RiscvInterruptCsr,
-    RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction, RiscvMachineTrapCsr,
-    RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvVectorFixedPointCsr,
+    RiscvCounterCsr, RiscvCsrOp, RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction,
+    RiscvError, RiscvFloatCsr, RiscvInstruction, RiscvInterruptCsr, RiscvMachineInformationCsr,
+    RiscvMachineInformationCsrInstruction, RiscvMachineTrapCsr, RiscvStatusCsr,
+    RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvVectorFixedPointCsr,
     RiscvVectorFixedPointCsrInstruction,
 };
 
@@ -38,6 +39,13 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             .or_else(|| {
                 RiscvStatusCsr::from_address(csr_address)
                     .map(|csr| RiscvInstruction::ReadStatusCsr { rd: rd(raw), csr })
+            })
+            .or_else(|| {
+                RiscvEnvironmentConfigCsr::from_address(csr_address).map(|csr| {
+                    RiscvInstruction::EnvironmentConfigCsr(
+                        RiscvEnvironmentConfigCsrInstruction::read(rd(raw), csr),
+                    )
+                })
             })
             .or_else(|| {
                 RiscvInterruptCsr::from_address(csr_address)
@@ -250,6 +258,30 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         };
     }
 
+    if let Some(csr) = RiscvEnvironmentConfigCsr::from_address(csr_address) {
+        return match funct3(raw) {
+            0x1 => Ok(decode_environment_config_csr(raw, csr, RiscvCsrOp::Write)),
+            0x2 => Ok(decode_environment_config_csr(raw, csr, RiscvCsrOp::Set)),
+            0x3 => Ok(decode_environment_config_csr(raw, csr, RiscvCsrOp::Clear)),
+            0x5 => Ok(decode_environment_config_csr_immediate(
+                raw,
+                csr,
+                RiscvCsrOp::Write,
+            )),
+            0x6 => Ok(decode_environment_config_csr_immediate(
+                raw,
+                csr,
+                RiscvCsrOp::Set,
+            )),
+            0x7 => Ok(decode_environment_config_csr_immediate(
+                raw,
+                csr,
+                RiscvCsrOp::Clear,
+            )),
+            _ => Err(RiscvError::UnknownEncoding { raw }),
+        };
+    }
+
     if let Some(csr) = RiscvMachineTrapCsr::from_address(csr_address) {
         return match funct3(raw) {
             0x1 => Ok(RiscvInstruction::WriteMachineTrapCsr {
@@ -409,6 +441,32 @@ fn decode_vector_fixed_point_csr_immediate(
     op: RiscvCsrOp,
 ) -> RiscvInstruction {
     RiscvInstruction::VectorFixedPointCsr(RiscvVectorFixedPointCsrInstruction::immediate(
+        rd(raw),
+        csr,
+        op,
+        rs1(raw).index(),
+    ))
+}
+
+fn decode_environment_config_csr(
+    raw: u32,
+    csr: RiscvEnvironmentConfigCsr,
+    op: RiscvCsrOp,
+) -> RiscvInstruction {
+    RiscvInstruction::EnvironmentConfigCsr(RiscvEnvironmentConfigCsrInstruction::register(
+        rd(raw),
+        csr,
+        op,
+        rs1(raw),
+    ))
+}
+
+fn decode_environment_config_csr_immediate(
+    raw: u32,
+    csr: RiscvEnvironmentConfigCsr,
+    op: RiscvCsrOp,
+) -> RiscvInstruction {
+    RiscvInstruction::EnvironmentConfigCsr(RiscvEnvironmentConfigCsrInstruction::immediate(
         rd(raw),
         csr,
         op,

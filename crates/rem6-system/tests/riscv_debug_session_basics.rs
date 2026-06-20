@@ -243,6 +243,7 @@ fn riscv_gdb_remote_session_reports_rv64_hart_register_snapshot() {
     let mut hart = RiscvHartState::with_hart_id(0x8877_6655_4433_2211, 0);
     hart.write(Register::new(1).unwrap(), 0x0123_4567_89ab_cdef);
     hart.write(Register::new(10).unwrap(), 0xfedc_ba98_7654_3210);
+    hart.set_supervisor_environment_config(0x7766_5544_3322_1100);
 
     let mut session = riscv_gdb_remote_session_from_hart(RiscvGdbXlen::Rv64, &hart);
 
@@ -251,7 +252,7 @@ fn riscv_gdb_remote_session_reports_rv64_hart_register_snapshot() {
             .handle_packet(&GdbRemotePacket::new(b"g".to_vec()).unwrap())
             .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(132));
+    assert_eq!(registers.len(), rv64_register_hex_offset(136));
     assert_eq!(&registers[0..16], b"0000000000000000");
     assert_eq!(&registers[16..32], b"efcdab8967452301");
     assert_eq!(&registers[10 * 16..11 * 16], b"1032547698badcfe");
@@ -275,6 +276,10 @@ fn riscv_gdb_remote_session_reports_rv64_hart_register_snapshot() {
     assert_eq!(
         &registers[rv64_register_hex_range(131)],
         b"2d11140000000080"
+    );
+    assert_eq!(
+        &registers[rv64_register_hex_range(135)],
+        b"0011223344556677"
     );
 
     assert_eq!(
@@ -309,6 +314,14 @@ fn riscv_gdb_remote_session_reports_rv64_hart_register_snapshot() {
         ),
         b"0000000000000000",
     );
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p87".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"0011223344556677",
+    );
 }
 
 fn rv64_register_hex_range(number: u64) -> std::ops::Range<usize> {
@@ -324,7 +337,7 @@ fn rv64_register_hex_offset(number: u64) -> usize {
         66..=69 => (33 * 8) + (32 * 8) + ((number - 66) * 4),
         70..=89 => (33 * 8) + (32 * 8) + (4 * 4) + ((number - 70) * 8),
         90..=121 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + ((number - 90) * 16),
-        122..=132 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
+        122..=136 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
         _ => panic!("unsupported RV64 GDB register number"),
     };
     byte_offset as usize * 2

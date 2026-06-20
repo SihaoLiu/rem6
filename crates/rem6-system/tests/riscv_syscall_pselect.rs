@@ -12,6 +12,9 @@ const RISCV_LINUX_EVENTFD2: u64 = 19;
 const RISCV_LINUX_DUP3: u64 = 24;
 const RISCV_LINUX_PSELECT6: u64 = 72;
 const RISCV_LINUX_EXIT: u64 = 93;
+const RISCV_LINUX_PRLIMIT64: u64 = 261;
+const RISCV_LINUX_RLIMIT_NOFILE: u64 = 7;
+const RISCV_LINUX_OPEN_FILE_HARD_LIMIT: u64 = 4096;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EFAULT: u64 = 14;
 const RISCV_LINUX_EINVAL: u64 = 22;
@@ -33,6 +36,7 @@ fn pselect_store() -> Arc<Mutex<PartitionedMemoryStore>> {
     let invalid_null_sigmask = sigmask_pair(0, 4);
     let valid_sigmask = sigmask_pair(0x9060, 8);
     let finite_timeout = finite_timespec(0, 1);
+    let high_fd_limit = resource_limit_bytes(2048, RISCV_LINUX_OPEN_FILE_HARD_LIMIT);
     loaded_program_store_with_data(
         &[(0x8000, 0)],
         &[
@@ -47,6 +51,7 @@ fn pselect_store() -> Arc<Mutex<PartitionedMemoryStore>> {
             (0x9080, &read_high_fd),
             (0x9200, &finite_timeout),
             (0x9210, &invalid_null_sigmask),
+            (0x9220, &high_fd_limit),
         ],
     )
 }
@@ -73,6 +78,13 @@ fn finite_timespec(seconds: i64, nanoseconds: i64) -> Vec<u8> {
     timespec.extend_from_slice(&seconds.to_le_bytes());
     timespec.extend_from_slice(&nanoseconds.to_le_bytes());
     timespec
+}
+
+fn resource_limit_bytes(current: u64, maximum: u64) -> [u8; 16] {
+    let mut bytes = [0_u8; 16];
+    bytes[0..8].copy_from_slice(&current.to_le_bytes());
+    bytes[8..16].copy_from_slice(&maximum.to_le_bytes());
+    bytes
 }
 
 fn fdset_word(store: &Arc<Mutex<PartitionedMemoryStore>>, address: u64) -> u64 {
@@ -154,6 +166,16 @@ fn linux_table_pselect6_accepts_fd_above_fd_setsize() {
     let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
     let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
     let mut state = RiscvSyscallState::new(0);
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_PRLIMIT64,
+            [0, RISCV_LINUX_RLIMIT_NOFILE, 0x9220, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        0
+    );
     let event_fd = return_value(handle(
         &mut state,
         RISCV_LINUX_EVENTFD2,

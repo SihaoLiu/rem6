@@ -634,6 +634,74 @@ fn remove_branch_speculation_mappings(
     });
 }
 
+pub(crate) fn sync_in_order_fetch_state(
+    state: &mut RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+) -> Result<(), RiscvCpuError> {
+    let failed_or_retried = fetch_events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.kind(),
+                CpuFetchEventKind::Retry | CpuFetchEventKind::Failed
+            )
+        })
+        .map(CpuFetchEvent::request_id)
+        .collect::<BTreeSet<_>>();
+    let failed_or_retried_sequences = failed_or_retried
+        .iter()
+        .map(|request| request.sequence())
+        .collect::<BTreeSet<_>>();
+    remove_fetch_sequences_from_pipeline(state, &failed_or_retried_sequences)?;
+    let mut fetches = fetch_events
+        .iter()
+        .filter(|event| {
+            !failed_or_retried.contains(&event.request_id())
+                && !state.executed_fetches.contains(&event.request_id())
+                && match event.kind() {
+                    CpuFetchEventKind::Issued => event.size().bytes() == 4,
+                    CpuFetchEventKind::Completed => {
+                        event.data().is_some_and(|data| data.len() == 4)
+                    }
+                    CpuFetchEventKind::Retry | CpuFetchEventKind::Failed => false,
+                }
+        })
+        .collect::<Vec<_>>();
+    fetches.sort_by_key(|event| event.request_id().sequence());
+
+    for fetch in fetches {
+        if let Some(record) = state
+            .in_order_pipeline
+            .enqueue_fetch_recorded(fetch.request_id().sequence())
+            .map_err(RiscvCpuError::InOrderPipeline)?
+        {
+            state.in_order_pipeline_cycle_records.push(record);
+        }
+    }
+    Ok(())
+}
+
+fn remove_fetch_sequences_from_pipeline(
+    state: &mut RiscvCoreState,
+    sequences: &BTreeSet<u64>,
+) -> Result<(), RiscvCpuError> {
+    if sequences.is_empty() {
+        return Ok(());
+    }
+
+    let retained = state
+        .in_order_pipeline
+        .in_flight()
+        .iter()
+        .copied()
+        .filter(|instruction| !sequences.contains(&instruction.sequence()))
+        .collect::<Vec<_>>();
+    state
+        .in_order_pipeline
+        .replace_in_flight(retained)
+        .map_err(RiscvCpuError::InOrderPipeline)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

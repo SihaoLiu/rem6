@@ -15,6 +15,7 @@ pub struct RiscvHartState {
     pub(crate) supervisor_exception_pc: u64,
     pub(crate) supervisor_trap_cause: u64,
     pub(crate) supervisor_trap_value: u64,
+    pub(crate) supervisor_environment_config: u64,
     pub(crate) machine_exception_delegation: u64,
     pub(crate) machine_interrupt_delegation: u64,
     pub(crate) machine_interrupt_enable: u64,
@@ -50,6 +51,7 @@ impl RiscvHartState {
             supervisor_exception_pc: 0,
             supervisor_trap_cause: 0,
             supervisor_trap_value: 0,
+            supervisor_environment_config: 0,
             machine_exception_delegation: 0,
             machine_interrupt_delegation: 0,
             machine_interrupt_enable: 0,
@@ -127,6 +129,10 @@ impl RiscvHartState {
 
     pub const fn supervisor_trap_value(&self) -> u64 {
         self.supervisor_trap_value
+    }
+
+    pub const fn supervisor_environment_config(&self) -> u64 {
+        self.supervisor_environment_config
     }
 
     pub const fn machine_trap_vector(&self) -> u64 {
@@ -222,6 +228,10 @@ impl RiscvHartState {
 
     pub fn set_supervisor_trap_value(&mut self, value: u64) {
         self.supervisor_trap_value = value;
+    }
+
+    pub fn set_supervisor_environment_config(&mut self, value: u64) {
+        self.supervisor_environment_config = value;
     }
 
     pub fn set_machine_trap_vector(&mut self, vector: u64) {

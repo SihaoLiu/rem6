@@ -81,6 +81,7 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "  <reg name=\"vl\" bitsize=\"64\" regnum=\"132\"/>\n",
             "  <reg name=\"vtype\" bitsize=\"64\" regnum=\"133\"/>\n",
             "  <reg name=\"vlenb\" bitsize=\"64\" regnum=\"134\"/>\n",
+            "  <reg name=\"senvcfg\" bitsize=\"64\" regnum=\"135\"/>\n",
             "</feature>\n",
         ),
     );
@@ -120,9 +121,10 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "vl",
             "vtype",
             "vlenb",
+            "senvcfg",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 33);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 34);
 }
 
 #[test]
@@ -360,6 +362,7 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "  <reg name=\"vl\" bitsize=\"32\" regnum=\"132\"/>\n",
             "  <reg name=\"vtype\" bitsize=\"32\" regnum=\"133\"/>\n",
             "  <reg name=\"vlenb\" bitsize=\"32\" regnum=\"134\"/>\n",
+            "  <reg name=\"senvcfg\" bitsize=\"32\" regnum=\"135\"/>\n",
             "</feature>\n",
         ),
     );
@@ -399,9 +402,10 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "vl",
             "vtype",
             "vlenb",
+            "senvcfg",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"32\"").count(), 33);
+    assert_eq!(csr.matches("bitsize=\"32\"").count(), 34);
 }
 
 #[test]

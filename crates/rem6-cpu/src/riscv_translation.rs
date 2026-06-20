@@ -2,10 +2,11 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_isa_riscv::{
-    walk_sv39_page_table_with_context, RiscvMachineTrapCsr, RiscvPrivilegeMode, RiscvStatusWord,
-    RiscvSv39AccessContext, RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel,
-    RiscvSv39Pte, RiscvSv39VirtualAddress, RiscvSv39WalkAdvance as IsaSv39WalkAdvance,
-    RiscvSv39WalkState, RiscvSystemEvent, RiscvTrapKind, RiscvVectorFixedPointState,
+    walk_sv39_page_table_with_context, RiscvEnvironmentConfigCsr, RiscvMachineTrapCsr,
+    RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext, RiscvSv39AccessKind,
+    RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte, RiscvSv39VirtualAddress,
+    RiscvSv39WalkAdvance as IsaSv39WalkAdvance, RiscvSv39WalkState, RiscvSystemEvent,
+    RiscvTrapKind, RiscvVectorFixedPointState,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
@@ -726,6 +727,17 @@ impl RiscvCore {
             .expect("riscv core lock")
             .hart
             .supervisor_trap_value()
+    }
+
+    pub fn environment_config_csr(&self, csr: RiscvEnvironmentConfigCsr) -> u64 {
+        let state = self.state.lock().expect("riscv core lock");
+        read_environment_config_csr(&state.hart, csr)
+    }
+
+    pub fn set_environment_config_csr(&self, csr: RiscvEnvironmentConfigCsr, value: u64) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        write_environment_config_csr(&mut state.hart, csr, value);
+        riscv_checker::sync_checker_hart(&mut state);
     }
 
     pub fn machine_exception_pc(&self) -> u64 {
@@ -1537,6 +1549,25 @@ fn write_machine_trap_csr(
         RiscvMachineTrapCsr::Mepc => hart.set_machine_exception_pc(value),
         RiscvMachineTrapCsr::Mcause => hart.set_machine_trap_cause(value),
         RiscvMachineTrapCsr::Mtval => hart.set_machine_trap_value(value),
+    }
+}
+
+fn read_environment_config_csr(
+    hart: &rem6_isa_riscv::RiscvHartState,
+    csr: RiscvEnvironmentConfigCsr,
+) -> u64 {
+    match csr {
+        RiscvEnvironmentConfigCsr::Senvcfg => hart.supervisor_environment_config(),
+    }
+}
+
+fn write_environment_config_csr(
+    hart: &mut rem6_isa_riscv::RiscvHartState,
+    csr: RiscvEnvironmentConfigCsr,
+    value: u64,
+) {
+    match csr {
+        RiscvEnvironmentConfigCsr::Senvcfg => hart.set_supervisor_environment_config(value),
     }
 }
 

@@ -104,6 +104,89 @@ pub enum RiscvCsrOperand {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RiscvEnvironmentConfigCsr {
+    Senvcfg,
+}
+
+impl RiscvEnvironmentConfigCsr {
+    pub const fn address(self) -> u16 {
+        match self {
+            Self::Senvcfg => 0x10a,
+        }
+    }
+
+    pub const fn from_address(address: u16) -> Option<Self> {
+        match address {
+            0x10a => Some(Self::Senvcfg),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RiscvEnvironmentConfigCsrInstruction {
+    rd: Register,
+    csr: RiscvEnvironmentConfigCsr,
+    op: RiscvCsrOp,
+    operand: RiscvCsrOperand,
+}
+
+impl RiscvEnvironmentConfigCsrInstruction {
+    pub const fn read(rd: Register, csr: RiscvEnvironmentConfigCsr) -> Self {
+        Self {
+            rd,
+            csr,
+            op: RiscvCsrOp::Read,
+            operand: RiscvCsrOperand::Immediate(0),
+        }
+    }
+
+    pub const fn register(
+        rd: Register,
+        csr: RiscvEnvironmentConfigCsr,
+        op: RiscvCsrOp,
+        rs1: Register,
+    ) -> Self {
+        Self {
+            rd,
+            csr,
+            op,
+            operand: RiscvCsrOperand::Register(rs1),
+        }
+    }
+
+    pub const fn immediate(
+        rd: Register,
+        csr: RiscvEnvironmentConfigCsr,
+        op: RiscvCsrOp,
+        zimm: u8,
+    ) -> Self {
+        Self {
+            rd,
+            csr,
+            op,
+            operand: RiscvCsrOperand::Immediate(zimm),
+        }
+    }
+
+    pub const fn rd(self) -> Register {
+        self.rd
+    }
+
+    pub const fn csr(self) -> RiscvEnvironmentConfigCsr {
+        self.csr
+    }
+
+    pub const fn op(self) -> RiscvCsrOp {
+        self.op
+    }
+
+    pub const fn operand(self) -> RiscvCsrOperand {
+        self.operand
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RiscvVectorFixedPointCsrInstruction {
     rd: Register,
     csr: RiscvVectorFixedPointCsr,

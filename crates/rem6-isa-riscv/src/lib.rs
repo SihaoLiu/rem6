@@ -5,6 +5,7 @@ mod csr;
 mod decode;
 mod decode_csr;
 mod encoding;
+mod environment_config_csr;
 mod error;
 mod float;
 mod float_execute;
@@ -49,7 +50,8 @@ pub use control_flow::{
 };
 pub use csr::{
     RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterSnapshot, RiscvCsrOp,
-    RiscvCsrOperand, RiscvFloatCsr, RiscvFloatRoundingMode, RiscvFloatStatus, RiscvInterruptCsr,
+    RiscvCsrOperand, RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction,
+    RiscvFloatCsr, RiscvFloatRoundingMode, RiscvFloatStatus, RiscvInterruptCsr,
     RiscvMachineIdentityCsr, RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction,
     RiscvMachineIsaCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvStatusWord,
     RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvVectorFixedPointCsr,
@@ -934,6 +936,9 @@ impl RiscvHartState {
             RiscvInstruction::VectorFixedPointCsr(instruction) => {
                 vector_fixed_point_csr::execute(self, &mut register_writes, instruction);
             }
+            RiscvInstruction::EnvironmentConfigCsr(instruction) => {
+                environment_config_csr::execute(self, &mut register_writes, instruction);
+            }
             RiscvInstruction::ReadStatusCsr { rd, csr } => {
                 write_register(self, &mut register_writes, rd, read_status_csr(self, csr));
             }
@@ -1179,6 +1184,7 @@ fn write_status_csr(
     write_register(hart, writes, register, old_value);
     hart.set_status(csr.write(hart.status(), value));
 }
+
 fn write_interrupt_csr(
     hart: &mut RiscvHartState,
     writes: &mut Vec<RegisterWrite>,

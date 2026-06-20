@@ -1,7 +1,7 @@
 use rem6_debug::{GdbRemoteCommand, GdbRemoteFrame, GdbRemotePacket};
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvFloatCsr, RiscvFloatStatus, RiscvGdbXlen, RiscvHartState,
-    RiscvStatusWord, RiscvVectorFixedRoundingMode, VectorRegister,
+    RiscvStatusWord, RiscvVectorConfig, RiscvVectorFixedRoundingMode, VectorRegister,
 };
 use rem6_system::{
     apply_riscv_gdb_remote_register_write, handle_riscv_gdb_remote_packet,
@@ -19,6 +19,7 @@ fn riscv_gdb_remote_session_reports_rv32_hart_csr_snapshot_and_writes() {
     hart.set_machine_interrupt_enable(0x0000_4040);
     hart.set_machine_interrupt_pending(0x0000_7777);
     hart.set_machine_scratch(0x0f0e_0d0c_0b0a_0908);
+    hart.set_supervisor_environment_config(0x0102_0304);
 
     let mut session = riscv_gdb_remote_session_from_hart(RiscvGdbXlen::Rv32, &hart);
 
@@ -27,7 +28,7 @@ fn riscv_gdb_remote_session_reports_rv32_hart_csr_snapshot_and_writes() {
             .handle_packet(&GdbRemotePacket::new(b"g".to_vec()).unwrap())
             .unwrap(),
     );
-    assert_eq!(registers.len(), rv32_register_hex_offset(132));
+    assert_eq!(registers.len(), rv32_register_hex_offset(136));
     assert_eq!(&registers[0..8], b"00000000");
     assert_eq!(&registers[2 * 8..3 * 8], b"efcdab89");
     assert_eq!(&registers[32 * 8..33 * 8], b"11223344");
@@ -41,6 +42,7 @@ fn riscv_gdb_remote_session_reports_rv32_hart_csr_snapshot_and_writes() {
     assert_eq!(&registers[rv32_register_hex_range(129)], b"00000000");
     assert_eq!(&registers[rv32_register_hex_range(130)], b"00000000");
     assert_eq!(&registers[rv32_register_hex_range(131)], b"2d111440");
+    assert_eq!(&registers[rv32_register_hex_range(135)], b"04030201");
 
     assert_eq!(
         packet_payload(
@@ -126,12 +128,37 @@ fn riscv_gdb_remote_session_reports_rv32_hart_csr_snapshot_and_writes() {
                 RiscvGdbXlen::Rv32,
                 &mut session,
                 &mut hart,
+                &GdbRemotePacket::new(b"p87".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"04030201",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &mut hart,
                 &GdbRemotePacket::new(b"P83=00000000".to_vec()).unwrap(),
             )
             .unwrap(),
         ),
         b"OK",
     );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"P87=88776655".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(hart.supervisor_environment_config(), 0x5566_7788);
     assert_eq!(
         packet_payload(
             handle_riscv_gdb_remote_packet(
@@ -306,7 +333,7 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_rv32d_float_registers_and_cs
         )
         .unwrap(),
     );
-    assert_eq!(registers.len(), rv32_register_hex_offset(132));
+    assert_eq!(registers.len(), rv32_register_hex_offset(136));
     assert_eq!(&registers[rv32_register_hex_range(33)], b"8877665544332211");
     assert_eq!(&registers[rv32_register_hex_range(64)], b"1032547698badcfe");
     assert_eq!(&registers[rv32_register_hex_range(67)], b"03000000");
@@ -317,6 +344,7 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_rv32d_float_registers_and_cs
     assert_eq!(&registers[rv32_register_hex_range(129)], b"00000000");
     assert_eq!(&registers[rv32_register_hex_range(130)], b"00000000");
     assert_eq!(&registers[rv32_register_hex_range(131)], b"2d111440");
+    assert_eq!(&registers[rv32_register_hex_range(135)], b"00000000");
 }
 
 #[test]
@@ -403,6 +431,8 @@ fn riscv_gdb_remote_register_write_applies_all_rv32_registers() {
     assert!(hart.vector_fixed_point().vxsat());
     assert_eq!(hart.read_vector(vreg(0)), vector_bytes(0x40));
     assert_eq!(hart.read_vector(vreg(31)), vector_bytes(0x5f));
+    assert_eq!(hart.vector_config(), RiscvVectorConfig::new(9, 0xc8));
+    assert_eq!(hart.supervisor_environment_config(), 0x33);
 }
 
 fn rv32_register_hex_range(number: u64) -> std::ops::Range<usize> {
@@ -418,7 +448,7 @@ fn rv32_register_hex_offset(number: u64) -> usize {
         66..=69 => (33 * 4) + (32 * 8) + ((number - 66) * 4),
         70..=89 => (33 * 4) + (32 * 8) + (4 * 4) + ((number - 70) * 4),
         90..=121 => (33 * 4) + (32 * 8) + (4 * 4) + (20 * 4) + ((number - 90) * 16),
-        122..=132 => (33 * 4) + (32 * 8) + (4 * 4) + (20 * 4) + (32 * 16) + ((number - 122) * 4),
+        122..=136 => (33 * 4) + (32 * 8) + (4 * 4) + (20 * 4) + (32 * 16) + ((number - 122) * 4),
         _ => panic!("unsupported RV32 GDB register number"),
     };
     byte_offset as usize * 2
@@ -456,6 +486,10 @@ fn rv32_register_set_write_bytes() -> Vec<u8> {
     bytes.extend_from_slice(&0_u32.to_le_bytes());
     bytes.extend_from_slice(&0_u32.to_le_bytes());
     bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(&9_u32.to_le_bytes());
+    bytes.extend_from_slice(&0xc8_u32.to_le_bytes());
+    bytes.extend_from_slice(&0x10_u32.to_le_bytes());
+    bytes.extend_from_slice(&0x33_u32.to_le_bytes());
     bytes
 }
 

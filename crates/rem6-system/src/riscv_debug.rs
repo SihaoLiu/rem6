@@ -6,8 +6,8 @@ use rem6_debug::{
     DEFAULT_GDB_REMOTE_MAX_PAYLOAD_BYTES,
 };
 use rem6_isa_riscv::{
-    FloatRegister, Register, RiscvCounterCsr, RiscvCounterSnapshot, RiscvFloatCsr,
-    RiscvGdbTargetDescription, RiscvGdbXlen, RiscvHartState, RiscvInterruptCsr,
+    FloatRegister, Register, RiscvCounterCsr, RiscvCounterSnapshot, RiscvEnvironmentConfigCsr,
+    RiscvFloatCsr, RiscvGdbTargetDescription, RiscvGdbXlen, RiscvHartState, RiscvInterruptCsr,
     RiscvMachineIdentityCsr, RiscvMachineIsaCsr, RiscvMachineTrapCsr, RiscvStatusCsr,
     RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvVectorConfig, RiscvVectorFixedPointCsr,
     VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
@@ -45,7 +45,8 @@ const RISCV_GDB_MACHINE_ISA_REGISTER: u64 = 131;
 const RISCV_GDB_VECTOR_LENGTH_REGISTER: u64 = 132;
 const RISCV_GDB_VECTOR_TYPE_REGISTER: u64 = 133;
 const RISCV_GDB_VECTOR_LENGTH_BYTES_REGISTER: u64 = 134;
-const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 13;
+const RISCV_GDB_SUPERVISOR_ENVIRONMENT_CONFIG_REGISTER: u64 = 135;
+const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 14;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 const RISCV_GDB_RV32_VTYPE_PAYLOAD_MASK: u64 = 0x7fff_ffff;
 const RISCV_GDB_RV32_VTYPE_VILL_BIT: u64 = 1_u64 << 31;
@@ -59,6 +60,7 @@ enum RiscvGdbCsrRegister {
     Translation(RiscvTranslationCsr),
     VectorFixedPoint(RiscvVectorFixedPointCsr),
     VectorConfig(RiscvVectorConfigCsr),
+    EnvironmentConfig(RiscvEnvironmentConfigCsr),
     Counter(RiscvCounterCsr),
     MachineIdentity(RiscvMachineIdentityCsr),
     MachineIsa(RiscvMachineIsaCsr),
@@ -766,6 +768,9 @@ fn riscv_gdb_hart_snapshot_from_core(core: &RiscvCore) -> RiscvHartState {
     hart.set_supervisor_exception_pc(core.supervisor_exception_pc());
     hart.set_supervisor_trap_cause(core.supervisor_trap_cause());
     hart.set_supervisor_trap_value(core.supervisor_trap_value());
+    hart.set_supervisor_environment_config(
+        core.environment_config_csr(RiscvEnvironmentConfigCsr::Senvcfg),
+    );
     hart.set_translation_satp(core.translation_satp());
     hart.set_vector_fixed_point(core.vector_fixed_point());
     hart.set_vector_config(core.vector_config());
@@ -993,6 +998,7 @@ fn read_hart_csr_register_value(xlen: RiscvGdbXlen, hart: &RiscvHartState, numbe
         RiscvGdbCsrRegister::VectorConfig(csr) => {
             read_hart_vector_config_csr(xlen, hart.vector_config(), csr)
         }
+        RiscvGdbCsrRegister::EnvironmentConfig(csr) => read_hart_environment_config_csr(hart, csr),
         RiscvGdbCsrRegister::Counter(csr) => read_hart_counter_csr(hart, csr),
         RiscvGdbCsrRegister::MachineIdentity(csr) => csr.read(hart.hart_id()),
         RiscvGdbCsrRegister::MachineIsa(csr) => csr.read_for_xlen_bits(riscv_gdb_xlen_bits(xlen)),
@@ -1027,6 +1033,9 @@ fn write_hart_csr_register_value(
         RiscvGdbCsrRegister::VectorConfig(csr) => {
             write_hart_vector_config_csr(xlen, hart, csr, value);
         }
+        RiscvGdbCsrRegister::EnvironmentConfig(csr) => {
+            write_hart_environment_config_csr(hart, csr, value);
+        }
         RiscvGdbCsrRegister::Counter(csr) => {
             write_hart_counter_csr(hart, csr, value);
         }
@@ -1057,6 +1066,9 @@ fn write_core_csr_register_value(xlen: RiscvGdbXlen, core: &RiscvCore, number: u
         }
         RiscvGdbCsrRegister::VectorConfig(csr) => {
             write_core_vector_config_csr(xlen, core, csr, value);
+        }
+        RiscvGdbCsrRegister::EnvironmentConfig(csr) => {
+            core.set_environment_config_csr(csr, value);
         }
         RiscvGdbCsrRegister::Counter(csr) => {
             write_core_counter_csr(core, csr, value);
@@ -1105,6 +1117,9 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     }
     if number == RISCV_GDB_VECTOR_LENGTH_BYTES_REGISTER {
         return RiscvGdbCsrRegister::VectorConfig(RiscvVectorConfigCsr::Vlenb);
+    }
+    if number == RISCV_GDB_SUPERVISOR_ENVIRONMENT_CONFIG_REGISTER {
+        return RiscvGdbCsrRegister::EnvironmentConfig(RiscvEnvironmentConfigCsr::Senvcfg);
     }
 
     match number - riscv_gdb_csr_register_base(xlen) {
@@ -1241,6 +1256,22 @@ fn counter_snapshot_with_value(
         RiscvCounterCsr::Time => {
             RiscvCounterSnapshot::with_time(snapshot.cycle(), value, snapshot.instret())
         }
+    }
+}
+
+fn read_hart_environment_config_csr(hart: &RiscvHartState, csr: RiscvEnvironmentConfigCsr) -> u64 {
+    match csr {
+        RiscvEnvironmentConfigCsr::Senvcfg => hart.supervisor_environment_config(),
+    }
+}
+
+fn write_hart_environment_config_csr(
+    hart: &mut RiscvHartState,
+    csr: RiscvEnvironmentConfigCsr,
+    value: u64,
+) {
+    match csr {
+        RiscvEnvironmentConfigCsr::Senvcfg => hart.set_supervisor_environment_config(value),
     }
 }
 
@@ -1398,6 +1429,7 @@ fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
             RISCV_GDB_VECTOR_LENGTH_REGISTER,
             RISCV_GDB_VECTOR_TYPE_REGISTER,
             RISCV_GDB_VECTOR_LENGTH_BYTES_REGISTER,
+            RISCV_GDB_SUPERVISOR_ENVIRONMENT_CONFIG_REGISTER,
         ])
 }
 
@@ -1469,6 +1501,7 @@ const fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool {
         || number == RISCV_GDB_VECTOR_LENGTH_REGISTER
         || number == RISCV_GDB_VECTOR_TYPE_REGISTER
         || number == RISCV_GDB_VECTOR_LENGTH_BYTES_REGISTER
+        || number == RISCV_GDB_SUPERVISOR_ENVIRONMENT_CONFIG_REGISTER
 }
 
 fn encode_register_value(xlen: RiscvGdbXlen, number: u64, value: u64) -> Vec<u8> {

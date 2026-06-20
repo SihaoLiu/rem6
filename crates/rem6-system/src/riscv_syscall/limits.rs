@@ -19,7 +19,8 @@ const RISCV_LINUX_RLIMIT_COUNT: usize = 16;
 const RISCV_LINUX_RLIMIT_BYTES: usize = 16;
 const RISCV_LINUX_DATA_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
 const RISCV_LINUX_SINGLE_PROCESS_COUNT: u64 = 1;
-const RISCV_LINUX_OPEN_FILE_LIMIT: u64 = 1024;
+const RISCV_LINUX_OPEN_FILE_SOFT_LIMIT: u64 = 1024;
+const RISCV_LINUX_OPEN_FILE_HARD_LIMIT: u64 = 4096;
 
 pub const RISCV_LINUX_STACK_LIMIT_BYTES: u64 = 8 * 1024 * 1024;
 
@@ -89,8 +90,8 @@ impl RiscvResourceLimits {
             RISCV_LINUX_SINGLE_PROCESS_COUNT,
         ));
         limits[RiscvResourceLimitKind::NoFile.index()] = Some(RiscvResourceLimit::new(
-            RISCV_LINUX_OPEN_FILE_LIMIT,
-            RISCV_LINUX_OPEN_FILE_LIMIT,
+            RISCV_LINUX_OPEN_FILE_SOFT_LIMIT,
+            RISCV_LINUX_OPEN_FILE_HARD_LIMIT,
         ));
         limits[RiscvResourceLimitKind::AddressSpace.index()] =
             Some(RiscvResourceLimit::new(u64::MAX, u64::MAX));

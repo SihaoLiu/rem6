@@ -6,6 +6,9 @@ impl RiscvInstruction {
             Self::MachineInformationCsr(instruction) => {
                 Some(required_csr_privilege(instruction.csr().address()))
             }
+            Self::EnvironmentConfigCsr(instruction) => {
+                Some(required_csr_privilege(instruction.csr().address()))
+            }
             Self::ReadCounterCsr { .. } => Some(RiscvPrivilegeMode::User),
             Self::ReadMachineCounterCsr { .. }
             | Self::WriteCounterCsr { .. }

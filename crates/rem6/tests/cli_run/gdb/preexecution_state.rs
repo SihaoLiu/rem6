@@ -122,6 +122,10 @@ fn rem6_run_gdb_listen_applies_preexecution_state_changes() {
         gdb_response(b"c800000000000000")
     );
     assert_eq!(
+        send_gdb_packet(&mut stream, b"p87"),
+        gdb_response(b"3300000000000000")
+    );
+    assert_eq!(
         send_gdb_packet(&mut stream, b"Z0,80000004,4"),
         gdb_response(b"OK")
     );
@@ -149,7 +153,7 @@ fn rv64_all_register_write_packet(x5: u64, pc: u64) -> Vec<u8> {
     const RV64_FLOAT_REGISTERS: usize = 32;
     const RV64_FLOAT_CSR_AND_PLACEHOLDER_REGISTERS: usize = 4;
     const RV64_CSR_REGISTERS: usize = 20;
-    const RV64_CSR_EXTENSION_REGISTERS: usize = 13;
+    const RV64_CSR_EXTENSION_REGISTERS: usize = 14;
     const RV64_VECTOR_REGISTERS: usize = 32;
     const RV64_VECTOR_REGISTER_BYTES: usize = 16;
     const RV64_SPARSE_CSR_REGISTERS_BEFORE_VECTOR_CONFIG: usize = 10;
@@ -169,6 +173,7 @@ fn rv64_all_register_write_packet(x5: u64, pc: u64) -> Vec<u8> {
     const VECTOR_CONFIG_BASE_OFFSET: usize = VECTOR_BASE_OFFSET
         + RV64_VECTOR_REGISTERS * RV64_VECTOR_REGISTER_BYTES
         + RV64_SPARSE_CSR_REGISTERS_BEFORE_VECTOR_CONFIG * 8;
+    const SENVCFG_OFFSET: usize = VECTOR_CONFIG_BASE_OFFSET + 3 * 8;
 
     let mut registers = vec![0; RV64_REGISTER_BYTES];
     registers[X5_OFFSET..X5_OFFSET + 8].copy_from_slice(&x5.to_le_bytes());
@@ -177,6 +182,7 @@ fn rv64_all_register_write_packet(x5: u64, pc: u64) -> Vec<u8> {
         .copy_from_slice(&9_u64.to_le_bytes());
     registers[VECTOR_CONFIG_BASE_OFFSET + 8..VECTOR_CONFIG_BASE_OFFSET + 16]
         .copy_from_slice(&0xc8_u64.to_le_bytes());
+    registers[SENVCFG_OFFSET..SENVCFG_OFFSET + 8].copy_from_slice(&0x33_u64.to_le_bytes());
     for (index, byte) in registers[VECTOR_BASE_OFFSET..VECTOR_BASE_OFFSET + 16]
         .iter_mut()
         .enumerate()

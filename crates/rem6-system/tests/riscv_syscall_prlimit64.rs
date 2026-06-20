@@ -21,7 +21,8 @@ const RISCV_LINUX_RLIMIT_NPROC: u64 = 6;
 const RISCV_LINUX_RLIMIT_NOFILE: u64 = 7;
 const RISCV_LINUX_STACK_LIMIT_BYTES: u64 = 8 * 1024 * 1024;
 const RISCV_LINUX_DATA_LIMIT_BYTES: u64 = 256 * 1024 * 1024;
-const RISCV_LINUX_OPEN_FILE_LIMIT: u64 = 1024;
+const RISCV_LINUX_OPEN_FILE_SOFT_LIMIT: u64 = 1024;
+const RISCV_LINUX_OPEN_FILE_HARD_LIMIT: u64 = 4096;
 const RISCV_LINUX_ESRCH: u64 = 3;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EINVAL: u64 = 22;
@@ -181,7 +182,7 @@ fn linux_table_prlimit64_writes_single_process_count_limit() {
 
 #[test]
 fn linux_table_prlimit64_lowers_open_file_limit_and_reports_previous_limit() {
-    let requested_limit = resource_limit_bytes(64, RISCV_LINUX_OPEN_FILE_LIMIT);
+    let requested_limit = resource_limit_bytes(64, RISCV_LINUX_OPEN_FILE_HARD_LIMIT);
     let store = loaded_program_store_with_data(
         &[(0x8000, addi(0, 0, 0))],
         &[
@@ -220,16 +221,19 @@ fn linux_table_prlimit64_lowers_open_file_limit_and_reports_previous_limit() {
     assert_eq!(set, Some(RiscvSyscallOutcome::Return { value: 0 }));
     assert_eq!(query, Some(RiscvSyscallOutcome::Return { value: 0 }));
     let old_limit = guest_memory_reader(Arc::clone(&store))(0x9100, 16).unwrap();
-    assert_eq!(read_u64(&old_limit, 0), RISCV_LINUX_OPEN_FILE_LIMIT);
-    assert_eq!(read_u64(&old_limit, 8), RISCV_LINUX_OPEN_FILE_LIMIT);
+    assert_eq!(read_u64(&old_limit, 0), RISCV_LINUX_OPEN_FILE_SOFT_LIMIT);
+    assert_eq!(read_u64(&old_limit, 8), RISCV_LINUX_OPEN_FILE_HARD_LIMIT);
     let current_limit = guest_memory_reader(Arc::clone(&store))(0x9200, 16).unwrap();
     assert_eq!(read_u64(&current_limit, 0), 64);
-    assert_eq!(read_u64(&current_limit, 8), RISCV_LINUX_OPEN_FILE_LIMIT);
+    assert_eq!(
+        read_u64(&current_limit, 8),
+        RISCV_LINUX_OPEN_FILE_HARD_LIMIT
+    );
 }
 
 #[test]
 fn linux_table_nofile_limit_blocks_new_fd_allocations() {
-    let requested_limit = resource_limit_bytes(3, RISCV_LINUX_OPEN_FILE_LIMIT);
+    let requested_limit = resource_limit_bytes(3, RISCV_LINUX_OPEN_FILE_HARD_LIMIT);
     let store = loaded_program_store_with_data(
         &[(0x8000, addi(0, 0, 0))],
         &[(0x9000, &requested_limit), (0x9100, &[0xff; 8])],
@@ -321,7 +325,7 @@ fn linux_table_nofile_limit_blocks_new_fd_allocations() {
 
 #[test]
 fn linux_table_nofile_limit_preserves_dup3_bad_old_fd_priority() {
-    let requested_limit = resource_limit_bytes(3, RISCV_LINUX_OPEN_FILE_LIMIT);
+    let requested_limit = resource_limit_bytes(3, RISCV_LINUX_OPEN_FILE_HARD_LIMIT);
     let store = loaded_program_store_with_data(
         &[(0x8000, addi(0, 0, 0))],
         &[(0x9000, &[0xff; 8]), (0x9100, &requested_limit)],
