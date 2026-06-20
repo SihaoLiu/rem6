@@ -930,6 +930,7 @@ and suite-level required-resource declarations, top-level manifest resource
 acquisition through local artifacts and the in-memory executor, runtime-consumable
 resolved resource construction for acquired manifest payloads, suite replay-plan
 resource acquisition through the same top-level local-artifact executor path,
+top-level `preloaded` acquisition locators for already materialized local artifacts,
 top-level host-file acquisition through config-relative host paths and the same
 executor validation flow, top-level uncompressed tar archive entry acquisition
 and gzip-compressed tar archive entry acquisition plus stored and deflated ZIP
@@ -974,10 +975,9 @@ artifact directories from TOML-relative paths, and
 top-level GUPS traffic profile JSON/stats output.
 
 **Not migrated:** Full gem5 stdlib ergonomics, host/network/archive resource
-acquisition beyond the host-file, tar-entry, gzip-tar-entry,
-stored/deflated ZIP-entry, generated zero-fill, basic HTTP, chunked HTTP, and
-HTTP redirect slices, HTTPS, cache/policy controls, broader archive and
-artifact kinds, broad
+acquisition beyond the host-file, tar-entry, gzip-tar-entry, stored/deflated
+ZIP-entry, preloaded-local, generated zero-fill, basic HTTP, chunked HTTP, and
+HTTP redirect slices, HTTPS, cache/policy controls, broader archive and artifact kinds, broad
 runtime handoff of acquired suite resources beyond the
 unique run-kernel, `suite-resource:<workload>/<resource>` readfile/load-blob,
 RISC-V SE guest-file, and selected trace-resource replay slices, broad GPU
@@ -988,7 +988,7 @@ orchestration.
 `WorkloadResource`, `WorkloadSuiteReplayPlan`,
 `WorkloadInMemoryResourceAcquisitionExecutor`, `WorkloadResolvedResources`,
 `rem6 resource-acquire` CLI tests, `rem6 run` manifest and suite
-resource-config kernel handoff tests, `rem6 run` suite resource-config
+resource-config kernel handoff tests including preloaded-local acquisition locator handoff, `rem6 run` suite resource-config
 readfile, load-blob, RISC-V SE stdin, and RISC-V SE guest-file handoff tests
 including `suite-resource:<workload>/<resource>` same-name suite resource
 selection and generated zero-fill load-blob memory dump coverage,

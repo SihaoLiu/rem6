@@ -436,7 +436,10 @@ fn parse_resource_acquire_resource(
             });
         }
         (Some(artifact), _) => (file_config.resolve_path(artifact), None, None),
-        (None, WorkloadResourceAcquisitionKind::HostFile) => (
+        (
+            None,
+            WorkloadResourceAcquisitionKind::HostFile | WorkloadResourceAcquisitionKind::Preloaded,
+        ) => (
             file_config.resolve_path(Path::new(&acquisition_locator)),
             None,
             None,
