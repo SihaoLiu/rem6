@@ -33,6 +33,7 @@ mod guest_write;
 mod hwprobe;
 mod identity;
 mod image_layout;
+mod inotify;
 mod ioctl;
 mod iovec;
 mod limits;
@@ -139,6 +140,10 @@ use identity::{
 };
 use image_layout::riscv_program_break_for_boot_image;
 pub use image_layout::RiscvSyscallImageLayoutError;
+use inotify::{
+    syscall_inotify_add_watch, syscall_inotify_init1, syscall_inotify_rm_watch, RiscvGuestInotify,
+    RISCV_LINUX_INOTIFY_ADD_WATCH, RISCV_LINUX_INOTIFY_INIT1, RISCV_LINUX_INOTIFY_RM_WATCH,
+};
 use ioctl::{syscall_ioctl, RISCV_LINUX_IOCTL};
 pub use limits::RISCV_LINUX_STACK_LIMIT_BYTES;
 use limits::{
@@ -288,6 +293,7 @@ pub struct RiscvSyscallState {
     guest_eventfds: BTreeMap<GuestFileDescriptionId, RiscvGuestEventFd>,
     guest_timerfds: BTreeMap<GuestFileDescriptionId, RiscvGuestTimerFd>,
     guest_signalfds: BTreeMap<GuestFileDescriptionId, RiscvGuestSignalFd>,
+    guest_inotifies: BTreeMap<GuestFileDescriptionId, RiscvGuestInotify>,
     guest_epolls: BTreeMap<GuestFileDescriptionId, RiscvGuestEpoll>,
     guest_opens: Vec<RiscvGuestOpenRecord>,
     stdin_fds: BTreeSet<GuestFd>,
@@ -388,6 +394,7 @@ impl RiscvSyscallState {
             guest_eventfds: BTreeMap::new(),
             guest_timerfds: BTreeMap::new(),
             guest_signalfds: BTreeMap::new(),
+            guest_inotifies: BTreeMap::new(),
             guest_epolls: BTreeMap::new(),
             guest_opens: Vec::new(),
             stdin_fds,
@@ -1008,6 +1015,7 @@ impl RiscvSyscallState {
         self.remove_guest_eventfd_description(description);
         self.remove_guest_timerfd_description(description);
         self.remove_guest_signalfd_description(description);
+        self.remove_guest_inotify_description(description);
         self.remove_guest_epoll_target_description(description);
         self.remove_guest_epoll_description(description);
         if let Some(identity) = closed_guest_file_identity {

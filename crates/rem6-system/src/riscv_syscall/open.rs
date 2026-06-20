@@ -333,7 +333,7 @@ fn syscall_open_registered_path(
 
     let open_directory = flags & RISCV_LINUX_O_DIRECTORY != 0;
     let virtual_file = state.virtual_proc_file_contents_for_path(&path);
-    let (path, node_kind, file_contents, directory_contents) =
+    let (path, node_kind, file_contents, directory_contents, created_file_path) =
         if let Some((path, contents)) = virtual_file {
             if open_directory {
                 return linux_error(RISCV_LINUX_ENOTDIR);
@@ -341,7 +341,13 @@ fn syscall_open_registered_path(
             if writable || creates_file || truncates_file {
                 return linux_error(RISCV_LINUX_EACCES);
             }
-            (path, RiscvGuestNodeKind::RegularFile, Some(contents), None)
+            (
+                path,
+                RiscvGuestNodeKind::RegularFile,
+                Some(contents),
+                None,
+                None,
+            )
         } else if open_directory {
             if writable || creates_file || truncates_file {
                 return linux_error(RISCV_LINUX_EINVAL);
@@ -358,6 +364,7 @@ fn syscall_open_registered_path(
                 RiscvGuestNodeKind::Directory,
                 None,
                 Some(super::riscv_linux_dirent64_bytes(&entries)),
+                None,
             )
         } else if writable || creates_file || truncates_file {
             let path = match state.resolve_guest_path(&path) {
@@ -389,7 +396,14 @@ fn syscall_open_registered_path(
             if created_new_file {
                 state.set_guest_file_permissions(&path, apply_file_creation_mask(mode, state));
             }
-            (path, RiscvGuestNodeKind::RegularFile, Some(contents), None)
+            let created_file_path = created_new_file.then_some(path.clone());
+            (
+                path,
+                RiscvGuestNodeKind::RegularFile,
+                Some(contents),
+                None,
+                created_file_path,
+            )
         } else {
             let path = match state.resolve_existing_guest_regular_path(&path) {
                 Ok(Some(path)) => path,
@@ -400,6 +414,7 @@ fn syscall_open_registered_path(
                 path.clone(),
                 RiscvGuestNodeKind::RegularFile,
                 state.guest_file_contents(&path).map(Vec::from),
+                None,
                 None,
             )
         };
@@ -418,7 +433,12 @@ fn syscall_open_registered_path(
         file_contents,
         directory_contents,
     }) {
-        Ok(fd) => u64::from(fd.get()),
+        Ok(fd) => {
+            if let Some(path) = created_file_path {
+                state.notify_guest_file_created(&path);
+            }
+            u64::from(fd.get())
+        }
         Err(GuestFdError::FdSpaceExhausted) => linux_error(RISCV_LINUX_EMFILE),
         Err(_error) => linux_error(RISCV_LINUX_EBADF),
     }

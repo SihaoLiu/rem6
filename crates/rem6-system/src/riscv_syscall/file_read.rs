@@ -1,6 +1,8 @@
 use super::{
     eventfd::{eventfd_read_bytes, RiscvGuestEventFdRead},
-    guest_fd_argument, linux_error,
+    guest_fd_argument,
+    inotify::{inotify_read_result, RiscvGuestInotifyRead},
+    linux_error,
     signalfd::{signalfd_read_result, signalfd_siginfo_bytes, RiscvGuestSignalFdRead},
     timerfd::{timerfd_read_bytes, timerfd_read_result, RiscvGuestTimerFdRead},
     RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAGAIN,
@@ -101,6 +103,26 @@ pub(super) fn syscall_read(
                 return Some(linux_error(RISCV_LINUX_EFAULT));
             }
             if state.consume_guest_signalfd_read(fd, &signals).is_err() {
+                return Some(linux_error(RISCV_LINUX_EBADF));
+            }
+            return Some(bytes.len() as u64);
+        }
+        Ok(None) => {}
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    }
+    match state.guest_inotify_read(fd, count) {
+        Ok(Some(read)) => {
+            let bytes = match read {
+                RiscvGuestInotifyRead::Bytes(bytes) => bytes,
+                RiscvGuestInotifyRead::Blocked => return None,
+                RiscvGuestInotifyRead::WouldBlock | RiscvGuestInotifyRead::InvalidSize => {
+                    return inotify_read_result(read);
+                }
+            };
+            if !guest_memory.write(request.argument(1), &bytes) {
+                return Some(linux_error(RISCV_LINUX_EFAULT));
+            }
+            if state.consume_guest_inotify_read(fd, bytes.len()).is_err() {
                 return Some(linux_error(RISCV_LINUX_EBADF));
             }
             return Some(bytes.len() as u64);

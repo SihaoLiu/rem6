@@ -83,6 +83,16 @@ impl RiscvSyscallTable {
                     state,
                 ),
             }),
+            RISCV_LINUX_INOTIFY_INIT1 => Some(RiscvSyscallOutcome::Return {
+                value: syscall_inotify_init1(request, state),
+            }),
+            RISCV_LINUX_INOTIFY_ADD_WATCH => {
+                syscall_inotify_add_watch(request, state, guest_memory_reader)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
+            RISCV_LINUX_INOTIFY_RM_WATCH => Some(RiscvSyscallOutcome::Return {
+                value: syscall_inotify_rm_watch(request, state),
+            }),
             RISCV_LINUX_FCNTL => {
                 syscall_fcntl(request, state, guest_memory_reader, guest_memory_writer)
             }
