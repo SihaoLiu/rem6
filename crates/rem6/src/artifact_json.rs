@@ -287,6 +287,7 @@ impl Rem6TraceReplayArtifact {
             traffic_trace_summary_json(
                 self.execution.summary(),
                 self.execution.parallel_summary(),
+                self.execution.data_cache_dram_summary(),
                 self.execution.data_cache_dram_accesses(),
             ),
             self.stats_json,
@@ -319,6 +320,7 @@ impl Rem6GupsExecutionSummary {
 fn traffic_trace_summary_json(
     summary: &rem6_workload::WorkloadTrafficTraceReplaySummary,
     parallel_summary: &rem6_workload::WorkloadParallelExecutionSummary,
+    data_cache_dram_summary: &rem6_workload::WorkloadParallelExecutionSummary,
     data_cache_dram_accesses: usize,
 ) -> String {
     let mut fields = vec![format!(
@@ -460,6 +462,66 @@ fn traffic_trace_summary_json(
         &mut fields,
         "data_cache_dram_accesses",
         data_cache_dram_accesses,
+    );
+    push_json_usize(
+        &mut fields,
+        "active_dram_target_count",
+        data_cache_dram_summary.active_dram_target_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "active_dram_port_count",
+        data_cache_dram_summary.active_dram_port_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "active_dram_bank_count",
+        data_cache_dram_summary.active_dram_bank_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "dram_access_count",
+        data_cache_dram_summary.dram_access_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "dram_read_count",
+        data_cache_dram_summary.dram_read_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "dram_write_count",
+        data_cache_dram_summary.dram_write_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "dram_row_hit_count",
+        data_cache_dram_summary.dram_row_hit_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "dram_row_miss_count",
+        data_cache_dram_summary.dram_row_miss_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "dram_command_count",
+        data_cache_dram_summary.dram_command_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "dram_turnaround_count",
+        data_cache_dram_summary.dram_turnaround_count(),
+    );
+    push_json_u64(
+        &mut fields,
+        "dram_total_ready_latency_cycles",
+        data_cache_dram_summary.dram_total_ready_latency_cycles(),
+    );
+    push_json_u64(
+        &mut fields,
+        "dram_max_ready_latency_cycles",
+        data_cache_dram_summary.dram_max_ready_latency_cycles(),
     );
     fields.push(format!(
         "\"fabric_lane_activities\":[{}]",
@@ -1629,8 +1691,12 @@ mod tests {
             .with_trace_l1_invalidation_count(1)
             .with_trace_diagnostic_count(1);
 
+        let parallel_summary = WorkloadParallelExecutionSummary::default();
+        let data_cache_dram_summary = WorkloadParallelExecutionSummary::default()
+            .with_dram_activity(2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
+
         let json =
-            traffic_trace_summary_json(&summary, &WorkloadParallelExecutionSummary::default(), 7);
+            traffic_trace_summary_json(&summary, &parallel_summary, &data_cache_dram_summary, 7);
 
         assert!(json.contains("\"trace_invalidate_response_count\":1"));
         assert!(json.contains("\"trace_clean_response_count\":1"));
@@ -1646,6 +1712,18 @@ mod tests {
         assert!(json.contains("\"trace_l1_invalidation_count\":1"));
         assert!(json.contains("\"trace_diagnostic_count\":1"));
         assert!(json.contains("\"data_cache_dram_accesses\":7"));
+        assert!(json.contains("\"active_dram_target_count\":2"));
+        assert!(json.contains("\"active_dram_port_count\":3"));
+        assert!(json.contains("\"active_dram_bank_count\":4"));
+        assert!(json.contains("\"dram_access_count\":5"));
+        assert!(json.contains("\"dram_read_count\":6"));
+        assert!(json.contains("\"dram_write_count\":7"));
+        assert!(json.contains("\"dram_row_hit_count\":8"));
+        assert!(json.contains("\"dram_row_miss_count\":9"));
+        assert!(json.contains("\"dram_command_count\":10"));
+        assert!(json.contains("\"dram_turnaround_count\":11"));
+        assert!(json.contains("\"dram_total_ready_latency_cycles\":12"));
+        assert!(json.contains("\"dram_max_ready_latency_cycles\":13"));
     }
 
     fn route_id(value: &str) -> WorkloadRouteId {

@@ -1655,11 +1655,80 @@ fn rem6_trace_replay_data_cache_profiled_dram_miss_emits_backing_dram_stats() {
     assert!(stdout.contains("\"data_cache_protocol\":\"msi\""));
     assert!(stdout.contains("\"data_cache_dram_memory_profile\":\"hbm\""));
     assert!(stdout.contains("\"data_cache_dram_accesses\":1"));
+    assert!(stdout.contains("\"active_dram_target_count\":1"));
+    assert!(stdout.contains("\"active_dram_port_count\":1"));
+    assert!(stdout.contains("\"active_dram_bank_count\":1"));
+    assert!(stdout.contains("\"dram_access_count\":1"));
+    assert!(stdout.contains("\"dram_read_count\":1"));
+    assert!(stdout.contains("\"dram_row_miss_count\":1"));
     assert_stat(
         &stdout,
         "sim.trace_replay.data_cache.dram_accesses",
         "Count",
         1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.dram.active_targets",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.dram.active_ports",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.dram.active_banks",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.dram.accesses",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.dram.reads",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.dram.row_misses",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.trace_replay.dram.commands",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.trace_replay.dram.total_ready_latency_ticks",
+        "Tick",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.trace_replay.dram.max_ready_latency_ticks",
+        "Tick",
+        0,
         "monotonic",
     );
 }

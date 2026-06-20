@@ -1,8 +1,11 @@
 use std::cmp;
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use rem6_boot::BootImage;
-use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout};
+use rem6_coherence::ParallelCoherenceRunSummary;
+use rem6_dram::{DramMemoryActivityProfile, DramTargetActivity};
+use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
 use rem6_system::RiscvWorkloadReplay;
 use rem6_traffic::TrafficTrace;
 use rem6_workload::{
@@ -53,6 +56,7 @@ pub struct Rem6TraceReplayExecutionSummary {
     pub(crate) final_tick: u64,
     pub(crate) summary: rem6_workload::WorkloadTrafficTraceReplaySummary,
     pub(crate) parallel_summary: WorkloadParallelExecutionSummary,
+    pub(crate) data_cache_dram_summary: WorkloadParallelExecutionSummary,
     pub(crate) data_cache_dram_accesses: usize,
 }
 
@@ -139,16 +143,17 @@ pub fn run_trace_replay_config(
             ),
         });
     }
+    let data_cache_runs = outcome.run().data_cache_runs();
+    let data_cache_dram_summary = data_cache_dram_summary(data_cache_runs);
     let execution = Rem6TraceReplayExecutionSummary {
         final_tick,
         summary,
         parallel_summary,
-        data_cache_dram_accesses: outcome
-            .run()
-            .data_cache_runs()
+        data_cache_dram_accesses: data_cache_runs
             .iter()
             .map(|run| run.dram_access_count())
             .sum(),
+        data_cache_dram_summary,
     };
     let stats = trace_replay_stats_output(Rem6TraceReplayStatsInputs {
         config: &config,
@@ -509,6 +514,42 @@ fn trace_payload_digest(payload: &[u8]) -> String {
     format!("sha256:{}", bytes_to_hex(&digest))
 }
 
+fn data_cache_dram_summary(
+    data_cache_runs: &[ParallelCoherenceRunSummary],
+) -> WorkloadParallelExecutionSummary {
+    let mut activities = BTreeMap::<MemoryTargetId, DramTargetActivity>::new();
+    for run in data_cache_runs {
+        for (target, activity) in run.dram_target_activities() {
+            activities
+                .entry(target)
+                .and_modify(|stored| {
+                    *stored = stored.clone().merge_window(activity.clone());
+                })
+                .or_insert(activity);
+        }
+    }
+    dram_profile_summary(&DramMemoryActivityProfile::from_target_activities(
+        activities.values(),
+    ))
+}
+
+fn dram_profile_summary(profile: &DramMemoryActivityProfile) -> WorkloadParallelExecutionSummary {
+    WorkloadParallelExecutionSummary::default().with_dram_activity(
+        profile.active_target_count(),
+        profile.active_port_count(),
+        profile.active_bank_count(),
+        profile.access_count(),
+        profile.read_count(),
+        profile.write_count(),
+        profile.row_hit_count(),
+        profile.row_miss_count(),
+        profile.command_count(),
+        profile.turnaround_count(),
+        profile.total_ready_latency_cycles(),
+        profile.max_ready_latency_cycles(),
+    )
+}
+
 impl Rem6TraceReplayExecutionSummary {
     pub(crate) const fn final_tick(&self) -> u64 {
         self.final_tick
@@ -520,6 +561,10 @@ impl Rem6TraceReplayExecutionSummary {
 
     pub(crate) const fn parallel_summary(&self) -> &WorkloadParallelExecutionSummary {
         &self.parallel_summary
+    }
+
+    pub(crate) const fn data_cache_dram_summary(&self) -> &WorkloadParallelExecutionSummary {
+        &self.data_cache_dram_summary
     }
 
     pub(crate) const fn data_cache_dram_accesses(&self) -> usize {

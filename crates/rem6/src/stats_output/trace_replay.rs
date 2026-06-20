@@ -518,6 +518,76 @@ pub(super) fn emit_trace_replay_fabric_stats(
     )
 }
 
+pub(super) fn emit_trace_replay_dram_stats(
+    stats: &mut StatsRegistry,
+    summary: &WorkloadParallelExecutionSummary,
+) -> Result<(), Rem6CliError> {
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.dram.active_targets",
+        summary.active_dram_target_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.dram.active_ports",
+        summary.active_dram_port_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.dram.active_banks",
+        summary.active_dram_bank_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.dram.accesses",
+        summary.dram_access_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.dram.reads",
+        summary.dram_read_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.dram.writes",
+        summary.dram_write_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.dram.row_hits",
+        summary.dram_row_hit_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.dram.row_misses",
+        summary.dram_row_miss_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.dram.commands",
+        summary.dram_command_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.dram.turnarounds",
+        summary.dram_turnaround_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.dram.total_ready_latency_ticks",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        summary.dram_total_ready_latency_cycles(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.dram.max_ready_latency_ticks",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        summary.dram_max_ready_latency_cycles(),
+    )
+}
+
 pub(super) fn emit_trace_replay_resource_stats(
     stats: &mut StatsRegistry,
     summary: &WorkloadParallelExecutionSummary,
@@ -548,8 +618,8 @@ mod tests {
     };
 
     use super::{
-        emit_trace_replay_data_cache_stats, emit_trace_replay_resource_stats,
-        emit_trace_replay_summary_stats,
+        emit_trace_replay_data_cache_stats, emit_trace_replay_dram_stats,
+        emit_trace_replay_resource_stats, emit_trace_replay_summary_stats,
     };
     use crate::stats_output::stats_snapshot_json;
 
@@ -700,6 +770,39 @@ mod tests {
             "sim.trace_replay.data_cache.dram_accesses",
             "Count",
             9,
+        );
+    }
+
+    #[test]
+    fn trace_replay_stats_emit_dram_activity_accounting() {
+        let summary = WorkloadParallelExecutionSummary::default()
+            .with_dram_activity(2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
+        let mut stats = StatsRegistry::new();
+
+        emit_trace_replay_dram_stats(&mut stats, &summary).unwrap();
+        let json = stats_snapshot_json(&stats.snapshot(0));
+
+        assert_stat_value(&json, "sim.trace_replay.dram.active_targets", "Count", 2);
+        assert_stat_value(&json, "sim.trace_replay.dram.active_ports", "Count", 3);
+        assert_stat_value(&json, "sim.trace_replay.dram.active_banks", "Count", 4);
+        assert_stat_value(&json, "sim.trace_replay.dram.accesses", "Count", 5);
+        assert_stat_value(&json, "sim.trace_replay.dram.reads", "Count", 6);
+        assert_stat_value(&json, "sim.trace_replay.dram.writes", "Count", 7);
+        assert_stat_value(&json, "sim.trace_replay.dram.row_hits", "Count", 8);
+        assert_stat_value(&json, "sim.trace_replay.dram.row_misses", "Count", 9);
+        assert_stat_value(&json, "sim.trace_replay.dram.commands", "Count", 10);
+        assert_stat_value(&json, "sim.trace_replay.dram.turnarounds", "Count", 11);
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.dram.total_ready_latency_ticks",
+            "Tick",
+            12,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.dram.max_ready_latency_ticks",
+            "Tick",
+            13,
         );
     }
 
