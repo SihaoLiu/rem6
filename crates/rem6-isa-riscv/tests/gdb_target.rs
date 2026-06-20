@@ -78,6 +78,9 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "  <reg name=\"marchid\" bitsize=\"64\" regnum=\"129\"/>\n",
             "  <reg name=\"mimpid\" bitsize=\"64\" regnum=\"130\"/>\n",
             "  <reg name=\"misa\" bitsize=\"64\" regnum=\"131\"/>\n",
+            "  <reg name=\"vl\" bitsize=\"64\" regnum=\"132\"/>\n",
+            "  <reg name=\"vtype\" bitsize=\"64\" regnum=\"133\"/>\n",
+            "  <reg name=\"vlenb\" bitsize=\"64\" regnum=\"134\"/>\n",
             "</feature>\n",
         ),
     );
@@ -114,9 +117,12 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "marchid",
             "mimpid",
             "misa",
+            "vl",
+            "vtype",
+            "vlenb",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 30);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 33);
 }
 
 #[test]
@@ -351,6 +357,9 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "  <reg name=\"marchid\" bitsize=\"32\" regnum=\"129\"/>\n",
             "  <reg name=\"mimpid\" bitsize=\"32\" regnum=\"130\"/>\n",
             "  <reg name=\"misa\" bitsize=\"32\" regnum=\"131\"/>\n",
+            "  <reg name=\"vl\" bitsize=\"32\" regnum=\"132\"/>\n",
+            "  <reg name=\"vtype\" bitsize=\"32\" regnum=\"133\"/>\n",
+            "  <reg name=\"vlenb\" bitsize=\"32\" regnum=\"134\"/>\n",
             "</feature>\n",
         ),
     );
@@ -387,9 +396,12 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "marchid",
             "mimpid",
             "misa",
+            "vl",
+            "vtype",
+            "vlenb",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"32\"").count(), 30);
+    assert_eq!(csr.matches("bitsize=\"32\"").count(), 33);
 }
 
 #[test]

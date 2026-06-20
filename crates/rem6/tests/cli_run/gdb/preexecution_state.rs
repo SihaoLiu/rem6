@@ -63,6 +63,26 @@ fn rem6_run_gdb_listen_applies_preexecution_state_changes() {
         send_gdb_packet(&mut stream, b"p5"),
         gdb_response(b"2a00000000000000")
     );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P84=0c00000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P85=d000000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p84"),
+        gdb_response(b"0c00000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p85"),
+        gdb_response(b"d000000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p86"),
+        gdb_response(b"1000000000000000")
+    );
     let vector_description = send_gdb_packet(
         &mut stream,
         b"qXfer:features:read:riscv-64bit-vector.xml:0,a0",
@@ -94,6 +114,14 @@ fn rem6_run_gdb_listen_applies_preexecution_state_changes() {
         gdb_response(b"404142434445464748494a4b4c4d4e4f")
     );
     assert_eq!(
+        send_gdb_packet(&mut stream, b"p84"),
+        gdb_response(b"0900000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p85"),
+        gdb_response(b"c800000000000000")
+    );
+    assert_eq!(
         send_gdb_packet(&mut stream, b"Z0,80000004,4"),
         gdb_response(b"OK")
     );
@@ -121,9 +149,10 @@ fn rv64_all_register_write_packet(x5: u64, pc: u64) -> Vec<u8> {
     const RV64_FLOAT_REGISTERS: usize = 32;
     const RV64_FLOAT_CSR_AND_PLACEHOLDER_REGISTERS: usize = 4;
     const RV64_CSR_REGISTERS: usize = 20;
-    const RV64_CSR_EXTENSION_REGISTERS: usize = 10;
+    const RV64_CSR_EXTENSION_REGISTERS: usize = 13;
     const RV64_VECTOR_REGISTERS: usize = 32;
     const RV64_VECTOR_REGISTER_BYTES: usize = 16;
+    const RV64_SPARSE_CSR_REGISTERS_BEFORE_VECTOR_CONFIG: usize = 10;
     const RV64_REGISTER_BYTES: usize = (RV64_INTEGER_AND_PC_REGISTERS
         + RV64_FLOAT_REGISTERS
         + RV64_CSR_REGISTERS
@@ -137,10 +166,17 @@ fn rv64_all_register_write_packet(x5: u64, pc: u64) -> Vec<u8> {
         + RV64_FLOAT_REGISTERS * 8
         + RV64_FLOAT_CSR_AND_PLACEHOLDER_REGISTERS * 4
         + RV64_CSR_REGISTERS * 8;
+    const VECTOR_CONFIG_BASE_OFFSET: usize = VECTOR_BASE_OFFSET
+        + RV64_VECTOR_REGISTERS * RV64_VECTOR_REGISTER_BYTES
+        + RV64_SPARSE_CSR_REGISTERS_BEFORE_VECTOR_CONFIG * 8;
 
     let mut registers = vec![0; RV64_REGISTER_BYTES];
     registers[X5_OFFSET..X5_OFFSET + 8].copy_from_slice(&x5.to_le_bytes());
     registers[PC_OFFSET..PC_OFFSET + 8].copy_from_slice(&pc.to_le_bytes());
+    registers[VECTOR_CONFIG_BASE_OFFSET..VECTOR_CONFIG_BASE_OFFSET + 8]
+        .copy_from_slice(&9_u64.to_le_bytes());
+    registers[VECTOR_CONFIG_BASE_OFFSET + 8..VECTOR_CONFIG_BASE_OFFSET + 16]
+        .copy_from_slice(&0xc8_u64.to_le_bytes());
     for (index, byte) in registers[VECTOR_BASE_OFFSET..VECTOR_BASE_OFFSET + 16]
         .iter_mut()
         .enumerate()

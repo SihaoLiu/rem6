@@ -368,4 +368,7 @@ const RV64_CSR_REGISTERS: &[CsrRegister] = &[
     CsrRegister::new("marchid", Some(129)),
     CsrRegister::new("mimpid", Some(130)),
     CsrRegister::new("misa", Some(131)),
+    CsrRegister::new("vl", Some(132)),
+    CsrRegister::new("vtype", Some(133)),
+    CsrRegister::new("vlenb", Some(134)),
 ];

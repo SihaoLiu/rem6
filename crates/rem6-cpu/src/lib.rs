@@ -785,6 +785,12 @@ impl RiscvCore {
             .vector_config()
     }
 
+    pub fn set_vector_config(&self, vector_config: RiscvVectorConfig) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.hart.set_vector_config(vector_config);
+        riscv_checker::sync_checker_hart(&mut state);
+    }
+
     pub fn add_pma_misaligned_range(&self, range: RiscvPmaRange) -> Result<(), RiscvPmaError> {
         self.state
             .lock()
