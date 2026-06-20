@@ -392,6 +392,7 @@ pub(super) fn emit_trace_replay_summary_stats(
 pub(super) fn emit_trace_replay_data_cache_stats(
     stats: &mut StatsRegistry,
     summary: &WorkloadParallelExecutionSummary,
+    data_cache_dram_accesses: usize,
 ) -> Result<(), Rem6CliError> {
     emit_trace_count(
         stats,
@@ -442,6 +443,11 @@ pub(super) fn emit_trace_replay_data_cache_stats(
         stats,
         "sim.trace_replay.data_cache.scheduler.total_workers",
         summary.data_cache_parallel_scheduler_total_workers() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.data_cache.dram_accesses",
+        data_cache_dram_accesses as u64,
     )?;
     for protocol in [
         WorkloadDataCacheProtocol::Msi,
@@ -627,7 +633,7 @@ mod tests {
             ]);
         let mut stats = StatsRegistry::new();
 
-        emit_trace_replay_data_cache_stats(&mut stats, &summary).unwrap();
+        emit_trace_replay_data_cache_stats(&mut stats, &summary, 9).unwrap();
         let json = stats_snapshot_json(&stats.snapshot(0));
 
         assert_stat_value(&json, "sim.trace_replay.data_cache.runs", "Count", 5);
@@ -688,6 +694,12 @@ mod tests {
             "sim.trace_replay.data_cache.scheduler.total_workers",
             "Count",
             8,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.data_cache.dram_accesses",
+            "Count",
+            9,
         );
     }
 

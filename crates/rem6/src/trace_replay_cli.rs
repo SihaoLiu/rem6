@@ -18,6 +18,7 @@ use sha2::{Digest, Sha256};
 use crate::cli_output::emit_cli_output;
 use crate::config::{Rem6TraceReplayConfig, StatsFormat};
 use crate::formatting::bytes_to_hex;
+use crate::guest_memory::build_cli_dram_profile;
 use crate::resource_acquire_cli::{
     acquire_manifest_required_resources, acquire_suite_required_resources,
     reject_runtime_remote_uri_resources,
@@ -52,6 +53,7 @@ pub struct Rem6TraceReplayExecutionSummary {
     pub(crate) final_tick: u64,
     pub(crate) summary: rem6_workload::WorkloadTrafficTraceReplaySummary,
     pub(crate) parallel_summary: WorkloadParallelExecutionSummary,
+    pub(crate) data_cache_dram_accesses: usize,
 }
 
 pub(crate) fn run_trace_replay_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
@@ -141,6 +143,12 @@ pub fn run_trace_replay_config(
         final_tick,
         summary,
         parallel_summary,
+        data_cache_dram_accesses: outcome
+            .run()
+            .data_cache_runs()
+            .iter()
+            .map(|run| run.dram_access_count())
+            .sum(),
     };
     let stats = trace_replay_stats_output(Rem6TraceReplayStatsInputs {
         config: &config,
@@ -272,6 +280,8 @@ fn trace_replay_manifest(
         AccessSize::new(config.memory_size()).map_err(execute_error)?,
     )
     .map_err(execute_error)?;
+    let line_layout = CacheLineLayout::new(config.line_bytes()).map_err(execute_error)?;
+    let memory_target = trace_replay_memory_target(config, memory_range, line_layout)?;
     let topology = WorkloadTopology::new(
         trace_partition_count(config.control_partition()),
         config.min_remote_delay(),
@@ -284,9 +294,7 @@ fn trace_replay_manifest(
         .map_err(execute_error)?,
     )
     .map_err(execute_error)?
-    .add_memory_target(
-        WorkloadMemoryTarget::new(0, config.line_bytes(), memory_range).map_err(execute_error)?,
-    )
+    .add_memory_target(memory_target)
     .map_err(execute_error)?;
     let topology = match config.data_cache_protocol() {
         Some(protocol) => {
@@ -327,6 +335,21 @@ fn trace_replay_manifest(
     .map_err(execute_error)?
     .build()
     .map_err(execute_error)
+}
+
+fn trace_replay_memory_target(
+    config: &Rem6TraceReplayConfig,
+    memory_range: AddressRange,
+    line_layout: CacheLineLayout,
+) -> Result<WorkloadMemoryTarget, Rem6CliError> {
+    let target =
+        WorkloadMemoryTarget::new(0, config.line_bytes(), memory_range).map_err(execute_error)?;
+    match config.data_cache_dram_memory_profile() {
+        Some(profile) => target
+            .with_external_memory_profile(build_cli_dram_profile(line_layout, profile)?)
+            .map_err(execute_error),
+        None => Ok(target),
+    }
 }
 
 fn trace_replay_memory_topology(
@@ -497,6 +520,10 @@ impl Rem6TraceReplayExecutionSummary {
 
     pub(crate) const fn parallel_summary(&self) -> &WorkloadParallelExecutionSummary {
         &self.parallel_summary
+    }
+
+    pub(crate) const fn data_cache_dram_accesses(&self) -> usize {
+        self.data_cache_dram_accesses
     }
 }
 

@@ -239,6 +239,11 @@ impl Rem6TraceReplayArtifact {
             .data_cache_protocol()
             .map(|protocol| format!("\"{}\"", protocol.as_str()))
             .unwrap_or_else(|| "null".to_string());
+        let data_cache_dram_memory_profile = self
+            .config
+            .data_cache_dram_memory_profile()
+            .map(|profile| format!("\"{}\"", profile.as_str()))
+            .unwrap_or_else(|| "null".to_string());
         let fabric_link = optional_string_json(self.config.fabric_link());
         let fabric_bandwidth = optional_count_json(self.config.fabric_bandwidth_bytes_per_tick());
         let fabric_request_virtual_network = optional_count_json(
@@ -259,7 +264,7 @@ impl Rem6TraceReplayArtifact {
             .map(|selector| format!("\"{}\"", json_escape(&selector.source_name())))
             .unwrap_or_else(|| "null".to_string());
         format!(
-            "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_resource\":{},\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"data_cache_protocol\":{},\"fabric_link\":{},\"fabric_bandwidth_bytes_per_tick\":{},\"fabric_request_virtual_network\":{},\"fabric_response_virtual_network\":{},\"fabric_credit_depth\":{},\"simulation\":{},\"summary\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_resource\":{},\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"data_cache_protocol\":{},\"data_cache_dram_memory_profile\":{},\"fabric_link\":{},\"fabric_bandwidth_bytes_per_tick\":{},\"fabric_request_virtual_network\":{},\"fabric_response_virtual_network\":{},\"fabric_credit_depth\":{},\"simulation\":{},\"summary\":{},\"stats\":{}}}\n",
             self.schema,
             json_escape(&self.config.trace_input()),
             trace_resource,
@@ -272,13 +277,18 @@ impl Rem6TraceReplayArtifact {
             self.config.agent(),
             self.config.control_partition(),
             data_cache_protocol,
+            data_cache_dram_memory_profile,
             fabric_link,
             fabric_bandwidth,
             fabric_request_virtual_network,
             fabric_response_virtual_network,
             fabric_credit_depth,
             self.execution.to_json(self.config.max_tick()),
-            traffic_trace_summary_json(self.execution.summary(), self.execution.parallel_summary()),
+            traffic_trace_summary_json(
+                self.execution.summary(),
+                self.execution.parallel_summary(),
+                self.execution.data_cache_dram_accesses(),
+            ),
             self.stats_json,
         )
     }
@@ -309,6 +319,7 @@ impl Rem6GupsExecutionSummary {
 fn traffic_trace_summary_json(
     summary: &rem6_workload::WorkloadTrafficTraceReplaySummary,
     parallel_summary: &rem6_workload::WorkloadParallelExecutionSummary,
+    data_cache_dram_accesses: usize,
 ) -> String {
     let mut fields = vec![format!(
         "\"route\":\"{}\"",
@@ -444,6 +455,11 @@ fn traffic_trace_summary_json(
         &mut fields,
         "contended_fabric_lane_count",
         parallel_summary.contended_fabric_lane_count(),
+    );
+    push_json_usize(
+        &mut fields,
+        "data_cache_dram_accesses",
+        data_cache_dram_accesses,
     );
     fields.push(format!(
         "\"fabric_lane_activities\":[{}]",
@@ -1614,7 +1630,7 @@ mod tests {
             .with_trace_diagnostic_count(1);
 
         let json =
-            traffic_trace_summary_json(&summary, &WorkloadParallelExecutionSummary::default());
+            traffic_trace_summary_json(&summary, &WorkloadParallelExecutionSummary::default(), 7);
 
         assert!(json.contains("\"trace_invalidate_response_count\":1"));
         assert!(json.contains("\"trace_clean_response_count\":1"));
@@ -1629,6 +1645,7 @@ mod tests {
         assert!(json.contains("\"trace_cache_flush_data_byte_count\":64"));
         assert!(json.contains("\"trace_l1_invalidation_count\":1"));
         assert!(json.contains("\"trace_diagnostic_count\":1"));
+        assert!(json.contains("\"data_cache_dram_accesses\":7"));
     }
 
     fn route_id(value: &str) -> WorkloadRouteId {

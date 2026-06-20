@@ -4,8 +4,8 @@ use rem6_workload::WorkloadDataCacheProtocol;
 
 use super::{
     load_trace_replay_file_config, parse_data_cache_protocol, parse_number, parse_positive_u64,
-    required_value, trace_replay_file_config_from_args, Rem6TraceReplayConfig, StatsFormat,
-    SuiteResourceSelector,
+    required_value, trace_replay_file_config_from_args, CliDramMemoryProfile,
+    Rem6TraceReplayConfig, StatsFormat, SuiteResourceSelector,
 };
 use crate::Rem6CliError;
 
@@ -95,6 +95,11 @@ impl Rem6TraceReplayConfig {
                     }
                 })
             })
+            .transpose()?;
+        let mut data_cache_dram_memory_profile = file_config
+            .data_cache_dram_memory_profile
+            .as_deref()
+            .map(CliDramMemoryProfile::parse)
             .transpose()?;
         let mut fabric_link = file_config.fabric_link;
         let mut fabric_bandwidth_bytes_per_tick = file_config.fabric_bandwidth_bytes_per_tick;
@@ -217,6 +222,11 @@ impl Rem6TraceReplayConfig {
                             }
                         })?);
                 }
+                "--data-cache-dram-memory-profile" => {
+                    data_cache_dram_memory_profile = Some(CliDramMemoryProfile::parse(
+                        &required_value(&flag, args.next())?,
+                    )?);
+                }
                 "--fabric-link" => {
                     fabric_link = Some(required_value(&flag, args.next())?);
                 }
@@ -285,6 +295,11 @@ impl Rem6TraceReplayConfig {
                 flag: "--resource-config",
             });
         }
+        if data_cache_dram_memory_profile.is_some() && data_cache_protocol.is_none() {
+            return Err(Rem6CliError::MissingRequiredFlag {
+                flag: "--data-cache-protocol",
+            });
+        }
         let memory_route_delay = memory_route_delay.unwrap_or(min_remote_delay);
         if memory_route_delay < min_remote_delay {
             return Err(Rem6CliError::MemoryRouteDelayBelowMinRemoteDelay {
@@ -316,6 +331,7 @@ impl Rem6TraceReplayConfig {
             agent,
             control_partition,
             data_cache_protocol,
+            data_cache_dram_memory_profile,
             fabric_link,
             fabric_bandwidth_bytes_per_tick,
             fabric_request_virtual_network: fabric_request_virtual_network.unwrap_or(0),
@@ -390,6 +406,10 @@ impl Rem6TraceReplayConfig {
         self.data_cache_protocol
     }
 
+    pub const fn data_cache_dram_memory_profile(&self) -> Option<CliDramMemoryProfile> {
+        self.data_cache_dram_memory_profile
+    }
+
     pub fn fabric_link(&self) -> Option<&str> {
         self.fabric_link.as_deref()
     }
@@ -445,4 +465,36 @@ fn parse_fabric_credit_depth(value: &str) -> Result<u32, Rem6CliError> {
         .ok_or_else(|| Rem6CliError::InvalidTraceReplayFabricCreditDepth {
             value: value.to_string(),
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trace_replay_data_cache_dram_memory_profile_requires_data_cache_protocol() {
+        let error = Rem6TraceReplayConfig::parse_args([
+            "trace-replay",
+            "--trace",
+            "trace.pb",
+            "--route",
+            "cpu0.data",
+            "--memory-start",
+            "0x1000",
+            "--memory-size",
+            "0x1000",
+            "--max-tick",
+            "64",
+            "--data-cache-dram-memory-profile",
+            "hbm",
+        ])
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            Rem6CliError::MissingRequiredFlag {
+                flag: "--data-cache-protocol"
+            }
+        ));
+    }
 }
