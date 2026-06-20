@@ -3,6 +3,153 @@ use std::{fs, process::Command};
 use crate::support::{find_riscv_tool, temp_workspace};
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_set_mempolicy_with_qemu_probe() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE raw set_mempolicy smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE raw set_mempolicy smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-set-mempolicy");
+    let source = workspace.join("raw-set-mempolicy.c");
+    let binary = workspace.join("raw-set-mempolicy");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall5(long number, long arg0, long arg1, long arg2, long arg3, long arg4) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a4 asm("a4") = arg4;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3), "r"(a4), "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    unsigned long mask = 1;
+    unsigned long bad_mask = 2;
+    int mode = -1;
+    int mode_after_bad = -1;
+    int reset_mode = -1;
+    unsigned long out_mask = ~0UL;
+    unsigned long out_after_bad = ~0UL;
+    unsigned long reset_mask = ~0UL;
+
+    long set = linux_syscall3(237, 2, (long)&mask, 2);
+    long get = linux_syscall5(236, (long)&mode, (long)&out_mask, 64, 0, 0);
+    long bad_set = linux_syscall3(237, 2, (long)&bad_mask, 3);
+    long get_after_bad = linux_syscall5(236, (long)&mode_after_bad, (long)&out_after_bad, 64, 0, 0);
+    long reset = linux_syscall3(237, 0, 0, 0);
+    long get_after_reset = linux_syscall5(236, (long)&reset_mode, (long)&reset_mask, 64, 0, 0);
+
+    int ok = set == 0
+        && get == 0
+        && mode == 2
+        && out_mask == 1
+        && bad_set == -22
+        && get_after_bad == 0
+        && mode_after_bad == 2
+        && out_after_bad == 1
+        && reset == 0
+        && get_after_reset == 0
+        && reset_mode == 0
+        && reset_mask == 0;
+    printf("raw-set-mempolicy:%ld:%ld:%d:%lu:%ld:%ld:%d:%lu:%ld:%ld:%d:%lu:%d\n",
+           set, get, mode, out_mask, bad_set, get_after_bad, mode_after_bad,
+           out_after_bad, reset, get_after_reset, reset_mode, reset_mask, ok);
+    return ok ? 71 : 91;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    if qemu_output.status.code() == Some(71) {
+        assert_eq!(
+            qemu_output.stdout,
+            b"raw-set-mempolicy:0:0:2:1:-22:0:2:1:0:0:0:0:1\n"
+        );
+    } else {
+        assert_eq!(
+            qemu_output.status.code(),
+            Some(91),
+            "qemu stdout: {}; qemu stderr: {}",
+            String::from_utf8_lossy(&qemu_output.stdout),
+            String::from_utf8_lossy(&qemu_output.stderr)
+        );
+        assert_eq!(
+            qemu_output.stdout,
+            b"raw-set-mempolicy:-38:-38:-1:18446744073709551615:-38:-38:-1:18446744073709551615:-38:-38:-1:18446744073709551615:0\n"
+        );
+        eprintln!(
+            "qemu-riscv64 reports ENOSYS for raw set/get_mempolicy; checking rem6 SE coverage"
+        );
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":71"));
+    assert!(stdout.contains("\"text\":\"raw-set-mempolicy:0:0:2:1:-22:0:2:1:0:0:0:0:1\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_get_mempolicy_with_qemu_probe() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(

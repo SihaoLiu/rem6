@@ -2,6 +2,7 @@ use super::*;
 
 const RISCV_LINUX_MBIND_FOR_TEST: u64 = 235;
 const RISCV_LINUX_GET_MEMPOLICY_FOR_TEST: u64 = 236;
+const RISCV_LINUX_SET_MEMPOLICY_FOR_TEST: u64 = 237;
 const RISCV_LINUX_EPERM_FOR_TEST: u64 = 1;
 const RISCV_LINUX_EFAULT_FOR_TEST: u64 = 14;
 const RISCV_LINUX_MPOL_DEFAULT_FOR_TEST: u64 = 0;
@@ -167,6 +168,146 @@ fn linux_table_get_mempolicy_reports_default_policy_and_empty_nodemask() {
         Some(RiscvSyscallOutcome::Return {
             value: linux_error(RISCV_LINUX_EINVAL)
         })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_set_mempolicy_updates_default_policy_for_get_mempolicy() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let node_zero = nodemask_reader(0x9100, 1);
+    let node_one = nodemask_reader(0x9120, 2);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8010,
+                RISCV_LINUX_SET_MEMPOLICY_FOR_TEST,
+                [RISCV_LINUX_MPOL_BIND_FOR_TEST, 0x9100, 2, 0, 0, 0,],
+            ),
+            &mut state,
+            0,
+            Some(&node_zero),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8014,
+                RISCV_LINUX_GET_MEMPOLICY_FOR_TEST,
+                [0x9000, 0x9008, 64, 0, 0, 0],
+            ),
+            &mut state,
+            0,
+            None,
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        writes.lock().unwrap().as_slice(),
+        &[
+            (
+                0x9000,
+                (RISCV_LINUX_MPOL_BIND_FOR_TEST as i32)
+                    .to_le_bytes()
+                    .to_vec(),
+            ),
+            (0x9008, 1_u64.to_le_bytes().to_vec()),
+        ]
+    );
+    writes.lock().unwrap().clear();
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8018,
+                RISCV_LINUX_SET_MEMPOLICY_FOR_TEST,
+                [RISCV_LINUX_MPOL_BIND_FOR_TEST, 0x9120, 3, 0, 0, 0,],
+            ),
+            &mut state,
+            0,
+            Some(&node_one),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x801c,
+                RISCV_LINUX_GET_MEMPOLICY_FOR_TEST,
+                [0x9010, 0x9018, 64, 0, 0, 0],
+            ),
+            &mut state,
+            0,
+            None,
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        writes.lock().unwrap().as_slice(),
+        &[
+            (
+                0x9010,
+                (RISCV_LINUX_MPOL_BIND_FOR_TEST as i32)
+                    .to_le_bytes()
+                    .to_vec(),
+            ),
+            (0x9018, 1_u64.to_le_bytes().to_vec()),
+        ]
+    );
+    writes.lock().unwrap().clear();
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8020,
+                RISCV_LINUX_SET_MEMPOLICY_FOR_TEST,
+                [RISCV_LINUX_MPOL_DEFAULT_FOR_TEST, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            0,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8024,
+                RISCV_LINUX_GET_MEMPOLICY_FOR_TEST,
+                [0x9020, 0x9028, 64, 0, 0, 0],
+            ),
+            &mut state,
+            0,
+            None,
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        writes.lock().unwrap().as_slice(),
+        &[
+            (
+                0x9020,
+                (RISCV_LINUX_MPOL_DEFAULT_FOR_TEST as i32)
+                    .to_le_bytes()
+                    .to_vec(),
+            ),
+            (0x9028, 0_u64.to_le_bytes().to_vec()),
+        ]
     );
     assert!(state.unknown_syscalls().is_empty());
 }

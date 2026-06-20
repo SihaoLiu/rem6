@@ -161,10 +161,11 @@ pub use mmap::RiscvMmapRegion;
 use mmap::{
     syscall_get_mempolicy, syscall_madvise, syscall_mbind, syscall_memory_lock_range,
     syscall_mincore, syscall_mlockall, syscall_mmap, syscall_mprotect, syscall_mremap,
-    syscall_msync, syscall_munlockall, syscall_munmap, RISCV64_LINUX_MMAP_BASE,
-    RISCV_LINUX_GET_MEMPOLICY, RISCV_LINUX_MADVISE, RISCV_LINUX_MBIND, RISCV_LINUX_MINCORE,
-    RISCV_LINUX_MLOCK, RISCV_LINUX_MMAP, RISCV_LINUX_MPROTECT, RISCV_LINUX_MREMAP,
-    RISCV_LINUX_MSYNC, RISCV_LINUX_MUNLOCK, RISCV_LINUX_MUNMAP, RISCV_PAGE_BYTES,
+    syscall_msync, syscall_munlockall, syscall_munmap, syscall_set_mempolicy,
+    RISCV64_LINUX_MMAP_BASE, RISCV_LINUX_GET_MEMPOLICY, RISCV_LINUX_MADVISE, RISCV_LINUX_MBIND,
+    RISCV_LINUX_MINCORE, RISCV_LINUX_MLOCK, RISCV_LINUX_MMAP, RISCV_LINUX_MPROTECT,
+    RISCV_LINUX_MREMAP, RISCV_LINUX_MSYNC, RISCV_LINUX_MUNLOCK, RISCV_LINUX_MUNMAP,
+    RISCV_LINUX_SET_MEMPOLICY, RISCV_PAGE_BYTES,
 };
 #[cfg(test)]
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
@@ -312,6 +313,8 @@ pub struct RiscvSyscallState {
     signal_actions: BTreeMap<u64, RiscvSignalAction>,
     signal_alt_stack: RiscvSignalAltStack,
     resource_limits: limits::RiscvResourceLimits,
+    memory_policy_mode: u64,
+    memory_policy_nodemask: u64,
     membarrier_registrations: u64,
     rseq_registration: Option<thread::RiscvSyscallRseqRegistration>,
     stdin: VecDeque<u8>,
@@ -414,6 +417,8 @@ impl RiscvSyscallState {
             signal_actions: BTreeMap::new(),
             signal_alt_stack: RiscvSignalAltStack::disabled(),
             resource_limits: limits::RiscvResourceLimits::linux_single_process(),
+            memory_policy_mode: 0,
+            memory_policy_nodemask: 0,
             membarrier_registrations: 0,
             rseq_registration: None,
             stdin: VecDeque::new(),

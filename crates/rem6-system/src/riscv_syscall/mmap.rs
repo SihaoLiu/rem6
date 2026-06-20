@@ -18,6 +18,7 @@ pub(super) const RISCV_LINUX_MINCORE: u64 = 232;
 pub(super) const RISCV_LINUX_MADVISE: u64 = 233;
 pub(super) const RISCV_LINUX_MBIND: u64 = 235;
 pub(super) const RISCV_LINUX_GET_MEMPOLICY: u64 = 236;
+pub(super) const RISCV_LINUX_SET_MEMPOLICY: u64 = 237;
 pub(super) const RISCV_LINUX_MAP_SHARED: u64 = 0x01;
 pub(super) const RISCV_LINUX_MAP_PRIVATE: u64 = 0x02;
 pub(super) const RISCV_LINUX_MAP_FIXED: u64 = 0x10;
@@ -405,6 +406,21 @@ impl RiscvMmapRegion {
                 .with_backing(self.backing.fragment(delta, right_length)),
             );
         }
+    }
+}
+
+impl RiscvSyscallState {
+    const fn memory_policy_mode(&self) -> u64 {
+        self.memory_policy_mode
+    }
+
+    const fn memory_policy_nodemask(&self) -> u64 {
+        self.memory_policy_nodemask
+    }
+
+    fn set_memory_policy(&mut self, mode: u64, nodemask: RiscvMbindNodemask) {
+        self.memory_policy_mode = mode;
+        self.memory_policy_nodemask = nodemask.to_bits();
     }
 }
 
@@ -819,6 +835,7 @@ pub(super) fn syscall_mbind(
 
 pub(super) fn syscall_get_mempolicy(
     request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
     guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
 ) -> Option<u64> {
     let mode_address = request.argument(0);
@@ -849,17 +866,44 @@ pub(super) fn syscall_get_mempolicy(
 
     let guest_memory = guest_memory_writer?;
     if mode_address != 0 {
-        let mode = RISCV_LINUX_MPOL_DEFAULT as i32;
+        let mode = state.memory_policy_mode() as i32;
         if !guest_memory.write(mode_address, &mode.to_le_bytes()) {
             return Some(linux_error(RISCV_LINUX_EFAULT));
         }
     }
     if let Some(bytes) = nodemask_bytes {
-        if !guest_memory.write(nodemask_address, &vec![0; bytes]) {
+        let mut nodemask = vec![0; bytes];
+        if !nodemask.is_empty() {
+            nodemask[0] = state.memory_policy_nodemask() as u8;
+        }
+        if !guest_memory.write(nodemask_address, &nodemask) {
             return Some(linux_error(RISCV_LINUX_EFAULT));
         }
     }
     Some(0)
+}
+
+pub(super) fn syscall_set_mempolicy(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+) -> u64 {
+    let Some(mode) = parse_mbind_mode(request.argument(0)) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    let nodemask = match read_mbind_nodemask(
+        request.argument(1),
+        request.argument(2),
+        guest_memory_reader,
+    ) {
+        Ok(nodemask) => nodemask,
+        Err(errno) => return linux_error(errno),
+    };
+    if !mbind_policy_accepts_nodemask(mode, nodemask) {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    state.set_memory_policy(mode, nodemask);
+    0
 }
 
 fn mlockall_flags_are_valid(flags: u64) -> bool {
@@ -944,6 +988,10 @@ impl RiscvMbindNodemask {
 
     const fn is_empty(self) -> bool {
         !self.node_zero
+    }
+
+    const fn to_bits(self) -> u64 {
+        self.node_zero as u64
     }
 }
 
