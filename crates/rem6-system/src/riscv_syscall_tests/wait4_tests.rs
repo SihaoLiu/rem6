@@ -8,6 +8,9 @@ const RISCV_LINUX_WSTOPPED_FOR_TEST: u64 = 2;
 const RISCV_LINUX_WEXITED_FOR_TEST: u64 = 4;
 const RISCV_LINUX_WCONTINUED_FOR_TEST: u64 = 8;
 const RISCV_LINUX_WNOWAIT_FOR_TEST: u64 = 0x0100_0000;
+const RISCV_LINUX_WAIT4_WNOTHREAD_FOR_TEST: u64 = 0x2000_0000;
+const RISCV_LINUX_WAIT4_WALL_FOR_TEST: u64 = 0x4000_0000;
+const RISCV_LINUX_WAIT4_WCLONE_FOR_TEST: u64 = 0x8000_0000;
 const RISCV_LINUX_P_ALL_FOR_TEST: u64 = 0;
 const RISCV_LINUX_P_PID_FOR_TEST: u64 = 1;
 const RISCV_LINUX_P_PGID_FOR_TEST: u64 = 2;
@@ -178,6 +181,123 @@ fn linux_table_wait4_writes_zero_rusage_for_reaped_child() {
             (0x9000, ((7_i32) << 8).to_le_bytes().to_vec()),
             (0xa000, vec![0; RISCV64_LINUX_RUSAGE_BYTES]),
         ]
+    );
+    assert!(state.guest_wait_queue().is_empty());
+}
+
+#[test]
+fn linux_table_wait4_accepts_linux_option_bits_without_children() {
+    let table = RiscvSyscallTable::new();
+    let valid_options = [
+        RISCV_LINUX_WSTOPPED_FOR_TEST,
+        RISCV_LINUX_WCONTINUED_FOR_TEST,
+        RISCV_LINUX_WSTOPPED_FOR_TEST | RISCV_LINUX_WCONTINUED_FOR_TEST,
+        RISCV_LINUX_WAIT4_WNOTHREAD_FOR_TEST,
+        RISCV_LINUX_WAIT4_WALL_FOR_TEST,
+        RISCV_LINUX_WAIT4_WCLONE_FOR_TEST,
+        RISCV_LINUX_WNOHANG_FOR_TEST
+            | RISCV_LINUX_WSTOPPED_FOR_TEST
+            | RISCV_LINUX_WCONTINUED_FOR_TEST
+            | RISCV_LINUX_WAIT4_WNOTHREAD_FOR_TEST
+            | RISCV_LINUX_WAIT4_WALL_FOR_TEST
+            | RISCV_LINUX_WAIT4_WCLONE_FOR_TEST,
+    ];
+
+    for options in valid_options {
+        let mut state = RiscvSyscallState::new(0);
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    0x8000,
+                    RISCV_LINUX_WAIT4,
+                    [(-1_i64) as u64, 0, options, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(RISCV_LINUX_ECHILD_FOR_TEST)
+            }),
+            "wait4 options {options:#x}"
+        );
+    }
+
+    let mut state = RiscvSyscallState::new(0);
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_WAIT4,
+                [(-1_i64) as u64, 0, RISCV_LINUX_WEXITED_FOR_TEST, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+}
+
+#[test]
+fn linux_table_wait4_filters_stopped_and_continued_statuses() {
+    let table = RiscvSyscallTable::new();
+    let stopped = child(
+        123,
+        100,
+        GuestWaitStatus::stopped(GuestSignal::new(19).unwrap()),
+    );
+    let mut state = RiscvSyscallState::new(0);
+    state.push_wait_child(stopped);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_WAIT4,
+                [(-1_i64) as u64, 0, RISCV_LINUX_WNOHANG_FOR_TEST, 0, 0, 0,],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(state.guest_wait_queue().snapshot().pending(), &[stopped]);
+
+    let stopped_writes = capture_wait4_writes(
+        &table,
+        &mut state,
+        [
+            (-1_i64) as u64,
+            0x9000,
+            RISCV_LINUX_WSTOPPED_FOR_TEST,
+            0,
+            0,
+            0,
+        ],
+        123,
+    );
+    assert_eq!(
+        stopped_writes,
+        vec![(0x9000, (((19_i32) << 8) | 0x7f).to_le_bytes().to_vec())]
+    );
+    assert!(state.guest_wait_queue().is_empty());
+
+    let continued = child(124, 100, GuestWaitStatus::continued());
+    state.push_wait_child(continued);
+    let continued_writes = capture_wait4_writes(
+        &table,
+        &mut state,
+        [
+            (-1_i64) as u64,
+            0x9000,
+            RISCV_LINUX_WCONTINUED_FOR_TEST,
+            0,
+            0,
+            0,
+        ],
+        124,
+    );
+    assert_eq!(
+        continued_writes,
+        vec![(0x9000, 0xffff_i32.to_le_bytes().to_vec())]
     );
     assert!(state.guest_wait_queue().is_empty());
 }
@@ -521,6 +641,39 @@ fn linux_table_waitid_writes_siginfo_for_signal_stop_and_continue_statuses() {
         RISCV64_LINUX_CLD_CONTINUED,
         RISCV64_LINUX_SIGCONT,
     );
+}
+
+fn capture_wait4_writes(
+    table: &RiscvSyscallTable,
+    state: &mut RiscvSyscallState,
+    arguments: [u64; 6],
+    expected_pid: u64,
+) -> Vec<(u64, Vec<u8>)> {
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_WAIT4, arguments),
+            state,
+            7,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: expected_pid
+        })
+    );
+
+    let writes = writes.lock().unwrap();
+    writes.clone()
 }
 
 fn capture_waitid_writes(

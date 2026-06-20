@@ -626,6 +626,145 @@ fail:
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_wait4_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!("skipping static RISC-V SE raw wait4 smoke: riscv64-unknown-elf-gcc not found");
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE raw wait4 smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-wait4");
+    let source = workspace.join("raw-wait4.S");
+    let binary = workspace.join("raw-wait4");
+    fs::write(
+        &source,
+        r#".section .bss
+.balign 4
+status:
+    .space 4
+
+.section .text
+.global _start
+_start:
+    li s0, 0x55555555
+    li s1, -10
+    li s2, -22
+    la s3, status
+
+    li a2, 2
+    call expect_echild
+    li a2, 8
+    call expect_echild
+    li a2, 10
+    call expect_echild
+    li a2, 0xe000000b
+    call expect_echild
+
+    li a2, 4
+    call expect_einval
+    li a2, 0x10000000
+    call expect_einval
+
+    li a0, 83
+    li a7, 93
+    ecall
+
+expect_echild:
+    sw s0, 0(s3)
+    li a0, -1
+    la a1, status
+    li a3, 0
+    li a7, 260
+    ecall
+    bne a0, s1, fail
+    lw t0, 0(s3)
+    bne t0, s0, fail
+    ret
+
+expect_einval:
+    sw s0, 0(s3)
+    li a0, -1
+    la a1, status
+    li a3, 0
+    li a7, 260
+    ecall
+    bne a0, s2, fail
+    lw t0, 0(s3)
+    bne t0, s0, fail
+    ret
+
+fail:
+    li a0, 84
+    li a7, 93
+    ecall
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-nostdlib",
+            "-nostartfiles",
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(83),
+        "qemu stdout: {}; qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stdout),
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert!(qemu_output.stdout.is_empty());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "1400",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":83"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[]"));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 83, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_priority_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(

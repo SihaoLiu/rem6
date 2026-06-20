@@ -1,6 +1,6 @@
 use crate::{
-    GuestChildStatus, GuestProcessGroupId, GuestProcessId, GuestWaitOptions, GuestWaitOutcome,
-    GuestWaitQueue, GuestWaitSelector, GuestWaitStatus,
+    GuestChildStatus, GuestProcessGroupId, GuestProcessId, GuestWaitOptions, GuestWaitQueue,
+    GuestWaitSelector, GuestWaitStatus,
 };
 
 use super::{
@@ -25,6 +25,9 @@ const RISCV_LINUX_WSTOPPED: u64 = 0x0000_0002;
 const RISCV_LINUX_WEXITED: u64 = 0x0000_0004;
 const RISCV_LINUX_WCONTINUED: u64 = 0x0000_0008;
 const RISCV_LINUX_WNOWAIT: u64 = 0x0100_0000;
+const RISCV_LINUX_WAIT4_WNOTHREAD: u64 = 0x2000_0000;
+const RISCV_LINUX_WAIT4_WALL: u64 = 0x4000_0000;
+const RISCV_LINUX_WAIT4_WCLONE: u64 = 0x8000_0000;
 const RISCV64_LINUX_RUSAGE_BYTES: usize = 144;
 const RISCV64_LINUX_SIGINFO_BYTES: usize = 128;
 const RISCV64_LINUX_SIGINFO_SIGCHLD: i32 = 17;
@@ -61,28 +64,28 @@ pub(super) fn syscall_wait4(
     request: RiscvSyscallRequest,
     state: &mut RiscvSyscallState,
     guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
-) -> u64 {
+) -> RiscvSyscallOutcome {
     let Ok(selector) = GuestWaitSelector::from_wait4_pid(request.argument(0) as i64 as i32) else {
-        return linux_error(RISCV_LINUX_EINVAL);
+        return wait4_return(linux_error(RISCV_LINUX_EINVAL));
     };
     let requested_options = request.argument(2);
-    if requested_options & !RISCV_LINUX_WNOHANG != 0 {
-        return linux_error(RISCV_LINUX_EINVAL);
+    if !valid_wait4_options(requested_options) {
+        return wait4_return(linux_error(RISCV_LINUX_EINVAL));
     }
-    let options = if requested_options & RISCV_LINUX_WNOHANG != 0 {
+    let wait_options = if requested_options & RISCV_LINUX_WNOHANG != 0 {
         GuestWaitOptions::nonblocking()
     } else {
         GuestWaitOptions::blocking()
     };
 
-    match state.guest_wait.wait(selector, options) {
-        GuestWaitOutcome::Ready(child) => {
+    match wait4_child(selector, requested_options, state) {
+        WaitChildOutcome::Ready(child) => {
             let status_address = request.argument(1);
             let rusage_address = request.argument(3);
             let writer_required = status_address != 0 || rusage_address != 0;
             let writer = if writer_required {
                 let Some(writer) = guest_memory_writer else {
-                    return linux_error(RISCV_LINUX_EFAULT);
+                    return wait4_return(linux_error(RISCV_LINUX_EFAULT));
                 };
                 Some(writer)
             } else {
@@ -92,16 +95,18 @@ pub(super) fn syscall_wait4(
                 if status_address != 0 {
                     let status = child.status().raw_wait_status().to_le_bytes();
                     if !writer.write(status_address, &status) {
-                        return linux_error(RISCV_LINUX_EFAULT);
+                        return wait4_return(linux_error(RISCV_LINUX_EFAULT));
                     }
                 }
                 if rusage_address != 0 && write_zero_rusage(rusage_address, writer) != 0 {
-                    return linux_error(RISCV_LINUX_EFAULT);
+                    return wait4_return(linux_error(RISCV_LINUX_EFAULT));
                 }
             }
-            u64::from(child.pid().get())
+            wait4_return(u64::from(child.pid().get()))
         }
-        GuestWaitOutcome::NoReady | GuestWaitOutcome::Retry => linux_error(RISCV_LINUX_ECHILD),
+        WaitChildOutcome::NoWaitableChild if wait_options.is_nonblocking() => wait4_return(0),
+        WaitChildOutcome::NoWaitableChild => RiscvSyscallOutcome::Blocked,
+        WaitChildOutcome::NoChild => wait4_return(linux_error(RISCV_LINUX_ECHILD)),
     }
 }
 
@@ -124,7 +129,7 @@ pub(super) fn syscall_waitid(
     };
 
     match waitid_child(selector, requested_options, state) {
-        WaitidChildOutcome::Ready(child) => {
+        WaitChildOutcome::Ready(child) => {
             let siginfo_address = request.argument(2);
             let rusage_address = request.argument(4);
             let writer_required = siginfo_address != 0 || rusage_address != 0;
@@ -148,7 +153,7 @@ pub(super) fn syscall_waitid(
             }
             waitid_return(0)
         }
-        WaitidChildOutcome::NoWaitableChild if wait_options.is_nonblocking() => {
+        WaitChildOutcome::NoWaitableChild if wait_options.is_nonblocking() => {
             let siginfo_address = request.argument(2);
             if siginfo_address != 0 {
                 let Some(writer) = guest_memory_writer else {
@@ -160,8 +165,8 @@ pub(super) fn syscall_waitid(
             }
             waitid_return(0)
         }
-        WaitidChildOutcome::NoWaitableChild => RiscvSyscallOutcome::Blocked,
-        WaitidChildOutcome::NoChild => waitid_return(linux_error(RISCV_LINUX_ECHILD)),
+        WaitChildOutcome::NoWaitableChild => RiscvSyscallOutcome::Blocked,
+        WaitChildOutcome::NoChild => waitid_return(linux_error(RISCV_LINUX_ECHILD)),
     }
 }
 
@@ -198,6 +203,17 @@ const fn valid_rusage_selector(selector: u64) -> bool {
     )
 }
 
+const fn valid_wait4_options(options: u64) -> bool {
+    const VALID_MASK: u64 = RISCV_LINUX_WNOHANG
+        | RISCV_LINUX_WSTOPPED
+        | RISCV_LINUX_WCONTINUED
+        | RISCV_LINUX_WAIT4_WNOTHREAD
+        | RISCV_LINUX_WAIT4_WALL
+        | RISCV_LINUX_WAIT4_WCLONE;
+
+    options & !VALID_MASK == 0
+}
+
 fn waitid_selector(id_type: u64, id: u64) -> Option<GuestWaitSelector> {
     match id_type {
         RISCV_LINUX_P_ALL => Some(GuestWaitSelector::AnyChild),
@@ -232,23 +248,56 @@ const fn waitid_return(value: u64) -> RiscvSyscallOutcome {
     RiscvSyscallOutcome::Return { value }
 }
 
+const fn wait4_return(value: u64) -> RiscvSyscallOutcome {
+    RiscvSyscallOutcome::Return { value }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum WaitidChildOutcome {
+enum WaitChildOutcome {
     Ready(GuestChildStatus),
     NoChild,
     NoWaitableChild,
+}
+
+fn wait4_child(
+    selector: GuestWaitSelector,
+    requested_options: u64,
+    state: &mut RiscvSyscallState,
+) -> WaitChildOutcome {
+    let snapshot = state.guest_wait.snapshot();
+    let current_process_group = snapshot.current_process_group();
+    let mut selected_child_exists = false;
+    let waitable_child = snapshot.pending().iter().copied().find(|child| {
+        if !wait_selector_matches(selector, *child, current_process_group) {
+            return false;
+        }
+        selected_child_exists = true;
+        wait4_status_matches(child.status(), requested_options)
+    });
+    let Some(child) = waitable_child else {
+        return if selected_child_exists {
+            WaitChildOutcome::NoWaitableChild
+        } else {
+            WaitChildOutcome::NoChild
+        };
+    };
+
+    state
+        .guest_wait
+        .take_matching(selector, |candidate| candidate == child)
+        .map_or(WaitChildOutcome::NoWaitableChild, WaitChildOutcome::Ready)
 }
 
 fn waitid_child(
     selector: GuestWaitSelector,
     requested_options: u64,
     state: &mut RiscvSyscallState,
-) -> WaitidChildOutcome {
+) -> WaitChildOutcome {
     let snapshot = state.guest_wait.snapshot();
     let current_process_group = snapshot.current_process_group();
     let mut selected_child_exists = false;
     let waitable_child = snapshot.pending().iter().copied().find(|child| {
-        if !waitid_selector_matches(selector, *child, current_process_group) {
+        if !wait_selector_matches(selector, *child, current_process_group) {
             return false;
         }
         selected_child_exists = true;
@@ -256,26 +305,23 @@ fn waitid_child(
     });
     let Some(child) = waitable_child else {
         return if selected_child_exists {
-            WaitidChildOutcome::NoWaitableChild
+            WaitChildOutcome::NoWaitableChild
         } else {
-            WaitidChildOutcome::NoChild
+            WaitChildOutcome::NoChild
         };
     };
 
     if requested_options & RISCV_LINUX_WNOWAIT != 0 {
-        return WaitidChildOutcome::Ready(child);
+        return WaitChildOutcome::Ready(child);
     }
 
     state
         .guest_wait
         .take_matching(selector, |candidate| candidate == child)
-        .map_or(
-            WaitidChildOutcome::NoWaitableChild,
-            WaitidChildOutcome::Ready,
-        )
+        .map_or(WaitChildOutcome::NoWaitableChild, WaitChildOutcome::Ready)
 }
 
-fn waitid_selector_matches(
+fn wait_selector_matches(
     selector: GuestWaitSelector,
     child: GuestChildStatus,
     current_process_group: GuestProcessGroupId,
@@ -286,6 +332,13 @@ fn waitid_selector_matches(
         GuestWaitSelector::Process(pid) => child.pid() == pid,
         GuestWaitSelector::ProcessGroup(process_group) => child.process_group() == process_group,
     }
+}
+
+const fn wait4_status_matches(status: GuestWaitStatus, requested_options: u64) -> bool {
+    status.is_exited()
+        || status.is_signaled()
+        || status.is_stopped() && requested_options & RISCV_LINUX_WSTOPPED != 0
+        || status.is_continued() && requested_options & RISCV_LINUX_WCONTINUED != 0
 }
 
 const fn waitid_status_matches(status: GuestWaitStatus, requested_options: u64) -> bool {

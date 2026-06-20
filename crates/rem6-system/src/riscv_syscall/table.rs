@@ -484,9 +484,7 @@ impl RiscvSyscallTable {
                 guest_memory_reader,
                 guest_memory_writer,
             ),
-            RISCV_LINUX_WAIT4 => Some(RiscvSyscallOutcome::Return {
-                value: syscall_wait4(request, state, guest_memory_writer),
-            }),
+            RISCV_LINUX_WAIT4 => Some(syscall_wait4(request, state, guest_memory_writer)),
             RISCV_LINUX_WAITID => Some(syscall_waitid(request, state, guest_memory_writer)),
             RISCV_LINUX_GETRUSAGE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_getrusage(request, guest_memory_writer),
