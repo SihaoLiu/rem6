@@ -735,7 +735,8 @@ pipeline and cache/DRAM runtime state.
   with direct `rem6 run` JSON evidence for repeated RISC-V work-marker
   payloads, store-backed and DRAM-backed checkpoint memory component/chunk
   metadata with checkpoint chunk checksum changes, m5 hypercall
-  selector/response metadata, and m5 return-value `sum` execution.
+  selector/response metadata, m5 return-value `sum` execution, and
+  `m5_switch_cpu` as a top-level injected `switchcpu` command plus host stop.
 - [x] Decode-first checkpoint capture/restore exists across scheduler, memory, device, storage, VirtIO, timer, interrupt, RISC-V hart run-state, platform, workload, and manifest owners.
 - [x] GDB remote packet/session parsing and RISC-V integer/PC register paths exist.
 - [x] GDB RV64D floating-point, including XML-aligned `fflags`/`frm`/`fcsr` and placeholder numbering, advertised RV64 CSR target descriptions including supervisor `sscratch`, translation `satp`, interrupt aliases `sie`/`sip`, machine identity `mhartid`/`mvendorid`/`marchid`/`mimpid`, machine ISA `misa`, and counter `cycle`/`time`/`instret`, and RV64 machine status, interrupt, trap, identity, ISA, and counter CSR register-cache paths exist, with `cycle` and `time` remaining independently writable and advanced by real GDB single-step execution.

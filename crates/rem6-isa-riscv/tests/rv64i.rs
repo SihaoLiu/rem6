@@ -2851,6 +2851,35 @@ fn hart_decodes_and_records_gem5_checkpoint_pseudo_op() {
 }
 
 #[test]
+fn hart_decodes_and_records_gem5_switch_cpu_pseudo_op() {
+    let switch_cpu = RiscvInstruction::decode(gem5_m5op_type(0x52)).unwrap();
+
+    assert_eq!(
+        switch_cpu,
+        RiscvInstruction::Gem5PseudoOp {
+            op: RiscvPseudoOp::SwitchCpu
+        }
+    );
+
+    let mut hart = RiscvHartState::new(0x7580);
+    hart.write(reg(10), 0x41);
+    hart.write(reg(11), 0x42);
+    let record = hart.execute(switch_cpu).unwrap();
+
+    assert_eq!(record.pc(), 0x7580);
+    assert_eq!(record.next_pc(), 0x7584);
+    assert_eq!(hart.pc(), 0x7584);
+    assert_eq!(
+        record.system_event(),
+        Some(&RiscvSystemEvent::Gem5SwitchCpu { pc: 0x7580 })
+    );
+    assert_eq!(record.register_writes(), &[RegisterWrite::new(reg(10), 0)]);
+    assert_eq!(record.memory_access(), None);
+    assert_eq!(hart.read(reg(10)), 0);
+    assert_eq!(hart.read(reg(11)), 0x42);
+}
+
+#[test]
 fn hart_decodes_and_records_gem5_hypercall_pseudo_op() {
     let hypercall = RiscvInstruction::decode(gem5_m5op_type(0x71)).unwrap();
 

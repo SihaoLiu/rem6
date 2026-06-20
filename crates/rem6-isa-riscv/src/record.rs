@@ -70,6 +70,9 @@ pub enum RiscvSystemEvent {
         delay: u64,
         period: u64,
     },
+    Gem5SwitchCpu {
+        pc: u64,
+    },
     Gem5Hypercall {
         pc: u64,
         selector: u64,

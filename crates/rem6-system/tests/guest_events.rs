@@ -511,6 +511,22 @@ fn host_event_policy_maps_structured_events_to_actions() {
     );
     assert_eq!(
         policy.actions_for(&GuestEvent::new(
+            GuestEventId::new(44),
+            GuestSourceId::new(3),
+            GuestEventKind::SimulationLoopExit {
+                cause: "switchcpu".to_string(),
+                code: 0,
+            },
+        )),
+        vec![
+            HostAction::InjectCommand {
+                command: "switchcpu".to_string(),
+            },
+            HostAction::Stop { code: 0 },
+        ]
+    );
+    assert_eq!(
+        policy.actions_for(&GuestEvent::new(
             GuestEventId::new(5),
             GuestSourceId::new(3),
             GuestEventKind::ExecutionModeSwitch {

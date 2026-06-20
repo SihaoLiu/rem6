@@ -13,6 +13,7 @@ const M5_RESET_STATS: u32 = 0x40;
 const M5_DUMP_STATS: u32 = 0x41;
 const M5_DUMP_RESET_STATS: u32 = 0x42;
 const M5_CHECKPOINT: u32 = 0x43;
+const M5_SWITCH_CPU: u32 = 0x52;
 const M5_HYPERCALL: u32 = 0x71;
 
 #[test]
@@ -203,6 +204,71 @@ fn rem6_run_emits_m5_hypercall_host_action_detail_from_real_riscv_execution() {
         Some(0)
     );
     assert!(call.pointer("/tick").and_then(Value::as_u64).is_some());
+}
+
+#[test]
+fn rem6_run_emits_m5_switch_cpu_command_from_real_riscv_execution() {
+    let program = riscv64_program(&[
+        m5op(M5_SWITCH_CPU),
+        i_type(77, 0, 0x0, 11, 0x13),
+        m5op(M5_FAIL),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("m5-switch-cpu-host-action", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/simulation/stop_code")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/total_action_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/injected_command_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions.pointer("/stop_count").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_injected_command(host_actions, 0, "switchcpu");
 }
 
 #[test]
@@ -592,6 +658,19 @@ fn assert_work_marker(
         Some(thread_id)
     );
     assert!(action.pointer("/tick").and_then(Value::as_u64).is_some());
+}
+
+fn assert_injected_command(host_actions: &Value, index: usize, command: &str) {
+    let action = host_actions
+        .pointer(&format!("/injected_commands/{index}"))
+        .unwrap_or_else(|| panic!("missing injected command action {index}"));
+    assert_eq!(
+        action.pointer("/command").and_then(Value::as_str),
+        Some(command)
+    );
+    assert!(action.pointer("/tick").and_then(Value::as_u64).is_some());
+    assert!(action.pointer("/event").and_then(Value::as_u64).is_some());
+    assert!(action.pointer("/source").and_then(Value::as_u64).is_some());
 }
 
 fn assert_stats_reset(host_actions: &Value, index: usize, id: u64, tick: u64, epoch: u64) {

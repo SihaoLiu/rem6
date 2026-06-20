@@ -64,6 +64,10 @@ pub enum GuestEventKind {
     Command {
         command: String,
     },
+    SimulationLoopExit {
+        cause: String,
+        code: i32,
+    },
     GuestHostCall {
         selector: u64,
         arguments: Vec<u64>,
@@ -422,6 +426,12 @@ impl HostEventPolicy {
             GuestEventKind::Command { command } => vec![HostAction::InjectCommand {
                 command: command.clone(),
             }],
+            GuestEventKind::SimulationLoopExit { cause, code } => vec![
+                HostAction::InjectCommand {
+                    command: cause.clone(),
+                },
+                HostAction::Stop { code: *code },
+            ],
             GuestEventKind::GuestHostCall {
                 selector,
                 arguments,

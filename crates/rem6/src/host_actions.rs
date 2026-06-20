@@ -5,6 +5,7 @@ use rem6_system::SystemActionOutcome;
 pub(crate) struct Rem6HostActionSummary {
     pub(crate) total_action_count: u64,
     pub(crate) injected_command_count: u64,
+    pub(crate) injected_commands: Vec<Rem6HostInjectedCommandSummary>,
     pub(crate) guest_host_calls: Vec<Rem6GuestHostCallSummary>,
     pub(crate) roi_begin: Vec<Rem6HostWorkMarkerSummary>,
     pub(crate) roi_end: Vec<Rem6HostWorkMarkerSummary>,
@@ -24,8 +25,21 @@ impl Rem6HostActionSummary {
         };
         for outcome in outcomes {
             match outcome {
-                SystemActionOutcome::InjectedCommand { .. } => {
+                SystemActionOutcome::InjectedCommand {
+                    tick,
+                    event,
+                    source,
+                    command,
+                } => {
                     summary.injected_command_count += 1;
+                    summary
+                        .injected_commands
+                        .push(Rem6HostInjectedCommandSummary {
+                            tick: *tick,
+                            event: event.get(),
+                            source: source.get(),
+                            command: command.clone(),
+                        });
                 }
                 SystemActionOutcome::GuestHostCall {
                     tick,
@@ -130,6 +144,14 @@ impl Rem6HostActionSummary {
         }
         summary
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6HostInjectedCommandSummary {
+    pub(crate) tick: u64,
+    pub(crate) event: u64,
+    pub(crate) source: u32,
+    pub(crate) command: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

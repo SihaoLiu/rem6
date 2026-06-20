@@ -14,6 +14,7 @@ use crate::{
 };
 
 const GEM5_M5_CHECKPOINT_LABEL: &str = "gem5-m5-checkpoint";
+const GEM5_M5_SWITCH_CPU_COMMAND: &str = "switchcpu";
 
 #[derive(Clone, Debug)]
 pub struct SystemEventPort {
@@ -941,6 +942,13 @@ fn guest_event_from_riscv_system_event(
             delay: *delay,
             kind: GuestEventKind::Checkpoint {
                 label: GEM5_M5_CHECKPOINT_LABEL.to_string(),
+            },
+        }),
+        Some(RiscvSystemEvent::Gem5SwitchCpu { .. }) => Some(RiscvGuestEventSchedule {
+            delay: 0,
+            kind: GuestEventKind::SimulationLoopExit {
+                cause: GEM5_M5_SWITCH_CPU_COMMAND.to_string(),
+                code: 0,
             },
         }),
         Some(RiscvSystemEvent::Gem5Hypercall { selector, .. }) => Some(RiscvGuestEventSchedule {
