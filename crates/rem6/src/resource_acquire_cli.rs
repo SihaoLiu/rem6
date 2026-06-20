@@ -573,14 +573,45 @@ fn resolve_http_redirect(current: &str, location: &str) -> Result<String, Rem6Cl
         parse_http_locator(location)?;
         return Ok(location.to_string());
     }
+    if has_uri_scheme(location) {
+        return Err(remote_resource_error(
+            current,
+            format!("HTTP redirect Location {location} is not an http:// URL or absolute path"),
+        ));
+    }
     if location.starts_with('/') {
         let (host, port, _) = parse_http_locator(current)?;
         return Ok(format!("http://{host}:{port}{location}"));
     }
-    Err(remote_resource_error(
-        current,
-        format!("HTTP redirect Location {location} is not an http:// URL or absolute path"),
-    ))
+    let (host, port, path) = parse_http_locator(current)?;
+    let base = path
+        .rsplit_once('/')
+        .map_or("/", |(base, _)| if base.is_empty() { "/" } else { base });
+    Ok(if base == "/" {
+        format!("http://{host}:{port}/{location}")
+    } else {
+        format!("http://{host}:{port}{base}/{location}")
+    })
+}
+
+fn has_uri_scheme(location: &str) -> bool {
+    let mut chars = location.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+    for character in chars {
+        match character {
+            ':' => return true,
+            '/' | '?' | '#' => return false,
+            '+' | '-' | '.' => {}
+            _ if character.is_ascii_alphanumeric() => {}
+            _ => return false,
+        }
+    }
+    false
 }
 
 fn decode_http_chunked_body(locator: &str, body: &[u8]) -> Result<Vec<u8>, Rem6CliError> {

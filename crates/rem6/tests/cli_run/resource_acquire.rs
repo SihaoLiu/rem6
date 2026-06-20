@@ -920,6 +920,76 @@ artifact_size = 4
 }
 
 #[test]
+fn rem6_resource_acquire_follows_relative_remote_uri_redirect() {
+    let workspace = temp_workspace("resource-acquire-remote-uri-relative-redirect");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let url = format!("{base}/images/redirect.bin");
+    let server = serve_redirect_http_resource_once(
+        listener,
+        "/images/redirect.bin",
+        "kernel.bin",
+        "/images/kernel.bin",
+        [0x13, 0x00, 0x00, 0x00],
+    );
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        format!(
+            r#"[resource_acquire]
+workload_id = "resource-remote-uri-relative-redirect-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:eba09f2f48f209cfa2dfbf19fc678d755d05559671eceda0164f3e080cb49765"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "remote-uri"
+acquisition_locator = "{url}"
+artifact_digest = "sha256:eba09f2f48f209cfa2dfbf19fc678d755d05559671eceda0164f3e080cb49765"
+artifact_size = 4
+"#,
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+    server.join().unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"workload_id\":\"resource-remote-uri-relative-redirect-cli\""));
+    assert!(stdout.contains("\"resource\":\"kernel\""));
+    assert!(stdout.contains("\"size_bytes\":4"));
+    assert!(stdout.contains("\"acquisition_kind\":\"remote-uri\""));
+    assert!(stdout.contains(&format!("\"acquisition_locator\":\"{url}\"")));
+    assert_stat(
+        &stdout,
+        "sim.resource_acquire.acquired_resources",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.resource_acquire.acquired_bytes",
+        "Byte",
+        4,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_resource_acquire_rejects_remote_uri_redirect_loop() {
     let workspace = temp_workspace("resource-acquire-remote-uri-redirect-loop");
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -966,12 +1036,8 @@ fn rem6_resource_acquire_rejects_remote_uri_redirect_to_unsupported_scheme() {
     let workspace = temp_workspace("resource-acquire-remote-uri-redirect-unsupported");
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}/redirect.bin", listener.local_addr().unwrap());
-    let server = serve_redirect_loop_http_resource(
-        listener,
-        "/redirect.bin",
-        "https://example.invalid/kernel.bin",
-        1,
-    );
+    let server =
+        serve_redirect_loop_http_resource(listener, "/redirect.bin", "file:/tmp/kernel.bin", 1);
     let config = workspace.join("resource-acquire.toml");
     fs::write(
         &config,
@@ -1006,7 +1072,7 @@ artifact_size = 4
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        stderr.contains("HTTP redirect Location https://example.invalid/kernel.bin")
+        stderr.contains("HTTP redirect Location file:/tmp/kernel.bin")
             && stderr.contains("is not an http:// URL or absolute path")
     );
 }

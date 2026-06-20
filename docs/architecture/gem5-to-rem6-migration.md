@@ -939,7 +939,7 @@ deterministic generated zero-fill artifact acquisition through the same executor
 validation flow with tagged locators for multiple generated resources,
 top-level HTTP `remote-uri` acquisition requiring an
 `artifact_digest` content SHA-256 and validating response bodies for basic and
-chunked transfer responses plus same-scheme HTTP redirects through the same
+chunked transfer responses plus absolute-URL, absolute-path, and relative HTTP redirects through the same
 executor validation flow for explicit pre-simulation `resource-acquire`,
 runtime `run` and `trace-replay` resource handoffs rejecting `remote-uri`
 resources before artifact reads to keep simulation entry points network-free,
@@ -977,7 +977,7 @@ top-level GUPS traffic profile JSON/stats output.
 **Not migrated:** Full gem5 stdlib ergonomics, host/network/archive resource
 acquisition beyond the host-file, tar-entry, gzip-tar-entry, stored/deflated
 ZIP-entry, preloaded-local, generated zero-fill, basic HTTP, chunked HTTP, and
-HTTP redirect slices, HTTPS, cache/policy controls, broader archive and artifact kinds, broad
+broader HTTP redirect slices, HTTPS, cache/policy controls, broader archive and artifact kinds, broad
 runtime handoff of acquired suite resources beyond the
 unique run-kernel, `suite-resource:<workload>/<resource>` readfile/load-blob,
 RISC-V SE guest-file, and selected trace-resource replay slices, broad GPU
@@ -993,7 +993,7 @@ readfile, load-blob, RISC-V SE stdin, and RISC-V SE guest-file handoff tests
 including `suite-resource:<workload>/<resource>` same-name suite resource
 selection and generated zero-fill load-blob memory dump coverage,
 `rem6 resource-acquire` remote-uri
-content-digest, content-address requirement, chunked-transfer, HTTP redirect, ZIP
+content-digest, content-address requirement, chunked-transfer, absolute/relative HTTP redirect, ZIP
 archive-entry, and generated zero-fill artifact tests, `rem6
 run` remote-uri runtime rejection tests, `rem6 trace-replay` manifest and suite
 resource-config handoff tests including TOML and CLI
