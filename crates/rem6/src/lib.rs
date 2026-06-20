@@ -38,6 +38,7 @@ mod guest_memory;
 mod gups_cli;
 mod host_actions;
 mod instruction_probe_summary;
+mod memory_resource_summary;
 mod parallel_stats;
 mod pipeline_stats;
 mod power_output;
@@ -83,6 +84,7 @@ pub(crate) use instruction_probe_summary::{
     instruction_probe_summary, Rem6InstructionProbeSummary, Rem6PcCountPairSummary,
     Rem6PcCountTrackerSummary,
 };
+pub(crate) use memory_resource_summary::Rem6MemoryResourceSummary;
 use parallel_stats::{
     parallel_frontier_summaries, parallel_partition_summaries, parallel_ready_partition_summaries,
     parallel_worker_lane_summaries, parallel_worker_slot_summaries,
@@ -204,6 +206,7 @@ pub struct Rem6ExecutionSummary {
     fetch_transport: Rem6MemoryTransportSummary,
     data_transport: Rem6MemoryTransportSummary,
     dram: Rem6DramSummary,
+    memory_resources: Rem6MemoryResourceSummary,
     debug: Rem6DebugSummary,
     cores: Vec<Rem6CoreSummary>,
     memory_dumps: Vec<Rem6MemoryDump>,
@@ -1070,6 +1073,17 @@ fn execution_summary(
         });
     }
 
+    let fetch_transport = memory_transport_summary(inputs.fetch_trace);
+    let data_transport = memory_transport_summary(inputs.data_trace);
+    let dram = inputs.memory.dram_summary_until(final_tick);
+    let memory_resources = Rem6MemoryResourceSummary::from_run_resources(
+        &inputs.instruction_cache,
+        &inputs.data_cache,
+        &fetch_transport,
+        &data_transport,
+        &dram,
+    );
+
     Ok(Rem6ExecutionSummary {
         final_tick,
         stop,
@@ -1113,9 +1127,10 @@ fn execution_summary(
         parallel_scheduler_ready_partitions: parallel_ready_partition_summaries(
             run.parallel_scheduler_ready_partitions(),
         ),
-        fetch_transport: memory_transport_summary(inputs.fetch_trace),
-        data_transport: memory_transport_summary(inputs.data_trace),
-        dram: inputs.memory.dram_summary_until(final_tick),
+        fetch_transport,
+        data_transport,
+        dram,
+        memory_resources,
         debug: Rem6DebugSummary::from_run(inputs.config, cluster, run),
         cores,
         memory_dumps: read_memory_dumps(

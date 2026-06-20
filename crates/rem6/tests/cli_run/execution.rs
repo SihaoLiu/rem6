@@ -1,5 +1,7 @@
 use std::{fs, process::Command};
 
+use serde_json::Value;
+
 use crate::support::*;
 
 #[test]
@@ -1542,6 +1544,124 @@ fn rem6_run_accepts_host_event_delay_runtime_option() {
 }
 
 #[test]
+fn rem6_run_cache_dram_path_emits_unified_resource_activity_stats() {
+    const DATA_OFFSET: usize = 32;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET, 0);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("memory-resource-activity", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--instruction-cache-protocol",
+            "msi",
+            "--data-cache-protocol",
+            "msi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let resources = json
+        .pointer("/memory_resources")
+        .expect("run JSON should include memory resources");
+    let activity = json_u64(resources, "/activity");
+    let active = json_u64(resources, "/active");
+    let cache_activity = json_u64(resources, "/cache/activity");
+    let active_caches = json_u64(resources, "/cache/active");
+    let transport_activity = json_u64(resources, "/transport/activity");
+    let active_transports = json_u64(resources, "/transport/active");
+    let dram_activity = json_u64(resources, "/dram/activity");
+    let active_dram = json_u64(resources, "/dram/active");
+
+    assert_eq!(
+        activity,
+        cache_activity + transport_activity + dram_activity
+    );
+    assert_eq!(active, active_caches + active_transports + active_dram);
+    assert!(
+        (1..=2).contains(&active_caches),
+        "active caches are bounded by instruction/data cache runtimes"
+    );
+    assert_eq!(active_transports, 2);
+    let active_dram_scope = json_u64(&json, "/dram/active_targets")
+        .max(json_u64(&json, "/dram/active_ports"))
+        .max(json_u64(&json, "/dram/active_banks"));
+    assert_eq!(
+        active_dram, active_dram_scope,
+        "DRAM active resources use the deepest active runtime scope, not summed hierarchy levels"
+    );
+    assert!(
+        active <= 2 + 2 + active_dram_scope,
+        "active resources are bounded by this run shape"
+    );
+    let low_power_entries = json_u64(&json, "/dram/low_power/active_powerdown/entries")
+        + json_u64(&json, "/dram/low_power/precharge_powerdown/entries")
+        + json_u64(&json, "/dram/low_power/self_refresh/entries");
+    let dram_operation_activity = json_u64(&json, "/dram/accesses")
+        .max(json_u64(&json, "/dram/reads") + json_u64(&json, "/dram/writes"))
+        .max(json_u64(&json, "/dram/row_hits") + json_u64(&json, "/dram/row_misses"))
+        .max(json_u64(&json, "/dram/commands"))
+        .max(json_u64(&json, "/dram/refreshes"))
+        .max(json_u64(&json, "/dram/turnarounds"))
+        .max(low_power_entries)
+        .max(json_u64(&json, "/dram/low_power/exits"));
+    assert_eq!(dram_activity, dram_operation_activity);
+    assert!(cache_activity > 0);
+    assert!(transport_activity > 0);
+    assert!(dram_activity > 0);
+
+    assert_resource_stat_matches_json(&stdout, "sim.memory.resources.activity", activity);
+    assert_resource_stat_matches_json(&stdout, "sim.memory.resources.active", active);
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.cache.activity",
+        cache_activity,
+    );
+    assert_resource_stat_matches_json(&stdout, "sim.memory.resources.cache.active", active_caches);
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.transport.activity",
+        transport_activity,
+    );
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.transport.active",
+        active_transports,
+    );
+    assert_resource_stat_matches_json(&stdout, "sim.memory.resources.dram.activity", dram_activity);
+    assert_resource_stat_matches_json(&stdout, "sim.memory.resources.dram.active", active_dram);
+}
+
+#[test]
 fn rem6_run_accepts_start_address_runtime_option() {
     let program = riscv64_program(&[
         i_type(3, 0, 0x0, 6, 0x13), // addi x6, x0, 3
@@ -2424,4 +2544,15 @@ fn rem6_run_riscv_se_reports_unknown_syscalls() {
         1,
         "monotonic",
     );
+}
+
+fn json_u64(json: &Value, pointer: &str) -> u64 {
+    json.pointer(pointer)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing unsigned JSON value at {pointer}: {json}"))
+}
+
+fn assert_resource_stat_matches_json(stdout: &str, path: &str, value: u64) {
+    assert_stat(stdout, path, "Count", value, "monotonic");
+    assert_eq!(stat_value(stdout, path), value);
 }

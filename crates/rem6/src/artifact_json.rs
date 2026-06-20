@@ -7,12 +7,12 @@ use super::{
     Rem6HostActionSummary, Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary,
     Rem6HostCheckpointSummary, Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary,
     Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
-    Rem6InstructionProbeSummary, Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
-    Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary,
-    Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary,
-    Rem6PcCountTrackerSummary, Rem6ReadfileSummary, Rem6RiscvGuestWriteSummary,
-    Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact, Rem6TraceReplayArtifact,
-    Rem6TraceReplayExecutionSummary, RequestedIsa,
+    Rem6InstructionProbeSummary, Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryResourceSummary,
+    Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary,
+    Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary,
+    Rem6PcCountPairSummary, Rem6PcCountTrackerSummary, Rem6ReadfileSummary,
+    Rem6RiscvGuestWriteSummary, Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact,
+    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -55,6 +55,11 @@ impl Rem6RunArtifact {
             .as_ref()
             .map(Rem6ExecutionSummary::to_memory_json)
             .unwrap_or_else(|| "[]".to_string());
+        let memory_resources = self
+            .execution
+            .as_ref()
+            .map(Rem6ExecutionSummary::to_memory_resources_json)
+            .unwrap_or_else(|| Rem6MemoryResourceSummary::default().to_json());
         let riscv_guest_writes = self
             .execution
             .as_ref()
@@ -113,7 +118,7 @@ impl Rem6RunArtifact {
             .map(|artifact| format!(",\"power_analysis\":{}", artifact.to_json()))
             .unwrap_or_default();
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"host_actions\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"host_actions\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -132,6 +137,7 @@ impl Rem6RunArtifact {
             parallel,
             cores,
             memory,
+            memory_resources,
             riscv_guest_writes,
             riscv_unknown_syscalls,
             host_actions,
@@ -973,6 +979,10 @@ impl Rem6ExecutionSummary {
         format!("[{dumps}]")
     }
 
+    fn to_memory_resources_json(&self) -> String {
+        self.memory_resources.to_json()
+    }
+
     fn to_riscv_guest_writes_json(&self) -> String {
         let writes = self
             .riscv_guest_writes
@@ -1007,6 +1017,22 @@ impl Rem6ExecutionSummary {
 
     fn to_dram_json(&self) -> String {
         self.dram.to_json()
+    }
+}
+
+impl Rem6MemoryResourceSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"activity\":{},\"active\":{},\"cache\":{{\"activity\":{},\"active\":{}}},\"transport\":{{\"activity\":{},\"active\":{}}},\"dram\":{{\"activity\":{},\"active\":{}}}}}",
+            self.activity,
+            self.active,
+            self.cache_activity,
+            self.active_caches,
+            self.transport_activity,
+            self.active_transports,
+            self.dram_activity,
+            self.active_dram_resources,
+        )
     }
 }
 

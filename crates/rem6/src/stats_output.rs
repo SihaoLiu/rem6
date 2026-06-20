@@ -677,6 +677,7 @@ pub(super) fn run_stats_output(
         emit_transport_stats(&mut stats, "sim.memory.fetch", &execution.fetch_transport)?;
         emit_transport_stats(&mut stats, "sim.memory.data", &execution.data_transport)?;
         emit_dram_stats(&mut stats, "sim.memory.dram", &execution.dram)?;
+        emit_memory_resource_stats(&mut stats, execution)?;
         let single_cpu_run = execution.cores.len() == 1;
         for core in &execution.cores {
             let gem5_cpu_alias_prefix = if single_cpu_run {
@@ -1137,6 +1138,68 @@ fn stat_path_segment(segment: &str) -> String {
     } else {
         output
     }
+}
+
+fn emit_memory_resource_stats(
+    stats: &mut StatsRegistry,
+    execution: &Rem6ExecutionSummary,
+) -> Result<(), Rem6CliError> {
+    increment_stat(
+        stats,
+        "sim.memory.resources.activity",
+        "Count",
+        StatResetPolicy::Monotonic,
+        execution.memory_resources.activity,
+    )?;
+    increment_stat(
+        stats,
+        "sim.memory.resources.active",
+        "Count",
+        StatResetPolicy::Monotonic,
+        execution.memory_resources.active,
+    )?;
+    increment_stat(
+        stats,
+        "sim.memory.resources.cache.activity",
+        "Count",
+        StatResetPolicy::Monotonic,
+        execution.memory_resources.cache_activity,
+    )?;
+    increment_stat(
+        stats,
+        "sim.memory.resources.cache.active",
+        "Count",
+        StatResetPolicy::Monotonic,
+        execution.memory_resources.active_caches,
+    )?;
+    increment_stat(
+        stats,
+        "sim.memory.resources.transport.activity",
+        "Count",
+        StatResetPolicy::Monotonic,
+        execution.memory_resources.transport_activity,
+    )?;
+    increment_stat(
+        stats,
+        "sim.memory.resources.transport.active",
+        "Count",
+        StatResetPolicy::Monotonic,
+        execution.memory_resources.active_transports,
+    )?;
+    increment_stat(
+        stats,
+        "sim.memory.resources.dram.activity",
+        "Count",
+        StatResetPolicy::Monotonic,
+        execution.memory_resources.dram_activity,
+    )?;
+    increment_stat(
+        stats,
+        "sim.memory.resources.dram.active",
+        "Count",
+        StatResetPolicy::Monotonic,
+        execution.memory_resources.active_dram_resources,
+    )
 }
 
 #[cfg(test)]
