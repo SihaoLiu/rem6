@@ -132,12 +132,13 @@ pub use guest_write::RiscvGuestWriteRecord;
 use hwprobe::{syscall_riscv_hwprobe, RISCV_LINUX_RISCV_HWPROBE};
 pub(crate) use identity::RiscvSyscallIdentity;
 use identity::{
-    syscall_getgroups, syscall_identity, syscall_res_identity, syscall_set_identity,
-    syscall_setgroups, syscall_setre_identity, syscall_setres_identity, RISCV_LINUX_GETEGID,
-    RISCV_LINUX_GETEUID, RISCV_LINUX_GETGID, RISCV_LINUX_GETGROUPS, RISCV_LINUX_GETPID,
-    RISCV_LINUX_GETPPID, RISCV_LINUX_GETRESGID, RISCV_LINUX_GETRESUID, RISCV_LINUX_GETTID,
-    RISCV_LINUX_GETUID, RISCV_LINUX_SETGID, RISCV_LINUX_SETGROUPS, RISCV_LINUX_SETREGID,
-    RISCV_LINUX_SETRESGID, RISCV_LINUX_SETRESUID, RISCV_LINUX_SETREUID, RISCV_LINUX_SETUID,
+    syscall_getgroups, syscall_identity, syscall_res_identity, syscall_set_file_system_identity,
+    syscall_set_identity, syscall_setgroups, syscall_setre_identity, syscall_setres_identity,
+    RISCV_LINUX_GETEGID, RISCV_LINUX_GETEUID, RISCV_LINUX_GETGID, RISCV_LINUX_GETGROUPS,
+    RISCV_LINUX_GETPID, RISCV_LINUX_GETPPID, RISCV_LINUX_GETRESGID, RISCV_LINUX_GETRESUID,
+    RISCV_LINUX_GETTID, RISCV_LINUX_GETUID, RISCV_LINUX_SETFSGID, RISCV_LINUX_SETFSUID,
+    RISCV_LINUX_SETGID, RISCV_LINUX_SETGROUPS, RISCV_LINUX_SETREGID, RISCV_LINUX_SETRESGID,
+    RISCV_LINUX_SETRESUID, RISCV_LINUX_SETREUID, RISCV_LINUX_SETUID,
 };
 use image_layout::riscv_program_break_for_boot_image;
 pub use image_layout::RiscvSyscallImageLayoutError;

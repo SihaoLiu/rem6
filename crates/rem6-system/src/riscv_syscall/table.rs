@@ -499,6 +499,9 @@ impl RiscvSyscallTable {
             RISCV_LINUX_SETUID | RISCV_LINUX_SETGID => Some(RiscvSyscallOutcome::Return {
                 value: syscall_set_identity(request, &mut state.identity),
             }),
+            RISCV_LINUX_SETFSUID | RISCV_LINUX_SETFSGID => Some(RiscvSyscallOutcome::Return {
+                value: syscall_set_file_system_identity(request, &mut state.identity),
+            }),
             RISCV_LINUX_GETGROUPS => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_getgroups(request, state.identity(), guest_memory),

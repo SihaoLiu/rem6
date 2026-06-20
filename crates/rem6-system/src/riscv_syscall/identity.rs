@@ -13,6 +13,8 @@ pub(super) const RISCV_LINUX_SETRESUID: u64 = 147;
 pub(super) const RISCV_LINUX_GETRESUID: u64 = 148;
 pub(super) const RISCV_LINUX_SETRESGID: u64 = 149;
 pub(super) const RISCV_LINUX_GETRESGID: u64 = 150;
+pub(super) const RISCV_LINUX_SETFSUID: u64 = 151;
+pub(super) const RISCV_LINUX_SETFSGID: u64 = 152;
 pub(super) const RISCV_LINUX_GETGROUPS: u64 = 158;
 pub(super) const RISCV_LINUX_SETGROUPS: u64 = 159;
 pub(super) const RISCV_LINUX_GETPID: u64 = 172;
@@ -31,9 +33,11 @@ pub(crate) struct RiscvSyscallIdentity {
     user_id: u64,
     effective_user_id: u64,
     saved_user_id: u64,
+    file_system_user_id: u64,
     group_id: u64,
     effective_group_id: u64,
     saved_group_id: u64,
+    file_system_group_id: u64,
 }
 
 impl RiscvSyscallIdentity {
@@ -53,9 +57,11 @@ impl RiscvSyscallIdentity {
             user_id,
             effective_user_id,
             saved_user_id: effective_user_id,
+            file_system_user_id: effective_user_id,
             group_id,
             effective_group_id,
             saved_group_id: effective_group_id,
+            file_system_group_id: effective_group_id,
         }
     }
 
@@ -184,6 +190,17 @@ pub(super) fn syscall_set_identity(
     }
 }
 
+pub(super) fn syscall_set_file_system_identity(
+    request: RiscvSyscallRequest,
+    identity: &mut RiscvSyscallIdentity,
+) -> u64 {
+    match request.number() {
+        RISCV_LINUX_SETFSUID => set_file_system_user_identity(request.argument(0), identity),
+        RISCV_LINUX_SETFSGID => set_file_system_group_identity(request.argument(0), identity),
+        _ => unreachable!("RISC-V Linux file-system identity syscall is handled by caller"),
+    }
+}
+
 pub(super) fn syscall_getgroups(
     request: RiscvSyscallRequest,
     _identity: RiscvSyscallIdentity,
@@ -204,10 +221,12 @@ fn set_user_identity(requested: u64, identity: &mut RiscvSyscallIdentity) -> u64
         identity.user_id = requested;
         identity.effective_user_id = requested;
         identity.saved_user_id = requested;
+        identity.file_system_user_id = requested;
         return 0;
     }
     if requested == identity.user_id || requested == identity.saved_user_id {
         identity.effective_user_id = requested;
+        identity.file_system_user_id = requested;
         0
     } else {
         linux_error(RISCV_LINUX_EPERM)
@@ -219,10 +238,12 @@ fn set_group_identity(requested: u64, identity: &mut RiscvSyscallIdentity) -> u6
         identity.group_id = requested;
         identity.effective_group_id = requested;
         identity.saved_group_id = requested;
+        identity.file_system_group_id = requested;
         return 0;
     }
     if requested == identity.group_id || requested == identity.saved_group_id {
         identity.effective_group_id = requested;
+        identity.file_system_group_id = requested;
         0
     } else {
         linux_error(RISCV_LINUX_EPERM)
@@ -259,6 +280,7 @@ fn setres_user_identity(request: RiscvSyscallRequest, identity: &mut RiscvSyscal
     identity.user_id = real_id;
     identity.effective_user_id = effective_id;
     identity.saved_user_id = saved_id;
+    identity.file_system_user_id = effective_id;
     0
 }
 
@@ -276,6 +298,7 @@ fn setre_user_identity(request: RiscvSyscallRequest, identity: &mut RiscvSyscall
     identity.user_id = user_id;
     identity.effective_user_id = effective_user_id;
     identity.saved_user_id = saved_user_id;
+    identity.file_system_user_id = effective_user_id;
     0
 }
 
@@ -310,6 +333,7 @@ fn setres_group_identity(request: RiscvSyscallRequest, identity: &mut RiscvSysca
     identity.group_id = real_id;
     identity.effective_group_id = effective_id;
     identity.saved_group_id = saved_id;
+    identity.file_system_group_id = effective_id;
     0
 }
 
@@ -327,7 +351,36 @@ fn setre_group_identity(request: RiscvSyscallRequest, identity: &mut RiscvSyscal
     identity.group_id = group_id;
     identity.effective_group_id = effective_group_id;
     identity.saved_group_id = saved_group_id;
+    identity.file_system_group_id = effective_group_id;
     0
+}
+
+fn set_file_system_user_identity(requested: u64, identity: &mut RiscvSyscallIdentity) -> u64 {
+    let previous = identity.file_system_user_id;
+    let allowed = [
+        identity.user_id,
+        identity.effective_user_id,
+        identity.saved_user_id,
+        identity.file_system_user_id,
+    ];
+    if identity.effective_user_id == 0 || allowed.contains(&requested) {
+        identity.file_system_user_id = requested;
+    }
+    previous
+}
+
+fn set_file_system_group_identity(requested: u64, identity: &mut RiscvSyscallIdentity) -> u64 {
+    let previous = identity.file_system_group_id;
+    let allowed = [
+        identity.group_id,
+        identity.effective_group_id,
+        identity.saved_group_id,
+        identity.file_system_group_id,
+    ];
+    if identity.effective_user_id == 0 || allowed.contains(&requested) {
+        identity.file_system_group_id = requested;
+    }
+    previous
 }
 
 fn next_setre_identity(
