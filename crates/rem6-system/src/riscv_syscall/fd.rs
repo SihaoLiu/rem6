@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use crate::{
     GuestFd, GuestFdEntry, GuestFdTable, GuestFileDescription, GuestFileDescriptionId,
     GuestFileStatusFlags,
@@ -12,6 +14,11 @@ pub(super) const RISCV_LINUX_DUP: u64 = 23;
 pub(super) const RISCV_LINUX_DUP3: u64 = 24;
 pub(super) const RISCV_LINUX_CLOSE: u64 = 57;
 pub(super) const RISCV_LINUX_CLOSE_RANGE: u64 = 436;
+const RISCV_LINUX_STANDARD_FDS: [(i32, u64, u64); 3] = [
+    (0, 0, RISCV_LINUX_O_RDONLY),
+    (1, 1, RISCV_LINUX_O_WRONLY),
+    (2, 2, RISCV_LINUX_O_WRONLY),
+];
 const RISCV_LINUX_CLOSE_RANGE_UNSHARE: u64 = 1 << 1;
 const RISCV_LINUX_CLOSE_RANGE_CLOEXEC: u64 = 1 << 2;
 const RISCV_LINUX_CLOSE_RANGE_SUPPORTED_FLAGS: u64 =
@@ -19,11 +26,7 @@ const RISCV_LINUX_CLOSE_RANGE_SUPPORTED_FLAGS: u64 =
 
 pub(super) fn linux_standard_guest_fds() -> GuestFdTable {
     let mut table = GuestFdTable::new();
-    for (fd, description, flags) in [
-        (0, 0, RISCV_LINUX_O_RDONLY),
-        (1, 1, RISCV_LINUX_O_WRONLY),
-        (2, 2, RISCV_LINUX_O_WRONLY),
-    ] {
+    for (fd, description, flags) in RISCV_LINUX_STANDARD_FDS {
         let description = GuestFileDescriptionId::new(description);
         table
             .insert_description(GuestFileDescription::guest_backed(
@@ -39,6 +42,13 @@ pub(super) fn linux_standard_guest_fds() -> GuestFdTable {
             .expect("standard RISC-V Linux fd is unique");
     }
     table
+}
+
+pub(super) fn linux_standard_terminal_descriptions() -> BTreeSet<GuestFileDescriptionId> {
+    RISCV_LINUX_STANDARD_FDS
+        .into_iter()
+        .map(|(_, description, _)| GuestFileDescriptionId::new(description))
+        .collect()
 }
 
 pub(super) fn syscall_close(fd_argument: u64, state: &mut RiscvSyscallState) -> u64 {

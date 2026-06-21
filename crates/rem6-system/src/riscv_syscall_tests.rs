@@ -34,6 +34,8 @@ mod guest_file_io_tests;
 mod hwprobe_tests;
 #[path = "riscv_syscall_tests/identity_tests.rs"]
 mod identity_tests;
+#[path = "riscv_syscall_tests/ioctl_tests.rs"]
+mod ioctl_tests;
 #[path = "riscv_syscall_tests/link_tests.rs"]
 mod link_tests;
 #[path = "riscv_syscall_tests/madvise_tests.rs"]

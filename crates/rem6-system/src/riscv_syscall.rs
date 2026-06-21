@@ -130,8 +130,9 @@ use fcntl::{
     RISCV_LINUX_F_SETFL,
 };
 use fd::{
-    linux_standard_guest_fds, syscall_close, syscall_close_range, syscall_dup, syscall_dup3,
-    RISCV_LINUX_CLOSE, RISCV_LINUX_CLOSE_RANGE, RISCV_LINUX_DUP, RISCV_LINUX_DUP3,
+    linux_standard_guest_fds, linux_standard_terminal_descriptions, syscall_close,
+    syscall_close_range, syscall_dup, syscall_dup3, RISCV_LINUX_CLOSE, RISCV_LINUX_CLOSE_RANGE,
+    RISCV_LINUX_DUP, RISCV_LINUX_DUP3,
 };
 use file_read::{syscall_pread64, syscall_read, RISCV_LINUX_PREAD64, RISCV_LINUX_READ};
 use file_write::{
@@ -303,6 +304,7 @@ pub struct RiscvSyscallState {
     process_ioprio: u64,
     sched_policy: i32,
     guest_fds: GuestFdTable,
+    guest_terminal_descriptions: BTreeSet<GuestFileDescriptionId>,
     guest_futexes: GuestFutexTable,
     guest_wait: GuestWaitQueue,
     session_id: u64,
@@ -411,6 +413,7 @@ impl RiscvSyscallState {
             process_ioprio: 0,
             sched_policy: scheduler::RISCV_LINUX_DEFAULT_SCHED_POLICY,
             guest_fds: linux_standard_guest_fds(),
+            guest_terminal_descriptions: linux_standard_terminal_descriptions(),
             guest_futexes: GuestFutexTable::new(),
             guest_wait: GuestWaitQueue::new(current_process_group),
             session_id: u64::from(current_process_group.get()),
@@ -1063,6 +1066,7 @@ impl RiscvSyscallState {
     }
 
     fn release_guest_description_sources(&mut self, description: GuestFileDescriptionId) {
+        self.guest_terminal_descriptions.remove(&description);
         let closed_guest_file_identity = self
             .guest_file_stats
             .remove(&description)

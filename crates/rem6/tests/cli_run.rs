@@ -52,6 +52,8 @@ mod riscv_se_getdents;
 mod riscv_se_identity;
 #[path = "cli_run/riscv_se_inotify.rs"]
 mod riscv_se_inotify;
+#[path = "cli_run/riscv_se_ioctl.rs"]
+mod riscv_se_ioctl;
 #[path = "cli_run/riscv_se_ioprio.rs"]
 mod riscv_se_ioprio;
 #[path = "cli_run/riscv_se_known_ni.rs"]
