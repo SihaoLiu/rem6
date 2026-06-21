@@ -330,6 +330,7 @@ pub struct Rem6DramBankSummary {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Rem6ExecutionStop {
+    Idle,
     HostTrap {
         stop_code: i32,
         trap: &'static str,
@@ -1023,9 +1024,17 @@ fn execution_summary(
             Rem6ExecutionStop::TickLimit { tick_limit: limit }
         }
         RiscvSystemRunStopReason::Idle { .. } => {
-            return Err(Rem6CliError::Execute {
-                error: "RISC-V execution stopped without a host trap".to_string(),
-            });
+            if inputs
+                .riscv_sbi_hsm_events
+                .iter()
+                .any(Rem6RiscvSbiHsmSummary::is_hart_stop)
+            {
+                Rem6ExecutionStop::Idle
+            } else {
+                return Err(Rem6CliError::Execute {
+                    error: "RISC-V execution stopped without a host trap".to_string(),
+                });
+            }
         }
     };
     let mut cores = Vec::new();

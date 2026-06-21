@@ -603,6 +603,7 @@ impl RiscvSbiFirmware {
                 if outcome == RiscvSbiOutcome::Stopped {
                     self.schedule_hart_stop(scheduler, core, parallel)
                         .map_err(SystemError::Scheduler)?;
+                    self.record_hsm_stop(core);
                 }
                 outcome
             }
@@ -818,6 +819,19 @@ impl RiscvSbiFirmware {
                 request.arg0(),
                 request.arg1(),
                 request.arg2(),
+            ));
+    }
+
+    fn record_hsm_stop(&self, core: &RiscvCore) {
+        self.hsm
+            .lock()
+            .expect("RISC-V SBI HSM record lock")
+            .push(RiscvSbiHsmRecord::new(
+                core.id(),
+                SBI_HSM_HART_STOP,
+                core.hart_id(),
+                0,
+                0,
             ));
     }
 

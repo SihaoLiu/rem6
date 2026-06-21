@@ -319,6 +319,15 @@ pub(super) fn run_stats_output(
             GEM5_COMPAT_SIM_FREQ_HZ,
         )?;
         match execution.stop {
+            Rem6ExecutionStop::Idle => {
+                increment_stat(
+                    &mut stats,
+                    "sim.stop.idle",
+                    "Count",
+                    StatResetPolicy::Constant,
+                    1,
+                )?;
+            }
             Rem6ExecutionStop::HostTrap { stop_code, .. } => {
                 increment_stat(
                     &mut stats,

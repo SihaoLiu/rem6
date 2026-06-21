@@ -132,6 +132,10 @@ impl Rem6RiscvSbiHsmSummary {
     pub(crate) const fn is_hart_start(&self) -> bool {
         self.function == 0
     }
+
+    pub(crate) const fn is_hart_stop(&self) -> bool {
+        self.function == 1
+    }
 }
 
 impl Rem6RiscvSbiIpiSummary {

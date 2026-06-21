@@ -966,7 +966,8 @@ impl Rem6ExecutionSummary {
     ) -> String {
         let instruction_limit = match self.stop {
             Rem6ExecutionStop::InstructionLimit { instruction_limit } => Some(instruction_limit),
-            Rem6ExecutionStop::HostTrap { .. }
+            Rem6ExecutionStop::Idle
+            | Rem6ExecutionStop::HostTrap { .. }
             | Rem6ExecutionStop::HostStop { .. }
             | Rem6ExecutionStop::TickLimit { .. } => max_instructions,
         };
@@ -1026,6 +1027,9 @@ impl Rem6ExecutionSummary {
             self.data_access_probes.to_json(),
         );
         match self.stop {
+            Rem6ExecutionStop::Idle => {
+                format!("{{\"status\":\"idle\",\"stop_reason\":\"idle\",{common}}}")
+            }
             Rem6ExecutionStop::HostTrap {
                 stop_code,
                 trap,

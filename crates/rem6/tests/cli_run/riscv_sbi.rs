@@ -17,6 +17,7 @@ const SBI_DEBUG_CONSOLE_EXTENSION: i32 = 0x4442_434e;
 const SBI_DEBUG_CONSOLE_WRITE: i32 = 0;
 const SBI_HSM_EXTENSION: i32 = 0x0048_534d;
 const SBI_HSM_HART_START: i32 = 0;
+const SBI_HSM_HART_STOP: i32 = 1;
 const SBI_ERR_ALREADY_AVAILABLE: u64 = (-6_i64) as u64;
 const SBI_SPEC_VERSION_2_0: u64 = 2 << 24;
 const RISCV_SBI_ENTRY: u64 = 0x8000_0000;
@@ -466,6 +467,53 @@ fn rem6_run_riscv_sbi_starts_secondary_hart_through_hsm() {
         message.len() as u64,
         "constant",
     );
+}
+
+#[test]
+fn rem6_run_riscv_sbi_hart_stop_records_hsm_stop() {
+    let mut words = Vec::new();
+    words.extend([
+        load_hsm_extension(17)[0],
+        load_hsm_extension(17)[1],
+        i_type(SBI_HSM_HART_STOP, 0, 0x0, 16, 0x13),
+        0x0000_0073,
+        i_type(0x7e, 0, 0x0, 5, 0x13),
+        0x0010_0073,
+    ]);
+    let elf = riscv64_elf(RISCV_SBI_ENTRY, RISCV_SBI_ENTRY, &riscv64_program(&words));
+    let path = temp_binary("riscv-sbi-hsm-stop", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-sbi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"idle\""));
+    assert!(stdout.contains("\"stop_reason\":\"idle\""));
+    assert!(!stdout.contains("\"x5\":\"0x7e\""));
+    assert!(stdout.contains(
+        "\"riscv_sbi_hsm_events\":[{\"source_cpu\":0,\"function\":1,\"target_hart\":0,\"start_addr\":\"0x0\",\"opaque\":\"0x0\"}]"
+    ));
+    assert_stat(&stdout, "sim.riscv.sbi.hsm.stops", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop.idle", "Count", 1, "constant");
 }
 
 #[test]
