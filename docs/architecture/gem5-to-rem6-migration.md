@@ -11,6 +11,8 @@ not copy test binaries, generated outputs, or build products into rem6.
 `docs/architecture/rem6-architecture.md` owns the stable architecture story:
 runtime shape, ownership model, invariants, and design motivation.
 
+`docs/architecture/gem5-to-rem6-alignment.md` is only a compatibility index.
+
 This migration ledger owns changing state:
 
 - component scores and score calculations;
