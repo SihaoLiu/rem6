@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_cpu::{
-    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineStage, RiscvCore,
-    RiscvDataAccessEventKind,
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineInstruction,
+    InOrderPipelineSnapshot, InOrderPipelineStage, RiscvCore, RiscvDataAccessEventKind,
 };
 use rem6_isa_riscv::{Register, RiscvInstruction};
 use rem6_kernel::{PartitionId, PartitionedScheduler, Tick};
@@ -262,6 +262,48 @@ fn last_data_wait_cycles(core: &RiscvCore, completion_kind: RiscvDataAccessEvent
         .tick();
     let completed_tick = data_events[completed_index].tick();
     completed_tick.saturating_sub(issued_tick)
+}
+
+fn assert_explicit_data_wait_stall_records(
+    core: &RiscvCore,
+    sequence: u64,
+    data_wait_cycles: Tick,
+) {
+    let cycle_records = core.in_order_pipeline_cycle_records();
+    assert!(cycle_records
+        .windows(2)
+        .all(|records| records[0].cycle() < records[1].cycle()));
+    let wait_records = cycle_records
+        .iter()
+        .filter(|cycle| {
+            cycle.summary().retired_count() == 0 && cycle.summary().stall_cycle_count() == 1
+        })
+        .filter(|cycle| {
+            cycle.before().in_flight().iter().any(|instruction| {
+                instruction.sequence() == sequence
+                    && instruction.stage() == InOrderPipelineStage::Execute
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(wait_records.len() as u64, data_wait_cycles);
+    if let Some(first_wait) = wait_records.first() {
+        for (offset, record) in wait_records.iter().enumerate() {
+            assert_eq!(record.cycle(), first_wait.cycle() + offset as u64);
+        }
+    }
+    assert_eq!(
+        cycle_records
+            .iter()
+            .filter(|cycle| {
+                cycle
+                    .plan()
+                    .advanced()
+                    .iter()
+                    .any(|advance| advance.sequence() == sequence && advance.retires())
+            })
+            .count(),
+        1
+    );
 }
 
 fn mmio_bus_with_u64(address: u64, bytes: [u8; 8]) -> MmioBus {
@@ -634,15 +676,18 @@ fn riscv_completed_mmio_data_access_records_in_order_pipeline_cycle() {
     let events = core.execution_events();
     assert_eq!(events.len(), 1);
     let record = events[0].in_order_pipeline_cycle().unwrap();
+    let sequence = events[0].fetch().request_id().sequence();
     assert_eq!(
         events[0].in_order_pipeline_data_wait_cycles(),
         data_wait_cycles
     );
     assert_eq!(record.cycle(), 4 + data_wait_cycles);
-    assert_eq!(record.summary().stall_cycle_count(), data_wait_cycles);
+    assert_eq!(record.summary().stall_cycle_count(), 0);
     assert_eq!(record.summary().retired_count(), 1);
     assert_eq!(record.summary().advanced_count(), 1);
     assert!(record.after().in_flight().is_empty());
+
+    assert_explicit_data_wait_stall_records(&core, sequence, data_wait_cycles);
 
     let snapshot = core.in_order_pipeline_snapshot();
     assert_eq!(snapshot.cycle(), 5 + data_wait_cycles);
@@ -678,13 +723,14 @@ fn riscv_completed_data_access_records_in_order_pipeline_cycle() {
     let events = core.execution_events();
     assert_eq!(events.len(), 1);
     let record = events[0].in_order_pipeline_cycle().unwrap();
+    let sequence = events[0].fetch().request_id().sequence();
     assert_eq!(
         events[0].in_order_pipeline_data_wait_cycles(),
         data_wait_cycles
     );
     assert_eq!(record.cycle(), 4 + data_wait_cycles);
     assert_eq!(record.before().cycle(), 4 + data_wait_cycles);
-    assert_eq!(record.summary().stall_cycle_count(), data_wait_cycles);
+    assert_eq!(record.summary().stall_cycle_count(), 0);
     assert_eq!(
         record
             .before()
@@ -692,15 +738,63 @@ fn riscv_completed_data_access_records_in_order_pipeline_cycle() {
             .iter()
             .map(|instruction| (instruction.sequence(), instruction.stage()))
             .collect::<Vec<_>>(),
-        vec![(0, InOrderPipelineStage::Commit)]
+        vec![(sequence, InOrderPipelineStage::Commit)]
     );
     assert_eq!(record.summary().retired_count(), 1);
     assert_eq!(record.summary().advanced_count(), 1);
     assert!(record.after().in_flight().is_empty());
 
+    assert_explicit_data_wait_stall_records(&core, sequence, data_wait_cycles);
+
     let snapshot = core.in_order_pipeline_snapshot();
     assert_eq!(snapshot.cycle(), 5 + data_wait_cycles);
     assert!(snapshot.in_flight().is_empty());
+}
+
+#[test]
+fn riscv_completed_data_access_records_wait_when_instruction_already_in_execute() {
+    let (mut scheduler, transport, fetch_route, data_route) = in_order_routes();
+    let raw = i_type(8, 2, 0x3, 5, 0x03);
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(2), 0x9000);
+    let store = loaded_store_with_data(
+        0x8000,
+        raw,
+        0x9008,
+        vec![0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11],
+    );
+
+    fetch_one(&core, store.clone(), &mut scheduler, &transport);
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(event.instruction(), RiscvInstruction::decode(raw).unwrap());
+    assert!(event.in_order_pipeline_cycle().is_none());
+    let sequence = event.fetch().request_id().sequence();
+    let config = core.in_order_pipeline_snapshot().config().clone();
+    core.restore_in_order_pipeline_snapshot(InOrderPipelineSnapshot::with_cycle(
+        config,
+        4,
+        [InOrderPipelineInstruction::new(
+            sequence,
+            InOrderPipelineStage::Execute,
+        )],
+    ))
+    .unwrap();
+
+    issue_one_data_access(&core, store, &mut scheduler, &transport);
+
+    assert_eq!(core.read_register(reg(5)), 0x1122_3344_5566_7788);
+    let data_wait_cycles = last_data_wait_cycles(&core, RiscvDataAccessEventKind::Completed);
+    assert!(data_wait_cycles > 0);
+    let events = core.execution_events();
+    let record = events[0].in_order_pipeline_cycle().unwrap();
+    assert_eq!(
+        events[0].in_order_pipeline_data_wait_cycles(),
+        data_wait_cycles
+    );
+    assert_eq!(record.summary().stall_cycle_count(), 0);
+    assert_eq!(record.summary().retired_count(), 1);
+    assert_explicit_data_wait_stall_records(&core, sequence, data_wait_cycles);
 }
 
 #[test]
@@ -796,6 +890,7 @@ fn riscv_response_store_conditional_failure_records_in_order_pipeline_cycle() {
     assert!(data_wait_cycles > 0);
     let events = core.execution_events();
     let record = events[1].in_order_pipeline_cycle().unwrap();
+    let sequence = events[1].fetch().request_id().sequence();
     assert_eq!(
         events[1].in_order_pipeline_data_wait_cycles(),
         data_wait_cycles
@@ -805,6 +900,7 @@ fn riscv_response_store_conditional_failure_records_in_order_pipeline_cycle() {
         9 + load_reserved_wait_cycles + data_wait_cycles
     );
     assert_eq!(record.summary().retired_count(), 1);
+    assert_explicit_data_wait_stall_records(&core, sequence, data_wait_cycles);
     assert_eq!(
         core.in_order_pipeline_snapshot().cycle(),
         10 + load_reserved_wait_cycles + data_wait_cycles

@@ -185,9 +185,9 @@ privileged Linux trap and interrupt smoke tests.
 **Score calculation:** 4 of 10 items have executable evidence, or 40% raw,
 capped to 39% by the unit-slice bucket. The bucket cap is unit-slice because
 RISC-V core timing has direct completed-fetch overlap, bounded normal-driver
-fetch-ahead, and one top-level pending-fetch resource-stall slice, but broad
-stalls/squashes remain incomplete and O3 state is not yet an executable
-cycle-visible engine.
+fetch-ahead, and narrow pending-fetch and data-access resource-stall slices,
+but broad stalls/squashes remain incomplete and O3 state is not yet an
+executable cycle-visible engine.
 
 - [x] RISC-V atomic execution and parallel clusters execute real instructions.
 - [x] Data access issue/response and store-conditional progress diagnostics have tests.
@@ -213,8 +213,8 @@ fetch-ahead requests inserted into the in-order timing state when issued and
 before their memory response, per-retired
 instruction in-order stage advancement with runtime stats, non-retire fetch and
 intermediate retire-loop cycle records retained in per-core in-order pipeline
-history and consumed by top-level stats, data-response wait cycles folded into
-in-order retire timing, per-stage occupied-cycle stats, explicit data-stall cycle stats,
+history and consumed by top-level stats, data-response wait cycles emitted as
+explicit non-retire resource-stall in-order cycle records before data-instruction retire, per-stage occupied-cycle stats, explicit data-stall cycle stats,
 per-core fetch-response and data-response wait cycle stats, retired branch
 prediction, speculation repair, and redirect summaries in normal in-order timing records, RISC-V
 normal parallel-cluster pending-fetch resource-stall accounting consumed by CLI run stats, core checkpoints preserving the fetch-steering branch predictor payload, including live fetch-ahead pending branch speculation state, a RISC-V checker CPU option that runs an

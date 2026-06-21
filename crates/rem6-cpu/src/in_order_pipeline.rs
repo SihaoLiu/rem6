@@ -916,11 +916,6 @@ impl InOrderPipelineCycleRecord {
         self.stall_cycle_count
     }
 
-    pub fn with_stall_cycle_count(mut self, cycles: u64) -> Self {
-        self.stall_cycle_count = cycles;
-        self
-    }
-
     pub const fn plan(&self) -> &InOrderPipelinePlan {
         &self.plan
     }
@@ -1059,14 +1054,6 @@ impl InOrderPipelineState {
         &mut self,
     ) -> Result<InOrderPipelineCycleRecord, InOrderPipelineError> {
         self.try_advance_cycle_recorded_with_redirect(None)
-    }
-
-    pub fn try_stall_cycles(&mut self, cycles: u64) -> Result<(), InOrderPipelineError> {
-        self.cycle = self
-            .cycle
-            .checked_add(cycles)
-            .ok_or(InOrderPipelineError::CycleCursorOverflow { cycle: self.cycle })?;
-        Ok(())
     }
 
     pub fn try_record_resource_stall_cycle(

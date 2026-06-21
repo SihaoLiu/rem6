@@ -353,9 +353,14 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
             )])
             .map_err(RiscvCpuError::InOrderPipeline)?;
     }
+    let mut wait_recorded = wait_cycles == 0;
     let max_retire_cycles =
         InOrderPipelineStage::ALL.len() + state.in_order_pipeline.in_flight().len();
     for _ in 0..max_retire_cycles {
+        if !wait_recorded && in_order_pipeline_sequence_is_in_execute(state, sequence) {
+            record_data_wait_in_order_stall_cycles(state, wait_cycles)?;
+            wait_recorded = true;
+        }
         let snapshot = state.in_order_pipeline.snapshot();
         let active_prediction = branch_prediction.filter(|prediction| {
             snapshot.in_flight().iter().any(|instruction| {
@@ -369,7 +374,7 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
                     && instruction.stage() == redirect.resolved_stage()
             })
         });
-        let mut record = if active_prediction.is_some() {
+        let record = if active_prediction.is_some() {
             state
                 .in_order_pipeline
                 .try_advance_cycle_recorded_with_prediction(active_prediction)
@@ -379,24 +384,48 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
                 .try_advance_cycle_recorded_with_redirect(active_redirect)
         }
         .map_err(RiscvCpuError::InOrderPipeline)?;
-        if record.after().in_flight().iter().any(|instruction| {
-            instruction.sequence() == sequence
-                && instruction.stage() == InOrderPipelineStage::Execute
-        }) {
-            state
-                .in_order_pipeline
-                .try_stall_cycles(wait_cycles)
-                .map_err(RiscvCpuError::InOrderPipeline)?;
+        let retires_sequence = record_retires_sequence(&record, sequence);
+        state.in_order_pipeline_cycle_records.push(record.clone());
+        if !wait_recorded
+            && record.after().in_flight().iter().any(|instruction| {
+                instruction.sequence() == sequence
+                    && instruction.stage() == InOrderPipelineStage::Execute
+            })
+        {
+            record_data_wait_in_order_stall_cycles(state, wait_cycles)?;
+            wait_recorded = true;
         }
-        if record_retires_sequence(&record, sequence) {
-            record = record.with_stall_cycle_count(wait_cycles);
-            state.in_order_pipeline_cycle_records.push(record.clone());
+        if retires_sequence {
             return Ok(record);
         }
-        state.in_order_pipeline_cycle_records.push(record);
     }
 
     unreachable!("default in-order pipeline retires an instruction within its stage count")
+}
+
+fn in_order_pipeline_sequence_is_in_execute(state: &RiscvCoreState, sequence: u64) -> bool {
+    state
+        .in_order_pipeline
+        .in_flight()
+        .iter()
+        .any(|instruction| {
+            instruction.sequence() == sequence
+                && instruction.stage() == InOrderPipelineStage::Execute
+        })
+}
+
+fn record_data_wait_in_order_stall_cycles(
+    state: &mut RiscvCoreState,
+    wait_cycles: u64,
+) -> Result<(), RiscvCpuError> {
+    for _ in 0..wait_cycles {
+        let stall_record = state
+            .in_order_pipeline
+            .try_record_resource_stall_cycle()
+            .map_err(RiscvCpuError::InOrderPipeline)?;
+        state.in_order_pipeline_cycle_records.push(stall_record);
+    }
+    Ok(())
 }
 
 fn record_retires_sequence(record: &InOrderPipelineCycleRecord, sequence: u64) -> bool {
