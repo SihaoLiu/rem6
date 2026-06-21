@@ -173,6 +173,11 @@ impl RiscvSyscallTable {
                     value: syscall_mkdir(request, state, guest_memory),
                 })
             }
+            RISCV_LINUX_MKNODAT => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_mknodat(request, state, guest_memory),
+                })
+            }
             RISCV_LINUX_LINK | RISCV_LINUX_LINKAT => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_link_operation(request, state, guest_memory),

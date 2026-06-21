@@ -42,6 +42,7 @@ mod link;
 mod links;
 mod memfd;
 mod mkdir;
+mod mknod;
 mod mmap;
 mod open;
 mod permissions;
@@ -166,6 +167,7 @@ use link::{
 use links::syscall_readlinkat;
 use memfd::{syscall_memfd_create, RISCV_LINUX_MEMFD_CREATE};
 use mkdir::{syscall_mkdir, RISCV_LINUX_MKDIRAT, RISCV_NEWLIB_LEGACY_MKDIR};
+use mknod::{syscall_mknodat, RISCV_LINUX_MKNODAT};
 pub use mmap::RiscvMmapRegion;
 use mmap::{
     syscall_get_mempolicy, syscall_madvise, syscall_mbind, syscall_memory_lock_range,

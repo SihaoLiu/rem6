@@ -54,6 +54,8 @@ mod riscv_se_links;
 mod riscv_se_memfd;
 #[path = "cli_run/riscv_se_mkdir.rs"]
 mod riscv_se_mkdir;
+#[path = "cli_run/riscv_se_mknod.rs"]
+mod riscv_se_mknod;
 #[path = "cli_run/riscv_se_mmap.rs"]
 mod riscv_se_mmap;
 #[path = "cli_run/riscv_se_open_flags.rs"]
