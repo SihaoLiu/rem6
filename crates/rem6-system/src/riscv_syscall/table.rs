@@ -448,6 +448,9 @@ impl RiscvSyscallTable {
             RISCV_LINUX_SETSID => Some(RiscvSyscallOutcome::Return {
                 value: syscall_setsid(state),
             }),
+            RISCV_LINUX_UNSHARE => Some(RiscvSyscallOutcome::Return {
+                value: syscall_unshare(request),
+            }),
             RISCV_LINUX_PERSONALITY => Some(RiscvSyscallOutcome::Return {
                 value: syscall_personality(request, state),
             }),

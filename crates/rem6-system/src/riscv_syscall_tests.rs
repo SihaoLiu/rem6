@@ -106,6 +106,8 @@ mod truncate_tests;
 mod unknown_syscall_tests;
 #[path = "riscv_syscall_tests/unlink_tests.rs"]
 mod unlink_tests;
+#[path = "riscv_syscall_tests/unshare_tests.rs"]
+mod unshare_tests;
 #[path = "riscv_syscall_tests/utsname_tests.rs"]
 mod utsname_tests;
 #[path = "riscv_syscall_tests/wait4_tests.rs"]

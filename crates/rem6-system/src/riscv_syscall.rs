@@ -201,8 +201,9 @@ use pipe::{
 use poll::{syscall_ppoll, syscall_pselect6, RISCV_LINUX_PPOLL, RISCV_LINUX_PSELECT6};
 use process::{
     syscall_execve_error_path, syscall_getpgid, syscall_getsid, syscall_personality, syscall_prctl,
-    syscall_setpgid, syscall_setsid, RISCV_LINUX_EXECVE, RISCV_LINUX_GETPGID, RISCV_LINUX_GETSID,
-    RISCV_LINUX_PERSONALITY, RISCV_LINUX_PRCTL, RISCV_LINUX_SETPGID, RISCV_LINUX_SETSID,
+    syscall_setpgid, syscall_setsid, syscall_unshare, RISCV_LINUX_EXECVE, RISCV_LINUX_GETPGID,
+    RISCV_LINUX_GETSID, RISCV_LINUX_PERSONALITY, RISCV_LINUX_PRCTL, RISCV_LINUX_SETPGID,
+    RISCV_LINUX_SETSID, RISCV_LINUX_UNSHARE,
 };
 use random::{invalid_getrandom_flags, syscall_getrandom, RISCV_LINUX_GETRANDOM};
 use readv::{syscall_preadv, syscall_readv, RISCV_LINUX_PREADV, RISCV_LINUX_READV};

@@ -14,8 +14,30 @@ pub(super) const RISCV_LINUX_SETSID: u64 = 157;
 pub(super) const RISCV_LINUX_PRCTL: u64 = 167;
 pub(super) const RISCV_LINUX_EXECVE: u64 = 221;
 pub(super) const RISCV_LINUX_PERSONALITY: u64 = 92;
+pub(super) const RISCV_LINUX_UNSHARE: u64 = 97;
 
 const RISCV_LINUX_PERSONALITY_QUERY: u32 = 0xffff_ffff;
+const RISCV_LINUX_CLONE_NEWTIME: u64 = 0x0000_0080;
+const RISCV_LINUX_CLONE_FS: u64 = 0x0000_0200;
+const RISCV_LINUX_CLONE_FILES: u64 = 0x0000_0400;
+const RISCV_LINUX_CLONE_NEWNS: u64 = 0x0002_0000;
+const RISCV_LINUX_CLONE_SYSVSEM: u64 = 0x0004_0000;
+const RISCV_LINUX_CLONE_NEWCGROUP: u64 = 0x0200_0000;
+const RISCV_LINUX_CLONE_NEWUTS: u64 = 0x0400_0000;
+const RISCV_LINUX_CLONE_NEWIPC: u64 = 0x0800_0000;
+const RISCV_LINUX_CLONE_NEWUSER: u64 = 0x1000_0000;
+const RISCV_LINUX_CLONE_NEWPID: u64 = 0x2000_0000;
+const RISCV_LINUX_CLONE_NEWNET: u64 = 0x4000_0000;
+const RISCV_LINUX_UNSHARE_RESOURCE_FLAGS: u64 =
+    RISCV_LINUX_CLONE_FS | RISCV_LINUX_CLONE_FILES | RISCV_LINUX_CLONE_SYSVSEM;
+const RISCV_LINUX_UNSHARE_NAMESPACE_FLAGS: u64 = RISCV_LINUX_CLONE_NEWTIME
+    | RISCV_LINUX_CLONE_NEWNS
+    | RISCV_LINUX_CLONE_NEWCGROUP
+    | RISCV_LINUX_CLONE_NEWUTS
+    | RISCV_LINUX_CLONE_NEWIPC
+    | RISCV_LINUX_CLONE_NEWUSER
+    | RISCV_LINUX_CLONE_NEWPID
+    | RISCV_LINUX_CLONE_NEWNET;
 const RISCV_LINUX_PR_SET_PDEATHSIG: u64 = 1;
 const RISCV_LINUX_PR_GET_PDEATHSIG: u64 = 2;
 const RISCV_LINUX_PR_GET_DUMPABLE: u64 = 3;
@@ -87,6 +109,17 @@ pub(super) fn syscall_personality(
         state.set_personality(requested);
     }
     u64::from(previous)
+}
+
+pub(super) fn syscall_unshare(request: RiscvSyscallRequest) -> u64 {
+    let flags = request.argument(0);
+    if flags & !(RISCV_LINUX_UNSHARE_RESOURCE_FLAGS | RISCV_LINUX_UNSHARE_NAMESPACE_FLAGS) != 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    if flags & RISCV_LINUX_UNSHARE_NAMESPACE_FLAGS != 0 {
+        return linux_error(RISCV_LINUX_EPERM);
+    }
+    0
 }
 
 pub(super) fn syscall_execve_error_path(
