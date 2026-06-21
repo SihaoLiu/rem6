@@ -48,6 +48,7 @@ mod resource_acquire_config;
 mod riscv_checkpoint_runtime;
 mod riscv_guest_output;
 mod riscv_run_driver;
+mod riscv_sbi_runtime;
 mod riscv_se_inputs;
 mod run_gdb;
 mod run_resource_config;
@@ -106,6 +107,7 @@ use riscv_checkpoint_runtime::{
 };
 pub(crate) use riscv_guest_output::{Rem6RiscvGuestWriteSummary, Rem6RiscvUnknownSyscallSummary};
 use riscv_run_driver::drive_cli_riscv_run;
+use riscv_sbi_runtime::{attach_cli_riscv_sbi_firmware, configure_cli_riscv_sbi_core};
 use riscv_se_inputs::{read_riscv_se_file, read_riscv_se_stdin};
 use run_gdb::{serve_riscv_gdb_with_run_control, RiscvGdbServeOutcome};
 use run_resource_config::{run_resource_payloads_from_config, RunResourcePayloads};
@@ -756,6 +758,7 @@ fn execute_riscv(
                 startup.initial_stack_pointer().get(),
             );
         }
+        configure_cli_riscv_sbi_core(config, cpu_index, &core, start_address);
         if config.checker_cpu() {
             core.enable_checker_cpu();
         }
@@ -795,6 +798,7 @@ fn execute_riscv(
             RiscvDataAccessStats::with_stack_distance(probe_config)
                 .with_mem_footprint(footprint_config),
         );
+    driver = attach_cli_riscv_sbi_firmware(config, driver);
     if config.riscv_se() {
         driver = driver.with_riscv_syscall_emulation_for_boot_image(image);
         let proc_self_exe_target = std::fs::canonicalize(config.binary())

@@ -12,6 +12,7 @@ pub(super) fn validate_run_config_inputs(config: &Rem6RunConfig) -> Result<(), R
     validate_cache_inputs(config)?;
     validate_readfile_inputs(config)?;
     validate_riscv_se_inputs(config)?;
+    validate_riscv_sbi_inputs(config)?;
     if config.gdb_listen().is_some() {
         validate_run_gdb_listen_config(config)?;
     }
@@ -33,6 +34,9 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     }
     if config.riscv_se() {
         return Err(Rem6CliError::RiscvSeRequiresExecution);
+    }
+    if config.riscv_sbi() {
+        return Err(Rem6CliError::RiscvSbiRequiresExecution);
     }
     if config.checker_cpu() {
         return Err(Rem6CliError::CheckerCpuRequiresExecution);
@@ -141,6 +145,22 @@ fn validate_riscv_se_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> 
         return Err(Rem6CliError::RiscvSeRequiresSingleCore {
             cores: config.cores(),
         });
+    }
+    Ok(())
+}
+
+fn validate_riscv_sbi_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
+    if !config.riscv_sbi() {
+        return Ok(());
+    }
+    if config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::RiscvSbiRequiresRiscv);
+    }
+    if config.riscv_se() {
+        return Err(Rem6CliError::RiscvSbiConflictsWithRiscvSe);
+    }
+    if config.riscv_boot_a0() != 0 {
+        return Err(Rem6CliError::RiscvSbiRequiresBootA0Zero);
     }
     Ok(())
 }

@@ -198,6 +198,13 @@ pub(super) fn run_stats_output(
         )?;
         increment_stat(
             &mut stats,
+            "sim.riscv.sbi",
+            "Count",
+            StatResetPolicy::Constant,
+            u64::from(inputs.config.riscv_sbi()),
+        )?;
+        increment_stat(
+            &mut stats,
             "sim.riscv.se",
             "Count",
             StatResetPolicy::Constant,

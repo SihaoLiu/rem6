@@ -49,7 +49,8 @@ fn rem6_run_loads_riscv_elf_and_emits_json_stats_artifact() {
     assert!(stdout.contains("\"architecture\":\"riscv64\""));
     assert!(stdout.contains("\"entry\":\"0x80000000\""));
     assert!(stdout.contains("\"start_address\":\"0x80000000\""));
-    assert!(stdout.contains("\"riscv_boot\":{\"a0\":\"0x0\",\"a1\":\"0x0\",\"se\":false}"));
+    assert!(stdout
+        .contains("\"riscv_boot\":{\"a0\":\"0x0\",\"a1\":\"0x0\",\"sbi\":false,\"se\":false}"));
     assert!(stdout.contains("\"status\":\"loaded\""));
     assert!(stdout.contains("\"host_event_delay\":1"));
     assert!(stdout.contains("\"parallel\":{\"scheduler\":{"));
@@ -186,7 +187,9 @@ fn rem6_run_loads_riscv_elf_with_explicit_boot_registers() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"status\":\"loaded\""));
-    assert!(stdout.contains("\"riscv_boot\":{\"a0\":\"0x7\",\"a1\":\"0x80002000\",\"se\":false}"));
+    assert!(stdout.contains(
+        "\"riscv_boot\":{\"a0\":\"0x7\",\"a1\":\"0x80002000\",\"sbi\":false,\"se\":false}"
+    ));
     assert_stat(&stdout, "sim.riscv.boot.a0", "Value", 7, "constant");
     assert_stat(
         &stdout,

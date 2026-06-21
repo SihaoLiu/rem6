@@ -140,6 +140,7 @@ pub struct Rem6RunConfig {
     start_address: Option<u64>,
     riscv_boot_a0: u64,
     riscv_boot_a1: u64,
+    riscv_sbi: bool,
     riscv_se: bool,
     riscv_se_args: Vec<String>,
     riscv_se_env: Vec<String>,
@@ -232,6 +233,7 @@ struct Rem6RunFileConfig {
     start_address: Option<u64>,
     riscv_boot_a0: Option<u64>,
     riscv_boot_a1: Option<u64>,
+    riscv_sbi: Option<bool>,
     riscv_se: Option<bool>,
     riscv_se_args: Option<Vec<String>>,
     riscv_se_env: Option<Vec<String>>,
@@ -399,6 +401,7 @@ impl Rem6RunConfig {
         let mut start_address = file_config.start_address;
         let mut riscv_boot_a0 = file_config.riscv_boot_a0.unwrap_or(0);
         let mut riscv_boot_a1 = file_config.riscv_boot_a1.unwrap_or(0);
+        let mut riscv_sbi = file_config.riscv_sbi.unwrap_or(false);
         let mut riscv_se = file_config.riscv_se.unwrap_or(false);
         let mut riscv_se_args = file_config.riscv_se_args.clone().unwrap_or_default();
         let mut riscv_se_env = file_config.riscv_se_env.clone().unwrap_or_default();
@@ -636,6 +639,9 @@ impl Rem6RunConfig {
                 }
                 "--riscv-se" => {
                     riscv_se = true;
+                }
+                "--riscv-sbi" => {
+                    riscv_sbi = true;
                 }
                 "--riscv-se-arg" => {
                     let value = required_value(&flag, args.next())?;
@@ -902,6 +908,7 @@ impl Rem6RunConfig {
             start_address,
             riscv_boot_a0,
             riscv_boot_a1,
+            riscv_sbi,
             riscv_se,
             riscv_se_args,
             riscv_se_env,
@@ -970,6 +977,10 @@ impl Rem6RunConfig {
 
     pub const fn riscv_boot_a1(&self) -> u64 {
         self.riscv_boot_a1
+    }
+
+    pub const fn riscv_sbi(&self) -> bool {
+        self.riscv_sbi
     }
 
     pub const fn riscv_se(&self) -> bool {
@@ -1654,7 +1665,13 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--power-format",
             "--power-output",
         ],
-        &["--execute", "--checker-cpu", "--dram-memory", "--riscv-se"],
+        &[
+            "--execute",
+            "--checker-cpu",
+            "--dram-memory",
+            "--riscv-se",
+            "--riscv-sbi",
+        ],
     )
 }
 

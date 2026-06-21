@@ -104,9 +104,10 @@ impl Rem6RunArtifact {
             .join(",");
         let riscv_boot = if self.config.isa() == RequestedIsa::Riscv {
             format!(
-                ",\"riscv_boot\":{{\"a0\":\"0x{:x}\",\"a1\":\"0x{:x}\",\"se\":{}}}",
+                ",\"riscv_boot\":{{\"a0\":\"0x{:x}\",\"a1\":\"0x{:x}\",\"sbi\":{},\"se\":{}}}",
                 self.config.riscv_boot_a0(),
                 self.config.riscv_boot_a1(),
+                self.config.riscv_sbi(),
                 self.config.riscv_se()
             )
         } else {

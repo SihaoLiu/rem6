@@ -191,6 +191,7 @@ pub enum Rem6CliError {
     MemoryDumpRequiresExecution,
     ReadfileRequiresExecution,
     ReadfileRequiresRiscv,
+    RiscvSbiRequiresExecution,
     RiscvSeRequiresExecution,
     CheckerCpuRequiresExecution,
     DataCacheProtocolRequiresExecution,
@@ -212,6 +213,9 @@ pub enum Rem6CliError {
     InstructionCachePrefetcherRequiresInstructionCacheProtocol,
     RiscvPcCountTargetRequiresRiscv,
     CheckerCpuRequiresRiscv,
+    RiscvSbiRequiresRiscv,
+    RiscvSbiConflictsWithRiscvSe,
+    RiscvSbiRequiresBootA0Zero,
     DataCacheProtocolLargeMulticoreRequiresMsi {
         protocol: RiscvDataCacheProtocol,
         cores: usize,
@@ -491,6 +495,9 @@ impl fmt::Display for Rem6CliError {
             Self::ReadfileRequiresRiscv => {
                 write!(formatter, "--readfile requires --isa riscv")
             }
+            Self::RiscvSbiRequiresExecution => {
+                write!(formatter, "--riscv-sbi requires --execute")
+            }
             Self::RiscvSeRequiresExecution => {
                 write!(formatter, "--riscv-se requires --execute")
             }
@@ -553,6 +560,15 @@ impl fmt::Display for Rem6CliError {
             }
             Self::CheckerCpuRequiresRiscv => {
                 write!(formatter, "--checker-cpu requires --isa riscv")
+            }
+            Self::RiscvSbiRequiresRiscv => {
+                write!(formatter, "--riscv-sbi requires --isa riscv")
+            }
+            Self::RiscvSbiConflictsWithRiscvSe => {
+                write!(formatter, "--riscv-sbi cannot be combined with --riscv-se")
+            }
+            Self::RiscvSbiRequiresBootA0Zero => {
+                write!(formatter, "--riscv-sbi requires --riscv-boot-a0 0")
             }
             Self::DataCacheProtocolLargeMulticoreRequiresMsi { protocol, cores } => {
                 write!(

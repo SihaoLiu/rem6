@@ -34,6 +34,8 @@ mod pc_count_probes;
 mod readfile_resource;
 #[path = "cli_run/resource_acquire.rs"]
 mod resource_acquire;
+#[path = "cli_run/riscv_sbi.rs"]
+mod riscv_sbi;
 #[path = "cli_run/riscv_se_admin.rs"]
 mod riscv_se_admin;
 #[path = "cli_run/riscv_se_chdir.rs"]

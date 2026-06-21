@@ -1818,7 +1818,9 @@ fn rem6_run_accepts_riscv_boot_register_runtime_options() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"status\":\"executed_until_trap\""));
-    assert!(stdout.contains("\"riscv_boot\":{\"a0\":\"0x123\",\"a1\":\"0x80001000\",\"se\":false}"));
+    assert!(stdout.contains(
+        "\"riscv_boot\":{\"a0\":\"0x123\",\"a1\":\"0x80001000\",\"sbi\":false,\"se\":false}"
+    ));
     assert!(stdout.contains("\"executed_ticks\":3"));
     assert!(stdout.contains("\"final_tick\":3"));
     assert!(stdout.contains("\"x10\":\"0x123\""));
@@ -1872,7 +1874,9 @@ fn rem6_run_riscv_se_loads_startup_stack_and_exits_through_syscall() {
     assert!(stdout.contains("\"status\":\"stopped_by_host\""));
     assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
     assert!(stdout.contains("\"stop_code\":47"));
-    assert!(stdout.contains("\"riscv_boot\":{\"a0\":\"0x0\",\"a1\":\"0x0\",\"se\":true}"));
+    assert!(
+        stdout.contains("\"riscv_boot\":{\"a0\":\"0x0\",\"a1\":\"0x0\",\"sbi\":false,\"se\":true}")
+    );
     assert!(stdout.contains("\"x5\":\"0x1\""));
     assert!(stdout.contains("\"x7\":\"0x2f\""));
     assert!(stdout.contains("\"x10\":\"0x2f\""));
@@ -1919,7 +1923,9 @@ fn rem6_run_riscv_se_executes_no_libc_rv64gc_line_end_fetches() {
     assert!(stdout.contains("\"status\":\"stopped_by_host\""));
     assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
     assert!(stdout.contains("\"stop_code\":0"));
-    assert!(stdout.contains("\"riscv_boot\":{\"a0\":\"0x0\",\"a1\":\"0x0\",\"se\":true}"));
+    assert!(
+        stdout.contains("\"riscv_boot\":{\"a0\":\"0x0\",\"a1\":\"0x0\",\"sbi\":false,\"se\":true}")
+    );
     assert!(stdout.contains("\"committed_instructions\":4"));
     assert!(stdout.contains("\"fetch\":{\"requests\":5"));
     assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
