@@ -44,6 +44,7 @@ mod memfd;
 mod mkdir;
 mod mknod;
 mod mmap;
+mod namespace;
 mod open;
 mod permissions;
 mod pidfd;
@@ -180,6 +181,7 @@ use mmap::{
 };
 #[cfg(test)]
 use mmap::{RISCV_LINUX_MAP_FIXED, RISCV_LINUX_MAP_PRIVATE};
+use namespace::{syscall_setns, RISCV_LINUX_SETNS};
 pub use open::RiscvGuestOpenRecord;
 use open::{
     syscall_open, syscall_openat, syscall_openat2, RiscvGuestOpenRequest, RISCV_LINUX_OPEN,

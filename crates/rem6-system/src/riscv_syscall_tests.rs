@@ -48,6 +48,8 @@ mod mlock_tests;
 mod mmap_tests;
 #[path = "riscv_syscall_tests/msync_tests.rs"]
 mod msync_tests;
+#[path = "riscv_syscall_tests/namespace_tests.rs"]
+mod namespace_tests;
 #[path = "riscv_syscall_tests/nanosleep_tests.rs"]
 mod nanosleep_tests;
 #[path = "riscv_syscall_tests/open_tests.rs"]
