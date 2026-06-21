@@ -1,4 +1,6 @@
-use rem6_system::{RiscvGuestWriteRecord, RiscvSbiIpiRecord, RiscvUnknownSyscallRecord};
+use rem6_system::{
+    RiscvGuestWriteRecord, RiscvSbiIpiRecord, RiscvSbiResetRecord, RiscvUnknownSyscallRecord,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6RiscvGuestWriteSummary {
@@ -36,6 +38,14 @@ pub(crate) struct Rem6RiscvSbiIpiSummary {
     hart_mask: u64,
     hart_mask_base: u64,
     targets: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6RiscvSbiResetSummary {
+    cpu: u32,
+    reset_type: u32,
+    reset_reason: u32,
+    code: i32,
 }
 
 impl Rem6RiscvSbiConsoleSummary {
@@ -94,6 +104,37 @@ impl Rem6RiscvSbiIpiSummary {
 
     pub(crate) fn target_count(&self) -> u64 {
         self.targets.len() as u64
+    }
+}
+
+impl Rem6RiscvSbiResetSummary {
+    pub(crate) fn from_record(record: &RiscvSbiResetRecord) -> Self {
+        Self {
+            cpu: record.cpu().get(),
+            reset_type: record.reset_type(),
+            reset_reason: record.reset_reason(),
+            code: record.code(),
+        }
+    }
+
+    pub(crate) const fn cpu(&self) -> u32 {
+        self.cpu
+    }
+
+    pub(crate) const fn reset_type(&self) -> u32 {
+        self.reset_type
+    }
+
+    pub(crate) const fn reset_reason(&self) -> u32 {
+        self.reset_reason
+    }
+
+    pub(crate) const fn code(&self) -> i32 {
+        self.code
+    }
+
+    pub(crate) const fn is_system_failure(&self) -> bool {
+        self.code != 0
     }
 }
 

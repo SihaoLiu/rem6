@@ -77,6 +77,24 @@ pub(super) fn emit_riscv_run_stats(
                     .map(|ipi| ipi.target_count())
                     .sum(),
             )?;
+            increment_stat(
+                stats,
+                "sim.riscv.sbi.reset.requests",
+                "Count",
+                StatResetPolicy::Constant,
+                execution.riscv_sbi_resets.len() as u64,
+            )?;
+            increment_stat(
+                stats,
+                "sim.riscv.sbi.reset.system_failures",
+                "Count",
+                StatResetPolicy::Constant,
+                execution
+                    .riscv_sbi_resets
+                    .iter()
+                    .filter(|reset| reset.is_system_failure())
+                    .count() as u64,
+            )?;
         }
     }
     increment_stat(

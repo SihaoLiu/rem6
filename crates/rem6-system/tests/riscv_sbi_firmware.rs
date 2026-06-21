@@ -3,12 +3,12 @@
 mod support;
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
-use rem6_cpu::RiscvHartRunState;
+use rem6_cpu::{CpuId, RiscvHartRunState};
 use rem6_isa_riscv::RiscvStatusWord;
 use rem6_memory::TranslationAddressSpaceId;
 use rem6_system::RiscvCoreCheckpointPort;
 use rem6_system::{
-    GuestEvent, GuestEventDelivery, GuestEventKind, GuestTrap, GuestTrapKind,
+    GuestEvent, GuestEventDelivery, GuestEventKind, GuestTrap, GuestTrapKind, RiscvSbiResetRecord,
     RiscvSystemRunStopReason,
 };
 use support::*;
@@ -1286,6 +1286,10 @@ fn supervisor_sbi_system_reset_shutdown_stops_without_returning() {
         controller.lock().unwrap().run().action_outcomes(),
         &[SystemActionOutcome::Stop(stop)]
     );
+    assert_eq!(
+        driver.riscv_sbi_firmware().unwrap().reset_records(),
+        vec![RiscvSbiResetRecord::new(CpuId::new(0), 0, 0, 0)]
+    );
 }
 
 #[test]
@@ -1373,6 +1377,10 @@ fn supervisor_sbi_system_reset_system_failure_stops_with_failure_code() {
         controller.lock().unwrap().run().action_outcomes(),
         &[SystemActionOutcome::Stop(stop)]
     );
+    assert_eq!(
+        driver.riscv_sbi_firmware().unwrap().reset_records(),
+        vec![RiscvSbiResetRecord::new(CpuId::new(0), 0, 1, 1)]
+    );
 }
 
 #[test]
@@ -1445,6 +1453,11 @@ fn supervisor_sbi_system_reset_rejects_reserved_type_before_user_exit() {
     );
     assert_eq!(core.read_register(reg(5)), (-3_i64) as u64);
     assert_eq!(core.read_register(reg(6)), 0);
+    assert!(driver
+        .riscv_sbi_firmware()
+        .unwrap()
+        .reset_records()
+        .is_empty());
 }
 
 #[test]

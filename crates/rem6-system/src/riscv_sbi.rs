@@ -74,6 +74,7 @@ pub struct RiscvSbiFirmware {
     cores: Arc<Mutex<BTreeMap<u64, RiscvCore>>>,
     timer: Arc<Mutex<RiscvSbiTimerState>>,
     ipis: Arc<Mutex<Vec<RiscvSbiIpiRecord>>>,
+    resets: Arc<Mutex<Vec<RiscvSbiResetRecord>>>,
     debug_console: Arc<Mutex<Vec<u8>>>,
     debug_console_input: Arc<Mutex<VecDeque<u8>>>,
     functional_guest_memory_reader: Option<RiscvGuestMemoryReader>,
@@ -92,6 +93,41 @@ pub struct RiscvSbiIpiRecord {
     hart_mask: u64,
     hart_mask_base: u64,
     targets: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvSbiResetRecord {
+    cpu: CpuId,
+    reset_type: u32,
+    reset_reason: u32,
+    code: i32,
+}
+
+impl RiscvSbiResetRecord {
+    pub const fn new(cpu: CpuId, reset_type: u32, reset_reason: u32, code: i32) -> Self {
+        Self {
+            cpu,
+            reset_type,
+            reset_reason,
+            code,
+        }
+    }
+
+    pub const fn cpu(&self) -> CpuId {
+        self.cpu
+    }
+
+    pub const fn reset_type(&self) -> u32 {
+        self.reset_type
+    }
+
+    pub const fn reset_reason(&self) -> u32 {
+        self.reset_reason
+    }
+
+    pub const fn code(&self) -> i32 {
+        self.code
+    }
 }
 
 impl RiscvSbiIpiRecord {
@@ -279,6 +315,7 @@ impl RiscvSbiFirmware {
                 deadlines: BTreeMap::new(),
             })),
             ipis: Arc::new(Mutex::new(Vec::new())),
+            resets: Arc::new(Mutex::new(Vec::new())),
             debug_console: Arc::new(Mutex::new(Vec::new())),
             debug_console_input: Arc::new(Mutex::new(VecDeque::new())),
             functional_guest_memory_reader: None,
@@ -324,6 +361,10 @@ impl RiscvSbiFirmware {
             .lock()
             .expect("RISC-V SBI IPI record lock")
             .clear();
+        self.resets
+            .lock()
+            .expect("RISC-V SBI reset record lock")
+            .clear();
         let mut cores = self.cores.lock().expect("RISC-V SBI core registry lock");
         cores.clear();
         for cpu in cluster.core_ids() {
@@ -362,6 +403,13 @@ impl RiscvSbiFirmware {
         self.ipis
             .lock()
             .expect("RISC-V SBI IPI record lock")
+            .clone()
+    }
+
+    pub fn reset_records(&self) -> Vec<RiscvSbiResetRecord> {
+        self.resets
+            .lock()
+            .expect("RISC-V SBI reset record lock")
             .clone()
     }
 
@@ -459,7 +507,7 @@ impl RiscvSbiFirmware {
             | (SBI_RFENCE_EXTENSION, SBI_RFENCE_REMOTE_HFENCE_VVMA) => self
                 .remote_hfence(scheduler, core, request, parallel)
                 .map_err(SystemError::Scheduler)?,
-            (SBI_SRST_EXTENSION, SBI_SRST_SYSTEM_RESET) => self.system_reset(request),
+            (SBI_SRST_EXTENSION, SBI_SRST_SYSTEM_RESET) => self.system_reset(core, request),
             (SBI_DEBUG_CONSOLE_EXTENSION, SBI_DEBUG_CONSOLE_WRITE) => {
                 self.debug_console_write(request)
             }
@@ -550,7 +598,7 @@ impl RiscvSbiFirmware {
         RiscvSbiOutcome::success(0)
     }
 
-    fn system_reset(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+    fn system_reset(&self, core: &RiscvCore, request: RiscvSbiRequest) -> RiscvSbiOutcome {
         let Some(reset_type) = u32::try_from(request.arg0()).ok() else {
             return RiscvSbiOutcome::invalid_param();
         };
@@ -567,11 +615,25 @@ impl RiscvSbiFirmware {
             return RiscvSbiOutcome::invalid_param();
         }
 
+        let code = i32::from(reset_reason == SBI_RESET_REASON_SYSTEM_FAILURE);
+        self.record_reset(core.id(), reset_type, reset_reason, code);
         RiscvSbiOutcome::SystemReset {
             reset_type,
             reset_reason,
-            code: i32::from(reset_reason == SBI_RESET_REASON_SYSTEM_FAILURE),
+            code,
         }
+    }
+
+    fn record_reset(&self, cpu: CpuId, reset_type: u32, reset_reason: u32, code: i32) {
+        self.resets
+            .lock()
+            .expect("RISC-V SBI reset record lock")
+            .push(RiscvSbiResetRecord::new(
+                cpu,
+                reset_type,
+                reset_reason,
+                code,
+            ));
     }
 
     fn send_ipi(

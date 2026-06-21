@@ -108,7 +108,7 @@ use riscv_checkpoint_runtime::{
 };
 pub(crate) use riscv_guest_output::{
     Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiIpiSummary,
-    Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
+    Rem6RiscvSbiResetSummary, Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
 };
 use riscv_run_driver::drive_cli_riscv_run;
 use riscv_sbi_runtime::{attach_cli_riscv_sbi_firmware, configure_cli_riscv_sbi_core};
@@ -195,6 +195,7 @@ pub struct Rem6ExecutionSummary {
     riscv_sbi_console: Rem6RiscvSbiConsoleSummary,
     riscv_sbi_timers: Vec<Rem6RiscvSbiTimerSummary>,
     riscv_sbi_ipis: Vec<Rem6RiscvSbiIpiSummary>,
+    riscv_sbi_resets: Vec<Rem6RiscvSbiResetSummary>,
     host_actions: Rem6HostActionSummary,
 }
 
@@ -395,6 +396,7 @@ struct ExecutionSummaryInputs<'a> {
     riscv_sbi_console: Rem6RiscvSbiConsoleSummary,
     riscv_sbi_timers: Vec<Rem6RiscvSbiTimerSummary>,
     riscv_sbi_ipis: Vec<Rem6RiscvSbiIpiSummary>,
+    riscv_sbi_resets: Vec<Rem6RiscvSbiResetSummary>,
     riscv_syscall_trace: Vec<RiscvSyscallTraceRecord>,
     host_actions: Rem6HostActionSummary,
     prior_committed_by_cpu: BTreeMap<CpuId, u64>,
@@ -909,7 +911,7 @@ fn execute_riscv(
             (guest_writes, unknown_syscalls, syscall_trace)
         })
         .unwrap_or_default();
-    let (riscv_sbi_console, riscv_sbi_timers, riscv_sbi_ipis) =
+    let (riscv_sbi_console, riscv_sbi_timers, riscv_sbi_ipis, riscv_sbi_resets) =
         riscv_sbi_runtime::collect_cli_riscv_sbi_output(&driver, core_count);
     let host_actions = {
         let controller = controller
@@ -943,6 +945,7 @@ fn execute_riscv(
         riscv_sbi_console,
         riscv_sbi_timers,
         riscv_sbi_ipis,
+        riscv_sbi_resets,
         riscv_syscall_trace,
         host_actions,
         prior_committed_by_cpu: gdb_outcome.retired_by_cpu().clone(),
@@ -1169,6 +1172,7 @@ fn execution_summary(
         riscv_sbi_console: inputs.riscv_sbi_console,
         riscv_sbi_timers: inputs.riscv_sbi_timers,
         riscv_sbi_ipis: inputs.riscv_sbi_ipis,
+        riscv_sbi_resets: inputs.riscv_sbi_resets,
         host_actions: inputs.host_actions,
     })
 }

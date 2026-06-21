@@ -5,7 +5,8 @@ use rem6_system::RiscvSystemRunDriver;
 
 use crate::config::Rem6RunConfig;
 use crate::riscv_guest_output::{
-    Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiIpiSummary, Rem6RiscvSbiTimerSummary,
+    Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary,
+    Rem6RiscvSbiTimerSummary,
 };
 use crate::runtime_memory::CliMemoryRuntime;
 
@@ -64,10 +65,12 @@ pub(crate) fn collect_cli_riscv_sbi_output(
     Rem6RiscvSbiConsoleSummary,
     Vec<Rem6RiscvSbiTimerSummary>,
     Vec<Rem6RiscvSbiIpiSummary>,
+    Vec<Rem6RiscvSbiResetSummary>,
 ) {
     let Some(firmware) = driver.riscv_sbi_firmware() else {
         return (
             Rem6RiscvSbiConsoleSummary::default(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
         );
@@ -85,5 +88,10 @@ pub(crate) fn collect_cli_riscv_sbi_output(
         .iter()
         .map(Rem6RiscvSbiIpiSummary::from_record)
         .collect();
-    (console, timers, ipis)
+    let resets = firmware
+        .reset_records()
+        .iter()
+        .map(Rem6RiscvSbiResetSummary::from_record)
+        .collect();
+    (console, timers, ipis, resets)
 }
