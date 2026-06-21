@@ -1063,20 +1063,20 @@ checklist-backed component sections above define the auditable percentages.
 
 ## External Adapter Migration
 
-### SystemC and TLM Adapters - 50% single-axis
+### SystemC and TLM Adapters - 59% single-axis
 
-**Score calculation:** 2 of 4 items have executable evidence, or 50% raw. The
+**Score calculation:** 3 of 4 items have executable evidence, or 75% raw. The
 bucket cap is single-axis because `trace-replay` drives the typed SystemC/TLM
 adapter boundary, but no external SystemC simulator or TLM model executes through it.
 
 - [x] A typed co-simulation adapter boundary exists.
 - [x] Adapter event handoff executes from the top-level trace-replay runtime adapter path.
-- [ ] Adapter checkpoint capture and restore are consumed by a runtime adapter.
+- [x] Adapter checkpoint capture and restore are consumed by the top-level trace-replay runtime adapter path.
 - [ ] Runtime SystemC/TLM model integration executes through the adapter.
 
 **Migrated:** `CoSimAdapterBoundary` SystemC/TLM endpoint tests exist, and
 `rem6 trace-replay --external-adapter-kind systemc|tlm --external-adapter-endpoint <id>`
-hands packet-trace requests into that boundary, acknowledges them, snapshots a clean boundary, and emits `external_adapter` JSON.
+hands packet-trace requests into that boundary, acknowledges them, snapshots and restores a clean boundary, and emits `external_adapter` JSON.
 
 **Not migrated:** External SystemC simulator or TLM model execution, runtime adapter-owned state, and `src/systemc`, `util/tlm`, and `ext/systemc` behavior.
 

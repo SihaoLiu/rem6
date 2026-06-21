@@ -313,7 +313,7 @@ impl Rem6TraceReplayArtifact {
 impl Rem6TraceReplayExternalAdapterSummary {
     fn to_json(&self) -> String {
         format!(
-            "{{\"kind\":\"{}\",\"endpoint\":\"{}\",\"events\":{},\"completed_events\":{},\"pending_events\":{},\"checkpoint_endpoints\":{},\"checkpoint_completed_events\":{},\"first_tick\":{},\"last_tick\":{}}}",
+            "{{\"kind\":\"{}\",\"endpoint\":\"{}\",\"events\":{},\"completed_events\":{},\"pending_events\":{},\"checkpoint_endpoints\":{},\"checkpoint_completed_events\":{},\"restored_endpoints\":{},\"restored_completed_events\":{},\"restored_pending_events\":{},\"first_tick\":{},\"last_tick\":{}}}",
             self.kind.as_str(),
             json_escape(&self.endpoint),
             self.events,
@@ -321,6 +321,9 @@ impl Rem6TraceReplayExternalAdapterSummary {
             self.pending_events,
             self.checkpoint_endpoints,
             self.checkpoint_completed_events,
+            self.restored_endpoints,
+            self.restored_completed_events,
+            self.restored_pending_events,
             optional_tick_json(self.first_tick),
             optional_tick_json(self.last_tick),
         )

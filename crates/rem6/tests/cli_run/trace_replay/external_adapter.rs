@@ -95,6 +95,9 @@ fn assert_external_adapter_handoff(kind: &str, endpoint: &str, route: &str) {
     assert!(stdout.contains("\"pending_events\":0"));
     assert!(stdout.contains("\"checkpoint_endpoints\":1"));
     assert!(stdout.contains("\"checkpoint_completed_events\":2"));
+    assert!(stdout.contains("\"restored_endpoints\":1"));
+    assert!(stdout.contains("\"restored_completed_events\":2"));
+    assert!(stdout.contains("\"restored_pending_events\":0"));
     assert!(stdout.contains("\"first_tick\":2"));
     assert!(stdout.contains("\"last_tick\":7"));
     assert!(stdout.contains("\"scheduled_count\":2"));
