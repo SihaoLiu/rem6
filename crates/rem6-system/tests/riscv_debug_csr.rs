@@ -1,9 +1,16 @@
+use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore};
 use rem6_debug::{GdbRemoteFrame, GdbRemotePacket};
 use rem6_isa_riscv::{
     RiscvGdbXlen, RiscvHartState, RiscvStatusCsr, RiscvStatusWord, RiscvVectorConfig,
     RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode,
 };
-use rem6_system::{handle_riscv_gdb_remote_packet, riscv_gdb_remote_session_from_hart};
+use rem6_kernel::PartitionId;
+use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
+use rem6_system::{
+    handle_riscv_gdb_remote_core_packet, handle_riscv_gdb_remote_packet,
+    riscv_gdb_remote_session_from_core, riscv_gdb_remote_session_from_hart,
+};
+use rem6_transport::{MemoryRouteId, TransportEndpointId};
 
 #[test]
 fn riscv_gdb_remote_packet_handler_reads_and_writes_advertised_rv64_csr_registers() {
@@ -479,7 +486,7 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_advertised_rv64_csr_register
         )
         .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(136));
+    assert_eq!(registers.len(), rv64_register_hex_offset(138));
     assert_eq!(&registers[rv64_register_hex_range(70)], b"0000080000000000");
     assert_eq!(&registers[rv64_register_hex_range(71)], b"8877665544332211");
     assert_eq!(&registers[rv64_register_hex_range(72)], b"8877665544332211");
@@ -548,6 +555,14 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_advertised_rv64_csr_register
         &registers[rv64_register_hex_range(135)],
         b"8877665544332211"
     );
+    assert_eq!(
+        &registers[rv64_register_hex_range(136)],
+        b"0000000000000000"
+    );
+    assert_eq!(
+        &registers[rv64_register_hex_range(137)],
+        b"0000000000000000"
+    );
 }
 
 #[test]
@@ -598,6 +613,108 @@ fn riscv_gdb_remote_packet_handler_maps_rv32_vector_config_csr_width() {
     );
 }
 
+#[test]
+fn riscv_gdb_remote_core_packet_handler_reads_and_writes_pmp_csrs() {
+    let core = riscv_debug_test_core(CpuId::new(5), 0x1000);
+    let mut session = riscv_gdb_remote_session_from_core(RiscvGdbXlen::Rv64, &core);
+
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"p88".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"0000000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"p89".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"0000000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"P88=0f00000000000000".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"P89=0002000000000000".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"p88".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"0f00000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"p89".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"0002000000000000",
+    );
+    let registers = packet_payload(
+        handle_riscv_gdb_remote_core_packet(
+            RiscvGdbXlen::Rv64,
+            &mut session,
+            &core,
+            &GdbRemotePacket::new(b"g".to_vec()).unwrap(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(registers.len(), rv64_register_hex_offset(138));
+    assert_eq!(
+        &registers[rv64_register_hex_range(136)],
+        b"0f00000000000000"
+    );
+    assert_eq!(
+        &registers[rv64_register_hex_range(137)],
+        b"0002000000000000"
+    );
+
+    let snapshot = core.pmp_snapshot();
+    let first = &snapshot.entries()[0];
+    assert_eq!(first.config().bits(), 0x0f);
+    assert_eq!(first.raw_addr(), 0x0200);
+}
+
 fn packet_payload(frames: Vec<GdbRemoteFrame>) -> Vec<u8> {
     let [GdbRemoteFrame::Ack, GdbRemoteFrame::Packet(packet)] = frames.as_slice() else {
         panic!("expected acknowledged packet response, got {frames:?}");
@@ -618,8 +735,28 @@ fn rv64_register_hex_offset(number: u64) -> usize {
         66..=69 => (33 * 8) + (32 * 8) + ((number - 66) * 4),
         70..=89 => (33 * 8) + (32 * 8) + (4 * 4) + ((number - 70) * 8),
         90..=121 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + ((number - 90) * 16),
-        122..=136 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
+        122..=138 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
         _ => panic!("unexpected RV64 GDB register number {number}"),
     };
     byte_offset as usize * 2
+}
+
+fn riscv_debug_test_core(cpu: CpuId, entry: u64) -> RiscvCore {
+    RiscvCore::new(
+        CpuCore::new(
+            CpuResetState::new(
+                cpu,
+                PartitionId::new(0),
+                AgentId::new(11),
+                Address::new(entry),
+            ),
+            CpuFetchConfig::new(
+                TransportEndpointId::new("test.ifetch").unwrap(),
+                MemoryRouteId::new(3),
+                CacheLineLayout::new(16).unwrap(),
+                AccessSize::new(4).unwrap(),
+            ),
+        )
+        .unwrap(),
+    )
 }

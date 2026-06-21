@@ -88,11 +88,19 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_rv64d_float_registers() {
         )
         .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(136));
+    assert_eq!(registers.len(), rv64_register_hex_offset(138));
     assert_eq!(&registers[rv64_register_hex_range(33)], b"8877665544332211");
     assert_eq!(&registers[rv64_register_hex_range(64)], b"1032547698badcfe");
     assert_eq!(
         &registers[rv64_register_hex_range(135)],
+        b"0000000000000000"
+    );
+    assert_eq!(
+        &registers[rv64_register_hex_range(136)],
+        b"0000000000000000"
+    );
+    assert_eq!(
+        &registers[rv64_register_hex_range(137)],
         b"0000000000000000"
     );
 }
@@ -262,11 +270,11 @@ fn riscv_gdb_remote_register_write_reports_invalid_requests() {
             RiscvGdbXlen::Rv64,
             &mut hart,
             &GdbRemoteCommand::WriteRegister {
-                number: 136,
+                number: 138,
                 bytes: vec![0; 8],
             },
         ),
-        Err(RiscvGdbRegisterWriteError::UnsupportedRegister { number: 136 }),
+        Err(RiscvGdbRegisterWriteError::UnsupportedRegister { number: 138 }),
     );
 
     assert_eq!(
@@ -276,7 +284,7 @@ fn riscv_gdb_remote_register_write_reports_invalid_requests() {
             &GdbRemoteCommand::WriteRegisters { bytes: vec![0; 8] },
         ),
         Err(RiscvGdbRegisterWriteError::InvalidRegisterSetBytes {
-            expected: 33 * 4 + 32 * 8 + 4 * 4 + 20 * 4 + 32 * 16 + 14 * 4,
+            expected: 33 * 4 + 32 * 8 + 4 * 4 + 20 * 4 + 32 * 16 + 16 * 4,
             actual: 8,
         }),
     );
@@ -330,17 +338,17 @@ fn riscv_gdb_remote_packet_handler_reports_writeback_errors() {
             RiscvGdbXlen::Rv64,
             &mut session,
             &mut hart,
-            &GdbRemotePacket::new(b"P88=0000000000000000".to_vec()).unwrap(),
+            &GdbRemotePacket::new(b"P8a=0000000000000000".to_vec()).unwrap(),
         ),
         Err(RiscvGdbRemotePacketError::RegisterWrite(
-            RiscvGdbRegisterWriteError::UnsupportedRegister { number: 136 },
+            RiscvGdbRegisterWriteError::UnsupportedRegister { number: 138 },
         )),
     );
     assert_eq!(hart.pc(), 0x1000);
     assert_eq!(
         packet_payload(
             session
-                .handle_packet(&GdbRemotePacket::new(b"p88".to_vec()).unwrap())
+                .handle_packet(&GdbRemotePacket::new(b"p8a".to_vec()).unwrap())
                 .unwrap(),
         ),
         b"E01",
@@ -1449,20 +1457,144 @@ fn riscv_gdb_remote_core_packet_handler_rejects_invalid_write_without_session_or
             RiscvGdbXlen::Rv64,
             &mut session,
             &core,
-            &GdbRemotePacket::new(b"P88=0000000000000000".to_vec()).unwrap(),
+            &GdbRemotePacket::new(b"P8a=0000000000000000".to_vec()).unwrap(),
         ),
         Err(RiscvGdbRemotePacketError::RegisterWrite(
-            RiscvGdbRegisterWriteError::UnsupportedRegister { number: 136 },
+            RiscvGdbRegisterWriteError::UnsupportedRegister { number: 138 },
         )),
     );
     assert_eq!(core.pc(), Address::new(0x8000));
     assert_eq!(
         packet_payload(
             session
-                .handle_packet(&GdbRemotePacket::new(b"p88".to_vec()).unwrap())
+                .handle_packet(&GdbRemotePacket::new(b"p8a".to_vec()).unwrap())
                 .unwrap(),
         ),
         b"E01",
+    );
+}
+
+#[test]
+fn riscv_gdb_remote_core_packet_handler_rejects_locked_pmp_write_without_ok_response() {
+    let core = riscv_core(0x8000);
+    core.write_pmp_config_bits(0, 0x80).unwrap();
+    let mut session = riscv_gdb_remote_session_from_core(RiscvGdbXlen::Rv64, &core);
+
+    assert_eq!(
+        handle_riscv_gdb_remote_core_packet(
+            RiscvGdbXlen::Rv64,
+            &mut session,
+            &core,
+            &GdbRemotePacket::new(b"P88=0f00000000000000".to_vec()).unwrap(),
+        ),
+        Err(RiscvGdbRemotePacketError::RegisterWrite(
+            RiscvGdbRegisterWriteError::RejectedRegisterWrite { number: 136 },
+        )),
+    );
+    assert_eq!(core.pmp_snapshot().entries()[0].config().bits(), 0x80);
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p88".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"8000000000000000",
+    );
+}
+
+#[test]
+fn riscv_gdb_remote_core_packet_handler_rejects_locked_pmp_register_set_without_partial_mutation() {
+    let core = riscv_core(0x8000);
+    core.write_pmp_config_bits(0, 0x80).unwrap();
+    let mut session = riscv_gdb_remote_session_from_core(RiscvGdbXlen::Rv64, &core);
+    let mut bytes = rv64_register_set_write_bytes();
+    bytes[rv64_register_byte_range(1)].copy_from_slice(&0xfeed_face_cafe_beef_u64.to_le_bytes());
+    bytes[rv64_register_byte_range(136)].copy_from_slice(&0x0f_u64.to_le_bytes());
+
+    assert_eq!(
+        handle_riscv_gdb_remote_core_packet(
+            RiscvGdbXlen::Rv64,
+            &mut session,
+            &core,
+            &register_write_packet(&bytes),
+        ),
+        Err(RiscvGdbRemotePacketError::RegisterWrite(
+            RiscvGdbRegisterWriteError::RejectedRegisterWrite { number: 136 },
+        )),
+    );
+    assert_eq!(core.read_register(Register::new(1).unwrap()), 0);
+    assert_eq!(core.pmp_snapshot().entries()[0].config().bits(), 0x80);
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p1".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"0000000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p88".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"8000000000000000",
+    );
+}
+
+#[test]
+fn riscv_gdb_remote_core_packet_handler_rejects_pmp_register_set_that_locks_before_addr_write_without_partial_mutation(
+) {
+    let core = riscv_core(0x8000);
+    let mut session = riscv_gdb_remote_session_from_core(RiscvGdbXlen::Rv64, &core);
+    let mut bytes = rv64_register_set_write_bytes();
+    bytes[rv64_register_byte_range(1)].copy_from_slice(&0xfeed_face_cafe_beef_u64.to_le_bytes());
+    bytes[rv64_register_byte_range(136)].copy_from_slice(&0x80_u64.to_le_bytes());
+    bytes[rv64_register_byte_range(137)].copy_from_slice(&0x200_u64.to_le_bytes());
+
+    assert_eq!(
+        handle_riscv_gdb_remote_core_packet(
+            RiscvGdbXlen::Rv64,
+            &mut session,
+            &core,
+            &register_write_packet(&bytes),
+        ),
+        Err(RiscvGdbRemotePacketError::RegisterWrite(
+            RiscvGdbRegisterWriteError::RejectedRegisterWrite { number: 137 },
+        )),
+    );
+    assert_eq!(core.read_register(Register::new(1).unwrap()), 0);
+    assert_eq!(core.pmp_snapshot().entries()[0].config().bits(), 0);
+    assert_eq!(core.pmp_snapshot().entries()[0].raw_addr(), 0);
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p1".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"0000000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            session
+                .handle_packet(&GdbRemotePacket::new(b"p88".to_vec()).unwrap())
+                .unwrap(),
+        ),
+        b"0000000000000000",
+    );
+    let registers = packet_payload(
+        session
+            .handle_packet(&GdbRemotePacket::new(b"g".to_vec()).unwrap())
+            .unwrap(),
+    );
+    assert_eq!(&registers[rv64_register_hex_range(1)], b"0000000000000000");
+    assert_eq!(
+        &registers[rv64_register_hex_range(136)],
+        b"0000000000000000"
+    );
+    assert_eq!(
+        &registers[rv64_register_hex_range(137)],
+        b"0000000000000000"
     );
 }
 
@@ -1987,6 +2119,11 @@ fn rv64_register_hex_range(number: u64) -> std::ops::Range<usize> {
     start..end
 }
 
+fn rv64_register_byte_range(number: u64) -> std::ops::Range<usize> {
+    let range = rv64_register_hex_range(number);
+    (range.start / 2)..(range.end / 2)
+}
+
 fn rv64_register_hex_offset(number: u64) -> usize {
     let byte_offset = match number {
         0..=32 => number * 8,
@@ -1994,7 +2131,7 @@ fn rv64_register_hex_offset(number: u64) -> usize {
         66..=69 => (33 * 8) + (32 * 8) + ((number - 66) * 4),
         70..=89 => (33 * 8) + (32 * 8) + (4 * 4) + ((number - 70) * 8),
         90..=121 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + ((number - 90) * 16),
-        122..=136 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
+        122..=138 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
         _ => panic!("unsupported RV64 GDB register number"),
     };
     byte_offset as usize * 2
@@ -2076,6 +2213,8 @@ fn rv64_register_set_write_bytes() -> Vec<u8> {
     bytes.extend_from_slice(&0xc8_u64.to_le_bytes());
     bytes.extend_from_slice(&0x20_u64.to_le_bytes());
     bytes.extend_from_slice(&0x33_u64.to_le_bytes());
+    bytes.extend_from_slice(&0_u64.to_le_bytes());
+    bytes.extend_from_slice(&0_u64.to_le_bytes());
     bytes
 }
 
