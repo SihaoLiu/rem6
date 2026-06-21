@@ -333,6 +333,8 @@ fn read_resource_artifact(
 ) -> Result<Vec<u8>, Rem6CliError> {
     if resource.acquisition_kind() == WorkloadResourceAcquisitionKind::Generated {
         read_generated_resource_artifact(resource)
+    } else if resource.acquisition_kind() == WorkloadResourceAcquisitionKind::ArchiveGzip {
+        read_gzip_artifact(resource.artifact())
     } else if let Some(locator) = resource.artifact_remote_locator() {
         read_remote_http_resource(locator)
     } else if let Some(member) = resource.artifact_member() {
@@ -358,6 +360,22 @@ fn read_resource_artifact(
             error: error.to_string(),
         })
     }
+}
+
+fn read_gzip_artifact(archive: &Path) -> Result<Vec<u8>, Rem6CliError> {
+    let data = std::fs::read(archive).map_err(|error| Rem6CliError::ReadResourceArtifact {
+        path: archive.to_path_buf(),
+        error: error.to_string(),
+    })?;
+    let mut decoder = GzDecoder::new(data.as_slice());
+    let mut decoded = Vec::new();
+    decoder
+        .read_to_end(&mut decoded)
+        .map_err(|error| Rem6CliError::ReadResourceArtifact {
+            path: archive.to_path_buf(),
+            error: format!("gzip artifact decode failed: {error}"),
+        })?;
+    Ok(decoded)
 }
 
 fn read_generated_resource_artifact(

@@ -457,6 +457,70 @@ artifact_size = 4
 }
 
 #[test]
+fn rem6_resource_acquire_loads_config_manifest_from_gzip_artifact_locator() {
+    let workspace = temp_workspace("resource-acquire-archive-gzip-config");
+    let archive_dir = workspace.join("archives");
+    fs::create_dir(&archive_dir).unwrap();
+    fs::write(
+        archive_dir.join("kernel.bin.gz"),
+        gzip_stored(vec![0x13, 0x00, 0x00, 0x00]),
+    )
+    .unwrap();
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        r#"[resource_acquire]
+workload_id = "resource-archive-gzip-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:archive-gzip-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "archive-gzip"
+acquisition_locator = "archives/kernel.bin.gz"
+artifact_digest = "sha256:archive-gzip-kernel"
+artifact_size = 4
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"workload_id\":\"resource-archive-gzip-cli\""));
+    assert!(stdout.contains("\"resource\":\"kernel\""));
+    assert!(stdout.contains("\"size_bytes\":4"));
+    assert!(stdout.contains("\"acquisition_kind\":\"archive-gzip\""));
+    assert!(stdout.contains("\"acquisition_locator\":\"archives/kernel.bin.gz\""));
+    assert_stat(
+        &stdout,
+        "sim.resource_acquire.acquired_resources",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.resource_acquire.acquired_bytes",
+        "Byte",
+        4,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_resource_acquire_loads_config_manifest_from_zip_archive_locator() {
     let workspace = temp_workspace("resource-acquire-archive-zip-config");
     let archive_dir = workspace.join("archives");

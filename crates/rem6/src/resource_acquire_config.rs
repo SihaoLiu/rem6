@@ -466,6 +466,11 @@ fn parse_resource_acquire_resource(
                 None,
             )
         }
+        (None, WorkloadResourceAcquisitionKind::ArchiveGzip) => (
+            file_config.resolve_path(Path::new(&acquisition_locator)),
+            None,
+            None,
+        ),
         (None, WorkloadResourceAcquisitionKind::RemoteUri) => {
             (PathBuf::new(), None, Some(acquisition_locator.clone()))
         }
@@ -567,6 +572,7 @@ fn parse_resource_acquisition_kind(value: &str) -> Option<WorkloadResourceAcquis
         "local-file" => Some(WorkloadResourceAcquisitionKind::LocalFile),
         "host-file" => Some(WorkloadResourceAcquisitionKind::HostFile),
         "archive-tar" => Some(WorkloadResourceAcquisitionKind::ArchiveTar),
+        "archive-gzip" => Some(WorkloadResourceAcquisitionKind::ArchiveGzip),
         "archive-zip" => Some(WorkloadResourceAcquisitionKind::ArchiveZip),
         "remote-uri" => Some(WorkloadResourceAcquisitionKind::RemoteUri),
         "generated" => Some(WorkloadResourceAcquisitionKind::Generated),
