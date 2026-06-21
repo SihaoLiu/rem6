@@ -74,6 +74,7 @@ pub struct RiscvSbiFirmware {
     cores: Arc<Mutex<BTreeMap<u64, RiscvCore>>>,
     timer: Arc<Mutex<RiscvSbiTimerState>>,
     hsm: Arc<Mutex<Vec<RiscvSbiHsmRecord>>>,
+    hsm_wakes: Arc<Mutex<Vec<RiscvSbiHsmWakeRecord>>>,
     ipis: Arc<Mutex<Vec<RiscvSbiIpiRecord>>>,
     rfences: Arc<Mutex<Vec<RiscvSbiRfenceRecord>>>,
     resets: Arc<Mutex<Vec<RiscvSbiResetRecord>>>,
@@ -96,6 +97,13 @@ pub struct RiscvSbiHsmRecord {
     arg0: u64,
     arg1: u64,
     arg2: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvSbiHsmWakeRecord {
+    source_cpu: CpuId,
+    target_hart: u64,
+    interrupt_bits: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -182,6 +190,28 @@ impl RiscvSbiHsmRecord {
 
     pub const fn arg2(&self) -> u64 {
         self.arg2
+    }
+}
+
+impl RiscvSbiHsmWakeRecord {
+    pub const fn new(source_cpu: CpuId, target_hart: u64, interrupt_bits: u64) -> Self {
+        Self {
+            source_cpu,
+            target_hart,
+            interrupt_bits,
+        }
+    }
+
+    pub const fn source_cpu(&self) -> CpuId {
+        self.source_cpu
+    }
+
+    pub const fn target_hart(&self) -> u64 {
+        self.target_hart
+    }
+
+    pub const fn interrupt_bits(&self) -> u64 {
+        self.interrupt_bits
     }
 }
 
@@ -427,6 +457,7 @@ impl RiscvSbiFirmware {
                 deadlines: BTreeMap::new(),
             })),
             hsm: Arc::new(Mutex::new(Vec::new())),
+            hsm_wakes: Arc::new(Mutex::new(Vec::new())),
             ipis: Arc::new(Mutex::new(Vec::new())),
             rfences: Arc::new(Mutex::new(Vec::new())),
             resets: Arc::new(Mutex::new(Vec::new())),
@@ -472,6 +503,10 @@ impl RiscvSbiFirmware {
             .expect("RISC-V SBI debug console lock")
             .clear();
         self.hsm.lock().expect("RISC-V SBI HSM record lock").clear();
+        self.hsm_wakes
+            .lock()
+            .expect("RISC-V SBI HSM wake record lock")
+            .clear();
         self.ipis
             .lock()
             .expect("RISC-V SBI IPI record lock")
@@ -520,6 +555,22 @@ impl RiscvSbiFirmware {
 
     pub fn hsm_records(&self) -> Vec<RiscvSbiHsmRecord> {
         self.hsm.lock().expect("RISC-V SBI HSM record lock").clone()
+    }
+
+    pub fn hsm_wake_records(&self) -> Vec<RiscvSbiHsmWakeRecord> {
+        let mut records = self
+            .hsm_wakes
+            .lock()
+            .expect("RISC-V SBI HSM wake record lock")
+            .clone();
+        records.sort_by_key(|record| {
+            (
+                record.source_cpu().get(),
+                record.target_hart(),
+                record.interrupt_bits(),
+            )
+        });
+        records
     }
 
     pub fn ipi_records(&self) -> Vec<RiscvSbiIpiRecord> {
@@ -851,14 +902,16 @@ impl RiscvSbiFirmware {
         targets: Vec<RiscvCore>,
         parallel: bool,
     ) -> Result<(), SchedulerError> {
+        let source_cpu = source.id();
         for (target, deadline) in remote_target_deadlines(scheduler, source, targets)? {
+            let hsm_wakes = Arc::clone(&self.hsm_wakes);
             if parallel {
                 scheduler.schedule_parallel_at(target.partition(), deadline, move |_context| {
-                    target.set_machine_interrupt_pending_bits(SSIP);
+                    set_ipi_and_record_hsm_wake(&target, source_cpu, &hsm_wakes);
                 })?;
             } else {
                 scheduler.schedule_at(target.partition(), deadline, move |_context| {
-                    target.set_machine_interrupt_pending_bits(SSIP);
+                    set_ipi_and_record_hsm_wake(&target, source_cpu, &hsm_wakes);
                 })?;
             }
         }
@@ -1295,6 +1348,29 @@ fn remote_target_deadlines(
             Ok((target, source_deadline.max(target_now)))
         })
         .collect()
+}
+
+fn set_ipi_and_record_hsm_wake(
+    target: &RiscvCore,
+    source_cpu: CpuId,
+    hsm_wakes: &Arc<Mutex<Vec<RiscvSbiHsmWakeRecord>>>,
+) {
+    let prior_state = target.hart_run_state();
+    target.set_machine_interrupt_pending_bits(SSIP);
+    if matches!(
+        prior_state,
+        RiscvHartRunState::Suspended | RiscvHartRunState::SuspendPending
+    ) && target.hart_run_state() == RiscvHartRunState::Started
+    {
+        hsm_wakes
+            .lock()
+            .expect("RISC-V SBI HSM wake record lock")
+            .push(RiscvSbiHsmWakeRecord::new(
+                source_cpu,
+                target.hart_id(),
+                SSIP,
+            ));
+    }
 }
 
 fn valid_rfence_range(start_addr: u64, size: u64) -> bool {

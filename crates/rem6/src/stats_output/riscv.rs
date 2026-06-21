@@ -101,6 +101,13 @@ pub(super) fn emit_riscv_run_stats(
             )?;
             increment_stat(
                 stats,
+                "sim.riscv.sbi.hsm.wakes",
+                "Count",
+                StatResetPolicy::Constant,
+                execution.riscv_sbi_hsm_wakes.len() as u64,
+            )?;
+            increment_stat(
+                stats,
                 "sim.riscv.sbi.ipi.targets",
                 "Count",
                 StatResetPolicy::Constant,

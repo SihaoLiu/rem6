@@ -504,6 +504,7 @@ fn assert_send_ipi_sets_target_ssip_when_completion_event_runs(parallel: bool) {
         firmware.ipi_records(),
         vec![RiscvSbiIpiRecord::new(CpuId::new(0), 0b10, 0, vec![1])]
     );
+    assert!(firmware.hsm_wake_records().is_empty());
     assert_eq!(core1.machine_interrupt_pending() & SSIP, 0);
 
     if parallel {
@@ -515,6 +516,7 @@ fn assert_send_ipi_sets_target_ssip_when_completion_event_runs(parallel: bool) {
     }
 
     assert_eq!(core1.machine_interrupt_pending() & SSIP, SSIP);
+    assert!(firmware.hsm_wake_records().is_empty());
 }
 
 #[test]
@@ -525,6 +527,29 @@ fn handle_pending_core_trap_schedules_ipi_completion_event() {
 #[test]
 fn parallel_handle_pending_core_trap_schedules_ipi_completion_event() {
     assert_send_ipi_sets_target_ssip_when_completion_event_runs(true);
+}
+
+#[test]
+fn hsm_wake_records_are_ordered_for_reproducible_output() {
+    let firmware = RiscvSbiFirmware::new();
+    firmware
+        .hsm_wakes
+        .lock()
+        .expect("RISC-V SBI HSM wake record lock")
+        .extend([
+            RiscvSbiHsmWakeRecord::new(CpuId::new(1), 3, SSIP),
+            RiscvSbiHsmWakeRecord::new(CpuId::new(0), 2, SSIP),
+            RiscvSbiHsmWakeRecord::new(CpuId::new(0), 1, SSIP),
+        ]);
+
+    assert_eq!(
+        firmware.hsm_wake_records(),
+        vec![
+            RiscvSbiHsmWakeRecord::new(CpuId::new(0), 1, SSIP),
+            RiscvSbiHsmWakeRecord::new(CpuId::new(0), 2, SSIP),
+            RiscvSbiHsmWakeRecord::new(CpuId::new(1), 3, SSIP),
+        ]
+    );
 }
 
 #[test]

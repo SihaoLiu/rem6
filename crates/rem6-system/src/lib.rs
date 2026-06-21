@@ -196,8 +196,8 @@ pub use riscv_debug::{
 pub use riscv_instruction_stats::{RiscvInstructionStats, RiscvRetiredInstructionProbeSnapshot};
 pub use riscv_run_activity::{RiscvSystemRunCpuActivity, RiscvSystemRunPartitionActivity};
 pub use riscv_sbi::{
-    RiscvSbiFirmware, RiscvSbiHsmRecord, RiscvSbiIpiRecord, RiscvSbiOutcome, RiscvSbiRequest,
-    RiscvSbiResetRecord, RiscvSbiRfenceRecord,
+    RiscvSbiFirmware, RiscvSbiHsmRecord, RiscvSbiHsmWakeRecord, RiscvSbiIpiRecord, RiscvSbiOutcome,
+    RiscvSbiRequest, RiscvSbiResetRecord, RiscvSbiRfenceRecord,
 };
 pub use riscv_syscall::{
     RiscvGuestMemoryMapRequest, RiscvGuestMemoryMapResult, RiscvGuestMemoryReader,

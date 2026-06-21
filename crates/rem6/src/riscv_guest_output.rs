@@ -1,6 +1,6 @@
 use rem6_system::{
-    RiscvGuestWriteRecord, RiscvSbiHsmRecord, RiscvSbiIpiRecord, RiscvSbiResetRecord,
-    RiscvSbiRfenceRecord, RiscvUnknownSyscallRecord,
+    RiscvGuestWriteRecord, RiscvSbiHsmRecord, RiscvSbiHsmWakeRecord, RiscvSbiIpiRecord,
+    RiscvSbiResetRecord, RiscvSbiRfenceRecord, RiscvUnknownSyscallRecord,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -40,6 +40,13 @@ pub(crate) struct Rem6RiscvSbiHsmSummary {
     arg0: u64,
     arg1: u64,
     arg2: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6RiscvSbiHsmWakeSummary {
+    source_cpu: u32,
+    target_hart: u64,
+    interrupt_bits: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -139,6 +146,28 @@ impl Rem6RiscvSbiHsmSummary {
 
     pub(crate) const fn is_hart_suspend(&self) -> bool {
         self.function == 3
+    }
+}
+
+impl Rem6RiscvSbiHsmWakeSummary {
+    pub(crate) fn from_record(record: &RiscvSbiHsmWakeRecord) -> Self {
+        Self {
+            source_cpu: record.source_cpu().get(),
+            target_hart: record.target_hart(),
+            interrupt_bits: record.interrupt_bits(),
+        }
+    }
+
+    pub(crate) const fn source_cpu(&self) -> u32 {
+        self.source_cpu
+    }
+
+    pub(crate) const fn target_hart(&self) -> u64 {
+        self.target_hart
+    }
+
+    pub(crate) const fn interrupt_bits(&self) -> u64 {
+        self.interrupt_bits
     }
 }
 

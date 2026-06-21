@@ -18,8 +18,11 @@ const SBI_DEBUG_CONSOLE_WRITE: i32 = 0;
 const SBI_HSM_EXTENSION: i32 = 0x0048_534d;
 const SBI_HSM_HART_START: i32 = 0;
 const SBI_HSM_HART_STOP: i32 = 1;
+const SBI_HSM_HART_GET_STATUS: i32 = 2;
 const SBI_HSM_HART_SUSPEND: i32 = 3;
+const SBI_HSM_DEFAULT_RETENTIVE_SUSPEND: i32 = 0;
 const SBI_HSM_DEFAULT_NON_RETENTIVE_SUSPEND: i32 = 0x8000_0000u32 as i32;
+const SBI_HSM_HART_SUSPENDED: i32 = 4;
 const SBI_ERR_ALREADY_AVAILABLE: u64 = (-6_i64) as u64;
 const SBI_SPEC_VERSION_2_0: u64 = 2 << 24;
 const RISCV_SBI_ENTRY: u64 = 0x8000_0000;
@@ -813,6 +816,125 @@ fn rem6_run_riscv_sbi_secondary_hart_receives_ipi_interrupt_after_hsm_start() {
         "constant",
     );
     assert_stat(&stdout, "sim.riscv.sbi.ipi.targets", "Count", 1, "constant");
+}
+
+#[test]
+fn rem6_run_riscv_sbi_ipi_wakes_retentive_hart_suspend() {
+    let mut words = Vec::new();
+    words.push(i_type(1, 0, 0x0, 10, 0x13));
+    let secondary_auipc_index = words.len();
+    words.push(u_type(0, 11, 0x17));
+    words.push(i_type(0, 11, 0x0, 11, 0x13));
+    words.extend([
+        i_type(0x44, 0, 0x0, 12, 0x13),
+        load_hsm_extension(17)[0],
+        load_hsm_extension(17)[1],
+        i_type(SBI_HSM_HART_START, 0, 0x0, 16, 0x13),
+        0x0000_0073,
+    ]);
+    let hsm_start_error_branch_index = words.len();
+    words.push(b_type(0, 0, 10, 0x1));
+
+    let poll_index = words.len();
+    words.extend([
+        i_type(1, 0, 0x0, 10, 0x13),
+        load_hsm_extension(17)[0],
+        load_hsm_extension(17)[1],
+        i_type(SBI_HSM_HART_GET_STATUS, 0, 0x0, 16, 0x13),
+        0x0000_0073,
+        i_type(SBI_HSM_HART_SUSPENDED, 0, 0x0, 6, 0x13),
+    ]);
+    let status_poll_branch_index = words.len();
+    words.push(b_type(
+        ((poll_index as isize - status_poll_branch_index as isize) * 4) as i32,
+        11,
+        6,
+        0x1,
+    ));
+    words.extend([
+        i_type(1 << 1, 0, 0x0, 10, 0x13),
+        i_type(0, 0, 0x0, 11, 0x13),
+        load_ipi_extension(17)[0],
+        load_ipi_extension(17)[1],
+        i_type(SBI_IPI_SEND_IPI, 0, 0x0, 16, 0x13),
+        0x0000_0073,
+    ]);
+    let ipi_error_branch_index = words.len();
+    words.push(b_type(0, 0, 10, 0x1));
+    words.push(j_type(0, 0));
+    let failure_index = words.len();
+    words.extend([i_type(0x7e, 0, 0x0, 5, 0x13), 0x0010_0073]);
+
+    let secondary_index = words.len();
+    words.extend([
+        load_hsm_extension(17)[0],
+        load_hsm_extension(17)[1],
+        i_type(SBI_HSM_HART_SUSPEND, 0, 0x0, 16, 0x13),
+        i_type(SBI_HSM_DEFAULT_RETENTIVE_SUSPEND, 0, 0x0, 10, 0x13),
+        i_type(0, 0, 0x0, 11, 0x13),
+        i_type(0x5a, 0, 0x0, 12, 0x13),
+        0x0000_0073,
+        i_type(0x5c, 0, 0x0, 7, 0x13),
+        0x0010_0073,
+    ]);
+
+    words[secondary_auipc_index + 1] = i_type(
+        ((secondary_index - secondary_auipc_index) * 4) as i32,
+        11,
+        0x0,
+        11,
+        0x13,
+    );
+    words[hsm_start_error_branch_index] = b_type(
+        ((failure_index - hsm_start_error_branch_index) * 4) as i32,
+        0,
+        10,
+        0x1,
+    );
+    words[ipi_error_branch_index] = b_type(
+        ((failure_index - ipi_error_branch_index) * 4) as i32,
+        0,
+        10,
+        0x1,
+    );
+
+    let elf = riscv64_elf(RISCV_SBI_ENTRY, RISCV_SBI_ENTRY, &riscv64_program(&words));
+    let path = temp_binary("riscv-sbi-hsm-retentive-ipi-wake", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "720",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--riscv-sbi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"cores\":2"));
+    assert!(stdout.contains("\"trap\":\"breakpoint\""));
+    assert!(stdout.contains("\"x7\":\"0x5c\""));
+    assert!(!stdout.contains("\"x5\":\"0x7e\""));
+    assert!(stdout.contains(
+        "\"riscv_sbi_hsm_wakes\":[{\"source_cpu\":0,\"target_hart\":1,\"interrupt_bits\":\"0x2\"}]"
+    ));
+    assert_stat(&stdout, "sim.riscv.sbi.hsm.wakes", "Count", 1, "constant");
 }
 
 #[test]

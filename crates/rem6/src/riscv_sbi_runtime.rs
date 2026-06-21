@@ -5,8 +5,9 @@ use rem6_system::RiscvSystemRunDriver;
 
 use crate::config::Rem6RunConfig;
 use crate::riscv_guest_output::{
-    Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmSummary, Rem6RiscvSbiIpiSummary,
-    Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
+    Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary,
+    Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceSummary,
+    Rem6RiscvSbiTimerSummary,
 };
 use crate::runtime_memory::CliMemoryRuntime;
 
@@ -21,6 +22,7 @@ pub(crate) struct CliRiscvSbiOutput {
     pub(crate) console: Rem6RiscvSbiConsoleSummary,
     pub(crate) timers: Vec<Rem6RiscvSbiTimerSummary>,
     pub(crate) hsm_events: Vec<Rem6RiscvSbiHsmSummary>,
+    pub(crate) hsm_wakes: Vec<Rem6RiscvSbiHsmWakeSummary>,
     pub(crate) ipis: Vec<Rem6RiscvSbiIpiSummary>,
     pub(crate) rfences: Vec<Rem6RiscvSbiRfenceSummary>,
     pub(crate) resets: Vec<Rem6RiscvSbiResetSummary>,
@@ -76,6 +78,7 @@ pub(crate) fn collect_cli_riscv_sbi_output(
             console: Rem6RiscvSbiConsoleSummary::default(),
             timers: Vec::new(),
             hsm_events: Vec::new(),
+            hsm_wakes: Vec::new(),
             ipis: Vec::new(),
             rfences: Vec::new(),
             resets: Vec::new(),
@@ -93,6 +96,11 @@ pub(crate) fn collect_cli_riscv_sbi_output(
         .hsm_records()
         .iter()
         .map(Rem6RiscvSbiHsmSummary::from_record)
+        .collect();
+    let hsm_wakes = firmware
+        .hsm_wake_records()
+        .iter()
+        .map(Rem6RiscvSbiHsmWakeSummary::from_record)
         .collect();
     let ipis = firmware
         .ipi_records()
@@ -113,6 +121,7 @@ pub(crate) fn collect_cli_riscv_sbi_output(
         console,
         timers,
         hsm_events: hsm,
+        hsm_wakes,
         ipis,
         rfences,
         resets,

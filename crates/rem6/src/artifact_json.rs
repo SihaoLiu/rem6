@@ -12,10 +12,10 @@ use super::{
     Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
     Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary, Rem6PcCountTrackerSummary,
     Rem6ReadfileSummary, Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary,
-    Rem6RiscvSbiHsmSummary, Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary,
-    Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
-    Rem6RunArtifact, Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary,
-    Rem6TraceReplayExternalAdapterSummary, RequestedIsa,
+    Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary,
+    Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
+    Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact, Rem6TraceReplayArtifact,
+    Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -88,6 +88,11 @@ impl Rem6RunArtifact {
             .as_ref()
             .map(Rem6ExecutionSummary::to_riscv_sbi_hsm_events_json)
             .unwrap_or_else(|| "[]".to_string());
+        let riscv_sbi_hsm_wakes = self
+            .execution
+            .as_ref()
+            .map(Rem6ExecutionSummary::to_riscv_sbi_hsm_wakes_json)
+            .unwrap_or_else(|| "[]".to_string());
         let riscv_sbi_ipis = self
             .execution
             .as_ref()
@@ -152,7 +157,7 @@ impl Rem6RunArtifact {
             .map(|artifact| format!(",\"power_analysis\":{}", artifact.to_json()))
             .unwrap_or_default();
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -177,6 +182,7 @@ impl Rem6RunArtifact {
             riscv_sbi_console,
             riscv_sbi_timers,
             riscv_sbi_hsm_events,
+            riscv_sbi_hsm_wakes,
             riscv_sbi_ipis,
             riscv_sbi_rfences,
             riscv_sbi_resets,
@@ -1189,6 +1195,17 @@ impl Rem6ExecutionSummary {
         )
     }
 
+    fn to_riscv_sbi_hsm_wakes_json(&self) -> String {
+        format!(
+            "[{}]",
+            self.riscv_sbi_hsm_wakes
+                .iter()
+                .map(Rem6RiscvSbiHsmWakeSummary::to_json)
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    }
+
     fn to_riscv_sbi_ipis_json(&self) -> String {
         format!(
             "[{}]",
@@ -1336,6 +1353,17 @@ impl Rem6RiscvSbiHsmSummary {
                 self.arg2(),
             )
         }
+    }
+}
+
+impl Rem6RiscvSbiHsmWakeSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"source_cpu\":{},\"target_hart\":{},\"interrupt_bits\":\"0x{:x}\"}}",
+            self.source_cpu(),
+            self.target_hart(),
+            self.interrupt_bits()
+        )
     }
 }
 
