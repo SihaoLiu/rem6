@@ -168,6 +168,7 @@ pub struct Rem6ExecutionSummary {
     data_atomic_bytes: u64,
     instruction_cache: CliDataCacheSummary,
     data_cache: CliDataCacheSummary,
+    data_cache_l2: CliDataCacheSummary,
     instruction_probes: Rem6InstructionProbeSummary,
     data_access_probes: Rem6DataAccessProbeSummary,
     parallel_scheduler_epochs: u64,
@@ -396,6 +397,7 @@ struct ExecutionSummaryInputs<'a> {
     config: &'a Rem6RunConfig,
     instruction_cache: CliDataCacheSummary,
     data_cache: CliDataCacheSummary,
+    data_cache_l2: CliDataCacheSummary,
     fetch_trace: &'a MemoryTrace,
     data_trace: &'a MemoryTrace,
     riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
@@ -661,6 +663,12 @@ fn execute_riscv(
         core_count,
         config.data_cache_prefetcher(),
     )?;
+    let data_cache_l2 = cli_cache_runtime_with_prefetcher(
+        config.data_cache_l2_protocol(),
+        line_layout,
+        core_count,
+        None,
+    )?;
     let readfile_bus = readfile_mmio_bus(
         readfiles,
         core_count,
@@ -798,7 +806,15 @@ fn execute_riscv(
             RiscvDataAccessStats::with_stack_distance(probe_config)
                 .with_mem_footprint(footprint_config),
         );
-    driver = attach_cli_riscv_sbi_firmware(config, driver, &memory, line_layout);
+    driver = attach_cli_riscv_sbi_firmware(
+        config,
+        driver,
+        &memory,
+        instruction_cache.clone(),
+        data_cache.clone(),
+        data_cache_l2.clone(),
+        line_layout,
+    );
     if config.riscv_se() {
         driver = driver.with_riscv_syscall_emulation_for_boot_image(image);
         let proc_self_exe_target = std::fs::canonicalize(config.binary())
@@ -832,6 +848,7 @@ fn execute_riscv(
             driver,
             memory.clone(),
             data_cache.clone(),
+            data_cache_l2.clone(),
             line_layout,
         );
         if config.debug_syscall_enabled() {
@@ -853,6 +870,7 @@ fn execute_riscv(
             &transport,
             instruction_cache.clone(),
             data_cache.clone(),
+            data_cache_l2.clone(),
             fetch_trace.clone(),
             data_trace.clone(),
             tick_limit,
@@ -873,6 +891,7 @@ fn execute_riscv(
             &memory,
             instruction_cache.clone(),
             data_cache.clone(),
+            data_cache_l2.clone(),
             fetch_trace.clone(),
             data_trace.clone(),
             tick_limit,
@@ -890,6 +909,11 @@ fn execute_riscv(
             return Err(error);
         }
     }
+    if let Some(data_cache_l2) = data_cache_l2.as_ref() {
+        if let Some(error) = data_cache_l2.take_error() {
+            return Err(error);
+        }
+    }
     if let Some(instruction_cache) = instruction_cache.as_ref() {
         if let Some(error) = instruction_cache.take_error() {
             return Err(error);
@@ -900,6 +924,10 @@ fn execute_riscv(
         run = run.with_data_cache_run_records(data_cache.records());
     }
     let instruction_cache_records = instruction_cache
+        .as_ref()
+        .map(CliDataCacheRuntime::records)
+        .unwrap_or_default();
+    let data_cache_l2_records = data_cache_l2
         .as_ref()
         .map(CliDataCacheRuntime::records)
         .unwrap_or_default();
@@ -947,6 +975,7 @@ fn execute_riscv(
                 .map(CliDataCacheRuntime::prefetch_summary)
                 .unwrap_or_default(),
         ),
+        data_cache_l2: CliDataCacheSummary::from_records(&data_cache_l2_records),
         fetch_trace: &fetch_trace,
         data_trace: &data_trace,
         riscv_guest_writes,
@@ -1128,6 +1157,7 @@ fn execution_summary(
     let memory_resources = Rem6MemoryResourceSummary::from_run_resources(
         &inputs.instruction_cache,
         &inputs.data_cache,
+        &inputs.data_cache_l2,
         &fetch_transport,
         &data_transport,
         &dram,
@@ -1145,6 +1175,7 @@ fn execution_summary(
         data_atomic_bytes,
         instruction_cache: inputs.instruction_cache,
         data_cache: inputs.data_cache,
+        data_cache_l2: inputs.data_cache_l2,
         instruction_probes: instruction_probe_summary(run),
         data_access_probes: data_access_probe_summary(
             run,

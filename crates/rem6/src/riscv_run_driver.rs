@@ -17,6 +17,7 @@ pub(super) fn drive_cli_riscv_run(
     memory: &CliMemoryRuntime,
     instruction_cache: Option<CliDataCacheRuntime>,
     data_cache: Option<CliDataCacheRuntime>,
+    data_cache_l2: Option<CliDataCacheRuntime>,
     fetch_trace: MemoryTrace,
     data_trace: MemoryTrace,
     tick_limit: u64,
@@ -47,6 +48,7 @@ pub(super) fn drive_cli_riscv_run(
                 memory,
                 instruction_cache,
                 data_cache,
+                data_cache_l2,
                 fetch_trace,
                 data_trace,
                 tick_limit,
@@ -62,6 +64,7 @@ pub(super) fn drive_cli_riscv_run(
             memory,
             instruction_cache,
             data_cache,
+            data_cache_l2,
             fetch_trace,
             data_trace,
             tick_limit,
@@ -79,6 +82,7 @@ fn drive_cli_riscv_run_with_instruction_limit(
     memory: &CliMemoryRuntime,
     instruction_cache: Option<CliDataCacheRuntime>,
     data_cache: Option<CliDataCacheRuntime>,
+    data_cache_l2: Option<CliDataCacheRuntime>,
     fetch_trace: MemoryTrace,
     data_trace: MemoryTrace,
     tick_limit: u64,
@@ -98,14 +102,20 @@ fn drive_cli_riscv_run_with_instruction_limit(
                 let memory = fetch_memory.clone();
                 let instruction_cache = instruction_cache.clone();
                 move |delivery, _context| {
-                    cli_data_memory_response(instruction_cache.as_ref(), &memory, &delivery)
+                    cli_data_memory_response(instruction_cache.as_ref(), None, &memory, &delivery)
                 }
             },
             move |_cpu| {
                 let memory = data_memory.clone();
                 let data_cache = data_cache.clone();
+                let data_cache_l2 = data_cache_l2.clone();
                 move |delivery, _context| {
-                    cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
+                    cli_data_memory_response(
+                        data_cache.as_ref(),
+                        data_cache_l2.as_ref(),
+                        &memory,
+                        &delivery,
+                    )
                 }
             },
             tick_limit,
@@ -126,14 +136,20 @@ fn drive_cli_riscv_run_with_instruction_limit(
             let memory = fetch_memory.clone();
             let instruction_cache = instruction_cache.clone();
             move |delivery, _context| {
-                cli_data_memory_response(instruction_cache.as_ref(), &memory, &delivery)
+                cli_data_memory_response(instruction_cache.as_ref(), None, &memory, &delivery)
             }
         },
         move |_cpu| {
             let memory = data_memory.clone();
             let data_cache = data_cache.clone();
+            let data_cache_l2 = data_cache_l2.clone();
             move |delivery, _context| {
-                cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
+                cli_data_memory_response(
+                    data_cache.as_ref(),
+                    data_cache_l2.as_ref(),
+                    &memory,
+                    &delivery,
+                )
             }
         },
         tick_limit,
@@ -152,6 +168,7 @@ fn drive_cli_riscv_run_until_tick(
     memory: &CliMemoryRuntime,
     instruction_cache: Option<CliDataCacheRuntime>,
     data_cache: Option<CliDataCacheRuntime>,
+    data_cache_l2: Option<CliDataCacheRuntime>,
     fetch_trace: MemoryTrace,
     data_trace: MemoryTrace,
     tick_limit: u64,
@@ -170,14 +187,20 @@ fn drive_cli_riscv_run_until_tick(
                 let memory = fetch_memory.clone();
                 let instruction_cache = instruction_cache.clone();
                 move |delivery, _context| {
-                    cli_data_memory_response(instruction_cache.as_ref(), &memory, &delivery)
+                    cli_data_memory_response(instruction_cache.as_ref(), None, &memory, &delivery)
                 }
             },
             move |_cpu| {
                 let memory = data_memory.clone();
                 let data_cache = data_cache.clone();
+                let data_cache_l2 = data_cache_l2.clone();
                 move |delivery, _context| {
-                    cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
+                    cli_data_memory_response(
+                        data_cache.as_ref(),
+                        data_cache_l2.as_ref(),
+                        &memory,
+                        &delivery,
+                    )
                 }
             },
             tick_limit,
@@ -197,14 +220,20 @@ fn drive_cli_riscv_run_until_tick(
             let memory = fetch_memory.clone();
             let instruction_cache = instruction_cache.clone();
             move |delivery, _context| {
-                cli_data_memory_response(instruction_cache.as_ref(), &memory, &delivery)
+                cli_data_memory_response(instruction_cache.as_ref(), None, &memory, &delivery)
             }
         },
         move |_cpu| {
             let memory = data_memory.clone();
             let data_cache = data_cache.clone();
+            let data_cache_l2 = data_cache_l2.clone();
             move |delivery, _context| {
-                cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
+                cli_data_memory_response(
+                    data_cache.as_ref(),
+                    data_cache_l2.as_ref(),
+                    &memory,
+                    &delivery,
+                )
             }
         },
         tick_limit,

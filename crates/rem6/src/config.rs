@@ -119,6 +119,7 @@ pub struct Rem6RunConfig {
     dram_memory: bool,
     dram_memory_profile: CliDramMemoryProfile,
     data_cache_protocol: Option<RiscvDataCacheProtocol>,
+    data_cache_l2_protocol: Option<RiscvDataCacheProtocol>,
     data_cache_prefetcher: Option<CliCachePrefetcher>,
     instruction_cache_protocol: Option<RiscvDataCacheProtocol>,
     instruction_cache_prefetcher: Option<CliCachePrefetcher>,
@@ -216,6 +217,7 @@ struct Rem6RunFileConfig {
     dram_memory: Option<bool>,
     dram_memory_profile: Option<String>,
     data_cache_protocol: Option<String>,
+    data_cache_l2_protocol: Option<String>,
     data_cache_prefetcher: Option<String>,
     instruction_cache_protocol: Option<String>,
     instruction_cache_prefetcher: Option<String>,
@@ -456,6 +458,17 @@ impl Rem6RunConfig {
             .map(|value| {
                 parse_run_data_cache_protocol(value).ok_or_else(|| {
                     Rem6CliError::InvalidRunDataCacheProtocol {
+                        value: value.to_string(),
+                    }
+                })
+            })
+            .transpose()?;
+        let mut data_cache_l2_protocol = file_config
+            .data_cache_l2_protocol
+            .as_deref()
+            .map(|value| {
+                parse_run_data_cache_protocol(value).ok_or_else(|| {
+                    Rem6CliError::InvalidRunDataCacheL2Protocol {
                         value: value.to_string(),
                     }
                 })
@@ -729,6 +742,15 @@ impl Rem6RunConfig {
                             }
                         })?);
                 }
+                "--data-cache-l2-protocol" => {
+                    let value = required_value(&flag, args.next())?;
+                    data_cache_l2_protocol =
+                        Some(parse_run_data_cache_protocol(&value).ok_or_else(|| {
+                            Rem6CliError::InvalidRunDataCacheL2Protocol {
+                                value: value.clone(),
+                            }
+                        })?);
+                }
                 "--data-cache-prefetcher" => {
                     data_cache_prefetcher = Some(CliCachePrefetcher::parse_data_cache(
                         &required_value(&flag, args.next())?,
@@ -932,6 +954,7 @@ impl Rem6RunConfig {
             dram_memory,
             dram_memory_profile,
             data_cache_protocol,
+            data_cache_l2_protocol,
             data_cache_prefetcher,
             instruction_cache_protocol,
             instruction_cache_prefetcher,
@@ -1051,6 +1074,10 @@ impl Rem6RunConfig {
 
     pub const fn data_cache_protocol(&self) -> Option<RiscvDataCacheProtocol> {
         self.data_cache_protocol
+    }
+
+    pub const fn data_cache_l2_protocol(&self) -> Option<RiscvDataCacheProtocol> {
+        self.data_cache_l2_protocol
     }
 
     pub const fn data_cache_prefetcher(&self) -> Option<CliCachePrefetcher> {
@@ -1656,6 +1683,7 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--stats-format",
             "--dram-memory-profile",
             "--data-cache-protocol",
+            "--data-cache-l2-protocol",
             "--data-cache-prefetcher",
             "--instruction-cache-protocol",
             "--instruction-cache-prefetcher",

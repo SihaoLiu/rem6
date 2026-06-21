@@ -45,6 +45,9 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     if config.data_cache_protocol().is_some() {
         return Err(Rem6CliError::DataCacheProtocolRequiresExecution);
     }
+    if config.data_cache_l2_protocol().is_some() {
+        return Err(Rem6CliError::DataCacheL2ProtocolRequiresExecution);
+    }
     if config.data_cache_prefetcher().is_some() {
         return Err(Rem6CliError::DataCachePrefetcherRequiresExecution);
     }
@@ -90,6 +93,12 @@ fn validate_cache_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
     if config.data_cache_protocol().is_some() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::DataCacheProtocolRequiresRiscv);
     }
+    if config.data_cache_l2_protocol().is_some() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::DataCacheL2ProtocolRequiresRiscv);
+    }
+    if config.data_cache_l2_protocol().is_some() && config.data_cache_protocol().is_none() {
+        return Err(Rem6CliError::DataCacheL2ProtocolRequiresDataCacheProtocol);
+    }
     if config.data_cache_prefetcher().is_some() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::DataCachePrefetcherRequiresRiscv);
     }
@@ -131,6 +140,14 @@ fn validate_large_multicore_cache_protocols(config: &Rem6RunConfig) -> Result<()
     if let Some(protocol) = config.data_cache_protocol() {
         if protocol != RiscvDataCacheProtocol::Msi {
             return Err(Rem6CliError::DataCacheProtocolLargeMulticoreRequiresMsi {
+                protocol,
+                cores: config.cores(),
+            });
+        }
+    }
+    if let Some(protocol) = config.data_cache_l2_protocol() {
+        if protocol != RiscvDataCacheProtocol::Msi {
+            return Err(Rem6CliError::DataCacheL2ProtocolLargeMulticoreRequiresMsi {
                 protocol,
                 cores: config.cores(),
             });

@@ -90,7 +90,7 @@ parity are not present.
 - [x] RV64C integer/load-store/control-flow slices have tests.
 - [x] RV64F/RV64D scalar load/store, arithmetic, comparisons, conversions, legal FP arithmetic and integer-to-float rounding-mode decode, exact static non-RNE integer-to-float conversion execution, inexact integer-to-float accrued flag updates, rounding-insensitive static arithmetic execution, `fadd.s`/`fsub.s` exact-wide-sum directed rounding, `fmul.s` exact-product directed rounding, `fdiv.s` and `fdiv.d` finite-quotient directed rounding with NX, `fmadd.s` exact-window directed rounding, narrow `fmadd.d` exact-window static/dynamic directed rounding slices, `fadd.s`/`fsub.s`/`fmul.s`/`fmadd.s` invalid, overflow, underflow, and inexact accrued flags, and NaN-boxing have tests.
 - [x] RV64F/RV64D integer-to-float conversions execute inexact static directed rounding and valid dynamic `frm` modes with accrued inexact flags.
-- [x] RV64C double-precision FP load/store decode and compressed FP load CPU data-access slices have tests.
+- [x] RV64C double-precision FP load/store decode and compressed FP load/store CPU data-access slices have tests.
 - [x] RVV vector-configuration instruction family (`vsetvli`, `vsetivli`, `vsetvl`) decode, hart execution, and CPU fetch-stream execution have tests.
 - [x] RVV unmasked integer `vadd.vv` LMUL=1 and m2 register-group slices, invalid-`vtype` and unaligned-group traps, and CPU fetch-stream execution have tests.
 - [x] RVV unmasked integer `vadd.vx` and signed-immediate `vadd.vi`, plus masked integer `vadd.vv`/`vadd.vx`/`vadd.vi` slices, decode, hart execution, and CPU fetch-stream execution have tests.
@@ -127,7 +127,7 @@ overflow accrual, narrow `fmadd.d`
 static RoundUp and dynamic RoundDown exact-window inexact rounding with
 directed zero-sign and overflow-flag boundary slices, plus
 `fadd.s`/`fsub.s` signaling-NaN, infinity invalid, overflow, and wider finite
-NX flag slices, compressed double FP load/store decoding, compressed FP load
+NX flag slices, compressed double FP load/store decoding, compressed FP load/store
 CPU data access, privileged interrupt fixed-priority machine and delegated
 supervisor trap entry, RVV vector-configuration decode and unmasked integer
 `vadd.vv` LMUL=1 plus m2 register-group execution, unmasked integer
@@ -296,7 +296,9 @@ fetch traffic can drive MSI, MESI, MOESI, and CHI instruction-cache runtimes
 and emit per-core fetch route stats; DRAM-backed MSI data-cache line fills emit
 backing DRAM read counters from a CLI run using `--dram-memory` and
 `--data-cache-protocol msi`, and read-only cache fetch/load responses do not
-emit false DRAM writes; volatile
+emit false DRAM writes; an explicit CLI run using `--data-cache-protocol msi`
+and `--data-cache-l2-protocol msi` routes an L1 data miss through an MSI L2
+before DRAM, with separate L1 and L2 JSON/stat counters; volatile
 CLI external-memory profiles carry refresh interval/recovery timing, DDR4,
 DDR5, and HBM preset constructors validate `tREFI`/`tRFC` cycles through
 existing timing checks and controller refresh scheduling, and a DDR CLI RISC-V
@@ -348,7 +350,7 @@ coverage with three-core MSI/MESI/MOESI/CHI data-cache coherence routing,
 three-core MSI/MESI/MOESI/CHI instruction-cache fetch routing, DRAM-backed MSI
 data-cache fill read accounting, MSI-bank accepted, immediate-hit,
 scheduled-miss, and coalesced-miss counters from an executed RISC-V
-data-cache run, and
+data-cache run, explicit MSI L1-to-L2-to-DRAM data-cache fill smoke coverage, and
 instruction-cache fetch smoke coverage. DRAM
 memory-profile tests cover bank-level resource
 counters, resource-activity stats, and activity-window counter deltas.
@@ -369,8 +371,8 @@ coverage exposes tagged next-line queue enqueue/issue stats from real RISC-V
 loads and fetches, plus identity-mapped page-crossing translation queue stats
 from real RISC-V loads and fetches.
 
-**Next evidence:** RISC-V instruction/data execution through a coherent
-multi-level cache and DRAM path with unified resource accounting, plus
+**Next evidence:** RISC-V instruction/data execution through a default coherent
+L1/L2/L3 cache, NoC, and DRAM path with unified resource accounting, plus
 validated DDR4/DDR5/HBM refresh presets, broader low-power state-transition
 coverage, and hierarchy-level prefetch translation consumers.
 

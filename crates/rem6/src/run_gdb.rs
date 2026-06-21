@@ -21,6 +21,7 @@ use rem6_system::{
 use rem6_transport::{MemoryTrace, MemoryTransport};
 
 use crate::data_cache_runtime::cli_data_memory_response;
+use crate::data_cache_runtime::invalidate_cli_cache_hierarchy;
 use crate::data_cache_runtime::CliDataCacheRuntime;
 use crate::runtime_memory::CliMemoryRuntime;
 use crate::{execute_error, Rem6CliError, Rem6RunConfig, RequestedIsa};
@@ -66,16 +67,23 @@ pub(super) fn serve_riscv_gdb_with_run_control(
     transport: &MemoryTransport,
     instruction_cache: Option<CliDataCacheRuntime>,
     data_cache: Option<CliDataCacheRuntime>,
+    data_cache_l2: Option<CliDataCacheRuntime>,
     fetch_trace: MemoryTrace,
     data_trace: MemoryTrace,
     tick_limit: u64,
     instruction_budget: Option<u64>,
 ) -> Result<RiscvGdbServeOutcome, Rem6CliError> {
     let gdb_memory = memory.clone();
+    let gdb_instruction_cache = instruction_cache.clone();
+    let gdb_data_cache = data_cache.clone();
+    let gdb_data_cache_l2 = data_cache_l2.clone();
     serve_riscv_gdb_once(
         listen,
         cluster,
         memory,
+        gdb_instruction_cache,
+        gdb_data_cache,
+        gdb_data_cache_l2,
         instruction_budget,
         |max_instructions, debug_stop| {
             if let Some(debug_stop) = debug_stop {
@@ -92,6 +100,7 @@ pub(super) fn serve_riscv_gdb_with_run_control(
                             move |delivery, _context| {
                                 cli_data_memory_response(
                                     instruction_cache.as_ref(),
+                                    None,
                                     &memory,
                                     &delivery,
                                 )
@@ -100,8 +109,14 @@ pub(super) fn serve_riscv_gdb_with_run_control(
                         |_cpu: CpuId| {
                             let memory = gdb_memory.clone();
                             let data_cache = data_cache.clone();
+                            let data_cache_l2 = data_cache_l2.clone();
                             move |delivery, _context| {
-                                cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
+                                cli_data_memory_response(
+                                    data_cache.as_ref(),
+                                    data_cache_l2.as_ref(),
+                                    &memory,
+                                    &delivery,
+                                )
                             }
                         },
                         tick_limit,
@@ -125,6 +140,7 @@ pub(super) fn serve_riscv_gdb_with_run_control(
                             move |delivery, _context| {
                                 cli_data_memory_response(
                                     instruction_cache.as_ref(),
+                                    None,
                                     &memory,
                                     &delivery,
                                 )
@@ -133,8 +149,14 @@ pub(super) fn serve_riscv_gdb_with_run_control(
                         |_cpu: CpuId| {
                             let memory = gdb_memory.clone();
                             let data_cache = data_cache.clone();
+                            let data_cache_l2 = data_cache_l2.clone();
                             move |delivery, _context| {
-                                cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
+                                cli_data_memory_response(
+                                    data_cache.as_ref(),
+                                    data_cache_l2.as_ref(),
+                                    &memory,
+                                    &delivery,
+                                )
                             }
                         },
                         tick_limit,
@@ -156,6 +178,7 @@ pub(super) fn serve_riscv_gdb_with_run_control(
                             move |delivery, _context| {
                                 cli_data_memory_response(
                                     instruction_cache.as_ref(),
+                                    None,
                                     &memory,
                                     &delivery,
                                 )
@@ -164,8 +187,14 @@ pub(super) fn serve_riscv_gdb_with_run_control(
                         |_cpu: CpuId| {
                             let memory = gdb_memory.clone();
                             let data_cache = data_cache.clone();
+                            let data_cache_l2 = data_cache_l2.clone();
                             move |delivery, _context| {
-                                cli_data_memory_response(data_cache.as_ref(), &memory, &delivery)
+                                cli_data_memory_response(
+                                    data_cache.as_ref(),
+                                    data_cache_l2.as_ref(),
+                                    &memory,
+                                    &delivery,
+                                )
                             }
                         },
                         tick_limit,
@@ -184,6 +213,9 @@ pub(super) fn serve_riscv_gdb_once<D>(
     listen: &str,
     cluster: &RiscvCluster,
     memory: &CliMemoryRuntime,
+    instruction_cache: Option<CliDataCacheRuntime>,
+    data_cache: Option<CliDataCacheRuntime>,
+    data_cache_l2: Option<CliDataCacheRuntime>,
     instruction_budget: Option<u64>,
     mut drive: D,
 ) -> Result<RiscvGdbServeOutcome, Rem6CliError>
@@ -234,6 +266,9 @@ where
                     &mut stream,
                     &mut control,
                     !outcome.has_completed_run(),
+                    instruction_cache.as_ref(),
+                    data_cache.as_ref(),
+                    data_cache_l2.as_ref(),
                 )
             })
             .ok_or_else(|| execute_error("--gdb-listen requires store-backed memory"))??;
@@ -465,6 +500,9 @@ fn process_gdb_bytes(
     stream: &mut impl Write,
     control: &mut RiscvGdbRunControl,
     resume_allowed: bool,
+    instruction_cache: Option<&CliDataCacheRuntime>,
+    data_cache: Option<&CliDataCacheRuntime>,
+    data_cache_l2: Option<&CliDataCacheRuntime>,
 ) -> Result<usize, Rem6CliError> {
     let mut consumed = 0;
     while consumed < pending.len() {
@@ -511,6 +549,15 @@ fn process_gdb_bytes(
                 .handle_frame(frame)
                 .map_err(|error| execute_error(format!("failed to handle GDB frame: {error}")))?,
         };
+        if let GdbRemoteFrame::Packet(packet) = parsed.frame() {
+            if gdb_packet_may_mutate_memory(packet)
+                && !invalidate_cli_cache_hierarchy(instruction_cache, data_cache, data_cache_l2)
+            {
+                return Err(execute_error(
+                    "failed to invalidate CLI caches after GDB memory mutation",
+                ));
+            }
+        }
         write_gdb_frames(stream, &frames)?;
         match session.control_state() {
             GdbRemoteControlState::SingleInstruction { .. } => {
@@ -527,6 +574,16 @@ fn process_gdb_bytes(
         }
     }
     Ok(consumed)
+}
+
+fn gdb_packet_may_mutate_memory(packet: &GdbRemotePacket) -> bool {
+    match GdbRemoteCommand::parse(packet) {
+        GdbRemoteCommand::WriteMemory { .. } => true,
+        GdbRemoteCommand::Trap { request } => {
+            request.point().kind() == GdbRemoteTrapKind::SoftwareBreakpoint
+        }
+        _ => false,
+    }
 }
 
 fn parse_loopback_gdb_listen_addr(listen: &str) -> Result<SocketAddr, Rem6CliError> {

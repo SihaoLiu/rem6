@@ -4935,6 +4935,63 @@ fn riscv_core_issues_compressed_float_load_after_halfword_fetch() {
 }
 
 #[test]
+fn riscv_core_issues_compressed_float_store_after_halfword_fetch() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(9), 0x9000);
+    core.write_float_register(freg(10), 7.5f64.to_bits());
+    let store = loaded_store_with_data(0x8000, u32::from(0xa4a8_u16), 0x9040, vec![0; 16]);
+
+    fetch_one(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+
+    assert_eq!(event.fetch_pc(), Address::new(0x8000));
+    assert_eq!(
+        event.instruction(),
+        RiscvInstruction::FloatStore {
+            rs1: reg(9),
+            rs2: freg(10),
+            offset: rem6_isa_riscv::Immediate::new(72),
+            width: MemoryWidth::Doubleword,
+        }
+    );
+    assert_eq!(core.pc(), Address::new(0x8002));
+
+    issue_one_data_access(
+        &core,
+        store.clone(),
+        &mut scheduler,
+        &transport,
+        MemoryTrace::new(),
+    );
+
+    let line = store
+        .lock()
+        .unwrap()
+        .line_data(MemoryTargetId::new(0), Address::new(0x9040))
+        .unwrap();
+    assert_eq!(&line[8..16], &7.5f64.to_bits().to_le_bytes());
+    let events = core.data_access_events();
+    assert_eq!(
+        events[0].access(),
+        &MemoryAccessKind::FloatStore {
+            address: 0x9048,
+            width: MemoryWidth::Doubleword,
+            value: 7.5f64.to_bits(),
+        }
+    );
+    assert_eq!(events[0].operation(), MemoryOperation::Write);
+    assert_eq!(events[1].kind(), RiscvDataAccessEventKind::Completed);
+    assert_eq!(events[1].data(), None);
+}
+
+#[test]
 fn riscv_core_issues_load_reserved_and_records_reservation() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);

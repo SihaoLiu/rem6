@@ -148,6 +148,9 @@ pub enum Rem6CliError {
     InvalidRunDataCacheProtocol {
         value: String,
     },
+    InvalidRunDataCacheL2Protocol {
+        value: String,
+    },
     InvalidRunDataCachePrefetcher {
         value: String,
     },
@@ -204,6 +207,7 @@ pub enum Rem6CliError {
     RiscvSeRequiresExecution,
     CheckerCpuRequiresExecution,
     DataCacheProtocolRequiresExecution,
+    DataCacheL2ProtocolRequiresExecution,
     DataCachePrefetcherRequiresExecution,
     InstructionCacheProtocolRequiresExecution,
     InstructionCachePrefetcherRequiresExecution,
@@ -218,6 +222,8 @@ pub enum Rem6CliError {
         input: &'static str,
     },
     DataCacheProtocolRequiresRiscv,
+    DataCacheL2ProtocolRequiresRiscv,
+    DataCacheL2ProtocolRequiresDataCacheProtocol,
     DataCachePrefetcherRequiresRiscv,
     DataCachePrefetcherRequiresDataCacheProtocol,
     InstructionCacheProtocolRequiresRiscv,
@@ -231,6 +237,10 @@ pub enum Rem6CliError {
     RiscvSbiConflictsWithRiscvSe,
     RiscvSbiRequiresBootA0Zero,
     DataCacheProtocolLargeMulticoreRequiresMsi {
+        protocol: RiscvDataCacheProtocol,
+        cores: usize,
+    },
+    DataCacheL2ProtocolLargeMulticoreRequiresMsi {
         protocol: RiscvDataCacheProtocol,
         cores: usize,
     },
@@ -452,6 +462,9 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidRunDataCacheProtocol { value } => {
                 write!(formatter, "invalid run data cache protocol {value}")
             }
+            Self::InvalidRunDataCacheL2Protocol { value } => {
+                write!(formatter, "invalid run data cache L2 protocol {value}")
+            }
             Self::InvalidRunDataCachePrefetcher { value } => {
                 write!(formatter, "invalid run data cache prefetcher {value}")
             }
@@ -533,6 +546,9 @@ impl fmt::Display for Rem6CliError {
             Self::DataCacheProtocolRequiresExecution => {
                 write!(formatter, "--data-cache-protocol requires --execute")
             }
+            Self::DataCacheL2ProtocolRequiresExecution => {
+                write!(formatter, "--data-cache-l2-protocol requires --execute")
+            }
             Self::DataCachePrefetcherRequiresExecution => {
                 write!(formatter, "--data-cache-prefetcher requires --execute")
             }
@@ -571,6 +587,15 @@ impl fmt::Display for Rem6CliError {
             }
             Self::DataCacheProtocolRequiresRiscv => {
                 write!(formatter, "--data-cache-protocol requires --isa riscv")
+            }
+            Self::DataCacheL2ProtocolRequiresRiscv => {
+                write!(formatter, "--data-cache-l2-protocol requires --isa riscv")
+            }
+            Self::DataCacheL2ProtocolRequiresDataCacheProtocol => {
+                write!(
+                    formatter,
+                    "--data-cache-l2-protocol requires --data-cache-protocol"
+                )
             }
             Self::DataCachePrefetcherRequiresRiscv => {
                 write!(formatter, "--data-cache-prefetcher requires --isa riscv")
@@ -618,6 +643,13 @@ impl fmt::Display for Rem6CliError {
                 write!(
                     formatter,
                     "--data-cache-protocol with --cores > 3 requires msi, got {} with {cores} cores",
+                    riscv_data_cache_protocol_name(*protocol)
+                )
+            }
+            Self::DataCacheL2ProtocolLargeMulticoreRequiresMsi { protocol, cores } => {
+                write!(
+                    formatter,
+                    "--data-cache-l2-protocol with --cores > 3 requires msi, got {} with {cores} cores",
                     riscv_data_cache_protocol_name(*protocol)
                 )
             }

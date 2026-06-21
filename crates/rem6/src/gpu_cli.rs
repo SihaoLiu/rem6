@@ -1125,6 +1125,7 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
                 move |delivery, _context| {
                     cli_data_memory_response(
                         request_data_cache.as_ref(),
+                        None,
                         &request_memory,
                         &delivery,
                     )

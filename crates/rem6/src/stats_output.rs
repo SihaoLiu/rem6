@@ -568,6 +568,7 @@ pub(super) fn run_stats_output(
             StatResetPolicy::Monotonic,
             execution.data_cache.prefetch_translation_queue_dropped,
         )?;
+        emit_data_cache_summary_stats(&mut stats, "sim.data_cache.l2", &execution.data_cache_l2)?;
         increment_stat(
             &mut stats,
             "sim.data.probes.samples",

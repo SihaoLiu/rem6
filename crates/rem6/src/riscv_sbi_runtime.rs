@@ -4,6 +4,7 @@ use rem6_memory::{Address, CacheLineLayout};
 use rem6_system::RiscvSystemRunDriver;
 
 use crate::config::Rem6RunConfig;
+use crate::data_cache_runtime::{write_guest_memory_with_cache_invalidation, CliDataCacheRuntime};
 use crate::riscv_guest_output::{
     Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary,
     Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceSummary,
@@ -51,6 +52,9 @@ pub(crate) fn attach_cli_riscv_sbi_firmware(
     config: &Rem6RunConfig,
     driver: RiscvSystemRunDriver,
     memory: &CliMemoryRuntime,
+    instruction_cache: Option<CliDataCacheRuntime>,
+    data_cache: Option<CliDataCacheRuntime>,
+    data_cache_l2: Option<CliDataCacheRuntime>,
     line_layout: CacheLineLayout,
 ) -> RiscvSystemRunDriver {
     if !config.riscv_sbi() {
@@ -59,13 +63,24 @@ pub(crate) fn attach_cli_riscv_sbi_firmware(
 
     let read_memory = memory.clone();
     let write_memory = memory.clone();
+    let write_instruction_cache = instruction_cache.clone();
+    let write_data_cache = data_cache.clone();
+    let write_data_cache_l2 = data_cache_l2.clone();
     driver
         .with_riscv_sbi_firmware()
         .with_riscv_sbi_firmware_and_functional_guest_memory_reader(move |address, bytes| {
             read_memory.read_guest_memory(address, bytes, line_layout)
         })
         .with_riscv_sbi_firmware_and_functional_guest_memory_writer(move |address, bytes| {
-            write_memory.write_guest_memory(address, bytes, line_layout)
+            write_guest_memory_with_cache_invalidation(
+                &write_memory,
+                write_instruction_cache.as_ref(),
+                write_data_cache.as_ref(),
+                write_data_cache_l2.as_ref(),
+                address,
+                bytes,
+                line_layout,
+            )
         })
 }
 

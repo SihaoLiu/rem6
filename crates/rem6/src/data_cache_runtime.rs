@@ -27,6 +27,7 @@ use crate::runtime_memory::{cli_memory_response, CliMemoryRuntime};
 use crate::{execute_error, Rem6CliError};
 
 const PREFETCH_REQUEST_SEQUENCE_BASE: u64 = 1 << 63;
+const LOWER_FILL_REQUEST_SEQUENCE_BASE: u64 = 1 << 62;
 const CLI_PREFETCH_TRANSLATION_PAGE_BYTES: u64 = 4096;
 
 #[derive(Clone)]
@@ -48,7 +49,7 @@ enum CliDataCacheHarness {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CliDataCacheResponseMode {
     External,
-    InternalPrefetch,
+    Internal,
 }
 
 struct CliMesiLineHarnesses {
@@ -194,11 +195,12 @@ impl CliDataCacheSummary {
 
 pub(super) fn cli_data_memory_response(
     data_cache: Option<&CliDataCacheRuntime>,
+    data_cache_l2: Option<&CliDataCacheRuntime>,
     memory: &CliMemoryRuntime,
     delivery: &RequestDelivery,
 ) -> TargetOutcome {
     if let Some(data_cache) = data_cache {
-        if let Some(outcome) = data_cache.respond(memory, delivery) {
+        if let Some(outcome) = data_cache.respond_with_lower(memory, data_cache_l2, delivery) {
             return outcome;
         }
     }
@@ -233,6 +235,7 @@ pub(super) fn with_riscv_syscall_data_cache_memory_io(
     driver: RiscvSystemRunDriver,
     memory: CliMemoryRuntime,
     data_cache: Option<CliDataCacheRuntime>,
+    data_cache_l2: Option<CliDataCacheRuntime>,
     line_layout: CacheLineLayout,
 ) -> RiscvSystemRunDriver {
     let read_memory = memory.clone();
@@ -240,12 +243,15 @@ pub(super) fn with_riscv_syscall_data_cache_memory_io(
     let probe_memory = memory.clone();
     let map_memory = memory.clone();
     let write_data_cache = data_cache.clone();
+    let write_data_cache_l2 = data_cache_l2.clone();
     driver.with_riscv_syscall_emulation_and_guest_memory_io_probe_map_handler(
         move |address, bytes| read_memory.read_guest_memory(address, bytes, line_layout),
         move |address, bytes| {
-            write_guest_memory_with_data_cache_invalidation(
+            write_guest_memory_with_cache_invalidation(
                 &write_memory,
+                None,
                 write_data_cache.as_ref(),
+                write_data_cache_l2.as_ref(),
                 address,
                 bytes,
                 line_layout,
@@ -256,6 +262,7 @@ pub(super) fn with_riscv_syscall_data_cache_memory_io(
             map_guest_memory_with_data_cache_invalidation(
                 &map_memory,
                 data_cache.as_ref(),
+                data_cache_l2.as_ref(),
                 request,
                 line_layout,
             )
@@ -263,9 +270,11 @@ pub(super) fn with_riscv_syscall_data_cache_memory_io(
     )
 }
 
-fn write_guest_memory_with_data_cache_invalidation(
+pub(super) fn write_guest_memory_with_cache_invalidation(
     memory: &CliMemoryRuntime,
+    instruction_cache: Option<&CliDataCacheRuntime>,
     data_cache: Option<&CliDataCacheRuntime>,
+    data_cache_l2: Option<&CliDataCacheRuntime>,
     address: u64,
     bytes: &[u8],
     line_layout: CacheLineLayout,
@@ -276,14 +285,13 @@ fn write_guest_memory_with_data_cache_invalidation(
     if bytes.is_empty() {
         return true;
     }
-    data_cache
-        .map(CliDataCacheRuntime::invalidate_cached_guest_memory)
-        .unwrap_or(true)
+    invalidate_cli_cache_hierarchy(instruction_cache, data_cache, data_cache_l2)
 }
 
 fn map_guest_memory_with_data_cache_invalidation(
     memory: &CliMemoryRuntime,
     data_cache: Option<&CliDataCacheRuntime>,
+    data_cache_l2: Option<&CliDataCacheRuntime>,
     request: RiscvGuestMemoryMapRequest,
     line_layout: CacheLineLayout,
 ) -> RiscvGuestMemoryMapResult {
@@ -293,12 +301,28 @@ fn map_guest_memory_with_data_cache_invalidation(
         line_layout,
         request.replace_existing(),
     );
-    match data_cache {
-        Some(data_cache) if !data_cache.invalidate_cached_guest_memory() => {
-            RiscvGuestMemoryMapResult::Failed
-        }
-        _ => result,
+    if invalidate_cli_cache_hierarchy(None, data_cache, data_cache_l2) {
+        result
+    } else {
+        RiscvGuestMemoryMapResult::Failed
     }
+}
+
+pub(super) fn invalidate_cli_cache_hierarchy(
+    instruction_cache: Option<&CliDataCacheRuntime>,
+    data_cache: Option<&CliDataCacheRuntime>,
+    data_cache_l2: Option<&CliDataCacheRuntime>,
+) -> bool {
+    let instruction_ok = instruction_cache
+        .map(CliDataCacheRuntime::invalidate_cached_guest_memory)
+        .unwrap_or(true);
+    let data_ok = data_cache
+        .map(CliDataCacheRuntime::invalidate_cached_guest_memory)
+        .unwrap_or(true);
+    let data_l2_ok = data_cache_l2
+        .map(CliDataCacheRuntime::invalidate_cached_guest_memory)
+        .unwrap_or(true);
+    instruction_ok && data_ok && data_l2_ok
 }
 
 impl CliDataCacheRuntime {
@@ -403,28 +427,31 @@ impl CliDataCacheRuntime {
         })
     }
 
-    pub(super) fn respond(
+    pub(super) fn respond_with_lower(
         &self,
         memory: &CliMemoryRuntime,
+        lower_cache: Option<&CliDataCacheRuntime>,
         delivery: &RequestDelivery,
     ) -> Option<TargetOutcome> {
-        self.respond_for_request(memory, delivery.tick(), delivery.request())
+        self.respond_for_request(memory, lower_cache, delivery.tick(), delivery.request())
     }
 
     fn respond_for_request(
         &self,
         memory: &CliMemoryRuntime,
+        lower_cache: Option<&CliDataCacheRuntime>,
         tick: u64,
         request: &MemoryRequest,
     ) -> Option<TargetOutcome> {
         if request.line_layout() != self.layout {
             return None;
         }
-        let backing_dram_access_count = self.ensure_backing(memory, tick, request)?;
+        let backing_dram_access_count = self.ensure_backing(memory, lower_cache, tick, request)?;
 
         let outcome = self
             .respond_inner(
                 memory,
+                lower_cache,
                 tick,
                 request,
                 backing_dram_access_count,
@@ -434,7 +461,7 @@ impl CliDataCacheRuntime {
                 self.record_error(error);
                 TargetOutcome::Respond(MemoryResponse::retry(request))
             });
-        if let Err(error) = self.issue_prefetches_from_request(memory, tick, request) {
+        if let Err(error) = self.issue_prefetches_from_request(memory, lower_cache, tick, request) {
             self.record_error(error);
         }
         Some(outcome)
@@ -507,6 +534,7 @@ impl CliDataCacheRuntime {
     fn ensure_backing(
         &self,
         memory: &CliMemoryRuntime,
+        lower_cache: Option<&CliDataCacheRuntime>,
         tick: u64,
         request: &MemoryRequest,
     ) -> Option<usize> {
@@ -515,7 +543,16 @@ impl CliDataCacheRuntime {
             return Some(0);
         }
 
-        let data = memory.read_guest_cache_line_for_fill(line, self.layout, tick)?;
+        let (data, dram_access_count) = match lower_cache {
+            Some(lower_cache) => (
+                lower_cache.read_line_for_upper_fill(memory, tick, request)?,
+                0,
+            ),
+            None => (
+                memory.read_guest_cache_line_for_fill(line, self.layout, tick)?,
+                if memory.uses_dram() { 1 } else { 0 },
+            ),
+        };
 
         let mut harness = self.harness.lock().expect("CLI data cache lock");
         let inserted = match &mut *harness {
@@ -566,10 +603,58 @@ impl CliDataCacheRuntime {
                 true
             }
         };
-        if inserted {
-            Some(if memory.uses_dram() { 1 } else { 0 })
-        } else {
-            None
+        inserted.then_some(dram_access_count)
+    }
+
+    fn read_line_for_upper_fill(
+        &self,
+        memory: &CliMemoryRuntime,
+        tick: u64,
+        upper_request: &MemoryRequest,
+    ) -> Option<Vec<u8>> {
+        let line = self.layout.line_address(upper_request.line_address());
+        let request = match lower_fill_request(upper_request, line, self.layout) {
+            Ok(request) => request,
+            Err(error) => {
+                self.record_error(error);
+                return None;
+            }
+        };
+        if request.line_layout() != self.layout {
+            return None;
+        }
+        let backing_dram_access_count = self.ensure_backing(memory, None, tick, &request)?;
+        if let Err(error) = self.respond_inner(
+            memory,
+            None,
+            tick,
+            &request,
+            backing_dram_access_count,
+            CliDataCacheResponseMode::Internal,
+        ) {
+            self.record_error(error);
+            return None;
+        }
+        self.cached_line_data(line, request.id().agent())
+    }
+
+    fn cached_line_data(&self, line: Address, agent: AgentId) -> Option<Vec<u8>> {
+        let harness = self.harness.lock().expect("CLI data cache lock");
+        match &*harness {
+            CliDataCacheHarness::Msi(harness) => harness
+                .functional_read_line(line)
+                .ok()?
+                .data()
+                .map(<[u8]>::to_vec),
+            CliDataCacheHarness::Mesi(harnesses) => {
+                harnesses.lines.get(&line)?.cache_data(agent).ok().flatten()
+            }
+            CliDataCacheHarness::Moesi(harnesses) => {
+                harnesses.lines.get(&line)?.cache_data(agent).ok().flatten()
+            }
+            CliDataCacheHarness::Chi(harnesses) => {
+                harnesses.lines.get(&line)?.cache_data(agent).ok().flatten()
+            }
         }
     }
 
@@ -604,6 +689,7 @@ impl CliDataCacheRuntime {
     fn respond_inner(
         &self,
         memory: &CliMemoryRuntime,
+        lower_cache: Option<&CliDataCacheRuntime>,
         start_tick: u64,
         request: &MemoryRequest,
         backing_dram_access_count: usize,
@@ -613,6 +699,7 @@ impl CliDataCacheRuntime {
         match &mut *harness {
             CliDataCacheHarness::Msi(harness) => self.respond_msi_inner(
                 memory,
+                lower_cache,
                 start_tick,
                 request,
                 harness,
@@ -621,6 +708,7 @@ impl CliDataCacheRuntime {
             ),
             CliDataCacheHarness::Mesi(harnesses) => self.respond_mesi_inner(
                 memory,
+                lower_cache,
                 start_tick,
                 request,
                 harnesses,
@@ -629,6 +717,7 @@ impl CliDataCacheRuntime {
             ),
             CliDataCacheHarness::Moesi(harnesses) => self.respond_moesi_inner(
                 memory,
+                lower_cache,
                 start_tick,
                 request,
                 harnesses,
@@ -637,6 +726,7 @@ impl CliDataCacheRuntime {
             ),
             CliDataCacheHarness::Chi(harnesses) => self.respond_chi_inner(
                 memory,
+                lower_cache,
                 start_tick,
                 request,
                 harnesses,
@@ -649,6 +739,7 @@ impl CliDataCacheRuntime {
     fn respond_msi_inner(
         &self,
         memory: &CliMemoryRuntime,
+        lower_cache: Option<&CliDataCacheRuntime>,
         start_tick: u64,
         request: &MemoryRequest,
         harness: &mut MsiBankDirectoryHarness,
@@ -681,7 +772,7 @@ impl CliDataCacheRuntime {
             .map(<[u8]>::to_vec);
 
         if let Some(line_data) = line_data {
-            self.sync_request_range(memory, request, response_status, &line_data)?;
+            self.sync_request_range(memory, lower_cache, request, response_status, &line_data)?;
         }
 
         self.records
@@ -702,6 +793,7 @@ impl CliDataCacheRuntime {
     fn respond_mesi_inner(
         &self,
         memory: &CliMemoryRuntime,
+        lower_cache: Option<&CliDataCacheRuntime>,
         start_tick: u64,
         request: &MemoryRequest,
         harnesses: &mut CliMesiLineHarnesses,
@@ -737,7 +829,7 @@ impl CliDataCacheRuntime {
             .cache_data(request.id().agent())
             .map_err(execute_error)?
         {
-            self.sync_request_range(memory, request, response_status, &line_data)?;
+            self.sync_request_range(memory, lower_cache, request, response_status, &line_data)?;
         }
 
         self.records
@@ -758,6 +850,7 @@ impl CliDataCacheRuntime {
     fn respond_moesi_inner(
         &self,
         memory: &CliMemoryRuntime,
+        lower_cache: Option<&CliDataCacheRuntime>,
         start_tick: u64,
         request: &MemoryRequest,
         harnesses: &mut CliMoesiLineHarnesses,
@@ -793,7 +886,7 @@ impl CliDataCacheRuntime {
             .cache_data(request.id().agent())
             .map_err(execute_error)?
         {
-            self.sync_request_range(memory, request, response_status, &line_data)?;
+            self.sync_request_range(memory, lower_cache, request, response_status, &line_data)?;
         }
 
         self.records
@@ -814,6 +907,7 @@ impl CliDataCacheRuntime {
     fn respond_chi_inner(
         &self,
         memory: &CliMemoryRuntime,
+        lower_cache: Option<&CliDataCacheRuntime>,
         start_tick: u64,
         request: &MemoryRequest,
         harnesses: &mut CliChiLineHarnesses,
@@ -849,7 +943,7 @@ impl CliDataCacheRuntime {
             .cache_data(request.id().agent())
             .map_err(execute_error)?
         {
-            self.sync_request_range(memory, request, response_status, &line_data)?;
+            self.sync_request_range(memory, lower_cache, request, response_status, &line_data)?;
         }
 
         self.records
@@ -870,6 +964,7 @@ impl CliDataCacheRuntime {
     fn sync_request_range(
         &self,
         memory: &CliMemoryRuntime,
+        lower_cache: Option<&CliDataCacheRuntime>,
         request: &MemoryRequest,
         response_status: Option<ResponseStatus>,
         line_data: &[u8],
@@ -890,16 +985,23 @@ impl CliDataCacheRuntime {
         if !data_cache_request_updates_backing(request.operation(), response_status) {
             return Ok(());
         }
-        if memory.write_guest_memory(range.start().get(), data, self.layout) {
-            Ok(())
-        } else {
-            Err(execute_error("failed to sync CLI data cache request"))
+        if !memory.write_guest_memory(range.start().get(), data, self.layout) {
+            return Err(execute_error("failed to sync CLI data cache request"));
         }
+        if let Some(lower_cache) = lower_cache {
+            if !lower_cache.invalidate_cached_guest_memory() {
+                return Err(execute_error(
+                    "failed to invalidate CLI lower data cache after write",
+                ));
+            }
+        }
+        Ok(())
     }
 
     fn issue_prefetches_from_request(
         &self,
         memory: &CliMemoryRuntime,
+        lower_cache: Option<&CliDataCacheRuntime>,
         tick: u64,
         request: &MemoryRequest,
     ) -> Result<(), Rem6CliError> {
@@ -919,14 +1021,15 @@ impl CliDataCacheRuntime {
             let issue_address = issue.address();
             let prefetch_request = prefetch_issue_request(issue, sequence, self.layout)?;
             if let Some(backing_dram_access_count) =
-                self.ensure_backing(memory, tick, &prefetch_request)
+                self.ensure_backing(memory, lower_cache, tick, &prefetch_request)
             {
                 let _ = self.respond_inner(
                     memory,
+                    lower_cache,
                     tick,
                     &prefetch_request,
                     backing_dram_access_count,
-                    CliDataCacheResponseMode::InternalPrefetch,
+                    CliDataCacheResponseMode::Internal,
                 )?;
                 if let Some(prefetch) = self.prefetch.as_ref() {
                     prefetch
@@ -1111,6 +1214,22 @@ fn prefetch_issue_request(
     MemoryRequest::from_snapshot(&snapshot).map_err(execute_error)
 }
 
+fn lower_fill_request(
+    upper_request: &MemoryRequest,
+    line: Address,
+    layout: CacheLineLayout,
+) -> Result<MemoryRequest, Rem6CliError> {
+    let sequence = LOWER_FILL_REQUEST_SEQUENCE_BASE
+        | (upper_request.id().sequence() & (LOWER_FILL_REQUEST_SEQUENCE_BASE - 1));
+    MemoryRequest::read_shared(
+        MemoryRequestId::new(upper_request.id().agent(), sequence),
+        line,
+        rem6_memory::AccessSize::new(layout.bytes()).map_err(execute_error)?,
+        layout,
+    )
+    .map_err(execute_error)
+}
+
 trait CliDataCacheResponseRecord: Clone {
     fn request(&self) -> MemoryRequestId;
     fn status(&self) -> ResponseStatus;
@@ -1242,7 +1361,7 @@ fn data_cache_target_outcome<R>(
 where
     R: CliDataCacheResponseRecord,
 {
-    if response_mode == CliDataCacheResponseMode::InternalPrefetch || !request.requires_response() {
+    if response_mode == CliDataCacheResponseMode::Internal || !request.requires_response() {
         return Ok(TargetOutcome::NoResponse);
     }
     match record {
@@ -1331,7 +1450,7 @@ mod tests {
         .unwrap();
 
         let outcome = runtime
-            .respond_for_request(&memory, 4, &request)
+            .respond_for_request(&memory, None, 4, &request)
             .expect("matching layout should be handled by the data cache runtime");
 
         let TargetOutcome::Respond(response) = outcome else {
@@ -1353,7 +1472,7 @@ mod tests {
         let store_conditional = store_conditional_request(layout, 1);
 
         let outcome = runtime
-            .respond_for_request(&memory, 12, &store_conditional)
+            .respond_for_request(&memory, None, 12, &store_conditional)
             .expect("matching layout should be handled by the data cache runtime");
 
         let TargetOutcome::Respond(response) = outcome else {
@@ -1364,6 +1483,48 @@ mod tests {
         assert_eq!(summary.accesses, 1);
         assert_eq!(summary.reads, 1);
         assert_eq!(summary.writes, 0);
+    }
+
+    #[test]
+    fn l1_write_invalidates_lower_cache_fill() {
+        let layout = CacheLineLayout::new(32).unwrap();
+        let memory = memory_with_line(layout);
+        let l1 = CliDataCacheRuntime::new_msi_bank(layout, [AgentId::new(0)], None).unwrap();
+        let l2 = CliDataCacheRuntime::new_msi_bank(layout, [AgentId::new(0)], None).unwrap();
+        let read = MemoryRequest::read_shared(
+            MemoryRequestId::new(AgentId::new(0), 1),
+            Address::new(0x1000),
+            AccessSize::new(8).unwrap(),
+            layout,
+        )
+        .unwrap();
+
+        let outcome = l1
+            .respond_for_request(&memory, Some(&l2), 4, &read)
+            .expect("L1 should handle a read through L2");
+        assert!(matches!(outcome, TargetOutcome::Respond(_)));
+        assert!(l2.contains_line(Address::new(0x1000)));
+
+        let size = AccessSize::new(8).unwrap();
+        let write = MemoryRequest::write(
+            MemoryRequestId::new(AgentId::new(0), 2),
+            Address::new(0x1000),
+            size,
+            0x1122_3344_5566_7788u64.to_le_bytes().to_vec(),
+            ByteMask::full(size).unwrap(),
+            layout,
+        )
+        .unwrap();
+        let outcome = l1
+            .respond_for_request(&memory, Some(&l2), 8, &write)
+            .expect("L1 should handle a write through the lower hierarchy");
+        assert!(matches!(outcome, TargetOutcome::Respond(_)));
+
+        assert!(!l2.contains_line(Address::new(0x1000)));
+        assert_eq!(
+            memory.read_guest_memory(0x1000, 8, layout),
+            Some(0x1122_3344_5566_7788u64.to_le_bytes().to_vec())
+        );
     }
 
     fn memory_with_line(layout: CacheLineLayout) -> CliMemoryRuntime {
