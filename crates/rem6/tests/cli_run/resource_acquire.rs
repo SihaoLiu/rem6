@@ -457,6 +457,75 @@ artifact_size = 4
 }
 
 #[test]
+fn rem6_resource_acquire_loads_config_manifest_from_tar_ustar_prefix_locator() {
+    let workspace = temp_workspace("resource-acquire-archive-tar-prefix-config");
+    let archive_dir = workspace.join("archives");
+    fs::create_dir(&archive_dir).unwrap();
+    fs::write(
+        archive_dir.join("kernel.tar"),
+        tar_archive_with_ustar_prefix_entry(
+            "payloads/rv64gc",
+            "kernel.bin",
+            &[0x13, 0x00, 0x00, 0x00],
+        ),
+    )
+    .unwrap();
+    let config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &config,
+        r#"[resource_acquire]
+workload_id = "resource-archive-tar-prefix-cli"
+boot_entry = 32768
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:archive-tar-prefix-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "archive-tar"
+acquisition_locator = "archives/kernel.tar#payloads/rv64gc/kernel.bin"
+artifact_digest = "sha256:archive-tar-prefix-kernel"
+artifact_size = 4
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["resource-acquire", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"workload_id\":\"resource-archive-tar-prefix-cli\""));
+    assert!(stdout.contains("\"resource\":\"kernel\""));
+    assert!(stdout.contains("\"size_bytes\":4"));
+    assert!(stdout.contains("\"acquisition_kind\":\"archive-tar\""));
+    assert!(stdout
+        .contains("\"acquisition_locator\":\"archives/kernel.tar#payloads/rv64gc/kernel.bin\""));
+    assert_stat(
+        &stdout,
+        "sim.resource_acquire.acquired_resources",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.resource_acquire.acquired_bytes",
+        "Byte",
+        4,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_resource_acquire_loads_config_manifest_from_gzip_artifact_locator() {
     let workspace = temp_workspace("resource-acquire-archive-gzip-config");
     let archive_dir = workspace.join("archives");
@@ -1368,6 +1437,16 @@ artifact_size = 4
 }
 
 fn tar_archive_with_entry(name: &str, data: &[u8]) -> Vec<u8> {
+    tar_archive_with_ustar_entry("", name, data)
+}
+
+fn tar_archive_with_ustar_prefix_entry(prefix: &str, name: &str, data: &[u8]) -> Vec<u8> {
+    tar_archive_with_ustar_entry(prefix, name, data)
+}
+
+fn tar_archive_with_ustar_entry(prefix: &str, name: &str, data: &[u8]) -> Vec<u8> {
+    assert!(name.len() <= 100);
+    assert!(prefix.len() <= 155);
     let mut header = [0_u8; 512];
     header[..name.len()].copy_from_slice(name.as_bytes());
     write_tar_octal(&mut header[100..108], 0o644);
@@ -1379,6 +1458,7 @@ fn tar_archive_with_entry(name: &str, data: &[u8]) -> Vec<u8> {
     header[156] = b'0';
     header[257..263].copy_from_slice(b"ustar\0");
     header[263..265].copy_from_slice(b"00");
+    header[345..345 + prefix.len()].copy_from_slice(prefix.as_bytes());
     let checksum = header.iter().map(|byte| u64::from(*byte)).sum::<u64>();
     write_tar_checksum(&mut header[148..156], checksum);
 

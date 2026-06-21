@@ -692,7 +692,7 @@ fn read_tar_member(archive: &Path, member: &str) -> Result<Vec<u8>, Rem6CliError
         if header.iter().all(|byte| *byte == 0) {
             break;
         }
-        let name = tar_header_text(&header[0..100]);
+        let name = tar_header_member_name(header);
         let size = tar_header_octal(&header[124..136]).map_err(|error| {
             Rem6CliError::ReadResourceArtifact {
                 path: archive.to_path_buf(),
@@ -763,6 +763,16 @@ fn tar_header_text(field: &[u8]) -> String {
         .position(|byte| *byte == 0)
         .unwrap_or(field.len());
     String::from_utf8_lossy(&field[..end]).to_string()
+}
+
+fn tar_header_member_name(header: &[u8]) -> String {
+    let name = tar_header_text(&header[0..100]);
+    let prefix = tar_header_text(&header[345..500]);
+    match (prefix.is_empty(), name.is_empty()) {
+        (true, _) => name,
+        (false, true) => prefix,
+        (false, false) => format!("{prefix}/{name}"),
+    }
 }
 
 fn tar_header_octal(field: &[u8]) -> Result<usize, String> {
