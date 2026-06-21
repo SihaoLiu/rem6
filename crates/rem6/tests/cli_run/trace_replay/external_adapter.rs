@@ -4,8 +4,18 @@ use crate::support::*;
 
 #[test]
 fn rem6_trace_replay_hands_off_packet_requests_to_sst_adapter() {
+    assert_external_adapter_handoff("sst", "sst.link0", "cpu0.sst");
+}
+
+#[test]
+fn rem6_trace_replay_hands_off_packet_requests_to_systemc_and_tlm_adapters() {
+    assert_external_adapter_handoff("systemc", "systemc.bridge0", "cpu0.systemc");
+    assert_external_adapter_handoff("tlm", "tlm.bridge0", "cpu0.tlm");
+}
+
+fn assert_external_adapter_handoff(kind: &str, endpoint: &str, route: &str) {
     let trace = temp_trace(
-        "trace-replay-sst-adapter",
+        &format!("trace-replay-{kind}-adapter"),
         &packet_trace_bytes(
             1_000,
             &[
@@ -47,7 +57,7 @@ fn rem6_trace_replay_hands_off_packet_requests_to_sst_adapter() {
             "--trace",
             trace.to_str().unwrap(),
             "--route",
-            "cpu0.sst",
+            route,
             "--memory-start",
             "0x1000",
             "--memory-size",
@@ -63,9 +73,9 @@ fn rem6_trace_replay_hands_off_packet_requests_to_sst_adapter() {
             "--control-partition",
             "2",
             "--external-adapter-kind",
-            "sst",
+            kind,
             "--external-adapter-endpoint",
-            "sst.link0",
+            endpoint,
             "--stats-format",
             "json",
         ])
@@ -78,8 +88,8 @@ fn rem6_trace_replay_hands_off_packet_requests_to_sst_adapter() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("\"external_adapter\":{\"kind\":\"sst\""));
-    assert!(stdout.contains("\"endpoint\":\"sst.link0\""));
+    assert!(stdout.contains(&format!("\"external_adapter\":{{\"kind\":\"{kind}\"")));
+    assert!(stdout.contains(&format!("\"endpoint\":\"{endpoint}\"")));
     assert!(stdout.contains("\"events\":2"));
     assert!(stdout.contains("\"completed_events\":2"));
     assert!(stdout.contains("\"pending_events\":0"));
@@ -163,9 +173,9 @@ fn rem6_trace_replay_rejects_unsupported_external_adapter_kind() {
             "--max-tick",
             "64",
             "--external-adapter-kind",
-            "systemc",
+            "vpi",
             "--external-adapter-endpoint",
-            "systemc.bridge0",
+            "vpi.bridge0",
         ])
         .output()
         .unwrap();
@@ -173,6 +183,6 @@ fn rem6_trace_replay_rejects_unsupported_external_adapter_kind() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("unsupported trace replay external adapter kind systemc"));
-    assert!(stderr.contains("supported: sst"));
+    assert!(stderr.contains("unsupported trace replay external adapter kind vpi"));
+    assert!(stderr.contains("supported: systemc, tlm, sst"));
 }

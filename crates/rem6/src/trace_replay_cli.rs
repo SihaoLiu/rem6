@@ -295,6 +295,8 @@ fn trace_replay_external_adapter_summary(
 
 const fn co_sim_adapter_kind(kind: TraceReplayExternalAdapterKind) -> CoSimAdapterKind {
     match kind {
+        TraceReplayExternalAdapterKind::SystemC => CoSimAdapterKind::SystemC,
+        TraceReplayExternalAdapterKind::Tlm => CoSimAdapterKind::Tlm,
         TraceReplayExternalAdapterKind::Sst => CoSimAdapterKind::Sst,
     }
 }

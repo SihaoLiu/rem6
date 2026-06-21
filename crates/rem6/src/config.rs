@@ -65,12 +65,16 @@ impl RequestedIsa {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TraceReplayExternalAdapterKind {
+    SystemC,
+    Tlm,
     Sst,
 }
 
 impl TraceReplayExternalAdapterKind {
     fn parse(value: &str) -> Result<Self, Rem6CliError> {
         match value {
+            "systemc" => Ok(Self::SystemC),
+            "tlm" => Ok(Self::Tlm),
             "sst" => Ok(Self::Sst),
             _ => Err(Rem6CliError::InvalidTraceReplayExternalAdapterKind {
                 value: value.to_string(),
@@ -80,6 +84,8 @@ impl TraceReplayExternalAdapterKind {
 
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::SystemC => "systemc",
+            Self::Tlm => "tlm",
             Self::Sst => "sst",
         }
     }

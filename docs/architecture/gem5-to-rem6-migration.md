@@ -1063,28 +1063,26 @@ checklist-backed component sections above define the auditable percentages.
 
 ## External Adapter Migration
 
-### SystemC and TLM Adapters - 19% scoped
+### SystemC and TLM Adapters - 50% single-axis
 
-**Score calculation:** 1 of 4 items have executable evidence, or 25% raw. The
-bucket cap is scoped because the current code is a library-level typed boundary
-with self-tests; no runtime SystemC/TLM model adapter executes through `rem6`.
+**Score calculation:** 2 of 4 items have executable evidence, or 50% raw. The
+bucket cap is single-axis because `trace-replay` drives the typed SystemC/TLM
+adapter boundary, but no external SystemC simulator or TLM model executes through it.
 
 - [x] A typed co-simulation adapter boundary exists.
-- [ ] Adapter event handoff executes from a runtime SystemC/TLM bridge.
+- [x] Adapter event handoff executes from the top-level trace-replay runtime adapter path.
 - [ ] Adapter checkpoint capture and restore are consumed by a runtime adapter.
 - [ ] Runtime SystemC/TLM model integration executes through the adapter.
 
-**Migrated:** `CoSimAdapterBoundary` registers SystemC/TLM endpoints, hands off
-typed events with required transaction shape, records acknowledgements, rejects
-ambiguous handoff, and snapshots or restores only clean boundaries in
-`rem6-proto` self-tests.
+**Migrated:** `CoSimAdapterBoundary` SystemC/TLM endpoint tests exist, and
+`rem6 trace-replay --external-adapter-kind systemc|tlm --external-adapter-endpoint <id>`
+hands packet-trace requests into that boundary, acknowledges them, snapshots a clean boundary, and emits `external_adapter` JSON.
 
-**Not migrated:** Runtime `src/systemc`, `util/tlm`, and `ext/systemc`
-behavior.
+**Not migrated:** External SystemC simulator or TLM model execution, runtime adapter-owned state, and `src/systemc`, `util/tlm`, and `ext/systemc` behavior.
 
-**Evidence:** `cosim_adapter` tests in `rem6-proto`.
+**Evidence:** `cosim_adapter`; `rem6_trace_replay_hands_off_packet_requests_to_systemc_and_tlm_adapters`; TOML/CLI external-adapter validation tests.
 
-**Next evidence:** Runtime model integration tests through the adapter.
+**Next evidence:** External SystemC/TLM bridge execution and adapter-owned checkpoint restore tests.
 
 ### SST Adapter - 50% single-axis
 

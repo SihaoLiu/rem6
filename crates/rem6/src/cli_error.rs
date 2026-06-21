@@ -417,7 +417,7 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidTraceReplayExternalAdapterKind { value } => {
                 write!(
                     formatter,
-                    "unsupported trace replay external adapter kind {value}; supported: sst"
+                    "unsupported trace replay external adapter kind {value}; supported: systemc, tlm, sst"
                 )
             }
             Self::InvalidGpuRunFabricBandwidth { value } => {
