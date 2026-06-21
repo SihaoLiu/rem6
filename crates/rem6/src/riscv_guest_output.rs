@@ -283,6 +283,14 @@ impl Rem6RiscvSbiResetSummary {
         self.reset_type == 0
     }
 
+    pub(crate) const fn is_cold_reboot(&self) -> bool {
+        self.reset_type == 1
+    }
+
+    pub(crate) const fn is_warm_reboot(&self) -> bool {
+        self.reset_type == 2
+    }
+
     pub(crate) const fn is_system_failure(&self) -> bool {
         self.code != 0
     }

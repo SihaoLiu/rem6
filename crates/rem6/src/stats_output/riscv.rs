@@ -155,6 +155,28 @@ pub(super) fn emit_riscv_run_stats(
             )?;
             increment_stat(
                 stats,
+                "sim.riscv.sbi.reset.cold_reboots",
+                "Count",
+                StatResetPolicy::Constant,
+                execution
+                    .riscv_sbi_resets
+                    .iter()
+                    .filter(|reset| reset.is_cold_reboot())
+                    .count() as u64,
+            )?;
+            increment_stat(
+                stats,
+                "sim.riscv.sbi.reset.warm_reboots",
+                "Count",
+                StatResetPolicy::Constant,
+                execution
+                    .riscv_sbi_resets
+                    .iter()
+                    .filter(|reset| reset.is_warm_reboot())
+                    .count() as u64,
+            )?;
+            increment_stat(
+                stats,
                 "sim.riscv.sbi.reset.system_failures",
                 "Count",
                 StatResetPolicy::Constant,

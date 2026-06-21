@@ -13,6 +13,9 @@ const SBI_RFENCE_EXTENSION: i32 = 0x5246_4e43;
 const SBI_RFENCE_REMOTE_FENCE_I: i32 = 0;
 const SBI_SRST_EXTENSION: i32 = 0x5352_5354;
 const SBI_SRST_SYSTEM_RESET: i32 = 0;
+const SBI_RESET_TYPE_SHUTDOWN: i32 = 0;
+const SBI_RESET_TYPE_COLD_REBOOT: i32 = 1;
+const SBI_RESET_TYPE_WARM_REBOOT: i32 = 2;
 const SBI_DEBUG_CONSOLE_EXTENSION: i32 = 0x4442_434e;
 const SBI_DEBUG_CONSOLE_WRITE: i32 = 0;
 const SBI_HSM_EXTENSION: i32 = 0x0048_534d;
@@ -1096,6 +1099,27 @@ fn rem6_run_riscv_sbi_system_reset_records_reset_request() {
     );
     assert_stat(
         &stdout,
+        "sim.riscv.sbi.reset.shutdowns",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.reset.cold_reboots",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.reset.warm_reboots",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
         "sim.riscv.sbi.reset.system_failures",
         "Count",
         1,
@@ -1110,7 +1134,7 @@ fn rem6_run_riscv_sbi_shutdown_reset_records_shutdown_stat() {
         load_srst_extension(17)[0],
         load_srst_extension(17)[1],
         i_type(SBI_SRST_SYSTEM_RESET, 0, 0x0, 16, 0x13),
-        i_type(0, 0, 0x0, 10, 0x13),
+        i_type(SBI_RESET_TYPE_SHUTDOWN, 0, 0x0, 10, 0x13),
         i_type(0, 0, 0x0, 11, 0x13),
         0x0000_0073,
         i_type(0x7e, 0, 0x0, 5, 0x13),
@@ -1165,11 +1189,112 @@ fn rem6_run_riscv_sbi_shutdown_reset_records_shutdown_stat() {
     );
     assert_stat(
         &stdout,
+        "sim.riscv.sbi.reset.cold_reboots",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.reset.warm_reboots",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
         "sim.riscv.sbi.reset.system_failures",
         "Count",
         0,
         "constant",
     );
+}
+
+fn run_reset_type_for_stats(reset_type: i32, temp_name: &str) {
+    let mut words = Vec::new();
+    words.extend([
+        load_srst_extension(17)[0],
+        load_srst_extension(17)[1],
+        i_type(SBI_SRST_SYSTEM_RESET, 0, 0x0, 16, 0x13),
+        i_type(reset_type, 0, 0x0, 10, 0x13),
+        i_type(0, 0, 0x0, 11, 0x13),
+        0x0000_0073,
+        i_type(0x7e, 0, 0x0, 5, 0x13),
+        0x0010_0073,
+    ]);
+    let elf = riscv64_elf(RISCV_SBI_ENTRY, RISCV_SBI_ENTRY, &riscv64_program(&words));
+    let path = temp_binary(temp_name, &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-sbi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":0"));
+    assert!(!stdout.contains("\"x5\":\"0x7e\""));
+    assert!(stdout.contains(&format!(
+        "\"riscv_sbi_resets\":[{{\"cpu\":0,\"reset_type\":{reset_type},\"reset_reason\":0,\"code\":0}}]"
+    )));
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.reset.requests",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.reset.shutdowns",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.reset.cold_reboots",
+        "Count",
+        u64::from(reset_type == SBI_RESET_TYPE_COLD_REBOOT),
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.reset.warm_reboots",
+        "Count",
+        u64::from(reset_type == SBI_RESET_TYPE_WARM_REBOOT),
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.reset.system_failures",
+        "Count",
+        0,
+        "constant",
+    );
+}
+
+#[test]
+fn rem6_run_riscv_sbi_reboot_resets_record_reboot_type_stats() {
+    run_reset_type_for_stats(SBI_RESET_TYPE_COLD_REBOOT, "riscv-sbi-cold-reboot-reset");
+    run_reset_type_for_stats(SBI_RESET_TYPE_WARM_REBOOT, "riscv-sbi-warm-reboot-reset");
 }
 
 #[test]
