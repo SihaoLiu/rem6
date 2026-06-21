@@ -7,7 +7,9 @@ use rem6_power::{
 
 use crate::data_cache_runtime::CliDataCacheSummary;
 use crate::gpu_cli::{Rem6GpuComputeUnitActivity, Rem6GpuRunExecutionSummary};
-use crate::{PowerAnalysisFormat, Rem6CliError, Rem6CoreSummary, Rem6DramSummary};
+use crate::{
+    PowerAnalysisFormat, Rem6CliError, Rem6CoreSummary, Rem6DramSummary, Rem6MemoryResourceSummary,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6PowerAnalysisArtifact {
@@ -101,6 +103,11 @@ fn records_for_run(execution: &crate::Rem6ExecutionSummary) -> Vec<PowerAnalysis
         records.push(record);
     }
     if let Some(record) = cpu_data_cache_power_record(&execution.data_cache, execution.final_tick) {
+        records.push(record);
+    }
+    if let Some(record) =
+        memory_transport_power_record(&execution.memory_resources, execution.final_tick)
+    {
         records.push(record);
     }
     if let Some(record) = dram_power_record(&execution.dram, execution.final_tick) {
@@ -267,6 +274,36 @@ fn cache_power_summary_is_active(cache: &CliDataCacheSummary) -> bool {
         || cache.dram_accesses != 0
         || cache.bank_accepted != 0
         || cache.prefetch_issued != 0
+}
+
+fn memory_transport_power_record(
+    resources: &Rem6MemoryResourceSummary,
+    final_tick: u64,
+) -> Option<PowerAnalysisRecord> {
+    if resources.transport_activity == 0 && resources.active_transports == 0 {
+        return None;
+    }
+    let dynamic_watts = watts_from_activity(
+        resources.transport_activity,
+        resources.active_transports,
+        resources.transport_activity.saturating_mul(64),
+        0.000_003,
+        0.000_500,
+        0.000_000_25,
+    );
+    Some(
+        PowerAnalysisRecord::new(
+            "memory.transport",
+            PowerStateKind::On,
+            PowerResidency::new(vec![(
+                PowerStateKind::On,
+                final_tick.max(resources.transport_activity).max(1),
+            )]),
+            37.0 + dynamic_watts.min(4.0),
+            PowerEstimate::new(dynamic_watts, 0.006),
+        )
+        .expect("memory transport power records use valid residency and finite watts"),
+    )
 }
 
 fn dram_power_record(dram: &Rem6DramSummary, final_tick: u64) -> Option<PowerAnalysisRecord> {

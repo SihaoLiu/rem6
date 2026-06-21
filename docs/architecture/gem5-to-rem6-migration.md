@@ -1129,7 +1129,7 @@ custom XML smoke coverage for totals, components, and residency entries, plus
 deterministic library-level McPAT-shaped XML and DSENT-shaped CSV exports.
 Top-level `rem6 run --power-output` emits an activity-derived McPAT-shaped or
 DSENT-shaped artifact from executed CPU, instruction-cache, data-cache, and
-DRAM summaries. Top-level `rem6 gpu-run --power-output` emits
+memory-transport/DRAM summaries. Top-level `rem6 gpu-run --power-output` emits
 activity-derived GPU compute-unit, GPU data-cache, and DRAM power records,
 with the artifact path reported in the run JSON or CLI output envelope.
 Top-level `rem6 gpu-run --nomali-output` emits a deterministic
@@ -1145,8 +1145,9 @@ ingestion, full external schema parity, and calibrated power/thermal activity.
 
 **Evidence:** rem6-power power-analysis export self-tests including custom XML,
 McPAT-shaped XML, and DSENT-shaped CSV output; `rem6 run` CLI tests for
-`--power-output`, executed instruction-cache and data-cache activity records,
-envelope reporting, and load-only rejection; `rem6 gpu-run` CLI and TOML tests
+`--power-output`, executed instruction-cache, data-cache, memory-transport,
+and DRAM activity records, envelope reporting, and load-only rejection;
+`rem6 gpu-run` CLI and TOML tests
 for McPAT-shaped and DSENT-shaped activity-derived output; CLI and TOML tests
 for `rem6 gpu-run --nomali-output` NoMali-compatible adapter artifacts with
 T760 register-file, soft-reset, IRQ-clear, shader power, multi-artifact

@@ -1084,6 +1084,45 @@ fn rem6_run_power_analysis_includes_cache_activity() {
 }
 
 #[test]
+fn rem6_run_power_analysis_includes_transport_activity() {
+    let program = riscv64_load_store_program();
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("power-output-transport", &elf);
+    let power_path = temp_output("power-output-transport");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--execute",
+            "--dram-memory",
+            "--instruction-cache-protocol",
+            "msi",
+            "--data-cache-protocol",
+            "msi",
+            "--power-output",
+            power_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let power = fs::read_to_string(&power_path).unwrap();
+    assert!(power.contains("<component id=\"cpu0.core\""));
+    assert!(power.contains("<component id=\"memory.transport\""));
+    assert!(power.contains("total_watts="));
+}
+
+#[test]
 fn rem6_run_rejects_invalid_power_analysis_format() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("power-output-invalid-format", &elf);
