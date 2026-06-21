@@ -93,9 +93,9 @@ struct RiscvSbiTimerState {
 pub struct RiscvSbiHsmRecord {
     source_cpu: CpuId,
     function: u64,
-    target_hart: u64,
-    start_addr: u64,
-    opaque: u64,
+    arg0: u64,
+    arg1: u64,
+    arg2: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -154,19 +154,13 @@ impl RiscvSbiResetRecord {
 }
 
 impl RiscvSbiHsmRecord {
-    pub const fn new(
-        source_cpu: CpuId,
-        function: u64,
-        target_hart: u64,
-        start_addr: u64,
-        opaque: u64,
-    ) -> Self {
+    pub const fn new(source_cpu: CpuId, function: u64, arg0: u64, arg1: u64, arg2: u64) -> Self {
         Self {
             source_cpu,
             function,
-            target_hart,
-            start_addr,
-            opaque,
+            arg0,
+            arg1,
+            arg2,
         }
     }
 
@@ -178,16 +172,16 @@ impl RiscvSbiHsmRecord {
         self.function
     }
 
-    pub const fn target_hart(&self) -> u64 {
-        self.target_hart
+    pub const fn arg0(&self) -> u64 {
+        self.arg0
     }
 
-    pub const fn start_addr(&self) -> u64 {
-        self.start_addr
+    pub const fn arg1(&self) -> u64 {
+        self.arg1
     }
 
-    pub const fn opaque(&self) -> u64 {
-        self.opaque
+    pub const fn arg2(&self) -> u64 {
+        self.arg2
     }
 }
 
@@ -615,6 +609,7 @@ impl RiscvSbiFirmware {
                 {
                     self.schedule_hart_suspend(scheduler, core, parallel)
                         .map_err(SystemError::Scheduler)?;
+                    self.record_hsm_suspend(core.id(), request);
                 } else if outcome == RiscvSbiOutcome::Resumed
                     && request.arg0() == SBI_HSM_DEFAULT_NON_RETENTIVE_SUSPEND
                 {
@@ -626,6 +621,7 @@ impl RiscvSbiFirmware {
                         parallel,
                     )
                     .map_err(SystemError::Scheduler)?;
+                    self.record_hsm_suspend(core.id(), request);
                 }
                 outcome
             }
@@ -832,6 +828,19 @@ impl RiscvSbiFirmware {
                 core.hart_id(),
                 0,
                 0,
+            ));
+    }
+
+    fn record_hsm_suspend(&self, source_cpu: CpuId, request: RiscvSbiRequest) {
+        self.hsm
+            .lock()
+            .expect("RISC-V SBI HSM record lock")
+            .push(RiscvSbiHsmRecord::new(
+                source_cpu,
+                request.function(),
+                request.arg0(),
+                request.arg1(),
+                request.arg2(),
             ));
     }
 

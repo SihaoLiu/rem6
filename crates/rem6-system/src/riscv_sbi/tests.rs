@@ -3,7 +3,7 @@ use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuResetState, CpuTranslationFrontend,
     CpuTranslationFrontendSnapshot,
 };
-use rem6_kernel::{PartitionId, SchedulerContext};
+use rem6_kernel::{PartitionId, PartitionSnapshot, SchedulerContext, SchedulerSnapshot};
 use rem6_memory::{
     AccessSize, AgentId, CacheLineLayout, MemoryTargetId, PartitionedMemoryStore,
     TranslationPagePermissions, TranslationPageSize, TranslationQueueConfig,
@@ -1210,6 +1210,68 @@ fn scheduled_nonretentive_resume_does_not_complete_after_state_changes() {
         RiscvSbiOutcome::success(SBI_HSM_HART_STARTED)
     );
     assert_ne!(core0.pc(), Address::new(0x9000));
+}
+
+#[test]
+fn nonretentive_suspend_scheduler_error_leaves_no_hsm_record() {
+    let near_end = u64::MAX - 1;
+    let mut scheduler =
+        PartitionedScheduler::with_min_remote_delay(1, 2).expect("valid test scheduler");
+    let mut transport = MemoryTransport::new();
+    let cpu0_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(0),
+                2,
+                3,
+            )
+            .expect("valid CPU route"),
+        )
+        .expect("registered CPU route");
+    let core0 = test_core(0, 0, 7, "cpu0.ifetch", cpu0_route, 0x8000);
+    core0.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    let cluster = RiscvCluster::new([core0.clone()]).expect("valid cluster");
+    let firmware = RiscvSbiFirmware::new();
+    firmware
+        .register_cluster(&cluster)
+        .expect("cluster registers with SBI firmware");
+    execute_hsm_ecall(
+        &mut scheduler,
+        &transport,
+        &core0,
+        SBI_HSM_HART_SUSPEND,
+        SBI_HSM_DEFAULT_NON_RETENTIVE_SUSPEND,
+        0x9000,
+        0x55,
+    );
+    scheduler
+        .restore_quiescent(&SchedulerSnapshot::new(
+            near_end,
+            2,
+            vec![PartitionSnapshot::quiescent(
+                PartitionId::new(0),
+                near_end,
+                0,
+                0,
+            )],
+        ))
+        .expect("restore near-overflow scheduler");
+
+    let error = firmware
+        .handle_pending_core_trap(&mut scheduler, &core0, false)
+        .expect_err("tick overflow rejects non-retentive resume scheduling");
+
+    assert_eq!(
+        error,
+        SystemError::Scheduler(SchedulerError::TickOverflow {
+            now: near_end,
+            delay: 2,
+        })
+    );
+    assert!(firmware.hsm_records().is_empty());
 }
 
 #[test]

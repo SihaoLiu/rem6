@@ -37,9 +37,9 @@ pub(crate) struct Rem6RiscvSbiTimerSummary {
 pub(crate) struct Rem6RiscvSbiHsmSummary {
     source_cpu: u32,
     function: u64,
-    target_hart: u64,
-    start_addr: u64,
-    opaque: u64,
+    arg0: u64,
+    arg1: u64,
+    arg2: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -103,9 +103,9 @@ impl Rem6RiscvSbiHsmSummary {
         Self {
             source_cpu: record.source_cpu().get(),
             function: record.function(),
-            target_hart: record.target_hart(),
-            start_addr: record.start_addr(),
-            opaque: record.opaque(),
+            arg0: record.arg0(),
+            arg1: record.arg1(),
+            arg2: record.arg2(),
         }
     }
 
@@ -117,16 +117,16 @@ impl Rem6RiscvSbiHsmSummary {
         self.function
     }
 
-    pub(crate) const fn target_hart(&self) -> u64 {
-        self.target_hart
+    pub(crate) const fn arg0(&self) -> u64 {
+        self.arg0
     }
 
-    pub(crate) const fn start_addr(&self) -> u64 {
-        self.start_addr
+    pub(crate) const fn arg1(&self) -> u64 {
+        self.arg1
     }
 
-    pub(crate) const fn opaque(&self) -> u64 {
-        self.opaque
+    pub(crate) const fn arg2(&self) -> u64 {
+        self.arg2
     }
 
     pub(crate) const fn is_hart_start(&self) -> bool {
@@ -135,6 +135,10 @@ impl Rem6RiscvSbiHsmSummary {
 
     pub(crate) const fn is_hart_stop(&self) -> bool {
         self.function == 1
+    }
+
+    pub(crate) const fn is_hart_suspend(&self) -> bool {
+        self.function == 3
     }
 }
 

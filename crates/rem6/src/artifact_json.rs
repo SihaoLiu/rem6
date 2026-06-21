@@ -1317,14 +1317,25 @@ impl Rem6RiscvSbiTimerSummary {
 
 impl Rem6RiscvSbiHsmSummary {
     fn to_json(&self) -> String {
-        format!(
-            "{{\"source_cpu\":{},\"function\":{},\"target_hart\":{},\"start_addr\":\"0x{:x}\",\"opaque\":\"0x{:x}\"}}",
-            self.source_cpu(),
-            self.function(),
-            self.target_hart(),
-            self.start_addr(),
-            self.opaque(),
-        )
+        if self.is_hart_suspend() {
+            format!(
+                "{{\"source_cpu\":{},\"function\":{},\"suspend_type\":\"0x{:x}\",\"resume_addr\":\"0x{:x}\",\"opaque\":\"0x{:x}\"}}",
+                self.source_cpu(),
+                self.function(),
+                self.arg0(),
+                self.arg1(),
+                self.arg2(),
+            )
+        } else {
+            format!(
+                "{{\"source_cpu\":{},\"function\":{},\"target_hart\":{},\"start_addr\":\"0x{:x}\",\"opaque\":\"0x{:x}\"}}",
+                self.source_cpu(),
+                self.function(),
+                self.arg0(),
+                self.arg1(),
+                self.arg2(),
+            )
+        }
     }
 }
 
