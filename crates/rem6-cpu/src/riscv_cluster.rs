@@ -16,9 +16,7 @@ use crate::riscv_cluster_drive::{
 };
 pub use crate::riscv_cluster_error::RiscvClusterError;
 pub use crate::riscv_cluster_htm::{RiscvClusterHtmAbortOutcome, RiscvClusterHtmBeginOutcome};
-use crate::riscv_cluster_run::{
-    RiscvClusterDriveEvent, RiscvClusterRun, RiscvClusterStopReason, RiscvClusterTurn,
-};
+use crate::riscv_cluster_run::{RiscvClusterDriveEvent, RiscvClusterTurn};
 use crate::riscv_cluster_scheduler::{
     drive_parallel_scheduler_turn, drive_parallel_scheduler_turn_until_tick,
 };
@@ -40,6 +38,15 @@ fn can_retire_completed_fetch_while_fetch_pending(
     core: &RiscvCore,
 ) -> Result<bool, RiscvClusterError> {
     core.can_retire_completed_fetch_while_fetch_pending()
+        .map_err(|error| RiscvClusterError::Core { cpu, error })
+}
+
+fn record_pending_fetch_resource_stall(
+    cpu: CpuId,
+    core: &RiscvCore,
+) -> Result<(), RiscvClusterError> {
+    core.record_in_order_resource_stall_cycle()
+        .map(|_| ())
         .map_err(|error| RiscvClusterError::Core { cpu, error })
 }
 
@@ -197,18 +204,6 @@ impl RiscvCluster {
             .collect()
     }
 
-    fn run_result(
-        &self,
-        turns: Vec<RiscvClusterTurn>,
-        stop_reason: RiscvClusterStopReason,
-    ) -> RiscvClusterRun {
-        RiscvClusterRun::with_store_conditional_failure_diagnostics(
-            turns,
-            stop_reason,
-            self.store_conditional_failure_diagnostics(),
-        )
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn drive_core_next_action<F, D>(
         &self,
@@ -307,6 +302,7 @@ impl RiscvCluster {
                 {
                     continue;
                 }
+                record_pending_fetch_resource_stall(*cpu, core)?;
                 continue;
             }
 
@@ -390,6 +386,7 @@ impl RiscvCluster {
                 {
                     continue;
                 }
+                record_pending_fetch_resource_stall(*cpu, core)?;
                 continue;
             }
 
@@ -504,17 +501,21 @@ impl RiscvCluster {
                 continue;
             }
             if core.has_pending_fetch() {
-                if !data_only && can_retire_completed_fetch_while_fetch_pending(*cpu, core)? {
-                    if let Some(event) = completed_fetch_drive_event(*cpu, core)? {
-                        if committed_instructions >= instruction_budget {
-                            break;
-                        }
-                        prepared_actions.push(PreparedParallelAction::Ready(event));
-                        committed_instructions += 1;
-                        if committed_instructions >= instruction_budget {
-                            break;
+                if !data_only {
+                    if can_retire_completed_fetch_while_fetch_pending(*cpu, core)? {
+                        if let Some(event) = completed_fetch_drive_event(*cpu, core)? {
+                            if committed_instructions >= instruction_budget {
+                                break;
+                            }
+                            prepared_actions.push(PreparedParallelAction::Ready(event));
+                            committed_instructions += 1;
+                            if committed_instructions >= instruction_budget {
+                                break;
+                            }
+                            continue;
                         }
                     }
+                    record_pending_fetch_resource_stall(*cpu, core)?;
                 }
                 continue;
             }
@@ -657,6 +658,9 @@ impl RiscvCluster {
                 {
                     continue;
                 }
+                if !core.has_pending_data_access() {
+                    record_pending_fetch_resource_stall(*cpu, core)?;
+                }
                 continue;
             }
 
@@ -793,6 +797,9 @@ impl RiscvCluster {
                     && push_prepared_completed_fetch_drive_event(*cpu, core, &mut prepared_actions)?
                 {
                     continue;
+                }
+                if !core.has_pending_data_access() {
+                    record_pending_fetch_resource_stall(*cpu, core)?;
                 }
                 continue;
             }
@@ -1017,6 +1024,7 @@ impl RiscvCluster {
                 {
                     continue;
                 }
+                record_pending_fetch_resource_stall(*cpu, core)?;
                 continue;
             }
 
@@ -1120,17 +1128,21 @@ impl RiscvCluster {
                 continue;
             }
             if core.has_pending_fetch() {
-                if !data_only && can_retire_completed_fetch_while_fetch_pending(*cpu, core)? {
-                    if let Some(event) = completed_fetch_drive_event(*cpu, core)? {
-                        if committed_instructions >= instruction_budget {
-                            break;
-                        }
-                        actions.push(event);
-                        committed_instructions += 1;
-                        if committed_instructions >= instruction_budget {
-                            break;
+                if !data_only {
+                    if can_retire_completed_fetch_while_fetch_pending(*cpu, core)? {
+                        if let Some(event) = completed_fetch_drive_event(*cpu, core)? {
+                            if committed_instructions >= instruction_budget {
+                                break;
+                            }
+                            actions.push(event);
+                            committed_instructions += 1;
+                            if committed_instructions >= instruction_budget {
+                                break;
+                            }
+                            continue;
                         }
                     }
+                    record_pending_fetch_resource_stall(*cpu, core)?;
                 }
                 continue;
             }
@@ -1697,101 +1709,5 @@ impl RiscvCluster {
         };
         self.reconcile_reservation_invalidations();
         Ok(Some(turn))
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn drive_until<F, D, FR, DR, S>(
-        &self,
-        scheduler: &mut PartitionedScheduler,
-        transport: &MemoryTransport,
-        fetch_trace: MemoryTrace,
-        data_trace: MemoryTrace,
-        mut fetch_responder: F,
-        mut data_responder: D,
-        max_turns: usize,
-        mut stop: S,
-    ) -> Result<RiscvClusterRun, RiscvClusterError>
-    where
-        F: FnMut(CpuId) -> FR,
-        D: FnMut(CpuId) -> DR,
-        FR: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
-        DR: FnOnce(RequestDelivery, &mut SchedulerContext<'_>) -> TargetOutcome + Send + 'static,
-        S: FnMut(&RiscvClusterTurn) -> bool,
-    {
-        let mut turns = Vec::new();
-        for _ in 0..max_turns {
-            let turn = self.drive_turn(
-                scheduler,
-                transport,
-                fetch_trace.clone(),
-                data_trace.clone(),
-                &mut fetch_responder,
-                &mut data_responder,
-            )?;
-            if let Some(tick) = turn.idle_tick() {
-                turns.push(turn);
-                return Ok(self.run_result(turns, RiscvClusterStopReason::Idle { tick }));
-            }
-            if stop(&turn) {
-                turns.push(turn);
-                return Ok(self.run_result(turns, RiscvClusterStopReason::StopCondition));
-            }
-            turns.push(turn);
-        }
-
-        Err(RiscvClusterError::TurnLimitExceeded {
-            limit: max_turns,
-            completed: turns.len(),
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn drive_until_parallel<F, D, FR, DR, S>(
-        &self,
-        scheduler: &mut PartitionedScheduler,
-        transport: &MemoryTransport,
-        fetch_trace: MemoryTrace,
-        data_trace: MemoryTrace,
-        mut fetch_responder: F,
-        mut data_responder: D,
-        max_turns: usize,
-        mut stop: S,
-    ) -> Result<RiscvClusterRun, RiscvClusterError>
-    where
-        F: FnMut(CpuId) -> FR,
-        D: FnMut(CpuId) -> DR,
-        FR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
-            + Send
-            + 'static,
-        DR: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome
-            + Send
-            + 'static,
-        S: FnMut(&RiscvClusterTurn) -> bool,
-    {
-        let mut turns = Vec::new();
-        for _ in 0..max_turns {
-            let turn = self.drive_turn_parallel(
-                scheduler,
-                transport,
-                fetch_trace.clone(),
-                data_trace.clone(),
-                &mut fetch_responder,
-                &mut data_responder,
-            )?;
-            if let Some(tick) = turn.idle_tick() {
-                turns.push(turn);
-                return Ok(self.run_result(turns, RiscvClusterStopReason::Idle { tick }));
-            }
-            if stop(&turn) {
-                turns.push(turn);
-                return Ok(self.run_result(turns, RiscvClusterStopReason::StopCondition));
-            }
-            turns.push(turn);
-        }
-
-        Err(RiscvClusterError::TurnLimitExceeded {
-            limit: max_turns,
-            completed: turns.len(),
-        })
     }
 }

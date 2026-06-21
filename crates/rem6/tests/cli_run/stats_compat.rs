@@ -280,7 +280,7 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"committed_instructions\":2"));
-    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":6,\"in_flight\":0,"));
+    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":10,\"in_flight\":0,"));
     assert!(stdout.contains(
         "\"stage_in_flight\":{\"fetch1\":0,\"fetch2\":0,\"decode\":0,\"execute\":0,\"commit\":0}"
     ));
@@ -289,12 +289,15 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
     ));
     assert!(stdout.contains("\"stage_occupied_cycles\":{\"fetch1\":"));
     assert!(stdout.contains("\"retired\":2"));
+    assert!(stdout.contains("\"resource_blocked\":4"));
+    assert!(stdout.contains("\"stall_cycles\":4"));
+    assert!(stdout.contains("\"fetch_wait_cycles\":4"));
     assert!(stdout.contains("\"data_wait_cycles\":0"));
     assert_stat(
         &stdout,
         "sim.cpu0.pipeline.in_order.cycles",
         "Cycle",
-        6,
+        10,
         "monotonic",
     );
     assert_stat(
@@ -320,6 +323,27 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
             "monotonic",
         );
     }
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.resource_blocked",
+        "Count",
+        4,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.stall_cycles",
+        "Cycle",
+        4,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.fetch_wait_cycles",
+        "Cycle",
+        4,
+        "monotonic",
+    );
     assert_stat(
         &stdout,
         "sim.cpu0.pipeline.in_order.data_wait_cycles",
@@ -607,6 +631,57 @@ fn rem6_run_stats_emit_in_order_fetch_wait_cycles_from_execution() {
         "Cycle",
         0,
         "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_stats_emit_in_order_resource_stalls_for_pending_parallel_fetch() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-pending-fetch-resource-stalls", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--min-remote-delay",
+            "2",
+            "--memory-route-delay",
+            "5",
+            "--stats-format",
+            "json",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let fetch_wait_cycles = json_u64_field(&stdout, "\"fetch_wait_cycles\":");
+    let stall_cycles = json_u64_field(&stdout, "\"stall_cycles\":");
+    let resource_blocked = json_u64_field(&stdout, "\"resource_blocked\":");
+    assert!(fetch_wait_cycles > 0, "{stdout}");
+    assert!(stall_cycles > 0, "{stdout}");
+    assert!(resource_blocked > 0, "{stdout}");
+    assert_eq!(
+        stat_value(&stdout, "sim.cpu0.pipeline.in_order.stall_cycles"),
+        stall_cycles
+    );
+    assert_eq!(
+        stat_value(&stdout, "sim.cpu0.pipeline.in_order.resource_blocked"),
+        resource_blocked
     );
 }
 
