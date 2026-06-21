@@ -1086,27 +1086,27 @@ behavior.
 
 **Next evidence:** Runtime model integration tests through the adapter.
 
-### SST Adapter - 19% scoped
+### SST Adapter - 50% single-axis
 
-**Score calculation:** 1 of 4 items have executable evidence, or 25% raw. The
-bucket cap is scoped because SST evidence is the same library-level adapter
-boundary, not a runtime SST execution path.
+**Score calculation:** 2 of 4 items have executable evidence, or 50% raw. The
+bucket cap is single-axis because `trace-replay` drives the typed SST adapter
+boundary, but no external SST simulator runtime executes through it.
 
 - [x] A typed SST adapter boundary exists.
-- [ ] SST traffic handoff executes from a runtime SST bridge.
+- [x] SST traffic handoff executes from the top-level trace-replay runtime adapter path.
 - [ ] SST adapter checkpoint capture and restore are consumed by runtime SST state.
-- [ ] Runtime SST execution uses the adapter.
+- [ ] Runtime SST execution uses an external SST simulator bridge.
 
-**Migrated:** `CoSimAdapterBoundary` registers SST endpoints and accepts typed
-traffic-packet handoff with required transaction shape through the same
-external adapter contract in `rem6-proto` self-tests.
+**Migrated:** `CoSimAdapterBoundary` SST endpoint tests exist, and `rem6
+trace-replay --external-adapter-kind sst --external-adapter-endpoint <id>`
+hands packet-trace requests into that boundary, acknowledges them, snapshots a
+clean boundary, and emits `external_adapter` JSON.
 
-**Not migrated:** SST-specific checkpoint tests and runtime `ext/sst` plus
-`configs/example/sst` behavior.
+**Not migrated:** External SST simulator bridge execution, SST-owned runtime state, and `ext/sst` plus `configs/example/sst` behavior.
 
-**Evidence:** `cosim_adapter` tests in `rem6-proto`.
+**Evidence:** `cosim_adapter`; `rem6_trace_replay_hands_off_packet_requests_to_sst_adapter`; TOML/CLI external-adapter validation tests in the `rem6` CLI suite.
 
-**Next evidence:** SST-specific checkpoint and runtime handoff tests.
+**Next evidence:** External SST bridge execution and SST-owned checkpoint restore tests.
 
 ### Power and Physical-Design Export Adapters - 59% single-axis
 

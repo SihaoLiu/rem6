@@ -66,7 +66,7 @@ pub use config::{
     CliCachePrefetcher, CliDebugFlag, CliDramMemoryProfile, LoadBlobRequest, LoadBlobSource,
     MemoryDumpRequest, PowerAnalysisFormat, ReadfileRequest, ReadfileSource, Rem6GupsConfig,
     Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource,
-    StatsFormat, SuiteResourceSelector,
+    StatsFormat, SuiteResourceSelector, TraceReplayExternalAdapterKind,
 };
 use data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io,
@@ -119,6 +119,7 @@ use runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use stats_output::{run_stats_output, Rem6StatsInputs};
 pub use trace_replay_cli::{
     run_trace_replay_config, Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary,
+    Rem6TraceReplayExternalAdapterSummary,
 };
 pub(crate) use transport_summary::{
     memory_transport_summary, Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary,

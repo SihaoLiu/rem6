@@ -5,7 +5,7 @@ use rem6_workload::WorkloadDataCacheProtocol;
 use super::{
     load_trace_replay_file_config, parse_data_cache_protocol, parse_number, parse_positive_u64,
     required_value, trace_replay_file_config_from_args, CliDramMemoryProfile,
-    Rem6TraceReplayConfig, StatsFormat, SuiteResourceSelector,
+    Rem6TraceReplayConfig, StatsFormat, SuiteResourceSelector, TraceReplayExternalAdapterKind,
 };
 use crate::Rem6CliError;
 
@@ -116,6 +116,12 @@ impl Rem6TraceReplayConfig {
                 value: "0".to_string(),
             });
         }
+        let mut external_adapter_kind = file_config
+            .external_adapter_kind
+            .as_deref()
+            .map(TraceReplayExternalAdapterKind::parse)
+            .transpose()?;
+        let mut external_adapter_endpoint = file_config.external_adapter_endpoint.clone();
         let mut stats_format = file_config
             .stats_format
             .as_deref()
@@ -251,6 +257,14 @@ impl Rem6TraceReplayConfig {
                     let value = required_value(&flag, args.next())?;
                     fabric_credit_depth = Some(parse_fabric_credit_depth(&value)?);
                 }
+                "--external-adapter-kind" => {
+                    external_adapter_kind = Some(TraceReplayExternalAdapterKind::parse(
+                        &required_value(&flag, args.next())?,
+                    )?);
+                }
+                "--external-adapter-endpoint" => {
+                    external_adapter_endpoint = Some(required_value(&flag, args.next())?);
+                }
                 "--stats-format" => {
                     stats_format = StatsFormat::parse(&required_value(&flag, args.next())?)?;
                 }
@@ -282,6 +296,14 @@ impl Rem6TraceReplayConfig {
             return Err(Rem6CliError::MissingRequiredFlag {
                 flag: "--fabric-link",
             });
+        }
+        if external_adapter_kind.is_some() && external_adapter_endpoint.is_none() {
+            return Err(Rem6CliError::MissingRequiredFlag {
+                flag: "--external-adapter-endpoint",
+            });
+        }
+        if external_adapter_endpoint.is_some() && external_adapter_kind.is_none() {
+            return Err(Rem6CliError::TraceReplayExternalAdapterEndpointRequiresKind);
         }
         if let (Some(output), Some(stats_output)) = (&output, &stats_output) {
             if output == stats_output {
@@ -337,6 +359,8 @@ impl Rem6TraceReplayConfig {
             fabric_request_virtual_network: fabric_request_virtual_network.unwrap_or(0),
             fabric_response_virtual_network: fabric_response_virtual_network.unwrap_or(0),
             fabric_credit_depth,
+            external_adapter_kind,
+            external_adapter_endpoint,
             stats_format,
             output,
             stats_output,
@@ -428,6 +452,14 @@ impl Rem6TraceReplayConfig {
 
     pub const fn fabric_credit_depth(&self) -> Option<u32> {
         self.fabric_credit_depth
+    }
+
+    pub const fn external_adapter_kind(&self) -> Option<TraceReplayExternalAdapterKind> {
+        self.external_adapter_kind
+    }
+
+    pub fn external_adapter_endpoint(&self) -> Option<&str> {
+        self.external_adapter_endpoint.as_deref()
     }
 
     pub const fn stats_format(&self) -> StatsFormat {

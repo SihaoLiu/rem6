@@ -21,6 +21,7 @@ rem6-memory = { path = "../rem6-memory" }
 rem6-mmio = { path = "../rem6-mmio" }
 rem6-platform = { path = "../rem6-platform" }
 rem6-power = { path = "../rem6-power" }
+rem6-proto = { path = "../rem6-proto" }
 rem6-stats = { path = "../rem6-stats" }
 rem6-system = { path = "../rem6-system" }
 rem6-traffic = { path = "../rem6-traffic" }

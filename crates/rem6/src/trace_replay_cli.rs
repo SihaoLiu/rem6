@@ -5,9 +5,13 @@ use std::path::Path;
 use rem6_boot::BootImage;
 use rem6_coherence::ParallelCoherenceRunSummary;
 use rem6_dram::{DramMemoryActivityProfile, DramTargetActivity};
-use rem6_memory::{AccessSize, Address, AddressRange, CacheLineLayout, MemoryTargetId};
+use rem6_memory::{AccessSize, Address, AddressRange, AgentId, CacheLineLayout, MemoryTargetId};
+use rem6_proto::{
+    CoSimAdapterBoundary, CoSimAdapterKind, CoSimEndpoint, CoSimEndpointId, CoSimEvent,
+    CoSimEventKind,
+};
 use rem6_system::RiscvWorkloadReplay;
-use rem6_traffic::TrafficTrace;
+use rem6_traffic::{TrafficTrace, TrafficTraceConfig, TrafficTraceEvent, TrafficTraceGenerator};
 use rem6_workload::{
     WorkloadAcquiredResource, WorkloadAcquiredSuiteResource, WorkloadDataCacheProtocol,
     WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
@@ -19,7 +23,7 @@ use rem6_workload::{
 use sha2::{Digest, Sha256};
 
 use crate::cli_output::emit_cli_output;
-use crate::config::{Rem6TraceReplayConfig, StatsFormat};
+use crate::config::{Rem6TraceReplayConfig, StatsFormat, TraceReplayExternalAdapterKind};
 use crate::data_cache_runtime::CliDataCacheSummary;
 use crate::formatting::bytes_to_hex;
 use crate::guest_memory::build_cli_dram_profile;
@@ -48,6 +52,7 @@ pub struct Rem6TraceReplayArtifact {
     pub(crate) config: Rem6TraceReplayConfig,
     pub(crate) trace_digest: String,
     pub(crate) execution: Rem6TraceReplayExecutionSummary,
+    pub(crate) external_adapter: Option<Rem6TraceReplayExternalAdapterSummary>,
     pub(crate) stats_json: String,
     pub(crate) stats_text: String,
 }
@@ -60,6 +65,19 @@ pub struct Rem6TraceReplayExecutionSummary {
     pub(crate) data_cache: CliDataCacheSummary,
     pub(crate) data_cache_dram_summary: WorkloadParallelExecutionSummary,
     pub(crate) data_cache_dram_accesses: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6TraceReplayExternalAdapterSummary {
+    pub(crate) kind: TraceReplayExternalAdapterKind,
+    pub(crate) endpoint: String,
+    pub(crate) events: usize,
+    pub(crate) completed_events: usize,
+    pub(crate) pending_events: usize,
+    pub(crate) checkpoint_endpoints: usize,
+    pub(crate) checkpoint_completed_events: usize,
+    pub(crate) first_tick: Option<u64>,
+    pub(crate) last_tick: Option<u64>,
 }
 
 pub(crate) fn run_trace_replay_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
@@ -160,6 +178,7 @@ pub fn run_trace_replay_config(
             .sum(),
         data_cache_dram_summary,
     };
+    let external_adapter = trace_replay_external_adapter_summary(&config, &trace)?;
     let stats = trace_replay_stats_output(Rem6TraceReplayStatsInputs {
         config: &config,
         execution: &execution,
@@ -170,9 +189,114 @@ pub fn run_trace_replay_config(
         config,
         trace_digest,
         execution,
+        external_adapter,
         stats_json: stats.json,
         stats_text: stats.text,
     })
+}
+
+fn trace_replay_external_adapter_summary(
+    config: &Rem6TraceReplayConfig,
+    trace: &TrafficTrace,
+) -> Result<Option<Rem6TraceReplayExternalAdapterSummary>, Rem6CliError> {
+    let Some(kind) = config.external_adapter_kind() else {
+        return Ok(None);
+    };
+    let endpoint = config
+        .external_adapter_endpoint()
+        .ok_or(Rem6CliError::MissingRequiredFlag {
+            flag: "--external-adapter-endpoint",
+        })?;
+    let endpoint_id = CoSimEndpointId::new(endpoint).map_err(execute_error)?;
+    let mut boundary = CoSimAdapterBoundary::new();
+    boundary
+        .register_endpoint(
+            CoSimEndpoint::new(
+                endpoint_id.clone(),
+                co_sim_adapter_kind(kind),
+                trace.tick_frequency(),
+            )
+            .map_err(execute_error)?,
+        )
+        .map_err(execute_error)?;
+
+    let line_layout = CacheLineLayout::new(config.line_bytes()).map_err(execute_error)?;
+    let duration = trace.max_tick().unwrap_or(0).saturating_add(1);
+    let trace_config = TrafficTraceConfig::new(
+        AgentId::new(config.agent()),
+        line_layout,
+        duration,
+        trace.clone(),
+    )
+    .map_err(execute_error)?;
+    let mut generator = TrafficTraceGenerator::new(trace_config);
+    generator.enter(0);
+
+    let mut events = 0usize;
+    let mut first_tick = None;
+    let mut last_tick = None;
+    while let Some(event) = generator.next_event(0, 0).map_err(execute_error)? {
+        let TrafficTraceEvent::Request(request) = event else {
+            continue;
+        };
+        let size = u32::try_from(request.request().size().bytes()).map_err(|_| {
+            execute_error(format!(
+                "trace replay external adapter request size {} exceeds u32",
+                request.request().size().bytes()
+            ))
+        })?;
+        let mut payload = vec![0; size as usize];
+        if let Some(data) = request.request().data() {
+            if data.len() != payload.len() {
+                return Err(Rem6CliError::Execute {
+                    error: format!(
+                        "trace replay external adapter request payload has {} bytes; expected {}",
+                        data.len(),
+                        payload.len()
+                    ),
+                });
+            }
+            payload.copy_from_slice(data);
+        }
+        let sequence = request.sequence().saturating_add(1);
+        let event = CoSimEvent::new(
+            sequence,
+            endpoint_id.clone(),
+            request.tick(),
+            CoSimEventKind::TrafficPacket,
+        )
+        .with_address(request.address())
+        .with_size(size)
+        .with_payload(payload);
+        boundary.handoff_event(event).map_err(execute_error)?;
+        boundary
+            .acknowledge_event(sequence, request.tick())
+            .map_err(execute_error)?;
+        events += 1;
+        first_tick = Some(first_tick.map_or(request.tick(), |tick: u64| tick.min(request.tick())));
+        last_tick = Some(last_tick.map_or(request.tick(), |tick: u64| tick.max(request.tick())));
+    }
+
+    let completed_events = boundary.completed_events().len();
+    let pending_events = boundary.pending_events().len();
+    let snapshot = boundary.snapshot().map_err(execute_error)?;
+    Ok(Some(Rem6TraceReplayExternalAdapterSummary {
+        kind,
+        endpoint: endpoint.to_string(),
+        events,
+        completed_events,
+        pending_events,
+        checkpoint_endpoints: snapshot.endpoints().len(),
+        checkpoint_completed_events: snapshot.completed_events().len(),
+        first_tick,
+        last_tick,
+    }))
+}
+
+const fn co_sim_adapter_kind(kind: TraceReplayExternalAdapterKind) -> CoSimAdapterKind {
+    match kind {
+        TraceReplayExternalAdapterKind::Sst => CoSimAdapterKind::Sst,
+    }
 }
 
 fn trace_replay_payload(

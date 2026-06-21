@@ -9,6 +9,7 @@ use serde::Deserialize;
 
 use crate::Rem6CliError;
 
+mod cache;
 mod debug;
 mod dram;
 mod output_format;
@@ -16,6 +17,7 @@ mod riscv_branch;
 mod riscv_se_input;
 mod trace_replay;
 
+pub use cache::CliCachePrefetcher;
 pub use debug::CliDebugFlag;
 use debug::{parse_debug_flag_list, parse_debug_flags};
 pub use dram::CliDramMemoryProfile;
@@ -62,33 +64,23 @@ impl RequestedIsa {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CliCachePrefetcher {
-    TaggedNextLine,
+pub enum TraceReplayExternalAdapterKind {
+    Sst,
 }
 
-impl CliCachePrefetcher {
-    fn parse(value: &str) -> Option<Self> {
+impl TraceReplayExternalAdapterKind {
+    fn parse(value: &str) -> Result<Self, Rem6CliError> {
         match value {
-            "tagged-next-line" => Some(Self::TaggedNextLine),
-            _ => None,
+            "sst" => Ok(Self::Sst),
+            _ => Err(Rem6CliError::InvalidTraceReplayExternalAdapterKind {
+                value: value.to_string(),
+            }),
         }
-    }
-
-    pub fn parse_data_cache(value: &str) -> Result<Self, Rem6CliError> {
-        Self::parse(value).ok_or_else(|| Rem6CliError::InvalidRunDataCachePrefetcher {
-            value: value.to_string(),
-        })
-    }
-
-    pub fn parse_instruction_cache(value: &str) -> Result<Self, Rem6CliError> {
-        Self::parse(value).ok_or_else(|| Rem6CliError::InvalidRunInstructionCachePrefetcher {
-            value: value.to_string(),
-        })
     }
 
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::TaggedNextLine => "tagged-next-line",
+            Self::Sst => "sst",
         }
     }
 }
@@ -174,6 +166,8 @@ pub struct Rem6TraceReplayConfig {
     fabric_request_virtual_network: u16,
     fabric_response_virtual_network: u16,
     fabric_credit_depth: Option<u32>,
+    external_adapter_kind: Option<TraceReplayExternalAdapterKind>,
+    external_adapter_endpoint: Option<String>,
     stats_format: StatsFormat,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
@@ -293,6 +287,8 @@ struct Rem6TraceReplayFileConfig {
     fabric_request_virtual_network: Option<u16>,
     fabric_response_virtual_network: Option<u16>,
     fabric_credit_depth: Option<u32>,
+    external_adapter_kind: Option<String>,
+    external_adapter_endpoint: Option<String>,
     stats_format: Option<String>,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
@@ -1721,6 +1717,8 @@ fn trace_replay_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>
             "--fabric-request-virtual-network",
             "--fabric-response-virtual-network",
             "--fabric-credit-depth",
+            "--external-adapter-kind",
+            "--external-adapter-endpoint",
             "--stats-format",
             "--output",
             "--stats-output",

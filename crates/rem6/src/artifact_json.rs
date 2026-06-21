@@ -13,7 +13,7 @@ use super::{
     Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary, Rem6PcCountTrackerSummary,
     Rem6ReadfileSummary, Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary,
     Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact, Rem6TraceReplayArtifact,
-    Rem6TraceReplayExecutionSummary, RequestedIsa,
+    Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -271,8 +271,13 @@ impl Rem6TraceReplayArtifact {
             .trace_resource()
             .map(|selector| format!("\"{}\"", json_escape(&selector.source_name())))
             .unwrap_or_else(|| "null".to_string());
+        let external_adapter = self
+            .external_adapter
+            .as_ref()
+            .map(Rem6TraceReplayExternalAdapterSummary::to_json)
+            .unwrap_or_else(|| "null".to_string());
         format!(
-            "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_resource\":{},\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"data_cache_protocol\":{},\"data_cache_dram_memory_profile\":{},\"fabric_link\":{},\"fabric_bandwidth_bytes_per_tick\":{},\"fabric_request_virtual_network\":{},\"fabric_response_virtual_network\":{},\"fabric_credit_depth\":{},\"simulation\":{},\"summary\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_resource\":{},\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"data_cache_protocol\":{},\"data_cache_dram_memory_profile\":{},\"fabric_link\":{},\"fabric_bandwidth_bytes_per_tick\":{},\"fabric_request_virtual_network\":{},\"fabric_response_virtual_network\":{},\"fabric_credit_depth\":{},\"external_adapter\":{},\"simulation\":{},\"summary\":{},\"stats\":{}}}\n",
             self.schema,
             json_escape(&self.config.trace_input()),
             trace_resource,
@@ -291,6 +296,7 @@ impl Rem6TraceReplayArtifact {
             fabric_request_virtual_network,
             fabric_response_virtual_network,
             fabric_credit_depth,
+            external_adapter,
             self.execution.to_json(self.config.max_tick()),
             traffic_trace_summary_json(
                 self.execution.summary(),
@@ -300,6 +306,23 @@ impl Rem6TraceReplayArtifact {
                 self.execution.data_cache_dram_accesses(),
             ),
             self.stats_json,
+        )
+    }
+}
+
+impl Rem6TraceReplayExternalAdapterSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"kind\":\"{}\",\"endpoint\":\"{}\",\"events\":{},\"completed_events\":{},\"pending_events\":{},\"checkpoint_endpoints\":{},\"checkpoint_completed_events\":{},\"first_tick\":{},\"last_tick\":{}}}",
+            self.kind.as_str(),
+            json_escape(&self.endpoint),
+            self.events,
+            self.completed_events,
+            self.pending_events,
+            self.checkpoint_endpoints,
+            self.checkpoint_completed_events,
+            optional_tick_json(self.first_tick),
+            optional_tick_json(self.last_tick),
         )
     }
 }

@@ -6,6 +6,8 @@ use crate::support::*;
 
 #[path = "trace_replay/data_cache_fabric.rs"]
 mod data_cache_fabric;
+#[path = "trace_replay/external_adapter.rs"]
+mod external_adapter;
 #[path = "trace_replay/fabric.rs"]
 mod fabric;
 
@@ -172,7 +174,7 @@ fn rem6_trace_replay_loads_toml_config_relative_trace_and_cli_route_override() {
     std::fs::write(
         &config,
         format!(
-            "[trace_replay]\ntrace = \"{}\"\nroute = \"cpu0.config\"\nmemory_start = 4096\nmemory_size = 4096\nmax_tick = 64\ntick_frequency = 1000\nline_bytes = 64\nagent = 7\ncontrol_partition = 2\nfabric_link = \"cpu_mem\"\nfabric_bandwidth_bytes_per_tick = 4\nfabric_request_virtual_network = 3\nfabric_response_virtual_network = 4\nfabric_credit_depth = 2\nstats_format = \"json\"\n",
+            "[trace_replay]\ntrace = \"{}\"\nroute = \"cpu0.config\"\nmemory_start = 4096\nmemory_size = 4096\nmax_tick = 64\ntick_frequency = 1000\nline_bytes = 64\nagent = 7\ncontrol_partition = 2\nfabric_link = \"cpu_mem\"\nfabric_bandwidth_bytes_per_tick = 4\nfabric_request_virtual_network = 3\nfabric_response_virtual_network = 4\nfabric_credit_depth = 2\nexternal_adapter_kind = \"sst\"\nexternal_adapter_endpoint = \"sst.config0\"\nstats_format = \"json\"\n",
             trace_name
         ),
     )
@@ -205,6 +207,9 @@ fn rem6_trace_replay_loads_toml_config_relative_trace_and_cli_route_override() {
     assert!(stdout.contains("\"fabric_request_virtual_network\":3"));
     assert!(stdout.contains("\"fabric_response_virtual_network\":4"));
     assert!(stdout.contains("\"fabric_credit_depth\":2"));
+    assert!(stdout.contains("\"external_adapter\":{\"kind\":\"sst\""));
+    assert!(stdout.contains("\"endpoint\":\"sst.config0\""));
+    assert!(stdout.contains("\"events\":1"));
     assert!(stdout.contains("\"active_fabric_lane_count\":2"));
     assert!(stdout.contains("\"active_fabric_virtual_network_count\":2"));
     assert_stat(

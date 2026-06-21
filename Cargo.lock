@@ -169,6 +169,7 @@ dependencies = [
  "rem6-mmio",
  "rem6-platform",
  "rem6-power",
+ "rem6-proto",
  "rem6-stats",
  "rem6-system",
  "rem6-traffic",

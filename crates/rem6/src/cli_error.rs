@@ -117,6 +117,9 @@ pub enum Rem6CliError {
     InvalidTraceReplayFabricCreditDepth {
         value: String,
     },
+    InvalidTraceReplayExternalAdapterKind {
+        value: String,
+    },
     InvalidGpuRunFabricBandwidth {
         value: String,
     },
@@ -210,6 +213,7 @@ pub enum Rem6CliError {
     DebugFlagsRequireExecution,
     DebugFlagsRequireJsonStats,
     PowerOutputRequiresExecution,
+    TraceReplayExternalAdapterEndpointRequiresKind,
     RiscvSeInputRequiresRiscvSe {
         input: &'static str,
     },
@@ -410,6 +414,12 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidTraceReplayFabricCreditDepth { value } => {
                 write!(formatter, "invalid trace replay fabric credit depth {value}")
             }
+            Self::InvalidTraceReplayExternalAdapterKind { value } => {
+                write!(
+                    formatter,
+                    "unsupported trace replay external adapter kind {value}; supported: sst"
+                )
+            }
             Self::InvalidGpuRunFabricBandwidth { value } => {
                 write!(formatter, "invalid gpu run fabric bandwidth {value}")
             }
@@ -549,6 +559,12 @@ impl fmt::Display for Rem6CliError {
             }
             Self::PowerOutputRequiresExecution => {
                 write!(formatter, "--power-output requires --execute")
+            }
+            Self::TraceReplayExternalAdapterEndpointRequiresKind => {
+                write!(
+                    formatter,
+                    "--external-adapter-endpoint requires --external-adapter-kind"
+                )
             }
             Self::RiscvSeInputRequiresRiscvSe { input } => {
                 write!(formatter, "{input} requires --riscv-se")
