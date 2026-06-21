@@ -756,7 +756,7 @@ pipeline and cache/DRAM runtime state.
 - [x] GDB packet byte streams drive typed step/resume and break/watch control state in memory-backed sessions.
 - [x] CLI `run --gdb-listen` applies pre-execution RISC-V register writes,
   memory writes, and software breakpoint packets before the normal run consumes
-  the mutated core and memory state, including vector data registers and vector-configuration CSRs.
+  the mutated core and memory state, including vector data registers, vector-configuration CSRs, and supervisor/machine trap CSRs.
 - [x] CLI `run --gdb-listen` single-step packets drive one real RISC-V
   instruction, return a GDB stop reply, and leave the stepped state visible to
   subsequent register reads and detach-time execution.
@@ -868,7 +868,7 @@ pre-execution writes consumed by the subsequent run, including RV64 vector
 data register target-description and register-cache smoke coverage,
 CLI `run --gdb-listen`
 single-step, continue, `vCont;c`, hardware-breakpoint, and data-watchpoint
-smoke tests, GDB cache-runtime smoke tests,
+smoke tests, trap CSR pre-execution smoke tests, GDB cache-runtime smoke tests,
 power-analysis export tests, CLI power-output tests, system GDB software
 breakpoint patch/restore tests, CLI data-access probe tests, CLI `Exec`,
 `Fetch`, `Data`, and `Syscall` debug-flag tests, and histogram

@@ -11,6 +11,8 @@ use crate::support::*;
 
 #[path = "gdb/preexecution_state.rs"]
 mod preexecution_state;
+#[path = "gdb/trap_csrs.rs"]
+mod trap_csrs;
 
 fn start_riscv_gdb_run(name: &str, program: Vec<u8>, max_tick: u64) -> (Child, TcpStream) {
     let elf = riscv64_elf(0x1000, 0x1000, &program);
