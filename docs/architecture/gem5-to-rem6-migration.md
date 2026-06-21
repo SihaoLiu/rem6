@@ -238,27 +238,18 @@ counter, data-stall cycle stat, and data-wait cycle stat; CLI run stats also exp
 in-order cycle-plan advance, general flush, resource-blocked,
 ordering-blocked, branch-prediction, branch-misprediction,
 branch-prediction flush, and redirect counters from the same executed RISC-V
-timing records, including
-nonzero branch-prediction flush evidence for a real taken RISC-V branch.
-RISC-V in-order timing tests include retired taken and fall-through branch
-prediction redirect evidence from the normal execution path, plus direct
-completed-fetch overlap evidence before retire. CPU frontend and cluster tests
-also cover normal-driver fetch-ahead before retiring straight-line integer and
-conditional branch instructions, including trained taken-branch target fetch, direct `JAL` target preservation through a correct in-order front-end prediction cycle, and
-branch speculation history commit across serial, translated, and parallel fetch
-paths, pending-fetch retire overlap for older completed straight-line
-instructions across serial, translated, and parallel-fetch drivers, pending
-compressed straight-line fetch-ahead through the normal parallel-cluster driver,
-pending fetch-ahead occupancy in the in-order stage snapshot immediately after issue and
-before response completion, normal-driver branch retirement before wrong-path
-fetch-ahead response completion across core and parallel-cluster paths,
-including trained predicted-target to actual-fall-through repair in the core
-path, and a CLI tick-limit stats run with two fetch requests, one fetch
-response, one retired instruction, and nonzero in-order pipeline cycles plus
-`sim.cpu0.pipeline.in_order.in_flight = 1` with matching per-stage current/max
-stats, per-stage occupied-cycle stats from executed in-order records, and in-order advanced count greater than retired count from recorded non-retire cycles, plus serial trap repair and
-stream-reset discard coverage; a direct `JAL` CLI tick-limit run records the jump retired with the target fetch still in flight, three total fetch requests, two fetch responses, and no committed fall-through register update. These paths preserve branch speculation,
-pending-interrupt redirect, and data-access ordering.
+timing records, including nonzero branch-prediction flush evidence for a real
+taken RISC-V branch.
+RISC-V in-order timing tests cover retired taken/fall-through redirect,
+completed-fetch overlap, serial/translated/parallel fetch-ahead, compressed
+fetch-ahead, wrong-path repair, pending occupancy before response completion,
+serial trap repair, stream-reset discard, and normal-driver fetch-response wait
+resource-stall records that preserve in-flight fetch state without breaking
+completed-fetch overlap. CLI tick-limit runs expose pending fetch occupancy,
+per-stage occupied-cycle stats, non-retire cycle advancement, and direct `JAL`
+target-fetch-in-flight behavior without committing the fall-through register
+update. These paths preserve branch speculation, pending-interrupt redirect,
+and data-access ordering.
 CLI `rem6 run --checker-cpu` executes the same RISC-V retire path and emits per-core checked-instruction and mismatch counters from the checker snapshot;
 checker tests cover retire comparison, data writeback sync, environment-call
 completion sync, public register writes, and HTM abort rollback.

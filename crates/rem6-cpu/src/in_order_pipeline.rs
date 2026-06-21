@@ -350,6 +350,19 @@ pub struct InOrderPipelinePlan {
 }
 
 impl InOrderPipelinePlan {
+    fn resource_stall<I>(instructions: I) -> Result<Self, InOrderPipelineError>
+    where
+        I: IntoIterator<Item = InOrderPipelineInstruction>,
+    {
+        Ok(Self {
+            advanced: Vec::new(),
+            resource_blocked: canonical_in_flight(instructions)?,
+            ordering_blocked: Vec::new(),
+            flushed: Vec::new(),
+            redirect: None,
+        })
+    }
+
     pub fn advanced(&self) -> &[InOrderPipelineAdvance] {
         &self.advanced
     }
@@ -1054,6 +1067,24 @@ impl InOrderPipelineState {
             .checked_add(cycles)
             .ok_or(InOrderPipelineError::CycleCursorOverflow { cycle: self.cycle })?;
         Ok(())
+    }
+
+    pub fn try_record_resource_stall_cycle(
+        &mut self,
+    ) -> Result<InOrderPipelineCycleRecord, InOrderPipelineError> {
+        let before = self.snapshot();
+        let plan = InOrderPipelinePlan::resource_stall(self.in_flight.iter().copied())?;
+        self.cycle = next_cycle(self.cycle)?;
+        let after = self.snapshot();
+
+        Ok(InOrderPipelineCycleRecord {
+            cycle: before.cycle(),
+            stall_cycle_count: 1,
+            before,
+            plan,
+            branch_predictions: Vec::new(),
+            after,
+        })
     }
 
     pub fn try_advance_cycle_recorded_with_redirect(

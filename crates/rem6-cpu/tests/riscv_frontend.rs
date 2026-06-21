@@ -2736,6 +2736,54 @@ fn riscv_core_driver_retires_completed_fetch_while_fetch_ahead_is_pending() {
 }
 
 #[test]
+fn riscv_core_driver_records_fetch_response_wait_cycle() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let store = loaded_program_store(0x8000, &[i_type(7, 0, 0x0, 1, 0x13), 0x0010_0073], &[]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(
+        in_order_in_flight(&core),
+        vec![(0, InOrderPipelineStage::Fetch1)]
+    );
+
+    assert_eq!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        None
+    );
+    let records = core.in_order_pipeline_cycle_records();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].cycle(), 0);
+    assert_eq!(records[0].stall_cycle_count(), 1);
+    assert_eq!(
+        records[0].before().in_flight(),
+        records[0].after().in_flight()
+    );
+    assert_eq!(records[0].summary().advanced_count(), 0);
+    assert_eq!(records[0].summary().retired_count(), 0);
+    assert_eq!(records[0].summary().resource_blocked_count(), 1);
+    assert_eq!(records[0].summary().ordering_blocked_count(), 0);
+    assert_eq!(
+        in_order_in_flight(&core),
+        vec![(0, InOrderPipelineStage::Fetch1)]
+    );
+
+    scheduler.run_until_idle_conservative();
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::decode(i_type(7, 0, 0x0, 1, 0x13)).unwrap()
+    );
+    assert_eq!(core.read_register(reg(1)), 7);
+    assert!(core
+        .in_order_pipeline_cycle_records()
+        .iter()
+        .any(|record| record.summary().retired_count() == 1));
+}
+
+#[test]
 fn riscv_core_driver_removes_retried_fetch_ahead_from_in_order_pipeline() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);

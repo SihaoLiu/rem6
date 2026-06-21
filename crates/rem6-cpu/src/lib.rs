@@ -1112,6 +1112,18 @@ impl RiscvCore {
             .clone()
     }
 
+    pub(crate) fn record_in_order_resource_stall_cycle(
+        &self,
+    ) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
+        let mut state = self.state.lock().expect("riscv core lock");
+        let record = state
+            .in_order_pipeline
+            .try_record_resource_stall_cycle()
+            .map_err(RiscvCpuError::InOrderPipeline)?;
+        state.in_order_pipeline_cycle_records.push(record.clone());
+        Ok(record)
+    }
+
     pub(crate) fn invalidate_load_reservation_if_overlaps(
         &self,
         address: Address,

@@ -413,6 +413,44 @@ fn in_order_pipeline_advance_cycle_increments_cycle_cursor() {
 }
 
 #[test]
+fn in_order_pipeline_resource_stall_cycle_preserves_in_flight_work() {
+    let mut state = InOrderPipelineState::new(config_with_decode_width(1));
+    state
+        .replace_in_flight([
+            instruction(7, InOrderPipelineStage::Fetch1),
+            instruction(8, InOrderPipelineStage::Decode),
+        ])
+        .unwrap();
+
+    let record = state.try_record_resource_stall_cycle().unwrap();
+
+    assert_eq!(record.cycle(), 0);
+    assert_eq!(record.stall_cycle_count(), 1);
+    assert_eq!(record.before().cycle(), 0);
+    assert_eq!(record.after().cycle(), 1);
+    assert_eq!(record.before().in_flight(), record.after().in_flight());
+    assert_eq!(state.cycle(), 1);
+    assert_eq!(
+        state
+            .in_flight()
+            .iter()
+            .map(|instruction| (instruction.sequence(), instruction.stage()))
+            .collect::<Vec<_>>(),
+        vec![
+            (7, InOrderPipelineStage::Fetch1),
+            (8, InOrderPipelineStage::Decode)
+        ]
+    );
+
+    let summary = record.summary();
+    assert_eq!(summary.advanced_count(), 0);
+    assert_eq!(summary.retired_count(), 0);
+    assert_eq!(summary.resource_blocked_count(), 2);
+    assert_eq!(summary.ordering_blocked_count(), 0);
+    assert!(!summary.state_changed());
+}
+
+#[test]
 fn in_order_pipeline_try_advance_rejects_cycle_cursor_overflow() {
     let snapshot = InOrderPipelineSnapshot::with_cycle(config_with_decode_width(1), u64::MAX, []);
     let mut state = InOrderPipelineState::restore(snapshot).unwrap();
