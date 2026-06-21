@@ -166,7 +166,7 @@ pub use riscv_data_access::{
 };
 pub use riscv_execution_event::{
     RiscvBiModeBranchUpdate, RiscvCoreDriveAction, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
-    RiscvTournamentBranchUpdate,
+    RiscvTageScLBranchUpdate, RiscvTournamentBranchUpdate,
 };
 pub use riscv_hart_run_state::RiscvHartRunState;
 pub use riscv_sc_progress::{
@@ -229,6 +229,7 @@ pub const DEFAULT_RISCV_TOURNAMENT_CHOICE_ENTRIES: usize = 1024;
 pub const RISCV_LOCAL_GSHARE_THREAD: CpuId = CpuId::new(0);
 pub const RISCV_LOCAL_BIMODE_THREAD: CpuId = CpuId::new(0);
 pub const RISCV_LOCAL_TOURNAMENT_THREAD: CpuId = CpuId::new(0);
+pub const RISCV_LOCAL_TAGE_SC_L_THREAD: CpuId = CpuId::new(0);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RiscvBranchPredictorKind {
@@ -237,6 +238,52 @@ pub enum RiscvBranchPredictorKind {
     GShare,
     BiMode,
     Tournament,
+    TageScL,
+}
+
+fn default_riscv_tage_sc_l_branch_predictor() -> TageScLBranchPredictor {
+    TageScLBranchPredictor::new(
+        TageScLBranchPredictorConfig::new(
+            LTageBranchPredictorConfig::new(
+                default_riscv_tage_branch_predictor_config(),
+                default_riscv_loop_branch_predictor_config(),
+            )
+            .expect("default RISC-V LTage branch predictor config is valid"),
+            StatisticalCorrectorConfig::tage_sc_l_8kb(1, 2, false)
+                .expect("default RISC-V TAGE-SC-L statistical corrector config is valid"),
+        )
+        .expect("default RISC-V TAGE-SC-L branch predictor config is valid"),
+    )
+}
+
+fn default_riscv_tage_branch_predictor_config() -> TageBranchPredictorConfig {
+    TageBranchPredictorConfig::with_options(
+        1,
+        2,
+        2,
+        6,
+        vec![0, 4, 5],
+        vec![4, 3, 3],
+        1,
+        3,
+        2,
+        8,
+        4,
+        1,
+        4,
+        1,
+        2,
+        false,
+        false,
+    )
+    .expect("default RISC-V TAGE branch predictor config is valid")
+}
+
+fn default_riscv_loop_branch_predictor_config() -> LoopBranchPredictorConfig {
+    LoopBranchPredictorConfig::with_options(
+        1, 3, 1, 3, 2, 4, 4, 3, 2, false, false, false, false, 1, 3, true,
+    )
+    .expect("default RISC-V loop branch predictor config is valid")
 }
 
 #[derive(Clone)]
@@ -1119,6 +1166,14 @@ impl RiscvCore {
             .snapshot()
     }
 
+    pub fn tage_sc_l_branch_predictor_snapshot(&self) -> TageScLBranchPredictorSnapshot {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .tage_sc_l_branch_predictor
+            .snapshot()
+    }
+
     pub fn in_order_pipeline_snapshot(&self) -> InOrderPipelineSnapshot {
         self.state
             .lock()
@@ -1220,6 +1275,7 @@ struct RiscvCoreState {
     gshare_branch_predictor: GShareBranchPredictor,
     bimode_branch_predictor: BiModeBranchPredictor,
     tournament_branch_predictor: TournamentBranchPredictor,
+    tage_sc_l_branch_predictor: TageScLBranchPredictor,
     in_order_pipeline: InOrderPipelineState,
     in_order_pipeline_cycle_records: Vec<InOrderPipelineCycleRecord>,
     events: Vec<RiscvCpuExecutionEvent>,
@@ -1279,6 +1335,7 @@ impl RiscvCoreState {
                 )
                 .expect("default RISC-V tournament branch predictor config is valid"),
             ),
+            tage_sc_l_branch_predictor: default_riscv_tage_sc_l_branch_predictor(),
             in_order_pipeline: InOrderPipelineState::new(
                 riscv_in_order_config::default_riscv_in_order_pipeline_config(),
             ),

@@ -8,7 +8,8 @@ use crate::{
     CpuFetchRecord, InOrderBranchPrediction, InOrderBranchRedirect, InOrderPipelineCycleRecord,
     InOrderPipelineInstruction, InOrderPipelineStage, RiscvBiModeBranchUpdate, RiscvCore,
     RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
-    RiscvTournamentBranchUpdate, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+    RiscvTageScLBranchUpdate, RiscvTournamentBranchUpdate, StatisticalCorrectorBranchKind,
+    RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_TAGE_SC_L_THREAD,
     RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
@@ -682,6 +683,24 @@ fn retire_branch_predictions(
         .tournament_branch_predictor
         .train(tournament_prediction.history(), actual_taken, false)
         .map_err(RiscvCpuError::TournamentBranchPredictor)?;
+    let tage_sc_l_prediction = state
+        .tage_sc_l_branch_predictor
+        .predict(RISCV_LOCAL_TAGE_SC_L_THREAD, pc, conditional)
+        .map_err(RiscvCpuError::TageScLBranchPredictor)?;
+    let tage_sc_l_target = if conditional {
+        static_conditional_branch_target(pc, instruction).unwrap_or(Address::new(next_pc))
+    } else {
+        Address::new(next_pc)
+    };
+    let tage_sc_l_training_update = state
+        .tage_sc_l_branch_predictor
+        .train(
+            tage_sc_l_prediction.history(),
+            actual_taken,
+            statistical_corrector_branch_kind(instruction),
+            tage_sc_l_target,
+        )
+        .map_err(RiscvCpuError::TageScLBranchPredictor)?;
 
     Ok(RiscvRetiredBranchResolution::new(
         RiscvRetiredBranchUpdates::new(
@@ -697,9 +716,41 @@ fn retire_branch_predictions(
                 tournament_history_update,
                 tournament_training_update,
             ),
+            RiscvTageScLBranchUpdate::new(tage_sc_l_prediction, tage_sc_l_training_update),
         ),
         selected_prediction,
     ))
+}
+
+const fn statistical_corrector_branch_kind(
+    instruction: RiscvInstruction,
+) -> StatisticalCorrectorBranchKind {
+    match instruction {
+        RiscvInstruction::Jal { .. } => StatisticalCorrectorBranchKind::DirectUnconditional,
+        RiscvInstruction::Jalr { .. } => StatisticalCorrectorBranchKind::IndirectUnconditional,
+        _ => StatisticalCorrectorBranchKind::DirectConditional,
+    }
+}
+
+fn static_conditional_branch_target(pc: Address, instruction: RiscvInstruction) -> Option<Address> {
+    let offset = match instruction {
+        RiscvInstruction::Beq { offset, .. }
+        | RiscvInstruction::Bne { offset, .. }
+        | RiscvInstruction::Blt { offset, .. }
+        | RiscvInstruction::Bge { offset, .. }
+        | RiscvInstruction::Bltu { offset, .. }
+        | RiscvInstruction::Bgeu { offset, .. } => offset.value(),
+        _ => return None,
+    };
+    checked_add_signed(pc.get(), offset).map(Address::new)
+}
+
+fn checked_add_signed(value: u64, offset: i64) -> Option<u64> {
+    if offset >= 0 {
+        value.checked_add(offset as u64)
+    } else {
+        value.checked_sub(offset.unsigned_abs())
+    }
 }
 
 fn resolve_branch_speculation(

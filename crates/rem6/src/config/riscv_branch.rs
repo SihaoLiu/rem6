@@ -9,6 +9,7 @@ pub(super) fn parse_riscv_branch_predictor(value: &str) -> Option<RiscvBranchPre
         "gshare" => Some(RiscvBranchPredictorKind::GShare),
         "bimode" => Some(RiscvBranchPredictorKind::BiMode),
         "tournament" => Some(RiscvBranchPredictorKind::Tournament),
+        "tage-sc-l" => Some(RiscvBranchPredictorKind::TageScL),
         _ => None,
     }
 }

@@ -5,7 +5,8 @@ use rem6_memory::Address;
 use crate::{
     BiModeHistoryUpdate, BiModePrediction, BiModeTrainingUpdate, BranchUpdate, CpuFetchEvent,
     GShareHistoryUpdate, GSharePrediction, GShareTrainingUpdate, InOrderPipelineCycleRecord,
-    TournamentHistoryUpdate, TournamentPrediction, TournamentTrainingUpdate,
+    TageScLPrediction, TageScLTrainingUpdate, TournamentHistoryUpdate, TournamentPrediction,
+    TournamentTrainingUpdate,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -17,6 +18,7 @@ pub struct RiscvCpuExecutionEvent {
     gshare_branch_update: Option<RiscvGShareBranchUpdate>,
     bimode_branch_update: Option<RiscvBiModeBranchUpdate>,
     tournament_branch_update: Option<RiscvTournamentBranchUpdate>,
+    tage_sc_l_branch_update: Option<RiscvTageScLBranchUpdate>,
     in_order_pipeline_cycle: Option<InOrderPipelineCycleRecord>,
     in_order_pipeline_data_wait_cycles: u64,
     counts_as_retired_instruction: bool,
@@ -95,12 +97,19 @@ pub struct RiscvTournamentBranchUpdate {
     training_update: TournamentTrainingUpdate,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvTageScLBranchUpdate {
+    prediction: TageScLPrediction,
+    training_update: TageScLTrainingUpdate,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RiscvRetiredBranchUpdates {
     branch_update: Option<BranchUpdate>,
     gshare_branch_update: Option<RiscvGShareBranchUpdate>,
     bimode_branch_update: Option<RiscvBiModeBranchUpdate>,
     tournament_branch_update: Option<RiscvTournamentBranchUpdate>,
+    tage_sc_l_branch_update: Option<RiscvTageScLBranchUpdate>,
 }
 
 impl RiscvRetiredBranchUpdates {
@@ -109,12 +118,14 @@ impl RiscvRetiredBranchUpdates {
         gshare_branch_update: RiscvGShareBranchUpdate,
         bimode_branch_update: RiscvBiModeBranchUpdate,
         tournament_branch_update: RiscvTournamentBranchUpdate,
+        tage_sc_l_branch_update: RiscvTageScLBranchUpdate,
     ) -> Self {
         Self {
             branch_update: Some(branch_update),
             gshare_branch_update: Some(gshare_branch_update),
             bimode_branch_update: Some(bimode_branch_update),
             tournament_branch_update: Some(tournament_branch_update),
+            tage_sc_l_branch_update: Some(tage_sc_l_branch_update),
         }
     }
 
@@ -145,6 +156,26 @@ impl RiscvTournamentBranchUpdate {
     }
 
     pub const fn training_update(&self) -> &TournamentTrainingUpdate {
+        &self.training_update
+    }
+}
+
+impl RiscvTageScLBranchUpdate {
+    pub const fn new(
+        prediction: TageScLPrediction,
+        training_update: TageScLTrainingUpdate,
+    ) -> Self {
+        Self {
+            prediction,
+            training_update,
+        }
+    }
+
+    pub const fn prediction(&self) -> &TageScLPrediction {
+        &self.prediction
+    }
+
+    pub const fn training_update(&self) -> &TageScLTrainingUpdate {
         &self.training_update
     }
 }
@@ -181,20 +212,19 @@ impl RiscvCpuExecutionEvent {
         branch_update: Option<BranchUpdate>,
         gshare_branch_update: Option<RiscvGShareBranchUpdate>,
     ) -> Self {
-        Self::with_all_branch_updates_pipeline_cycle_and_retired_instruction_counting(
+        Self {
             fetch,
             instruction,
             execution,
-            RiscvRetiredBranchUpdates {
-                branch_update,
-                gshare_branch_update,
-                bimode_branch_update: None,
-                tournament_branch_update: None,
-            },
-            None,
-            0,
-            true,
-        )
+            branch_update,
+            gshare_branch_update,
+            bimode_branch_update: None,
+            tournament_branch_update: None,
+            tage_sc_l_branch_update: None,
+            in_order_pipeline_cycle: None,
+            in_order_pipeline_data_wait_cycles: 0,
+            counts_as_retired_instruction: true,
+        }
     }
 
     pub const fn with_retired_instruction_counting(
@@ -243,23 +273,22 @@ impl RiscvCpuExecutionEvent {
         in_order_pipeline_cycle: Option<InOrderPipelineCycleRecord>,
         counts_as_retired_instruction: bool,
     ) -> Self {
-        Self::with_all_branch_updates_pipeline_cycle_and_retired_instruction_counting(
+        Self {
             fetch,
             instruction,
             execution,
-            RiscvRetiredBranchUpdates {
-                branch_update,
-                gshare_branch_update,
-                bimode_branch_update: None,
-                tournament_branch_update: None,
-            },
+            branch_update,
+            gshare_branch_update,
+            bimode_branch_update: None,
+            tournament_branch_update: None,
+            tage_sc_l_branch_update: None,
             in_order_pipeline_cycle,
-            0,
+            in_order_pipeline_data_wait_cycles: 0,
             counts_as_retired_instruction,
-        )
+        }
     }
 
-    pub(crate) const fn with_all_branch_updates_pipeline_cycle_and_retired_instruction_counting(
+    pub(crate) fn with_all_branch_updates_pipeline_cycle_and_retired_instruction_counting(
         fetch: CpuFetchEvent,
         instruction: RiscvInstruction,
         execution: RiscvExecutionRecord,
@@ -268,14 +297,22 @@ impl RiscvCpuExecutionEvent {
         in_order_pipeline_data_wait_cycles: u64,
         counts_as_retired_instruction: bool,
     ) -> Self {
+        let RiscvRetiredBranchUpdates {
+            branch_update,
+            gshare_branch_update,
+            bimode_branch_update,
+            tournament_branch_update,
+            tage_sc_l_branch_update,
+        } = branch_updates;
         Self {
             fetch,
             instruction,
             execution,
-            branch_update: branch_updates.branch_update,
-            gshare_branch_update: branch_updates.gshare_branch_update,
-            bimode_branch_update: branch_updates.bimode_branch_update,
-            tournament_branch_update: branch_updates.tournament_branch_update,
+            branch_update,
+            gshare_branch_update,
+            bimode_branch_update,
+            tournament_branch_update,
+            tage_sc_l_branch_update,
             in_order_pipeline_cycle,
             in_order_pipeline_data_wait_cycles,
             counts_as_retired_instruction,
@@ -312,6 +349,10 @@ impl RiscvCpuExecutionEvent {
 
     pub fn tournament_branch_update(&self) -> Option<&RiscvTournamentBranchUpdate> {
         self.tournament_branch_update.as_ref()
+    }
+
+    pub fn tage_sc_l_branch_update(&self) -> Option<&RiscvTageScLBranchUpdate> {
+        self.tage_sc_l_branch_update.as_ref()
     }
 
     pub fn in_order_pipeline_cycle(&self) -> Option<&InOrderPipelineCycleRecord> {

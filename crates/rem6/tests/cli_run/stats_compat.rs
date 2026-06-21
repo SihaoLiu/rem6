@@ -946,6 +946,45 @@ fn rem6_run_stats_use_selected_bimode_branch_predictor_for_fetch_steering() {
     assert!(!bimode.contains("\"x6\":\"0x1\""));
 }
 
+#[test]
+fn rem6_run_stats_use_selected_tage_sc_l_branch_predictor_for_fetch_steering() {
+    let program = tage_sc_l_initial_bias_program();
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-tage-sc-l-initial-branch-steering", &elf);
+
+    let basic = selected_branch_predictor_stdout(&path, "basic");
+    let tage_sc_l = selected_branch_predictor_stdout(&path, "tage-sc-l");
+
+    let tage_sc_l_predictions = json_u64_field(&tage_sc_l, "\"branch_speculation_predictions\":");
+    let basic_final_tick = json_u64_field(&basic, "\"final_tick\":");
+    let tage_sc_l_final_tick = json_u64_field(&tage_sc_l, "\"final_tick\":");
+
+    assert!(tage_sc_l_predictions >= 1, "{tage_sc_l}");
+    assert_ne!(
+        tage_sc_l_final_tick, basic_final_tick,
+        "basic final_tick={basic_final_tick}, tage-sc-l final_tick={tage_sc_l_final_tick}\nbasic:\n{basic}\ntage-sc-l:\n{tage_sc_l}"
+    );
+    assert!(tage_sc_l.contains("\"x5\":\"0x7\""));
+    assert!(!tage_sc_l.contains("\"x6\":\"0x1\""));
+}
+
+#[test]
+fn rem6_run_stats_use_retired_tage_sc_l_training_for_later_fetch_steering() {
+    let program = tage_sc_l_repeated_not_taken_training_program();
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-tage-sc-l-training-feedback", &elf);
+
+    let tage_sc_l = selected_branch_predictor_stdout(&path, "tage-sc-l");
+
+    let predictions = json_u64_field(&tage_sc_l, "\"branch_speculation_predictions\":");
+    let repairs = json_u64_field(&tage_sc_l, "\"branch_speculation_repairs\":");
+
+    assert_eq!(predictions, 4, "{tage_sc_l}");
+    assert_eq!(repairs, 2, "{tage_sc_l}");
+    assert!(tage_sc_l.contains("\"x5\":\"0x7\""));
+    assert!(!tage_sc_l.contains("\"x6\":\"0x1\""));
+}
+
 fn selected_branch_predictor_stdout(path: &std::path::Path, predictor: &str) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
@@ -997,6 +1036,31 @@ fn selected_branch_predictor_program() -> Vec<u8> {
         0x0000_0073,                // ecall
         0x0000_0513,                // addi x10, x0, 0
         j_type(-24, 0),             // jal x0, loop
+    ])
+}
+
+fn tage_sc_l_initial_bias_program() -> Vec<u8> {
+    riscv64_program(&[
+        b_type(12, 0, 0, 0x1), // bne x0, x0, wrong_path
+        0x0070_0293,           // addi x5, x0, 7
+        0x0000_0073,           // ecall
+        0x0010_0313,           // addi x6, x0, 1
+        0x0000_0073,           // ecall
+    ])
+}
+
+fn tage_sc_l_repeated_not_taken_training_program() -> Vec<u8> {
+    riscv64_program(&[
+        i_type(0, 0, 0x0, 8, 0x13),    // addi x8, x0, 0
+        i_type(0, 0, 0x0, 9, 0x13),    // addi x9, x0, 0
+        i_type(2, 0, 0x0, 10, 0x13),   // addi x10, x0, 2
+        b_type(20, 9, 8, 0x1),         // bne x8, x9, wrong_path
+        i_type(-1, 10, 0x0, 10, 0x13), // addi x10, x10, -1
+        b_type(-8, 0, 10, 0x1),        // bne x10, x0, loop
+        0x0070_0293,                   // addi x5, x0, 7
+        0x0000_0073,                   // ecall
+        0x0010_0313,                   // addi x6, x0, 1
+        0x0000_0073,                   // ecall
     ])
 }
 

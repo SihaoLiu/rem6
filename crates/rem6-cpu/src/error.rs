@@ -9,7 +9,8 @@ use rem6_transport::{MemoryRouteId, TransportEndpointId, TransportError};
 
 use crate::{
     BiModeBranchPredictorError, BranchPredictorError, CpuId, CpuTranslationFrontendError,
-    GShareBranchPredictorError, InOrderPipelineError, TournamentBranchPredictorError,
+    GShareBranchPredictorError, InOrderPipelineError, TageScLBranchPredictorError,
+    TournamentBranchPredictorError,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -219,6 +220,7 @@ pub enum RiscvCpuError {
     GShareBranchPredictor(GShareBranchPredictorError),
     BiModeBranchPredictor(BiModeBranchPredictorError),
     TournamentBranchPredictor(TournamentBranchPredictorError),
+    TageScLBranchPredictor(TageScLBranchPredictorError),
     InOrderPipeline(InOrderPipelineError),
     Isa(RiscvError),
     Memory(MemoryError),
@@ -349,6 +351,7 @@ impl fmt::Display for RiscvCpuError {
             Self::GShareBranchPredictor(error) => write!(formatter, "{error}"),
             Self::BiModeBranchPredictor(error) => write!(formatter, "{error}"),
             Self::TournamentBranchPredictor(error) => write!(formatter, "{error}"),
+            Self::TageScLBranchPredictor(error) => write!(formatter, "{error}"),
             Self::InOrderPipeline(error) => write!(formatter, "{error}"),
             Self::Isa(error) => write!(formatter, "{error}"),
             Self::Memory(error) => write!(formatter, "{error}"),
@@ -367,6 +370,7 @@ impl Error for RiscvCpuError {
             Self::GShareBranchPredictor(error) => Some(error),
             Self::BiModeBranchPredictor(error) => Some(error),
             Self::TournamentBranchPredictor(error) => Some(error),
+            Self::TageScLBranchPredictor(error) => Some(error),
             Self::InOrderPipeline(error) => Some(error),
             Self::DataTranslation(error) => Some(error),
             Self::FetchPmpAccess { error, .. } => Some(error),
