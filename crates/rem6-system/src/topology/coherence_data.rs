@@ -320,7 +320,7 @@ fn topology_msi_data_response_result(
     delivery: &RequestDelivery,
 ) -> Result<TargetOutcome, RiscvTopologySystemError> {
     let mut harness = cache.harness.lock().expect("MSI data cache lock");
-    let (run, outcome) = topology_data_cache_response_result(
+    let (run, outcome) = topology_cache_response_result(
         &mut *harness,
         cluster,
         delivery,
@@ -353,7 +353,7 @@ fn topology_mesi_data_response_result(
     delivery: &RequestDelivery,
 ) -> Result<TargetOutcome, RiscvTopologySystemError> {
     let mut harness = cache.harness.lock().expect("MESI data cache lock");
-    let (run, outcome) = topology_data_cache_response_result(
+    let (run, outcome) = topology_cache_response_result(
         &mut *harness,
         cluster,
         delivery,
@@ -463,15 +463,13 @@ fn topology_msi_bank_data_response_result(
     );
     let responses = harness.cpu_responses();
     let response_record =
-        data_cache_response_record(&responses, responses_before, delivery.request().id())
-            .ok_or_else(|| RiscvTopologySystemError::MissingMsiDataResponse {
+        cache_response_record(&responses, responses_before, delivery.request().id()).ok_or_else(
+            || RiscvTopologySystemError::MissingMsiDataResponse {
                 request: delivery.request().id(),
-            })?;
-    let outcome = data_cache_response_record_to_target_outcome(
-        delivery.request(),
-        start_tick,
-        &response_record,
-    )?;
+            },
+        )?;
+    let outcome =
+        cache_response_record_to_target_outcome(delivery.request(), start_tick, &response_record)?;
     drop(harness);
     cache.record_run(msi_bank_cycle_run_summary(
         &cycle_run,
@@ -501,7 +499,7 @@ fn topology_chi_data_response_result(
     delivery: &RequestDelivery,
 ) -> Result<TargetOutcome, RiscvTopologySystemError> {
     let mut harness = cache.harness.lock().expect("CHI data cache lock");
-    let (run, outcome) = topology_data_cache_response_result(
+    let (run, outcome) = topology_cache_response_result(
         &mut *harness,
         cluster,
         delivery,
@@ -534,7 +532,7 @@ fn topology_moesi_data_response_result(
     delivery: &RequestDelivery,
 ) -> Result<TargetOutcome, RiscvTopologySystemError> {
     let mut harness = cache.harness.lock().expect("MOESI data cache lock");
-    let (run, outcome) = topology_data_cache_response_result(
+    let (run, outcome) = topology_cache_response_result(
         &mut *harness,
         cluster,
         delivery,
@@ -598,14 +596,14 @@ fn msi_bank_cycle_run_summary(
     )
 }
 
-trait DataCacheCpuResponseRecord {
+pub(super) trait CacheCpuResponseRecord {
     fn status(&self) -> ResponseStatus;
     fn data(&self) -> Option<&[u8]>;
     fn tick(&self) -> u64;
     fn request(&self) -> MemoryRequestId;
 }
 
-impl DataCacheCpuResponseRecord for CpuResponseRecord {
+impl CacheCpuResponseRecord for CpuResponseRecord {
     fn status(&self) -> ResponseStatus {
         self.status()
     }
@@ -623,7 +621,7 @@ impl DataCacheCpuResponseRecord for CpuResponseRecord {
     }
 }
 
-impl DataCacheCpuResponseRecord for MesiCpuResponseRecord {
+impl CacheCpuResponseRecord for MesiCpuResponseRecord {
     fn status(&self) -> ResponseStatus {
         self.status()
     }
@@ -641,7 +639,7 @@ impl DataCacheCpuResponseRecord for MesiCpuResponseRecord {
     }
 }
 
-impl DataCacheCpuResponseRecord for MoesiCpuResponseRecord {
+impl CacheCpuResponseRecord for MoesiCpuResponseRecord {
     fn status(&self) -> ResponseStatus {
         self.status()
     }
@@ -659,7 +657,7 @@ impl DataCacheCpuResponseRecord for MoesiCpuResponseRecord {
     }
 }
 
-impl DataCacheCpuResponseRecord for ChiCpuResponseRecord {
+impl CacheCpuResponseRecord for ChiCpuResponseRecord {
     fn status(&self) -> ResponseStatus {
         self.status()
     }
@@ -677,9 +675,9 @@ impl DataCacheCpuResponseRecord for ChiCpuResponseRecord {
     }
 }
 
-trait TopologyDataCacheResponseHarness {
+pub(super) trait TopologyCacheResponseHarness {
     type Error;
-    type Response: Clone + DataCacheCpuResponseRecord;
+    type Response: Clone + CacheCpuResponseRecord;
 
     fn now(&self) -> u64;
     fn cpu_responses(&self) -> Vec<Self::Response>;
@@ -700,7 +698,7 @@ trait TopologyDataCacheResponseHarness {
     );
 }
 
-impl TopologyDataCacheResponseHarness for PartitionedDirectoryLineHarness {
+impl TopologyCacheResponseHarness for PartitionedDirectoryLineHarness {
     type Error = HarnessError;
     type Response = CpuResponseRecord;
 
@@ -751,7 +749,7 @@ impl TopologyDataCacheResponseHarness for PartitionedDirectoryLineHarness {
     }
 }
 
-impl TopologyDataCacheResponseHarness for PartitionedMesiDirectoryLineHarness {
+impl TopologyCacheResponseHarness for PartitionedMesiDirectoryLineHarness {
     type Error = MesiHarnessError;
     type Response = MesiCpuResponseRecord;
 
@@ -802,7 +800,7 @@ impl TopologyDataCacheResponseHarness for PartitionedMesiDirectoryLineHarness {
     }
 }
 
-impl TopologyDataCacheResponseHarness for PartitionedMoesiDirectoryLineHarness {
+impl TopologyCacheResponseHarness for PartitionedMoesiDirectoryLineHarness {
     type Error = MoesiHarnessError;
     type Response = MoesiCpuResponseRecord;
 
@@ -853,7 +851,7 @@ impl TopologyDataCacheResponseHarness for PartitionedMoesiDirectoryLineHarness {
     }
 }
 
-impl TopologyDataCacheResponseHarness for PartitionedChiDirectoryLineHarness {
+impl TopologyCacheResponseHarness for PartitionedChiDirectoryLineHarness {
     type Error = ChiHarnessError;
     type Response = ChiCpuResponseRecord;
 
@@ -904,7 +902,7 @@ impl TopologyDataCacheResponseHarness for PartitionedChiDirectoryLineHarness {
     }
 }
 
-fn topology_data_cache_response_result<H, M, N>(
+pub(super) fn topology_cache_response_result<H, M, N>(
     harness: &mut H,
     cluster: &RiscvCluster,
     delivery: &RequestDelivery,
@@ -912,7 +910,7 @@ fn topology_data_cache_response_result<H, M, N>(
     missing_response: N,
 ) -> Result<(ParallelCoherenceRunSummary, TargetOutcome), RiscvTopologySystemError>
 where
-    H: TopologyDataCacheResponseHarness,
+    H: TopologyCacheResponseHarness,
     M: Fn(H::Error) -> RiscvTopologySystemError,
     N: Fn(MemoryRequestId) -> RiscvTopologySystemError,
 {
@@ -928,23 +926,20 @@ where
     harness.invalidate_snooped_reservations_since(decisions_before, cluster, delivery.request());
     let responses = harness.cpu_responses();
     let response_record =
-        data_cache_response_record(&responses, responses_before, delivery.request().id())
+        cache_response_record(&responses, responses_before, delivery.request().id())
             .ok_or_else(|| missing_response(delivery.request().id()))?;
-    let outcome = data_cache_response_record_to_target_outcome(
-        delivery.request(),
-        start_tick,
-        &response_record,
-    )?;
+    let outcome =
+        cache_response_record_to_target_outcome(delivery.request(), start_tick, &response_record)?;
     Ok((run, outcome))
 }
 
-fn data_cache_response_record<R>(
+fn cache_response_record<R>(
     responses: &[R],
     responses_before: usize,
     request: MemoryRequestId,
 ) -> Option<R>
 where
-    R: Clone + DataCacheCpuResponseRecord,
+    R: Clone + CacheCpuResponseRecord,
 {
     responses
         .get(responses_before..)
@@ -954,15 +949,15 @@ where
         .cloned()
 }
 
-fn data_cache_response_record_to_target_outcome<R>(
+fn cache_response_record_to_target_outcome<R>(
     request: &MemoryRequest,
     start_tick: u64,
     record: &R,
 ) -> Result<TargetOutcome, RiscvTopologySystemError>
 where
-    R: DataCacheCpuResponseRecord,
+    R: CacheCpuResponseRecord,
 {
-    let response = data_cache_response_record_to_memory_response(request, record)?;
+    let response = cache_response_record_to_memory_response(request, record)?;
     let delay = record.tick().saturating_sub(start_tick);
     if delay == 0 {
         Ok(TargetOutcome::Respond(response))
@@ -971,12 +966,12 @@ where
     }
 }
 
-fn data_cache_response_record_to_memory_response<R>(
+fn cache_response_record_to_memory_response<R>(
     request: &MemoryRequest,
     record: &R,
 ) -> Result<MemoryResponse, RiscvTopologySystemError>
 where
-    R: DataCacheCpuResponseRecord,
+    R: CacheCpuResponseRecord,
 {
     match record.status() {
         ResponseStatus::Completed => {
@@ -1161,18 +1156,18 @@ fn record_coherence_error(
 mod tests {
     use super::*;
 
-    fn assert_topology_data_cache_response_harness<H>()
+    fn assert_topology_cache_response_harness<H>()
     where
-        H: TopologyDataCacheResponseHarness,
-        H::Response: DataCacheCpuResponseRecord,
+        H: TopologyCacheResponseHarness,
+        H::Response: CacheCpuResponseRecord,
     {
     }
 
     #[test]
-    fn topology_data_cache_response_harness_is_protocol_neutral() {
-        assert_topology_data_cache_response_harness::<PartitionedDirectoryLineHarness>();
-        assert_topology_data_cache_response_harness::<PartitionedMesiDirectoryLineHarness>();
-        assert_topology_data_cache_response_harness::<PartitionedMoesiDirectoryLineHarness>();
-        assert_topology_data_cache_response_harness::<PartitionedChiDirectoryLineHarness>();
+    fn topology_cache_response_harness_is_protocol_neutral() {
+        assert_topology_cache_response_harness::<PartitionedDirectoryLineHarness>();
+        assert_topology_cache_response_harness::<PartitionedMesiDirectoryLineHarness>();
+        assert_topology_cache_response_harness::<PartitionedMoesiDirectoryLineHarness>();
+        assert_topology_cache_response_harness::<PartitionedChiDirectoryLineHarness>();
     }
 }

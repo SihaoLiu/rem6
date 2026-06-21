@@ -401,6 +401,343 @@ fn msi_bank_data_harness() -> MsiBankDirectoryHarness {
     harness
 }
 
+fn msi_instruction_and_data_topology() -> Topology {
+    TopologyBuilder::new(8)
+        .add_component(
+            ComponentSpec::new(
+                component("cpu0"),
+                kind("cpu"),
+                PartitionId::new(0),
+                clock(1),
+            )
+            .add_port(port("ifetch"), PortDirection::Initiator)
+            .unwrap()
+            .add_port(port("dmem"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("l1i0"),
+                kind("l1_cache"),
+                PartitionId::new(1),
+                clock(1),
+            )
+            .add_port(port("cpu_side"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("idir0"),
+                kind("directory"),
+                PartitionId::new(2),
+                clock(1),
+            )
+            .add_port(port("cache_side"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("imem0"),
+                kind("dram"),
+                PartitionId::new(3),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("l1d0"),
+                kind("l1_cache"),
+                PartitionId::new(4),
+                clock(1),
+            )
+            .add_port(port("cpu_side"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("dir0"),
+                kind("directory"),
+                PartitionId::new(5),
+                clock(1),
+            )
+            .add_port(port("cache_side"), PortDirection::Target)
+            .unwrap()
+            .add_port(port("mem_side"), PortDirection::Initiator)
+            .unwrap(),
+        )
+        .unwrap()
+        .add_component(
+            ComponentSpec::new(
+                component("dmem0"),
+                kind("dram"),
+                PartitionId::new(6),
+                clock(1),
+            )
+            .add_port(port("requests"), PortDirection::Target)
+            .unwrap(),
+        )
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("cpu0", "ifetch"),
+            endpoint("l1i0", "cpu_side"),
+            2,
+            2,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("l1i0", "mem_side"),
+            endpoint("idir0", "cache_side"),
+            2,
+            3,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("idir0", "mem_side"),
+            endpoint("imem0", "requests"),
+            4,
+            5,
+        )
+        .unwrap()
+        .connect_with_latencies(endpoint("cpu0", "dmem"), endpoint("l1d0", "cpu_side"), 2, 2)
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("l1d0", "mem_side"),
+            endpoint("dir0", "cache_side"),
+            2,
+            3,
+        )
+        .unwrap()
+        .connect_with_latencies(
+            endpoint("dir0", "mem_side"),
+            endpoint("dmem0", "requests"),
+            4,
+            5,
+        )
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
+fn instruction_cache_core_config() -> RiscvCoreTopologyConfig {
+    RiscvCoreTopologyConfig::new(
+        CpuResetState::new(
+            CpuId::new(0),
+            PartitionId::new(0),
+            agent(7),
+            Address::new(0x8000),
+        ),
+        endpoint("cpu0", "ifetch"),
+        endpoint("l1i0", "cpu_side"),
+        layout(),
+        AccessSize::new(4).unwrap(),
+    )
+    .with_data(
+        endpoint("cpu0", "dmem"),
+        endpoint("l1d0", "cpu_side"),
+        layout(),
+    )
+}
+
+fn instruction_cache_code_image() -> BootImage {
+    BootImage::new(Address::new(0x8000))
+        .add_segment(Address::new(0x8000), word(i_type(1, 0, 0x0, 5, 0x13)))
+        .unwrap()
+        .add_segment(Address::new(0x8004), word(0x0010_0073))
+        .unwrap()
+}
+
+fn instruction_cache_dram_config() -> RiscvTopologyDramConfig {
+    RiscvTopologyDramConfig::new(
+        MemoryTargetId::new(0),
+        layout(),
+        DramGeometry::new(2, 128, 16).unwrap(),
+        DramTiming::new(5, 7, 11, 3, 2).unwrap(),
+    )
+    .add_region(Address::new(0x8000), AccessSize::new(0x1000).unwrap())
+}
+
+fn instruction_dram_memory() -> DramMemoryController {
+    let target = MemoryTargetId::new(8);
+    let mut memory = DramMemoryController::new();
+    memory
+        .add_target(DramControllerConfig::new(
+            target,
+            layout(),
+            DramGeometry::new(2, 64, 16).unwrap(),
+            DramTiming::new(3, 5, 9, 2, 2).unwrap(),
+        ))
+        .unwrap();
+    memory
+        .map_region(
+            target,
+            Address::new(0x8000),
+            AccessSize::new(0x1000).unwrap(),
+        )
+        .unwrap();
+    let mut line = vec![0; 16];
+    line[0..4].copy_from_slice(&word(i_type(0, 2, 0x3, 5, 0x03)));
+    line[4..8].copy_from_slice(&word(0x0010_0073));
+    memory
+        .insert_line(target, Address::new(0x8000), line)
+        .unwrap();
+    memory
+}
+
+fn msi_instruction_harness(topology: &Topology) -> PartitionedDirectoryLineHarness {
+    PartitionedDirectoryLineHarness::new_with_topology(
+        topology,
+        TopologyDirectoryHarnessConfig::new(
+            layout(),
+            Address::new(0x8000),
+            TopologyDirectoryConfig::new(component("idir0"), port("cache_side"), port("mem_side")),
+            TopologyDramMemoryConfig::new(
+                component("imem0"),
+                port("requests"),
+                instruction_dram_memory(),
+            ),
+            [TopologyCacheAgentConfig::new(
+                agent(7),
+                component("l1i0"),
+                port("mem_side"),
+            )],
+        ),
+    )
+    .unwrap()
+}
+
+fn single_msi_data_harness(topology: &Topology) -> PartitionedDirectoryLineHarness {
+    PartitionedDirectoryLineHarness::new_with_topology(
+        topology,
+        TopologyDirectoryHarnessConfig::new(
+            layout(),
+            Address::new(0x3000),
+            TopologyDirectoryConfig::new(component("dir0"), port("cache_side"), port("mem_side")),
+            TopologyDramMemoryConfig::new(component("dmem0"), port("requests"), data_dram_memory()),
+            [TopologyCacheAgentConfig::new(
+                agent(7),
+                component("l1d0"),
+                port("mem_side"),
+            )],
+        ),
+    )
+    .unwrap()
+}
+
+#[test]
+fn topology_system_routes_instruction_fetch_and_data_load_through_msi_cache_backends() {
+    let topology = msi_instruction_and_data_topology();
+    let source = GuestSourceId::new(129);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology.clone(),
+        RiscvClusterTopologyConfig::new([instruction_cache_core_config()]),
+        2,
+    )
+    .unwrap()
+    .with_boot_image_dram_memory(
+        instruction_cache_dram_config(),
+        &instruction_cache_code_image(),
+    )
+    .unwrap()
+    .with_msi_instruction_cache(msi_instruction_harness(&topology))
+    .unwrap()
+    .with_msi_data_cache(single_msi_data_harness(&topology))
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(7), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+    system
+        .cluster()
+        .core(CpuId::new(0))
+        .unwrap()
+        .write_register(Register::new(2).unwrap(), 0x3000);
+
+    let run = system
+        .drive_attached_until_host_stop_parallel(
+            Default::default(),
+            Default::default(),
+            120,
+            |cpu: CpuId| GuestEventId::new(1290 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    assert_eq!(
+        run.stop_reason(),
+        RiscvSystemRunStopReason::HostStop(StopRequest::new(
+            run.final_tick().unwrap(),
+            GuestEventId::new(1290),
+            source,
+            1,
+        )),
+    );
+    assert_eq!(
+        system
+            .cluster()
+            .core(CpuId::new(0))
+            .unwrap()
+            .read_register(Register::new(5).unwrap()),
+        0x0706_0504_0302_0100,
+    );
+
+    let instruction_cache_runs = system.msi_instruction_cache_runs();
+    assert!(!instruction_cache_runs.is_empty());
+    assert_eq!(system.msi_data_cache_runs().len(), 1);
+    assert_eq!(run.data_cache_run_count(), 1);
+    assert_eq!(
+        run.data_cache_run_count_for_protocol(RiscvDataCacheProtocol::Msi),
+        1,
+    );
+    assert_eq!(run.unattributed_data_cache_run_count(), 0);
+    assert_eq!(
+        system
+            .msi_instruction_cache()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .dram_memory_accesses()
+            .len(),
+        1,
+    );
+    assert_eq!(
+        system
+            .msi_data_cache()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .dram_memory_accesses()
+            .len(),
+        1,
+    );
+    assert_eq!(
+        run.dram_target_activity(MemoryTargetId::new(8))
+            .unwrap()
+            .profile()
+            .read_count(),
+        1,
+    );
+    assert_eq!(
+        run.dram_target_activity(MemoryTargetId::new(7))
+            .unwrap()
+            .profile()
+            .read_count(),
+        1,
+    );
+}
+
 #[test]
 fn topology_system_msi_snoop_invalidates_peer_lr_reservation_before_store_response() {
     let topology = msi_topology();
