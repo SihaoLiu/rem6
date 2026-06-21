@@ -142,3 +142,122 @@ void _start(void) {
     assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
     assert_stat(&stdout, "sim.stop_code", "Count", 61, "constant");
 }
+
+#[test]
+fn rem6_run_riscv_se_runs_static_raw_ioctl_tcgets_terminal() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!("skipping static RISC-V SE raw TCGETS smoke: riscv64-unknown-elf-gcc not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-ioctl-tcgets");
+    let source = workspace.join("raw-ioctl-tcgets.c");
+    let binary = workspace.join("raw-ioctl-tcgets");
+    fs::write(
+        &source,
+        r#"static long linux_syscall1(long number, long arg0) {
+    register long a0 asm("a0") = arg0;
+    register long a7 asm("a7") = number;
+    asm volatile("ecall" : "+r"(a0) : "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+static void write_stdout(const char *text, long bytes) {
+    linux_syscall3(64, 1, (long)text, bytes);
+}
+
+static void exit_with(long code) {
+    linux_syscall1(93, code);
+    __builtin_unreachable();
+}
+
+void _start(void) {
+    unsigned char termios[36];
+    for (int i = 0; i < 36; i++) {
+        termios[i] = 0xff;
+    }
+    long status = linux_syscall3(29, 1, 0x5401, (long)termios);
+    unsigned int iflag = (unsigned int)termios[0]
+        | ((unsigned int)termios[1] << 8)
+        | ((unsigned int)termios[2] << 16)
+        | ((unsigned int)termios[3] << 24);
+    unsigned int lflag = (unsigned int)termios[12]
+        | ((unsigned int)termios[13] << 8)
+        | ((unsigned int)termios[14] << 16)
+        | ((unsigned int)termios[15] << 24);
+
+    if (status == 0 && iflag == 0x500 && lflag == 0x8a3b &&
+        termios[16] == 0 && termios[17] == 3 && termios[19] == 127) {
+        write_stdout("raw-tcgets:tty\n", sizeof("raw-tcgets:tty\n") - 1);
+        exit_with(68);
+    }
+    if (status == -25) {
+        write_stdout("raw-tcgets:enotty\n", sizeof("raw-tcgets:enotty\n") - 1);
+        exit_with(69);
+    }
+    write_stdout("raw-tcgets:fail\n", sizeof("raw-tcgets:fail\n") - 1);
+    exit_with(70);
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-nostdlib",
+            "-nostartfiles",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-Wl,-e,_start",
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "200000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":68"));
+    assert!(stdout.contains("\"text\":\"raw-tcgets:tty\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 68, "constant");
+}

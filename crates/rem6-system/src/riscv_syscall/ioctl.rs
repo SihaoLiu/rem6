@@ -5,6 +5,7 @@ use super::{
 use crate::{GuestFd, GuestFdError};
 
 pub(super) const RISCV_LINUX_IOCTL: u64 = 29;
+const RISCV_LINUX_TCGETS: u64 = 0x5401;
 const RISCV_LINUX_TIOCGWINSZ: u64 = 0x5413;
 const RISCV_LINUX_FIONREAD: u64 = 0x541b;
 const RISCV_LINUX_WINSIZE_ROWS: u16 = 24;
@@ -30,7 +31,7 @@ pub(super) fn syscall_ioctl(
     }
 
     match request.argument(1) {
-        RISCV_LINUX_TIOCGWINSZ => {
+        RISCV_LINUX_TCGETS | RISCV_LINUX_TIOCGWINSZ => {
             match state.guest_fd_is_terminal(fd) {
                 Ok(true) => {}
                 Ok(false) => return linux_error(RISCV_LINUX_ENOTTY),
@@ -39,7 +40,12 @@ pub(super) fn syscall_ioctl(
             let Some(guest_memory_writer) = guest_memory_writer else {
                 return linux_error(RISCV_LINUX_EFAULT);
             };
-            if guest_memory_writer.write(request.argument(2), &linux_winsize_bytes()) {
+            let wrote = if request.argument(1) == RISCV_LINUX_TCGETS {
+                guest_memory_writer.write(request.argument(2), &linux_termios_bytes())
+            } else {
+                guest_memory_writer.write(request.argument(2), &linux_winsize_bytes())
+            };
+            if wrote {
                 0
             } else {
                 linux_error(RISCV_LINUX_EFAULT)
@@ -71,5 +77,27 @@ fn linux_winsize_bytes() -> [u8; 8] {
     let mut bytes = [0; 8];
     bytes[0..2].copy_from_slice(&RISCV_LINUX_WINSIZE_ROWS.to_le_bytes());
     bytes[2..4].copy_from_slice(&RISCV_LINUX_WINSIZE_COLUMNS.to_le_bytes());
+    bytes
+}
+
+fn linux_termios_bytes() -> [u8; 36] {
+    let mut bytes = [0; 36];
+    bytes[0..4].copy_from_slice(&0x0000_0500_u32.to_le_bytes());
+    bytes[4..8].copy_from_slice(&0x0000_0005_u32.to_le_bytes());
+    bytes[8..12].copy_from_slice(&0x0000_00bf_u32.to_le_bytes());
+    bytes[12..16].copy_from_slice(&0x0000_8a3b_u32.to_le_bytes());
+    bytes[17] = 0x03;
+    bytes[18] = 0x1c;
+    bytes[19] = 0x7f;
+    bytes[20] = 0x15;
+    bytes[21] = 0x04;
+    bytes[23] = 0x01;
+    bytes[25] = 0x11;
+    bytes[26] = 0x13;
+    bytes[27] = 0x1a;
+    bytes[29] = 0x12;
+    bytes[30] = 0x0f;
+    bytes[31] = 0x17;
+    bytes[32] = 0x16;
     bytes
 }

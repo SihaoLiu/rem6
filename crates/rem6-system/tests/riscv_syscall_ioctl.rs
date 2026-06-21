@@ -21,6 +21,41 @@ fn linux_error(errno: u64) -> u64 {
     0_u64.wrapping_sub(errno)
 }
 
+fn expected_linux_termios_bytes() -> [u8; 36] {
+    let mut bytes = [0; 36];
+    bytes[0..4].copy_from_slice(&0x0000_0500_u32.to_le_bytes());
+    bytes[4..8].copy_from_slice(&0x0000_0005_u32.to_le_bytes());
+    bytes[8..12].copy_from_slice(&0x0000_00bf_u32.to_le_bytes());
+    bytes[12..16].copy_from_slice(&0x0000_8a3b_u32.to_le_bytes());
+    bytes[17] = 0x03;
+    bytes[18] = 0x1c;
+    bytes[19] = 0x7f;
+    bytes[20] = 0x15;
+    bytes[21] = 0x04;
+    bytes[23] = 0x01;
+    bytes[25] = 0x11;
+    bytes[26] = 0x13;
+    bytes[27] = 0x1a;
+    bytes[29] = 0x12;
+    bytes[30] = 0x0f;
+    bytes[31] = 0x17;
+    bytes[32] = 0x16;
+    bytes
+}
+
+fn read_guest_bytes(
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    address: u64,
+    bytes: usize,
+) -> Option<Vec<u8>> {
+    let reader = guest_memory_reader(store);
+    let mut data = Vec::with_capacity(bytes);
+    for offset in 0..bytes {
+        data.extend(reader(address + offset as u64, 1)?);
+    }
+    Some(data)
+}
+
 fn pipe_with_bytes() -> (
     Arc<Mutex<PartitionedMemoryStore>>,
     RiscvSyscallState,
@@ -70,26 +105,27 @@ fn pipe_with_bytes() -> (
 }
 
 #[test]
-fn linux_table_ioctl_tcgets_reports_standard_fd_is_not_tty() {
+fn linux_table_ioctl_tcgets_reports_standard_fd_termios() {
+    let store = loaded_program_store_with_data(&[(0x8000, 0)], &[(0x9000, &[0xff; 36])]);
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
     let mut state = RiscvSyscallState::new(0);
 
     let outcome = RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
         RiscvSyscallRequest::new(
             0x8000,
             RISCV_LINUX_IOCTL,
-            [1, RISCV_LINUX_TCGETS, 0, 0, 0, 0],
+            [1, RISCV_LINUX_TCGETS, 0x9000, 0, 0, 0],
         ),
         &mut state,
         0,
         None,
-        None,
+        Some(&writer),
     );
 
+    assert_eq!(outcome, Some(RiscvSyscallOutcome::Return { value: 0 }));
     assert_eq!(
-        outcome,
-        Some(RiscvSyscallOutcome::Return {
-            value: 0u64.wrapping_sub(RISCV_LINUX_ENOTTY),
-        })
+        read_guest_bytes(Arc::clone(&store), 0x9000, 36),
+        Some(expected_linux_termios_bytes().to_vec())
     );
 }
 
@@ -236,7 +272,7 @@ fn linux_table_ioctl_invalid_fd_returns_ebadf() {
 }
 
 #[test]
-fn user_ecall_ioctl_tcgets_returns_enotty_before_exit() {
+fn user_ecall_ioctl_tcgets_writes_termios_before_exit() {
     let host = PartitionId::new(3);
     let source = GuestSourceId::new(78);
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
@@ -257,18 +293,21 @@ fn user_ecall_ioctl_tcgets_returns_enotty_before_exit() {
     let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
     core.set_privilege_mode(RiscvPrivilegeMode::User);
     let cluster = RiscvCluster::new([core.clone()]).unwrap();
-    let store = loaded_program_store(&[
-        (0x8000, addi(17, 0, RISCV_LINUX_IOCTL as i32)),
-        (0x8004, addi(10, 0, 1)),
-        (0x8008, lui(11, 5)),
-        (0x800c, addi(11, 11, 0x401)),
-        (0x8010, addi(12, 0, 0)),
-        (0x8014, 0x0000_0073),
-        (0x8018, addi(5, 10, 0)),
-        (0x801c, addi(17, 0, 93)),
-        (0x8020, addi(10, 0, 0)),
-        (0x8024, 0x0000_0073),
-    ]);
+    let store = loaded_program_store_with_data(
+        &[
+            (0x8000, addi(17, 0, RISCV_LINUX_IOCTL as i32)),
+            (0x8004, addi(10, 0, 1)),
+            (0x8008, lui(11, 5)),
+            (0x800c, addi(11, 11, 0x401)),
+            (0x8010, lui(12, 9)),
+            (0x8014, 0x0000_0073),
+            (0x8018, addi(5, 10, 0)),
+            (0x801c, addi(17, 0, 93)),
+            (0x8020, addi(10, 0, 0)),
+            (0x8024, 0x0000_0073),
+        ],
+        &[(0x9000, &[0xff; 36])],
+    );
     let controller = Arc::new(Mutex::new(SystemHostController::new(
         HostEventPolicy,
         StatsRegistry::new(),
@@ -277,7 +316,11 @@ fn user_ecall_ioctl_tcgets_returns_enotty_before_exit() {
         SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
         source,
     );
-    let driver = RiscvSystemRunDriver::new(trap_port).with_riscv_syscall_emulation();
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_riscv_syscall_emulation()
+        .with_riscv_syscall_emulation_and_guest_memory_writer(guest_memory_writer(Arc::clone(
+            &store,
+        )));
 
     let run = driver
         .drive_until_host_stop(
@@ -296,9 +339,10 @@ fn user_ecall_ioctl_tcgets_returns_enotty_before_exit() {
     let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(600), source, 0);
     assert_eq!(run.host_stop(), Some(stop));
     assert!(run.scheduled_traps().is_empty());
+    assert_eq!(core.read_register(reg(5)), 0);
     assert_eq!(
-        core.read_register(reg(5)),
-        0u64.wrapping_sub(RISCV_LINUX_ENOTTY)
+        read_guest_bytes(Arc::clone(&store), 0x9000, 36),
+        Some(expected_linux_termios_bytes().to_vec())
     );
     assert_eq!(
         controller.lock().unwrap().run().action_outcomes(),
