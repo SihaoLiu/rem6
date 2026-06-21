@@ -52,6 +52,8 @@ mod riscv_se_identity;
 mod riscv_se_inotify;
 #[path = "cli_run/riscv_se_ioprio.rs"]
 mod riscv_se_ioprio;
+#[path = "cli_run/riscv_se_known_ni.rs"]
+mod riscv_se_known_ni;
 #[path = "cli_run/riscv_se_links.rs"]
 mod riscv_se_links;
 #[path = "cli_run/riscv_se_memfd.rs"]

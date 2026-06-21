@@ -48,6 +48,7 @@ impl RiscvSyscallTable {
             5..=16 => {
                 xattr::syscall_xattr(request, state, guest_memory_reader, guest_memory_writer)
             }
+            RISCV_LINUX_LOOKUP_DCOOKIE | RISCV_LINUX_NFSSERVCTL => Some(known_ni_syscall_outcome()),
             RISCV_LINUX_UMOUNT2 => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_umount2(request, guest_memory),
@@ -748,6 +749,12 @@ impl RiscvSyscallTable {
             }),
             _ => Some(unsupported_syscall_outcome(request, state, tick)),
         }
+    }
+}
+
+fn known_ni_syscall_outcome() -> RiscvSyscallOutcome {
+    RiscvSyscallOutcome::Return {
+        value: linux_error(RISCV_LINUX_ENOSYS),
     }
 }
 
