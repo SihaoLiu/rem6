@@ -12,8 +12,9 @@ use super::{
     Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
     Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary, Rem6PcCountTrackerSummary,
     Rem6ReadfileSummary, Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary,
-    Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact, Rem6TraceReplayArtifact,
-    Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary, RequestedIsa,
+    Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact,
+    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary,
+    Rem6TraceReplayExternalAdapterSummary, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -76,6 +77,11 @@ impl Rem6RunArtifact {
             .as_ref()
             .map(Rem6ExecutionSummary::to_riscv_sbi_console_json)
             .unwrap_or_else(|| Rem6RiscvSbiConsoleSummary::default().to_json());
+        let riscv_sbi_timers = self
+            .execution
+            .as_ref()
+            .map(Rem6ExecutionSummary::to_riscv_sbi_timers_json)
+            .unwrap_or_else(|| "[]".to_string());
         let host_actions = self
             .execution
             .as_ref()
@@ -125,7 +131,7 @@ impl Rem6RunArtifact {
             .map(|artifact| format!(",\"power_analysis\":{}", artifact.to_json()))
             .unwrap_or_default();
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"host_actions\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"host_actions\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -148,6 +154,7 @@ impl Rem6RunArtifact {
             riscv_guest_writes,
             riscv_unknown_syscalls,
             riscv_sbi_console,
+            riscv_sbi_timers,
             host_actions,
             dram,
             transport,
@@ -1131,6 +1138,17 @@ impl Rem6ExecutionSummary {
         self.riscv_sbi_console.to_json()
     }
 
+    fn to_riscv_sbi_timers_json(&self) -> String {
+        format!(
+            "[{}]",
+            self.riscv_sbi_timers
+                .iter()
+                .map(Rem6RiscvSbiTimerSummary::to_json)
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    }
+
     fn to_transport_json(&self) -> String {
         format!(
             "{{\"fetch\":{},\"data\":{}}}",
@@ -1210,6 +1228,16 @@ impl Rem6RiscvSbiConsoleSummary {
             self.byte_count(),
             text,
             bytes_to_hex(self.bytes()),
+        )
+    }
+}
+
+impl Rem6RiscvSbiTimerSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"cpu\":{},\"deadline\":{}}}",
+            self.cpu(),
+            self.deadline()
         )
     }
 }

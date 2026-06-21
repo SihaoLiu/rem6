@@ -5,6 +5,8 @@ use crate::support::*;
 const SBI_BASE_GET_SPEC_VERSION: i32 = 0;
 const SBI_BASE_PROBE_EXTENSION: i32 = 3;
 const SBI_BASE_EXTENSION: i32 = 0x10;
+const SBI_TIME_EXTENSION: i32 = 0x5449_4d45u32 as i32;
+const SBI_TIME_SET_TIMER: i32 = 0;
 const SBI_DEBUG_CONSOLE_EXTENSION: i32 = 0x4442_434e;
 const SBI_DEBUG_CONSOLE_WRITE: i32 = 0;
 const SBI_HSM_EXTENSION: i32 = 0x0048_534d;
@@ -19,10 +21,112 @@ fn load_dbcn_extension(rd: u8) -> [u32; 2] {
     [u_type(upper, rd, 0x37), i_type(lower, rd, 0x0, rd, 0x13)]
 }
 
+fn load_time_extension(rd: u8) -> [u32; 2] {
+    let upper = (SBI_TIME_EXTENSION + 0x800) & !0xfff;
+    let lower = SBI_TIME_EXTENSION - upper;
+    [u_type(upper, rd, 0x37), i_type(lower, rd, 0x0, rd, 0x13)]
+}
+
 fn load_hsm_extension(rd: u8) -> [u32; 2] {
     let upper = (SBI_HSM_EXTENSION + 0x800) & !0xfff;
     let lower = SBI_HSM_EXTENSION - upper;
     [u_type(upper, rd, 0x37), i_type(lower, rd, 0x0, rd, 0x13)]
+}
+
+#[test]
+fn rem6_run_riscv_sbi_reports_time_set_timer_deadline() {
+    let mut words = Vec::new();
+    words.extend([
+        load_time_extension(17)[0],
+        load_time_extension(17)[1],
+        i_type(SBI_TIME_SET_TIMER, 0, 0x0, 16, 0x13),
+        i_type(96, 0, 0x0, 10, 0x13),
+        0x0000_0073,
+        i_type(0, 10, 0x0, 5, 0x13),
+        i_type(0, 11, 0x0, 6, 0x13),
+        0x0010_0073,
+    ]);
+    let elf = riscv64_elf(RISCV_SBI_ENTRY, RISCV_SBI_ENTRY, &riscv64_program(&words));
+    let path = temp_binary("riscv-sbi-time-set-timer", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-sbi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"trap\":\"breakpoint\""));
+    assert!(!stdout.contains("\"x6\":\""));
+    assert!(stdout.contains("\"riscv_sbi_timers\":[{\"cpu\":0,\"deadline\":96}]"));
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.timer.deadlines",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.timer.next_deadline",
+        "Tick",
+        96,
+        "constant",
+    );
+}
+
+#[test]
+fn rem6_run_without_riscv_sbi_omits_sbi_timer_stats() {
+    let elf = riscv64_elf(
+        RISCV_SBI_ENTRY,
+        RISCV_SBI_ENTRY,
+        &riscv64_program(&[0x0010_0073]),
+    );
+    let path = temp_binary("riscv-no-sbi-timer-stats", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "32",
+            "--stats-format",
+            "json",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"trap\":\"breakpoint\""));
+    assert!(stdout.contains("\"riscv_sbi_timers\":[]"));
+    assert!(!stdout.contains("sim.riscv.sbi.timer."));
 }
 
 #[test]

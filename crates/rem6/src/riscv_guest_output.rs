@@ -24,6 +24,12 @@ pub(crate) struct Rem6RiscvSbiConsoleSummary {
     bytes: Vec<u8>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6RiscvSbiTimerSummary {
+    cpu: u32,
+    deadline: u64,
+}
+
 impl Rem6RiscvSbiConsoleSummary {
     pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {
         Self { bytes }
@@ -35,6 +41,20 @@ impl Rem6RiscvSbiConsoleSummary {
 
     pub(crate) fn byte_count(&self) -> u64 {
         self.bytes.len() as u64
+    }
+}
+
+impl Rem6RiscvSbiTimerSummary {
+    pub(crate) const fn new(cpu: u32, deadline: u64) -> Self {
+        Self { cpu, deadline }
+    }
+
+    pub(crate) const fn cpu(&self) -> u32 {
+        self.cpu
+    }
+
+    pub(crate) const fn deadline(&self) -> u64 {
+        self.deadline
     }
 }
 

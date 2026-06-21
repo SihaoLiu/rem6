@@ -1,8 +1,9 @@
-use rem6_cpu::RiscvCore;
+use rem6_cpu::{CpuId, RiscvCore};
 use rem6_memory::{Address, CacheLineLayout};
 use rem6_system::RiscvSystemRunDriver;
 
 use crate::config::Rem6RunConfig;
+use crate::riscv_guest_output::{Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiTimerSummary};
 use crate::runtime_memory::CliMemoryRuntime;
 
 pub(crate) fn configure_cli_riscv_sbi_core(
@@ -41,4 +42,22 @@ pub(crate) fn attach_cli_riscv_sbi_firmware(
         .with_riscv_sbi_firmware_and_functional_guest_memory_writer(move |address, bytes| {
             write_memory.write_guest_memory(address, bytes, line_layout)
         })
+}
+
+pub(crate) fn collect_cli_riscv_sbi_output(
+    driver: &RiscvSystemRunDriver,
+    core_count: u32,
+) -> (Rem6RiscvSbiConsoleSummary, Vec<Rem6RiscvSbiTimerSummary>) {
+    let Some(firmware) = driver.riscv_sbi_firmware() else {
+        return (Rem6RiscvSbiConsoleSummary::default(), Vec::new());
+    };
+    let console = Rem6RiscvSbiConsoleSummary::from_bytes(firmware.debug_console_bytes());
+    let timers = (0..core_count)
+        .filter_map(|cpu| {
+            firmware
+                .timer_deadline(CpuId::new(cpu))
+                .map(|deadline| Rem6RiscvSbiTimerSummary::new(cpu, deadline))
+        })
+        .collect();
+    (console, timers)
 }

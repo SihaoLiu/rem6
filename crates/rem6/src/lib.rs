@@ -107,7 +107,8 @@ use riscv_checkpoint_runtime::{
     attach_cli_memory_checkpoint_bank, attach_cli_riscv_checkpoint_bank,
 };
 pub(crate) use riscv_guest_output::{
-    Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvUnknownSyscallSummary,
+    Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiTimerSummary,
+    Rem6RiscvUnknownSyscallSummary,
 };
 use riscv_run_driver::drive_cli_riscv_run;
 use riscv_sbi_runtime::{attach_cli_riscv_sbi_firmware, configure_cli_riscv_sbi_core};
@@ -192,6 +193,7 @@ pub struct Rem6ExecutionSummary {
     riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
     riscv_unknown_syscalls: Vec<Rem6RiscvUnknownSyscallSummary>,
     riscv_sbi_console: Rem6RiscvSbiConsoleSummary,
+    riscv_sbi_timers: Vec<Rem6RiscvSbiTimerSummary>,
     host_actions: Rem6HostActionSummary,
 }
 
@@ -390,6 +392,7 @@ struct ExecutionSummaryInputs<'a> {
     riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
     riscv_unknown_syscalls: Vec<Rem6RiscvUnknownSyscallSummary>,
     riscv_sbi_console: Rem6RiscvSbiConsoleSummary,
+    riscv_sbi_timers: Vec<Rem6RiscvSbiTimerSummary>,
     riscv_syscall_trace: Vec<RiscvSyscallTraceRecord>,
     host_actions: Rem6HostActionSummary,
     prior_committed_by_cpu: BTreeMap<CpuId, u64>,
@@ -904,10 +907,8 @@ fn execute_riscv(
             (guest_writes, unknown_syscalls, syscall_trace)
         })
         .unwrap_or_default();
-    let riscv_sbi_console = driver
-        .riscv_sbi_firmware()
-        .map(|firmware| Rem6RiscvSbiConsoleSummary::from_bytes(firmware.debug_console_bytes()))
-        .unwrap_or_default();
+    let (riscv_sbi_console, riscv_sbi_timers) =
+        riscv_sbi_runtime::collect_cli_riscv_sbi_output(&driver, core_count);
     let host_actions = {
         let controller = controller
             .lock()
@@ -938,6 +939,7 @@ fn execute_riscv(
         riscv_guest_writes,
         riscv_unknown_syscalls,
         riscv_sbi_console,
+        riscv_sbi_timers,
         riscv_syscall_trace,
         host_actions,
         prior_committed_by_cpu: gdb_outcome.retired_by_cpu().clone(),
@@ -1162,6 +1164,7 @@ fn execution_summary(
         riscv_guest_writes: inputs.riscv_guest_writes,
         riscv_unknown_syscalls: inputs.riscv_unknown_syscalls,
         riscv_sbi_console: inputs.riscv_sbi_console,
+        riscv_sbi_timers: inputs.riscv_sbi_timers,
         host_actions: inputs.host_actions,
     })
 }

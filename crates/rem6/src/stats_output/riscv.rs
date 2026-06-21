@@ -37,6 +37,29 @@ pub(super) fn emit_riscv_run_stats(
             StatResetPolicy::Constant,
             execution.riscv_sbi_console.byte_count(),
         )?;
+        if config.riscv_sbi() {
+            increment_stat(
+                stats,
+                "sim.riscv.sbi.timer.deadlines",
+                "Count",
+                StatResetPolicy::Constant,
+                execution.riscv_sbi_timers.len() as u64,
+            )?;
+            if let Some(deadline) = execution
+                .riscv_sbi_timers
+                .iter()
+                .map(|timer| timer.deadline())
+                .min()
+            {
+                increment_stat(
+                    stats,
+                    "sim.riscv.sbi.timer.next_deadline",
+                    "Tick",
+                    StatResetPolicy::Constant,
+                    deadline,
+                )?;
+            }
+        }
     }
     increment_stat(
         stats,
