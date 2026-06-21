@@ -334,7 +334,7 @@ fn fetch_ahead_decision(
     if instruction_allows_straight_line_fetch_ahead(instruction) {
         return Some(RiscvFetchAheadDecision::straight_line(sequential_pc));
     }
-    if let Some(target) = direct_jump_fetch_ahead_target(fetch_pc, instruction) {
+    if let Some(target) = direct_jump_fetch_ahead_target(state, fetch_pc, instruction) {
         return Some(RiscvFetchAheadDecision::straight_line(target));
     }
     if !instruction_is_conditional_branch(instruction) {
@@ -351,6 +351,7 @@ fn fetch_ahead_decision(
 }
 
 fn direct_jump_fetch_ahead_target(
+    state: &RiscvCoreState,
     fetch_pc: Address,
     instruction: RiscvInstruction,
 ) -> Option<Address> {
@@ -358,7 +359,10 @@ fn direct_jump_fetch_ahead_target(
         RiscvInstruction::Jal { offset, .. } => {
             checked_add_signed(fetch_pc.get(), offset.value()).map(Address::new)
         }
-        RiscvInstruction::Jalr { .. } => None,
+        RiscvInstruction::Jalr { rs1, offset, .. } => {
+            checked_add_signed(state.hart.read(rs1), offset.value())
+                .map(|target| Address::new(target & !1))
+        }
         _ => None,
     }
 }

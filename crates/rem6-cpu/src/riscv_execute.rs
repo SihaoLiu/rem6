@@ -441,7 +441,10 @@ fn direct_jump_fetch_ahead_prediction_target(
     instruction: RiscvInstruction,
     actual_next_pc: Address,
 ) -> Option<Address> {
-    if !matches!(instruction, RiscvInstruction::Jal { .. }) {
+    if !matches!(
+        instruction,
+        RiscvInstruction::Jal { .. } | RiscvInstruction::Jalr { .. }
+    ) {
         return None;
     }
 
