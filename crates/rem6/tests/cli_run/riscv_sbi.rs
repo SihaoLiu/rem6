@@ -7,12 +7,20 @@ const SBI_BASE_PROBE_EXTENSION: i32 = 3;
 const SBI_BASE_EXTENSION: i32 = 0x10;
 const SBI_DEBUG_CONSOLE_EXTENSION: i32 = 0x4442_434e;
 const SBI_DEBUG_CONSOLE_WRITE: i32 = 0;
+const SBI_HSM_EXTENSION: i32 = 0x0048_534d;
+const SBI_HSM_HART_START: i32 = 0;
 const SBI_SPEC_VERSION_2_0: u64 = 2 << 24;
 const RISCV_SBI_ENTRY: u64 = 0x8000_0000;
 
 fn load_dbcn_extension(rd: u8) -> [u32; 2] {
     let upper = (SBI_DEBUG_CONSOLE_EXTENSION + 0x800) & !0xfff;
     let lower = SBI_DEBUG_CONSOLE_EXTENSION - upper;
+    [u_type(upper, rd, 0x37), i_type(lower, rd, 0x0, rd, 0x13)]
+}
+
+fn load_hsm_extension(rd: u8) -> [u32; 2] {
+    let upper = (SBI_HSM_EXTENSION + 0x800) & !0xfff;
+    let lower = SBI_HSM_EXTENSION - upper;
     [u_type(upper, rd, 0x37), i_type(lower, rd, 0x0, rd, 0x13)]
 }
 
@@ -130,6 +138,115 @@ fn rem6_run_riscv_sbi_handles_dbcn_shared_memory_write() {
     assert!(stdout.contains(
         "\"riscv_sbi_console\":{\"bytes\":10,\"text\":\"rem6-dbcn\\n\",\"hex\":\"72656d362d6462636e0a\"}"
     ));
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.dbcn.console_bytes",
+        "Byte",
+        message.len() as u64,
+        "constant",
+    );
+}
+
+#[test]
+fn rem6_run_riscv_sbi_starts_secondary_hart_through_hsm() {
+    let message = b"hsm-start:1:55\n";
+    let mut words = Vec::new();
+    words.push(i_type(1, 0, 0x0, 10, 0x13));
+    let secondary_auipc_index = words.len();
+    words.push(u_type(0, 11, 0x17));
+    words.push(i_type(0, 11, 0x0, 11, 0x13));
+    words.extend([
+        i_type(0x55, 0, 0x0, 12, 0x13),
+        load_hsm_extension(17)[0],
+        load_hsm_extension(17)[1],
+        i_type(SBI_HSM_HART_START, 0, 0x0, 16, 0x13),
+        0x0000_0073,
+        b_type(8, 0, 10, 0x1),
+        j_type(0, 0),
+        i_type(0x7e, 0, 0x0, 5, 0x13),
+        0x0010_0073,
+    ]);
+
+    let secondary_index = words.len();
+    words.extend([
+        i_type(1, 0, 0x0, 5, 0x13),
+        b_type(56, 5, 10, 0x1),
+        i_type(0x55, 0, 0x0, 5, 0x13),
+        b_type(48, 5, 11, 0x1),
+        i_type(message.len() as i32, 0, 0x0, 10, 0x13),
+    ]);
+    let message_auipc_index = words.len();
+    words.push(u_type(0, 11, 0x17));
+    words.push(i_type(0, 11, 0x0, 11, 0x13));
+    words.extend([
+        i_type(0, 0, 0x0, 12, 0x13),
+        load_dbcn_extension(17)[0],
+        load_dbcn_extension(17)[1],
+        i_type(SBI_DEBUG_CONSOLE_WRITE, 0, 0x0, 16, 0x13),
+        0x0000_0073,
+        b_type(12, 0, 10, 0x1),
+        i_type(1, 0, 0x0, 5, 0x13),
+        0x0010_0073,
+        i_type(0x7f, 0, 0x0, 5, 0x13),
+        0x0010_0073,
+    ]);
+
+    let mut program = riscv64_program(&words);
+    let secondary_offset = (secondary_index * 4) as i32;
+    let message_offset = program.len() as i32;
+    words[secondary_auipc_index + 1] = i_type(
+        secondary_offset - (secondary_auipc_index * 4) as i32,
+        11,
+        0x0,
+        11,
+        0x13,
+    );
+    words[message_auipc_index + 1] = i_type(
+        message_offset - (message_auipc_index * 4) as i32,
+        11,
+        0x0,
+        11,
+        0x13,
+    );
+    program = riscv64_program(&words);
+    program.extend_from_slice(message);
+
+    let elf = riscv64_elf(RISCV_SBI_ENTRY, RISCV_SBI_ENTRY, &program);
+    let path = temp_binary("riscv-sbi-hsm-start", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "320",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--riscv-sbi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"cores\":2"));
+    assert!(stdout.contains("\"trap\":\"breakpoint\""));
+    assert!(stdout.contains("\"x5\":\"0x1\""));
+    assert!(stdout.contains(
+        "\"riscv_sbi_console\":{\"bytes\":15,\"text\":\"hsm-start:1:55\\n\",\"hex\":\"68736d2d73746172743a313a35350a\"}"
+    ));
+    assert_stat(&stdout, "sim.riscv.sbi", "Count", 1, "constant");
     assert_stat(
         &stdout,
         "sim.riscv.sbi.dbcn.console_bytes",
