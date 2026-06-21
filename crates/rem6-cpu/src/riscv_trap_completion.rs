@@ -77,4 +77,22 @@ impl RiscvCore {
         self.core.reset_fetch_stream_to_pc(next_pc);
         Some(trap)
     }
+
+    pub fn complete_pending_interrupt_delivery(&self) -> Option<RiscvTrap> {
+        let mut state = self.state.lock().expect("riscv core lock");
+        let trap = state.pending_trap?;
+        if !matches!(trap.kind(), RiscvTrapKind::Interrupt { .. }) {
+            return None;
+        }
+
+        let next_pc = Address::new(state.hart.pc());
+        state.pending_trap = None;
+        state.pending_trap_event = None;
+        state.pending_fetch_prefix = None;
+        state.discard_branch_speculations();
+        riscv_checker::sync_checker_hart(&mut state);
+        drop(state);
+        self.core.reset_fetch_stream_to_pc(next_pc);
+        Some(trap)
+    }
 }

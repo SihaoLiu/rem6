@@ -1,10 +1,18 @@
 use rem6_cpu::{CpuId, RiscvCore};
+use rem6_isa_riscv::RiscvMachineTrapCsr;
 use rem6_memory::{Address, CacheLineLayout};
 use rem6_system::RiscvSystemRunDriver;
 
 use crate::config::Rem6RunConfig;
 use crate::riscv_guest_output::{Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiTimerSummary};
 use crate::runtime_memory::CliMemoryRuntime;
+
+const SUPERVISOR_SOFTWARE_INTERRUPT: u64 = 1;
+const SUPERVISOR_TIMER_INTERRUPT: u64 = 5;
+const SUPERVISOR_EXTERNAL_INTERRUPT: u64 = 9;
+const SBI_SUPERVISOR_INTERRUPT_DELEGATION: u64 = (1 << SUPERVISOR_SOFTWARE_INTERRUPT)
+    | (1 << SUPERVISOR_TIMER_INTERRUPT)
+    | (1 << SUPERVISOR_EXTERNAL_INTERRUPT);
 
 pub(crate) fn configure_cli_riscv_sbi_core(
     config: &Rem6RunConfig,
@@ -15,6 +23,9 @@ pub(crate) fn configure_cli_riscv_sbi_core(
     if !config.riscv_sbi() {
         return;
     }
+    let delegated_interrupts =
+        core.machine_trap_csr(RiscvMachineTrapCsr::Mideleg) | SBI_SUPERVISOR_INTERRUPT_DELEGATION;
+    core.set_machine_trap_csr(RiscvMachineTrapCsr::Mideleg, delegated_interrupts);
     if core_index == 0 {
         core.start_supervisor_hart(start_address, config.riscv_boot_a1());
     } else {

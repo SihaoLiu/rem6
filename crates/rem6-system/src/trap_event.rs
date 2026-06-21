@@ -328,6 +328,12 @@ impl RiscvTrapEventPort {
             let Some(trap) = core.pending_trap() else {
                 continue;
             };
+            if matches!(trap.kind(), RiscvTrapKind::Interrupt { .. })
+                && core.complete_pending_interrupt_delivery().is_some()
+            {
+                continue;
+            }
+
             let cpu = core.id();
             let event = event_for(cpu);
             let source = core.partition();
@@ -380,6 +386,12 @@ impl RiscvTrapEventPort {
             let Some(trap) = core.pending_trap() else {
                 continue;
             };
+            if matches!(trap.kind(), RiscvTrapKind::Interrupt { .. })
+                && core.complete_pending_interrupt_delivery().is_some()
+            {
+                continue;
+            }
+
             let cpu = core.id();
             let event = event_for(cpu);
             let source = core.partition();
@@ -604,6 +616,12 @@ impl RiscvTrapEventPort {
             let Some(trap) = core.pending_trap() else {
                 continue;
             };
+            if matches!(trap.kind(), RiscvTrapKind::Interrupt { .. })
+                && core.complete_pending_interrupt_delivery().is_some()
+            {
+                continue;
+            }
+
             let cpu = core.id();
             let event = event_for(cpu);
             let source = core.partition();
