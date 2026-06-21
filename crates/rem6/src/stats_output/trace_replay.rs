@@ -3,7 +3,7 @@ use rem6_workload::{
     WorkloadDataCacheProtocol, WorkloadParallelExecutionSummary, WorkloadTrafficTraceReplaySummary,
 };
 
-use super::{increment_stat, Rem6CliError};
+use super::{increment_stat, CliDataCacheSummary, Rem6CliError};
 
 pub(super) fn emit_trace_replay_summary_stats(
     stats: &mut StatsRegistry,
@@ -392,6 +392,7 @@ pub(super) fn emit_trace_replay_summary_stats(
 pub(super) fn emit_trace_replay_data_cache_stats(
     stats: &mut StatsRegistry,
     summary: &WorkloadParallelExecutionSummary,
+    data_cache: &CliDataCacheSummary,
     data_cache_dram_accesses: usize,
 ) -> Result<(), Rem6CliError> {
     emit_trace_count(
@@ -448,6 +449,16 @@ pub(super) fn emit_trace_replay_data_cache_stats(
         stats,
         "sim.trace_replay.data_cache.dram_accesses",
         data_cache_dram_accesses as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.data_cache.cpu_responses",
+        data_cache.cpu_responses,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.data_cache.directory_decisions",
+        data_cache.directory_decisions,
     )?;
     for protocol in [
         WorkloadDataCacheProtocol::Msi,
@@ -622,6 +633,7 @@ mod tests {
         emit_trace_replay_resource_stats, emit_trace_replay_summary_stats,
     };
     use crate::stats_output::stats_snapshot_json;
+    use crate::CliDataCacheSummary;
 
     #[test]
     fn trace_replay_stats_emit_nonzero_cache_and_sideband_counters() {
@@ -701,9 +713,14 @@ mod tests {
                 WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Msi, 3),
                 WorkloadDataCacheProtocolCount::new(WorkloadDataCacheProtocol::Mesi, 1),
             ]);
+        let data_cache = CliDataCacheSummary {
+            cpu_responses: 11,
+            directory_decisions: 13,
+            ..CliDataCacheSummary::default()
+        };
         let mut stats = StatsRegistry::new();
 
-        emit_trace_replay_data_cache_stats(&mut stats, &summary, 9).unwrap();
+        emit_trace_replay_data_cache_stats(&mut stats, &summary, &data_cache, 9).unwrap();
         let json = stats_snapshot_json(&stats.snapshot(0));
 
         assert_stat_value(&json, "sim.trace_replay.data_cache.runs", "Count", 5);
@@ -770,6 +787,18 @@ mod tests {
             "sim.trace_replay.data_cache.dram_accesses",
             "Count",
             9,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.data_cache.cpu_responses",
+            "Count",
+            11,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.data_cache.directory_decisions",
+            "Count",
+            13,
         );
     }
 

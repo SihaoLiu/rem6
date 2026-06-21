@@ -1519,6 +1519,8 @@ fn rem6_trace_replay_data_cache_protocol_drives_executable_policy_stats() {
     assert!(stdout.contains("\"trace_data_cache_maintenance_response_count\":2"));
     assert!(stdout.contains("\"trace_data_cache_clean_maintenance_response_count\":1"));
     assert!(stdout.contains("\"trace_data_cache_invalidate_maintenance_response_count\":1"));
+    assert!(stdout.contains("\"data_cache_cpu_responses\":2"));
+    assert!(stdout.contains("\"data_cache_directory_decisions\":2"));
     assert_stat(
         &stdout,
         "sim.trace_replay.responses.cache",
@@ -1543,6 +1545,20 @@ fn rem6_trace_replay_data_cache_protocol_drives_executable_policy_stats() {
     assert_stat(
         &stdout,
         "sim.trace_replay.data_cache.msi.runs",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.data_cache.cpu_responses",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.data_cache.directory_decisions",
         "Count",
         2,
         "monotonic",

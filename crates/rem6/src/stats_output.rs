@@ -963,6 +963,7 @@ pub(super) fn trace_replay_stats_output(
     emit_trace_replay_data_cache_stats(
         &mut stats,
         inputs.execution.parallel_summary(),
+        inputs.execution.data_cache(),
         inputs.execution.data_cache_dram_accesses(),
     )?;
     emit_trace_replay_fabric_stats(&mut stats, inputs.execution.parallel_summary())?;

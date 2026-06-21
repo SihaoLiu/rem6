@@ -2,17 +2,18 @@ use super::formatting::{
     bytes_to_hex, elf_architecture_name, elf_class_name, elf_endian_name, elf_os_name, json_escape,
 };
 use super::{
-    Rem6CoreSummary, Rem6DataAccessProbeSummary, Rem6DramSummary, Rem6ExecutionStop,
-    Rem6ExecutionSummary, Rem6GuestHostCallSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary,
-    Rem6HostActionSummary, Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary,
-    Rem6HostCheckpointSummary, Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary,
-    Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
-    Rem6InstructionProbeSummary, Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryResourceSummary,
-    Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary,
-    Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary,
-    Rem6PcCountPairSummary, Rem6PcCountTrackerSummary, Rem6ReadfileSummary,
-    Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvUnknownSyscallSummary,
-    Rem6RunArtifact, Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary, RequestedIsa,
+    CliDataCacheSummary, Rem6CoreSummary, Rem6DataAccessProbeSummary, Rem6DramSummary,
+    Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GuestHostCallSummary, Rem6GupsArtifact,
+    Rem6GupsExecutionSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
+    Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary, Rem6HostInjectedCommandSummary,
+    Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary, Rem6HostStopActionSummary,
+    Rem6HostWorkMarkerSummary, Rem6InstructionProbeSummary, Rem6LoadBlobSummary, Rem6MemoryDump,
+    Rem6MemoryResourceSummary, Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary,
+    Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
+    Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary, Rem6PcCountTrackerSummary,
+    Rem6ReadfileSummary, Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary,
+    Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact, Rem6TraceReplayArtifact,
+    Rem6TraceReplayExecutionSummary, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -294,6 +295,7 @@ impl Rem6TraceReplayArtifact {
             traffic_trace_summary_json(
                 self.execution.summary(),
                 self.execution.parallel_summary(),
+                self.execution.data_cache(),
                 self.execution.data_cache_dram_summary(),
                 self.execution.data_cache_dram_accesses(),
             ),
@@ -327,6 +329,7 @@ impl Rem6GupsExecutionSummary {
 fn traffic_trace_summary_json(
     summary: &rem6_workload::WorkloadTrafficTraceReplaySummary,
     parallel_summary: &rem6_workload::WorkloadParallelExecutionSummary,
+    data_cache: &CliDataCacheSummary,
     data_cache_dram_summary: &rem6_workload::WorkloadParallelExecutionSummary,
     data_cache_dram_accesses: usize,
 ) -> String {
@@ -469,6 +472,16 @@ fn traffic_trace_summary_json(
         &mut fields,
         "data_cache_dram_accesses",
         data_cache_dram_accesses,
+    );
+    push_json_u64(
+        &mut fields,
+        "data_cache_cpu_responses",
+        data_cache.cpu_responses,
+    );
+    push_json_u64(
+        &mut fields,
+        "data_cache_directory_decisions",
+        data_cache.directory_decisions,
     );
     push_json_usize(
         &mut fields,
@@ -1708,6 +1721,8 @@ impl Rem6MemoryTransportCounters {
 
 #[cfg(test)]
 mod tests {
+    use crate::CliDataCacheSummary;
+
     use rem6_workload::{
         WorkloadParallelExecutionSummary, WorkloadRouteId, WorkloadTrafficTraceReplaySummary,
     };
@@ -1732,11 +1747,21 @@ mod tests {
             .with_trace_diagnostic_count(1);
 
         let parallel_summary = WorkloadParallelExecutionSummary::default();
+        let data_cache = CliDataCacheSummary {
+            cpu_responses: 11,
+            directory_decisions: 13,
+            ..CliDataCacheSummary::default()
+        };
         let data_cache_dram_summary = WorkloadParallelExecutionSummary::default()
             .with_dram_activity(2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
 
-        let json =
-            traffic_trace_summary_json(&summary, &parallel_summary, &data_cache_dram_summary, 7);
+        let json = traffic_trace_summary_json(
+            &summary,
+            &parallel_summary,
+            &data_cache,
+            &data_cache_dram_summary,
+            7,
+        );
 
         assert!(json.contains("\"trace_invalidate_response_count\":1"));
         assert!(json.contains("\"trace_clean_response_count\":1"));
@@ -1752,6 +1777,8 @@ mod tests {
         assert!(json.contains("\"trace_l1_invalidation_count\":1"));
         assert!(json.contains("\"trace_diagnostic_count\":1"));
         assert!(json.contains("\"data_cache_dram_accesses\":7"));
+        assert!(json.contains("\"data_cache_cpu_responses\":11"));
+        assert!(json.contains("\"data_cache_directory_decisions\":13"));
         assert!(json.contains("\"active_dram_target_count\":2"));
         assert!(json.contains("\"active_dram_port_count\":3"));
         assert!(json.contains("\"active_dram_bank_count\":4"));

@@ -20,6 +20,7 @@ use sha2::{Digest, Sha256};
 
 use crate::cli_output::emit_cli_output;
 use crate::config::{Rem6TraceReplayConfig, StatsFormat};
+use crate::data_cache_runtime::CliDataCacheSummary;
 use crate::formatting::bytes_to_hex;
 use crate::guest_memory::build_cli_dram_profile;
 use crate::resource_acquire_cli::{
@@ -56,6 +57,7 @@ pub struct Rem6TraceReplayExecutionSummary {
     pub(crate) final_tick: u64,
     pub(crate) summary: rem6_workload::WorkloadTrafficTraceReplaySummary,
     pub(crate) parallel_summary: WorkloadParallelExecutionSummary,
+    pub(crate) data_cache: CliDataCacheSummary,
     pub(crate) data_cache_dram_summary: WorkloadParallelExecutionSummary,
     pub(crate) data_cache_dram_accesses: usize,
 }
@@ -143,12 +145,15 @@ pub fn run_trace_replay_config(
             ),
         });
     }
-    let data_cache_runs = outcome.run().data_cache_runs();
+    let run = outcome.run();
+    let data_cache_runs = run.data_cache_runs();
+    let data_cache = CliDataCacheSummary::from_records(&run.data_cache_run_records());
     let data_cache_dram_summary = data_cache_dram_summary(data_cache_runs);
     let execution = Rem6TraceReplayExecutionSummary {
         final_tick,
         summary,
         parallel_summary,
+        data_cache,
         data_cache_dram_accesses: data_cache_runs
             .iter()
             .map(|run| run.dram_access_count())
@@ -561,6 +566,10 @@ impl Rem6TraceReplayExecutionSummary {
 
     pub(crate) const fn parallel_summary(&self) -> &WorkloadParallelExecutionSummary {
         &self.parallel_summary
+    }
+
+    pub(crate) const fn data_cache(&self) -> &CliDataCacheSummary {
+        &self.data_cache
     }
 
     pub(crate) const fn data_cache_dram_summary(&self) -> &WorkloadParallelExecutionSummary {
