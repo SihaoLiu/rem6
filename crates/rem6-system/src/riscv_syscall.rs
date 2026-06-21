@@ -64,11 +64,13 @@ mod signal;
 mod signalfd;
 mod sleep;
 mod splice;
+mod splice_flags;
 mod startup;
 mod stat;
 mod sync;
 mod sysinfo;
 mod table;
+mod tee;
 mod thread;
 mod time;
 mod timerfd;
@@ -238,6 +240,7 @@ use sync::{
 };
 use sysinfo::{syscall_sysinfo, RISCV_LINUX_SYSINFO};
 pub use table::RiscvSyscallTable;
+use tee::{syscall_tee, RISCV_LINUX_TEE};
 use timerfd::{
     syscall_timerfd_create, syscall_timerfd_gettime, syscall_timerfd_settime, RiscvGuestTimerFd,
     RISCV_LINUX_TIMERFD_CREATE, RISCV_LINUX_TIMERFD_GETTIME, RISCV_LINUX_TIMERFD_SETTIME,

@@ -3,27 +3,19 @@ use super::{
     iovec::{read_iovec_prefix, read_iovecs, RISCV_LINUX_IOV_MAX},
     linux_error,
     pipe::RiscvGuestPipeWrite,
+    splice_flags::{splice_flags_are_nonblocking, splice_flags_are_supported},
     RiscvGuestMemoryReader, RiscvSyscallOutcome, RiscvSyscallRequest, RiscvSyscallState,
     RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
 };
 
 pub(super) const RISCV_LINUX_VMSPLICE: u64 = 75;
 
-const RISCV_LINUX_SPLICE_F_MOVE: u64 = 0x01;
-const RISCV_LINUX_SPLICE_F_NONBLOCK: u64 = 0x02;
-const RISCV_LINUX_SPLICE_F_MORE: u64 = 0x04;
-const RISCV_LINUX_SPLICE_F_GIFT: u64 = 0x08;
-const RISCV_LINUX_VMSPLICE_SUPPORTED_FLAGS: u64 = RISCV_LINUX_SPLICE_F_MOVE
-    | RISCV_LINUX_SPLICE_F_NONBLOCK
-    | RISCV_LINUX_SPLICE_F_MORE
-    | RISCV_LINUX_SPLICE_F_GIFT;
-
 pub(super) fn syscall_vmsplice(
     request: RiscvSyscallRequest,
     state: &mut RiscvSyscallState,
     guest_memory: &RiscvGuestMemoryReader,
 ) -> RiscvSyscallOutcome {
-    if request.argument(3) & !RISCV_LINUX_VMSPLICE_SUPPORTED_FLAGS != 0 {
+    if !splice_flags_are_supported(request.argument(3)) {
         return vmsplice_return(linux_error(RISCV_LINUX_EINVAL));
     }
     let Some(fd) = guest_fd_argument(request.argument(0)) else {
@@ -55,7 +47,7 @@ pub(super) fn syscall_vmsplice(
         return vmsplice_return(linux_error(RISCV_LINUX_EINVAL));
     };
 
-    let nonblocking = request.argument(3) & RISCV_LINUX_SPLICE_F_NONBLOCK != 0;
+    let nonblocking = splice_flags_are_nonblocking(request.argument(3));
     let planned = match state.guest_pipe_write_plan_with_nonblocking_hint(fd, total, nonblocking) {
         Ok(RiscvGuestPipeWrite::Written(written)) => written,
         Ok(RiscvGuestPipeWrite::WouldBlock) => {

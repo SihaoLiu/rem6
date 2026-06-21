@@ -90,6 +90,8 @@ mod riscv_se_stdio;
 mod riscv_se_sync;
 #[path = "cli_run/riscv_se_sysinfo.rs"]
 mod riscv_se_sysinfo;
+#[path = "cli_run/riscv_se_tee.rs"]
+mod riscv_se_tee;
 #[path = "cli_run/riscv_se_time.rs"]
 mod riscv_se_time;
 #[path = "cli_run/riscv_se_timerfd.rs"]

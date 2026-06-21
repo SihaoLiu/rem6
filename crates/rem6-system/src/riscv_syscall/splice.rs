@@ -4,6 +4,7 @@ use super::{
     file_write::RiscvGuestFileWriteError,
     guest_fd_argument, linux_error,
     pipe::{RiscvGuestPipeRead, RiscvGuestPipeWrite},
+    splice_flags::{splice_flags_are_nonblocking, splice_flags_are_supported},
     RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallOutcome, RiscvSyscallRequest,
     RiscvSyscallState, RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT,
     RISCV_LINUX_EFBIG, RISCV_LINUX_EINVAL, RISCV_LINUX_EPERM, RISCV_LINUX_ESPIPE,
@@ -12,22 +13,13 @@ use super::{
 
 pub(super) const RISCV_LINUX_SPLICE: u64 = 76;
 
-const RISCV_LINUX_SPLICE_F_MOVE: u64 = 0x01;
-const RISCV_LINUX_SPLICE_F_NONBLOCK: u64 = 0x02;
-const RISCV_LINUX_SPLICE_F_MORE: u64 = 0x04;
-const RISCV_LINUX_SPLICE_F_GIFT: u64 = 0x08;
-const RISCV_LINUX_SPLICE_SUPPORTED_FLAGS: u64 = RISCV_LINUX_SPLICE_F_MOVE
-    | RISCV_LINUX_SPLICE_F_NONBLOCK
-    | RISCV_LINUX_SPLICE_F_MORE
-    | RISCV_LINUX_SPLICE_F_GIFT;
-
 pub(super) fn syscall_splice(
     request: RiscvSyscallRequest,
     state: &mut RiscvSyscallState,
     guest_memory_reader: Option<&RiscvGuestMemoryReader>,
     guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
 ) -> RiscvSyscallOutcome {
-    if request.argument(5) & !RISCV_LINUX_SPLICE_SUPPORTED_FLAGS != 0 {
+    if !splice_flags_are_supported(request.argument(5)) {
         return splice_return(linux_error(RISCV_LINUX_EINVAL));
     }
     let Some(in_fd) = guest_fd_argument(request.argument(0)) else {
@@ -67,7 +59,7 @@ pub(super) fn syscall_splice(
         Ok(offset) => offset,
         Err(errno) => return splice_return(linux_error(errno)),
     };
-    let nonblocking = request.argument(5) & RISCV_LINUX_SPLICE_F_NONBLOCK != 0;
+    let nonblocking = splice_flags_are_nonblocking(request.argument(5));
     match splice_bytes(
         in_fd,
         out_fd,
