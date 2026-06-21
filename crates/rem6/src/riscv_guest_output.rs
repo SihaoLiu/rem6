@@ -279,6 +279,10 @@ impl Rem6RiscvSbiResetSummary {
         self.code
     }
 
+    pub(crate) const fn is_shutdown(&self) -> bool {
+        self.reset_type == 0
+    }
+
     pub(crate) const fn is_system_failure(&self) -> bool {
         self.code != 0
     }

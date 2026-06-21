@@ -144,6 +144,17 @@ pub(super) fn emit_riscv_run_stats(
             )?;
             increment_stat(
                 stats,
+                "sim.riscv.sbi.reset.shutdowns",
+                "Count",
+                StatResetPolicy::Constant,
+                execution
+                    .riscv_sbi_resets
+                    .iter()
+                    .filter(|reset| reset.is_shutdown())
+                    .count() as u64,
+            )?;
+            increment_stat(
+                stats,
                 "sim.riscv.sbi.reset.system_failures",
                 "Count",
                 StatResetPolicy::Constant,
