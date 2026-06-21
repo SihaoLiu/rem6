@@ -11,8 +11,8 @@ use super::{
     Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary, Rem6MemoryTransportSummary,
     Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary,
     Rem6PcCountPairSummary, Rem6PcCountTrackerSummary, Rem6ReadfileSummary,
-    Rem6RiscvGuestWriteSummary, Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact,
-    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary, RequestedIsa,
+    Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvUnknownSyscallSummary,
+    Rem6RunArtifact, Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -70,6 +70,11 @@ impl Rem6RunArtifact {
             .as_ref()
             .map(Rem6ExecutionSummary::to_riscv_unknown_syscalls_json)
             .unwrap_or_else(|| "[]".to_string());
+        let riscv_sbi_console = self
+            .execution
+            .as_ref()
+            .map(Rem6ExecutionSummary::to_riscv_sbi_console_json)
+            .unwrap_or_else(|| Rem6RiscvSbiConsoleSummary::default().to_json());
         let host_actions = self
             .execution
             .as_ref()
@@ -119,7 +124,7 @@ impl Rem6RunArtifact {
             .map(|artifact| format!(",\"power_analysis\":{}", artifact.to_json()))
             .unwrap_or_default();
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"host_actions\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"host_actions\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -141,6 +146,7 @@ impl Rem6RunArtifact {
             memory_resources,
             riscv_guest_writes,
             riscv_unknown_syscalls,
+            riscv_sbi_console,
             host_actions,
             dram,
             transport,
@@ -1082,6 +1088,10 @@ impl Rem6ExecutionSummary {
         format!("[{syscalls}]")
     }
 
+    fn to_riscv_sbi_console_json(&self) -> String {
+        self.riscv_sbi_console.to_json()
+    }
+
     fn to_transport_json(&self) -> String {
         format!(
             "{{\"fetch\":{},\"data\":{}}}",
@@ -1143,6 +1153,20 @@ impl Rem6RiscvUnknownSyscallSummary {
         format!(
             "{{\"pc\":\"0x{:x}\",\"number\":{},\"tick\":{},\"arguments\":[{}]}}",
             self.pc, self.number, self.tick, arguments
+        )
+    }
+}
+
+impl Rem6RiscvSbiConsoleSummary {
+    fn to_json(&self) -> String {
+        let text = std::str::from_utf8(self.bytes())
+            .map(|value| format!("\"{}\"", json_escape(value)))
+            .unwrap_or_else(|_| "null".to_string());
+        format!(
+            "{{\"bytes\":{},\"text\":{},\"hex\":\"{}\"}}",
+            self.byte_count(),
+            text,
+            bytes_to_hex(self.bytes()),
         )
     }
 }

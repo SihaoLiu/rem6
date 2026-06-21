@@ -19,6 +19,25 @@ impl Rem6RiscvGuestWriteSummary {
     }
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct Rem6RiscvSbiConsoleSummary {
+    bytes: Vec<u8>,
+}
+
+impl Rem6RiscvSbiConsoleSummary {
+    pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {
+        Self { bytes }
+    }
+
+    pub(crate) fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub(crate) fn byte_count(&self) -> u64 {
+        self.bytes.len() as u64
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6RiscvUnknownSyscallSummary {
     pub(crate) pc: u64,

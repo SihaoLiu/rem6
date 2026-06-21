@@ -73,7 +73,7 @@ use data_cache_runtime::{
 };
 use debug_output::Rem6DebugSummary;
 pub use gpu_cli::{run_gpu_run_config, Rem6GpuRunArtifact, Rem6GpuRunConfig};
-use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob};
+use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob, Rem6LoadBlobSummary};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
 pub(crate) use host_actions::{
     Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
@@ -105,7 +105,9 @@ pub use resource_acquire_config::{Rem6ResourceAcquireConfig, Rem6ResourceAcquire
 use riscv_checkpoint_runtime::{
     attach_cli_memory_checkpoint_bank, attach_cli_riscv_checkpoint_bank,
 };
-pub(crate) use riscv_guest_output::{Rem6RiscvGuestWriteSummary, Rem6RiscvUnknownSyscallSummary};
+pub(crate) use riscv_guest_output::{
+    Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvUnknownSyscallSummary,
+};
 use riscv_run_driver::drive_cli_riscv_run;
 use riscv_sbi_runtime::{attach_cli_riscv_sbi_firmware, configure_cli_riscv_sbi_core};
 use riscv_se_inputs::{read_riscv_se_file, read_riscv_se_stdin};
@@ -148,35 +150,6 @@ pub struct Rem6RunArtifact {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Rem6LoadBlobSummary {
-    address: u64,
-    source: String,
-    bytes: u64,
-}
-
-impl Rem6LoadBlobSummary {
-    fn new(address: u64, source: impl Into<String>, bytes: u64) -> Self {
-        Self {
-            address,
-            source: source.into(),
-            bytes,
-        }
-    }
-
-    pub const fn address(&self) -> u64 {
-        self.address
-    }
-
-    pub fn source(&self) -> &str {
-        &self.source
-    }
-
-    pub const fn bytes(&self) -> u64 {
-        self.bytes
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6ExecutionSummary {
     final_tick: u64,
     stop: Rem6ExecutionStop,
@@ -216,6 +189,7 @@ pub struct Rem6ExecutionSummary {
     memory_dumps: Vec<Rem6MemoryDump>,
     riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
     riscv_unknown_syscalls: Vec<Rem6RiscvUnknownSyscallSummary>,
+    riscv_sbi_console: Rem6RiscvSbiConsoleSummary,
     host_actions: Rem6HostActionSummary,
 }
 
@@ -413,6 +387,7 @@ struct ExecutionSummaryInputs<'a> {
     data_trace: &'a MemoryTrace,
     riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
     riscv_unknown_syscalls: Vec<Rem6RiscvUnknownSyscallSummary>,
+    riscv_sbi_console: Rem6RiscvSbiConsoleSummary,
     riscv_syscall_trace: Vec<RiscvSyscallTraceRecord>,
     host_actions: Rem6HostActionSummary,
     prior_committed_by_cpu: BTreeMap<CpuId, u64>,
@@ -798,7 +773,7 @@ fn execute_riscv(
             RiscvDataAccessStats::with_stack_distance(probe_config)
                 .with_mem_footprint(footprint_config),
         );
-    driver = attach_cli_riscv_sbi_firmware(config, driver);
+    driver = attach_cli_riscv_sbi_firmware(config, driver, &memory, line_layout);
     if config.riscv_se() {
         driver = driver.with_riscv_syscall_emulation_for_boot_image(image);
         let proc_self_exe_target = std::fs::canonicalize(config.binary())
@@ -921,6 +896,10 @@ fn execute_riscv(
             (guest_writes, unknown_syscalls, syscall_trace)
         })
         .unwrap_or_default();
+    let riscv_sbi_console = driver
+        .riscv_sbi_firmware()
+        .map(|firmware| Rem6RiscvSbiConsoleSummary::from_bytes(firmware.debug_console_bytes()))
+        .unwrap_or_default();
     let host_actions = {
         let controller = controller
             .lock()
@@ -950,6 +929,7 @@ fn execute_riscv(
         data_trace: &data_trace,
         riscv_guest_writes,
         riscv_unknown_syscalls,
+        riscv_sbi_console,
         riscv_syscall_trace,
         host_actions,
         prior_committed_by_cpu: gdb_outcome.retired_by_cpu().clone(),
@@ -1165,6 +1145,7 @@ fn execution_summary(
         )?,
         riscv_guest_writes: inputs.riscv_guest_writes,
         riscv_unknown_syscalls: inputs.riscv_unknown_syscalls,
+        riscv_sbi_console: inputs.riscv_sbi_console,
         host_actions: inputs.host_actions,
     })
 }

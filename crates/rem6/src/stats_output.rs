@@ -5,6 +5,7 @@ mod dram;
 mod gpu_run;
 mod gups;
 mod resource_acquire;
+mod riscv;
 mod text;
 mod trace_replay;
 
@@ -23,6 +24,7 @@ use dram::emit_dram_stats;
 pub(super) use gpu_run::gpu_run_stats_output;
 pub(super) use gups::gups_stats_output;
 pub(super) use resource_acquire::resource_acquire_stats_output;
+use riscv::emit_riscv_run_stats;
 use text::stats_snapshot_text;
 use trace_replay::{
     emit_trace_replay_data_cache_stats, emit_trace_replay_dram_stats,
@@ -182,34 +184,7 @@ pub(super) fn run_stats_output(
         inputs.start_address,
     )?;
     if inputs.config.isa() == RequestedIsa::Riscv {
-        increment_stat(
-            &mut stats,
-            "sim.riscv.boot.a0",
-            "Value",
-            StatResetPolicy::Constant,
-            inputs.config.riscv_boot_a0(),
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.riscv.boot.a1",
-            "Value",
-            StatResetPolicy::Constant,
-            inputs.config.riscv_boot_a1(),
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.riscv.sbi",
-            "Count",
-            StatResetPolicy::Constant,
-            u64::from(inputs.config.riscv_sbi()),
-        )?;
-        increment_stat(
-            &mut stats,
-            "sim.riscv.se",
-            "Count",
-            StatResetPolicy::Constant,
-            u64::from(inputs.config.riscv_se()),
-        )?;
+        emit_riscv_run_stats(&mut stats, inputs.config, inputs.execution)?;
     }
     increment_stat(
         &mut stats,

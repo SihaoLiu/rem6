@@ -10,12 +10,41 @@ use rem6_memory::{
 
 use crate::config::{CliDramMemoryProfile, LoadBlobRequest, LoadBlobSource};
 use crate::run_resource_config::RunResourcePayloads;
-use crate::{execute_error, Rem6CliError, Rem6LoadBlobSummary};
+use crate::{execute_error, Rem6CliError};
 
 pub(super) const CLI_MEMORY_TARGET: MemoryTargetId = MemoryTargetId::new(0);
 const CLI_ELF_LOAD_PAGE_BYTES: u64 = 4096;
 const CLI_VOLATILE_REFRESH_INTERVAL: u64 = 32;
 const CLI_VOLATILE_REFRESH_RECOVERY: u64 = 5;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6LoadBlobSummary {
+    address: u64,
+    source: String,
+    bytes: u64,
+}
+
+impl Rem6LoadBlobSummary {
+    pub(crate) fn new(address: u64, source: impl Into<String>, bytes: u64) -> Self {
+        Self {
+            address,
+            source: source.into(),
+            bytes,
+        }
+    }
+
+    pub(crate) const fn address(&self) -> u64 {
+        self.address
+    }
+
+    pub(crate) fn source(&self) -> &str {
+        &self.source
+    }
+
+    pub(crate) const fn bytes(&self) -> u64 {
+        self.bytes
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct LoadedBlob {
