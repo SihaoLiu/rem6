@@ -268,6 +268,61 @@ fn linux_table_newfstatat_nofollow_stats_final_symlink() {
 }
 
 #[test]
+fn linux_table_newfstatat_resolves_relative_path_against_guest_directory_fd() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"sub/guest.txt", b"file-backed input\n");
+    let guest_memory_reader = c_string_reader_with(&[(0x9000, b"sub"), (0x9010, b"guest.txt")]);
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPENAT_FOR_STAT_TEST,
+                [
+                    RISCV_LINUX_AT_FDCWD,
+                    0x9000,
+                    RISCV_LINUX_O_DIRECTORY_FOR_TEST,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_NEWFSTATAT, [3, 0x9010, 0x9200, 0, 0, 0],),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+
+    let writes = writes.lock().unwrap();
+    assert_eq!(writes.len(), 128);
+    let stat = collect_guest_writes(&writes, 0x9200, 128);
+    assert_eq!(read_le_u64(&stat, 48), 18);
+    assert_eq!(read_le_u32(&stat, 16), 0o100444);
+}
+
+#[test]
 fn linux_table_utimensat_validates_guest_paths_fds_and_timespecs() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);

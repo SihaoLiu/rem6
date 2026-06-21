@@ -203,6 +203,171 @@ int main(void) {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_newfstatat_dirfd_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE raw newfstatat smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE raw newfstatat smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-newfstatat-dirfd");
+    let source = workspace.join("raw-newfstatat-dirfd.c");
+    let binary = workspace.join("raw-newfstatat-dirfd");
+    fs::write(
+        &source,
+        r#"#include <stdint.h>
+
+#define AT_FDCWD (-100L)
+#define O_RDONLY 0
+#define O_DIRECTORY 0200000
+#define S_IFMT 0170000U
+#define S_IFREG 0100000U
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall4(long number, long arg0, long arg1, long arg2, long arg3) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3), "r"(a7) : "memory");
+    return a0;
+}
+
+static uint32_t read_le32(const unsigned char *bytes) {
+    return ((uint32_t)bytes[0]) |
+           ((uint32_t)bytes[1] << 8) |
+           ((uint32_t)bytes[2] << 16) |
+           ((uint32_t)bytes[3] << 24);
+}
+
+static uint64_t read_le64(const unsigned char *bytes) {
+    return ((uint64_t)read_le32(bytes)) |
+           ((uint64_t)read_le32(bytes + 4) << 32);
+}
+
+static void finish(int ok) {
+    static const char pass[] = "raw-newfstatat-dirfd:0:18:100444\n";
+    static const char fail[] = "raw-newfstatat-dirfd:fail\n";
+    if (ok) {
+        linux_syscall3(64, 1, (long)pass, sizeof(pass) - 1);
+        linux_syscall3(93, 84, 0, 0);
+    } else {
+        linux_syscall3(64, 1, (long)fail, sizeof(fail) - 1);
+        linux_syscall3(93, 85, 0, 0);
+    }
+    for (;;) {
+    }
+}
+
+int main(void) {
+    unsigned char stat[128];
+    for (unsigned int i = 0; i < sizeof(stat); i++) {
+        stat[i] = 0x3c;
+    }
+
+    long dirfd = linux_syscall4(56, AT_FDCWD, (long)"sub", O_RDONLY | O_DIRECTORY, 0);
+    long status = -99;
+    long close_status = -99;
+    if (dirfd >= 0) {
+        status = linux_syscall4(79, dirfd, (long)"guest.txt", (long)stat, 0);
+        close_status = linux_syscall3(57, dirfd, 0, 0);
+    }
+
+    uint32_t mode = read_le32(stat + 16) & 0777777U;
+    uint64_t size = read_le64(stat + 48);
+    finish(dirfd == 3 &&
+           status == 0 &&
+           close_status == 0 &&
+           size == 18 &&
+           (mode & S_IFMT) == S_IFREG &&
+           (mode & 0777U) == 0444U);
+    return 85;
+}
+"#,
+    )
+    .unwrap();
+    fs::create_dir(workspace.join("sub")).unwrap();
+    let nested_input = workspace.join("sub").join("guest.txt");
+    fs::write(&nested_input, b"file-backed input\n").unwrap();
+    fs::set_permissions(&nested_input, fs::Permissions::from_mode(0o444)).unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu)
+        .current_dir(&workspace)
+        .arg(&binary)
+        .output()
+        .unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(84),
+        "qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(qemu_output.stdout, b"raw-newfstatat-dirfd:0:18:100444\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+            "--riscv-se-file",
+            &format!("sub/guest.txt={}", nested_input.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":84"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("raw-newfstatat-dirfd:0:18:100444"));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_utimensat_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(

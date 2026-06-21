@@ -220,9 +220,10 @@ pub(super) fn syscall_newfstatat(
             Err(_error) => return linux_error(RISCV_LINUX_EBADF),
         }
     } else {
-        if request.argument(0) != RISCV_LINUX_AT_FDCWD {
-            return linux_error(RISCV_LINUX_EBADF);
-        }
+        let path = match resolve_guest_at_path(request.argument(0), &path, state) {
+            Ok(path) => path,
+            Err(error) => return error,
+        };
         match guest_path_or_link_stat_or_error(
             state,
             &path,
