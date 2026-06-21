@@ -16,7 +16,7 @@ use rem6_kernel::PartitionedScheduler;
 use rem6_memory::{MemoryOperation, PartitionedMemoryStore};
 use rem6_system::{
     handle_riscv_gdb_remote_system_packet, riscv_gdb_remote_session_from_cluster, GuestEventId,
-    RiscvSystemRun, RiscvSystemRunDriver,
+    RiscvGdbRemotePacketError, RiscvSystemRun, RiscvSystemRunDriver,
 };
 use rem6_transport::{MemoryTrace, MemoryTransport};
 
@@ -486,16 +486,25 @@ fn process_gdb_bytes(
                             execute_error(format!("failed to reject GDB packet: {error}"))
                         })?
                 } else {
-                    handle_riscv_gdb_remote_system_packet(
+                    match handle_riscv_gdb_remote_system_packet(
                         RiscvGdbXlen::Rv64,
                         session,
                         cluster,
                         memory,
                         packet,
-                    )
-                    .map_err(|error| {
-                        execute_error(format!("failed to handle GDB packet: {error}"))
-                    })?
+                    ) {
+                        Ok(frames) => frames,
+                        Err(RiscvGdbRemotePacketError::RegisterWrite(_)) => session
+                            .respond_with_payload(b"E01".to_vec())
+                            .map_err(|error| {
+                                execute_error(format!("failed to reject GDB packet: {error}"))
+                            })?,
+                        Err(error) => {
+                            return Err(execute_error(format!(
+                                "failed to handle GDB packet: {error}"
+                            )));
+                        }
+                    }
                 }
             }
             frame => session

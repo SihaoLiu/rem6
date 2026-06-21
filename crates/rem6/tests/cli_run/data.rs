@@ -49,12 +49,14 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
     assert!(stdout.contains("\"x6\":\"0x1122334455667789\""));
     assert!(stdout.contains("\"data_loads\":1"));
     assert!(stdout.contains("\"data_stores\":1"));
-    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":23,\"in_flight\":0,"));
+    assert!(stdout.contains("\"in_order_pipeline\":{\"cycles\":35,\"in_flight\":0,"));
     assert!(stdout.contains(
         "\"stage_in_flight\":{\"fetch1\":0,\"fetch2\":0,\"decode\":0,\"execute\":0,\"commit\":0}"
     ));
     assert!(stdout.contains("\"retired\":6"));
-    assert!(stdout.contains("\"stall_cycles\":4"));
+    assert!(stdout.contains("\"resource_blocked\":12"));
+    assert!(stdout.contains("\"stall_cycles\":16"));
+    assert!(stdout.contains("\"fetch_wait_cycles\":12"));
     assert!(stdout.contains("\"data_wait_cycles\":4"));
     assert!(stdout.contains("\"address\":\"0x80000020\""));
     assert!(stdout.contains("\"bytes\":8"));
@@ -72,7 +74,7 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
         &stdout,
         "sim.cpu0.pipeline.in_order.cycles",
         "Cycle",
-        23,
+        35,
         "monotonic",
     );
     assert_stat(
@@ -86,7 +88,21 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
         &stdout,
         "sim.cpu0.pipeline.in_order.stall_cycles",
         "Cycle",
-        4,
+        16,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.fetch_wait_cycles",
+        "Cycle",
+        12,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.resource_blocked",
+        "Count",
+        12,
         "monotonic",
     );
     assert_stat(

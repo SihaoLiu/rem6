@@ -148,12 +148,39 @@ fn rem6_run_gdb_listen_applies_preexecution_state_changes() {
     assert!(stdout.contains("\"x5\":\"0x2b\""));
 }
 
+#[test]
+fn rem6_run_gdb_listen_rejects_short_all_register_write_without_disconnect() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let (child, mut stream) = start_riscv_gdb_run("gdb-listen-short-register-set", program, 40);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"G00000000"),
+        gdb_response(b"E01")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p5"),
+        gdb_response(b"0000000000000000")
+    );
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn rv64_all_register_write_packet(x5: u64, pc: u64) -> Vec<u8> {
     const RV64_INTEGER_AND_PC_REGISTERS: usize = 33;
     const RV64_FLOAT_REGISTERS: usize = 32;
     const RV64_FLOAT_CSR_AND_PLACEHOLDER_REGISTERS: usize = 4;
     const RV64_CSR_REGISTERS: usize = 20;
-    const RV64_CSR_EXTENSION_REGISTERS: usize = 14;
+    const RV64_CSR_EXTENSION_REGISTERS: usize = 18;
     const RV64_VECTOR_REGISTERS: usize = 32;
     const RV64_VECTOR_REGISTER_BYTES: usize = 16;
     const RV64_SPARSE_CSR_REGISTERS_BEFORE_VECTOR_CONFIG: usize = 10;
