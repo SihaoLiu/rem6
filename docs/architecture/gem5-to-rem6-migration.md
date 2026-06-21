@@ -772,9 +772,8 @@ pipeline and cache/DRAM runtime state.
 - [x] CLI `run --gdb-listen` hardware breakpoints accept `Z1`/`z1`, stop before
   a matching RISC-V instruction retires, and continue after removal without
   patching guest memory.
-- [x] CLI `run --execute --stats-format json --debug-flags Exec,Fetch,Data`
-  emits deterministic instruction, fetch, and data-access trace records from
-  real RISC-V execution paths.
+- [x] CLI `run --execute --stats-format json --debug-flags Exec,Fetch,Data,Syscall` emits
+  deterministic instruction, fetch, data-access, and RISC-V SE syscall trace records from real RISC-V execution paths.
 - [x] Stricter gem5 text-stat compatibility exists.
 - [ ] Cache/bank/fabric/DRAM hierarchy counters are complete.
 - [ ] Broader GDB CSR register-cache coverage exists.
@@ -823,10 +822,11 @@ runtime GDB data-watchpoint execution through real RISC-V load and store
 data-access completions with detach-time continuation of later guest
 instructions, runtime GDB hardware breakpoints that stop before the matching
 RISC-V instruction retires without patching guest memory,
-top-level `rem6 run --execute --stats-format json --debug-flags Exec,Fetch,Data`
+top-level `rem6 run --execute --stats-format json --debug-flags Exec,Fetch,Data,Syscall`
 execution-trace JSON emitted from real RISC-V instruction execution events,
 fetch-trace JSON emitted from real RISC-V fetch issue records, and data-trace
-JSON emitted from completed RISC-V data-access records,
+JSON emitted from completed RISC-V data-access records, plus RISC-V SE
+syscall-trace JSON emitted from real syscall trap handling,
 target-description-aligned register-cache seeding, top-level trace-replay
 fabric-route activity counters, top-level trace-replay aggregate resource
 activity counters, top-level trace-replay data-cache run and protocol
@@ -871,8 +871,8 @@ CLI `run --gdb-listen`
 single-step, continue, `vCont;c`, hardware-breakpoint, and data-watchpoint
 smoke tests, GDB cache-runtime smoke tests,
 power-analysis export tests, CLI power-output tests, system GDB software
-breakpoint patch/restore tests, CLI data-access probe tests, CLI `Exec` and
-`Fetch` debug-flag tests, and histogram
+breakpoint patch/restore tests, CLI data-access probe tests, CLI `Exec`,
+`Fetch`, `Data`, and `Syscall` debug-flag tests, and histogram
 registry/output tests.
 CLI retired-instruction probe tests expose InstTracker-backed event counts and
 tracked-instruction counts from executed RISC-V instructions.

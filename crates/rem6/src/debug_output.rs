@@ -1,6 +1,6 @@
 use rem6_cpu::{CpuFetchEventKind, RiscvCluster, RiscvCoreDriveAction, RiscvDataAccessEventKind};
 use rem6_memory::MemoryOperation;
-use rem6_system::RiscvSystemRun;
+use rem6_system::{RiscvSyscallTraceOutcome, RiscvSyscallTraceRecord, RiscvSystemRun};
 
 use crate::formatting::{bytes_to_hex, json_escape};
 use crate::{CliDebugFlag, Rem6RunConfig};
@@ -11,6 +11,7 @@ pub(crate) struct Rem6DebugSummary {
     exec_trace: Vec<Rem6ExecTraceRecord>,
     fetch_trace: Vec<Rem6FetchTraceRecord>,
     data_trace: Vec<Rem6DataTraceRecord>,
+    syscall_trace: Vec<Rem6SyscallTraceRecord>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -42,11 +43,22 @@ struct Rem6DataTraceRecord {
     size: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Rem6SyscallTraceRecord {
+    cpu: u32,
+    tick: u64,
+    pc: u64,
+    number: u64,
+    arguments: [u64; 6],
+    outcome: RiscvSyscallTraceOutcome,
+}
+
 impl Rem6DebugSummary {
     pub(crate) fn from_run(
         config: &Rem6RunConfig,
         cluster: &RiscvCluster,
         run: &RiscvSystemRun,
+        syscall_trace: &[RiscvSyscallTraceRecord],
     ) -> Self {
         let flags = config.debug_flags().to_vec();
         let exec_trace = if config.debug_exec_enabled() {
@@ -64,11 +76,17 @@ impl Rem6DebugSummary {
         } else {
             Vec::new()
         };
+        let syscall_trace = if config.debug_syscall_enabled() {
+            syscall_trace_records(syscall_trace)
+        } else {
+            Vec::new()
+        };
         Self {
             flags,
             exec_trace,
             fetch_trace,
             data_trace,
+            syscall_trace,
         }
     }
 
@@ -101,9 +119,15 @@ impl Rem6DebugSummary {
             .map(Rem6DataTraceRecord::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let syscall_trace = self
+            .syscall_trace
+            .iter()
+            .map(Rem6SyscallTraceRecord::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
-            "{{\"flags\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"data_trace\":[{}]}}",
-            flags, exec_trace, fetch_trace, data_trace
+            "{{\"flags\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"data_trace\":[{}],\"syscall_trace\":[{}]}}",
+            flags, exec_trace, fetch_trace, data_trace, syscall_trace
         )
     }
 }
@@ -145,6 +169,26 @@ impl Rem6DataTraceRecord {
     }
 }
 
+impl Rem6SyscallTraceRecord {
+    fn to_json(&self) -> String {
+        let arguments = self
+            .arguments
+            .iter()
+            .map(u64::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "{{\"cpu\":{},\"tick\":{},\"pc\":\"0x{:x}\",\"number\":{},\"arguments\":[{}],\"outcome\":{}}}",
+            self.cpu,
+            self.tick,
+            self.pc,
+            self.number,
+            arguments,
+            syscall_outcome_json(self.outcome),
+        )
+    }
+}
+
 fn exec_trace_records(run: &RiscvSystemRun) -> Vec<Rem6ExecTraceRecord> {
     let mut records = Vec::new();
     for event in run.turns().iter().flat_map(|turn| turn.core_events()) {
@@ -160,6 +204,32 @@ fn exec_trace_records(run: &RiscvSystemRun) -> Vec<Rem6ExecTraceRecord> {
         });
     }
     records
+}
+
+fn syscall_trace_records(records: &[RiscvSyscallTraceRecord]) -> Vec<Rem6SyscallTraceRecord> {
+    records
+        .iter()
+        .map(|record| Rem6SyscallTraceRecord {
+            cpu: record.cpu().get(),
+            tick: record.tick(),
+            pc: record.pc(),
+            number: record.number(),
+            arguments: record.arguments(),
+            outcome: record.outcome(),
+        })
+        .collect()
+}
+
+fn syscall_outcome_json(outcome: RiscvSyscallTraceOutcome) -> String {
+    match outcome {
+        RiscvSyscallTraceOutcome::Blocked => "{\"kind\":\"blocked\"}".to_string(),
+        RiscvSyscallTraceOutcome::Exit { code } => {
+            format!("{{\"kind\":\"exit\",\"code\":{code}}}")
+        }
+        RiscvSyscallTraceOutcome::Return { value } => {
+            format!("{{\"kind\":\"return\",\"value\":{value}}}")
+        }
+    }
 }
 
 fn data_trace_records(cluster: &RiscvCluster, core_count: u32) -> Vec<Rem6DataTraceRecord> {

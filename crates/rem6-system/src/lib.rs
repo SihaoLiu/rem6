@@ -202,9 +202,10 @@ pub use riscv_syscall::{
     RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSeStartupError, RiscvSeStartupImage,
     RiscvSeStartupStringField, RiscvSyscallEmulation, RiscvSyscallImageLayoutError,
     RiscvSyscallOutcome, RiscvSyscallRequest, RiscvSyscallState, RiscvSyscallTable,
-    RiscvUnknownSyscallRecord, RISCV_LINUX_AT_ENTRY, RISCV_LINUX_AT_NULL, RISCV_LINUX_AT_PAGESZ,
-    RISCV_LINUX_AT_PHDR, RISCV_LINUX_AT_PHENT, RISCV_LINUX_AT_PHNUM, RISCV_LINUX_AT_RANDOM,
-    RISCV_LINUX_AT_SECURE, RISCV_LINUX_STACK_LIMIT_BYTES,
+    RiscvSyscallTraceOutcome, RiscvSyscallTraceRecord, RiscvUnknownSyscallRecord,
+    RISCV_LINUX_AT_ENTRY, RISCV_LINUX_AT_NULL, RISCV_LINUX_AT_PAGESZ, RISCV_LINUX_AT_PHDR,
+    RISCV_LINUX_AT_PHENT, RISCV_LINUX_AT_PHNUM, RISCV_LINUX_AT_RANDOM, RISCV_LINUX_AT_SECURE,
+    RISCV_LINUX_STACK_LIMIT_BYTES,
 };
 pub use rtc_checkpoint::{
     RtcCheckpointBank, RtcCheckpointError, RtcCheckpointPort, RtcCheckpointRecord,

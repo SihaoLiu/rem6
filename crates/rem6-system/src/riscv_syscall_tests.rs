@@ -3,6 +3,7 @@ use crate::{
     GuestFd, GuestFileStatusFlags, GuestFutexAddress, GuestFutexKey, GuestFutexWaitRequest,
     GuestThreadGroupId, GuestThreadId,
 };
+use rem6_cpu::CpuId;
 use rem6_kernel::PartitionId;
 
 #[path = "riscv_syscall_tests/boot_image_tests.rs"]
@@ -150,6 +151,26 @@ fn linux_table_returns_enosys_for_unknown_syscalls() {
             0
         )]
     );
+}
+
+#[test]
+fn linux_state_records_syscall_trace_only_when_enabled() {
+    let mut state = RiscvSyscallState::new(0);
+    let request = RiscvSyscallRequest::new(0x8000, RISCV_LINUX_GETPID, [0; 6]);
+    let record = RiscvSyscallTraceRecord::from_request_outcome(
+        CpuId::new(0),
+        request,
+        11,
+        RiscvSyscallOutcome::Return { value: 100 },
+    );
+
+    assert!(!state.syscall_trace_enabled());
+    state.push_syscall_trace(record.clone());
+    assert!(state.syscall_trace().is_empty());
+
+    state.enable_syscall_trace();
+    state.push_syscall_trace(record.clone());
+    assert_eq!(state.syscall_trace(), &[record]);
 }
 
 #[test]

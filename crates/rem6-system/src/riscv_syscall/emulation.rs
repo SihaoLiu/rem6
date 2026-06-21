@@ -109,6 +109,13 @@ impl RiscvSyscallEmulation {
             .clone()
     }
 
+    pub fn enable_syscall_trace(&self) {
+        self.state
+            .lock()
+            .expect("RISC-V syscall state lock")
+            .enable_syscall_trace();
+    }
+
     pub(super) fn with_state_mut<R>(&self, f: impl FnOnce(&mut RiscvSyscallState) -> R) -> R {
         let mut state = self.state.lock().expect("RISC-V syscall state lock");
         f(&mut state)
@@ -149,13 +156,22 @@ impl RiscvSyscallEmulation {
     ) -> Option<RiscvSyscallOutcome> {
         let request = RiscvSyscallRequest::from_pending_core_trap(core)?;
         let mut state = self.state.lock().expect("RISC-V syscall state lock");
-        self.table.handle_with_guest_memory_io_at_tick(
+        let outcome = self.table.handle_with_guest_memory_io_at_tick(
             request,
             &mut state,
             tick,
             self.guest_memory_reader.as_ref(),
             self.guest_memory_writer.as_ref(),
-        )
+        );
+        if let Some(outcome) = outcome {
+            state.push_syscall_trace(RiscvSyscallTraceRecord::from_request_outcome(
+                core.id(),
+                request,
+                tick,
+                outcome,
+            ));
+        }
+        outcome
     }
 }
 

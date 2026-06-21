@@ -460,7 +460,7 @@ fn rem6_run_stats_include_issued_fetch_ahead_before_response() {
         stat_value(&stdout, "sim.cpu0.pipeline.in_order.stage.commit.in_flight"),
     ];
     assert_eq!(stage_in_flight.iter().sum::<u64>(), 1);
-    assert!(stage_in_flight.iter().any(|count| *count == 1));
+    assert!(stage_in_flight.contains(&1));
     let stage_max_in_flight = [
         stat_value(
             &stdout,

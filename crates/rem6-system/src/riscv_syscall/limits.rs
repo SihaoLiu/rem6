@@ -125,7 +125,7 @@ impl RiscvSyscallState {
     }
 
     pub(super) fn guest_fd_is_below_open_file_limit(&self, fd: GuestFd) -> bool {
-        u64::try_from(fd.get()).is_ok_and(|raw| raw < self.open_file_soft_limit())
+        u64::from(fd.get()) < self.open_file_soft_limit()
     }
 
     pub(super) fn has_open_file_capacity(&self, additional_fds: usize) -> bool {

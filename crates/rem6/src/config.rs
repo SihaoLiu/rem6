@@ -1056,6 +1056,10 @@ impl Rem6RunConfig {
         self.debug_flags.contains(&CliDebugFlag::Data)
     }
 
+    pub fn debug_syscall_enabled(&self) -> bool {
+        self.debug_flags.contains(&CliDebugFlag::Syscall)
+    }
+
     pub const fn cores(&self) -> usize {
         self.cores
     }

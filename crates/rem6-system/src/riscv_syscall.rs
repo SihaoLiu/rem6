@@ -72,6 +72,7 @@ mod table;
 mod thread;
 mod time;
 mod timerfd;
+mod trace;
 mod unknown;
 mod unlink;
 mod util;
@@ -240,6 +241,7 @@ use timerfd::{
     syscall_timerfd_create, syscall_timerfd_gettime, syscall_timerfd_settime, RiscvGuestTimerFd,
     RISCV_LINUX_TIMERFD_CREATE, RISCV_LINUX_TIMERFD_GETTIME, RISCV_LINUX_TIMERFD_SETTIME,
 };
+pub use trace::{RiscvSyscallTraceOutcome, RiscvSyscallTraceRecord};
 pub use unknown::RiscvUnknownSyscallRecord;
 use unlink::{syscall_unlink_operation, RISCV_LINUX_UNLINK, RISCV_LINUX_UNLINKAT};
 use util::{guest_fd_argument, linux_error, read_guest_c_string, RiscvGuestCStringError};
@@ -318,6 +320,8 @@ pub struct RiscvSyscallState {
     guest_file_seals: BTreeMap<GuestFileDescriptionId, u32>,
     guest_writes: Vec<RiscvGuestWriteRecord>,
     unknown_syscalls: Vec<RiscvUnknownSyscallRecord>,
+    syscall_trace_enabled: bool,
+    syscall_trace: Vec<RiscvSyscallTraceRecord>,
     file_creation_mask: u32,
     signal_mask: u64,
     pending_signal_mask: u64,
@@ -423,6 +427,8 @@ impl RiscvSyscallState {
             guest_file_seals: BTreeMap::new(),
             guest_writes: Vec::new(),
             unknown_syscalls: Vec::new(),
+            syscall_trace_enabled: false,
+            syscall_trace: Vec::new(),
             file_creation_mask: 0,
             signal_mask: 0,
             pending_signal_mask: 0,
@@ -467,6 +473,15 @@ impl RiscvSyscallState {
     }
     pub fn unknown_syscalls(&self) -> &[RiscvUnknownSyscallRecord] {
         &self.unknown_syscalls
+    }
+    pub fn syscall_trace(&self) -> &[RiscvSyscallTraceRecord] {
+        &self.syscall_trace
+    }
+    pub const fn syscall_trace_enabled(&self) -> bool {
+        self.syscall_trace_enabled
+    }
+    pub fn enable_syscall_trace(&mut self) {
+        self.syscall_trace_enabled = true;
     }
     pub fn guest_opens(&self) -> &[RiscvGuestOpenRecord] {
         &self.guest_opens
@@ -583,6 +598,12 @@ impl RiscvSyscallState {
 
     fn push_unknown_syscall(&mut self, record: RiscvUnknownSyscallRecord) {
         self.unknown_syscalls.push(record);
+    }
+
+    fn push_syscall_trace(&mut self, record: RiscvSyscallTraceRecord) {
+        if self.syscall_trace_enabled {
+            self.syscall_trace.push(record);
+        }
     }
 
     pub(super) const fn file_creation_mask(&self) -> u32 {

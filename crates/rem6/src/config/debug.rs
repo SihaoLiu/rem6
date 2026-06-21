@@ -5,6 +5,7 @@ pub enum CliDebugFlag {
     Data,
     Exec,
     Fetch,
+    Syscall,
 }
 
 impl CliDebugFlag {
@@ -16,6 +17,7 @@ impl CliDebugFlag {
             "Data" => Ok(Self::Data),
             "Exec" => Ok(Self::Exec),
             "Fetch" => Ok(Self::Fetch),
+            "Syscall" => Ok(Self::Syscall),
             _ => Err(Rem6CliError::UnsupportedDebugFlag {
                 flag: value.to_string(),
             }),
@@ -27,6 +29,7 @@ impl CliDebugFlag {
             Self::Data => "Data",
             Self::Exec => "Exec",
             Self::Fetch => "Fetch",
+            Self::Syscall => "Syscall",
         }
     }
 }

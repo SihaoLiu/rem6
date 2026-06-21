@@ -247,6 +247,84 @@ fn rem6_run_data_debug_flag_emits_real_data_access_trace() {
 }
 
 #[test]
+fn rem6_run_syscall_debug_flag_emits_real_riscv_se_syscall_trace() {
+    let program = riscv64_program(&[
+        i_type(172, 0, 0x0, 17, 0x13), // addi a7, x0, getpid
+        0x0000_0073,                   // ecall
+        i_type(93, 0, 0x0, 17, 0x13),  // addi a7, x0, exit
+        i_type(0, 0, 0x0, 10, 0x13),   // addi a0, x0, 0
+        0x0000_0073,                   // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-syscall", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+            "--debug-flags",
+            "Syscall",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = stdout_json(output.stdout);
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![Value::String("Syscall".to_string())])
+    );
+    let trace = json
+        .pointer("/debug/syscall_trace")
+        .and_then(Value::as_array)
+        .expect("debug syscall trace array");
+    assert_eq!(trace.len(), 2);
+
+    assert_eq!(trace[0].get("cpu").and_then(Value::as_u64), Some(0));
+    assert_eq!(
+        trace[0].get("pc").and_then(Value::as_str),
+        Some("0x80000004")
+    );
+    assert_eq!(trace[0].get("number").and_then(Value::as_u64), Some(172));
+    assert_eq!(
+        trace[0].pointer("/outcome/kind").and_then(Value::as_str),
+        Some("return")
+    );
+    assert_eq!(
+        trace[0].pointer("/outcome/value").and_then(Value::as_u64),
+        Some(100)
+    );
+
+    assert_eq!(trace[1].get("cpu").and_then(Value::as_u64), Some(0));
+    assert_eq!(
+        trace[1].get("pc").and_then(Value::as_str),
+        Some("0x80000010")
+    );
+    assert_eq!(trace[1].get("number").and_then(Value::as_u64), Some(93));
+    assert_eq!(
+        trace[1].pointer("/outcome/kind").and_then(Value::as_str),
+        Some("exit")
+    );
+    assert_eq!(
+        trace[1].pointer("/outcome/code").and_then(Value::as_i64),
+        Some(0)
+    );
+}
+
+#[test]
 fn rem6_run_loads_debug_flags_from_toml_config() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7

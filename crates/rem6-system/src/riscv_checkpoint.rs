@@ -40,6 +40,17 @@ pub struct RiscvCoreCheckpointRecord {
     branch_predictor_payload: BranchPredictorCheckpointPayload,
 }
 
+struct RiscvCoreCheckpointRecordParts {
+    component: CheckpointComponentId,
+    pc: Address,
+    registers: Vec<(Register, u64)>,
+    float_registers: Vec<(FloatRegister, u64)>,
+    pmp_snapshot: RiscvPmpSnapshot,
+    hart_run_state: RiscvHartRunState,
+    in_order_pipeline_snapshot: InOrderPipelineSnapshot,
+    branch_predictor_payload: BranchPredictorCheckpointPayload,
+}
+
 impl RiscvCoreCheckpointRecord {
     pub fn new(
         component: CheckpointComponentId,
@@ -47,37 +58,28 @@ impl RiscvCoreCheckpointRecord {
         registers: Vec<(Register, u64)>,
         pmp_snapshot: RiscvPmpSnapshot,
     ) -> Self {
-        Self::new_with_float_registers(
+        Self::from_parts(RiscvCoreCheckpointRecordParts {
             component,
             pc,
             registers,
-            zero_float_register_values(),
+            float_registers: zero_float_register_values(),
             pmp_snapshot,
-            RiscvHartRunState::Started,
-            RiscvCore::default_in_order_pipeline_snapshot(),
-            RiscvCore::default_branch_predictor_checkpoint_payload(),
-        )
+            hart_run_state: RiscvHartRunState::Started,
+            in_order_pipeline_snapshot: RiscvCore::default_in_order_pipeline_snapshot(),
+            branch_predictor_payload: RiscvCore::default_branch_predictor_checkpoint_payload(),
+        })
     }
 
-    pub fn new_with_float_registers(
-        component: CheckpointComponentId,
-        pc: Address,
-        registers: Vec<(Register, u64)>,
-        float_registers: Vec<(FloatRegister, u64)>,
-        pmp_snapshot: RiscvPmpSnapshot,
-        hart_run_state: RiscvHartRunState,
-        in_order_pipeline_snapshot: InOrderPipelineSnapshot,
-        branch_predictor_payload: BranchPredictorCheckpointPayload,
-    ) -> Self {
+    fn from_parts(parts: RiscvCoreCheckpointRecordParts) -> Self {
         Self {
-            component,
-            pc,
-            registers,
-            float_registers,
-            pmp_snapshot,
-            hart_run_state,
-            in_order_pipeline_snapshot,
-            branch_predictor_payload,
+            component: parts.component,
+            pc: parts.pc,
+            registers: parts.registers,
+            float_registers: parts.float_registers,
+            pmp_snapshot: parts.pmp_snapshot,
+            hart_run_state: parts.hart_run_state,
+            in_order_pipeline_snapshot: parts.in_order_pipeline_snapshot,
+            branch_predictor_payload: parts.branch_predictor_payload,
         }
     }
 
@@ -260,15 +262,17 @@ impl RiscvCoreCheckpointPort {
                 },
             )?;
 
-        Ok(RiscvCoreCheckpointRecord::new_with_float_registers(
-            self.component.clone(),
-            pc,
-            registers,
-            float_registers,
-            pmp_snapshot,
-            hart_run_state,
-            in_order_pipeline_snapshot,
-            branch_predictor_payload,
+        Ok(RiscvCoreCheckpointRecord::from_parts(
+            RiscvCoreCheckpointRecordParts {
+                component: self.component.clone(),
+                pc,
+                registers,
+                float_registers,
+                pmp_snapshot,
+                hart_run_state,
+                in_order_pipeline_snapshot,
+                branch_predictor_payload,
+            },
         ))
     }
 
@@ -318,16 +322,16 @@ impl RiscvCoreCheckpointPort {
     }
 
     fn capture_record(&self) -> RiscvCoreCheckpointRecord {
-        RiscvCoreCheckpointRecord::new_with_float_registers(
-            self.component.clone(),
-            self.core.pc(),
-            all_register_values(&self.core),
-            all_float_register_values(&self.core),
-            self.core.pmp_snapshot(),
-            self.core.hart_run_state(),
-            self.core.in_order_pipeline_snapshot(),
-            self.core.branch_predictor_checkpoint_payload(),
-        )
+        RiscvCoreCheckpointRecord::from_parts(RiscvCoreCheckpointRecordParts {
+            component: self.component.clone(),
+            pc: self.core.pc(),
+            registers: all_register_values(&self.core),
+            float_registers: all_float_register_values(&self.core),
+            pmp_snapshot: self.core.pmp_snapshot(),
+            hart_run_state: self.core.hart_run_state(),
+            in_order_pipeline_snapshot: self.core.in_order_pipeline_snapshot(),
+            branch_predictor_payload: self.core.branch_predictor_checkpoint_payload(),
+        })
     }
 }
 
