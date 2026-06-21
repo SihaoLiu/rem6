@@ -1125,11 +1125,15 @@ impl Rem6ExecutionSummary {
 impl Rem6MemoryResourceSummary {
     fn to_json(&self) -> String {
         format!(
-            "{{\"activity\":{},\"active\":{},\"cache\":{{\"activity\":{},\"active\":{}}},\"transport\":{{\"activity\":{},\"active\":{}}},\"dram\":{{\"activity\":{},\"active\":{}}}}}",
+            "{{\"activity\":{},\"active\":{},\"cache\":{{\"activity\":{},\"active\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{}}},\"transport\":{{\"activity\":{},\"active\":{}}},\"dram\":{{\"activity\":{},\"active\":{}}}}}",
             self.activity,
             self.active,
             self.cache_activity,
             self.active_caches,
+            self.cache_bank_accepted,
+            self.cache_bank_immediate_hits,
+            self.cache_bank_scheduled_misses,
+            self.cache_bank_coalesced_misses,
             self.transport_activity,
             self.active_transports,
             self.dram_activity,

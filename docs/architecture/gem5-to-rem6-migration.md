@@ -307,7 +307,9 @@ DRAM target activity exposes per-bank resource counters for access/read/write
 counts, byte counts, row hits/misses, commands, and refresh cycles. CLI
 RISC-V runs aggregate executed instruction-cache, data-cache, memory-transport,
 and DRAM activity into unified memory-resource activity and active-resource
-JSON/stat counters. CLI trace
+JSON/stat counters, including unified cache-bank accepted, immediate-hit,
+scheduled-miss, and coalesced-miss counters derived from executed
+instruction-cache and data-cache bank runs. CLI trace
 replay can route packet traces through an explicit workload fabric link and
 configure request/response virtual networks and link credit depth from CLI or
 TOML config while emitting active-lane, active-virtual-network, transfer, byte,
@@ -353,7 +355,9 @@ counters, resource-activity stats, and activity-window counter deltas.
 CLI `run` also has DDR profile refresh smoke coverage that exposes refresh
 timing fields and nonzero refresh stats from RISC-V DRAM execution, plus LPDDR
 low-power timing and precharge-powerdown residency stats from routed RISC-V
-fetch requests. CLI
+fetch requests; CLI `run` cache/DRAM resource smoke coverage exposes unified
+memory-resource cache-bank counters in artifact JSON and `StatsRegistry`.
+CLI
 trace-replay fabric-route smoke coverage exposes nonzero active-lane,
 active-virtual-network, transfer, and byte stats plus request/response virtual
 network and credit-depth config fields plus per-lane and per-hop activity JSON

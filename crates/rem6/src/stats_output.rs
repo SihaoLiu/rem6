@@ -4,6 +4,7 @@ mod data_cache;
 mod dram;
 mod gpu_run;
 mod gups;
+mod memory_resources;
 mod resource_acquire;
 mod riscv;
 mod text;
@@ -23,6 +24,7 @@ use data_cache::{emit_data_cache_prefetch_summary_stats, emit_data_cache_summary
 use dram::emit_dram_stats;
 pub(super) use gpu_run::gpu_run_stats_output;
 pub(super) use gups::gups_stats_output;
+use memory_resources::emit_memory_resource_stats;
 pub(super) use resource_acquire::resource_acquire_stats_output;
 use riscv::emit_riscv_run_stats;
 use text::stats_snapshot_text;
@@ -1177,68 +1179,6 @@ fn stat_path_segment(segment: &str) -> String {
     } else {
         output
     }
-}
-
-fn emit_memory_resource_stats(
-    stats: &mut StatsRegistry,
-    execution: &Rem6ExecutionSummary,
-) -> Result<(), Rem6CliError> {
-    increment_stat(
-        stats,
-        "sim.memory.resources.activity",
-        "Count",
-        StatResetPolicy::Monotonic,
-        execution.memory_resources.activity,
-    )?;
-    increment_stat(
-        stats,
-        "sim.memory.resources.active",
-        "Count",
-        StatResetPolicy::Monotonic,
-        execution.memory_resources.active,
-    )?;
-    increment_stat(
-        stats,
-        "sim.memory.resources.cache.activity",
-        "Count",
-        StatResetPolicy::Monotonic,
-        execution.memory_resources.cache_activity,
-    )?;
-    increment_stat(
-        stats,
-        "sim.memory.resources.cache.active",
-        "Count",
-        StatResetPolicy::Monotonic,
-        execution.memory_resources.active_caches,
-    )?;
-    increment_stat(
-        stats,
-        "sim.memory.resources.transport.activity",
-        "Count",
-        StatResetPolicy::Monotonic,
-        execution.memory_resources.transport_activity,
-    )?;
-    increment_stat(
-        stats,
-        "sim.memory.resources.transport.active",
-        "Count",
-        StatResetPolicy::Monotonic,
-        execution.memory_resources.active_transports,
-    )?;
-    increment_stat(
-        stats,
-        "sim.memory.resources.dram.activity",
-        "Count",
-        StatResetPolicy::Monotonic,
-        execution.memory_resources.dram_activity,
-    )?;
-    increment_stat(
-        stats,
-        "sim.memory.resources.dram.active",
-        "Count",
-        StatResetPolicy::Monotonic,
-        execution.memory_resources.active_dram_resources,
-    )
 }
 
 fn emit_in_order_stage_stats(

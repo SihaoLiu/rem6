@@ -9,6 +9,10 @@ pub(crate) struct Rem6MemoryResourceSummary {
     pub(crate) active: u64,
     pub(crate) cache_activity: u64,
     pub(crate) active_caches: u64,
+    pub(crate) cache_bank_accepted: u64,
+    pub(crate) cache_bank_immediate_hits: u64,
+    pub(crate) cache_bank_scheduled_misses: u64,
+    pub(crate) cache_bank_coalesced_misses: u64,
     pub(crate) transport_activity: u64,
     pub(crate) active_transports: u64,
     pub(crate) dram_activity: u64,
@@ -26,6 +30,18 @@ impl Rem6MemoryResourceSummary {
         let cache_activity = instruction_cache.runs.saturating_add(data_cache.runs);
         let active_caches =
             u64::from(instruction_cache.runs != 0) + u64::from(data_cache.runs != 0);
+        let cache_bank_accepted = instruction_cache
+            .bank_accepted
+            .saturating_add(data_cache.bank_accepted);
+        let cache_bank_immediate_hits = instruction_cache
+            .bank_immediate_hits
+            .saturating_add(data_cache.bank_immediate_hits);
+        let cache_bank_scheduled_misses = instruction_cache
+            .bank_scheduled_misses
+            .saturating_add(data_cache.bank_scheduled_misses);
+        let cache_bank_coalesced_misses = instruction_cache
+            .bank_coalesced_misses
+            .saturating_add(data_cache.bank_coalesced_misses);
         let transport_activity = fetch_transport
             .counters
             .requests
@@ -60,6 +76,10 @@ impl Rem6MemoryResourceSummary {
                 .saturating_add(active_dram_resources),
             cache_activity,
             active_caches,
+            cache_bank_accepted,
+            cache_bank_immediate_hits,
+            cache_bank_scheduled_misses,
+            cache_bank_coalesced_misses,
             transport_activity,
             active_transports,
             dram_activity,

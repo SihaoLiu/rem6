@@ -1665,6 +1665,10 @@ fn rem6_run_cache_dram_path_emits_unified_resource_activity_stats() {
     let active = json_u64(resources, "/active");
     let cache_activity = json_u64(resources, "/cache/activity");
     let active_caches = json_u64(resources, "/cache/active");
+    let cache_bank_accepted = json_u64(resources, "/cache/bank_accepted");
+    let cache_bank_immediate_hits = json_u64(resources, "/cache/bank_immediate_hits");
+    let cache_bank_scheduled_misses = json_u64(resources, "/cache/bank_scheduled_misses");
+    let cache_bank_coalesced_misses = json_u64(resources, "/cache/bank_coalesced_misses");
     let transport_activity = json_u64(resources, "/transport/activity");
     let active_transports = json_u64(resources, "/transport/active");
     let dram_activity = json_u64(resources, "/dram/activity");
@@ -1704,6 +1708,28 @@ fn rem6_run_cache_dram_path_emits_unified_resource_activity_stats() {
         .max(json_u64(&json, "/dram/low_power/exits"));
     assert_eq!(dram_activity, dram_operation_activity);
     assert!(cache_activity > 0);
+    assert!(cache_bank_accepted > 0);
+    assert!(cache_bank_scheduled_misses > 0);
+    assert_eq!(
+        cache_bank_accepted,
+        json_u64(&json, "/simulation/instruction_cache_bank_accepted")
+            + json_u64(&json, "/simulation/data_cache_bank_accepted")
+    );
+    assert_eq!(
+        cache_bank_immediate_hits,
+        json_u64(&json, "/simulation/instruction_cache_bank_immediate_hits")
+            + json_u64(&json, "/simulation/data_cache_bank_immediate_hits")
+    );
+    assert_eq!(
+        cache_bank_scheduled_misses,
+        json_u64(&json, "/simulation/instruction_cache_bank_scheduled_misses")
+            + json_u64(&json, "/simulation/data_cache_bank_scheduled_misses")
+    );
+    assert_eq!(
+        cache_bank_coalesced_misses,
+        json_u64(&json, "/simulation/instruction_cache_bank_coalesced_misses")
+            + json_u64(&json, "/simulation/data_cache_bank_coalesced_misses")
+    );
     assert!(transport_activity > 0);
     assert!(dram_activity > 0);
 
@@ -1715,6 +1741,26 @@ fn rem6_run_cache_dram_path_emits_unified_resource_activity_stats() {
         cache_activity,
     );
     assert_resource_stat_matches_json(&stdout, "sim.memory.resources.cache.active", active_caches);
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.cache.bank.accepted",
+        cache_bank_accepted,
+    );
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.cache.bank.immediate_hits",
+        cache_bank_immediate_hits,
+    );
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.cache.bank.scheduled_misses",
+        cache_bank_scheduled_misses,
+    );
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.cache.bank.coalesced_misses",
+        cache_bank_coalesced_misses,
+    );
     assert_resource_stat_matches_json(
         &stdout,
         "sim.memory.resources.transport.activity",
