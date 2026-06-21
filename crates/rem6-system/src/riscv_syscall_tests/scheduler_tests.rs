@@ -9,8 +9,11 @@ const RISCV_LINUX_SCHED_GETAFFINITY_FOR_TEST: u64 = 123;
 const RISCV_LINUX_SCHED_GET_PRIORITY_MAX_FOR_TEST: u64 = 125;
 const RISCV_LINUX_SCHED_GET_PRIORITY_MIN_FOR_TEST: u64 = 126;
 const RISCV_LINUX_SCHED_RR_GET_INTERVAL_FOR_TEST: u64 = 127;
+const RISCV_LINUX_IOPRIO_SET_FOR_TEST: u64 = 30;
+const RISCV_LINUX_IOPRIO_GET_FOR_TEST: u64 = 31;
 const RISCV_LINUX_SETPRIORITY_FOR_TEST: u64 = 140;
 const RISCV_LINUX_GETPRIORITY_FOR_TEST: u64 = 141;
+const RISCV_LINUX_EPERM_FOR_TEST: u64 = 1;
 const RISCV_LINUX_EACCES_FOR_TEST: u64 = 13;
 const RISCV_LINUX_ESRCH_FOR_TEST: u64 = 3;
 const RISCV_LINUX_SCHED_OTHER_FOR_TEST: u64 = 0;
@@ -23,6 +26,12 @@ const RISCV_LINUX_SCHED_PRIORITY_BYTES_FOR_TEST: usize = 4;
 const RISCV_LINUX_SCHED_RR_INTERVAL_NANOSECONDS_FOR_TEST: u64 = 2_000_000;
 const RISCV_LINUX_DEFAULT_AFFINITY_BYTES_FOR_TEST: u64 = 8;
 const RISCV_LINUX_DEFAULT_AFFINITY_MASK_FOR_TEST: u64 = 1;
+const RISCV_LINUX_IOPRIO_WHO_PROCESS_FOR_TEST: u64 = 1;
+const RISCV_LINUX_IOPRIO_CLASS_NONE_FOR_TEST: u64 = 0;
+const RISCV_LINUX_IOPRIO_CLASS_RT_FOR_TEST: u64 = 1;
+const RISCV_LINUX_IOPRIO_CLASS_BE_FOR_TEST: u64 = 2;
+const RISCV_LINUX_IOPRIO_CLASS_IDLE_FOR_TEST: u64 = 3;
+const RISCV_LINUX_IOPRIO_CLASS_SHIFT_FOR_TEST: u64 = 13;
 
 #[test]
 fn linux_table_sched_getscheduler_returns_other_for_current_process() {
@@ -45,6 +54,205 @@ fn linux_table_sched_getscheduler_returns_other_for_current_process() {
             ),
             Some(RiscvSyscallOutcome::Return {
                 value: RISCV_LINUX_SCHED_OTHER_FOR_TEST
+            })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_ioprio_get_set_tracks_current_process_priority() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+    let idle = RISCV_LINUX_IOPRIO_CLASS_IDLE_FOR_TEST << RISCV_LINUX_IOPRIO_CLASS_SHIFT_FOR_TEST;
+    let best_effort_5 =
+        (RISCV_LINUX_IOPRIO_CLASS_BE_FOR_TEST << RISCV_LINUX_IOPRIO_CLASS_SHIFT_FOR_TEST) | 5;
+    let high_bits_best_effort_5 = (1_u64 << 40) | (1_u64 << 16) | best_effort_5;
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_IOPRIO_GET_FOR_TEST,
+                [RISCV_LINUX_IOPRIO_WHO_PROCESS_FOR_TEST, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_IOPRIO_SET_FOR_TEST,
+                [RISCV_LINUX_IOPRIO_WHO_PROCESS_FOR_TEST, 0, idle, 0, 0, 0,],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_IOPRIO_GET_FOR_TEST,
+                [RISCV_LINUX_IOPRIO_WHO_PROCESS_FOR_TEST, 41, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: idle })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_IOPRIO_SET_FOR_TEST,
+                [
+                    RISCV_LINUX_IOPRIO_WHO_PROCESS_FOR_TEST,
+                    42,
+                    best_effort_5,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8010,
+                RISCV_LINUX_IOPRIO_GET_FOR_TEST,
+                [RISCV_LINUX_IOPRIO_WHO_PROCESS_FOR_TEST, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: best_effort_5
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8014,
+                RISCV_LINUX_IOPRIO_SET_FOR_TEST,
+                [
+                    RISCV_LINUX_IOPRIO_WHO_PROCESS_FOR_TEST,
+                    0,
+                    high_bits_best_effort_5,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8018,
+                RISCV_LINUX_IOPRIO_GET_FOR_TEST,
+                [RISCV_LINUX_IOPRIO_WHO_PROCESS_FOR_TEST, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: best_effort_5
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_ioprio_rejects_invalid_targets_and_class_without_unknown_record() {
+    let table = RiscvSyscallTable::new();
+    let mut state =
+        RiscvSyscallState::with_identity(0, RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10));
+    let invalid_class = 4 << RISCV_LINUX_IOPRIO_CLASS_SHIFT_FOR_TEST;
+    let realtime_class =
+        RISCV_LINUX_IOPRIO_CLASS_RT_FOR_TEST << RISCV_LINUX_IOPRIO_CLASS_SHIFT_FOR_TEST;
+
+    for (pc, number, arguments, errno) in [
+        (
+            0x8000,
+            RISCV_LINUX_IOPRIO_GET_FOR_TEST,
+            [99, 0, 0, 0, 0, 0],
+            RISCV_LINUX_EINVAL,
+        ),
+        (
+            0x8004,
+            RISCV_LINUX_IOPRIO_SET_FOR_TEST,
+            [99, 0, 0, 0, 0, 0],
+            RISCV_LINUX_EINVAL,
+        ),
+        (
+            0x8008,
+            RISCV_LINUX_IOPRIO_GET_FOR_TEST,
+            [RISCV_LINUX_IOPRIO_WHO_PROCESS_FOR_TEST, 999, 0, 0, 0, 0],
+            RISCV_LINUX_ESRCH_FOR_TEST,
+        ),
+        (
+            0x800c,
+            RISCV_LINUX_IOPRIO_SET_FOR_TEST,
+            [
+                RISCV_LINUX_IOPRIO_WHO_PROCESS_FOR_TEST,
+                0,
+                invalid_class,
+                0,
+                0,
+                0,
+            ],
+            RISCV_LINUX_EINVAL,
+        ),
+        (
+            0x8010,
+            RISCV_LINUX_IOPRIO_SET_FOR_TEST,
+            [
+                RISCV_LINUX_IOPRIO_WHO_PROCESS_FOR_TEST,
+                999,
+                invalid_class,
+                0,
+                0,
+                0,
+            ],
+            RISCV_LINUX_EINVAL,
+        ),
+        (
+            0x8014,
+            RISCV_LINUX_IOPRIO_SET_FOR_TEST,
+            [
+                RISCV_LINUX_IOPRIO_WHO_PROCESS_FOR_TEST,
+                0,
+                RISCV_LINUX_IOPRIO_CLASS_NONE_FOR_TEST | 5,
+                0,
+                0,
+                0,
+            ],
+            RISCV_LINUX_EINVAL,
+        ),
+        (
+            0x8018,
+            RISCV_LINUX_IOPRIO_SET_FOR_TEST,
+            [
+                RISCV_LINUX_IOPRIO_WHO_PROCESS_FOR_TEST,
+                0,
+                realtime_class,
+                0,
+                0,
+                0,
+            ],
+            RISCV_LINUX_EPERM_FOR_TEST,
+        ),
+    ] {
+        assert_eq!(
+            table.handle(RiscvSyscallRequest::new(pc, number, arguments), &mut state),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(errno)
             })
         );
     }

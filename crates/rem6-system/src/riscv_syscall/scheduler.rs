@@ -3,7 +3,7 @@ use std::{cmp, mem};
 use super::{
     clock::write_riscv_linux_time_pair, linux_error, RiscvGuestMemoryReader,
     RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EACCES,
-    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ESRCH,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EPERM, RISCV_LINUX_ESRCH,
 };
 
 pub(super) const RISCV_LINUX_SCHED_GETSCHEDULER: u64 = 120;
@@ -15,6 +15,8 @@ pub(super) const RISCV_LINUX_SCHED_GETAFFINITY: u64 = 123;
 pub(super) const RISCV_LINUX_SCHED_GET_PRIORITY_MAX: u64 = 125;
 pub(super) const RISCV_LINUX_SCHED_GET_PRIORITY_MIN: u64 = 126;
 pub(super) const RISCV_LINUX_SCHED_RR_GET_INTERVAL: u64 = 127;
+pub(super) const RISCV_LINUX_IOPRIO_SET: u64 = 30;
+pub(super) const RISCV_LINUX_IOPRIO_GET: u64 = 31;
 pub(super) const RISCV_LINUX_SETPRIORITY: u64 = 140;
 pub(super) const RISCV_LINUX_GETPRIORITY: u64 = 141;
 
@@ -23,6 +25,15 @@ const RISCV_LINUX_DEFAULT_SCHED_PRIORITY: i32 = 0;
 const RISCV_LINUX_SCHED_PARAM_BYTES: usize = mem::size_of::<i32>();
 const RISCV_LINUX_NICE_MIN: i32 = -20;
 const RISCV_LINUX_NICE_MAX: i32 = 19;
+const RISCV_LINUX_IOPRIO_WHO_PROCESS: i32 = 1;
+const RISCV_LINUX_IOPRIO_CLASS_SHIFT: u64 = 13;
+const RISCV_LINUX_IOPRIO_DATA_MASK: u64 = (1 << RISCV_LINUX_IOPRIO_CLASS_SHIFT) - 1;
+const RISCV_LINUX_IOPRIO_CLASS_MASK: u64 = 0x7;
+const RISCV_LINUX_IOPRIO_ENCODING_MASK: u64 = 0xffff;
+const RISCV_LINUX_IOPRIO_CLASS_NONE: u64 = 0;
+const RISCV_LINUX_IOPRIO_CLASS_RT: u64 = 1;
+const RISCV_LINUX_IOPRIO_CLASS_BE: u64 = 2;
+const RISCV_LINUX_IOPRIO_CLASS_IDLE: u64 = 3;
 const RISCV_LINUX_PRIO_PROCESS: i32 = 0;
 const RISCV_LINUX_RAW_PRIORITY_BASE: i32 = 20;
 const RISCV_LINUX_SCHED_RR_INTERVAL_NANOSECONDS: u64 = 2_000_000;
@@ -72,6 +83,29 @@ pub(super) fn syscall_getpriority(request: RiscvSyscallRequest, state: &RiscvSys
         Ok(()) => state.raw_linux_priority(),
         Err(errno) => linux_error(errno),
     }
+}
+
+pub(super) fn syscall_ioprio_get(request: RiscvSyscallRequest, state: &RiscvSyscallState) -> u64 {
+    match ioprio_target(request.argument(0), request.argument(1), state) {
+        Ok(()) => state.process_ioprio(),
+        Err(errno) => linux_error(errno),
+    }
+}
+
+pub(super) fn syscall_ioprio_set(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+) -> u64 {
+    let ioprio = normalize_ioprio(request.argument(2));
+    if let Err(errno) = validate_ioprio(ioprio) {
+        return linux_error(errno);
+    }
+    if let Err(errno) = ioprio_target(request.argument(0), request.argument(1), state) {
+        return linux_error(errno);
+    }
+
+    state.set_process_ioprio(ioprio);
+    0
 }
 
 pub(super) fn syscall_setpriority(
@@ -271,12 +305,41 @@ impl RiscvSyscallState {
         self.process_nice
     }
 
+    fn process_ioprio(&self) -> u64 {
+        self.process_ioprio
+    }
+
     fn raw_linux_priority(&self) -> u64 {
         (RISCV_LINUX_RAW_PRIORITY_BASE - self.process_nice) as u64
     }
 
     fn set_process_nice(&mut self, process_nice: i32) {
         self.process_nice = process_nice;
+    }
+
+    fn set_process_ioprio(&mut self, process_ioprio: u64) {
+        self.process_ioprio = process_ioprio;
+    }
+}
+
+fn ioprio_target(
+    which_argument: u64,
+    who_argument: u64,
+    state: &RiscvSyscallState,
+) -> Result<(), u64> {
+    match linux_int_argument(which_argument) {
+        RISCV_LINUX_IOPRIO_WHO_PROCESS => {
+            let requested_pid = linux_int_argument(who_argument);
+            if requested_pid < 0 {
+                return Err(RISCV_LINUX_ESRCH);
+            }
+            if matches_current_process(requested_pid as u64, state) {
+                Ok(())
+            } else {
+                Err(RISCV_LINUX_ESRCH)
+            }
+        }
+        _ => Err(RISCV_LINUX_EINVAL),
     }
 }
 
@@ -335,6 +398,22 @@ const fn settable_scheduler_policy(policy: i32) -> bool {
         policy,
         RISCV_LINUX_SCHED_OTHER | RISCV_LINUX_SCHED_BATCH | RISCV_LINUX_SCHED_IDLE
     )
+}
+
+const fn validate_ioprio(ioprio: u64) -> Result<(), u64> {
+    let class = (ioprio >> RISCV_LINUX_IOPRIO_CLASS_SHIFT) & RISCV_LINUX_IOPRIO_CLASS_MASK;
+    let data = ioprio & RISCV_LINUX_IOPRIO_DATA_MASK;
+    match class {
+        RISCV_LINUX_IOPRIO_CLASS_NONE if data == 0 => Ok(()),
+        RISCV_LINUX_IOPRIO_CLASS_NONE => Err(RISCV_LINUX_EINVAL),
+        RISCV_LINUX_IOPRIO_CLASS_RT => Err(RISCV_LINUX_EPERM),
+        RISCV_LINUX_IOPRIO_CLASS_BE | RISCV_LINUX_IOPRIO_CLASS_IDLE => Ok(()),
+        _ => Err(RISCV_LINUX_EINVAL),
+    }
+}
+
+const fn normalize_ioprio(ioprio: u64) -> u64 {
+    ioprio & RISCV_LINUX_IOPRIO_ENCODING_MASK
 }
 
 fn read_sched_priority(guest_memory_reader: &RiscvGuestMemoryReader, address: u64) -> Option<i32> {

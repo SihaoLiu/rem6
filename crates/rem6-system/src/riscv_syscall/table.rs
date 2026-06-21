@@ -563,6 +563,12 @@ impl RiscvSyscallTable {
                 scheduler::syscall_sched_setparam(request, state, guest_memory_reader)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
+            scheduler::RISCV_LINUX_IOPRIO_GET => Some(RiscvSyscallOutcome::Return {
+                value: scheduler::syscall_ioprio_get(request, state),
+            }),
+            scheduler::RISCV_LINUX_IOPRIO_SET => Some(RiscvSyscallOutcome::Return {
+                value: scheduler::syscall_ioprio_set(request, state),
+            }),
             scheduler::RISCV_LINUX_SCHED_SETSCHEDULER => {
                 scheduler::syscall_sched_setscheduler(request, state, guest_memory_reader)
                     .map(|value| RiscvSyscallOutcome::Return { value })
