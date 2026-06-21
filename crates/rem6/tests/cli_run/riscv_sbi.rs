@@ -7,6 +7,8 @@ const SBI_BASE_PROBE_EXTENSION: i32 = 3;
 const SBI_BASE_EXTENSION: i32 = 0x10;
 const SBI_TIME_EXTENSION: i32 = 0x5449_4d45u32 as i32;
 const SBI_TIME_SET_TIMER: i32 = 0;
+const SBI_IPI_EXTENSION: i32 = 0x0073_5049;
+const SBI_IPI_SEND_IPI: i32 = 0;
 const SBI_DEBUG_CONSOLE_EXTENSION: i32 = 0x4442_434e;
 const SBI_DEBUG_CONSOLE_WRITE: i32 = 0;
 const SBI_HSM_EXTENSION: i32 = 0x0048_534d;
@@ -15,6 +17,7 @@ const SBI_ERR_ALREADY_AVAILABLE: u64 = (-6_i64) as u64;
 const SBI_SPEC_VERSION_2_0: u64 = 2 << 24;
 const RISCV_SBI_ENTRY: u64 = 0x8000_0000;
 const RISCV_INTERRUPT_BIT: u64 = 1 << 63;
+const RISCV_SUPERVISOR_SOFTWARE_INTERRUPT: u64 = 1;
 const RISCV_SUPERVISOR_TIMER_INTERRUPT: u64 = 5;
 
 fn load_dbcn_extension(rd: u8) -> [u32; 2] {
@@ -26,6 +29,12 @@ fn load_dbcn_extension(rd: u8) -> [u32; 2] {
 fn load_time_extension(rd: u8) -> [u32; 2] {
     let upper = (SBI_TIME_EXTENSION + 0x800) & !0xfff;
     let lower = SBI_TIME_EXTENSION - upper;
+    [u_type(upper, rd, 0x37), i_type(lower, rd, 0x0, rd, 0x13)]
+}
+
+fn load_ipi_extension(rd: u8) -> [u32; 2] {
+    let upper = (SBI_IPI_EXTENSION + 0x800) & !0xfff;
+    let lower = SBI_IPI_EXTENSION - upper;
     [u_type(upper, rd, 0x37), i_type(lower, rd, 0x0, rd, 0x13)]
 }
 
@@ -532,6 +541,131 @@ fn rem6_run_riscv_sbi_secondary_hart_receives_timer_interrupt_after_hsm_start() 
     )));
     assert!(stdout.contains("\"x7\":\"0x6b\""));
     assert!(stdout.contains("\"riscv_sbi_timers\":[{\"cpu\":1,\"deadline\":144}]"));
+}
+
+#[test]
+fn rem6_run_riscv_sbi_secondary_hart_receives_ipi_interrupt_after_hsm_start() {
+    let mut words = Vec::new();
+    words.push(i_type(1, 0, 0x0, 10, 0x13));
+    let secondary_auipc_index = words.len();
+    words.push(u_type(0, 11, 0x17));
+    words.push(i_type(0, 11, 0x0, 11, 0x13));
+    words.extend([
+        i_type(0x77, 0, 0x0, 12, 0x13),
+        load_hsm_extension(17)[0],
+        load_hsm_extension(17)[1],
+        i_type(SBI_HSM_HART_START, 0, 0x0, 16, 0x13),
+        0x0000_0073,
+    ]);
+    let hsm_error_branch_index = words.len();
+    words.push(b_type(0, 0, 10, 0x1));
+    words.extend([
+        i_type(1 << 1, 0, 0x0, 10, 0x13),
+        i_type(0, 0, 0x0, 11, 0x13),
+        load_ipi_extension(17)[0],
+        load_ipi_extension(17)[1],
+        i_type(SBI_IPI_SEND_IPI, 0, 0x0, 16, 0x13),
+        0x0000_0073,
+    ]);
+    let ipi_error_branch_index = words.len();
+    words.push(b_type(0, 0, 10, 0x1));
+    words.push(j_type(0, 0));
+    let failure_index = words.len();
+    words.extend([i_type(0x7e, 0, 0x0, 5, 0x13), 0x0010_0073]);
+    words[hsm_error_branch_index] = b_type(
+        ((failure_index - hsm_error_branch_index) * 4) as i32,
+        0,
+        10,
+        0x1,
+    );
+    words[ipi_error_branch_index] = b_type(
+        ((failure_index - ipi_error_branch_index) * 4) as i32,
+        0,
+        10,
+        0x1,
+    );
+
+    let secondary_index = words.len();
+    let stvec_auipc_index = words.len();
+    words.extend([
+        u_type(0, 5, 0x17),
+        i_type(0, 5, 0x0, 5, 0x13),
+        csr_write(0x105, 5),
+        i_type(1 << 1, 0, 0x0, 5, 0x13),
+        csr_write(0x104, 5),
+        i_type(1 << 1, 0, 0x0, 5, 0x13),
+        csr_write(0x100, 5),
+        b_type(0, 0, 0, 0x0),
+    ]);
+    let handler_index = words.len();
+    words.extend([
+        csr_read(0x142, 5),
+        i_type(0x4d, 0, 0x0, 7, 0x13),
+        0x0010_0073,
+    ]);
+
+    words[secondary_auipc_index + 1] = i_type(
+        ((secondary_index - secondary_auipc_index) * 4) as i32,
+        11,
+        0x0,
+        11,
+        0x13,
+    );
+    words[stvec_auipc_index + 1] = i_type(
+        ((handler_index - stvec_auipc_index) * 4) as i32,
+        5,
+        0x0,
+        5,
+        0x13,
+    );
+
+    let elf = riscv64_elf(RISCV_SBI_ENTRY, RISCV_SBI_ENTRY, &riscv64_program(&words));
+    let path = temp_binary("riscv-sbi-secondary-ipi-interrupt", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "640",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--riscv-sbi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"cores\":2"));
+    assert!(stdout.contains("\"trap\":\"breakpoint\""));
+    assert!(stdout.contains(&format!(
+        "\"x5\":\"0x{:x}\"",
+        RISCV_INTERRUPT_BIT | RISCV_SUPERVISOR_SOFTWARE_INTERRUPT
+    )));
+    assert!(stdout.contains("\"x7\":\"0x4d\""));
+    assert!(stdout.contains(
+        "\"riscv_sbi_ipis\":[{\"source_cpu\":0,\"hart_mask\":\"0x2\",\"hart_mask_base\":\"0x0\",\"targets\":[1]}]"
+    ));
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.ipi.requests",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(&stdout, "sim.riscv.sbi.ipi.targets", "Count", 1, "constant");
 }
 
 #[test]

@@ -73,6 +73,7 @@ const STIP: u64 = 1 << 5;
 pub struct RiscvSbiFirmware {
     cores: Arc<Mutex<BTreeMap<u64, RiscvCore>>>,
     timer: Arc<Mutex<RiscvSbiTimerState>>,
+    ipis: Arc<Mutex<Vec<RiscvSbiIpiRecord>>>,
     debug_console: Arc<Mutex<Vec<u8>>>,
     debug_console_input: Arc<Mutex<VecDeque<u8>>>,
     functional_guest_memory_reader: Option<RiscvGuestMemoryReader>,
@@ -83,6 +84,41 @@ pub struct RiscvSbiFirmware {
 struct RiscvSbiTimerState {
     generations: BTreeMap<CpuId, u64>,
     deadlines: BTreeMap<CpuId, u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvSbiIpiRecord {
+    source_cpu: CpuId,
+    hart_mask: u64,
+    hart_mask_base: u64,
+    targets: Vec<u64>,
+}
+
+impl RiscvSbiIpiRecord {
+    pub fn new(source_cpu: CpuId, hart_mask: u64, hart_mask_base: u64, targets: Vec<u64>) -> Self {
+        Self {
+            source_cpu,
+            hart_mask,
+            hart_mask_base,
+            targets,
+        }
+    }
+
+    pub const fn source_cpu(&self) -> CpuId {
+        self.source_cpu
+    }
+
+    pub const fn hart_mask(&self) -> u64 {
+        self.hart_mask
+    }
+
+    pub const fn hart_mask_base(&self) -> u64 {
+        self.hart_mask_base
+    }
+
+    pub fn targets(&self) -> &[u64] {
+        &self.targets
+    }
 }
 
 impl RiscvSbiTimerState {
@@ -242,6 +278,7 @@ impl RiscvSbiFirmware {
                 generations: BTreeMap::new(),
                 deadlines: BTreeMap::new(),
             })),
+            ipis: Arc::new(Mutex::new(Vec::new())),
             debug_console: Arc::new(Mutex::new(Vec::new())),
             debug_console_input: Arc::new(Mutex::new(VecDeque::new())),
             functional_guest_memory_reader: None,
@@ -283,6 +320,10 @@ impl RiscvSbiFirmware {
             .lock()
             .expect("RISC-V SBI debug console lock")
             .clear();
+        self.ipis
+            .lock()
+            .expect("RISC-V SBI IPI record lock")
+            .clear();
         let mut cores = self.cores.lock().expect("RISC-V SBI core registry lock");
         cores.clear();
         for cpu in cluster.core_ids() {
@@ -314,6 +355,13 @@ impl RiscvSbiFirmware {
         self.debug_console
             .lock()
             .expect("RISC-V SBI debug console lock")
+            .clone()
+    }
+
+    pub fn ipi_records(&self) -> Vec<RiscvSbiIpiRecord> {
+        self.ipis
+            .lock()
+            .expect("RISC-V SBI IPI record lock")
             .clone()
     }
 
@@ -537,8 +585,28 @@ impl RiscvSbiFirmware {
             return Ok(RiscvSbiOutcome::invalid_param());
         };
 
+        let target_harts = targets.iter().map(RiscvCore::hart_id).collect();
         self.schedule_remote_ipi(scheduler, source, targets, parallel)?;
+        self.record_ipi(source.id(), request.arg0(), request.arg1(), target_harts);
         Ok(RiscvSbiOutcome::success(0))
+    }
+
+    fn record_ipi(
+        &self,
+        source_cpu: CpuId,
+        hart_mask: u64,
+        hart_mask_base: u64,
+        targets: Vec<u64>,
+    ) {
+        self.ipis
+            .lock()
+            .expect("RISC-V SBI IPI record lock")
+            .push(RiscvSbiIpiRecord::new(
+                source_cpu,
+                hart_mask,
+                hart_mask_base,
+                targets,
+            ));
     }
 
     fn schedule_remote_ipi(

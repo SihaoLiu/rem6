@@ -500,6 +500,10 @@ fn assert_send_ipi_sets_target_ssip_when_completion_event_runs(parallel: bool) {
         .expect("SBI outcome");
 
     assert_eq!(outcome, RiscvSbiOutcome::success(0));
+    assert_eq!(
+        firmware.ipi_records(),
+        vec![RiscvSbiIpiRecord::new(CpuId::new(0), 0b10, 0, vec![1])]
+    );
     assert_eq!(core1.machine_interrupt_pending() & SSIP, 0);
 
     if parallel {
@@ -599,6 +603,7 @@ fn send_ipi_scheduler_error_leaves_no_partial_target_events() {
             partitions: 2,
         })
     );
+    assert!(firmware.ipi_records().is_empty());
     assert_eq!(
         scheduler
             .next_pending_tick(PartitionId::new(1))

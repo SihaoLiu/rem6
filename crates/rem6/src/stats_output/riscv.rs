@@ -59,6 +59,24 @@ pub(super) fn emit_riscv_run_stats(
                     deadline,
                 )?;
             }
+            increment_stat(
+                stats,
+                "sim.riscv.sbi.ipi.requests",
+                "Count",
+                StatResetPolicy::Constant,
+                execution.riscv_sbi_ipis.len() as u64,
+            )?;
+            increment_stat(
+                stats,
+                "sim.riscv.sbi.ipi.targets",
+                "Count",
+                StatResetPolicy::Constant,
+                execution
+                    .riscv_sbi_ipis
+                    .iter()
+                    .map(|ipi| ipi.target_count())
+                    .sum(),
+            )?;
         }
     }
     increment_stat(

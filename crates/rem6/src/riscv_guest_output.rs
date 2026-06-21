@@ -1,4 +1,4 @@
-use rem6_system::{RiscvGuestWriteRecord, RiscvUnknownSyscallRecord};
+use rem6_system::{RiscvGuestWriteRecord, RiscvSbiIpiRecord, RiscvUnknownSyscallRecord};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6RiscvGuestWriteSummary {
@@ -30,6 +30,14 @@ pub(crate) struct Rem6RiscvSbiTimerSummary {
     deadline: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6RiscvSbiIpiSummary {
+    source_cpu: u32,
+    hart_mask: u64,
+    hart_mask_base: u64,
+    targets: Vec<u64>,
+}
+
 impl Rem6RiscvSbiConsoleSummary {
     pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {
         Self { bytes }
@@ -55,6 +63,37 @@ impl Rem6RiscvSbiTimerSummary {
 
     pub(crate) const fn deadline(&self) -> u64 {
         self.deadline
+    }
+}
+
+impl Rem6RiscvSbiIpiSummary {
+    pub(crate) fn from_record(record: &RiscvSbiIpiRecord) -> Self {
+        Self {
+            source_cpu: record.source_cpu().get(),
+            hart_mask: record.hart_mask(),
+            hart_mask_base: record.hart_mask_base(),
+            targets: record.targets().to_vec(),
+        }
+    }
+
+    pub(crate) const fn source_cpu(&self) -> u32 {
+        self.source_cpu
+    }
+
+    pub(crate) const fn hart_mask(&self) -> u64 {
+        self.hart_mask
+    }
+
+    pub(crate) const fn hart_mask_base(&self) -> u64 {
+        self.hart_mask_base
+    }
+
+    pub(crate) fn targets(&self) -> &[u64] {
+        &self.targets
+    }
+
+    pub(crate) fn target_count(&self) -> u64 {
+        self.targets.len() as u64
     }
 }
 
