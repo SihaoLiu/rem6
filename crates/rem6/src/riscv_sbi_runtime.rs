@@ -53,6 +53,7 @@ pub(crate) fn attach_cli_riscv_sbi_firmware(
     driver: RiscvSystemRunDriver,
     memory: &CliMemoryRuntime,
     instruction_cache: Option<CliDataCacheRuntime>,
+    instruction_cache_l2: Option<CliDataCacheRuntime>,
     data_cache: Option<CliDataCacheRuntime>,
     data_cache_l2: Option<CliDataCacheRuntime>,
     line_layout: CacheLineLayout,
@@ -64,6 +65,7 @@ pub(crate) fn attach_cli_riscv_sbi_firmware(
     let read_memory = memory.clone();
     let write_memory = memory.clone();
     let write_instruction_cache = instruction_cache.clone();
+    let write_instruction_cache_l2 = instruction_cache_l2.clone();
     let write_data_cache = data_cache.clone();
     let write_data_cache_l2 = data_cache_l2.clone();
     driver
@@ -75,6 +77,7 @@ pub(crate) fn attach_cli_riscv_sbi_firmware(
             write_guest_memory_with_cache_invalidation(
                 &write_memory,
                 write_instruction_cache.as_ref(),
+                write_instruction_cache_l2.as_ref(),
                 write_data_cache.as_ref(),
                 write_data_cache_l2.as_ref(),
                 address,

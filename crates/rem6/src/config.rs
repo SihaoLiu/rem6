@@ -12,6 +12,7 @@ use crate::Rem6CliError;
 mod cache;
 mod debug;
 mod dram;
+mod file_scan;
 mod output_format;
 mod riscv_branch;
 mod riscv_se_input;
@@ -21,6 +22,9 @@ pub use cache::CliCachePrefetcher;
 pub use debug::CliDebugFlag;
 use debug::{parse_debug_flag_list, parse_debug_flags};
 pub use dram::CliDramMemoryProfile;
+use file_scan::{
+    gups_file_config_from_args, run_file_config_from_args, trace_replay_file_config_from_args,
+};
 pub use output_format::{PowerAnalysisFormat, StatsFormat};
 use riscv_branch::{parse_riscv_branch_predictor, parse_riscv_pc_count_target};
 pub use riscv_se_input::{RiscvSeFileRequest, RiscvSeInputSource};
@@ -122,6 +126,7 @@ pub struct Rem6RunConfig {
     data_cache_l2_protocol: Option<RiscvDataCacheProtocol>,
     data_cache_prefetcher: Option<CliCachePrefetcher>,
     instruction_cache_protocol: Option<RiscvDataCacheProtocol>,
+    instruction_cache_l2_protocol: Option<RiscvDataCacheProtocol>,
     instruction_cache_prefetcher: Option<CliCachePrefetcher>,
     gdb_listen: Option<String>,
     debug_flags: Vec<CliDebugFlag>,
@@ -220,6 +225,7 @@ struct Rem6RunFileConfig {
     data_cache_l2_protocol: Option<String>,
     data_cache_prefetcher: Option<String>,
     instruction_cache_protocol: Option<String>,
+    instruction_cache_l2_protocol: Option<String>,
     instruction_cache_prefetcher: Option<String>,
     debug_flags: Option<Vec<String>>,
     cores: Option<usize>,
@@ -485,6 +491,17 @@ impl Rem6RunConfig {
             .map(|value| {
                 parse_run_data_cache_protocol(value).ok_or_else(|| {
                     Rem6CliError::InvalidRunInstructionCacheProtocol {
+                        value: value.to_string(),
+                    }
+                })
+            })
+            .transpose()?;
+        let mut instruction_cache_l2_protocol = file_config
+            .instruction_cache_l2_protocol
+            .as_deref()
+            .map(|value| {
+                parse_run_data_cache_protocol(value).ok_or_else(|| {
+                    Rem6CliError::InvalidRunInstructionCacheL2Protocol {
                         value: value.to_string(),
                     }
                 })
@@ -765,6 +782,15 @@ impl Rem6RunConfig {
                             }
                         })?);
                 }
+                "--instruction-cache-l2-protocol" => {
+                    let value = required_value(&flag, args.next())?;
+                    instruction_cache_l2_protocol =
+                        Some(parse_run_data_cache_protocol(&value).ok_or_else(|| {
+                            Rem6CliError::InvalidRunInstructionCacheL2Protocol {
+                                value: value.clone(),
+                            }
+                        })?);
+                }
                 "--instruction-cache-prefetcher" => {
                     instruction_cache_prefetcher =
                         Some(CliCachePrefetcher::parse_instruction_cache(
@@ -957,6 +983,7 @@ impl Rem6RunConfig {
             data_cache_l2_protocol,
             data_cache_prefetcher,
             instruction_cache_protocol,
+            instruction_cache_l2_protocol,
             instruction_cache_prefetcher,
             gdb_listen,
             debug_flags,
@@ -1086,6 +1113,10 @@ impl Rem6RunConfig {
 
     pub const fn instruction_cache_protocol(&self) -> Option<RiscvDataCacheProtocol> {
         self.instruction_cache_protocol
+    }
+
+    pub const fn instruction_cache_l2_protocol(&self) -> Option<RiscvDataCacheProtocol> {
+        self.instruction_cache_l2_protocol
     }
 
     pub const fn instruction_cache_prefetcher(&self) -> Option<CliCachePrefetcher> {
@@ -1656,140 +1687,6 @@ fn parse_run_data_cache_protocol(value: &str) -> Option<RiscvDataCacheProtocol> 
         "chi" => Some(RiscvDataCacheProtocol::Chi),
         _ => None,
     }
-}
-
-fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
-    config_path_from_args(
-        args,
-        &[
-            "--isa",
-            "--binary",
-            "--resource-config",
-            "--max-tick",
-            "--min-remote-delay",
-            "--memory-route-delay",
-            "--host-event-delay",
-            "--start-address",
-            "--riscv-boot-a0",
-            "--riscv-boot-a1",
-            "--riscv-se-arg",
-            "--riscv-se-env",
-            "--riscv-se-stdin",
-            "--riscv-se-file",
-            "--riscv-pc-count-target",
-            "--riscv-branch-lookahead",
-            "--riscv-branch-predictor",
-            "--max-instructions",
-            "--stats-format",
-            "--dram-memory-profile",
-            "--data-cache-protocol",
-            "--data-cache-l2-protocol",
-            "--data-cache-prefetcher",
-            "--instruction-cache-protocol",
-            "--instruction-cache-prefetcher",
-            "--debug-flags",
-            "--cores",
-            "--parallel-workers",
-            "--dump-memory",
-            "--load-blob",
-            "--readfile",
-            "--output",
-            "--stats-output",
-            "--power-format",
-            "--power-output",
-        ],
-        &[
-            "--execute",
-            "--checker-cpu",
-            "--dram-memory",
-            "--riscv-se",
-            "--riscv-sbi",
-        ],
-    )
-}
-
-fn gups_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
-    config_path_from_args(
-        args,
-        &[
-            "--memory-start",
-            "--memory-size",
-            "--updates",
-            "--max-tick",
-            "--min-remote-delay",
-            "--memory-route-delay",
-            "--stats-format",
-            "--rng-state",
-            "--dump-memory",
-            "--output",
-            "--stats-output",
-        ],
-        &[],
-    )
-}
-
-fn trace_replay_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
-    config_path_from_args(
-        args,
-        &[
-            "--trace",
-            "--resource-config",
-            "--route",
-            "--memory-start",
-            "--memory-size",
-            "--max-tick",
-            "--min-remote-delay",
-            "--memory-route-delay",
-            "--tick-frequency",
-            "--line-bytes",
-            "--agent",
-            "--control-partition",
-            "--data-cache-protocol",
-            "--data-cache-dram-memory-profile",
-            "--fabric-link",
-            "--fabric-bandwidth-bytes-per-tick",
-            "--fabric-request-virtual-network",
-            "--fabric-response-virtual-network",
-            "--fabric-credit-depth",
-            "--external-adapter-kind",
-            "--external-adapter-endpoint",
-            "--stats-format",
-            "--output",
-            "--stats-output",
-        ],
-        &[],
-    )
-}
-
-fn config_path_from_args(
-    args: &[String],
-    value_flags: &[&str],
-    bool_flags: &[&str],
-) -> Result<Option<PathBuf>, Rem6CliError> {
-    let mut path = None;
-    let mut index = 0;
-    while let Some(flag) = args.get(index) {
-        match flag.as_str() {
-            "--config" => {
-                let value = args
-                    .get(index + 1)
-                    .cloned()
-                    .ok_or_else(|| Rem6CliError::MissingFlagValue { flag: flag.clone() })?;
-                path = Some(PathBuf::from(value));
-                index += 2;
-            }
-            flag if bool_flags.contains(&flag) => {
-                index += 1;
-            }
-            flag if value_flags.contains(&flag) => {
-                index += 2;
-            }
-            _ => {
-                index += 1;
-            }
-        }
-    }
-    Ok(path)
 }
 
 fn load_run_file_config(path: &Path) -> Result<Rem6RunFileConfig, Rem6CliError> {

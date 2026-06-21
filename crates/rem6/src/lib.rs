@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fmt;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
@@ -7,7 +6,6 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
-    RiscvCoreDriveAction,
 };
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
@@ -18,9 +16,8 @@ use rem6_stats::{
 };
 use rem6_system::{
     GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats, RiscvInstructionStats,
-    RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSyscallTraceRecord, RiscvSystemRun,
-    RiscvSystemRunDriver, RiscvSystemRunStopReason, RiscvTrapEventPort, SystemHostController,
-    SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
+    RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun, RiscvSystemRunDriver,
+    RiscvTrapEventPort, SystemHostController, SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TransportEndpointId,
@@ -52,6 +49,7 @@ mod riscv_guest_output;
 mod riscv_run_driver;
 mod riscv_sbi_runtime;
 mod riscv_se_inputs;
+mod run_execution_summary;
 mod run_gdb;
 mod run_resource_config;
 mod run_validation;
@@ -69,7 +67,6 @@ pub use config::{
     Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource,
     StatsFormat, SuiteResourceSelector, TraceReplayExternalAdapterKind,
 };
-use data_access_counts::core_data_access_counts;
 use data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io,
     CliDataCacheRuntime, CliDataCacheSummary,
@@ -89,16 +86,7 @@ pub(crate) use instruction_probe_summary::{
     Rem6PcCountTrackerSummary,
 };
 pub(crate) use memory_resource_summary::Rem6MemoryResourceSummary;
-use parallel_stats::{
-    parallel_frontier_summaries, parallel_partition_summaries, parallel_ready_partition_summaries,
-    parallel_worker_lane_summaries, parallel_worker_slot_summaries,
-};
-use pipeline_stats::{
-    in_order_pipeline_data_wait_cycles, in_order_pipeline_fetch_wait_cycles,
-    in_order_pipeline_run_summary, in_order_pipeline_stage_in_flight,
-    in_order_pipeline_stage_max_in_flight, in_order_pipeline_stage_occupied_cycles,
-    Rem6InOrderPipelineStageInFlightSummary,
-};
+use pipeline_stats::Rem6InOrderPipelineStageInFlightSummary;
 use power_output::{run_power_analysis_artifact, Rem6PowerAnalysisArtifact};
 use readfile_runtime::{read_readfiles, readfile_mmio_bus, LoadedReadfile, Rem6ReadfileSummary};
 pub use resource_acquire_cli::{
@@ -116,10 +104,11 @@ pub(crate) use riscv_guest_output::{
 use riscv_run_driver::drive_cli_riscv_run;
 use riscv_sbi_runtime::{attach_cli_riscv_sbi_firmware, configure_cli_riscv_sbi_core};
 use riscv_se_inputs::{read_riscv_se_file, read_riscv_se_stdin};
+use run_execution_summary::{execution_summary, ExecutionSummaryInputs};
 use run_gdb::{serve_riscv_gdb_with_run_control, RiscvGdbServeOutcome};
 use run_resource_config::{run_resource_payloads_from_config, RunResourcePayloads};
 use run_validation::validate_run_config_inputs;
-use runtime_memory::{read_memory_dumps, CliMemoryRuntime};
+use runtime_memory::CliMemoryRuntime;
 use stats_output::{run_stats_output, Rem6StatsInputs};
 pub use trace_replay_cli::{
     run_trace_replay_config, Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary,
@@ -167,6 +156,7 @@ pub struct Rem6ExecutionSummary {
     data_store_bytes: u64,
     data_atomic_bytes: u64,
     instruction_cache: CliDataCacheSummary,
+    instruction_cache_l2: CliDataCacheSummary,
     data_cache: CliDataCacheSummary,
     data_cache_l2: CliDataCacheSummary,
     instruction_probes: Rem6InstructionProbeSummary,
@@ -388,30 +378,6 @@ pub struct Rem6ParallelFrontierSummary {
 pub struct Rem6ParallelReadyPartitionSummary {
     partition: u32,
     next_tick: u64,
-}
-
-struct ExecutionSummaryInputs<'a> {
-    core_count: u32,
-    memory: &'a CliMemoryRuntime,
-    line_layout: CacheLineLayout,
-    config: &'a Rem6RunConfig,
-    instruction_cache: CliDataCacheSummary,
-    data_cache: CliDataCacheSummary,
-    data_cache_l2: CliDataCacheSummary,
-    fetch_trace: &'a MemoryTrace,
-    data_trace: &'a MemoryTrace,
-    riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
-    riscv_unknown_syscalls: Vec<Rem6RiscvUnknownSyscallSummary>,
-    riscv_sbi_console: Rem6RiscvSbiConsoleSummary,
-    riscv_sbi_timers: Vec<Rem6RiscvSbiTimerSummary>,
-    riscv_sbi_hsm_events: Vec<Rem6RiscvSbiHsmSummary>,
-    riscv_sbi_hsm_wakes: Vec<Rem6RiscvSbiHsmWakeSummary>,
-    riscv_sbi_ipis: Vec<Rem6RiscvSbiIpiSummary>,
-    riscv_sbi_rfences: Vec<Rem6RiscvSbiRfenceSummary>,
-    riscv_sbi_resets: Vec<Rem6RiscvSbiResetSummary>,
-    riscv_syscall_trace: Vec<RiscvSyscallTraceRecord>,
-    host_actions: Rem6HostActionSummary,
-    prior_committed_by_cpu: BTreeMap<CpuId, u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -657,6 +623,12 @@ fn execute_riscv(
         core_count,
         config.instruction_cache_prefetcher(),
     )?;
+    let instruction_cache_l2 = cli_cache_runtime_with_prefetcher(
+        config.instruction_cache_l2_protocol(),
+        line_layout,
+        core_count,
+        None,
+    )?;
     let data_cache = cli_cache_runtime_with_prefetcher(
         config.data_cache_protocol(),
         line_layout,
@@ -811,6 +783,7 @@ fn execute_riscv(
         driver,
         &memory,
         instruction_cache.clone(),
+        instruction_cache_l2.clone(),
         data_cache.clone(),
         data_cache_l2.clone(),
         line_layout,
@@ -847,6 +820,8 @@ fn execute_riscv(
         driver = with_riscv_syscall_data_cache_memory_io(
             driver,
             memory.clone(),
+            instruction_cache.clone(),
+            instruction_cache_l2.clone(),
             data_cache.clone(),
             data_cache_l2.clone(),
             line_layout,
@@ -869,6 +844,7 @@ fn execute_riscv(
             &mut scheduler,
             &transport,
             instruction_cache.clone(),
+            instruction_cache_l2.clone(),
             data_cache.clone(),
             data_cache_l2.clone(),
             fetch_trace.clone(),
@@ -890,6 +866,7 @@ fn execute_riscv(
             readfile_bus.as_ref(),
             &memory,
             instruction_cache.clone(),
+            instruction_cache_l2.clone(),
             data_cache.clone(),
             data_cache_l2.clone(),
             fetch_trace.clone(),
@@ -919,11 +896,20 @@ fn execute_riscv(
             return Err(error);
         }
     }
+    if let Some(instruction_cache_l2) = instruction_cache_l2.as_ref() {
+        if let Some(error) = instruction_cache_l2.take_error() {
+            return Err(error);
+        }
+    }
     let mut run = run_result.map_err(execute_error)?;
     if let Some(data_cache) = data_cache.as_ref() {
         run = run.with_data_cache_run_records(data_cache.records());
     }
     let instruction_cache_records = instruction_cache
+        .as_ref()
+        .map(CliDataCacheRuntime::records)
+        .unwrap_or_default();
+    let instruction_cache_l2_records = instruction_cache_l2
         .as_ref()
         .map(CliDataCacheRuntime::records)
         .unwrap_or_default();
@@ -969,6 +955,7 @@ fn execute_riscv(
                     .map(CliDataCacheRuntime::prefetch_summary)
                     .unwrap_or_default(),
             ),
+        instruction_cache_l2: CliDataCacheSummary::from_records(&instruction_cache_l2_records),
         data_cache: CliDataCacheSummary::from_run(&run).with_prefetch_summary(
             data_cache
                 .as_ref()
@@ -1015,220 +1002,6 @@ fn add_memory_route(
             .map_err(execute_error)?,
         )
         .map_err(execute_error)
-}
-
-fn execution_summary(
-    cluster: &RiscvCluster,
-    run: &RiscvSystemRun,
-    inputs: ExecutionSummaryInputs<'_>,
-) -> Result<Rem6ExecutionSummary, Rem6CliError> {
-    let mut committed_by_cpu = inputs.prior_committed_by_cpu.clone();
-    for (cpu, committed) in committed_instructions_by_cpu(run) {
-        *committed_by_cpu.entry(cpu).or_insert(0) += committed;
-    }
-    let committed_instructions = committed_by_cpu.values().sum();
-    let final_tick = run.final_tick().ok_or_else(|| Rem6CliError::Execute {
-        error: "RISC-V execution stopped without a final tick".to_string(),
-    })?;
-    let stop = match run.stop_reason() {
-        RiscvSystemRunStopReason::HostStop(stop) => {
-            if let Some(scheduled_trap) = run.scheduled_traps().first() {
-                Rem6ExecutionStop::HostTrap {
-                    stop_code: stop.code(),
-                    trap: guest_trap_name(scheduled_trap.trap().kind()),
-                    trap_pc: scheduled_trap.trap().pc(),
-                }
-            } else {
-                Rem6ExecutionStop::HostStop {
-                    stop_code: stop.code(),
-                }
-            }
-        }
-        RiscvSystemRunStopReason::DebugStop { .. } => {
-            return Err(Rem6CliError::Execute {
-                error: "RISC-V execution stopped at a debugger watchpoint".to_string(),
-            });
-        }
-        RiscvSystemRunStopReason::InstructionLimit { limit, .. } => {
-            Rem6ExecutionStop::InstructionLimit {
-                instruction_limit: inputs.config.max_instructions().unwrap_or(limit),
-            }
-        }
-        RiscvSystemRunStopReason::TickLimit { limit, .. } => {
-            Rem6ExecutionStop::TickLimit { tick_limit: limit }
-        }
-        RiscvSystemRunStopReason::Idle { .. } => {
-            if inputs
-                .riscv_sbi_hsm_events
-                .iter()
-                .any(Rem6RiscvSbiHsmSummary::is_hart_stop)
-            {
-                Rem6ExecutionStop::Idle
-            } else {
-                return Err(Rem6CliError::Execute {
-                    error: "RISC-V execution stopped without a host trap".to_string(),
-                });
-            }
-        }
-    };
-    let mut cores = Vec::new();
-    let mut data_loads = 0;
-    let mut data_stores = 0;
-    let mut data_atomics = 0;
-    let mut data_load_bytes = 0;
-    let mut data_store_bytes = 0;
-    let mut data_atomic_bytes = 0;
-    for cpu_index in 0..inputs.core_count {
-        let cpu = CpuId::new(cpu_index);
-        let core = cluster.core(cpu).map_err(execute_error)?;
-        let data = core_data_access_counts(&core);
-        data_loads += data.loads;
-        data_stores += data.stores;
-        data_atomics += data.atomics;
-        data_load_bytes += data.load_bytes;
-        data_store_bytes += data.store_bytes;
-        data_atomic_bytes += data.atomic_bytes;
-        let mut registers = Vec::new();
-        for register_index in 1..32 {
-            let register = Register::new(register_index).map_err(execute_error)?;
-            let value = core.read_register(register);
-            if value != 0 {
-                registers.push((register_index, value));
-            }
-        }
-        let pipeline_summary = in_order_pipeline_run_summary(&core);
-        let pipeline_snapshot = core.in_order_pipeline_snapshot();
-        let pipeline_stage_in_flight = in_order_pipeline_stage_in_flight(&pipeline_snapshot);
-        let pipeline_stage_max_in_flight =
-            in_order_pipeline_stage_max_in_flight(&core, &pipeline_snapshot);
-        let pipeline_stage_occupied_cycles = in_order_pipeline_stage_occupied_cycles(&core);
-        let branch_speculation_summary = core.branch_speculation_summary();
-        let checker = core
-            .checker_cpu_snapshot()
-            .map(|snapshot| Rem6CheckerSummary {
-                checked_instructions: snapshot.checked_instructions(),
-                mismatches: snapshot.mismatches().len() as u64,
-            });
-        cores.push(Rem6CoreSummary {
-            cpu: cpu_index,
-            pc: core.pc().get(),
-            committed_instructions: committed_by_cpu.get(&cpu).copied().unwrap_or(0),
-            in_order_pipeline_cycles: pipeline_snapshot.cycle(),
-            in_order_pipeline_in_flight: pipeline_snapshot.in_flight().len() as u64,
-            in_order_pipeline_stage_in_flight: pipeline_stage_in_flight,
-            in_order_pipeline_stage_max_in_flight: pipeline_stage_max_in_flight,
-            in_order_pipeline_stage_occupied_cycles: pipeline_stage_occupied_cycles,
-            in_order_pipeline_retired: pipeline_summary.retired_count() as u64,
-            in_order_pipeline_advanced: pipeline_summary.advanced_count() as u64,
-            in_order_pipeline_flushed: pipeline_summary.flushed_count() as u64,
-            in_order_pipeline_resource_blocked: pipeline_summary.resource_blocked_count() as u64,
-            in_order_pipeline_ordering_blocked: pipeline_summary.ordering_blocked_count() as u64,
-            in_order_pipeline_stall_cycles: pipeline_summary.stall_cycle_count(),
-            in_order_pipeline_fetch_wait_cycles: in_order_pipeline_fetch_wait_cycles(&core),
-            in_order_pipeline_data_wait_cycles: in_order_pipeline_data_wait_cycles(&core),
-            in_order_pipeline_branch_predictions: pipeline_summary.branch_prediction_count() as u64,
-            in_order_pipeline_branch_mispredictions: pipeline_summary.branch_misprediction_count()
-                as u64,
-            in_order_pipeline_branch_prediction_flushes: pipeline_summary
-                .branch_prediction_flushed_count()
-                as u64,
-            in_order_pipeline_redirects: pipeline_summary.redirect_count() as u64,
-            in_order_pipeline_branch_speculation_predictions: branch_speculation_summary
-                .predictions(),
-            in_order_pipeline_branch_speculation_repairs: branch_speculation_summary.repairs(),
-            in_order_pipeline_branch_speculation_removed_youngers: branch_speculation_summary
-                .removed_youngers(),
-            in_order_pipeline_branch_speculation_max_pending: branch_speculation_summary
-                .max_pending(),
-            data_loads: data.loads,
-            data_stores: data.stores,
-            data_atomics: data.atomics,
-            data_load_bytes: data.load_bytes,
-            data_store_bytes: data.store_bytes,
-            data_atomic_bytes: data.atomic_bytes,
-            checker,
-            registers,
-        });
-    }
-
-    let fetch_transport = memory_transport_summary(inputs.fetch_trace);
-    let data_transport = memory_transport_summary(inputs.data_trace);
-    let dram = inputs.memory.dram_summary_until(final_tick);
-    let memory_resources = Rem6MemoryResourceSummary::from_run_resources(
-        &inputs.instruction_cache,
-        &inputs.data_cache,
-        &inputs.data_cache_l2,
-        &fetch_transport,
-        &data_transport,
-        &dram,
-    );
-
-    Ok(Rem6ExecutionSummary {
-        final_tick,
-        stop,
-        committed_instructions,
-        data_loads,
-        data_stores,
-        data_atomics,
-        data_load_bytes,
-        data_store_bytes,
-        data_atomic_bytes,
-        instruction_cache: inputs.instruction_cache,
-        data_cache: inputs.data_cache,
-        data_cache_l2: inputs.data_cache_l2,
-        instruction_probes: instruction_probe_summary(run),
-        data_access_probes: data_access_probe_summary(
-            run,
-            inputs.line_layout,
-            RISCV_DATA_PROBE_PAGE_BYTES,
-        ),
-        parallel_scheduler_epochs: run.parallel_scheduler_epochs().len() as u64,
-        parallel_scheduler_dispatches: run.parallel_scheduler_dispatches().len() as u64,
-        parallel_scheduler_batches: run.parallel_scheduler_batches().len() as u64,
-        parallel_scheduler_max_workers: run.max_parallel_scheduler_workers() as u64,
-        parallel_scheduler_total_workers: run.parallel_scheduler_workers().len() as u64,
-        parallel_scheduler_active_partitions: run.active_parallel_scheduler_partition_count()
-            as u64,
-        parallel_scheduler_remote_sends: run.parallel_scheduler_total_remote_send_count() as u64,
-        parallel_scheduler_batch_worker_ticks: run.parallel_scheduler_batch_worker_ticks(),
-        parallel_scheduler_batch_worker_capacity_ticks: run
-            .parallel_scheduler_batch_worker_capacity_ticks(),
-        parallel_scheduler_batch_idle_worker_ticks: run
-            .parallel_scheduler_batch_idle_worker_ticks(),
-        parallel_scheduler_worker_slots: parallel_worker_slot_summaries(run),
-        parallel_scheduler_worker_lanes: parallel_worker_lane_summaries(run),
-        parallel_scheduler_partitions: parallel_partition_summaries(run),
-        parallel_scheduler_frontiers: parallel_frontier_summaries(
-            run.parallel_scheduler_frontiers(),
-        ),
-        parallel_scheduler_final_frontiers: parallel_frontier_summaries(
-            run.parallel_scheduler_final_frontiers(),
-        ),
-        parallel_scheduler_ready_partitions: parallel_ready_partition_summaries(
-            run.parallel_scheduler_ready_partitions(),
-        ),
-        fetch_transport,
-        data_transport,
-        dram,
-        memory_resources,
-        debug: Rem6DebugSummary::from_run(inputs.config, cluster, run, &inputs.riscv_syscall_trace),
-        cores,
-        memory_dumps: read_memory_dumps(
-            inputs.memory,
-            inputs.line_layout,
-            inputs.config.memory_dumps(),
-        )?,
-        riscv_guest_writes: inputs.riscv_guest_writes,
-        riscv_unknown_syscalls: inputs.riscv_unknown_syscalls,
-        riscv_sbi_console: inputs.riscv_sbi_console,
-        riscv_sbi_timers: inputs.riscv_sbi_timers,
-        riscv_sbi_hsm_events: inputs.riscv_sbi_hsm_events,
-        riscv_sbi_hsm_wakes: inputs.riscv_sbi_hsm_wakes,
-        riscv_sbi_ipis: inputs.riscv_sbi_ipis,
-        riscv_sbi_rfences: inputs.riscv_sbi_rfences,
-        riscv_sbi_resets: inputs.riscv_sbi_resets,
-        host_actions: inputs.host_actions,
-    })
 }
 
 fn cli_instruction_stats(
@@ -1282,19 +1055,6 @@ fn data_access_probe_summary(
             }
         })
         .unwrap_or_default()
-}
-
-fn committed_instructions_by_cpu(run: &RiscvSystemRun) -> BTreeMap<CpuId, u64> {
-    let mut committed = BTreeMap::new();
-    for event in run.turns().iter().flat_map(|turn| turn.core_events()) {
-        let RiscvCoreDriveAction::InstructionExecuted(instruction) = event.action() else {
-            continue;
-        };
-        if instruction.counts_as_retired_instruction() {
-            *committed.entry(event.cpu()).or_insert(0) += 1;
-        }
-    }
-    committed
 }
 
 fn guest_trap_name(kind: GuestTrapKind) -> &'static str {

@@ -1,237 +1,25 @@
-use self::parallel::empty_parallel_json;
-use self::transport::empty_transport_json;
-use super::formatting::{
-    bytes_to_hex, elf_architecture_name, elf_class_name, elf_endian_name, elf_os_name, json_escape,
-};
+use super::formatting::{bytes_to_hex, json_escape};
 use super::{
     CliDataCacheSummary, Rem6CoreSummary, Rem6DataAccessProbeSummary, Rem6DramSummary,
     Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GuestHostCallSummary, Rem6GupsArtifact,
     Rem6GupsExecutionSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
     Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary, Rem6HostInjectedCommandSummary,
     Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary, Rem6HostStopActionSummary,
-    Rem6HostWorkMarkerSummary, Rem6InstructionProbeSummary, Rem6LoadBlobSummary, Rem6MemoryDump,
+    Rem6HostWorkMarkerSummary, Rem6InstructionProbeSummary, Rem6MemoryDump,
     Rem6MemoryResourceSummary, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
     Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary, Rem6PcCountTrackerSummary,
-    Rem6ReadfileSummary, Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary,
-    Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary,
-    Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
-    Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact, Rem6TraceReplayArtifact,
-    Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary, RequestedIsa,
+    Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmSummary,
+    Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary,
+    Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
+    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary,
+    Rem6TraceReplayExternalAdapterSummary,
 };
 
 mod parallel;
+mod run;
 #[cfg(test)]
 mod tests;
 mod transport;
-
-impl Rem6RunArtifact {
-    pub fn to_json(&self) -> String {
-        let simulation = match &self.execution {
-            Some(execution) => {
-                execution.to_simulation_json(
-                    self.config.max_tick(),
-                    self.config.max_instructions(),
-                    self.config.memory_route_delay(),
-                    self.config.host_event_delay(),
-                )
-            }
-            None => format!(
-                "{{\"status\":\"loaded\",\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":0,\"cores\":{}}}",
-                self.config.max_tick(),
-                optional_count_json(self.config.max_instructions()),
-                self.config.memory_route_delay(),
-                self.config.host_event_delay(),
-                self.config.cores(),
-            ),
-        };
-        let parallel = match &self.execution {
-            Some(execution) => execution.to_parallel_json(
-                self.config.parallel_workers(),
-                self.config.min_remote_delay(),
-            ),
-            None => empty_parallel_json(
-                self.config.parallel_workers(),
-                self.config.min_remote_delay(),
-            ),
-        };
-        let cores = self
-            .execution
-            .as_ref()
-            .map(Rem6ExecutionSummary::to_cores_json)
-            .unwrap_or_else(|| "[]".to_string());
-        let memory = self
-            .execution
-            .as_ref()
-            .map(Rem6ExecutionSummary::to_memory_json)
-            .unwrap_or_else(|| "[]".to_string());
-        let memory_resources = self
-            .execution
-            .as_ref()
-            .map(Rem6ExecutionSummary::to_memory_resources_json)
-            .unwrap_or_else(|| Rem6MemoryResourceSummary::default().to_json());
-        let riscv_guest_writes = self
-            .execution
-            .as_ref()
-            .map(Rem6ExecutionSummary::to_riscv_guest_writes_json)
-            .unwrap_or_else(|| "[]".to_string());
-        let riscv_unknown_syscalls = self
-            .execution
-            .as_ref()
-            .map(Rem6ExecutionSummary::to_riscv_unknown_syscalls_json)
-            .unwrap_or_else(|| "[]".to_string());
-        let riscv_sbi_console = self
-            .execution
-            .as_ref()
-            .map(Rem6ExecutionSummary::to_riscv_sbi_console_json)
-            .unwrap_or_else(|| Rem6RiscvSbiConsoleSummary::default().to_json());
-        let riscv_sbi_timers = self
-            .execution
-            .as_ref()
-            .map(Rem6ExecutionSummary::to_riscv_sbi_timers_json)
-            .unwrap_or_else(|| "[]".to_string());
-        let riscv_sbi_hsm_events = self
-            .execution
-            .as_ref()
-            .map(Rem6ExecutionSummary::to_riscv_sbi_hsm_events_json)
-            .unwrap_or_else(|| "[]".to_string());
-        let riscv_sbi_hsm_wakes = self
-            .execution
-            .as_ref()
-            .map(Rem6ExecutionSummary::to_riscv_sbi_hsm_wakes_json)
-            .unwrap_or_else(|| "[]".to_string());
-        let riscv_sbi_ipis = self
-            .execution
-            .as_ref()
-            .map(Rem6ExecutionSummary::to_riscv_sbi_ipis_json)
-            .unwrap_or_else(|| "[]".to_string());
-        let riscv_sbi_rfences = self
-            .execution
-            .as_ref()
-            .map(Rem6ExecutionSummary::to_riscv_sbi_rfences_json)
-            .unwrap_or_else(|| "[]".to_string());
-        let riscv_sbi_resets = self
-            .execution
-            .as_ref()
-            .map(Rem6ExecutionSummary::to_riscv_sbi_resets_json)
-            .unwrap_or_else(|| "[]".to_string());
-        let host_actions = self
-            .execution
-            .as_ref()
-            .map(Rem6ExecutionSummary::to_host_actions_json)
-            .unwrap_or_else(|| Rem6HostActionSummary::default().to_json());
-        let dram = self
-            .execution
-            .as_ref()
-            .map(Rem6ExecutionSummary::to_dram_json)
-            .unwrap_or_else(|| Rem6DramSummary::default().to_json());
-        let transport = self
-            .execution
-            .as_ref()
-            .map(Rem6ExecutionSummary::to_transport_json)
-            .unwrap_or_else(empty_transport_json);
-        let debug = self
-            .execution
-            .as_ref()
-            .and_then(Rem6ExecutionSummary::debug_json_field)
-            .unwrap_or_default();
-        let load_blobs = self
-            .load_blobs
-            .iter()
-            .map(Rem6LoadBlobSummary::to_json)
-            .collect::<Vec<_>>()
-            .join(",");
-        let readfiles = self
-            .readfiles
-            .iter()
-            .map(Rem6ReadfileSummary::to_json)
-            .collect::<Vec<_>>()
-            .join(",");
-        let riscv_boot = if self.config.isa() == RequestedIsa::Riscv {
-            format!(
-                ",\"riscv_boot\":{{\"a0\":\"0x{:x}\",\"a1\":\"0x{:x}\",\"sbi\":{},\"se\":{}}}",
-                self.config.riscv_boot_a0(),
-                self.config.riscv_boot_a1(),
-                self.config.riscv_sbi(),
-                self.config.riscv_se()
-            )
-        } else {
-            String::new()
-        };
-        let power_analysis = self
-            .power_analysis
-            .as_ref()
-            .map(|artifact| format!(",\"power_analysis\":{}", artifact.to_json()))
-            .unwrap_or_default();
-        format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
-            self.schema,
-            self.config.isa().as_str(),
-            json_escape(&self.config.binary().display().to_string()),
-            self.entry,
-            self.start_address,
-            riscv_boot,
-            load_blobs,
-            readfiles,
-            elf_class_name(self.metadata.class()),
-            elf_endian_name(self.metadata.endian()),
-            elf_architecture_name(self.metadata.architecture()),
-            elf_os_name(self.metadata.operating_system()),
-            self.metadata.machine(),
-            self.metadata.flags(),
-            simulation,
-            parallel,
-            cores,
-            memory,
-            memory_resources,
-            riscv_guest_writes,
-            riscv_unknown_syscalls,
-            riscv_sbi_console,
-            riscv_sbi_timers,
-            riscv_sbi_hsm_events,
-            riscv_sbi_hsm_wakes,
-            riscv_sbi_ipis,
-            riscv_sbi_rfences,
-            riscv_sbi_resets,
-            host_actions,
-            dram,
-            transport,
-            debug,
-            self.stats_json,
-            power_analysis,
-        )
-    }
-
-    pub const fn binary_bytes(&self) -> u64 {
-        self.binary_bytes
-    }
-
-    pub const fn load_segments(&self) -> u64 {
-        self.load_segments
-    }
-}
-
-impl Rem6LoadBlobSummary {
-    fn to_json(&self) -> String {
-        format!(
-            "{{\"address\":\"0x{:x}\",\"bytes\":{},\"path\":\"{}\"}}",
-            self.address(),
-            self.bytes(),
-            json_escape(self.source())
-        )
-    }
-}
-
-impl Rem6ReadfileSummary {
-    fn to_json(&self) -> String {
-        format!(
-            "{{\"base\":\"0x{:x}\",\"size\":{},\"bytes\":{},\"path\":\"{}\"}}",
-            self.base(),
-            self.size(),
-            self.bytes(),
-            json_escape(self.path())
-        )
-    }
-}
 
 impl Rem6GupsArtifact {
     pub fn to_json(&self) -> String {
@@ -984,7 +772,7 @@ impl Rem6ExecutionSummary {
             | Rem6ExecutionStop::TickLimit { .. } => max_instructions,
         };
         let common = format!(
-            "\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{},\"instruction_probes\":{},\"instruction_cache_runs\":{},\"instruction_cache_msi_runs\":{},\"instruction_cache_mesi_runs\":{},\"instruction_cache_moesi_runs\":{},\"instruction_cache_chi_runs\":{},\"instruction_cache_cpu_responses\":{},\"instruction_cache_directory_decisions\":{},\"instruction_cache_dram_accesses\":{},\"instruction_cache_bank_accepted\":{},\"instruction_cache_bank_immediate_hits\":{},\"instruction_cache_bank_scheduled_misses\":{},\"instruction_cache_bank_coalesced_misses\":{},\"instruction_cache_prefetch_identified\":{},\"instruction_cache_prefetch_issued\":{},\"instruction_cache_prefetch_queue_enqueued\":{},\"instruction_cache_prefetch_queue_issued\":{},\"instruction_cache_prefetch_queue_dropped\":{},\"instruction_cache_prefetch_translation_queue_enqueued\":{},\"instruction_cache_prefetch_translation_queue_issued\":{},\"instruction_cache_prefetch_translation_queue_translated\":{},\"instruction_cache_prefetch_translation_queue_dropped\":{},\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_cache_bank_accepted\":{},\"data_cache_bank_immediate_hits\":{},\"data_cache_bank_scheduled_misses\":{},\"data_cache_bank_coalesced_misses\":{},\"data_cache_l2_runs\":{},\"data_cache_l2_msi_runs\":{},\"data_cache_l2_mesi_runs\":{},\"data_cache_l2_moesi_runs\":{},\"data_cache_l2_chi_runs\":{},\"data_cache_l2_cpu_responses\":{},\"data_cache_l2_directory_decisions\":{},\"data_cache_l2_dram_accesses\":{},\"data_cache_l2_bank_accepted\":{},\"data_cache_l2_bank_immediate_hits\":{},\"data_cache_l2_bank_scheduled_misses\":{},\"data_cache_l2_bank_coalesced_misses\":{},\"data_cache_prefetch_identified\":{},\"data_cache_prefetch_issued\":{},\"data_cache_prefetch_queue_enqueued\":{},\"data_cache_prefetch_queue_issued\":{},\"data_cache_prefetch_queue_dropped\":{},\"data_cache_prefetch_translation_queue_enqueued\":{},\"data_cache_prefetch_translation_queue_issued\":{},\"data_cache_prefetch_translation_queue_translated\":{},\"data_cache_prefetch_translation_queue_dropped\":{},\"data_access_probes\":{}",
+            "\"max_tick\":{},\"instruction_limit\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{},\"instruction_probes\":{},\"instruction_cache_runs\":{},\"instruction_cache_msi_runs\":{},\"instruction_cache_mesi_runs\":{},\"instruction_cache_moesi_runs\":{},\"instruction_cache_chi_runs\":{},\"instruction_cache_cpu_responses\":{},\"instruction_cache_directory_decisions\":{},\"instruction_cache_dram_accesses\":{},\"instruction_cache_bank_accepted\":{},\"instruction_cache_bank_immediate_hits\":{},\"instruction_cache_bank_scheduled_misses\":{},\"instruction_cache_bank_coalesced_misses\":{},\"instruction_cache_l2_runs\":{},\"instruction_cache_l2_msi_runs\":{},\"instruction_cache_l2_mesi_runs\":{},\"instruction_cache_l2_moesi_runs\":{},\"instruction_cache_l2_chi_runs\":{},\"instruction_cache_l2_cpu_responses\":{},\"instruction_cache_l2_directory_decisions\":{},\"instruction_cache_l2_dram_accesses\":{},\"instruction_cache_l2_bank_accepted\":{},\"instruction_cache_l2_bank_immediate_hits\":{},\"instruction_cache_l2_bank_scheduled_misses\":{},\"instruction_cache_l2_bank_coalesced_misses\":{},\"instruction_cache_prefetch_identified\":{},\"instruction_cache_prefetch_issued\":{},\"instruction_cache_prefetch_queue_enqueued\":{},\"instruction_cache_prefetch_queue_issued\":{},\"instruction_cache_prefetch_queue_dropped\":{},\"instruction_cache_prefetch_translation_queue_enqueued\":{},\"instruction_cache_prefetch_translation_queue_issued\":{},\"instruction_cache_prefetch_translation_queue_translated\":{},\"instruction_cache_prefetch_translation_queue_dropped\":{},\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_cache_bank_accepted\":{},\"data_cache_bank_immediate_hits\":{},\"data_cache_bank_scheduled_misses\":{},\"data_cache_bank_coalesced_misses\":{},\"data_cache_l2_runs\":{},\"data_cache_l2_msi_runs\":{},\"data_cache_l2_mesi_runs\":{},\"data_cache_l2_moesi_runs\":{},\"data_cache_l2_chi_runs\":{},\"data_cache_l2_cpu_responses\":{},\"data_cache_l2_directory_decisions\":{},\"data_cache_l2_dram_accesses\":{},\"data_cache_l2_bank_accepted\":{},\"data_cache_l2_bank_immediate_hits\":{},\"data_cache_l2_bank_scheduled_misses\":{},\"data_cache_l2_bank_coalesced_misses\":{},\"data_cache_prefetch_identified\":{},\"data_cache_prefetch_issued\":{},\"data_cache_prefetch_queue_enqueued\":{},\"data_cache_prefetch_queue_issued\":{},\"data_cache_prefetch_queue_dropped\":{},\"data_cache_prefetch_translation_queue_enqueued\":{},\"data_cache_prefetch_translation_queue_issued\":{},\"data_cache_prefetch_translation_queue_translated\":{},\"data_cache_prefetch_translation_queue_dropped\":{},\"data_access_probes\":{}",
             max_tick,
             optional_count_json(instruction_limit),
             memory_route_delay,
@@ -1006,6 +794,18 @@ impl Rem6ExecutionSummary {
             self.instruction_cache.bank_immediate_hits,
             self.instruction_cache.bank_scheduled_misses,
             self.instruction_cache.bank_coalesced_misses,
+            self.instruction_cache_l2.runs,
+            self.instruction_cache_l2.msi_runs,
+            self.instruction_cache_l2.mesi_runs,
+            self.instruction_cache_l2.moesi_runs,
+            self.instruction_cache_l2.chi_runs,
+            self.instruction_cache_l2.cpu_responses,
+            self.instruction_cache_l2.directory_decisions,
+            self.instruction_cache_l2.dram_accesses,
+            self.instruction_cache_l2.bank_accepted,
+            self.instruction_cache_l2.bank_immediate_hits,
+            self.instruction_cache_l2.bank_scheduled_misses,
+            self.instruction_cache_l2.bank_coalesced_misses,
             self.instruction_cache.prefetch_identified,
             self.instruction_cache.prefetch_issued,
             self.instruction_cache.prefetch_queue_enqueued,

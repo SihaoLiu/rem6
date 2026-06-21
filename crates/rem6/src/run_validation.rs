@@ -54,6 +54,9 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     if config.instruction_cache_protocol().is_some() {
         return Err(Rem6CliError::InstructionCacheProtocolRequiresExecution);
     }
+    if config.instruction_cache_l2_protocol().is_some() {
+        return Err(Rem6CliError::InstructionCacheL2ProtocolRequiresExecution);
+    }
     if config.instruction_cache_prefetcher().is_some() {
         return Err(Rem6CliError::InstructionCachePrefetcherRequiresExecution);
     }
@@ -108,6 +111,14 @@ fn validate_cache_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
     if config.instruction_cache_protocol().is_some() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::InstructionCacheProtocolRequiresRiscv);
     }
+    if config.instruction_cache_l2_protocol().is_some() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::InstructionCacheL2ProtocolRequiresRiscv);
+    }
+    if config.instruction_cache_l2_protocol().is_some()
+        && config.instruction_cache_protocol().is_none()
+    {
+        return Err(Rem6CliError::InstructionCacheL2ProtocolRequiresInstructionCacheProtocol);
+    }
     if config.instruction_cache_prefetcher().is_some() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::InstructionCachePrefetcherRequiresRiscv);
     }
@@ -157,6 +168,16 @@ fn validate_large_multicore_cache_protocols(config: &Rem6RunConfig) -> Result<()
         if protocol != RiscvDataCacheProtocol::Msi {
             return Err(
                 Rem6CliError::InstructionCacheProtocolLargeMulticoreRequiresMsi {
+                    protocol,
+                    cores: config.cores(),
+                },
+            );
+        }
+    }
+    if let Some(protocol) = config.instruction_cache_l2_protocol() {
+        if protocol != RiscvDataCacheProtocol::Msi {
+            return Err(
+                Rem6CliError::InstructionCacheL2ProtocolLargeMulticoreRequiresMsi {
                     protocol,
                     cores: config.cores(),
                 },

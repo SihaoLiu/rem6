@@ -157,6 +157,9 @@ pub enum Rem6CliError {
     InvalidRunInstructionCacheProtocol {
         value: String,
     },
+    InvalidRunInstructionCacheL2Protocol {
+        value: String,
+    },
     InvalidRunInstructionCachePrefetcher {
         value: String,
     },
@@ -210,6 +213,7 @@ pub enum Rem6CliError {
     DataCacheL2ProtocolRequiresExecution,
     DataCachePrefetcherRequiresExecution,
     InstructionCacheProtocolRequiresExecution,
+    InstructionCacheL2ProtocolRequiresExecution,
     InstructionCachePrefetcherRequiresExecution,
     RiscvPcCountTargetRequiresExecution,
     RiscvBranchLookaheadRequiresExecution,
@@ -227,6 +231,8 @@ pub enum Rem6CliError {
     DataCachePrefetcherRequiresRiscv,
     DataCachePrefetcherRequiresDataCacheProtocol,
     InstructionCacheProtocolRequiresRiscv,
+    InstructionCacheL2ProtocolRequiresRiscv,
+    InstructionCacheL2ProtocolRequiresInstructionCacheProtocol,
     InstructionCachePrefetcherRequiresRiscv,
     InstructionCachePrefetcherRequiresInstructionCacheProtocol,
     RiscvPcCountTargetRequiresRiscv,
@@ -245,6 +251,10 @@ pub enum Rem6CliError {
         cores: usize,
     },
     InstructionCacheProtocolLargeMulticoreRequiresMsi {
+        protocol: RiscvDataCacheProtocol,
+        cores: usize,
+    },
+    InstructionCacheL2ProtocolLargeMulticoreRequiresMsi {
         protocol: RiscvDataCacheProtocol,
         cores: usize,
     },
@@ -471,6 +481,9 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidRunInstructionCacheProtocol { value } => {
                 write!(formatter, "invalid run instruction cache protocol {value}")
             }
+            Self::InvalidRunInstructionCacheL2Protocol { value } => {
+                write!(formatter, "invalid run instruction cache L2 protocol {value}")
+            }
             Self::InvalidRunInstructionCachePrefetcher { value } => {
                 write!(formatter, "invalid run instruction cache prefetcher {value}")
             }
@@ -555,6 +568,9 @@ impl fmt::Display for Rem6CliError {
             Self::InstructionCacheProtocolRequiresExecution => {
                 write!(formatter, "--instruction-cache-protocol requires --execute")
             }
+            Self::InstructionCacheL2ProtocolRequiresExecution => {
+                write!(formatter, "--instruction-cache-l2-protocol requires --execute")
+            }
             Self::InstructionCachePrefetcherRequiresExecution => {
                 write!(formatter, "--instruction-cache-prefetcher requires --execute")
             }
@@ -609,6 +625,15 @@ impl fmt::Display for Rem6CliError {
             Self::InstructionCacheProtocolRequiresRiscv => {
                 write!(formatter, "--instruction-cache-protocol requires --isa riscv")
             }
+            Self::InstructionCacheL2ProtocolRequiresRiscv => {
+                write!(formatter, "--instruction-cache-l2-protocol requires --isa riscv")
+            }
+            Self::InstructionCacheL2ProtocolRequiresInstructionCacheProtocol => {
+                write!(
+                    formatter,
+                    "--instruction-cache-l2-protocol requires --instruction-cache-protocol"
+                )
+            }
             Self::InstructionCachePrefetcherRequiresRiscv => {
                 write!(formatter, "--instruction-cache-prefetcher requires --isa riscv")
             }
@@ -657,6 +682,13 @@ impl fmt::Display for Rem6CliError {
                 write!(
                     formatter,
                     "--instruction-cache-protocol with --cores > 3 requires msi, got {} with {cores} cores",
+                    riscv_data_cache_protocol_name(*protocol)
+                )
+            }
+            Self::InstructionCacheL2ProtocolLargeMulticoreRequiresMsi { protocol, cores } => {
+                write!(
+                    formatter,
+                    "--instruction-cache-l2-protocol with --cores > 3 requires msi, got {} with {cores} cores",
                     riscv_data_cache_protocol_name(*protocol)
                 )
             }

@@ -16,6 +16,7 @@ pub(super) fn drive_cli_riscv_run(
     readfile_bus: Option<&MmioBus>,
     memory: &CliMemoryRuntime,
     instruction_cache: Option<CliDataCacheRuntime>,
+    instruction_cache_l2: Option<CliDataCacheRuntime>,
     data_cache: Option<CliDataCacheRuntime>,
     data_cache_l2: Option<CliDataCacheRuntime>,
     fetch_trace: MemoryTrace,
@@ -47,6 +48,7 @@ pub(super) fn drive_cli_riscv_run(
                 readfile_bus,
                 memory,
                 instruction_cache,
+                instruction_cache_l2,
                 data_cache,
                 data_cache_l2,
                 fetch_trace,
@@ -63,6 +65,7 @@ pub(super) fn drive_cli_riscv_run(
             readfile_bus,
             memory,
             instruction_cache,
+            instruction_cache_l2,
             data_cache,
             data_cache_l2,
             fetch_trace,
@@ -81,6 +84,7 @@ fn drive_cli_riscv_run_with_instruction_limit(
     readfile_bus: Option<&MmioBus>,
     memory: &CliMemoryRuntime,
     instruction_cache: Option<CliDataCacheRuntime>,
+    instruction_cache_l2: Option<CliDataCacheRuntime>,
     data_cache: Option<CliDataCacheRuntime>,
     data_cache_l2: Option<CliDataCacheRuntime>,
     fetch_trace: MemoryTrace,
@@ -101,8 +105,14 @@ fn drive_cli_riscv_run_with_instruction_limit(
             move |_cpu| {
                 let memory = fetch_memory.clone();
                 let instruction_cache = instruction_cache.clone();
+                let instruction_cache_l2 = instruction_cache_l2.clone();
                 move |delivery, _context| {
-                    cli_data_memory_response(instruction_cache.as_ref(), None, &memory, &delivery)
+                    cli_data_memory_response(
+                        instruction_cache.as_ref(),
+                        instruction_cache_l2.as_ref(),
+                        &memory,
+                        &delivery,
+                    )
                 }
             },
             move |_cpu| {
@@ -135,8 +145,14 @@ fn drive_cli_riscv_run_with_instruction_limit(
         move |_cpu| {
             let memory = fetch_memory.clone();
             let instruction_cache = instruction_cache.clone();
+            let instruction_cache_l2 = instruction_cache_l2.clone();
             move |delivery, _context| {
-                cli_data_memory_response(instruction_cache.as_ref(), None, &memory, &delivery)
+                cli_data_memory_response(
+                    instruction_cache.as_ref(),
+                    instruction_cache_l2.as_ref(),
+                    &memory,
+                    &delivery,
+                )
             }
         },
         move |_cpu| {
@@ -167,6 +183,7 @@ fn drive_cli_riscv_run_until_tick(
     readfile_bus: Option<&MmioBus>,
     memory: &CliMemoryRuntime,
     instruction_cache: Option<CliDataCacheRuntime>,
+    instruction_cache_l2: Option<CliDataCacheRuntime>,
     data_cache: Option<CliDataCacheRuntime>,
     data_cache_l2: Option<CliDataCacheRuntime>,
     fetch_trace: MemoryTrace,
@@ -186,8 +203,14 @@ fn drive_cli_riscv_run_until_tick(
             move |_cpu| {
                 let memory = fetch_memory.clone();
                 let instruction_cache = instruction_cache.clone();
+                let instruction_cache_l2 = instruction_cache_l2.clone();
                 move |delivery, _context| {
-                    cli_data_memory_response(instruction_cache.as_ref(), None, &memory, &delivery)
+                    cli_data_memory_response(
+                        instruction_cache.as_ref(),
+                        instruction_cache_l2.as_ref(),
+                        &memory,
+                        &delivery,
+                    )
                 }
             },
             move |_cpu| {
@@ -219,8 +242,14 @@ fn drive_cli_riscv_run_until_tick(
         move |_cpu| {
             let memory = fetch_memory.clone();
             let instruction_cache = instruction_cache.clone();
+            let instruction_cache_l2 = instruction_cache_l2.clone();
             move |delivery, _context| {
-                cli_data_memory_response(instruction_cache.as_ref(), None, &memory, &delivery)
+                cli_data_memory_response(
+                    instruction_cache.as_ref(),
+                    instruction_cache_l2.as_ref(),
+                    &memory,
+                    &delivery,
+                )
             }
         },
         move |_cpu| {

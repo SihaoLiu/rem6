@@ -22,6 +22,7 @@ pub(crate) struct Rem6MemoryResourceSummary {
 impl Rem6MemoryResourceSummary {
     pub(crate) fn from_run_resources(
         instruction_cache: &CliDataCacheSummary,
+        instruction_cache_l2: &CliDataCacheSummary,
         data_cache: &CliDataCacheSummary,
         data_cache_l2: &CliDataCacheSummary,
         fetch_transport: &Rem6MemoryTransportSummary,
@@ -30,25 +31,31 @@ impl Rem6MemoryResourceSummary {
     ) -> Self {
         let cache_activity = instruction_cache
             .runs
+            .saturating_add(instruction_cache_l2.runs)
             .saturating_add(data_cache.runs)
             .saturating_add(data_cache_l2.runs);
         let active_caches = u64::from(instruction_cache.runs != 0)
+            + u64::from(instruction_cache_l2.runs != 0)
             + u64::from(data_cache.runs != 0)
             + u64::from(data_cache_l2.runs != 0);
         let cache_bank_accepted = instruction_cache
             .bank_accepted
+            .saturating_add(instruction_cache_l2.bank_accepted)
             .saturating_add(data_cache.bank_accepted)
             .saturating_add(data_cache_l2.bank_accepted);
         let cache_bank_immediate_hits = instruction_cache
             .bank_immediate_hits
+            .saturating_add(instruction_cache_l2.bank_immediate_hits)
             .saturating_add(data_cache.bank_immediate_hits)
             .saturating_add(data_cache_l2.bank_immediate_hits);
         let cache_bank_scheduled_misses = instruction_cache
             .bank_scheduled_misses
+            .saturating_add(instruction_cache_l2.bank_scheduled_misses)
             .saturating_add(data_cache.bank_scheduled_misses)
             .saturating_add(data_cache_l2.bank_scheduled_misses);
         let cache_bank_coalesced_misses = instruction_cache
             .bank_coalesced_misses
+            .saturating_add(instruction_cache_l2.bank_coalesced_misses)
             .saturating_add(data_cache.bank_coalesced_misses)
             .saturating_add(data_cache_l2.bank_coalesced_misses);
         let transport_activity = fetch_transport

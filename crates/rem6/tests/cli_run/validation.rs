@@ -562,6 +562,34 @@ fn rem6_run_rejects_instruction_cache_protocol_without_execution() {
 }
 
 #[test]
+fn rem6_run_rejects_instruction_cache_l2_protocol_without_execution() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("instruction-cache-l2-without-execute", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--instruction-cache-l2-protocol",
+            "msi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--instruction-cache-l2-protocol requires --execute"));
+}
+
+#[test]
 fn rem6_run_rejects_unsupported_data_cache_protocol() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("unsupported-data-cache-protocol", &elf);
@@ -893,6 +921,37 @@ fn rem6_run_rejects_instruction_cache_prefetcher_without_instruction_cache_proto
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("--instruction-cache-prefetcher requires --instruction-cache-protocol"));
+}
+
+#[test]
+fn rem6_run_rejects_instruction_cache_l2_protocol_without_instruction_cache_protocol() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("instruction-cache-l2-without-protocol", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--instruction-cache-l2-protocol",
+            "msi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("--instruction-cache-l2-protocol requires --instruction-cache-protocol")
+    );
 }
 
 #[test]

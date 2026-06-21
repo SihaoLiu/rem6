@@ -433,6 +433,11 @@ pub(super) fn run_stats_output(
             "sim.instruction_cache",
             &execution.instruction_cache,
         )?;
+        emit_data_cache_summary_stats(
+            &mut stats,
+            "sim.instruction_cache.l2",
+            &execution.instruction_cache_l2,
+        )?;
         increment_stat(
             &mut stats,
             "sim.instruction_cache.prefetch.identified",

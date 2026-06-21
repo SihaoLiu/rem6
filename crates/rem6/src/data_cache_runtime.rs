@@ -234,6 +234,8 @@ pub(super) fn cli_cache_runtime_with_prefetcher(
 pub(super) fn with_riscv_syscall_data_cache_memory_io(
     driver: RiscvSystemRunDriver,
     memory: CliMemoryRuntime,
+    instruction_cache: Option<CliDataCacheRuntime>,
+    instruction_cache_l2: Option<CliDataCacheRuntime>,
     data_cache: Option<CliDataCacheRuntime>,
     data_cache_l2: Option<CliDataCacheRuntime>,
     line_layout: CacheLineLayout,
@@ -242,6 +244,8 @@ pub(super) fn with_riscv_syscall_data_cache_memory_io(
     let write_memory = memory.clone();
     let probe_memory = memory.clone();
     let map_memory = memory.clone();
+    let write_instruction_cache = instruction_cache.clone();
+    let write_instruction_cache_l2 = instruction_cache_l2.clone();
     let write_data_cache = data_cache.clone();
     let write_data_cache_l2 = data_cache_l2.clone();
     driver.with_riscv_syscall_emulation_and_guest_memory_io_probe_map_handler(
@@ -249,7 +253,8 @@ pub(super) fn with_riscv_syscall_data_cache_memory_io(
         move |address, bytes| {
             write_guest_memory_with_cache_invalidation(
                 &write_memory,
-                None,
+                write_instruction_cache.as_ref(),
+                write_instruction_cache_l2.as_ref(),
                 write_data_cache.as_ref(),
                 write_data_cache_l2.as_ref(),
                 address,
@@ -261,6 +266,8 @@ pub(super) fn with_riscv_syscall_data_cache_memory_io(
         move |request| {
             map_guest_memory_with_data_cache_invalidation(
                 &map_memory,
+                instruction_cache.as_ref(),
+                instruction_cache_l2.as_ref(),
                 data_cache.as_ref(),
                 data_cache_l2.as_ref(),
                 request,
@@ -273,6 +280,7 @@ pub(super) fn with_riscv_syscall_data_cache_memory_io(
 pub(super) fn write_guest_memory_with_cache_invalidation(
     memory: &CliMemoryRuntime,
     instruction_cache: Option<&CliDataCacheRuntime>,
+    instruction_cache_l2: Option<&CliDataCacheRuntime>,
     data_cache: Option<&CliDataCacheRuntime>,
     data_cache_l2: Option<&CliDataCacheRuntime>,
     address: u64,
@@ -285,11 +293,18 @@ pub(super) fn write_guest_memory_with_cache_invalidation(
     if bytes.is_empty() {
         return true;
     }
-    invalidate_cli_cache_hierarchy(instruction_cache, data_cache, data_cache_l2)
+    invalidate_cli_cache_hierarchy(
+        instruction_cache,
+        instruction_cache_l2,
+        data_cache,
+        data_cache_l2,
+    )
 }
 
 fn map_guest_memory_with_data_cache_invalidation(
     memory: &CliMemoryRuntime,
+    instruction_cache: Option<&CliDataCacheRuntime>,
+    instruction_cache_l2: Option<&CliDataCacheRuntime>,
     data_cache: Option<&CliDataCacheRuntime>,
     data_cache_l2: Option<&CliDataCacheRuntime>,
     request: RiscvGuestMemoryMapRequest,
@@ -301,7 +316,12 @@ fn map_guest_memory_with_data_cache_invalidation(
         line_layout,
         request.replace_existing(),
     );
-    if invalidate_cli_cache_hierarchy(None, data_cache, data_cache_l2) {
+    if invalidate_cli_cache_hierarchy(
+        instruction_cache,
+        instruction_cache_l2,
+        data_cache,
+        data_cache_l2,
+    ) {
         result
     } else {
         RiscvGuestMemoryMapResult::Failed
@@ -310,10 +330,14 @@ fn map_guest_memory_with_data_cache_invalidation(
 
 pub(super) fn invalidate_cli_cache_hierarchy(
     instruction_cache: Option<&CliDataCacheRuntime>,
+    instruction_cache_l2: Option<&CliDataCacheRuntime>,
     data_cache: Option<&CliDataCacheRuntime>,
     data_cache_l2: Option<&CliDataCacheRuntime>,
 ) -> bool {
     let instruction_ok = instruction_cache
+        .map(CliDataCacheRuntime::invalidate_cached_guest_memory)
+        .unwrap_or(true);
+    let instruction_l2_ok = instruction_cache_l2
         .map(CliDataCacheRuntime::invalidate_cached_guest_memory)
         .unwrap_or(true);
     let data_ok = data_cache
@@ -322,7 +346,7 @@ pub(super) fn invalidate_cli_cache_hierarchy(
     let data_l2_ok = data_cache_l2
         .map(CliDataCacheRuntime::invalidate_cached_guest_memory)
         .unwrap_or(true);
-    instruction_ok && data_ok && data_l2_ok
+    instruction_ok && instruction_l2_ok && data_ok && data_l2_ok
 }
 
 impl CliDataCacheRuntime {
