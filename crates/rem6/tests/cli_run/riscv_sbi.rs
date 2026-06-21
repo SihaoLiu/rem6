@@ -9,6 +9,8 @@ const SBI_TIME_EXTENSION: i32 = 0x5449_4d45u32 as i32;
 const SBI_TIME_SET_TIMER: i32 = 0;
 const SBI_IPI_EXTENSION: i32 = 0x0073_5049;
 const SBI_IPI_SEND_IPI: i32 = 0;
+const SBI_RFENCE_EXTENSION: i32 = 0x5246_4e43;
+const SBI_RFENCE_REMOTE_FENCE_I: i32 = 0;
 const SBI_SRST_EXTENSION: i32 = 0x5352_5354;
 const SBI_SRST_SYSTEM_RESET: i32 = 0;
 const SBI_DEBUG_CONSOLE_EXTENSION: i32 = 0x4442_434e;
@@ -37,6 +39,12 @@ fn load_time_extension(rd: u8) -> [u32; 2] {
 fn load_ipi_extension(rd: u8) -> [u32; 2] {
     let upper = (SBI_IPI_EXTENSION + 0x800) & !0xfff;
     let lower = SBI_IPI_EXTENSION - upper;
+    [u_type(upper, rd, 0x37), i_type(lower, rd, 0x0, rd, 0x13)]
+}
+
+fn load_rfence_extension(rd: u8) -> [u32; 2] {
+    let upper = (SBI_RFENCE_EXTENSION + 0x800) & !0xfff;
+    let lower = SBI_RFENCE_EXTENSION - upper;
     [u_type(upper, rd, 0x37), i_type(lower, rd, 0x0, rd, 0x13)]
 }
 
@@ -674,6 +682,109 @@ fn rem6_run_riscv_sbi_secondary_hart_receives_ipi_interrupt_after_hsm_start() {
         "constant",
     );
     assert_stat(&stdout, "sim.riscv.sbi.ipi.targets", "Count", 1, "constant");
+}
+
+#[test]
+fn rem6_run_riscv_sbi_remote_fence_i_records_rfence_request() {
+    let mut words = Vec::new();
+    words.push(i_type(1, 0, 0x0, 10, 0x13));
+    let secondary_auipc_index = words.len();
+    words.push(u_type(0, 11, 0x17));
+    words.push(i_type(0, 11, 0x0, 11, 0x13));
+    words.extend([
+        i_type(0x44, 0, 0x0, 12, 0x13),
+        load_hsm_extension(17)[0],
+        load_hsm_extension(17)[1],
+        i_type(SBI_HSM_HART_START, 0, 0x0, 16, 0x13),
+        0x0000_0073,
+    ]);
+    let hsm_error_branch_index = words.len();
+    words.push(b_type(0, 0, 10, 0x1));
+    words.extend([
+        i_type(1 << 1, 0, 0x0, 10, 0x13),
+        i_type(0, 0, 0x0, 11, 0x13),
+        load_rfence_extension(17)[0],
+        load_rfence_extension(17)[1],
+        i_type(SBI_RFENCE_REMOTE_FENCE_I, 0, 0x0, 16, 0x13),
+        0x0000_0073,
+    ]);
+    let rfence_error_branch_index = words.len();
+    words.push(b_type(0, 0, 10, 0x1));
+    words.extend([i_type(0x33, 0, 0x0, 5, 0x13), 0x0010_0073]);
+    let failure_index = words.len();
+    words.extend([i_type(0x7e, 0, 0x0, 5, 0x13), 0x0010_0073]);
+    words[hsm_error_branch_index] = b_type(
+        ((failure_index - hsm_error_branch_index) * 4) as i32,
+        0,
+        10,
+        0x1,
+    );
+    words[rfence_error_branch_index] = b_type(
+        ((failure_index - rfence_error_branch_index) * 4) as i32,
+        0,
+        10,
+        0x1,
+    );
+
+    let secondary_index = words.len();
+    words.extend([i_type(1, 0, 0x0, 5, 0x13), j_type(0, 0)]);
+    words[secondary_auipc_index + 1] = i_type(
+        ((secondary_index - secondary_auipc_index) * 4) as i32,
+        11,
+        0x0,
+        11,
+        0x13,
+    );
+
+    let elf = riscv64_elf(RISCV_SBI_ENTRY, RISCV_SBI_ENTRY, &riscv64_program(&words));
+    let path = temp_binary("riscv-sbi-remote-fence-i", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "480",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "2",
+            "--riscv-sbi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"cores\":2"));
+    assert!(stdout.contains("\"trap\":\"breakpoint\""));
+    assert!(stdout.contains("\"x5\":\"0x33\""));
+    assert!(stdout.contains(
+        "\"riscv_sbi_rfences\":[{\"source_cpu\":0,\"function\":0,\"hart_mask\":\"0x2\",\"hart_mask_base\":\"0x0\",\"start_addr\":\"0x0\",\"size\":\"0x0\",\"address_space\":null,\"targets\":[1]}]"
+    ));
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.rfence.requests",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.rfence.targets",
+        "Count",
+        1,
+        "constant",
+    );
 }
 
 #[test]

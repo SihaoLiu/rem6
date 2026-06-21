@@ -12,9 +12,10 @@ use super::{
     Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
     Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary, Rem6PcCountTrackerSummary,
     Rem6ReadfileSummary, Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary,
-    Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary, Rem6RiscvSbiTimerSummary,
-    Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact, Rem6TraceReplayArtifact,
-    Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary, RequestedIsa,
+    Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceSummary,
+    Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact,
+    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary,
+    Rem6TraceReplayExternalAdapterSummary, RequestedIsa,
 };
 
 impl Rem6RunArtifact {
@@ -87,6 +88,11 @@ impl Rem6RunArtifact {
             .as_ref()
             .map(Rem6ExecutionSummary::to_riscv_sbi_ipis_json)
             .unwrap_or_else(|| "[]".to_string());
+        let riscv_sbi_rfences = self
+            .execution
+            .as_ref()
+            .map(Rem6ExecutionSummary::to_riscv_sbi_rfences_json)
+            .unwrap_or_else(|| "[]".to_string());
         let riscv_sbi_resets = self
             .execution
             .as_ref()
@@ -141,7 +147,7 @@ impl Rem6RunArtifact {
             .map(|artifact| format!(",\"power_analysis\":{}", artifact.to_json()))
             .unwrap_or_default();
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -166,6 +172,7 @@ impl Rem6RunArtifact {
             riscv_sbi_console,
             riscv_sbi_timers,
             riscv_sbi_ipis,
+            riscv_sbi_rfences,
             riscv_sbi_resets,
             host_actions,
             dram,
@@ -1172,6 +1179,17 @@ impl Rem6ExecutionSummary {
         )
     }
 
+    fn to_riscv_sbi_rfences_json(&self) -> String {
+        format!(
+            "[{}]",
+            self.riscv_sbi_rfences
+                .iter()
+                .map(Rem6RiscvSbiRfenceSummary::to_json)
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    }
+
     fn to_riscv_sbi_resets_json(&self) -> String {
         format!(
             "[{}]",
@@ -1289,6 +1307,32 @@ impl Rem6RiscvSbiIpiSummary {
             self.source_cpu(),
             self.hart_mask(),
             self.hart_mask_base(),
+            targets,
+        )
+    }
+}
+
+impl Rem6RiscvSbiRfenceSummary {
+    fn to_json(&self) -> String {
+        let targets = self
+            .targets()
+            .iter()
+            .map(u64::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        let address_space = self
+            .address_space()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "null".to_string());
+        format!(
+            "{{\"source_cpu\":{},\"function\":{},\"hart_mask\":\"0x{:x}\",\"hart_mask_base\":\"0x{:x}\",\"start_addr\":\"0x{:x}\",\"size\":\"0x{:x}\",\"address_space\":{},\"targets\":[{}]}}",
+            self.source_cpu(),
+            self.function(),
+            self.hart_mask(),
+            self.hart_mask_base(),
+            self.start_addr(),
+            self.size(),
+            address_space,
             targets,
         )
     }

@@ -74,6 +74,7 @@ pub struct RiscvSbiFirmware {
     cores: Arc<Mutex<BTreeMap<u64, RiscvCore>>>,
     timer: Arc<Mutex<RiscvSbiTimerState>>,
     ipis: Arc<Mutex<Vec<RiscvSbiIpiRecord>>>,
+    rfences: Arc<Mutex<Vec<RiscvSbiRfenceRecord>>>,
     resets: Arc<Mutex<Vec<RiscvSbiResetRecord>>>,
     debug_console: Arc<Mutex<Vec<u8>>>,
     debug_console_input: Arc<Mutex<VecDeque<u8>>>,
@@ -92,6 +93,18 @@ pub struct RiscvSbiIpiRecord {
     source_cpu: CpuId,
     hart_mask: u64,
     hart_mask_base: u64,
+    targets: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvSbiRfenceRecord {
+    source_cpu: CpuId,
+    function: u64,
+    hart_mask: u64,
+    hart_mask_base: u64,
+    start_addr: u64,
+    size: u64,
+    address_space: Option<u64>,
     targets: Vec<u64>,
 }
 
@@ -150,6 +163,63 @@ impl RiscvSbiIpiRecord {
 
     pub const fn hart_mask_base(&self) -> u64 {
         self.hart_mask_base
+    }
+
+    pub fn targets(&self) -> &[u64] {
+        &self.targets
+    }
+}
+
+impl RiscvSbiRfenceRecord {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        source_cpu: CpuId,
+        function: u64,
+        hart_mask: u64,
+        hart_mask_base: u64,
+        start_addr: u64,
+        size: u64,
+        address_space: Option<u64>,
+        targets: Vec<u64>,
+    ) -> Self {
+        Self {
+            source_cpu,
+            function,
+            hart_mask,
+            hart_mask_base,
+            start_addr,
+            size,
+            address_space,
+            targets,
+        }
+    }
+
+    pub const fn source_cpu(&self) -> CpuId {
+        self.source_cpu
+    }
+
+    pub const fn function(&self) -> u64 {
+        self.function
+    }
+
+    pub const fn hart_mask(&self) -> u64 {
+        self.hart_mask
+    }
+
+    pub const fn hart_mask_base(&self) -> u64 {
+        self.hart_mask_base
+    }
+
+    pub const fn start_addr(&self) -> u64 {
+        self.start_addr
+    }
+
+    pub const fn size(&self) -> u64 {
+        self.size
+    }
+
+    pub const fn address_space(&self) -> Option<u64> {
+        self.address_space
     }
 
     pub fn targets(&self) -> &[u64] {
@@ -315,6 +385,7 @@ impl RiscvSbiFirmware {
                 deadlines: BTreeMap::new(),
             })),
             ipis: Arc::new(Mutex::new(Vec::new())),
+            rfences: Arc::new(Mutex::new(Vec::new())),
             resets: Arc::new(Mutex::new(Vec::new())),
             debug_console: Arc::new(Mutex::new(Vec::new())),
             debug_console_input: Arc::new(Mutex::new(VecDeque::new())),
@@ -361,6 +432,10 @@ impl RiscvSbiFirmware {
             .lock()
             .expect("RISC-V SBI IPI record lock")
             .clear();
+        self.rfences
+            .lock()
+            .expect("RISC-V SBI RFENCE record lock")
+            .clear();
         self.resets
             .lock()
             .expect("RISC-V SBI reset record lock")
@@ -403,6 +478,13 @@ impl RiscvSbiFirmware {
         self.ipis
             .lock()
             .expect("RISC-V SBI IPI record lock")
+            .clone()
+    }
+
+    pub fn rfence_records(&self) -> Vec<RiscvSbiRfenceRecord> {
+        self.rfences
+            .lock()
+            .expect("RISC-V SBI RFENCE record lock")
             .clone()
     }
 
@@ -887,7 +969,9 @@ impl RiscvSbiFirmware {
         let Some(targets) = self.hart_mask_targets(request.arg0(), request.arg1()) else {
             return Ok(RiscvSbiOutcome::invalid_param());
         };
+        let target_harts = targets.iter().map(RiscvCore::hart_id).collect();
         self.schedule_remote_instruction_fence(scheduler, source, targets, parallel)?;
+        self.record_rfence(source.id(), request, target_harts);
         Ok(RiscvSbiOutcome::success(0))
     }
 
@@ -932,6 +1016,7 @@ impl RiscvSbiFirmware {
             return Ok(RiscvSbiOutcome::invalid_address());
         };
 
+        let target_harts = targets.iter().map(RiscvCore::hart_id).collect();
         self.schedule_remote_data_tlb_flush(
             scheduler,
             source,
@@ -940,6 +1025,7 @@ impl RiscvSbiFirmware {
             address_space,
             parallel,
         )?;
+        self.record_rfence(source.id(), request, target_harts);
         Ok(RiscvSbiOutcome::success(0))
     }
 
@@ -963,6 +1049,7 @@ impl RiscvSbiFirmware {
             return Ok(RiscvSbiOutcome::invalid_address());
         };
 
+        let target_harts = targets.iter().map(RiscvCore::hart_id).collect();
         self.schedule_remote_data_tlb_flush(
             scheduler,
             source,
@@ -971,7 +1058,33 @@ impl RiscvSbiFirmware {
             address_space,
             parallel,
         )?;
+        self.record_rfence(source.id(), request, target_harts);
         Ok(RiscvSbiOutcome::success(0))
+    }
+
+    fn record_rfence(&self, source_cpu: CpuId, request: RiscvSbiRequest, targets: Vec<u64>) {
+        let (start_addr, size, address_space) = if request.function() == SBI_RFENCE_REMOTE_FENCE_I {
+            (0, 0, None)
+        } else {
+            (
+                request.arg2(),
+                request.arg3(),
+                rfence_record_address_space(request),
+            )
+        };
+        self.rfences
+            .lock()
+            .expect("RISC-V SBI RFENCE record lock")
+            .push(RiscvSbiRfenceRecord::new(
+                source_cpu,
+                request.function(),
+                request.arg0(),
+                request.arg1(),
+                start_addr,
+                size,
+                address_space,
+                targets,
+            ));
     }
 
     fn schedule_remote_data_tlb_flush(
@@ -1107,6 +1220,15 @@ fn rfence_address_space(request: RiscvSbiRequest) -> Option<Option<TranslationAd
             .map(Some);
     }
     Some(None)
+}
+
+fn rfence_record_address_space(request: RiscvSbiRequest) -> Option<u64> {
+    match request.function() {
+        SBI_RFENCE_REMOTE_SFENCE_VMA_ASID
+        | SBI_RFENCE_REMOTE_HFENCE_GVMA_VMID
+        | SBI_RFENCE_REMOTE_HFENCE_VVMA_ASID => Some(request.arg4()),
+        _ => None,
+    }
 }
 
 fn valid_hfence_address_space(request: RiscvSbiRequest) -> bool {

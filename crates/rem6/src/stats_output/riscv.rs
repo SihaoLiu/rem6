@@ -79,6 +79,24 @@ pub(super) fn emit_riscv_run_stats(
             )?;
             increment_stat(
                 stats,
+                "sim.riscv.sbi.rfence.requests",
+                "Count",
+                StatResetPolicy::Constant,
+                execution.riscv_sbi_rfences.len() as u64,
+            )?;
+            increment_stat(
+                stats,
+                "sim.riscv.sbi.rfence.targets",
+                "Count",
+                StatResetPolicy::Constant,
+                execution
+                    .riscv_sbi_rfences
+                    .iter()
+                    .map(|rfence| rfence.target_count())
+                    .sum(),
+            )?;
+            increment_stat(
+                stats,
                 "sim.riscv.sbi.reset.requests",
                 "Count",
                 StatResetPolicy::Constant,
