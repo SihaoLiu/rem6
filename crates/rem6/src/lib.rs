@@ -7,11 +7,11 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
-    RiscvCoreDriveAction, RiscvDataAccessEventKind,
+    RiscvCoreDriveAction,
 };
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
-use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation};
+use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_stats::{
     MemFootprintAddressRange, MemFootprintProbeConfig, PcCountPair, StackDistProbeConfig,
     StatsRegistry,
@@ -31,6 +31,7 @@ mod cli_error;
 mod cli_output;
 mod config;
 mod core_summary_json;
+mod data_access_counts;
 mod data_cache_runtime;
 mod debug_output;
 mod formatting;
@@ -68,6 +69,7 @@ pub use config::{
     Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource,
     StatsFormat, SuiteResourceSelector, TraceReplayExternalAdapterKind,
 };
+use data_access_counts::core_data_access_counts;
 use data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io,
     CliDataCacheRuntime, CliDataCacheSummary,
@@ -1249,42 +1251,6 @@ fn data_access_probe_summary(
             }
         })
         .unwrap_or_default()
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct DataAccessCounts {
-    loads: u64,
-    stores: u64,
-    atomics: u64,
-    load_bytes: u64,
-    store_bytes: u64,
-    atomic_bytes: u64,
-}
-
-fn core_data_access_counts(core: &RiscvCore) -> DataAccessCounts {
-    let mut counts = DataAccessCounts::default();
-    for event in core.data_access_events() {
-        if event.kind() != RiscvDataAccessEventKind::Completed {
-            continue;
-        }
-        let bytes = event.size().bytes();
-        match event.operation() {
-            MemoryOperation::ReadShared | MemoryOperation::ReadUnique => {
-                counts.loads += 1;
-                counts.load_bytes += bytes;
-            }
-            MemoryOperation::Write => {
-                counts.stores += 1;
-                counts.store_bytes += bytes;
-            }
-            MemoryOperation::Atomic | MemoryOperation::AtomicNoReturn => {
-                counts.atomics += 1;
-                counts.atomic_bytes += bytes;
-            }
-            _ => {}
-        }
-    }
-    counts
 }
 
 fn committed_instructions_by_cpu(run: &RiscvSystemRun) -> BTreeMap<CpuId, u64> {

@@ -1,3 +1,5 @@
+use self::parallel::empty_parallel_json;
+use self::transport::empty_transport_json;
 use super::formatting::{
     bytes_to_hex, elf_architecture_name, elf_class_name, elf_endian_name, elf_os_name, json_escape,
 };
@@ -8,8 +10,7 @@ use super::{
     Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary, Rem6HostInjectedCommandSummary,
     Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary, Rem6HostStopActionSummary,
     Rem6HostWorkMarkerSummary, Rem6InstructionProbeSummary, Rem6LoadBlobSummary, Rem6MemoryDump,
-    Rem6MemoryResourceSummary, Rem6MemoryTransportCounters, Rem6MemoryTransportRouteSummary,
-    Rem6MemoryTransportSummary, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
+    Rem6MemoryResourceSummary, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
     Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary, Rem6PcCountTrackerSummary,
     Rem6ReadfileSummary, Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary,
     Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary,
@@ -17,6 +18,11 @@ use super::{
     Rem6RiscvUnknownSyscallSummary, Rem6RunArtifact, Rem6TraceReplayArtifact,
     Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary, RequestedIsa,
 };
+
+mod parallel;
+#[cfg(test)]
+mod tests;
+mod transport;
 
 impl Rem6RunArtifact {
     pub fn to_json(&self) -> String {
@@ -1757,67 +1763,6 @@ fn optional_string_json(value: Option<&str>) -> String {
         .unwrap_or_else(|| "null".to_string())
 }
 
-fn empty_parallel_json(worker_limit: usize, min_remote_delay: u64) -> String {
-    format!(
-        "{{\"scheduler\":{{\"worker_limit\":{},\"min_remote_delay\":{},\"epochs\":0,\"dispatches\":0,\"batches\":0,\"max_workers\":0,\"total_workers\":0,\"active_partitions\":0,\"remote_sends\":0,\"batch_worker_ticks\":0,\"batch_worker_capacity_ticks\":0,\"batch_idle_worker_ticks\":0,\"worker_slots\":[],\"worker_lanes\":[],\"partitions\":[],\"frontiers\":[],\"final_frontiers\":[],\"ready_partitions\":[]}}}}",
-        worker_limit, min_remote_delay
-    )
-}
-
-impl super::Rem6ParallelWorkerSlotSummary {
-    fn to_json(&self) -> String {
-        format!(
-            "{{\"slot\":{},\"active_ticks\":{},\"idle_ticks\":{}}}",
-            self.slot, self.active_ticks, self.idle_ticks
-        )
-    }
-}
-
-impl super::Rem6ParallelWorkerLaneSummary {
-    fn to_json(&self) -> String {
-        format!(
-            "{{\"lane\":{},\"partition\":{},\"active_ticks\":{}}}",
-            self.lane, self.partition, self.active_ticks
-        )
-    }
-}
-
-impl Rem6ParallelPartitionSummary {
-    fn to_json(&self) -> String {
-        format!(
-            "{{\"partition\":{},\"workers\":{},\"dispatches\":{},\"remote_sends\":{},\"remote_receives\":{},\"max_pending_events\":{}}}",
-            self.partition,
-            self.workers,
-            self.dispatches,
-            self.remote_sends,
-            self.remote_receives,
-            self.max_pending_events,
-        )
-    }
-}
-
-impl Rem6ParallelFrontierSummary {
-    fn to_json(&self) -> String {
-        format!(
-            "{{\"partition\":{},\"now\":{},\"safe_until\":{},\"next_tick\":{},\"pending_events\":{}}}",
-            self.partition,
-            self.now,
-            self.safe_until,
-            optional_tick_json(self.next_tick),
-            self.pending_events,
-        )
-    }
-}
-
-impl Rem6ParallelReadyPartitionSummary {
-    fn to_json(&self) -> String {
-        format!(
-            "{{\"partition\":{},\"next_tick\":{}}}",
-            self.partition, self.next_tick
-        )
-    }
-}
-
 fn optional_tick_json(value: Option<u64>) -> String {
     value
         .map(|tick| tick.to_string())
@@ -1838,137 +1783,5 @@ impl Rem6MemoryDump {
             self.data.len(),
             bytes_to_hex(&self.data),
         )
-    }
-}
-
-fn empty_transport_json() -> String {
-    format!(
-        "{{\"fetch\":{},\"data\":{}}}",
-        empty_transport_scope_json(),
-        empty_transport_scope_json()
-    )
-}
-
-fn empty_transport_scope_json() -> String {
-    "{\"requests\":0,\"request_arrivals\":0,\"responses\":0,\"response_arrivals\":0,\"round_trip_ticks\":0,\"max_round_trip_ticks\":0,\"routes\":[]}".to_string()
-}
-
-impl Rem6MemoryTransportSummary {
-    pub(crate) fn to_json(&self) -> String {
-        let routes = self
-            .routes
-            .iter()
-            .map(Rem6MemoryTransportRouteSummary::to_json)
-            .collect::<Vec<_>>()
-            .join(",");
-        format!(
-            "{{{},\"routes\":[{}]}}",
-            self.counters.json_fields(),
-            routes
-        )
-    }
-}
-
-impl Rem6MemoryTransportRouteSummary {
-    fn to_json(&self) -> String {
-        format!(
-            "{{\"route\":{},\"source\":\"{}\",{}}}",
-            self.route.get(),
-            json_escape(&self.source),
-            self.counters.json_fields()
-        )
-    }
-}
-
-impl Rem6MemoryTransportCounters {
-    fn json_fields(&self) -> String {
-        format!(
-            "\"requests\":{},\"request_arrivals\":{},\"responses\":{},\"response_arrivals\":{},\"round_trip_ticks\":{},\"max_round_trip_ticks\":{}",
-            self.requests,
-            self.request_arrivals,
-            self.responses,
-            self.response_arrivals,
-            self.round_trip_ticks,
-            self.max_round_trip_ticks,
-        )
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::CliDataCacheSummary;
-
-    use rem6_workload::{
-        WorkloadParallelExecutionSummary, WorkloadRouteId, WorkloadTrafficTraceReplaySummary,
-    };
-
-    use super::traffic_trace_summary_json;
-
-    #[test]
-    fn traffic_trace_summary_json_emits_nonzero_cache_and_sideband_counters() {
-        let summary = WorkloadTrafficTraceReplaySummary::new(route_id("cpu0.data"), 3)
-            .with_trace_invalidate_response_count(1)
-            .with_trace_clean_response_count(1)
-            .with_trace_data_cache_response_count(3)
-            .with_trace_data_cache_maintenance_response_count(2)
-            .with_trace_data_cache_clean_maintenance_response_count(1)
-            .with_trace_data_cache_invalidate_maintenance_response_count(1)
-            .with_trace_error_count(2)
-            .with_trace_error_write_count(1)
-            .with_trace_error_functional_write_count(1)
-            .with_trace_cache_flush_count(1)
-            .with_trace_cache_flush_data_byte_count(64)
-            .with_trace_l1_invalidation_count(1)
-            .with_trace_diagnostic_count(1);
-
-        let parallel_summary = WorkloadParallelExecutionSummary::default();
-        let data_cache = CliDataCacheSummary {
-            cpu_responses: 11,
-            directory_decisions: 13,
-            ..CliDataCacheSummary::default()
-        };
-        let data_cache_dram_summary = WorkloadParallelExecutionSummary::default()
-            .with_dram_activity(2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
-
-        let json = traffic_trace_summary_json(
-            &summary,
-            &parallel_summary,
-            &data_cache,
-            &data_cache_dram_summary,
-            7,
-        );
-
-        assert!(json.contains("\"trace_invalidate_response_count\":1"));
-        assert!(json.contains("\"trace_clean_response_count\":1"));
-        assert!(json.contains("\"trace_data_cache_response_count\":3"));
-        assert!(json.contains("\"trace_data_cache_maintenance_response_count\":2"));
-        assert!(json.contains("\"trace_data_cache_clean_maintenance_response_count\":1"));
-        assert!(json.contains("\"trace_data_cache_invalidate_maintenance_response_count\":1"));
-        assert!(json.contains("\"trace_error_count\":2"));
-        assert!(json.contains("\"trace_error_write_count\":1"));
-        assert!(json.contains("\"trace_error_functional_write_count\":1"));
-        assert!(json.contains("\"trace_cache_flush_count\":1"));
-        assert!(json.contains("\"trace_cache_flush_data_byte_count\":64"));
-        assert!(json.contains("\"trace_l1_invalidation_count\":1"));
-        assert!(json.contains("\"trace_diagnostic_count\":1"));
-        assert!(json.contains("\"data_cache_dram_accesses\":7"));
-        assert!(json.contains("\"data_cache_cpu_responses\":11"));
-        assert!(json.contains("\"data_cache_directory_decisions\":13"));
-        assert!(json.contains("\"active_dram_target_count\":2"));
-        assert!(json.contains("\"active_dram_port_count\":3"));
-        assert!(json.contains("\"active_dram_bank_count\":4"));
-        assert!(json.contains("\"dram_access_count\":5"));
-        assert!(json.contains("\"dram_read_count\":6"));
-        assert!(json.contains("\"dram_write_count\":7"));
-        assert!(json.contains("\"dram_row_hit_count\":8"));
-        assert!(json.contains("\"dram_row_miss_count\":9"));
-        assert!(json.contains("\"dram_command_count\":10"));
-        assert!(json.contains("\"dram_turnaround_count\":11"));
-        assert!(json.contains("\"dram_total_ready_latency_cycles\":12"));
-        assert!(json.contains("\"dram_max_ready_latency_cycles\":13"));
-    }
-
-    fn route_id(value: &str) -> WorkloadRouteId {
-        WorkloadRouteId::new(value).unwrap()
     }
 }
