@@ -71,6 +71,7 @@ mod startup;
 mod stat;
 mod sync;
 mod sysinfo;
+mod syslog;
 mod table;
 mod tee;
 mod thread;
@@ -244,6 +245,7 @@ use sync::{
     RISCV_LINUX_SYNCFS, RISCV_LINUX_SYNC_FILE_RANGE,
 };
 use sysinfo::{syscall_sysinfo, RISCV_LINUX_SYSINFO};
+use syslog::{syscall_syslog, RISCV_LINUX_SYSLOG};
 pub use table::RiscvSyscallTable;
 use tee::{syscall_tee, RISCV_LINUX_TEE};
 use timerfd::{

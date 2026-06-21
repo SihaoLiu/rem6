@@ -98,6 +98,8 @@ mod statfs_tests;
 mod sync_tests;
 #[path = "riscv_syscall_tests/sysinfo_tests.rs"]
 mod sysinfo_tests;
+#[path = "riscv_syscall_tests/syslog_tests.rs"]
+mod syslog_tests;
 #[path = "riscv_syscall_tests/time_tests.rs"]
 mod time_tests;
 #[path = "riscv_syscall_tests/timerfd_tests.rs"]

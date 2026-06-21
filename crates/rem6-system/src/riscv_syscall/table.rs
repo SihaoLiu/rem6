@@ -491,6 +491,9 @@ impl RiscvSyscallTable {
                     ),
                 })
             }
+            RISCV_LINUX_SYSLOG => Some(RiscvSyscallOutcome::Return {
+                value: syscall_syslog(request),
+            }),
             RISCV_LINUX_FUTEX => syscall_futex(
                 request,
                 state,
