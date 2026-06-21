@@ -264,6 +264,8 @@ impl RiscvSyscallTable {
                 guest_memory_reader,
                 guest_memory_writer,
             )),
+            RISCV_LINUX_VMSPLICE => guest_memory_reader
+                .map(|guest_memory| syscall_vmsplice(request, state, guest_memory)),
             RISCV_LINUX_COPY_FILE_RANGE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_copy_file_range(
                     request,

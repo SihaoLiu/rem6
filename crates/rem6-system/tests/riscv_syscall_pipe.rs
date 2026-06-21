@@ -11,7 +11,15 @@ use support::*;
 const RISCV_LINUX_PIPE2: u64 = 59;
 const RISCV_LINUX_READ: u64 = 63;
 const RISCV_LINUX_WRITE: u64 = 64;
+const RISCV_LINUX_VMSPLICE: u64 = 75;
+const RISCV_LINUX_FCNTL: u64 = 25;
 const RISCV_LINUX_CLOSE: u64 = 57;
+const RISCV_LINUX_OPEN: u64 = 1024;
+const RISCV_LINUX_F_SETPIPE_SZ: u64 = 1031;
+const RISCV_LINUX_SPLICE_F_NONBLOCK: u64 = 0x02;
+const RISCV_LINUX_IOV_MAX: u64 = 1024;
+const RISCV_LINUX_PIPE_PAGE_BYTES: usize = 4096;
+const RISCV_LINUX_EAGAIN: u64 = 11;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EFAULT: u64 = 14;
 const RISCV_LINUX_EINVAL: u64 = 22;
@@ -38,6 +46,13 @@ fn fds_from_memory(store: &Arc<Mutex<PartitionedMemoryStore>>) -> (u64, u64) {
     let read_fd = i32::from_le_bytes(fds[..4].try_into().unwrap());
     let write_fd = i32::from_le_bytes(fds[4..].try_into().unwrap());
     (read_fd as u64, write_fd as u64)
+}
+
+fn iovec(address: u64, len: u64) -> [u8; 16] {
+    let mut bytes = [0; 16];
+    bytes[..8].copy_from_slice(&address.to_le_bytes());
+    bytes[8..].copy_from_slice(&len.to_le_bytes());
+    bytes
 }
 
 #[test]
@@ -120,6 +135,320 @@ fn linux_table_pipe2_roundtrips_bytes_and_close_releases_endpoints() {
         Some(RiscvSyscallOutcome::Return {
             value: linux_error(RISCV_LINUX_EBADF)
         })
+    );
+}
+
+#[test]
+fn linux_table_vmsplice_writes_guest_iovec_bytes_to_pipe() {
+    let iovec_a = iovec(0x9000, 4);
+    let iovec_b = iovec(0x9004, 5);
+    let read_area = [0; 9];
+    let store = loaded_program_store_with_data(
+        &[(0x8000, 0)],
+        &[
+            (0x8800, &[0; 8]),
+            (0x9000, b"pipe-data"),
+            (0x9100, &read_area),
+            (0x9200, &iovec_a),
+            (0x9210, &iovec_b),
+        ],
+    );
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_PIPE2, [0x8800, 0, 0, 0, 0, 0]),
+            &mut state,
+            0,
+            None,
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    let (read_fd, write_fd) = fds_from_memory(&store);
+
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_VMSPLICE, [write_fd, 0x9200, 2, 0, 0, 0],),
+            &mut state,
+            1,
+            Some(&reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 9 })
+    );
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_READ, [read_fd, 0x9100, 9, 0, 0, 0]),
+            &mut state,
+            2,
+            None,
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 9 })
+    );
+    assert_eq!(
+        guest_memory_reader(Arc::clone(&store))(0x9100, 9),
+        Some(b"pipe-data".to_vec())
+    );
+}
+
+#[test]
+fn linux_table_vmsplice_rejects_regular_and_unusable_fds() {
+    let iovec_a = iovec(0x9000, 4);
+    let store = loaded_program_store_with_data(
+        &[(0x8000, 0)],
+        &[
+            (0x8800, &[0; 8]),
+            (0x9000, b"pipe"),
+            (0x9200, &iovec_a),
+            (0x9300, b"/input.txt\0"),
+        ],
+    );
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"/input.txt", b"file");
+
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_OPEN, [0x9300, 0, 0, 0, 0, 0]),
+            &mut state,
+            0,
+            Some(&reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_VMSPLICE, [3, 0x9200, 1, 0, 0, 0]),
+            &mut state,
+            1,
+            Some(&reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_VMSPLICE, [99, 0x9200, 1, 0, 0, 0]),
+            &mut state,
+            2,
+            Some(&reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x800c, RISCV_LINUX_PIPE2, [0x8800, 0, 0, 0, 0, 0]),
+            &mut state,
+            3,
+            None,
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    let (read_fd, _) = fds_from_memory(&store);
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8010, RISCV_LINUX_VMSPLICE, [read_fd, 0x9200, 1, 0, 0, 0],),
+            &mut state,
+            4,
+            Some(&reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EBADF)
+        })
+    );
+}
+
+#[test]
+fn linux_table_vmsplice_rejects_faulting_iovecs_and_invalid_lengths() {
+    let faulting_data_iovec = iovec(0xa000, 1);
+    let overflow_a = iovec(0x9000, u64::MAX);
+    let overflow_b = iovec(0x9000, 1);
+    let store = loaded_program_store_with_data(
+        &[(0x8000, 0)],
+        &[
+            (0x8800, &[0; 8]),
+            (0x9000, b"x"),
+            (0x9200, &faulting_data_iovec),
+            (0x9300, &overflow_a),
+            (0x9310, &overflow_b),
+        ],
+    );
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_PIPE2, [0x8800, 0, 0, 0, 0, 0]),
+            &mut state,
+            0,
+            None,
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    let (_, write_fd) = fds_from_memory(&store);
+
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_VMSPLICE,
+                [write_fd, 0x9200, RISCV_LINUX_IOV_MAX + 1, 0, 0, 0],
+            ),
+            &mut state,
+            1,
+            Some(&reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_VMSPLICE, [write_fd, 0xa000, 1, 0, 0, 0]),
+            &mut state,
+            2,
+            Some(&reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x800c, RISCV_LINUX_VMSPLICE, [write_fd, 0x9200, 1, 0, 0, 0]),
+            &mut state,
+            3,
+            Some(&reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8010, RISCV_LINUX_VMSPLICE, [write_fd, 0x9300, 2, 0, 0, 0]),
+            &mut state,
+            4,
+            Some(&reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+}
+
+#[test]
+fn linux_table_vmsplice_reports_full_pipe_write_availability() {
+    const PIPE_FILL_CHUNK_BYTES: usize = 16;
+
+    let fill = [b'x'; PIPE_FILL_CHUNK_BYTES];
+    let iovec_a = iovec(0x9000, 1);
+    let store = loaded_program_store_with_data(
+        &[(0x8000, 0)],
+        &[(0x8800, &[0; 8]), (0x8f00, &iovec_a), (0x9000, &fill)],
+    );
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_PIPE2, [0x8800, 0, 0, 0, 0, 0]),
+            &mut state,
+            0,
+            None,
+            Some(&writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    let (_, write_fd) = fds_from_memory(&store);
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_FCNTL,
+                [
+                    write_fd,
+                    RISCV_LINUX_F_SETPIPE_SZ,
+                    RISCV_LINUX_PIPE_PAGE_BYTES as u64,
+                    0,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            1,
+            None,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV_LINUX_PIPE_PAGE_BYTES as u64
+        })
+    );
+    for tick in 2..(2 + RISCV_LINUX_PIPE_PAGE_BYTES / PIPE_FILL_CHUNK_BYTES) {
+        assert_eq!(
+            RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(
+                    0x8008,
+                    RISCV_LINUX_WRITE,
+                    [write_fd, 0x9000, PIPE_FILL_CHUNK_BYTES as u64, 0, 0, 0],
+                ),
+                &mut state,
+                tick as u64,
+                Some(&reader),
+                None,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: PIPE_FILL_CHUNK_BYTES as u64
+            })
+        );
+    }
+
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_VMSPLICE,
+                [write_fd, 0x8f00, 1, RISCV_LINUX_SPLICE_F_NONBLOCK, 0, 0],
+            ),
+            &mut state,
+            260,
+            Some(&reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EAGAIN)
+        })
+    );
+    assert_eq!(
+        RiscvSyscallTable::new().handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8010, RISCV_LINUX_VMSPLICE, [write_fd, 0x8f00, 1, 0, 0, 0]),
+            &mut state,
+            261,
+            Some(&reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Blocked)
     );
 }
 

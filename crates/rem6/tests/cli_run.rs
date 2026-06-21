@@ -96,6 +96,8 @@ mod riscv_se_time;
 mod riscv_se_timerfd;
 #[path = "cli_run/riscv_se_truncate.rs"]
 mod riscv_se_truncate;
+#[path = "cli_run/riscv_se_vmsplice.rs"]
+mod riscv_se_vmsplice;
 #[path = "cli_run/riscv_se_xattr.rs"]
 mod riscv_se_xattr;
 #[path = "cli_run/stats_compat.rs"]

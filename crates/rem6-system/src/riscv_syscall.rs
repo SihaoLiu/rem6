@@ -77,6 +77,7 @@ mod unknown;
 mod unlink;
 mod util;
 mod utsname;
+mod vmsplice;
 mod wait4;
 mod writev;
 mod xattr;
@@ -246,6 +247,7 @@ pub use unknown::RiscvUnknownSyscallRecord;
 use unlink::{syscall_unlink_operation, RISCV_LINUX_UNLINK, RISCV_LINUX_UNLINKAT};
 use util::{guest_fd_argument, linux_error, read_guest_c_string, RiscvGuestCStringError};
 use utsname::write_riscv_linux_utsname;
+use vmsplice::{syscall_vmsplice, RISCV_LINUX_VMSPLICE};
 use wait4::{
     syscall_getrusage, syscall_process_group_id, syscall_wait4, syscall_waitid,
     RISCV_LINUX_GETRUSAGE, RISCV_LINUX_WAIT4, RISCV_LINUX_WAITID,
