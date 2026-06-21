@@ -21,6 +21,7 @@ mod pmp;
 mod pseudo;
 mod record;
 mod sv39;
+mod translation_csr;
 mod trap;
 mod types;
 mod vector;
@@ -54,8 +55,8 @@ pub use csr::{
     RiscvFloatCsr, RiscvFloatRoundingMode, RiscvFloatStatus, RiscvInterruptCsr,
     RiscvMachineIdentityCsr, RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction,
     RiscvMachineIsaCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvStatusWord,
-    RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvVectorFixedPointCsr,
-    RiscvVectorFixedPointCsrInstruction,
+    RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvTranslationCsrInstruction,
+    RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction,
 };
 pub use error::{RiscvCsrError, RiscvError};
 pub use gdb_target::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
@@ -1049,35 +1050,8 @@ impl RiscvHartState {
                 let value = read_supervisor_trap_csr(self, csr) & !u64::from(zimm);
                 write_supervisor_trap_csr(self, &mut register_writes, rd, csr, value);
             }
-            RiscvInstruction::ReadTranslationCsr { rd, csr } => {
-                write_register(
-                    self,
-                    &mut register_writes,
-                    rd,
-                    read_translation_csr(self, csr),
-                );
-            }
-            RiscvInstruction::WriteTranslationCsr { rd, csr, rs1 } => {
-                write_translation_csr(self, &mut register_writes, rd, csr, self.read(rs1));
-            }
-            RiscvInstruction::SetTranslationCsr { rd, csr, rs1 } => {
-                let value = read_translation_csr(self, csr) | self.read(rs1);
-                write_translation_csr(self, &mut register_writes, rd, csr, value);
-            }
-            RiscvInstruction::ClearTranslationCsr { rd, csr, rs1 } => {
-                let value = read_translation_csr(self, csr) & !self.read(rs1);
-                write_translation_csr(self, &mut register_writes, rd, csr, value);
-            }
-            RiscvInstruction::WriteTranslationCsrImmediate { rd, csr, zimm } => {
-                write_translation_csr(self, &mut register_writes, rd, csr, u64::from(zimm));
-            }
-            RiscvInstruction::SetTranslationCsrImmediate { rd, csr, zimm } => {
-                let value = read_translation_csr(self, csr) | u64::from(zimm);
-                write_translation_csr(self, &mut register_writes, rd, csr, value);
-            }
-            RiscvInstruction::ClearTranslationCsrImmediate { rd, csr, zimm } => {
-                let value = read_translation_csr(self, csr) & !u64::from(zimm);
-                write_translation_csr(self, &mut register_writes, rd, csr, value);
+            RiscvInstruction::TranslationCsr(instruction) => {
+                translation_csr::execute(self, &mut register_writes, instruction);
             }
             RiscvInstruction::Ecall => {
                 return Ok(enter_synchronous_trap(
@@ -1250,24 +1224,6 @@ fn write_supervisor_trap_csr(
         RiscvSupervisorTrapCsr::Sepc => hart.set_supervisor_exception_pc(value),
         RiscvSupervisorTrapCsr::Scause => hart.set_supervisor_trap_cause(value),
         RiscvSupervisorTrapCsr::Stval => hart.set_supervisor_trap_value(value),
-    }
-}
-fn read_translation_csr(hart: &RiscvHartState, csr: RiscvTranslationCsr) -> u64 {
-    match csr {
-        RiscvTranslationCsr::Satp => hart.translation_satp(),
-    }
-}
-fn write_translation_csr(
-    hart: &mut RiscvHartState,
-    writes: &mut Vec<RegisterWrite>,
-    register: Register,
-    csr: RiscvTranslationCsr,
-    value: u64,
-) {
-    let old_value = read_translation_csr(hart, csr);
-    write_register(hart, writes, register, old_value);
-    match csr {
-        RiscvTranslationCsr::Satp => hart.set_translation_satp(value),
     }
 }
 fn add_signed(value: u64, offset: i64) -> Result<u64, RiscvError> {

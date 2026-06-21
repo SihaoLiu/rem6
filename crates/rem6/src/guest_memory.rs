@@ -213,6 +213,17 @@ pub(super) fn build_cli_dram_profile(
             let timing = volatile_timing.with_low_power_timing(cli_dram_low_power_timing()?);
             ExternalMemoryProfile::lpddr(CLI_MEMORY_TARGET, line_layout, 2, 2, geometry, timing)
         }
+        CliDramMemoryProfile::Lpddr4_3200_16Gb => {
+            let timing = timing.with_low_power_timing(cli_dram_low_power_timing()?);
+            ExternalMemoryProfile::lpddr4_3200_16gb(
+                CLI_MEMORY_TARGET,
+                line_layout,
+                2,
+                2,
+                geometry,
+                timing,
+            )
+        }
         CliDramMemoryProfile::Nvm => {
             let timing = timing.with_command_window(16, 2).map_err(execute_error)?;
             let timing = timing.with_low_power_timing(cli_dram_low_power_timing()?);

@@ -2,7 +2,7 @@ use crate::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryWidth, Register, RiscvCounterCsr,
     RiscvEnvironmentConfigCsrInstruction, RiscvFenceSet, RiscvFloatCsr, RiscvFloatRoundingMode,
     RiscvInterruptCsr, RiscvMachineInformationCsrInstruction, RiscvMachineTrapCsr, RiscvPseudoOp,
-    RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr, VectorRegister,
+    RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsrInstruction, VectorRegister,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1284,40 +1284,7 @@ pub enum RiscvInstruction {
         csr: RiscvSupervisorTrapCsr,
         zimm: u8,
     },
-    ReadTranslationCsr {
-        rd: Register,
-        csr: RiscvTranslationCsr,
-    },
-    WriteTranslationCsr {
-        rd: Register,
-        csr: RiscvTranslationCsr,
-        rs1: Register,
-    },
-    SetTranslationCsr {
-        rd: Register,
-        csr: RiscvTranslationCsr,
-        rs1: Register,
-    },
-    ClearTranslationCsr {
-        rd: Register,
-        csr: RiscvTranslationCsr,
-        rs1: Register,
-    },
-    WriteTranslationCsrImmediate {
-        rd: Register,
-        csr: RiscvTranslationCsr,
-        zimm: u8,
-    },
-    SetTranslationCsrImmediate {
-        rd: Register,
-        csr: RiscvTranslationCsr,
-        zimm: u8,
-    },
-    ClearTranslationCsrImmediate {
-        rd: Register,
-        csr: RiscvTranslationCsr,
-        zimm: u8,
-    },
+    TranslationCsr(RiscvTranslationCsrInstruction),
     Ecall,
     Ebreak,
 }

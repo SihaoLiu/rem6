@@ -3,8 +3,8 @@ use crate::{
     RiscvCounterCsr, RiscvCsrOp, RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction,
     RiscvError, RiscvFloatCsr, RiscvInstruction, RiscvInterruptCsr, RiscvMachineInformationCsr,
     RiscvMachineInformationCsrInstruction, RiscvMachineTrapCsr, RiscvStatusCsr,
-    RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvVectorFixedPointCsr,
-    RiscvVectorFixedPointCsrInstruction,
+    RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvTranslationCsrInstruction,
+    RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction,
 };
 
 pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -60,8 +60,12 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                     .map(|csr| RiscvInstruction::ReadSupervisorTrapCsr { rd: rd(raw), csr })
             })
             .or_else(|| {
-                RiscvTranslationCsr::from_address(csr_address)
-                    .map(|csr| RiscvInstruction::ReadTranslationCsr { rd: rd(raw), csr })
+                RiscvTranslationCsr::from_address(csr_address).map(|csr| {
+                    RiscvInstruction::TranslationCsr(RiscvTranslationCsrInstruction::read(
+                        rd(raw),
+                        csr,
+                    ))
+                })
             })
             .ok_or(RiscvError::UnknownEncoding { raw });
     }
@@ -358,36 +362,20 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         return Err(RiscvError::UnknownEncoding { raw });
     };
     match funct3(raw) {
-        0x1 => Ok(RiscvInstruction::WriteTranslationCsr {
-            rd: rd(raw),
+        0x1 => Ok(decode_translation_csr(raw, csr, RiscvCsrOp::Write)),
+        0x2 => Ok(decode_translation_csr(raw, csr, RiscvCsrOp::Set)),
+        0x3 => Ok(decode_translation_csr(raw, csr, RiscvCsrOp::Clear)),
+        0x5 => Ok(decode_translation_csr_immediate(
+            raw,
             csr,
-            rs1: rs1(raw),
-        }),
-        0x2 => Ok(RiscvInstruction::SetTranslationCsr {
-            rd: rd(raw),
+            RiscvCsrOp::Write,
+        )),
+        0x6 => Ok(decode_translation_csr_immediate(raw, csr, RiscvCsrOp::Set)),
+        0x7 => Ok(decode_translation_csr_immediate(
+            raw,
             csr,
-            rs1: rs1(raw),
-        }),
-        0x3 => Ok(RiscvInstruction::ClearTranslationCsr {
-            rd: rd(raw),
-            csr,
-            rs1: rs1(raw),
-        }),
-        0x5 => Ok(RiscvInstruction::WriteTranslationCsrImmediate {
-            rd: rd(raw),
-            csr,
-            zimm: rs1(raw).index(),
-        }),
-        0x6 => Ok(RiscvInstruction::SetTranslationCsrImmediate {
-            rd: rd(raw),
-            csr,
-            zimm: rs1(raw).index(),
-        }),
-        0x7 => Ok(RiscvInstruction::ClearTranslationCsrImmediate {
-            rd: rd(raw),
-            csr,
-            zimm: rs1(raw).index(),
-        }),
+            RiscvCsrOp::Clear,
+        )),
         _ => Err(RiscvError::UnknownEncoding { raw }),
     }
 }
@@ -467,6 +455,28 @@ fn decode_environment_config_csr_immediate(
     op: RiscvCsrOp,
 ) -> RiscvInstruction {
     RiscvInstruction::EnvironmentConfigCsr(RiscvEnvironmentConfigCsrInstruction::immediate(
+        rd(raw),
+        csr,
+        op,
+        rs1(raw).index(),
+    ))
+}
+
+fn decode_translation_csr(raw: u32, csr: RiscvTranslationCsr, op: RiscvCsrOp) -> RiscvInstruction {
+    RiscvInstruction::TranslationCsr(RiscvTranslationCsrInstruction::register(
+        rd(raw),
+        csr,
+        op,
+        rs1(raw),
+    ))
+}
+
+fn decode_translation_csr_immediate(
+    raw: u32,
+    csr: RiscvTranslationCsr,
+    op: RiscvCsrOp,
+) -> RiscvInstruction {
+    RiscvInstruction::TranslationCsr(RiscvTranslationCsrInstruction::immediate(
         rd(raw),
         csr,
         op,

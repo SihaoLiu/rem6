@@ -6,7 +6,7 @@ use rem6_isa_riscv::{
     RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction, RiscvMachineIsaCsr,
     RiscvMachineTrapCsr, RiscvMemoryOrdering, RiscvPrivilegeMode, RiscvPseudoOp, RiscvStatusCsr,
     RiscvStatusWord, RiscvSupervisorTrapCsr, RiscvSv39AccessContext, RiscvSystemEvent,
-    RiscvTranslationCsr, RiscvTrap, RiscvTrapKind,
+    RiscvTranslationCsr, RiscvTranslationCsrInstruction, RiscvTrap, RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -1227,11 +1227,12 @@ fn hart_executes_satp_csr_write_and_exposes_address_space() {
     let write_satp = RiscvInstruction::decode(csr_type(0x180, 2, 0x1, 5)).unwrap();
     assert_eq!(
         write_satp,
-        RiscvInstruction::WriteTranslationCsr {
-            rd: reg(5),
-            csr: RiscvTranslationCsr::Satp,
-            rs1: reg(2),
-        }
+        RiscvInstruction::TranslationCsr(RiscvTranslationCsrInstruction::register(
+            reg(5),
+            RiscvTranslationCsr::Satp,
+            RiscvCsrOp::Write,
+            reg(2),
+        ))
     );
 
     let mut hart = RiscvHartState::new(0x3400);
@@ -1275,31 +1276,31 @@ fn hart_executes_satp_csr_read_modify_write_operations() {
 
     assert_eq!(
         set_read_only,
-        RiscvInstruction::ReadTranslationCsr {
-            rd: reg(11),
-            csr: RiscvTranslationCsr::Satp,
-        }
+        RiscvInstruction::TranslationCsr(RiscvTranslationCsrInstruction::read(
+            reg(11),
+            RiscvTranslationCsr::Satp,
+        ))
     );
     assert_eq!(
         clear_read_only,
-        RiscvInstruction::ReadTranslationCsr {
-            rd: reg(12),
-            csr: RiscvTranslationCsr::Satp,
-        }
+        RiscvInstruction::TranslationCsr(RiscvTranslationCsrInstruction::read(
+            reg(12),
+            RiscvTranslationCsr::Satp,
+        ))
     );
     assert_eq!(
         set_immediate_read_only,
-        RiscvInstruction::ReadTranslationCsr {
-            rd: reg(13),
-            csr: RiscvTranslationCsr::Satp,
-        }
+        RiscvInstruction::TranslationCsr(RiscvTranslationCsrInstruction::read(
+            reg(13),
+            RiscvTranslationCsr::Satp,
+        ))
     );
     assert_eq!(
         clear_immediate_read_only,
-        RiscvInstruction::ReadTranslationCsr {
-            rd: reg(14),
-            csr: RiscvTranslationCsr::Satp,
-        }
+        RiscvInstruction::TranslationCsr(RiscvTranslationCsrInstruction::read(
+            reg(14),
+            RiscvTranslationCsr::Satp,
+        ))
     );
     assert!(matches!(
         RiscvInstruction::decode(csr_type(0x180, 1, 0x4, 15)),

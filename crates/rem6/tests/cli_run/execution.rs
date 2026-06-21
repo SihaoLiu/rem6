@@ -1499,6 +1499,12 @@ fn rem6_run_accepts_jedec_dram_profile_presets() {
             refresh_interval: 3_900,
             refresh_recovery: 220,
         },
+        Case {
+            cli_profile: "lpddr4-3200-16gb",
+            technology: "lpddr",
+            refresh_interval: 6_247,
+            refresh_recovery: 448,
+        },
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
             .args([

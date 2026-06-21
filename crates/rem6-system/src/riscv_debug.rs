@@ -48,7 +48,9 @@ const RISCV_GDB_VECTOR_LENGTH_BYTES_REGISTER: u64 = 134;
 const RISCV_GDB_SUPERVISOR_ENVIRONMENT_CONFIG_REGISTER: u64 = 135;
 const RISCV_GDB_PMP_CONFIG0_REGISTER: u64 = 136;
 const RISCV_GDB_PMP_ADDR0_REGISTER: u64 = 137;
-const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 16;
+const RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER: u64 = 138;
+const RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER: u64 = 139;
+const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 18;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 const RISCV_GDB_RV32_VTYPE_PAYLOAD_MASK: u64 = 0x7fff_ffff;
 const RISCV_GDB_RV32_VTYPE_VILL_BIT: u64 = 1_u64 << 31;
@@ -1331,6 +1333,12 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     if number == RISCV_GDB_PMP_ADDR0_REGISTER {
         return RiscvGdbCsrRegister::PmpAddr(0);
     }
+    if number == RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER {
+        return RiscvGdbCsrRegister::Counter(RiscvCounterCsr::Cycle);
+    }
+    if number == RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER {
+        return RiscvGdbCsrRegister::Counter(RiscvCounterCsr::Instret);
+    }
 
     match number - riscv_gdb_csr_register_base(xlen) {
         0 => RiscvGdbCsrRegister::Status(RiscvStatusCsr::Sstatus),
@@ -1642,6 +1650,8 @@ fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
             RISCV_GDB_SUPERVISOR_ENVIRONMENT_CONFIG_REGISTER,
             RISCV_GDB_PMP_CONFIG0_REGISTER,
             RISCV_GDB_PMP_ADDR0_REGISTER,
+            RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER,
+            RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER,
         ])
 }
 
@@ -1716,6 +1726,8 @@ const fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool {
         || number == RISCV_GDB_SUPERVISOR_ENVIRONMENT_CONFIG_REGISTER
         || number == RISCV_GDB_PMP_CONFIG0_REGISTER
         || number == RISCV_GDB_PMP_ADDR0_REGISTER
+        || number == RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER
+        || number == RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER
 }
 
 fn encode_register_value(xlen: RiscvGdbXlen, number: u64, value: u64) -> Vec<u8> {

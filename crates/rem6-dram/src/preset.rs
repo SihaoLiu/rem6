@@ -10,6 +10,7 @@ pub enum DramJedecRefreshPreset {
     Ddr4_2400_8Gb,
     Ddr5_4800_16Gb,
     Hbm2_2000_2Gb,
+    Lpddr4_3200_16Gb,
 }
 
 impl DramJedecRefreshPreset {
@@ -43,6 +44,9 @@ impl DramJedecRefreshPreset {
             }
             Self::Hbm2_2000_2Gb => {
                 DramJedecRefreshSpec::new(DramMemoryTechnology::Hbm, 1_000, 3_900_000, 220_000)
+            }
+            Self::Lpddr4_3200_16Gb => {
+                DramJedecRefreshSpec::new(DramMemoryTechnology::Lpddr, 1_600, 3_904_000, 280_000)
             }
         }
     }
@@ -140,6 +144,24 @@ impl ExternalMemoryProfile {
             pseudo_channels_per_stack,
             geometry,
             timing.with_jedec_refresh_preset(DramJedecRefreshPreset::Hbm2_2000_2Gb)?,
+        )
+    }
+
+    pub fn lpddr4_3200_16gb(
+        target: MemoryTargetId,
+        line_layout: CacheLineLayout,
+        channels: u32,
+        dies_per_channel: u32,
+        geometry: DramGeometry,
+        timing: DramTiming,
+    ) -> Result<Self, DramError> {
+        Self::lpddr(
+            target,
+            line_layout,
+            channels,
+            dies_per_channel,
+            geometry,
+            timing.with_jedec_refresh_preset(DramJedecRefreshPreset::Lpddr4_3200_16Gb)?,
         )
     }
 }

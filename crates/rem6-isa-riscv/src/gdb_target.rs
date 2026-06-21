@@ -374,4 +374,6 @@ const RV64_CSR_REGISTERS: &[CsrRegister] = &[
     CsrRegister::new("senvcfg", Some(135)),
     CsrRegister::new("pmpcfg0", Some(136)),
     CsrRegister::new("pmpaddr0", Some(137)),
+    CsrRegister::new("mcycle", Some(138)),
+    CsrRegister::new("minstret", Some(139)),
 ];

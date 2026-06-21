@@ -65,14 +65,8 @@ impl RiscvInstruction {
             | Self::ClearSupervisorTrapCsrImmediate { csr, .. } => {
                 Some(required_csr_privilege(csr.address()))
             }
-            Self::ReadTranslationCsr { csr, .. }
-            | Self::WriteTranslationCsr { csr, .. }
-            | Self::SetTranslationCsr { csr, .. }
-            | Self::ClearTranslationCsr { csr, .. }
-            | Self::WriteTranslationCsrImmediate { csr, .. }
-            | Self::SetTranslationCsrImmediate { csr, .. }
-            | Self::ClearTranslationCsrImmediate { csr, .. } => {
-                Some(required_csr_privilege(csr.address()))
+            Self::TranslationCsr(instruction) => {
+                Some(required_csr_privilege(instruction.csr().address()))
             }
             _ => None,
         }

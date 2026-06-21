@@ -88,6 +88,15 @@ fn jedec_refresh_presets_convert_trefi_and_trfc_to_cycles() {
         3_900,
         220,
     );
+    assert_preset_cycles(
+        DramJedecRefreshPreset::Lpddr4_3200_16Gb,
+        DramMemoryTechnology::Lpddr,
+        1600,
+        3_904_000,
+        280_000,
+        6_247,
+        448,
+    );
 }
 
 #[test]
@@ -100,6 +109,9 @@ fn jedec_refresh_profile_constructors_attach_validated_timing() {
             .unwrap();
     let hbm = ExternalMemoryProfile::hbm2_2000_2gb(target(3), layout(), 2, 4, geometry(), timing())
         .unwrap();
+    let lpddr =
+        ExternalMemoryProfile::lpddr4_3200_16gb(target(4), layout(), 2, 2, geometry(), timing())
+            .unwrap();
 
     assert_eq!(
         ddr4.timing().refresh_timing(),
@@ -125,9 +137,18 @@ fn jedec_refresh_profile_constructors_attach_validated_timing() {
                 .unwrap()
         )
     );
+    assert_eq!(
+        lpddr.timing().refresh_timing(),
+        Some(
+            DramJedecRefreshPreset::Lpddr4_3200_16Gb
+                .refresh_timing()
+                .unwrap()
+        )
+    );
     assert_eq!(ddr4.technology(), DramMemoryTechnology::Ddr);
     assert_eq!(ddr5.technology(), DramMemoryTechnology::Ddr);
     assert_eq!(hbm.technology(), DramMemoryTechnology::Hbm);
+    assert_eq!(lpddr.technology(), DramMemoryTechnology::Lpddr);
 }
 
 #[test]
