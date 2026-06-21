@@ -7,6 +7,7 @@ pub(super) fn parse_riscv_branch_predictor(value: &str) -> Option<RiscvBranchPre
     match value {
         "basic" => Some(RiscvBranchPredictorKind::Basic),
         "gshare" => Some(RiscvBranchPredictorKind::GShare),
+        "bimode" => Some(RiscvBranchPredictorKind::BiMode),
         "tournament" => Some(RiscvBranchPredictorKind::Tournament),
         _ => None,
     }

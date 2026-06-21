@@ -3,7 +3,8 @@ use rem6_memory::Address;
 
 use crate::{
     CpuFetchEvent, CpuFetchEventKind, RiscvBranchPredictorKind, RiscvCore, RiscvCoreState,
-    RiscvCpuError, RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
+    RiscvCpuError, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+    RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
 const COMPLETED_FETCH_WINDOW: usize = 2;
@@ -404,6 +405,20 @@ fn selected_conditional_branch_prediction(
             let prediction = state
                 .gshare_branch_predictor
                 .predict(RISCV_LOCAL_GSHARE_THREAD, fetch_pc)
+                .ok()?;
+            let target = prediction
+                .predicted_taken()
+                .then(|| conditional_branch_target(fetch_pc, instruction))
+                .flatten();
+            Some(RiscvFetchAheadBranchPrediction {
+                predicted_taken: prediction.predicted_taken(),
+                target,
+            })
+        }
+        RiscvBranchPredictorKind::BiMode => {
+            let prediction = state
+                .bimode_branch_predictor
+                .predict(RISCV_LOCAL_BIMODE_THREAD, fetch_pc)
                 .ok()?;
             let target = prediction
                 .predicted_taken()

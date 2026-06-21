@@ -3,9 +3,9 @@ use rem6_kernel::PartitionEventId;
 use rem6_memory::Address;
 
 use crate::{
-    BranchUpdate, CpuFetchEvent, GShareHistoryUpdate, GSharePrediction, GShareTrainingUpdate,
-    InOrderPipelineCycleRecord, TournamentHistoryUpdate, TournamentPrediction,
-    TournamentTrainingUpdate,
+    BiModeHistoryUpdate, BiModePrediction, BiModeTrainingUpdate, BranchUpdate, CpuFetchEvent,
+    GShareHistoryUpdate, GSharePrediction, GShareTrainingUpdate, InOrderPipelineCycleRecord,
+    TournamentHistoryUpdate, TournamentPrediction, TournamentTrainingUpdate,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -15,6 +15,7 @@ pub struct RiscvCpuExecutionEvent {
     execution: RiscvExecutionRecord,
     branch_update: Option<BranchUpdate>,
     gshare_branch_update: Option<RiscvGShareBranchUpdate>,
+    bimode_branch_update: Option<RiscvBiModeBranchUpdate>,
     tournament_branch_update: Option<RiscvTournamentBranchUpdate>,
     in_order_pipeline_cycle: Option<InOrderPipelineCycleRecord>,
     in_order_pipeline_data_wait_cycles: u64,
@@ -55,6 +56,39 @@ impl RiscvGShareBranchUpdate {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvBiModeBranchUpdate {
+    prediction: BiModePrediction,
+    history_update: BiModeHistoryUpdate,
+    training_update: BiModeTrainingUpdate,
+}
+
+impl RiscvBiModeBranchUpdate {
+    pub const fn new(
+        prediction: BiModePrediction,
+        history_update: BiModeHistoryUpdate,
+        training_update: BiModeTrainingUpdate,
+    ) -> Self {
+        Self {
+            prediction,
+            history_update,
+            training_update,
+        }
+    }
+
+    pub const fn prediction(&self) -> &BiModePrediction {
+        &self.prediction
+    }
+
+    pub const fn history_update(&self) -> &BiModeHistoryUpdate {
+        &self.history_update
+    }
+
+    pub const fn training_update(&self) -> &BiModeTrainingUpdate {
+        &self.training_update
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvTournamentBranchUpdate {
     prediction: TournamentPrediction,
     history_update: TournamentHistoryUpdate,
@@ -65,6 +99,7 @@ pub struct RiscvTournamentBranchUpdate {
 pub(crate) struct RiscvRetiredBranchUpdates {
     branch_update: Option<BranchUpdate>,
     gshare_branch_update: Option<RiscvGShareBranchUpdate>,
+    bimode_branch_update: Option<RiscvBiModeBranchUpdate>,
     tournament_branch_update: Option<RiscvTournamentBranchUpdate>,
 }
 
@@ -72,11 +107,13 @@ impl RiscvRetiredBranchUpdates {
     pub(crate) fn new(
         branch_update: BranchUpdate,
         gshare_branch_update: RiscvGShareBranchUpdate,
+        bimode_branch_update: RiscvBiModeBranchUpdate,
         tournament_branch_update: RiscvTournamentBranchUpdate,
     ) -> Self {
         Self {
             branch_update: Some(branch_update),
             gshare_branch_update: Some(gshare_branch_update),
+            bimode_branch_update: Some(bimode_branch_update),
             tournament_branch_update: Some(tournament_branch_update),
         }
     }
@@ -151,6 +188,7 @@ impl RiscvCpuExecutionEvent {
             RiscvRetiredBranchUpdates {
                 branch_update,
                 gshare_branch_update,
+                bimode_branch_update: None,
                 tournament_branch_update: None,
             },
             None,
@@ -212,6 +250,7 @@ impl RiscvCpuExecutionEvent {
             RiscvRetiredBranchUpdates {
                 branch_update,
                 gshare_branch_update,
+                bimode_branch_update: None,
                 tournament_branch_update: None,
             },
             in_order_pipeline_cycle,
@@ -235,6 +274,7 @@ impl RiscvCpuExecutionEvent {
             execution,
             branch_update: branch_updates.branch_update,
             gshare_branch_update: branch_updates.gshare_branch_update,
+            bimode_branch_update: branch_updates.bimode_branch_update,
             tournament_branch_update: branch_updates.tournament_branch_update,
             in_order_pipeline_cycle,
             in_order_pipeline_data_wait_cycles,
@@ -264,6 +304,10 @@ impl RiscvCpuExecutionEvent {
 
     pub fn gshare_branch_update(&self) -> Option<&RiscvGShareBranchUpdate> {
         self.gshare_branch_update.as_ref()
+    }
+
+    pub fn bimode_branch_update(&self) -> Option<&RiscvBiModeBranchUpdate> {
+        self.bimode_branch_update.as_ref()
     }
 
     pub fn tournament_branch_update(&self) -> Option<&RiscvTournamentBranchUpdate> {

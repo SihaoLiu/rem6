@@ -191,7 +191,7 @@ executable cycle-visible engine.
 
 - [x] RISC-V atomic execution and parallel clusters execute real instructions.
 - [x] Data access issue/response and store-conditional progress diagnostics have tests.
-- [x] Basic, GShare, and Tournament branch predictors are trained from retired control flow.
+- [x] Basic, GShare, BiMode, and Tournament branch predictors are trained from retired control flow.
 - [x] Checker CPU support exists as a RISC-V retire-path reference hart with CLI-visible counts.
 - [ ] Minor-like fetch/decode/execute/commit timing is wired into normal CPU execution.
 - [ ] Branch predictors steer fetch with speculation snapshots, squash, and rollback.
@@ -204,7 +204,7 @@ executable cycle-visible engine.
 state and retired training, directly issued completed 4-byte fetches occupying
 the in-order timing state before retire, normal `drive_next_action`, cluster,
 and data-translation drivers issuing a bounded fetch-ahead for completed straight-line 4-byte integer instructions, predictor-selected conditional
-branches including top-level `rem6 run --riscv-branch-predictor gshare` fetch-steering evidence, and direct RISC-V `JAL`/`JALR` targets before retire, with direct `JAL`
+branches including top-level `rem6 run --riscv-branch-predictor gshare` and `bimode` fetch-steering evidence, and direct RISC-V `JAL`/`JALR` targets before retire, with direct `JAL`
 front-end predictions preserved through retire in the normal driver; compressed straight-line instructions reaching the same normal parallel-cluster fetch-ahead path, branch fetch-ahead speculation history recorded and resolved at retire, and explicit `--riscv-branch-lookahead 2` two-deep conditional-branch fetch-ahead through the normal `rem6 run` path with an older misprediction repairing predictor history and removing younger branch speculation before wrong-path registers commit,
 completed younger fetches consumed by in-order branch flushes, wrong-path branch
 fetch-ahead requests from fall-through and predicted-target paths squashed even
@@ -237,7 +237,7 @@ in-order cycle-plan advance, general flush, resource-blocked,
 ordering-blocked, branch-prediction, branch-misprediction,
 branch-prediction flush, and redirect counters from the same executed RISC-V
 timing records, including nonzero branch-prediction flush evidence for a real
-taken RISC-V branch; they also expose branch-speculation prediction, repair, younger-removal, and maximum-pending counters for a real nested conditional branch run where the corrected older branch prevents younger wrong-path register writes from committing. CLI `rem6 run --riscv-branch-predictor gshare` drives the normal RISC-V fetch-ahead path with the selected predictor and changes deterministic fetch-steering timing while preserving the final architectural register state.
+taken RISC-V branch; they also expose branch-speculation prediction, repair, younger-removal, and maximum-pending counters for a real nested conditional branch run where the corrected older branch prevents younger wrong-path register writes from committing. CLI `rem6 run --riscv-branch-predictor gshare` and `bimode` drive the normal RISC-V fetch-ahead path with the selected predictor and change deterministic fetch-steering timing while preserving the final architectural register state.
 RISC-V in-order timing tests cover retired taken/fall-through redirect,
 completed-fetch overlap, serial/translated/parallel fetch-ahead, direct `JAL`
 and register-target `JALR` fetch-ahead preservation, compressed
@@ -1039,7 +1039,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/chi_protocol` | `rem6-coherence`, protocol crates, `rem6-cache` | 40% single-axis | CHI-like line, controller, bank, dirty peer sourcing, reservation, and Evict-hazard tests exist. | Add Ruby-scale CHI transactions, topology networks, directory races, and workload checks. |
 | `tests/gem5/chi_tlm_tests` | `rem6-proto`, future adapter crates, `rem6-coherence` | 19% scoped | A library-level co-simulation boundary can register TLM endpoints, validate transaction shape, hand off events, and checkpoint clean adapter state in self-tests. | Add runtime TLM bridge tests with coherence traffic. |
 | `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, text stats output, TOML-driven nested run/stats/power artifact directory creation, TOML-driven GPU run config tests, and TOML-driven GPU power-output plus NoMali adapter artifact creation exist. | Add config-driven file layouts for full-system manifests and broader multi-artifact workloads. |
-| `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line and conditional-branch fetch-ahead including compressed straight-line fetch-ahead through the normal parallel-cluster path, explicit `--riscv-branch-lookahead 2` two-deep conditional-branch fetch-ahead rollback through `rem6 run`, CLI-selected `gshare` branch-predictor fetch steering changing deterministic run timing, direct RISC-V `JAL` and `JALR` target fetch-ahead preserved through retire in driver tests plus direct `JAL` CLI run coverage, pending-fetch retire overlap for older completed straight-line fetches, issued fetch-ahead occupancy in in-order timing before response completion, normal parallel-cluster pending-fetch resource-stall stats, retained non-retire in-order cycle history consumed by top-level stats, branch speculation history repair/commit with younger-speculation removal stats, completed younger fetch squash, per-retired-instruction in-order stage timing stats, top-level per-stage in-flight and occupied-cycle stats, top-level fetch/data wait stats, top-level in-order cycle-plan advance/block/flush stats, top-level branch redirect/misprediction/branch-prediction-flush stats, and O3 policies exist. | Add broader in-order stalls/squashes, broader predictor-family speculation, and ROB/LSQ-backed O3 execution tests. |
+| `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line and conditional-branch fetch-ahead including compressed straight-line fetch-ahead through the normal parallel-cluster path, explicit `--riscv-branch-lookahead 2` two-deep conditional-branch fetch-ahead rollback through `rem6 run`, CLI-selected `gshare` and `bimode` branch-predictor fetch steering changing deterministic run timing, direct RISC-V `JAL` and `JALR` target fetch-ahead preserved through retire in driver tests plus direct `JAL` CLI run coverage, pending-fetch retire overlap for older completed straight-line fetches, issued fetch-ahead occupancy in in-order timing before response completion, normal parallel-cluster pending-fetch resource-stall stats, retained non-retire in-order cycle history consumed by top-level stats, branch speculation history repair/commit with younger-speculation removal stats, completed younger fetch squash, per-retired-instruction in-order stage timing stats, top-level per-stage in-flight and occupied-cycle stats, top-level fetch/data wait stats, top-level in-order cycle-plan advance/block/flush stats, top-level branch redirect/misprediction/branch-prediction-flush stats, and O3 policies exist. | Add broader in-order stalls/squashes, broader predictor-family speculation, and ROB/LSQ-backed O3 execution tests. |
 | `tests/gem5/dram_lowp` | `rem6-dram`, `rem6-power` | 40% single-axis | DRAM/NVM profile counters, low-power constants, and top-level LPDDR routed-request precharge-powerdown residency stats are surfaced. | Add broader executable low-power state-transition tests across profiles and power states. |
 | `tests/gem5/example_configs`, `tests/gem5/learning_gem5` | `rem6` CLI, `rem6-platform`, `rem6-workload` | 40% single-axis | CLI and TOML tests cover several execution, trace-replay, and GPU micro-run paths, including a checked-in GUPS example config that runs without recompilation. | Add broader example suites spanning run, trace replay, resources, and full-system handoff. |
 | `tests/gem5/fdp_tests` | `rem6-cache` | 45% single-axis | Fetch-directed prefetcher state, errors, and cache-local queue/translation counters have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |
@@ -1176,11 +1176,9 @@ complete.
 scalar load/store, arithmetic, comparison, conversion, NaN-boxing, and accrued
 flag slices.
 
-**Not migrated:** Complete `ext/libelf`, `ext/libfdt`, and `ext/softfloat`
-parity.
+**Not migrated:** Complete `ext/libelf`, `ext/libfdt`, and `ext/softfloat` parity.
 
-**Evidence:** CLI static RISC-V smoke tests, RISC-V DTB handoff tests, and
-RV64F/RV64D tests.
+**Evidence:** CLI static RISC-V smoke tests, RISC-V DTB handoff tests, and RV64F/RV64D tests.
 
 **Next evidence:** Expand loader breadth and soft-float parity.
 
@@ -1190,15 +1188,13 @@ RV64F/RV64D tests.
 2. Run more real static-libc SE programs, then expand SBI runtime coverage and real Linux boot.
 3. Route CPU instruction/data traffic through cache, coherence, NoC, and DRAM.
 4. Promote hierarchy resource counters to first-class stats.
-5. Split broad migration rows as evidence grows, especially `se_mode`,
-   `cpu_tests`, `traffic_gen`, `stats`, and `tests/test-progs`.
+5. Split broad rows as evidence grows: `se_mode`, `cpu_tests`, `traffic_gen`, `stats`, and `tests/test-progs`.
 
 ## Update Rules
 
 - Update percentages only when executable rem6 evidence changes.
 - Keep the checklist beside each component so the score can be audited.
-- Do not count unknown-syscall diagnostics as implemented syscall coverage.
-- Do not count tool-detected static smokes as broad workload parity.
+- Do not count unknown-syscall diagnostics as implemented syscall coverage or
+  tool-detected static smokes as broad workload parity.
 - Do not cite exact line ranges from gem5 or rem6.
-- Keep detailed proof in tests, artifacts, traces, checkpoints, or manifests
-  instead of expanding this document into a proof log.
+- Keep detailed proof in tests, artifacts, traces, checkpoints, or manifests.

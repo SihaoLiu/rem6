@@ -6,9 +6,10 @@ use rem6_memory::{AccessSize, Address, MemoryRequestId};
 use crate::{
     riscv_execution_event::RiscvRetiredBranchUpdates, CpuFetchEvent, CpuFetchEventKind,
     CpuFetchRecord, InOrderBranchPrediction, InOrderBranchRedirect, InOrderPipelineCycleRecord,
-    InOrderPipelineInstruction, InOrderPipelineStage, RiscvCore, RiscvCoreState, RiscvCpuError,
-    RiscvCpuExecutionEvent, RiscvGShareBranchUpdate, RiscvTournamentBranchUpdate,
-    RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
+    InOrderPipelineInstruction, InOrderPipelineStage, RiscvBiModeBranchUpdate, RiscvCore,
+    RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
+    RiscvTournamentBranchUpdate, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+    RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -645,6 +646,24 @@ fn retire_branch_predictions(
         .gshare_branch_predictor
         .train(prediction.history(), actual_taken, false)
         .map_err(RiscvCpuError::GShareBranchPredictor)?;
+    let bimode_prediction = if conditional {
+        state
+            .bimode_branch_predictor
+            .predict(RISCV_LOCAL_BIMODE_THREAD, pc)
+    } else {
+        state
+            .bimode_branch_predictor
+            .predict_unconditional(RISCV_LOCAL_BIMODE_THREAD, pc)
+    }
+    .map_err(RiscvCpuError::BiModeBranchPredictor)?;
+    let bimode_history_update = state
+        .bimode_branch_predictor
+        .update_history(bimode_prediction.history(), actual_taken)
+        .map_err(RiscvCpuError::BiModeBranchPredictor)?;
+    let bimode_training_update = state
+        .bimode_branch_predictor
+        .train(bimode_prediction.history(), actual_taken, false)
+        .map_err(RiscvCpuError::BiModeBranchPredictor)?;
     let tournament_prediction = if conditional {
         state
             .tournament_branch_predictor
@@ -668,6 +687,11 @@ fn retire_branch_predictions(
         RiscvRetiredBranchUpdates::new(
             branch_update,
             RiscvGShareBranchUpdate::new(prediction, history_update, training_update),
+            RiscvBiModeBranchUpdate::new(
+                bimode_prediction,
+                bimode_history_update,
+                bimode_training_update,
+            ),
             RiscvTournamentBranchUpdate::new(
                 tournament_prediction,
                 tournament_history_update,

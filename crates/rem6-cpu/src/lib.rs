@@ -165,7 +165,7 @@ pub use riscv_data_access::{
     RiscvLoadReservation,
 };
 pub use riscv_execution_event::{
-    RiscvCoreDriveAction, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
+    RiscvBiModeBranchUpdate, RiscvCoreDriveAction, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
     RiscvTournamentBranchUpdate,
 };
 pub use riscv_hart_run_state::RiscvHartRunState;
@@ -220,11 +220,14 @@ pub use translation::{
 pub const DEFAULT_RISCV_PMP_ENTRIES: usize = 16;
 pub const DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES: usize = 1024;
 pub const DEFAULT_RISCV_GSHARE_BRANCH_PREDICTOR_ENTRIES: usize = 1024;
+pub const DEFAULT_RISCV_BIMODE_CHOICE_ENTRIES: usize = 1024;
+pub const DEFAULT_RISCV_BIMODE_GLOBAL_ENTRIES: usize = 1024;
 pub const DEFAULT_RISCV_TOURNAMENT_LOCAL_ENTRIES: usize = 1024;
 pub const DEFAULT_RISCV_TOURNAMENT_LOCAL_HISTORY_ENTRIES: usize = 1024;
 pub const DEFAULT_RISCV_TOURNAMENT_GLOBAL_ENTRIES: usize = 1024;
 pub const DEFAULT_RISCV_TOURNAMENT_CHOICE_ENTRIES: usize = 1024;
 pub const RISCV_LOCAL_GSHARE_THREAD: CpuId = CpuId::new(0);
+pub const RISCV_LOCAL_BIMODE_THREAD: CpuId = CpuId::new(0);
 pub const RISCV_LOCAL_TOURNAMENT_THREAD: CpuId = CpuId::new(0);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -232,6 +235,7 @@ pub enum RiscvBranchPredictorKind {
     #[default]
     Basic,
     GShare,
+    BiMode,
     Tournament,
 }
 
@@ -1099,6 +1103,14 @@ impl RiscvCore {
             .snapshot()
     }
 
+    pub fn bimode_branch_predictor_snapshot(&self) -> BiModeBranchPredictorSnapshot {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .bimode_branch_predictor
+            .snapshot()
+    }
+
     pub fn tournament_branch_predictor_snapshot(&self) -> TournamentBranchPredictorSnapshot {
         self.state
             .lock()
@@ -1206,6 +1218,7 @@ struct RiscvCoreState {
     branch_lookahead: usize,
     branch_predictor_kind: RiscvBranchPredictorKind,
     gshare_branch_predictor: GShareBranchPredictor,
+    bimode_branch_predictor: BiModeBranchPredictor,
     tournament_branch_predictor: TournamentBranchPredictor,
     in_order_pipeline: InOrderPipelineState,
     in_order_pipeline_cycle_records: Vec<InOrderPipelineCycleRecord>,
@@ -1247,6 +1260,14 @@ impl RiscvCoreState {
             gshare_branch_predictor: GShareBranchPredictor::new(
                 GShareBranchPredictorConfig::new(1, DEFAULT_RISCV_GSHARE_BRANCH_PREDICTOR_ENTRIES)
                     .expect("default RISC-V gshare branch predictor config is valid"),
+            ),
+            bimode_branch_predictor: BiModeBranchPredictor::new(
+                BiModeBranchPredictorConfig::new(
+                    1,
+                    DEFAULT_RISCV_BIMODE_CHOICE_ENTRIES,
+                    DEFAULT_RISCV_BIMODE_GLOBAL_ENTRIES,
+                )
+                .expect("default RISC-V bimode branch predictor config is valid"),
             ),
             tournament_branch_predictor: TournamentBranchPredictor::new(
                 TournamentBranchPredictorConfig::new(

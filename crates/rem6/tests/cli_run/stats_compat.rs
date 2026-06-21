@@ -924,6 +924,28 @@ fn rem6_run_stats_use_selected_gshare_branch_predictor_for_fetch_steering() {
     assert!(!gshare.contains("\"x6\":\"0x1\""));
 }
 
+#[test]
+fn rem6_run_stats_use_selected_bimode_branch_predictor_for_fetch_steering() {
+    let program = selected_branch_predictor_program();
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-bimode-branch-steering", &elf);
+
+    let basic = selected_branch_predictor_stdout(&path, "basic");
+    let bimode = selected_branch_predictor_stdout(&path, "bimode");
+
+    let bimode_predictions = json_u64_field(&bimode, "\"branch_speculation_predictions\":");
+    let basic_final_tick = json_u64_field(&basic, "\"final_tick\":");
+    let bimode_final_tick = json_u64_field(&bimode, "\"final_tick\":");
+
+    assert!(bimode_predictions >= 3, "{bimode}");
+    assert_ne!(
+        bimode_final_tick, basic_final_tick,
+        "basic final_tick={basic_final_tick}, bimode final_tick={bimode_final_tick}\nbasic:\n{basic}\nbimode:\n{bimode}"
+    );
+    assert!(bimode.contains("\"x5\":\"0x7\""));
+    assert!(!bimode.contains("\"x6\":\"0x1\""));
+}
+
 fn selected_branch_predictor_stdout(path: &std::path::Path, predictor: &str) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([
