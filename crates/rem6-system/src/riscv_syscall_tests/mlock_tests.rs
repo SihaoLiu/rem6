@@ -4,7 +4,9 @@ const RISCV_LINUX_MLOCK_FOR_TEST: u64 = 228;
 const RISCV_LINUX_MUNLOCK_FOR_TEST: u64 = 229;
 const RISCV_LINUX_MLOCKALL_FOR_TEST: u64 = 230;
 const RISCV_LINUX_MUNLOCKALL_FOR_TEST: u64 = 231;
+const RISCV_LINUX_MLOCK2_FOR_TEST: u64 = 284;
 const RISCV_LINUX_ENOMEM_FOR_TEST: u64 = 12;
+const RISCV_LINUX_MLOCK2_ONFAULT_FOR_TEST: u64 = 1;
 const RISCV_LINUX_MCL_CURRENT_FOR_TEST: u64 = 1;
 const RISCV_LINUX_MCL_FUTURE_FOR_TEST: u64 = 2;
 const RISCV_LINUX_MCL_ONFAULT_FOR_TEST: u64 = 4;
@@ -166,6 +168,100 @@ fn linux_table_mlock_and_munlock_report_einval_for_overflowing_address_range() {
             })
         );
     }
+}
+
+#[test]
+fn linux_table_mlock2_accepts_mmap_and_brk_ranges_with_supported_flags() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0x8000);
+
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_MMAP,
+                [0, 2 * RISCV_PAGE_BYTES, 3, 34, u64::MAX, 0]
+            ),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: RISCV64_LINUX_MMAP_BASE
+        })
+    );
+    assert_eq!(
+        table.handle(
+            RiscvSyscallRequest::new(0x8004, RISCV_LINUX_BRK, [0xa001, 0, 0, 0, 0, 0]),
+            &mut state,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0xa001 })
+    );
+
+    for (pc, start, flags) in [
+        (0x8008, RISCV64_LINUX_MMAP_BASE + 17, 0),
+        (
+            0x800c,
+            RISCV64_LINUX_MMAP_BASE + RISCV_PAGE_BYTES,
+            RISCV_LINUX_MLOCK2_ONFAULT_FOR_TEST,
+        ),
+        (
+            0x8010,
+            0x8017,
+            (1_u64 << 32) | RISCV_LINUX_MLOCK2_ONFAULT_FOR_TEST,
+        ),
+    ] {
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    pc,
+                    RISCV_LINUX_MLOCK2_FOR_TEST,
+                    [start, RISCV_PAGE_BYTES, flags, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return { value: 0 })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_mlock2_validates_flags_before_range_and_reuses_mlock_range_errors() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    for (pc, start, length, flags, errno) in [
+        (0x8000, u64::MAX, 0, 2, RISCV_LINUX_EINVAL),
+        (
+            0x8004,
+            RISCV64_LINUX_MMAP_BASE,
+            RISCV_PAGE_BYTES,
+            2,
+            RISCV_LINUX_EINVAL,
+        ),
+        (
+            0x8008,
+            RISCV64_LINUX_MMAP_BASE,
+            RISCV_PAGE_BYTES,
+            RISCV_LINUX_MLOCK2_ONFAULT_FOR_TEST,
+            RISCV_LINUX_ENOMEM_FOR_TEST,
+        ),
+        (0x800c, u64::MAX, 1, 0, RISCV_LINUX_EINVAL),
+    ] {
+        assert_eq!(
+            table.handle(
+                RiscvSyscallRequest::new(
+                    pc,
+                    RISCV_LINUX_MLOCK2_FOR_TEST,
+                    [start, length, flags, 0, 0, 0],
+                ),
+                &mut state,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(errno)
+            })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
 }
 
 #[test]

@@ -1,5 +1,7 @@
 use std::{fs, process::Command};
 
+use serde_json::Value;
+
 use crate::support::{find_riscv_tool, temp_workspace};
 
 #[test]
@@ -553,4 +555,199 @@ int main(void) {
     assert!(stdout.contains("\"stop_code\":69"));
     assert!(stdout.contains("\"text\":\"raw-madvise-file:ok\\n\""));
     assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}
+
+#[test]
+fn rem6_run_riscv_se_runs_static_raw_mlock2_with_qemu_probe() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!("skipping static RISC-V SE raw mlock2 smoke: riscv64-unknown-elf-gcc not found");
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE raw mlock2 smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-mlock2");
+    let source = workspace.join("raw-mlock2.c");
+    let binary = workspace.join("raw-mlock2");
+    fs::write(
+        &source,
+        r#"static long linux_syscall1(long number, long arg0) {
+    register long a0 asm("a0") = arg0;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall6(long number, long arg0, long arg1, long arg2, long arg3, long arg4, long arg5) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a4 asm("a4") = arg4;
+    register long a5 asm("a5") = arg5;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3), "r"(a4), "r"(a5), "r"(a7) : "memory");
+    return a0;
+}
+
+static void putc(char c) {
+    linux_syscall3(64, 1, (long)&c, 1);
+}
+
+static void puts(const char *text) {
+    while (*text) {
+        putc(*text++);
+    }
+}
+
+static void putn(long value) {
+    char bytes[32];
+    int len = 0;
+    if (value < 0) {
+        putc('-');
+        value = -value;
+    }
+    if (value == 0) {
+        putc('0');
+        return;
+    }
+    while (value != 0) {
+        bytes[len++] = (char)('0' + (value % 10));
+        value /= 10;
+    }
+    while (len != 0) {
+        putc(bytes[--len]);
+    }
+}
+
+static void print_result(long a, long b, long c, long d, long e, long f) {
+    puts("raw-mlock2:");
+    putn(a);
+    putc(':');
+    putn(b);
+    putc(':');
+    putn(c);
+    putc(':');
+    putn(d);
+    putc(':');
+    putn(e);
+    putc(':');
+    putn(f);
+    putc('\n');
+}
+
+void _start(void) {
+    long mapped = linux_syscall6(222, 0, 8192, 3, 34, -1, 0);
+    long lock_now = linux_syscall3(284, mapped, 4096, 0);
+    long lock_onfault = linux_syscall3(284, mapped + 4096, 4096, 1);
+    long lock_high = linux_syscall3(284, mapped, 0, (1L << 32) | 1);
+    long bad_flags = linux_syscall3(284, mapped, 4096, 2);
+    long unmapped = linux_syscall3(284, 0x700000000000L, 4096, 1);
+    long overflow = linux_syscall3(284, -1, 1, 0);
+    print_result(lock_now, lock_onfault, lock_high, bad_flags, unmapped, overflow);
+    if (lock_now == 0 && lock_onfault == 0 && lock_high == 0 &&
+        bad_flags == -22 && unmapped == -12 && overflow == -22) {
+        linux_syscall1(93, 68);
+    }
+    linux_syscall1(93, 88);
+    for (;;) {
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-nostdlib",
+            "-fno-builtin",
+            "-fno-stack-protector",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    if qemu_output.status.code() == Some(68) {
+        assert_eq!(qemu_output.stdout, b"raw-mlock2:0:0:0:-22:-12:-22\n");
+    } else {
+        assert_eq!(
+            qemu_output.status.code(),
+            Some(88),
+            "qemu stdout: {}; qemu stderr: {}",
+            String::from_utf8_lossy(&qemu_output.stdout),
+            String::from_utf8_lossy(&qemu_output.stderr)
+        );
+        assert_eq!(qemu_output.stdout, b"raw-mlock2:-38:-38:-38:-38:-38:-38\n");
+        eprintln!("qemu-riscv64 reports ENOSYS for raw mlock2; checking rem6 SE coverage");
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/simulation/stop_code")
+            .and_then(Value::as_u64),
+        Some(68)
+    );
+    let guest_stdout = json
+        .pointer("/riscv_guest_writes")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .filter_map(|write| write.get("text").and_then(Value::as_str))
+        .collect::<String>();
+    assert_eq!(guest_stdout, "raw-mlock2:0:0:0:-22:-12:-22\n");
+    assert_eq!(
+        json.pointer("/riscv_unknown_syscalls")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
 }

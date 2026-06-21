@@ -14,6 +14,7 @@ pub(super) const RISCV_LINUX_MPROTECT: u64 = 226;
 pub(super) const RISCV_LINUX_MSYNC: u64 = 227;
 pub(super) const RISCV_LINUX_MLOCK: u64 = 228;
 pub(super) const RISCV_LINUX_MUNLOCK: u64 = 229;
+pub(super) const RISCV_LINUX_MLOCK2: u64 = 284;
 pub(super) const RISCV_LINUX_MINCORE: u64 = 232;
 pub(super) const RISCV_LINUX_MADVISE: u64 = 233;
 pub(super) const RISCV_LINUX_MBIND: u64 = 235;
@@ -32,6 +33,7 @@ const RISCV_LINUX_MCL_FUTURE: u64 = 2;
 const RISCV_LINUX_MCL_ONFAULT: u64 = 4;
 const RISCV_LINUX_MCL_SUPPORTED_FLAGS: u64 =
     RISCV_LINUX_MCL_CURRENT | RISCV_LINUX_MCL_FUTURE | RISCV_LINUX_MCL_ONFAULT;
+const RISCV_LINUX_MLOCK2_ONFAULT: u64 = 1;
 const RISCV_LINUX_MPOL_DEFAULT: u64 = 0;
 const RISCV_LINUX_MPOL_PREFERRED: u64 = 1;
 const RISCV_LINUX_MPOL_BIND: u64 = 2;
@@ -769,6 +771,13 @@ pub(super) fn syscall_memory_lock_range(
     0
 }
 
+pub(super) fn syscall_mlock2(request: RiscvSyscallRequest, state: &RiscvSyscallState) -> u64 {
+    if !mlock2_flags_are_valid(request.argument(2)) {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    syscall_memory_lock_range(request, state)
+}
+
 pub(super) fn syscall_mlockall(flags: u64) -> u64 {
     if !mlockall_flags_are_valid(flags) {
         return linux_error(RISCV_LINUX_EINVAL);
@@ -913,6 +922,11 @@ fn mlockall_flags_are_valid(flags: u64) -> bool {
     }
     let scoped = flags & (RISCV_LINUX_MCL_CURRENT | RISCV_LINUX_MCL_FUTURE);
     scoped != 0
+}
+
+fn mlock2_flags_are_valid(flags: u64) -> bool {
+    let flags = u64::from(flags as u32);
+    flags & !RISCV_LINUX_MLOCK2_ONFAULT == 0
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

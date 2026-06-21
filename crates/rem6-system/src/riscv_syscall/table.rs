@@ -653,6 +653,9 @@ impl RiscvSyscallTable {
             RISCV_LINUX_MLOCK | RISCV_LINUX_MUNLOCK => Some(RiscvSyscallOutcome::Return {
                 value: syscall_memory_lock_range(request, state),
             }),
+            RISCV_LINUX_MLOCK2 => Some(RiscvSyscallOutcome::Return {
+                value: syscall_mlock2(request, state),
+            }),
             RISCV_LINUX_MLOCKALL => Some(RiscvSyscallOutcome::Return {
                 value: syscall_mlockall(request.argument(0)),
             }),
