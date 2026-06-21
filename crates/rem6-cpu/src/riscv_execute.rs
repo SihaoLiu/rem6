@@ -159,8 +159,8 @@ impl RiscvCore {
         let redirects_fetch = execution.trap().is_some()
             || next_pc.get() != sequential_next_pc
             || retired_branch
-                .branch_update()
-                .is_some_and(branch_update_redirects_fetch);
+                .fetch_prediction()
+                .is_some_and(branch_prediction_redirects_fetch);
         let has_completed_successor_fetch = self.core.fetch_events().iter().any(|event| {
             event.kind() == CpuFetchEventKind::Completed
                 && event.pc() == next_pc
@@ -187,7 +187,7 @@ impl RiscvCore {
             fetch.request_id().sequence(),
             fetch.pc(),
             next_pc,
-            retired_branch.branch_update(),
+            retired_branch.fetch_prediction(),
             direct_jump_fetch_ahead_target,
         );
         let pipeline_redirect = execution.trap().is_some().then(|| {
@@ -212,7 +212,7 @@ impl RiscvCore {
             fetch.clone(),
             instruction,
             execution,
-            retired_branch,
+            retired_branch.into_updates(),
             pipeline_cycle,
             0,
             true,
@@ -465,7 +465,7 @@ fn in_order_pipeline_branch_prediction(
     sequence: u64,
     fetch_pc: Address,
     actual_next_pc: Address,
-    branch_update: Option<&crate::BranchUpdate>,
+    branch_prediction: Option<RiscvResolvedBranchPrediction>,
     direct_jump_fetch_ahead_target: Option<Address>,
 ) -> Option<InOrderBranchPrediction> {
     if let Some(predicted_target) = direct_jump_fetch_ahead_target {
@@ -480,23 +480,84 @@ fn in_order_pipeline_branch_prediction(
         ));
     }
 
-    let update = branch_update?;
+    let prediction = branch_prediction?;
     let resolved_target_pc =
-        (update.actual_taken() || update.predicted_taken()).then_some(actual_next_pc.get());
+        (prediction.actual_taken() || prediction.predicted_taken()).then_some(actual_next_pc.get());
     Some(InOrderBranchPrediction::new(
         sequence,
         InOrderPipelineStage::Commit,
         fetch_pc.get(),
-        update.predicted_taken(),
-        update.predicted_target().map(Address::get),
-        update.actual_taken(),
+        prediction.predicted_taken(),
+        prediction.predicted_target().map(Address::get),
+        prediction.actual_taken(),
         resolved_target_pc,
     ))
 }
 
-fn branch_update_redirects_fetch(update: &crate::BranchUpdate) -> bool {
-    update.predicted_taken() != update.actual_taken()
-        || update.predicted_target() != update.actual_target()
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvResolvedBranchPrediction {
+    predicted_taken: bool,
+    predicted_target: Option<Address>,
+    actual_taken: bool,
+    actual_target: Option<Address>,
+}
+
+impl RiscvResolvedBranchPrediction {
+    fn from_branch_update(update: &crate::BranchUpdate) -> Self {
+        Self {
+            predicted_taken: update.predicted_taken(),
+            predicted_target: update.predicted_target(),
+            actual_taken: update.actual_taken(),
+            actual_target: update.actual_target(),
+        }
+    }
+
+    const fn predicted_taken(self) -> bool {
+        self.predicted_taken
+    }
+
+    const fn predicted_target(self) -> Option<Address> {
+        self.predicted_target
+    }
+
+    const fn actual_taken(self) -> bool {
+        self.actual_taken
+    }
+}
+
+fn branch_prediction_redirects_fetch(prediction: RiscvResolvedBranchPrediction) -> bool {
+    prediction.predicted_taken != prediction.actual_taken
+        || prediction.predicted_target != prediction.actual_target
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct RiscvRetiredBranchResolution {
+    updates: RiscvRetiredBranchUpdates,
+    fetch_prediction: Option<RiscvResolvedBranchPrediction>,
+}
+
+impl RiscvRetiredBranchResolution {
+    fn new(
+        updates: RiscvRetiredBranchUpdates,
+        fetch_prediction: Option<RiscvResolvedBranchPrediction>,
+    ) -> Self {
+        Self {
+            updates,
+            fetch_prediction,
+        }
+    }
+
+    fn fetch_prediction(&self) -> Option<RiscvResolvedBranchPrediction> {
+        self.fetch_prediction.or_else(|| {
+            self.updates
+                .branch_update()
+                .map(RiscvResolvedBranchPrediction::from_branch_update)
+        })
+    }
+
+    fn into_updates(self) -> RiscvRetiredBranchUpdates {
+        self.updates
+    }
 }
 
 fn retire_branch_predictions(
@@ -505,10 +566,10 @@ fn retire_branch_predictions(
     pc: Address,
     instruction: RiscvInstruction,
     execution: &rem6_isa_riscv::RiscvExecutionRecord,
-) -> Result<RiscvRetiredBranchUpdates, RiscvCpuError> {
+) -> Result<RiscvRetiredBranchResolution, RiscvCpuError> {
     if execution.trap().is_some() {
         discard_branch_speculation(state, sequence)?;
-        return Ok(RiscvRetiredBranchUpdates::default());
+        return Ok(RiscvRetiredBranchResolution::default());
     }
 
     let sequential_pc = pc
@@ -529,14 +590,14 @@ fn retire_branch_predictions(
             (false, true, Some(Address::new(next_pc)))
         }
         _ => {
-            return Ok(RiscvRetiredBranchUpdates::default());
+            return Ok(RiscvRetiredBranchResolution::default());
         }
     };
 
     let branch_update = state
         .branch_predictor
         .update(pc, actual_taken, actual_target);
-    resolve_branch_speculation(state, sequence, &branch_update)?;
+    let selected_prediction = resolve_branch_speculation(state, sequence, &branch_update)?;
     let prediction = if conditional {
         state
             .gshare_branch_predictor
@@ -574,14 +635,17 @@ fn retire_branch_predictions(
         .train(tournament_prediction.history(), actual_taken, false)
         .map_err(RiscvCpuError::TournamentBranchPredictor)?;
 
-    Ok(RiscvRetiredBranchUpdates::new(
-        branch_update,
-        RiscvGShareBranchUpdate::new(prediction, history_update, training_update),
-        RiscvTournamentBranchUpdate::new(
-            tournament_prediction,
-            tournament_history_update,
-            tournament_training_update,
+    Ok(RiscvRetiredBranchResolution::new(
+        RiscvRetiredBranchUpdates::new(
+            branch_update,
+            RiscvGShareBranchUpdate::new(prediction, history_update, training_update),
+            RiscvTournamentBranchUpdate::new(
+                tournament_prediction,
+                tournament_history_update,
+                tournament_training_update,
+            ),
         ),
+        selected_prediction,
     ))
 }
 
@@ -589,13 +653,26 @@ fn resolve_branch_speculation(
     state: &mut RiscvCoreState,
     sequence: u64,
     update: &crate::BranchUpdate,
-) -> Result<(), RiscvCpuError> {
+) -> Result<Option<RiscvResolvedBranchPrediction>, RiscvCpuError> {
     let Some(speculation) = state.branch_speculations.remove(&sequence) else {
-        return Ok(());
+        return Ok(None);
     };
 
-    let predicted_correctly = update.predicted_taken() == update.actual_taken()
-        && (!update.predicted_taken() || update.predicted_target() == update.actual_target());
+    let pending = state
+        .branch_predictor
+        .pending_speculation(speculation)
+        .ok_or(crate::BranchPredictorError::UnknownSpeculation { id: speculation })
+        .map_err(RiscvCpuError::BranchPredictor)?;
+    let predicted_taken = pending.predicted_taken();
+    let predicted_target = pending.target();
+    let selected_prediction = RiscvResolvedBranchPrediction {
+        predicted_taken,
+        predicted_target,
+        actual_taken: update.actual_taken(),
+        actual_target: update.actual_target(),
+    };
+    let predicted_correctly = predicted_taken == update.actual_taken()
+        && (!predicted_taken || predicted_target == update.actual_target());
     if !predicted_correctly {
         let repair = state
             .branch_predictor
@@ -610,7 +687,7 @@ fn resolve_branch_speculation(
         .branch_predictor
         .commit_speculation(speculation)
         .map_err(RiscvCpuError::BranchPredictor)?;
-    Ok(())
+    Ok(Some(selected_prediction))
 }
 
 fn discard_branch_speculation(

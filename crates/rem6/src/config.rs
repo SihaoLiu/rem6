@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use rem6_boot::BootElfArchitecture;
+use rem6_cpu::RiscvBranchPredictorKind;
 use rem6_stats::PcCountPair;
 use rem6_system::RiscvDataCacheProtocol;
 use rem6_workload::WorkloadDataCacheProtocol;
@@ -11,6 +12,7 @@ use crate::Rem6CliError;
 mod debug;
 mod dram;
 mod output_format;
+mod riscv_branch;
 mod riscv_se_input;
 mod trace_replay;
 
@@ -18,6 +20,7 @@ pub use debug::CliDebugFlag;
 use debug::{parse_debug_flag_list, parse_debug_flags};
 pub use dram::CliDramMemoryProfile;
 pub use output_format::{PowerAnalysisFormat, StatsFormat};
+use riscv_branch::{parse_riscv_branch_predictor, parse_riscv_pc_count_target};
 pub use riscv_se_input::{RiscvSeFileRequest, RiscvSeInputSource};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -110,6 +113,7 @@ pub struct Rem6RunConfig {
     riscv_se_files: Vec<RiscvSeFileRequest>,
     riscv_pc_count_targets: Vec<PcCountPair>,
     riscv_branch_lookahead: usize,
+    riscv_branch_predictor: RiscvBranchPredictorKind,
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
@@ -204,6 +208,7 @@ struct Rem6RunFileConfig {
     riscv_se_files: Option<Vec<String>>,
     riscv_pc_count_targets: Option<Vec<String>>,
     riscv_branch_lookahead: Option<usize>,
+    riscv_branch_predictor: Option<String>,
     max_instructions: Option<u64>,
     stats_format: Option<String>,
     execute: Option<bool>,
@@ -415,6 +420,18 @@ impl Rem6RunConfig {
                 value: riscv_branch_lookahead.to_string(),
             });
         }
+        let mut riscv_branch_predictor = file_config
+            .riscv_branch_predictor
+            .as_deref()
+            .map(|value| {
+                parse_riscv_branch_predictor(value).ok_or_else(|| {
+                    Rem6CliError::InvalidRiscvBranchPredictor {
+                        value: value.to_string(),
+                    }
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
         let mut stats_format = file_config
             .stats_format
             .as_deref()
@@ -663,6 +680,15 @@ impl Rem6RunConfig {
                             value: value.clone(),
                         })?;
                 }
+                "--riscv-branch-predictor" => {
+                    let value = required_value(&flag, args.next())?;
+                    riscv_branch_predictor =
+                        parse_riscv_branch_predictor(&value).ok_or_else(|| {
+                            Rem6CliError::InvalidRiscvBranchPredictor {
+                                value: value.clone(),
+                            }
+                        })?;
+                }
                 "--max-instructions" => {
                     let value = required_value(&flag, args.next())?;
                     max_instructions = Some(
@@ -896,6 +922,7 @@ impl Rem6RunConfig {
             riscv_se_files,
             riscv_pc_count_targets,
             riscv_branch_lookahead,
+            riscv_branch_predictor,
             max_instructions,
             stats_format,
             execute,
@@ -990,6 +1017,10 @@ impl Rem6RunConfig {
 
     pub const fn riscv_branch_lookahead(&self) -> usize {
         self.riscv_branch_lookahead
+    }
+
+    pub const fn riscv_branch_predictor(&self) -> RiscvBranchPredictorKind {
+        self.riscv_branch_predictor
     }
 
     pub const fn max_instructions(&self) -> Option<u64> {
@@ -1578,25 +1609,6 @@ fn valid_riscv_branch_lookahead(value: usize) -> bool {
     matches!(value, 1 | 2)
 }
 
-fn parse_riscv_pc_count_target(value: &str) -> Result<PcCountPair, Rem6CliError> {
-    let Some((pc, count)) = value.split_once(':') else {
-        return Err(Rem6CliError::InvalidRiscvPcCountTarget {
-            value: value.to_string(),
-        });
-    };
-    let Some(pc) = parse_number(pc) else {
-        return Err(Rem6CliError::InvalidRiscvPcCountTarget {
-            value: value.to_string(),
-        });
-    };
-    let Some(count) = parse_positive_u64(count) else {
-        return Err(Rem6CliError::InvalidRiscvPcCountTarget {
-            value: value.to_string(),
-        });
-    };
-    Ok(PcCountPair::new(pc, count))
-}
-
 fn parse_data_cache_protocol(value: &str) -> Option<WorkloadDataCacheProtocol> {
     match value {
         "msi" => Some(WorkloadDataCacheProtocol::Msi),
@@ -1637,6 +1649,7 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--riscv-se-file",
             "--riscv-pc-count-target",
             "--riscv-branch-lookahead",
+            "--riscv-branch-predictor",
             "--max-instructions",
             "--stats-format",
             "--dram-memory-profile",

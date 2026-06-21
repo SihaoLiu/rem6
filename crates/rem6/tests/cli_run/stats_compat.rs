@@ -902,6 +902,59 @@ fn rem6_run_stats_keep_default_branch_speculation_depth_single_pending() {
     assert!(!stdout.contains("\"x7\":\"0x2\""));
 }
 
+#[test]
+fn rem6_run_stats_use_selected_gshare_branch_predictor_for_fetch_steering() {
+    let program = selected_branch_predictor_program();
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-gshare-branch-steering", &elf);
+
+    let basic = selected_branch_predictor_stdout(&path, "basic");
+    let gshare = selected_branch_predictor_stdout(&path, "gshare");
+
+    let gshare_predictions = json_u64_field(&gshare, "\"branch_speculation_predictions\":");
+    let basic_final_tick = json_u64_field(&basic, "\"final_tick\":");
+    let gshare_final_tick = json_u64_field(&gshare, "\"final_tick\":");
+
+    assert!(gshare_predictions >= 3, "{gshare}");
+    assert_ne!(
+        gshare_final_tick, basic_final_tick,
+        "basic final_tick={basic_final_tick}, gshare final_tick={gshare_final_tick}\nbasic:\n{basic}\ngshare:\n{gshare}"
+    );
+    assert!(gshare.contains("\"x5\":\"0x7\""));
+    assert!(!gshare.contains("\"x6\":\"0x1\""));
+}
+
+fn selected_branch_predictor_stdout(path: &std::path::Path, predictor: &str) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--memory-route-delay",
+            "1",
+            "--riscv-branch-lookahead",
+            "2",
+            "--riscv-branch-predictor",
+            predictor,
+            "--stats-format",
+            "json",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
 fn nested_branch_speculation_program() -> Vec<u8> {
     riscv64_program(&[
         b_type(16, 0, 0, 0x0), // beq x0, x0, target
@@ -910,6 +963,18 @@ fn nested_branch_speculation_program() -> Vec<u8> {
         0x0020_0393,           // addi x7, x0, 2
         0x0070_0293,           // addi x5, x0, 7
         0x0000_0073,           // ecall
+    ])
+}
+
+fn selected_branch_predictor_program() -> Vec<u8> {
+    riscv64_program(&[
+        i_type(1, 8, 0x0, 8, 0x13), // addi x8, x8, 1
+        i_type(3, 0, 0x0, 9, 0x13), // addi x9, x0, 3
+        b_type(12, 9, 8, 0x4),      // blt x8, x9, loop_body
+        0x0070_0293,                // addi x5, x0, 7
+        0x0000_0073,                // ecall
+        0x0000_0513,                // addi x10, x0, 0
+        j_type(-24, 0),             // jal x0, loop
     ])
 }
 

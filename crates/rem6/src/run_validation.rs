@@ -1,3 +1,4 @@
+use rem6_cpu::RiscvBranchPredictorKind;
 use rem6_system::RiscvDataCacheProtocol;
 
 use crate::config::{Rem6RunConfig, RequestedIsa, StatsFormat};
@@ -59,6 +60,9 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     if config.riscv_branch_lookahead() > 1 {
         return Err(Rem6CliError::RiscvBranchLookaheadRequiresExecution);
     }
+    if config.riscv_branch_predictor() != RiscvBranchPredictorKind::Basic {
+        return Err(Rem6CliError::RiscvBranchPredictorRequiresExecution);
+    }
     if !config.debug_flags().is_empty() {
         return Err(Rem6CliError::DebugFlagsRequireExecution);
     }
@@ -103,6 +107,11 @@ fn validate_cache_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
     }
     if config.riscv_branch_lookahead() > 1 && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::RiscvBranchLookaheadRequiresRiscv);
+    }
+    if config.riscv_branch_predictor() != RiscvBranchPredictorKind::Basic
+        && config.isa() != RequestedIsa::Riscv
+    {
+        return Err(Rem6CliError::RiscvBranchPredictorRequiresRiscv);
     }
     if config.checker_cpu() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::CheckerCpuRequiresRiscv);

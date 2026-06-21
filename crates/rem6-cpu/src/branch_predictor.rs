@@ -376,6 +376,27 @@ impl BranchPredictor {
 
     pub fn predict_speculative(&mut self, pc: Address) -> BranchSpeculation {
         let prediction = self.predict(pc);
+        self.push_speculation(prediction)
+    }
+
+    pub(crate) fn predict_speculative_with_prediction(
+        &mut self,
+        pc: Address,
+        predicted_taken: bool,
+        target: Option<Address>,
+    ) -> BranchSpeculation {
+        let index = self.index(pc);
+        let prediction = BranchPrediction {
+            pc,
+            index,
+            predicted_taken,
+            target: predicted_taken.then_some(target).flatten(),
+            counter: self.counters[index],
+        };
+        self.push_speculation(prediction)
+    }
+
+    fn push_speculation(&mut self, prediction: BranchPrediction) -> BranchSpeculation {
         let history_before = self.speculative_history;
         let history_taken = prediction.predicted_taken();
         let history_after = self.shift_history(history_before, history_taken);
@@ -392,6 +413,15 @@ impl BranchPredictor {
         self.speculative_history = history_after;
         self.pending_speculations.push(speculation.clone());
         speculation
+    }
+
+    pub(crate) fn pending_speculation(
+        &self,
+        id: BranchSpeculationId,
+    ) -> Option<&BranchSpeculation> {
+        self.pending_speculations
+            .iter()
+            .find(|speculation| speculation.id() == id)
     }
 
     pub fn update(

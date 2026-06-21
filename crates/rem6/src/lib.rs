@@ -743,6 +743,7 @@ fn execute_riscv(
             core.enable_checker_cpu();
         }
         core.set_branch_lookahead(config.riscv_branch_lookahead());
+        core.set_branch_predictor_kind(config.riscv_branch_predictor());
         cores.push(core);
     }
     let cluster = RiscvCluster::new(cores).map_err(execute_error)?;

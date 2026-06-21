@@ -1,14 +1,17 @@
 use rem6_isa_riscv::{RiscvHartState, RiscvInstruction, RiscvPrivilegeMode};
 use rem6_memory::Address;
 
-use crate::{CpuFetchEvent, CpuFetchEventKind, RiscvCore, RiscvCoreState, RiscvCpuError};
+use crate::{
+    CpuFetchEvent, CpuFetchEventKind, RiscvBranchPredictorKind, RiscvCore, RiscvCoreState,
+    RiscvCpuError, RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
+};
 
 const COMPLETED_FETCH_WINDOW: usize = 2;
 
 impl RiscvCore {
     pub(crate) fn next_fetch_ahead_before_retire(&self) -> Option<RiscvFetchAheadDecision> {
         let fetch_events = self.core.fetch_events();
-        let state = self.state.lock().expect("riscv core lock");
+        let mut state = self.state.lock().expect("riscv core lock");
         if state.pending_trap.is_some() || state.pending_fetch_prefix.is_some() {
             return None;
         }
@@ -40,7 +43,7 @@ impl RiscvCore {
         let sequential_pc = Address::new(fetch.pc().get().wrapping_add(u64::from(decoded.bytes())));
 
         fetch_ahead_decision(
-            &state,
+            &mut state,
             fetch.request_id().sequence(),
             fetch.pc(),
             sequential_pc,
@@ -63,7 +66,11 @@ impl RiscvCore {
         {
             return;
         }
-        let prediction = state.branch_predictor.predict_speculative(speculation.pc());
+        let prediction = state.branch_predictor.predict_speculative_with_prediction(
+            speculation.pc(),
+            speculation.predicted_taken(),
+            speculation.target(),
+        );
         state
             .branch_speculations
             .insert(speculation.sequence(), prediction.id());
@@ -101,12 +108,20 @@ impl RiscvFetchAheadDecision {
         }
     }
 
-    const fn branch(pc: Address, sequence: u64, branch_pc: Address) -> Self {
+    const fn branch(
+        pc: Address,
+        sequence: u64,
+        branch_pc: Address,
+        predicted_taken: bool,
+        target: Option<Address>,
+    ) -> Self {
         Self {
             pc,
             branch_speculation: Some(RiscvFetchAheadSpeculation {
                 sequence,
                 pc: branch_pc,
+                predicted_taken,
+                target,
             }),
         }
     }
@@ -124,6 +139,8 @@ impl RiscvFetchAheadDecision {
 pub(crate) struct RiscvFetchAheadSpeculation {
     sequence: u64,
     pc: Address,
+    predicted_taken: bool,
+    target: Option<Address>,
 }
 
 impl RiscvFetchAheadSpeculation {
@@ -133,6 +150,14 @@ impl RiscvFetchAheadSpeculation {
 
     const fn pc(self) -> Address {
         self.pc
+    }
+
+    const fn predicted_taken(self) -> bool {
+        self.predicted_taken
+    }
+
+    const fn target(self) -> Option<Address> {
+        self.target
     }
 }
 
@@ -325,7 +350,7 @@ fn next_completed_fetch_sequence_for_architectural_pc(
 }
 
 fn fetch_ahead_decision(
-    state: &RiscvCoreState,
+    state: &mut RiscvCoreState,
     sequence: u64,
     fetch_pc: Address,
     sequential_pc: Address,
@@ -341,13 +366,82 @@ fn fetch_ahead_decision(
         return None;
     }
 
-    let prediction = state.branch_predictor.predict(fetch_pc);
-    let pc = if prediction.predicted_taken() {
-        prediction.target()?
+    let prediction = selected_conditional_branch_prediction(state, fetch_pc, instruction)?;
+    let pc = if prediction.predicted_taken {
+        prediction.target?
     } else {
         sequential_pc
     };
-    Some(RiscvFetchAheadDecision::branch(pc, sequence, fetch_pc))
+    Some(RiscvFetchAheadDecision::branch(
+        pc,
+        sequence,
+        fetch_pc,
+        prediction.predicted_taken,
+        prediction.target,
+    ))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvFetchAheadBranchPrediction {
+    predicted_taken: bool,
+    target: Option<Address>,
+}
+
+fn selected_conditional_branch_prediction(
+    state: &mut RiscvCoreState,
+    fetch_pc: Address,
+    instruction: RiscvInstruction,
+) -> Option<RiscvFetchAheadBranchPrediction> {
+    match state.branch_predictor_kind {
+        RiscvBranchPredictorKind::Basic => {
+            let prediction = state.branch_predictor.predict(fetch_pc);
+            Some(RiscvFetchAheadBranchPrediction {
+                predicted_taken: prediction.predicted_taken(),
+                target: prediction.target(),
+            })
+        }
+        RiscvBranchPredictorKind::GShare => {
+            let prediction = state
+                .gshare_branch_predictor
+                .predict(RISCV_LOCAL_GSHARE_THREAD, fetch_pc)
+                .ok()?;
+            let target = prediction
+                .predicted_taken()
+                .then(|| conditional_branch_target(fetch_pc, instruction))
+                .flatten();
+            Some(RiscvFetchAheadBranchPrediction {
+                predicted_taken: prediction.predicted_taken(),
+                target,
+            })
+        }
+        RiscvBranchPredictorKind::Tournament => {
+            let prediction = state
+                .tournament_branch_predictor
+                .predict(RISCV_LOCAL_TOURNAMENT_THREAD, fetch_pc)
+                .ok()?;
+            let target = prediction
+                .predicted_taken()
+                .then(|| conditional_branch_target(fetch_pc, instruction))
+                .flatten();
+            Some(RiscvFetchAheadBranchPrediction {
+                predicted_taken: prediction.predicted_taken(),
+                target,
+            })
+        }
+    }
+}
+
+fn conditional_branch_target(fetch_pc: Address, instruction: RiscvInstruction) -> Option<Address> {
+    let offset = match instruction {
+        RiscvInstruction::Beq { offset, .. }
+        | RiscvInstruction::Bne { offset, .. }
+        | RiscvInstruction::Blt { offset, .. }
+        | RiscvInstruction::Bge { offset, .. }
+        | RiscvInstruction::Bltu { offset, .. }
+        | RiscvInstruction::Bgeu { offset, .. } => offset.value(),
+        _ => return None,
+    };
+    checked_add_signed(fetch_pc.get(), offset).map(Address::new)
 }
 
 fn direct_jump_fetch_ahead_target(
@@ -526,7 +620,10 @@ fn instruction_is_conditional_branch(instruction: RiscvInstruction) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CpuCore, CpuFetchConfig, CpuFetchRecord, CpuId, CpuResetState};
+    use crate::{
+        CpuCore, CpuFetchConfig, CpuFetchRecord, CpuId, CpuResetState, RiscvBranchPredictorKind,
+        RISCV_LOCAL_GSHARE_THREAD,
+    };
     use rem6_kernel::PartitionId;
     use rem6_memory::{AccessSize, AgentId, CacheLineLayout, MemoryRequestId};
     use rem6_transport::{MemoryRouteId, TransportEndpointId};
@@ -637,6 +734,43 @@ mod tests {
 
         assert_eq!(decision.pc(), Address::new(0x800c));
         assert_eq!(decision.branch_speculation(), None);
+    }
+
+    #[test]
+    fn selected_gshare_speculation_controls_retire_branch_prediction() {
+        let branch = b_type(8, 0, 0, 0x1).to_le_bytes().to_vec();
+        let core = core_with_completed_fetch(branch);
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::GShare);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            let pc = Address::new(0x8000);
+            for _ in 0..2 {
+                let prediction = state
+                    .gshare_branch_predictor
+                    .predict(RISCV_LOCAL_GSHARE_THREAD, pc)
+                    .unwrap();
+                state
+                    .gshare_branch_predictor
+                    .train(prediction.history(), true, false)
+                    .unwrap();
+            }
+        }
+
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+        assert_eq!(decision.pc(), Address::new(0x8008));
+        core.record_fetch_ahead_speculation(&decision);
+
+        let event = core.execute_next_completed_fetch().unwrap().unwrap();
+        let basic_update = event.branch_update().unwrap();
+        assert!(!basic_update.predicted_taken());
+
+        let cycle = event.in_order_pipeline_cycle().unwrap();
+        let prediction = cycle.branch_predictions().first().unwrap();
+        assert!(prediction.predicted_taken());
+        assert_eq!(prediction.predicted_target_pc(), Some(0x8008));
+        assert!(!prediction.resolved_taken());
+        assert_eq!(prediction.repair_target_pc(), Some(0x8004));
+        assert_eq!(core.branch_speculation_summary().repairs(), 1);
     }
 
     #[test]
