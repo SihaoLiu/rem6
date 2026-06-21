@@ -60,7 +60,7 @@ pub use csr::{
 pub use error::{RiscvCsrError, RiscvError};
 pub use gdb_target::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
 pub use hart::RiscvHartState;
-pub use instruction::RiscvInstruction;
+pub use instruction::{RiscvInstruction, RiscvVectorMaskMode};
 pub use pma::{RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmaTable};
 pub use pmp::{
     RiscvPmpAccessKind, RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpEntry, RiscvPmpError,

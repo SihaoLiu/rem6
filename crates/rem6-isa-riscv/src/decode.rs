@@ -2,7 +2,7 @@ use crate::decode_csr::decode_csr;
 use crate::encoding::{b_imm, funct3, funct7, i_imm, rd, rs1, rs2, shamt32, shamt64, shift_funct6};
 use crate::{
     FloatRegister, Immediate, RiscvError, RiscvFenceSet, RiscvInstruction,
-    RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode, VectorRegister,
+    RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode, RiscvVectorMaskMode, VectorRegister,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -273,10 +273,11 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
     let fs1 = float_register(raw, 15);
 
     match (funct3(raw), vector_funct6(raw), vector_unmasked(raw)) {
-        (0x0, 0, true) => Ok(RiscvInstruction::VectorAddVv {
+        (0x0, 0, _) => Ok(RiscvInstruction::VectorAddVv {
             vd: vector_register(raw, 7),
             vs1: vector_register(raw, 15),
             vs2: vector_register(raw, 20),
+            mask: vector_mask_mode(raw),
         }),
         (0x1, 0, true) => Ok(RiscvInstruction::VectorFloat(
             RiscvVectorFloatInstruction::AddVv { vd, vs1, vs2 },
@@ -598,10 +599,11 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs1: vector_register(raw, 15),
             vs2: vector_register(raw, 20),
         }),
-        (0x3, 0, true) => Ok(RiscvInstruction::VectorAddVi {
+        (0x3, 0, _) => Ok(RiscvInstruction::VectorAddVi {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
             imm: vector_signed_imm5(raw),
+            mask: vector_mask_mode(raw),
         }),
         (0x3, 0b001001, true) => Ok(RiscvInstruction::VectorAndVi {
             vd: vector_register(raw, 7),
@@ -672,10 +674,11 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             shamt: vector_unsigned_imm5(raw),
         }),
-        (0x4, 0, true) => Ok(RiscvInstruction::VectorAddVx {
+        (0x4, 0, _) => Ok(RiscvInstruction::VectorAddVx {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
             rs1: rs1(raw),
+            mask: vector_mask_mode(raw),
         }),
         (0x4, 0b000010, true) => Ok(RiscvInstruction::VectorSubVx {
             vd: vector_register(raw, 7),
@@ -856,6 +859,10 @@ fn vector_funct6(raw: u32) -> u32 {
 
 fn vector_unmasked(raw: u32) -> bool {
     (raw & (1 << 25)) != 0
+}
+
+fn vector_mask_mode(raw: u32) -> RiscvVectorMaskMode {
+    RiscvVectorMaskMode::from_vm_bit(vector_unmasked(raw))
 }
 
 fn vector_vs2_is_zero(raw: u32) -> bool {

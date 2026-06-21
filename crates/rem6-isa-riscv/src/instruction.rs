@@ -6,6 +6,26 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvVectorMaskMode {
+    Masked,
+    Unmasked,
+}
+
+impl RiscvVectorMaskMode {
+    pub const fn from_vm_bit(unmasked: bool) -> Self {
+        if unmasked {
+            Self::Unmasked
+        } else {
+            Self::Masked
+        }
+    }
+
+    pub const fn is_masked(self) -> bool {
+        matches!(self, Self::Masked)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvInstruction {
     Lui {
         rd: Register,
@@ -278,16 +298,19 @@ pub enum RiscvInstruction {
         vd: VectorRegister,
         vs1: VectorRegister,
         vs2: VectorRegister,
+        mask: RiscvVectorMaskMode,
     },
     VectorAddVx {
         vd: VectorRegister,
         vs2: VectorRegister,
         rs1: Register,
+        mask: RiscvVectorMaskMode,
     },
     VectorAddVi {
         vd: VectorRegister,
         vs2: VectorRegister,
         imm: i8,
+        mask: RiscvVectorMaskMode,
     },
     VectorSubVv {
         vd: VectorRegister,

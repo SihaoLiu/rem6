@@ -3,7 +3,7 @@ use crate::{
         read_mask_bit, read_register_group, valid_register_group, write_register_group,
         VectorBinaryPlan, MAX_VECTOR_GROUP_BYTES,
     },
-    RiscvHartState, RiscvInstruction, RiscvVectorConfig, VectorRegister,
+    RiscvHartState, RiscvInstruction, RiscvVectorConfig, RiscvVectorMaskMode, VectorRegister,
     RISCV_VECTOR_REGISTER_BYTES,
 };
 
@@ -12,14 +12,19 @@ pub(crate) fn execute_vector_integer_binary(
     instruction: RiscvInstruction,
 ) -> bool {
     match instruction {
-        RiscvInstruction::VectorAddVv { vd, vs1, vs2 } => {
-            execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::Add)
+        RiscvInstruction::VectorAddVv { vd, vs1, vs2, mask } => {
+            execute_vector_binary_vv_with_mask(hart, vd, vs1, vs2, mask, LaneBinaryOp::Add)
         }
-        RiscvInstruction::VectorAddVx { vd, vs2, rs1 } => {
-            execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::Add)
-        }
-        RiscvInstruction::VectorAddVi { vd, vs2, imm } => {
-            execute_vector_binary_vi(hart, vd, vs2, imm, LaneBinaryOp::Add)
+        RiscvInstruction::VectorAddVx { vd, vs2, rs1, mask } => execute_vector_binary_vx_with_mask(
+            hart,
+            vd,
+            vs2,
+            hart.read(rs1),
+            mask,
+            LaneBinaryOp::Add,
+        ),
+        RiscvInstruction::VectorAddVi { vd, vs2, imm, mask } => {
+            execute_vector_binary_vi_with_mask(hart, vd, vs2, imm, mask, LaneBinaryOp::Add)
         }
         RiscvInstruction::VectorSubVv { vd, vs1, vs2 } => {
             execute_vector_binary_vv(hart, vd, vs1, vs2, LaneBinaryOp::Sub)
@@ -348,7 +353,18 @@ fn execute_vector_binary_vi(
     imm: i8,
     operation: LaneBinaryOp,
 ) -> bool {
-    execute_vector_binary_vx(hart, vd, vs2, imm as i64 as u64, operation)
+    execute_vector_binary_vi_with_mask(hart, vd, vs2, imm, RiscvVectorMaskMode::Unmasked, operation)
+}
+
+fn execute_vector_binary_vi_with_mask(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    imm: i8,
+    mask: RiscvVectorMaskMode,
+    operation: LaneBinaryOp,
+) -> bool {
+    execute_vector_binary_vx_with_mask(hart, vd, vs2, imm as i64 as u64, mask, operation)
 }
 
 fn execute_vector_binary_vv(
@@ -358,13 +374,30 @@ fn execute_vector_binary_vv(
     vs2: VectorRegister,
     operation: LaneBinaryOp,
 ) -> bool {
+    execute_vector_binary_vv_with_mask(hart, vd, vs1, vs2, RiscvVectorMaskMode::Unmasked, operation)
+}
+
+fn execute_vector_binary_vv_with_mask(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs1: VectorRegister,
+    vs2: VectorRegister,
+    mask: RiscvVectorMaskMode,
+    operation: LaneBinaryOp,
+) -> bool {
     let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2, vs1]) else {
         return false;
     };
+    if mask.is_masked() && register_group_overlaps_v0(vd, plan.group_registers) {
+        return false;
+    }
+    let mask = mask
+        .is_masked()
+        .then(|| hart.read_vector(VectorRegister::from_field(0)));
     let left = read_register_group(hart, vs2, plan.group_registers);
     let right = read_register_group(hart, vs1, plan.group_registers);
     let mut result = read_register_group(hart, vd, plan.group_registers);
-    apply_vector_lanes(&plan, &mut result, &left, &right, operation);
+    apply_vector_lanes_with_mask(&plan, &mut result, &left, &right, mask.as_ref(), operation);
     write_register_group(hart, vd, plan.group_registers, &result);
     true
 }
@@ -376,12 +409,36 @@ fn execute_vector_binary_vx(
     scalar: u64,
     operation: LaneBinaryOp,
 ) -> bool {
+    execute_vector_binary_vx_with_mask(
+        hart,
+        vd,
+        vs2,
+        scalar,
+        RiscvVectorMaskMode::Unmasked,
+        operation,
+    )
+}
+
+fn execute_vector_binary_vx_with_mask(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    scalar: u64,
+    mask: RiscvVectorMaskMode,
+    operation: LaneBinaryOp,
+) -> bool {
     let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2]) else {
         return false;
     };
+    if mask.is_masked() && register_group_overlaps_v0(vd, plan.group_registers) {
+        return false;
+    }
+    let mask = mask
+        .is_masked()
+        .then(|| hart.read_vector(VectorRegister::from_field(0)));
     let left = read_register_group(hart, vs2, plan.group_registers);
     let mut result = read_register_group(hart, vd, plan.group_registers);
-    apply_scalar_lanes(&plan, &mut result, &left, scalar, operation);
+    apply_scalar_lanes_with_mask(&plan, &mut result, &left, scalar, mask.as_ref(), operation);
     write_register_group(hart, vd, plan.group_registers, &result);
     true
 }
@@ -926,14 +983,19 @@ impl VectorMaskLogicalPlan {
     }
 }
 
-fn apply_vector_lanes(
+fn apply_vector_lanes_with_mask(
     plan: &VectorBinaryPlan,
     result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
     left: &[u8; MAX_VECTOR_GROUP_BYTES],
     right: &[u8; MAX_VECTOR_GROUP_BYTES],
+    mask: Option<&[u8; RISCV_VECTOR_REGISTER_BYTES]>,
     operation: LaneBinaryOp,
 ) {
-    for offset in (0..plan.active_bytes).step_by(plan.element_bytes) {
+    for element_index in 0..plan.active_element_count() {
+        if mask.is_some_and(|mask| !read_mask_bit(mask, element_index)) {
+            continue;
+        }
+        let offset = element_index * plan.element_bytes;
         apply_lane(
             &mut result[offset..offset + plan.element_bytes],
             &left[offset..offset + plan.element_bytes],
@@ -943,14 +1005,19 @@ fn apply_vector_lanes(
     }
 }
 
-fn apply_scalar_lanes(
+fn apply_scalar_lanes_with_mask(
     plan: &VectorBinaryPlan,
     result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
     left: &[u8; MAX_VECTOR_GROUP_BYTES],
     scalar: u64,
+    mask: Option<&[u8; RISCV_VECTOR_REGISTER_BYTES]>,
     operation: LaneBinaryOp,
 ) {
-    for offset in (0..plan.active_bytes).step_by(plan.element_bytes) {
+    for element_index in 0..plan.active_element_count() {
+        if mask.is_some_and(|mask| !read_mask_bit(mask, element_index)) {
+            continue;
+        }
+        let offset = element_index * plan.element_bytes;
         apply_lane_scalar(
             &mut result[offset..offset + plan.element_bytes],
             &left[offset..offset + plan.element_bytes],
