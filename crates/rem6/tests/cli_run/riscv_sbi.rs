@@ -399,6 +399,7 @@ fn rem6_run_riscv_sbi_starts_secondary_hart_through_hsm() {
 
     let mut program = riscv64_program(&words);
     let secondary_offset = (secondary_index * 4) as i32;
+    let secondary_address = RISCV_SBI_ENTRY + secondary_offset as u64;
     let message_offset = program.len() as i32;
     words[secondary_auipc_index + 1] = i_type(
         secondary_offset - (secondary_auipc_index * 4) as i32,
@@ -452,7 +453,12 @@ fn rem6_run_riscv_sbi_starts_secondary_hart_through_hsm() {
     assert!(stdout.contains(
         "\"riscv_sbi_console\":{\"bytes\":15,\"text\":\"hsm-start:1:55\\n\",\"hex\":\"68736d2d73746172743a313a35350a\"}"
     ));
+    assert!(stdout.contains(&format!(
+        "\"riscv_sbi_hsm_events\":[{{\"source_cpu\":0,\"function\":0,\"target_hart\":1,\"start_addr\":\"0x{:x}\",\"opaque\":\"0x55\"}}]",
+        secondary_address
+    )));
     assert_stat(&stdout, "sim.riscv.sbi", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.riscv.sbi.hsm.starts", "Count", 1, "constant");
     assert_stat(
         &stdout,
         "sim.riscv.sbi.dbcn.console_bytes",

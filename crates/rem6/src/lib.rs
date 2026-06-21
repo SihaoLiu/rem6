@@ -107,9 +107,9 @@ use riscv_checkpoint_runtime::{
     attach_cli_memory_checkpoint_bank, attach_cli_riscv_checkpoint_bank,
 };
 pub(crate) use riscv_guest_output::{
-    Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiIpiSummary,
-    Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
-    Rem6RiscvUnknownSyscallSummary,
+    Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmSummary,
+    Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceSummary,
+    Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
 };
 use riscv_run_driver::drive_cli_riscv_run;
 use riscv_sbi_runtime::{attach_cli_riscv_sbi_firmware, configure_cli_riscv_sbi_core};
@@ -195,6 +195,7 @@ pub struct Rem6ExecutionSummary {
     riscv_unknown_syscalls: Vec<Rem6RiscvUnknownSyscallSummary>,
     riscv_sbi_console: Rem6RiscvSbiConsoleSummary,
     riscv_sbi_timers: Vec<Rem6RiscvSbiTimerSummary>,
+    riscv_sbi_hsm_events: Vec<Rem6RiscvSbiHsmSummary>,
     riscv_sbi_ipis: Vec<Rem6RiscvSbiIpiSummary>,
     riscv_sbi_rfences: Vec<Rem6RiscvSbiRfenceSummary>,
     riscv_sbi_resets: Vec<Rem6RiscvSbiResetSummary>,
@@ -397,6 +398,7 @@ struct ExecutionSummaryInputs<'a> {
     riscv_unknown_syscalls: Vec<Rem6RiscvUnknownSyscallSummary>,
     riscv_sbi_console: Rem6RiscvSbiConsoleSummary,
     riscv_sbi_timers: Vec<Rem6RiscvSbiTimerSummary>,
+    riscv_sbi_hsm_events: Vec<Rem6RiscvSbiHsmSummary>,
     riscv_sbi_ipis: Vec<Rem6RiscvSbiIpiSummary>,
     riscv_sbi_rfences: Vec<Rem6RiscvSbiRfenceSummary>,
     riscv_sbi_resets: Vec<Rem6RiscvSbiResetSummary>,
@@ -914,8 +916,7 @@ fn execute_riscv(
             (guest_writes, unknown_syscalls, syscall_trace)
         })
         .unwrap_or_default();
-    let (riscv_sbi_console, riscv_sbi_timers, riscv_sbi_ipis, riscv_sbi_rfences, riscv_sbi_resets) =
-        riscv_sbi_runtime::collect_cli_riscv_sbi_output(&driver, core_count);
+    let riscv_sbi_output = riscv_sbi_runtime::collect_cli_riscv_sbi_output(&driver, core_count);
     let host_actions = {
         let controller = controller
             .lock()
@@ -945,11 +946,12 @@ fn execute_riscv(
         data_trace: &data_trace,
         riscv_guest_writes,
         riscv_unknown_syscalls,
-        riscv_sbi_console,
-        riscv_sbi_timers,
-        riscv_sbi_ipis,
-        riscv_sbi_rfences,
-        riscv_sbi_resets,
+        riscv_sbi_console: riscv_sbi_output.console,
+        riscv_sbi_timers: riscv_sbi_output.timers,
+        riscv_sbi_hsm_events: riscv_sbi_output.hsm_events,
+        riscv_sbi_ipis: riscv_sbi_output.ipis,
+        riscv_sbi_rfences: riscv_sbi_output.rfences,
+        riscv_sbi_resets: riscv_sbi_output.resets,
         riscv_syscall_trace,
         host_actions,
         prior_committed_by_cpu: gdb_outcome.retired_by_cpu().clone(),
@@ -1175,6 +1177,7 @@ fn execution_summary(
         riscv_unknown_syscalls: inputs.riscv_unknown_syscalls,
         riscv_sbi_console: inputs.riscv_sbi_console,
         riscv_sbi_timers: inputs.riscv_sbi_timers,
+        riscv_sbi_hsm_events: inputs.riscv_sbi_hsm_events,
         riscv_sbi_ipis: inputs.riscv_sbi_ipis,
         riscv_sbi_rfences: inputs.riscv_sbi_rfences,
         riscv_sbi_resets: inputs.riscv_sbi_resets,

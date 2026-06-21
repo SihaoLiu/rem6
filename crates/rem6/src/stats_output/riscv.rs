@@ -68,6 +68,17 @@ pub(super) fn emit_riscv_run_stats(
             )?;
             increment_stat(
                 stats,
+                "sim.riscv.sbi.hsm.starts",
+                "Count",
+                StatResetPolicy::Constant,
+                execution
+                    .riscv_sbi_hsm_events
+                    .iter()
+                    .filter(|event| event.is_hart_start())
+                    .count() as u64,
+            )?;
+            increment_stat(
+                stats,
                 "sim.riscv.sbi.ipi.targets",
                 "Count",
                 StatResetPolicy::Constant,

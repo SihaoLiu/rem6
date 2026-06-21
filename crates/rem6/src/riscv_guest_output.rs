@@ -1,6 +1,6 @@
 use rem6_system::{
-    RiscvGuestWriteRecord, RiscvSbiIpiRecord, RiscvSbiResetRecord, RiscvSbiRfenceRecord,
-    RiscvUnknownSyscallRecord,
+    RiscvGuestWriteRecord, RiscvSbiHsmRecord, RiscvSbiIpiRecord, RiscvSbiResetRecord,
+    RiscvSbiRfenceRecord, RiscvUnknownSyscallRecord,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -31,6 +31,15 @@ pub(crate) struct Rem6RiscvSbiConsoleSummary {
 pub(crate) struct Rem6RiscvSbiTimerSummary {
     cpu: u32,
     deadline: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6RiscvSbiHsmSummary {
+    source_cpu: u32,
+    function: u64,
+    target_hart: u64,
+    start_addr: u64,
+    opaque: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -86,6 +95,42 @@ impl Rem6RiscvSbiTimerSummary {
 
     pub(crate) const fn deadline(&self) -> u64 {
         self.deadline
+    }
+}
+
+impl Rem6RiscvSbiHsmSummary {
+    pub(crate) fn from_record(record: &RiscvSbiHsmRecord) -> Self {
+        Self {
+            source_cpu: record.source_cpu().get(),
+            function: record.function(),
+            target_hart: record.target_hart(),
+            start_addr: record.start_addr(),
+            opaque: record.opaque(),
+        }
+    }
+
+    pub(crate) const fn source_cpu(&self) -> u32 {
+        self.source_cpu
+    }
+
+    pub(crate) const fn function(&self) -> u64 {
+        self.function
+    }
+
+    pub(crate) const fn target_hart(&self) -> u64 {
+        self.target_hart
+    }
+
+    pub(crate) const fn start_addr(&self) -> u64 {
+        self.start_addr
+    }
+
+    pub(crate) const fn opaque(&self) -> u64 {
+        self.opaque
+    }
+
+    pub(crate) const fn is_hart_start(&self) -> bool {
+        self.function == 0
     }
 }
 

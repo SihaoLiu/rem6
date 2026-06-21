@@ -5,8 +5,8 @@ use rem6_system::RiscvSystemRunDriver;
 
 use crate::config::Rem6RunConfig;
 use crate::riscv_guest_output::{
-    Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary,
-    Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
+    Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmSummary, Rem6RiscvSbiIpiSummary,
+    Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
 };
 use crate::runtime_memory::CliMemoryRuntime;
 
@@ -16,6 +16,15 @@ const SUPERVISOR_EXTERNAL_INTERRUPT: u64 = 9;
 const SBI_SUPERVISOR_INTERRUPT_DELEGATION: u64 = (1 << SUPERVISOR_SOFTWARE_INTERRUPT)
     | (1 << SUPERVISOR_TIMER_INTERRUPT)
     | (1 << SUPERVISOR_EXTERNAL_INTERRUPT);
+
+pub(crate) struct CliRiscvSbiOutput {
+    pub(crate) console: Rem6RiscvSbiConsoleSummary,
+    pub(crate) timers: Vec<Rem6RiscvSbiTimerSummary>,
+    pub(crate) hsm_events: Vec<Rem6RiscvSbiHsmSummary>,
+    pub(crate) ipis: Vec<Rem6RiscvSbiIpiSummary>,
+    pub(crate) rfences: Vec<Rem6RiscvSbiRfenceSummary>,
+    pub(crate) resets: Vec<Rem6RiscvSbiResetSummary>,
+}
 
 pub(crate) fn configure_cli_riscv_sbi_core(
     config: &Rem6RunConfig,
@@ -61,21 +70,16 @@ pub(crate) fn attach_cli_riscv_sbi_firmware(
 pub(crate) fn collect_cli_riscv_sbi_output(
     driver: &RiscvSystemRunDriver,
     core_count: u32,
-) -> (
-    Rem6RiscvSbiConsoleSummary,
-    Vec<Rem6RiscvSbiTimerSummary>,
-    Vec<Rem6RiscvSbiIpiSummary>,
-    Vec<Rem6RiscvSbiRfenceSummary>,
-    Vec<Rem6RiscvSbiResetSummary>,
-) {
+) -> CliRiscvSbiOutput {
     let Some(firmware) = driver.riscv_sbi_firmware() else {
-        return (
-            Rem6RiscvSbiConsoleSummary::default(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        );
+        return CliRiscvSbiOutput {
+            console: Rem6RiscvSbiConsoleSummary::default(),
+            timers: Vec::new(),
+            hsm_events: Vec::new(),
+            ipis: Vec::new(),
+            rfences: Vec::new(),
+            resets: Vec::new(),
+        };
     };
     let console = Rem6RiscvSbiConsoleSummary::from_bytes(firmware.debug_console_bytes());
     let timers = (0..core_count)
@@ -84,6 +88,11 @@ pub(crate) fn collect_cli_riscv_sbi_output(
                 .timer_deadline(CpuId::new(cpu))
                 .map(|deadline| Rem6RiscvSbiTimerSummary::new(cpu, deadline))
         })
+        .collect();
+    let hsm = firmware
+        .hsm_records()
+        .iter()
+        .map(Rem6RiscvSbiHsmSummary::from_record)
         .collect();
     let ipis = firmware
         .ipi_records()
@@ -100,5 +109,12 @@ pub(crate) fn collect_cli_riscv_sbi_output(
         .iter()
         .map(Rem6RiscvSbiResetSummary::from_record)
         .collect();
-    (console, timers, ipis, rfences, resets)
+    CliRiscvSbiOutput {
+        console,
+        timers,
+        hsm_events: hsm,
+        ipis,
+        rfences,
+        resets,
+    }
 }

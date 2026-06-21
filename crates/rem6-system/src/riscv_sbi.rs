@@ -73,6 +73,7 @@ const STIP: u64 = 1 << 5;
 pub struct RiscvSbiFirmware {
     cores: Arc<Mutex<BTreeMap<u64, RiscvCore>>>,
     timer: Arc<Mutex<RiscvSbiTimerState>>,
+    hsm: Arc<Mutex<Vec<RiscvSbiHsmRecord>>>,
     ipis: Arc<Mutex<Vec<RiscvSbiIpiRecord>>>,
     rfences: Arc<Mutex<Vec<RiscvSbiRfenceRecord>>>,
     resets: Arc<Mutex<Vec<RiscvSbiResetRecord>>>,
@@ -86,6 +87,15 @@ pub struct RiscvSbiFirmware {
 struct RiscvSbiTimerState {
     generations: BTreeMap<CpuId, u64>,
     deadlines: BTreeMap<CpuId, u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvSbiHsmRecord {
+    source_cpu: CpuId,
+    function: u64,
+    target_hart: u64,
+    start_addr: u64,
+    opaque: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -140,6 +150,44 @@ impl RiscvSbiResetRecord {
 
     pub const fn code(&self) -> i32 {
         self.code
+    }
+}
+
+impl RiscvSbiHsmRecord {
+    pub const fn new(
+        source_cpu: CpuId,
+        function: u64,
+        target_hart: u64,
+        start_addr: u64,
+        opaque: u64,
+    ) -> Self {
+        Self {
+            source_cpu,
+            function,
+            target_hart,
+            start_addr,
+            opaque,
+        }
+    }
+
+    pub const fn source_cpu(&self) -> CpuId {
+        self.source_cpu
+    }
+
+    pub const fn function(&self) -> u64 {
+        self.function
+    }
+
+    pub const fn target_hart(&self) -> u64 {
+        self.target_hart
+    }
+
+    pub const fn start_addr(&self) -> u64 {
+        self.start_addr
+    }
+
+    pub const fn opaque(&self) -> u64 {
+        self.opaque
     }
 }
 
@@ -384,6 +432,7 @@ impl RiscvSbiFirmware {
                 generations: BTreeMap::new(),
                 deadlines: BTreeMap::new(),
             })),
+            hsm: Arc::new(Mutex::new(Vec::new())),
             ipis: Arc::new(Mutex::new(Vec::new())),
             rfences: Arc::new(Mutex::new(Vec::new())),
             resets: Arc::new(Mutex::new(Vec::new())),
@@ -428,6 +477,7 @@ impl RiscvSbiFirmware {
             .lock()
             .expect("RISC-V SBI debug console lock")
             .clear();
+        self.hsm.lock().expect("RISC-V SBI HSM record lock").clear();
         self.ipis
             .lock()
             .expect("RISC-V SBI IPI record lock")
@@ -472,6 +522,10 @@ impl RiscvSbiFirmware {
             .lock()
             .expect("RISC-V SBI debug console lock")
             .clone()
+    }
+
+    pub fn hsm_records(&self) -> Vec<RiscvSbiHsmRecord> {
+        self.hsm.lock().expect("RISC-V SBI HSM record lock").clone()
     }
 
     pub fn ipi_records(&self) -> Vec<RiscvSbiIpiRecord> {
@@ -540,6 +594,7 @@ impl RiscvSbiFirmware {
                 {
                     self.schedule_hart_start(scheduler, core, request, parallel)
                         .map_err(SystemError::Scheduler)?;
+                    self.record_hsm_start(core.id(), request);
                 }
                 outcome
             }
@@ -750,6 +805,19 @@ impl RiscvSbiFirmware {
                 hart_mask,
                 hart_mask_base,
                 targets,
+            ));
+    }
+
+    fn record_hsm_start(&self, source_cpu: CpuId, request: RiscvSbiRequest) {
+        self.hsm
+            .lock()
+            .expect("RISC-V SBI HSM record lock")
+            .push(RiscvSbiHsmRecord::new(
+                source_cpu,
+                request.function(),
+                request.arg0(),
+                request.arg1(),
+                request.arg2(),
             ));
     }
 
