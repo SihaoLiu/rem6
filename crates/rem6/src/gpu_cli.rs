@@ -23,7 +23,8 @@ use crate::config::{
     CliCachePrefetcher, CliDramMemoryProfile, MemoryDumpRequest, PowerAnalysisFormat, StatsFormat,
 };
 use crate::data_cache_runtime::{
-    cli_cache_runtime_with_prefetcher, cli_data_memory_response, CliDataCacheSummary,
+    cli_cache_runtime_with_prefetcher, cli_data_memory_response, CliCacheHierarchy,
+    CliDataCacheSummary,
 };
 use crate::power_output::{gpu_run_power_analysis_artifact, Rem6PowerAnalysisArtifact};
 use crate::runtime_memory::{read_memory_dumps, CliMemoryRuntime};
@@ -1081,6 +1082,7 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
         config.compute_units(),
         config.data_cache_prefetcher(),
     )?;
+    let data_cache_hierarchy = CliCacheHierarchy::from_levels([data_cache.clone()]);
     let mut transport = gpu_memory_transport(&config);
     let memory_route = transport
         .add_route(gpu_memory_route(&config)?)
@@ -1116,19 +1118,14 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
                 line_layout,
             )?;
             let request_memory = memory.clone();
-            let request_data_cache = data_cache.clone();
+            let request_data_cache = data_cache_hierarchy.clone();
             let response_records = Arc::clone(&memory_responses);
             Ok(ParallelMemoryTransaction::new(
                 memory_route,
                 request,
                 trace.clone(),
                 move |delivery, _context| {
-                    cli_data_memory_response(
-                        request_data_cache.as_ref(),
-                        None,
-                        &request_memory,
-                        &delivery,
-                    )
+                    cli_data_memory_response(&request_data_cache, &request_memory, &delivery)
                 },
                 move |delivery| {
                     response_records

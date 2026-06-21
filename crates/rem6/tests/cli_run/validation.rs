@@ -955,6 +955,70 @@ fn rem6_run_rejects_instruction_cache_l2_protocol_without_instruction_cache_prot
 }
 
 #[test]
+fn rem6_run_rejects_data_cache_l3_protocol_without_l2_protocol() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("data-cache-l3-without-l2", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-l3-protocol",
+            "msi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--data-cache-l3-protocol requires --data-cache-l2-protocol"));
+}
+
+#[test]
+fn rem6_run_rejects_instruction_cache_l3_protocol_without_l2_protocol() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("instruction-cache-l3-without-l2", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--instruction-cache-protocol",
+            "msi",
+            "--instruction-cache-l3-protocol",
+            "msi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("--instruction-cache-l3-protocol requires --instruction-cache-l2-protocol")
+    );
+}
+
+#[test]
 fn rem6_run_rejects_instruction_cache_protocol_for_non_riscv_isa() {
     let elf = x86_64_elf(0x4000_0000, 0x4000_0000, &[0x90]);
     let path = temp_binary("instruction-cache-non-riscv", &elf);

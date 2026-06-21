@@ -68,8 +68,8 @@ pub use config::{
     StatsFormat, SuiteResourceSelector, TraceReplayExternalAdapterKind,
 };
 use data_cache_runtime::{
-    cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io,
-    CliDataCacheRuntime, CliDataCacheSummary,
+    cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io, CliCacheHierarchy,
+    CliDataCacheSummary,
 };
 use debug_output::Rem6DebugSummary;
 pub use gpu_cli::{run_gpu_run_config, Rem6GpuRunArtifact, Rem6GpuRunConfig};
@@ -157,8 +157,10 @@ pub struct Rem6ExecutionSummary {
     data_atomic_bytes: u64,
     instruction_cache: CliDataCacheSummary,
     instruction_cache_l2: CliDataCacheSummary,
+    instruction_cache_l3: CliDataCacheSummary,
     data_cache: CliDataCacheSummary,
     data_cache_l2: CliDataCacheSummary,
+    data_cache_l3: CliDataCacheSummary,
     instruction_probes: Rem6InstructionProbeSummary,
     data_access_probes: Rem6DataAccessProbeSummary,
     parallel_scheduler_epochs: u64,
@@ -629,6 +631,17 @@ fn execute_riscv(
         core_count,
         None,
     )?;
+    let instruction_cache_l3 = cli_cache_runtime_with_prefetcher(
+        config.instruction_cache_l3_protocol(),
+        line_layout,
+        core_count,
+        None,
+    )?;
+    let instruction_cache_hierarchy = CliCacheHierarchy::from_levels([
+        instruction_cache.clone(),
+        instruction_cache_l2.clone(),
+        instruction_cache_l3.clone(),
+    ]);
     let data_cache = cli_cache_runtime_with_prefetcher(
         config.data_cache_protocol(),
         line_layout,
@@ -641,6 +654,17 @@ fn execute_riscv(
         core_count,
         None,
     )?;
+    let data_cache_l3 = cli_cache_runtime_with_prefetcher(
+        config.data_cache_l3_protocol(),
+        line_layout,
+        core_count,
+        None,
+    )?;
+    let data_cache_hierarchy = CliCacheHierarchy::from_levels([
+        data_cache.clone(),
+        data_cache_l2.clone(),
+        data_cache_l3.clone(),
+    ]);
     let readfile_bus = readfile_mmio_bus(
         readfiles,
         core_count,
@@ -782,10 +806,8 @@ fn execute_riscv(
         config,
         driver,
         &memory,
-        instruction_cache.clone(),
-        instruction_cache_l2.clone(),
-        data_cache.clone(),
-        data_cache_l2.clone(),
+        instruction_cache_hierarchy.clone(),
+        data_cache_hierarchy.clone(),
         line_layout,
     );
     if config.riscv_se() {
@@ -820,10 +842,8 @@ fn execute_riscv(
         driver = with_riscv_syscall_data_cache_memory_io(
             driver,
             memory.clone(),
-            instruction_cache.clone(),
-            instruction_cache_l2.clone(),
-            data_cache.clone(),
-            data_cache_l2.clone(),
+            instruction_cache_hierarchy.clone(),
+            data_cache_hierarchy.clone(),
             line_layout,
         );
         if config.debug_syscall_enabled() {
@@ -843,10 +863,8 @@ fn execute_riscv(
             &driver,
             &mut scheduler,
             &transport,
-            instruction_cache.clone(),
-            instruction_cache_l2.clone(),
-            data_cache.clone(),
-            data_cache_l2.clone(),
+            instruction_cache_hierarchy.clone(),
+            data_cache_hierarchy.clone(),
             fetch_trace.clone(),
             data_trace.clone(),
             tick_limit,
@@ -865,10 +883,8 @@ fn execute_riscv(
             &transport,
             readfile_bus.as_ref(),
             &memory,
-            instruction_cache.clone(),
-            instruction_cache_l2.clone(),
-            data_cache.clone(),
-            data_cache_l2.clone(),
+            instruction_cache_hierarchy.clone(),
+            data_cache_hierarchy.clone(),
             fetch_trace.clone(),
             data_trace.clone(),
             tick_limit,
@@ -881,42 +897,16 @@ fn execute_riscv(
             return Err(execute_error(error));
         }
     }
-    if let Some(data_cache) = data_cache.as_ref() {
-        if let Some(error) = data_cache.take_error() {
-            return Err(error);
-        }
+    if let Some(error) = data_cache_hierarchy.take_error() {
+        return Err(error);
     }
-    if let Some(data_cache_l2) = data_cache_l2.as_ref() {
-        if let Some(error) = data_cache_l2.take_error() {
-            return Err(error);
-        }
-    }
-    if let Some(instruction_cache) = instruction_cache.as_ref() {
-        if let Some(error) = instruction_cache.take_error() {
-            return Err(error);
-        }
-    }
-    if let Some(instruction_cache_l2) = instruction_cache_l2.as_ref() {
-        if let Some(error) = instruction_cache_l2.take_error() {
-            return Err(error);
-        }
+    if let Some(error) = instruction_cache_hierarchy.take_error() {
+        return Err(error);
     }
     let mut run = run_result.map_err(execute_error)?;
     if let Some(data_cache) = data_cache.as_ref() {
         run = run.with_data_cache_run_records(data_cache.records());
     }
-    let instruction_cache_records = instruction_cache
-        .as_ref()
-        .map(CliDataCacheRuntime::records)
-        .unwrap_or_default();
-    let instruction_cache_l2_records = instruction_cache_l2
-        .as_ref()
-        .map(CliDataCacheRuntime::records)
-        .unwrap_or_default();
-    let data_cache_l2_records = data_cache_l2
-        .as_ref()
-        .map(CliDataCacheRuntime::records)
-        .unwrap_or_default();
     let (riscv_guest_writes, riscv_unknown_syscalls, riscv_syscall_trace) = driver
         .riscv_syscall_emulation()
         .map(|emulation| {
@@ -948,21 +938,20 @@ fn execute_riscv(
         memory: &memory,
         line_layout,
         config,
-        instruction_cache: CliDataCacheSummary::from_records(&instruction_cache_records)
-            .with_prefetch_summary(
-                instruction_cache
-                    .as_ref()
-                    .map(CliDataCacheRuntime::prefetch_summary)
-                    .unwrap_or_default(),
-            ),
-        instruction_cache_l2: CliDataCacheSummary::from_records(&instruction_cache_l2_records),
-        data_cache: CliDataCacheSummary::from_run(&run).with_prefetch_summary(
-            data_cache
-                .as_ref()
-                .map(CliDataCacheRuntime::prefetch_summary)
-                .unwrap_or_default(),
+        instruction_cache: CliDataCacheSummary::from_records(
+            &instruction_cache_hierarchy.records(0),
+        )
+        .with_prefetch_summary(instruction_cache_hierarchy.top_prefetch_summary()),
+        instruction_cache_l2: CliDataCacheSummary::from_records(
+            &instruction_cache_hierarchy.records(1),
         ),
-        data_cache_l2: CliDataCacheSummary::from_records(&data_cache_l2_records),
+        instruction_cache_l3: CliDataCacheSummary::from_records(
+            &instruction_cache_hierarchy.records(2),
+        ),
+        data_cache: CliDataCacheSummary::from_run(&run)
+            .with_prefetch_summary(data_cache_hierarchy.top_prefetch_summary()),
+        data_cache_l2: CliDataCacheSummary::from_records(&data_cache_hierarchy.records(1)),
+        data_cache_l3: CliDataCacheSummary::from_records(&data_cache_hierarchy.records(2)),
         fetch_trace: &fetch_trace,
         data_trace: &data_trace,
         riscv_guest_writes,

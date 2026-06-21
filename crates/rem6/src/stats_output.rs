@@ -438,6 +438,11 @@ pub(super) fn run_stats_output(
             "sim.instruction_cache.l2",
             &execution.instruction_cache_l2,
         )?;
+        emit_data_cache_summary_stats(
+            &mut stats,
+            "sim.instruction_cache.l3",
+            &execution.instruction_cache_l3,
+        )?;
         increment_stat(
             &mut stats,
             "sim.instruction_cache.prefetch.identified",
@@ -574,6 +579,7 @@ pub(super) fn run_stats_output(
             execution.data_cache.prefetch_translation_queue_dropped,
         )?;
         emit_data_cache_summary_stats(&mut stats, "sim.data_cache.l2", &execution.data_cache_l2)?;
+        emit_data_cache_summary_stats(&mut stats, "sim.data_cache.l3", &execution.data_cache_l3)?;
         increment_stat(
             &mut stats,
             "sim.data.probes.samples",

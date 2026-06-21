@@ -48,6 +48,9 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     if config.data_cache_l2_protocol().is_some() {
         return Err(Rem6CliError::DataCacheL2ProtocolRequiresExecution);
     }
+    if config.data_cache_l3_protocol().is_some() {
+        return Err(Rem6CliError::DataCacheL3ProtocolRequiresExecution);
+    }
     if config.data_cache_prefetcher().is_some() {
         return Err(Rem6CliError::DataCachePrefetcherRequiresExecution);
     }
@@ -56,6 +59,9 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     }
     if config.instruction_cache_l2_protocol().is_some() {
         return Err(Rem6CliError::InstructionCacheL2ProtocolRequiresExecution);
+    }
+    if config.instruction_cache_l3_protocol().is_some() {
+        return Err(Rem6CliError::InstructionCacheL3ProtocolRequiresExecution);
     }
     if config.instruction_cache_prefetcher().is_some() {
         return Err(Rem6CliError::InstructionCachePrefetcherRequiresExecution);
@@ -102,6 +108,12 @@ fn validate_cache_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
     if config.data_cache_l2_protocol().is_some() && config.data_cache_protocol().is_none() {
         return Err(Rem6CliError::DataCacheL2ProtocolRequiresDataCacheProtocol);
     }
+    if config.data_cache_l3_protocol().is_some() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::DataCacheL3ProtocolRequiresRiscv);
+    }
+    if config.data_cache_l3_protocol().is_some() && config.data_cache_l2_protocol().is_none() {
+        return Err(Rem6CliError::DataCacheL3ProtocolRequiresDataCacheL2Protocol);
+    }
     if config.data_cache_prefetcher().is_some() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::DataCachePrefetcherRequiresRiscv);
     }
@@ -118,6 +130,14 @@ fn validate_cache_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
         && config.instruction_cache_protocol().is_none()
     {
         return Err(Rem6CliError::InstructionCacheL2ProtocolRequiresInstructionCacheProtocol);
+    }
+    if config.instruction_cache_l3_protocol().is_some() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::InstructionCacheL3ProtocolRequiresRiscv);
+    }
+    if config.instruction_cache_l3_protocol().is_some()
+        && config.instruction_cache_l2_protocol().is_none()
+    {
+        return Err(Rem6CliError::InstructionCacheL3ProtocolRequiresInstructionCacheL2Protocol);
     }
     if config.instruction_cache_prefetcher().is_some() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::InstructionCachePrefetcherRequiresRiscv);
@@ -164,6 +184,14 @@ fn validate_large_multicore_cache_protocols(config: &Rem6RunConfig) -> Result<()
             });
         }
     }
+    if let Some(protocol) = config.data_cache_l3_protocol() {
+        if protocol != RiscvDataCacheProtocol::Msi {
+            return Err(Rem6CliError::DataCacheL3ProtocolLargeMulticoreRequiresMsi {
+                protocol,
+                cores: config.cores(),
+            });
+        }
+    }
     if let Some(protocol) = config.instruction_cache_protocol() {
         if protocol != RiscvDataCacheProtocol::Msi {
             return Err(
@@ -178,6 +206,16 @@ fn validate_large_multicore_cache_protocols(config: &Rem6RunConfig) -> Result<()
         if protocol != RiscvDataCacheProtocol::Msi {
             return Err(
                 Rem6CliError::InstructionCacheL2ProtocolLargeMulticoreRequiresMsi {
+                    protocol,
+                    cores: config.cores(),
+                },
+            );
+        }
+    }
+    if let Some(protocol) = config.instruction_cache_l3_protocol() {
+        if protocol != RiscvDataCacheProtocol::Msi {
+            return Err(
+                Rem6CliError::InstructionCacheL3ProtocolLargeMulticoreRequiresMsi {
                     protocol,
                     cores: config.cores(),
                 },

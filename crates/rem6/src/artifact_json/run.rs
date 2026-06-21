@@ -149,12 +149,16 @@ impl Rem6RunArtifact {
             optional_riscv_cache_protocol_json(self.config.instruction_cache_protocol());
         let instruction_cache_l2_protocol =
             optional_riscv_cache_protocol_json(self.config.instruction_cache_l2_protocol());
+        let instruction_cache_l3_protocol =
+            optional_riscv_cache_protocol_json(self.config.instruction_cache_l3_protocol());
         let instruction_cache_prefetcher =
             optional_cache_prefetcher_json(self.config.instruction_cache_prefetcher());
         let data_cache_protocol =
             optional_riscv_cache_protocol_json(self.config.data_cache_protocol());
         let data_cache_l2_protocol =
             optional_riscv_cache_protocol_json(self.config.data_cache_l2_protocol());
+        let data_cache_l3_protocol =
+            optional_riscv_cache_protocol_json(self.config.data_cache_l3_protocol());
         let data_cache_prefetcher =
             optional_cache_prefetcher_json(self.config.data_cache_prefetcher());
         let power_analysis = self
@@ -163,7 +167,7 @@ impl Rem6RunArtifact {
             .map(|artifact| format!(",\"power_analysis\":{}", artifact.to_json()))
             .unwrap_or_default();
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -172,9 +176,11 @@ impl Rem6RunArtifact {
             riscv_boot,
             instruction_cache_protocol,
             instruction_cache_l2_protocol,
+            instruction_cache_l3_protocol,
             instruction_cache_prefetcher,
             data_cache_protocol,
             data_cache_l2_protocol,
+            data_cache_l3_protocol,
             data_cache_prefetcher,
             load_blobs,
             readfiles,
