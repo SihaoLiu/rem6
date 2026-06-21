@@ -9,12 +9,14 @@ use serde::Deserialize;
 use crate::Rem6CliError;
 
 mod debug;
+mod dram;
 mod output_format;
 mod riscv_se_input;
 mod trace_replay;
 
 pub use debug::CliDebugFlag;
 use debug::{parse_debug_flag_list, parse_debug_flags};
+pub use dram::CliDramMemoryProfile;
 pub use output_format::{PowerAnalysisFormat, StatsFormat};
 pub use riscv_se_input::{RiscvSeFileRequest, RiscvSeInputSource};
 
@@ -53,49 +55,6 @@ impl RequestedIsa {
                 BootElfArchitecture::I386 | BootElfArchitecture::X8664
             )
         )
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CliDramMemoryProfile {
-    Ddr,
-    Ddr4_2400_8Gb,
-    Ddr5_4800_16Gb,
-    Hbm,
-    Hbm2_2000_2Gb,
-    Lpddr,
-    Lpddr4_3200_16Gb,
-    Nvm,
-}
-
-impl CliDramMemoryProfile {
-    pub fn parse(value: &str) -> Result<Self, Rem6CliError> {
-        match value {
-            "ddr" => Ok(Self::Ddr),
-            "ddr4-2400-8gb" => Ok(Self::Ddr4_2400_8Gb),
-            "ddr5-4800-16gb" => Ok(Self::Ddr5_4800_16Gb),
-            "hbm" => Ok(Self::Hbm),
-            "hbm2-2000-2gb" => Ok(Self::Hbm2_2000_2Gb),
-            "lpddr" => Ok(Self::Lpddr),
-            "lpddr4-3200-16gb" => Ok(Self::Lpddr4_3200_16Gb),
-            "nvm" => Ok(Self::Nvm),
-            _ => Err(Rem6CliError::UnsupportedDramMemoryProfile {
-                profile: value.to_string(),
-            }),
-        }
-    }
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Ddr => "ddr",
-            Self::Ddr4_2400_8Gb => "ddr4-2400-8gb",
-            Self::Ddr5_4800_16Gb => "ddr5-4800-16gb",
-            Self::Hbm => "hbm",
-            Self::Hbm2_2000_2Gb => "hbm2-2000-2gb",
-            Self::Lpddr => "lpddr",
-            Self::Lpddr4_3200_16Gb => "lpddr4-3200-16gb",
-            Self::Nvm => "nvm",
-        }
     }
 }
 
@@ -150,6 +109,7 @@ pub struct Rem6RunConfig {
     riscv_se_stdin: Option<RiscvSeInputSource>,
     riscv_se_files: Vec<RiscvSeFileRequest>,
     riscv_pc_count_targets: Vec<PcCountPair>,
+    riscv_branch_lookahead: usize,
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
@@ -243,6 +203,7 @@ struct Rem6RunFileConfig {
     riscv_se_stdin: Option<String>,
     riscv_se_files: Option<Vec<String>>,
     riscv_pc_count_targets: Option<Vec<String>>,
+    riscv_branch_lookahead: Option<usize>,
     max_instructions: Option<u64>,
     stats_format: Option<String>,
     execute: Option<bool>,
@@ -446,6 +407,12 @@ impl Rem6RunConfig {
         if max_instructions == Some(0) {
             return Err(Rem6CliError::InvalidMaxInstructions {
                 value: "0".to_string(),
+            });
+        }
+        let mut riscv_branch_lookahead = file_config.riscv_branch_lookahead.unwrap_or(1);
+        if !valid_riscv_branch_lookahead(riscv_branch_lookahead) {
+            return Err(Rem6CliError::InvalidRiscvBranchLookahead {
+                value: riscv_branch_lookahead.to_string(),
             });
         }
         let mut stats_format = file_config
@@ -686,6 +653,16 @@ impl Rem6RunConfig {
                     }
                     riscv_pc_count_targets.push(parse_riscv_pc_count_target(&value)?);
                 }
+                "--riscv-branch-lookahead" => {
+                    let value = required_value(&flag, args.next())?;
+                    riscv_branch_lookahead = value
+                        .parse()
+                        .ok()
+                        .filter(|lookahead| valid_riscv_branch_lookahead(*lookahead))
+                        .ok_or_else(|| Rem6CliError::InvalidRiscvBranchLookahead {
+                            value: value.clone(),
+                        })?;
+                }
                 "--max-instructions" => {
                     let value = required_value(&flag, args.next())?;
                     max_instructions = Some(
@@ -918,6 +895,7 @@ impl Rem6RunConfig {
             riscv_se_stdin,
             riscv_se_files,
             riscv_pc_count_targets,
+            riscv_branch_lookahead,
             max_instructions,
             stats_format,
             execute,
@@ -1008,6 +986,10 @@ impl Rem6RunConfig {
 
     pub fn riscv_pc_count_targets(&self) -> &[PcCountPair] {
         &self.riscv_pc_count_targets
+    }
+
+    pub const fn riscv_branch_lookahead(&self) -> usize {
+        self.riscv_branch_lookahead
     }
 
     pub const fn max_instructions(&self) -> Option<u64> {
@@ -1592,6 +1574,10 @@ fn parse_positive_u64(value: &str) -> Option<u64> {
     value.parse().ok().filter(|value| *value > 0)
 }
 
+fn valid_riscv_branch_lookahead(value: usize) -> bool {
+    matches!(value, 1 | 2)
+}
+
 fn parse_riscv_pc_count_target(value: &str) -> Result<PcCountPair, Rem6CliError> {
     let Some((pc, count)) = value.split_once(':') else {
         return Err(Rem6CliError::InvalidRiscvPcCountTarget {
@@ -1650,6 +1636,7 @@ fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6Cli
             "--riscv-se-stdin",
             "--riscv-se-file",
             "--riscv-pc-count-target",
+            "--riscv-branch-lookahead",
             "--max-instructions",
             "--stats-format",
             "--dram-memory-profile",

@@ -817,6 +817,32 @@ pub(super) fn run_stats_output(
                 StatResetPolicy::Monotonic,
                 core.in_order_pipeline_redirects,
             )?;
+            for (name, value) in [
+                (
+                    "branch_speculation_predictions",
+                    core.in_order_pipeline_branch_speculation_predictions,
+                ),
+                (
+                    "branch_speculation_repairs",
+                    core.in_order_pipeline_branch_speculation_repairs,
+                ),
+                (
+                    "branch_speculation_removed_youngers",
+                    core.in_order_pipeline_branch_speculation_removed_youngers,
+                ),
+                (
+                    "branch_speculation_max_pending",
+                    core.in_order_pipeline_branch_speculation_max_pending,
+                ),
+            ] {
+                increment_stat(
+                    &mut stats,
+                    &format!("sim.cpu{}.pipeline.in_order.{name}", core.cpu),
+                    "Count",
+                    StatResetPolicy::Monotonic,
+                    value,
+                )?;
+            }
             if let Some(checker) = &core.checker {
                 increment_stat(
                     &mut stats,

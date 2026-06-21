@@ -56,6 +56,9 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     if !config.riscv_pc_count_targets().is_empty() {
         return Err(Rem6CliError::RiscvPcCountTargetRequiresExecution);
     }
+    if config.riscv_branch_lookahead() > 1 {
+        return Err(Rem6CliError::RiscvBranchLookaheadRequiresExecution);
+    }
     if !config.debug_flags().is_empty() {
         return Err(Rem6CliError::DebugFlagsRequireExecution);
     }
@@ -97,6 +100,9 @@ fn validate_cache_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
     }
     if !config.riscv_pc_count_targets().is_empty() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::RiscvPcCountTargetRequiresRiscv);
+    }
+    if config.riscv_branch_lookahead() > 1 && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::RiscvBranchLookaheadRequiresRiscv);
     }
     if config.checker_cpu() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::CheckerCpuRequiresRiscv);

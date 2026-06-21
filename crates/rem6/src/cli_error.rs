@@ -60,6 +60,9 @@ pub enum Rem6CliError {
     InvalidHostEventDelay {
         value: String,
     },
+    InvalidRiscvBranchLookahead {
+        value: String,
+    },
     InvalidStartAddress {
         value: String,
     },
@@ -199,6 +202,7 @@ pub enum Rem6CliError {
     InstructionCacheProtocolRequiresExecution,
     InstructionCachePrefetcherRequiresExecution,
     RiscvPcCountTargetRequiresExecution,
+    RiscvBranchLookaheadRequiresExecution,
     DebugFlagsRequireExecution,
     DebugFlagsRequireJsonStats,
     PowerOutputRequiresExecution,
@@ -212,6 +216,7 @@ pub enum Rem6CliError {
     InstructionCachePrefetcherRequiresRiscv,
     InstructionCachePrefetcherRequiresInstructionCacheProtocol,
     RiscvPcCountTargetRequiresRiscv,
+    RiscvBranchLookaheadRequiresRiscv,
     CheckerCpuRequiresRiscv,
     RiscvSbiRequiresRiscv,
     RiscvSbiConflictsWithRiscvSe,
@@ -339,6 +344,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidHostEventDelay { value } => {
                 write!(formatter, "invalid host event delay {value}")
+            }
+            Self::InvalidRiscvBranchLookahead { value } => {
+                write!(formatter, "invalid RISC-V branch lookahead {value}")
             }
             Self::InvalidStartAddress { value } => {
                 write!(formatter, "invalid start address {value}")
@@ -519,6 +527,9 @@ impl fmt::Display for Rem6CliError {
             Self::RiscvPcCountTargetRequiresExecution => {
                 write!(formatter, "--riscv-pc-count-target requires --execute")
             }
+            Self::RiscvBranchLookaheadRequiresExecution => {
+                write!(formatter, "--riscv-branch-lookahead requires --execute")
+            }
             Self::DebugFlagsRequireExecution => {
                 write!(formatter, "--debug-flags requires --execute")
             }
@@ -557,6 +568,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::RiscvPcCountTargetRequiresRiscv => {
                 write!(formatter, "--riscv-pc-count-target requires --isa riscv")
+            }
+            Self::RiscvBranchLookaheadRequiresRiscv => {
+                write!(formatter, "--riscv-branch-lookahead requires --isa riscv")
             }
             Self::CheckerCpuRequiresRiscv => {
                 write!(formatter, "--checker-cpu requires --isa riscv")

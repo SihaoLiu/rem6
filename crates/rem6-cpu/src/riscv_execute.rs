@@ -598,6 +598,9 @@ fn resolve_branch_speculation(
             .branch_predictor
             .repair_speculation(speculation, update.actual_taken())
             .map_err(RiscvCpuError::BranchPredictor)?;
+        state
+            .branch_speculation_summary
+            .record_repair(repair.removed_youngers().len() as u64);
         remove_branch_speculation_mappings(state, repair.removed_youngers());
     }
     state

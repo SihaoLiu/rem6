@@ -23,15 +23,12 @@ impl RiscvCore {
                     && !state.executed_fetches.contains(&event.request_id())
             })
             .collect::<Vec<_>>();
-        if completed.is_empty() || completed.len() >= COMPLETED_FETCH_WINDOW {
+        if completed.is_empty() || completed.len() >= completed_fetch_window(&state) {
             return None;
         }
         completed.sort_by_key(|event| event.request_id().sequence());
 
-        let fetch = completed[0];
-        if fetch.pc() != Address::new(state.hart.pc()) {
-            return None;
-        }
+        let fetch = next_fetch_ahead_candidate(&state, &completed)?;
         let data = fetch.data()?;
         let raw = match data {
             [a, b, c, d] => u32::from_le_bytes([*a, *b, *c, *d]),
@@ -70,6 +67,8 @@ impl RiscvCore {
         state
             .branch_speculations
             .insert(speculation.sequence(), prediction.id());
+        let pending = state.branch_speculations.len() as u64;
+        state.branch_speculation_summary.record_prediction(pending);
     }
 
     pub(crate) fn can_retire_completed_fetch_while_fetch_pending(
@@ -172,11 +171,48 @@ fn can_retire_completed_fetch_with_branch_speculations(
     let Some(oldest_speculation_sequence) = state.branch_speculations.keys().next().copied() else {
         return Ok(true);
     };
+    if state.branch_speculations.len() < state.branch_lookahead
+        && has_pending_younger_fetch(state, fetch_events, oldest_speculation_sequence)
+        && completed_unexecuted_fetch_count(state, fetch_events) < completed_fetch_window(state)
+    {
+        return Ok(false);
+    }
 
     Ok(
         next_completed_fetch_sequence_for_architectural_pc(state, fetch_events)
             == Some(oldest_speculation_sequence),
     )
+}
+
+fn next_fetch_ahead_candidate<'a>(
+    state: &RiscvCoreState,
+    completed: &'a [&'a CpuFetchEvent],
+) -> Option<&'a CpuFetchEvent> {
+    let architectural = Address::new(state.hart.pc());
+    if let Some(fetch) = completed
+        .iter()
+        .copied()
+        .find(|event| event.pc() == architectural)
+    {
+        if !state
+            .branch_speculations
+            .contains_key(&fetch.request_id().sequence())
+        {
+            return Some(fetch);
+        }
+    }
+
+    let oldest_speculation = state.branch_speculations.keys().next().copied()?;
+    completed.iter().copied().find(|event| {
+        event.request_id().sequence() > oldest_speculation
+            && !state
+                .branch_speculations
+                .contains_key(&event.request_id().sequence())
+    })
+}
+
+fn completed_fetch_window(state: &RiscvCoreState) -> usize {
+    COMPLETED_FETCH_WINDOW.max(state.branch_lookahead.saturating_add(1))
 }
 
 fn discard_stale_branch_speculations_before_architectural_fetch(
@@ -200,6 +236,42 @@ fn discard_stale_branch_speculations_before_architectural_fetch(
         }
         discard_branch_speculation_mapping(state, oldest_sequence)?;
     }
+}
+
+fn has_pending_younger_fetch(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    oldest_speculation_sequence: u64,
+) -> bool {
+    fetch_events.iter().any(|event| {
+        event.kind() == CpuFetchEventKind::Issued
+            && event.request_id().sequence() > oldest_speculation_sequence
+            && !state.executed_fetches.contains(&event.request_id())
+            && !fetch_request_has_response(fetch_events, event)
+    })
+}
+
+fn fetch_request_has_response(fetch_events: &[CpuFetchEvent], issued: &CpuFetchEvent) -> bool {
+    fetch_events.iter().any(|event| {
+        event.request_id() == issued.request_id()
+            && matches!(
+                event.kind(),
+                CpuFetchEventKind::Completed | CpuFetchEventKind::Retry | CpuFetchEventKind::Failed
+            )
+    })
+}
+
+fn completed_unexecuted_fetch_count(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+) -> usize {
+    fetch_events
+        .iter()
+        .filter(|event| {
+            event.kind() == CpuFetchEventKind::Completed
+                && !state.executed_fetches.contains(&event.request_id())
+        })
+        .count()
 }
 
 fn branch_speculation_sequence_has_live_fetch(

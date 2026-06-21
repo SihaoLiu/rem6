@@ -1113,6 +1113,17 @@ impl RiscvCore {
             .clone()
     }
 
+    pub fn branch_speculation_summary(&self) -> RiscvBranchSpeculationSummary {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .branch_speculation_summary
+    }
+
+    pub fn set_branch_lookahead(&self, lookahead: usize) {
+        self.state.lock().expect("riscv core lock").branch_lookahead = lookahead.max(1);
+    }
+
     pub(crate) fn record_in_order_resource_stall_cycle(
         &self,
     ) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
@@ -1174,6 +1185,8 @@ struct RiscvCoreState {
     checker: Option<riscv_checker::RiscvCheckerCpu>,
     branch_predictor: BranchPredictor,
     branch_speculations: BTreeMap<u64, BranchSpeculationId>,
+    branch_speculation_summary: RiscvBranchSpeculationSummary,
+    branch_lookahead: usize,
     gshare_branch_predictor: GShareBranchPredictor,
     tournament_branch_predictor: TournamentBranchPredictor,
     in_order_pipeline: InOrderPipelineState,
@@ -1210,6 +1223,8 @@ impl RiscvCoreState {
                     .expect("default RISC-V branch predictor entries are valid"),
             ),
             branch_speculations: BTreeMap::new(),
+            branch_speculation_summary: RiscvBranchSpeculationSummary::default(),
+            branch_lookahead: 1,
             gshare_branch_predictor: GShareBranchPredictor::new(
                 GShareBranchPredictorConfig::new(1, DEFAULT_RISCV_GSHARE_BRANCH_PREDICTOR_ENTRIES)
                     .expect("default RISC-V gshare branch predictor config is valid"),
@@ -1241,6 +1256,42 @@ impl RiscvCoreState {
     fn discard_branch_speculations(&mut self) {
         self.branch_predictor.discard_all_speculations();
         self.branch_speculations.clear();
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RiscvBranchSpeculationSummary {
+    predictions: u64,
+    repairs: u64,
+    removed_youngers: u64,
+    max_pending: u64,
+}
+
+impl RiscvBranchSpeculationSummary {
+    pub const fn predictions(self) -> u64 {
+        self.predictions
+    }
+
+    pub const fn repairs(self) -> u64 {
+        self.repairs
+    }
+
+    pub const fn removed_youngers(self) -> u64 {
+        self.removed_youngers
+    }
+
+    pub const fn max_pending(self) -> u64 {
+        self.max_pending
+    }
+
+    fn record_prediction(&mut self, pending: u64) {
+        self.predictions = self.predictions.saturating_add(1);
+        self.max_pending = self.max_pending.max(pending);
+    }
+
+    fn record_repair(&mut self, removed_youngers: u64) {
+        self.repairs = self.repairs.saturating_add(1);
+        self.removed_youngers = self.removed_youngers.saturating_add(removed_youngers);
     }
 }
 

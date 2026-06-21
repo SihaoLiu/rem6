@@ -30,6 +30,7 @@ mod artifact_json;
 mod cli_error;
 mod cli_output;
 mod config;
+mod core_summary_json;
 mod data_cache_runtime;
 mod debug_output;
 mod formatting;
@@ -415,6 +416,10 @@ pub struct Rem6CoreSummary {
     in_order_pipeline_branch_mispredictions: u64,
     in_order_pipeline_branch_prediction_flushes: u64,
     in_order_pipeline_redirects: u64,
+    in_order_pipeline_branch_speculation_predictions: u64,
+    in_order_pipeline_branch_speculation_repairs: u64,
+    in_order_pipeline_branch_speculation_removed_youngers: u64,
+    in_order_pipeline_branch_speculation_max_pending: u64,
     data_loads: u64,
     data_stores: u64,
     data_atomics: u64,
@@ -737,6 +742,7 @@ fn execute_riscv(
         if config.checker_cpu() {
             core.enable_checker_cpu();
         }
+        core.set_branch_lookahead(config.riscv_branch_lookahead());
         cores.push(core);
     }
     let cluster = RiscvCluster::new(cores).map_err(execute_error)?;
@@ -1037,6 +1043,7 @@ fn execution_summary(
         let pipeline_stage_max_in_flight =
             in_order_pipeline_stage_max_in_flight(&core, &pipeline_snapshot);
         let pipeline_stage_occupied_cycles = in_order_pipeline_stage_occupied_cycles(&core);
+        let branch_speculation_summary = core.branch_speculation_summary();
         let checker = core
             .checker_cpu_snapshot()
             .map(|snapshot| Rem6CheckerSummary {
@@ -1067,6 +1074,13 @@ fn execution_summary(
                 .branch_prediction_flushed_count()
                 as u64,
             in_order_pipeline_redirects: pipeline_summary.redirect_count() as u64,
+            in_order_pipeline_branch_speculation_predictions: branch_speculation_summary
+                .predictions(),
+            in_order_pipeline_branch_speculation_repairs: branch_speculation_summary.repairs(),
+            in_order_pipeline_branch_speculation_removed_youngers: branch_speculation_summary
+                .removed_youngers(),
+            in_order_pipeline_branch_speculation_max_pending: branch_speculation_summary
+                .max_pending(),
             data_loads: data.loads,
             data_stores: data.stores,
             data_atomics: data.atomics,

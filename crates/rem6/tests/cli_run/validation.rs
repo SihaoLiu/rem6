@@ -31,6 +31,97 @@ fn rem6_run_rejects_instruction_limit_without_execution() {
 }
 
 #[test]
+fn rem6_run_rejects_riscv_branch_lookahead_without_execution() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("riscv-branch-lookahead-without-execute", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--riscv-branch-lookahead",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--riscv-branch-lookahead requires --execute"));
+}
+
+#[test]
+fn rem6_run_rejects_riscv_branch_lookahead_without_riscv_isa() {
+    let elf = x86_64_elf(0x1000_0000, 0x1000_0000, &[0x90]);
+    let path = temp_binary("riscv-branch-lookahead-without-riscv", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "x86",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--execute",
+            "--stats-format",
+            "json",
+            "--riscv-branch-lookahead",
+            "2",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--riscv-branch-lookahead requires --isa riscv"));
+}
+
+#[test]
+fn rem6_run_rejects_invalid_riscv_branch_lookahead_values() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("riscv-branch-lookahead-invalid", &elf);
+
+    for value in ["0", "3"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "40",
+                "--execute",
+                "--stats-format",
+                "json",
+                "--riscv-branch-lookahead",
+                value,
+            ])
+            .output()
+            .unwrap();
+
+        assert!(!output.status.success(), "{value}");
+        assert!(output.stdout.is_empty(), "{value}");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(
+            stderr.contains("invalid RISC-V branch lookahead"),
+            "{value}: {stderr}"
+        );
+    }
+}
+
+#[test]
 fn rem6_run_rejects_riscv_se_without_execution() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("riscv-se-without-execute", &elf);
