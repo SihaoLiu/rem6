@@ -8,6 +8,7 @@ use crate::{
 use rem6_boot::BootImage;
 use rem6_kernel::Tick;
 
+mod admin;
 mod advisory;
 mod brk;
 mod cache;
@@ -87,6 +88,12 @@ mod wait4;
 mod writev;
 mod xattr;
 
+use admin::{
+    syscall_acct, syscall_mount, syscall_pivot_root, syscall_reboot, syscall_setdomainname,
+    syscall_sethostname, syscall_swapoff, syscall_swapon, syscall_umount2, RISCV_LINUX_ACCT,
+    RISCV_LINUX_MOUNT, RISCV_LINUX_PIVOT_ROOT, RISCV_LINUX_REBOOT, RISCV_LINUX_SETDOMAINNAME,
+    RISCV_LINUX_SETHOSTNAME, RISCV_LINUX_SWAPOFF, RISCV_LINUX_SWAPON, RISCV_LINUX_UMOUNT2,
+};
 use advisory::{syscall_fadvise64, RISCV_LINUX_FADVISE64};
 use brk::syscall_brk;
 use cache::{syscall_riscv_flush_icache, RISCV_LINUX_RISCV_FLUSH_ICACHE};

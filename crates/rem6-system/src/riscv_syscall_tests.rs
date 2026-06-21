@@ -6,6 +6,8 @@ use crate::{
 use rem6_cpu::CpuId;
 use rem6_kernel::PartitionId;
 
+#[path = "riscv_syscall_tests/admin_tests.rs"]
+mod admin_tests;
 #[path = "riscv_syscall_tests/boot_image_tests.rs"]
 mod boot_image_tests;
 #[path = "riscv_syscall_tests/capability_tests.rs"]

@@ -48,6 +48,21 @@ impl RiscvSyscallTable {
             5..=16 => {
                 xattr::syscall_xattr(request, state, guest_memory_reader, guest_memory_writer)
             }
+            RISCV_LINUX_UMOUNT2 => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_umount2(request, guest_memory),
+                })
+            }
+            RISCV_LINUX_MOUNT => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_mount(request, guest_memory),
+                })
+            }
+            RISCV_LINUX_PIVOT_ROOT => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_pivot_root(request, guest_memory),
+                })
+            }
             RISCV_LINUX_GETCWD => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_getcwd(
@@ -451,6 +466,8 @@ impl RiscvSyscallTable {
             RISCV_LINUX_SETSID => Some(RiscvSyscallOutcome::Return {
                 value: syscall_setsid(state),
             }),
+            RISCV_LINUX_ACCT => syscall_acct(request, guest_memory_reader)
+                .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_UNSHARE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_unshare(request),
             }),
@@ -479,6 +496,19 @@ impl RiscvSyscallTable {
             RISCV_LINUX_UNAME => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: write_riscv_linux_utsname(request.argument(0), guest_memory),
+                })
+            }
+            RISCV_LINUX_REBOOT => Some(RiscvSyscallOutcome::Return {
+                value: syscall_reboot(),
+            }),
+            RISCV_LINUX_SETHOSTNAME => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_sethostname(request, guest_memory),
+                })
+            }
+            RISCV_LINUX_SETDOMAINNAME => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_setdomainname(request, guest_memory),
                 })
             }
             RISCV_LINUX_SYSINFO => {
@@ -691,6 +721,16 @@ impl RiscvSyscallTable {
             RISCV_LINUX_BRK => Some(RiscvSyscallOutcome::Return {
                 value: syscall_brk(request.argument(0), state, guest_memory_writer),
             }),
+            RISCV_LINUX_SWAPON => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_swapon(request, guest_memory),
+                })
+            }
+            RISCV_LINUX_SWAPOFF => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_swapoff(request, guest_memory),
+                })
+            }
             RISCV_LINUX_MMAP => Some(RiscvSyscallOutcome::Return {
                 value: syscall_mmap(request, state, guest_memory_writer),
             }),
