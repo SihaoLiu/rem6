@@ -48,6 +48,14 @@ pub(super) fn emit_memory_resource_stats(
             execution.memory_resources.active_transports,
         ),
         (
+            "sim.memory.resources.fabric.activity",
+            execution.memory_resources.fabric_activity,
+        ),
+        (
+            "sim.memory.resources.fabric.active",
+            execution.memory_resources.active_fabric_resources,
+        ),
+        (
             "sim.memory.resources.dram.activity",
             execution.memory_resources.dram_activity,
         ),

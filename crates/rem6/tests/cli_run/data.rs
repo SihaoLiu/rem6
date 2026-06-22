@@ -922,6 +922,72 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         Some(2)
     );
     assert!(fabric.get("transfers").and_then(Value::as_u64).unwrap_or(0) > 0);
+    let fabric_transfers = fabric
+        .get("transfers")
+        .and_then(Value::as_u64)
+        .expect("fabric transfers");
+    let fabric_active_lanes = fabric
+        .get("active_lanes")
+        .and_then(Value::as_u64)
+        .expect("fabric active lanes");
+    let memory_resources = json
+        .pointer("/memory_resources")
+        .expect("memory resource summary");
+    let cache_activity = memory_resources
+        .pointer("/cache/activity")
+        .and_then(Value::as_u64)
+        .expect("cache resource activity");
+    let transport_activity = memory_resources
+        .pointer("/transport/activity")
+        .and_then(Value::as_u64)
+        .expect("transport resource activity");
+    let dram_activity = memory_resources
+        .pointer("/dram/activity")
+        .and_then(Value::as_u64)
+        .expect("DRAM resource activity");
+    let cache_active = memory_resources
+        .pointer("/cache/active")
+        .and_then(Value::as_u64)
+        .expect("active cache resources");
+    let transport_active = memory_resources
+        .pointer("/transport/active")
+        .and_then(Value::as_u64)
+        .expect("active transport resources");
+    let dram_active = memory_resources
+        .pointer("/dram/active")
+        .and_then(Value::as_u64)
+        .expect("active DRAM resources");
+    assert_eq!(
+        memory_resources
+            .pointer("/fabric/activity")
+            .and_then(Value::as_u64),
+        Some(fabric_transfers)
+    );
+    assert_eq!(
+        memory_resources
+            .pointer("/fabric/active")
+            .and_then(Value::as_u64),
+        Some(fabric_active_lanes)
+    );
+    assert_eq!(
+        memory_resources
+            .pointer("/activity")
+            .and_then(Value::as_u64),
+        Some(
+            cache_activity
+                .saturating_add(transport_activity)
+                .saturating_add(fabric_transfers)
+                .saturating_add(dram_activity)
+        )
+    );
+    let expected_active_memory_resources = cache_active
+        .saturating_add(transport_active)
+        .saturating_add(fabric_active_lanes)
+        .saturating_add(dram_active);
+    assert_eq!(
+        memory_resources.pointer("/active").and_then(Value::as_u64),
+        Some(expected_active_memory_resources)
+    );
     assert!(fabric.get("bytes").and_then(Value::as_u64).unwrap_or(0) > 0);
     assert!(fabric.get("flits").and_then(Value::as_u64).unwrap_or(0) > 0);
     let credit_delay_ticks = fabric
@@ -983,6 +1049,27 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         "sim.memory.fabric.max_credit_delay_ticks",
         "Tick",
         max_credit_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.fabric.activity",
+        "Count",
+        fabric_transfers,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.fabric.active",
+        "Count",
+        fabric_active_lanes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.active",
+        "Count",
+        expected_active_memory_resources,
         "monotonic",
     );
     assert_run_fabric_virtual_network_stats(&stdout, fabric, 3);

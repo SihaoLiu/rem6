@@ -202,6 +202,7 @@ pub(super) fn execution_summary(
         &inputs.data_cache_l3,
         &fetch_transport,
         &data_transport,
+        &inputs.fabric,
         &dram,
     );
     let power_records = crate::power_output::run_power_analysis_records_from_parts(

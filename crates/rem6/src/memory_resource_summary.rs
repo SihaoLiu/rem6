@@ -1,6 +1,6 @@
 use crate::{
     data_cache_runtime::CliDataCacheSummary, transport_summary::Rem6MemoryTransportSummary,
-    Rem6DramSummary,
+    Rem6DramSummary, Rem6RunFabricSummary,
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -15,6 +15,8 @@ pub(crate) struct Rem6MemoryResourceSummary {
     pub(crate) cache_bank_coalesced_misses: u64,
     pub(crate) transport_activity: u64,
     pub(crate) active_transports: u64,
+    pub(crate) fabric_activity: u64,
+    pub(crate) active_fabric_resources: u64,
     pub(crate) dram_activity: u64,
     pub(crate) active_dram_resources: u64,
 }
@@ -29,6 +31,7 @@ impl Rem6MemoryResourceSummary {
         data_cache_l3: &CliDataCacheSummary,
         fetch_transport: &Rem6MemoryTransportSummary,
         data_transport: &Rem6MemoryTransportSummary,
+        fabric: &Rem6RunFabricSummary,
         dram: &Rem6DramSummary,
     ) -> Self {
         let cache_activity = instruction_cache
@@ -78,6 +81,8 @@ impl Rem6MemoryResourceSummary {
             .saturating_add(data_transport.counters.requests);
         let active_transports = u64::from(fetch_transport.counters.requests != 0)
             + u64::from(data_transport.counters.requests != 0);
+        let fabric_activity = fabric.transfers();
+        let active_fabric_resources = fabric.active_lanes();
         let dram_activity = dram
             .accesses
             .max(dram.reads.saturating_add(dram.writes))
@@ -100,9 +105,11 @@ impl Rem6MemoryResourceSummary {
         Self {
             activity: cache_activity
                 .saturating_add(transport_activity)
+                .saturating_add(fabric_activity)
                 .saturating_add(dram_activity),
             active: active_caches
                 .saturating_add(active_transports)
+                .saturating_add(active_fabric_resources)
                 .saturating_add(active_dram_resources),
             cache_activity,
             active_caches,
@@ -112,6 +119,8 @@ impl Rem6MemoryResourceSummary {
             cache_bank_coalesced_misses,
             transport_activity,
             active_transports,
+            fabric_activity,
+            active_fabric_resources,
             dram_activity,
             active_dram_resources,
         }
