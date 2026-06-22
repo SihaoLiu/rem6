@@ -25,7 +25,7 @@ use crate::{
     Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmSummary,
     Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary,
     Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
-    Rem6RunConfig, RISCV_DATA_PROBE_PAGE_BYTES,
+    Rem6RunConfig, Rem6RunFabricSummary, RISCV_DATA_PROBE_PAGE_BYTES,
 };
 
 pub(super) struct ExecutionSummaryInputs<'a> {
@@ -41,6 +41,7 @@ pub(super) struct ExecutionSummaryInputs<'a> {
     pub(super) data_cache_l3: CliDataCacheSummary,
     pub(super) fetch_trace: &'a MemoryTrace,
     pub(super) data_trace: &'a MemoryTrace,
+    pub(super) fabric: Rem6RunFabricSummary,
     pub(super) riscv_guest_writes: Vec<Rem6RiscvGuestWriteSummary>,
     pub(super) riscv_unknown_syscalls: Vec<Rem6RiscvUnknownSyscallSummary>,
     pub(super) riscv_sbi_console: Rem6RiscvSbiConsoleSummary,
@@ -253,6 +254,7 @@ pub(super) fn execution_summary(
         ),
         fetch_transport,
         data_transport,
+        fabric: inputs.fabric,
         dram,
         memory_resources,
         debug: Rem6DebugSummary::from_run(inputs.config, cluster, run, &inputs.riscv_syscall_trace),

@@ -66,6 +66,9 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     if config.instruction_cache_prefetcher().is_some() {
         return Err(Rem6CliError::InstructionCachePrefetcherRequiresExecution);
     }
+    if config.fabric().is_some() {
+        return Err(Rem6CliError::FabricRequiresExecution);
+    }
     if !config.riscv_pc_count_targets().is_empty() {
         return Err(Rem6CliError::RiscvPcCountTargetRequiresExecution);
     }
@@ -141,6 +144,9 @@ fn validate_cache_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliError> {
     }
     if config.instruction_cache_prefetcher().is_some() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::InstructionCachePrefetcherRequiresRiscv);
+    }
+    if config.fabric().is_some() && config.isa() != RequestedIsa::Riscv {
+        return Err(Rem6CliError::FabricRequiresRiscv);
     }
     if !config.riscv_pc_count_targets().is_empty() && config.isa() != RequestedIsa::Riscv {
         return Err(Rem6CliError::RiscvPcCountTargetRequiresRiscv);

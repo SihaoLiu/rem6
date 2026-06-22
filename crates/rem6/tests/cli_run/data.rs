@@ -1,5 +1,7 @@
 use std::process::Command;
 
+use serde_json::Value;
+
 use crate::support::*;
 
 #[test]
@@ -765,6 +767,129 @@ fn rem6_run_routes_data_cache_miss_through_l3_and_dram() {
         1,
         "monotonic",
     );
+}
+
+#[test]
+fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),                  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),                        // sd x6, 8(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET, 0);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("run-fabric-cache-dram", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--instruction-cache-protocol",
+            "msi",
+            "--instruction-cache-l2-protocol",
+            "msi",
+            "--instruction-cache-l3-protocol",
+            "msi",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-l2-protocol",
+            "msi",
+            "--data-cache-l3-protocol",
+            "msi",
+            "--fabric-link",
+            "cpu_mem",
+            "--fabric-bandwidth-bytes-per-tick",
+            "8",
+            "--fabric-request-virtual-network",
+            "3",
+            "--fabric-response-virtual-network",
+            "4",
+            "--fabric-credit-depth",
+            "2",
+            "--dump-memory",
+            "0x80000048:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let fabric = json.pointer("/fabric").expect("run fabric summary");
+
+    assert_eq!(fabric.get("link").and_then(Value::as_str), Some("cpu_mem"));
+    assert_eq!(
+        fabric
+            .get("bandwidth_bytes_per_tick")
+            .and_then(Value::as_u64),
+        Some(8)
+    );
+    assert_eq!(
+        fabric
+            .get("request_virtual_network")
+            .and_then(Value::as_u64),
+        Some(3)
+    );
+    assert_eq!(
+        fabric
+            .get("response_virtual_network")
+            .and_then(Value::as_u64),
+        Some(4)
+    );
+    assert_eq!(fabric.get("credit_depth").and_then(Value::as_u64), Some(2));
+    assert!(
+        fabric
+            .get("active_lanes")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            >= 2
+    );
+    assert_eq!(
+        fabric
+            .get("active_virtual_networks")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert!(fabric.get("transfers").and_then(Value::as_u64).unwrap_or(0) > 0);
+    assert!(fabric.get("bytes").and_then(Value::as_u64).unwrap_or(0) > 0);
+    assert!(fabric
+        .get("lane_activities")
+        .and_then(Value::as_array)
+        .is_some_and(|lanes| lanes.len() >= 2));
+    assert!(fabric
+        .get("hop_activities")
+        .and_then(Value::as_array)
+        .is_some_and(|hops| !hops.is_empty()));
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.fabric.transfers",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(&stdout, "sim.memory.fabric.bytes", "Byte", 0, "monotonic");
 }
 
 #[test]

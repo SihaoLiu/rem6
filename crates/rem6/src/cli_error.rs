@@ -169,6 +169,15 @@ pub enum Rem6CliError {
     InvalidRunInstructionCachePrefetcher {
         value: String,
     },
+    InvalidRunFabricBandwidth {
+        value: String,
+    },
+    InvalidRunFabricVirtualNetwork {
+        value: String,
+    },
+    InvalidRunFabricCreditDepth {
+        value: String,
+    },
     MemoryRouteDelayBelowMinRemoteDelay {
         memory_route_delay: u64,
         min_remote_delay: u64,
@@ -223,6 +232,7 @@ pub enum Rem6CliError {
     InstructionCacheL2ProtocolRequiresExecution,
     InstructionCacheL3ProtocolRequiresExecution,
     InstructionCachePrefetcherRequiresExecution,
+    FabricRequiresExecution,
     RiscvPcCountTargetRequiresExecution,
     RiscvBranchLookaheadRequiresExecution,
     RiscvBranchPredictorRequiresExecution,
@@ -247,6 +257,7 @@ pub enum Rem6CliError {
     InstructionCacheL3ProtocolRequiresInstructionCacheL2Protocol,
     InstructionCachePrefetcherRequiresRiscv,
     InstructionCachePrefetcherRequiresInstructionCacheProtocol,
+    FabricRequiresRiscv,
     RiscvPcCountTargetRequiresRiscv,
     RiscvBranchLookaheadRequiresRiscv,
     RiscvBranchPredictorRequiresRiscv,
@@ -513,6 +524,15 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidRunInstructionCachePrefetcher { value } => {
                 write!(formatter, "invalid run instruction cache prefetcher {value}")
             }
+            Self::InvalidRunFabricBandwidth { value } => {
+                write!(formatter, "invalid run fabric bandwidth {value}")
+            }
+            Self::InvalidRunFabricVirtualNetwork { value } => {
+                write!(formatter, "invalid run fabric virtual network {value}")
+            }
+            Self::InvalidRunFabricCreditDepth { value } => {
+                write!(formatter, "invalid run fabric credit depth {value}")
+            }
             Self::MemoryRouteDelayBelowMinRemoteDelay {
                 memory_route_delay,
                 min_remote_delay,
@@ -606,6 +626,9 @@ impl fmt::Display for Rem6CliError {
             Self::InstructionCachePrefetcherRequiresExecution => {
                 write!(formatter, "--instruction-cache-prefetcher requires --execute")
             }
+            Self::FabricRequiresExecution => {
+                write!(formatter, "--fabric-link requires --execute")
+            }
             Self::RiscvPcCountTargetRequiresExecution => {
                 write!(formatter, "--riscv-pc-count-target requires --execute")
             }
@@ -692,6 +715,9 @@ impl fmt::Display for Rem6CliError {
                     formatter,
                     "--instruction-cache-prefetcher requires --instruction-cache-protocol"
                 )
+            }
+            Self::FabricRequiresRiscv => {
+                write!(formatter, "--fabric-link requires --isa riscv")
             }
             Self::RiscvPcCountTargetRequiresRiscv => {
                 write!(formatter, "--riscv-pc-count-target requires --isa riscv")

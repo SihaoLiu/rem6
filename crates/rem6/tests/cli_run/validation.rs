@@ -145,6 +145,67 @@ fn rem6_run_rejects_riscv_branch_predictor_without_riscv_isa() {
 }
 
 #[test]
+fn rem6_run_rejects_fabric_without_execution() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("fabric-without-execute", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--fabric-link",
+            "cpu_mem",
+            "--fabric-bandwidth-bytes-per-tick",
+            "8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--fabric-link requires --execute"));
+}
+
+#[test]
+fn rem6_run_rejects_fabric_without_riscv_isa() {
+    let elf = x86_64_elf(0x1000_0000, 0x1000_0000, &[0x90]);
+    let path = temp_binary("fabric-without-riscv", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "x86",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--execute",
+            "--stats-format",
+            "json",
+            "--fabric-link",
+            "cpu_mem",
+            "--fabric-bandwidth-bytes-per-tick",
+            "8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--fabric-link requires --isa riscv"));
+}
+
+#[test]
 fn rem6_run_rejects_invalid_riscv_branch_lookahead_values() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("riscv-branch-lookahead-invalid", &elf);

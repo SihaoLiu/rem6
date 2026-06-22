@@ -5,9 +5,37 @@ use rem6_workload::WorkloadDataCacheProtocol;
 use super::{
     load_trace_replay_file_config, parse_data_cache_protocol, parse_number, parse_positive_u64,
     required_value, trace_replay_file_config_from_args, CliDramMemoryProfile,
-    Rem6TraceReplayConfig, StatsFormat, SuiteResourceSelector, TraceReplayExternalAdapterKind,
+    Rem6TraceReplayConfig, StatsFormat, SuiteResourceSelector,
 };
 use crate::Rem6CliError;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TraceReplayExternalAdapterKind {
+    SystemC,
+    Tlm,
+    Sst,
+}
+
+impl TraceReplayExternalAdapterKind {
+    pub(super) fn parse(value: &str) -> Result<Self, Rem6CliError> {
+        match value {
+            "systemc" => Ok(Self::SystemC),
+            "tlm" => Ok(Self::Tlm),
+            "sst" => Ok(Self::Sst),
+            _ => Err(Rem6CliError::InvalidTraceReplayExternalAdapterKind {
+                value: value.to_string(),
+            }),
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SystemC => "systemc",
+            Self::Tlm => "tlm",
+            Self::Sst => "sst",
+        }
+    }
+}
 
 impl Rem6TraceReplayConfig {
     pub fn parse_args<I, S>(args: I) -> Result<Self, Rem6CliError>

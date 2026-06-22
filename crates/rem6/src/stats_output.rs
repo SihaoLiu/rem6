@@ -2,6 +2,7 @@ use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
 
 mod data_cache;
 mod dram;
+mod fabric;
 mod gpu_run;
 mod gups;
 mod memory_resources;
@@ -22,6 +23,7 @@ use super::{
 };
 use data_cache::{emit_data_cache_prefetch_summary_stats, emit_data_cache_summary_stats};
 use dram::emit_dram_stats;
+use fabric::emit_run_fabric_stats;
 pub(super) use gpu_run::gpu_run_stats_output;
 pub(super) use gups::gups_stats_output;
 use memory_resources::emit_memory_resource_stats;
@@ -682,6 +684,7 @@ pub(super) fn run_stats_output(
         parallel_stats::emit_scheduler_stats(&mut stats, execution)?;
         emit_transport_stats(&mut stats, "sim.memory.fetch", &execution.fetch_transport)?;
         emit_transport_stats(&mut stats, "sim.memory.data", &execution.data_transport)?;
+        emit_run_fabric_stats(&mut stats, "sim.memory.fabric", &execution.fabric)?;
         emit_dram_stats(&mut stats, "sim.memory.dram", &execution.dram)?;
         emit_memory_resource_stats(&mut stats, execution)?;
         let single_cpu_run = execution.cores.len() == 1;

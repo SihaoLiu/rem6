@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 
-use rem6_boot::BootElfArchitecture;
 use rem6_cpu::RiscvBranchPredictorKind;
 use rem6_stats::PcCountPair;
 use rem6_system::RiscvDataCacheProtocol;
@@ -12,7 +11,9 @@ use crate::Rem6CliError;
 mod cache;
 mod debug;
 mod dram;
+mod fabric;
 mod file_scan;
+mod isa;
 mod output_format;
 mod riscv_branch;
 mod riscv_se_input;
@@ -22,78 +23,18 @@ pub use cache::CliCachePrefetcher;
 pub use debug::CliDebugFlag;
 use debug::{parse_debug_flag_list, parse_debug_flags};
 pub use dram::CliDramMemoryProfile;
+pub use fabric::RunFabricConfig;
+use fabric::{
+    parse_run_fabric_credit_depth, parse_run_fabric_virtual_network, run_fabric_config_from_parts,
+};
 use file_scan::{
     gups_file_config_from_args, run_file_config_from_args, trace_replay_file_config_from_args,
 };
+pub use isa::RequestedIsa;
 pub use output_format::{PowerAnalysisFormat, StatsFormat};
 use riscv_branch::{parse_riscv_branch_predictor, parse_riscv_pc_count_target};
 pub use riscv_se_input::{RiscvSeFileRequest, RiscvSeInputSource};
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RequestedIsa {
-    Riscv,
-    X86,
-}
-
-impl RequestedIsa {
-    pub fn parse(value: &str) -> Result<Self, Rem6CliError> {
-        match value {
-            "riscv" => Ok(Self::Riscv),
-            "x86" => Ok(Self::X86),
-            _ => Err(Rem6CliError::UnsupportedIsa {
-                isa: value.to_string(),
-            }),
-        }
-    }
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Riscv => "riscv",
-            Self::X86 => "x86",
-        }
-    }
-
-    pub(super) const fn matches_architecture(self, architecture: BootElfArchitecture) -> bool {
-        matches!(
-            (self, architecture),
-            (
-                Self::Riscv,
-                BootElfArchitecture::Riscv32 | BootElfArchitecture::Riscv64
-            ) | (
-                Self::X86,
-                BootElfArchitecture::I386 | BootElfArchitecture::X8664
-            )
-        )
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TraceReplayExternalAdapterKind {
-    SystemC,
-    Tlm,
-    Sst,
-}
-
-impl TraceReplayExternalAdapterKind {
-    fn parse(value: &str) -> Result<Self, Rem6CliError> {
-        match value {
-            "systemc" => Ok(Self::SystemC),
-            "tlm" => Ok(Self::Tlm),
-            "sst" => Ok(Self::Sst),
-            _ => Err(Rem6CliError::InvalidTraceReplayExternalAdapterKind {
-                value: value.to_string(),
-            }),
-        }
-    }
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::SystemC => "systemc",
-            Self::Tlm => "tlm",
-            Self::Sst => "sst",
-        }
-    }
-}
+pub use trace_replay::TraceReplayExternalAdapterKind;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6RunConfig {
@@ -130,6 +71,7 @@ pub struct Rem6RunConfig {
     instruction_cache_l2_protocol: Option<RiscvDataCacheProtocol>,
     instruction_cache_l3_protocol: Option<RiscvDataCacheProtocol>,
     instruction_cache_prefetcher: Option<CliCachePrefetcher>,
+    fabric: Option<RunFabricConfig>,
     gdb_listen: Option<String>,
     debug_flags: Vec<CliDebugFlag>,
     cores: usize,
@@ -231,6 +173,11 @@ struct Rem6RunFileConfig {
     instruction_cache_l2_protocol: Option<String>,
     instruction_cache_l3_protocol: Option<String>,
     instruction_cache_prefetcher: Option<String>,
+    fabric_link: Option<String>,
+    fabric_bandwidth_bytes_per_tick: Option<u64>,
+    fabric_request_virtual_network: Option<u16>,
+    fabric_response_virtual_network: Option<u16>,
+    fabric_credit_depth: Option<u32>,
     debug_flags: Option<Vec<String>>,
     cores: Option<usize>,
     parallel_workers: Option<usize>,
@@ -538,6 +485,21 @@ impl Rem6RunConfig {
             .as_deref()
             .map(CliCachePrefetcher::parse_instruction_cache)
             .transpose()?;
+        let mut fabric_link = file_config.fabric_link.clone();
+        let mut fabric_bandwidth_bytes_per_tick = file_config.fabric_bandwidth_bytes_per_tick;
+        if fabric_bandwidth_bytes_per_tick == Some(0) {
+            return Err(Rem6CliError::InvalidRunFabricBandwidth {
+                value: "0".to_string(),
+            });
+        }
+        let mut fabric_request_virtual_network = file_config.fabric_request_virtual_network;
+        let mut fabric_response_virtual_network = file_config.fabric_response_virtual_network;
+        let mut fabric_credit_depth = file_config.fabric_credit_depth;
+        if fabric_credit_depth == Some(0) {
+            return Err(Rem6CliError::InvalidRunFabricCreditDepth {
+                value: "0".to_string(),
+            });
+        }
         let mut gdb_listen = None;
         let mut debug_flags =
             parse_debug_flags(file_config.debug_flags.as_deref().unwrap_or_default())?;
@@ -841,6 +803,32 @@ impl Rem6RunConfig {
                             &required_value(&flag, args.next())?,
                         )?);
                 }
+                "--fabric-link" => {
+                    fabric_link = Some(required_value(&flag, args.next())?);
+                }
+                "--fabric-bandwidth-bytes-per-tick" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_bandwidth_bytes_per_tick =
+                        Some(parse_positive_u64(&value).ok_or_else(|| {
+                            Rem6CliError::InvalidRunFabricBandwidth {
+                                value: value.clone(),
+                            }
+                        })?);
+                }
+                "--fabric-request-virtual-network" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_request_virtual_network =
+                        Some(parse_run_fabric_virtual_network(&value)?);
+                }
+                "--fabric-response-virtual-network" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_response_virtual_network =
+                        Some(parse_run_fabric_virtual_network(&value)?);
+                }
+                "--fabric-credit-depth" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_credit_depth = Some(parse_run_fabric_credit_depth(&value)?);
+                }
                 "--gdb-listen" => {
                     gdb_listen = Some(required_value(&flag, args.next())?);
                 }
@@ -996,6 +984,13 @@ impl Rem6RunConfig {
             .ok_or(Rem6CliError::MissingRequiredFlag {
                 flag: "--binary or --resource-config",
             })?;
+        let fabric = run_fabric_config_from_parts(
+            fabric_link,
+            fabric_bandwidth_bytes_per_tick,
+            fabric_request_virtual_network,
+            fabric_response_virtual_network,
+            fabric_credit_depth,
+        )?;
 
         Ok(Self {
             isa: isa.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--isa" })?,
@@ -1031,6 +1026,7 @@ impl Rem6RunConfig {
             instruction_cache_l2_protocol,
             instruction_cache_l3_protocol,
             instruction_cache_prefetcher,
+            fabric,
             gdb_listen,
             debug_flags,
             cores,
@@ -1175,6 +1171,10 @@ impl Rem6RunConfig {
 
     pub const fn instruction_cache_prefetcher(&self) -> Option<CliCachePrefetcher> {
         self.instruction_cache_prefetcher
+    }
+
+    pub fn fabric(&self) -> Option<&RunFabricConfig> {
+        self.fabric.as_ref()
     }
 
     pub fn gdb_listen(&self) -> Option<&str> {

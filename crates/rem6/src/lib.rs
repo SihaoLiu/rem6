@@ -7,6 +7,7 @@ use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
 };
+use rem6_fabric::{FabricLinkId, FabricPath, FabricPathHop, VirtualNetworkId};
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
@@ -20,7 +21,7 @@ use rem6_system::{
     RiscvTrapEventPort, SystemHostController, SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
 };
 use rem6_transport::{
-    MemoryRoute, MemoryRouteId, MemoryTrace, MemoryTransport, TransportEndpointId,
+    MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTransport, TransportEndpointId,
 };
 
 mod artifact_json;
@@ -50,6 +51,7 @@ mod riscv_run_driver;
 mod riscv_sbi_runtime;
 mod riscv_se_inputs;
 mod run_execution_summary;
+mod run_fabric;
 mod run_gdb;
 mod run_resource_config;
 mod run_validation;
@@ -65,7 +67,7 @@ pub use config::{
     CliCachePrefetcher, CliDebugFlag, CliDramMemoryProfile, LoadBlobRequest, LoadBlobSource,
     MemoryDumpRequest, PowerAnalysisFormat, ReadfileRequest, ReadfileSource, Rem6GupsConfig,
     Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource,
-    StatsFormat, SuiteResourceSelector, TraceReplayExternalAdapterKind,
+    RunFabricConfig, StatsFormat, SuiteResourceSelector, TraceReplayExternalAdapterKind,
 };
 use data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io, CliCacheHierarchy,
@@ -105,6 +107,8 @@ use riscv_run_driver::drive_cli_riscv_run;
 use riscv_sbi_runtime::{attach_cli_riscv_sbi_firmware, configure_cli_riscv_sbi_core};
 use riscv_se_inputs::{read_riscv_se_file, read_riscv_se_stdin};
 use run_execution_summary::{execution_summary, ExecutionSummaryInputs};
+use run_fabric::run_memory_transport;
+pub(crate) use run_fabric::Rem6RunFabricSummary;
 use run_gdb::{serve_riscv_gdb_with_run_control, RiscvGdbServeOutcome};
 use run_resource_config::{run_resource_payloads_from_config, RunResourcePayloads};
 use run_validation::validate_run_config_inputs;
@@ -181,6 +185,7 @@ pub struct Rem6ExecutionSummary {
     parallel_scheduler_ready_partitions: Vec<Rem6ParallelReadyPartitionSummary>,
     fetch_transport: Rem6MemoryTransportSummary,
     data_transport: Rem6MemoryTransportSummary,
+    fabric: Rem6RunFabricSummary,
     dram: Rem6DramSummary,
     memory_resources: Rem6MemoryResourceSummary,
     debug: Rem6DebugSummary,
@@ -705,7 +710,7 @@ fn execute_riscv(
         config.parallel_workers(),
     )
     .map_err(execute_error)?;
-    let mut transport = MemoryTransport::new();
+    let mut transport = run_memory_transport(config.fabric());
     let mut cores = Vec::new();
     for cpu_index in 0..core_count {
         let cpu_partition = PartitionId::new(cpu_index);
@@ -715,6 +720,7 @@ fn execute_riscv(
             cpu_partition,
             memory_partition,
             config.memory_route_delay(),
+            config.fabric(),
         )?;
         let data_route = add_memory_route(
             &mut transport,
@@ -722,6 +728,7 @@ fn execute_riscv(
             cpu_partition,
             memory_partition,
             config.memory_route_delay(),
+            config.fabric(),
         )?;
         let core = RiscvCore::with_data(
             CpuCore::new(
@@ -954,6 +961,7 @@ fn execute_riscv(
         data_cache_l3: CliDataCacheSummary::from_records(&data_cache_hierarchy.records(2)),
         fetch_trace: &fetch_trace,
         data_trace: &data_trace,
+        fabric: Rem6RunFabricSummary::from_transport(config.fabric(), &transport),
         riscv_guest_writes,
         riscv_unknown_syscalls,
         riscv_sbi_console: riscv_sbi_output.console,
@@ -977,20 +985,59 @@ fn add_memory_route(
     cpu_partition: PartitionId,
     memory_partition: PartitionId,
     route_delay: u64,
+    fabric: Option<&RunFabricConfig>,
 ) -> Result<MemoryRouteId, Rem6CliError> {
-    transport
-        .add_route(
-            MemoryRoute::new(
-                transport_endpoint(source)?,
-                cpu_partition,
-                transport_endpoint("memory".to_string())?,
-                memory_partition,
-                route_delay,
-                route_delay,
-            )
-            .map_err(execute_error)?,
+    let source = transport_endpoint(source)?;
+    let target = transport_endpoint("memory".to_string())?;
+    let route = match fabric {
+        Some(fabric) => {
+            let hop = MemoryRouteHop::new(target, memory_partition, route_delay, route_delay)
+                .map_err(execute_error)?
+                .with_request_fabric_path(run_fabric_path(
+                    fabric,
+                    route_delay,
+                    fabric.request_virtual_network(),
+                )?)
+                .with_response_fabric_path(run_fabric_path(
+                    fabric,
+                    route_delay,
+                    fabric.response_virtual_network(),
+                )?);
+            MemoryRoute::new_path(source, cpu_partition, [hop])
+                .map_err(execute_error)?
+                .with_virtual_networks(
+                    VirtualNetworkId::new(fabric.request_virtual_network()),
+                    VirtualNetworkId::new(fabric.response_virtual_network()),
+                )
+        }
+        None => MemoryRoute::new(
+            source,
+            cpu_partition,
+            target,
+            memory_partition,
+            route_delay,
+            route_delay,
         )
-        .map_err(execute_error)
+        .map_err(execute_error)?,
+    };
+
+    transport.add_route(route).map_err(execute_error)
+}
+
+fn run_fabric_path(
+    fabric: &RunFabricConfig,
+    latency: u64,
+    virtual_network: u16,
+) -> Result<FabricPath, Rem6CliError> {
+    let link = FabricLinkId::new(fabric.link()).map_err(execute_error)?;
+    let hop = FabricPathHop::new(link, latency, fabric.bandwidth_bytes_per_tick())
+        .map_err(execute_error)?
+        .with_virtual_network(VirtualNetworkId::new(virtual_network));
+    let hop = match fabric.credit_depth() {
+        Some(credit_depth) => hop.with_credit_depth(credit_depth).map_err(execute_error)?,
+        None => hop,
+    };
+    FabricPath::new([hop]).map_err(execute_error)
 }
 
 fn cli_instruction_stats(

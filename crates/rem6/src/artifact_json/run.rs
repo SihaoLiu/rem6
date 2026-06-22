@@ -9,7 +9,8 @@ use crate::formatting::{
 use crate::{
     CliCachePrefetcher, Rem6DramSummary, Rem6ExecutionSummary, Rem6HostActionSummary,
     Rem6LoadBlobSummary, Rem6MemoryResourceSummary, Rem6ReadfileSummary,
-    Rem6RiscvSbiConsoleSummary, Rem6RunArtifact, RequestedIsa,
+    Rem6RiscvSbiConsoleSummary, Rem6RunArtifact, Rem6RunFabricSummary, RequestedIsa,
+    RunFabricConfig,
 };
 
 impl Rem6RunArtifact {
@@ -117,6 +118,12 @@ impl Rem6RunArtifact {
             .as_ref()
             .map(Rem6ExecutionSummary::to_transport_json)
             .unwrap_or_else(empty_transport_json);
+        let empty_fabric = Rem6RunFabricSummary::default();
+        let fabric = self
+            .execution
+            .as_ref()
+            .map(|execution| execution.to_fabric_json(self.config.fabric()))
+            .unwrap_or_else(|| run_fabric_json(self.config.fabric(), &empty_fabric));
         let debug = self
             .execution
             .as_ref()
@@ -167,7 +174,7 @@ impl Rem6RunArtifact {
             .map(|artifact| format!(",\"power_analysis\":{}", artifact.to_json()))
             .unwrap_or_default();
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -207,6 +214,7 @@ impl Rem6RunArtifact {
             host_actions,
             dram,
             transport,
+            fabric,
             debug,
             self.stats_json,
             power_analysis,
@@ -220,6 +228,86 @@ impl Rem6RunArtifact {
     pub const fn load_segments(&self) -> u64 {
         self.load_segments
     }
+}
+
+impl Rem6ExecutionSummary {
+    fn to_fabric_json(&self, config: Option<&RunFabricConfig>) -> String {
+        run_fabric_json(config, &self.fabric)
+    }
+}
+
+fn run_fabric_json(config: Option<&RunFabricConfig>, summary: &Rem6RunFabricSummary) -> String {
+    let Some(config) = config else {
+        return "null".to_string();
+    };
+    let credit_depth = config
+        .credit_depth()
+        .map(|depth| depth.to_string())
+        .unwrap_or_else(|| "null".to_string());
+    format!(
+        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"transfers\":{},\"bytes\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"contended_lanes\":{},\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
+        json_escape(config.link()),
+        config.bandwidth_bytes_per_tick(),
+        config.request_virtual_network(),
+        config.response_virtual_network(),
+        credit_depth,
+        summary.active_lanes(),
+        summary.active_virtual_networks(),
+        summary.transfers(),
+        summary.bytes(),
+        summary.occupied_ticks(),
+        summary.queue_delay_ticks(),
+        summary.max_queue_delay_ticks(),
+        summary.contended_lanes(),
+        run_fabric_lane_activities_json(summary),
+        run_fabric_hop_activities_json(summary),
+    )
+}
+
+fn run_fabric_lane_activities_json(summary: &Rem6RunFabricSummary) -> String {
+    summary
+        .lane_activities()
+        .iter()
+        .map(|activity| {
+            format!(
+                "{{\"link\":\"{}\",\"virtual_network\":{},\"transfer_count\":{},\"byte_count\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                json_escape(activity.link().as_str()),
+                activity.virtual_network().get(),
+                activity.transfer_count(),
+                activity.byte_count(),
+                activity.occupied_ticks(),
+                activity.queue_delay_ticks(),
+                activity.max_queue_delay_ticks(),
+                activity.first_tick(),
+                activity.last_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn run_fabric_hop_activities_json(summary: &Rem6RunFabricSummary) -> String {
+    summary
+        .hop_activities()
+        .iter()
+        .map(|activity| {
+            format!(
+                "{{\"packet\":{},\"hop_index\":{},\"link\":\"{}\",\"virtual_network\":{},\"bytes\":{},\"ready_tick\":{},\"start_tick\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"depart_tick\":{},\"arrival_tick\":{}}}",
+                activity.packet().get(),
+                activity.hop_index(),
+                json_escape(activity.link().as_str()),
+                activity.virtual_network().get(),
+                activity.bytes(),
+                activity.ready_tick(),
+                activity.start_tick(),
+                activity.occupied_ticks(),
+                activity.queue_delay_ticks(),
+                activity.depart_tick(),
+                activity.arrival_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 impl Rem6LoadBlobSummary {
