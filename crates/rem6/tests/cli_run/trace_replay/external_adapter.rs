@@ -103,6 +103,41 @@ fn assert_external_adapter_handoff(kind: &str, endpoint: &str, route: &str) {
     assert!(stdout.contains("\"scheduled_count\":2"));
     assert!(stdout.contains("\"trace_read_response_count\":1"));
     assert!(stdout.contains("\"trace_write_response_count\":1"));
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.external_adapter.events",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.external_adapter.completed_events",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.external_adapter.pending_events",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.external_adapter.checkpoint_endpoints",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.external_adapter.restored_completed_events",
+        "Count",
+        2,
+        "monotonic",
+    );
 }
 
 #[test]

@@ -4,7 +4,9 @@ use rem6_workload::{
 };
 
 use super::fabric::emit_fabric_virtual_network_stats;
-use super::{increment_stat, CliDataCacheSummary, Rem6CliError};
+use super::{
+    increment_stat, CliDataCacheSummary, Rem6CliError, Rem6TraceReplayExternalAdapterSummary,
+};
 
 pub(super) fn emit_trace_replay_summary_stats(
     stats: &mut StatsRegistry,
@@ -640,6 +642,71 @@ pub(super) fn emit_trace_replay_resource_stats(
     )
 }
 
+pub(super) fn emit_trace_replay_external_adapter_stats(
+    stats: &mut StatsRegistry,
+    summary: &Rem6TraceReplayExternalAdapterSummary,
+) -> Result<(), Rem6CliError> {
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.external_adapter.events",
+        summary.events as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.external_adapter.completed_events",
+        summary.completed_events as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.external_adapter.pending_events",
+        summary.pending_events as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.external_adapter.checkpoint_endpoints",
+        summary.checkpoint_endpoints as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.external_adapter.checkpoint_completed_events",
+        summary.checkpoint_completed_events as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.external_adapter.restored_endpoints",
+        summary.restored_endpoints as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.external_adapter.restored_completed_events",
+        summary.restored_completed_events as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.external_adapter.restored_pending_events",
+        summary.restored_pending_events as u64,
+    )?;
+    if let Some(first_tick) = summary.first_tick {
+        increment_stat(
+            stats,
+            "sim.trace_replay.external_adapter.first_tick",
+            "Tick",
+            StatResetPolicy::Monotonic,
+            first_tick,
+        )?;
+    }
+    if let Some(last_tick) = summary.last_tick {
+        increment_stat(
+            stats,
+            "sim.trace_replay.external_adapter.last_tick",
+            "Tick",
+            StatResetPolicy::Monotonic,
+            last_tick,
+        )?;
+    }
+    Ok(())
+}
+
 fn emit_trace_count(stats: &mut StatsRegistry, path: &str, value: u64) -> Result<(), Rem6CliError> {
     increment_stat(stats, path, "Count", StatResetPolicy::Monotonic, value)
 }
@@ -655,9 +722,12 @@ mod tests {
 
     use super::{
         emit_trace_replay_data_cache_stats, emit_trace_replay_dram_stats,
-        emit_trace_replay_resource_stats, emit_trace_replay_summary_stats,
+        emit_trace_replay_external_adapter_stats, emit_trace_replay_resource_stats,
+        emit_trace_replay_summary_stats,
     };
+    use crate::config::TraceReplayExternalAdapterKind;
     use crate::stats_output::stats_snapshot_json;
+    use crate::trace_replay_cli::Rem6TraceReplayExternalAdapterSummary;
     use crate::CliDataCacheSummary;
 
     #[test]
@@ -724,6 +794,89 @@ mod tests {
             1,
         );
         assert_stat_value(&json, "sim.trace_replay.sideband.diagnostic", "Count", 1);
+    }
+
+    #[test]
+    fn trace_replay_stats_emit_external_adapter_accounting() {
+        let summary = Rem6TraceReplayExternalAdapterSummary {
+            kind: TraceReplayExternalAdapterKind::Sst,
+            endpoint: "sst.link0".to_string(),
+            events: 5,
+            completed_events: 4,
+            pending_events: 1,
+            checkpoint_endpoints: 2,
+            checkpoint_completed_events: 3,
+            restored_endpoints: 2,
+            restored_completed_events: 3,
+            restored_pending_events: 1,
+            first_tick: Some(7),
+            last_tick: Some(19),
+        };
+        let mut stats = StatsRegistry::new();
+
+        emit_trace_replay_external_adapter_stats(&mut stats, &summary).unwrap();
+        let json = stats_snapshot_json(&stats.snapshot(0));
+
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.external_adapter.events",
+            "Count",
+            5,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.external_adapter.completed_events",
+            "Count",
+            4,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.external_adapter.pending_events",
+            "Count",
+            1,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.external_adapter.checkpoint_endpoints",
+            "Count",
+            2,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.external_adapter.checkpoint_completed_events",
+            "Count",
+            3,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.external_adapter.restored_endpoints",
+            "Count",
+            2,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.external_adapter.restored_completed_events",
+            "Count",
+            3,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.external_adapter.restored_pending_events",
+            "Count",
+            1,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.external_adapter.first_tick",
+            "Tick",
+            7,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.external_adapter.last_tick",
+            "Tick",
+            19,
+        );
     }
 
     #[test]

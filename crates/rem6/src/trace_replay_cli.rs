@@ -185,6 +185,7 @@ pub fn run_trace_replay_config(
     let stats = trace_replay_stats_output(Rem6TraceReplayStatsInputs {
         config: &config,
         execution: &execution,
+        external_adapter: external_adapter.as_ref(),
     })?;
 
     Ok(Rem6TraceReplayArtifact {

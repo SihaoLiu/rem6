@@ -1075,7 +1075,9 @@ adapter boundary, but no external SystemC simulator or TLM model executes throug
 
 **Migrated:** `CoSimAdapterBoundary` SystemC/TLM endpoint tests exist, and
 `rem6 trace-replay --external-adapter-kind systemc|tlm --external-adapter-endpoint <id>`
-hands packet-trace requests into that boundary, acknowledges them, snapshots and restores a clean boundary, and emits `external_adapter` JSON.
+hands packet-trace requests into that boundary, acknowledges them, snapshots
+and restores a clean boundary, and emits `external_adapter` JSON plus
+`sim.trace_replay.external_adapter.*` stats.
 
 **Not migrated:** External SystemC simulator or TLM model execution, runtime adapter-owned state, and `src/systemc`, `util/tlm`, and `ext/systemc` behavior.
 
@@ -1097,7 +1099,8 @@ boundary, but no external SST simulator runtime executes through it.
 **Migrated:** `CoSimAdapterBoundary` SST endpoint tests exist, and `rem6
 trace-replay --external-adapter-kind sst --external-adapter-endpoint <id>`
 hands packet-trace requests into that boundary, acknowledges them, snapshots a
-clean boundary, and emits `external_adapter` JSON.
+clean boundary, and emits `external_adapter` JSON plus
+`sim.trace_replay.external_adapter.*` stats.
 
 **Not migrated:** External SST simulator bridge execution, SST-owned runtime state, and `ext/sst` plus `configs/example/sst` behavior.
 

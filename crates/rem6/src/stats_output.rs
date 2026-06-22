@@ -20,7 +20,8 @@ use super::{
     Rem6DramSummary, Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GpuRunConfig, Rem6GupsConfig,
     Rem6GupsExecutionSummary, Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
     Rem6MemoryTransportSummary, Rem6ReadfileSummary, Rem6ResourceAcquireArtifact, Rem6RunConfig,
-    Rem6TraceReplayConfig, Rem6TraceReplayExecutionSummary, RequestedIsa,
+    Rem6TraceReplayConfig, Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary,
+    RequestedIsa,
 };
 use data_cache::{emit_data_cache_prefetch_summary_stats, emit_data_cache_summary_stats};
 use debug::emit_debug_stats;
@@ -34,8 +35,8 @@ use riscv::emit_riscv_run_stats;
 use text::stats_snapshot_text;
 use trace_replay::{
     emit_trace_replay_data_cache_stats, emit_trace_replay_dram_stats,
-    emit_trace_replay_fabric_stats, emit_trace_replay_resource_stats,
-    emit_trace_replay_summary_stats,
+    emit_trace_replay_external_adapter_stats, emit_trace_replay_fabric_stats,
+    emit_trace_replay_resource_stats, emit_trace_replay_summary_stats,
 };
 
 const GEM5_COMPAT_SIM_FREQ_HZ: u64 = 1_000_000_000_000;
@@ -76,6 +77,7 @@ pub(super) struct Rem6GpuRunStatsInputs<'a> {
 pub(super) struct Rem6TraceReplayStatsInputs<'a> {
     pub(super) config: &'a Rem6TraceReplayConfig,
     pub(super) execution: &'a Rem6TraceReplayExecutionSummary,
+    pub(super) external_adapter: Option<&'a Rem6TraceReplayExternalAdapterSummary>,
 }
 
 pub(super) struct Rem6ResourceAcquireStatsInputs<'a> {
@@ -1024,6 +1026,9 @@ pub(super) fn trace_replay_stats_output(
     emit_trace_replay_fabric_stats(&mut stats, inputs.execution.parallel_summary())?;
     emit_trace_replay_dram_stats(&mut stats, inputs.execution.data_cache_dram_summary())?;
     emit_trace_replay_resource_stats(&mut stats, inputs.execution.parallel_summary())?;
+    if let Some(external_adapter) = inputs.external_adapter {
+        emit_trace_replay_external_adapter_stats(&mut stats, external_adapter)?;
+    }
 
     let snapshot = stats.snapshot(0);
     Ok(Rem6StatsOutput {
