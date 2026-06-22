@@ -306,7 +306,7 @@ immediate-hit, scheduled-miss, and coalesced-miss counters. CLI trace
 replay can route packet traces through an explicit workload fabric link and
 configure request/response virtual networks and link credit depth from CLI or
 TOML config while emitting active-lane, active-virtual-network, transfer, byte, flit,
-occupancy, queue-delay, credit-delay, contention, per-lane, and per-hop activity stats from
+occupancy, queue-delay, credit-delay, contention, per-virtual-network, per-lane, and per-hop activity stats from
 the resulting workload parallel summary, plus aggregate resource-activity and
 active-resource stats from the same summary. CLI trace replay with an explicit
 data-cache protocol emits data-cache run accounting, per-protocol run stats,
@@ -354,8 +354,8 @@ memory-resource cache-bank counters in artifact JSON and `StatsRegistry`.
 CLI
 trace-replay fabric-route smoke coverage exposes nonzero active-lane,
 active-virtual-network, transfer, byte, and flit stats plus request/response virtual
-network and credit-depth config fields plus per-lane flit counts and per-hop activity JSON
-from the top-level replay command, including aggregate, per-lane, and per-hop
+network and credit-depth config fields plus per-virtual-network and per-lane flit counts
+and per-hop activity JSON from the top-level replay command, including aggregate, per-VN, per-lane, and per-hop
 credit-delay fields; CLI
 trace-replay data-cache protocol smoke coverage exposes data-cache run,
 protocol, scheduler, and profiled backing-DRAM resource stats from the top-level
@@ -887,7 +887,7 @@ nonzero fabric active-lane, active-virtual-network, transfer, byte, and flit sta
 from an executed packet replay, request/response virtual-network and
 credit-depth config fields from CLI and TOML entry points, aggregate
 resource-activity and active-resource stats, while occupancy, queue-delay,
-credit-delay, contention, per-lane flit counts, and per-hop activity details are emitted
+credit-delay, contention, per-virtual-network and per-lane flit counts, and per-hop activity details are emitted
 from the same workload parallel summary. CLI trace-replay data-cache protocol
 tests include data-cache run, protocol, CPU-response, directory-decision, and
 scheduler resource counters emitted from the executed workload parallel

@@ -328,6 +328,38 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
             max_credit_delay_ticks: 0,
         },
     );
+    assert_fabric_virtual_network_stats(
+        &stdout,
+        ExpectedFabricVirtualNetworkStats {
+            virtual_network: 1,
+            active_lanes: 1,
+            transfers: 1,
+            bytes: 8,
+            flits: 2,
+            occupied_ticks: 2,
+            queue_delay_ticks: 0,
+            max_queue_delay_ticks: 0,
+            credit_delay_ticks: 0,
+            max_credit_delay_ticks: 0,
+            contended_lanes: 0,
+        },
+    );
+    assert_fabric_virtual_network_stats(
+        &stdout,
+        ExpectedFabricVirtualNetworkStats {
+            virtual_network: 2,
+            active_lanes: 1,
+            transfers: 1,
+            bytes: 8,
+            flits: 2,
+            occupied_ticks: 2,
+            queue_delay_ticks: 0,
+            max_queue_delay_ticks: 0,
+            credit_delay_ticks: 0,
+            max_credit_delay_ticks: 0,
+            contended_lanes: 0,
+        },
+    );
 
     let hops = artifact
         .pointer("/summary/fabric_hop_activities")
@@ -358,6 +390,80 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
         assert!(hop.get("depart_tick").and_then(Value::as_u64).is_some());
         assert!(hop.get("arrival_tick").and_then(Value::as_u64).is_some());
     }
+}
+
+fn assert_fabric_virtual_network_stats(stdout: &str, expected: ExpectedFabricVirtualNetworkStats) {
+    let prefix = format!("sim.trace_replay.fabric.vn{}", expected.virtual_network);
+    assert_stat(
+        stdout,
+        &format!("{prefix}.active_lanes"),
+        "Count",
+        expected.active_lanes,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.transfers"),
+        "Count",
+        expected.transfers,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.bytes"),
+        "Byte",
+        expected.bytes,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.flits"),
+        "Count",
+        expected.flits,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.occupied_ticks"),
+        "Tick",
+        expected.occupied_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.queue_delay_ticks"),
+        "Tick",
+        expected.queue_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.max_queue_delay_ticks"),
+        "Tick",
+        expected.max_queue_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.credit_delay_ticks"),
+        "Tick",
+        expected.credit_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.max_credit_delay_ticks"),
+        "Tick",
+        expected.max_credit_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.contended_lanes"),
+        "Count",
+        expected.contended_lanes,
+        "monotonic",
+    );
 }
 
 fn assert_fabric_lane_activity(lanes: &[Value], expected: ExpectedFabricLaneActivity<'_>) {
@@ -403,6 +509,20 @@ fn assert_fabric_lane_activity(lanes: &[Value], expected: ExpectedFabricLaneActi
     );
     assert!(lane.get("first_tick").and_then(Value::as_u64).is_some());
     assert!(lane.get("last_tick").and_then(Value::as_u64).is_some());
+}
+
+struct ExpectedFabricVirtualNetworkStats {
+    virtual_network: u64,
+    active_lanes: u64,
+    transfers: u64,
+    bytes: u64,
+    flits: u64,
+    occupied_ticks: u64,
+    queue_delay_ticks: u64,
+    max_queue_delay_ticks: u64,
+    credit_delay_ticks: u64,
+    max_credit_delay_ticks: u64,
+    contended_lanes: u64,
 }
 
 struct ExpectedFabricLaneActivity<'a> {

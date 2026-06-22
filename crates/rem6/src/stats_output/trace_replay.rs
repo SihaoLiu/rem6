@@ -545,7 +545,75 @@ pub(super) fn emit_trace_replay_fabric_stats(
         stats,
         "sim.trace_replay.fabric.contended_lanes",
         summary.contended_fabric_lane_count() as u64,
-    )
+    )?;
+    for activity in summary.fabric_virtual_network_activities() {
+        if activity.is_empty() {
+            continue;
+        }
+        let prefix = format!(
+            "sim.trace_replay.fabric.vn{}",
+            activity.virtual_network().get()
+        );
+        emit_trace_count(
+            stats,
+            &format!("{prefix}.active_lanes"),
+            activity.active_lane_count() as u64,
+        )?;
+        emit_trace_count(
+            stats,
+            &format!("{prefix}.transfers"),
+            activity.transfer_count() as u64,
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.bytes"),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            activity.byte_count(),
+        )?;
+        emit_trace_count(stats, &format!("{prefix}.flits"), activity.flit_count())?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.occupied_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            activity.occupied_ticks(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.queue_delay_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            activity.queue_delay_ticks(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.max_queue_delay_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            activity.max_queue_delay_ticks(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.credit_delay_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            activity.credit_delay_ticks(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.max_credit_delay_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            activity.max_credit_delay_ticks(),
+        )?;
+        emit_trace_count(
+            stats,
+            &format!("{prefix}.contended_lanes"),
+            activity.contended_lane_count() as u64,
+        )?;
+    }
+    Ok(())
 }
 
 pub(super) fn emit_trace_replay_dram_stats(
