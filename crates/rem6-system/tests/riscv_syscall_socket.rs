@@ -9,8 +9,11 @@ use rem6_system::{
 use support::*;
 
 const RISCV_LINUX_SOCKETPAIR: u64 = 199;
+const RISCV_LINUX_GETSOCKNAME: u64 = 204;
+const RISCV_LINUX_GETPEERNAME: u64 = 205;
 const RISCV_LINUX_SENDTO: u64 = 206;
 const RISCV_LINUX_RECVFROM: u64 = 207;
+const RISCV_LINUX_SHUTDOWN: u64 = 210;
 const RISCV_LINUX_FCNTL: u64 = 25;
 const RISCV_LINUX_CLOSE: u64 = 57;
 const RISCV_LINUX_READ: u64 = 63;
@@ -27,6 +30,7 @@ const RISCV_LINUX_AF_UNIX: u64 = 1;
 const RISCV_LINUX_SOCK_STREAM: u64 = 1;
 const RISCV_LINUX_MSG_DONTWAIT: u64 = 0x40;
 const RISCV_LINUX_MSG_NOSIGNAL: u64 = 0x4000;
+const RISCV_LINUX_SHUT_RDWR: u64 = 2;
 const RISCV_LINUX_POLLIN: i16 = 0x0001;
 const RISCV_LINUX_POLLOUT: i16 = 0x0004;
 
@@ -51,6 +55,10 @@ fn socket_store() -> Arc<Mutex<PartitionedMemoryStore>> {
             (0x9180, &[0; 16]),
             (0x91a0, &[0; 16]),
             (0x91c0, &[0; 16]),
+            (0x9320, &[0; 16]),
+            (0x9340, &[0; 8]),
+            (0x9360, &[0; 16]),
+            (0x9380, &[0; 8]),
             (0x9200, &iovec(0x9040, 4)),
             (0x9210, &iovec(0x9044, 6)),
             (0x9220, &iovec(0x9140, 3)),
@@ -243,6 +251,71 @@ fn linux_table_socketpair_roundtrips_bidirectional_bytes_and_poll_without_pipe_i
         Some(b"-socket".to_vec())
     );
 
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9340,
+        &16_u32.to_le_bytes()
+    ));
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9380,
+        &16_u32.to_le_bytes()
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETSOCKNAME,
+            [left_fd, 0x9320, 0x9340, 0, 0, 0],
+            None,
+            Some(&writer),
+        )),
+        0
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETPEERNAME,
+            [right_fd, 0x9360, 0x9380, 0, 0, 0],
+            None,
+            Some(&writer),
+        )),
+        0
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            guest_memory_reader(Arc::clone(&store))(0x9340, 4)
+                .unwrap()
+                .try_into()
+                .unwrap()
+        ),
+        2
+    );
+    assert_eq!(
+        u32::from_le_bytes(
+            guest_memory_reader(Arc::clone(&store))(0x9380, 4)
+                .unwrap()
+                .try_into()
+                .unwrap()
+        ),
+        2
+    );
+    assert_eq!(
+        u16::from_le_bytes(
+            guest_memory_reader(Arc::clone(&store))(0x9320, 2)
+                .unwrap()
+                .try_into()
+                .unwrap()
+        ),
+        RISCV_LINUX_AF_UNIX as u16
+    );
+    assert_eq!(
+        u16::from_le_bytes(
+            guest_memory_reader(Arc::clone(&store))(0x9360, 2)
+                .unwrap()
+                .try_into()
+                .unwrap()
+        ),
+        RISCV_LINUX_AF_UNIX as u16
+    );
+
     assert_eq!(
         return_value(handle_with_memory(
             &mut state,
@@ -293,6 +366,57 @@ fn linux_table_socketpair_roundtrips_bidirectional_bytes_and_poll_without_pipe_i
         Some(b"sendto->recv".to_vec())
     );
     assert!(state.guest_writes().is_empty());
+
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_SHUTDOWN,
+            [left_fd, RISCV_LINUX_SHUT_RDWR, 0, 0, 0, 0],
+            None,
+            None,
+        )),
+        0
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_WRITE,
+            [left_fd, 0x9000, 1, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        linux_error(RISCV_LINUX_EPIPE)
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_READ,
+            [left_fd, 0x9100, 1, 0, 0, 0],
+            None,
+            Some(&writer),
+        )),
+        0
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_WRITE,
+            [right_fd, 0x9020, 1, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        linux_error(RISCV_LINUX_EPIPE)
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_READ,
+            [right_fd, 0x9120, 1, 0, 0, 0],
+            None,
+            Some(&writer),
+        )),
+        0
+    );
 
     for fd in [left_fd, right_fd] {
         assert_eq!(
@@ -505,6 +629,16 @@ fn linux_table_sendto_recvfrom_report_non_socket_fds_as_enotsock() {
             [1, 0x91c0, 1, 0, 0, 0],
             None,
             Some(&writer),
+        )),
+        linux_error(RISCV_LINUX_ENOTSOCK)
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_SHUTDOWN,
+            [1, 99, 0, 0, 0, 0],
+            None,
+            None,
         )),
         linux_error(RISCV_LINUX_ENOTSOCK)
     );

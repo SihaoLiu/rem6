@@ -23,6 +23,7 @@ fn rem6_run_riscv_se_runs_static_raw_socketpair_against_qemu() {
 #define F_GETPIPE_SZ 1032
 #define MSG_DONTWAIT 0x40
 #define MSG_NOSIGNAL 0x4000
+#define SHUT_RDWR 2
 
 struct pollfd {
     int fd;
@@ -30,10 +31,23 @@ struct pollfd {
     short revents;
 };
 
+struct sockaddr_un_addr {
+    unsigned short family;
+    char path[14];
+};
+
 static long linux_syscall1(long number, long arg0) {
     register long a0 asm("a0") = arg0;
     register long a7 asm("a7") = number;
     asm volatile ("ecall" : "+r"(a0) : "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall2(long number, long arg0, long arg1) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a7) : "memory");
     return a0;
 }
 
@@ -97,6 +111,10 @@ int main(void) {
     char left[16] = {0};
     char right[16] = {0};
     char received[16] = {0};
+    struct sockaddr_un_addr name = {0};
+    struct sockaddr_un_addr peer = {0};
+    unsigned int name_len = sizeof(name);
+    unsigned int peer_len = sizeof(peer);
     const char *left_msg = "left";
     const char *right_msg = "right";
     const char *send_msg = "sendto";
@@ -114,6 +132,13 @@ int main(void) {
     long second_read = pair_status == 0 ? linux_syscall3(63, fds[0], (long)left, 5) : -1;
     long send_status = pair_status == 0 ? linux_syscall6(206, fds[0], (long)send_msg, 6, MSG_NOSIGNAL, 0, 0) : -1;
     long recv_status = pair_status == 0 ? linux_syscall6(207, fds[1], (long)received, 6, MSG_DONTWAIT, 0, 0) : -1;
+    long name_status = pair_status == 0 ? linux_syscall3(204, fds[0], (long)&name, (long)&name_len) : -1;
+    long peer_status = pair_status == 0 ? linux_syscall3(205, fds[1], (long)&peer, (long)&peer_len) : -1;
+    long shutdown_status = pair_status == 0 ? linux_syscall2(210, fds[0], SHUT_RDWR) : -1;
+    long left_send_after_shutdown = pair_status == 0 ? linux_syscall6(206, fds[0], (long)send_msg, 1, MSG_NOSIGNAL, 0, 0) : -1;
+    long left_read_after_shutdown = pair_status == 0 ? linux_syscall3(63, fds[0], (long)left, 1) : -1;
+    long right_send_after_shutdown = pair_status == 0 ? linux_syscall6(206, fds[1], (long)send_msg, 1, MSG_NOSIGNAL, 0, 0) : -1;
+    long right_read_after_shutdown = pair_status == 0 ? linux_syscall3(63, fds[1], (long)right, 1) : -1;
     if (pair_status == 0) {
         linux_syscall1(57, fds[0]);
         linux_syscall1(57, fds[1]);
@@ -123,7 +148,13 @@ int main(void) {
         ready == 1 && (poll_fd.revents & POLLIN) != 0 &&
         first_read == 4 && bytes_match(right, left_msg, 4) &&
         second_write == 5 && second_read == 5 && bytes_match(left, right_msg, 5) &&
-        send_status == 6 && recv_status == 6 && bytes_match(received, send_msg, 6)) {
+        send_status == 6 && recv_status == 6 && bytes_match(received, send_msg, 6) &&
+        name_status == 0 && peer_status == 0 &&
+        name_len == 2 && peer_len == 2 &&
+        name.family == AF_UNIX && peer.family == AF_UNIX &&
+        shutdown_status == 0 &&
+        left_send_after_shutdown == -32 && left_read_after_shutdown == 0 &&
+        right_send_after_shutdown == -32 && right_read_after_shutdown == 0) {
         linux_syscall3(64, 1, (long)ok, 14);
         linux_syscall1(93, 74);
     }

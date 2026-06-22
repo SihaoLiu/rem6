@@ -322,6 +322,16 @@ impl RiscvSyscallTable {
                     value: syscall_socketpair(request, state, writer),
                 })
             }
+            RISCV_LINUX_GETSOCKNAME => {
+                guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
+                    value: syscall_getsockname(request, state, writer),
+                })
+            }
+            RISCV_LINUX_GETPEERNAME => {
+                guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
+                    value: syscall_getpeername(request, state, writer),
+                })
+            }
             RISCV_LINUX_SENDTO => {
                 guest_memory_reader.map(|reader| match syscall_sendto(request, state, reader) {
                     Some(value) => RiscvSyscallOutcome::Return { value },
@@ -334,6 +344,9 @@ impl RiscvSyscallTable {
                     None => RiscvSyscallOutcome::Blocked,
                 })
             }
+            RISCV_LINUX_SHUTDOWN => Some(RiscvSyscallOutcome::Return {
+                value: syscall_shutdown(request, state),
+            }),
             RISCV_LINUX_PPOLL => {
                 syscall_ppoll(request, state, guest_memory_reader, guest_memory_writer)
             }
