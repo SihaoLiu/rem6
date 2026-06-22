@@ -1,0 +1,12 @@
+[gpu_run]
+workgroups = 2
+compute_units = 2
+memory_start = 4096
+memory_size = 64
+max_tick = 80
+stats_format = "json"
+dram_memory = true
+data_cache_protocol = "msi"
+global_loads = ["0x1000:4:4:4"]
+global_stores = ["0x1004:4:4:4"]
+memory_dumps = ["0x1000:16"]

@@ -26,6 +26,8 @@ fn rem6_run_exec_debug_flag_emits_real_instruction_trace() {
             "--stats-format",
             "json",
             "--execute",
+            "--memory-system",
+            "direct",
             "--debug-flags",
             "Exec",
         ])
@@ -82,6 +84,8 @@ fn rem6_run_fetch_debug_flag_emits_real_fetch_issue_trace() {
             "--stats-format",
             "json",
             "--execute",
+            "--memory-system",
+            "direct",
             "--debug-flags",
             "Exec,Fetch",
         ])
@@ -337,7 +341,7 @@ fn rem6_run_loads_debug_flags_from_toml_config() {
     let config = workspace.join("run.toml");
     fs::write(
         &config,
-        "[run]\nisa = \"riscv\"\nbinary = \"kernel.elf\"\nmax_tick = 60\nexecute = true\nstats_format = \"json\"\ndebug_flags = [\"Exec\"]\n",
+        "[run]\nisa = \"riscv\"\nbinary = \"kernel.elf\"\nmax_tick = 60\nexecute = true\nmemory_system = \"direct\"\nstats_format = \"json\"\ndebug_flags = [\"Exec\"]\n",
     )
     .unwrap();
 

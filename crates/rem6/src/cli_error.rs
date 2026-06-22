@@ -151,6 +151,9 @@ pub enum Rem6CliError {
     RunMemorySystemConflictsWithDisabledDram {
         memory_system: String,
     },
+    RunMemorySystemConflictsWithMemoryHierarchy {
+        memory_system: String,
+    },
     InvalidRunDataCacheProtocol {
         value: String,
     },
@@ -229,6 +232,7 @@ pub enum Rem6CliError {
     InstructionLimitRequiresExecution,
     MemoryDumpRequiresExecution,
     ReadfileRequiresExecution,
+    MemorySystemRequiresExecution,
     ReadfileRequiresRiscv,
     RiscvSbiRequiresExecution,
     RiscvSeRequiresExecution,
@@ -521,6 +525,10 @@ impl fmt::Display for Rem6CliError {
                 formatter,
                 "memory system {memory_system} conflicts with dram_memory = false"
             ),
+            Self::RunMemorySystemConflictsWithMemoryHierarchy { memory_system } => write!(
+                formatter,
+                "memory system {memory_system} conflicts with memory hierarchy options"
+            ),
             Self::InvalidRunDataCacheProtocol { value } => {
                 write!(formatter, "invalid run data cache protocol {value}")
             }
@@ -616,6 +624,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::ReadfileRequiresExecution => {
                 write!(formatter, "--readfile requires --execute")
+            }
+            Self::MemorySystemRequiresExecution => {
+                write!(formatter, "--memory-system requires --execute")
             }
             Self::ReadfileRequiresRiscv => {
                 write!(formatter, "--readfile requires --isa riscv")

@@ -269,6 +269,8 @@ fn rem6_run_stats_emit_in_order_pipeline_cycles_from_execution() {
             "--stats-format",
             "json",
             "--execute",
+            "--memory-system",
+            "direct",
         ])
         .output()
         .unwrap();
@@ -425,6 +427,8 @@ fn rem6_run_stats_include_issued_fetch_ahead_before_response() {
             "--stats-format",
             "json",
             "--execute",
+            "--memory-system",
+            "direct",
         ])
         .output()
         .unwrap();
@@ -553,6 +557,8 @@ fn rem6_run_stats_issue_jal_fetch_ahead_before_retire() {
             "--stats-format",
             "json",
             "--execute",
+            "--memory-system",
+            "direct",
         ])
         .output()
         .unwrap();

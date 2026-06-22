@@ -48,6 +48,8 @@ fn rem6_run_emits_m5_work_marker_host_actions_from_real_riscv_execution() {
             "--stats-format",
             "json",
             "--execute",
+            "--memory-system",
+            "direct",
         ])
         .output()
         .unwrap();
@@ -139,6 +141,8 @@ fn rem6_run_emits_m5_hypercall_host_action_detail_from_real_riscv_execution() {
             "--stats-format",
             "json",
             "--execute",
+            "--memory-system",
+            "direct",
         ])
         .output()
         .unwrap();
@@ -228,6 +232,8 @@ fn rem6_run_emits_m5_switch_cpu_command_from_real_riscv_execution() {
             "--stats-format",
             "json",
             "--execute",
+            "--memory-system",
+            "direct",
         ])
         .output()
         .unwrap();
@@ -303,6 +309,8 @@ fn rem6_run_executes_m5_sum_return_value_from_real_riscv_execution() {
             "--stats-format",
             "json",
             "--execute",
+            "--memory-system",
+            "direct",
         ])
         .output()
         .unwrap();
@@ -367,6 +375,8 @@ fn rem6_run_emits_m5_stats_host_action_details_from_real_riscv_execution() {
             "--stats-format",
             "json",
             "--execute",
+            "--memory-system",
+            "direct",
         ])
         .output()
         .unwrap();
@@ -432,6 +442,8 @@ fn rem6_run_emits_m5_checkpoint_host_action_detail_from_real_riscv_execution() {
             "--stats-format",
             "json",
             "--execute",
+            "--memory-system",
+            "direct",
         ])
         .output()
         .unwrap();
@@ -609,6 +621,8 @@ fn run_m5_checkpoint_memory_checksums(name: &str, dram_memory: bool) -> (String,
     ];
     if dram_memory {
         args.push("--dram-memory");
+    } else {
+        args.extend(["--memory-system", "direct"]);
     }
 
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))

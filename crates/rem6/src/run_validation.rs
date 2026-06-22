@@ -33,6 +33,9 @@ fn validate_non_execution_inputs(config: &Rem6RunConfig) -> Result<(), Rem6CliEr
     if !config.readfiles().is_empty() {
         return Err(Rem6CliError::ReadfileRequiresExecution);
     }
+    if config.memory_system().is_some() {
+        return Err(Rem6CliError::MemorySystemRequiresExecution);
+    }
     if config.riscv_se() {
         return Err(Rem6CliError::RiscvSeRequiresExecution);
     }
