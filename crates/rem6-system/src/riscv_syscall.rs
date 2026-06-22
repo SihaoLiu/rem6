@@ -66,6 +66,7 @@ mod sendfile;
 mod signal;
 mod signalfd;
 mod sleep;
+mod socket;
 mod splice;
 mod splice_flags;
 mod startup;
@@ -233,6 +234,10 @@ use signalfd::{syscall_signalfd4, RiscvGuestSignalFd, RISCV_LINUX_SIGNALFD4};
 use sleep::{
     syscall_clock_nanosleep, syscall_nanosleep, RISCV_LINUX_CLOCK_NANOSLEEP, RISCV_LINUX_NANOSLEEP,
 };
+use socket::{
+    syscall_socketpair, RiscvGuestSocketEndpoint, RiscvGuestSocketQueue, RiscvGuestSocketQueueId,
+    RISCV_LINUX_SOCKETPAIR,
+};
 use splice::{syscall_splice, RISCV_LINUX_SPLICE};
 pub use startup::{
     RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSeStartupError, RiscvSeStartupImage,
@@ -328,6 +333,8 @@ pub struct RiscvSyscallState {
     guest_pipes: BTreeMap<RiscvGuestPipeId, RiscvGuestPipe>,
     guest_pipe_read_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
     guest_pipe_write_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
+    guest_socket_queues: BTreeMap<RiscvGuestSocketQueueId, RiscvGuestSocketQueue>,
+    guest_socket_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestSocketEndpoint>,
     guest_eventfds: BTreeMap<GuestFileDescriptionId, RiscvGuestEventFd>,
     guest_timerfds: BTreeMap<GuestFileDescriptionId, RiscvGuestTimerFd>,
     guest_signalfds: BTreeMap<GuestFileDescriptionId, RiscvGuestSignalFd>,
@@ -438,6 +445,8 @@ impl RiscvSyscallState {
             guest_pipes: BTreeMap::new(),
             guest_pipe_read_descriptions: BTreeMap::new(),
             guest_pipe_write_descriptions: BTreeMap::new(),
+            guest_socket_queues: BTreeMap::new(),
+            guest_socket_descriptions: BTreeMap::new(),
             guest_eventfds: BTreeMap::new(),
             guest_timerfds: BTreeMap::new(),
             guest_signalfds: BTreeMap::new(),
@@ -1127,6 +1136,7 @@ impl RiscvSyscallState {
         self.guest_directory_descriptions.remove(&description);
         self.guest_directory_paths.remove(&description);
         self.remove_guest_pipe_description(description);
+        self.remove_guest_socket_description(description);
         self.remove_guest_eventfd_description(description);
         self.remove_guest_timerfd_description(description);
         self.remove_guest_signalfd_description(description);

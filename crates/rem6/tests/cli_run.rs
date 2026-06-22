@@ -98,6 +98,8 @@ mod riscv_se_setns;
 mod riscv_se_signal;
 #[path = "cli_run/riscv_se_signalfd.rs"]
 mod riscv_se_signalfd;
+#[path = "cli_run/riscv_se_socket.rs"]
+mod riscv_se_socket;
 #[path = "cli_run/riscv_se_splice.rs"]
 mod riscv_se_splice;
 #[path = "cli_run/riscv_se_statx.rs"]

@@ -4,6 +4,7 @@ use super::{
     inotify::{inotify_read_result, RiscvGuestInotifyRead},
     linux_error,
     signalfd::{signalfd_read_result, signalfd_siginfo_bytes, RiscvGuestSignalFdRead},
+    socket::RiscvGuestSocketRead,
     timerfd::{timerfd_read_bytes, timerfd_read_result, RiscvGuestTimerFdRead},
     RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAGAIN,
     RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ESPIPE,
@@ -137,6 +138,24 @@ pub(super) fn syscall_read(
     let Ok(byte_count) = usize::try_from(count) else {
         return Some(linux_error(RISCV_LINUX_EINVAL));
     };
+    match state.guest_socket_read(fd, byte_count) {
+        Ok(RiscvGuestSocketRead::Bytes(bytes)) => {
+            if bytes.is_empty() {
+                return Some(0);
+            }
+            if !guest_memory.write(request.argument(1), &bytes) {
+                return Some(linux_error(RISCV_LINUX_EFAULT));
+            }
+            if state.consume_guest_socket_read(fd, bytes.len()).is_err() {
+                return Some(linux_error(RISCV_LINUX_EBADF));
+            }
+            return Some(bytes.len() as u64);
+        }
+        Ok(RiscvGuestSocketRead::WouldBlock) => return Some(linux_error(RISCV_LINUX_EAGAIN)),
+        Ok(RiscvGuestSocketRead::Blocked) => return None,
+        Ok(RiscvGuestSocketRead::NotSocket) => {}
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    }
     match state.guest_pipe_prefix(fd, byte_count) {
         Ok(Some(bytes)) => {
             if bytes.is_empty() {

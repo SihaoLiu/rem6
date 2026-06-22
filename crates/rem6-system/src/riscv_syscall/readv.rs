@@ -4,6 +4,7 @@ use super::{
     iovec::{read_iovecs, write_iovecs, RISCV_LINUX_IOV_MAX},
     linux_error,
     positioned::riscv_linux_split_offset,
+    socket::RiscvGuestSocketRead,
     RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState,
     RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
     RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_WRONLY,
@@ -70,6 +71,25 @@ pub(super) fn syscall_readv(
     let Ok(total_bytes) = usize::try_from(total) else {
         return Some(linux_error(RISCV_LINUX_EINVAL));
     };
+
+    match state.guest_socket_read(fd, total_bytes) {
+        Ok(RiscvGuestSocketRead::Bytes(bytes)) => {
+            if bytes.is_empty() {
+                return Some(0);
+            }
+            if !write_iovecs(guest_memory_writer, &iovecs, &bytes) {
+                return Some(linux_error(RISCV_LINUX_EFAULT));
+            }
+            if state.consume_guest_socket_read(fd, bytes.len()).is_err() {
+                return Some(linux_error(RISCV_LINUX_EBADF));
+            }
+            return Some(bytes.len() as u64);
+        }
+        Ok(RiscvGuestSocketRead::WouldBlock) => return Some(linux_error(RISCV_LINUX_EAGAIN)),
+        Ok(RiscvGuestSocketRead::Blocked) => return None,
+        Ok(RiscvGuestSocketRead::NotSocket) => {}
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    }
 
     match state.guest_pipe_prefix(fd, total_bytes) {
         Ok(Some(bytes)) => {

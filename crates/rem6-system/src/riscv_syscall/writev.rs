@@ -6,6 +6,7 @@ use super::{
     linux_error,
     pipe::RiscvGuestPipeWrite,
     positioned::riscv_linux_split_offset,
+    socket::{socket_write_result, RiscvGuestSocketWrite},
     RiscvGuestMemoryReader, RiscvGuestWriteRecord, RiscvSyscallRequest, RiscvSyscallState,
     RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG,
     RISCV_LINUX_EINVAL, RISCV_LINUX_EPERM, RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE,
@@ -74,6 +75,28 @@ pub(super) fn syscall_writev(
         Ok(true) => return Some(linux_error(RISCV_LINUX_EFBIG)),
         Ok(false) => {}
         Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    }
+    let socket_write = match usize::try_from(total)
+        .ok()
+        .map(|byte_count| state.guest_socket_write_plan(fd, byte_count))
+    {
+        Some(Ok(RiscvGuestSocketWrite::NotSocket)) | None => None,
+        Some(Ok(RiscvGuestSocketWrite::Written(written))) => Some(written),
+        Some(Ok(write @ RiscvGuestSocketWrite::WouldBlock))
+        | Some(Ok(write @ RiscvGuestSocketWrite::Blocked))
+        | Some(Ok(write @ RiscvGuestSocketWrite::BrokenPipe)) => {
+            return socket_write_result(write);
+        }
+        Some(Err(_)) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    };
+    if let Some(written) = socket_write {
+        let Some(bytes) = read_iovec_prefix(guest_memory, &iovecs, written) else {
+            return Some(linux_error(RISCV_LINUX_EFAULT));
+        };
+        return match state.write_guest_socket_from_fd(fd, &bytes) {
+            Ok(write) => socket_write_result(write),
+            Err(_) => Some(linux_error(RISCV_LINUX_EBADF)),
+        };
     }
     let pipe_write = match usize::try_from(total)
         .ok()

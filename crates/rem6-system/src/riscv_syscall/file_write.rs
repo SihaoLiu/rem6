@@ -4,6 +4,7 @@ use super::{
     pipe::RiscvGuestPipeWrite,
     read_guest_c_string,
     signalfd::signalfd_write_result,
+    socket::{socket_write_result, RiscvGuestSocketWrite},
     timerfd::timerfd_write_result,
     RiscvGuestCStringError, RiscvGuestFileIdentity, RiscvGuestMemoryReader, RiscvGuestNodeKind,
     RiscvGuestWriteRecord, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAGAIN,
@@ -504,6 +505,27 @@ pub(super) fn syscall_write(
         Ok(true) => return Some(linux_error(RISCV_LINUX_EFBIG)),
         Ok(false) => {}
         Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    }
+    let socket_write = match state.guest_socket_write_plan(fd, byte_count) {
+        Ok(RiscvGuestSocketWrite::NotSocket) => None,
+        Ok(RiscvGuestSocketWrite::Written(written)) => Some(written),
+        Ok(write @ RiscvGuestSocketWrite::WouldBlock)
+        | Ok(write @ RiscvGuestSocketWrite::Blocked)
+        | Ok(write @ RiscvGuestSocketWrite::BrokenPipe) => return socket_write_result(write),
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    };
+    if let Some(written) = socket_write {
+        let address = request.argument(1);
+        let Some(bytes) = guest_memory.read(address, written) else {
+            return Some(linux_error(RISCV_LINUX_EFAULT));
+        };
+        if bytes.len() != written {
+            return Some(linux_error(RISCV_LINUX_EFAULT));
+        }
+        return match state.write_guest_socket_from_fd(fd, &bytes) {
+            Ok(write) => socket_write_result(write),
+            Err(_) => Some(linux_error(RISCV_LINUX_EBADF)),
+        };
     }
     let pipe_write = match state.guest_pipe_write_plan(fd, byte_count) {
         Ok(RiscvGuestPipeWrite::NotPipe) => None,
