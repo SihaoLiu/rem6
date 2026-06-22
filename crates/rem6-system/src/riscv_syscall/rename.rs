@@ -3,12 +3,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::{
     linux_error, read_guest_c_string, RiscvGuestCStringError, RiscvGuestMemoryReader,
     RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_AT_FDCWD, RISCV_LINUX_EBADF,
-    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EISDIR, RISCV_LINUX_ENAMETOOLONG,
-    RISCV_LINUX_ENOENT, RISCV_LINUX_ENOTDIR, RISCV_LINUX_ENOTEMPTY, RISCV_LINUX_PATH_MAX,
+    RISCV_LINUX_EEXIST, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EISDIR,
+    RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT, RISCV_LINUX_ENOTDIR, RISCV_LINUX_ENOTEMPTY,
+    RISCV_LINUX_PATH_MAX,
 };
 
 pub(super) const RISCV_LINUX_RENAMEAT2: u64 = 276;
 pub(super) const RISCV_LINUX_RENAMEAT: u64 = 38;
+const RISCV_LINUX_RENAME_NOREPLACE: u64 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum RiscvGuestRenameError {
@@ -41,9 +43,10 @@ fn syscall_rename_operation(
     guest_memory: &RiscvGuestMemoryReader,
     flags: u64,
 ) -> u64 {
-    if flags != 0 {
+    if flags & !RISCV_LINUX_RENAME_NOREPLACE != 0 {
         return linux_error(RISCV_LINUX_EINVAL);
     }
+    let no_replace = flags & RISCV_LINUX_RENAME_NOREPLACE != 0;
 
     let source = match read_rename_path(request.argument(1), guest_memory) {
         Ok(path) => path,
@@ -67,6 +70,9 @@ fn syscall_rename_operation(
         Err(error) => return linux_error(error.linux_error_code()),
     };
     let destination = state.resolve_guest_path_for_create(&destination);
+    if no_replace && state.guest_path_exists(&destination) {
+        return linux_error(RISCV_LINUX_EEXIST);
+    }
 
     match state.rename_guest_path(&source, &destination) {
         Ok(()) => 0,
