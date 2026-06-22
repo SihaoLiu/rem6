@@ -8,8 +8,9 @@ use crate::config::StatsFormat;
 use crate::formatting::json_escape;
 use crate::stats_output::multi_run_stats_output;
 use crate::{
-    run_config, run_gups_config, run_trace_replay_config, Rem6CliError, Rem6ExecutionStop,
-    Rem6ExecutionSummary, Rem6GupsConfig, Rem6RunConfig, Rem6TraceReplayConfig,
+    run_config, run_gpu_run_config, run_gups_config, run_trace_replay_config, Rem6CliError,
+    Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GpuRunConfig, Rem6GupsConfig, Rem6RunConfig,
+    Rem6TraceReplayConfig,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,6 +34,7 @@ enum Rem6MultiRunCommand {
     #[default]
     Run,
     Gups,
+    GpuRun,
     TraceReplay,
 }
 
@@ -299,6 +301,15 @@ fn run_child(run: &Rem6MultiRunEntry) -> Result<Rem6MultiRunSummary, Rem6CliErro
             let artifact = run_gups_config(child_config)?;
             Ok(Rem6MultiRunSummary::from_gups_artifact(run, &artifact))
         }
+        Rem6MultiRunCommand::GpuRun => {
+            let child_config = Rem6GpuRunConfig::parse_args([
+                "gpu-run".to_string(),
+                "--config".to_string(),
+                path_arg(&run.config),
+            ])?;
+            let artifact = run_gpu_run_config(child_config)?;
+            Ok(Rem6MultiRunSummary::from_gpu_run_artifact(run, &artifact))
+        }
         Rem6MultiRunCommand::TraceReplay => {
             let child_config = Rem6TraceReplayConfig::parse_args([
                 "trace-replay".to_string(),
@@ -318,6 +329,7 @@ impl Rem6MultiRunCommand {
         match value {
             "run" => Ok(Self::Run),
             "gups" => Ok(Self::Gups),
+            "gpu-run" => Ok(Self::GpuRun),
             "trace-replay" => Ok(Self::TraceReplay),
             _ => Err(Rem6CliError::UnsupportedCommand {
                 command: value.to_string(),
@@ -329,6 +341,7 @@ impl Rem6MultiRunCommand {
         match self {
             Self::Run => "run",
             Self::Gups => "gups",
+            Self::GpuRun => "gpu-run",
             Self::TraceReplay => "trace-replay",
         }
     }
@@ -371,6 +384,24 @@ impl Rem6MultiRunSummary {
             final_tick: artifact.execution.final_tick,
             committed_instructions: 0,
             scheduled_requests: artifact.execution.scheduled_requests,
+        }
+    }
+
+    fn from_gpu_run_artifact(
+        run: &Rem6MultiRunEntry,
+        artifact: &crate::Rem6GpuRunArtifact,
+    ) -> Self {
+        let execution = artifact.execution();
+        Self {
+            id: run.id.clone(),
+            command: run.command,
+            config: run.config.clone(),
+            child_schema: artifact.schema(),
+            status: "completed",
+            executed: true,
+            final_tick: execution.final_tick(),
+            committed_instructions: 0,
+            scheduled_requests: execution.global_memory_requests(),
         }
     }
 

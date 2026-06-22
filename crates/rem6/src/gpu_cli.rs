@@ -1252,6 +1252,14 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
 }
 
 impl Rem6GpuRunArtifact {
+    pub(crate) const fn schema(&self) -> &'static str {
+        self.schema
+    }
+
+    pub(crate) const fn execution(&self) -> &Rem6GpuRunExecutionSummary {
+        &self.execution
+    }
+
     pub fn to_json(&self) -> String {
         let data_cache_protocol = self
             .config
