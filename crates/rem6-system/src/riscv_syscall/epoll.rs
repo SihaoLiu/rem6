@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 
+use super::time::read_timespec64;
 use super::{
     guest_fd_argument, linux_error, poll::ready_events_for_guest_fd, RiscvGuestMemoryReader,
-    RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EBADF,
-    RISCV_LINUX_EEXIST, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EMFILE,
-    RISCV_LINUX_ENOENT, RISCV_LINUX_O_CLOEXEC, RISCV_LINUX_O_RDWR,
+    RiscvGuestMemoryWriter, RiscvSyscallOutcome, RiscvSyscallRequest, RiscvSyscallState,
+    RISCV_LINUX_EBADF, RISCV_LINUX_EEXIST, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
+    RISCV_LINUX_EMFILE, RISCV_LINUX_ENOENT, RISCV_LINUX_O_CLOEXEC, RISCV_LINUX_O_RDWR,
 };
 use crate::{
     GuestFd, GuestFdEntry, GuestFdError, GuestFileDescription, GuestFileDescriptionId,
@@ -14,8 +15,10 @@ use crate::{
 pub(super) const RISCV_LINUX_EPOLL_CREATE1: u64 = 20;
 pub(super) const RISCV_LINUX_EPOLL_CTL: u64 = 21;
 pub(super) const RISCV_LINUX_EPOLL_PWAIT: u64 = 22;
+pub(super) const RISCV_LINUX_EPOLL_PWAIT2: u64 = 441;
 
 const RISCV_LINUX_EPOLL_EVENT_BYTES: usize = 16;
+const RISCV_LINUX_SIGSET_BYTES: u64 = 8;
 const RISCV_LINUX_EPOLL_CTL_ADD: u64 = 1;
 const RISCV_LINUX_EPOLL_CTL_DEL: u64 = 2;
 const RISCV_LINUX_EPOLL_CTL_MOD: u64 = 3;
@@ -83,6 +86,18 @@ impl RiscvGuestEpoll {
 enum RiscvGuestEpollError {
     AlreadyRegistered,
     MissingRegistration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RiscvGuestEpollTimeout {
+    Block,
+    Expire,
+}
+
+impl RiscvGuestEpollTimeout {
+    const fn blocks_when_unready(self) -> bool {
+        matches!(self, Self::Block)
+    }
 }
 
 impl RiscvSyscallState {
@@ -250,54 +265,131 @@ pub(super) fn syscall_epoll_ctl(
 pub(super) fn syscall_epoll_pwait(
     request: RiscvSyscallRequest,
     state: &RiscvSyscallState,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
     guest_memory: Option<&RiscvGuestMemoryWriter>,
-) -> Option<u64> {
+) -> Option<RiscvSyscallOutcome> {
+    if let Err(errno) = validate_epoll_sigmask(
+        request.argument(4),
+        request.argument(5),
+        guest_memory_reader,
+    )? {
+        return Some(epoll_return(linux_error(errno)));
+    }
+    let timeout = if epoll_timeout_may_block(request.argument(3)) {
+        RiscvGuestEpollTimeout::Block
+    } else {
+        RiscvGuestEpollTimeout::Expire
+    };
+    syscall_epoll_wait(request, state, timeout, guest_memory)
+}
+
+pub(super) fn syscall_epoll_pwait2(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> Option<RiscvSyscallOutcome> {
+    let timeout = match epoll_pwait2_timeout(request.argument(3), guest_memory_reader)? {
+        Ok(timeout) => timeout,
+        Err(errno) => return Some(epoll_return(linux_error(errno))),
+    };
+    if let Err(errno) = validate_epoll_sigmask(
+        request.argument(4),
+        request.argument(5),
+        guest_memory_reader,
+    )? {
+        return Some(epoll_return(linux_error(errno)));
+    }
+    syscall_epoll_wait(request, state, timeout, guest_memory_writer)
+}
+
+fn syscall_epoll_wait(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    timeout: RiscvGuestEpollTimeout,
+    guest_memory: Option<&RiscvGuestMemoryWriter>,
+) -> Option<RiscvSyscallOutcome> {
     let Some(epfd) = guest_fd_argument(request.argument(0)) else {
-        return Some(linux_error(RISCV_LINUX_EBADF));
+        return Some(epoll_return(linux_error(RISCV_LINUX_EBADF)));
     };
     let max_events = request.argument(2);
     if max_events == 0 || max_events > RISCV_LINUX_EPOLL_MAX_EVENTS {
-        return Some(linux_error(RISCV_LINUX_EINVAL));
-    }
-    let Some(output_bytes) = max_events
-        .checked_mul(RISCV_LINUX_EPOLL_EVENT_BYTES as u64)
-        .and_then(|bytes| usize::try_from(bytes).ok())
-    else {
-        return Some(linux_error(RISCV_LINUX_EINVAL));
-    };
-    let guest_memory = guest_memory?;
-    if !guest_memory.can_write(request.argument(1), output_bytes) {
-        return Some(linux_error(RISCV_LINUX_EFAULT));
+        return Some(epoll_return(linux_error(RISCV_LINUX_EINVAL)));
     }
     let epoll_description = match state.guest_epoll_description_for_fd(epfd) {
         Ok(Some(description)) => description,
-        Ok(None) => return Some(linux_error(RISCV_LINUX_EINVAL)),
-        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+        Ok(None) => return Some(epoll_return(linux_error(RISCV_LINUX_EINVAL))),
+        Err(_) => return Some(epoll_return(linux_error(RISCV_LINUX_EBADF))),
     };
     let ready = match ready_epoll_events(state, epoll_description, max_events) {
         Ok(events) => events,
-        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+        Err(_) => return Some(epoll_return(linux_error(RISCV_LINUX_EBADF))),
     };
     if ready.is_empty() {
-        return if epoll_timeout_may_block(request.argument(3)) {
-            None
+        return if timeout.blocks_when_unready() {
+            Some(RiscvSyscallOutcome::Blocked)
         } else {
-            Some(0)
+            Some(epoll_return(0))
         };
     }
 
+    let output_bytes = ready
+        .len()
+        .checked_mul(RISCV_LINUX_EPOLL_EVENT_BYTES)
+        .expect("ready event count is bounded by max_events");
+    let guest_memory = guest_memory?;
+    if !guest_memory.can_write(request.argument(1), output_bytes) {
+        return Some(epoll_return(linux_error(RISCV_LINUX_EFAULT)));
+    }
     for (index, event) in ready.iter().enumerate() {
         let Some(address) = request
             .argument(1)
             .checked_add((index * RISCV_LINUX_EPOLL_EVENT_BYTES) as u64)
         else {
-            return Some(linux_error(RISCV_LINUX_EFAULT));
+            return Some(epoll_return(linux_error(RISCV_LINUX_EFAULT)));
         };
         if !guest_memory.write(address, &epoll_event_bytes(*event)) {
-            return Some(linux_error(RISCV_LINUX_EFAULT));
+            return Some(epoll_return(linux_error(RISCV_LINUX_EFAULT)));
         }
     }
-    Some(ready.len() as u64)
+    Some(epoll_return(ready.len() as u64))
+}
+
+fn epoll_return(value: u64) -> RiscvSyscallOutcome {
+    RiscvSyscallOutcome::Return { value }
+}
+
+fn epoll_pwait2_timeout(
+    timeout_address: u64,
+    guest_memory: Option<&RiscvGuestMemoryReader>,
+) -> Option<Result<RiscvGuestEpollTimeout, u64>> {
+    if timeout_address == 0 {
+        return Some(Ok(RiscvGuestEpollTimeout::Block));
+    }
+    let Some(timespec) = read_timespec64(guest_memory?, timeout_address) else {
+        return Some(Err(RISCV_LINUX_EFAULT));
+    };
+    if !timespec.is_valid() {
+        return Some(Err(RISCV_LINUX_EINVAL));
+    }
+    Some(Ok(RiscvGuestEpollTimeout::Expire))
+}
+
+fn validate_epoll_sigmask(
+    sigmask_address: u64,
+    sigset_bytes: u64,
+    guest_memory: Option<&RiscvGuestMemoryReader>,
+) -> Option<Result<(), u64>> {
+    if sigmask_address == 0 {
+        return Some(Ok(()));
+    }
+    if sigset_bytes != RISCV_LINUX_SIGSET_BYTES {
+        return Some(Err(RISCV_LINUX_EINVAL));
+    }
+    match guest_memory?.read(sigmask_address, RISCV_LINUX_SIGSET_BYTES as usize) {
+        Some(bytes) if bytes.len() == RISCV_LINUX_SIGSET_BYTES as usize => Some(Ok(())),
+        _ => Some(Err(RISCV_LINUX_EFAULT)),
+    }
 }
 
 fn read_epoll_event(

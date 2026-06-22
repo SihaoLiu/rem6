@@ -118,8 +118,9 @@ use dirent::{
 };
 pub use emulation::RiscvSyscallEmulation;
 use epoll::{
-    syscall_epoll_create1, syscall_epoll_ctl, syscall_epoll_pwait, RiscvGuestEpoll,
-    RISCV_LINUX_EPOLL_CREATE1, RISCV_LINUX_EPOLL_CTL, RISCV_LINUX_EPOLL_PWAIT,
+    syscall_epoll_create1, syscall_epoll_ctl, syscall_epoll_pwait, syscall_epoll_pwait2,
+    RiscvGuestEpoll, RISCV_LINUX_EPOLL_CREATE1, RISCV_LINUX_EPOLL_CTL, RISCV_LINUX_EPOLL_PWAIT,
+    RISCV_LINUX_EPOLL_PWAIT2,
 };
 use eventfd::{syscall_eventfd2, RiscvGuestEventFd, RISCV_LINUX_EVENTFD2};
 use exit::{syscall_exit, RISCV_LINUX_EXIT, RISCV_LINUX_EXIT_GROUP};

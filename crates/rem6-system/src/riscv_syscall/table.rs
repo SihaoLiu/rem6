@@ -142,8 +142,12 @@ impl RiscvSyscallTable {
             }),
             RISCV_LINUX_EPOLL_CTL => syscall_epoll_ctl(request, state, guest_memory_reader)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
-            RISCV_LINUX_EPOLL_PWAIT => syscall_epoll_pwait(request, state, guest_memory_writer)
-                .map(|value| RiscvSyscallOutcome::Return { value }),
+            RISCV_LINUX_EPOLL_PWAIT => {
+                syscall_epoll_pwait(request, state, guest_memory_reader, guest_memory_writer)
+            }
+            RISCV_LINUX_EPOLL_PWAIT2 => {
+                syscall_epoll_pwait2(request, state, guest_memory_reader, guest_memory_writer)
+            }
             RISCV_LINUX_FLOCK => Some(RiscvSyscallOutcome::Return {
                 value: syscall_flock(request, state),
             }),

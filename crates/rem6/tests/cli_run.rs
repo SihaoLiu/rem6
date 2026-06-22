@@ -40,6 +40,8 @@ mod riscv_sbi;
 mod riscv_se_admin;
 #[path = "cli_run/riscv_se_chdir.rs"]
 mod riscv_se_chdir;
+#[path = "cli_run/riscv_se_epoll.rs"]
+mod riscv_se_epoll;
 #[path = "cli_run/riscv_se_fadvise.rs"]
 mod riscv_se_fadvise;
 #[path = "cli_run/riscv_se_fallocate.rs"]

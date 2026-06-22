@@ -12,6 +12,7 @@ const RISCV_LINUX_EVENTFD2: u64 = 19;
 const RISCV_LINUX_EPOLL_CREATE1: u64 = 20;
 const RISCV_LINUX_EPOLL_CTL: u64 = 21;
 const RISCV_LINUX_EPOLL_PWAIT: u64 = 22;
+const RISCV_LINUX_EPOLL_PWAIT2: u64 = 441;
 const RISCV_LINUX_DUP: u64 = 23;
 const RISCV_LINUX_FCNTL: u64 = 25;
 const RISCV_LINUX_F_GETFD: u64 = 1;
@@ -247,6 +248,81 @@ fn linux_table_epoll_ctl_and_pwait_report_registered_eventfd_readiness() {
             Some(&writer),
         )),
         0
+    );
+}
+
+#[test]
+fn linux_table_epoll_pwait2_reports_registered_eventfd_readiness() {
+    let store = epoll_store();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+
+    let event_fd = return_value(handle(&mut state, RISCV_LINUX_EVENTFD2, [7, 0, 0, 0, 0, 0]));
+    let epfd = return_value(handle(
+        &mut state,
+        RISCV_LINUX_EPOLL_CREATE1,
+        [0, 0, 0, 0, 0, 0],
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_EPOLL_CTL,
+            [epfd, RISCV_LINUX_EPOLL_CTL_ADD, event_fd, 0x9010, 0, 0,],
+            Some(&reader),
+            None,
+        )),
+        0
+    );
+
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_EPOLL_PWAIT2,
+            [epfd, 0x9050, 2, 0, 0, 0],
+            None,
+            Some(&writer),
+        )),
+        1
+    );
+    assert_eq!(
+        epoll_event_at(&store, 0x9050),
+        (RISCV_LINUX_EPOLLIN, 0x55aa)
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_epoll_pwait2_validates_guest_sigmask() {
+    let store = epoll_store();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+
+    let epfd = return_value(handle(
+        &mut state,
+        RISCV_LINUX_EPOLL_CREATE1,
+        [0, 0, 0, 0, 0, 0],
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_EPOLL_PWAIT2,
+            [epfd, 0x9050, 1, 0, 0x9000, 7],
+            Some(&reader),
+            Some(&writer),
+        )),
+        linux_error(RISCV_LINUX_EINVAL)
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_EPOLL_PWAIT2,
+            [epfd, 0x9050, 1, 0, 0x9ff9, 8],
+            Some(&reader),
+            Some(&writer),
+        )),
+        linux_error(RISCV_LINUX_EFAULT)
     );
 }
 
@@ -497,7 +573,7 @@ fn linux_table_epoll_pwait_validates_memory_and_blocking_timeout() {
             None,
             Some(&writer),
         ),
-        None
+        Some(RiscvSyscallOutcome::Blocked)
     );
     let sentinel_event = [0xa5_u8; 16];
     assert!(guest_memory_writer(Arc::clone(&store))(
@@ -526,7 +602,7 @@ fn linux_table_epoll_pwait_validates_memory_and_blocking_timeout() {
             None,
             Some(&range_writer),
         )),
-        linux_error(RISCV_LINUX_EFAULT)
+        0
     );
     assert!(guest_memory_writer(Arc::clone(&store))(
         0x9ff0,
@@ -540,7 +616,17 @@ fn linux_table_epoll_pwait_validates_memory_and_blocking_timeout() {
             None,
             Some(&writer),
         )),
-        linux_error(RISCV_LINUX_EFAULT)
+        0
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_EPOLL_PWAIT,
+            [999, 0x7000, 1, 0, 0, 0],
+            None,
+            Some(&writer),
+        )),
+        linux_error(RISCV_LINUX_EBADF)
     );
     assert_eq!(
         return_value(handle_with_memory(
@@ -560,11 +646,11 @@ fn linux_table_epoll_pwait_validates_memory_and_blocking_timeout() {
             None,
             Some(&range_writer),
         )),
-        linux_error(RISCV_LINUX_EFAULT)
+        1
     );
     assert_eq!(
-        guest_memory_reader(Arc::clone(&store))(0x9ff0, 16).unwrap(),
-        sentinel_event
+        epoll_event_at(&store, 0x9ff0),
+        (RISCV_LINUX_EPOLLIN, 0x55aa)
     );
     assert_eq!(
         return_value(handle_with_memory(
@@ -608,6 +694,44 @@ fn linux_table_epoll_pwait_accepts_large_positive_maxevents() {
             Some(&writer),
         )),
         0
+    );
+}
+
+#[test]
+fn linux_table_epoll_pwait2_validates_timeout_before_sigmask_and_rejects_short_sigmask() {
+    let store = epoll_store();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let short_sigmask_reader = RiscvGuestMemoryReader::new(|_address, bytes| {
+        let truncated = bytes.saturating_sub(1);
+        Some(vec![0_u8; truncated])
+    });
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+    let epfd = return_value(handle(
+        &mut state,
+        RISCV_LINUX_EPOLL_CREATE1,
+        [0, 0, 0, 0, 0, 0],
+    ));
+
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_EPOLL_PWAIT2,
+            [epfd, 0x9050, 1, 0x7000, 0x9000, 7],
+            Some(&reader),
+            Some(&writer),
+        )),
+        linux_error(RISCV_LINUX_EFAULT)
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_EPOLL_PWAIT2,
+            [epfd, 0x9050, 1, 0, 0x9000, 8],
+            Some(&short_sigmask_reader),
+            Some(&writer),
+        )),
+        linux_error(RISCV_LINUX_EFAULT)
     );
 }
 

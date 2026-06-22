@@ -423,9 +423,10 @@ fd/link visibility, vector I/O, positional vector I/O, guest-file `sendfile`,
 `splice`, `tee`, `vmsplice`, mode-zero `fallocate`, and `copy_file_range`, `waitid`, `ppoll` timeout,
 sigmask, expiration/writeback, indefinite blocking, and readiness behavior, `pselect6`,
 `eventfd2` counter, semaphore, nonblock, close-on-exec, poll-readiness, and
-actual ecall read-to-exit smoke slices, `epoll_create1`, `epoll_ctl`, and
-`epoll_pwait` eventfd-readiness slices, `signalfd4` blocked pending-signal
-read, nonblock, write-rejection, poll-readiness, and close-cleanup slices with
+actual ecall read-to-exit smoke slices, `epoll_create1`, `epoll_ctl`,
+`epoll_pwait`, and `epoll_pwait2` eventfd-readiness slices,
+`signalfd4` blocked pending-signal read, nonblock, write-rejection,
+poll-readiness, and close-cleanup slices with
 direct ecall smoke coverage, `inotify_init1`/`inotify_add_watch`/`inotify_rm_watch`
 guest-backed `IN_CREATE` event production from `openat(O_CREAT)`, read,
 nonblock, poll-readiness, ignored-watch cleanup, and direct ecall smoke
@@ -637,13 +638,11 @@ shared RISC-V CLI tool detection in `cli_run::support`,
 `riscv_syscall::tests::hwprobe_tests`, `riscv_syscall_riscv_flush_icache`, `riscv_se_riscv`,
 `riscv_syscall_close_range`,
 `riscv_syscall_openat2`,
-`riscv_syscall_eventfd`,
-`riscv_syscall::tests::timerfd_tests`,
-`riscv_se_timerfd`,
+`riscv_syscall_eventfd`, `riscv_syscall::tests::timerfd_tests`, `riscv_se_timerfd`,
 `riscv_syscall_signalfd`,
 `riscv_se_signalfd`,
 `riscv_syscall_inotify`, `riscv_se_inotify`,
-`riscv_syscall_epoll`,
+`riscv_syscall_epoll`, `riscv_se_epoll`,
 `riscv_syscall_pselect`,
 `riscv_syscall::tests::mlock_tests`, `riscv_se_mmap`,
 `riscv_syscall::tests::memory_policy_tests`,
