@@ -235,7 +235,8 @@ use sleep::{
     syscall_clock_nanosleep, syscall_nanosleep, RISCV_LINUX_CLOCK_NANOSLEEP, RISCV_LINUX_NANOSLEEP,
 };
 use socket::{
-    syscall_socketpair, RiscvGuestSocketEndpoint, RiscvGuestSocketQueue, RiscvGuestSocketQueueId,
+    syscall_recvfrom, syscall_sendto, syscall_socketpair, RiscvGuestSocketEndpoint,
+    RiscvGuestSocketQueue, RiscvGuestSocketQueueId, RISCV_LINUX_RECVFROM, RISCV_LINUX_SENDTO,
     RISCV_LINUX_SOCKETPAIR,
 };
 use splice::{syscall_splice, RISCV_LINUX_SPLICE};

@@ -21,6 +21,8 @@ fn rem6_run_riscv_se_runs_static_raw_socketpair_against_qemu() {
 #define SOCK_STREAM 1
 #define POLLIN 0x0001
 #define F_GETPIPE_SZ 1032
+#define MSG_DONTWAIT 0x40
+#define MSG_NOSIGNAL 0x4000
 
 struct pollfd {
     int fd;
@@ -67,6 +69,20 @@ static long linux_syscall5(long number, long arg0, long arg1, long arg2,
     return a0;
 }
 
+static long linux_syscall6(long number, long arg0, long arg1, long arg2,
+                           long arg3, long arg4, long arg5) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a4 asm("a4") = arg4;
+    register long a5 asm("a5") = arg5;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3),
+                  "r"(a4), "r"(a5), "r"(a7) : "memory");
+    return a0;
+}
+
 static int bytes_match(const char *left, const char *right, int count) {
     for (int i = 0; i < count; ++i) {
         if (left[i] != right[i]) {
@@ -80,8 +96,10 @@ int main(void) {
     int fds[2] = {-1, -1};
     char left[16] = {0};
     char right[16] = {0};
+    char received[16] = {0};
     const char *left_msg = "left";
     const char *right_msg = "right";
+    const char *send_msg = "sendto";
     struct pollfd poll_fd = {-1, POLLIN, 0};
     const char *ok = "socketpair:ok\n";
     const char *fail = "socketpair:fail\n";
@@ -94,6 +112,8 @@ int main(void) {
     long first_read = pair_status == 0 ? linux_syscall3(63, fds[1], (long)right, 4) : -1;
     long second_write = pair_status == 0 ? linux_syscall3(64, fds[1], (long)right_msg, 5) : -1;
     long second_read = pair_status == 0 ? linux_syscall3(63, fds[0], (long)left, 5) : -1;
+    long send_status = pair_status == 0 ? linux_syscall6(206, fds[0], (long)send_msg, 6, MSG_NOSIGNAL, 0, 0) : -1;
+    long recv_status = pair_status == 0 ? linux_syscall6(207, fds[1], (long)received, 6, MSG_DONTWAIT, 0, 0) : -1;
     if (pair_status == 0) {
         linux_syscall1(57, fds[0]);
         linux_syscall1(57, fds[1]);
@@ -102,7 +122,8 @@ int main(void) {
     if (pair_status == 0 && not_pipe == -9 && first_write == 4 &&
         ready == 1 && (poll_fd.revents & POLLIN) != 0 &&
         first_read == 4 && bytes_match(right, left_msg, 4) &&
-        second_write == 5 && second_read == 5 && bytes_match(left, right_msg, 5)) {
+        second_write == 5 && second_read == 5 && bytes_match(left, right_msg, 5) &&
+        send_status == 6 && recv_status == 6 && bytes_match(received, send_msg, 6)) {
         linux_syscall3(64, 1, (long)ok, 14);
         linux_syscall1(93, 74);
     }
