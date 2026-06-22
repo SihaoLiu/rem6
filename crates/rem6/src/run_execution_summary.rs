@@ -204,6 +204,21 @@ pub(super) fn execution_summary(
         &data_transport,
         &dram,
     );
+    let power_records = crate::power_output::run_power_analysis_records_from_parts(
+        final_tick,
+        &cores,
+        &inputs.instruction_cache,
+        &inputs.data_cache,
+        &memory_resources,
+        &dram,
+    );
+    let debug = Rem6DebugSummary::from_run(
+        inputs.config,
+        cluster,
+        run,
+        &power_records,
+        &inputs.riscv_syscall_trace,
+    );
 
     Ok(Rem6ExecutionSummary {
         final_tick,
@@ -257,7 +272,7 @@ pub(super) fn execution_summary(
         fabric: inputs.fabric,
         dram,
         memory_resources,
-        debug: Rem6DebugSummary::from_run(inputs.config, cluster, run, &inputs.riscv_syscall_trace),
+        debug,
         cores,
         memory_dumps: read_memory_dumps(
             inputs.memory,

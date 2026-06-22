@@ -1293,6 +1293,10 @@ impl Rem6RunConfig {
         self.debug_flags.contains(&CliDebugFlag::Data)
     }
 
+    pub fn debug_power_enabled(&self) -> bool {
+        self.debug_flags.contains(&CliDebugFlag::Power)
+    }
+
     pub fn debug_syscall_enabled(&self) -> bool {
         self.debug_flags.contains(&CliDebugFlag::Syscall)
     }

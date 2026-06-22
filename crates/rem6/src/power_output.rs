@@ -45,7 +45,7 @@ pub(crate) fn run_power_analysis_artifact(
         format,
         output,
         execution.final_tick,
-        records_for_run(execution),
+        run_power_analysis_records(execution),
     )
 }
 
@@ -91,28 +91,44 @@ fn power_analysis_kind(format: PowerAnalysisFormat) -> ExternalPowerAnalysisKind
     }
 }
 
-fn records_for_run(execution: &crate::Rem6ExecutionSummary) -> Vec<PowerAnalysisRecord> {
-    let mut records = execution
-        .cores
+pub(crate) fn run_power_analysis_records(
+    execution: &crate::Rem6ExecutionSummary,
+) -> Vec<PowerAnalysisRecord> {
+    run_power_analysis_records_from_parts(
+        execution.final_tick,
+        &execution.cores,
+        &execution.instruction_cache,
+        &execution.data_cache,
+        &execution.memory_resources,
+        &execution.dram,
+    )
+}
+
+pub(crate) fn run_power_analysis_records_from_parts(
+    final_tick: u64,
+    cores: &[Rem6CoreSummary],
+    instruction_cache: &CliDataCacheSummary,
+    data_cache: &CliDataCacheSummary,
+    memory_resources: &Rem6MemoryResourceSummary,
+    dram: &Rem6DramSummary,
+) -> Vec<PowerAnalysisRecord> {
+    let mut records = cores
         .iter()
-        .map(|core| cpu_power_record(core, execution.final_tick))
+        .map(|core| cpu_power_record(core, final_tick))
         .collect::<Vec<_>>();
-    if let Some(record) =
-        cpu_instruction_cache_power_record(&execution.instruction_cache, execution.final_tick)
-    {
+    if let Some(record) = cpu_instruction_cache_power_record(instruction_cache, final_tick) {
         records.push(record);
     }
-    if let Some(record) = cpu_data_cache_power_record(&execution.data_cache, execution.final_tick) {
+    if let Some(record) = cpu_data_cache_power_record(data_cache, final_tick) {
         records.push(record);
     }
-    if let Some(record) =
-        memory_transport_power_record(&execution.memory_resources, execution.final_tick)
-    {
+    if let Some(record) = memory_transport_power_record(memory_resources, final_tick) {
         records.push(record);
     }
-    if let Some(record) = dram_power_record(&execution.dram, execution.final_tick) {
+    if let Some(record) = dram_power_record(dram, final_tick) {
         records.push(record);
     }
+    records.sort_by(|left, right| left.target().cmp(right.target()));
     records
 }
 

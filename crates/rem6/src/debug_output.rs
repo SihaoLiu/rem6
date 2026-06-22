@@ -1,5 +1,6 @@
 use rem6_cpu::{CpuFetchEventKind, RiscvCluster, RiscvCoreDriveAction, RiscvDataAccessEventKind};
 use rem6_memory::MemoryOperation;
+use rem6_power::{PowerAnalysisRecord, PowerStateKind};
 use rem6_system::{RiscvSyscallTraceOutcome, RiscvSyscallTraceRecord, RiscvSystemRun};
 
 use crate::formatting::{bytes_to_hex, json_escape};
@@ -11,6 +12,7 @@ pub(crate) struct Rem6DebugSummary {
     exec_trace: Vec<Rem6ExecTraceRecord>,
     fetch_trace: Vec<Rem6FetchTraceRecord>,
     data_trace: Vec<Rem6DataTraceRecord>,
+    power_trace: Vec<Rem6PowerTraceRecord>,
     syscall_trace: Vec<Rem6SyscallTraceRecord>,
 }
 
@@ -44,6 +46,17 @@ struct Rem6DataTraceRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct Rem6PowerTraceRecord {
+    target: String,
+    state: &'static str,
+    residency_ticks: u64,
+    temperature_c: String,
+    dynamic_watts: String,
+    static_watts: String,
+    total_watts: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct Rem6SyscallTraceRecord {
     cpu: u32,
     tick: u64,
@@ -58,6 +71,7 @@ impl Rem6DebugSummary {
         config: &Rem6RunConfig,
         cluster: &RiscvCluster,
         run: &RiscvSystemRun,
+        power_records: &[PowerAnalysisRecord],
         syscall_trace: &[RiscvSyscallTraceRecord],
     ) -> Self {
         let flags = config.debug_flags().to_vec();
@@ -76,6 +90,11 @@ impl Rem6DebugSummary {
         } else {
             Vec::new()
         };
+        let power_trace = if config.debug_power_enabled() {
+            power_trace_records(power_records)
+        } else {
+            Vec::new()
+        };
         let syscall_trace = if config.debug_syscall_enabled() {
             syscall_trace_records(syscall_trace)
         } else {
@@ -86,6 +105,7 @@ impl Rem6DebugSummary {
             exec_trace,
             fetch_trace,
             data_trace,
+            power_trace,
             syscall_trace,
         }
     }
@@ -119,6 +139,12 @@ impl Rem6DebugSummary {
             .map(Rem6DataTraceRecord::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let power_trace = self
+            .power_trace
+            .iter()
+            .map(Rem6PowerTraceRecord::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         let syscall_trace = self
             .syscall_trace
             .iter()
@@ -126,8 +152,8 @@ impl Rem6DebugSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"flags\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"data_trace\":[{}],\"syscall_trace\":[{}]}}",
-            flags, exec_trace, fetch_trace, data_trace, syscall_trace
+            "{{\"flags\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"data_trace\":[{}],\"power_trace\":[{}],\"syscall_trace\":[{}]}}",
+            flags, exec_trace, fetch_trace, data_trace, power_trace, syscall_trace
         )
     }
 }
@@ -169,6 +195,21 @@ impl Rem6DataTraceRecord {
     }
 }
 
+impl Rem6PowerTraceRecord {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"target\":\"{}\",\"state\":\"{}\",\"residency_ticks\":{},\"temperature_c\":{},\"dynamic_watts\":{},\"static_watts\":{},\"total_watts\":{}}}",
+            json_escape(&self.target),
+            self.state,
+            self.residency_ticks,
+            self.temperature_c,
+            self.dynamic_watts,
+            self.static_watts,
+            self.total_watts,
+        )
+    }
+}
+
 impl Rem6SyscallTraceRecord {
     fn to_json(&self) -> String {
         let arguments = self
@@ -186,6 +227,31 @@ impl Rem6SyscallTraceRecord {
             arguments,
             syscall_outcome_json(self.outcome),
         )
+    }
+}
+
+fn power_trace_records(records: &[PowerAnalysisRecord]) -> Vec<Rem6PowerTraceRecord> {
+    records
+        .iter()
+        .map(|record| Rem6PowerTraceRecord {
+            target: record.target().to_string(),
+            state: power_state_name(record.current_state()),
+            residency_ticks: record.residency_ticks(record.current_state()),
+            temperature_c: format!("{:.6}", record.temperature_c()),
+            dynamic_watts: format!("{:.6}", record.dynamic_watts()),
+            static_watts: format!("{:.6}", record.static_watts()),
+            total_watts: format!("{:.6}", record.total_watts()),
+        })
+        .collect()
+}
+
+const fn power_state_name(state: PowerStateKind) -> &'static str {
+    match state {
+        PowerStateKind::Undefined => "undefined",
+        PowerStateKind::On => "on",
+        PowerStateKind::ClockGated => "clock_gated",
+        PowerStateKind::SramRetention => "sram_retention",
+        PowerStateKind::Off => "off",
     }
 }
 

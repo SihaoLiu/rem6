@@ -329,6 +329,85 @@ fn rem6_run_syscall_debug_flag_emits_real_riscv_se_syscall_trace() {
 }
 
 #[test]
+fn rem6_run_power_debug_flag_emits_activity_power_trace() {
+    let mut program = riscv64_program(&[
+        0x0000_0297, // auipc x5, 0
+        0x0402_8293, // addi x5, x5, 64
+        0x0052_b023, // sd x5, 0(x5)
+        0x0002_b303, // ld x6, 0(x5)
+        0x0000_0073, // ecall
+    ]);
+    program.resize(0x50, 0);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-power", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--dram-memory",
+            "--instruction-cache-protocol",
+            "msi",
+            "--data-cache-protocol",
+            "msi",
+            "--debug-flags",
+            "Power",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = stdout_json(output.stdout);
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![Value::String("Power".to_string())])
+    );
+    let trace = json
+        .pointer("/debug/power_trace")
+        .and_then(Value::as_array)
+        .expect("debug power trace array");
+    for target in [
+        "cpu0.core",
+        "cpu.instruction_cache",
+        "cpu.data_cache",
+        "memory.transport",
+        "memory.dram",
+    ] {
+        let record = trace
+            .iter()
+            .find(|record| record.get("target").and_then(Value::as_str) == Some(target))
+            .unwrap_or_else(|| panic!("missing power trace target {target}: {trace:?}"));
+        assert_eq!(record.get("state").and_then(Value::as_str), Some("on"));
+        assert!(
+            record
+                .get("residency_ticks")
+                .and_then(Value::as_u64)
+                .is_some_and(|ticks| ticks > 0),
+            "missing residency ticks for {target}: {record:?}"
+        );
+        assert!(
+            record
+                .get("dynamic_watts")
+                .and_then(Value::as_f64)
+                .is_some_and(|watts| watts > 0.0),
+            "missing dynamic watts for {target}: {record:?}"
+        );
+    }
+}
+
+#[test]
 fn rem6_run_loads_debug_flags_from_toml_config() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
