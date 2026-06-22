@@ -21,11 +21,12 @@ use crate::runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use crate::{
     data_access_probe_summary, execute_error, guest_trap_name, instruction_probe_summary,
     memory_transport_summary, Rem6CheckerSummary, Rem6CliError, Rem6CoreSummary, Rem6DebugSummary,
-    Rem6ExecutionStop, Rem6ExecutionSummary, Rem6HostActionSummary, Rem6MemoryResourceSummary,
-    Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmSummary,
-    Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary,
-    Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
-    Rem6RunConfig, Rem6RunFabricSummary, RISCV_DATA_PROBE_PAGE_BYTES,
+    Rem6ExecutionStop, Rem6ExecutionSummary, Rem6HostActionSummary, Rem6MemoryResourceInputs,
+    Rem6MemoryResourceSummary, Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary,
+    Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary,
+    Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
+    Rem6RiscvUnknownSyscallSummary, Rem6RunConfig, Rem6RunFabricSummary,
+    RISCV_DATA_PROBE_PAGE_BYTES,
 };
 
 pub(super) struct ExecutionSummaryInputs<'a> {
@@ -193,18 +194,23 @@ pub(super) fn execution_summary(
     let fetch_transport = memory_transport_summary(inputs.fetch_trace);
     let data_transport = memory_transport_summary(inputs.data_trace);
     let dram = inputs.memory.dram_summary_until(final_tick);
-    let memory_resources = Rem6MemoryResourceSummary::from_run_resources(
-        &inputs.instruction_cache,
-        &inputs.instruction_cache_l2,
-        &inputs.instruction_cache_l3,
-        &inputs.data_cache,
-        &inputs.data_cache_l2,
-        &inputs.data_cache_l3,
-        &fetch_transport,
-        &data_transport,
-        &inputs.fabric,
-        &dram,
-    );
+    let memory_resources =
+        Rem6MemoryResourceSummary::from_run_resources(Rem6MemoryResourceInputs {
+            instruction_caches: [
+                &inputs.instruction_cache,
+                &inputs.instruction_cache_l2,
+                &inputs.instruction_cache_l3,
+            ],
+            data_caches: [
+                &inputs.data_cache,
+                &inputs.data_cache_l2,
+                &inputs.data_cache_l3,
+            ],
+            fetch_transport: &fetch_transport,
+            data_transport: &data_transport,
+            fabric: &inputs.fabric,
+            dram: &dram,
+        });
     let power_records = crate::power_output::run_power_analysis_records_from_parts(
         final_tick,
         &cores,

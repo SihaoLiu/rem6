@@ -21,68 +21,55 @@ pub(crate) struct Rem6MemoryResourceSummary {
     pub(crate) active_dram_resources: u64,
 }
 
+pub(crate) struct Rem6MemoryResourceInputs<'a> {
+    pub(crate) instruction_caches: [&'a CliDataCacheSummary; 3],
+    pub(crate) data_caches: [&'a CliDataCacheSummary; 3],
+    pub(crate) fetch_transport: &'a Rem6MemoryTransportSummary,
+    pub(crate) data_transport: &'a Rem6MemoryTransportSummary,
+    pub(crate) fabric: &'a Rem6RunFabricSummary,
+    pub(crate) dram: &'a Rem6DramSummary,
+}
+
+impl Rem6MemoryResourceInputs<'_> {
+    fn cache_summaries(&self) -> impl Iterator<Item = &CliDataCacheSummary> {
+        self.instruction_caches
+            .iter()
+            .chain(self.data_caches.iter())
+            .copied()
+    }
+}
+
 impl Rem6MemoryResourceSummary {
-    pub(crate) fn from_run_resources(
-        instruction_cache: &CliDataCacheSummary,
-        instruction_cache_l2: &CliDataCacheSummary,
-        instruction_cache_l3: &CliDataCacheSummary,
-        data_cache: &CliDataCacheSummary,
-        data_cache_l2: &CliDataCacheSummary,
-        data_cache_l3: &CliDataCacheSummary,
-        fetch_transport: &Rem6MemoryTransportSummary,
-        data_transport: &Rem6MemoryTransportSummary,
-        fabric: &Rem6RunFabricSummary,
-        dram: &Rem6DramSummary,
-    ) -> Self {
-        let cache_activity = instruction_cache
-            .runs
-            .saturating_add(instruction_cache_l2.runs)
-            .saturating_add(instruction_cache_l3.runs)
-            .saturating_add(data_cache.runs)
-            .saturating_add(data_cache_l2.runs)
-            .saturating_add(data_cache_l3.runs);
-        let active_caches = u64::from(instruction_cache.runs != 0)
-            + u64::from(instruction_cache_l2.runs != 0)
-            + u64::from(instruction_cache_l3.runs != 0)
-            + u64::from(data_cache.runs != 0)
-            + u64::from(data_cache_l2.runs != 0)
-            + u64::from(data_cache_l3.runs != 0);
-        let cache_bank_accepted = instruction_cache
-            .bank_accepted
-            .saturating_add(instruction_cache_l2.bank_accepted)
-            .saturating_add(instruction_cache_l3.bank_accepted)
-            .saturating_add(data_cache.bank_accepted)
-            .saturating_add(data_cache_l2.bank_accepted)
-            .saturating_add(data_cache_l3.bank_accepted);
-        let cache_bank_immediate_hits = instruction_cache
-            .bank_immediate_hits
-            .saturating_add(instruction_cache_l2.bank_immediate_hits)
-            .saturating_add(instruction_cache_l3.bank_immediate_hits)
-            .saturating_add(data_cache.bank_immediate_hits)
-            .saturating_add(data_cache_l2.bank_immediate_hits)
-            .saturating_add(data_cache_l3.bank_immediate_hits);
-        let cache_bank_scheduled_misses = instruction_cache
-            .bank_scheduled_misses
-            .saturating_add(instruction_cache_l2.bank_scheduled_misses)
-            .saturating_add(instruction_cache_l3.bank_scheduled_misses)
-            .saturating_add(data_cache.bank_scheduled_misses)
-            .saturating_add(data_cache_l2.bank_scheduled_misses)
-            .saturating_add(data_cache_l3.bank_scheduled_misses);
-        let cache_bank_coalesced_misses = instruction_cache
-            .bank_coalesced_misses
-            .saturating_add(instruction_cache_l2.bank_coalesced_misses)
-            .saturating_add(instruction_cache_l3.bank_coalesced_misses)
-            .saturating_add(data_cache.bank_coalesced_misses)
-            .saturating_add(data_cache_l2.bank_coalesced_misses)
-            .saturating_add(data_cache_l3.bank_coalesced_misses);
-        let transport_activity = fetch_transport
+    pub(crate) fn from_run_resources(inputs: Rem6MemoryResourceInputs<'_>) -> Self {
+        let cache_activity = inputs
+            .cache_summaries()
+            .fold(0_u64, |sum, cache| sum.saturating_add(cache.runs));
+        let active_caches = inputs
+            .cache_summaries()
+            .filter(|cache| cache.runs != 0)
+            .count() as u64;
+        let cache_bank_accepted = inputs
+            .cache_summaries()
+            .fold(0_u64, |sum, cache| sum.saturating_add(cache.bank_accepted));
+        let cache_bank_immediate_hits = inputs.cache_summaries().fold(0_u64, |sum, cache| {
+            sum.saturating_add(cache.bank_immediate_hits)
+        });
+        let cache_bank_scheduled_misses = inputs.cache_summaries().fold(0_u64, |sum, cache| {
+            sum.saturating_add(cache.bank_scheduled_misses)
+        });
+        let cache_bank_coalesced_misses = inputs.cache_summaries().fold(0_u64, |sum, cache| {
+            sum.saturating_add(cache.bank_coalesced_misses)
+        });
+        let transport_activity = inputs
+            .fetch_transport
             .counters
             .requests
-            .saturating_add(data_transport.counters.requests);
-        let active_transports = u64::from(fetch_transport.counters.requests != 0)
-            + u64::from(data_transport.counters.requests != 0);
-        let fabric_activity = fabric.transfers();
-        let active_fabric_resources = fabric.active_lanes();
+            .saturating_add(inputs.data_transport.counters.requests);
+        let active_transports = u64::from(inputs.fetch_transport.counters.requests != 0)
+            + u64::from(inputs.data_transport.counters.requests != 0);
+        let fabric_activity = inputs.fabric.transfers();
+        let active_fabric_resources = inputs.fabric.active_lanes();
+        let dram = inputs.dram;
         let dram_activity = dram
             .accesses
             .max(dram.reads.saturating_add(dram.writes))

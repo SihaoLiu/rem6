@@ -221,16 +221,19 @@ where
         let mut control = RiscvGdbRunControl::None;
         let consumed = memory
             .with_store_mut(|store| {
-                process_gdb_bytes(
-                    &mut session,
+                let mut processor = GdbPacketProcessor {
+                    session: &mut session,
                     cluster,
-                    store,
+                    memory: store,
+                    stream: &mut stream,
+                    instruction_cache: &instruction_cache,
+                    data_cache: &data_cache,
+                };
+                process_gdb_bytes(
+                    &mut processor,
                     &pending,
-                    &mut stream,
                     &mut control,
                     !outcome.has_completed_run(),
-                    &instruction_cache,
-                    &data_cache,
                 )
             })
             .ok_or_else(|| execute_error("--gdb-listen requires store-backed memory"))??;
@@ -399,6 +402,15 @@ enum RiscvGdbRunControl {
     SingleStep,
 }
 
+struct GdbPacketProcessor<'a, W: Write> {
+    session: &'a mut GdbRemoteSession,
+    cluster: &'a RiscvCluster,
+    memory: &'a mut PartitionedMemoryStore,
+    stream: &'a mut W,
+    instruction_cache: &'a CliCacheHierarchy,
+    data_cache: &'a CliCacheHierarchy,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum RiscvGdbContinueOutcome {
     StoppedAtTrap {
@@ -454,16 +466,11 @@ impl RiscvGdbDataAccessCursor {
     }
 }
 
-fn process_gdb_bytes(
-    session: &mut GdbRemoteSession,
-    cluster: &RiscvCluster,
-    memory: &mut PartitionedMemoryStore,
+fn process_gdb_bytes<W: Write>(
+    processor: &mut GdbPacketProcessor<'_, W>,
     pending: &[u8],
-    stream: &mut impl Write,
     control: &mut RiscvGdbRunControl,
     resume_allowed: bool,
-    instruction_cache: &CliCacheHierarchy,
-    data_cache: &CliCacheHierarchy,
 ) -> Result<usize, Rem6CliError> {
     let mut consumed = 0;
     while consumed < pending.len() {
@@ -478,8 +485,9 @@ fn process_gdb_bytes(
         consumed += parsed.consumed_bytes();
         let frames = match parsed.frame() {
             GdbRemoteFrame::Packet(packet) => {
-                if rejects_preexecution_gdb_command(session, packet, resume_allowed) {
-                    session
+                if rejects_preexecution_gdb_command(processor.session, packet, resume_allowed) {
+                    processor
+                        .session
                         .respond_with_payload(b"E22".to_vec())
                         .map_err(|error| {
                             execute_error(format!("failed to reject GDB packet: {error}"))
@@ -487,13 +495,14 @@ fn process_gdb_bytes(
                 } else {
                     match handle_riscv_gdb_remote_system_packet(
                         RiscvGdbXlen::Rv64,
-                        session,
-                        cluster,
-                        memory,
+                        processor.session,
+                        processor.cluster,
+                        processor.memory,
                         packet,
                     ) {
                         Ok(frames) => frames,
-                        Err(RiscvGdbRemotePacketError::RegisterWrite(_)) => session
+                        Err(RiscvGdbRemotePacketError::RegisterWrite(_)) => processor
+                            .session
                             .respond_with_payload(b"E01".to_vec())
                             .map_err(|error| {
                                 execute_error(format!("failed to reject GDB packet: {error}"))
@@ -506,21 +515,25 @@ fn process_gdb_bytes(
                     }
                 }
             }
-            frame => session
+            frame => processor
+                .session
                 .handle_frame(frame)
                 .map_err(|error| execute_error(format!("failed to handle GDB frame: {error}")))?,
         };
         if let GdbRemoteFrame::Packet(packet) = parsed.frame() {
             if gdb_packet_may_mutate_memory(packet)
-                && !invalidate_cli_cache_hierarchies(instruction_cache, data_cache)
+                && !invalidate_cli_cache_hierarchies(
+                    processor.instruction_cache,
+                    processor.data_cache,
+                )
             {
                 return Err(execute_error(
                     "failed to invalidate CLI caches after GDB memory mutation",
                 ));
             }
         }
-        write_gdb_frames(stream, &frames)?;
-        match session.control_state() {
+        write_gdb_frames(&mut processor.stream, &frames)?;
+        match processor.session.control_state() {
             GdbRemoteControlState::SingleInstruction { .. } => {
                 *control = RiscvGdbRunControl::SingleStep;
                 break;

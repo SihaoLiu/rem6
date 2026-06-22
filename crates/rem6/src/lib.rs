@@ -90,7 +90,7 @@ pub(crate) use instruction_probe_summary::{
     instruction_probe_summary, Rem6InstructionProbeSummary, Rem6PcCountPairSummary,
     Rem6PcCountTrackerSummary,
 };
-pub(crate) use memory_resource_summary::Rem6MemoryResourceSummary;
+pub(crate) use memory_resource_summary::{Rem6MemoryResourceInputs, Rem6MemoryResourceSummary};
 use pipeline_stats::Rem6InOrderPipelineStageInFlightSummary;
 use power_output::{run_power_analysis_artifact, Rem6PowerAnalysisArtifact};
 use readfile_runtime::{read_readfiles, readfile_mmio_bus, LoadedReadfile, Rem6ReadfileSummary};

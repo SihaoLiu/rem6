@@ -57,6 +57,15 @@ enum CliDataCacheResponseMode {
     Internal,
 }
 
+struct CliDataCacheResponseContext<'a> {
+    memory: &'a CliMemoryRuntime,
+    lower_caches: &'a [CliDataCacheRuntime],
+    start_tick: u64,
+    request: &'a MemoryRequest,
+    backing_dram_access_count: usize,
+    response_mode: CliDataCacheResponseMode,
+}
+
 struct CliMesiLineHarnesses {
     agents: Vec<AgentId>,
     lines: BTreeMap<Address, MesiDirectoryLineHarness>,
@@ -484,14 +493,14 @@ impl CliDataCacheRuntime {
         let backing_dram_access_count = self.ensure_backing(memory, lower_caches, tick, request)?;
 
         let outcome = self
-            .respond_inner(
+            .respond_inner(CliDataCacheResponseContext {
                 memory,
                 lower_caches,
-                tick,
+                start_tick: tick,
                 request,
                 backing_dram_access_count,
-                CliDataCacheResponseMode::External,
-            )
+                response_mode: CliDataCacheResponseMode::External,
+            })
             .unwrap_or_else(|error| {
                 self.record_error(error);
                 TargetOutcome::Respond(MemoryResponse::retry(request))
@@ -667,14 +676,14 @@ impl CliDataCacheRuntime {
         }
         let backing_dram_access_count =
             self.ensure_backing(memory, lower_caches, tick, &request)?;
-        if let Err(error) = self.respond_inner(
+        if let Err(error) = self.respond_inner(CliDataCacheResponseContext {
             memory,
             lower_caches,
-            tick,
-            &request,
+            start_tick: tick,
+            request: &request,
             backing_dram_access_count,
-            CliDataCacheResponseMode::Internal,
-        ) {
+            response_mode: CliDataCacheResponseMode::Internal,
+        }) {
             self.record_error(error);
             return None;
         }
@@ -731,91 +740,61 @@ impl CliDataCacheRuntime {
 
     fn respond_inner(
         &self,
-        memory: &CliMemoryRuntime,
-        lower_caches: &[CliDataCacheRuntime],
-        start_tick: u64,
-        request: &MemoryRequest,
-        backing_dram_access_count: usize,
-        response_mode: CliDataCacheResponseMode,
+        context: CliDataCacheResponseContext<'_>,
     ) -> Result<TargetOutcome, Rem6CliError> {
         let mut harness = self.harness.lock().expect("CLI data cache lock");
         match &mut *harness {
-            CliDataCacheHarness::Msi(harness) => self.respond_msi_inner(
-                memory,
-                lower_caches,
-                start_tick,
-                request,
-                harness,
-                backing_dram_access_count,
-                response_mode,
-            ),
-            CliDataCacheHarness::Mesi(harnesses) => self.respond_mesi_inner(
-                memory,
-                lower_caches,
-                start_tick,
-                request,
-                harnesses,
-                backing_dram_access_count,
-                response_mode,
-            ),
-            CliDataCacheHarness::Moesi(harnesses) => self.respond_moesi_inner(
-                memory,
-                lower_caches,
-                start_tick,
-                request,
-                harnesses,
-                backing_dram_access_count,
-                response_mode,
-            ),
-            CliDataCacheHarness::Chi(harnesses) => self.respond_chi_inner(
-                memory,
-                lower_caches,
-                start_tick,
-                request,
-                harnesses,
-                backing_dram_access_count,
-                response_mode,
-            ),
+            CliDataCacheHarness::Msi(harness) => self.respond_msi_inner(&context, harness),
+            CliDataCacheHarness::Mesi(harnesses) => self.respond_mesi_inner(&context, harnesses),
+            CliDataCacheHarness::Moesi(harnesses) => self.respond_moesi_inner(&context, harnesses),
+            CliDataCacheHarness::Chi(harnesses) => self.respond_chi_inner(&context, harnesses),
         }
     }
 
     fn respond_msi_inner(
         &self,
-        memory: &CliMemoryRuntime,
-        lower_caches: &[CliDataCacheRuntime],
-        start_tick: u64,
-        request: &MemoryRequest,
+        context: &CliDataCacheResponseContext<'_>,
         harness: &mut MsiBankDirectoryHarness,
-        backing_dram_access_count: usize,
-        response_mode: CliDataCacheResponseMode,
     ) -> Result<TargetOutcome, Rem6CliError> {
         let responses_before = harness.cpu_responses().len();
         let decisions_before = harness.directory_decisions().len();
         let cycle_run = harness
-            .submit_parallel_cycle(start_tick, [(request.id().agent(), request.clone())])
+            .submit_parallel_cycle(
+                context.start_tick,
+                [(context.request.id().agent(), context.request.clone())],
+            )
             .map_err(execute_error)?;
         let directory_decision_count = harness
             .directory_decisions()
             .len()
             .saturating_sub(decisions_before);
-        let response_record =
-            response_record(&harness.cpu_responses(), responses_before, request.id());
+        let response_record = response_record(
+            &harness.cpu_responses(),
+            responses_before,
+            context.request.id(),
+        );
         let response_status = response_record.as_ref().map(|record| record.status());
         let outcome = data_cache_target_outcome(
-            response_mode,
-            request,
-            start_tick,
+            context.response_mode,
+            context.request,
+            context.start_tick,
             response_record.as_ref(),
             "CLI MSI data cache response missing",
         )?;
         let line_data = harness
-            .functional_read_line(self.layout.line_address(request.line_address()))
+            .functional_read_line(self.layout.line_address(context.request.line_address()))
             .map_err(execute_error)?
             .data()
             .map(<[u8]>::to_vec);
 
         if let Some(line_data) = line_data {
-            self.sync_request_range(memory, lower_caches, request, response_status, &line_data)?;
+            self.sync_request_range(
+                context.memory,
+                context.lower_caches,
+                context.request,
+                response_status,
+                &line_data,
+            )?;
         }
 
         self.records
@@ -826,8 +805,12 @@ impl CliDataCacheRuntime {
                 msi_bank_cycle_run_summary(
                     &cycle_run,
                     directory_decision_count,
-                    response_count_for_request(response_mode, request, cycle_run.response_count()),
-                    backing_dram_access_count,
+                    response_count_for_request(
+                        context.response_mode,
+                        context.request,
+                        cycle_run.response_count(),
+                    ),
+                    context.backing_dram_access_count,
                 ),
             ));
         Ok(outcome)
@@ -835,15 +818,10 @@ impl CliDataCacheRuntime {
 
     fn respond_mesi_inner(
         &self,
-        memory: &CliMemoryRuntime,
-        lower_caches: &[CliDataCacheRuntime],
-        start_tick: u64,
-        request: &MemoryRequest,
+        context: &CliDataCacheResponseContext<'_>,
         harnesses: &mut CliMesiLineHarnesses,
-        backing_dram_access_count: usize,
-        response_mode: CliDataCacheResponseMode,
     ) -> Result<TargetOutcome, Rem6CliError> {
-        let line = self.layout.line_address(request.line_address());
+        let line = self.layout.line_address(context.request.line_address());
         let harness = harnesses
             .lines
             .get_mut(&line)
@@ -851,7 +829,7 @@ impl CliDataCacheRuntime {
         let responses_before = harness.cpu_responses().len();
         let decisions_before = harness.directory_decisions().len();
         harness
-            .submit_cpu_request(request.id().agent(), request.clone())
+            .submit_cpu_request(context.request.id().agent(), context.request.clone())
             .map_err(execute_error)?;
         let responses = harness.cpu_responses();
         let cpu_response_count = responses.len().saturating_sub(responses_before);
@@ -859,20 +837,26 @@ impl CliDataCacheRuntime {
             .directory_decisions()
             .len()
             .saturating_sub(decisions_before);
-        let response_record = response_record(&responses, responses_before, request.id());
+        let response_record = response_record(&responses, responses_before, context.request.id());
         let response_status = response_record.as_ref().map(|record| record.status());
         let outcome = data_cache_target_outcome(
-            response_mode,
-            request,
-            start_tick,
+            context.response_mode,
+            context.request,
+            context.start_tick,
             response_record.as_ref(),
             "CLI MESI data cache response missing",
         )?;
         if let Some(line_data) = harness
-            .cache_data(request.id().agent())
+            .cache_data(context.request.id().agent())
             .map_err(execute_error)?
         {
-            self.sync_request_range(memory, lower_caches, request, response_status, &line_data)?;
+            self.sync_request_range(
+                context.memory,
+                context.lower_caches,
+                context.request,
+                response_status,
+                &line_data,
+            )?;
         }
 
         self.records
@@ -881,10 +865,14 @@ impl CliDataCacheRuntime {
             .push(RiscvDataCacheRunRecord::new(
                 RiscvDataCacheProtocol::Mesi,
                 data_cache_run_summary(
-                    start_tick,
-                    response_count_for_request(response_mode, request, cpu_response_count),
+                    context.start_tick,
+                    response_count_for_request(
+                        context.response_mode,
+                        context.request,
+                        cpu_response_count,
+                    ),
                     directory_decision_count,
-                    backing_dram_access_count,
+                    context.backing_dram_access_count,
                 ),
             ));
         Ok(outcome)
@@ -892,15 +880,10 @@ impl CliDataCacheRuntime {
 
     fn respond_moesi_inner(
         &self,
-        memory: &CliMemoryRuntime,
-        lower_caches: &[CliDataCacheRuntime],
-        start_tick: u64,
-        request: &MemoryRequest,
+        context: &CliDataCacheResponseContext<'_>,
         harnesses: &mut CliMoesiLineHarnesses,
-        backing_dram_access_count: usize,
-        response_mode: CliDataCacheResponseMode,
     ) -> Result<TargetOutcome, Rem6CliError> {
-        let line = self.layout.line_address(request.line_address());
+        let line = self.layout.line_address(context.request.line_address());
         let harness = harnesses
             .lines
             .get_mut(&line)
@@ -908,7 +891,7 @@ impl CliDataCacheRuntime {
         let responses_before = harness.cpu_responses().len();
         let decisions_before = harness.directory_decisions().len();
         harness
-            .submit_cpu_request(request.id().agent(), request.clone())
+            .submit_cpu_request(context.request.id().agent(), context.request.clone())
             .map_err(execute_error)?;
         let responses = harness.cpu_responses();
         let cpu_response_count = responses.len().saturating_sub(responses_before);
@@ -916,20 +899,26 @@ impl CliDataCacheRuntime {
             .directory_decisions()
             .len()
             .saturating_sub(decisions_before);
-        let response_record = response_record(&responses, responses_before, request.id());
+        let response_record = response_record(&responses, responses_before, context.request.id());
         let response_status = response_record.as_ref().map(|record| record.status());
         let outcome = data_cache_target_outcome(
-            response_mode,
-            request,
-            start_tick,
+            context.response_mode,
+            context.request,
+            context.start_tick,
             response_record.as_ref(),
             "CLI MOESI data cache response missing",
         )?;
         if let Some(line_data) = harness
-            .cache_data(request.id().agent())
+            .cache_data(context.request.id().agent())
             .map_err(execute_error)?
         {
-            self.sync_request_range(memory, lower_caches, request, response_status, &line_data)?;
+            self.sync_request_range(
+                context.memory,
+                context.lower_caches,
+                context.request,
+                response_status,
+                &line_data,
+            )?;
         }
 
         self.records
@@ -938,10 +927,14 @@ impl CliDataCacheRuntime {
             .push(RiscvDataCacheRunRecord::new(
                 RiscvDataCacheProtocol::Moesi,
                 data_cache_run_summary(
-                    start_tick,
-                    response_count_for_request(response_mode, request, cpu_response_count),
+                    context.start_tick,
+                    response_count_for_request(
+                        context.response_mode,
+                        context.request,
+                        cpu_response_count,
+                    ),
                     directory_decision_count,
-                    backing_dram_access_count,
+                    context.backing_dram_access_count,
                 ),
             ));
         Ok(outcome)
@@ -949,15 +942,10 @@ impl CliDataCacheRuntime {
 
     fn respond_chi_inner(
         &self,
-        memory: &CliMemoryRuntime,
-        lower_caches: &[CliDataCacheRuntime],
-        start_tick: u64,
-        request: &MemoryRequest,
+        context: &CliDataCacheResponseContext<'_>,
         harnesses: &mut CliChiLineHarnesses,
-        backing_dram_access_count: usize,
-        response_mode: CliDataCacheResponseMode,
     ) -> Result<TargetOutcome, Rem6CliError> {
-        let line = self.layout.line_address(request.line_address());
+        let line = self.layout.line_address(context.request.line_address());
         let harness = harnesses
             .lines
             .get_mut(&line)
@@ -965,7 +953,7 @@ impl CliDataCacheRuntime {
         let responses_before = harness.cpu_responses().len();
         let decisions_before = harness.directory_decisions().len();
         harness
-            .submit_cpu_request(request.id().agent(), request.clone())
+            .submit_cpu_request(context.request.id().agent(), context.request.clone())
             .map_err(execute_error)?;
         let responses = harness.cpu_responses();
         let cpu_response_count = responses.len().saturating_sub(responses_before);
@@ -973,20 +961,26 @@ impl CliDataCacheRuntime {
             .directory_decisions()
             .len()
             .saturating_sub(decisions_before);
-        let response_record = response_record(&responses, responses_before, request.id());
+        let response_record = response_record(&responses, responses_before, context.request.id());
         let response_status = response_record.as_ref().map(|record| record.status());
         let outcome = data_cache_target_outcome(
-            response_mode,
-            request,
-            start_tick,
+            context.response_mode,
+            context.request,
+            context.start_tick,
             response_record.as_ref(),
             "CLI CHI data cache response missing",
         )?;
         if let Some(line_data) = harness
-            .cache_data(request.id().agent())
+            .cache_data(context.request.id().agent())
             .map_err(execute_error)?
         {
-            self.sync_request_range(memory, lower_caches, request, response_status, &line_data)?;
+            self.sync_request_range(
+                context.memory,
+                context.lower_caches,
+                context.request,
+                response_status,
+                &line_data,
+            )?;
         }
 
         self.records
@@ -995,10 +989,14 @@ impl CliDataCacheRuntime {
             .push(RiscvDataCacheRunRecord::new(
                 RiscvDataCacheProtocol::Chi,
                 data_cache_run_summary(
-                    start_tick,
-                    response_count_for_request(response_mode, request, cpu_response_count),
+                    context.start_tick,
+                    response_count_for_request(
+                        context.response_mode,
+                        context.request,
+                        cpu_response_count,
+                    ),
                     directory_decision_count,
-                    backing_dram_access_count,
+                    context.backing_dram_access_count,
                 ),
             ));
         Ok(outcome)
@@ -1067,14 +1065,14 @@ impl CliDataCacheRuntime {
             if let Some(backing_dram_access_count) =
                 self.ensure_backing(memory, lower_caches, tick, &prefetch_request)
             {
-                let _ = self.respond_inner(
+                let _ = self.respond_inner(CliDataCacheResponseContext {
                     memory,
                     lower_caches,
-                    tick,
-                    &prefetch_request,
+                    start_tick: tick,
+                    request: &prefetch_request,
                     backing_dram_access_count,
-                    CliDataCacheResponseMode::Internal,
-                )?;
+                    response_mode: CliDataCacheResponseMode::Internal,
+                })?;
                 if let Some(prefetch) = self.prefetch.as_ref() {
                     prefetch
                         .lock()
