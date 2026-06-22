@@ -40,7 +40,7 @@ struct RiscvFutexWaitRequest {
     address: GuestFutexAddress,
     thread_group: GuestThreadGroupId,
     bitset: u32,
-    timeout_address: Option<u64>,
+    timeout: RiscvFutexWaitTimeout,
 }
 
 impl RiscvFutexWaitRequest {
@@ -48,15 +48,27 @@ impl RiscvFutexWaitRequest {
         address: GuestFutexAddress,
         thread_group: GuestThreadGroupId,
         bitset: u32,
-        timeout_address: Option<u64>,
+        timeout: RiscvFutexWaitTimeout,
     ) -> Self {
         Self {
             address,
             thread_group,
             bitset,
-            timeout_address,
+            timeout,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RiscvFutexWaitTimeout {
+    Relative(Option<u64>),
+    Absolute(Option<u64>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RiscvFutexWaitTimeoutStatus {
+    Pending,
+    Expired,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -98,7 +110,7 @@ pub(super) fn syscall_futex(
                     address,
                     thread_group,
                     u32::MAX,
-                    Some(request.argument(3)),
+                    RiscvFutexWaitTimeout::Relative(futex_timeout_address(request.argument(3))),
                 ),
                 guest_memory,
             )
@@ -119,7 +131,7 @@ pub(super) fn syscall_futex(
                         address,
                         thread_group,
                         bitset,
-                        Some(request.argument(3)),
+                        RiscvFutexWaitTimeout::Absolute(futex_timeout_address(request.argument(3))),
                     ),
                     guest_memory,
                 )
@@ -300,12 +312,9 @@ fn syscall_futex_wait(
             value: linux_error(RISCV_LINUX_EFAULT),
         });
     };
-    let timeout_is_zero = match wait.timeout_address {
-        Some(timeout_address) => match futex_wait_timeout_is_zero(timeout_address, guest_memory) {
-            Ok(timeout_is_zero) => timeout_is_zero,
-            Err(outcome) => return Some(outcome),
-        },
-        None => false,
+    let timeout_status = match futex_wait_timeout_status(wait.timeout, tick, guest_memory) {
+        Ok(timeout_status) => timeout_status,
+        Err(outcome) => return Some(outcome),
     };
     let expected = request.argument(2) as i32;
     if observed != expected {
@@ -313,7 +322,7 @@ fn syscall_futex_wait(
             value: linux_error(RISCV_LINUX_EAGAIN),
         });
     }
-    if timeout_is_zero {
+    if timeout_status == RiscvFutexWaitTimeoutStatus::Expired {
         return Some(RiscvSyscallOutcome::Return {
             value: linux_error(RISCV_LINUX_ETIMEDOUT),
         });
@@ -340,13 +349,38 @@ fn syscall_futex_wait(
     }
 }
 
-fn futex_wait_timeout_is_zero(
+fn futex_wait_timeout_status(
+    timeout: RiscvFutexWaitTimeout,
+    tick: Tick,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> Result<RiscvFutexWaitTimeoutStatus, RiscvSyscallOutcome> {
+    match timeout {
+        RiscvFutexWaitTimeout::Relative(None) | RiscvFutexWaitTimeout::Absolute(None) => {
+            Ok(RiscvFutexWaitTimeoutStatus::Pending)
+        }
+        RiscvFutexWaitTimeout::Relative(Some(timeout_address)) => {
+            let timeout = read_futex_wait_timeout(timeout_address, guest_memory)?;
+            if timeout.is_zero() {
+                Ok(RiscvFutexWaitTimeoutStatus::Expired)
+            } else {
+                Ok(RiscvFutexWaitTimeoutStatus::Pending)
+            }
+        }
+        RiscvFutexWaitTimeout::Absolute(Some(timeout_address)) => {
+            let timeout = read_futex_wait_timeout(timeout_address, guest_memory)?;
+            if timeout.total_nanoseconds() <= u128::from(tick) {
+                Ok(RiscvFutexWaitTimeoutStatus::Expired)
+            } else {
+                Ok(RiscvFutexWaitTimeoutStatus::Pending)
+            }
+        }
+    }
+}
+
+fn read_futex_wait_timeout(
     timeout_address: u64,
     guest_memory: &RiscvGuestMemoryReader,
-) -> Result<bool, RiscvSyscallOutcome> {
-    if timeout_address == 0 {
-        return Ok(false);
-    }
+) -> Result<super::time::RiscvLinuxTimespec64, RiscvSyscallOutcome> {
     let Some(timeout) = read_timespec64(guest_memory, timeout_address) else {
         return Err(RiscvSyscallOutcome::Return {
             value: linux_error(RISCV_LINUX_EFAULT),
@@ -357,7 +391,15 @@ fn futex_wait_timeout_is_zero(
             value: linux_error(RISCV_LINUX_EINVAL),
         });
     }
-    Ok(timeout.is_zero())
+    Ok(timeout)
+}
+
+const fn futex_timeout_address(address: u64) -> Option<u64> {
+    if address == 0 {
+        None
+    } else {
+        Some(address)
+    }
 }
 
 fn read_guest_i32(guest_memory: &RiscvGuestMemoryReader, address: u64) -> Option<i32> {
