@@ -11,6 +11,9 @@ use super::{
 pub(super) const RISCV_LINUX_RENAMEAT2: u64 = 276;
 pub(super) const RISCV_LINUX_RENAMEAT: u64 = 38;
 const RISCV_LINUX_RENAME_NOREPLACE: u64 = 1;
+const RISCV_LINUX_RENAME_EXCHANGE: u64 = 2;
+const RISCV_LINUX_RENAME_SUPPORTED_FLAGS: u64 =
+    RISCV_LINUX_RENAME_NOREPLACE | RISCV_LINUX_RENAME_EXCHANGE;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum RiscvGuestRenameError {
@@ -43,10 +46,14 @@ fn syscall_rename_operation(
     guest_memory: &RiscvGuestMemoryReader,
     flags: u64,
 ) -> u64 {
-    if flags & !RISCV_LINUX_RENAME_NOREPLACE != 0 {
+    if flags & !RISCV_LINUX_RENAME_SUPPORTED_FLAGS != 0 {
         return linux_error(RISCV_LINUX_EINVAL);
     }
     let no_replace = flags & RISCV_LINUX_RENAME_NOREPLACE != 0;
+    let exchange = flags & RISCV_LINUX_RENAME_EXCHANGE != 0;
+    if no_replace && exchange {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
 
     let source = match read_rename_path(request.argument(1), guest_memory) {
         Ok(path) => path,
@@ -69,6 +76,21 @@ fn syscall_rename_operation(
         Ok(None) => return linux_error(RISCV_LINUX_ENOENT),
         Err(error) => return linux_error(error.linux_error_code()),
     };
+    if exchange {
+        let destination = match state.resolve_existing_guest_path(&destination) {
+            Ok(Some(path)) => path,
+            Ok(None) => return linux_error(RISCV_LINUX_ENOENT),
+            Err(error) => return linux_error(error.linux_error_code()),
+        };
+        return match state.exchange_guest_paths(&source, &destination) {
+            Ok(()) => 0,
+            Err(RiscvGuestRenameError::SourceMissing) => linux_error(RISCV_LINUX_ENOENT),
+            Err(RiscvGuestRenameError::DestinationIsDirectory) => linux_error(RISCV_LINUX_EISDIR),
+            Err(RiscvGuestRenameError::DestinationNotDirectory) => linux_error(RISCV_LINUX_ENOTDIR),
+            Err(RiscvGuestRenameError::DestinationNotEmpty) => linux_error(RISCV_LINUX_ENOTEMPTY),
+            Err(RiscvGuestRenameError::Invalid) => linux_error(RISCV_LINUX_EINVAL),
+        };
+    }
     let destination = state.resolve_guest_path_for_create(&destination);
     if no_replace && state.guest_path_exists(&destination) {
         return linux_error(RISCV_LINUX_EEXIST);
@@ -176,6 +198,28 @@ impl RiscvSyscallState {
         Ok(())
     }
 
+    pub(super) fn exchange_guest_paths(
+        &mut self,
+        source: &[u8],
+        destination: &[u8],
+    ) -> Result<(), RiscvGuestRenameError> {
+        if !self.guest_path_exists(source) || !self.guest_path_exists(destination) {
+            return Err(RiscvGuestRenameError::SourceMissing);
+        }
+        if source == destination {
+            return Ok(());
+        }
+        if self.guest_directories.contains(source) || self.guest_directories.contains(destination) {
+            return Err(RiscvGuestRenameError::Invalid);
+        }
+
+        swap_exact_set(&mut self.guest_paths, source, destination);
+        swap_exact_map(&mut self.guest_files, source, destination);
+        swap_exact_map(&mut self.guest_links, source, destination);
+        swap_exact_map(&mut self.guest_file_identities, source, destination);
+        Ok(())
+    }
+
     fn remove_guest_node_exact(&mut self, path: &[u8]) {
         self.guest_paths.remove(path);
         let removed_directory = self.guest_directories.remove(path);
@@ -259,5 +303,27 @@ fn move_rebased_values<K: Ord>(map: &mut BTreeMap<K, Vec<u8>>, source: &[u8], de
         if let Some(rebased) = rebase_guest_path(path, source, destination) {
             *path = rebased;
         }
+    }
+}
+
+fn swap_exact_set(set: &mut BTreeSet<Vec<u8>>, source: &[u8], destination: &[u8]) {
+    let source_present = set.remove(source);
+    let destination_present = set.remove(destination);
+    if source_present {
+        set.insert(destination.to_vec());
+    }
+    if destination_present {
+        set.insert(source.to_vec());
+    }
+}
+
+fn swap_exact_map<T>(map: &mut BTreeMap<Vec<u8>, T>, source: &[u8], destination: &[u8]) {
+    let source_value = map.remove(source);
+    let destination_value = map.remove(destination);
+    if let Some(value) = source_value {
+        map.insert(destination.to_vec(), value);
+    }
+    if let Some(value) = destination_value {
+        map.insert(source.to_vec(), value);
     }
 }

@@ -12,7 +12,10 @@ const RISCV_LINUX_RENAMEAT2: u64 = 276;
 const RISCV_LINUX_AT_FDCWD: u64 = (-100_i64) as u64;
 const RISCV_LINUX_EEXIST: u64 = 17;
 const RISCV_LINUX_EINVAL: u64 = 22;
+const RISCV_LINUX_ENOENT: u64 = 2;
 const RISCV_LINUX_RENAME_NOREPLACE: u64 = 1;
+const RISCV_LINUX_RENAME_EXCHANGE: u64 = 2;
+const RISCV_LINUX_RENAME_WHITEOUT: u64 = 4;
 
 fn linux_error(errno: u64) -> u64 {
     0u64.wrapping_sub(errno)
@@ -91,11 +94,66 @@ fn linux_table_renameat2_rejects_unsupported_flags_without_mutation() {
     state.register_guest_file(b"old.txt", b"old");
 
     assert_eq!(
-        handle_renameat2(&mut state, &reader, 2),
+        handle_renameat2(&mut state, &reader, RISCV_LINUX_RENAME_WHITEOUT),
         Some(RiscvSyscallOutcome::Return {
             value: linux_error(RISCV_LINUX_EINVAL)
         })
     );
     assert_eq!(state.guest_file_contents(b"old.txt"), Some(&b"old"[..]));
     assert_eq!(state.guest_file_contents(b"new.txt"), None);
+}
+
+#[test]
+fn linux_table_renameat2_exchange_swaps_existing_regular_files() {
+    let store = memory_with_rename_paths();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"old.txt", b"old");
+    state.register_guest_file(b"new.txt", b"new");
+
+    assert_eq!(
+        handle_renameat2(&mut state, &reader, RISCV_LINUX_RENAME_EXCHANGE),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(state.guest_file_contents(b"old.txt"), Some(&b"new"[..]));
+    assert_eq!(state.guest_file_contents(b"new.txt"), Some(&b"old"[..]));
+}
+
+#[test]
+fn linux_table_renameat2_exchange_requires_existing_destination() {
+    let store = memory_with_rename_paths();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"old.txt", b"old");
+
+    assert_eq!(
+        handle_renameat2(&mut state, &reader, RISCV_LINUX_RENAME_EXCHANGE),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOENT)
+        })
+    );
+    assert_eq!(state.guest_file_contents(b"old.txt"), Some(&b"old"[..]));
+    assert_eq!(state.guest_file_contents(b"new.txt"), None);
+}
+
+#[test]
+fn linux_table_renameat2_exchange_rejects_noreplace_combination_without_mutation() {
+    let store = memory_with_rename_paths();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"old.txt", b"old");
+    state.register_guest_file(b"new.txt", b"new");
+
+    assert_eq!(
+        handle_renameat2(
+            &mut state,
+            &reader,
+            RISCV_LINUX_RENAME_EXCHANGE | RISCV_LINUX_RENAME_NOREPLACE,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINVAL)
+        })
+    );
+    assert_eq!(state.guest_file_contents(b"old.txt"), Some(&b"old"[..]));
+    assert_eq!(state.guest_file_contents(b"new.txt"), Some(&b"new"[..]));
 }
