@@ -66,6 +66,7 @@ fn rem6_trace_replay_fabric_route_emits_activity_stats() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"active_fabric_lane_count\":1"));
     assert!(stdout.contains("\"fabric_transfer_count\":2"));
+    assert!(stdout.contains("\"fabric_flit_count\":4"));
     assert_stat(
         &stdout,
         "sim.trace_replay.fabric.active_lanes",
@@ -78,6 +79,13 @@ fn rem6_trace_replay_fabric_route_emits_activity_stats() {
         "sim.trace_replay.fabric.transfers",
         "Count",
         2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.fabric.flits",
+        "Count",
+        4,
         "monotonic",
     );
     assert_stat(
@@ -281,6 +289,7 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
             virtual_network: 1,
             transfer_count: 1,
             byte_count: 8,
+            flit_count: 2,
             occupied_ticks: 2,
             queue_delay_ticks: 0,
             max_queue_delay_ticks: 0,
@@ -293,6 +302,7 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
             virtual_network: 2,
             transfer_count: 1,
             byte_count: 8,
+            flit_count: 2,
             occupied_ticks: 2,
             queue_delay_ticks: 0,
             max_queue_delay_ticks: 0,
@@ -312,6 +322,7 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
             Some(1 | 2)
         ));
         assert_eq!(hop.get("bytes").and_then(Value::as_u64), Some(8));
+        assert_eq!(hop.get("flits").and_then(Value::as_u64), Some(2));
         assert!(hop.get("packet").and_then(Value::as_u64).is_some());
         assert!(hop.get("ready_tick").and_then(Value::as_u64).is_some());
         assert!(hop.get("start_tick").and_then(Value::as_u64).is_some());
@@ -343,6 +354,10 @@ fn assert_fabric_lane_activity(lanes: &[Value], expected: ExpectedFabricLaneActi
         Some(expected.byte_count)
     );
     assert_eq!(
+        lane.get("flit_count").and_then(Value::as_u64),
+        Some(expected.flit_count)
+    );
+    assert_eq!(
         lane.get("occupied_ticks").and_then(Value::as_u64),
         Some(expected.occupied_ticks)
     );
@@ -363,6 +378,7 @@ struct ExpectedFabricLaneActivity<'a> {
     virtual_network: u64,
     transfer_count: u64,
     byte_count: u64,
+    flit_count: u64,
     occupied_ticks: u64,
     queue_delay_ticks: u64,
     max_queue_delay_ticks: u64,

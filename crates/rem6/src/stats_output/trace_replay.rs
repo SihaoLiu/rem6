@@ -501,6 +501,11 @@ pub(super) fn emit_trace_replay_fabric_stats(
         StatResetPolicy::Monotonic,
         summary.fabric_byte_count(),
     )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.fabric.flits",
+        summary.fabric_flit_count(),
+    )?;
     increment_stat(
         stats,
         "sim.trace_replay.fabric.occupied_ticks",

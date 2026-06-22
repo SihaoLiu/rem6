@@ -278,6 +278,7 @@ pub struct WorkloadParallelExecutionSummary {
     active_fabric_lane_count: usize,
     fabric_transfer_count: usize,
     fabric_byte_count: u64,
+    fabric_flit_count: u64,
     fabric_occupied_ticks: u64,
     fabric_queue_delay_ticks: u64,
     fabric_max_queue_delay_ticks: u64,
@@ -625,10 +626,16 @@ impl WorkloadParallelExecutionSummary {
         self.active_fabric_lane_count = active_lane_count;
         self.fabric_transfer_count = transfer_count;
         self.fabric_byte_count = byte_count;
+        self.fabric_flit_count = transfer_count as u64;
         self.fabric_occupied_ticks = occupied_ticks;
         self.fabric_queue_delay_ticks = queue_delay_ticks;
         self.fabric_max_queue_delay_ticks = max_queue_delay_ticks;
         self.contended_fabric_lane_count = contended_lane_count;
+        self
+    }
+
+    pub const fn with_fabric_flit_count(mut self, flit_count: u64) -> Self {
+        self.fabric_flit_count = flit_count;
         self
     }
 
@@ -1062,6 +1069,10 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn fabric_byte_count(&self) -> u64 {
         self.fabric_byte_count
+    }
+
+    pub const fn fabric_flit_count(&self) -> u64 {
+        self.fabric_flit_count
     }
 
     pub const fn fabric_occupied_ticks(&self) -> u64 {

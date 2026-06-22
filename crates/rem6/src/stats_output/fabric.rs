@@ -39,6 +39,13 @@ pub(super) fn emit_run_fabric_stats(
     )?;
     increment_stat(
         stats,
+        &format!("{prefix}.flits"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.flits(),
+    )?;
+    increment_stat(
+        stats,
         &format!("{prefix}.occupied_ticks"),
         "Tick",
         StatResetPolicy::Monotonic,

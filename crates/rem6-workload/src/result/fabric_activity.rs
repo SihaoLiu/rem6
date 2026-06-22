@@ -29,6 +29,7 @@ impl WorkloadParallelExecutionSummary {
         self.active_fabric_lane_count = profile.active_lane_count();
         self.fabric_transfer_count = profile.transfer_count();
         self.fabric_byte_count = profile.byte_count();
+        self.fabric_flit_count = profile.flit_count();
         self.fabric_occupied_ticks = profile.occupied_ticks();
         self.fabric_queue_delay_ticks = profile.queue_delay_ticks();
         self.fabric_max_queue_delay_ticks = profile.max_queue_delay_ticks();

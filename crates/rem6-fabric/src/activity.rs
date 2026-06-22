@@ -10,6 +10,7 @@ pub struct FabricLaneActivity {
     virtual_network: VirtualNetworkId,
     transfer_count: usize,
     byte_count: u64,
+    flit_count: u64,
     occupied_ticks: Tick,
     queue_delay_ticks: Tick,
     max_queue_delay_ticks: Tick,
@@ -35,6 +36,7 @@ impl FabricLaneActivity {
             virtual_network,
             transfer_count,
             byte_count,
+            flit_count: transfer_count as u64,
             occupied_ticks,
             queue_delay_ticks,
             max_queue_delay_ticks,
@@ -57,6 +59,10 @@ impl FabricLaneActivity {
 
     pub const fn byte_count(&self) -> u64 {
         self.byte_count
+    }
+
+    pub const fn flit_count(&self) -> u64 {
+        self.flit_count
     }
 
     pub const fn occupied_ticks(&self) -> Tick {
@@ -83,6 +89,11 @@ impl FabricLaneActivity {
         self.queue_delay_ticks != 0
     }
 
+    pub const fn with_flit_count(mut self, flit_count: u64) -> Self {
+        self.flit_count = flit_count;
+        self
+    }
+
     pub fn merge_window(self, later: Self) -> Self {
         debug_assert_eq!(&self.link, &later.link);
         debug_assert_eq!(self.virtual_network, later.virtual_network);
@@ -91,6 +102,7 @@ impl FabricLaneActivity {
             virtual_network: self.virtual_network,
             transfer_count: self.transfer_count + later.transfer_count,
             byte_count: self.byte_count + later.byte_count,
+            flit_count: self.flit_count + later.flit_count,
             occupied_ticks: self.occupied_ticks + later.occupied_ticks,
             queue_delay_ticks: self.queue_delay_ticks + later.queue_delay_ticks,
             max_queue_delay_ticks: self.max_queue_delay_ticks.max(later.max_queue_delay_ticks),
@@ -107,6 +119,7 @@ pub struct FabricLinkActivity {
     active_virtual_networks: Option<BTreeSet<VirtualNetworkId>>,
     transfer_count: usize,
     byte_count: u64,
+    flit_count: u64,
     occupied_ticks: Tick,
     queue_delay_ticks: Tick,
     max_queue_delay_ticks: Tick,
@@ -122,6 +135,7 @@ impl PartialEq for FabricLinkActivity {
             && self.active_virtual_network_count == other.active_virtual_network_count
             && self.transfer_count == other.transfer_count
             && self.byte_count == other.byte_count
+            && self.flit_count == other.flit_count
             && self.occupied_ticks == other.occupied_ticks
             && self.queue_delay_ticks == other.queue_delay_ticks
             && self.max_queue_delay_ticks == other.max_queue_delay_ticks
@@ -163,6 +177,7 @@ impl FabricLinkActivity {
             active_virtual_networks: None,
             transfer_count,
             byte_count,
+            flit_count: transfer_count as u64,
             occupied_ticks,
             queue_delay_ticks,
             max_queue_delay_ticks,
@@ -203,6 +218,10 @@ impl FabricLinkActivity {
         self.byte_count
     }
 
+    pub const fn flit_count(&self) -> u64 {
+        self.flit_count
+    }
+
     pub const fn occupied_ticks(&self) -> Tick {
         self.occupied_ticks
     }
@@ -231,6 +250,11 @@ impl FabricLinkActivity {
         self.contended_virtual_network_count != 0
     }
 
+    pub const fn with_flit_count(mut self, flit_count: u64) -> Self {
+        self.flit_count = flit_count;
+        self
+    }
+
     pub const fn is_empty(&self) -> bool {
         self.transfer_count == 0
     }
@@ -255,6 +279,7 @@ impl FabricLinkActivity {
             active_virtual_networks,
             transfer_count: self.transfer_count + later.transfer_count,
             byte_count: self.byte_count + later.byte_count,
+            flit_count: self.flit_count + later.flit_count,
             occupied_ticks: self.occupied_ticks + later.occupied_ticks,
             queue_delay_ticks: self.queue_delay_ticks + later.queue_delay_ticks,
             max_queue_delay_ticks: self.max_queue_delay_ticks.max(later.max_queue_delay_ticks),
@@ -283,6 +308,7 @@ impl FabricLinkActivity {
             lane.first_tick(),
             lane.last_tick(),
         )
+        .with_flit_count(lane.flit_count())
         .with_virtual_network_coverage(active_virtual_networks, Some(contended_virtual_networks))
     }
 
@@ -296,6 +322,7 @@ impl FabricLinkActivity {
         }
         self.transfer_count += lane.transfer_count();
         self.byte_count += lane.byte_count();
+        self.flit_count += lane.flit_count();
         self.occupied_ticks += lane.occupied_ticks();
         self.queue_delay_ticks += lane.queue_delay_ticks();
         self.max_queue_delay_ticks = self.max_queue_delay_ticks.max(lane.max_queue_delay_ticks());
@@ -332,6 +359,7 @@ pub struct FabricVirtualNetworkActivity {
     active_links: Option<BTreeSet<FabricLinkId>>,
     transfer_count: usize,
     byte_count: u64,
+    flit_count: u64,
     occupied_ticks: Tick,
     queue_delay_ticks: Tick,
     max_queue_delay_ticks: Tick,
@@ -347,6 +375,7 @@ impl PartialEq for FabricVirtualNetworkActivity {
             && self.active_lane_count == other.active_lane_count
             && self.transfer_count == other.transfer_count
             && self.byte_count == other.byte_count
+            && self.flit_count == other.flit_count
             && self.occupied_ticks == other.occupied_ticks
             && self.queue_delay_ticks == other.queue_delay_ticks
             && self.max_queue_delay_ticks == other.max_queue_delay_ticks
@@ -388,6 +417,7 @@ impl FabricVirtualNetworkActivity {
             active_links: None,
             transfer_count,
             byte_count,
+            flit_count: transfer_count as u64,
             occupied_ticks,
             queue_delay_ticks,
             max_queue_delay_ticks,
@@ -428,6 +458,10 @@ impl FabricVirtualNetworkActivity {
         self.byte_count
     }
 
+    pub const fn flit_count(&self) -> u64 {
+        self.flit_count
+    }
+
     pub const fn occupied_ticks(&self) -> Tick {
         self.occupied_ticks
     }
@@ -456,6 +490,11 @@ impl FabricVirtualNetworkActivity {
         self.contended_lane_count != 0
     }
 
+    pub const fn with_flit_count(mut self, flit_count: u64) -> Self {
+        self.flit_count = flit_count;
+        self
+    }
+
     pub const fn is_empty(&self) -> bool {
         self.transfer_count == 0
     }
@@ -480,6 +519,7 @@ impl FabricVirtualNetworkActivity {
             active_links,
             transfer_count: self.transfer_count + later.transfer_count,
             byte_count: self.byte_count + later.byte_count,
+            flit_count: self.flit_count + later.flit_count,
             occupied_ticks: self.occupied_ticks + later.occupied_ticks,
             queue_delay_ticks: self.queue_delay_ticks + later.queue_delay_ticks,
             max_queue_delay_ticks: self.max_queue_delay_ticks.max(later.max_queue_delay_ticks),
@@ -508,6 +548,7 @@ impl FabricVirtualNetworkActivity {
             lane.first_tick(),
             lane.last_tick(),
         )
+        .with_flit_count(lane.flit_count())
         .with_link_coverage(active_links, Some(contended_links))
     }
 
@@ -521,6 +562,7 @@ impl FabricVirtualNetworkActivity {
         }
         self.transfer_count += lane.transfer_count();
         self.byte_count += lane.byte_count();
+        self.flit_count += lane.flit_count();
         self.occupied_ticks += lane.occupied_ticks();
         self.queue_delay_ticks += lane.queue_delay_ticks();
         self.max_queue_delay_ticks = self.max_queue_delay_ticks.max(lane.max_queue_delay_ticks());
@@ -554,6 +596,7 @@ pub struct FabricActivityProfile {
     active_lane_count: usize,
     transfer_count: usize,
     byte_count: u64,
+    flit_count: u64,
     occupied_ticks: Tick,
     queue_delay_ticks: Tick,
     max_queue_delay_ticks: Tick,
@@ -574,6 +617,7 @@ impl FabricActivityProfile {
             active_lane_count,
             transfer_count,
             byte_count,
+            flit_count: transfer_count as u64,
             occupied_ticks,
             queue_delay_ticks,
             max_queue_delay_ticks,
@@ -590,6 +634,7 @@ impl FabricActivityProfile {
             profile.active_lane_count += 1;
             profile.transfer_count += lane.transfer_count();
             profile.byte_count += lane.byte_count();
+            profile.flit_count += lane.flit_count();
             profile.occupied_ticks += lane.occupied_ticks();
             profile.queue_delay_ticks += lane.queue_delay_ticks();
             profile.max_queue_delay_ticks = profile
@@ -612,6 +657,15 @@ impl FabricActivityProfile {
 
     pub const fn byte_count(self) -> u64 {
         self.byte_count
+    }
+
+    pub const fn flit_count(self) -> u64 {
+        self.flit_count
+    }
+
+    pub const fn with_flit_count(mut self, flit_count: u64) -> Self {
+        self.flit_count = flit_count;
+        self
     }
 
     pub const fn occupied_ticks(self) -> Tick {

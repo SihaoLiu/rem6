@@ -438,6 +438,21 @@ impl FabricSerialLinkTiming {
             }
         }
     }
+
+    fn flit_count(self, bytes: u64) -> Result<u64, FabricError> {
+        let bits = bytes
+            .checked_mul(8)
+            .ok_or(FabricError::SerialLinkPacketBitOverflow { bytes })?;
+        Ok(match self.rate {
+            FabricSerialLinkRate::BitsPerCycle { bits_per_cycle, .. } => {
+                ceil_div(bits, bits_per_cycle)
+            }
+            FabricSerialLinkRate::BitsPerNanosecond {
+                bits_per_nanosecond,
+                ..
+            } => ceil_div(bits, bits_per_nanosecond),
+        })
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -562,6 +577,14 @@ impl FabricPathHop {
 
         Ok(serialization_ticks(bytes, self.bandwidth_bytes_per_tick()))
     }
+
+    fn flit_count(&self, bytes: u64) -> Result<u64, FabricError> {
+        if let Some(serial_link) = self.serial_link {
+            return serial_link.flit_count(bytes);
+        }
+
+        Ok(ceil_div(bytes, self.bandwidth_bytes_per_tick()))
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -661,6 +684,7 @@ pub struct FabricHopActivity {
     link: FabricLinkId,
     virtual_network: VirtualNetworkId,
     bytes: u64,
+    flits: u64,
     ready_tick: Tick,
     start_tick: Tick,
     occupied_ticks: Tick,
@@ -688,6 +712,10 @@ impl FabricHopActivity {
 
     pub const fn bytes(&self) -> u64 {
         self.bytes
+    }
+
+    pub const fn flits(&self) -> u64 {
+        self.flits
     }
 
     pub const fn ready_tick(&self) -> Tick {
@@ -799,6 +827,7 @@ struct FabricLaneActivityRecord {
     link: FabricLinkId,
     virtual_network: VirtualNetworkId,
     bytes: u64,
+    flits: u64,
     occupied_ticks: Tick,
     queue_delay_ticks: Tick,
     ready_tick: Tick,
@@ -815,6 +844,7 @@ impl FabricLaneActivityRecord {
         link: FabricLinkId,
         virtual_network: VirtualNetworkId,
         bytes: u64,
+        flits: u64,
         occupied_ticks: Tick,
         queue_delay_ticks: Tick,
         ready_tick: Tick,
@@ -828,6 +858,7 @@ impl FabricLaneActivityRecord {
             link,
             virtual_network,
             bytes,
+            flits,
             occupied_ticks,
             queue_delay_ticks,
             ready_tick,
@@ -853,6 +884,7 @@ impl FabricLaneActivityRecord {
             self.ready_tick,
             self.arrival_tick,
         )
+        .with_flit_count(self.flits)
     }
 
     fn hop_activity(&self) -> FabricHopActivity {
@@ -862,6 +894,7 @@ impl FabricLaneActivityRecord {
             link: self.link.clone(),
             virtual_network: self.virtual_network,
             bytes: self.bytes,
+            flits: self.flits,
             ready_tick: self.ready_tick,
             start_tick: self.start_tick,
             occupied_ticks: self.occupied_ticks,
@@ -1262,6 +1295,7 @@ impl FabricModel {
             let virtual_network = hop.virtual_network().unwrap_or(packet.virtual_network());
             let lane = FabricLaneKey::new(hop.link().clone(), virtual_network);
             let serialization_ticks = hop.serialization_ticks(packet.bytes())?;
+            let flits = hop.flit_count(packet.bytes())?;
             let reservation = self.lanes.entry(lane).or_default().reserve(
                 ready_tick,
                 serialization_ticks,
@@ -1299,6 +1333,7 @@ impl FabricModel {
                 hop.link().clone(),
                 virtual_network,
                 packet.bytes(),
+                flits,
                 serialization_ticks,
                 queue_delay_ticks,
                 ready_tick,

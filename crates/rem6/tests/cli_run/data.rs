@@ -923,14 +923,25 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
     );
     assert!(fabric.get("transfers").and_then(Value::as_u64).unwrap_or(0) > 0);
     assert!(fabric.get("bytes").and_then(Value::as_u64).unwrap_or(0) > 0);
+    assert!(fabric.get("flits").and_then(Value::as_u64).unwrap_or(0) > 0);
     assert!(fabric
         .get("lane_activities")
         .and_then(Value::as_array)
-        .is_some_and(|lanes| lanes.len() >= 2));
+        .is_some_and(|lanes| {
+            lanes.len() >= 2
+                && lanes
+                    .iter()
+                    .all(|lane| lane.get("flit_count").and_then(Value::as_u64).is_some())
+        }));
     assert!(fabric
         .get("hop_activities")
         .and_then(Value::as_array)
-        .is_some_and(|hops| !hops.is_empty()));
+        .is_some_and(|hops| {
+            !hops.is_empty()
+                && hops
+                    .iter()
+                    .all(|hop| hop.get("flits").and_then(Value::as_u64).is_some())
+        }));
     assert_stat_greater_than(
         &stdout,
         "sim.memory.fabric.transfers",
@@ -939,6 +950,7 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         "monotonic",
     );
     assert_stat_greater_than(&stdout, "sim.memory.fabric.bytes", "Byte", 0, "monotonic");
+    assert_stat_greater_than(&stdout, "sim.memory.fabric.flits", "Count", 0, "monotonic");
 }
 
 #[test]

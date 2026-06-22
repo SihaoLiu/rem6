@@ -17,7 +17,13 @@ fn unique_gpu_temp_dir(prefix: &str) -> PathBuf {
     ))
 }
 
-fn assert_gpu_fabric_lane(lanes: &[Value], link: &str, virtual_network: u64, byte_count: u64) {
+fn assert_gpu_fabric_lane(
+    lanes: &[Value],
+    link: &str,
+    virtual_network: u64,
+    byte_count: u64,
+    flit_count: u64,
+) {
     let lane = lanes
         .iter()
         .find(|lane| {
@@ -29,6 +35,10 @@ fn assert_gpu_fabric_lane(lanes: &[Value], link: &str, virtual_network: u64, byt
     assert_eq!(
         lane.get("byte_count").and_then(Value::as_u64),
         Some(byte_count)
+    );
+    assert_eq!(
+        lane.get("flit_count").and_then(Value::as_u64),
+        Some(flit_count)
     );
     assert!(lane.get("occupied_ticks").and_then(Value::as_u64).is_some());
     assert!(lane.get("first_tick").and_then(Value::as_u64).is_some());
@@ -1037,13 +1047,14 @@ fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
     );
     assert_eq!(fabric.get("transfers").and_then(Value::as_u64), Some(2));
     assert_eq!(fabric.get("bytes").and_then(Value::as_u64), Some(32));
+    assert_eq!(fabric.get("flits").and_then(Value::as_u64), Some(2));
     let lanes = fabric
         .get("lane_activities")
         .and_then(Value::as_array)
         .unwrap();
     assert_eq!(lanes.len(), 2);
-    assert_gpu_fabric_lane(lanes, "gpu_mem", 7, 16);
-    assert_gpu_fabric_lane(lanes, "gpu_mem", 8, 16);
+    assert_gpu_fabric_lane(lanes, "gpu_mem", 7, 16, 1);
+    assert_gpu_fabric_lane(lanes, "gpu_mem", 8, 16, 1);
     let hops = fabric
         .get("hop_activities")
         .and_then(Value::as_array)
@@ -1052,10 +1063,12 @@ fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
     assert!(hops.iter().any(|hop| {
         hop.get("link").and_then(Value::as_str) == Some("gpu_mem")
             && hop.get("virtual_network").and_then(Value::as_u64) == Some(7)
+            && hop.get("flits").and_then(Value::as_u64) == Some(1)
     }));
     assert!(hops.iter().any(|hop| {
         hop.get("link").and_then(Value::as_str) == Some("gpu_mem")
             && hop.get("virtual_network").and_then(Value::as_u64) == Some(8)
+            && hop.get("flits").and_then(Value::as_u64) == Some(1)
     }));
     assert_stat(
         &stdout,
@@ -1071,6 +1084,7 @@ fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
         2,
         "monotonic",
     );
+    assert_stat(&stdout, "sim.gpu_run.fabric.flits", "Count", 2, "monotonic");
 }
 
 #[test]

@@ -101,6 +101,10 @@ impl Rem6GpuFabricSummary {
         self.profile.byte_count()
     }
 
+    pub(crate) fn flit_count(&self) -> u64 {
+        self.profile.flit_count()
+    }
+
     pub(crate) fn occupied_ticks(&self) -> u64 {
         self.profile.occupied_ticks()
     }
@@ -204,7 +208,7 @@ pub(super) fn gpu_fabric_summary_json(
         .map(|depth| depth.to_string())
         .unwrap_or_else(|| "null".to_string());
     format!(
-        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"transfers\":{},\"bytes\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"contended_lanes\":{},\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
+        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"contended_lanes\":{},\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
         json_escape(config.link()),
         config.bandwidth_bytes_per_tick(),
         config.request_virtual_network(),
@@ -214,6 +218,7 @@ pub(super) fn gpu_fabric_summary_json(
         summary.active_virtual_network_count(),
         summary.transfer_count(),
         summary.byte_count(),
+        summary.flit_count(),
         summary.occupied_ticks(),
         summary.queue_delay_ticks(),
         summary.max_queue_delay_ticks(),
@@ -229,11 +234,12 @@ fn gpu_fabric_lane_activities_json(summary: &Rem6GpuFabricSummary) -> String {
         .iter()
         .map(|activity| {
             format!(
-                "{{\"link\":\"{}\",\"virtual_network\":{},\"transfer_count\":{},\"byte_count\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                "{{\"link\":\"{}\",\"virtual_network\":{},\"transfer_count\":{},\"byte_count\":{},\"flit_count\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"first_tick\":{},\"last_tick\":{}}}",
                 json_escape(activity.link().as_str()),
                 activity.virtual_network().get(),
                 activity.transfer_count(),
                 activity.byte_count(),
+                activity.flit_count(),
                 activity.occupied_ticks(),
                 activity.queue_delay_ticks(),
                 activity.max_queue_delay_ticks(),
@@ -251,12 +257,13 @@ fn gpu_fabric_hop_activities_json(summary: &Rem6GpuFabricSummary) -> String {
         .iter()
         .map(|activity| {
             format!(
-                "{{\"packet\":{},\"hop_index\":{},\"link\":\"{}\",\"virtual_network\":{},\"bytes\":{},\"ready_tick\":{},\"start_tick\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"depart_tick\":{},\"arrival_tick\":{}}}",
+                "{{\"packet\":{},\"hop_index\":{},\"link\":\"{}\",\"virtual_network\":{},\"bytes\":{},\"flits\":{},\"ready_tick\":{},\"start_tick\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"depart_tick\":{},\"arrival_tick\":{}}}",
                 activity.packet().get(),
                 activity.hop_index(),
                 json_escape(activity.link().as_str()),
                 activity.virtual_network().get(),
                 activity.bytes(),
+                activity.flits(),
                 activity.ready_tick(),
                 activity.start_tick(),
                 activity.occupied_ticks(),

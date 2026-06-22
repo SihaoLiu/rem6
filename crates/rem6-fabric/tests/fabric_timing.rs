@@ -1,6 +1,7 @@
 use rem6_fabric::{
-    FabricError, FabricLaneActivity, FabricLinkActivity, FabricLinkId, FabricModel, FabricPacket,
-    FabricPacketId, FabricPath, FabricPathHop, FabricVirtualNetworkActivity, VirtualNetworkId,
+    FabricActivityProfile, FabricError, FabricLaneActivity, FabricLinkActivity, FabricLinkId,
+    FabricModel, FabricPacket, FabricPacketId, FabricPath, FabricPathHop,
+    FabricVirtualNetworkActivity, VirtualNetworkId,
 };
 use rem6_kernel::{ClockDomain, Cycles, WaitForEdgeKind, WaitForNode};
 
@@ -79,14 +80,16 @@ fn fabric_serial_link_timing_uses_declared_clock_domain() {
     let mut fabric = FabricModel::new();
     let fast_clock = ClockDomain::new(1).unwrap();
     let slow_clock = ClockDomain::new(4).unwrap();
+    let fast_link = link("serial_fast");
+    let slow_link = link("serial_slow");
     let fast_route =
         path([
-            FabricPathHop::serial_link(link("serial_fast"), fast_clock, Cycles::new(3), 4, 8)
+            FabricPathHop::serial_link(fast_link.clone(), fast_clock, Cycles::new(3), 4, 8)
                 .unwrap(),
         ]);
     let slow_route =
         path([
-            FabricPathHop::serial_link(link("serial_slow"), slow_clock, Cycles::new(3), 4, 8)
+            FabricPathHop::serial_link(slow_link.clone(), slow_clock, Cycles::new(3), 4, 8)
                 .unwrap(),
         ]);
 
@@ -99,6 +102,20 @@ fn fabric_serial_link_timing_uses_declared_clock_domain() {
     assert_eq!(slow.hops()[0].serialization_ticks(), 64);
     assert_eq!(slow.hops()[0].depart_tick(), 71);
     assert_eq!(slow.arrival_tick(), 83);
+    assert_eq!(
+        fabric
+            .lane_activity(&fast_link, VirtualNetworkId::new(0))
+            .unwrap()
+            .flit_count(),
+        16
+    );
+    assert_eq!(
+        fabric
+            .lane_activity(&slow_link, VirtualNetworkId::new(0))
+            .unwrap()
+            .flit_count(),
+        16
+    );
 }
 
 #[test]
@@ -203,27 +220,33 @@ fn fabric_virtual_network_activity_merge_window_preserves_unique_lane_coverage()
 #[test]
 fn fabric_aggregate_activity_equality_uses_public_summary_values() {
     let lanes = [
-        lane_activity("mesh_public_eq", 6, 2, 32, 4, 7, 7, 0, 5),
-        lane_activity("mesh_public_eq", 7, 1, 16, 2, 0, 0, 6, 9),
+        lane_activity("mesh_public_eq", 6, 2, 32, 4, 7, 7, 0, 5).with_flit_count(8),
+        lane_activity("mesh_public_eq", 7, 1, 16, 2, 0, 0, 6, 9).with_flit_count(4),
     ];
     let link_summary = FabricLinkActivity::from_lanes(lanes.iter())
         .into_iter()
         .next()
         .unwrap();
     let count_only_link =
-        FabricLinkActivity::new(link("mesh_public_eq"), 2, 3, 48, 6, 7, 7, 1, 0, 9);
+        FabricLinkActivity::new(link("mesh_public_eq"), 2, 3, 48, 6, 7, 7, 1, 0, 9)
+            .with_flit_count(12);
     assert_eq!(link_summary, count_only_link);
+    assert_eq!(
+        FabricActivityProfile::from_lanes(lanes.iter()),
+        FabricActivityProfile::new(2, 3, 48, 6, 7, 7, 1).with_flit_count(12)
+    );
 
     let vn_lanes = [
-        lane_activity("mesh_public_eq_a", 8, 2, 32, 4, 7, 7, 0, 5),
-        lane_activity("mesh_public_eq_b", 8, 1, 16, 2, 0, 0, 6, 9),
+        lane_activity("mesh_public_eq_a", 8, 2, 32, 4, 7, 7, 0, 5).with_flit_count(8),
+        lane_activity("mesh_public_eq_b", 8, 1, 16, 2, 0, 0, 6, 9).with_flit_count(4),
     ];
     let virtual_network_summary = FabricVirtualNetworkActivity::from_lanes(vn_lanes.iter())
         .into_iter()
         .next()
         .unwrap();
     let count_only_virtual_network =
-        FabricVirtualNetworkActivity::new(VirtualNetworkId::new(8), 2, 3, 48, 6, 7, 7, 1, 0, 9);
+        FabricVirtualNetworkActivity::new(VirtualNetworkId::new(8), 2, 3, 48, 6, 7, 7, 1, 0, 9)
+            .with_flit_count(12);
     assert_eq!(virtual_network_summary, count_only_virtual_network);
 }
 

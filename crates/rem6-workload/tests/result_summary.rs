@@ -171,6 +171,7 @@ fn workload_result_records_parallel_execution_summary() {
         ])
         .with_data_cache_diagnostics(17, 19)
         .with_fabric_activity(2, 7, 224, 31, 13, 8, 1)
+        .with_fabric_flit_count(19)
         .with_dram_activity(1, 2, 3, 5, 4, 1, 2, 3, 11, 1, 83, 21)
         .with_dram_qos_activity(
             3,
@@ -472,6 +473,7 @@ fn workload_result_records_parallel_execution_summary() {
     assert_eq!(summary.active_fabric_lane_count(), 2);
     assert_eq!(summary.fabric_transfer_count(), 7);
     assert_eq!(summary.fabric_byte_count(), 224);
+    assert_eq!(summary.fabric_flit_count(), 19);
     assert_eq!(summary.fabric_occupied_ticks(), 31);
     assert_eq!(summary.fabric_queue_delay_ticks(), 13);
     assert_eq!(summary.fabric_max_queue_delay_ticks(), 8);

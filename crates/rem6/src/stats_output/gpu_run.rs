@@ -287,6 +287,13 @@ fn emit_gpu_fabric_stats(
     )?;
     increment_stat(
         stats,
+        &format!("{prefix}.flits"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.flit_count(),
+    )?;
+    increment_stat(
+        stats,
         &format!("{prefix}.occupied_ticks"),
         "Tick",
         StatResetPolicy::Monotonic,

@@ -11,6 +11,7 @@ pub(crate) struct Rem6RunFabricSummary {
     active_virtual_networks: u64,
     transfers: u64,
     bytes: u64,
+    flits: u64,
     occupied_ticks: u64,
     queue_delay_ticks: u64,
     max_queue_delay_ticks: u64,
@@ -42,6 +43,7 @@ impl Rem6RunFabricSummary {
             active_virtual_networks,
             transfers: profile.transfer_count() as u64,
             bytes: profile.byte_count(),
+            flits: profile.flit_count(),
             occupied_ticks: profile.occupied_ticks(),
             queue_delay_ticks: profile.queue_delay_ticks(),
             max_queue_delay_ticks: profile.max_queue_delay_ticks(),
@@ -65,6 +67,10 @@ impl Rem6RunFabricSummary {
 
     pub(crate) const fn bytes(&self) -> u64 {
         self.bytes
+    }
+
+    pub(crate) const fn flits(&self) -> u64 {
+        self.flits
     }
 
     pub(crate) const fn occupied_ticks(&self) -> u64 {
