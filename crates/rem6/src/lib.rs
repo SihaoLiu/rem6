@@ -66,11 +66,11 @@ mod transport_summary_tests;
 
 pub use cli_error::Rem6CliError;
 pub use config::{
-    CliCachePrefetcher, CliDebugFlag, CliDramMemoryProfile, LoadBlobRequest, LoadBlobSource,
-    MemoryDumpRequest, PowerAnalysisFormat, ReadfileRequest, ReadfileSource, Rem6GupsConfig,
-    Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource,
-    RunFabricConfig, RunMemorySystem, StatsFormat, SuiteResourceSelector,
-    TraceReplayExternalAdapterKind,
+    CliCachePrefetcher, CliDebugFlag, CliDramMemoryProfile, KernelResourceSelector,
+    LoadBlobRequest, LoadBlobSource, MemoryDumpRequest, PowerAnalysisFormat, ReadfileRequest,
+    ReadfileSource, Rem6GupsConfig, Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa,
+    RiscvSeFileRequest, RiscvSeInputSource, RunFabricConfig, RunMemorySystem, StatsFormat,
+    SuiteResourceSelector, TraceReplayExternalAdapterKind,
 };
 use data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io, CliCacheHierarchy,
@@ -596,7 +596,7 @@ fn run_binary_bytes(
             .ok_or_else(|| Rem6CliError::Execute {
                 error: "run resource config was not loaded".to_string(),
             })?
-            .kernel_binary();
+            .kernel_binary(config.kernel_resource());
     }
 
     std::fs::read(config.binary()).map_err(|error| Rem6CliError::ReadBinary {

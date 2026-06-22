@@ -9,7 +9,7 @@ use crate::resource_acquire_cli::{
     acquire_manifest_required_resources, acquire_suite_required_resources,
     reject_runtime_remote_uri_resources,
 };
-use crate::{Rem6CliError, Rem6ResourceAcquireConfig};
+use crate::{KernelResourceSelector, Rem6CliError, Rem6ResourceAcquireConfig};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RunResourcePayloads {
@@ -25,7 +25,14 @@ struct RunResourcePayload {
 }
 
 impl RunResourcePayloads {
-    pub(crate) fn kernel_binary(&self) -> Result<Vec<u8>, Rem6CliError> {
+    pub(crate) fn kernel_binary(
+        &self,
+        selector: Option<&KernelResourceSelector>,
+    ) -> Result<Vec<u8>, Rem6CliError> {
+        if let Some(selector) = selector {
+            return self.selected_kernel_binary(selector);
+        }
+
         let payloads = self
             .payloads
             .iter()
@@ -41,6 +48,29 @@ impl RunResourcePayloads {
             });
         }
         Ok(payloads[0].payload.data().to_vec())
+    }
+
+    fn selected_kernel_binary(
+        &self,
+        selector: &KernelResourceSelector,
+    ) -> Result<Vec<u8>, Rem6CliError> {
+        let payload = match selector {
+            KernelResourceSelector::Resource(id) => self.payload_by_id("kernel", id)?,
+            KernelResourceSelector::SuiteResource(selector) => {
+                self.payload_by_suite_id("kernel", selector.workload_id(), selector.resource_id())?
+            }
+        };
+        if payload.kind != WorkloadResourceKind::Kernel {
+            return Err(Rem6CliError::Execute {
+                error: format!(
+                    "kernel resource {} in run resource config {} has kind {}; expected kernel",
+                    selector.source_name(),
+                    self.resource_config.display(),
+                    payload.kind.as_str(),
+                ),
+            });
+        }
+        Ok(payload.payload.data().to_vec())
     }
 
     pub(crate) fn readfile_payload(&self, id: &str) -> Result<&[u8], Rem6CliError> {

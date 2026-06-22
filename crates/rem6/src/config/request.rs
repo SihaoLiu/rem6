@@ -55,6 +55,12 @@ pub enum LoadBlobSource {
     SuiteResource(SuiteResourceSelector),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum KernelResourceSelector {
+    Resource(String),
+    SuiteResource(SuiteResourceSelector),
+}
+
 impl SuiteResourceSelector {
     pub fn parse_source(value: &str) -> Option<Self> {
         value.strip_prefix("suite-resource:").and_then(Self::parse)
@@ -85,6 +91,26 @@ impl SuiteResourceSelector {
 
     pub fn source_name(&self) -> String {
         format!("suite-resource:{}", self.qualified_id())
+    }
+}
+
+impl KernelResourceSelector {
+    pub fn parse(value: &str) -> Option<Self> {
+        if let Some(selector) = value.strip_prefix("suite-resource:") {
+            return SuiteResourceSelector::parse(selector).map(Self::SuiteResource);
+        }
+        let resource = value.strip_prefix("resource:")?;
+        if resource.is_empty() {
+            return None;
+        }
+        Some(Self::Resource(resource.to_string()))
+    }
+
+    pub fn source_name(&self) -> String {
+        match self {
+            Self::Resource(resource) => format!("resource:{resource}"),
+            Self::SuiteResource(selector) => selector.source_name(),
+        }
     }
 }
 

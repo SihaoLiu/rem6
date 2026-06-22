@@ -448,6 +448,241 @@ artifact_digest = "sha256:run-suite-input"
 }
 
 #[test]
+fn rem6_run_selects_kernel_binary_from_suite_resource_config() {
+    let program_a = riscv64_program(&[
+        0x00a0_0293, // addi x5, x0, 10
+        0x0000_0073, // ecall
+    ]);
+    let program_b = riscv64_program(&[
+        0x00b0_0293, // addi x5, x0, 11
+        0x0000_0073, // ecall
+    ]);
+    let elf_a = riscv64_elf(0x8000_0000, 0x8000_0000, &program_a);
+    let elf_b = riscv64_elf(0x8000_0000, 0x8000_0000, &program_b);
+    let workspace = temp_workspace("run-suite-resource-config-selected-kernel");
+    fs::write(workspace.join("kernel-a.elf"), &elf_a).unwrap();
+    fs::write(workspace.join("kernel-b.elf"), &elf_b).unwrap();
+    let resource_config = workspace.join("resource-acquire-suite.toml");
+    fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+suite_id = "selected-kernel-suite"
+stats_format = "json"
+
+[[resource_acquire.manifests]]
+workload_id = "kernel-a-workload"
+boot_entry = 2147483648
+
+[[resource_acquire.manifests.resources]]
+id = "kernel-a"
+kind = "kernel"
+digest = "sha256:selected-kernel-a"
+locator = "resources/kernel-a.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel-a"
+artifact = "kernel-a.elf"
+artifact_digest = "sha256:selected-kernel-a"
+
+[[resource_acquire.manifests]]
+workload_id = "kernel-b-workload"
+boot_entry = 2147483648
+
+[[resource_acquire.manifests.resources]]
+id = "kernel-b"
+kind = "kernel"
+digest = "sha256:selected-kernel-b"
+locator = "resources/kernel-b.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel-b"
+artifact = "kernel-b.elf"
+artifact_digest = "sha256:selected-kernel-b"
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("run.toml");
+    fs::write(
+        &config,
+        "[run]\nisa = \"riscv\"\nresource_config = \"resource-acquire-suite.toml\"\nkernel_resource = \"suite-resource:kernel-b-workload/kernel-b\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\ncores = 1\n",
+    )
+    .unwrap();
+
+    let assert_kernel_b_output = |output: std::process::Output| {
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+        assert!(stdout.contains("\"binary\":\"resource-config:"));
+        assert!(
+            stdout.contains("\"kernel_resource\":\"suite-resource:kernel-b-workload/kernel-b\"")
+        );
+        assert!(stdout.contains("resource-acquire-suite.toml"));
+        assert!(stdout.contains("\"stop_code\":0"));
+        assert!(stdout.contains("\"trap\":\"environment_call\""));
+        assert!(stdout.contains("\"x5\":\"0xb\""));
+        assert_stat(
+            &stdout,
+            "sim.instructions.committed",
+            "Count",
+            2,
+            "monotonic",
+        );
+    };
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_kernel_b_output(output);
+
+    let cli_config = workspace.join("run-cli.toml");
+    fs::write(
+        &cli_config,
+        "[run]\nisa = \"riscv\"\nresource_config = \"resource-acquire-suite.toml\"\nkernel_resource = \"suite-resource:kernel-a-workload/kernel-a\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\ncores = 1\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args([
+            "run",
+            "--config",
+            cli_config.to_str().unwrap(),
+            "--kernel-resource",
+            "suite-resource:kernel-b-workload/kernel-b",
+        ])
+        .output()
+        .unwrap();
+    assert_kernel_b_output(output);
+}
+
+#[test]
+fn rem6_run_selects_kernel_binary_from_manifest_resource_config() {
+    let program_a = riscv64_program(&[
+        0x00d0_0293, // addi x5, x0, 13
+        0x0000_0073, // ecall
+    ]);
+    let program_b = riscv64_program(&[
+        0x00e0_0293, // addi x5, x0, 14
+        0x0000_0073, // ecall
+    ]);
+    let elf_a = riscv64_elf(0x8000_0000, 0x8000_0000, &program_a);
+    let elf_b = riscv64_elf(0x8000_0000, 0x8000_0000, &program_b);
+    let workspace = temp_workspace("run-manifest-resource-config-selected-kernel");
+    fs::write(workspace.join("kernel-a.elf"), &elf_a).unwrap();
+    fs::write(workspace.join("kernel-b.elf"), &elf_b).unwrap();
+    let resource_config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+workload_id = "selected-manifest-kernel"
+boot_entry = 2147483648
+stats_format = "json"
+
+[[resource_acquire.resources]]
+id = "kernel-a"
+kind = "kernel"
+digest = "sha256:selected-manifest-kernel-a"
+locator = "resources/kernel-a.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel-a"
+artifact = "kernel-a.elf"
+artifact_digest = "sha256:selected-manifest-kernel-a"
+
+[[resource_acquire.resources]]
+id = "kernel-b"
+kind = "kernel"
+digest = "sha256:selected-manifest-kernel-b"
+locator = "resources/kernel-b.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel-b"
+artifact = "kernel-b.elf"
+artifact_digest = "sha256:selected-manifest-kernel-b"
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("run.toml");
+    fs::write(
+        &config,
+        "[run]\nisa = \"riscv\"\nresource_config = \"resource-acquire.toml\"\nkernel_resource = \"resource:kernel-b\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\ncores = 1\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"binary\":\"resource-config:"));
+    assert!(stdout.contains("\"kernel_resource\":\"resource:kernel-b\""));
+    assert!(stdout.contains("resource-acquire.toml"));
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x5\":\"0xe\""));
+    assert_stat(
+        &stdout,
+        "sim.instructions.committed",
+        "Count",
+        2,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_binary_flag_clears_config_kernel_resource() {
+    let program = riscv64_program(&[
+        0x00c0_0293, // addi x5, x0, 12
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let workspace = temp_workspace("run-binary-overrides-kernel-resource");
+    let binary = workspace.join("direct.elf");
+    fs::write(&binary, &elf).unwrap();
+    let config = workspace.join("run.toml");
+    fs::write(
+        &config,
+        "[run]\nisa = \"riscv\"\nresource_config = \"unused-resource-acquire-suite.toml\"\nkernel_resource = \"suite-resource:unused-workload/kernel\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\ncores = 1\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args([
+            "run",
+            "--config",
+            config.to_str().unwrap(),
+            "--binary",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"binary\":\""));
+    assert!(stdout.contains("direct.elf"));
+    assert!(stdout.contains("\"kernel_resource\":null"));
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x5\":\"0xc\""));
+}
+
+#[test]
 fn rem6_run_cli_load_blob_flags_replace_toml_load_blob_defaults() {
     let program = riscv64_program(&[0x0000_0073]); // ecall
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);

@@ -132,6 +132,9 @@ pub enum Rem6CliError {
     InvalidTraceReplayResource {
         value: String,
     },
+    InvalidRunKernelResource {
+        value: String,
+    },
     InvalidResourceKind {
         value: String,
     },
@@ -502,6 +505,12 @@ impl fmt::Display for Rem6CliError {
                 write!(
                     formatter,
                     "invalid trace replay resource {value}; expected suite-resource:<workload>/<resource>"
+                )
+            }
+            Self::InvalidRunKernelResource { value } => {
+                write!(
+                    formatter,
+                    "invalid run kernel resource {value}; expected resource:<resource> or suite-resource:<workload>/<resource>"
                 )
             }
             Self::InvalidResourceKind { value } => {

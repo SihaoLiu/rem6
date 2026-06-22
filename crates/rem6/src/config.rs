@@ -40,8 +40,8 @@ use memory_system::{apply_run_memory_system_preset, default_run_memory_system_fo
 pub use output_format::{PowerAnalysisFormat, StatsFormat};
 use parse::{parse_number, parse_positive_u64, required_value};
 pub use request::{
-    LoadBlobRequest, LoadBlobSource, MemoryDumpRequest, ReadfileRequest, ReadfileSource,
-    SuiteResourceSelector,
+    KernelResourceSelector, LoadBlobRequest, LoadBlobSource, MemoryDumpRequest, ReadfileRequest,
+    ReadfileSource, SuiteResourceSelector,
 };
 use riscv_branch::{
     parse_riscv_branch_predictor, parse_riscv_pc_count_target, valid_riscv_branch_lookahead,
@@ -55,6 +55,7 @@ pub struct Rem6RunConfig {
     isa: RequestedIsa,
     binary: PathBuf,
     resource_config: Option<PathBuf>,
+    kernel_resource: Option<KernelResourceSelector>,
     max_tick: u64,
     min_remote_delay: u64,
     memory_route_delay: u64,
@@ -158,6 +159,7 @@ struct Rem6RunFileConfig {
     isa: Option<String>,
     binary: Option<PathBuf>,
     resource_config: Option<PathBuf>,
+    kernel_resource: Option<String>,
     max_tick: Option<u64>,
     min_remote_delay: Option<u64>,
     memory_route_delay: Option<u64>,
@@ -325,6 +327,17 @@ impl Rem6RunConfig {
             .resource_config
             .as_deref()
             .map(|path| file_config.resolve_path(path));
+        let mut kernel_resource = file_config
+            .kernel_resource
+            .as_deref()
+            .map(|value| {
+                KernelResourceSelector::parse(value).ok_or_else(|| {
+                    Rem6CliError::InvalidRunKernelResource {
+                        value: value.to_string(),
+                    }
+                })
+            })
+            .transpose()?;
         let mut max_tick = file_config.max_tick;
         let mut min_remote_delay = file_config.min_remote_delay.unwrap_or(1);
         if min_remote_delay == 0 {
@@ -613,10 +626,18 @@ impl Rem6RunConfig {
                 "--binary" => {
                     binary = Some(PathBuf::from(required_value(&flag, args.next())?));
                     resource_config = None;
+                    kernel_resource = None;
                 }
                 "--resource-config" => {
                     resource_config = Some(PathBuf::from(required_value(&flag, args.next())?));
                     binary = None;
+                }
+                "--kernel-resource" => {
+                    let value = required_value(&flag, args.next())?;
+                    kernel_resource = Some(
+                        KernelResourceSelector::parse(&value)
+                            .ok_or(Rem6CliError::InvalidRunKernelResource { value })?,
+                    );
                 }
                 "--max-tick" => {
                     let value = required_value(&flag, args.next())?;
@@ -977,6 +998,11 @@ impl Rem6RunConfig {
         if binary.is_some() && resource_config.is_some() {
             return Err(Rem6CliError::ConflictingRunBinarySources);
         }
+        if kernel_resource.is_some() && resource_config.is_none() {
+            return Err(Rem6CliError::MissingRequiredFlag {
+                flag: "--resource-config",
+            });
+        }
         let explicit_memory_system = memory_system.is_some();
         let explicit_enabled_memory_hierarchy = dram_memory
             || dram_memory_profile_was_set
@@ -1087,6 +1113,7 @@ impl Rem6RunConfig {
             isa: isa.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--isa" })?,
             binary,
             resource_config,
+            kernel_resource,
             max_tick: max_tick.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--max-tick" })?,
             min_remote_delay,
             memory_route_delay,
@@ -1143,6 +1170,10 @@ impl Rem6RunConfig {
 
     pub fn resource_config(&self) -> Option<&Path> {
         self.resource_config.as_deref()
+    }
+
+    pub fn kernel_resource(&self) -> Option<&KernelResourceSelector> {
+        self.kernel_resource.as_ref()
     }
 
     pub const fn max_tick(&self) -> u64 {

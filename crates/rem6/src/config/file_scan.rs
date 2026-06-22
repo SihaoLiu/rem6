@@ -9,6 +9,7 @@ pub(super) fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBu
             "--isa",
             "--binary",
             "--resource-config",
+            "--kernel-resource",
             "--max-tick",
             "--min-remote-delay",
             "--memory-route-delay",
