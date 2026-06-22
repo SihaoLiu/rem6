@@ -1031,6 +1031,14 @@ pub(crate) fn run_gpu_run_cli(args: Vec<String>) -> Result<String, Rem6CliError>
 }
 
 impl Rem6GpuRunArtifact {
+    pub(crate) fn configured_output(&self) -> Option<&Path> {
+        self.config.output()
+    }
+
+    pub(crate) fn configured_stats_output(&self) -> Option<&Path> {
+        self.config.stats_output()
+    }
+
     pub(crate) fn emit_configured_output(&self) -> Result<(), Rem6CliError> {
         let stats_format = self.config.stats_format();
         let mut extra_artifacts = Vec::new();

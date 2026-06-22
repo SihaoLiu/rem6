@@ -298,6 +298,14 @@ config = "traffic.toml"
     assert!(stdout.contains("\"suite_id\":\"child-output-smoke\""));
     assert!(stdout.contains("\"runs\":1"));
     assert!(stdout.contains("\"succeeded\":1"));
+    assert!(stdout.contains(&format!(
+        "\"artifact\":\"{}\"",
+        workspace.join("artifacts/gups.json").display()
+    )));
+    assert!(stdout.contains(&format!(
+        "\"stats_artifact\":\"{}\"",
+        workspace.join("artifacts/gups-stats.json").display()
+    )));
 
     let child_artifact = fs::read_to_string(workspace.join("artifacts/gups.json")).unwrap();
     let child_stats = fs::read_to_string(workspace.join("artifacts/gups-stats.json")).unwrap();

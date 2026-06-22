@@ -59,6 +59,8 @@ struct Rem6MultiRunSummary {
     final_tick: u64,
     committed_instructions: u64,
     scheduled_requests: u64,
+    artifact: Option<PathBuf>,
+    stats_artifact: Option<PathBuf>,
     error: Option<String>,
 }
 
@@ -395,6 +397,8 @@ impl Rem6MultiRunSummary {
             final_tick,
             committed_instructions,
             scheduled_requests: 0,
+            artifact: artifact.config.output().map(Path::to_path_buf),
+            stats_artifact: artifact.config.stats_output().map(Path::to_path_buf),
             error: None,
         }
     }
@@ -410,6 +414,8 @@ impl Rem6MultiRunSummary {
             final_tick: artifact.execution.final_tick,
             committed_instructions: 0,
             scheduled_requests: artifact.execution.scheduled_requests,
+            artifact: artifact.config.output().map(Path::to_path_buf),
+            stats_artifact: artifact.config.stats_output().map(Path::to_path_buf),
             error: None,
         }
     }
@@ -429,6 +435,8 @@ impl Rem6MultiRunSummary {
             final_tick: execution.final_tick(),
             committed_instructions: 0,
             scheduled_requests: execution.global_memory_requests(),
+            artifact: artifact.configured_output().map(Path::to_path_buf),
+            stats_artifact: artifact.configured_stats_output().map(Path::to_path_buf),
             error: None,
         }
     }
@@ -447,6 +455,8 @@ impl Rem6MultiRunSummary {
             final_tick: artifact.execution.final_tick,
             committed_instructions: 0,
             scheduled_requests: artifact.execution.summary.scheduled_count() as u64,
+            artifact: artifact.config.output().map(Path::to_path_buf),
+            stats_artifact: artifact.config.stats_output().map(Path::to_path_buf),
             error: None,
         }
     }
@@ -462,6 +472,8 @@ impl Rem6MultiRunSummary {
             final_tick: 0,
             committed_instructions: 0,
             scheduled_requests: 0,
+            artifact: None,
+            stats_artifact: None,
             error: Some(error.to_string()),
         }
     }
@@ -471,13 +483,15 @@ impl Rem6MultiRunSummary {
     }
 
     fn to_json(&self) -> String {
+        let artifact = optional_path_json(self.artifact.as_deref());
+        let stats_artifact = optional_path_json(self.stats_artifact.as_deref());
         let error = self
             .error
             .as_ref()
             .map(|error| format!("\"{}\"", json_escape(error)))
             .unwrap_or_else(|| "null".to_string());
         format!(
-            "{{\"id\":\"{}\",\"command\":\"{}\",\"config\":\"{}\",\"child_schema\":\"{}\",\"run_schema\":\"{}\",\"status\":\"{}\",\"executed\":{},\"final_tick\":{},\"committed_instructions\":{},\"scheduled_requests\":{},\"error\":{}}}",
+            "{{\"id\":\"{}\",\"command\":\"{}\",\"config\":\"{}\",\"child_schema\":\"{}\",\"run_schema\":\"{}\",\"status\":\"{}\",\"executed\":{},\"final_tick\":{},\"committed_instructions\":{},\"scheduled_requests\":{},\"artifact\":{},\"stats_artifact\":{},\"error\":{}}}",
             json_escape(&self.id),
             self.command.as_str(),
             json_escape(&self.config.display().to_string()),
@@ -488,9 +502,16 @@ impl Rem6MultiRunSummary {
             self.final_tick,
             self.committed_instructions,
             self.scheduled_requests,
+            artifact,
+            stats_artifact,
             error,
         )
     }
+}
+
+fn optional_path_json(path: Option<&Path>) -> String {
+    path.map(|path| format!("\"{}\"", json_escape(&path.display().to_string())))
+        .unwrap_or_else(|| "null".to_string())
 }
 
 impl Rem6MultiRunArtifact {
