@@ -17,6 +17,7 @@ use crate::{
 pub struct Rem6MultiRunConfig {
     suite_id: String,
     runs: Vec<Rem6MultiRunEntry>,
+    continue_on_failure: bool,
     stats_format: StatsFormat,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
@@ -58,6 +59,7 @@ struct Rem6MultiRunSummary {
     final_tick: u64,
     committed_instructions: u64,
     scheduled_requests: u64,
+    error: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -71,6 +73,7 @@ struct Rem6MultiRunFileRoot {
 struct Rem6MultiRunFileConfig {
     suite_id: Option<String>,
     stats_format: Option<String>,
+    continue_on_failure: Option<bool>,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
     runs: Option<Vec<Rem6MultiRunFileEntry>>,
@@ -107,6 +110,7 @@ impl Rem6MultiRunConfig {
 
         let mut suite_id = file_config.suite_id.clone();
         let mut runs = file_config.runs()?;
+        let mut continue_on_failure = file_config.continue_on_failure.unwrap_or(false);
         let mut stats_format = file_config
             .stats_format
             .as_deref()
@@ -137,6 +141,9 @@ impl Rem6MultiRunConfig {
                 "--stats-format" => {
                     stats_format = StatsFormat::parse(&required_value(&flag, args.next())?)?;
                 }
+                "--continue-on-failure" => {
+                    continue_on_failure = true;
+                }
                 "--output" => {
                     output = Some(PathBuf::from(required_value(&flag, args.next())?));
                 }
@@ -160,6 +167,7 @@ impl Rem6MultiRunConfig {
             suite_id: suite_id.ok_or(Rem6CliError::MissingRequiredFlag {
                 flag: "multi_run.suite_id",
             })?,
+            continue_on_failure,
             runs: (!runs.is_empty())
                 .then_some(runs)
                 .ok_or(Rem6CliError::MissingRequiredFlag {
@@ -181,6 +189,10 @@ impl Rem6MultiRunConfig {
 
     fn stats_output(&self) -> Option<&Path> {
         self.stats_output.as_deref()
+    }
+
+    const fn continue_on_failure(&self) -> bool {
+        self.continue_on_failure
     }
 }
 
@@ -246,11 +258,20 @@ pub fn run_multi_run_config(
 ) -> Result<Rem6MultiRunArtifact, Rem6CliError> {
     let mut run_summaries = Vec::with_capacity(config.runs.len());
     for run in &config.runs {
-        run_summaries.push(run_child(run)?);
+        match run_child(run) {
+            Ok(summary) => run_summaries.push(summary),
+            Err(error) if config.continue_on_failure() => {
+                run_summaries.push(Rem6MultiRunSummary::from_error(run, error));
+            }
+            Err(error) => return Err(error),
+        }
     }
 
-    let succeeded = run_summaries.len() as u64;
-    let failed = 0;
+    let succeeded = run_summaries
+        .iter()
+        .filter(|summary| summary.succeeded())
+        .count() as u64;
+    let failed = run_summaries.len() as u64 - succeeded;
     let total_final_tick = run_summaries
         .iter()
         .map(|summary| summary.final_tick)
@@ -370,6 +391,7 @@ impl Rem6MultiRunSummary {
             final_tick,
             committed_instructions,
             scheduled_requests: 0,
+            error: None,
         }
     }
 
@@ -384,6 +406,7 @@ impl Rem6MultiRunSummary {
             final_tick: artifact.execution.final_tick,
             committed_instructions: 0,
             scheduled_requests: artifact.execution.scheduled_requests,
+            error: None,
         }
     }
 
@@ -402,6 +425,7 @@ impl Rem6MultiRunSummary {
             final_tick: execution.final_tick(),
             committed_instructions: 0,
             scheduled_requests: execution.global_memory_requests(),
+            error: None,
         }
     }
 
@@ -419,12 +443,37 @@ impl Rem6MultiRunSummary {
             final_tick: artifact.execution.final_tick,
             committed_instructions: 0,
             scheduled_requests: artifact.execution.summary.scheduled_count() as u64,
+            error: None,
         }
     }
 
+    fn from_error(run: &Rem6MultiRunEntry, error: Rem6CliError) -> Self {
+        Self {
+            id: run.id.clone(),
+            command: run.command,
+            config: run.config.clone(),
+            child_schema: "rem6.cli.error.v1",
+            status: "failed",
+            executed: false,
+            final_tick: 0,
+            committed_instructions: 0,
+            scheduled_requests: 0,
+            error: Some(error.to_string()),
+        }
+    }
+
+    fn succeeded(&self) -> bool {
+        self.error.is_none()
+    }
+
     fn to_json(&self) -> String {
+        let error = self
+            .error
+            .as_ref()
+            .map(|error| format!("\"{}\"", json_escape(error)))
+            .unwrap_or_else(|| "null".to_string());
         format!(
-            "{{\"id\":\"{}\",\"command\":\"{}\",\"config\":\"{}\",\"child_schema\":\"{}\",\"run_schema\":\"{}\",\"status\":\"{}\",\"executed\":{},\"final_tick\":{},\"committed_instructions\":{},\"scheduled_requests\":{}}}",
+            "{{\"id\":\"{}\",\"command\":\"{}\",\"config\":\"{}\",\"child_schema\":\"{}\",\"run_schema\":\"{}\",\"status\":\"{}\",\"executed\":{},\"final_tick\":{},\"committed_instructions\":{},\"scheduled_requests\":{},\"error\":{}}}",
             json_escape(&self.id),
             self.command.as_str(),
             json_escape(&self.config.display().to_string()),
@@ -435,6 +484,7 @@ impl Rem6MultiRunSummary {
             self.final_tick,
             self.committed_instructions,
             self.scheduled_requests,
+            error,
         )
     }
 }
@@ -462,12 +512,19 @@ impl Rem6MultiRunArtifact {
             .iter()
             .map(|summary| summary.scheduled_requests)
             .sum::<u64>();
+        let succeeded = self
+            .runs
+            .iter()
+            .filter(|summary| summary.succeeded())
+            .count();
+        let failed = self.runs.len() - succeeded;
         format!(
-            "{{\"schema\":\"{}\",\"suite_id\":\"{}\",\"runs\":{},\"succeeded\":{},\"failed\":0,\"total_final_tick\":{},\"total_committed_instructions\":{},\"total_scheduled_requests\":{},\"run_summaries\":[{}],\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"suite_id\":\"{}\",\"runs\":{},\"succeeded\":{},\"failed\":{},\"total_final_tick\":{},\"total_committed_instructions\":{},\"total_scheduled_requests\":{},\"run_summaries\":[{}],\"stats\":{}}}\n",
             self.schema,
             json_escape(&self.config.suite_id),
             self.runs.len(),
-            self.runs.len(),
+            succeeded,
+            failed,
             total_final_tick,
             total_committed_instructions,
             total_scheduled_requests,
@@ -500,6 +557,9 @@ fn multi_run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, R
             }
             "--suite-id" | "--run" | "--stats-format" | "--output" | "--stats-output" => {
                 index += 2;
+            }
+            "--continue-on-failure" => {
+                index += 1;
             }
             _ => {
                 index += 1;
