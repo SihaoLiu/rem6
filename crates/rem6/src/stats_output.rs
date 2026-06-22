@@ -86,6 +86,17 @@ pub(super) struct Rem6ResourceAcquireStatsInputs<'a> {
     pub(super) artifact: &'a Rem6ResourceAcquireArtifact,
 }
 
+pub(super) struct Rem6MultiRunStatsInputs {
+    pub(super) runs: u64,
+    pub(super) succeeded: u64,
+    pub(super) failed: u64,
+    pub(super) total_final_tick: u64,
+    pub(super) total_committed_instructions: u64,
+    pub(super) total_scheduled_requests: u64,
+    pub(super) total_checkpoints: u64,
+    pub(super) total_checkpoint_restores: u64,
+}
+
 pub(super) fn run_stats_output(
     inputs: Rem6StatsInputs<'_>,
 ) -> Result<Rem6StatsOutput, Rem6CliError> {

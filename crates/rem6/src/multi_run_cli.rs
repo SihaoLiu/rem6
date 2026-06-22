@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::cli_output;
 use crate::config::StatsFormat;
 use crate::formatting::json_escape;
-use crate::stats_output::multi_run_stats_output;
+use crate::stats_output::{multi_run_stats_output, Rem6MultiRunStatsInputs};
 use crate::{
     run_config, run_gpu_run_config, run_gups_config, run_trace_replay_config, Rem6CliError,
     Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GpuRunConfig, Rem6GupsConfig, Rem6RunConfig,
@@ -59,6 +59,8 @@ struct Rem6MultiRunSummary {
     final_tick: u64,
     committed_instructions: u64,
     scheduled_requests: u64,
+    checkpoint_count: u64,
+    checkpoint_restored_count: u64,
     artifact: Option<PathBuf>,
     stats_artifact: Option<PathBuf>,
     extra_artifacts: Vec<Rem6MultiRunExtraArtifact>,
@@ -293,14 +295,24 @@ pub fn run_multi_run_config(
         .iter()
         .map(|summary| summary.scheduled_requests)
         .sum::<u64>();
-    let stats = multi_run_stats_output(
-        config.runs.len() as u64,
+    let total_checkpoints = run_summaries
+        .iter()
+        .map(|summary| summary.checkpoint_count)
+        .sum::<u64>();
+    let total_checkpoint_restores = run_summaries
+        .iter()
+        .map(|summary| summary.checkpoint_restored_count)
+        .sum::<u64>();
+    let stats = multi_run_stats_output(Rem6MultiRunStatsInputs {
+        runs: config.runs.len() as u64,
         succeeded,
         failed,
         total_final_tick,
         total_committed_instructions,
         total_scheduled_requests,
-    )?;
+        total_checkpoints,
+        total_checkpoint_restores,
+    })?;
 
     Ok(Rem6MultiRunArtifact {
         schema: "rem6.cli.multi-run.v1",
@@ -383,17 +395,24 @@ impl Rem6MultiRunCommand {
 
 impl Rem6MultiRunSummary {
     fn from_run_artifact(run: &Rem6MultiRunEntry, artifact: &crate::Rem6RunArtifact) -> Self {
-        let (status, final_tick, committed_instructions) =
-            artifact
-                .execution
-                .as_ref()
-                .map_or(("loaded", 0, 0), |execution| {
-                    (
-                        execution_status(execution),
-                        execution.final_tick,
-                        execution.committed_instructions,
-                    )
-                });
+        let (
+            status,
+            final_tick,
+            committed_instructions,
+            checkpoint_count,
+            checkpoint_restored_count,
+        ) = artifact
+            .execution
+            .as_ref()
+            .map_or(("loaded", 0, 0, 0, 0), |execution| {
+                (
+                    execution_status(execution),
+                    execution.final_tick,
+                    execution.committed_instructions,
+                    execution.host_actions.checkpoints.len() as u64,
+                    execution.host_actions.checkpoint_restored_count,
+                )
+            });
         Self {
             id: run.id.clone(),
             command: run.command,
@@ -404,6 +423,8 @@ impl Rem6MultiRunSummary {
             final_tick,
             committed_instructions,
             scheduled_requests: 0,
+            checkpoint_count,
+            checkpoint_restored_count,
             artifact: artifact.config.output().map(Path::to_path_buf),
             stats_artifact: artifact.config.stats_output().map(Path::to_path_buf),
             extra_artifacts: artifact
@@ -427,6 +448,8 @@ impl Rem6MultiRunSummary {
             final_tick: artifact.execution.final_tick,
             committed_instructions: 0,
             scheduled_requests: artifact.execution.scheduled_requests,
+            checkpoint_count: 0,
+            checkpoint_restored_count: 0,
             artifact: artifact.config.output().map(Path::to_path_buf),
             stats_artifact: artifact.config.stats_output().map(Path::to_path_buf),
             extra_artifacts: Vec::new(),
@@ -449,6 +472,8 @@ impl Rem6MultiRunSummary {
             final_tick: execution.final_tick(),
             committed_instructions: 0,
             scheduled_requests: execution.global_memory_requests(),
+            checkpoint_count: 0,
+            checkpoint_restored_count: 0,
             artifact: artifact.configured_output().map(Path::to_path_buf),
             stats_artifact: artifact.configured_stats_output().map(Path::to_path_buf),
             extra_artifacts: artifact
@@ -474,6 +499,8 @@ impl Rem6MultiRunSummary {
             final_tick: artifact.execution.final_tick,
             committed_instructions: 0,
             scheduled_requests: artifact.execution.summary.scheduled_count() as u64,
+            checkpoint_count: 0,
+            checkpoint_restored_count: 0,
             artifact: artifact.config.output().map(Path::to_path_buf),
             stats_artifact: artifact.config.stats_output().map(Path::to_path_buf),
             extra_artifacts: artifact
@@ -497,6 +524,8 @@ impl Rem6MultiRunSummary {
             final_tick: 0,
             committed_instructions: 0,
             scheduled_requests: 0,
+            checkpoint_count: 0,
+            checkpoint_restored_count: 0,
             artifact: None,
             stats_artifact: None,
             extra_artifacts: Vec::new(),
@@ -523,7 +552,7 @@ impl Rem6MultiRunSummary {
             .map(|error| format!("\"{}\"", json_escape(error)))
             .unwrap_or_else(|| "null".to_string());
         format!(
-            "{{\"id\":\"{}\",\"command\":\"{}\",\"config\":\"{}\",\"child_schema\":\"{}\",\"run_schema\":\"{}\",\"status\":\"{}\",\"executed\":{},\"final_tick\":{},\"committed_instructions\":{},\"scheduled_requests\":{},\"artifact\":{},\"stats_artifact\":{},\"extra_artifacts\":[{}],\"error\":{}}}",
+            "{{\"id\":\"{}\",\"command\":\"{}\",\"config\":\"{}\",\"child_schema\":\"{}\",\"run_schema\":\"{}\",\"status\":\"{}\",\"executed\":{},\"final_tick\":{},\"committed_instructions\":{},\"scheduled_requests\":{},\"checkpoint_count\":{},\"checkpoint_restored_count\":{},\"artifact\":{},\"stats_artifact\":{},\"extra_artifacts\":[{}],\"error\":{}}}",
             json_escape(&self.id),
             self.command.as_str(),
             json_escape(&self.config.display().to_string()),
@@ -534,6 +563,8 @@ impl Rem6MultiRunSummary {
             self.final_tick,
             self.committed_instructions,
             self.scheduled_requests,
+            self.checkpoint_count,
+            self.checkpoint_restored_count,
             artifact,
             stats_artifact,
             extra_artifacts,
@@ -587,6 +618,16 @@ impl Rem6MultiRunArtifact {
             .iter()
             .map(|summary| summary.scheduled_requests)
             .sum::<u64>();
+        let total_checkpoints = self
+            .runs
+            .iter()
+            .map(|summary| summary.checkpoint_count)
+            .sum::<u64>();
+        let total_checkpoint_restores = self
+            .runs
+            .iter()
+            .map(|summary| summary.checkpoint_restored_count)
+            .sum::<u64>();
         let succeeded = self
             .runs
             .iter()
@@ -594,7 +635,7 @@ impl Rem6MultiRunArtifact {
             .count();
         let failed = self.runs.len() - succeeded;
         format!(
-            "{{\"schema\":\"{}\",\"suite_id\":\"{}\",\"runs\":{},\"succeeded\":{},\"failed\":{},\"total_final_tick\":{},\"total_committed_instructions\":{},\"total_scheduled_requests\":{},\"run_summaries\":[{}],\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"suite_id\":\"{}\",\"runs\":{},\"succeeded\":{},\"failed\":{},\"total_final_tick\":{},\"total_committed_instructions\":{},\"total_scheduled_requests\":{},\"total_checkpoints\":{},\"total_checkpoint_restores\":{},\"run_summaries\":[{}],\"stats\":{}}}\n",
             self.schema,
             json_escape(&self.config.suite_id),
             self.runs.len(),
@@ -603,6 +644,8 @@ impl Rem6MultiRunArtifact {
             total_final_tick,
             total_committed_instructions,
             total_scheduled_requests,
+            total_checkpoints,
+            total_checkpoint_restores,
             runs,
             self.stats_json,
         )

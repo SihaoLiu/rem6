@@ -2,15 +2,13 @@ use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use crate::Rem6CliError;
 
-use super::{increment_stat, stats_snapshot_json, text::stats_snapshot_text, Rem6StatsOutput};
+use super::{
+    increment_stat, stats_snapshot_json, text::stats_snapshot_text, Rem6MultiRunStatsInputs,
+    Rem6StatsOutput,
+};
 
 pub(crate) fn multi_run_stats_output(
-    runs: u64,
-    succeeded: u64,
-    failed: u64,
-    total_final_tick: u64,
-    total_committed_instructions: u64,
-    total_scheduled_requests: u64,
+    inputs: Rem6MultiRunStatsInputs,
 ) -> Result<Rem6StatsOutput, Rem6CliError> {
     let mut stats = StatsRegistry::new();
     increment_stat(
@@ -18,49 +16,49 @@ pub(crate) fn multi_run_stats_output(
         "sim.multi_run.runs",
         "Count",
         StatResetPolicy::Constant,
-        runs,
+        inputs.runs,
     )?;
     increment_stat(
         &mut stats,
         "sim.multi_run.succeeded",
         "Count",
         StatResetPolicy::Monotonic,
-        succeeded,
+        inputs.succeeded,
     )?;
     increment_stat(
         &mut stats,
         "sim.multi_run.failed",
         "Count",
         StatResetPolicy::Monotonic,
-        failed,
+        inputs.failed,
     )?;
     increment_stat(
         &mut stats,
         "sim.multi_run.final_tick",
         "Tick",
         StatResetPolicy::Monotonic,
-        total_final_tick,
+        inputs.total_final_tick,
     )?;
     increment_stat(
         &mut stats,
         "sim.final_tick",
         "Tick",
         StatResetPolicy::Monotonic,
-        total_final_tick,
+        inputs.total_final_tick,
     )?;
     increment_stat(
         &mut stats,
         "simTicks",
         "Tick",
         StatResetPolicy::Monotonic,
-        total_final_tick,
+        inputs.total_final_tick,
     )?;
     increment_stat(
         &mut stats,
         "finalTick",
         "Tick",
         StatResetPolicy::Monotonic,
-        total_final_tick,
+        inputs.total_final_tick,
     )?;
     increment_stat(
         &mut stats,
@@ -74,28 +72,42 @@ pub(crate) fn multi_run_stats_output(
         "sim.multi_run.instructions.committed",
         "Count",
         StatResetPolicy::Monotonic,
-        total_committed_instructions,
+        inputs.total_committed_instructions,
     )?;
     increment_stat(
         &mut stats,
         "simInsts",
         "Count",
         StatResetPolicy::Monotonic,
-        total_committed_instructions,
+        inputs.total_committed_instructions,
     )?;
     increment_stat(
         &mut stats,
         "simOps",
         "Count",
         StatResetPolicy::Monotonic,
-        total_committed_instructions,
+        inputs.total_committed_instructions,
     )?;
     increment_stat(
         &mut stats,
         "sim.multi_run.scheduled_requests",
         "Count",
         StatResetPolicy::Monotonic,
-        total_scheduled_requests,
+        inputs.total_scheduled_requests,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.multi_run.checkpoints",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.total_checkpoints,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.multi_run.checkpoint_restores",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.total_checkpoint_restores,
     )?;
 
     let snapshot = stats.snapshot(0);
