@@ -279,7 +279,7 @@ pub enum RiscvSyscallOutcome {
     Return { value: u64 },
 }
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-struct RiscvGuestFileIdentity {
+pub struct RiscvGuestFileIdentity {
     inode: u64,
 }
 
@@ -322,6 +322,7 @@ pub struct RiscvSyscallState {
     guest_links: BTreeMap<Vec<u8>, Vec<u8>>,
     guest_file_identities: BTreeMap<Vec<u8>, RiscvGuestFileIdentity>,
     guest_file_modes: BTreeMap<RiscvGuestFileIdentity, u32>,
+    guest_file_contents_dirty_identities: BTreeSet<RiscvGuestFileIdentity>,
     guest_xattrs: BTreeMap<RiscvGuestFileIdentity, BTreeMap<Vec<u8>, Vec<u8>>>,
     guest_pipes: BTreeMap<RiscvGuestPipeId, RiscvGuestPipe>,
     guest_pipe_read_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
@@ -431,6 +432,7 @@ impl RiscvSyscallState {
             guest_links: BTreeMap::new(),
             guest_file_identities: BTreeMap::new(),
             guest_file_modes: BTreeMap::new(),
+            guest_file_contents_dirty_identities: BTreeSet::new(),
             guest_xattrs: BTreeMap::new(),
             guest_pipes: BTreeMap::new(),
             guest_pipe_read_descriptions: BTreeMap::new(),
@@ -520,7 +522,11 @@ impl RiscvSyscallState {
             .or_insert(RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS);
     }
 
-    pub fn register_guest_file(&mut self, path: impl AsRef<[u8]>, contents: impl AsRef<[u8]>) {
+    pub fn register_guest_file(
+        &mut self,
+        path: impl AsRef<[u8]>,
+        contents: impl AsRef<[u8]>,
+    ) -> RiscvGuestFileIdentity {
         let path = path.as_ref().to_vec();
         self.guest_paths.insert(path.clone());
         self.guest_files
@@ -529,6 +535,7 @@ impl RiscvSyscallState {
         self.guest_file_modes
             .entry(identity)
             .or_insert(RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS);
+        identity
     }
 
     pub fn register_guest_symlink(&mut self, path: impl AsRef<[u8]>, target: impl AsRef<[u8]>) {
@@ -670,8 +677,49 @@ impl RiscvSyscallState {
             || self.guest_links.contains_key(path)
     }
 
-    fn guest_file_contents(&self, path: &[u8]) -> Option<&[u8]> {
+    pub fn guest_file_contents(&self, path: impl AsRef<[u8]>) -> Option<&[u8]> {
+        let path = path.as_ref();
         self.guest_files.get(path).map(Vec::as_slice)
+    }
+
+    pub fn guest_file_contents_dirty(&self, path: impl AsRef<[u8]>) -> bool {
+        let path = path.as_ref();
+        self.guest_file_identities
+            .get(path)
+            .is_some_and(|identity| self.guest_file_contents_dirty_identities.contains(identity))
+    }
+
+    pub fn guest_file_contents_dirty_by_identity(&self, identity: RiscvGuestFileIdentity) -> bool {
+        self.guest_file_contents_dirty_identities
+            .contains(&identity)
+    }
+
+    pub fn guest_file_contents_by_identity(
+        &self,
+        identity: RiscvGuestFileIdentity,
+    ) -> Option<&[u8]> {
+        self.guest_files
+            .iter()
+            .find_map(|(path, contents)| {
+                (self.guest_file_identity(path) == identity).then_some(contents.as_slice())
+            })
+            .or_else(|| {
+                self.guest_file_stats
+                    .iter()
+                    .find_map(|(description, stat)| {
+                        (stat.identity == identity && stat.kind == RiscvGuestNodeKind::RegularFile)
+                            .then(|| {
+                                self.guest_file_descriptions
+                                    .get(description)
+                                    .map(Vec::as_slice)
+                            })
+                            .flatten()
+                    })
+            })
+    }
+
+    fn mark_guest_file_contents_dirty(&mut self, identity: RiscvGuestFileIdentity) {
+        self.guest_file_contents_dirty_identities.insert(identity);
     }
 
     fn allocate_guest_file_identity(&mut self) -> RiscvGuestFileIdentity {
@@ -756,6 +804,7 @@ impl RiscvSyscallState {
             .any(|candidate| *candidate == identity)
         {
             self.guest_file_modes.remove(&identity);
+            self.guest_file_contents_dirty_identities.remove(&identity);
         }
     }
 

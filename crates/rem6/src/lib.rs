@@ -1,6 +1,7 @@
 use std::fmt;
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
@@ -16,9 +17,10 @@ use rem6_stats::{
     StatsRegistry,
 };
 use rem6_system::{
-    GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats, RiscvInstructionStats,
-    RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun, RiscvSystemRunDriver,
-    RiscvTrapEventPort, SystemHostController, SystemHostEventPort, RISCV_LINUX_AT_ENTRY,
+    GuestSourceId, GuestTrapKind, HostEventPolicy, RiscvDataAccessStats, RiscvGuestFileIdentity,
+    RiscvInstructionStats, RiscvSeAuxvEntry, RiscvSeStartupConfig, RiscvSystemRun,
+    RiscvSystemRunDriver, RiscvTrapEventPort, SystemHostController, SystemHostEventPort,
+    RISCV_LINUX_AT_ENTRY,
 };
 use rem6_transport::{
     MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTransport, TransportEndpointId,
@@ -129,6 +131,12 @@ const RISCV_DATA_PROBE_PAGE_BYTES: u64 = 4096;
 const CLI_MEMORY_DUMP_AGENT: AgentId = AgentId::new(u32::MAX);
 const RISCV_BOOT_A0_REGISTER: u8 = 10;
 const RISCV_BOOT_A1_REGISTER: u8 = 11;
+
+struct RiscvSePathFileWriteback {
+    guest_path: String,
+    host_path: PathBuf,
+    identity: RiscvGuestFileIdentity,
+}
 const RISCV_STACK_POINTER_REGISTER: u8 = 2;
 const RISCV64_SE_STACK_TOP: u64 = 0x0000_7fff_ffff_f000;
 
@@ -818,6 +826,7 @@ fn execute_riscv(
         data_cache_hierarchy.clone(),
         line_layout,
     );
+    let mut riscv_se_path_file_writebacks = Vec::new();
     if config.riscv_se() {
         driver = driver.with_riscv_syscall_emulation_for_boot_image(image);
         let proc_self_exe_target = std::fs::canonicalize(config.binary())
@@ -842,10 +851,17 @@ fn execute_riscv(
         }
         for file in config.riscv_se_files() {
             let contents = read_riscv_se_file(file, resource_payloads)?;
-            driver
+            let identity = driver
                 .riscv_syscall_emulation()
                 .expect("RISC-V SE syscall emulation was just installed")
                 .register_guest_file(file.guest_path().as_bytes(), contents);
+            if let RiscvSeInputSource::Path(path) = file.source() {
+                riscv_se_path_file_writebacks.push(RiscvSePathFileWriteback {
+                    guest_path: file.guest_path().to_string(),
+                    host_path: path.to_path_buf(),
+                    identity,
+                });
+            }
         }
         driver = with_riscv_syscall_data_cache_memory_io(
             driver,
@@ -912,6 +928,7 @@ fn execute_riscv(
         return Err(error);
     }
     let mut run = run_result.map_err(execute_error)?;
+    write_back_riscv_se_path_files(&driver, &riscv_se_path_file_writebacks)?;
     if let Some(data_cache) = data_cache.as_ref() {
         run = run.with_data_cache_run_records(data_cache.records());
     }
@@ -978,6 +995,32 @@ fn execute_riscv(
     };
 
     execution_summary(&cluster, &run, summary_inputs)
+}
+
+fn write_back_riscv_se_path_files(
+    driver: &RiscvSystemRunDriver,
+    files: &[RiscvSePathFileWriteback],
+) -> Result<(), Rem6CliError> {
+    let Some(emulation) = driver.riscv_syscall_emulation() else {
+        return Ok(());
+    };
+    let state = emulation.state();
+    for file in files {
+        if !state.guest_file_contents_dirty_by_identity(file.identity) {
+            continue;
+        }
+        let Some(contents) = state.guest_file_contents_by_identity(file.identity) else {
+            continue;
+        };
+        std::fs::write(&file.host_path, contents).map_err(|error| {
+            Rem6CliError::WriteRiscvSeFile {
+                guest_path: file.guest_path.clone(),
+                path: file.host_path.clone(),
+                error: error.to_string(),
+            }
+        })?;
+    }
+    Ok(())
 }
 
 fn add_memory_route(

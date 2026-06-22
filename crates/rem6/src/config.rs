@@ -41,6 +41,7 @@ use parse::{parse_number, parse_positive_u64, required_value};
 use riscv_branch::{
     parse_riscv_branch_predictor, parse_riscv_pc_count_target, valid_riscv_branch_lookahead,
 };
+use riscv_se_input::reject_conflicting_riscv_se_output_paths;
 pub use riscv_se_input::{RiscvSeFileRequest, RiscvSeInputSource};
 pub use trace_replay::TraceReplayExternalAdapterKind;
 
@@ -948,6 +949,12 @@ impl Rem6RunConfig {
                 });
             }
         }
+        reject_conflicting_riscv_se_output_paths(
+            &riscv_se_files,
+            output.as_deref(),
+            stats_output.as_deref(),
+            power_output.as_deref(),
+        )?;
         let memory_route_delay = memory_route_delay.unwrap_or(min_remote_delay);
         let host_event_delay = host_event_delay.unwrap_or(min_remote_delay);
         if memory_route_delay < min_remote_delay {

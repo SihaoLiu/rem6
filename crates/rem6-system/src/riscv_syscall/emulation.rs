@@ -135,11 +135,15 @@ impl RiscvSyscallEmulation {
             .register_guest_path(path);
     }
 
-    pub fn register_guest_file(&self, path: impl AsRef<[u8]>, contents: impl AsRef<[u8]>) {
+    pub fn register_guest_file(
+        &self,
+        path: impl AsRef<[u8]>,
+        contents: impl AsRef<[u8]>,
+    ) -> super::RiscvGuestFileIdentity {
         self.state
             .lock()
             .expect("RISC-V syscall state lock")
-            .register_guest_file(path, contents);
+            .register_guest_file(path, contents)
     }
 
     pub fn register_guest_symlink(&self, path: impl AsRef<[u8]>, target: impl AsRef<[u8]>) {

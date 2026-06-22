@@ -216,6 +216,9 @@ pub enum Rem6CliError {
     InvalidRiscvSeFile {
         value: String,
     },
+    DuplicateRiscvSeGuestFile {
+        guest_path: String,
+    },
     InvalidRiscvPcCountTarget {
         value: String,
     },
@@ -320,6 +323,11 @@ pub enum Rem6CliError {
         error: String,
     },
     ReadRiscvSeFile {
+        guest_path: String,
+        path: PathBuf,
+        error: String,
+    },
+    WriteRiscvSeFile {
         guest_path: String,
         path: PathBuf,
         error: String,
@@ -582,6 +590,12 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidRiscvSeFile { value } => {
                 write!(formatter, "invalid RISC-V SE file mapping {value}")
             }
+            Self::DuplicateRiscvSeGuestFile { guest_path } => {
+                write!(
+                    formatter,
+                    "RISC-V SE file guest paths must be unique: {guest_path}"
+                )
+            }
             Self::InvalidRiscvPcCountTarget { value } => {
                 write!(
                     formatter,
@@ -840,6 +854,17 @@ impl fmt::Display for Rem6CliError {
                 write!(
                     formatter,
                     "failed to read RISC-V SE file {guest_path} from {}: {error}",
+                    path.display()
+                )
+            }
+            Self::WriteRiscvSeFile {
+                guest_path,
+                path,
+                error,
+            } => {
+                write!(
+                    formatter,
+                    "failed to write RISC-V SE file {guest_path} to {}: {error}",
                     path.display()
                 )
             }

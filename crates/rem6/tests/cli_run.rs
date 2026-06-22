@@ -46,6 +46,8 @@ mod riscv_se_fadvise;
 mod riscv_se_fallocate;
 #[path = "cli_run/riscv_se_fd.rs"]
 mod riscv_se_fd;
+#[path = "cli_run/riscv_se_files.rs"]
+mod riscv_se_files;
 #[path = "cli_run/riscv_se_getdents.rs"]
 mod riscv_se_getdents;
 #[path = "cli_run/riscv_se_identity.rs"]

@@ -28,6 +28,8 @@ mod fcntl_tests;
 mod fd_tests;
 #[path = "riscv_syscall_tests/futex_tests.rs"]
 mod futex_tests;
+#[path = "riscv_syscall_tests/guest_file_dirty_tests.rs"]
+mod guest_file_dirty_tests;
 #[path = "riscv_syscall_tests/guest_file_io_tests.rs"]
 mod guest_file_io_tests;
 #[path = "riscv_syscall_tests/hwprobe_tests.rs"]

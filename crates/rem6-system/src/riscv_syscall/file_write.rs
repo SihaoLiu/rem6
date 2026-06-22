@@ -52,13 +52,18 @@ impl From<GuestFdError> for RiscvGuestFileResizeError {
 
 impl RiscvSyscallState {
     pub(super) fn replace_guest_file_contents(&mut self, path: &[u8], contents: Vec<u8>) {
+        let previous = self.guest_file_contents(path).map(Vec::from);
         let path = path.to_vec();
         self.guest_paths.insert(path.clone());
         let identity = self.ensure_guest_file_identity(&path);
         self.guest_file_modes
             .entry(identity)
             .or_insert(super::stat::RISCV_LINUX_DEFAULT_REGULAR_FILE_PERMISSIONS);
+        let contents_changed = previous.as_deref() != Some(contents.as_slice());
         self.synchronize_guest_file_contents(identity, contents);
+        if contents_changed {
+            self.mark_guest_file_contents_dirty(identity);
+        }
     }
 
     fn synchronize_guest_file_contents(
@@ -138,6 +143,7 @@ impl RiscvSyscallState {
         let contents = contents.clone();
         if let Some(stat) = self.guest_file_stats.get(&description).copied() {
             self.synchronize_guest_file_contents(stat.identity, contents);
+            self.mark_guest_file_contents_dirty(stat.identity);
         } else if let Some(path) = self.guest_file_description_paths.get(&description).cloned() {
             self.guest_files.insert(path, contents);
         }
@@ -177,6 +183,7 @@ impl RiscvSyscallState {
         let contents = contents.clone();
         if let Some(stat) = self.guest_file_stats.get(&description).copied() {
             self.synchronize_guest_file_contents(stat.identity, contents);
+            self.mark_guest_file_contents_dirty(stat.identity);
         } else if let Some(path) = self.guest_file_description_paths.get(&description).cloned() {
             self.guest_files.insert(path, contents);
         }
@@ -230,10 +237,14 @@ impl RiscvSyscallState {
         }
         let length =
             usize::try_from(length).map_err(|_| RiscvGuestFileResizeError::FileTooLarge)?;
+        let contents_changed = contents.len() != length;
         contents.resize(length, 0);
         let contents = contents.clone();
         if let Some(stat) = self.guest_file_stats.get(&description).copied() {
             self.synchronize_guest_file_contents(stat.identity, contents);
+            if contents_changed {
+                self.mark_guest_file_contents_dirty(stat.identity);
+            }
         } else if let Some(path) = self.guest_file_description_paths.get(&description).cloned() {
             self.guest_files.insert(path, contents);
         }
@@ -266,6 +277,7 @@ impl RiscvSyscallState {
             let contents = contents.clone();
             if let Some(stat) = self.guest_file_stats.get(&description).copied() {
                 self.synchronize_guest_file_contents(stat.identity, contents);
+                self.mark_guest_file_contents_dirty(stat.identity);
             } else if let Some(path) = self.guest_file_description_paths.get(&description).cloned()
             {
                 self.guest_files.insert(path, contents);
@@ -292,8 +304,12 @@ impl RiscvSyscallState {
             .guest_file_contents(path)
             .map(Vec::from)
             .unwrap_or_default();
+        let contents_changed = contents.len() != length;
         contents.resize(length, 0);
         self.synchronize_guest_file_contents(identity, contents);
+        if contents_changed {
+            self.mark_guest_file_contents_dirty(identity);
+        }
         Ok(())
     }
 
