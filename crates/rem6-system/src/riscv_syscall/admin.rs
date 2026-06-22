@@ -7,6 +7,7 @@ use super::{
 pub(super) const RISCV_LINUX_UMOUNT2: u64 = 39;
 pub(super) const RISCV_LINUX_MOUNT: u64 = 40;
 pub(super) const RISCV_LINUX_PIVOT_ROOT: u64 = 41;
+pub(super) const RISCV_LINUX_CHROOT: u64 = 51;
 pub(super) const RISCV_LINUX_ACCT: u64 = 89;
 pub(super) const RISCV_LINUX_REBOOT: u64 = 142;
 pub(super) const RISCV_LINUX_SETHOSTNAME: u64 = 161;
@@ -65,6 +66,13 @@ pub(super) fn syscall_pivot_root(
         return linux_error(errno);
     }
     deny_after_guest_path(request.argument(1), guest_memory)
+}
+
+pub(super) fn syscall_chroot(
+    request: RiscvSyscallRequest,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> u64 {
+    deny_after_guest_path(request.argument(0), guest_memory)
 }
 
 pub(super) fn syscall_acct(

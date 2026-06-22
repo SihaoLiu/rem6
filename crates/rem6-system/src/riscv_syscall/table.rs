@@ -64,6 +64,11 @@ impl RiscvSyscallTable {
                     value: syscall_pivot_root(request, guest_memory),
                 })
             }
+            RISCV_LINUX_CHROOT => {
+                guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
+                    value: syscall_chroot(request, guest_memory),
+                })
+            }
             RISCV_LINUX_GETCWD => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_getcwd(

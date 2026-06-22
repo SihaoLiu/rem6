@@ -111,6 +111,8 @@ void _start(void) {
     long mount_bad_fstype = linux_syscall5(40, (long)path, (long)path, 1, 0, 0);
     long pivot_null = linux_syscall2(41, 0, 0);
     long pivot_root = linux_syscall2(41, (long)path, (long)path);
+    long chroot_null = linux_syscall1(51, 0);
+    long chroot_root = linux_syscall1(51, (long)path);
     long acct_null = linux_syscall1(89, 0);
     long reboot_null = linux_syscall4(142, 0, 0, 0, 0);
     long sethostname_null = linux_syscall2(161, 0, 4);
@@ -140,6 +142,10 @@ void _start(void) {
     putn(pivot_null);
     sep();
     putn(pivot_root);
+    sep();
+    putn(chroot_null);
+    sep();
+    putn(chroot_root);
     sep();
     putn(acct_null);
     sep();
@@ -175,6 +181,8 @@ void _start(void) {
         mount_bad_fstype == -14 &&
         pivot_null == -14 &&
         pivot_root == -1 &&
+        chroot_null == -14 &&
+        chroot_root == -1 &&
         acct_null == -1 &&
         reboot_null == -1 &&
         sethostname_null == -14 &&
@@ -220,7 +228,7 @@ void _start(void) {
     );
 
     let expected_stdout =
-        "raw-admin:-14:-1:-22:-14:-1:-14:-14:-1:-1:-1:-14:-14:-1:-14:-14:-1:-14:-1:-22:-14:-1\n";
+        "raw-admin:-14:-1:-22:-14:-1:-14:-14:-1:-14:-1:-1:-1:-14:-14:-1:-14:-14:-1:-14:-1:-22:-14:-1\n";
     let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
     assert_eq!(
         qemu_output.status.code(),
