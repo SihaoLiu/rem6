@@ -105,8 +105,8 @@ config = "second.toml"
 }
 
 #[test]
-fn rem6_multi_run_orchestrates_run_and_gups_configs() {
-    let workspace = temp_workspace("multi-run-run-and-gups");
+fn rem6_multi_run_orchestrates_run_gups_and_trace_replay_configs() {
+    let workspace = temp_workspace("multi-run-run-gups-trace");
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
         0x0000_0073, // ecall
@@ -141,6 +141,45 @@ rng_state = 0
     )
     .unwrap();
     fs::write(
+        workspace.join("packet.pb"),
+        packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("packet.toml"),
+        r#"[trace_replay]
+trace = "packet.pb"
+route = "cpu0.fetch"
+memory_start = 4096
+memory_size = 4096
+max_tick = 64
+tick_frequency = 1000
+line_bytes = 64
+agent = 7
+control_partition = 2
+stats_format = "json"
+"#,
+    )
+    .unwrap();
+    fs::write(
         workspace.join("multi-run.toml"),
         r#"[multi_run]
 suite_id = "mixed-smoke"
@@ -155,6 +194,11 @@ config = "cpu.toml"
 id = "traffic"
 command = "gups"
 config = "traffic.toml"
+
+[[multi_run.runs]]
+id = "packet"
+command = "trace-replay"
+config = "packet.toml"
 "#,
     )
     .unwrap();
@@ -176,10 +220,10 @@ config = "traffic.toml"
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"schema\":\"rem6.cli.multi-run.v1\""));
     assert!(stdout.contains("\"suite_id\":\"mixed-smoke\""));
-    assert!(stdout.contains("\"runs\":2"));
-    assert!(stdout.contains("\"total_final_tick\":17"));
+    assert!(stdout.contains("\"runs\":3"));
+    assert!(stdout.contains("\"total_final_tick\":21"));
     assert!(stdout.contains("\"total_committed_instructions\":2"));
-    assert!(stdout.contains("\"total_scheduled_requests\":4"));
+    assert!(stdout.contains("\"total_scheduled_requests\":5"));
     assert!(stdout.contains("\"id\":\"cpu\""));
     assert!(stdout.contains("\"command\":\"run\""));
     assert!(stdout.contains("\"child_schema\":\"rem6.cli.run.v1\""));
@@ -191,11 +235,16 @@ config = "traffic.toml"
     assert!(stdout.contains("\"status\":\"completed\""));
     assert!(stdout.contains("\"final_tick\":12"));
     assert!(stdout.contains("\"scheduled_requests\":4"));
+    assert!(stdout.contains("\"id\":\"packet\""));
+    assert!(stdout.contains("\"command\":\"trace-replay\""));
+    assert!(stdout.contains("\"child_schema\":\"rem6.cli.trace_replay.v1\""));
+    assert!(stdout.contains("\"final_tick\":4"));
+    assert!(stdout.contains("\"scheduled_requests\":1"));
     assert_stat(
         &stdout,
         "sim.multi_run.scheduled_requests",
         "Count",
-        4,
+        5,
         "monotonic",
     );
 }
