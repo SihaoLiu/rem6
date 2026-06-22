@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use rem6_fabric::{
     FabricActivityProfile, FabricHopActivity, FabricLaneActivity, FabricLinkId, FabricModel,
-    FabricPath, FabricPathHop, VirtualNetworkId,
+    FabricPath, FabricPathHop, FabricVirtualNetworkActivity, VirtualNetworkId,
 };
 use rem6_transport::{MemoryRoute, MemoryRouteHop, MemoryTransport};
 
@@ -135,6 +135,10 @@ impl Rem6GpuFabricSummary {
 
     fn hop_activities(&self) -> &[FabricHopActivity] {
         &self.hop_activities
+    }
+
+    pub(crate) fn virtual_network_activities(&self) -> Vec<FabricVirtualNetworkActivity> {
+        FabricVirtualNetworkActivity::from_lanes(self.lane_activities.iter())
     }
 }
 
