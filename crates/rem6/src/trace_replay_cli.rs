@@ -112,6 +112,30 @@ pub(crate) fn run_trace_replay_cli(args: Vec<String>) -> Result<String, Rem6CliE
     )
 }
 
+impl Rem6TraceReplayArtifact {
+    pub(crate) fn emit_configured_output(&self) -> Result<(), Rem6CliError> {
+        let stats_format = self.config.stats_format();
+        let mut extra_artifacts = Vec::new();
+        if let Some(artifact) = self.power_analysis.as_ref() {
+            extra_artifacts.push(crate::cli_output::ExtraCliArtifact {
+                name: "power_artifact",
+                path: artifact.output(),
+                contents: artifact.contents(),
+            });
+        }
+        crate::cli_output::emit_configured_artifact_output(
+            || self.to_json(),
+            &self.stats_json,
+            &self.stats_text,
+            self.config.output(),
+            self.config.stats_output(),
+            stats_format,
+            &extra_artifacts,
+        )
+        .map(|_| ())
+    }
+}
+
 pub fn run_trace_replay_config(
     config: Rem6TraceReplayConfig,
 ) -> Result<Rem6TraceReplayArtifact, Rem6CliError> {

@@ -1030,6 +1030,37 @@ pub(crate) fn run_gpu_run_cli(args: Vec<String>) -> Result<String, Rem6CliError>
     )
 }
 
+impl Rem6GpuRunArtifact {
+    pub(crate) fn emit_configured_output(&self) -> Result<(), Rem6CliError> {
+        let stats_format = self.config.stats_format();
+        let mut extra_artifacts = Vec::new();
+        if let Some(artifact) = self.power_analysis.as_ref() {
+            extra_artifacts.push(cli_output::ExtraCliArtifact {
+                name: "power_artifact",
+                path: artifact.output(),
+                contents: artifact.contents(),
+            });
+        }
+        if let Some(artifact) = self.nomali_adapter.as_ref() {
+            extra_artifacts.push(cli_output::ExtraCliArtifact {
+                name: "nomali_artifact",
+                path: artifact.output(),
+                contents: artifact.contents(),
+            });
+        }
+        cli_output::emit_configured_artifact_output(
+            || self.to_json(),
+            &self.stats_json,
+            &self.stats_text,
+            self.config.output(),
+            self.config.stats_output(),
+            stats_format,
+            &extra_artifacts,
+        )
+        .map(|_| ())
+    }
+}
+
 pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact, Rem6CliError> {
     let line_layout = CacheLineLayout::new(DEFAULT_CACHE_LINE_BYTES).map_err(execute_error)?;
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(3, config.min_remote_delay())

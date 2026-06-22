@@ -311,6 +311,7 @@ fn run_child(run: &Rem6MultiRunEntry) -> Result<Rem6MultiRunSummary, Rem6CliErro
                 path_arg(&run.config),
             ])?;
             let artifact = run_config(child_config)?;
+            artifact.emit_configured_output()?;
             Ok(Rem6MultiRunSummary::from_run_artifact(run, &artifact))
         }
         Rem6MultiRunCommand::Gups => {
@@ -320,6 +321,7 @@ fn run_child(run: &Rem6MultiRunEntry) -> Result<Rem6MultiRunSummary, Rem6CliErro
                 path_arg(&run.config),
             ])?;
             let artifact = run_gups_config(child_config)?;
+            artifact.emit_configured_output()?;
             Ok(Rem6MultiRunSummary::from_gups_artifact(run, &artifact))
         }
         Rem6MultiRunCommand::GpuRun => {
@@ -329,6 +331,7 @@ fn run_child(run: &Rem6MultiRunEntry) -> Result<Rem6MultiRunSummary, Rem6CliErro
                 path_arg(&run.config),
             ])?;
             let artifact = run_gpu_run_config(child_config)?;
+            artifact.emit_configured_output()?;
             Ok(Rem6MultiRunSummary::from_gpu_run_artifact(run, &artifact))
         }
         Rem6MultiRunCommand::TraceReplay => {
@@ -338,6 +341,7 @@ fn run_child(run: &Rem6MultiRunEntry) -> Result<Rem6MultiRunSummary, Rem6CliErro
                 path_arg(&run.config),
             ])?;
             let artifact = run_trace_replay_config(child_config)?;
+            artifact.emit_configured_output()?;
             Ok(Rem6MultiRunSummary::from_trace_replay_artifact(
                 run, &artifact,
             ))

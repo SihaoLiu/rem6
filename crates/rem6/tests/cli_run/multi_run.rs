@@ -250,6 +250,69 @@ config = "packet.toml"
 }
 
 #[test]
+fn rem6_multi_run_preserves_child_output_artifacts() {
+    let workspace = temp_workspace("multi-run-child-output-artifacts");
+    fs::write(
+        workspace.join("traffic.toml"),
+        r#"[gups]
+memory_start = 4096
+memory_size = 8
+updates = 2
+max_tick = 40
+stats_format = "json"
+rng_state = 0
+output = "artifacts/gups.json"
+stats_output = "artifacts/gups-stats.json"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("multi-run.toml"),
+        r#"[multi_run]
+suite_id = "child-output-smoke"
+stats_format = "json"
+
+[[multi_run.runs]]
+id = "traffic"
+command = "gups"
+config = "traffic.toml"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "multi-run",
+            "--config",
+            workspace.join("multi-run.toml").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"suite_id\":\"child-output-smoke\""));
+    assert!(stdout.contains("\"runs\":1"));
+    assert!(stdout.contains("\"succeeded\":1"));
+
+    let child_artifact = fs::read_to_string(workspace.join("artifacts/gups.json")).unwrap();
+    let child_stats = fs::read_to_string(workspace.join("artifacts/gups-stats.json")).unwrap();
+    assert!(child_artifact.contains("\"schema\":\"rem6.cli.gups.v1\""));
+    assert!(child_artifact.contains("\"scheduled_requests\":4"));
+    assert_stat(
+        &child_stats,
+        "sim.gups.scheduled_requests",
+        "Count",
+        4,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_multi_run_orchestrates_gpu_run_config() {
     let workspace = temp_workspace("multi-run-gpu-run");
     fs::write(

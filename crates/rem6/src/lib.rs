@@ -498,6 +498,33 @@ fn run_run_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
     )
 }
 
+impl Rem6RunArtifact {
+    pub(crate) fn emit_configured_output(&self) -> Result<(), Rem6CliError> {
+        let stats_format = self.config.stats_format();
+        let extra_artifacts = self
+            .power_analysis
+            .as_ref()
+            .map(|artifact| {
+                vec![cli_output::ExtraCliArtifact {
+                    name: "power_artifact",
+                    path: artifact.output(),
+                    contents: artifact.contents(),
+                }]
+            })
+            .unwrap_or_default();
+        cli_output::emit_configured_artifact_output(
+            || self.to_json(),
+            &self.stats_json,
+            &self.stats_text,
+            self.config.output(),
+            self.config.stats_output(),
+            stats_format,
+            &extra_artifacts,
+        )
+        .map(|_| ())
+    }
+}
+
 pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError> {
     let resource_payloads = config
         .resource_config()

@@ -41,6 +41,37 @@ pub(crate) fn emit_cli_output(
     Ok(output)
 }
 
+pub(crate) fn emit_configured_artifact_output<F>(
+    artifact_json: F,
+    stats_json: &str,
+    stats_text: &str,
+    output_path: Option<&Path>,
+    stats_output_path: Option<&Path>,
+    stats_format: StatsFormat,
+    extra_artifacts: &[ExtraCliArtifact<'_>],
+) -> Result<(), Rem6CliError>
+where
+    F: FnOnce() -> String,
+{
+    if output_path.is_none() && stats_output_path.is_none() && extra_artifacts.is_empty() {
+        return Ok(());
+    }
+    let output = match stats_format {
+        StatsFormat::Json => artifact_json(),
+        StatsFormat::Text => stats_text.to_string(),
+    };
+    emit_cli_output(
+        output,
+        stats_json,
+        stats_text,
+        output_path,
+        stats_output_path,
+        stats_format,
+        extra_artifacts,
+    )
+    .map(|_| ())
+}
+
 fn write_output_file(path: &Path, contents: &[u8]) -> Result<(), Rem6CliError> {
     if let Some(parent) = path
         .parent()

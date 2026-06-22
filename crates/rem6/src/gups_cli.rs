@@ -68,6 +68,22 @@ pub(crate) fn run_gups_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
     )
 }
 
+impl Rem6GupsArtifact {
+    pub(crate) fn emit_configured_output(&self) -> Result<(), Rem6CliError> {
+        let stats_format = self.config.stats_format();
+        crate::cli_output::emit_configured_artifact_output(
+            || self.to_json(),
+            &self.stats_json,
+            &self.stats_text,
+            self.config.output(),
+            self.config.stats_output(),
+            stats_format,
+            &[],
+        )
+        .map(|_| ())
+    }
+}
+
 pub fn run_gups_config(config: Rem6GupsConfig) -> Result<Rem6GupsArtifact, Rem6CliError> {
     let line_layout = CacheLineLayout::new(DEFAULT_CACHE_LINE_BYTES).map_err(execute_error)?;
     validate_gups_memory_start(&config)?;
