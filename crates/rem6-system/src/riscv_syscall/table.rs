@@ -349,13 +349,17 @@ impl RiscvSyscallTable {
                 }
             }
             RISCV_LINUX_GETSOCKNAME => {
-                guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
-                    value: syscall_getsockname(request, state, writer),
+                let reader = guest_memory_reader?;
+                let writer = guest_memory_writer?;
+                Some(RiscvSyscallOutcome::Return {
+                    value: syscall_getsockname(request, state, reader, writer),
                 })
             }
             RISCV_LINUX_GETPEERNAME => {
-                guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
-                    value: syscall_getpeername(request, state, writer),
+                let reader = guest_memory_reader?;
+                let writer = guest_memory_writer?;
+                Some(RiscvSyscallOutcome::Return {
+                    value: syscall_getpeername(request, state, reader, writer),
                 })
             }
             RISCV_LINUX_SENDTO => {

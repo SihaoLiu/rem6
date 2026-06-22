@@ -52,7 +52,6 @@ const RISCV_LINUX_RECVFROM_ALLOWED_FLAGS: u64 = RISCV_LINUX_MSG_DONTWAIT;
 const RISCV_LINUX_SENDMSG_ALLOWED_FLAGS: u64 = RISCV_LINUX_SENDTO_ALLOWED_FLAGS;
 const RISCV_LINUX_RECVMSG_ALLOWED_FLAGS: u64 = RISCV_LINUX_RECVFROM_ALLOWED_FLAGS;
 const RISCV_LINUX_DEFAULT_SOCKET_CAPACITY_BYTES: usize = 64 * 1024;
-const RISCV_LINUX_UNIX_SOCKET_NAME_LEN: u32 = 2;
 const RISCV_LINUX_MSGHDR_BYTES: usize = 56;
 const RISCV_LINUX_MSGHDR_NAME_OFFSET: usize = 0;
 const RISCV_LINUX_MSGHDR_NAMELEN_OFFSET: usize = 8;
@@ -150,6 +149,39 @@ fn read_sockaddr_un_name(
     Ok(bytes[2..].to_vec())
 }
 
+fn read_guest_u32(guest_memory: &RiscvGuestMemoryReader, address: u64) -> Result<u32, u64> {
+    let bytes = read_guest_exact(guest_memory, address, 4).ok_or(RISCV_LINUX_EFAULT)?;
+    Ok(read_u32(&bytes, 0))
+}
+
+fn sockaddr_un_bytes(name: Option<&[u8]>) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(2 + name.map_or(0, |name| name.len()));
+    bytes.extend_from_slice(&(RISCV_LINUX_AF_UNIX as u16).to_le_bytes());
+    if let Some(name) = name {
+        bytes.extend_from_slice(name);
+    }
+    bytes
+}
+
+fn write_sockaddr_un(
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+    address: u64,
+    len_address: u64,
+    name: Option<&[u8]>,
+) -> Result<(), u64> {
+    let sockaddr = sockaddr_un_bytes(name);
+    let requested_len = read_guest_u32(guest_memory_reader, len_address)? as usize;
+    let write_len = requested_len.min(sockaddr.len());
+    if write_len != 0 && !guest_memory_writer.write(address, &sockaddr[..write_len]) {
+        return Err(RISCV_LINUX_EFAULT);
+    }
+    if !guest_memory_writer.write(len_address, &(sockaddr.len() as u32).to_le_bytes()) {
+        return Err(RISCV_LINUX_EFAULT);
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct RiscvGuestSocketQueueId(u64);
 
@@ -159,23 +191,24 @@ impl RiscvGuestSocketQueueId {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct RiscvGuestSocketEndpoint {
     read_queue: Option<RiscvGuestSocketQueueId>,
     write_queue: Option<RiscvGuestSocketQueueId>,
+    local_name: Option<Vec<u8>>,
+    peer_name: Option<Vec<u8>>,
     read_shutdown: bool,
     write_shutdown: bool,
     reuse_addr: bool,
 }
 
 impl RiscvGuestSocketEndpoint {
-    const fn new(
-        read_queue: RiscvGuestSocketQueueId,
-        write_queue: RiscvGuestSocketQueueId,
-    ) -> Self {
+    fn new(read_queue: RiscvGuestSocketQueueId, write_queue: RiscvGuestSocketQueueId) -> Self {
         Self {
             read_queue: Some(read_queue),
             write_queue: Some(write_queue),
+            local_name: None,
+            peer_name: None,
             read_shutdown: false,
             write_shutdown: false,
             reuse_addr: false,
@@ -186,6 +219,8 @@ impl RiscvGuestSocketEndpoint {
         Self {
             read_queue: None,
             write_queue: None,
+            local_name: None,
+            peer_name: None,
             read_shutdown: false,
             write_shutdown: false,
             reuse_addr: false,
@@ -196,9 +231,27 @@ impl RiscvGuestSocketEndpoint {
         self.read_queue.is_some() && self.write_queue.is_some()
     }
 
-    const fn with_reuse_addr(mut self, reuse_addr: bool) -> Self {
+    fn with_reuse_addr(mut self, reuse_addr: bool) -> Self {
         self.reuse_addr = reuse_addr;
         self
+    }
+
+    fn with_local_name(mut self, local_name: Option<Vec<u8>>) -> Self {
+        self.local_name = local_name;
+        self
+    }
+
+    fn with_peer_name(mut self, peer_name: Option<Vec<u8>>) -> Self {
+        self.peer_name = peer_name;
+        self
+    }
+
+    fn local_name(&self) -> Option<&[u8]> {
+        self.local_name.as_deref()
+    }
+
+    fn peer_name(&self) -> Option<&[u8]> {
+        self.peer_name.as_deref()
     }
 }
 
@@ -331,7 +384,7 @@ impl RiscvSyscallState {
             .entry(fd)
             .ok_or(GuestFdError::BadFd { fd })?
             .description();
-        let Some(endpoint) = self.guest_socket_descriptions.get(&description).copied() else {
+        let Some(endpoint) = self.guest_socket_descriptions.get(&description).cloned() else {
             return Ok(RiscvGuestSocketRead::NotSocket);
         };
         if endpoint.read_shutdown {
@@ -371,7 +424,7 @@ impl RiscvSyscallState {
         let endpoint = self
             .guest_socket_descriptions
             .get(&description)
-            .copied()
+            .cloned()
             .ok_or(GuestFdError::BadFd { fd })?;
         let read_queue = endpoint
             .read_queue
@@ -405,7 +458,7 @@ impl RiscvSyscallState {
             .entry(fd)
             .ok_or(GuestFdError::BadFd { fd })?
             .description();
-        let Some(endpoint) = self.guest_socket_descriptions.get(&description).copied() else {
+        let Some(endpoint) = self.guest_socket_descriptions.get(&description).cloned() else {
             return Ok(RiscvGuestSocketWrite::NotSocket);
         };
         if endpoint.write_shutdown {
@@ -453,7 +506,7 @@ impl RiscvSyscallState {
         let endpoint = self
             .guest_socket_descriptions
             .get(&description)
-            .copied()
+            .cloned()
             .expect("socket write plan found endpoint");
         let write_queue = endpoint
             .write_queue
@@ -478,7 +531,7 @@ impl RiscvSyscallState {
         if let Some(listener) = self.guest_socket_listeners.get(&description) {
             return Ok(Some(!listener.pending.is_empty()));
         }
-        let Some(endpoint) = self.guest_socket_descriptions.get(&description).copied() else {
+        let Some(endpoint) = self.guest_socket_descriptions.get(&description).cloned() else {
             return Ok(None);
         };
         if endpoint.read_shutdown {
@@ -506,7 +559,7 @@ impl RiscvSyscallState {
         if self.guest_socket_listeners.contains_key(&description) {
             return Ok(Some(false));
         }
-        let Some(endpoint) = self.guest_socket_descriptions.get(&description).copied() else {
+        let Some(endpoint) = self.guest_socket_descriptions.get(&description).cloned() else {
             return Ok(None);
         };
         if endpoint.write_shutdown {
@@ -537,7 +590,7 @@ impl RiscvSyscallState {
         if self.guest_socket_listeners.contains_key(&description) {
             return Ok(Some(false));
         }
-        let Some(endpoint) = self.guest_socket_descriptions.get(&description).copied() else {
+        let Some(endpoint) = self.guest_socket_descriptions.get(&description).cloned() else {
             return Ok(None);
         };
         Ok(Some(!endpoint.is_connected()))
@@ -576,7 +629,7 @@ impl RiscvSyscallState {
             .entry(fd)
             .ok_or(GuestFdError::BadFd { fd })?
             .description();
-        Ok(self.guest_socket_descriptions.get(&description).copied())
+        Ok(self.guest_socket_descriptions.get(&description).cloned())
     }
 
     fn guest_socket_description_for_fd(
@@ -658,7 +711,11 @@ impl RiscvSyscallState {
             return Ok(Err(RISCV_LINUX_EADDRINUSE));
         }
         self.guest_socket_bindings.insert(name.clone(), description);
-        self.guest_socket_bound_names.insert(description, name);
+        self.guest_socket_bound_names
+            .insert(description, name.clone());
+        if let Some(endpoint) = self.guest_socket_descriptions.get_mut(&description) {
+            endpoint.local_name = Some(name);
+        }
         Ok(Ok(()))
     }
 
@@ -696,10 +753,14 @@ impl RiscvSyscallState {
         let Some(client_description) = self.guest_socket_description_for_fd(fd)? else {
             return Ok(RiscvGuestSocketConnect::Errno(RISCV_LINUX_ENOTSOCK));
         };
-        if self
+        let Some(client_endpoint) = self
             .guest_socket_descriptions
             .get(&client_description)
-            .is_some_and(RiscvGuestSocketEndpoint::is_connected)
+            .cloned()
+        else {
+            return Ok(RiscvGuestSocketConnect::Errno(RISCV_LINUX_ENOTSOCK));
+        };
+        if client_endpoint.is_connected()
             || self
                 .guest_socket_listeners
                 .contains_key(&client_description)
@@ -730,16 +791,18 @@ impl RiscvSyscallState {
             server_to_client,
             RiscvGuestSocketQueue::new(RISCV_LINUX_DEFAULT_SOCKET_CAPACITY_BYTES),
         );
-        let reuse_addr = self
-            .guest_socket_descriptions
-            .get(&client_description)
-            .is_some_and(|endpoint| endpoint.reuse_addr);
+        let client_local_name = client_endpoint.local_name.clone();
+        let server_name = name.to_vec();
         self.guest_socket_descriptions.insert(
             client_description,
             RiscvGuestSocketEndpoint::new(server_to_client, client_to_server)
-                .with_reuse_addr(reuse_addr),
+                .with_reuse_addr(client_endpoint.reuse_addr)
+                .with_local_name(client_local_name.clone())
+                .with_peer_name(Some(server_name.clone())),
         );
-        let accepted = RiscvGuestSocketEndpoint::new(client_to_server, server_to_client);
+        let accepted = RiscvGuestSocketEndpoint::new(client_to_server, server_to_client)
+            .with_local_name(Some(server_name))
+            .with_peer_name(client_local_name);
         let Some(listener) = self.guest_socket_listeners.get_mut(&server_description) else {
             return Ok(RiscvGuestSocketConnect::Errno(RISCV_LINUX_ECONNREFUSED));
         };
@@ -1103,23 +1166,38 @@ pub(super) fn syscall_socket_accept(
 pub(super) fn syscall_getsockname(
     request: RiscvSyscallRequest,
     state: &RiscvSyscallState,
-    guest_memory: &RiscvGuestMemoryWriter,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
 ) -> u64 {
-    syscall_unix_socket_name(request, state, guest_memory, false)
+    syscall_unix_socket_name(
+        request,
+        state,
+        guest_memory_reader,
+        guest_memory_writer,
+        false,
+    )
 }
 
 pub(super) fn syscall_getpeername(
     request: RiscvSyscallRequest,
     state: &RiscvSyscallState,
-    guest_memory: &RiscvGuestMemoryWriter,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
 ) -> u64 {
-    syscall_unix_socket_name(request, state, guest_memory, true)
+    syscall_unix_socket_name(
+        request,
+        state,
+        guest_memory_reader,
+        guest_memory_writer,
+        true,
+    )
 }
 
 fn syscall_unix_socket_name(
     request: RiscvSyscallRequest,
     state: &RiscvSyscallState,
-    guest_memory: &RiscvGuestMemoryWriter,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
     require_connected_peer: bool,
 ) -> u64 {
     let Some(fd) = guest_fd_argument(request.argument(0)) else {
@@ -1134,16 +1212,21 @@ fn syscall_unix_socket_name(
         return linux_error(RISCV_LINUX_ENOTCONN);
     }
 
-    let family = (RISCV_LINUX_AF_UNIX as u16).to_le_bytes();
-    if !guest_memory.write(request.argument(1), &family)
-        || !guest_memory.write(
-            request.argument(2),
-            &RISCV_LINUX_UNIX_SOCKET_NAME_LEN.to_le_bytes(),
-        )
-    {
-        return linux_error(RISCV_LINUX_EFAULT);
+    let name = if require_connected_peer {
+        endpoint.peer_name()
+    } else {
+        endpoint.local_name()
+    };
+    match write_sockaddr_un(
+        guest_memory_reader,
+        guest_memory_writer,
+        request.argument(1),
+        request.argument(2),
+        name,
+    ) {
+        Ok(()) => 0,
+        Err(errno) => linux_error(errno),
     }
-    0
 }
 
 pub(super) fn syscall_shutdown(request: RiscvSyscallRequest, state: &mut RiscvSyscallState) -> u64 {

@@ -145,9 +145,15 @@ int main(void) {
         AF_UNIX,
         {0, 'r', 'e', 'm', '6', '-', 'a', 'c', 'c', 'e', 'p', 't'}
     };
+    struct sockaddr_un_addr listener_name = {0};
+    struct sockaddr_un_addr client_peer_name = {0};
+    struct sockaddr_un_addr accepted_name = {0};
     unsigned int name_len = sizeof(name);
     unsigned int peer_len = sizeof(peer);
     unsigned int solo_peer_len = sizeof(solo_peer);
+    unsigned int listener_name_len = sizeof(listener_name);
+    unsigned int client_peer_name_len = sizeof(client_peer_name);
+    unsigned int accepted_name_len = sizeof(accepted_name);
     int socket_type = -1;
     int socket_error = -1;
     int reuse_addr = 1;
@@ -202,8 +208,11 @@ int main(void) {
     long bind_status = listen_fd >= 0 ? linux_syscall3(200, listen_fd, (long)&listener_addr, ABSTRACT_LISTENER_LEN) : -1;
     long listen_status = listen_fd >= 0 ? linux_syscall2(201, listen_fd, 4) : -1;
     long connect_status = connect_fd >= 0 ? linux_syscall3(203, connect_fd, (long)&listener_addr, ABSTRACT_LISTENER_LEN) : -1;
+    long listener_name_status = listen_fd >= 0 ? linux_syscall3(204, listen_fd, (long)&listener_name, (long)&listener_name_len) : -1;
+    long client_peer_name_status = connect_fd >= 0 ? linux_syscall3(205, connect_fd, (long)&client_peer_name, (long)&client_peer_name_len) : -1;
     long listener_write_status = connect_fd >= 0 ? linux_syscall3(64, connect_fd, (long)left_msg, 4) : -1;
     long accepted_fd = listen_fd >= 0 ? linux_syscall4(242, listen_fd, 0, 0, SOCK_CLOEXEC | SOCK_NONBLOCK) : -1;
+    long accepted_name_status = accepted_fd >= 0 ? linux_syscall3(204, accepted_fd, (long)&accepted_name, (long)&accepted_name_len) : -1;
     long listener_read_status = accepted_fd >= 0 ? linux_syscall3(63, accepted_fd, (long)listener_left, 4) : -1;
     long accepted_write_status = accepted_fd >= 0 ? linux_syscall3(64, accepted_fd, (long)right_msg, 5) : -1;
     long accepted_read_status = connect_fd >= 0 ? linux_syscall3(63, connect_fd, (long)listener_right, 5) : -1;
@@ -254,7 +263,16 @@ int main(void) {
         solo_sendmsg_status == -107 && solo_recvmsg_status == -22 &&
         listen_fd >= 0 && connect_fd >= 0 &&
         bind_status == 0 && listen_status == 0 && connect_status == 0 &&
+        listener_name_status == 0 && listener_name_len == ABSTRACT_LISTENER_LEN &&
+        listener_name.family == AF_UNIX &&
+        bytes_match(listener_name.path, listener_addr.path, ABSTRACT_LISTENER_LEN - 2) &&
+        client_peer_name_status == 0 && client_peer_name_len == ABSTRACT_LISTENER_LEN &&
+        client_peer_name.family == AF_UNIX &&
+        bytes_match(client_peer_name.path, listener_addr.path, ABSTRACT_LISTENER_LEN - 2) &&
         accepted_fd >= 0 &&
+        accepted_name_status == 0 && accepted_name_len == ABSTRACT_LISTENER_LEN &&
+        accepted_name.family == AF_UNIX &&
+        bytes_match(accepted_name.path, listener_addr.path, ABSTRACT_LISTENER_LEN - 2) &&
         listener_write_status == 4 && listener_read_status == 4 &&
         bytes_match(listener_left, left_msg, 4) &&
         accepted_write_status == 5 && accepted_read_status == 5 &&

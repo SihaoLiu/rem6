@@ -88,6 +88,17 @@ fn socket_store() -> Arc<Mutex<PartitionedMemoryStore>> {
             (0x9440, &[0; 56]),
             (0x9480, &[0; 56]),
             (0x9500, &sockaddr_un_abstract(b"rem6-listener")),
+            (0x9520, &sockaddr_un_abstract(b"rem6-client")),
+            (0x9540, &[0; 32]),
+            (0x9580, &[0; 32]),
+            (0x95c0, &[0; 32]),
+            (0x9600, &[0; 32]),
+            (0x9620, &[0; 32]),
+            (0x9640, &[0; 8]),
+            (0x9660, &[0; 8]),
+            (0x9680, &[0; 8]),
+            (0x96a0, &[0; 8]),
+            (0x96c0, &[0; 8]),
             (0x9200, &iovec(0x9040, 4)),
             (0x9210, &iovec(0x9044, 6)),
             (0x9220, &iovec(0x9140, 3)),
@@ -136,6 +147,10 @@ fn guest_u32(store: &Arc<Mutex<PartitionedMemoryStore>>, address: u64) -> u32 {
             .try_into()
             .unwrap(),
     )
+}
+
+fn guest_bytes(store: &Arc<Mutex<PartitionedMemoryStore>>, address: u64, len: usize) -> Vec<u8> {
+    guest_memory_reader(Arc::clone(store))(address, len).unwrap()
 }
 
 fn iovec(address: u64, len: u64) -> [u8; 16] {
@@ -251,12 +266,16 @@ fn linux_table_socket_creates_unconnected_unix_stream_fd() {
     assert_eq!(guest_i32(&store, 0x93a0), RISCV_LINUX_SOCK_STREAM as i32);
     assert_eq!(guest_u32(&store, 0x93c0), 4);
 
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9120,
+        &16_u32.to_le_bytes()
+    ));
     assert_eq!(
         return_value(handle_with_memory(
             &mut state,
             RISCV_LINUX_GETSOCKNAME,
             [fd_value, 0x9100, 0x9120, 0, 0, 0],
-            None,
+            Some(&reader),
             Some(&writer),
         )),
         0
@@ -272,7 +291,7 @@ fn linux_table_socket_creates_unconnected_unix_stream_fd() {
             &mut state,
             RISCV_LINUX_GETPEERNAME,
             [fd_value, 0x9100, 0x9120, 0, 0, 0],
-            None,
+            Some(&reader),
             Some(&writer),
         )),
         linux_error(RISCV_LINUX_ENOTCONN)
@@ -819,7 +838,7 @@ fn linux_table_socketpair_roundtrips_bidirectional_bytes_and_poll_without_pipe_i
             &mut state,
             RISCV_LINUX_GETSOCKNAME,
             [left_fd, 0x9320, 0x9340, 0, 0, 0],
-            None,
+            Some(&reader),
             Some(&writer),
         )),
         0
@@ -829,7 +848,7 @@ fn linux_table_socketpair_roundtrips_bidirectional_bytes_and_poll_without_pipe_i
             &mut state,
             RISCV_LINUX_GETPEERNAME,
             [right_fd, 0x9360, 0x9380, 0, 0, 0],
-            None,
+            Some(&reader),
             Some(&writer),
         )),
         0
@@ -1176,6 +1195,181 @@ fn linux_table_unix_listener_accepts_guest_only_stream_connection() {
         Some(b"right-to-left".to_vec())
     );
     assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_unix_listener_reports_bound_and_peer_names() {
+    let store = socket_store();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+    let listener_name = b"rem6-listener";
+    let client_name = b"rem6-client";
+    let sockaddr = sockaddr_un_abstract(listener_name);
+    let client_sockaddr = sockaddr_un_abstract(client_name);
+    let sockaddr_len = abstract_sockaddr_len(listener_name);
+    let client_sockaddr_len = abstract_sockaddr_len(client_name);
+
+    let server_fd = return_value(handle_with_memory(
+        &mut state,
+        RISCV_LINUX_SOCKET,
+        [RISCV_LINUX_AF_UNIX, RISCV_LINUX_SOCK_STREAM, 0, 0, 0, 0],
+        None,
+        None,
+    ));
+    let client_fd = return_value(handle_with_memory(
+        &mut state,
+        RISCV_LINUX_SOCKET,
+        [RISCV_LINUX_AF_UNIX, RISCV_LINUX_SOCK_STREAM, 0, 0, 0, 0],
+        None,
+        None,
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_BIND,
+            [client_fd, 0x9520, client_sockaddr_len, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        0
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_BIND,
+            [server_fd, 0x9500, sockaddr_len, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        0
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_LISTEN,
+            [server_fd, 2, 0, 0, 0, 0],
+            None,
+            None,
+        )),
+        0
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_CONNECT,
+            [client_fd, 0x9500, sockaddr_len, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        0
+    );
+    let accepted_fd = return_value(handle_with_memory(
+        &mut state,
+        RISCV_LINUX_ACCEPT4,
+        [server_fd, 0, 0, 0, 0, 0],
+        None,
+        None,
+    ));
+
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9640,
+        &32_u32.to_le_bytes()
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETSOCKNAME,
+            [server_fd, 0x9540, 0x9640, 0, 0, 0],
+            Some(&reader),
+            Some(&writer),
+        )),
+        0
+    );
+    assert_eq!(guest_u32(&store, 0x9640), sockaddr.len() as u32);
+    assert_eq!(guest_bytes(&store, 0x9540, sockaddr.len()), sockaddr);
+
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x96c0,
+        &4_u32.to_le_bytes()
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETSOCKNAME,
+            [server_fd, 0x9600, 0x96c0, 0, 0, 0],
+            Some(&reader),
+            Some(&writer),
+        )),
+        0
+    );
+    assert_eq!(guest_u32(&store, 0x96c0), sockaddr.len() as u32);
+    assert_eq!(guest_bytes(&store, 0x9600, 4), sockaddr[..4]);
+
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9660,
+        &32_u32.to_le_bytes()
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETPEERNAME,
+            [client_fd, 0x9580, 0x9660, 0, 0, 0],
+            Some(&reader),
+            Some(&writer),
+        )),
+        0
+    );
+    assert_eq!(guest_u32(&store, 0x9660), sockaddr.len() as u32);
+    assert_eq!(guest_bytes(&store, 0x9580, sockaddr.len()), sockaddr);
+
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9680,
+        &32_u32.to_le_bytes()
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETSOCKNAME,
+            [accepted_fd, 0x95c0, 0x9680, 0, 0, 0],
+            Some(&reader),
+            Some(&writer),
+        )),
+        0
+    );
+    assert_eq!(guest_u32(&store, 0x9680), sockaddr.len() as u32);
+    assert_eq!(guest_bytes(&store, 0x95c0, sockaddr.len()), sockaddr);
+
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x96a0,
+        &32_u32.to_le_bytes()
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETPEERNAME,
+            [accepted_fd, 0x9620, 0x96a0, 0, 0, 0],
+            Some(&reader),
+            Some(&writer),
+        )),
+        0
+    );
+    assert_eq!(guest_u32(&store, 0x96a0), client_sockaddr.len() as u32);
+    assert_eq!(
+        guest_bytes(&store, 0x9620, client_sockaddr.len()),
+        client_sockaddr
+    );
+
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETPEERNAME,
+            [server_fd, 0x9600, 0x96c0, 0, 0, 0],
+            Some(&reader),
+            Some(&writer),
+        )),
+        linux_error(RISCV_LINUX_ENOTCONN)
+    );
 }
 
 #[test]
