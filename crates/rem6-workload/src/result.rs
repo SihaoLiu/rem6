@@ -282,6 +282,8 @@ pub struct WorkloadParallelExecutionSummary {
     fabric_occupied_ticks: u64,
     fabric_queue_delay_ticks: u64,
     fabric_max_queue_delay_ticks: u64,
+    fabric_credit_delay_ticks: u64,
+    fabric_max_credit_delay_ticks: u64,
     contended_fabric_lane_count: usize,
     fabric_hop_activities: Vec<FabricHopActivity>,
     fabric_lane_activities: Vec<FabricLaneActivity>,
@@ -630,7 +632,19 @@ impl WorkloadParallelExecutionSummary {
         self.fabric_occupied_ticks = occupied_ticks;
         self.fabric_queue_delay_ticks = queue_delay_ticks;
         self.fabric_max_queue_delay_ticks = max_queue_delay_ticks;
+        self.fabric_credit_delay_ticks = 0;
+        self.fabric_max_credit_delay_ticks = 0;
         self.contended_fabric_lane_count = contended_lane_count;
+        self
+    }
+
+    pub const fn with_fabric_credit_delay(
+        mut self,
+        credit_delay_ticks: u64,
+        max_credit_delay_ticks: u64,
+    ) -> Self {
+        self.fabric_credit_delay_ticks = credit_delay_ticks;
+        self.fabric_max_credit_delay_ticks = max_credit_delay_ticks;
         self
     }
 
@@ -1085,6 +1099,14 @@ impl WorkloadParallelExecutionSummary {
 
     pub const fn fabric_max_queue_delay_ticks(&self) -> u64 {
         self.fabric_max_queue_delay_ticks
+    }
+
+    pub const fn fabric_credit_delay_ticks(&self) -> u64 {
+        self.fabric_credit_delay_ticks
+    }
+
+    pub const fn fabric_max_credit_delay_ticks(&self) -> u64 {
+        self.fabric_max_credit_delay_ticks
     }
 
     pub const fn contended_fabric_lane_count(&self) -> usize {

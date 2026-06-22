@@ -40,6 +40,14 @@ fn assert_gpu_fabric_lane(
         lane.get("flit_count").and_then(Value::as_u64),
         Some(flit_count)
     );
+    assert!(lane
+        .get("credit_delay_ticks")
+        .and_then(Value::as_u64)
+        .is_some());
+    assert!(lane
+        .get("max_credit_delay_ticks")
+        .and_then(Value::as_u64)
+        .is_some());
     assert!(lane.get("occupied_ticks").and_then(Value::as_u64).is_some());
     assert!(lane.get("first_tick").and_then(Value::as_u64).is_some());
     assert!(lane.get("last_tick").and_then(Value::as_u64).is_some());
@@ -1048,6 +1056,14 @@ fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
     assert_eq!(fabric.get("transfers").and_then(Value::as_u64), Some(2));
     assert_eq!(fabric.get("bytes").and_then(Value::as_u64), Some(32));
     assert_eq!(fabric.get("flits").and_then(Value::as_u64), Some(2));
+    let credit_delay_ticks = fabric
+        .get("credit_delay_ticks")
+        .and_then(Value::as_u64)
+        .expect("fabric credit delay ticks");
+    let max_credit_delay_ticks = fabric
+        .get("max_credit_delay_ticks")
+        .and_then(Value::as_u64)
+        .expect("fabric max credit delay ticks");
     let lanes = fabric
         .get("lane_activities")
         .and_then(Value::as_array)
@@ -1064,11 +1080,19 @@ fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
         hop.get("link").and_then(Value::as_str) == Some("gpu_mem")
             && hop.get("virtual_network").and_then(Value::as_u64) == Some(7)
             && hop.get("flits").and_then(Value::as_u64) == Some(1)
+            && hop
+                .get("credit_delay_ticks")
+                .and_then(Value::as_u64)
+                .is_some()
     }));
     assert!(hops.iter().any(|hop| {
         hop.get("link").and_then(Value::as_str) == Some("gpu_mem")
             && hop.get("virtual_network").and_then(Value::as_u64) == Some(8)
             && hop.get("flits").and_then(Value::as_u64) == Some(1)
+            && hop
+                .get("credit_delay_ticks")
+                .and_then(Value::as_u64)
+                .is_some()
     }));
     assert_stat(
         &stdout,
@@ -1085,6 +1109,20 @@ fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
         "monotonic",
     );
     assert_stat(&stdout, "sim.gpu_run.fabric.flits", "Count", 2, "monotonic");
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.fabric.credit_delay_ticks",
+        "Tick",
+        credit_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.fabric.max_credit_delay_ticks",
+        "Tick",
+        max_credit_delay_ticks,
+        "monotonic",
+    );
 }
 
 #[test]

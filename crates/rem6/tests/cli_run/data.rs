@@ -924,23 +924,43 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
     assert!(fabric.get("transfers").and_then(Value::as_u64).unwrap_or(0) > 0);
     assert!(fabric.get("bytes").and_then(Value::as_u64).unwrap_or(0) > 0);
     assert!(fabric.get("flits").and_then(Value::as_u64).unwrap_or(0) > 0);
+    let credit_delay_ticks = fabric
+        .get("credit_delay_ticks")
+        .and_then(Value::as_u64)
+        .expect("fabric credit delay ticks");
+    let max_credit_delay_ticks = fabric
+        .get("max_credit_delay_ticks")
+        .and_then(Value::as_u64)
+        .expect("fabric max credit delay ticks");
     assert!(fabric
         .get("lane_activities")
         .and_then(Value::as_array)
         .is_some_and(|lanes| {
             lanes.len() >= 2
-                && lanes
-                    .iter()
-                    .all(|lane| lane.get("flit_count").and_then(Value::as_u64).is_some())
+                && lanes.iter().all(|lane| {
+                    lane.get("flit_count").and_then(Value::as_u64).is_some()
+                        && lane
+                            .get("credit_delay_ticks")
+                            .and_then(Value::as_u64)
+                            .is_some()
+                        && lane
+                            .get("max_credit_delay_ticks")
+                            .and_then(Value::as_u64)
+                            .is_some()
+                })
         }));
     assert!(fabric
         .get("hop_activities")
         .and_then(Value::as_array)
         .is_some_and(|hops| {
             !hops.is_empty()
-                && hops
-                    .iter()
-                    .all(|hop| hop.get("flits").and_then(Value::as_u64).is_some())
+                && hops.iter().all(|hop| {
+                    hop.get("flits").and_then(Value::as_u64).is_some()
+                        && hop
+                            .get("credit_delay_ticks")
+                            .and_then(Value::as_u64)
+                            .is_some()
+                })
         }));
     assert_stat_greater_than(
         &stdout,
@@ -951,6 +971,20 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
     );
     assert_stat_greater_than(&stdout, "sim.memory.fabric.bytes", "Byte", 0, "monotonic");
     assert_stat_greater_than(&stdout, "sim.memory.fabric.flits", "Count", 0, "monotonic");
+    assert_stat(
+        &stdout,
+        "sim.memory.fabric.credit_delay_ticks",
+        "Tick",
+        credit_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.fabric.max_credit_delay_ticks",
+        "Tick",
+        max_credit_delay_ticks,
+        "monotonic",
+    );
 }
 
 #[test]

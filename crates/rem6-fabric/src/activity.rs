@@ -14,6 +14,8 @@ pub struct FabricLaneActivity {
     occupied_ticks: Tick,
     queue_delay_ticks: Tick,
     max_queue_delay_ticks: Tick,
+    credit_delay_ticks: Tick,
+    max_credit_delay_ticks: Tick,
     first_tick: Tick,
     last_tick: Tick,
 }
@@ -40,6 +42,8 @@ impl FabricLaneActivity {
             occupied_ticks,
             queue_delay_ticks,
             max_queue_delay_ticks,
+            credit_delay_ticks: 0,
+            max_credit_delay_ticks: 0,
             first_tick,
             last_tick,
         }
@@ -77,6 +81,14 @@ impl FabricLaneActivity {
         self.max_queue_delay_ticks
     }
 
+    pub const fn credit_delay_ticks(&self) -> Tick {
+        self.credit_delay_ticks
+    }
+
+    pub const fn max_credit_delay_ticks(&self) -> Tick {
+        self.max_credit_delay_ticks
+    }
+
     pub const fn first_tick(&self) -> Tick {
         self.first_tick
     }
@@ -94,6 +106,16 @@ impl FabricLaneActivity {
         self
     }
 
+    pub const fn with_credit_delay(
+        mut self,
+        credit_delay_ticks: Tick,
+        max_credit_delay_ticks: Tick,
+    ) -> Self {
+        self.credit_delay_ticks = credit_delay_ticks;
+        self.max_credit_delay_ticks = max_credit_delay_ticks;
+        self
+    }
+
     pub fn merge_window(self, later: Self) -> Self {
         debug_assert_eq!(&self.link, &later.link);
         debug_assert_eq!(self.virtual_network, later.virtual_network);
@@ -106,6 +128,10 @@ impl FabricLaneActivity {
             occupied_ticks: self.occupied_ticks + later.occupied_ticks,
             queue_delay_ticks: self.queue_delay_ticks + later.queue_delay_ticks,
             max_queue_delay_ticks: self.max_queue_delay_ticks.max(later.max_queue_delay_ticks),
+            credit_delay_ticks: self.credit_delay_ticks + later.credit_delay_ticks,
+            max_credit_delay_ticks: self
+                .max_credit_delay_ticks
+                .max(later.max_credit_delay_ticks),
             first_tick: self.first_tick.min(later.first_tick),
             last_tick: self.last_tick.max(later.last_tick),
         }
@@ -123,6 +149,8 @@ pub struct FabricLinkActivity {
     occupied_ticks: Tick,
     queue_delay_ticks: Tick,
     max_queue_delay_ticks: Tick,
+    credit_delay_ticks: Tick,
+    max_credit_delay_ticks: Tick,
     contended_virtual_network_count: usize,
     contended_virtual_networks: Option<BTreeSet<VirtualNetworkId>>,
     first_tick: Tick,
@@ -139,6 +167,8 @@ impl PartialEq for FabricLinkActivity {
             && self.occupied_ticks == other.occupied_ticks
             && self.queue_delay_ticks == other.queue_delay_ticks
             && self.max_queue_delay_ticks == other.max_queue_delay_ticks
+            && self.credit_delay_ticks == other.credit_delay_ticks
+            && self.max_credit_delay_ticks == other.max_credit_delay_ticks
             && self.contended_virtual_network_count == other.contended_virtual_network_count
             && self.first_tick == other.first_tick
             && self.last_tick == other.last_tick
@@ -181,6 +211,8 @@ impl FabricLinkActivity {
             occupied_ticks,
             queue_delay_ticks,
             max_queue_delay_ticks,
+            credit_delay_ticks: 0,
+            max_credit_delay_ticks: 0,
             contended_virtual_network_count,
             contended_virtual_networks: None,
             first_tick: stored_first_tick,
@@ -234,6 +266,14 @@ impl FabricLinkActivity {
         self.max_queue_delay_ticks
     }
 
+    pub const fn credit_delay_ticks(&self) -> Tick {
+        self.credit_delay_ticks
+    }
+
+    pub const fn max_credit_delay_ticks(&self) -> Tick {
+        self.max_credit_delay_ticks
+    }
+
     pub const fn contended_virtual_network_count(&self) -> usize {
         self.contended_virtual_network_count
     }
@@ -252,6 +292,16 @@ impl FabricLinkActivity {
 
     pub const fn with_flit_count(mut self, flit_count: u64) -> Self {
         self.flit_count = flit_count;
+        self
+    }
+
+    pub const fn with_credit_delay(
+        mut self,
+        credit_delay_ticks: Tick,
+        max_credit_delay_ticks: Tick,
+    ) -> Self {
+        self.credit_delay_ticks = credit_delay_ticks;
+        self.max_credit_delay_ticks = max_credit_delay_ticks;
         self
     }
 
@@ -283,6 +333,10 @@ impl FabricLinkActivity {
             occupied_ticks: self.occupied_ticks + later.occupied_ticks,
             queue_delay_ticks: self.queue_delay_ticks + later.queue_delay_ticks,
             max_queue_delay_ticks: self.max_queue_delay_ticks.max(later.max_queue_delay_ticks),
+            credit_delay_ticks: self.credit_delay_ticks + later.credit_delay_ticks,
+            max_credit_delay_ticks: self
+                .max_credit_delay_ticks
+                .max(later.max_credit_delay_ticks),
             contended_virtual_network_count,
             contended_virtual_networks,
             first_tick: self.first_tick.min(later.first_tick),
@@ -309,6 +363,7 @@ impl FabricLinkActivity {
             lane.last_tick(),
         )
         .with_flit_count(lane.flit_count())
+        .with_credit_delay(lane.credit_delay_ticks(), lane.max_credit_delay_ticks())
         .with_virtual_network_coverage(active_virtual_networks, Some(contended_virtual_networks))
     }
 
@@ -326,6 +381,10 @@ impl FabricLinkActivity {
         self.occupied_ticks += lane.occupied_ticks();
         self.queue_delay_ticks += lane.queue_delay_ticks();
         self.max_queue_delay_ticks = self.max_queue_delay_ticks.max(lane.max_queue_delay_ticks());
+        self.credit_delay_ticks += lane.credit_delay_ticks();
+        self.max_credit_delay_ticks = self
+            .max_credit_delay_ticks
+            .max(lane.max_credit_delay_ticks());
         if lane.has_contention() {
             if let Some(contended_virtual_networks) = &mut self.contended_virtual_networks {
                 contended_virtual_networks.insert(lane.virtual_network());
@@ -363,6 +422,8 @@ pub struct FabricVirtualNetworkActivity {
     occupied_ticks: Tick,
     queue_delay_ticks: Tick,
     max_queue_delay_ticks: Tick,
+    credit_delay_ticks: Tick,
+    max_credit_delay_ticks: Tick,
     contended_lane_count: usize,
     contended_links: Option<BTreeSet<FabricLinkId>>,
     first_tick: Tick,
@@ -379,6 +440,8 @@ impl PartialEq for FabricVirtualNetworkActivity {
             && self.occupied_ticks == other.occupied_ticks
             && self.queue_delay_ticks == other.queue_delay_ticks
             && self.max_queue_delay_ticks == other.max_queue_delay_ticks
+            && self.credit_delay_ticks == other.credit_delay_ticks
+            && self.max_credit_delay_ticks == other.max_credit_delay_ticks
             && self.contended_lane_count == other.contended_lane_count
             && self.first_tick == other.first_tick
             && self.last_tick == other.last_tick
@@ -421,6 +484,8 @@ impl FabricVirtualNetworkActivity {
             occupied_ticks,
             queue_delay_ticks,
             max_queue_delay_ticks,
+            credit_delay_ticks: 0,
+            max_credit_delay_ticks: 0,
             contended_lane_count,
             contended_links: None,
             first_tick: stored_first_tick,
@@ -474,6 +539,14 @@ impl FabricVirtualNetworkActivity {
         self.max_queue_delay_ticks
     }
 
+    pub const fn credit_delay_ticks(&self) -> Tick {
+        self.credit_delay_ticks
+    }
+
+    pub const fn max_credit_delay_ticks(&self) -> Tick {
+        self.max_credit_delay_ticks
+    }
+
     pub const fn contended_lane_count(&self) -> usize {
         self.contended_lane_count
     }
@@ -492,6 +565,16 @@ impl FabricVirtualNetworkActivity {
 
     pub const fn with_flit_count(mut self, flit_count: u64) -> Self {
         self.flit_count = flit_count;
+        self
+    }
+
+    pub const fn with_credit_delay(
+        mut self,
+        credit_delay_ticks: Tick,
+        max_credit_delay_ticks: Tick,
+    ) -> Self {
+        self.credit_delay_ticks = credit_delay_ticks;
+        self.max_credit_delay_ticks = max_credit_delay_ticks;
         self
     }
 
@@ -523,6 +606,10 @@ impl FabricVirtualNetworkActivity {
             occupied_ticks: self.occupied_ticks + later.occupied_ticks,
             queue_delay_ticks: self.queue_delay_ticks + later.queue_delay_ticks,
             max_queue_delay_ticks: self.max_queue_delay_ticks.max(later.max_queue_delay_ticks),
+            credit_delay_ticks: self.credit_delay_ticks + later.credit_delay_ticks,
+            max_credit_delay_ticks: self
+                .max_credit_delay_ticks
+                .max(later.max_credit_delay_ticks),
             contended_lane_count,
             contended_links,
             first_tick: self.first_tick.min(later.first_tick),
@@ -549,6 +636,7 @@ impl FabricVirtualNetworkActivity {
             lane.last_tick(),
         )
         .with_flit_count(lane.flit_count())
+        .with_credit_delay(lane.credit_delay_ticks(), lane.max_credit_delay_ticks())
         .with_link_coverage(active_links, Some(contended_links))
     }
 
@@ -566,6 +654,10 @@ impl FabricVirtualNetworkActivity {
         self.occupied_ticks += lane.occupied_ticks();
         self.queue_delay_ticks += lane.queue_delay_ticks();
         self.max_queue_delay_ticks = self.max_queue_delay_ticks.max(lane.max_queue_delay_ticks());
+        self.credit_delay_ticks += lane.credit_delay_ticks();
+        self.max_credit_delay_ticks = self
+            .max_credit_delay_ticks
+            .max(lane.max_credit_delay_ticks());
         if lane.has_contention() {
             if let Some(contended_links) = &mut self.contended_links {
                 contended_links.insert(lane.link().clone());
@@ -600,6 +692,8 @@ pub struct FabricActivityProfile {
     occupied_ticks: Tick,
     queue_delay_ticks: Tick,
     max_queue_delay_ticks: Tick,
+    credit_delay_ticks: Tick,
+    max_credit_delay_ticks: Tick,
     contended_lane_count: usize,
 }
 
@@ -621,6 +715,8 @@ impl FabricActivityProfile {
             occupied_ticks,
             queue_delay_ticks,
             max_queue_delay_ticks,
+            credit_delay_ticks: 0,
+            max_credit_delay_ticks: 0,
             contended_lane_count,
         }
     }
@@ -640,6 +736,10 @@ impl FabricActivityProfile {
             profile.max_queue_delay_ticks = profile
                 .max_queue_delay_ticks
                 .max(lane.max_queue_delay_ticks());
+            profile.credit_delay_ticks += lane.credit_delay_ticks();
+            profile.max_credit_delay_ticks = profile
+                .max_credit_delay_ticks
+                .max(lane.max_credit_delay_ticks());
             if lane.has_contention() {
                 profile.contended_lane_count += 1;
             }
@@ -678,6 +778,24 @@ impl FabricActivityProfile {
 
     pub const fn max_queue_delay_ticks(self) -> Tick {
         self.max_queue_delay_ticks
+    }
+
+    pub const fn credit_delay_ticks(self) -> Tick {
+        self.credit_delay_ticks
+    }
+
+    pub const fn max_credit_delay_ticks(self) -> Tick {
+        self.max_credit_delay_ticks
+    }
+
+    pub const fn with_credit_delay(
+        mut self,
+        credit_delay_ticks: Tick,
+        max_credit_delay_ticks: Tick,
+    ) -> Self {
+        self.credit_delay_ticks = credit_delay_ticks;
+        self.max_credit_delay_ticks = max_credit_delay_ticks;
+        self
     }
 
     pub const fn contended_lane_count(self) -> usize {

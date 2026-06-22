@@ -314,6 +314,8 @@ fn fabric_credit_depth_limits_in_flight_packets_per_virtual_network() {
     assert_eq!(activity.occupied_ticks(), 3);
     assert_eq!(activity.queue_delay_ticks(), 12);
     assert_eq!(activity.max_queue_delay_ticks(), 11);
+    assert_eq!(activity.credit_delay_ticks(), 9);
+    assert_eq!(activity.max_credit_delay_ticks(), 9);
     assert_eq!(activity.first_tick(), 0);
     assert_eq!(activity.last_tick(), 22);
     assert!(activity.has_contention());
@@ -331,6 +333,8 @@ fn fabric_credit_depth_limits_in_flight_packets_per_virtual_network() {
     assert_eq!(profile.occupied_ticks(), 3);
     assert_eq!(profile.queue_delay_ticks(), 12);
     assert_eq!(profile.max_queue_delay_ticks(), 11);
+    assert_eq!(profile.credit_delay_ticks(), 9);
+    assert_eq!(profile.max_credit_delay_ticks(), 9);
     assert_eq!(profile.contended_lane_count(), 1);
     assert!(profile.has_contention());
     assert!(!profile.is_empty());
@@ -445,9 +449,15 @@ fn fabric_wait_for_graph_tracks_credit_blocked_packets_until_credit_returns() {
         .unwrap();
 
     let packet_wait = WaitForNode::transaction("fabric.packet.3").unwrap();
+    let lane = WaitForNode::resource("fabric.mesh_wait_credit.vn.1.lane").unwrap();
     let credit = WaitForNode::resource("fabric.mesh_wait_credit.vn.1.credit").unwrap();
+    let queued_wait = fabric.wait_for_graph_at(1).snapshot();
     let active_wait = fabric.wait_for_graph_at(2).snapshot();
 
+    assert_eq!(queued_wait.edge_count(), 1);
+    assert_eq!(queued_wait.first_observed_tick(), Some(1));
+    assert_eq!(queued_wait.last_observed_tick(), Some(1));
+    assert!(queued_wait.contains_edge(&packet_wait, &lane, WaitForEdgeKind::Queue));
     assert_eq!(active_wait.edge_count(), 1);
     assert_eq!(active_wait.first_observed_tick(), Some(2));
     assert_eq!(active_wait.last_observed_tick(), Some(2));

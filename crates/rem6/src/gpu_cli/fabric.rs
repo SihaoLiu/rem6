@@ -117,6 +117,14 @@ impl Rem6GpuFabricSummary {
         self.profile.max_queue_delay_ticks()
     }
 
+    pub(crate) fn credit_delay_ticks(&self) -> u64 {
+        self.profile.credit_delay_ticks()
+    }
+
+    pub(crate) fn max_credit_delay_ticks(&self) -> u64 {
+        self.profile.max_credit_delay_ticks()
+    }
+
     pub(crate) fn contended_lane_count(&self) -> usize {
         self.profile.contended_lane_count()
     }
@@ -208,7 +216,7 @@ pub(super) fn gpu_fabric_summary_json(
         .map(|depth| depth.to_string())
         .unwrap_or_else(|| "null".to_string());
     format!(
-        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"contended_lanes\":{},\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
+        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
         json_escape(config.link()),
         config.bandwidth_bytes_per_tick(),
         config.request_virtual_network(),
@@ -222,6 +230,8 @@ pub(super) fn gpu_fabric_summary_json(
         summary.occupied_ticks(),
         summary.queue_delay_ticks(),
         summary.max_queue_delay_ticks(),
+        summary.credit_delay_ticks(),
+        summary.max_credit_delay_ticks(),
         summary.contended_lane_count(),
         gpu_fabric_lane_activities_json(summary),
         gpu_fabric_hop_activities_json(summary),
@@ -234,7 +244,7 @@ fn gpu_fabric_lane_activities_json(summary: &Rem6GpuFabricSummary) -> String {
         .iter()
         .map(|activity| {
             format!(
-                "{{\"link\":\"{}\",\"virtual_network\":{},\"transfer_count\":{},\"byte_count\":{},\"flit_count\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                "{{\"link\":\"{}\",\"virtual_network\":{},\"transfer_count\":{},\"byte_count\":{},\"flit_count\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"first_tick\":{},\"last_tick\":{}}}",
                 json_escape(activity.link().as_str()),
                 activity.virtual_network().get(),
                 activity.transfer_count(),
@@ -243,6 +253,8 @@ fn gpu_fabric_lane_activities_json(summary: &Rem6GpuFabricSummary) -> String {
                 activity.occupied_ticks(),
                 activity.queue_delay_ticks(),
                 activity.max_queue_delay_ticks(),
+                activity.credit_delay_ticks(),
+                activity.max_credit_delay_ticks(),
                 activity.first_tick(),
                 activity.last_tick(),
             )
@@ -257,7 +269,7 @@ fn gpu_fabric_hop_activities_json(summary: &Rem6GpuFabricSummary) -> String {
         .iter()
         .map(|activity| {
             format!(
-                "{{\"packet\":{},\"hop_index\":{},\"link\":\"{}\",\"virtual_network\":{},\"bytes\":{},\"flits\":{},\"ready_tick\":{},\"start_tick\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"depart_tick\":{},\"arrival_tick\":{}}}",
+                "{{\"packet\":{},\"hop_index\":{},\"link\":\"{}\",\"virtual_network\":{},\"bytes\":{},\"flits\":{},\"ready_tick\":{},\"start_tick\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"depart_tick\":{},\"arrival_tick\":{}}}",
                 activity.packet().get(),
                 activity.hop_index(),
                 json_escape(activity.link().as_str()),
@@ -268,6 +280,7 @@ fn gpu_fabric_hop_activities_json(summary: &Rem6GpuFabricSummary) -> String {
                 activity.start_tick(),
                 activity.occupied_ticks(),
                 activity.queue_delay_ticks(),
+                activity.credit_delay_ticks(),
                 activity.depart_tick(),
                 activity.arrival_tick(),
             )

@@ -186,6 +186,8 @@ fn rem6_trace_replay_fabric_route_uses_virtual_networks_and_credit_depth() {
     assert!(stdout.contains("\"active_fabric_virtual_network_count\":2"));
     assert!(stdout.contains("\"fabric_transfer_count\":2"));
     assert!(stdout.contains("\"fabric_queue_delay_ticks\":0"));
+    assert!(stdout.contains("\"fabric_credit_delay_ticks\":0"));
+    assert!(stdout.contains("\"fabric_max_credit_delay_ticks\":0"));
     assert_stat(
         &stdout,
         "sim.trace_replay.fabric.active_virtual_networks",
@@ -196,6 +198,20 @@ fn rem6_trace_replay_fabric_route_uses_virtual_networks_and_credit_depth() {
     assert_stat(
         &stdout,
         "sim.trace_replay.fabric.queue_delay_ticks",
+        "Tick",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.fabric.credit_delay_ticks",
+        "Tick",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.fabric.max_credit_delay_ticks",
         "Tick",
         0,
         "monotonic",
@@ -293,6 +309,8 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
             occupied_ticks: 2,
             queue_delay_ticks: 0,
             max_queue_delay_ticks: 0,
+            credit_delay_ticks: 0,
+            max_credit_delay_ticks: 0,
         },
     );
     assert_fabric_lane_activity(
@@ -306,6 +324,8 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
             occupied_ticks: 2,
             queue_delay_ticks: 0,
             max_queue_delay_ticks: 0,
+            credit_delay_ticks: 0,
+            max_credit_delay_ticks: 0,
         },
     );
 
@@ -323,6 +343,10 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
         ));
         assert_eq!(hop.get("bytes").and_then(Value::as_u64), Some(8));
         assert_eq!(hop.get("flits").and_then(Value::as_u64), Some(2));
+        assert_eq!(
+            hop.get("credit_delay_ticks").and_then(Value::as_u64),
+            Some(0)
+        );
         assert!(hop.get("packet").and_then(Value::as_u64).is_some());
         assert!(hop.get("ready_tick").and_then(Value::as_u64).is_some());
         assert!(hop.get("start_tick").and_then(Value::as_u64).is_some());
@@ -369,6 +393,14 @@ fn assert_fabric_lane_activity(lanes: &[Value], expected: ExpectedFabricLaneActi
         lane.get("max_queue_delay_ticks").and_then(Value::as_u64),
         Some(expected.max_queue_delay_ticks)
     );
+    assert_eq!(
+        lane.get("credit_delay_ticks").and_then(Value::as_u64),
+        Some(expected.credit_delay_ticks)
+    );
+    assert_eq!(
+        lane.get("max_credit_delay_ticks").and_then(Value::as_u64),
+        Some(expected.max_credit_delay_ticks)
+    );
     assert!(lane.get("first_tick").and_then(Value::as_u64).is_some());
     assert!(lane.get("last_tick").and_then(Value::as_u64).is_some());
 }
@@ -382,6 +414,8 @@ struct ExpectedFabricLaneActivity<'a> {
     occupied_ticks: u64,
     queue_delay_ticks: u64,
     max_queue_delay_ticks: u64,
+    credit_delay_ticks: u64,
+    max_credit_delay_ticks: u64,
 }
 
 #[test]

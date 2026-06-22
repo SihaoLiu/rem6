@@ -315,6 +315,20 @@ fn emit_gpu_fabric_stats(
     )?;
     increment_stat(
         stats,
+        &format!("{prefix}.credit_delay_ticks"),
+        "Tick",
+        StatResetPolicy::Monotonic,
+        summary.credit_delay_ticks(),
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.max_credit_delay_ticks"),
+        "Tick",
+        StatResetPolicy::Monotonic,
+        summary.max_credit_delay_ticks(),
+    )?;
+    increment_stat(
+        stats,
         &format!("{prefix}.contended_lanes"),
         "Count",
         StatResetPolicy::Monotonic,

@@ -15,6 +15,8 @@ pub(crate) struct Rem6RunFabricSummary {
     occupied_ticks: u64,
     queue_delay_ticks: u64,
     max_queue_delay_ticks: u64,
+    credit_delay_ticks: u64,
+    max_credit_delay_ticks: u64,
     contended_lanes: u64,
     lane_activities: Vec<FabricLaneActivity>,
     hop_activities: Vec<FabricHopActivity>,
@@ -47,6 +49,8 @@ impl Rem6RunFabricSummary {
             occupied_ticks: profile.occupied_ticks(),
             queue_delay_ticks: profile.queue_delay_ticks(),
             max_queue_delay_ticks: profile.max_queue_delay_ticks(),
+            credit_delay_ticks: profile.credit_delay_ticks(),
+            max_credit_delay_ticks: profile.max_credit_delay_ticks(),
             contended_lanes: profile.contended_lane_count() as u64,
             lane_activities,
             hop_activities,
@@ -83,6 +87,14 @@ impl Rem6RunFabricSummary {
 
     pub(crate) const fn max_queue_delay_ticks(&self) -> u64 {
         self.max_queue_delay_ticks
+    }
+
+    pub(crate) const fn credit_delay_ticks(&self) -> u64 {
+        self.credit_delay_ticks
+    }
+
+    pub(crate) const fn max_credit_delay_ticks(&self) -> u64 {
+        self.max_credit_delay_ticks
     }
 
     pub(crate) const fn contended_lanes(&self) -> u64 {

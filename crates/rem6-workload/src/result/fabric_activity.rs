@@ -33,6 +33,8 @@ impl WorkloadParallelExecutionSummary {
         self.fabric_occupied_ticks = profile.occupied_ticks();
         self.fabric_queue_delay_ticks = profile.queue_delay_ticks();
         self.fabric_max_queue_delay_ticks = profile.max_queue_delay_ticks();
+        self.fabric_credit_delay_ticks = profile.credit_delay_ticks();
+        self.fabric_max_credit_delay_ticks = profile.max_credit_delay_ticks();
         self.contended_fabric_lane_count = profile.contended_lane_count();
         self
     }

@@ -527,6 +527,20 @@ pub(super) fn emit_trace_replay_fabric_stats(
         StatResetPolicy::Monotonic,
         summary.fabric_max_queue_delay_ticks(),
     )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.fabric.credit_delay_ticks",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        summary.fabric_credit_delay_ticks(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.fabric.max_credit_delay_ticks",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        summary.fabric_max_credit_delay_ticks(),
+    )?;
     emit_trace_count(
         stats,
         "sim.trace_replay.fabric.contended_lanes",

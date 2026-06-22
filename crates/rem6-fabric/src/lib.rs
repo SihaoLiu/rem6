@@ -689,6 +689,7 @@ pub struct FabricHopActivity {
     start_tick: Tick,
     occupied_ticks: Tick,
     queue_delay_ticks: Tick,
+    credit_delay_ticks: Tick,
     depart_tick: Tick,
     arrival_tick: Tick,
 }
@@ -732,6 +733,10 @@ impl FabricHopActivity {
 
     pub const fn queue_delay_ticks(&self) -> Tick {
         self.queue_delay_ticks
+    }
+
+    pub const fn credit_delay_ticks(&self) -> Tick {
+        self.credit_delay_ticks
     }
 
     pub const fn depart_tick(&self) -> Tick {
@@ -830,6 +835,7 @@ struct FabricLaneActivityRecord {
     flits: u64,
     occupied_ticks: Tick,
     queue_delay_ticks: Tick,
+    credit_delay_ticks: Tick,
     ready_tick: Tick,
     start_tick: Tick,
     depart_tick: Tick,
@@ -847,6 +853,7 @@ impl FabricLaneActivityRecord {
         flits: u64,
         occupied_ticks: Tick,
         queue_delay_ticks: Tick,
+        credit_delay_ticks: Tick,
         ready_tick: Tick,
         start_tick: Tick,
         depart_tick: Tick,
@@ -861,6 +868,7 @@ impl FabricLaneActivityRecord {
             flits,
             occupied_ticks,
             queue_delay_ticks,
+            credit_delay_ticks,
             ready_tick,
             start_tick,
             depart_tick,
@@ -885,6 +893,7 @@ impl FabricLaneActivityRecord {
             self.arrival_tick,
         )
         .with_flit_count(self.flits)
+        .with_credit_delay(self.credit_delay_ticks, self.credit_delay_ticks)
     }
 
     fn hop_activity(&self) -> FabricHopActivity {
@@ -899,6 +908,7 @@ impl FabricLaneActivityRecord {
             start_tick: self.start_tick,
             occupied_ticks: self.occupied_ticks,
             queue_delay_ticks: self.queue_delay_ticks,
+            credit_delay_ticks: self.credit_delay_ticks,
             depart_tick: self.depart_tick,
             arrival_tick: self.arrival_tick,
         }
@@ -986,6 +996,7 @@ impl FabricLaneState {
     ) -> Result<FabricLaneReservation, FabricError> {
         let mut start_tick = arrival_tick.max(self.next_available);
         let mut wait_kind = (start_tick > arrival_tick).then_some(FabricWaitKind::Queue);
+        let mut credit_delay_ticks: Tick = 0;
         if let Some(credit_depth) = credit_depth {
             loop {
                 self.credit_returns
@@ -999,7 +1010,14 @@ impl FabricLaneState {
                     break;
                 }
                 wait_kind = Some(FabricWaitKind::Credit);
+                let previous_start_tick = start_tick;
                 start_tick = credit_ready_tick.max(self.next_available);
+                let credit_delay = start_tick
+                    .checked_sub(previous_start_tick)
+                    .ok_or(FabricError::TickOverflow)?;
+                credit_delay_ticks = credit_delay_ticks
+                    .checked_add(credit_delay)
+                    .ok_or(FabricError::TickOverflow)?;
             }
         }
 
@@ -1023,6 +1041,7 @@ impl FabricLaneState {
             depart_tick,
             arrival_tick: next_arrival_tick,
             wait_kind,
+            credit_delay_ticks,
         })
     }
 }
@@ -1034,6 +1053,7 @@ struct FabricLaneReservation {
     depart_tick: Tick,
     arrival_tick: Tick,
     wait_kind: Option<FabricWaitKind>,
+    credit_delay_ticks: Tick,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1306,16 +1326,42 @@ impl FabricModel {
                 .start_tick
                 .checked_sub(ready_tick)
                 .ok_or(FabricError::TickOverflow)?;
+            let credit_delay_ticks = reservation.credit_delay_ticks;
             if queue_delay_ticks != 0 {
-                let wait_kind = reservation.wait_kind.unwrap_or(FabricWaitKind::Queue);
-                self.wait_log.push(FabricWaitRecord::new(
-                    packet.id(),
-                    hop.link().clone(),
-                    virtual_network,
-                    wait_kind,
-                    ready_tick,
-                    reservation.start_tick,
-                ));
+                if credit_delay_ticks == 0 {
+                    let wait_kind = reservation.wait_kind.unwrap_or(FabricWaitKind::Queue);
+                    self.wait_log.push(FabricWaitRecord::new(
+                        packet.id(),
+                        hop.link().clone(),
+                        virtual_network,
+                        wait_kind,
+                        ready_tick,
+                        reservation.start_tick,
+                    ));
+                } else {
+                    let credit_wait_start_tick = reservation
+                        .start_tick
+                        .checked_sub(credit_delay_ticks)
+                        .ok_or(FabricError::TickOverflow)?;
+                    if credit_wait_start_tick > ready_tick {
+                        self.wait_log.push(FabricWaitRecord::new(
+                            packet.id(),
+                            hop.link().clone(),
+                            virtual_network,
+                            FabricWaitKind::Queue,
+                            ready_tick,
+                            credit_wait_start_tick,
+                        ));
+                    }
+                    self.wait_log.push(FabricWaitRecord::new(
+                        packet.id(),
+                        hop.link().clone(),
+                        virtual_network,
+                        FabricWaitKind::Credit,
+                        credit_wait_start_tick,
+                        reservation.start_tick,
+                    ));
+                }
             }
 
             timings.push(FabricHopTiming {
@@ -1336,6 +1382,7 @@ impl FabricModel {
                 flits,
                 serialization_ticks,
                 queue_delay_ticks,
+                credit_delay_ticks,
                 ready_tick,
                 reservation.start_tick,
                 reservation.depart_tick,

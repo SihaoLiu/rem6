@@ -872,6 +872,64 @@ fn replay_topology_with_fabric_fetch() -> WorkloadTopology {
         .unwrap()
 }
 
+fn replay_topology_with_credit_limited_fabric_fetches() -> WorkloadTopology {
+    let fabric = || {
+        WorkloadRouteFabric::new("cpu_mem", 4)
+            .unwrap()
+            .with_virtual_networks(1, 2)
+            .with_credit_depth(1)
+            .unwrap()
+    };
+
+    WorkloadTopology::new(4, 2, 2, WorkloadHostPlacement::new(3, 2, 51).unwrap())
+        .unwrap()
+        .add_memory_target(
+            WorkloadMemoryTarget::new(
+                0,
+                16,
+                AddressRange::new(Address::new(0x8000), AccessSize::new(0x2000).unwrap()).unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 2, 2, 3)
+                .unwrap()
+                .with_fabric(fabric()),
+        )
+        .unwrap()
+        .add_memory_route(
+            WorkloadMemoryRoute::new(route_id("cpu1.fetch"), "cpu1.ifetch", 1, "memory", 2, 2, 3)
+                .unwrap()
+                .with_fabric(fabric()),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                0,
+                0,
+                7,
+                Address::new(0x8000),
+                "cpu0.ifetch",
+                route_id("cpu0.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .add_riscv_core(
+            WorkloadRiscvCore::new(
+                1,
+                1,
+                8,
+                Address::new(0x8000),
+                "cpu1.ifetch",
+                route_id("cpu1.fetch"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+}
+
 fn replay_topology_with_multihop_fabric_fetch() -> WorkloadTopology {
     let cpu_to_router = WorkloadRouteFabric::new("cpu_router", 4)
         .unwrap()
@@ -1427,6 +1485,25 @@ fn replay_manifest_with_fabric_fetch() -> WorkloadManifest {
         ))
         .build()
         .unwrap()
+}
+
+fn replay_manifest_with_credit_limited_fabric_fetches() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-credit-limited-fabric-fetches"),
+        boot_image(),
+    )
+    .with_topology(replay_topology_with_credit_limited_fabric_fetches())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
 }
 
 fn replay_manifest_with_multihop_fabric_fetch() -> WorkloadManifest {
@@ -2137,6 +2214,31 @@ fn workload_replay_routes_declared_fabric_path_and_reports_activity() {
     assert_eq!(
         summary.resource_activity_count(),
         outcome.run().resource_activity_count(),
+    );
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_reports_fabric_credit_delay_activity() {
+    let manifest = replay_manifest_with_credit_limited_fabric_fetches();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(32)
+        .run_parallel()
+        .unwrap();
+
+    let summary = outcome.result().parallel_execution_summary().unwrap();
+    assert!(outcome.run().has_fabric_activity());
+    assert!(summary.fabric_credit_delay_ticks() > 0);
+    assert!(summary.fabric_max_credit_delay_ticks() > 0);
+    assert_eq!(
+        summary.fabric_credit_delay_ticks(),
+        outcome.run().fabric_profile().credit_delay_ticks(),
+    );
+    assert_eq!(
+        summary.fabric_max_credit_delay_ticks(),
+        outcome.run().fabric_profile().max_credit_delay_ticks(),
     );
     plan.verify_result(outcome.result()).unwrap();
 }
