@@ -1297,11 +1297,12 @@ impl RiscvSbiFirmware {
         let partition = core.partition();
         let now = scheduler.partition_now(partition)?;
         if deadline <= now {
-            core.set_machine_interrupt_pending_bits(STIP);
+            set_interrupt_and_record_hsm_wake(core, cpu, STIP, &self.hsm_wakes);
             return Ok(());
         }
 
         let timer = Arc::clone(&self.timer);
+        let hsm_wakes = Arc::clone(&self.hsm_wakes);
         let timer_core = core.clone();
         if parallel {
             scheduler.schedule_parallel_at(partition, deadline, move |_context| {
@@ -1310,7 +1311,7 @@ impl RiscvSbiFirmware {
                     .expect("RISC-V SBI timer state lock")
                     .generation_matches(cpu, generation)
                 {
-                    timer_core.set_machine_interrupt_pending_bits(STIP);
+                    set_interrupt_and_record_hsm_wake(&timer_core, cpu, STIP, &hsm_wakes);
                 }
             })?;
         } else {
@@ -1320,7 +1321,7 @@ impl RiscvSbiFirmware {
                     .expect("RISC-V SBI timer state lock")
                     .generation_matches(cpu, generation)
                 {
-                    timer_core.set_machine_interrupt_pending_bits(STIP);
+                    set_interrupt_and_record_hsm_wake(&timer_core, cpu, STIP, &hsm_wakes);
                 }
             })?;
         }
@@ -1355,8 +1356,17 @@ fn set_ipi_and_record_hsm_wake(
     source_cpu: CpuId,
     hsm_wakes: &Arc<Mutex<Vec<RiscvSbiHsmWakeRecord>>>,
 ) {
+    set_interrupt_and_record_hsm_wake(target, source_cpu, SSIP, hsm_wakes);
+}
+
+fn set_interrupt_and_record_hsm_wake(
+    target: &RiscvCore,
+    source_cpu: CpuId,
+    interrupt_bits: u64,
+    hsm_wakes: &Arc<Mutex<Vec<RiscvSbiHsmWakeRecord>>>,
+) {
     let prior_state = target.hart_run_state();
-    target.set_machine_interrupt_pending_bits(SSIP);
+    target.set_machine_interrupt_pending_bits(interrupt_bits);
     if matches!(
         prior_state,
         RiscvHartRunState::Suspended | RiscvHartRunState::SuspendPending
@@ -1368,7 +1378,7 @@ fn set_ipi_and_record_hsm_wake(
             .push(RiscvSbiHsmWakeRecord::new(
                 source_cpu,
                 target.hart_id(),
-                SSIP,
+                interrupt_bits,
             ));
     }
 }

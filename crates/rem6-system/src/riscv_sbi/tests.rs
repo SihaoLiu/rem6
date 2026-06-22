@@ -530,6 +530,45 @@ fn parallel_handle_pending_core_trap_schedules_ipi_completion_event() {
 }
 
 #[test]
+fn parallel_timer_interrupt_records_hsm_wake_for_retentive_suspend() {
+    let (mut scheduler, transport, firmware, core0, _core1) = registered_hsm_pair();
+    execute_sbi_ecall(
+        &mut scheduler,
+        &transport,
+        &core0,
+        SBI_TIME_EXTENSION,
+        SBI_TIME_SET_TIMER,
+        [512, 0, 0, 0, 0],
+    );
+
+    let timer_outcome = firmware
+        .handle_pending_core_trap(&mut scheduler, &core0, true)
+        .expect("handled timer SBI trap")
+        .expect("timer SBI outcome");
+
+    assert_eq!(timer_outcome, RiscvSbiOutcome::success(0));
+    assert_eq!(firmware.timer_deadline(CpuId::new(0)), Some(512));
+    core0.set_hart_suspended();
+    assert_eq!(
+        firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 0, 0, 0)),
+        RiscvSbiOutcome::success(SBI_HSM_HART_SUSPENDED)
+    );
+    scheduler
+        .run_until_idle_parallel()
+        .expect("parallel timer and suspend events");
+
+    assert_eq!(
+        firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 0, 0, 0)),
+        RiscvSbiOutcome::success(SBI_HSM_HART_STARTED)
+    );
+    assert_eq!(core0.machine_interrupt_pending() & STIP, STIP);
+    assert_eq!(
+        firmware.hsm_wake_records(),
+        vec![RiscvSbiHsmWakeRecord::new(CpuId::new(0), 0, STIP)]
+    );
+}
+
+#[test]
 fn hsm_wake_records_are_ordered_for_reproducible_output() {
     let firmware = RiscvSbiFirmware::new();
     firmware
