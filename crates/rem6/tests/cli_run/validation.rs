@@ -1343,6 +1343,30 @@ fn rem6_run_config_scan_treats_riscv_se_file_as_value_taking() {
 }
 
 #[test]
+fn rem6_run_config_scan_treats_memory_system_as_value_taking() {
+    let bogus_config = temp_output("memory-system-prescan-bogus-config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--memory-system",
+            "--config",
+            bogus_config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("invalid run memory system --config"),
+        "stderr: {stderr}"
+    );
+    assert!(!stderr.contains(&format!("failed to read config {}", bogus_config.display())));
+}
+
+#[test]
 fn rem6_run_rejects_toml_riscv_se_inputs_without_riscv_se() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x73, 0, 0, 0]);
     let binary = temp_binary("riscv-se-toml-inputs-without-riscv-se", &elf);
@@ -1499,6 +1523,53 @@ fn rem6_run_rejects_unsupported_dram_memory_profile() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("unsupported DRAM memory profile wideio"));
+}
+
+#[test]
+fn rem6_run_rejects_unsupported_memory_system_from_toml_config() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let binary = temp_binary("unsupported-memory-system-config-bin", &elf);
+    let config = temp_config(
+        "unsupported-memory-system-config",
+        &format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\nmemory_system = \"ruby\"\n",
+            binary.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid run memory system ruby"));
+}
+
+#[test]
+fn rem6_run_rejects_memory_system_with_toml_dram_memory_false() {
+    let program = riscv64_program(&[0x0000_0073]); // ecall
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let binary = temp_binary("memory-system-dram-false-config-bin", &elf);
+    let config = temp_config(
+        "memory-system-dram-false-config",
+        &format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\nmemory_system = \"cache-fabric-dram\"\ndram_memory = false\n",
+            binary.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("memory system cache-fabric-dram conflicts with dram_memory = false"));
 }
 
 #[test]

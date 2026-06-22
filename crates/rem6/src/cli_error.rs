@@ -145,6 +145,12 @@ pub enum Rem6CliError {
         resource: String,
         value: String,
     },
+    InvalidRunMemorySystem {
+        value: String,
+    },
+    RunMemorySystemConflictsWithDisabledDram {
+        memory_system: String,
+    },
     InvalidRunDataCacheProtocol {
         value: String,
     },
@@ -499,6 +505,13 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidRemoteResourceArtifactDigest { resource, value } => write!(
                 formatter,
                 "remote-uri resource {resource} requires artifact_digest sha256:<64 lowercase hex>; got {value}"
+            ),
+            Self::InvalidRunMemorySystem { value } => {
+                write!(formatter, "invalid run memory system {value}")
+            }
+            Self::RunMemorySystemConflictsWithDisabledDram { memory_system } => write!(
+                formatter,
+                "memory system {memory_system} conflicts with dram_memory = false"
             ),
             Self::InvalidRunDataCacheProtocol { value } => {
                 write!(formatter, "invalid run data cache protocol {value}")

@@ -67,7 +67,8 @@ pub use config::{
     CliCachePrefetcher, CliDebugFlag, CliDramMemoryProfile, LoadBlobRequest, LoadBlobSource,
     MemoryDumpRequest, PowerAnalysisFormat, ReadfileRequest, ReadfileSource, Rem6GupsConfig,
     Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource,
-    RunFabricConfig, StatsFormat, SuiteResourceSelector, TraceReplayExternalAdapterKind,
+    RunFabricConfig, RunMemorySystem, StatsFormat, SuiteResourceSelector,
+    TraceReplayExternalAdapterKind,
 };
 use data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io, CliCacheHierarchy,

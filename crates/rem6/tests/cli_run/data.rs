@@ -893,6 +893,187 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
 }
 
 #[test]
+fn rem6_run_memory_system_preset_routes_cpu_through_cache_fabric_and_dram() {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),                  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),                        // sd x6, 8(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET, 0);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("run-memory-system-preset", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--memory-system",
+            "cache-fabric-dram",
+            "--dump-memory",
+            "0x80000048:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("executed_until_trap")
+    );
+    assert_eq!(
+        json.pointer("/cores/0/registers/x5")
+            .and_then(Value::as_str),
+        Some("0x1122334455667788")
+    );
+    assert_eq!(
+        json.pointer("/cores/0/registers/x6")
+            .and_then(Value::as_str),
+        Some("0x1122334455667789")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/address").and_then(Value::as_str),
+        Some("0x80000048")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/bytes").and_then(Value::as_u64),
+        Some(8)
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("8977665544332211")
+    );
+    assert_eq!(
+        json.pointer("/simulation/memory_system")
+            .and_then(Value::as_str),
+        Some("cache-fabric-dram")
+    );
+    assert_eq!(
+        json.pointer("/instruction_cache_protocol")
+            .and_then(Value::as_str),
+        Some("msi")
+    );
+    assert_eq!(
+        json.pointer("/instruction_cache_l2_protocol")
+            .and_then(Value::as_str),
+        Some("msi")
+    );
+    assert_eq!(
+        json.pointer("/instruction_cache_l3_protocol")
+            .and_then(Value::as_str),
+        Some("msi")
+    );
+    assert_eq!(
+        json.pointer("/data_cache_protocol").and_then(Value::as_str),
+        Some("msi")
+    );
+    assert_eq!(
+        json.pointer("/data_cache_l2_protocol")
+            .and_then(Value::as_str),
+        Some("msi")
+    );
+    assert_eq!(
+        json.pointer("/data_cache_l3_protocol")
+            .and_then(Value::as_str),
+        Some("msi")
+    );
+    assert!(json_u64(&json, "/dram/accesses") > 0);
+    assert!(json_u64(&json, "/fabric/transfers") > 0);
+    assert!(json_u64(&json, "/simulation/instruction_cache_l2_runs") > 0);
+    assert!(json_u64(&json, "/simulation/instruction_cache_l3_runs") > 0);
+    assert!(json_u64(&json, "/simulation/data_cache_l2_runs") > 0);
+    assert!(json_u64(&json, "/simulation/data_cache_l3_runs") > 0);
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.fabric.transfers",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(&stdout, "sim.memory.dram.accesses", "Count", 0, "monotonic");
+}
+
+#[test]
+fn rem6_run_toml_memory_system_preset_routes_cpu_through_cache_fabric_and_dram() {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),                  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),                        // sd x6, 8(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET, 0);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let binary = temp_binary("toml-run-memory-system-preset", &elf);
+    let config = temp_config(
+        "toml-run-memory-system-preset",
+        &format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 240\nstats_format = \"json\"\nexecute = true\nmemory_system = \"cache-fabric-dram\"\nmemory_dumps = [\"0x80000048:8\"]\n",
+            binary.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("executed_until_trap")
+    );
+    assert_eq!(
+        json.pointer("/simulation/memory_system")
+            .and_then(Value::as_str),
+        Some("cache-fabric-dram")
+    );
+    assert_eq!(
+        json.pointer("/memory/0/hex").and_then(Value::as_str),
+        Some("8977665544332211")
+    );
+    assert!(json_u64(&json, "/dram/accesses") > 0);
+    assert!(json_u64(&json, "/fabric/transfers") > 0);
+    assert!(json_u64(&json, "/simulation/data_cache_l2_runs") > 0);
+    assert!(json_u64(&json, "/simulation/data_cache_l3_runs") > 0);
+}
+
+#[test]
 fn rem6_run_executes_riscv_elf_load_store_through_mesi_data_cache() {
     let mut program = riscv64_program(&[
         u_type(0, 2, 0x17),          // auipc x2, 0
@@ -2259,4 +2440,10 @@ fn rem6_run_executes_riscv_counter_csr_reads() {
     assert!(stdout.contains("\"x5\":\"0x1\""));
     assert!(stdout.contains("\"x6\":\"0x2\""));
     assert!(stdout.contains("\"x7\":\"0x9\""));
+}
+
+fn json_u64(json: &Value, pointer: &str) -> u64 {
+    json.pointer(pointer)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing u64 JSON field {pointer}"))
 }

@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use rem6_workload::WorkloadDataCacheProtocol;
 
 use super::{
-    load_trace_replay_file_config, parse_data_cache_protocol, parse_number, parse_positive_u64,
-    required_value, trace_replay_file_config_from_args, CliDramMemoryProfile,
+    load_trace_replay_file_config,
+    parse::{parse_number, parse_positive_u64, required_value},
+    parse_data_cache_protocol, trace_replay_file_config_from_args, CliDramMemoryProfile,
     Rem6TraceReplayConfig, StatsFormat, SuiteResourceSelector,
 };
 use crate::Rem6CliError;

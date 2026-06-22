@@ -14,12 +14,15 @@ mod dram;
 mod fabric;
 mod file_scan;
 mod isa;
+mod memory_system;
 mod output_format;
+mod parse;
 mod riscv_branch;
 mod riscv_se_input;
 mod trace_replay;
 
 pub use cache::CliCachePrefetcher;
+use cache::{parse_data_cache_protocol, parse_run_data_cache_protocol};
 pub use debug::CliDebugFlag;
 use debug::{parse_debug_flag_list, parse_debug_flags};
 pub use dram::CliDramMemoryProfile;
@@ -31,8 +34,13 @@ use file_scan::{
     gups_file_config_from_args, run_file_config_from_args, trace_replay_file_config_from_args,
 };
 pub use isa::RequestedIsa;
+use memory_system::apply_run_memory_system_preset;
+pub use memory_system::RunMemorySystem;
 pub use output_format::{PowerAnalysisFormat, StatsFormat};
-use riscv_branch::{parse_riscv_branch_predictor, parse_riscv_pc_count_target};
+use parse::{parse_number, parse_positive_u64, required_value};
+use riscv_branch::{
+    parse_riscv_branch_predictor, parse_riscv_pc_count_target, valid_riscv_branch_lookahead,
+};
 pub use riscv_se_input::{RiscvSeFileRequest, RiscvSeInputSource};
 pub use trace_replay::TraceReplayExternalAdapterKind;
 
@@ -61,6 +69,7 @@ pub struct Rem6RunConfig {
     stats_format: StatsFormat,
     execute: bool,
     checker_cpu: bool,
+    memory_system: Option<RunMemorySystem>,
     dram_memory: bool,
     dram_memory_profile: CliDramMemoryProfile,
     data_cache_protocol: Option<RiscvDataCacheProtocol>,
@@ -163,6 +172,7 @@ struct Rem6RunFileConfig {
     stats_format: Option<String>,
     execute: Option<bool>,
     checker_cpu: Option<bool>,
+    memory_system: Option<String>,
     dram_memory: Option<bool>,
     dram_memory_profile: Option<String>,
     data_cache_protocol: Option<String>,
@@ -401,6 +411,16 @@ impl Rem6RunConfig {
             .unwrap_or(StatsFormat::Json);
         let mut execute = file_config.execute.unwrap_or(false);
         let mut checker_cpu = file_config.checker_cpu.unwrap_or(false);
+        let mut memory_system = file_config
+            .memory_system
+            .as_deref()
+            .map(|value| {
+                RunMemorySystem::parse(value).ok_or_else(|| Rem6CliError::InvalidRunMemorySystem {
+                    value: value.to_string(),
+                })
+            })
+            .transpose()?;
+        let dram_memory_disabled_by_config = file_config.dram_memory == Some(false);
         let mut dram_memory = file_config.dram_memory.unwrap_or(false);
         let mut dram_memory_profile = file_config
             .dram_memory_profile
@@ -730,6 +750,14 @@ impl Rem6RunConfig {
                 "--checker-cpu" => {
                     checker_cpu = true;
                 }
+                "--memory-system" => {
+                    let value = required_value(&flag, args.next())?;
+                    memory_system = Some(RunMemorySystem::parse(&value).ok_or_else(|| {
+                        Rem6CliError::InvalidRunMemorySystem {
+                            value: value.clone(),
+                        }
+                    })?);
+                }
                 "--dram-memory" => {
                     dram_memory = true;
                 }
@@ -937,6 +965,22 @@ impl Rem6RunConfig {
         if binary.is_some() && resource_config.is_some() {
             return Err(Rem6CliError::ConflictingRunBinarySources);
         }
+        apply_run_memory_system_preset(
+            memory_system,
+            dram_memory_disabled_by_config,
+            &mut dram_memory,
+            &mut data_cache_protocol,
+            &mut data_cache_l2_protocol,
+            &mut data_cache_l3_protocol,
+            &mut instruction_cache_protocol,
+            &mut instruction_cache_l2_protocol,
+            &mut instruction_cache_l3_protocol,
+            &mut fabric_link,
+            &mut fabric_bandwidth_bytes_per_tick,
+            &mut fabric_request_virtual_network,
+            &mut fabric_response_virtual_network,
+            &mut fabric_credit_depth,
+        )?;
         if dram_memory_profile_was_set && !dram_memory {
             return Err(Rem6CliError::DramMemoryProfileRequiresDramMemory);
         }
@@ -1016,6 +1060,7 @@ impl Rem6RunConfig {
             stats_format,
             execute,
             checker_cpu,
+            memory_system,
             dram_memory,
             dram_memory_profile,
             data_cache_protocol,
@@ -1131,6 +1176,10 @@ impl Rem6RunConfig {
 
     pub const fn checker_cpu(&self) -> bool {
         self.checker_cpu
+    }
+
+    pub const fn memory_system(&self) -> Option<RunMemorySystem> {
+        self.memory_system
     }
 
     pub const fn dram_memory(&self) -> bool {
@@ -1704,45 +1753,6 @@ impl ReadfileRequest {
     }
 }
 
-fn parse_number(value: &str) -> Option<u64> {
-    if let Some(hex) = value
-        .strip_prefix("0x")
-        .or_else(|| value.strip_prefix("0X"))
-    {
-        u64::from_str_radix(hex, 16).ok()
-    } else {
-        value.parse().ok()
-    }
-}
-
-fn parse_positive_u64(value: &str) -> Option<u64> {
-    value.parse().ok().filter(|value| *value > 0)
-}
-
-fn valid_riscv_branch_lookahead(value: usize) -> bool {
-    matches!(value, 1 | 2)
-}
-
-fn parse_data_cache_protocol(value: &str) -> Option<WorkloadDataCacheProtocol> {
-    match value {
-        "msi" => Some(WorkloadDataCacheProtocol::Msi),
-        "mesi" => Some(WorkloadDataCacheProtocol::Mesi),
-        "moesi" => Some(WorkloadDataCacheProtocol::Moesi),
-        "chi" => Some(WorkloadDataCacheProtocol::Chi),
-        _ => None,
-    }
-}
-
-fn parse_run_data_cache_protocol(value: &str) -> Option<RiscvDataCacheProtocol> {
-    match value {
-        "msi" => Some(RiscvDataCacheProtocol::Msi),
-        "mesi" => Some(RiscvDataCacheProtocol::Mesi),
-        "moesi" => Some(RiscvDataCacheProtocol::Moesi),
-        "chi" => Some(RiscvDataCacheProtocol::Chi),
-        _ => None,
-    }
-}
-
 fn load_run_file_config(path: &Path) -> Result<Rem6RunFileConfig, Rem6CliError> {
     let mut run = load_file_config(path)?.run.unwrap_or_default();
     run.config_dir = path.parent().map(Path::to_path_buf);
@@ -1769,11 +1779,5 @@ fn load_file_config(path: &Path) -> Result<Rem6FileConfig, Rem6CliError> {
     toml::from_str::<Rem6FileConfig>(&text).map_err(|error| Rem6CliError::ParseConfig {
         path: path.to_path_buf(),
         error: error.to_string(),
-    })
-}
-
-fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliError> {
-    value.ok_or_else(|| Rem6CliError::MissingFlagValue {
-        flag: flag.to_string(),
     })
 }

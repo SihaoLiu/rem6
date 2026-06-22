@@ -22,6 +22,7 @@ impl Rem6RunArtifact {
                     self.config.max_instructions(),
                     self.config.memory_route_delay(),
                     self.config.host_event_delay(),
+                    self.config.memory_system(),
                 )
             }
             None => format!(

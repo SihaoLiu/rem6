@@ -14,6 +14,10 @@ pub(super) fn parse_riscv_branch_predictor(value: &str) -> Option<RiscvBranchPre
     }
 }
 
+pub(super) const fn valid_riscv_branch_lookahead(value: usize) -> bool {
+    matches!(value, 1 | 2)
+}
+
 pub(super) fn parse_riscv_pc_count_target(value: &str) -> Result<PcCountPair, Rem6CliError> {
     let Some((pc, count)) = value.split_once(':') else {
         return Err(Rem6CliError::InvalidRiscvPcCountTarget {

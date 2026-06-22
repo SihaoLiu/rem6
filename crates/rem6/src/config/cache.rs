@@ -1,4 +1,6 @@
 use crate::Rem6CliError;
+use rem6_system::RiscvDataCacheProtocol;
+use rem6_workload::WorkloadDataCacheProtocol;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CliCachePrefetcher {
@@ -29,5 +31,25 @@ impl CliCachePrefetcher {
         match self {
             Self::TaggedNextLine => "tagged-next-line",
         }
+    }
+}
+
+pub(super) fn parse_data_cache_protocol(value: &str) -> Option<WorkloadDataCacheProtocol> {
+    match value {
+        "msi" => Some(WorkloadDataCacheProtocol::Msi),
+        "mesi" => Some(WorkloadDataCacheProtocol::Mesi),
+        "moesi" => Some(WorkloadDataCacheProtocol::Moesi),
+        "chi" => Some(WorkloadDataCacheProtocol::Chi),
+        _ => None,
+    }
+}
+
+pub(super) fn parse_run_data_cache_protocol(value: &str) -> Option<RiscvDataCacheProtocol> {
+    match value {
+        "msi" => Some(RiscvDataCacheProtocol::Msi),
+        "mesi" => Some(RiscvDataCacheProtocol::Mesi),
+        "moesi" => Some(RiscvDataCacheProtocol::Moesi),
+        "chi" => Some(RiscvDataCacheProtocol::Chi),
+        _ => None,
     }
 }

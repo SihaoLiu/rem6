@@ -25,6 +25,7 @@ pub(super) fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBu
             "--riscv-branch-predictor",
             "--max-instructions",
             "--stats-format",
+            "--memory-system",
             "--dram-memory-profile",
             "--data-cache-protocol",
             "--data-cache-l2-protocol",
