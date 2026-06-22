@@ -10,6 +10,7 @@ pub(crate) fn multi_run_stats_output(
     failed: u64,
     total_final_tick: u64,
     total_committed_instructions: u64,
+    total_scheduled_requests: u64,
 ) -> Result<Rem6StatsOutput, Rem6CliError> {
     let mut stats = StatsRegistry::new();
     increment_stat(
@@ -88,6 +89,13 @@ pub(crate) fn multi_run_stats_output(
         "Count",
         StatResetPolicy::Monotonic,
         total_committed_instructions,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.multi_run.scheduled_requests",
+        "Count",
+        StatResetPolicy::Monotonic,
+        total_scheduled_requests,
     )?;
 
     let snapshot = stats.snapshot(0);

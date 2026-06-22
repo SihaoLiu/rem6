@@ -7,7 +7,10 @@ use crate::cli_output;
 use crate::config::StatsFormat;
 use crate::formatting::json_escape;
 use crate::stats_output::multi_run_stats_output;
-use crate::{run_config, Rem6CliError, Rem6ExecutionStop, Rem6ExecutionSummary, Rem6RunConfig};
+use crate::{
+    run_config, run_gups_config, Rem6CliError, Rem6ExecutionStop, Rem6ExecutionSummary,
+    Rem6GupsConfig, Rem6RunConfig,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6MultiRunConfig {
@@ -21,7 +24,15 @@ pub struct Rem6MultiRunConfig {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Rem6MultiRunEntry {
     id: String,
+    command: Rem6MultiRunCommand,
     config: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum Rem6MultiRunCommand {
+    #[default]
+    Run,
+    Gups,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,12 +47,14 @@ pub struct Rem6MultiRunArtifact {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Rem6MultiRunSummary {
     id: String,
+    command: Rem6MultiRunCommand,
     config: PathBuf,
-    run_schema: &'static str,
+    child_schema: &'static str,
     status: &'static str,
     executed: bool,
     final_tick: u64,
     committed_instructions: u64,
+    scheduled_requests: u64,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -66,6 +79,7 @@ struct Rem6MultiRunFileConfig {
 #[serde(deny_unknown_fields)]
 struct Rem6MultiRunFileEntry {
     id: Option<String>,
+    command: Option<String>,
     config: Option<PathBuf>,
 }
 
@@ -189,6 +203,12 @@ impl Rem6MultiRunFileConfig {
                     id: entry.id.clone().ok_or(Rem6CliError::MissingRequiredFlag {
                         flag: "multi_run.runs.id",
                     })?,
+                    command: entry
+                        .command
+                        .as_deref()
+                        .map(Rem6MultiRunCommand::parse)
+                        .transpose()?
+                        .unwrap_or_default(),
                     config: self.resolve_path(entry.config.as_deref().ok_or(
                         Rem6CliError::MissingRequiredFlag {
                             flag: "multi_run.runs.config",
@@ -223,17 +243,7 @@ pub fn run_multi_run_config(
 ) -> Result<Rem6MultiRunArtifact, Rem6CliError> {
     let mut run_summaries = Vec::with_capacity(config.runs.len());
     for run in &config.runs {
-        let child_config = Rem6RunConfig::parse_args([
-            "run".to_string(),
-            "--config".to_string(),
-            path_arg(&run.config),
-        ])?;
-        let artifact = run_config(child_config)?;
-        run_summaries.push(Rem6MultiRunSummary::from_run_artifact(
-            run.id.clone(),
-            run.config.clone(),
-            &artifact,
-        ));
+        run_summaries.push(run_child(run)?);
     }
 
     let succeeded = run_summaries.len() as u64;
@@ -246,12 +256,17 @@ pub fn run_multi_run_config(
         .iter()
         .map(|summary| summary.committed_instructions)
         .sum::<u64>();
+    let total_scheduled_requests = run_summaries
+        .iter()
+        .map(|summary| summary.scheduled_requests)
+        .sum::<u64>();
     let stats = multi_run_stats_output(
         config.runs.len() as u64,
         succeeded,
         failed,
         total_final_tick,
         total_committed_instructions,
+        total_scheduled_requests,
     )?;
 
     Ok(Rem6MultiRunArtifact {
@@ -263,8 +278,50 @@ pub fn run_multi_run_config(
     })
 }
 
+fn run_child(run: &Rem6MultiRunEntry) -> Result<Rem6MultiRunSummary, Rem6CliError> {
+    match run.command {
+        Rem6MultiRunCommand::Run => {
+            let child_config = Rem6RunConfig::parse_args([
+                "run".to_string(),
+                "--config".to_string(),
+                path_arg(&run.config),
+            ])?;
+            let artifact = run_config(child_config)?;
+            Ok(Rem6MultiRunSummary::from_run_artifact(run, &artifact))
+        }
+        Rem6MultiRunCommand::Gups => {
+            let child_config = Rem6GupsConfig::parse_args([
+                "gups".to_string(),
+                "--config".to_string(),
+                path_arg(&run.config),
+            ])?;
+            let artifact = run_gups_config(child_config)?;
+            Ok(Rem6MultiRunSummary::from_gups_artifact(run, &artifact))
+        }
+    }
+}
+
+impl Rem6MultiRunCommand {
+    fn parse(value: &str) -> Result<Self, Rem6CliError> {
+        match value {
+            "run" => Ok(Self::Run),
+            "gups" => Ok(Self::Gups),
+            _ => Err(Rem6CliError::UnsupportedCommand {
+                command: value.to_string(),
+            }),
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Run => "run",
+            Self::Gups => "gups",
+        }
+    }
+}
+
 impl Rem6MultiRunSummary {
-    fn from_run_artifact(id: String, config: PathBuf, artifact: &crate::Rem6RunArtifact) -> Self {
+    fn from_run_artifact(run: &Rem6MultiRunEntry, artifact: &crate::Rem6RunArtifact) -> Self {
         let (status, final_tick, committed_instructions) =
             artifact
                 .execution
@@ -277,26 +334,45 @@ impl Rem6MultiRunSummary {
                     )
                 });
         Self {
-            id,
-            config,
-            run_schema: artifact.schema,
+            id: run.id.clone(),
+            command: run.command,
+            config: run.config.clone(),
+            child_schema: artifact.schema,
             status,
             executed: artifact.execution.is_some(),
             final_tick,
             committed_instructions,
+            scheduled_requests: 0,
+        }
+    }
+
+    fn from_gups_artifact(run: &Rem6MultiRunEntry, artifact: &crate::Rem6GupsArtifact) -> Self {
+        Self {
+            id: run.id.clone(),
+            command: run.command,
+            config: run.config.clone(),
+            child_schema: artifact.schema,
+            status: "completed",
+            executed: true,
+            final_tick: artifact.execution.final_tick,
+            committed_instructions: 0,
+            scheduled_requests: artifact.execution.scheduled_requests,
         }
     }
 
     fn to_json(&self) -> String {
         format!(
-            "{{\"id\":\"{}\",\"config\":\"{}\",\"run_schema\":\"{}\",\"status\":\"{}\",\"executed\":{},\"final_tick\":{},\"committed_instructions\":{}}}",
+            "{{\"id\":\"{}\",\"command\":\"{}\",\"config\":\"{}\",\"child_schema\":\"{}\",\"run_schema\":\"{}\",\"status\":\"{}\",\"executed\":{},\"final_tick\":{},\"committed_instructions\":{},\"scheduled_requests\":{}}}",
             json_escape(&self.id),
+            self.command.as_str(),
             json_escape(&self.config.display().to_string()),
-            self.run_schema,
+            self.child_schema,
+            self.child_schema,
             self.status,
             self.executed,
             self.final_tick,
             self.committed_instructions,
+            self.scheduled_requests,
         )
     }
 }
@@ -319,14 +395,20 @@ impl Rem6MultiRunArtifact {
             .iter()
             .map(|summary| summary.committed_instructions)
             .sum::<u64>();
+        let total_scheduled_requests = self
+            .runs
+            .iter()
+            .map(|summary| summary.scheduled_requests)
+            .sum::<u64>();
         format!(
-            "{{\"schema\":\"{}\",\"suite_id\":\"{}\",\"runs\":{},\"succeeded\":{},\"failed\":0,\"total_final_tick\":{},\"total_committed_instructions\":{},\"run_summaries\":[{}],\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"suite_id\":\"{}\",\"runs\":{},\"succeeded\":{},\"failed\":0,\"total_final_tick\":{},\"total_committed_instructions\":{},\"total_scheduled_requests\":{},\"run_summaries\":[{}],\"stats\":{}}}\n",
             self.schema,
             json_escape(&self.config.suite_id),
             self.runs.len(),
             self.runs.len(),
             total_final_tick,
             total_committed_instructions,
+            total_scheduled_requests,
             runs,
             self.stats_json,
         )
@@ -389,6 +471,7 @@ fn parse_multi_run_entry(value: &str) -> Result<Rem6MultiRunEntry, Rem6CliError>
     };
     Ok(Rem6MultiRunEntry {
         id: id.to_string(),
+        command: Rem6MultiRunCommand::Run,
         config: PathBuf::from(config),
     })
 }
