@@ -331,10 +331,17 @@ impl RiscvSyscallTable {
             RISCV_LINUX_LISTEN => Some(RiscvSyscallOutcome::Return {
                 value: syscall_socket_listen(request, state),
             }),
-            RISCV_LINUX_ACCEPT => match syscall_socket_accept(request, state, 0) {
-                Some(value) => Some(RiscvSyscallOutcome::Return { value }),
-                None => Some(RiscvSyscallOutcome::Blocked),
-            },
+            RISCV_LINUX_ACCEPT => {
+                let guest_memory = if request.argument(1) != 0 && request.argument(2) != 0 {
+                    Some((guest_memory_reader?, guest_memory_writer?))
+                } else {
+                    None
+                };
+                match syscall_socket_accept(request, state, 0, guest_memory) {
+                    Some(value) => Some(RiscvSyscallOutcome::Return { value }),
+                    None => Some(RiscvSyscallOutcome::Blocked),
+                }
+            }
             RISCV_LINUX_CONNECT => {
                 let reader = guest_memory_reader?;
                 match syscall_socket_connect(request, state, reader) {
@@ -343,7 +350,12 @@ impl RiscvSyscallTable {
                 }
             }
             RISCV_LINUX_ACCEPT4 => {
-                match syscall_socket_accept(request, state, request.argument(3)) {
+                let guest_memory = if request.argument(1) != 0 && request.argument(2) != 0 {
+                    Some((guest_memory_reader?, guest_memory_writer?))
+                } else {
+                    None
+                };
+                match syscall_socket_accept(request, state, request.argument(3), guest_memory) {
                     Some(value) => Some(RiscvSyscallOutcome::Return { value }),
                     None => Some(RiscvSyscallOutcome::Blocked),
                 }

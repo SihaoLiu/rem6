@@ -171,7 +171,11 @@ fn write_sockaddr_un(
     name: Option<&[u8]>,
 ) -> Result<(), u64> {
     let sockaddr = sockaddr_un_bytes(name);
-    let requested_len = read_guest_u32(guest_memory_reader, len_address)? as usize;
+    let requested_len = read_guest_u32(guest_memory_reader, len_address)?;
+    if requested_len > i32::MAX as u32 {
+        return Err(RISCV_LINUX_EINVAL);
+    }
+    let requested_len = requested_len as usize;
     let write_len = requested_len.min(sockaddr.len());
     if write_len != 0 && !guest_memory_writer.write(address, &sockaddr[..write_len]) {
         return Err(RISCV_LINUX_EFAULT);
@@ -313,6 +317,19 @@ enum RiscvGuestSocketConnect {
     Connected,
     Blocked,
     Errno(u64),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RiscvPendingAcceptedGuestSocket {
+    fd: GuestFd,
+    description: GuestFileDescriptionId,
+    endpoint: RiscvGuestSocketEndpoint,
+}
+
+impl RiscvPendingAcceptedGuestSocket {
+    fn peer_name(&self) -> Option<&[u8]> {
+        self.endpoint.peer_name()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -810,11 +827,11 @@ impl RiscvSyscallState {
         Ok(RiscvGuestSocketConnect::Connected)
     }
 
-    fn accept_guest_socket(
+    fn prepare_guest_socket_accept(
         &mut self,
         fd: GuestFd,
         flags: u64,
-    ) -> Result<Result<Option<GuestFd>, u64>, GuestFdError> {
+    ) -> Result<Result<Option<RiscvPendingAcceptedGuestSocket>, u64>, GuestFdError> {
         if flags & !(RISCV_LINUX_O_CLOEXEC | RISCV_LINUX_O_NONBLOCK) != 0 {
             return Ok(Err(RISCV_LINUX_EINVAL));
         }
@@ -843,22 +860,35 @@ impl RiscvSyscallState {
             .ok_or(GuestFdError::MissingFileDescription {
                 description: listener_description,
             })?;
+        Ok(Ok(Some(RiscvPendingAcceptedGuestSocket {
+            fd: accepted_fd,
+            description: accepted_description,
+            endpoint,
+        })))
+    }
+
+    fn install_accepted_guest_socket(
+        &mut self,
+        accepted: RiscvPendingAcceptedGuestSocket,
+        flags: u64,
+    ) -> Result<GuestFd, GuestFdError> {
         let status_flags = GuestFileStatusFlags::new(
             (RISCV_LINUX_O_RDWR | (flags & RISCV_LINUX_O_NONBLOCK)) as u32,
         );
+        let accepted_fd = accepted.fd;
         self.guest_fds
             .insert_description(GuestFileDescription::guest_backed(
-                accepted_description,
+                accepted.description,
                 status_flags,
             ))?;
         self.guest_fds.insert(
-            accepted_fd,
-            GuestFdEntry::new(accepted_description)
+            accepted.fd,
+            GuestFdEntry::new(accepted.description)
                 .with_close_on_exec(flags & RISCV_LINUX_O_CLOEXEC != 0),
         )?;
         self.guest_socket_descriptions
-            .insert(accepted_description, endpoint);
-        Ok(Ok(Some(accepted_fd)))
+            .insert(accepted.description, accepted.endpoint);
+        Ok(accepted_fd)
     }
 
     fn open_guest_socket(&mut self, type_flags: u64) -> Result<GuestFd, GuestFdError> {
@@ -1147,15 +1177,56 @@ pub(super) fn syscall_socket_accept(
     request: RiscvSyscallRequest,
     state: &mut RiscvSyscallState,
     flags: u64,
+    guest_memory: Option<(&RiscvGuestMemoryReader, &RiscvGuestMemoryWriter)>,
 ) -> Option<u64> {
+    enum AcceptAddressWrite {
+        Ignore,
+        Fault,
+        Write { address: u64, len_address: u64 },
+    }
+
     let Some(fd) = guest_fd_argument(request.argument(0)) else {
         return Some(linux_error(RISCV_LINUX_EBADF));
     };
-    if request.argument(1) != 0 || request.argument(2) != 0 {
-        return Some(linux_error(RISCV_LINUX_ENOTSUP));
+    let address_write = match (request.argument(1), request.argument(2)) {
+        (0, _) => AcceptAddressWrite::Ignore,
+        (_, 0) => AcceptAddressWrite::Fault,
+        (address, len_address) => AcceptAddressWrite::Write {
+            address,
+            len_address,
+        },
+    };
+    if matches!(address_write, AcceptAddressWrite::Write { .. }) && guest_memory.is_none() {
+        return None;
     }
-    match state.accept_guest_socket(fd, flags) {
-        Ok(Ok(Some(accepted_fd))) => Some(u64::from(accepted_fd.get())),
+    match state.prepare_guest_socket_accept(fd, flags) {
+        Ok(Ok(Some(pending))) => {
+            match address_write {
+                AcceptAddressWrite::Ignore => {}
+                AcceptAddressWrite::Fault => return Some(linux_error(RISCV_LINUX_EFAULT)),
+                AcceptAddressWrite::Write {
+                    address,
+                    len_address,
+                } => {
+                    let (guest_memory_reader, guest_memory_writer) =
+                        guest_memory.expect("peer address write requires guest memory");
+                    if let Err(errno) = write_sockaddr_un(
+                        guest_memory_reader,
+                        guest_memory_writer,
+                        address,
+                        len_address,
+                        pending.peer_name(),
+                    ) {
+                        return Some(linux_error(errno));
+                    }
+                }
+            }
+            match state.install_accepted_guest_socket(pending, flags) {
+                Ok(accepted_fd) => Some(u64::from(accepted_fd.get())),
+                Err(GuestFdError::FdSpaceExhausted) => Some(linux_error(RISCV_LINUX_EMFILE)),
+                Err(_) => Some(linux_error(RISCV_LINUX_EBADF)),
+            }
+        }
         Ok(Ok(None)) => None,
         Ok(Err(errno)) => Some(linux_error(errno)),
         Err(GuestFdError::FdSpaceExhausted) => Some(linux_error(RISCV_LINUX_EMFILE)),
