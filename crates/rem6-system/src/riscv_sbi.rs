@@ -15,6 +15,7 @@ const SBI_SUCCESS: u64 = 0;
 const SBI_ERR_NOT_SUPPORTED: u64 = (-2_i64) as u64;
 const SBI_ERR_INVALID_PARAM: u64 = (-3_i64) as u64;
 const SBI_ERR_ALREADY_AVAILABLE: u64 = (-6_i64) as u64;
+const SBI_LEGACY_CONSOLE_PUTCHAR: u64 = 1;
 const SBI_BASE_EXTENSION: u64 = 0x10;
 const SBI_TIME_EXTENSION: u64 = 0x5449_4d45;
 const SBI_HSM_EXTENSION: u64 = 0x0048_534d;
@@ -79,6 +80,7 @@ pub struct RiscvSbiFirmware {
     rfences: Arc<Mutex<Vec<RiscvSbiRfenceRecord>>>,
     resets: Arc<Mutex<Vec<RiscvSbiResetRecord>>>,
     debug_console: Arc<Mutex<Vec<u8>>>,
+    debug_console_dbcn_bytes: Arc<Mutex<u64>>,
     debug_console_input: Arc<Mutex<VecDeque<u8>>>,
     functional_guest_memory_reader: Option<RiscvGuestMemoryReader>,
     functional_guest_memory_writer: Option<RiscvGuestMemoryWriter>,
@@ -402,6 +404,9 @@ pub enum RiscvSbiOutcome {
         error: u64,
         value: u64,
     },
+    LegacyReturn {
+        value: u64,
+    },
     Stopped,
     Resumed,
     SystemReset {
@@ -462,6 +467,7 @@ impl RiscvSbiFirmware {
             rfences: Arc::new(Mutex::new(Vec::new())),
             resets: Arc::new(Mutex::new(Vec::new())),
             debug_console: Arc::new(Mutex::new(Vec::new())),
+            debug_console_dbcn_bytes: Arc::new(Mutex::new(0)),
             debug_console_input: Arc::new(Mutex::new(VecDeque::new())),
             functional_guest_memory_reader: None,
             functional_guest_memory_writer: None,
@@ -502,6 +508,10 @@ impl RiscvSbiFirmware {
             .lock()
             .expect("RISC-V SBI debug console lock")
             .clear();
+        *self
+            .debug_console_dbcn_bytes
+            .lock()
+            .expect("RISC-V SBI DBCN debug console byte lock") = 0;
         self.hsm.lock().expect("RISC-V SBI HSM record lock").clear();
         self.hsm_wakes
             .lock()
@@ -551,6 +561,13 @@ impl RiscvSbiFirmware {
             .lock()
             .expect("RISC-V SBI debug console lock")
             .clone()
+    }
+
+    pub fn debug_console_dbcn_byte_count(&self) -> u64 {
+        *self
+            .debug_console_dbcn_bytes
+            .lock()
+            .expect("RISC-V SBI DBCN debug console byte lock")
     }
 
     pub fn hsm_records(&self) -> Vec<RiscvSbiHsmRecord> {
@@ -604,6 +621,7 @@ impl RiscvSbiFirmware {
             return Ok(None);
         };
         Ok(Some(match (request.extension(), request.function()) {
+            (SBI_LEGACY_CONSOLE_PUTCHAR, _) => self.legacy_console_putchar(request),
             (SBI_BASE_EXTENSION, SBI_BASE_GET_SPEC_VERSION) => {
                 RiscvSbiOutcome::success(SBI_SPEC_VERSION_2_0)
             }
@@ -614,7 +632,8 @@ impl RiscvSbiFirmware {
                 RiscvSbiOutcome::success(REM6_SBI_IMPL_VERSION)
             }
             (SBI_BASE_EXTENSION, SBI_BASE_PROBE_EXTENSION) => RiscvSbiOutcome::success(u64::from(
-                request.arg0() == SBI_BASE_EXTENSION
+                request.arg0() == SBI_LEGACY_CONSOLE_PUTCHAR
+                    || request.arg0() == SBI_BASE_EXTENSION
                     || request.arg0() == SBI_TIME_EXTENSION
                     || request.arg0() == SBI_HSM_EXTENSION
                     || request.arg0() == SBI_IPI_EXTENSION
@@ -717,10 +736,7 @@ impl RiscvSbiFirmware {
             Err(outcome) => return outcome,
         };
         let written = bytes.len() as u64;
-        self.debug_console
-            .lock()
-            .expect("RISC-V SBI debug console lock")
-            .extend_from_slice(&bytes);
+        self.push_debug_console_bytes(&bytes, true);
         RiscvSbiOutcome::success(written)
     }
 
@@ -775,12 +791,30 @@ impl RiscvSbiFirmware {
     }
 
     fn debug_console_write_byte(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
-        let byte = request.arg0() as u8;
+        self.push_debug_console_byte(request.arg0() as u8, true);
+        RiscvSbiOutcome::success(0)
+    }
+
+    fn legacy_console_putchar(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+        self.push_debug_console_byte(request.arg0() as u8, false);
+        RiscvSbiOutcome::LegacyReturn { value: 0 }
+    }
+
+    fn push_debug_console_byte(&self, byte: u8, count_dbcn: bool) {
+        self.push_debug_console_bytes(&[byte], count_dbcn);
+    }
+
+    fn push_debug_console_bytes(&self, bytes: &[u8], count_dbcn: bool) {
         self.debug_console
             .lock()
             .expect("RISC-V SBI debug console lock")
-            .push(byte);
-        RiscvSbiOutcome::success(0)
+            .extend_from_slice(bytes);
+        if count_dbcn {
+            *self
+                .debug_console_dbcn_bytes
+                .lock()
+                .expect("RISC-V SBI DBCN debug console byte lock") += bytes.len() as u64;
+        }
     }
 
     fn system_reset(&self, core: &RiscvCore, request: RiscvSbiRequest) -> RiscvSbiOutcome {

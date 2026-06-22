@@ -32,10 +32,17 @@ pub(super) fn emit_riscv_run_stats(
     if let Some(execution) = execution {
         increment_stat(
             stats,
-            "sim.riscv.sbi.dbcn.console_bytes",
+            "sim.riscv.sbi.console.bytes",
             "Byte",
             StatResetPolicy::Constant,
             execution.riscv_sbi_console.byte_count(),
+        )?;
+        increment_stat(
+            stats,
+            "sim.riscv.sbi.dbcn.console_bytes",
+            "Byte",
+            StatResetPolicy::Constant,
+            execution.riscv_sbi_console.dbcn_byte_count(),
         )?;
         if config.riscv_sbi() {
             increment_stat(

@@ -25,6 +25,7 @@ impl Rem6RiscvGuestWriteSummary {
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Rem6RiscvSbiConsoleSummary {
     bytes: Vec<u8>,
+    dbcn_byte_count: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -78,8 +79,11 @@ pub(crate) struct Rem6RiscvSbiResetSummary {
 }
 
 impl Rem6RiscvSbiConsoleSummary {
-    pub(crate) fn from_bytes(bytes: Vec<u8>) -> Self {
-        Self { bytes }
+    pub(crate) fn from_bytes_and_dbcn_byte_count(bytes: Vec<u8>, dbcn_byte_count: u64) -> Self {
+        Self {
+            bytes,
+            dbcn_byte_count,
+        }
     }
 
     pub(crate) fn bytes(&self) -> &[u8] {
@@ -88,6 +92,10 @@ impl Rem6RiscvSbiConsoleSummary {
 
     pub(crate) fn byte_count(&self) -> u64 {
         self.bytes.len() as u64
+    }
+
+    pub(crate) fn dbcn_byte_count(&self) -> u64 {
+        self.dbcn_byte_count
     }
 }
 

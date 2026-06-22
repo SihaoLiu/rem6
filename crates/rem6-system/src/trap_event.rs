@@ -653,6 +653,20 @@ impl RiscvTrapEventPort {
                                 });
                             }
                         }
+                        RiscvSbiOutcome::LegacyReturn { value } => {
+                            if core
+                                .complete_pending_supervisor_legacy_environment_call(value)
+                                .is_none()
+                            {
+                                pending_traps.push(PendingRiscvTrapSchedule {
+                                    cpu,
+                                    event,
+                                    source,
+                                    source_tick,
+                                    trap,
+                                });
+                            }
+                        }
                         RiscvSbiOutcome::Stopped | RiscvSbiOutcome::Resumed => {}
                         RiscvSbiOutcome::SystemReset {
                             reset_type,

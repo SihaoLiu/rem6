@@ -41,6 +41,21 @@ impl RiscvCore {
         error: u64,
         value: u64,
     ) -> Option<RiscvTrap> {
+        self.complete_pending_supervisor_environment_call_with_registers(error, Some(value))
+    }
+
+    pub fn complete_pending_supervisor_legacy_environment_call(
+        &self,
+        value: u64,
+    ) -> Option<RiscvTrap> {
+        self.complete_pending_supervisor_environment_call_with_registers(value, None)
+    }
+
+    fn complete_pending_supervisor_environment_call_with_registers(
+        &self,
+        value: u64,
+        extra_value: Option<u64>,
+    ) -> Option<RiscvTrap> {
         let mut state = self.state.lock().expect("riscv core lock");
         let trap = state.pending_trap?;
         if !matches!(trap.kind(), RiscvTrapKind::EnvironmentCall) {
@@ -64,12 +79,14 @@ impl RiscvCore {
             .set_privilege_mode(RiscvPrivilegeMode::Supervisor);
         state.hart.write(
             Register::new(10).expect("valid RISC-V integer register"),
-            error,
-        );
-        state.hart.write(
-            Register::new(11).expect("valid RISC-V integer register"),
             value,
         );
+        if let Some(extra_value) = extra_value {
+            state.hart.write(
+                Register::new(11).expect("valid RISC-V integer register"),
+                extra_value,
+            );
+        }
         let next_pc = Address::new(trap.pc().wrapping_add(4));
         state.hart.set_pc(next_pc.get());
         riscv_checker::sync_checker_hart(&mut state);

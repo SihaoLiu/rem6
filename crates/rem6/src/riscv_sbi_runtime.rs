@@ -96,7 +96,10 @@ pub(crate) fn collect_cli_riscv_sbi_output(
             resets: Vec::new(),
         };
     };
-    let console = Rem6RiscvSbiConsoleSummary::from_bytes(firmware.debug_console_bytes());
+    let console = Rem6RiscvSbiConsoleSummary::from_bytes_and_dbcn_byte_count(
+        firmware.debug_console_bytes(),
+        firmware.debug_console_dbcn_byte_count(),
+    );
     let timers = (0..core_count)
         .filter_map(|cpu| {
             firmware
