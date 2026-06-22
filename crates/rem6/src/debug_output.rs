@@ -136,6 +136,42 @@ impl Rem6DebugSummary {
         !self.flags.is_empty()
     }
 
+    pub(crate) fn enabled_flag_count(&self) -> u64 {
+        self.flags.len() as u64
+    }
+
+    pub(crate) fn exec_trace_count(&self) -> u64 {
+        self.exec_trace.len() as u64
+    }
+
+    pub(crate) fn fetch_trace_count(&self) -> u64 {
+        self.fetch_trace.len() as u64
+    }
+
+    pub(crate) fn data_trace_count(&self) -> u64 {
+        self.data_trace.len() as u64
+    }
+
+    pub(crate) fn memory_trace_count(&self) -> u64 {
+        self.memory_trace.len() as u64
+    }
+
+    pub(crate) fn memory_fetch_trace_count(&self) -> u64 {
+        self.memory_channel_trace_count("fetch")
+    }
+
+    pub(crate) fn memory_data_trace_count(&self) -> u64 {
+        self.memory_channel_trace_count("data")
+    }
+
+    pub(crate) fn power_trace_count(&self) -> u64 {
+        self.power_trace.len() as u64
+    }
+
+    pub(crate) fn syscall_trace_count(&self) -> u64 {
+        self.syscall_trace.len() as u64
+    }
+
     pub(crate) fn to_json(&self) -> String {
         let flags = self
             .flags
@@ -183,6 +219,13 @@ impl Rem6DebugSummary {
             "{{\"flags\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"data_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"syscall_trace\":[{}]}}",
             flags, exec_trace, fetch_trace, data_trace, memory_trace, power_trace, syscall_trace
         )
+    }
+
+    fn memory_channel_trace_count(&self, channel: &str) -> u64 {
+        self.memory_trace
+            .iter()
+            .filter(|record| record.channel == channel)
+            .count() as u64
     }
 }
 

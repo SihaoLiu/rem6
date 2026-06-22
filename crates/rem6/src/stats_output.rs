@@ -1,6 +1,7 @@
 use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
 
 mod data_cache;
+mod debug;
 mod dram;
 mod fabric;
 mod gpu_run;
@@ -22,6 +23,7 @@ use super::{
     Rem6TraceReplayConfig, Rem6TraceReplayExecutionSummary, RequestedIsa,
 };
 use data_cache::{emit_data_cache_prefetch_summary_stats, emit_data_cache_summary_stats};
+use debug::emit_debug_stats;
 use dram::emit_dram_stats;
 use fabric::emit_run_fabric_stats;
 pub(super) use gpu_run::gpu_run_stats_output;
@@ -928,6 +930,7 @@ pub(super) fn run_stats_output(
                 core.data_atomic_bytes,
             )?;
         }
+        emit_debug_stats(&mut stats, execution)?;
     }
 
     let snapshot = stats.snapshot(0);

@@ -288,7 +288,8 @@ fn rem6_run_memory_debug_flag_emits_real_transport_trace() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let json = stdout_json(output.stdout);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(
         json.pointer("/debug/flags").and_then(Value::as_array),
         Some(&vec![Value::String("Memory".to_string())])
@@ -313,6 +314,35 @@ fn rem6_run_memory_debug_flag_emits_real_transport_trace() {
         record.get("kind").and_then(Value::as_str) == Some("response_arrived")
             && record.get("response_status").and_then(Value::as_str) == Some("completed")
     }));
+    let fetch_records = trace
+        .iter()
+        .filter(|record| record.get("channel").and_then(Value::as_str) == Some("fetch"))
+        .count() as u64;
+    let data_records = trace
+        .iter()
+        .filter(|record| record.get("channel").and_then(Value::as_str) == Some("data"))
+        .count() as u64;
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.records",
+        "Count",
+        trace.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.fetch.records",
+        "Count",
+        fetch_records,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.data.records",
+        "Count",
+        data_records,
+        "monotonic",
+    );
     for record in trace {
         assert!(record.get("tick").and_then(Value::as_u64).is_some());
         assert!(record.get("route").and_then(Value::as_u64).is_some());
