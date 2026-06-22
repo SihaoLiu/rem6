@@ -344,6 +344,16 @@ impl RiscvSyscallTable {
                     None => RiscvSyscallOutcome::Blocked,
                 })
             }
+            RISCV_LINUX_SETSOCKOPT => {
+                guest_memory_reader.map(|reader| RiscvSyscallOutcome::Return {
+                    value: syscall_setsockopt(request, state, reader),
+                })
+            }
+            RISCV_LINUX_GETSOCKOPT => guest_memory_reader.and_then(|reader| {
+                guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
+                    value: syscall_getsockopt(request, state, reader, writer),
+                })
+            }),
             RISCV_LINUX_SHUTDOWN => Some(RiscvSyscallOutcome::Return {
                 value: syscall_shutdown(request, state),
             }),

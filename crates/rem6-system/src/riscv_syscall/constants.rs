@@ -50,6 +50,7 @@ pub(super) const RISCV_LINUX_ENOSYS: u64 = 38;
 pub(super) const RISCV_LINUX_ENOTEMPTY: u64 = 39;
 pub(super) const RISCV_LINUX_ELOOP: u64 = 40;
 pub(super) const RISCV_LINUX_ENOTSOCK: u64 = 88;
+pub(super) const RISCV_LINUX_ENOPROTOOPT: u64 = 92;
 pub(super) const RISCV_LINUX_EPROTONOSUPPORT: u64 = 93;
 pub(super) const RISCV_LINUX_ENOTSUP: u64 = 95;
 pub(super) const RISCV_LINUX_EAFNOSUPPORT: u64 = 97;

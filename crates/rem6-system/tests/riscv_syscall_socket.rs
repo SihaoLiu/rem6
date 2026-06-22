@@ -13,6 +13,8 @@ const RISCV_LINUX_GETSOCKNAME: u64 = 204;
 const RISCV_LINUX_GETPEERNAME: u64 = 205;
 const RISCV_LINUX_SENDTO: u64 = 206;
 const RISCV_LINUX_RECVFROM: u64 = 207;
+const RISCV_LINUX_SETSOCKOPT: u64 = 208;
+const RISCV_LINUX_GETSOCKOPT: u64 = 209;
 const RISCV_LINUX_SHUTDOWN: u64 = 210;
 const RISCV_LINUX_FCNTL: u64 = 25;
 const RISCV_LINUX_CLOSE: u64 = 57;
@@ -24,10 +26,18 @@ const RISCV_LINUX_PPOLL: u64 = 73;
 const RISCV_LINUX_F_GETPIPE_SZ: u64 = 1032;
 const RISCV_LINUX_EBADF: u64 = 9;
 const RISCV_LINUX_EAGAIN: u64 = 11;
+const RISCV_LINUX_EFAULT: u64 = 14;
+const RISCV_LINUX_EINVAL: u64 = 22;
 const RISCV_LINUX_EPIPE: u64 = 32;
 const RISCV_LINUX_ENOTSOCK: u64 = 88;
+const RISCV_LINUX_ENOPROTOOPT: u64 = 92;
+const RISCV_LINUX_ENOTSUP: u64 = 95;
 const RISCV_LINUX_AF_UNIX: u64 = 1;
 const RISCV_LINUX_SOCK_STREAM: u64 = 1;
+const RISCV_LINUX_SOL_SOCKET: u64 = 1;
+const RISCV_LINUX_SO_REUSEADDR: u64 = 2;
+const RISCV_LINUX_SO_TYPE: u64 = 3;
+const RISCV_LINUX_SO_ERROR: u64 = 4;
 const RISCV_LINUX_MSG_DONTWAIT: u64 = 0x40;
 const RISCV_LINUX_MSG_NOSIGNAL: u64 = 0x4000;
 const RISCV_LINUX_SHUT_RDWR: u64 = 2;
@@ -59,6 +69,8 @@ fn socket_store() -> Arc<Mutex<PartitionedMemoryStore>> {
             (0x9340, &[0; 8]),
             (0x9360, &[0; 16]),
             (0x9380, &[0; 8]),
+            (0x93a0, &[0; 8]),
+            (0x93c0, &[0; 8]),
             (0x9200, &iovec(0x9040, 4)),
             (0x9210, &iovec(0x9044, 6)),
             (0x9220, &iovec(0x9140, 3)),
@@ -85,6 +97,24 @@ fn pollfd_bytes(fd: u64, events: i16) -> [u8; 8] {
 fn pollfd_revents(store: &Arc<Mutex<PartitionedMemoryStore>>) -> i16 {
     let pollfd = guest_memory_reader(Arc::clone(store))(0x9300, 8).unwrap();
     i16::from_le_bytes(pollfd[6..8].try_into().unwrap())
+}
+
+fn guest_i32(store: &Arc<Mutex<PartitionedMemoryStore>>, address: u64) -> i32 {
+    i32::from_le_bytes(
+        guest_memory_reader(Arc::clone(store))(address, 4)
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    )
+}
+
+fn guest_u32(store: &Arc<Mutex<PartitionedMemoryStore>>, address: u64) -> u32 {
+    u32::from_le_bytes(
+        guest_memory_reader(Arc::clone(store))(address, 4)
+            .unwrap()
+            .try_into()
+            .unwrap(),
+    )
 }
 
 fn iovec(address: u64, len: u64) -> [u8; 16] {
@@ -117,6 +147,203 @@ fn return_value(outcome: RiscvSyscallOutcome) -> u64 {
         RiscvSyscallOutcome::Return { value } => value,
         outcome => panic!("unexpected syscall outcome: {outcome:?}"),
     }
+}
+
+#[test]
+fn linux_table_socket_options_roundtrip_guest_socket_state() {
+    let store = socket_store();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_SOCKETPAIR,
+            [
+                RISCV_LINUX_AF_UNIX,
+                RISCV_LINUX_SOCK_STREAM,
+                0,
+                0x8800,
+                0,
+                0,
+            ],
+            None,
+            Some(&writer),
+        )),
+        0
+    );
+    let (left_fd, right_fd) = fds_from_memory(&store);
+
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x93c0,
+        &4_u32.to_le_bytes()
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETSOCKOPT,
+            [
+                left_fd,
+                RISCV_LINUX_SOL_SOCKET,
+                RISCV_LINUX_SO_TYPE,
+                0x93a0,
+                0x93c0,
+                0,
+            ],
+            Some(&reader),
+            Some(&writer),
+        )),
+        0
+    );
+    assert_eq!(guest_i32(&store, 0x93a0), RISCV_LINUX_SOCK_STREAM as i32);
+    assert_eq!(guest_u32(&store, 0x93c0), 4);
+
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x93a0,
+        &(-1_i32).to_le_bytes()
+    ));
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x93c0,
+        &4_u32.to_le_bytes()
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETSOCKOPT,
+            [
+                right_fd,
+                RISCV_LINUX_SOL_SOCKET,
+                RISCV_LINUX_SO_ERROR,
+                0x93a0,
+                0x93c0,
+                0,
+            ],
+            Some(&reader),
+            Some(&writer),
+        )),
+        0
+    );
+    assert_eq!(guest_i32(&store, 0x93a0), 0);
+    assert_eq!(guest_u32(&store, 0x93c0), 4);
+
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x93a0,
+        &1_i32.to_le_bytes()
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_SETSOCKOPT,
+            [
+                left_fd,
+                RISCV_LINUX_SOL_SOCKET,
+                RISCV_LINUX_SO_REUSEADDR,
+                0x93a0,
+                4,
+                0,
+            ],
+            Some(&reader),
+            None,
+        )),
+        0
+    );
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x93a0,
+        &0_i32.to_le_bytes()
+    ));
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x93c0,
+        &4_u32.to_le_bytes()
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETSOCKOPT,
+            [
+                left_fd,
+                RISCV_LINUX_SOL_SOCKET,
+                RISCV_LINUX_SO_REUSEADDR,
+                0x93a0,
+                0x93c0,
+                0,
+            ],
+            Some(&reader),
+            Some(&writer),
+        )),
+        0
+    );
+    assert_eq!(guest_i32(&store, 0x93a0), 1);
+    assert_eq!(guest_u32(&store, 0x93c0), 4);
+
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_SETSOCKOPT,
+            [
+                left_fd,
+                RISCV_LINUX_SOL_SOCKET,
+                RISCV_LINUX_SO_REUSEADDR,
+                0x93a0,
+                3,
+                0,
+            ],
+            Some(&reader),
+            None,
+        )),
+        linux_error(RISCV_LINUX_EINVAL)
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETSOCKOPT,
+            [right_fd, RISCV_LINUX_SOL_SOCKET, 9999, 0x93a0, 0x93c0, 0],
+            Some(&reader),
+            Some(&writer),
+        )),
+        linux_error(RISCV_LINUX_ENOPROTOOPT)
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETSOCKOPT,
+            [right_fd, RISCV_LINUX_SOL_SOCKET, 9999, 0x93a0, 0x1, 0],
+            Some(&reader),
+            Some(&writer),
+        )),
+        linux_error(RISCV_LINUX_EFAULT)
+    );
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x93c0,
+        &0xffff_ffff_u32.to_le_bytes()
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETSOCKOPT,
+            [
+                right_fd,
+                RISCV_LINUX_SOL_SOCKET,
+                RISCV_LINUX_SO_TYPE,
+                0x93a0,
+                0x93c0,
+                0,
+            ],
+            Some(&reader),
+            Some(&writer),
+        )),
+        linux_error(RISCV_LINUX_EINVAL)
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_SETSOCKOPT,
+            [right_fd, 9999, RISCV_LINUX_SO_REUSEADDR, 0x93a0, 4, 0,],
+            Some(&reader),
+            None,
+        )),
+        linux_error(RISCV_LINUX_ENOTSUP)
+    );
 }
 
 #[test]
@@ -628,6 +855,26 @@ fn linux_table_sendto_recvfrom_report_non_socket_fds_as_enotsock() {
             RISCV_LINUX_RECVFROM,
             [1, 0x91c0, 1, 0, 0, 0],
             None,
+            Some(&writer),
+        )),
+        linux_error(RISCV_LINUX_ENOTSOCK)
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_SETSOCKOPT,
+            [1, 9999, 9999, 0x93a0, 4, 0],
+            Some(&reader),
+            None,
+        )),
+        linux_error(RISCV_LINUX_ENOTSOCK)
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETSOCKOPT,
+            [1, 9999, 9999, 0x93a0, 0x93c0, 0],
+            Some(&reader),
             Some(&writer),
         )),
         linux_error(RISCV_LINUX_ENOTSOCK)

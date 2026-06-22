@@ -17,8 +17,12 @@ fn rem6_run_riscv_se_runs_static_raw_socketpair_against_qemu() {
     let binary = workspace.join("raw-socketpair");
     fs::write(
         &source,
-        r#"#define AF_UNIX 1
+r#"#define AF_UNIX 1
 #define SOCK_STREAM 1
+#define SOL_SOCKET 1
+#define SO_REUSEADDR 2
+#define SO_TYPE 3
+#define SO_ERROR 4
 #define POLLIN 0x0001
 #define F_GETPIPE_SZ 1032
 #define MSG_DONTWAIT 0x40
@@ -115,6 +119,13 @@ int main(void) {
     struct sockaddr_un_addr peer = {0};
     unsigned int name_len = sizeof(name);
     unsigned int peer_len = sizeof(peer);
+    int socket_type = -1;
+    int socket_error = -1;
+    int reuse_addr = 1;
+    int reuse_read = 0;
+    unsigned int socket_type_len = sizeof(socket_type);
+    unsigned int socket_error_len = sizeof(socket_error);
+    unsigned int reuse_len = sizeof(reuse_read);
     const char *left_msg = "left";
     const char *right_msg = "right";
     const char *send_msg = "sendto";
@@ -134,6 +145,10 @@ int main(void) {
     long recv_status = pair_status == 0 ? linux_syscall6(207, fds[1], (long)received, 6, MSG_DONTWAIT, 0, 0) : -1;
     long name_status = pair_status == 0 ? linux_syscall3(204, fds[0], (long)&name, (long)&name_len) : -1;
     long peer_status = pair_status == 0 ? linux_syscall3(205, fds[1], (long)&peer, (long)&peer_len) : -1;
+    long socket_type_status = pair_status == 0 ? linux_syscall5(209, fds[0], SOL_SOCKET, SO_TYPE, (long)&socket_type, (long)&socket_type_len) : -1;
+    long socket_error_status = pair_status == 0 ? linux_syscall5(209, fds[0], SOL_SOCKET, SO_ERROR, (long)&socket_error, (long)&socket_error_len) : -1;
+    long reuse_set_status = pair_status == 0 ? linux_syscall5(208, fds[0], SOL_SOCKET, SO_REUSEADDR, (long)&reuse_addr, sizeof(reuse_addr)) : -1;
+    long reuse_get_status = pair_status == 0 ? linux_syscall5(209, fds[0], SOL_SOCKET, SO_REUSEADDR, (long)&reuse_read, (long)&reuse_len) : -1;
     long shutdown_status = pair_status == 0 ? linux_syscall2(210, fds[0], SHUT_RDWR) : -1;
     long left_send_after_shutdown = pair_status == 0 ? linux_syscall6(206, fds[0], (long)send_msg, 1, MSG_NOSIGNAL, 0, 0) : -1;
     long left_read_after_shutdown = pair_status == 0 ? linux_syscall3(63, fds[0], (long)left, 1) : -1;
@@ -152,6 +167,9 @@ int main(void) {
         name_status == 0 && peer_status == 0 &&
         name_len == 2 && peer_len == 2 &&
         name.family == AF_UNIX && peer.family == AF_UNIX &&
+        socket_type_status == 0 && socket_type == SOCK_STREAM && socket_type_len == 4 &&
+        socket_error_status == 0 && socket_error == 0 && socket_error_len == 4 &&
+        reuse_set_status == 0 && reuse_get_status == 0 && reuse_read == 1 && reuse_len == 4 &&
         shutdown_status == 0 &&
         left_send_after_shutdown == -32 && left_read_after_shutdown == 0 &&
         right_send_after_shutdown == -32 && right_read_after_shutdown == 0) {

@@ -4,9 +4,9 @@ use super::{
     guest_fd_argument, linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter,
     RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAFNOSUPPORT, RISCV_LINUX_EAGAIN,
     RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EMFILE,
-    RISCV_LINUX_ENOTSOCK, RISCV_LINUX_ENOTSUP, RISCV_LINUX_EPIPE, RISCV_LINUX_EPROTONOSUPPORT,
-    RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_CLOEXEC, RISCV_LINUX_O_NONBLOCK, RISCV_LINUX_O_RDONLY,
-    RISCV_LINUX_O_RDWR, RISCV_LINUX_O_WRONLY,
+    RISCV_LINUX_ENOPROTOOPT, RISCV_LINUX_ENOTSOCK, RISCV_LINUX_ENOTSUP, RISCV_LINUX_EPIPE,
+    RISCV_LINUX_EPROTONOSUPPORT, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_CLOEXEC,
+    RISCV_LINUX_O_NONBLOCK, RISCV_LINUX_O_RDONLY, RISCV_LINUX_O_RDWR, RISCV_LINUX_O_WRONLY,
 };
 use crate::{
     GuestFd, GuestFdEntry, GuestFdError, GuestFileDescription, GuestFileDescriptionId,
@@ -18,10 +18,17 @@ pub(super) const RISCV_LINUX_GETSOCKNAME: u64 = 204;
 pub(super) const RISCV_LINUX_GETPEERNAME: u64 = 205;
 pub(super) const RISCV_LINUX_SENDTO: u64 = 206;
 pub(super) const RISCV_LINUX_RECVFROM: u64 = 207;
+pub(super) const RISCV_LINUX_SETSOCKOPT: u64 = 208;
+pub(super) const RISCV_LINUX_GETSOCKOPT: u64 = 209;
 pub(super) const RISCV_LINUX_SHUTDOWN: u64 = 210;
 
 const RISCV_LINUX_AF_UNIX: u64 = 1;
 const RISCV_LINUX_SOCK_STREAM: u64 = 1;
+const RISCV_LINUX_SOL_SOCKET: u64 = 1;
+const RISCV_LINUX_SO_REUSEADDR: u64 = 2;
+const RISCV_LINUX_SO_TYPE: u64 = 3;
+const RISCV_LINUX_SO_ERROR: u64 = 4;
+const RISCV_LINUX_INT_OPTION_BYTES: usize = 4;
 const RISCV_LINUX_SOCK_TYPE_MASK: u64 = 0xf;
 const RISCV_LINUX_SOCKETPAIR_ALLOWED_FLAGS: u64 =
     RISCV_LINUX_SOCK_STREAM | RISCV_LINUX_O_CLOEXEC | RISCV_LINUX_O_NONBLOCK;
@@ -50,6 +57,7 @@ pub(super) struct RiscvGuestSocketEndpoint {
     write_queue: RiscvGuestSocketQueueId,
     read_shutdown: bool,
     write_shutdown: bool,
+    reuse_addr: bool,
 }
 
 impl RiscvGuestSocketEndpoint {
@@ -62,6 +70,7 @@ impl RiscvGuestSocketEndpoint {
             write_queue,
             read_shutdown: false,
             write_shutdown: false,
+            reuse_addr: false,
         }
     }
 }
@@ -112,6 +121,37 @@ impl RiscvGuestSocketShutdown {
             RISCV_LINUX_SHUT_WR => Some(Self::Write),
             RISCV_LINUX_SHUT_RDWR => Some(Self::ReadWrite),
             _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RiscvGuestSocketOption {
+    ReuseAddr,
+    Type,
+    Error,
+}
+
+impl RiscvGuestSocketOption {
+    const fn from_getsockopt(level: u64, optname: u64) -> Result<Self, u64> {
+        if level != RISCV_LINUX_SOL_SOCKET {
+            return Err(RISCV_LINUX_ENOTSUP);
+        }
+        match optname {
+            RISCV_LINUX_SO_REUSEADDR => Ok(Self::ReuseAddr),
+            RISCV_LINUX_SO_TYPE => Ok(Self::Type),
+            RISCV_LINUX_SO_ERROR => Ok(Self::Error),
+            _ => Err(RISCV_LINUX_ENOPROTOOPT),
+        }
+    }
+
+    const fn from_setsockopt(level: u64, optname: u64) -> Result<Self, u64> {
+        if level != RISCV_LINUX_SOL_SOCKET {
+            return Err(RISCV_LINUX_ENOTSUP);
+        }
+        match optname {
+            RISCV_LINUX_SO_REUSEADDR => Ok(Self::ReuseAddr),
+            _ => Err(RISCV_LINUX_ENOPROTOOPT),
         }
     }
 }
@@ -338,6 +378,35 @@ impl RiscvSyscallState {
         Ok(true)
     }
 
+    fn guest_socket_endpoint(
+        &self,
+        fd: GuestFd,
+    ) -> Result<Option<RiscvGuestSocketEndpoint>, GuestFdError> {
+        let description = self
+            .guest_fds
+            .entry(fd)
+            .ok_or(GuestFdError::BadFd { fd })?
+            .description();
+        Ok(self.guest_socket_descriptions.get(&description).copied())
+    }
+
+    fn set_guest_socket_reuse_addr(
+        &mut self,
+        fd: GuestFd,
+        enabled: bool,
+    ) -> Result<bool, GuestFdError> {
+        let description = self
+            .guest_fds
+            .entry(fd)
+            .ok_or(GuestFdError::BadFd { fd })?
+            .description();
+        let Some(endpoint) = self.guest_socket_descriptions.get_mut(&description) else {
+            return Ok(false);
+        };
+        endpoint.reuse_addr = enabled;
+        Ok(true)
+    }
+
     pub(super) fn remove_guest_socket_description(&mut self, description: GuestFileDescriptionId) {
         let Some(endpoint) = self.guest_socket_descriptions.remove(&description) else {
             return;
@@ -561,6 +630,103 @@ pub(super) fn syscall_shutdown(request: RiscvSyscallRequest, state: &mut RiscvSy
         Ok(true) => 0,
         Ok(false) | Err(_) => linux_error(RISCV_LINUX_EBADF),
     }
+}
+
+pub(super) fn syscall_setsockopt(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> u64 {
+    let Some(fd) = guest_fd_argument(request.argument(0)) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    match state.guest_socket_endpoint(fd) {
+        Ok(Some(_)) => {}
+        Ok(None) => return linux_error(RISCV_LINUX_ENOTSOCK),
+        Err(_) => return linux_error(RISCV_LINUX_EBADF),
+    }
+    let option =
+        match RiscvGuestSocketOption::from_setsockopt(request.argument(1), request.argument(2)) {
+            Ok(option) => option,
+            Err(errno) => return linux_error(errno),
+        };
+    let Ok(optlen) = usize::try_from(request.argument(4)) else {
+        return linux_error(RISCV_LINUX_EINVAL);
+    };
+    if optlen < RISCV_LINUX_INT_OPTION_BYTES {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    let Some(bytes) = guest_memory.read(request.argument(3), RISCV_LINUX_INT_OPTION_BYTES) else {
+        return linux_error(RISCV_LINUX_EFAULT);
+    };
+    let Ok(value_bytes) = <[u8; RISCV_LINUX_INT_OPTION_BYTES]>::try_from(bytes.as_slice()) else {
+        return linux_error(RISCV_LINUX_EFAULT);
+    };
+    match option {
+        RiscvGuestSocketOption::ReuseAddr => {
+            let enabled = i32::from_le_bytes(value_bytes) != 0;
+            match state.set_guest_socket_reuse_addr(fd, enabled) {
+                Ok(true) => 0,
+                Ok(false) => linux_error(RISCV_LINUX_ENOTSOCK),
+                Err(_) => linux_error(RISCV_LINUX_EBADF),
+            }
+        }
+        RiscvGuestSocketOption::Type | RiscvGuestSocketOption::Error => {
+            linux_error(RISCV_LINUX_ENOPROTOOPT)
+        }
+    }
+}
+
+pub(super) fn syscall_getsockopt(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let Some(fd) = guest_fd_argument(request.argument(0)) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    let endpoint = match state.guest_socket_endpoint(fd) {
+        Ok(Some(endpoint)) => endpoint,
+        Ok(None) => return linux_error(RISCV_LINUX_ENOTSOCK),
+        Err(_) => return linux_error(RISCV_LINUX_EBADF),
+    };
+    let Some(optlen_bytes) = guest_memory_reader.read(request.argument(4), 4) else {
+        return linux_error(RISCV_LINUX_EFAULT);
+    };
+    let Ok(optlen_bytes) = <[u8; 4]>::try_from(optlen_bytes.as_slice()) else {
+        return linux_error(RISCV_LINUX_EFAULT);
+    };
+    let requested_len = i32::from_le_bytes(optlen_bytes);
+    if requested_len < 0 {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    let option =
+        match RiscvGuestSocketOption::from_getsockopt(request.argument(1), request.argument(2)) {
+            Ok(option) => option,
+            Err(errno) => return linux_error(errno),
+        };
+    let value = match option {
+        RiscvGuestSocketOption::ReuseAddr => {
+            if endpoint.reuse_addr {
+                1
+            } else {
+                0
+            }
+        }
+        RiscvGuestSocketOption::Type => RISCV_LINUX_SOCK_STREAM as i32,
+        RiscvGuestSocketOption::Error => 0,
+    };
+    let value_bytes = value.to_le_bytes();
+    let returned_len = (requested_len as u32).min(RISCV_LINUX_INT_OPTION_BYTES as u32);
+    let write_len = returned_len as usize;
+    if write_len > 0 && !guest_memory_writer.write(request.argument(3), &value_bytes[..write_len]) {
+        return linux_error(RISCV_LINUX_EFAULT);
+    }
+    if !guest_memory_writer.write(request.argument(4), &returned_len.to_le_bytes()) {
+        return linux_error(RISCV_LINUX_EFAULT);
+    }
+    0
 }
 
 pub(super) fn syscall_sendto(
