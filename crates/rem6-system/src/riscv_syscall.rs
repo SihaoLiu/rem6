@@ -237,11 +237,13 @@ use sleep::{
 use socket::{
     syscall_getpeername, syscall_getsockname, syscall_getsockopt, syscall_recvfrom,
     syscall_recvmsg, syscall_sendmsg, syscall_sendto, syscall_setsockopt, syscall_shutdown,
-    syscall_socket, syscall_socketpair, RiscvGuestSocketEndpoint, RiscvGuestSocketQueue,
-    RiscvGuestSocketQueueId, RISCV_LINUX_GETPEERNAME, RISCV_LINUX_GETSOCKNAME,
-    RISCV_LINUX_GETSOCKOPT, RISCV_LINUX_RECVFROM, RISCV_LINUX_RECVMSG, RISCV_LINUX_SENDMSG,
-    RISCV_LINUX_SENDTO, RISCV_LINUX_SETSOCKOPT, RISCV_LINUX_SHUTDOWN, RISCV_LINUX_SOCKET,
-    RISCV_LINUX_SOCKETPAIR,
+    syscall_socket, syscall_socket_accept, syscall_socket_bind, syscall_socket_connect,
+    syscall_socket_listen, syscall_socketpair, RiscvGuestSocketEndpoint, RiscvGuestSocketListener,
+    RiscvGuestSocketQueue, RiscvGuestSocketQueueId, RISCV_LINUX_ACCEPT, RISCV_LINUX_ACCEPT4,
+    RISCV_LINUX_BIND, RISCV_LINUX_CONNECT, RISCV_LINUX_GETPEERNAME, RISCV_LINUX_GETSOCKNAME,
+    RISCV_LINUX_GETSOCKOPT, RISCV_LINUX_LISTEN, RISCV_LINUX_RECVFROM, RISCV_LINUX_RECVMSG,
+    RISCV_LINUX_SENDMSG, RISCV_LINUX_SENDTO, RISCV_LINUX_SETSOCKOPT, RISCV_LINUX_SHUTDOWN,
+    RISCV_LINUX_SOCKET, RISCV_LINUX_SOCKETPAIR,
 };
 use splice::{syscall_splice, RISCV_LINUX_SPLICE};
 pub use startup::{
@@ -340,6 +342,9 @@ pub struct RiscvSyscallState {
     guest_pipe_write_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestPipeEndpoint>,
     guest_socket_queues: BTreeMap<RiscvGuestSocketQueueId, RiscvGuestSocketQueue>,
     guest_socket_descriptions: BTreeMap<GuestFileDescriptionId, RiscvGuestSocketEndpoint>,
+    guest_socket_bound_names: BTreeMap<GuestFileDescriptionId, Vec<u8>>,
+    guest_socket_bindings: BTreeMap<Vec<u8>, GuestFileDescriptionId>,
+    guest_socket_listeners: BTreeMap<GuestFileDescriptionId, RiscvGuestSocketListener>,
     guest_eventfds: BTreeMap<GuestFileDescriptionId, RiscvGuestEventFd>,
     guest_timerfds: BTreeMap<GuestFileDescriptionId, RiscvGuestTimerFd>,
     guest_signalfds: BTreeMap<GuestFileDescriptionId, RiscvGuestSignalFd>,
@@ -452,6 +457,9 @@ impl RiscvSyscallState {
             guest_pipe_write_descriptions: BTreeMap::new(),
             guest_socket_queues: BTreeMap::new(),
             guest_socket_descriptions: BTreeMap::new(),
+            guest_socket_bound_names: BTreeMap::new(),
+            guest_socket_bindings: BTreeMap::new(),
+            guest_socket_listeners: BTreeMap::new(),
             guest_eventfds: BTreeMap::new(),
             guest_timerfds: BTreeMap::new(),
             guest_signalfds: BTreeMap::new(),

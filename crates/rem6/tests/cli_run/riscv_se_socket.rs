@@ -32,6 +32,7 @@ r#"#define AF_UNIX 1
 #define MSG_DONTWAIT 0x40
 #define MSG_NOSIGNAL 0x4000
 #define SHUT_RDWR 2
+#define ABSTRACT_LISTENER_LEN 14
 
 struct pollfd {
     int fd;
@@ -140,6 +141,10 @@ int main(void) {
     struct sockaddr_un_addr name = {0};
     struct sockaddr_un_addr peer = {0};
     struct sockaddr_un_addr solo_peer = {0};
+    struct sockaddr_un_addr listener_addr = {
+        AF_UNIX,
+        {0, 'r', 'e', 'm', '6', '-', 'a', 'c', 'c', 'e', 'p', 't'}
+    };
     unsigned int name_len = sizeof(name);
     unsigned int peer_len = sizeof(peer);
     unsigned int solo_peer_len = sizeof(solo_peer);
@@ -148,6 +153,8 @@ int main(void) {
     int reuse_addr = 1;
     int reuse_read = 0;
     int solo_socket_type = -1;
+    char listener_left[16] = {0};
+    char listener_right[16] = {0};
     unsigned int socket_type_len = sizeof(socket_type);
     unsigned int socket_error_len = sizeof(socket_error);
     unsigned int reuse_len = sizeof(reuse_read);
@@ -190,6 +197,26 @@ int main(void) {
         linux_syscall1(57, solo_fd);
     }
 
+    long listen_fd = linux_syscall3(198, AF_UNIX, SOCK_STREAM, 0);
+    long connect_fd = linux_syscall3(198, AF_UNIX, SOCK_STREAM, 0);
+    long bind_status = listen_fd >= 0 ? linux_syscall3(200, listen_fd, (long)&listener_addr, ABSTRACT_LISTENER_LEN) : -1;
+    long listen_status = listen_fd >= 0 ? linux_syscall2(201, listen_fd, 4) : -1;
+    long connect_status = connect_fd >= 0 ? linux_syscall3(203, connect_fd, (long)&listener_addr, ABSTRACT_LISTENER_LEN) : -1;
+    long listener_write_status = connect_fd >= 0 ? linux_syscall3(64, connect_fd, (long)left_msg, 4) : -1;
+    long accepted_fd = listen_fd >= 0 ? linux_syscall4(242, listen_fd, 0, 0, SOCK_CLOEXEC | SOCK_NONBLOCK) : -1;
+    long listener_read_status = accepted_fd >= 0 ? linux_syscall3(63, accepted_fd, (long)listener_left, 4) : -1;
+    long accepted_write_status = accepted_fd >= 0 ? linux_syscall3(64, accepted_fd, (long)right_msg, 5) : -1;
+    long accepted_read_status = connect_fd >= 0 ? linux_syscall3(63, connect_fd, (long)listener_right, 5) : -1;
+    if (accepted_fd >= 0) {
+        linux_syscall1(57, accepted_fd);
+    }
+    if (connect_fd >= 0) {
+        linux_syscall1(57, connect_fd);
+    }
+    if (listen_fd >= 0) {
+        linux_syscall1(57, listen_fd);
+    }
+
     long pair_status = linux_syscall4(199, AF_UNIX, SOCK_STREAM, 0, (long)fds);
     long not_pipe = pair_status == 0 ? linux_syscall3(25, fds[0], F_GETPIPE_SZ, 0) : 0;
     long first_write = pair_status == 0 ? linux_syscall3(64, fds[0], (long)left_msg, 4) : -1;
@@ -225,6 +252,13 @@ int main(void) {
         solo_zero_write_status == -107 &&
         solo_write_status == -107 && solo_read_status == -22 &&
         solo_sendmsg_status == -107 && solo_recvmsg_status == -22 &&
+        listen_fd >= 0 && connect_fd >= 0 &&
+        bind_status == 0 && listen_status == 0 && connect_status == 0 &&
+        accepted_fd >= 0 &&
+        listener_write_status == 4 && listener_read_status == 4 &&
+        bytes_match(listener_left, left_msg, 4) &&
+        accepted_write_status == 5 && accepted_read_status == 5 &&
+        bytes_match(listener_right, right_msg, 5) &&
         pair_status == 0 && not_pipe == -9 && first_write == 4 &&
         ready == 1 && (poll_fd.revents & POLLIN) != 0 &&
         first_read == 4 && bytes_match(right, left_msg, 4) &&

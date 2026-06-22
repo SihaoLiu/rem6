@@ -4,11 +4,12 @@ use super::{
     guest_fd_argument,
     iovec::{read_iovec_prefix, read_iovecs, write_iovecs, RISCV_LINUX_IOV_MAX},
     linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallRequest,
-    RiscvSyscallState, RISCV_LINUX_EAFNOSUPPORT, RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF,
-    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EMFILE, RISCV_LINUX_ENOPROTOOPT,
-    RISCV_LINUX_ENOTCONN, RISCV_LINUX_ENOTSOCK, RISCV_LINUX_ENOTSUP, RISCV_LINUX_EPIPE,
-    RISCV_LINUX_EPROTONOSUPPORT, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_CLOEXEC,
-    RISCV_LINUX_O_NONBLOCK, RISCV_LINUX_O_RDONLY, RISCV_LINUX_O_RDWR, RISCV_LINUX_O_WRONLY,
+    RiscvSyscallState, RISCV_LINUX_EADDRINUSE, RISCV_LINUX_EAFNOSUPPORT, RISCV_LINUX_EAGAIN,
+    RISCV_LINUX_EBADF, RISCV_LINUX_ECONNREFUSED, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
+    RISCV_LINUX_EMFILE, RISCV_LINUX_ENOPROTOOPT, RISCV_LINUX_ENOTCONN, RISCV_LINUX_ENOTSOCK,
+    RISCV_LINUX_ENOTSUP, RISCV_LINUX_EPIPE, RISCV_LINUX_EPROTONOSUPPORT, RISCV_LINUX_O_ACCMODE,
+    RISCV_LINUX_O_CLOEXEC, RISCV_LINUX_O_NONBLOCK, RISCV_LINUX_O_RDONLY, RISCV_LINUX_O_RDWR,
+    RISCV_LINUX_O_WRONLY,
 };
 use crate::{
     GuestFd, GuestFdEntry, GuestFdError, GuestFileDescription, GuestFileDescriptionId,
@@ -17,6 +18,10 @@ use crate::{
 
 pub(super) const RISCV_LINUX_SOCKET: u64 = 198;
 pub(super) const RISCV_LINUX_SOCKETPAIR: u64 = 199;
+pub(super) const RISCV_LINUX_BIND: u64 = 200;
+pub(super) const RISCV_LINUX_LISTEN: u64 = 201;
+pub(super) const RISCV_LINUX_ACCEPT: u64 = 202;
+pub(super) const RISCV_LINUX_CONNECT: u64 = 203;
 pub(super) const RISCV_LINUX_GETSOCKNAME: u64 = 204;
 pub(super) const RISCV_LINUX_GETPEERNAME: u64 = 205;
 pub(super) const RISCV_LINUX_SENDTO: u64 = 206;
@@ -26,6 +31,7 @@ pub(super) const RISCV_LINUX_GETSOCKOPT: u64 = 209;
 pub(super) const RISCV_LINUX_SHUTDOWN: u64 = 210;
 pub(super) const RISCV_LINUX_SENDMSG: u64 = 211;
 pub(super) const RISCV_LINUX_RECVMSG: u64 = 212;
+pub(super) const RISCV_LINUX_ACCEPT4: u64 = 242;
 
 const RISCV_LINUX_AF_UNIX: u64 = 1;
 const RISCV_LINUX_SOCK_STREAM: u64 = 1;
@@ -55,6 +61,8 @@ const RISCV_LINUX_MSGHDR_IOVLEN_OFFSET: usize = 24;
 const RISCV_LINUX_MSGHDR_CONTROL_OFFSET: usize = 32;
 const RISCV_LINUX_MSGHDR_CONTROLLEN_OFFSET: usize = 40;
 const RISCV_LINUX_MSGHDR_FLAGS_OFFSET: usize = 48;
+const RISCV_LINUX_SOCKADDR_UN_MIN_BYTES: usize = 3;
+const RISCV_LINUX_SOCKADDR_UN_BYTES: usize = 110;
 const RISCV_LINUX_SHUT_RD: u64 = 0;
 const RISCV_LINUX_SHUT_WR: u64 = 1;
 const RISCV_LINUX_SHUT_RDWR: u64 = 2;
@@ -120,6 +128,28 @@ fn read_u64(bytes: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(raw)
 }
 
+fn read_sockaddr_un_name(
+    guest_memory: &RiscvGuestMemoryReader,
+    address: u64,
+    len: u64,
+) -> Result<Vec<u8>, u64> {
+    let Ok(len) = usize::try_from(len) else {
+        return Err(RISCV_LINUX_EINVAL);
+    };
+    if len < RISCV_LINUX_SOCKADDR_UN_MIN_BYTES {
+        return Err(RISCV_LINUX_EINVAL);
+    }
+    if len > RISCV_LINUX_SOCKADDR_UN_BYTES {
+        return Err(RISCV_LINUX_EINVAL);
+    }
+    let bytes = read_guest_exact(guest_memory, address, len).ok_or(RISCV_LINUX_EFAULT)?;
+    let family = u16::from_le_bytes([bytes[0], bytes[1]]);
+    if u64::from(family) != RISCV_LINUX_AF_UNIX {
+        return Err(RISCV_LINUX_EAFNOSUPPORT);
+    }
+    Ok(bytes[2..].to_vec())
+}
+
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct RiscvGuestSocketQueueId(u64);
 
@@ -165,12 +195,36 @@ impl RiscvGuestSocketEndpoint {
     const fn is_connected(&self) -> bool {
         self.read_queue.is_some() && self.write_queue.is_some()
     }
+
+    const fn with_reuse_addr(mut self, reuse_addr: bool) -> Self {
+        self.reuse_addr = reuse_addr;
+        self
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct RiscvGuestSocketQueue {
     buffer: VecDeque<u8>,
     capacity: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct RiscvGuestSocketListener {
+    backlog: usize,
+    pending: VecDeque<RiscvGuestSocketEndpoint>,
+}
+
+impl RiscvGuestSocketListener {
+    fn new(backlog: usize) -> Self {
+        Self {
+            backlog: backlog.max(1),
+            pending: VecDeque::new(),
+        }
+    }
+
+    fn set_backlog(&mut self, backlog: usize) {
+        self.backlog = backlog.max(1);
+    }
 }
 
 impl RiscvGuestSocketQueue {
@@ -199,6 +253,13 @@ pub(super) enum RiscvGuestSocketWrite {
     WouldBlock,
     Blocked,
     BrokenPipe,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RiscvGuestSocketConnect {
+    Connected,
+    Blocked,
+    Errno(u64),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -286,9 +347,7 @@ impl RiscvSyscallState {
         if !bytes.is_empty() || count == 0 {
             return Ok(RiscvGuestSocketRead::Bytes(bytes));
         }
-        let write_live = self.guest_socket_descriptions.values().any(|candidate| {
-            candidate.write_queue == Some(read_queue) && !candidate.write_shutdown
-        });
+        let write_live = self.guest_socket_write_queue_live(read_queue);
         if !write_live {
             return Ok(RiscvGuestSocketRead::Bytes(Vec::new()));
         }
@@ -355,10 +414,7 @@ impl RiscvSyscallState {
         let Some(write_queue) = endpoint.write_queue else {
             return Ok(RiscvGuestSocketWrite::NotConnected);
         };
-        let read_live = self
-            .guest_socket_descriptions
-            .values()
-            .any(|candidate| candidate.read_queue == Some(write_queue) && !candidate.read_shutdown);
+        let read_live = self.guest_socket_read_queue_live(write_queue);
         if !read_live {
             return Ok(RiscvGuestSocketWrite::BrokenPipe);
         }
@@ -419,6 +475,9 @@ impl RiscvSyscallState {
             .entry(fd)
             .ok_or(GuestFdError::BadFd { fd })?
             .description();
+        if let Some(listener) = self.guest_socket_listeners.get(&description) {
+            return Ok(Some(!listener.pending.is_empty()));
+        }
         let Some(endpoint) = self.guest_socket_descriptions.get(&description).copied() else {
             return Ok(None);
         };
@@ -431,9 +490,7 @@ impl RiscvSyscallState {
         let Some(queue) = self.guest_socket_queues.get(&read_queue) else {
             return Err(GuestFdError::MissingFileDescription { description });
         };
-        let write_live = self.guest_socket_descriptions.values().any(|candidate| {
-            candidate.write_queue == Some(read_queue) && !candidate.write_shutdown
-        });
+        let write_live = self.guest_socket_write_queue_live(read_queue);
         Ok(Some(!queue.buffer.is_empty() || !write_live))
     }
 
@@ -446,6 +503,9 @@ impl RiscvSyscallState {
             .entry(fd)
             .ok_or(GuestFdError::BadFd { fd })?
             .description();
+        if self.guest_socket_listeners.contains_key(&description) {
+            return Ok(Some(false));
+        }
         let Some(endpoint) = self.guest_socket_descriptions.get(&description).copied() else {
             return Ok(None);
         };
@@ -455,10 +515,7 @@ impl RiscvSyscallState {
         let Some(write_queue) = endpoint.write_queue else {
             return Ok(Some(true));
         };
-        let read_live = self
-            .guest_socket_descriptions
-            .values()
-            .any(|candidate| candidate.read_queue == Some(write_queue) && !candidate.read_shutdown);
+        let read_live = self.guest_socket_read_queue_live(write_queue);
         if !read_live {
             return Ok(Some(true));
         }
@@ -477,6 +534,9 @@ impl RiscvSyscallState {
             .entry(fd)
             .ok_or(GuestFdError::BadFd { fd })?
             .description();
+        if self.guest_socket_listeners.contains_key(&description) {
+            return Ok(Some(false));
+        }
         let Some(endpoint) = self.guest_socket_descriptions.get(&description).copied() else {
             return Ok(None);
         };
@@ -519,6 +579,21 @@ impl RiscvSyscallState {
         Ok(self.guest_socket_descriptions.get(&description).copied())
     }
 
+    fn guest_socket_description_for_fd(
+        &self,
+        fd: GuestFd,
+    ) -> Result<Option<GuestFileDescriptionId>, GuestFdError> {
+        let description = self
+            .guest_fds
+            .entry(fd)
+            .ok_or(GuestFdError::BadFd { fd })?
+            .description();
+        Ok(self
+            .guest_socket_descriptions
+            .contains_key(&description)
+            .then_some(description))
+    }
+
     fn set_guest_socket_reuse_addr(
         &mut self,
         fd: GuestFd,
@@ -540,12 +615,187 @@ impl RiscvSyscallState {
         let Some(endpoint) = self.guest_socket_descriptions.remove(&description) else {
             return;
         };
+        if let Some(name) = self.guest_socket_bound_names.remove(&description) {
+            self.guest_socket_bindings.remove(&name);
+        }
+        let listener = self.guest_socket_listeners.remove(&description);
         if let Some(read_queue) = endpoint.read_queue {
             self.remove_socket_queue_if_unreferenced(read_queue);
         }
         if let Some(write_queue) = endpoint.write_queue {
             self.remove_socket_queue_if_unreferenced(write_queue);
         }
+        if let Some(listener) = listener {
+            for pending in listener.pending {
+                if let Some(read_queue) = pending.read_queue {
+                    self.remove_socket_queue_if_unreferenced(read_queue);
+                }
+                if let Some(write_queue) = pending.write_queue {
+                    self.remove_socket_queue_if_unreferenced(write_queue);
+                }
+            }
+        }
+    }
+
+    fn bind_guest_socket(
+        &mut self,
+        fd: GuestFd,
+        name: Vec<u8>,
+    ) -> Result<Result<(), u64>, GuestFdError> {
+        let Some(description) = self.guest_socket_description_for_fd(fd)? else {
+            return Ok(Err(RISCV_LINUX_ENOTSOCK));
+        };
+        if self
+            .guest_socket_descriptions
+            .get(&description)
+            .is_some_and(RiscvGuestSocketEndpoint::is_connected)
+            || self.guest_socket_listeners.contains_key(&description)
+            || self.guest_socket_bound_names.contains_key(&description)
+        {
+            return Ok(Err(RISCV_LINUX_EINVAL));
+        }
+        if self.guest_socket_bindings.contains_key(&name) {
+            return Ok(Err(RISCV_LINUX_EADDRINUSE));
+        }
+        self.guest_socket_bindings.insert(name.clone(), description);
+        self.guest_socket_bound_names.insert(description, name);
+        Ok(Ok(()))
+    }
+
+    fn listen_guest_socket(
+        &mut self,
+        fd: GuestFd,
+        backlog: u64,
+    ) -> Result<Result<(), u64>, GuestFdError> {
+        let Some(description) = self.guest_socket_description_for_fd(fd)? else {
+            return Ok(Err(RISCV_LINUX_ENOTSOCK));
+        };
+        if !self.guest_socket_bound_names.contains_key(&description)
+            || self
+                .guest_socket_descriptions
+                .get(&description)
+                .is_some_and(RiscvGuestSocketEndpoint::is_connected)
+        {
+            return Ok(Err(RISCV_LINUX_EINVAL));
+        }
+        let backlog = usize::try_from(backlog.min(i32::MAX as u64)).unwrap_or(usize::MAX);
+        if let Some(listener) = self.guest_socket_listeners.get_mut(&description) {
+            listener.set_backlog(backlog);
+        } else {
+            self.guest_socket_listeners
+                .insert(description, RiscvGuestSocketListener::new(backlog));
+        }
+        Ok(Ok(()))
+    }
+
+    fn connect_guest_socket(
+        &mut self,
+        fd: GuestFd,
+        name: &[u8],
+    ) -> Result<RiscvGuestSocketConnect, GuestFdError> {
+        let Some(client_description) = self.guest_socket_description_for_fd(fd)? else {
+            return Ok(RiscvGuestSocketConnect::Errno(RISCV_LINUX_ENOTSOCK));
+        };
+        if self
+            .guest_socket_descriptions
+            .get(&client_description)
+            .is_some_and(RiscvGuestSocketEndpoint::is_connected)
+            || self
+                .guest_socket_listeners
+                .contains_key(&client_description)
+        {
+            return Ok(RiscvGuestSocketConnect::Errno(RISCV_LINUX_EINVAL));
+        }
+        let Some(server_description) = self.guest_socket_bindings.get(name).copied() else {
+            return Ok(RiscvGuestSocketConnect::Errno(RISCV_LINUX_ECONNREFUSED));
+        };
+        let Some(listener) = self.guest_socket_listeners.get(&server_description) else {
+            return Ok(RiscvGuestSocketConnect::Errno(RISCV_LINUX_ECONNREFUSED));
+        };
+        if listener.pending.len() >= listener.backlog {
+            return if self.guest_fd_nonblocking(fd)? {
+                Ok(RiscvGuestSocketConnect::Errno(RISCV_LINUX_EAGAIN))
+            } else {
+                Ok(RiscvGuestSocketConnect::Blocked)
+            };
+        }
+
+        let client_to_server = self.next_guest_socket_queue_id()?;
+        let server_to_client = self.next_guest_socket_queue_id_excluding(&[client_to_server])?;
+        self.guest_socket_queues.insert(
+            client_to_server,
+            RiscvGuestSocketQueue::new(RISCV_LINUX_DEFAULT_SOCKET_CAPACITY_BYTES),
+        );
+        self.guest_socket_queues.insert(
+            server_to_client,
+            RiscvGuestSocketQueue::new(RISCV_LINUX_DEFAULT_SOCKET_CAPACITY_BYTES),
+        );
+        let reuse_addr = self
+            .guest_socket_descriptions
+            .get(&client_description)
+            .is_some_and(|endpoint| endpoint.reuse_addr);
+        self.guest_socket_descriptions.insert(
+            client_description,
+            RiscvGuestSocketEndpoint::new(server_to_client, client_to_server)
+                .with_reuse_addr(reuse_addr),
+        );
+        let accepted = RiscvGuestSocketEndpoint::new(client_to_server, server_to_client);
+        let Some(listener) = self.guest_socket_listeners.get_mut(&server_description) else {
+            return Ok(RiscvGuestSocketConnect::Errno(RISCV_LINUX_ECONNREFUSED));
+        };
+        listener.pending.push_back(accepted);
+        Ok(RiscvGuestSocketConnect::Connected)
+    }
+
+    fn accept_guest_socket(
+        &mut self,
+        fd: GuestFd,
+        flags: u64,
+    ) -> Result<Result<Option<GuestFd>, u64>, GuestFdError> {
+        if flags & !(RISCV_LINUX_O_CLOEXEC | RISCV_LINUX_O_NONBLOCK) != 0 {
+            return Ok(Err(RISCV_LINUX_EINVAL));
+        }
+        let Some(listener_description) = self.guest_socket_description_for_fd(fd)? else {
+            return Ok(Err(RISCV_LINUX_ENOTSOCK));
+        };
+        let Some(listener) = self.guest_socket_listeners.get(&listener_description) else {
+            return Ok(Err(RISCV_LINUX_EINVAL));
+        };
+        if listener.pending.is_empty() {
+            if self.guest_fd_nonblocking(fd)? {
+                return Ok(Err(RISCV_LINUX_EAGAIN));
+            }
+            return Ok(Ok(None));
+        }
+        let accepted_fd = self.next_guest_fd_excluding(&[])?;
+        let accepted_description = self.next_guest_file_description_excluding(&[])?;
+        let endpoint = self
+            .guest_socket_listeners
+            .get_mut(&listener_description)
+            .ok_or(GuestFdError::MissingFileDescription {
+                description: listener_description,
+            })?
+            .pending
+            .pop_front()
+            .ok_or(GuestFdError::MissingFileDescription {
+                description: listener_description,
+            })?;
+        let status_flags = GuestFileStatusFlags::new(
+            (RISCV_LINUX_O_RDWR | (flags & RISCV_LINUX_O_NONBLOCK)) as u32,
+        );
+        self.guest_fds
+            .insert_description(GuestFileDescription::guest_backed(
+                accepted_description,
+                status_flags,
+            ))?;
+        self.guest_fds.insert(
+            accepted_fd,
+            GuestFdEntry::new(accepted_description)
+                .with_close_on_exec(flags & RISCV_LINUX_O_CLOEXEC != 0),
+        )?;
+        self.guest_socket_descriptions
+            .insert(accepted_description, endpoint);
+        Ok(Ok(Some(accepted_fd)))
     }
 
     fn open_guest_socket(&mut self, type_flags: u64) -> Result<GuestFd, GuestFdError> {
@@ -633,9 +883,37 @@ impl RiscvSyscallState {
         Ok(self.guest_socket_descriptions.contains_key(&description))
     }
 
+    fn guest_socket_read_queue_live(&self, queue: RiscvGuestSocketQueueId) -> bool {
+        self.guest_socket_descriptions
+            .values()
+            .any(|endpoint| endpoint.read_queue == Some(queue) && !endpoint.read_shutdown)
+            || self.guest_socket_listeners.values().any(|listener| {
+                listener
+                    .pending
+                    .iter()
+                    .any(|endpoint| endpoint.read_queue == Some(queue) && !endpoint.read_shutdown)
+            })
+    }
+
+    fn guest_socket_write_queue_live(&self, queue: RiscvGuestSocketQueueId) -> bool {
+        self.guest_socket_descriptions
+            .values()
+            .any(|endpoint| endpoint.write_queue == Some(queue) && !endpoint.write_shutdown)
+            || self.guest_socket_listeners.values().any(|listener| {
+                listener
+                    .pending
+                    .iter()
+                    .any(|endpoint| endpoint.write_queue == Some(queue) && !endpoint.write_shutdown)
+            })
+    }
+
     fn remove_socket_queue_if_unreferenced(&mut self, queue: RiscvGuestSocketQueueId) {
         let live = self.guest_socket_descriptions.values().any(|endpoint| {
             endpoint.read_queue == Some(queue) || endpoint.write_queue == Some(queue)
+        }) || self.guest_socket_listeners.values().any(|listener| {
+            listener.pending.iter().any(|endpoint| {
+                endpoint.read_queue == Some(queue) || endpoint.write_queue == Some(queue)
+            })
         });
         if !live {
             self.guest_socket_queues.remove(&queue);
@@ -745,6 +1023,80 @@ pub(super) fn syscall_socketpair(
     ) {
         Ok(()) => 0,
         Err(_) => linux_error(RISCV_LINUX_EMFILE),
+    }
+}
+
+pub(super) fn syscall_socket_bind(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> u64 {
+    let Some(fd) = guest_fd_argument(request.argument(0)) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    let name = match read_sockaddr_un_name(guest_memory, request.argument(1), request.argument(2)) {
+        Ok(name) => name,
+        Err(errno) => return linux_error(errno),
+    };
+    match state.bind_guest_socket(fd, name) {
+        Ok(Ok(())) => 0,
+        Ok(Err(errno)) => linux_error(errno),
+        Err(_) => linux_error(RISCV_LINUX_EBADF),
+    }
+}
+
+pub(super) fn syscall_socket_listen(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+) -> u64 {
+    let Some(fd) = guest_fd_argument(request.argument(0)) else {
+        return linux_error(RISCV_LINUX_EBADF);
+    };
+    match state.listen_guest_socket(fd, request.argument(1)) {
+        Ok(Ok(())) => 0,
+        Ok(Err(errno)) => linux_error(errno),
+        Err(_) => linux_error(RISCV_LINUX_EBADF),
+    }
+}
+
+pub(super) fn syscall_socket_connect(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> Option<u64> {
+    let Some(fd) = guest_fd_argument(request.argument(0)) else {
+        return Some(linux_error(RISCV_LINUX_EBADF));
+    };
+    let name = match read_sockaddr_un_name(guest_memory, request.argument(1), request.argument(2)) {
+        Ok(name) => name,
+        Err(errno) => return Some(linux_error(errno)),
+    };
+    match state.connect_guest_socket(fd, &name) {
+        Ok(RiscvGuestSocketConnect::Connected) => Some(0),
+        Ok(RiscvGuestSocketConnect::Blocked) => None,
+        Ok(RiscvGuestSocketConnect::Errno(errno)) => Some(linux_error(errno)),
+        Err(GuestFdError::FdSpaceExhausted) => Some(linux_error(RISCV_LINUX_EMFILE)),
+        Err(_) => Some(linux_error(RISCV_LINUX_EBADF)),
+    }
+}
+
+pub(super) fn syscall_socket_accept(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    flags: u64,
+) -> Option<u64> {
+    let Some(fd) = guest_fd_argument(request.argument(0)) else {
+        return Some(linux_error(RISCV_LINUX_EBADF));
+    };
+    if request.argument(1) != 0 || request.argument(2) != 0 {
+        return Some(linux_error(RISCV_LINUX_ENOTSUP));
+    }
+    match state.accept_guest_socket(fd, flags) {
+        Ok(Ok(Some(accepted_fd))) => Some(u64::from(accepted_fd.get())),
+        Ok(Ok(None)) => None,
+        Ok(Err(errno)) => Some(linux_error(errno)),
+        Err(GuestFdError::FdSpaceExhausted) => Some(linux_error(RISCV_LINUX_EMFILE)),
+        Err(_) => Some(linux_error(RISCV_LINUX_EBADF)),
     }
 }
 

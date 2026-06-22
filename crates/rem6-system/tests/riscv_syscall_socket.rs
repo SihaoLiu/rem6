@@ -10,6 +10,9 @@ use support::*;
 
 const RISCV_LINUX_SOCKET: u64 = 198;
 const RISCV_LINUX_SOCKETPAIR: u64 = 199;
+const RISCV_LINUX_BIND: u64 = 200;
+const RISCV_LINUX_LISTEN: u64 = 201;
+const RISCV_LINUX_CONNECT: u64 = 203;
 const RISCV_LINUX_GETSOCKNAME: u64 = 204;
 const RISCV_LINUX_GETPEERNAME: u64 = 205;
 const RISCV_LINUX_SENDTO: u64 = 206;
@@ -19,6 +22,7 @@ const RISCV_LINUX_GETSOCKOPT: u64 = 209;
 const RISCV_LINUX_SHUTDOWN: u64 = 210;
 const RISCV_LINUX_SENDMSG: u64 = 211;
 const RISCV_LINUX_RECVMSG: u64 = 212;
+const RISCV_LINUX_ACCEPT4: u64 = 242;
 const RISCV_LINUX_FCNTL: u64 = 25;
 const RISCV_LINUX_CLOSE: u64 = 57;
 const RISCV_LINUX_READ: u64 = 63;
@@ -83,6 +87,7 @@ fn socket_store() -> Arc<Mutex<PartitionedMemoryStore>> {
             (0x9400, &[0; 56]),
             (0x9440, &[0; 56]),
             (0x9480, &[0; 56]),
+            (0x9500, &sockaddr_un_abstract(b"rem6-listener")),
             (0x9200, &iovec(0x9040, 4)),
             (0x9210, &iovec(0x9044, 6)),
             (0x9220, &iovec(0x9140, 3)),
@@ -111,6 +116,10 @@ fn pollfd_revents(store: &Arc<Mutex<PartitionedMemoryStore>>) -> i16 {
     i16::from_le_bytes(pollfd[6..8].try_into().unwrap())
 }
 
+fn abstract_sockaddr_len(name: &[u8]) -> u64 {
+    3 + name.len() as u64
+}
+
 fn guest_i32(store: &Arc<Mutex<PartitionedMemoryStore>>, address: u64) -> i32 {
     i32::from_le_bytes(
         guest_memory_reader(Arc::clone(store))(address, 4)
@@ -133,6 +142,14 @@ fn iovec(address: u64, len: u64) -> [u8; 16] {
     let mut bytes = [0; 16];
     bytes[..8].copy_from_slice(&address.to_le_bytes());
     bytes[8..].copy_from_slice(&len.to_le_bytes());
+    bytes
+}
+
+fn sockaddr_un_abstract(name: &[u8]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(3 + name.len());
+    bytes.extend_from_slice(&(RISCV_LINUX_AF_UNIX as u16).to_le_bytes());
+    bytes.push(0);
+    bytes.extend_from_slice(name);
     bytes
 }
 
@@ -977,6 +994,486 @@ fn linux_table_socketpair_roundtrips_bidirectional_bytes_and_poll_without_pipe_i
             Some(&writer),
         )),
         linux_error(RISCV_LINUX_EBADF)
+    );
+}
+
+#[test]
+fn linux_table_unix_listener_accepts_guest_only_stream_connection() {
+    let store = socket_store();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+    let sockaddr_len = abstract_sockaddr_len(b"rem6-listener");
+
+    let server_fd = return_value(handle_with_memory(
+        &mut state,
+        RISCV_LINUX_SOCKET,
+        [RISCV_LINUX_AF_UNIX, RISCV_LINUX_SOCK_STREAM, 0, 0, 0, 0],
+        None,
+        None,
+    ));
+    let client_fd = return_value(handle_with_memory(
+        &mut state,
+        RISCV_LINUX_SOCKET,
+        [RISCV_LINUX_AF_UNIX, RISCV_LINUX_SOCK_STREAM, 0, 0, 0, 0],
+        None,
+        None,
+    ));
+    assert_eq!(server_fd, 3);
+    assert_eq!(client_fd, 4);
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x93a0,
+        &1_i32.to_le_bytes()
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_SETSOCKOPT,
+            [
+                client_fd,
+                RISCV_LINUX_SOL_SOCKET,
+                RISCV_LINUX_SO_REUSEADDR,
+                0x93a0,
+                4,
+                0,
+            ],
+            Some(&reader),
+            None,
+        )),
+        0
+    );
+
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_BIND,
+            [server_fd, 0x9500, sockaddr_len, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        0
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_LISTEN,
+            [server_fd, 4, 0, 0, 0, 0],
+            None,
+            None,
+        )),
+        0
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_CONNECT,
+            [client_fd, 0x9500, sockaddr_len, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        0
+    );
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x93a0,
+        &0_i32.to_le_bytes()
+    ));
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x93c0,
+        &4_u32.to_le_bytes()
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_GETSOCKOPT,
+            [
+                client_fd,
+                RISCV_LINUX_SOL_SOCKET,
+                RISCV_LINUX_SO_REUSEADDR,
+                0x93a0,
+                0x93c0,
+                0,
+            ],
+            Some(&reader),
+            Some(&writer),
+        )),
+        0
+    );
+    assert_eq!(guest_i32(&store, 0x93a0), 1);
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_WRITE,
+            [client_fd, 0x9000, 13, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        13
+    );
+    let accepted_fd = return_value(handle_with_memory(
+        &mut state,
+        RISCV_LINUX_ACCEPT4,
+        [
+            server_fd,
+            0,
+            0,
+            RISCV_LINUX_O_CLOEXEC | RISCV_LINUX_O_NONBLOCK,
+            0,
+            0,
+        ],
+        None,
+        None,
+    ));
+    assert_eq!(accepted_fd, 5);
+    let accepted_guest_fd = GuestFd::new(accepted_fd as i32).unwrap();
+    assert!(state.guest_fds().close_on_exec(accepted_guest_fd).unwrap());
+    assert_eq!(
+        state
+            .guest_fds()
+            .status_flags(accepted_guest_fd)
+            .unwrap()
+            .bits()
+            & RISCV_LINUX_O_NONBLOCK as u32,
+        RISCV_LINUX_O_NONBLOCK as u32
+    );
+
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_READ,
+            [accepted_fd, 0x9100, 13, 0, 0, 0],
+            None,
+            Some(&writer),
+        )),
+        13
+    );
+    assert_eq!(
+        guest_memory_reader(Arc::clone(&store))(0x9100, 13),
+        Some(b"left-to-right".to_vec())
+    );
+
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_WRITE,
+            [accepted_fd, 0x9020, 13, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        13
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_READ,
+            [client_fd, 0x9120, 13, 0, 0, 0],
+            None,
+            Some(&writer),
+        )),
+        13
+    );
+    assert_eq!(
+        guest_memory_reader(Arc::clone(&store))(0x9120, 13),
+        Some(b"right-to-left".to_vec())
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_unix_listener_preserves_role_and_pending_readiness() {
+    let store = socket_store();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+    let sockaddr_len = abstract_sockaddr_len(b"rem6-listener");
+
+    let server_fd = return_value(handle_with_memory(
+        &mut state,
+        RISCV_LINUX_SOCKET,
+        [RISCV_LINUX_AF_UNIX, RISCV_LINUX_SOCK_STREAM, 0, 0, 0, 0],
+        None,
+        None,
+    ));
+    let client_fd = return_value(handle_with_memory(
+        &mut state,
+        RISCV_LINUX_SOCKET,
+        [RISCV_LINUX_AF_UNIX, RISCV_LINUX_SOCK_STREAM, 0, 0, 0, 0],
+        None,
+        None,
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_BIND,
+            [server_fd, 0x9500, sockaddr_len, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        0
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_LISTEN,
+            [server_fd, 1, 0, 0, 0, 0],
+            None,
+            None,
+        )),
+        0
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_CONNECT,
+            [server_fd, 0x9500, sockaddr_len, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        linux_error(RISCV_LINUX_EINVAL)
+    );
+
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9300,
+        &pollfd_bytes(server_fd, RISCV_LINUX_POLLIN | RISCV_LINUX_POLLOUT),
+    ));
+    assert_eq!(
+        handle_with_memory(
+            &mut state,
+            RISCV_LINUX_PPOLL,
+            [0x9300, 1, 0, 0, 0, 0],
+            Some(&reader),
+            Some(&writer),
+        ),
+        RiscvSyscallOutcome::Blocked
+    );
+    assert_eq!(pollfd_revents(&store), 0);
+
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_CONNECT,
+            [client_fd, 0x9500, sockaddr_len, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        0
+    );
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9300,
+        &pollfd_bytes(server_fd, RISCV_LINUX_POLLIN | RISCV_LINUX_POLLOUT),
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_PPOLL,
+            [0x9300, 1, 0, 0, 0, 0],
+            Some(&reader),
+            Some(&writer),
+        )),
+        1
+    );
+    let revents = pollfd_revents(&store);
+    assert_ne!(revents & RISCV_LINUX_POLLIN, 0);
+    assert_eq!(revents & RISCV_LINUX_POLLOUT, 0);
+    assert_eq!(revents & RISCV_LINUX_POLLHUP, 0);
+}
+
+#[test]
+fn linux_table_unix_listener_bounds_sockaddr_len_and_accept4_empty_queue_blocking_semantics() {
+    let store = socket_store();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+    let sockaddr_len = abstract_sockaddr_len(b"rem6-listener");
+
+    let server_fd = return_value(handle_with_memory(
+        &mut state,
+        RISCV_LINUX_SOCKET,
+        [RISCV_LINUX_AF_UNIX, RISCV_LINUX_SOCK_STREAM, 0, 0, 0, 0],
+        None,
+        None,
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_BIND,
+            [server_fd, 0x9500, u64::MAX, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        linux_error(RISCV_LINUX_EINVAL)
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_BIND,
+            [server_fd, 0x9500, sockaddr_len, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        0
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_LISTEN,
+            [server_fd, 1, 0, 0, 0, 0],
+            None,
+            None,
+        )),
+        0
+    );
+    assert_eq!(
+        handle_with_memory(
+            &mut state,
+            RISCV_LINUX_ACCEPT4,
+            [
+                server_fd,
+                0,
+                0,
+                RISCV_LINUX_O_CLOEXEC | RISCV_LINUX_O_NONBLOCK,
+                0,
+                0,
+            ],
+            None,
+            None,
+        ),
+        RiscvSyscallOutcome::Blocked
+    );
+}
+
+#[test]
+fn linux_table_unix_listener_blocks_when_backlog_full_and_relisten_preserves_pending() {
+    let store = socket_store();
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(Arc::clone(&store)));
+    let writer = RiscvGuestMemoryWriter::new(guest_memory_writer(Arc::clone(&store)));
+    let mut state = RiscvSyscallState::new(0);
+    let sockaddr_len = abstract_sockaddr_len(b"rem6-listener");
+
+    let server_fd = return_value(handle_with_memory(
+        &mut state,
+        RISCV_LINUX_SOCKET,
+        [RISCV_LINUX_AF_UNIX, RISCV_LINUX_SOCK_STREAM, 0, 0, 0, 0],
+        None,
+        None,
+    ));
+    let first_client_fd = return_value(handle_with_memory(
+        &mut state,
+        RISCV_LINUX_SOCKET,
+        [RISCV_LINUX_AF_UNIX, RISCV_LINUX_SOCK_STREAM, 0, 0, 0, 0],
+        None,
+        None,
+    ));
+    let second_client_fd = return_value(handle_with_memory(
+        &mut state,
+        RISCV_LINUX_SOCKET,
+        [
+            RISCV_LINUX_AF_UNIX,
+            RISCV_LINUX_SOCK_STREAM | RISCV_LINUX_O_NONBLOCK,
+            0,
+            0,
+            0,
+            0,
+        ],
+        None,
+        None,
+    ));
+    let third_client_fd = return_value(handle_with_memory(
+        &mut state,
+        RISCV_LINUX_SOCKET,
+        [RISCV_LINUX_AF_UNIX, RISCV_LINUX_SOCK_STREAM, 0, 0, 0, 0],
+        None,
+        None,
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_BIND,
+            [server_fd, 0x9500, sockaddr_len, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        0
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_LISTEN,
+            [server_fd, 1, 0, 0, 0, 0],
+            None,
+            None,
+        )),
+        0
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_CONNECT,
+            [first_client_fd, 0x9500, sockaddr_len, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        0
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_CONNECT,
+            [second_client_fd, 0x9500, sockaddr_len, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        linux_error(RISCV_LINUX_EAGAIN)
+    );
+    assert_eq!(
+        handle_with_memory(
+            &mut state,
+            RISCV_LINUX_CONNECT,
+            [third_client_fd, 0x9500, sockaddr_len, 0, 0, 0],
+            Some(&reader),
+            None,
+        ),
+        RiscvSyscallOutcome::Blocked
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_LISTEN,
+            [server_fd, 8, 0, 0, 0, 0],
+            None,
+            None,
+        )),
+        0
+    );
+
+    let accepted_fd = return_value(handle_with_memory(
+        &mut state,
+        RISCV_LINUX_ACCEPT4,
+        [server_fd, 0, 0, 0, 0, 0],
+        None,
+        None,
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_WRITE,
+            [first_client_fd, 0x9000, 13, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        13
+    );
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_READ,
+            [accepted_fd, 0x9100, 13, 0, 0, 0],
+            None,
+            Some(&writer),
+        )),
+        13
+    );
+    assert_eq!(
+        guest_memory_reader(Arc::clone(&store))(0x9100, 13),
+        Some(b"left-to-right".to_vec())
     );
 }
 

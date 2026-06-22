@@ -325,6 +325,29 @@ impl RiscvSyscallTable {
                     value: syscall_socketpair(request, state, writer),
                 })
             }
+            RISCV_LINUX_BIND => guest_memory_reader.map(|reader| RiscvSyscallOutcome::Return {
+                value: syscall_socket_bind(request, state, reader),
+            }),
+            RISCV_LINUX_LISTEN => Some(RiscvSyscallOutcome::Return {
+                value: syscall_socket_listen(request, state),
+            }),
+            RISCV_LINUX_ACCEPT => match syscall_socket_accept(request, state, 0) {
+                Some(value) => Some(RiscvSyscallOutcome::Return { value }),
+                None => Some(RiscvSyscallOutcome::Blocked),
+            },
+            RISCV_LINUX_CONNECT => {
+                let reader = guest_memory_reader?;
+                match syscall_socket_connect(request, state, reader) {
+                    Some(value) => Some(RiscvSyscallOutcome::Return { value }),
+                    None => Some(RiscvSyscallOutcome::Blocked),
+                }
+            }
+            RISCV_LINUX_ACCEPT4 => {
+                match syscall_socket_accept(request, state, request.argument(3)) {
+                    Some(value) => Some(RiscvSyscallOutcome::Return { value }),
+                    None => Some(RiscvSyscallOutcome::Blocked),
+                }
+            }
             RISCV_LINUX_GETSOCKNAME => {
                 guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
                     value: syscall_getsockname(request, state, writer),
