@@ -1,6 +1,9 @@
 use std::collections::BTreeSet;
 
-use rem6_fabric::{FabricActivityProfile, FabricHopActivity, FabricLaneActivity, FabricModel};
+use rem6_fabric::{
+    FabricActivityProfile, FabricHopActivity, FabricLaneActivity, FabricModel,
+    FabricVirtualNetworkActivity,
+};
 use rem6_transport::MemoryTransport;
 
 use crate::RunFabricConfig;
@@ -107,6 +110,10 @@ impl Rem6RunFabricSummary {
 
     pub(crate) fn hop_activities(&self) -> &[FabricHopActivity] {
         &self.hop_activities
+    }
+
+    pub(crate) fn virtual_network_activities(&self) -> Vec<FabricVirtualNetworkActivity> {
+        FabricVirtualNetworkActivity::from_lanes(self.lane_activities.iter())
     }
 }
 

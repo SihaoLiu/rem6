@@ -1,6 +1,7 @@
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::dram::emit_dram_stats;
+use super::fabric::emit_fabric_virtual_network_stats;
 use super::text::stats_snapshot_text;
 use super::{
     emit_data_cache_prefetch_summary_stats, emit_data_cache_summary_stats, emit_transport_stats,
@@ -334,81 +335,5 @@ fn emit_gpu_fabric_stats(
         StatResetPolicy::Monotonic,
         summary.contended_lane_count() as u64,
     )?;
-    for activity in summary.virtual_network_activities() {
-        if activity.is_empty() {
-            continue;
-        }
-        let prefix = format!("{prefix}.vn{}", activity.virtual_network().get());
-        increment_stat(
-            stats,
-            &format!("{prefix}.active_lanes"),
-            "Count",
-            StatResetPolicy::Monotonic,
-            activity.active_lane_count() as u64,
-        )?;
-        increment_stat(
-            stats,
-            &format!("{prefix}.transfers"),
-            "Count",
-            StatResetPolicy::Monotonic,
-            activity.transfer_count() as u64,
-        )?;
-        increment_stat(
-            stats,
-            &format!("{prefix}.bytes"),
-            "Byte",
-            StatResetPolicy::Monotonic,
-            activity.byte_count(),
-        )?;
-        increment_stat(
-            stats,
-            &format!("{prefix}.flits"),
-            "Count",
-            StatResetPolicy::Monotonic,
-            activity.flit_count(),
-        )?;
-        increment_stat(
-            stats,
-            &format!("{prefix}.occupied_ticks"),
-            "Tick",
-            StatResetPolicy::Monotonic,
-            activity.occupied_ticks(),
-        )?;
-        increment_stat(
-            stats,
-            &format!("{prefix}.queue_delay_ticks"),
-            "Tick",
-            StatResetPolicy::Monotonic,
-            activity.queue_delay_ticks(),
-        )?;
-        increment_stat(
-            stats,
-            &format!("{prefix}.max_queue_delay_ticks"),
-            "Tick",
-            StatResetPolicy::Monotonic,
-            activity.max_queue_delay_ticks(),
-        )?;
-        increment_stat(
-            stats,
-            &format!("{prefix}.credit_delay_ticks"),
-            "Tick",
-            StatResetPolicy::Monotonic,
-            activity.credit_delay_ticks(),
-        )?;
-        increment_stat(
-            stats,
-            &format!("{prefix}.max_credit_delay_ticks"),
-            "Tick",
-            StatResetPolicy::Monotonic,
-            activity.max_credit_delay_ticks(),
-        )?;
-        increment_stat(
-            stats,
-            &format!("{prefix}.contended_lanes"),
-            "Count",
-            StatResetPolicy::Monotonic,
-            activity.contended_lane_count() as u64,
-        )?;
-    }
-    Ok(())
+    emit_fabric_virtual_network_stats(stats, prefix, summary.virtual_network_activities())
 }

@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{collections::BTreeSet, process::Command};
 
 use serde_json::Value;
 
@@ -985,6 +985,8 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         max_credit_delay_ticks,
         "monotonic",
     );
+    assert_run_fabric_virtual_network_stats(&stdout, fabric, 3);
+    assert_run_fabric_virtual_network_stats(&stdout, fabric, 4);
 }
 
 #[test]
@@ -2713,4 +2715,125 @@ fn json_u64(json: &Value, pointer: &str) -> u64 {
     json.pointer(pointer)
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("missing u64 JSON field {pointer}"))
+}
+
+fn assert_run_fabric_virtual_network_stats(stdout: &str, fabric: &Value, virtual_network: u64) {
+    let lanes = fabric
+        .get("lane_activities")
+        .and_then(Value::as_array)
+        .expect("fabric lane activities");
+    let mut active_links = BTreeSet::new();
+    let mut contended_links = BTreeSet::new();
+    let mut transfers = 0;
+    let mut bytes = 0;
+    let mut flits = 0;
+    let mut occupied_ticks = 0;
+    let mut queue_delay_ticks = 0;
+    let mut max_queue_delay_ticks = 0;
+    let mut credit_delay_ticks = 0;
+    let mut max_credit_delay_ticks = 0;
+
+    for lane in lanes {
+        if lane.get("virtual_network").and_then(Value::as_u64) != Some(virtual_network) {
+            continue;
+        }
+        let link = lane
+            .get("link")
+            .and_then(Value::as_str)
+            .expect("fabric lane link");
+        active_links.insert(link);
+        let lane_queue_delay_ticks = lane_u64(lane, "queue_delay_ticks");
+        if lane_queue_delay_ticks != 0 {
+            contended_links.insert(link);
+        }
+        transfers += lane_u64(lane, "transfer_count");
+        bytes += lane_u64(lane, "byte_count");
+        flits += lane_u64(lane, "flit_count");
+        occupied_ticks += lane_u64(lane, "occupied_ticks");
+        queue_delay_ticks += lane_queue_delay_ticks;
+        max_queue_delay_ticks = max_queue_delay_ticks.max(lane_u64(lane, "max_queue_delay_ticks"));
+        credit_delay_ticks += lane_u64(lane, "credit_delay_ticks");
+        max_credit_delay_ticks =
+            max_credit_delay_ticks.max(lane_u64(lane, "max_credit_delay_ticks"));
+    }
+
+    assert!(
+        !active_links.is_empty(),
+        "missing VN{virtual_network} lane activity"
+    );
+    let prefix = format!("sim.memory.fabric.vn{virtual_network}");
+    assert_stat(
+        stdout,
+        &format!("{prefix}.active_lanes"),
+        "Count",
+        active_links.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.transfers"),
+        "Count",
+        transfers,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.bytes"),
+        "Byte",
+        bytes,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.flits"),
+        "Count",
+        flits,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.occupied_ticks"),
+        "Tick",
+        occupied_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.queue_delay_ticks"),
+        "Tick",
+        queue_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.max_queue_delay_ticks"),
+        "Tick",
+        max_queue_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.credit_delay_ticks"),
+        "Tick",
+        credit_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.max_credit_delay_ticks"),
+        "Tick",
+        max_credit_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.contended_lanes"),
+        "Count",
+        contended_links.len() as u64,
+        "monotonic",
+    );
+}
+
+fn lane_u64(lane: &Value, field: &str) -> u64 {
+    lane.get(field).and_then(Value::as_u64).unwrap_or(0)
 }
