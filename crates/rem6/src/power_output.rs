@@ -9,6 +9,7 @@ use crate::data_cache_runtime::CliDataCacheSummary;
 use crate::gpu_cli::{Rem6GpuComputeUnitActivity, Rem6GpuRunExecutionSummary};
 use crate::{
     PowerAnalysisFormat, Rem6CliError, Rem6CoreSummary, Rem6DramSummary, Rem6MemoryResourceSummary,
+    Rem6TraceReplayExecutionSummary,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -61,6 +62,19 @@ pub(crate) fn gpu_run_power_analysis_artifact(
         output,
         execution.final_tick(),
         records_for_gpu_run(execution, data_cache, dram),
+    )
+}
+
+pub(crate) fn trace_replay_power_analysis_artifact(
+    format: PowerAnalysisFormat,
+    output: PathBuf,
+    execution: &Rem6TraceReplayExecutionSummary,
+) -> Result<Rem6PowerAnalysisArtifact, Rem6CliError> {
+    build_power_analysis_artifact(
+        format,
+        output,
+        execution.final_tick(),
+        records_for_trace_replay(execution),
     )
 }
 
@@ -147,6 +161,28 @@ fn records_for_gpu_run(
         records.push(record);
     }
     if let Some(record) = dram_power_record(dram, execution.final_tick()) {
+        records.push(record);
+    }
+    records
+}
+
+fn records_for_trace_replay(
+    execution: &Rem6TraceReplayExecutionSummary,
+) -> Vec<PowerAnalysisRecord> {
+    let mut records = Vec::new();
+    if let Some(record) = cache_power_record(
+        "trace_replay.data_cache",
+        execution.data_cache(),
+        execution.final_tick(),
+        39.0,
+        0.012,
+    ) {
+        records.push(record);
+    }
+    if let Some(record) = dram_power_record(
+        &trace_replay_dram_summary(execution.data_cache_dram_summary()),
+        execution.final_tick(),
+    ) {
         records.push(record);
     }
     records
@@ -350,6 +386,27 @@ fn dram_power_record(dram: &Rem6DramSummary, final_tick: u64) -> Option<PowerAna
         )
         .expect("run DRAM power records use valid residency and finite watts"),
     )
+}
+
+fn trace_replay_dram_summary(
+    summary: &rem6_workload::WorkloadParallelExecutionSummary,
+) -> Rem6DramSummary {
+    Rem6DramSummary {
+        active_targets: summary.active_dram_target_count() as u64,
+        active_ports: summary.active_dram_port_count() as u64,
+        active_banks: summary.active_dram_bank_count() as u64,
+        accesses: summary.dram_access_count() as u64,
+        reads: summary.dram_read_count() as u64,
+        writes: summary.dram_write_count() as u64,
+        row_hits: summary.dram_row_hit_count() as u64,
+        row_misses: summary.dram_row_miss_count() as u64,
+        commands: summary.dram_command_count() as u64,
+        turnarounds: summary.dram_turnaround_count() as u64,
+        total_ready_latency_ticks: summary.dram_total_ready_latency_cycles(),
+        max_ready_latency_ticks: summary.dram_max_ready_latency_cycles(),
+        profiled_targets: summary.active_dram_target_count() as u64,
+        ..Rem6DramSummary::default()
+    }
 }
 
 fn watts_from_activity(

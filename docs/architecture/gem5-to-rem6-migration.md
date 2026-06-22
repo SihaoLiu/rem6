@@ -833,8 +833,7 @@ top-level `rem6 run` retired-instruction probe summaries and CLI-configured
 retired-PC target counter summaries,
 O3 writeback transfer
 deferred-completion checkpoint payloads, and custom plus library-level and
-`rem6 run --power-output` plus `rem6 gpu-run --power-output` McPAT-shaped and
-DSENT-shaped power-analysis exports.
+`rem6 run --power-output`, `rem6 trace-replay --power-output`, and `rem6 gpu-run --power-output` McPAT-shaped and DSENT-shaped power-analysis exports.
 
 **Not migrated:** Complete gem5 text-stat parity, full debug execution control,
 remaining broad CSR GDB register-cache coverage, broader debug-run stat parity beyond current trace record counts, runtime resource counters,
@@ -1118,7 +1117,7 @@ complete NoMali PIO device model remain absent.
 - [x] rem6-power can export typed power-analysis records.
 - [x] McPAT-shaped XML export serializes power, thermal, and residency records.
 - [x] DSENT-shaped CSV export serializes power, thermal, and residency records.
-- [x] `rem6 run --power-output` and `rem6 gpu-run --power-output` write executed-run activity-derived power-analysis artifacts.
+- [x] `rem6 run --power-output`, `rem6 trace-replay --power-output`, and `rem6 gpu-run --power-output` write executed-run activity-derived power-analysis artifacts.
 - [ ] McPAT-compatible ingestion/export parity is complete.
 - [ ] DSENT-compatible ingestion/export parity is complete.
 - [x] NoMali-compatible GPU adapter evidence exists.
@@ -1130,8 +1129,7 @@ Top-level `rem6 run --power-output` emits an activity-derived McPAT-shaped or
 DSENT-shaped artifact from executed CPU, instruction-cache, data-cache, and
 memory-transport/DRAM summaries. Top-level `rem6 run --debug-flags Power`
 emits the same executed-run activity-derived CPU, cache, memory-transport, and
-DRAM power records in deterministic run JSON. Top-level
-`rem6 gpu-run --power-output` emits activity-derived GPU compute-unit, GPU
+DRAM power records in deterministic run JSON. Top-level `rem6 trace-replay --power-output` emits activity-derived trace replay data-cache and DRAM power records from executed packet replay summaries. Top-level `rem6 gpu-run --power-output` emits activity-derived GPU compute-unit, GPU
 data-cache, and DRAM power records, with the artifact path reported in the run
 JSON or CLI output envelope.
 Top-level `rem6 gpu-run --nomali-output` emits a deterministic
@@ -1148,7 +1146,8 @@ ingestion, full external schema parity, and calibrated power/thermal activity.
 **Evidence:** rem6-power power-analysis export self-tests including custom XML,
 McPAT-shaped XML, and DSENT-shaped CSV output; `rem6 run` CLI tests for
 `--power-output`, executed instruction-cache, data-cache, memory-transport,
-and DRAM activity records, `--debug-flags Power` run-JSON records,
+and DRAM activity records, `rem6 trace-replay --power-output` data-cache plus
+DRAM activity records, `--debug-flags Power` run-JSON records,
 envelope reporting, and load-only rejection;
 `rem6 gpu-run` CLI and TOML tests
 for McPAT-shaped and DSENT-shaped activity-derived output; CLI and TOML tests

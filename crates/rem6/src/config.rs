@@ -143,6 +143,8 @@ pub struct Rem6TraceReplayConfig {
     stats_format: StatsFormat,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
+    power_format: PowerAnalysisFormat,
+    power_output: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -275,6 +277,8 @@ struct Rem6TraceReplayFileConfig {
     stats_format: Option<String>,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
+    power_format: Option<String>,
+    power_output: Option<PathBuf>,
     #[serde(skip)]
     config_dir: Option<PathBuf>,
 }

@@ -1754,6 +1754,80 @@ fn rem6_trace_replay_data_cache_profiled_dram_miss_emits_backing_dram_stats() {
     );
 }
 
+#[test]
+fn rem6_trace_replay_power_output_exports_activity_records() {
+    let workspace = temp_workspace("trace-replay-power-output");
+    let trace = workspace.join("trace.pb");
+    std::fs::write(
+        &trace,
+        packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    )
+    .unwrap();
+    let power_path = workspace.join("trace-power.xml");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "trace-replay",
+            "--trace",
+            trace.to_str().unwrap(),
+            "--route",
+            "cpu0.power",
+            "--memory-start",
+            "0x1000",
+            "--memory-size",
+            "0x1000",
+            "--max-tick",
+            "64",
+            "--tick-frequency",
+            "1000",
+            "--line-bytes",
+            "64",
+            "--agent",
+            "7",
+            "--control-partition",
+            "2",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-dram-memory-profile",
+            "hbm",
+            "--power-output",
+            power_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"power_analysis\":{\"format\":\"mcpat-xml\""));
+    assert!(stdout.contains(&format!("\"artifact\":\"{}\"", power_path.display())));
+    let power = std::fs::read_to_string(power_path).unwrap();
+    assert!(power.contains("<mcpat_power tick=\""));
+    assert!(power.contains("<component id=\"trace_replay.data_cache\""));
+    assert!(power.contains("<component id=\"memory.dram\""));
+}
+
 fn trace_replay_output(trace: &std::path::Path, max_tick: &str) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([

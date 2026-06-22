@@ -108,8 +108,13 @@ impl Rem6TraceReplayArtifact {
             .as_ref()
             .map(Rem6TraceReplayExternalAdapterSummary::to_json)
             .unwrap_or_else(|| "null".to_string());
+        let power_analysis = self
+            .power_analysis
+            .as_ref()
+            .map(crate::power_output::Rem6PowerAnalysisArtifact::to_json)
+            .unwrap_or_else(|| "null".to_string());
         format!(
-            "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_resource\":{},\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"data_cache_protocol\":{},\"data_cache_dram_memory_profile\":{},\"fabric_link\":{},\"fabric_bandwidth_bytes_per_tick\":{},\"fabric_request_virtual_network\":{},\"fabric_response_virtual_network\":{},\"fabric_credit_depth\":{},\"external_adapter\":{},\"simulation\":{},\"summary\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_resource\":{},\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"data_cache_protocol\":{},\"data_cache_dram_memory_profile\":{},\"fabric_link\":{},\"fabric_bandwidth_bytes_per_tick\":{},\"fabric_request_virtual_network\":{},\"fabric_response_virtual_network\":{},\"fabric_credit_depth\":{},\"external_adapter\":{},\"simulation\":{},\"summary\":{},\"power_analysis\":{},\"stats\":{}}}\n",
             self.schema,
             json_escape(&self.config.trace_input()),
             trace_resource,
@@ -137,6 +142,7 @@ impl Rem6TraceReplayArtifact {
                 self.execution.data_cache_dram_summary(),
                 self.execution.data_cache_dram_accesses(),
             ),
+            power_analysis,
             self.stats_json,
         )
     }

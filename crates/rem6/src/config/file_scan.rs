@@ -112,6 +112,8 @@ pub(super) fn trace_replay_file_config_from_args(
             "--stats-format",
             "--output",
             "--stats-output",
+            "--power-format",
+            "--power-output",
         ],
         &[],
     )

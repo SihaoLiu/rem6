@@ -27,6 +27,7 @@ use crate::config::{Rem6TraceReplayConfig, StatsFormat, TraceReplayExternalAdapt
 use crate::data_cache_runtime::CliDataCacheSummary;
 use crate::formatting::bytes_to_hex;
 use crate::guest_memory::build_cli_dram_profile;
+use crate::power_output::{trace_replay_power_analysis_artifact, Rem6PowerAnalysisArtifact};
 use crate::resource_acquire_cli::{
     acquire_manifest_required_resources, acquire_suite_required_resources,
     reject_runtime_remote_uri_resources,
@@ -55,6 +56,7 @@ pub struct Rem6TraceReplayArtifact {
     pub(crate) external_adapter: Option<Rem6TraceReplayExternalAdapterSummary>,
     pub(crate) stats_json: String,
     pub(crate) stats_text: String,
+    pub(crate) power_analysis: Option<Rem6PowerAnalysisArtifact>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -91,6 +93,14 @@ pub(crate) fn run_trace_replay_cli(args: Vec<String>) -> Result<String, Rem6CliE
         StatsFormat::Json => artifact.to_json(),
         StatsFormat::Text => artifact.stats_text.clone(),
     };
+    let mut extra_artifacts = Vec::new();
+    if let Some(artifact) = artifact.power_analysis.as_ref() {
+        extra_artifacts.push(crate::cli_output::ExtraCliArtifact {
+            name: "power_artifact",
+            path: artifact.output(),
+            contents: artifact.contents(),
+        });
+    }
     emit_cli_output(
         output,
         &artifact.stats_json,
@@ -98,7 +108,7 @@ pub(crate) fn run_trace_replay_cli(args: Vec<String>) -> Result<String, Rem6CliE
         artifact.config.output(),
         artifact.config.stats_output(),
         stats_format,
-        &[],
+        &extra_artifacts,
     )
 }
 
@@ -187,6 +197,16 @@ pub fn run_trace_replay_config(
         execution: &execution,
         external_adapter: external_adapter.as_ref(),
     })?;
+    let power_analysis = config
+        .power_output()
+        .map(|path| {
+            trace_replay_power_analysis_artifact(
+                config.power_format(),
+                path.to_path_buf(),
+                &execution,
+            )
+        })
+        .transpose()?;
 
     Ok(Rem6TraceReplayArtifact {
         schema: "rem6.cli.trace_replay.v1",
@@ -196,6 +216,7 @@ pub fn run_trace_replay_config(
         external_adapter,
         stats_json: stats.json,
         stats_text: stats.text,
+        power_analysis,
     })
 }
 
