@@ -1,0 +1,414 @@
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+
+use serde::Deserialize;
+
+use crate::cli_output;
+use crate::config::StatsFormat;
+use crate::formatting::json_escape;
+use crate::stats_output::multi_run_stats_output;
+use crate::{run_config, Rem6CliError, Rem6ExecutionStop, Rem6ExecutionSummary, Rem6RunConfig};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6MultiRunConfig {
+    suite_id: String,
+    runs: Vec<Rem6MultiRunEntry>,
+    stats_format: StatsFormat,
+    output: Option<PathBuf>,
+    stats_output: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Rem6MultiRunEntry {
+    id: String,
+    config: PathBuf,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Rem6MultiRunArtifact {
+    schema: &'static str,
+    config: Rem6MultiRunConfig,
+    runs: Vec<Rem6MultiRunSummary>,
+    stats_json: String,
+    stats_text: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Rem6MultiRunSummary {
+    id: String,
+    config: PathBuf,
+    run_schema: &'static str,
+    status: &'static str,
+    executed: bool,
+    final_tick: u64,
+    committed_instructions: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rem6MultiRunFileRoot {
+    multi_run: Option<Rem6MultiRunFileConfig>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rem6MultiRunFileConfig {
+    suite_id: Option<String>,
+    stats_format: Option<String>,
+    output: Option<PathBuf>,
+    stats_output: Option<PathBuf>,
+    runs: Option<Vec<Rem6MultiRunFileEntry>>,
+    #[serde(skip)]
+    config_dir: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rem6MultiRunFileEntry {
+    id: Option<String>,
+    config: Option<PathBuf>,
+}
+
+impl Rem6MultiRunConfig {
+    pub fn parse_args<I, S>(args: I) -> Result<Self, Rem6CliError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut args = args.into_iter().map(Into::into);
+        let Some(command) = args.next() else {
+            return Err(Rem6CliError::MissingCommand);
+        };
+        if command != "multi-run" {
+            return Err(Rem6CliError::UnsupportedCommand { command });
+        }
+        let remaining_args = args.collect::<Vec<_>>();
+        let file_config = multi_run_file_config_from_args(&remaining_args)?
+            .map(|path| load_multi_run_file_config(&path))
+            .transpose()?
+            .unwrap_or_default();
+
+        let mut suite_id = file_config.suite_id.clone();
+        let mut runs = file_config.runs()?;
+        let mut stats_format = file_config
+            .stats_format
+            .as_deref()
+            .map(StatsFormat::parse)
+            .transpose()?
+            .unwrap_or(StatsFormat::Json);
+        let mut output = file_config
+            .output
+            .as_deref()
+            .map(|path| file_config.resolve_path(path));
+        let mut stats_output = file_config
+            .stats_output
+            .as_deref()
+            .map(|path| file_config.resolve_path(path));
+
+        let mut args = remaining_args.into_iter();
+        while let Some(flag) = args.next() {
+            match flag.as_str() {
+                "--config" => {
+                    let _ = required_value(&flag, args.next())?;
+                }
+                "--suite-id" => {
+                    suite_id = Some(required_value(&flag, args.next())?);
+                }
+                "--run" => {
+                    runs.push(parse_multi_run_entry(&required_value(&flag, args.next())?)?);
+                }
+                "--stats-format" => {
+                    stats_format = StatsFormat::parse(&required_value(&flag, args.next())?)?;
+                }
+                "--output" => {
+                    output = Some(PathBuf::from(required_value(&flag, args.next())?));
+                }
+                "--stats-output" => {
+                    stats_output = Some(PathBuf::from(required_value(&flag, args.next())?));
+                }
+                _ => return Err(Rem6CliError::UnknownFlag { flag }),
+            }
+        }
+
+        if let (Some(output), Some(stats_output)) = (&output, &stats_output) {
+            if output == stats_output {
+                return Err(Rem6CliError::ConflictingOutputPaths {
+                    path: output.to_path_buf(),
+                });
+            }
+        }
+        require_unique_run_ids(&runs)?;
+
+        Ok(Self {
+            suite_id: suite_id.ok_or(Rem6CliError::MissingRequiredFlag {
+                flag: "multi_run.suite_id",
+            })?,
+            runs: (!runs.is_empty())
+                .then_some(runs)
+                .ok_or(Rem6CliError::MissingRequiredFlag {
+                    flag: "multi_run.runs",
+                })?,
+            stats_format,
+            output,
+            stats_output,
+        })
+    }
+
+    const fn stats_format(&self) -> StatsFormat {
+        self.stats_format
+    }
+
+    fn output(&self) -> Option<&Path> {
+        self.output.as_deref()
+    }
+
+    fn stats_output(&self) -> Option<&Path> {
+        self.stats_output.as_deref()
+    }
+}
+
+impl Rem6MultiRunFileConfig {
+    fn resolve_path(&self, path: &Path) -> PathBuf {
+        if path.is_relative() {
+            self.config_dir
+                .as_deref()
+                .map(|dir| dir.join(path))
+                .unwrap_or_else(|| path.to_path_buf())
+        } else {
+            path.to_path_buf()
+        }
+    }
+
+    fn runs(&self) -> Result<Vec<Rem6MultiRunEntry>, Rem6CliError> {
+        self.runs
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .map(|entry| {
+                Ok(Rem6MultiRunEntry {
+                    id: entry.id.clone().ok_or(Rem6CliError::MissingRequiredFlag {
+                        flag: "multi_run.runs.id",
+                    })?,
+                    config: self.resolve_path(entry.config.as_deref().ok_or(
+                        Rem6CliError::MissingRequiredFlag {
+                            flag: "multi_run.runs.config",
+                        },
+                    )?),
+                })
+            })
+            .collect()
+    }
+}
+
+pub fn run_multi_run_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
+    let config = Rem6MultiRunConfig::parse_args(args)?;
+    let artifact = run_multi_run_config(config)?;
+    let output = match artifact.config.stats_format() {
+        StatsFormat::Json => artifact.to_json(),
+        StatsFormat::Text => artifact.stats_text.clone(),
+    };
+    cli_output::emit_cli_output(
+        output,
+        &artifact.stats_json,
+        &artifact.stats_text,
+        artifact.config.output(),
+        artifact.config.stats_output(),
+        artifact.config.stats_format(),
+        &[],
+    )
+}
+
+pub fn run_multi_run_config(
+    config: Rem6MultiRunConfig,
+) -> Result<Rem6MultiRunArtifact, Rem6CliError> {
+    let mut run_summaries = Vec::with_capacity(config.runs.len());
+    for run in &config.runs {
+        let child_config = Rem6RunConfig::parse_args([
+            "run".to_string(),
+            "--config".to_string(),
+            path_arg(&run.config),
+        ])?;
+        let artifact = run_config(child_config)?;
+        run_summaries.push(Rem6MultiRunSummary::from_run_artifact(
+            run.id.clone(),
+            run.config.clone(),
+            &artifact,
+        ));
+    }
+
+    let succeeded = run_summaries.len() as u64;
+    let failed = 0;
+    let total_final_tick = run_summaries
+        .iter()
+        .map(|summary| summary.final_tick)
+        .sum::<u64>();
+    let total_committed_instructions = run_summaries
+        .iter()
+        .map(|summary| summary.committed_instructions)
+        .sum::<u64>();
+    let stats = multi_run_stats_output(
+        config.runs.len() as u64,
+        succeeded,
+        failed,
+        total_final_tick,
+        total_committed_instructions,
+    )?;
+
+    Ok(Rem6MultiRunArtifact {
+        schema: "rem6.cli.multi-run.v1",
+        config,
+        runs: run_summaries,
+        stats_json: stats.json,
+        stats_text: stats.text,
+    })
+}
+
+impl Rem6MultiRunSummary {
+    fn from_run_artifact(id: String, config: PathBuf, artifact: &crate::Rem6RunArtifact) -> Self {
+        let (status, final_tick, committed_instructions) =
+            artifact
+                .execution
+                .as_ref()
+                .map_or(("loaded", 0, 0), |execution| {
+                    (
+                        execution_status(execution),
+                        execution.final_tick,
+                        execution.committed_instructions,
+                    )
+                });
+        Self {
+            id,
+            config,
+            run_schema: artifact.schema,
+            status,
+            executed: artifact.execution.is_some(),
+            final_tick,
+            committed_instructions,
+        }
+    }
+
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"id\":\"{}\",\"config\":\"{}\",\"run_schema\":\"{}\",\"status\":\"{}\",\"executed\":{},\"final_tick\":{},\"committed_instructions\":{}}}",
+            json_escape(&self.id),
+            json_escape(&self.config.display().to_string()),
+            self.run_schema,
+            self.status,
+            self.executed,
+            self.final_tick,
+            self.committed_instructions,
+        )
+    }
+}
+
+impl Rem6MultiRunArtifact {
+    pub fn to_json(&self) -> String {
+        let runs = self
+            .runs
+            .iter()
+            .map(Rem6MultiRunSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
+        let total_final_tick = self
+            .runs
+            .iter()
+            .map(|summary| summary.final_tick)
+            .sum::<u64>();
+        let total_committed_instructions = self
+            .runs
+            .iter()
+            .map(|summary| summary.committed_instructions)
+            .sum::<u64>();
+        format!(
+            "{{\"schema\":\"{}\",\"suite_id\":\"{}\",\"runs\":{},\"succeeded\":{},\"failed\":0,\"total_final_tick\":{},\"total_committed_instructions\":{},\"run_summaries\":[{}],\"stats\":{}}}\n",
+            self.schema,
+            json_escape(&self.config.suite_id),
+            self.runs.len(),
+            self.runs.len(),
+            total_final_tick,
+            total_committed_instructions,
+            runs,
+            self.stats_json,
+        )
+    }
+}
+
+fn execution_status(execution: &Rem6ExecutionSummary) -> &'static str {
+    match execution.stop {
+        Rem6ExecutionStop::Idle => "idle",
+        Rem6ExecutionStop::HostTrap { .. } => "executed_until_trap",
+        Rem6ExecutionStop::HostStop { .. } => "host_stop",
+        Rem6ExecutionStop::TickLimit { .. } => "stopped_at_tick_limit",
+        Rem6ExecutionStop::InstructionLimit { .. } => "stopped_at_instruction_limit",
+    }
+}
+
+fn multi_run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
+    let mut path = None;
+    let mut index = 0;
+    while let Some(flag) = args.get(index) {
+        match flag.as_str() {
+            "--config" => {
+                path = Some(PathBuf::from(args.get(index + 1).cloned().ok_or_else(
+                    || Rem6CliError::MissingFlagValue { flag: flag.clone() },
+                )?));
+                index += 2;
+            }
+            "--suite-id" | "--run" | "--stats-format" | "--output" | "--stats-output" => {
+                index += 2;
+            }
+            _ => {
+                index += 1;
+            }
+        }
+    }
+    Ok(path)
+}
+
+fn load_multi_run_file_config(path: &Path) -> Result<Rem6MultiRunFileConfig, Rem6CliError> {
+    let text = std::fs::read_to_string(path).map_err(|error| Rem6CliError::ReadConfig {
+        path: path.to_path_buf(),
+        error: error.to_string(),
+    })?;
+    let mut config = toml::from_str::<Rem6MultiRunFileRoot>(&text)
+        .map_err(|error| Rem6CliError::ParseConfig {
+            path: path.to_path_buf(),
+            error: error.to_string(),
+        })?
+        .multi_run
+        .unwrap_or_default();
+    config.config_dir = path.parent().map(Path::to_path_buf);
+    Ok(config)
+}
+
+fn parse_multi_run_entry(value: &str) -> Result<Rem6MultiRunEntry, Rem6CliError> {
+    let Some((id, config)) = value.split_once(':') else {
+        return Err(Rem6CliError::MissingRequiredFlag {
+            flag: "--run <id>:<config>",
+        });
+    };
+    Ok(Rem6MultiRunEntry {
+        id: id.to_string(),
+        config: PathBuf::from(config),
+    })
+}
+
+fn require_unique_run_ids(runs: &[Rem6MultiRunEntry]) -> Result<(), Rem6CliError> {
+    let mut ids = HashSet::new();
+    for run in runs {
+        if !ids.insert(run.id.as_str()) {
+            return Err(Rem6CliError::DuplicateMultiRunId { id: run.id.clone() });
+        }
+    }
+    Ok(())
+}
+
+fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliError> {
+    value.ok_or_else(|| Rem6CliError::MissingFlagValue {
+        flag: flag.to_string(),
+    })
+}
+
+fn path_arg(path: &Path) -> String {
+    path.display().to_string()
+}

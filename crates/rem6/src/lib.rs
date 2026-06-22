@@ -41,6 +41,7 @@ mod gups_cli;
 mod host_actions;
 mod instruction_probe_summary;
 mod memory_resource_summary;
+mod multi_run_cli;
 mod parallel_stats;
 mod pipeline_stats;
 mod power_output;
@@ -91,6 +92,7 @@ pub(crate) use instruction_probe_summary::{
     Rem6PcCountTrackerSummary,
 };
 pub(crate) use memory_resource_summary::{Rem6MemoryResourceInputs, Rem6MemoryResourceSummary};
+pub use multi_run_cli::{run_multi_run_config, Rem6MultiRunArtifact, Rem6MultiRunConfig};
 use pipeline_stats::Rem6InOrderPipelineStageInFlightSummary;
 use power_output::{run_power_analysis_artifact, Rem6PowerAnalysisArtifact};
 use readfile_runtime::{read_readfiles, readfile_mmio_bus, LoadedReadfile, Rem6ReadfileSummary};
@@ -455,6 +457,7 @@ where
     };
     match command.as_str() {
         "run" => run_run_cli(args),
+        "multi-run" => multi_run_cli::run_multi_run_cli(args),
         "gpu-run" => gpu_cli::run_gpu_run_cli(args),
         "gups" => gups_cli::run_gups_cli(args),
         "trace-replay" => trace_replay_cli::run_trace_replay_cli(args),

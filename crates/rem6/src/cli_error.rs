@@ -207,6 +207,9 @@ pub enum Rem6CliError {
     InvalidParallelWorkerCount {
         value: String,
     },
+    DuplicateMultiRunId {
+        id: String,
+    },
     InvalidMemoryDump {
         value: String,
     },
@@ -591,6 +594,9 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidCoreCount { value } => write!(formatter, "invalid core count {value}"),
             Self::InvalidParallelWorkerCount { value } => {
                 write!(formatter, "invalid parallel worker count {value}")
+            }
+            Self::DuplicateMultiRunId { id } => {
+                write!(formatter, "multi-run ids must be unique: {id}")
             }
             Self::InvalidMemoryDump { value } => {
                 write!(formatter, "invalid memory dump request {value}")
