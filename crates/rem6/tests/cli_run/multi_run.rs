@@ -250,6 +250,99 @@ config = "packet.toml"
 }
 
 #[test]
+fn rem6_multi_run_run_flag_accepts_command_qualified_entries() {
+    let workspace = temp_workspace("multi-run-flag-command-qualified");
+    fs::write(
+        workspace.join("traffic.toml"),
+        r#"[gups]
+memory_start = 4096
+memory_size = 8
+updates = 2
+max_tick = 40
+stats_format = "json"
+rng_state = 0
+"#,
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("packet.pb"),
+        packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("packet.toml"),
+        r#"[trace_replay]
+trace = "packet.pb"
+route = "cpu0.fetch"
+memory_start = 4096
+memory_size = 4096
+max_tick = 64
+tick_frequency = 1000
+line_bytes = 64
+agent = 7
+control_partition = 2
+stats_format = "json"
+"#,
+    )
+    .unwrap();
+
+    let gups_run = format!("traffic:gups:{}", workspace.join("traffic.toml").display());
+    let trace_run = format!(
+        "packet:trace-replay:{}",
+        workspace.join("packet.toml").display()
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "multi-run",
+            "--suite-id",
+            "flag-mixed-smoke",
+            "--stats-format",
+            "json",
+            "--run",
+            &gups_run,
+            "--run",
+            &trace_run,
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"suite_id\":\"flag-mixed-smoke\""));
+    assert!(stdout.contains("\"runs\":2"));
+    assert!(stdout.contains("\"total_final_tick\":16"));
+    assert!(stdout.contains("\"total_scheduled_requests\":5"));
+    assert!(stdout.contains("\"id\":\"traffic\""));
+    assert!(stdout.contains("\"command\":\"gups\""));
+    assert!(stdout.contains("\"child_schema\":\"rem6.cli.gups.v1\""));
+    assert!(stdout.contains("\"id\":\"packet\""));
+    assert!(stdout.contains("\"command\":\"trace-replay\""));
+    assert!(stdout.contains("\"child_schema\":\"rem6.cli.trace_replay.v1\""));
+}
+
+#[test]
 fn rem6_multi_run_rejects_duplicate_run_ids() {
     let workspace = temp_workspace("multi-run-duplicate-ids");
     fs::write(

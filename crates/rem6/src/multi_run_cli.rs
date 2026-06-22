@@ -495,14 +495,22 @@ fn load_multi_run_file_config(path: &Path) -> Result<Rem6MultiRunFileConfig, Rem
 }
 
 fn parse_multi_run_entry(value: &str) -> Result<Rem6MultiRunEntry, Rem6CliError> {
-    let Some((id, config)) = value.split_once(':') else {
+    let Some((id, entry)) = value.split_once(':') else {
         return Err(Rem6CliError::MissingRequiredFlag {
             flag: "--run <id>:<config>",
         });
     };
+    let (command, config) = entry
+        .split_once(':')
+        .and_then(|(candidate, config)| {
+            Rem6MultiRunCommand::parse(candidate)
+                .ok()
+                .map(|command| (command, config))
+        })
+        .unwrap_or((Rem6MultiRunCommand::Run, entry));
     Ok(Rem6MultiRunEntry {
         id: id.to_string(),
-        command: Rem6MultiRunCommand::Run,
+        command,
         config: PathBuf::from(config),
     })
 }
