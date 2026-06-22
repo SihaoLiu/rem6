@@ -10,6 +10,7 @@ pub(super) fn parse_riscv_branch_predictor(value: &str) -> Option<RiscvBranchPre
         "bimode" => Some(RiscvBranchPredictorKind::BiMode),
         "tournament" => Some(RiscvBranchPredictorKind::Tournament),
         "tage-sc-l" => Some(RiscvBranchPredictorKind::TageScL),
+        "multiperspective-perceptron" => Some(RiscvBranchPredictorKind::MultiperspectivePerceptron),
         _ => None,
     }
 }

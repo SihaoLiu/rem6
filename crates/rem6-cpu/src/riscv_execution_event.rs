@@ -5,6 +5,7 @@ use rem6_memory::Address;
 use crate::{
     BiModeHistoryUpdate, BiModePrediction, BiModeTrainingUpdate, BranchUpdate, CpuFetchEvent,
     GShareHistoryUpdate, GSharePrediction, GShareTrainingUpdate, InOrderPipelineCycleRecord,
+    MultiperspectivePerceptronPrediction, MultiperspectivePerceptronTrainingUpdate,
     TageScLPrediction, TageScLTrainingUpdate, TournamentHistoryUpdate, TournamentPrediction,
     TournamentTrainingUpdate,
 };
@@ -19,6 +20,7 @@ pub struct RiscvCpuExecutionEvent {
     bimode_branch_update: Option<RiscvBiModeBranchUpdate>,
     tournament_branch_update: Option<RiscvTournamentBranchUpdate>,
     tage_sc_l_branch_update: Option<RiscvTageScLBranchUpdate>,
+    multiperspective_perceptron_branch_update: Option<RiscvMultiperspectivePerceptronBranchUpdate>,
     in_order_pipeline_cycle: Option<InOrderPipelineCycleRecord>,
     in_order_pipeline_data_wait_cycles: u64,
     counts_as_retired_instruction: bool,
@@ -103,6 +105,12 @@ pub struct RiscvTageScLBranchUpdate {
     training_update: TageScLTrainingUpdate,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvMultiperspectivePerceptronBranchUpdate {
+    prediction: MultiperspectivePerceptronPrediction,
+    training_update: MultiperspectivePerceptronTrainingUpdate,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct RiscvRetiredBranchUpdates {
     branch_update: Option<BranchUpdate>,
@@ -110,6 +118,7 @@ pub(crate) struct RiscvRetiredBranchUpdates {
     bimode_branch_update: Option<RiscvBiModeBranchUpdate>,
     tournament_branch_update: Option<RiscvTournamentBranchUpdate>,
     tage_sc_l_branch_update: Option<RiscvTageScLBranchUpdate>,
+    multiperspective_perceptron_branch_update: Option<RiscvMultiperspectivePerceptronBranchUpdate>,
 }
 
 impl RiscvRetiredBranchUpdates {
@@ -119,6 +128,7 @@ impl RiscvRetiredBranchUpdates {
         bimode_branch_update: RiscvBiModeBranchUpdate,
         tournament_branch_update: RiscvTournamentBranchUpdate,
         tage_sc_l_branch_update: RiscvTageScLBranchUpdate,
+        multiperspective_perceptron_branch_update: RiscvMultiperspectivePerceptronBranchUpdate,
     ) -> Self {
         Self {
             branch_update: Some(branch_update),
@@ -126,6 +136,9 @@ impl RiscvRetiredBranchUpdates {
             bimode_branch_update: Some(bimode_branch_update),
             tournament_branch_update: Some(tournament_branch_update),
             tage_sc_l_branch_update: Some(tage_sc_l_branch_update),
+            multiperspective_perceptron_branch_update: Some(
+                multiperspective_perceptron_branch_update,
+            ),
         }
     }
 
@@ -180,6 +193,26 @@ impl RiscvTageScLBranchUpdate {
     }
 }
 
+impl RiscvMultiperspectivePerceptronBranchUpdate {
+    pub const fn new(
+        prediction: MultiperspectivePerceptronPrediction,
+        training_update: MultiperspectivePerceptronTrainingUpdate,
+    ) -> Self {
+        Self {
+            prediction,
+            training_update,
+        }
+    }
+
+    pub const fn prediction(&self) -> &MultiperspectivePerceptronPrediction {
+        &self.prediction
+    }
+
+    pub const fn training_update(&self) -> &MultiperspectivePerceptronTrainingUpdate {
+        &self.training_update
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RiscvCoreDriveAction {
     FetchIssued { event: PartitionEventId },
@@ -221,6 +254,7 @@ impl RiscvCpuExecutionEvent {
             bimode_branch_update: None,
             tournament_branch_update: None,
             tage_sc_l_branch_update: None,
+            multiperspective_perceptron_branch_update: None,
             in_order_pipeline_cycle: None,
             in_order_pipeline_data_wait_cycles: 0,
             counts_as_retired_instruction: true,
@@ -282,6 +316,7 @@ impl RiscvCpuExecutionEvent {
             bimode_branch_update: None,
             tournament_branch_update: None,
             tage_sc_l_branch_update: None,
+            multiperspective_perceptron_branch_update: None,
             in_order_pipeline_cycle,
             in_order_pipeline_data_wait_cycles: 0,
             counts_as_retired_instruction,
@@ -303,6 +338,7 @@ impl RiscvCpuExecutionEvent {
             bimode_branch_update,
             tournament_branch_update,
             tage_sc_l_branch_update,
+            multiperspective_perceptron_branch_update,
         } = branch_updates;
         Self {
             fetch,
@@ -313,6 +349,7 @@ impl RiscvCpuExecutionEvent {
             bimode_branch_update,
             tournament_branch_update,
             tage_sc_l_branch_update,
+            multiperspective_perceptron_branch_update,
             in_order_pipeline_cycle,
             in_order_pipeline_data_wait_cycles,
             counts_as_retired_instruction,
@@ -353,6 +390,12 @@ impl RiscvCpuExecutionEvent {
 
     pub fn tage_sc_l_branch_update(&self) -> Option<&RiscvTageScLBranchUpdate> {
         self.tage_sc_l_branch_update.as_ref()
+    }
+
+    pub fn multiperspective_perceptron_branch_update(
+        &self,
+    ) -> Option<&RiscvMultiperspectivePerceptronBranchUpdate> {
+        self.multiperspective_perceptron_branch_update.as_ref()
     }
 
     pub fn in_order_pipeline_cycle(&self) -> Option<&InOrderPipelineCycleRecord> {

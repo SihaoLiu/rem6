@@ -8,9 +8,10 @@ use crate::{
     CpuFetchRecord, InOrderBranchPrediction, InOrderBranchRedirect, InOrderPipelineCycleRecord,
     InOrderPipelineInstruction, InOrderPipelineStage, RiscvBiModeBranchUpdate, RiscvCore,
     RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
-    RiscvTageScLBranchUpdate, RiscvTournamentBranchUpdate, StatisticalCorrectorBranchKind,
-    RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_TAGE_SC_L_THREAD,
-    RISCV_LOCAL_TOURNAMENT_THREAD,
+    RiscvMultiperspectivePerceptronBranchUpdate, RiscvTageScLBranchUpdate,
+    RiscvTournamentBranchUpdate, StatisticalCorrectorBranchKind, RISCV_LOCAL_BIMODE_THREAD,
+    RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
+    RISCV_LOCAL_TAGE_SC_L_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -701,6 +702,27 @@ fn retire_branch_predictions(
             tage_sc_l_target,
         )
         .map_err(RiscvCpuError::TageScLBranchPredictor)?;
+    let multiperspective_perceptron_prediction = state
+        .multiperspective_perceptron
+        .predict(
+            RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
+            pc,
+            conditional,
+        )
+        .map_err(RiscvCpuError::MultiperspectivePerceptron)?;
+    let multiperspective_perceptron_target = if conditional {
+        static_conditional_branch_target(pc, instruction).unwrap_or(Address::new(next_pc))
+    } else {
+        Address::new(next_pc)
+    };
+    let multiperspective_perceptron_training_update = state
+        .multiperspective_perceptron
+        .train(
+            multiperspective_perceptron_prediction.history(),
+            actual_taken,
+            multiperspective_perceptron_target,
+        )
+        .map_err(RiscvCpuError::MultiperspectivePerceptron)?;
 
     Ok(RiscvRetiredBranchResolution::new(
         RiscvRetiredBranchUpdates::new(
@@ -717,6 +739,10 @@ fn retire_branch_predictions(
                 tournament_training_update,
             ),
             RiscvTageScLBranchUpdate::new(tage_sc_l_prediction, tage_sc_l_training_update),
+            RiscvMultiperspectivePerceptronBranchUpdate::new(
+                multiperspective_perceptron_prediction,
+                multiperspective_perceptron_training_update,
+            ),
         ),
         selected_prediction,
     ))

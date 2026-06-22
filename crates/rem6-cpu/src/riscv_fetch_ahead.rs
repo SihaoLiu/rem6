@@ -4,7 +4,8 @@ use rem6_memory::Address;
 use crate::{
     CpuFetchEvent, CpuFetchEventKind, RiscvBranchPredictorKind, RiscvCore, RiscvCoreState,
     RiscvCpuError, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
-    RISCV_LOCAL_TAGE_SC_L_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
+    RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TAGE_SC_L_THREAD,
+    RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
 const COMPLETED_FETCH_WINDOW: usize = 2;
@@ -447,6 +448,24 @@ fn selected_conditional_branch_prediction(
             let prediction = state
                 .tage_sc_l_branch_predictor
                 .predict(RISCV_LOCAL_TAGE_SC_L_THREAD, fetch_pc, true)
+                .ok()?;
+            let target = prediction
+                .predicted_taken()
+                .then(|| conditional_branch_target(fetch_pc, instruction))
+                .flatten();
+            Some(RiscvFetchAheadBranchPrediction {
+                predicted_taken: prediction.predicted_taken(),
+                target,
+            })
+        }
+        RiscvBranchPredictorKind::MultiperspectivePerceptron => {
+            let prediction = state
+                .multiperspective_perceptron
+                .predict(
+                    RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
+                    fetch_pc,
+                    true,
+                )
                 .ok()?;
             let target = prediction
                 .predicted_taken()

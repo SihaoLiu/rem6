@@ -166,7 +166,8 @@ pub use riscv_data_access::{
 };
 pub use riscv_execution_event::{
     RiscvBiModeBranchUpdate, RiscvCoreDriveAction, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
-    RiscvTageScLBranchUpdate, RiscvTournamentBranchUpdate,
+    RiscvMultiperspectivePerceptronBranchUpdate, RiscvTageScLBranchUpdate,
+    RiscvTournamentBranchUpdate,
 };
 pub use riscv_hart_run_state::RiscvHartRunState;
 pub use riscv_sc_progress::{
@@ -230,6 +231,7 @@ pub const RISCV_LOCAL_GSHARE_THREAD: CpuId = CpuId::new(0);
 pub const RISCV_LOCAL_BIMODE_THREAD: CpuId = CpuId::new(0);
 pub const RISCV_LOCAL_TOURNAMENT_THREAD: CpuId = CpuId::new(0);
 pub const RISCV_LOCAL_TAGE_SC_L_THREAD: CpuId = CpuId::new(0);
+pub const RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD: CpuId = CpuId::new(0);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RiscvBranchPredictorKind {
@@ -239,6 +241,15 @@ pub enum RiscvBranchPredictorKind {
     BiMode,
     Tournament,
     TageScL,
+    MultiperspectivePerceptron,
+}
+
+fn default_riscv_multiperspective_perceptron() -> MultiperspectivePerceptron {
+    MultiperspectivePerceptron::new(
+        MultiperspectivePerceptronConfig::eight_kb(1)
+            .expect("default RISC-V multiperspective perceptron config is valid"),
+    )
+    .expect("default RISC-V multiperspective perceptron is valid")
 }
 
 fn default_riscv_tage_sc_l_branch_predictor() -> TageScLBranchPredictor {
@@ -1276,6 +1287,7 @@ struct RiscvCoreState {
     bimode_branch_predictor: BiModeBranchPredictor,
     tournament_branch_predictor: TournamentBranchPredictor,
     tage_sc_l_branch_predictor: TageScLBranchPredictor,
+    multiperspective_perceptron: MultiperspectivePerceptron,
     in_order_pipeline: InOrderPipelineState,
     in_order_pipeline_cycle_records: Vec<InOrderPipelineCycleRecord>,
     events: Vec<RiscvCpuExecutionEvent>,
@@ -1336,6 +1348,7 @@ impl RiscvCoreState {
                 .expect("default RISC-V tournament branch predictor config is valid"),
             ),
             tage_sc_l_branch_predictor: default_riscv_tage_sc_l_branch_predictor(),
+            multiperspective_perceptron: default_riscv_multiperspective_perceptron(),
             in_order_pipeline: InOrderPipelineState::new(
                 riscv_in_order_config::default_riscv_in_order_pipeline_config(),
             ),

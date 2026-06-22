@@ -953,6 +953,28 @@ fn rem6_run_stats_use_selected_bimode_branch_predictor_for_fetch_steering() {
 }
 
 #[test]
+fn rem6_run_stats_use_selected_multiperspective_perceptron_for_fetch_steering() {
+    let program = selected_branch_predictor_program();
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-multiperspective-perceptron-branch-steering", &elf);
+
+    let basic = selected_branch_predictor_stdout(&path, "basic");
+    let perceptron = selected_branch_predictor_stdout(&path, "multiperspective-perceptron");
+
+    let perceptron_predictions = json_u64_field(&perceptron, "\"branch_speculation_predictions\":");
+    let basic_final_tick = json_u64_field(&basic, "\"final_tick\":");
+    let perceptron_final_tick = json_u64_field(&perceptron, "\"final_tick\":");
+
+    assert!(perceptron_predictions >= 3, "{perceptron}");
+    assert_ne!(
+        perceptron_final_tick, basic_final_tick,
+        "basic final_tick={basic_final_tick}, perceptron final_tick={perceptron_final_tick}\nbasic:\n{basic}\nperceptron:\n{perceptron}"
+    );
+    assert!(perceptron.contains("\"x5\":\"0x7\""));
+    assert!(!perceptron.contains("\"x6\":\"0x1\""));
+}
+
+#[test]
 fn rem6_run_stats_use_selected_tage_sc_l_branch_predictor_for_fetch_steering() {
     let program = tage_sc_l_initial_bias_program();
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);

@@ -199,6 +199,35 @@ fn riscv_core_gshare_predictor_records_not_taken_conditional_branches() {
 }
 
 #[test]
+fn riscv_core_multiperspective_perceptron_records_retired_conditional_branches() {
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i0"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let raw = b_type(8, 0, 0, 0x0);
+    let core = RiscvCore::new(core(route, CpuId::new(0), 0x8000));
+
+    fetch_one(&core, loaded_store(0x8000, raw), &mut scheduler, &transport);
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+    let update = event.multiperspective_perceptron_branch_update().unwrap();
+
+    assert!(update.prediction().history().conditional());
+    assert!(update.training_update().trained());
+    assert_eq!(update.training_update().update_count(), 1);
+}
+
+#[test]
 fn riscv_core_gshare_predictor_records_unconditional_jumps() {
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 2).unwrap();
     let mut transport = MemoryTransport::new();
