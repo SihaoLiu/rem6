@@ -19,11 +19,15 @@ fn rem6_run_riscv_se_runs_static_raw_socketpair_against_qemu() {
         &source,
 r#"#define AF_UNIX 1
 #define SOCK_STREAM 1
+#define SOCK_CLOEXEC 02000000
+#define SOCK_NONBLOCK 00004000
 #define SOL_SOCKET 1
 #define SO_REUSEADDR 2
 #define SO_TYPE 3
 #define SO_ERROR 4
 #define POLLIN 0x0001
+#define POLLOUT 0x0004
+#define POLLHUP 0x0010
 #define F_GETPIPE_SZ 1032
 #define MSG_DONTWAIT 0x40
 #define MSG_NOSIGNAL 0x4000
@@ -117,21 +121,38 @@ int main(void) {
     char received[16] = {0};
     struct sockaddr_un_addr name = {0};
     struct sockaddr_un_addr peer = {0};
+    struct sockaddr_un_addr solo_peer = {0};
     unsigned int name_len = sizeof(name);
     unsigned int peer_len = sizeof(peer);
+    unsigned int solo_peer_len = sizeof(solo_peer);
     int socket_type = -1;
     int socket_error = -1;
     int reuse_addr = 1;
     int reuse_read = 0;
+    int solo_socket_type = -1;
     unsigned int socket_type_len = sizeof(socket_type);
     unsigned int socket_error_len = sizeof(socket_error);
     unsigned int reuse_len = sizeof(reuse_read);
+    unsigned int solo_socket_type_len = sizeof(solo_socket_type);
     const char *left_msg = "left";
     const char *right_msg = "right";
     const char *send_msg = "sendto";
+    struct pollfd solo_poll_fd = {-1, POLLOUT, 0};
     struct pollfd poll_fd = {-1, POLLIN, 0};
     const char *ok = "socketpair:ok\n";
     const char *fail = "socketpair:fail\n";
+
+    long solo_fd = linux_syscall3(198, AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    long solo_type_status = solo_fd >= 0 ? linux_syscall5(209, solo_fd, SOL_SOCKET, SO_TYPE, (long)&solo_socket_type, (long)&solo_socket_type_len) : -1;
+    long solo_peer_status = solo_fd >= 0 ? linux_syscall3(205, solo_fd, (long)&solo_peer, (long)&solo_peer_len) : -1;
+    solo_poll_fd.fd = solo_fd >= 0 ? solo_fd : -1;
+    long solo_poll_status = solo_fd >= 0 ? linux_syscall5(73, (long)&solo_poll_fd, 1, 0, 0, 0) : -1;
+    long solo_zero_write_status = solo_fd >= 0 ? linux_syscall3(64, solo_fd, (long)left_msg, 0) : -1;
+    long solo_write_status = solo_fd >= 0 ? linux_syscall3(64, solo_fd, (long)left_msg, 1) : -1;
+    long solo_read_status = solo_fd >= 0 ? linux_syscall3(63, solo_fd, (long)left, 1) : -1;
+    if (solo_fd >= 0) {
+        linux_syscall1(57, solo_fd);
+    }
 
     long pair_status = linux_syscall4(199, AF_UNIX, SOCK_STREAM, 0, (long)fds);
     long not_pipe = pair_status == 0 ? linux_syscall3(25, fds[0], F_GETPIPE_SZ, 0) : 0;
@@ -159,7 +180,13 @@ int main(void) {
         linux_syscall1(57, fds[1]);
     }
 
-    if (pair_status == 0 && not_pipe == -9 && first_write == 4 &&
+    if (solo_fd >= 0 &&
+        solo_type_status == 0 && solo_socket_type == SOCK_STREAM && solo_socket_type_len == 4 &&
+        solo_peer_status == -107 &&
+        solo_poll_status == 1 && solo_poll_fd.revents == (POLLOUT | POLLHUP) &&
+        solo_zero_write_status == -107 &&
+        solo_write_status == -107 && solo_read_status == -22 &&
+        pair_status == 0 && not_pipe == -9 && first_write == 4 &&
         ready == 1 && (poll_fd.revents & POLLIN) != 0 &&
         first_read == 4 && bytes_match(right, left_msg, 4) &&
         second_write == 5 && second_read == 5 && bytes_match(left, right_msg, 5) &&

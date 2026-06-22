@@ -84,7 +84,8 @@ pub(super) fn syscall_writev(
         Some(Ok(RiscvGuestSocketWrite::Written(written))) => Some(written),
         Some(Ok(write @ RiscvGuestSocketWrite::WouldBlock))
         | Some(Ok(write @ RiscvGuestSocketWrite::Blocked))
-        | Some(Ok(write @ RiscvGuestSocketWrite::BrokenPipe)) => {
+        | Some(Ok(write @ RiscvGuestSocketWrite::BrokenPipe))
+        | Some(Ok(write @ RiscvGuestSocketWrite::NotConnected)) => {
             return socket_write_result(write);
         }
         Some(Err(_)) => return Some(linux_error(RISCV_LINUX_EBADF)),

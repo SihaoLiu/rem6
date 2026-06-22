@@ -87,6 +87,7 @@ pub(super) fn syscall_readv(
         }
         Ok(RiscvGuestSocketRead::WouldBlock) => return Some(linux_error(RISCV_LINUX_EAGAIN)),
         Ok(RiscvGuestSocketRead::Blocked) => return None,
+        Ok(RiscvGuestSocketRead::NotConnected) => return Some(linux_error(RISCV_LINUX_EINVAL)),
         Ok(RiscvGuestSocketRead::NotSocket) => {}
         Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
     }

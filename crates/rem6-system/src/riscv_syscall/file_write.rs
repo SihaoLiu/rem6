@@ -494,27 +494,22 @@ pub(super) fn syscall_write(
         Ok(None) => {}
         Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
     }
-    if count == 0 {
-        return Some(0);
-    }
-
     let Ok(byte_count) = usize::try_from(count) else {
         return Some(linux_error(RISCV_LINUX_EINVAL));
     };
-    match state.guest_file_write_exceeds_dense_limit(fd, count) {
-        Ok(true) => return Some(linux_error(RISCV_LINUX_EFBIG)),
-        Ok(false) => {}
-        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
-    }
     let socket_write = match state.guest_socket_write_plan(fd, byte_count) {
         Ok(RiscvGuestSocketWrite::NotSocket) => None,
         Ok(RiscvGuestSocketWrite::Written(written)) => Some(written),
         Ok(write @ RiscvGuestSocketWrite::WouldBlock)
         | Ok(write @ RiscvGuestSocketWrite::Blocked)
-        | Ok(write @ RiscvGuestSocketWrite::BrokenPipe) => return socket_write_result(write),
+        | Ok(write @ RiscvGuestSocketWrite::BrokenPipe)
+        | Ok(write @ RiscvGuestSocketWrite::NotConnected) => return socket_write_result(write),
         Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
     };
     if let Some(written) = socket_write {
+        if written == 0 {
+            return Some(0);
+        }
         let address = request.argument(1);
         let Some(bytes) = guest_memory.read(address, written) else {
             return Some(linux_error(RISCV_LINUX_EFAULT));
@@ -526,6 +521,14 @@ pub(super) fn syscall_write(
             Ok(write) => socket_write_result(write),
             Err(_) => Some(linux_error(RISCV_LINUX_EBADF)),
         };
+    }
+    if count == 0 {
+        return Some(0);
+    }
+    match state.guest_file_write_exceeds_dense_limit(fd, count) {
+        Ok(true) => return Some(linux_error(RISCV_LINUX_EFBIG)),
+        Ok(false) => {}
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
     }
     let pipe_write = match state.guest_pipe_write_plan(fd, byte_count) {
         Ok(RiscvGuestPipeWrite::NotPipe) => None,

@@ -17,6 +17,7 @@ const RISCV_LINUX_POLLFD_BYTES: usize = 8;
 const RISCV_LINUX_POLLFD_MAX: u64 = 1024;
 const RISCV_LINUX_POLLIN: i16 = 0x0001;
 const RISCV_LINUX_POLLOUT: i16 = 0x0004;
+const RISCV_LINUX_POLLHUP: i16 = 0x0010;
 const RISCV_LINUX_POLLNVAL: i16 = 0x0020;
 const RISCV_LINUX_POLLRDNORM: i16 = 0x0040;
 const RISCV_LINUX_POLLWRNORM: i16 = 0x0100;
@@ -649,6 +650,14 @@ pub(super) fn ready_events_for_guest_fd(
             }
         }
         Ok(None) => {}
+        Err(error) => return Err(error),
+    }
+    match state.guest_socket_hangup_ready(fd) {
+        Ok(Some(true)) => {
+            socket_endpoint = true;
+            revents |= RISCV_LINUX_POLLHUP as u32;
+        }
+        Ok(Some(false) | None) => {}
         Err(error) => return Err(error),
     }
     if socket_endpoint {

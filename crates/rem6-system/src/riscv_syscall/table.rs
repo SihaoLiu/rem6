@@ -317,6 +317,9 @@ impl RiscvSyscallTable {
             RISCV_LINUX_PIPE2 => guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
                 value: syscall_pipe2(request, state, writer),
             }),
+            RISCV_LINUX_SOCKET => Some(RiscvSyscallOutcome::Return {
+                value: syscall_socket(request, state),
+            }),
             RISCV_LINUX_SOCKETPAIR => {
                 guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
                     value: syscall_socketpair(request, state, writer),
