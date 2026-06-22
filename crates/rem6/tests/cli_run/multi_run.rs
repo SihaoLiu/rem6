@@ -1,4 +1,6 @@
-use std::{fs, process::Command};
+use std::{fs, path::Path, process::Command};
+
+use serde_json::Value;
 
 use crate::support::*;
 
@@ -306,6 +308,8 @@ config = "traffic.toml"
         "\"stats_artifact\":\"{}\"",
         workspace.join("artifacts/gups-stats.json").display()
     )));
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_summary_extra_artifacts(multi_run_summary_by_id(&json, "traffic"), &[]);
 
     let child_artifact = fs::read_to_string(workspace.join("artifacts/gups.json")).unwrap();
     let child_stats = fs::read_to_string(workspace.join("artifacts/gups-stats.json")).unwrap();
@@ -385,6 +389,237 @@ config = "gpu.toml"
         2,
         "monotonic",
     );
+}
+
+#[test]
+fn rem6_multi_run_reports_gpu_child_extra_artifacts() {
+    let workspace = temp_workspace("multi-run-gpu-extra-artifacts");
+    fs::write(
+        workspace.join("gpu.toml"),
+        r#"[gpu_run]
+workgroups = 2
+compute_units = 2
+memory_start = 14336
+memory_size = 64
+max_tick = 80
+stats_format = "json"
+dram_memory = true
+data_cache_protocol = "msi"
+power_format = "dsent-csv"
+power_output = "artifacts/gpu-power.csv"
+nomali_output = "artifacts/gpu-nomali.json"
+global_loads = ["0x3800:4:4:4"]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("multi-run.toml"),
+        r#"[multi_run]
+suite_id = "gpu-extra-artifact-smoke"
+stats_format = "json"
+
+[[multi_run.runs]]
+id = "gpu"
+command = "gpu-run"
+config = "gpu.toml"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "multi-run",
+            "--config",
+            workspace.join("multi-run.toml").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let power_path = workspace.join("artifacts/gpu-power.csv");
+    let nomali_path = workspace.join("artifacts/gpu-nomali.json");
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.get("suite_id").and_then(Value::as_str),
+        Some("gpu-extra-artifact-smoke")
+    );
+    let gpu_summary = multi_run_summary_by_id(&json, "gpu");
+    assert_eq!(
+        gpu_summary.get("command").and_then(Value::as_str),
+        Some("gpu-run")
+    );
+    assert_summary_extra_artifacts(
+        gpu_summary,
+        &[
+            ("power_artifact", power_path.as_path()),
+            ("nomali_artifact", nomali_path.as_path()),
+        ],
+    );
+
+    let power = fs::read_to_string(power_path).unwrap();
+    let nomali = fs::read_to_string(nomali_path).unwrap();
+    assert!(power.contains("gpu.compute_unit0"));
+    assert!(power.contains("gpu.data_cache"));
+    assert!(nomali.contains("\"schema\":\"rem6.nomali.gpu-adapter.v1\""));
+    assert!(nomali.contains("\"workgroup_completions\":2"));
+}
+
+#[test]
+fn rem6_multi_run_reports_run_and_trace_child_power_artifacts() {
+    let workspace = temp_workspace("multi-run-run-trace-power-artifacts");
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    fs::write(
+        workspace.join("program.elf"),
+        riscv64_elf(0x8000_0000, 0x8000_0000, &program),
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("packet.pb"),
+        packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("run.toml"),
+        r#"[run]
+isa = "riscv"
+binary = "program.elf"
+max_tick = 40
+stats_format = "json"
+execute = true
+memory_system = "direct"
+power_output = "artifacts/run-power.xml"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("trace.toml"),
+        r#"[trace_replay]
+trace = "packet.pb"
+route = "cpu0.power"
+memory_start = 4096
+memory_size = 4096
+max_tick = 64
+tick_frequency = 1000
+line_bytes = 64
+agent = 7
+control_partition = 2
+stats_format = "json"
+power_format = "dsent-csv"
+power_output = "artifacts/trace-power.csv"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("multi-run.toml"),
+        r#"[multi_run]
+suite_id = "run-trace-power-artifact-smoke"
+stats_format = "json"
+
+[[multi_run.runs]]
+id = "cpu"
+command = "run"
+config = "run.toml"
+
+[[multi_run.runs]]
+id = "packet"
+command = "trace-replay"
+config = "trace.toml"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "multi-run",
+            "--config",
+            workspace.join("multi-run.toml").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let run_power_path = workspace.join("artifacts/run-power.xml");
+    let trace_power_path = workspace.join("artifacts/trace-power.csv");
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.get("suite_id").and_then(Value::as_str),
+        Some("run-trace-power-artifact-smoke")
+    );
+    assert_summary_extra_artifacts(
+        multi_run_summary_by_id(&json, "cpu"),
+        &[("power_artifact", run_power_path.as_path())],
+    );
+    assert_summary_extra_artifacts(
+        multi_run_summary_by_id(&json, "packet"),
+        &[("power_artifact", trace_power_path.as_path())],
+    );
+
+    let run_power = fs::read_to_string(run_power_path).unwrap();
+    let trace_power = fs::read_to_string(trace_power_path).unwrap();
+    assert!(run_power.contains("<component id=\"cpu0.core\""));
+    assert!(trace_power.starts_with("record_type,tick,target,state,temperature_c"));
+    assert!(trace_power.contains("total,4,__total__,All"));
+}
+
+fn multi_run_summary_by_id<'a>(json: &'a Value, id: &str) -> &'a Value {
+    json.get("run_summaries")
+        .and_then(Value::as_array)
+        .and_then(|summaries| {
+            summaries
+                .iter()
+                .find(|summary| summary.get("id").and_then(Value::as_str) == Some(id))
+        })
+        .unwrap_or_else(|| panic!("missing multi-run summary {id}"))
+}
+
+fn assert_summary_extra_artifacts(summary: &Value, expected: &[(&str, &Path)]) {
+    let artifacts = summary
+        .get("extra_artifacts")
+        .and_then(Value::as_array)
+        .expect("missing extra_artifacts array");
+    assert_eq!(artifacts.len(), expected.len());
+    for (artifact, (expected_name, expected_path)) in artifacts.iter().zip(expected) {
+        assert_eq!(
+            artifact.get("name").and_then(Value::as_str),
+            Some(*expected_name)
+        );
+        let expected_path = expected_path.display().to_string();
+        assert_eq!(
+            artifact.get("artifact").and_then(Value::as_str),
+            Some(expected_path.as_str())
+        );
+    }
 }
 
 #[test]
@@ -602,6 +837,9 @@ config = "good-gups.toml"
     assert!(stdout.contains("\"child_schema\":\"rem6.cli.gups.v1\""));
     assert!(stdout.contains("\"scheduled_requests\":4"));
     assert!(stdout.contains("\"total_scheduled_requests\":4"));
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_summary_extra_artifacts(multi_run_summary_by_id(&json, "bad"), &[]);
+    assert_summary_extra_artifacts(multi_run_summary_by_id(&json, "good"), &[]);
     assert_stat(&stdout, "sim.multi_run.succeeded", "Count", 1, "monotonic");
     assert_stat(&stdout, "sim.multi_run.failed", "Count", 1, "monotonic");
     assert_stat(
@@ -656,6 +894,8 @@ rng_state = 0
     assert!(stdout.contains("\"id\":\"bad\""));
     assert!(stdout.contains("\"child_schema\":\"rem6.cli.error.v1\""));
     assert!(stdout.contains("\"error\":\"missing required flag --memory-start\""));
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_summary_extra_artifacts(multi_run_summary_by_id(&json, "bad"), &[]);
     assert_stat(&stdout, "sim.multi_run.failed", "Count", 1, "monotonic");
 }
 

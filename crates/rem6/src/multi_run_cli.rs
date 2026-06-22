@@ -61,7 +61,14 @@ struct Rem6MultiRunSummary {
     scheduled_requests: u64,
     artifact: Option<PathBuf>,
     stats_artifact: Option<PathBuf>,
+    extra_artifacts: Vec<Rem6MultiRunExtraArtifact>,
     error: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Rem6MultiRunExtraArtifact {
+    name: &'static str,
+    path: PathBuf,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -399,6 +406,12 @@ impl Rem6MultiRunSummary {
             scheduled_requests: 0,
             artifact: artifact.config.output().map(Path::to_path_buf),
             stats_artifact: artifact.config.stats_output().map(Path::to_path_buf),
+            extra_artifacts: artifact
+                .power_analysis
+                .as_ref()
+                .map(|artifact| Rem6MultiRunExtraArtifact::new("power_artifact", artifact.output()))
+                .into_iter()
+                .collect(),
             error: None,
         }
     }
@@ -416,6 +429,7 @@ impl Rem6MultiRunSummary {
             scheduled_requests: artifact.execution.scheduled_requests,
             artifact: artifact.config.output().map(Path::to_path_buf),
             stats_artifact: artifact.config.stats_output().map(Path::to_path_buf),
+            extra_artifacts: Vec::new(),
             error: None,
         }
     }
@@ -437,6 +451,11 @@ impl Rem6MultiRunSummary {
             scheduled_requests: execution.global_memory_requests(),
             artifact: artifact.configured_output().map(Path::to_path_buf),
             stats_artifact: artifact.configured_stats_output().map(Path::to_path_buf),
+            extra_artifacts: artifact
+                .configured_extra_artifacts()
+                .into_iter()
+                .map(|(name, path)| Rem6MultiRunExtraArtifact::new(name, path))
+                .collect(),
             error: None,
         }
     }
@@ -457,6 +476,12 @@ impl Rem6MultiRunSummary {
             scheduled_requests: artifact.execution.summary.scheduled_count() as u64,
             artifact: artifact.config.output().map(Path::to_path_buf),
             stats_artifact: artifact.config.stats_output().map(Path::to_path_buf),
+            extra_artifacts: artifact
+                .power_analysis
+                .as_ref()
+                .map(|artifact| Rem6MultiRunExtraArtifact::new("power_artifact", artifact.output()))
+                .into_iter()
+                .collect(),
             error: None,
         }
     }
@@ -474,6 +499,7 @@ impl Rem6MultiRunSummary {
             scheduled_requests: 0,
             artifact: None,
             stats_artifact: None,
+            extra_artifacts: Vec::new(),
             error: Some(error.to_string()),
         }
     }
@@ -485,13 +511,19 @@ impl Rem6MultiRunSummary {
     fn to_json(&self) -> String {
         let artifact = optional_path_json(self.artifact.as_deref());
         let stats_artifact = optional_path_json(self.stats_artifact.as_deref());
+        let extra_artifacts = self
+            .extra_artifacts
+            .iter()
+            .map(Rem6MultiRunExtraArtifact::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         let error = self
             .error
             .as_ref()
             .map(|error| format!("\"{}\"", json_escape(error)))
             .unwrap_or_else(|| "null".to_string());
         format!(
-            "{{\"id\":\"{}\",\"command\":\"{}\",\"config\":\"{}\",\"child_schema\":\"{}\",\"run_schema\":\"{}\",\"status\":\"{}\",\"executed\":{},\"final_tick\":{},\"committed_instructions\":{},\"scheduled_requests\":{},\"artifact\":{},\"stats_artifact\":{},\"error\":{}}}",
+            "{{\"id\":\"{}\",\"command\":\"{}\",\"config\":\"{}\",\"child_schema\":\"{}\",\"run_schema\":\"{}\",\"status\":\"{}\",\"executed\":{},\"final_tick\":{},\"committed_instructions\":{},\"scheduled_requests\":{},\"artifact\":{},\"stats_artifact\":{},\"extra_artifacts\":[{}],\"error\":{}}}",
             json_escape(&self.id),
             self.command.as_str(),
             json_escape(&self.config.display().to_string()),
@@ -504,7 +536,25 @@ impl Rem6MultiRunSummary {
             self.scheduled_requests,
             artifact,
             stats_artifact,
+            extra_artifacts,
             error,
+        )
+    }
+}
+
+impl Rem6MultiRunExtraArtifact {
+    fn new(name: &'static str, path: &Path) -> Self {
+        Self {
+            name,
+            path: path.to_path_buf(),
+        }
+    }
+
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"name\":\"{}\",\"artifact\":\"{}\"}}",
+            self.name,
+            json_escape(&self.path.display().to_string())
         )
     }
 }

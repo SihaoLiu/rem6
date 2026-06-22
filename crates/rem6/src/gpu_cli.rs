@@ -1039,6 +1039,17 @@ impl Rem6GpuRunArtifact {
         self.config.stats_output()
     }
 
+    pub(crate) fn configured_extra_artifacts(&self) -> Vec<(&'static str, &Path)> {
+        let mut artifacts = Vec::new();
+        if let Some(artifact) = self.power_analysis.as_ref() {
+            artifacts.push(("power_artifact", artifact.output()));
+        }
+        if let Some(artifact) = self.nomali_adapter.as_ref() {
+            artifacts.push(("nomali_artifact", artifact.output()));
+        }
+        artifacts
+    }
+
     pub(crate) fn emit_configured_output(&self) -> Result<(), Rem6CliError> {
         let stats_format = self.config.stats_format();
         let mut extra_artifacts = Vec::new();
