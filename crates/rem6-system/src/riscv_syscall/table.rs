@@ -347,6 +347,20 @@ impl RiscvSyscallTable {
                     None => RiscvSyscallOutcome::Blocked,
                 })
             }
+            RISCV_LINUX_SENDMSG => {
+                guest_memory_reader.map(|reader| match syscall_sendmsg(request, state, reader) {
+                    Some(value) => RiscvSyscallOutcome::Return { value },
+                    None => RiscvSyscallOutcome::Blocked,
+                })
+            }
+            RISCV_LINUX_RECVMSG => guest_memory_reader.and_then(|reader| {
+                guest_memory_writer.map(|writer| {
+                    match syscall_recvmsg(request, state, reader, writer) {
+                        Some(value) => RiscvSyscallOutcome::Return { value },
+                        None => RiscvSyscallOutcome::Blocked,
+                    }
+                })
+            }),
             RISCV_LINUX_SETSOCKOPT => {
                 guest_memory_reader.map(|reader| RiscvSyscallOutcome::Return {
                     value: syscall_setsockopt(request, state, reader),

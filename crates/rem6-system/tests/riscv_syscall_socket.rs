@@ -17,6 +17,8 @@ const RISCV_LINUX_RECVFROM: u64 = 207;
 const RISCV_LINUX_SETSOCKOPT: u64 = 208;
 const RISCV_LINUX_GETSOCKOPT: u64 = 209;
 const RISCV_LINUX_SHUTDOWN: u64 = 210;
+const RISCV_LINUX_SENDMSG: u64 = 211;
+const RISCV_LINUX_RECVMSG: u64 = 212;
 const RISCV_LINUX_FCNTL: u64 = 25;
 const RISCV_LINUX_CLOSE: u64 = 57;
 const RISCV_LINUX_READ: u64 = 63;
@@ -78,6 +80,9 @@ fn socket_store() -> Arc<Mutex<PartitionedMemoryStore>> {
             (0x9380, &[0; 8]),
             (0x93a0, &[0; 8]),
             (0x93c0, &[0; 8]),
+            (0x9400, &[0; 56]),
+            (0x9440, &[0; 56]),
+            (0x9480, &[0; 56]),
             (0x9200, &iovec(0x9040, 4)),
             (0x9210, &iovec(0x9044, 6)),
             (0x9220, &iovec(0x9140, 3)),
@@ -128,6 +133,26 @@ fn iovec(address: u64, len: u64) -> [u8; 16] {
     let mut bytes = [0; 16];
     bytes[..8].copy_from_slice(&address.to_le_bytes());
     bytes[8..].copy_from_slice(&len.to_le_bytes());
+    bytes
+}
+
+fn msghdr(
+    name: u64,
+    namelen: u32,
+    iov: u64,
+    iovlen: u64,
+    control: u64,
+    controllen: u64,
+    flags: i32,
+) -> [u8; 56] {
+    let mut bytes = [0; 56];
+    bytes[0..8].copy_from_slice(&name.to_le_bytes());
+    bytes[8..12].copy_from_slice(&namelen.to_le_bytes());
+    bytes[16..24].copy_from_slice(&iov.to_le_bytes());
+    bytes[24..32].copy_from_slice(&iovlen.to_le_bytes());
+    bytes[32..40].copy_from_slice(&control.to_le_bytes());
+    bytes[40..48].copy_from_slice(&controllen.to_le_bytes());
+    bytes[48..52].copy_from_slice(&flags.to_le_bytes());
     bytes
 }
 
@@ -324,6 +349,34 @@ fn linux_table_socket_creates_unconnected_unix_stream_fd() {
             RISCV_LINUX_RECVFROM,
             [fd_value, 0x9140, 1, RISCV_LINUX_MSG_DONTWAIT, 0, 0],
             None,
+            Some(&writer),
+        )),
+        linux_error(RISCV_LINUX_EINVAL)
+    );
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9400,
+        &msghdr(0, 0, 0x9200, 1, 0, 0, 0)
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_SENDMSG,
+            [fd_value, 0x9400, RISCV_LINUX_MSG_NOSIGNAL, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        linux_error(RISCV_LINUX_ENOTCONN)
+    );
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9440,
+        &msghdr(0, 0, 0x9220, 1, 0, 0, -1)
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_RECVMSG,
+            [fd_value, 0x9440, RISCV_LINUX_MSG_DONTWAIT, 0, 0, 0],
+            Some(&reader),
             Some(&writer),
         )),
         linux_error(RISCV_LINUX_EINVAL)
@@ -697,6 +750,44 @@ fn linux_table_socketpair_roundtrips_bidirectional_bytes_and_poll_without_pipe_i
         guest_memory_reader(Arc::clone(&store))(0x9160, 7),
         Some(b"-socket".to_vec())
     );
+
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9400,
+        &msghdr(0, 0, 0x9200, 2, 0, 0, 0)
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_SENDMSG,
+            [left_fd, 0x9400, RISCV_LINUX_MSG_NOSIGNAL, 0, 0, 0],
+            Some(&reader),
+            None,
+        )),
+        10
+    );
+    assert!(guest_memory_writer(Arc::clone(&store))(
+        0x9440,
+        &msghdr(0, 0, 0x9220, 2, 0, 0, -1)
+    ));
+    assert_eq!(
+        return_value(handle_with_memory(
+            &mut state,
+            RISCV_LINUX_RECVMSG,
+            [right_fd, 0x9440, RISCV_LINUX_MSG_DONTWAIT, 0, 0, 0],
+            Some(&reader),
+            Some(&writer),
+        )),
+        10
+    );
+    assert_eq!(
+        guest_memory_reader(Arc::clone(&store))(0x9140, 3),
+        Some(b"vec".to_vec())
+    );
+    assert_eq!(
+        guest_memory_reader(Arc::clone(&store))(0x9160, 7),
+        Some(b"-socket".to_vec())
+    );
+    assert_eq!(guest_i32(&store, 0x9440 + 48), 0);
 
     assert!(guest_memory_writer(Arc::clone(&store))(
         0x9340,

@@ -235,10 +235,11 @@ use sleep::{
     syscall_clock_nanosleep, syscall_nanosleep, RISCV_LINUX_CLOCK_NANOSLEEP, RISCV_LINUX_NANOSLEEP,
 };
 use socket::{
-    syscall_getpeername, syscall_getsockname, syscall_getsockopt, syscall_recvfrom, syscall_sendto,
-    syscall_setsockopt, syscall_shutdown, syscall_socket, syscall_socketpair,
-    RiscvGuestSocketEndpoint, RiscvGuestSocketQueue, RiscvGuestSocketQueueId,
-    RISCV_LINUX_GETPEERNAME, RISCV_LINUX_GETSOCKNAME, RISCV_LINUX_GETSOCKOPT, RISCV_LINUX_RECVFROM,
+    syscall_getpeername, syscall_getsockname, syscall_getsockopt, syscall_recvfrom,
+    syscall_recvmsg, syscall_sendmsg, syscall_sendto, syscall_setsockopt, syscall_shutdown,
+    syscall_socket, syscall_socketpair, RiscvGuestSocketEndpoint, RiscvGuestSocketQueue,
+    RiscvGuestSocketQueueId, RISCV_LINUX_GETPEERNAME, RISCV_LINUX_GETSOCKNAME,
+    RISCV_LINUX_GETSOCKOPT, RISCV_LINUX_RECVFROM, RISCV_LINUX_RECVMSG, RISCV_LINUX_SENDMSG,
     RISCV_LINUX_SENDTO, RISCV_LINUX_SETSOCKOPT, RISCV_LINUX_SHUTDOWN, RISCV_LINUX_SOCKET,
     RISCV_LINUX_SOCKETPAIR,
 };

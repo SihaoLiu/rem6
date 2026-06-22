@@ -39,6 +39,21 @@ struct pollfd {
     short revents;
 };
 
+struct iovec {
+    void *iov_base;
+    unsigned long iov_len;
+};
+
+struct msghdr {
+    void *msg_name;
+    unsigned int msg_namelen;
+    struct iovec *msg_iov;
+    unsigned long msg_iovlen;
+    void *msg_control;
+    unsigned long msg_controllen;
+    int msg_flags;
+};
+
 struct sockaddr_un_addr {
     unsigned short family;
     char path[14];
@@ -119,6 +134,9 @@ int main(void) {
     char left[16] = {0};
     char right[16] = {0};
     char received[16] = {0};
+    char msg_received_left[8] = {0};
+    char msg_received_right[8] = {0};
+    char solo_msg_received[4] = {0};
     struct sockaddr_un_addr name = {0};
     struct sockaddr_un_addr peer = {0};
     struct sockaddr_un_addr solo_peer = {0};
@@ -137,6 +155,22 @@ int main(void) {
     const char *left_msg = "left";
     const char *right_msg = "right";
     const char *send_msg = "sendto";
+    const char *sendmsg_left = "msg-";
+    const char *sendmsg_right = "iov";
+    struct iovec sendmsg_iov[2] = {
+        {(void *)sendmsg_left, 4},
+        {(void *)sendmsg_right, 3},
+    };
+    struct iovec recvmsg_iov[2] = {
+        {msg_received_left, 4},
+        {msg_received_right, 3},
+    };
+    struct msghdr send_hdr = {0, 0, sendmsg_iov, 2, 0, 0, 0};
+    struct msghdr recv_hdr = {0, 0, recvmsg_iov, 2, 0, 0, -1};
+    struct iovec solo_sendmsg_iov[1] = {{(void *)left_msg, 1}};
+    struct iovec solo_recvmsg_iov[1] = {{solo_msg_received, 1}};
+    struct msghdr solo_send_hdr = {0, 0, solo_sendmsg_iov, 1, 0, 0, 0};
+    struct msghdr solo_recv_hdr = {0, 0, solo_recvmsg_iov, 1, 0, 0, -1};
     struct pollfd solo_poll_fd = {-1, POLLOUT, 0};
     struct pollfd poll_fd = {-1, POLLIN, 0};
     const char *ok = "socketpair:ok\n";
@@ -150,6 +184,8 @@ int main(void) {
     long solo_zero_write_status = solo_fd >= 0 ? linux_syscall3(64, solo_fd, (long)left_msg, 0) : -1;
     long solo_write_status = solo_fd >= 0 ? linux_syscall3(64, solo_fd, (long)left_msg, 1) : -1;
     long solo_read_status = solo_fd >= 0 ? linux_syscall3(63, solo_fd, (long)left, 1) : -1;
+    long solo_sendmsg_status = solo_fd >= 0 ? linux_syscall3(211, solo_fd, (long)&solo_send_hdr, MSG_NOSIGNAL) : -1;
+    long solo_recvmsg_status = solo_fd >= 0 ? linux_syscall3(212, solo_fd, (long)&solo_recv_hdr, MSG_DONTWAIT) : -1;
     if (solo_fd >= 0) {
         linux_syscall1(57, solo_fd);
     }
@@ -164,6 +200,8 @@ int main(void) {
     long second_read = pair_status == 0 ? linux_syscall3(63, fds[0], (long)left, 5) : -1;
     long send_status = pair_status == 0 ? linux_syscall6(206, fds[0], (long)send_msg, 6, MSG_NOSIGNAL, 0, 0) : -1;
     long recv_status = pair_status == 0 ? linux_syscall6(207, fds[1], (long)received, 6, MSG_DONTWAIT, 0, 0) : -1;
+    long sendmsg_status = pair_status == 0 ? linux_syscall3(211, fds[0], (long)&send_hdr, MSG_NOSIGNAL) : -1;
+    long recvmsg_status = pair_status == 0 ? linux_syscall3(212, fds[1], (long)&recv_hdr, MSG_DONTWAIT) : -1;
     long name_status = pair_status == 0 ? linux_syscall3(204, fds[0], (long)&name, (long)&name_len) : -1;
     long peer_status = pair_status == 0 ? linux_syscall3(205, fds[1], (long)&peer, (long)&peer_len) : -1;
     long socket_type_status = pair_status == 0 ? linux_syscall5(209, fds[0], SOL_SOCKET, SO_TYPE, (long)&socket_type, (long)&socket_type_len) : -1;
@@ -186,11 +224,16 @@ int main(void) {
         solo_poll_status == 1 && solo_poll_fd.revents == (POLLOUT | POLLHUP) &&
         solo_zero_write_status == -107 &&
         solo_write_status == -107 && solo_read_status == -22 &&
+        solo_sendmsg_status == -107 && solo_recvmsg_status == -22 &&
         pair_status == 0 && not_pipe == -9 && first_write == 4 &&
         ready == 1 && (poll_fd.revents & POLLIN) != 0 &&
         first_read == 4 && bytes_match(right, left_msg, 4) &&
         second_write == 5 && second_read == 5 && bytes_match(left, right_msg, 5) &&
         send_status == 6 && recv_status == 6 && bytes_match(received, send_msg, 6) &&
+        sendmsg_status == 7 && recvmsg_status == 7 &&
+        bytes_match(msg_received_left, sendmsg_left, 4) &&
+        bytes_match(msg_received_right, sendmsg_right, 3) &&
+        recv_hdr.msg_flags == 0 &&
         name_status == 0 && peer_status == 0 &&
         name_len == 2 && peer_len == 2 &&
         name.family == AF_UNIX && peer.family == AF_UNIX &&

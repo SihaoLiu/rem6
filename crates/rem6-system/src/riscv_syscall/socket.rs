@@ -1,11 +1,13 @@
 use std::collections::VecDeque;
 
 use super::{
-    guest_fd_argument, linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter,
-    RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EAFNOSUPPORT, RISCV_LINUX_EAGAIN,
-    RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EMFILE,
-    RISCV_LINUX_ENOPROTOOPT, RISCV_LINUX_ENOTCONN, RISCV_LINUX_ENOTSOCK, RISCV_LINUX_ENOTSUP,
-    RISCV_LINUX_EPIPE, RISCV_LINUX_EPROTONOSUPPORT, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_CLOEXEC,
+    guest_fd_argument,
+    iovec::{read_iovec_prefix, read_iovecs, write_iovecs, RISCV_LINUX_IOV_MAX},
+    linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallRequest,
+    RiscvSyscallState, RISCV_LINUX_EAFNOSUPPORT, RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EMFILE, RISCV_LINUX_ENOPROTOOPT,
+    RISCV_LINUX_ENOTCONN, RISCV_LINUX_ENOTSOCK, RISCV_LINUX_ENOTSUP, RISCV_LINUX_EPIPE,
+    RISCV_LINUX_EPROTONOSUPPORT, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_CLOEXEC,
     RISCV_LINUX_O_NONBLOCK, RISCV_LINUX_O_RDONLY, RISCV_LINUX_O_RDWR, RISCV_LINUX_O_WRONLY,
 };
 use crate::{
@@ -22,6 +24,8 @@ pub(super) const RISCV_LINUX_RECVFROM: u64 = 207;
 pub(super) const RISCV_LINUX_SETSOCKOPT: u64 = 208;
 pub(super) const RISCV_LINUX_GETSOCKOPT: u64 = 209;
 pub(super) const RISCV_LINUX_SHUTDOWN: u64 = 210;
+pub(super) const RISCV_LINUX_SENDMSG: u64 = 211;
+pub(super) const RISCV_LINUX_RECVMSG: u64 = 212;
 
 const RISCV_LINUX_AF_UNIX: u64 = 1;
 const RISCV_LINUX_SOCK_STREAM: u64 = 1;
@@ -39,11 +43,82 @@ const RISCV_LINUX_MSG_DONTWAIT: u64 = 0x40;
 const RISCV_LINUX_MSG_NOSIGNAL: u64 = 0x4000;
 const RISCV_LINUX_SENDTO_ALLOWED_FLAGS: u64 = RISCV_LINUX_MSG_DONTWAIT | RISCV_LINUX_MSG_NOSIGNAL;
 const RISCV_LINUX_RECVFROM_ALLOWED_FLAGS: u64 = RISCV_LINUX_MSG_DONTWAIT;
+const RISCV_LINUX_SENDMSG_ALLOWED_FLAGS: u64 = RISCV_LINUX_SENDTO_ALLOWED_FLAGS;
+const RISCV_LINUX_RECVMSG_ALLOWED_FLAGS: u64 = RISCV_LINUX_RECVFROM_ALLOWED_FLAGS;
 const RISCV_LINUX_DEFAULT_SOCKET_CAPACITY_BYTES: usize = 64 * 1024;
 const RISCV_LINUX_UNIX_SOCKET_NAME_LEN: u32 = 2;
+const RISCV_LINUX_MSGHDR_BYTES: usize = 56;
+const RISCV_LINUX_MSGHDR_NAME_OFFSET: usize = 0;
+const RISCV_LINUX_MSGHDR_NAMELEN_OFFSET: usize = 8;
+const RISCV_LINUX_MSGHDR_IOV_OFFSET: usize = 16;
+const RISCV_LINUX_MSGHDR_IOVLEN_OFFSET: usize = 24;
+const RISCV_LINUX_MSGHDR_CONTROL_OFFSET: usize = 32;
+const RISCV_LINUX_MSGHDR_CONTROLLEN_OFFSET: usize = 40;
+const RISCV_LINUX_MSGHDR_FLAGS_OFFSET: usize = 48;
 const RISCV_LINUX_SHUT_RD: u64 = 0;
 const RISCV_LINUX_SHUT_WR: u64 = 1;
 const RISCV_LINUX_SHUT_RDWR: u64 = 2;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvLinuxMsgHdr {
+    name: u64,
+    namelen: u32,
+    iov: u64,
+    iovlen: u64,
+    control: u64,
+    controllen: u64,
+}
+
+impl RiscvLinuxMsgHdr {
+    fn read(guest_memory: &RiscvGuestMemoryReader, address: u64) -> Result<Self, u64> {
+        let bytes = read_guest_exact(guest_memory, address, RISCV_LINUX_MSGHDR_BYTES)
+            .ok_or(RISCV_LINUX_EFAULT)?;
+        let msg = Self {
+            name: read_u64(&bytes, RISCV_LINUX_MSGHDR_NAME_OFFSET),
+            namelen: read_u32(&bytes, RISCV_LINUX_MSGHDR_NAMELEN_OFFSET),
+            iov: read_u64(&bytes, RISCV_LINUX_MSGHDR_IOV_OFFSET),
+            iovlen: read_u64(&bytes, RISCV_LINUX_MSGHDR_IOVLEN_OFFSET),
+            control: read_u64(&bytes, RISCV_LINUX_MSGHDR_CONTROL_OFFSET),
+            controllen: read_u64(&bytes, RISCV_LINUX_MSGHDR_CONTROLLEN_OFFSET),
+        };
+        if msg.iovlen > RISCV_LINUX_IOV_MAX {
+            return Err(RISCV_LINUX_EINVAL);
+        }
+        if msg.name != 0 || msg.namelen != 0 || msg.control != 0 || msg.controllen != 0 {
+            return Err(RISCV_LINUX_ENOTSUP);
+        }
+        Ok(msg)
+    }
+}
+
+fn read_guest_exact(
+    guest_memory: &RiscvGuestMemoryReader,
+    address: u64,
+    len: usize,
+) -> Option<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(len);
+    for offset in 0..len {
+        let address = address.checked_add(offset as u64)?;
+        let byte = guest_memory.read(address, 1)?;
+        if byte.len() != 1 {
+            return None;
+        }
+        bytes.push(byte[0]);
+    }
+    Some(bytes)
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> u32 {
+    let mut raw = [0; 4];
+    raw.copy_from_slice(&bytes[offset..offset + 4]);
+    u32::from_le_bytes(raw)
+}
+
+fn read_u64(bytes: &[u8], offset: usize) -> u64 {
+    let mut raw = [0; 8];
+    raw.copy_from_slice(&bytes[offset..offset + 8]);
+    u64::from_le_bytes(raw)
+}
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct RiscvGuestSocketQueueId(u64);
@@ -927,6 +1002,128 @@ pub(super) fn syscall_recvfrom(
                 return Some(0);
             }
             if !guest_memory.write(request.argument(1), &bytes) {
+                return Some(linux_error(RISCV_LINUX_EFAULT));
+            }
+            if state.consume_guest_socket_read(fd, bytes.len()).is_err() {
+                return Some(linux_error(RISCV_LINUX_EBADF));
+            }
+            Some(bytes.len() as u64)
+        }
+        Ok(RiscvGuestSocketRead::WouldBlock) => Some(linux_error(RISCV_LINUX_EAGAIN)),
+        Ok(RiscvGuestSocketRead::Blocked) => None,
+        Ok(RiscvGuestSocketRead::NotConnected) => Some(linux_error(RISCV_LINUX_EINVAL)),
+        Ok(RiscvGuestSocketRead::NotSocket) => Some(linux_error(RISCV_LINUX_ENOTSOCK)),
+        Err(_) => Some(linux_error(RISCV_LINUX_EBADF)),
+    }
+}
+
+pub(super) fn syscall_sendmsg(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> Option<u64> {
+    let Some(fd) = guest_fd_argument(request.argument(0)) else {
+        return Some(linux_error(RISCV_LINUX_EBADF));
+    };
+    match state.guest_fd_is_socket(fd) {
+        Ok(true) => {}
+        Ok(false) => return Some(linux_error(RISCV_LINUX_ENOTSOCK)),
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    }
+    let Ok(status_flags) = state.guest_fds.status_flags(fd) else {
+        return Some(linux_error(RISCV_LINUX_EBADF));
+    };
+    if status_flags.bits() & (RISCV_LINUX_O_ACCMODE as u32) == RISCV_LINUX_O_RDONLY as u32 {
+        return Some(linux_error(RISCV_LINUX_EBADF));
+    }
+    let flags = request.argument(2);
+    if flags & !RISCV_LINUX_SENDMSG_ALLOWED_FLAGS != 0 {
+        return Some(linux_error(RISCV_LINUX_ENOTSUP));
+    }
+
+    let msg = match RiscvLinuxMsgHdr::read(guest_memory, request.argument(1)) {
+        Ok(msg) => msg,
+        Err(errno) => return Some(linux_error(errno)),
+    };
+    let (iovecs, total) = match read_iovecs(guest_memory, msg.iov, msg.iovlen) {
+        Ok(iovecs) => iovecs,
+        Err(errno) => return Some(linux_error(errno)),
+    };
+    let Ok(byte_count) = usize::try_from(total) else {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    };
+    let force_nonblocking = flags & RISCV_LINUX_MSG_DONTWAIT != 0;
+    let written =
+        match state.guest_socket_write_plan_with_nonblocking(fd, byte_count, force_nonblocking) {
+            Ok(RiscvGuestSocketWrite::NotSocket) => return Some(linux_error(RISCV_LINUX_ENOTSOCK)),
+            Ok(RiscvGuestSocketWrite::Written(written)) => written,
+            Ok(write @ RiscvGuestSocketWrite::WouldBlock)
+            | Ok(write @ RiscvGuestSocketWrite::Blocked)
+            | Ok(write @ RiscvGuestSocketWrite::BrokenPipe)
+            | Ok(write @ RiscvGuestSocketWrite::NotConnected) => return socket_write_result(write),
+            Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+        };
+    if written == 0 {
+        return Some(0);
+    }
+    let Some(bytes) = read_iovec_prefix(guest_memory, &iovecs, written) else {
+        return Some(linux_error(RISCV_LINUX_EFAULT));
+    };
+    match state.write_guest_socket_from_fd(fd, &bytes) {
+        Ok(write) => socket_write_result(write),
+        Err(_) => Some(linux_error(RISCV_LINUX_EBADF)),
+    }
+}
+
+pub(super) fn syscall_recvmsg(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> Option<u64> {
+    let Some(fd) = guest_fd_argument(request.argument(0)) else {
+        return Some(linux_error(RISCV_LINUX_EBADF));
+    };
+    match state.guest_fd_is_socket(fd) {
+        Ok(true) => {}
+        Ok(false) => return Some(linux_error(RISCV_LINUX_ENOTSOCK)),
+        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
+    }
+    let Ok(status_flags) = state.guest_fds.status_flags(fd) else {
+        return Some(linux_error(RISCV_LINUX_EBADF));
+    };
+    if status_flags.bits() & (RISCV_LINUX_O_ACCMODE as u32) == RISCV_LINUX_O_WRONLY as u32 {
+        return Some(linux_error(RISCV_LINUX_EBADF));
+    }
+    let flags = request.argument(2);
+    if flags & !RISCV_LINUX_RECVMSG_ALLOWED_FLAGS != 0 {
+        return Some(linux_error(RISCV_LINUX_ENOTSUP));
+    }
+
+    let msg = match RiscvLinuxMsgHdr::read(guest_memory_reader, request.argument(1)) {
+        Ok(msg) => msg,
+        Err(errno) => return Some(linux_error(errno)),
+    };
+    let (iovecs, total) = match read_iovecs(guest_memory_reader, msg.iov, msg.iovlen) {
+        Ok(iovecs) => iovecs,
+        Err(errno) => return Some(linux_error(errno)),
+    };
+    let Ok(byte_count) = usize::try_from(total) else {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    };
+    let force_nonblocking = flags & RISCV_LINUX_MSG_DONTWAIT != 0;
+    match state.guest_socket_read_with_nonblocking(fd, byte_count, force_nonblocking) {
+        Ok(RiscvGuestSocketRead::Bytes(bytes)) => {
+            if !bytes.is_empty() && !write_iovecs(guest_memory_writer, &iovecs, &bytes) {
+                return Some(linux_error(RISCV_LINUX_EFAULT));
+            }
+            let Some(flags_address) = request
+                .argument(1)
+                .checked_add(RISCV_LINUX_MSGHDR_FLAGS_OFFSET as u64)
+            else {
+                return Some(linux_error(RISCV_LINUX_EFAULT));
+            };
+            if !guest_memory_writer.write(flags_address, &0_i32.to_le_bytes()) {
                 return Some(linux_error(RISCV_LINUX_EFAULT));
             }
             if state.consume_guest_socket_read(fd, bytes.len()).is_err() {
