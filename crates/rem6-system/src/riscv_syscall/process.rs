@@ -2,9 +2,9 @@ use crate::GuestProcessGroupId;
 
 use super::{
     linux_error, read_guest_c_string, RiscvGuestCStringError, RiscvGuestMemoryReader,
-    RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EFAULT,
-    RISCV_LINUX_EINVAL, RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT, RISCV_LINUX_EPERM,
-    RISCV_LINUX_ESRCH, RISCV_LINUX_PATH_MAX,
+    RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_AT_FDCWD,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_ENAMETOOLONG, RISCV_LINUX_ENOENT,
+    RISCV_LINUX_EPERM, RISCV_LINUX_ESRCH, RISCV_LINUX_PATH_MAX,
 };
 
 pub(super) const RISCV_LINUX_SETPGID: u64 = 154;
@@ -13,6 +13,7 @@ pub(super) const RISCV_LINUX_GETSID: u64 = 156;
 pub(super) const RISCV_LINUX_SETSID: u64 = 157;
 pub(super) const RISCV_LINUX_PRCTL: u64 = 167;
 pub(super) const RISCV_LINUX_EXECVE: u64 = 221;
+pub(super) const RISCV_LINUX_EXECVEAT: u64 = 281;
 pub(super) const RISCV_LINUX_PERSONALITY: u64 = 92;
 pub(super) const RISCV_LINUX_UNSHARE: u64 = 97;
 
@@ -127,17 +128,50 @@ pub(super) fn syscall_execve_error_path(
     state: &RiscvSyscallState,
     guest_memory: &RiscvGuestMemoryReader,
 ) -> Option<u64> {
-    let path = match read_guest_c_string(guest_memory, request.argument(0), RISCV_LINUX_PATH_MAX) {
+    syscall_exec_path_error_path(request.argument(0), state, guest_memory)
+}
+
+pub(super) fn syscall_execveat_error_path(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> Option<u64> {
+    if request.argument(4) != 0 {
+        return None;
+    }
+    let path = match read_guest_c_string(guest_memory, request.argument(1), RISCV_LINUX_PATH_MAX) {
         Ok(path) => path,
         Err(RiscvGuestCStringError::Fault) => return Some(linux_error(RISCV_LINUX_EFAULT)),
         Err(RiscvGuestCStringError::TooLong) => {
             return Some(linux_error(RISCV_LINUX_ENAMETOOLONG));
         }
     };
+    if request.argument(0) != RISCV_LINUX_AT_FDCWD && !path.starts_with(b"/") {
+        return None;
+    }
+    exec_guest_path_error_path(&path, state)
+}
+
+fn syscall_exec_path_error_path(
+    path_address: u64,
+    state: &RiscvSyscallState,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> Option<u64> {
+    let path = match read_guest_c_string(guest_memory, path_address, RISCV_LINUX_PATH_MAX) {
+        Ok(path) => path,
+        Err(RiscvGuestCStringError::Fault) => return Some(linux_error(RISCV_LINUX_EFAULT)),
+        Err(RiscvGuestCStringError::TooLong) => {
+            return Some(linux_error(RISCV_LINUX_ENAMETOOLONG));
+        }
+    };
+    exec_guest_path_error_path(&path, state)
+}
+
+fn exec_guest_path_error_path(path: &[u8], state: &RiscvSyscallState) -> Option<u64> {
     if path.is_empty() {
         return Some(linux_error(RISCV_LINUX_ENOENT));
     }
-    let Some(_path) = state.resolve_existing_guest_path(&path).ok().flatten() else {
+    let Some(_path) = state.resolve_existing_guest_path(path).ok().flatten() else {
         return Some(linux_error(RISCV_LINUX_ENOENT));
     };
     None

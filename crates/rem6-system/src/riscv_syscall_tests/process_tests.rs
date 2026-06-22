@@ -15,7 +15,6 @@ const RISCV_LINUX_SETGROUPS_FOR_TEST: u64 = 159;
 const RISCV_LINUX_PRCTL_FOR_TEST: u64 = 167;
 const RISCV_LINUX_PR_SET_NO_NEW_PRIVS_FOR_TEST: u64 = 38;
 const RISCV_LINUX_PR_GET_NO_NEW_PRIVS_FOR_TEST: u64 = 39;
-const RISCV_LINUX_EXECVE_FOR_TEST: u64 = 221;
 
 fn child(pid: u32, process_group: u32, status: GuestWaitStatus) -> GuestChildStatus {
     GuestChildStatus::new(
@@ -23,128 +22,6 @@ fn child(pid: u32, process_group: u32, status: GuestWaitStatus) -> GuestChildSta
         GuestProcessGroupId::new(process_group).unwrap(),
         status,
     )
-}
-
-#[test]
-fn linux_table_execve_missing_registered_path_returns_enoent_without_unknown_record() {
-    let table = RiscvSyscallTable::new();
-    let mut state = RiscvSyscallState::new(0);
-    let path = b"/missing\0".to_vec();
-    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
-        if bytes != 1 || address < 0x9000 {
-            return None;
-        }
-        path.get((address - 0x9000) as usize)
-            .copied()
-            .map(|byte| vec![byte])
-    });
-
-    assert_eq!(
-        table.handle_with_guest_memory_at_tick(
-            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_EXECVE_FOR_TEST, [0x9000, 0, 0, 0, 0, 0],),
-            &mut state,
-            5,
-            Some(&guest_memory_reader),
-        ),
-        Some(RiscvSyscallOutcome::Return {
-            value: linux_error(RISCV_LINUX_ENOENT)
-        })
-    );
-    assert!(state.unknown_syscalls().is_empty());
-}
-
-#[test]
-fn linux_table_execve_path_fault_returns_efault_without_unknown_record() {
-    let table = RiscvSyscallTable::new();
-    let mut state = RiscvSyscallState::new(0);
-    let guest_memory_reader = RiscvGuestMemoryReader::new(|_address, _bytes| None);
-
-    assert_eq!(
-        table.handle_with_guest_memory_at_tick(
-            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_EXECVE_FOR_TEST, [0x9000, 0, 0, 0, 0, 0],),
-            &mut state,
-            5,
-            Some(&guest_memory_reader),
-        ),
-        Some(RiscvSyscallOutcome::Return {
-            value: linux_error(RISCV_LINUX_EFAULT)
-        })
-    );
-    assert!(state.unknown_syscalls().is_empty());
-}
-
-#[test]
-fn linux_table_execve_existing_path_remains_unsupported_and_recorded() {
-    let table = RiscvSyscallTable::new();
-    let mut state = RiscvSyscallState::new(0);
-    state.register_guest_file(b"/bin/app", b"elf");
-    let path = b"/bin/app\0".to_vec();
-    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
-        if bytes != 1 || address < 0x9000 {
-            return None;
-        }
-        path.get((address - 0x9000) as usize)
-            .copied()
-            .map(|byte| vec![byte])
-    });
-
-    assert_eq!(
-        table.handle_with_guest_memory_at_tick(
-            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_EXECVE_FOR_TEST, [0x9000, 0, 0, 0, 0, 0],),
-            &mut state,
-            5,
-            Some(&guest_memory_reader),
-        ),
-        Some(RiscvSyscallOutcome::Return {
-            value: linux_error(RISCV_LINUX_ENOSYS)
-        })
-    );
-    assert_eq!(
-        state.unknown_syscalls(),
-        &[RiscvUnknownSyscallRecord::new(
-            0x8000,
-            RISCV_LINUX_EXECVE_FOR_TEST,
-            [0x9000, 0, 0, 0, 0, 0],
-            5
-        )]
-    );
-}
-
-#[test]
-fn linux_table_execve_relative_existing_path_remains_unsupported_and_recorded() {
-    let table = RiscvSyscallTable::new();
-    let mut state = RiscvSyscallState::new(0);
-    state.register_guest_file(b"/bin/app", b"elf");
-    let path = b"bin/app\0".to_vec();
-    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
-        if bytes != 1 || address < 0x9000 {
-            return None;
-        }
-        path.get((address - 0x9000) as usize)
-            .copied()
-            .map(|byte| vec![byte])
-    });
-
-    assert_eq!(
-        table.handle_with_guest_memory_at_tick(
-            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_EXECVE_FOR_TEST, [0x9000, 0, 0, 0, 0, 0],),
-            &mut state,
-            5,
-            Some(&guest_memory_reader),
-        ),
-        Some(RiscvSyscallOutcome::Return {
-            value: linux_error(RISCV_LINUX_ENOSYS)
-        })
-    );
-    assert_eq!(
-        state.unknown_syscalls(),
-        &[RiscvUnknownSyscallRecord::new(
-            0x8000,
-            RISCV_LINUX_EXECVE_FOR_TEST,
-            [0x9000, 0, 0, 0, 0, 0],
-            5
-        )]
-    );
 }
 
 #[test]

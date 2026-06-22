@@ -599,6 +599,12 @@ impl RiscvSyscallTable {
                     None => unsupported_syscall_outcome(request, state, tick),
                 }
             }),
+            RISCV_LINUX_EXECVEAT => guest_memory_reader.map(|guest_memory| {
+                match syscall_execveat_error_path(request, state, guest_memory) {
+                    Some(value) => RiscvSyscallOutcome::Return { value },
+                    None => unsupported_syscall_outcome(request, state, tick),
+                }
+            }),
             RISCV_LINUX_UNAME => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: write_riscv_linux_utsname(request.argument(0), guest_memory),

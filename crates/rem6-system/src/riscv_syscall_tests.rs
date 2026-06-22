@@ -20,6 +20,8 @@ mod cpu_tests;
 mod cwd_tests;
 #[path = "riscv_syscall_tests/dirent_tests.rs"]
 mod dirent_tests;
+#[path = "riscv_syscall_tests/exec_tests.rs"]
+mod exec_tests;
 #[path = "riscv_syscall_tests/exit_tests.rs"]
 mod exit_tests;
 #[path = "riscv_syscall_tests/fcntl_tests.rs"]

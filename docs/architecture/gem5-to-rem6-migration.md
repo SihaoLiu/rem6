@@ -389,9 +389,9 @@ tool-detected, and broad workload coverage is not present.
   `capget`/`capset` zero-capability, version-probe, pid, null-pointer, and
   nonzero-set error paths are covered by syscall table tests and a no-libc
   static CLI/qemu smoke.
-  `execve` missing-path and guest-path fault error slices are covered by
-  syscall table tests, and missing-path `execve` is covered by a direct
-  `rem6 run --riscv-se` ecall smoke without unknown-syscall diagnostics.
+  `execve` missing-path/fault and flags-zero `execveat` missing-path slices have
+  table coverage; unsupported `execveat` flag/fd-relative boundaries and existing
+  guest exec paths stay typed unknown, while missing-path CLI smokes have no unknown diagnostics.
   `memfd_create` anonymous regular-file fd allocation and file-seal state are
   covered by syscall table tests plus a static raw CLI/qemu smoke; `setfsuid` and `setfsgid` return previous file-system identity values, update allowed
   credentials, reject unprivileged new identities without `errno`, and are
@@ -554,11 +554,10 @@ modeled hart run states, and SBI IPI pending interrupts waking retentive
 suspended harts with top-level HSM wake artifact/stat records; workload replay Linux boot handoff starts the boot hart in
 supervisor mode with `a0=hartid` and `a1=dtb_addr`, keeps secondary harts
 stopped before HSM start, and routes replay SBI base ecalls through firmware;
-typed
-unknown-syscall records, including raw `rt_sigreturn` CLI records instead of
-silent success; `execve` missing-path/fault error returns without
-unknown-syscall record pollution and direct ecall CLI coverage for the
-missing-path case; static smoke coverage; a static newlib
+typed unknown-syscall records, including raw `rt_sigreturn` CLI records instead of
+silent success; `execve` missing-path/fault and flags-zero `execveat` missing-path
+errors avoid unknown pollution; unsupported exec boundaries stay typed unknown;
+direct ecall CLI coverage exists for missing-path cases; static smoke coverage; a static newlib
 `fopen("w+")` create, write, seek, readback, and exit-code roundtrip; and a
 static newlib program that reads `/proc/self/exe` through a direct
 `readlinkat` ecall and compares the exit path with qemu; a static raw program
