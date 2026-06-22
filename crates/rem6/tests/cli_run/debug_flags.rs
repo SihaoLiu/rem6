@@ -251,6 +251,77 @@ fn rem6_run_data_debug_flag_emits_real_data_access_trace() {
 }
 
 #[test]
+fn rem6_run_memory_debug_flag_emits_real_transport_trace() {
+    let mut program = riscv64_program(&[
+        0x0000_0297, // auipc x5, 0
+        0x0402_8293, // addi x5, x5, 64
+        0x0052_b023, // sd x5, 0(x5)
+        0x0002_b303, // ld x6, 0(x5)
+        0x0000_0073, // ecall
+    ]);
+    program.resize(0x50, 0);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-memory", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "Memory",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = stdout_json(output.stdout);
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![Value::String("Memory".to_string())])
+    );
+    let trace = json
+        .pointer("/debug/memory_trace")
+        .and_then(Value::as_array)
+        .expect("debug memory trace array");
+    assert!(
+        trace.len() >= 6,
+        "expected fetch and data transport events, got {trace:?}"
+    );
+    assert!(trace.iter().any(|record| {
+        record.get("channel").and_then(Value::as_str) == Some("fetch")
+            && record.get("kind").and_then(Value::as_str) == Some("request_sent")
+    }));
+    assert!(trace.iter().any(|record| {
+        record.get("channel").and_then(Value::as_str) == Some("data")
+            && record.get("kind").and_then(Value::as_str) == Some("request_sent")
+    }));
+    assert!(trace.iter().any(|record| {
+        record.get("kind").and_then(Value::as_str) == Some("response_arrived")
+            && record.get("response_status").and_then(Value::as_str) == Some("completed")
+    }));
+    for record in trace {
+        assert!(record.get("tick").and_then(Value::as_u64).is_some());
+        assert!(record.get("route").and_then(Value::as_u64).is_some());
+        assert!(record.get("request").and_then(Value::as_u64).is_some());
+        assert!(record.get("endpoint").and_then(Value::as_str).is_some());
+    }
+}
+
+#[test]
 fn rem6_run_syscall_debug_flag_emits_real_riscv_se_syscall_trace() {
     let program = riscv64_program(&[
         i_type(172, 0, 0x0, 17, 0x13), // addi a7, x0, getpid

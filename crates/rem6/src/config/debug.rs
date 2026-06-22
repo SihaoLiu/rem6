@@ -5,6 +5,7 @@ pub enum CliDebugFlag {
     Data,
     Exec,
     Fetch,
+    Memory,
     Power,
     Syscall,
 }
@@ -18,6 +19,7 @@ impl CliDebugFlag {
             "Data" => Ok(Self::Data),
             "Exec" => Ok(Self::Exec),
             "Fetch" => Ok(Self::Fetch),
+            "Memory" => Ok(Self::Memory),
             "Power" => Ok(Self::Power),
             "Syscall" => Ok(Self::Syscall),
             _ => Err(Rem6CliError::UnsupportedDebugFlag {
@@ -31,6 +33,7 @@ impl CliDebugFlag {
             Self::Data => "Data",
             Self::Exec => "Exec",
             Self::Fetch => "Fetch",
+            Self::Memory => "Memory",
             Self::Power => "Power",
             Self::Syscall => "Syscall",
         }

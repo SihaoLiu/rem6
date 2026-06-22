@@ -1,7 +1,8 @@
 use rem6_cpu::{CpuFetchEventKind, RiscvCluster, RiscvCoreDriveAction, RiscvDataAccessEventKind};
-use rem6_memory::MemoryOperation;
+use rem6_memory::{MemoryOperation, ResponseStatus};
 use rem6_power::{PowerAnalysisRecord, PowerStateKind};
 use rem6_system::{RiscvSyscallTraceOutcome, RiscvSyscallTraceRecord, RiscvSystemRun};
+use rem6_transport::{MemoryTrace, MemoryTraceEvent, MemoryTraceKind};
 
 use crate::formatting::{bytes_to_hex, json_escape};
 use crate::{CliDebugFlag, Rem6RunConfig};
@@ -12,6 +13,7 @@ pub(crate) struct Rem6DebugSummary {
     exec_trace: Vec<Rem6ExecTraceRecord>,
     fetch_trace: Vec<Rem6FetchTraceRecord>,
     data_trace: Vec<Rem6DataTraceRecord>,
+    memory_trace: Vec<Rem6MemoryTraceRecord>,
     power_trace: Vec<Rem6PowerTraceRecord>,
     syscall_trace: Vec<Rem6SyscallTraceRecord>,
 }
@@ -46,6 +48,18 @@ struct Rem6DataTraceRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct Rem6MemoryTraceRecord {
+    channel: &'static str,
+    tick: u64,
+    kind: &'static str,
+    route: u64,
+    endpoint: String,
+    request_agent: u32,
+    request: u64,
+    response_status: Option<&'static str>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct Rem6PowerTraceRecord {
     target: String,
     state: &'static str,
@@ -71,6 +85,8 @@ impl Rem6DebugSummary {
         config: &Rem6RunConfig,
         cluster: &RiscvCluster,
         run: &RiscvSystemRun,
+        fetch_memory_trace: &MemoryTrace,
+        data_memory_trace: &MemoryTrace,
         power_records: &[PowerAnalysisRecord],
         syscall_trace: &[RiscvSyscallTraceRecord],
     ) -> Self {
@@ -90,6 +106,11 @@ impl Rem6DebugSummary {
         } else {
             Vec::new()
         };
+        let memory_trace = if config.debug_memory_enabled() {
+            memory_trace_records(fetch_memory_trace, data_memory_trace)
+        } else {
+            Vec::new()
+        };
         let power_trace = if config.debug_power_enabled() {
             power_trace_records(power_records)
         } else {
@@ -105,6 +126,7 @@ impl Rem6DebugSummary {
             exec_trace,
             fetch_trace,
             data_trace,
+            memory_trace,
             power_trace,
             syscall_trace,
         }
@@ -139,6 +161,12 @@ impl Rem6DebugSummary {
             .map(Rem6DataTraceRecord::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let memory_trace = self
+            .memory_trace
+            .iter()
+            .map(Rem6MemoryTraceRecord::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         let power_trace = self
             .power_trace
             .iter()
@@ -152,8 +180,8 @@ impl Rem6DebugSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"flags\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"data_trace\":[{}],\"power_trace\":[{}],\"syscall_trace\":[{}]}}",
-            flags, exec_trace, fetch_trace, data_trace, power_trace, syscall_trace
+            "{{\"flags\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"data_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"syscall_trace\":[{}]}}",
+            flags, exec_trace, fetch_trace, data_trace, memory_trace, power_trace, syscall_trace
         )
     }
 }
@@ -191,6 +219,26 @@ impl Rem6DataTraceRecord {
         format!(
             "{{\"cpu\":{},\"tick\":{},\"kind\":\"{}\",\"address\":\"0x{:x}\",\"size\":{}}}",
             self.cpu, self.tick, self.kind, self.address, self.size,
+        )
+    }
+}
+
+impl Rem6MemoryTraceRecord {
+    fn to_json(&self) -> String {
+        let response_status = self
+            .response_status
+            .map(|status| format!("\"{status}\""))
+            .unwrap_or_else(|| "null".to_string());
+        format!(
+            "{{\"channel\":\"{}\",\"tick\":{},\"kind\":\"{}\",\"route\":{},\"endpoint\":\"{}\",\"request_agent\":{},\"request\":{},\"response_status\":{}}}",
+            self.channel,
+            self.tick,
+            self.kind,
+            self.route,
+            json_escape(&self.endpoint),
+            self.request_agent,
+            self.request,
+            response_status,
         )
     }
 }
@@ -348,6 +396,67 @@ fn data_trace_kind(operation: MemoryOperation) -> Option<&'static str> {
         | MemoryOperation::CleanEvict
         | MemoryOperation::Invalidate
         | MemoryOperation::InvalidateWritable => None,
+    }
+}
+
+fn memory_trace_records(
+    fetch_memory_trace: &MemoryTrace,
+    data_memory_trace: &MemoryTrace,
+) -> Vec<Rem6MemoryTraceRecord> {
+    let mut records = Vec::new();
+    records.extend(memory_trace_channel_records("fetch", fetch_memory_trace));
+    records.extend(memory_trace_channel_records("data", data_memory_trace));
+    records.sort_by_key(|record| {
+        (
+            record.tick,
+            record.channel,
+            record.route,
+            record.request_agent,
+            record.request,
+            record.kind,
+        )
+    });
+    records
+}
+
+fn memory_trace_channel_records(
+    channel: &'static str,
+    trace: &MemoryTrace,
+) -> Vec<Rem6MemoryTraceRecord> {
+    trace
+        .snapshot()
+        .into_iter()
+        .map(|event| memory_trace_record(channel, event))
+        .collect()
+}
+
+fn memory_trace_record(channel: &'static str, event: MemoryTraceEvent) -> Rem6MemoryTraceRecord {
+    let request = event.request_id();
+    Rem6MemoryTraceRecord {
+        channel,
+        tick: event.tick(),
+        kind: memory_trace_kind(event.kind()),
+        route: event.route().get(),
+        endpoint: event.endpoint().as_str().to_string(),
+        request_agent: request.agent().get(),
+        request: request.sequence(),
+        response_status: event.response_status().map(response_status_name),
+    }
+}
+
+const fn memory_trace_kind(kind: MemoryTraceKind) -> &'static str {
+    match kind {
+        MemoryTraceKind::RequestSent => "request_sent",
+        MemoryTraceKind::RequestArrived => "request_arrived",
+        MemoryTraceKind::ResponseArrived => "response_arrived",
+    }
+}
+
+const fn response_status_name(status: ResponseStatus) -> &'static str {
+    match status {
+        ResponseStatus::Completed => "completed",
+        ResponseStatus::Retry => "retry",
+        ResponseStatus::StoreConditionalFailed => "store_conditional_failed",
     }
 }
 

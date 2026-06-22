@@ -1324,6 +1324,10 @@ impl Rem6RunConfig {
         self.debug_flags.contains(&CliDebugFlag::Data)
     }
 
+    pub fn debug_memory_enabled(&self) -> bool {
+        self.debug_flags.contains(&CliDebugFlag::Memory)
+    }
+
     pub fn debug_power_enabled(&self) -> bool {
         self.debug_flags.contains(&CliDebugFlag::Power)
     }

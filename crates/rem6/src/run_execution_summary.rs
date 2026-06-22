@@ -217,6 +217,8 @@ pub(super) fn execution_summary(
         inputs.config,
         cluster,
         run,
+        inputs.fetch_trace,
+        inputs.data_trace,
         &power_records,
         &inputs.riscv_syscall_trace,
     );
