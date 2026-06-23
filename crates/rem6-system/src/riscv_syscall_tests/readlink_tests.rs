@@ -3,6 +3,7 @@ use super::*;
 const RISCV_LINUX_ENOTDIR_FOR_READLINK_TEST: u64 = 20;
 const RISCV_LINUX_EINVAL_FOR_READLINK_TEST: u64 = 22;
 const RISCV_LINUX_CHDIR_FOR_READLINK_TEST: u64 = 49;
+const RISCV_LINUX_PIPE2_FOR_READLINK_TEST: u64 = 59;
 
 #[test]
 fn linux_table_readlinkat_writes_registered_guest_link_without_nul() {
@@ -277,6 +278,112 @@ fn linux_table_readlinkat_reports_proc_self_cwd_after_chdir() {
             value: linux_error(RISCV_LINUX_EINVAL_FOR_READLINK_TEST)
         })
     );
+}
+
+#[test]
+fn linux_table_readlinkat_reports_proc_self_fd_pipe_targets() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if bytes != 1 {
+            return None;
+        }
+        match address {
+            0x9100..=0x910f => b"/proc/self/fd/3\0"
+                .get((address - 0x9100) as usize)
+                .copied(),
+            0x9200..=0x920f => b"/proc/self/fd/4\0"
+                .get((address - 0x9200) as usize)
+                .copied(),
+            0x9300..=0x9310 => b"/proc/self/fd/3/\0"
+                .get((address - 0x9300) as usize)
+                .copied(),
+            _ => None,
+        }
+        .map(|byte| vec![byte])
+    });
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_PIPE2_FOR_READLINK_TEST,
+                [0x9000, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        &*writes.lock().unwrap(),
+        &[(0x9000, [3_u32.to_le_bytes(), 4_u32.to_le_bytes()].concat())]
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_READLINKAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9100, 0x9400, 32, 0, 0],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 8 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_READLINKAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9200, 0x9500, 32, 0, 0],
+            ),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 8 })
+    );
+    {
+        let writes = writes.lock().unwrap();
+        assert!(writes.contains(&(0x9400, b"pipe:[0]".to_vec())));
+        assert!(writes.contains(&(0x9500, b"pipe:[0]".to_vec())));
+    }
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x800c,
+                RISCV_LINUX_READLINKAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9300, 0x9600, 32, 0, 0],
+            ),
+            &mut state,
+            10,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOTDIR_FOR_READLINK_TEST)
+        })
+    );
+    assert!(!writes
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|(address, _)| *address == 0x9600));
 }
 
 #[test]

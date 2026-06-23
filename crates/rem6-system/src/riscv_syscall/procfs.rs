@@ -46,14 +46,16 @@ impl RiscvSyscallState {
         let Some(target) = self
             .guest_file_description_paths
             .get(&description)
-            .or_else(|| self.guest_directory_paths.get(&description))
+            .cloned()
+            .or_else(|| self.guest_directory_paths.get(&description).cloned())
+            .or_else(|| self.guest_pipe_proc_fd_link_target(description))
         else {
             return Ok(None);
         };
         if resolved.crossed_proc_fd_link {
             return Err(RISCV_LINUX_ENOTDIR);
         }
-        Ok(Some(target.clone()))
+        Ok(Some(target))
     }
 
     fn proc_self_maps_bytes(&self) -> Vec<u8> {

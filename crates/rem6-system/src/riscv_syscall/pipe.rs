@@ -21,6 +21,10 @@ impl RiscvGuestPipeId {
     const fn new(value: u64) -> Self {
         Self(value)
     }
+
+    const fn get(self) -> u64 {
+        self.0
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -154,6 +158,14 @@ impl RiscvSyscallState {
             || self
                 .guest_pipe_write_descriptions
                 .contains_key(&description))
+    }
+
+    pub(super) fn guest_pipe_proc_fd_link_target(
+        &self,
+        description: GuestFileDescriptionId,
+    ) -> Option<Vec<u8>> {
+        let endpoint = self.guest_pipe_endpoint(description)?;
+        Some(format!("pipe:[{}]", endpoint.pipe.get()).into_bytes())
     }
 
     pub(super) fn guest_fds_share_pipe(
