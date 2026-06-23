@@ -629,7 +629,61 @@ pub(super) fn emit_trace_replay_dram_stats(
         "Tick",
         StatResetPolicy::Monotonic,
         summary.dram_max_ready_latency_cycles(),
-    )
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.dram.qos.accesses",
+        summary.dram_qos_access_count() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.trace_replay.dram.qos.bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        summary.dram_qos_byte_count(),
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.dram.qos.escalated",
+        summary.dram_qos_escalated_access_count() as u64,
+    )?;
+    for priority in summary.dram_qos_priority_summaries() {
+        let prefix = format!(
+            "sim.trace_replay.dram.qos.priority{}",
+            priority.priority().get()
+        );
+        emit_trace_count(
+            stats,
+            &format!("{prefix}.accesses"),
+            priority.access_count() as u64,
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.bytes"),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            priority.byte_count(),
+        )?;
+    }
+    for requestor in summary.dram_qos_requestor_summaries() {
+        let prefix = format!(
+            "sim.trace_replay.dram.qos.requestor{}",
+            requestor.requestor().get()
+        );
+        emit_trace_count(
+            stats,
+            &format!("{prefix}.accesses"),
+            requestor.access_count() as u64,
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.bytes"),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            requestor.byte_count(),
+        )?;
+    }
+    Ok(())
 }
 
 pub(super) fn emit_trace_replay_resource_stats(
@@ -750,11 +804,13 @@ fn emit_trace_count(stats: &mut StatsRegistry, path: &str, value: u64) -> Result
 
 #[cfg(test)]
 mod tests {
+    use rem6_fabric::{QosPriority, QosRequestorId};
     use rem6_kernel::WaitForEdgeKind;
     use rem6_stats::StatsRegistry;
     use rem6_workload::{
-        WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount,
-        WorkloadParallelExecutionSummary, WorkloadRouteId, WorkloadTrafficTraceReplaySummary,
+        WorkloadDataCacheProtocol, WorkloadDataCacheProtocolCount, WorkloadDramQosPrioritySummary,
+        WorkloadDramQosRequestorSummary, WorkloadParallelExecutionSummary, WorkloadRouteId,
+        WorkloadTrafficTraceReplaySummary,
     };
 
     use super::{
@@ -1061,6 +1117,56 @@ mod tests {
             "sim.trace_replay.dram.max_ready_latency_ticks",
             "Tick",
             13,
+        );
+    }
+
+    #[test]
+    fn trace_replay_stats_emit_dram_qos_activity_accounting() {
+        let summary = WorkloadParallelExecutionSummary::default().with_dram_qos_activity(
+            3,
+            24,
+            1,
+            [
+                WorkloadDramQosPrioritySummary::new(QosPriority::new(0), 2, 16),
+                WorkloadDramQosPrioritySummary::new(QosPriority::new(1), 1, 8),
+            ],
+            [WorkloadDramQosRequestorSummary::new(
+                QosRequestorId::new(7),
+                3,
+                24,
+            )],
+        );
+        let mut stats = StatsRegistry::new();
+
+        emit_trace_replay_dram_stats(&mut stats, &summary).unwrap();
+        let json = stats_snapshot_json(&stats.snapshot(0));
+
+        assert_stat_value(&json, "sim.trace_replay.dram.qos.accesses", "Count", 3);
+        assert_stat_value(&json, "sim.trace_replay.dram.qos.bytes", "Byte", 24);
+        assert_stat_value(&json, "sim.trace_replay.dram.qos.escalated", "Count", 1);
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.dram.qos.priority0.accesses",
+            "Count",
+            2,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.dram.qos.priority1.bytes",
+            "Byte",
+            8,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.dram.qos.requestor7.accesses",
+            "Count",
+            3,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.dram.qos.requestor7.bytes",
+            "Byte",
+            24,
         );
     }
 

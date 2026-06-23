@@ -111,6 +111,12 @@ pub enum Rem6CliError {
     InvalidTraceReplayDataCacheProtocol {
         value: String,
     },
+    InvalidTraceReplayDataCacheDramQosPriorityLevels {
+        value: String,
+    },
+    InvalidTraceReplayDataCacheDramQosDefaultPriority {
+        value: String,
+    },
     InvalidTraceReplayFabricBandwidth {
         value: String,
     },
@@ -490,6 +496,18 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidTraceReplayDataCacheProtocol { value } => {
                 write!(formatter, "invalid trace replay data cache protocol {value}")
+            }
+            Self::InvalidTraceReplayDataCacheDramQosPriorityLevels { value } => {
+                write!(
+                    formatter,
+                    "invalid trace replay data cache DRAM QoS priority levels {value}"
+                )
+            }
+            Self::InvalidTraceReplayDataCacheDramQosDefaultPriority { value } => {
+                write!(
+                    formatter,
+                    "invalid trace replay data cache DRAM QoS default priority {value}"
+                )
             }
             Self::InvalidTraceReplayFabricBandwidth { value } => {
                 write!(formatter, "invalid trace replay fabric bandwidth {value}")

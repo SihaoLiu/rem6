@@ -6,6 +6,8 @@ use serde_json::Value;
 
 use crate::support::*;
 
+#[path = "trace_replay/data_cache_dram.rs"]
+mod data_cache_dram;
 #[path = "trace_replay/data_cache_fabric.rs"]
 mod data_cache_fabric;
 #[path = "trace_replay/external_adapter.rs"]

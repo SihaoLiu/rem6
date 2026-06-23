@@ -14,9 +14,10 @@ use rem6_system::RiscvWorkloadReplay;
 use rem6_traffic::{TrafficTrace, TrafficTraceConfig, TrafficTraceEvent, TrafficTraceGenerator};
 use rem6_workload::{
     HostEventIntent, WorkloadAcquiredResource, WorkloadAcquiredSuiteResource,
-    WorkloadCheckpointManifestSummary, WorkloadDataCacheProtocol, WorkloadHostActionSummary,
-    WorkloadHostEvent, WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute,
-    WorkloadMemoryTarget, WorkloadParallelExecutionSummary, WorkloadReplayPlan,
+    WorkloadCheckpointManifestSummary, WorkloadDataCacheProtocol, WorkloadDramQosPrioritySummary,
+    WorkloadDramQosRequestorSummary, WorkloadHostActionSummary, WorkloadHostEvent,
+    WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadParallelExecutionSummary, WorkloadQosPolicy, WorkloadReplayPlan,
     WorkloadResolvedResources, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
     WorkloadResourcePayload, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteId,
     WorkloadTopology, WorkloadTrafficTraceReplayRun,
@@ -576,6 +577,10 @@ fn trace_replay_manifest(
         }
         None => trace_replay_memory_topology(config, route, topology)?,
     };
+    let topology = match trace_replay_qos_policy(config)? {
+        Some(policy) => topology.with_qos_policy(policy),
+        None => topology,
+    };
     let mut trace_replay = WorkloadTrafficTraceReplayRun::new(
         route.clone(),
         trace_resource.clone(),
@@ -753,6 +758,20 @@ fn trace_replay_fabric_route(
     }
 }
 
+fn trace_replay_qos_policy(
+    config: &Rem6TraceReplayConfig,
+) -> Result<Option<WorkloadQosPolicy>, Rem6CliError> {
+    let (Some(priority_levels), Some(default_priority)) = (
+        config.data_cache_dram_qos_priority_levels(),
+        config.data_cache_dram_qos_default_priority(),
+    ) else {
+        return Ok(None);
+    };
+    WorkloadQosPolicy::new(priority_levels, default_priority)
+        .map(Some)
+        .map_err(execute_error)
+}
+
 fn trace_replay_backing_route(route: &WorkloadRouteId) -> Result<WorkloadRouteId, Rem6CliError> {
     WorkloadRouteId::new(format!("{}.dcache.backing", route.as_str())).map_err(execute_error)
 }
@@ -820,20 +839,40 @@ fn data_cache_dram_summary(
 }
 
 fn dram_profile_summary(profile: &DramMemoryActivityProfile) -> WorkloadParallelExecutionSummary {
-    WorkloadParallelExecutionSummary::default().with_dram_activity(
-        profile.active_target_count(),
-        profile.active_port_count(),
-        profile.active_bank_count(),
-        profile.access_count(),
-        profile.read_count(),
-        profile.write_count(),
-        profile.row_hit_count(),
-        profile.row_miss_count(),
-        profile.command_count(),
-        profile.turnaround_count(),
-        profile.total_ready_latency_cycles(),
-        profile.max_ready_latency_cycles(),
-    )
+    WorkloadParallelExecutionSummary::default()
+        .with_dram_activity(
+            profile.active_target_count(),
+            profile.active_port_count(),
+            profile.active_bank_count(),
+            profile.access_count(),
+            profile.read_count(),
+            profile.write_count(),
+            profile.row_hit_count(),
+            profile.row_miss_count(),
+            profile.command_count(),
+            profile.turnaround_count(),
+            profile.total_ready_latency_cycles(),
+            profile.max_ready_latency_cycles(),
+        )
+        .with_dram_qos_activity(
+            profile.qos_access_count(),
+            profile.qos_byte_count(),
+            profile.qos_escalated_access_count(),
+            profile.qos_priorities().into_iter().map(|priority| {
+                WorkloadDramQosPrioritySummary::new(
+                    priority,
+                    profile.qos_priority_access_count(priority),
+                    profile.qos_priority_byte_count(priority),
+                )
+            }),
+            profile.qos_requestors().into_iter().map(|requestor| {
+                WorkloadDramQosRequestorSummary::new(
+                    requestor,
+                    profile.qos_requestor_access_count(requestor),
+                    profile.qos_requestor_byte_count(requestor),
+                )
+            }),
+        )
 }
 
 impl Rem6TraceReplayExecutionSummary {

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use rem6_cpu::RiscvBranchPredictorKind;
+use rem6_fabric::QosPriority;
 use rem6_stats::PcCountPair;
 use rem6_system::RiscvDataCacheProtocol;
 use rem6_workload::WorkloadDataCacheProtocol;
@@ -137,6 +138,8 @@ pub struct Rem6TraceReplayConfig {
     control_partition: u32,
     data_cache_protocol: Option<WorkloadDataCacheProtocol>,
     data_cache_dram_memory_profile: Option<CliDramMemoryProfile>,
+    data_cache_dram_qos_priority_levels: Option<u8>,
+    data_cache_dram_qos_default_priority: Option<QosPriority>,
     fabric_link: Option<String>,
     fabric_bandwidth_bytes_per_tick: Option<u64>,
     fabric_request_virtual_network: u16,
@@ -298,6 +301,8 @@ struct Rem6TraceReplayFileConfig {
     control_partition: Option<u32>,
     data_cache_protocol: Option<String>,
     data_cache_dram_memory_profile: Option<String>,
+    data_cache_dram_qos_priority_levels: Option<u8>,
+    data_cache_dram_qos_default_priority: Option<u8>,
     fabric_link: Option<String>,
     fabric_bandwidth_bytes_per_tick: Option<u64>,
     fabric_request_virtual_network: Option<u16>,

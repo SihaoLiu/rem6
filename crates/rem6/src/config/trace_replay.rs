@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use rem6_fabric::QosPriority;
 use rem6_workload::WorkloadDataCacheProtocol;
 
 use super::{
@@ -141,6 +142,18 @@ impl Rem6TraceReplayConfig {
             .as_deref()
             .map(CliDramMemoryProfile::parse)
             .transpose()?;
+        let mut data_cache_dram_qos_priority_levels =
+            file_config.data_cache_dram_qos_priority_levels;
+        if data_cache_dram_qos_priority_levels == Some(0) {
+            return Err(
+                Rem6CliError::InvalidTraceReplayDataCacheDramQosPriorityLevels {
+                    value: "0".to_string(),
+                },
+            );
+        }
+        let mut data_cache_dram_qos_default_priority = file_config
+            .data_cache_dram_qos_default_priority
+            .map(QosPriority::new);
         let mut fabric_link = file_config.fabric_link;
         let mut fabric_bandwidth_bytes_per_tick = file_config.fabric_bandwidth_bytes_per_tick;
         if fabric_bandwidth_bytes_per_tick == Some(0) {
@@ -281,6 +294,18 @@ impl Rem6TraceReplayConfig {
                         &required_value(&flag, args.next())?,
                     )?);
                 }
+                "--data-cache-dram-qos-priority-levels" => {
+                    let value = required_value(&flag, args.next())?;
+                    data_cache_dram_qos_priority_levels = Some(
+                        parse_trace_replay_data_cache_dram_qos_priority_levels(&value)?,
+                    );
+                }
+                "--data-cache-dram-qos-default-priority" => {
+                    let value = required_value(&flag, args.next())?;
+                    data_cache_dram_qos_default_priority = Some(
+                        parse_trace_replay_data_cache_dram_qos_default_priority(&value)?,
+                    );
+                }
                 "--fabric-link" => {
                     fabric_link = Some(required_value(&flag, args.next())?);
                 }
@@ -404,6 +429,30 @@ impl Rem6TraceReplayConfig {
                 flag: "--data-cache-protocol",
             });
         }
+        if data_cache_dram_qos_priority_levels.is_some()
+            && data_cache_dram_qos_default_priority.is_none()
+        {
+            return Err(Rem6CliError::MissingRequiredFlag {
+                flag: "--data-cache-dram-qos-default-priority",
+            });
+        }
+        if data_cache_dram_qos_default_priority.is_some()
+            && data_cache_dram_qos_priority_levels.is_none()
+        {
+            return Err(Rem6CliError::MissingRequiredFlag {
+                flag: "--data-cache-dram-qos-priority-levels",
+            });
+        }
+        if data_cache_dram_qos_priority_levels.is_some() && data_cache_dram_memory_profile.is_none()
+        {
+            return Err(Rem6CliError::MissingRequiredFlag {
+                flag: "--data-cache-dram-memory-profile",
+            });
+        }
+        validate_trace_replay_data_cache_dram_qos_default_priority(
+            data_cache_dram_qos_priority_levels,
+            data_cache_dram_qos_default_priority,
+        )?;
         let memory_route_delay = memory_route_delay.unwrap_or(min_remote_delay);
         if memory_route_delay < min_remote_delay {
             return Err(Rem6CliError::MemoryRouteDelayBelowMinRemoteDelay {
@@ -436,6 +485,8 @@ impl Rem6TraceReplayConfig {
             control_partition,
             data_cache_protocol,
             data_cache_dram_memory_profile,
+            data_cache_dram_qos_priority_levels,
+            data_cache_dram_qos_default_priority,
             fabric_link,
             fabric_bandwidth_bytes_per_tick,
             fabric_request_virtual_network: fabric_request_virtual_network.unwrap_or(0),
@@ -519,6 +570,14 @@ impl Rem6TraceReplayConfig {
 
     pub const fn data_cache_dram_memory_profile(&self) -> Option<CliDramMemoryProfile> {
         self.data_cache_dram_memory_profile
+    }
+
+    pub const fn data_cache_dram_qos_priority_levels(&self) -> Option<u8> {
+        self.data_cache_dram_qos_priority_levels
+    }
+
+    pub const fn data_cache_dram_qos_default_priority(&self) -> Option<QosPriority> {
+        self.data_cache_dram_qos_default_priority
     }
 
     pub fn fabric_link(&self) -> Option<&str> {
@@ -606,6 +665,47 @@ fn parse_fabric_credit_depth(value: &str) -> Result<u32, Rem6CliError> {
         })
 }
 
+fn parse_trace_replay_data_cache_dram_qos_priority_levels(value: &str) -> Result<u8, Rem6CliError> {
+    parse_positive_u64(value)
+        .and_then(|levels| u8::try_from(levels).ok())
+        .ok_or_else(
+            || Rem6CliError::InvalidTraceReplayDataCacheDramQosPriorityLevels {
+                value: value.to_string(),
+            },
+        )
+}
+
+fn parse_trace_replay_data_cache_dram_qos_default_priority(
+    value: &str,
+) -> Result<QosPriority, Rem6CliError> {
+    parse_number(value)
+        .and_then(|priority| u8::try_from(priority).ok())
+        .map(QosPriority::new)
+        .ok_or_else(
+            || Rem6CliError::InvalidTraceReplayDataCacheDramQosDefaultPriority {
+                value: value.to_string(),
+            },
+        )
+}
+
+fn validate_trace_replay_data_cache_dram_qos_default_priority(
+    priority_levels: Option<u8>,
+    default_priority: Option<QosPriority>,
+) -> Result<(), Rem6CliError> {
+    let (Some(priority_levels), Some(default_priority)) = (priority_levels, default_priority)
+    else {
+        return Ok(());
+    };
+    if default_priority.get() >= priority_levels {
+        return Err(
+            Rem6CliError::InvalidTraceReplayDataCacheDramQosDefaultPriority {
+                value: default_priority.get().to_string(),
+            },
+        );
+    }
+    Ok(())
+}
+
 fn parse_trace_replay_external_adapter_checkpoint_after_events(
     value: &str,
 ) -> Result<usize, Rem6CliError> {
@@ -691,6 +791,72 @@ mod tests {
             Rem6CliError::MissingRequiredFlag {
                 flag: "--data-cache-protocol"
             }
+        ));
+    }
+
+    #[test]
+    fn trace_replay_data_cache_dram_qos_parses() {
+        let mut args = minimal_trace_replay_args().to_vec();
+        args.extend([
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-dram-memory-profile",
+            "hbm",
+            "--data-cache-dram-qos-priority-levels",
+            "2",
+            "--data-cache-dram-qos-default-priority",
+            "1",
+        ]);
+
+        let config = Rem6TraceReplayConfig::parse_args(args).unwrap();
+
+        assert_eq!(config.data_cache_dram_qos_priority_levels(), Some(2));
+        assert_eq!(
+            config
+                .data_cache_dram_qos_default_priority()
+                .map(QosPriority::get),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn trace_replay_data_cache_dram_qos_requires_profiled_dram() {
+        let mut args = minimal_trace_replay_args().to_vec();
+        args.extend([
+            "--data-cache-dram-qos-priority-levels",
+            "2",
+            "--data-cache-dram-qos-default-priority",
+            "1",
+        ]);
+        let error = Rem6TraceReplayConfig::parse_args(args).unwrap_err();
+
+        assert!(matches!(
+            error,
+            Rem6CliError::MissingRequiredFlag {
+                flag: "--data-cache-dram-memory-profile"
+            }
+        ));
+    }
+
+    #[test]
+    fn trace_replay_data_cache_dram_qos_rejects_out_of_range_default_priority() {
+        let mut args = minimal_trace_replay_args().to_vec();
+        args.extend([
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-dram-memory-profile",
+            "hbm",
+            "--data-cache-dram-qos-priority-levels",
+            "2",
+            "--data-cache-dram-qos-default-priority",
+            "2",
+        ]);
+        let error = Rem6TraceReplayConfig::parse_args(args).unwrap_err();
+
+        assert!(matches!(
+            error,
+            Rem6CliError::InvalidTraceReplayDataCacheDramQosDefaultPriority { value }
+                if value == "2"
         ));
     }
 
