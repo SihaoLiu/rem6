@@ -930,6 +930,42 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         .get("active_lanes")
         .and_then(Value::as_u64)
         .expect("fabric active lanes");
+    let fabric_active_virtual_networks = fabric
+        .get("active_virtual_networks")
+        .and_then(Value::as_u64)
+        .expect("fabric active virtual networks");
+    let fabric_bytes = fabric
+        .get("bytes")
+        .and_then(Value::as_u64)
+        .expect("fabric bytes");
+    let fabric_flits = fabric
+        .get("flits")
+        .and_then(Value::as_u64)
+        .expect("fabric flits");
+    let fabric_occupied_ticks = fabric
+        .get("occupied_ticks")
+        .and_then(Value::as_u64)
+        .expect("fabric occupied ticks");
+    let fabric_queue_delay_ticks = fabric
+        .get("queue_delay_ticks")
+        .and_then(Value::as_u64)
+        .expect("fabric queue delay ticks");
+    let fabric_max_queue_delay_ticks = fabric
+        .get("max_queue_delay_ticks")
+        .and_then(Value::as_u64)
+        .expect("fabric max queue delay ticks");
+    let fabric_credit_delay_ticks = fabric
+        .get("credit_delay_ticks")
+        .and_then(Value::as_u64)
+        .expect("fabric credit delay ticks");
+    let fabric_max_credit_delay_ticks = fabric
+        .get("max_credit_delay_ticks")
+        .and_then(Value::as_u64)
+        .expect("fabric max credit delay ticks");
+    let fabric_contended_lanes = fabric
+        .get("contended_lanes")
+        .and_then(Value::as_u64)
+        .expect("fabric contended lanes");
     let memory_resources = json
         .pointer("/memory_resources")
         .expect("memory resource summary");
@@ -1026,6 +1062,60 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
             .pointer("/fabric/active")
             .and_then(Value::as_u64),
         Some(fabric_active_lanes)
+    );
+    assert_eq!(
+        memory_resources
+            .pointer("/fabric/active_virtual_networks")
+            .and_then(Value::as_u64),
+        Some(fabric_active_virtual_networks)
+    );
+    assert_eq!(
+        memory_resources
+            .pointer("/fabric/bytes")
+            .and_then(Value::as_u64),
+        Some(fabric_bytes)
+    );
+    assert_eq!(
+        memory_resources
+            .pointer("/fabric/flits")
+            .and_then(Value::as_u64),
+        Some(fabric_flits)
+    );
+    assert_eq!(
+        memory_resources
+            .pointer("/fabric/occupied_ticks")
+            .and_then(Value::as_u64),
+        Some(fabric_occupied_ticks)
+    );
+    assert_eq!(
+        memory_resources
+            .pointer("/fabric/queue_delay_ticks")
+            .and_then(Value::as_u64),
+        Some(fabric_queue_delay_ticks)
+    );
+    assert_eq!(
+        memory_resources
+            .pointer("/fabric/max_queue_delay_ticks")
+            .and_then(Value::as_u64),
+        Some(fabric_max_queue_delay_ticks)
+    );
+    assert_eq!(
+        memory_resources
+            .pointer("/fabric/credit_delay_ticks")
+            .and_then(Value::as_u64),
+        Some(fabric_credit_delay_ticks)
+    );
+    assert_eq!(
+        memory_resources
+            .pointer("/fabric/max_credit_delay_ticks")
+            .and_then(Value::as_u64),
+        Some(fabric_max_credit_delay_ticks)
+    );
+    assert_eq!(
+        memory_resources
+            .pointer("/fabric/contended_lanes")
+            .and_then(Value::as_u64),
+        Some(fabric_contended_lanes)
     );
     assert_eq!(
         transport_fetch_activity,
@@ -1146,16 +1236,8 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         memory_resources.pointer("/active").and_then(Value::as_u64),
         Some(expected_active_memory_resources)
     );
-    assert!(fabric.get("bytes").and_then(Value::as_u64).unwrap_or(0) > 0);
-    assert!(fabric.get("flits").and_then(Value::as_u64).unwrap_or(0) > 0);
-    let credit_delay_ticks = fabric
-        .get("credit_delay_ticks")
-        .and_then(Value::as_u64)
-        .expect("fabric credit delay ticks");
-    let max_credit_delay_ticks = fabric
-        .get("max_credit_delay_ticks")
-        .and_then(Value::as_u64)
-        .expect("fabric max credit delay ticks");
+    assert!(fabric_bytes > 0);
+    assert!(fabric_flits > 0);
     assert!(fabric
         .get("lane_activities")
         .and_then(Value::as_array)
@@ -1199,14 +1281,14 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         &stdout,
         "sim.memory.fabric.credit_delay_ticks",
         "Tick",
-        credit_delay_ticks,
+        fabric_credit_delay_ticks,
         "monotonic",
     );
     assert_stat(
         &stdout,
         "sim.memory.fabric.max_credit_delay_ticks",
         "Tick",
-        max_credit_delay_ticks,
+        fabric_max_credit_delay_ticks,
         "monotonic",
     );
     assert_stat(
@@ -1221,6 +1303,69 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         "sim.memory.resources.fabric.active",
         "Count",
         fabric_active_lanes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.fabric.active_virtual_networks",
+        "Count",
+        fabric_active_virtual_networks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.fabric.bytes",
+        "Byte",
+        fabric_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.fabric.flits",
+        "Count",
+        fabric_flits,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.fabric.occupied_ticks",
+        "Tick",
+        fabric_occupied_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.fabric.queue_delay_ticks",
+        "Tick",
+        fabric_queue_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.fabric.max_queue_delay_ticks",
+        "Tick",
+        fabric_max_queue_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.fabric.credit_delay_ticks",
+        "Tick",
+        fabric_credit_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.fabric.max_credit_delay_ticks",
+        "Tick",
+        fabric_max_credit_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.fabric.contended_lanes",
+        "Count",
+        fabric_contended_lanes,
         "monotonic",
     );
     assert_stat(

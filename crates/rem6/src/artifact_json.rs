@@ -1151,7 +1151,7 @@ impl Rem6ExecutionSummary {
 impl Rem6MemoryResourceSummary {
     fn to_json(&self) -> String {
         format!(
-            "{{\"activity\":{},\"active\":{},\"cache\":{{\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{},\"l1\":{},\"l2\":{},\"l3\":{}}},\"transport\":{{\"activity\":{},\"active\":{},\"request_arrivals\":{},\"responses\":{},\"response_arrivals\":{},\"round_trip_ticks\":{},\"max_round_trip_ticks\":{},\"fetch\":{},\"data\":{}}},\"fabric\":{{\"activity\":{},\"active\":{}}},\"dram\":{{\"activity\":{},\"active\":{}}}}}",
+            "{{\"activity\":{},\"active\":{},\"cache\":{{\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{},\"l1\":{},\"l2\":{},\"l3\":{}}},\"transport\":{{\"activity\":{},\"active\":{},\"request_arrivals\":{},\"responses\":{},\"response_arrivals\":{},\"round_trip_ticks\":{},\"max_round_trip_ticks\":{},\"fetch\":{},\"data\":{}}},\"fabric\":{},\"dram\":{{\"activity\":{},\"active\":{}}}}}",
             self.activity,
             self.active,
             self.cache.activity,
@@ -1175,12 +1175,28 @@ impl Rem6MemoryResourceSummary {
             self.transport.max_round_trip_ticks,
             transport_resource_json(&self.transport_fetch),
             transport_resource_json(&self.transport_data),
-            self.fabric_activity,
-            self.active_fabric_resources,
+            fabric_resource_json(&self.fabric),
             self.dram_activity,
             self.active_dram_resources,
         )
     }
+}
+
+fn fabric_resource_json(summary: &super::Rem6FabricResourceSummary) -> String {
+    format!(
+        "{{\"activity\":{},\"active\":{},\"active_virtual_networks\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{}}}",
+        summary.activity,
+        summary.active,
+        summary.active_virtual_networks,
+        summary.bytes,
+        summary.flits,
+        summary.occupied_ticks,
+        summary.queue_delay_ticks,
+        summary.max_queue_delay_ticks,
+        summary.credit_delay_ticks,
+        summary.max_credit_delay_ticks,
+        summary.contended_lanes,
+    )
 }
 
 fn transport_resource_json(summary: &super::Rem6TransportResourceSummary) -> String {

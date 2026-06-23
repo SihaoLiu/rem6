@@ -14,8 +14,7 @@ pub(crate) struct Rem6MemoryResourceSummary {
     pub(crate) transport: Rem6TransportResourceSummary,
     pub(crate) transport_fetch: Rem6TransportResourceSummary,
     pub(crate) transport_data: Rem6TransportResourceSummary,
-    pub(crate) fabric_activity: u64,
-    pub(crate) active_fabric_resources: u64,
+    pub(crate) fabric: Rem6FabricResourceSummary,
     pub(crate) dram_activity: u64,
     pub(crate) active_dram_resources: u64,
 }
@@ -42,6 +41,21 @@ pub(crate) struct Rem6TransportResourceSummary {
     pub(crate) response_arrivals: u64,
     pub(crate) round_trip_ticks: u64,
     pub(crate) max_round_trip_ticks: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct Rem6FabricResourceSummary {
+    pub(crate) activity: u64,
+    pub(crate) active: u64,
+    pub(crate) active_virtual_networks: u64,
+    pub(crate) bytes: u64,
+    pub(crate) flits: u64,
+    pub(crate) occupied_ticks: u64,
+    pub(crate) queue_delay_ticks: u64,
+    pub(crate) max_queue_delay_ticks: u64,
+    pub(crate) credit_delay_ticks: u64,
+    pub(crate) max_credit_delay_ticks: u64,
+    pub(crate) contended_lanes: u64,
 }
 
 pub(crate) struct Rem6MemoryResourceInputs<'a> {
@@ -127,6 +141,24 @@ impl Rem6TransportResourceSummary {
     }
 }
 
+impl Rem6FabricResourceSummary {
+    fn from_fabric(summary: &Rem6RunFabricSummary) -> Self {
+        Self {
+            activity: summary.transfers(),
+            active: summary.active_lanes(),
+            active_virtual_networks: summary.active_virtual_networks(),
+            bytes: summary.bytes(),
+            flits: summary.flits(),
+            occupied_ticks: summary.occupied_ticks(),
+            queue_delay_ticks: summary.queue_delay_ticks(),
+            max_queue_delay_ticks: summary.max_queue_delay_ticks(),
+            credit_delay_ticks: summary.credit_delay_ticks(),
+            max_credit_delay_ticks: summary.max_credit_delay_ticks(),
+            contended_lanes: summary.contended_lanes(),
+        }
+    }
+}
+
 impl Rem6MemoryResourceSummary {
     pub(crate) fn from_run_resources(inputs: Rem6MemoryResourceInputs<'_>) -> Self {
         let cache = Rem6CacheResourceSummary::from_cache_summaries(inputs.cache_summaries());
@@ -148,8 +180,7 @@ impl Rem6MemoryResourceSummary {
             transport_fetch.clone(),
             transport_data.clone(),
         ]);
-        let fabric_activity = inputs.fabric.transfers();
-        let active_fabric_resources = inputs.fabric.active_lanes();
+        let fabric = Rem6FabricResourceSummary::from_fabric(inputs.fabric);
         let dram = inputs.dram;
         let dram_activity = dram
             .accesses
@@ -174,12 +205,12 @@ impl Rem6MemoryResourceSummary {
             activity: cache
                 .activity
                 .saturating_add(transport.activity)
-                .saturating_add(fabric_activity)
+                .saturating_add(fabric.activity)
                 .saturating_add(dram_activity),
             active: cache
                 .active
                 .saturating_add(transport.active)
-                .saturating_add(active_fabric_resources)
+                .saturating_add(fabric.active)
                 .saturating_add(active_dram_resources),
             cache,
             cache_l1,
@@ -188,8 +219,7 @@ impl Rem6MemoryResourceSummary {
             transport,
             transport_fetch,
             transport_data,
-            fabric_activity,
-            active_fabric_resources,
+            fabric,
             dram_activity,
             active_dram_resources,
         }

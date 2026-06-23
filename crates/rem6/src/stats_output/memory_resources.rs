@@ -1,6 +1,6 @@
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
-use crate::{Rem6CacheResourceSummary, Rem6TransportResourceSummary};
+use crate::{Rem6CacheResourceSummary, Rem6FabricResourceSummary, Rem6TransportResourceSummary};
 
 use super::{increment_stat, Rem6CliError, Rem6ExecutionSummary};
 
@@ -16,14 +16,6 @@ pub(super) fn emit_memory_resource_stats(
         (
             "sim.memory.resources.active",
             execution.memory_resources.active,
-        ),
-        (
-            "sim.memory.resources.fabric.activity",
-            execution.memory_resources.fabric_activity,
-        ),
-        (
-            "sim.memory.resources.fabric.active",
-            execution.memory_resources.active_fabric_resources,
         ),
         (
             "sim.memory.resources.dram.activity",
@@ -71,6 +63,52 @@ pub(super) fn emit_memory_resource_stats(
         "sim.memory.resources.transport.data",
         &execution.memory_resources.transport_data,
     )?;
+    emit_fabric_resource_stats(
+        stats,
+        "sim.memory.resources.fabric",
+        &execution.memory_resources.fabric,
+    )?;
+    Ok(())
+}
+
+fn emit_fabric_resource_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    summary: &Rem6FabricResourceSummary,
+) -> Result<(), Rem6CliError> {
+    for (suffix, unit, value) in [
+        ("activity", "Count", summary.activity),
+        ("active", "Count", summary.active),
+        (
+            "active_virtual_networks",
+            "Count",
+            summary.active_virtual_networks,
+        ),
+        ("bytes", "Byte", summary.bytes),
+        ("flits", "Count", summary.flits),
+        ("occupied_ticks", "Tick", summary.occupied_ticks),
+        ("queue_delay_ticks", "Tick", summary.queue_delay_ticks),
+        (
+            "max_queue_delay_ticks",
+            "Tick",
+            summary.max_queue_delay_ticks,
+        ),
+        ("credit_delay_ticks", "Tick", summary.credit_delay_ticks),
+        (
+            "max_credit_delay_ticks",
+            "Tick",
+            summary.max_credit_delay_ticks,
+        ),
+        ("contended_lanes", "Count", summary.contended_lanes),
+    ] {
+        increment_stat(
+            stats,
+            &format!("{prefix}.{suffix}"),
+            unit,
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
     Ok(())
 }
 

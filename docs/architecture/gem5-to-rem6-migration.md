@@ -366,6 +366,10 @@ CLI `run` cache/fabric/DRAM resource smoke coverage also exposes fetch/data
 memory-transport resource activity, active-resource, arrival/response,
 round-trip, and max-round-trip counters in artifact JSON and `StatsRegistry`,
 derived from real fetch/data `MemoryTrace` summaries.
+The same CLI `run` cache/fabric/DRAM smoke exposes memory-resource fabric
+active-lane, active-virtual-network, transfer, byte, flit, occupied-tick,
+queue-delay, credit-delay, and contention counters in artifact JSON and
+`StatsRegistry`, derived from the executed run fabric summary.
 CLI
 trace-replay fabric-route smoke coverage exposes nonzero active-lane,
 active-virtual-network, transfer, byte, and flit stats plus request/response virtual
