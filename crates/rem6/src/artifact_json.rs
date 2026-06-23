@@ -1151,7 +1151,7 @@ impl Rem6ExecutionSummary {
 impl Rem6MemoryResourceSummary {
     fn to_json(&self) -> String {
         format!(
-            "{{\"activity\":{},\"active\":{},\"cache\":{{\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{},\"l1\":{},\"l2\":{},\"l3\":{}}},\"transport\":{{\"activity\":{},\"active\":{},\"request_arrivals\":{},\"responses\":{},\"response_arrivals\":{},\"round_trip_ticks\":{},\"max_round_trip_ticks\":{},\"fetch\":{},\"data\":{}}},\"fabric\":{},\"dram\":{{\"activity\":{},\"active\":{}}}}}",
+            "{{\"activity\":{},\"active\":{},\"cache\":{{\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{},\"l1\":{},\"l2\":{},\"l3\":{}}},\"transport\":{{\"activity\":{},\"active\":{},\"request_arrivals\":{},\"responses\":{},\"response_arrivals\":{},\"round_trip_ticks\":{},\"max_round_trip_ticks\":{},\"fetch\":{},\"data\":{}}},\"fabric\":{},\"dram\":{}}}",
             self.activity,
             self.active,
             self.cache.activity,
@@ -1176,10 +1176,29 @@ impl Rem6MemoryResourceSummary {
             transport_resource_json(&self.transport_fetch),
             transport_resource_json(&self.transport_data),
             fabric_resource_json(&self.fabric),
-            self.dram_activity,
-            self.active_dram_resources,
+            dram_resource_json(&self.dram),
         )
     }
+}
+
+fn dram_resource_json(summary: &super::Rem6DramResourceSummary) -> String {
+    format!(
+        "{{\"activity\":{},\"active\":{},\"active_targets\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{}}}",
+        summary.activity,
+        summary.active,
+        summary.active_targets,
+        summary.active_ports,
+        summary.active_banks,
+        summary.accesses,
+        summary.reads,
+        summary.writes,
+        summary.row_hits,
+        summary.row_misses,
+        summary.commands,
+        summary.turnarounds,
+        summary.total_ready_latency_ticks,
+        summary.max_ready_latency_ticks,
+    )
 }
 
 fn fabric_resource_json(summary: &super::Rem6FabricResourceSummary) -> String {

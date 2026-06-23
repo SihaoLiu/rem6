@@ -93,8 +93,8 @@ pub(crate) use instruction_probe_summary::{
     Rem6PcCountTrackerSummary,
 };
 pub(crate) use memory_resource_summary::{
-    Rem6CacheResourceSummary, Rem6FabricResourceSummary, Rem6MemoryResourceInputs,
-    Rem6MemoryResourceSummary, Rem6TransportResourceSummary,
+    Rem6CacheResourceSummary, Rem6DramResourceSummary, Rem6FabricResourceSummary,
+    Rem6MemoryResourceInputs, Rem6MemoryResourceSummary, Rem6TransportResourceSummary,
 };
 pub use multi_run_cli::{run_multi_run_config, Rem6MultiRunArtifact, Rem6MultiRunConfig};
 use pipeline_stats::Rem6InOrderPipelineStageSummary;

@@ -1925,6 +1925,18 @@ fn rem6_run_cache_dram_path_emits_unified_resource_activity_stats() {
     let active_transports = json_u64(resources, "/transport/active");
     let dram_activity = json_u64(resources, "/dram/activity");
     let active_dram = json_u64(resources, "/dram/active");
+    let dram_active_targets = json_u64(resources, "/dram/active_targets");
+    let dram_active_ports = json_u64(resources, "/dram/active_ports");
+    let dram_active_banks = json_u64(resources, "/dram/active_banks");
+    let dram_accesses = json_u64(resources, "/dram/accesses");
+    let dram_reads = json_u64(resources, "/dram/reads");
+    let dram_writes = json_u64(resources, "/dram/writes");
+    let dram_row_hits = json_u64(resources, "/dram/row_hits");
+    let dram_row_misses = json_u64(resources, "/dram/row_misses");
+    let dram_commands = json_u64(resources, "/dram/commands");
+    let dram_turnarounds = json_u64(resources, "/dram/turnarounds");
+    let dram_total_ready_latency_ticks = json_u64(resources, "/dram/total_ready_latency_ticks");
+    let dram_max_ready_latency_ticks = json_u64(resources, "/dram/max_ready_latency_ticks");
 
     assert_eq!(
         activity,
@@ -1959,6 +1971,24 @@ fn rem6_run_cache_dram_path_emits_unified_resource_activity_stats() {
         .max(low_power_entries)
         .max(json_u64(&json, "/dram/low_power/exits"));
     assert_eq!(dram_activity, dram_operation_activity);
+    assert_eq!(dram_active_targets, json_u64(&json, "/dram/active_targets"));
+    assert_eq!(dram_active_ports, json_u64(&json, "/dram/active_ports"));
+    assert_eq!(dram_active_banks, json_u64(&json, "/dram/active_banks"));
+    assert_eq!(dram_accesses, json_u64(&json, "/dram/accesses"));
+    assert_eq!(dram_reads, json_u64(&json, "/dram/reads"));
+    assert_eq!(dram_writes, json_u64(&json, "/dram/writes"));
+    assert_eq!(dram_row_hits, json_u64(&json, "/dram/row_hits"));
+    assert_eq!(dram_row_misses, json_u64(&json, "/dram/row_misses"));
+    assert_eq!(dram_commands, json_u64(&json, "/dram/commands"));
+    assert_eq!(dram_turnarounds, json_u64(&json, "/dram/turnarounds"));
+    assert_eq!(
+        dram_total_ready_latency_ticks,
+        json_u64(&json, "/dram/total_ready_latency_ticks")
+    );
+    assert_eq!(
+        dram_max_ready_latency_ticks,
+        json_u64(&json, "/dram/max_ready_latency_ticks")
+    );
     assert!(cache_activity > 0);
     assert!(cache_cpu_responses > 0);
     assert!(cache_directory_decisions > 0);
@@ -2058,6 +2088,50 @@ fn rem6_run_cache_dram_path_emits_unified_resource_activity_stats() {
     );
     assert_resource_stat_matches_json(&stdout, "sim.memory.resources.dram.activity", dram_activity);
     assert_resource_stat_matches_json(&stdout, "sim.memory.resources.dram.active", active_dram);
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.dram.active_targets",
+        dram_active_targets,
+    );
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.dram.active_ports",
+        dram_active_ports,
+    );
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.dram.active_banks",
+        dram_active_banks,
+    );
+    assert_resource_stat_matches_json(&stdout, "sim.memory.resources.dram.accesses", dram_accesses);
+    assert_resource_stat_matches_json(&stdout, "sim.memory.resources.dram.reads", dram_reads);
+    assert_resource_stat_matches_json(&stdout, "sim.memory.resources.dram.writes", dram_writes);
+    assert_resource_stat_matches_json(&stdout, "sim.memory.resources.dram.row_hits", dram_row_hits);
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.dram.row_misses",
+        dram_row_misses,
+    );
+    assert_resource_stat_matches_json(&stdout, "sim.memory.resources.dram.commands", dram_commands);
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.dram.turnarounds",
+        dram_turnarounds,
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.total_ready_latency_ticks",
+        "Tick",
+        dram_total_ready_latency_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.max_ready_latency_ticks",
+        "Tick",
+        dram_max_ready_latency_ticks,
+        "monotonic",
+    );
 }
 
 #[test]

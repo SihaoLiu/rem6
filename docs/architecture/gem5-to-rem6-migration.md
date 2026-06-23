@@ -370,6 +370,10 @@ The same CLI `run` cache/fabric/DRAM smoke exposes memory-resource fabric
 active-lane, active-virtual-network, transfer, byte, flit, occupied-tick,
 queue-delay, credit-delay, and contention counters in artifact JSON and
 `StatsRegistry`, derived from the executed run fabric summary.
+Top-level `rem6 run` cache/DRAM resource smoke coverage exposes
+memory-resource DRAM active target/port/bank, access, read/write, row,
+command, turnaround, and ready-latency counters in artifact JSON and
+`StatsRegistry`, derived from the executed DRAM summary.
 CLI
 trace-replay fabric-route smoke coverage exposes nonzero active-lane,
 active-virtual-network, transfer, byte, and flit stats plus request/response virtual

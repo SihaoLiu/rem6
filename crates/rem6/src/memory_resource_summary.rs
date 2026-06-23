@@ -15,8 +15,7 @@ pub(crate) struct Rem6MemoryResourceSummary {
     pub(crate) transport_fetch: Rem6TransportResourceSummary,
     pub(crate) transport_data: Rem6TransportResourceSummary,
     pub(crate) fabric: Rem6FabricResourceSummary,
-    pub(crate) dram_activity: u64,
-    pub(crate) active_dram_resources: u64,
+    pub(crate) dram: Rem6DramResourceSummary,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -56,6 +55,24 @@ pub(crate) struct Rem6FabricResourceSummary {
     pub(crate) credit_delay_ticks: u64,
     pub(crate) max_credit_delay_ticks: u64,
     pub(crate) contended_lanes: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct Rem6DramResourceSummary {
+    pub(crate) activity: u64,
+    pub(crate) active: u64,
+    pub(crate) active_targets: u64,
+    pub(crate) active_ports: u64,
+    pub(crate) active_banks: u64,
+    pub(crate) accesses: u64,
+    pub(crate) reads: u64,
+    pub(crate) writes: u64,
+    pub(crate) row_hits: u64,
+    pub(crate) row_misses: u64,
+    pub(crate) commands: u64,
+    pub(crate) turnarounds: u64,
+    pub(crate) total_ready_latency_ticks: u64,
+    pub(crate) max_ready_latency_ticks: u64,
 }
 
 pub(crate) struct Rem6MemoryResourceInputs<'a> {
@@ -159,6 +176,47 @@ impl Rem6FabricResourceSummary {
     }
 }
 
+impl Rem6DramResourceSummary {
+    fn from_dram(summary: &Rem6DramSummary) -> Self {
+        let activity = summary
+            .accesses
+            .max(summary.reads.saturating_add(summary.writes))
+            .max(summary.row_hits.saturating_add(summary.row_misses))
+            .max(summary.commands)
+            .max(summary.refreshes)
+            .max(summary.turnarounds)
+            .max(
+                summary
+                    .low_power_active_powerdown_entries
+                    .saturating_add(summary.low_power_precharge_powerdown_entries)
+                    .saturating_add(summary.low_power_self_refresh_entries),
+            )
+            .max(summary.low_power_exits);
+        let active = summary
+            .active_targets
+            .max(summary.active_ports)
+            .max(summary.active_banks)
+            .max(u64::from(activity != 0));
+
+        Self {
+            activity,
+            active,
+            active_targets: summary.active_targets,
+            active_ports: summary.active_ports,
+            active_banks: summary.active_banks,
+            accesses: summary.accesses,
+            reads: summary.reads,
+            writes: summary.writes,
+            row_hits: summary.row_hits,
+            row_misses: summary.row_misses,
+            commands: summary.commands,
+            turnarounds: summary.turnarounds,
+            total_ready_latency_ticks: summary.total_ready_latency_ticks,
+            max_ready_latency_ticks: summary.max_ready_latency_ticks,
+        }
+    }
+}
+
 impl Rem6MemoryResourceSummary {
     pub(crate) fn from_run_resources(inputs: Rem6MemoryResourceInputs<'_>) -> Self {
         let cache = Rem6CacheResourceSummary::from_cache_summaries(inputs.cache_summaries());
@@ -181,37 +239,19 @@ impl Rem6MemoryResourceSummary {
             transport_data.clone(),
         ]);
         let fabric = Rem6FabricResourceSummary::from_fabric(inputs.fabric);
-        let dram = inputs.dram;
-        let dram_activity = dram
-            .accesses
-            .max(dram.reads.saturating_add(dram.writes))
-            .max(dram.row_hits.saturating_add(dram.row_misses))
-            .max(dram.commands)
-            .max(dram.refreshes)
-            .max(dram.turnarounds)
-            .max(
-                dram.low_power_active_powerdown_entries
-                    .saturating_add(dram.low_power_precharge_powerdown_entries)
-                    .saturating_add(dram.low_power_self_refresh_entries),
-            )
-            .max(dram.low_power_exits);
-        let active_dram_resources = dram
-            .active_targets
-            .max(dram.active_ports)
-            .max(dram.active_banks)
-            .max(u64::from(dram_activity != 0));
+        let dram = Rem6DramResourceSummary::from_dram(inputs.dram);
 
         Self {
             activity: cache
                 .activity
                 .saturating_add(transport.activity)
                 .saturating_add(fabric.activity)
-                .saturating_add(dram_activity),
+                .saturating_add(dram.activity),
             active: cache
                 .active
                 .saturating_add(transport.active)
                 .saturating_add(fabric.active)
-                .saturating_add(active_dram_resources),
+                .saturating_add(dram.active),
             cache,
             cache_l1,
             cache_l2,
@@ -220,8 +260,42 @@ impl Rem6MemoryResourceSummary {
             transport_fetch,
             transport_data,
             fabric,
-            dram_activity,
-            active_dram_resources,
+            dram,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dram_resource_activity_counts_refresh_only_activity() {
+        let summary = Rem6DramSummary {
+            refreshes: 7,
+            refresh_ticks: 91,
+            ..Rem6DramSummary::default()
+        };
+
+        let resource = Rem6DramResourceSummary::from_dram(&summary);
+
+        assert_eq!(resource.activity, 7);
+        assert_eq!(resource.active, 1);
+    }
+
+    #[test]
+    fn dram_resource_activity_counts_low_power_only_activity() {
+        let summary = Rem6DramSummary {
+            low_power_active_powerdown_entries: 2,
+            low_power_precharge_powerdown_entries: 3,
+            low_power_self_refresh_entries: 5,
+            low_power_exits: 4,
+            ..Rem6DramSummary::default()
+        };
+
+        let resource = Rem6DramResourceSummary::from_dram(&summary);
+
+        assert_eq!(resource.activity, 10);
+        assert_eq!(resource.active, 1);
     }
 }

@@ -1,6 +1,9 @@
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
-use crate::{Rem6CacheResourceSummary, Rem6FabricResourceSummary, Rem6TransportResourceSummary};
+use crate::{
+    Rem6CacheResourceSummary, Rem6DramResourceSummary, Rem6FabricResourceSummary,
+    Rem6TransportResourceSummary,
+};
 
 use super::{increment_stat, Rem6CliError, Rem6ExecutionSummary};
 
@@ -16,14 +19,6 @@ pub(super) fn emit_memory_resource_stats(
         (
             "sim.memory.resources.active",
             execution.memory_resources.active,
-        ),
-        (
-            "sim.memory.resources.dram.activity",
-            execution.memory_resources.dram_activity,
-        ),
-        (
-            "sim.memory.resources.dram.active",
-            execution.memory_resources.active_dram_resources,
         ),
     ] {
         increment_stat(stats, path, "Count", StatResetPolicy::Monotonic, value)?;
@@ -68,6 +63,51 @@ pub(super) fn emit_memory_resource_stats(
         "sim.memory.resources.fabric",
         &execution.memory_resources.fabric,
     )?;
+    emit_dram_resource_stats(
+        stats,
+        "sim.memory.resources.dram",
+        &execution.memory_resources.dram,
+    )?;
+    Ok(())
+}
+
+fn emit_dram_resource_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    summary: &Rem6DramResourceSummary,
+) -> Result<(), Rem6CliError> {
+    for (suffix, unit, value) in [
+        ("activity", "Count", summary.activity),
+        ("active", "Count", summary.active),
+        ("active_targets", "Count", summary.active_targets),
+        ("active_ports", "Count", summary.active_ports),
+        ("active_banks", "Count", summary.active_banks),
+        ("accesses", "Count", summary.accesses),
+        ("reads", "Count", summary.reads),
+        ("writes", "Count", summary.writes),
+        ("row_hits", "Count", summary.row_hits),
+        ("row_misses", "Count", summary.row_misses),
+        ("commands", "Count", summary.commands),
+        ("turnarounds", "Count", summary.turnarounds),
+        (
+            "total_ready_latency_ticks",
+            "Tick",
+            summary.total_ready_latency_ticks,
+        ),
+        (
+            "max_ready_latency_ticks",
+            "Tick",
+            summary.max_ready_latency_ticks,
+        ),
+    ] {
+        increment_stat(
+            stats,
+            &format!("{prefix}.{suffix}"),
+            unit,
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
     Ok(())
 }
 
