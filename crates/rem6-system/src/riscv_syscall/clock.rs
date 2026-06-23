@@ -1,12 +1,14 @@
 use rem6_kernel::Tick;
 
 use super::{
-    linux_error, RiscvGuestMemoryWriter, RiscvSyscallOutcome, RiscvSyscallRequest,
-    RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
+    linux_error, RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallOutcome,
+    RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
+    RISCV_LINUX_EPERM,
 };
 
 pub(super) const RISCV_LINUX_GETITIMER: u64 = 102;
 pub(super) const RISCV_LINUX_SETITIMER: u64 = 103;
+pub(super) const RISCV_LINUX_CLOCK_SETTIME: u64 = 112;
 pub(super) const RISCV_LINUX_CLOCK_GETTIME: u64 = 113;
 pub(super) const RISCV_LINUX_CLOCK_GETRES: u64 = 114;
 pub(super) const RISCV_LINUX_TIMES: u64 = 153;
@@ -146,6 +148,19 @@ pub(super) fn syscall_clock_getres(
     guest_memory.map(|guest_memory| {
         write_riscv_linux_time_pair(timespec_address, 0, resolution, guest_memory)
     })
+}
+
+pub(super) fn syscall_clock_settime(
+    request: RiscvSyscallRequest,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> u64 {
+    if request.argument(0) != RISCV_LINUX_CLOCK_REALTIME {
+        return linux_error(RISCV_LINUX_EINVAL);
+    }
+    match read_riscv_linux_timespec(request.argument(1), guest_memory) {
+        Ok(()) => linux_error(RISCV_LINUX_EPERM),
+        Err(error) => linux_error(error),
+    }
 }
 
 pub(super) fn syscall_gettimeofday(
@@ -306,7 +321,7 @@ fn interval_timer_index(which: u64) -> Option<usize> {
 
 fn read_riscv_linux_itimerval(
     address: u64,
-    guest_memory: &super::RiscvGuestMemoryReader,
+    guest_memory: &RiscvGuestMemoryReader,
 ) -> Result<RiscvLinuxItimerval, u64> {
     let bytes = guest_memory
         .read(address, RISCV_LINUX_ITIMERVAL_BYTES)
@@ -326,6 +341,19 @@ fn read_riscv_linux_itimerval(
             Some(RISCV_LINUX_MICROSECONDS_PER_SECOND),
         )?,
     })
+}
+
+fn read_riscv_linux_timespec(
+    address: u64,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> Result<(), u64> {
+    let bytes = guest_memory
+        .read(address, 16)
+        .filter(|bytes| bytes.len() == 16)
+        .ok_or(RISCV_LINUX_EFAULT)?;
+    read_nonnegative_timeval_field(&bytes, 0, None)?;
+    read_nonnegative_timeval_field(&bytes, 8, Some(RISCV_LINUX_NANOSECONDS_PER_SECOND))?;
+    Ok(())
 }
 
 fn read_nonnegative_timeval_field(

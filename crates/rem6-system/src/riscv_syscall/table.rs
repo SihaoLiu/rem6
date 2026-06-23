@@ -561,6 +561,11 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_CLOCK_GETRES
             | clock::RISCV_NEWLIB_CLOCK_GETTIME64
             | clock::RISCV_NEWLIB_LEGACY_TIME => syscall_clock(request, tick, guest_memory_writer),
+            RISCV_LINUX_CLOCK_SETTIME => {
+                guest_memory_reader.map(|reader| RiscvSyscallOutcome::Return {
+                    value: syscall_clock_settime(request, reader),
+                })
+            }
             RISCV_LINUX_GETITIMER => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_getitimer(request, state, guest_memory),

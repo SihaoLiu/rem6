@@ -3,10 +3,15 @@
 mod support;
 
 use rem6_system::{
-    RiscvGuestMemoryWriter, RiscvSyscallOutcome, RiscvSyscallRequest, RiscvSyscallState,
-    RiscvSyscallTable,
+    RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallOutcome, RiscvSyscallRequest,
+    RiscvSyscallState, RiscvSyscallTable,
 };
 use support::*;
+
+const RISCV_LINUX_CLOCK_SETTIME_FOR_TEST: u64 = 112;
+const RISCV_LINUX_EFAULT_FOR_TEST: u64 = 14;
+const RISCV_LINUX_EINVAL_FOR_TEST: u64 = 22;
+const RISCV_LINUX_EPERM_FOR_TEST: u64 = 1;
 
 #[test]
 fn linux_table_clock_gettime_writes_deterministic_timespec() {
@@ -92,6 +97,114 @@ fn linux_table_clock_gettime_reports_guest_write_fault() {
             value: 0u64.wrapping_sub(14),
         })
     );
+}
+
+#[test]
+fn linux_table_clock_settime_validates_timespec_and_denies_realtime_mutation() {
+    let mut valid_timespec = Vec::new();
+    valid_timespec.extend_from_slice(&0i64.to_le_bytes());
+    valid_timespec.extend_from_slice(&0i64.to_le_bytes());
+    let mut invalid_nsec_timespec = Vec::new();
+    invalid_nsec_timespec.extend_from_slice(&0i64.to_le_bytes());
+    invalid_nsec_timespec.extend_from_slice(&1_000_000_000i64.to_le_bytes());
+    let store = loaded_program_store_with_data(
+        &[(0x8000, addi(0, 0, 0))],
+        &[
+            (0x9000, valid_timespec.as_slice()),
+            (0x9020, invalid_nsec_timespec.as_slice()),
+        ],
+    );
+    let reader = RiscvGuestMemoryReader::new(guest_memory_reader(store));
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    let invalid_clock = table.handle_with_guest_memory_io_at_tick(
+        RiscvSyscallRequest::new(
+            0x8000,
+            RISCV_LINUX_CLOCK_SETTIME_FOR_TEST,
+            [99, 0x9000, 0, 0, 0, 0],
+        ),
+        &mut state,
+        8,
+        Some(&reader),
+        None,
+    );
+    let monotonic = table.handle_with_guest_memory_io_at_tick(
+        RiscvSyscallRequest::new(
+            0x8004,
+            RISCV_LINUX_CLOCK_SETTIME_FOR_TEST,
+            [1, 0x9000, 0, 0, 0, 0],
+        ),
+        &mut state,
+        8,
+        Some(&reader),
+        None,
+    );
+    let invalid_nsec = table.handle_with_guest_memory_io_at_tick(
+        RiscvSyscallRequest::new(
+            0x8008,
+            RISCV_LINUX_CLOCK_SETTIME_FOR_TEST,
+            [0, 0x9020, 0, 0, 0, 0],
+        ),
+        &mut state,
+        8,
+        Some(&reader),
+        None,
+    );
+    let fault = table.handle_with_guest_memory_io_at_tick(
+        RiscvSyscallRequest::new(
+            0x800c,
+            RISCV_LINUX_CLOCK_SETTIME_FOR_TEST,
+            [0, 1, 0, 0, 0, 0],
+        ),
+        &mut state,
+        8,
+        Some(&reader),
+        None,
+    );
+    let realtime = table.handle_with_guest_memory_io_at_tick(
+        RiscvSyscallRequest::new(
+            0x8010,
+            RISCV_LINUX_CLOCK_SETTIME_FOR_TEST,
+            [0, 0x9000, 0, 0, 0, 0],
+        ),
+        &mut state,
+        8,
+        Some(&reader),
+        None,
+    );
+
+    assert_eq!(
+        invalid_clock,
+        Some(RiscvSyscallOutcome::Return {
+            value: 0u64.wrapping_sub(RISCV_LINUX_EINVAL_FOR_TEST)
+        })
+    );
+    assert_eq!(
+        monotonic,
+        Some(RiscvSyscallOutcome::Return {
+            value: 0u64.wrapping_sub(RISCV_LINUX_EINVAL_FOR_TEST)
+        })
+    );
+    assert_eq!(
+        invalid_nsec,
+        Some(RiscvSyscallOutcome::Return {
+            value: 0u64.wrapping_sub(RISCV_LINUX_EINVAL_FOR_TEST)
+        })
+    );
+    assert_eq!(
+        fault,
+        Some(RiscvSyscallOutcome::Return {
+            value: 0u64.wrapping_sub(RISCV_LINUX_EFAULT_FOR_TEST)
+        })
+    );
+    assert_eq!(
+        realtime,
+        Some(RiscvSyscallOutcome::Return {
+            value: 0u64.wrapping_sub(RISCV_LINUX_EPERM_FOR_TEST)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
 }
 
 #[test]

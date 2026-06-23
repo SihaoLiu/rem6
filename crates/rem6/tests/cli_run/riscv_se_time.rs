@@ -549,6 +549,120 @@ int main(void) {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_clock_settime_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE raw clock_settime smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE raw clock_settime smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-clock-settime");
+    let source = workspace.join("raw-clock-settime.c");
+    let binary = workspace.join("raw-clock-settime");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+
+struct timespec64 {
+    long tv_sec;
+    long tv_nsec;
+};
+
+static long linux_syscall2(long number, long arg0, long arg1) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    struct timespec64 valid = {0, 0};
+    struct timespec64 bad_nsec = {0, 1000000000L};
+    long invalid_clock = linux_syscall2(112, 99, (long)&valid);
+    long monotonic = linux_syscall2(112, 1, (long)&valid);
+    long realtime_bad_nsec = linux_syscall2(112, 0, (long)&bad_nsec);
+    long realtime_fault = linux_syscall2(112, 0, 1);
+    long realtime_valid = linux_syscall2(112, 0, (long)&valid);
+    int ok = invalid_clock == -22 &&
+             monotonic == -22 &&
+             realtime_bad_nsec == -22 &&
+             realtime_fault == -14 &&
+             realtime_valid == -1;
+    printf("raw-clock-settime:%ld:%ld:%ld:%ld:%ld\n",
+           invalid_clock, monotonic, realtime_bad_nsec, realtime_fault, realtime_valid);
+    return ok ? 42 : 86;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(42),
+        "qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(
+        qemu_output.stdout,
+        b"raw-clock-settime:-22:-22:-22:-14:-1\n"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "200000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
+    assert!(stdout.contains("\"stop_code\":42"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"raw-clock-settime:-22:-22:-22:-14:-1\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_clock_nanosleep_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(
