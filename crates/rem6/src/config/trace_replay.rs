@@ -68,6 +68,8 @@ impl Rem6TraceReplayConfig {
             .resource_config
             .as_deref()
             .map(|path| file_config.resolve_path(path));
+        let mut conflicting_trace_sources =
+            file_config.trace.is_some() && file_config.resource_config.is_some();
         let mut trace_resource = file_config
             .trace_resource
             .as_deref()
@@ -199,9 +201,11 @@ impl Rem6TraceReplayConfig {
                     trace = Some(PathBuf::from(required_value(&flag, args.next())?));
                     resource_config = None;
                     trace_resource = None;
+                    conflicting_trace_sources = false;
                 }
                 "--resource-config" => {
                     resource_config = Some(PathBuf::from(required_value(&flag, args.next())?));
+                    conflicting_trace_sources = false;
                 }
                 "--trace-resource" => {
                     let value = required_value(&flag, args.next())?;
@@ -423,6 +427,9 @@ impl Rem6TraceReplayConfig {
             return Err(Rem6CliError::MissingRequiredFlag {
                 flag: "--resource-config",
             });
+        }
+        if conflicting_trace_sources {
+            return Err(Rem6CliError::ConflictingTraceReplaySources);
         }
         if data_cache_dram_memory_profile.is_some() && data_cache_protocol.is_none() {
             return Err(Rem6CliError::MissingRequiredFlag {

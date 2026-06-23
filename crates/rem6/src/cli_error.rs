@@ -386,6 +386,7 @@ pub enum Rem6CliError {
         path: PathBuf,
     },
     ConflictingRunBinarySources,
+    ConflictingTraceReplaySources,
     PowerAnalysis {
         error: String,
     },
@@ -984,6 +985,12 @@ impl fmt::Display for Rem6CliError {
             ),
             Self::ConflictingRunBinarySources => {
                 write!(formatter, "run binary sources conflict: use binary or resource_config")
+            }
+            Self::ConflictingTraceReplaySources => {
+                write!(
+                    formatter,
+                    "trace replay sources conflict: use trace or resource_config"
+                )
             }
             Self::PowerAnalysis { error } => {
                 write!(formatter, "failed to build power analysis export: {error}")

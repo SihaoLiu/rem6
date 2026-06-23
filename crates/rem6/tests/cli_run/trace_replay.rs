@@ -1321,6 +1321,81 @@ fn rem6_trace_replay_cli_trace_overrides_toml_resource_config() {
 }
 
 #[test]
+fn rem6_trace_replay_rejects_conflicting_toml_trace_sources() {
+    let workspace = temp_workspace("trace-replay-conflicting-toml-sources");
+    let trace_dir = workspace.join("artifacts");
+    std::fs::create_dir(&trace_dir).unwrap();
+    std::fs::write(
+        trace_dir.join("resource-trace.pb"),
+        packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.join("direct-trace.pb"),
+        packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1010),
+                    size: Some(8),
+                    packet_id: Some(20),
+                },
+                PacketFields {
+                    tick: 2,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1010),
+                    size: Some(8),
+                    packet_id: Some(20),
+                },
+            ],
+        ),
+    )
+    .unwrap();
+    let resource_config = workspace.join("resource-acquire.toml");
+    std::fs::write(
+        &resource_config,
+        "[resource_acquire]\nworkload_id = \"trace-conflict-cli\"\nboot_entry = 4096\nstats_format = \"json\"\n\n[[resource_acquire.resources]]\nid = \"trace\"\nkind = \"input\"\ndigest = \"sha256:trace-resource\"\nlocator = \"resources/trace.pb\"\nrequired = true\nacquisition_kind = \"local-file\"\nacquisition_locator = \"catalog://trace\"\nartifact = \"artifacts/resource-trace.pb\"\nartifact_digest = \"sha256:trace-resource\"\n",
+    )
+    .unwrap();
+    let config = workspace.join("trace-replay.toml");
+    std::fs::write(
+        &config,
+        "[trace_replay]\ntrace = \"direct-trace.pb\"\nresource_config = \"resource-acquire.toml\"\nroute = \"cpu0.config\"\nmemory_start = 4096\nmemory_size = 4096\nmax_tick = 64\ntick_frequency = 1000\nline_bytes = 64\nagent = 7\ncontrol_partition = 2\nstats_format = \"json\"\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["trace-replay", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("trace replay sources conflict: use trace or resource_config"));
+}
+
+#[test]
 fn rem6_trace_replay_rejects_zero_memory_size_from_toml_config() {
     let workspace = temp_workspace("trace-replay-toml-invalid-memory-size");
     let trace_name = format!("trace-{}.pb", std::process::id());
