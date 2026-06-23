@@ -1074,6 +1074,68 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
     );
     assert_run_fabric_virtual_network_stats(&stdout, fabric, 3);
     assert_run_fabric_virtual_network_stats(&stdout, fabric, 4);
+    assert_run_fabric_lane_stats(&stdout, fabric);
+}
+
+#[test]
+fn rem6_run_sanitizes_configured_fabric_link_stat_paths() {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET, 0);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("run-fabric-sanitized-link-stats", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--instruction-cache-protocol",
+            "msi",
+            "--data-cache-protocol",
+            "msi",
+            "--fabric-link",
+            "cpu-mem.link 0",
+            "--fabric-bandwidth-bytes-per-tick",
+            "8",
+            "--fabric-request-virtual-network",
+            "3",
+            "--fabric-response-virtual-network",
+            "4",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let fabric = json.pointer("/fabric").expect("run fabric summary");
+    assert_eq!(
+        fabric.get("link").and_then(Value::as_str),
+        Some("cpu-mem.link 0")
+    );
+    assert_run_fabric_lane_stats(&stdout, fabric);
 }
 
 #[test]
@@ -2921,6 +2983,110 @@ fn assert_run_fabric_virtual_network_stats(stdout: &str, fabric: &Value, virtual
     );
 }
 
+fn assert_run_fabric_lane_stats(stdout: &str, fabric: &Value) {
+    let lanes = fabric
+        .get("lane_activities")
+        .and_then(Value::as_array)
+        .expect("fabric lane activities");
+    assert!(!lanes.is_empty(), "missing fabric lane activity");
+
+    for lane in lanes {
+        let link = lane
+            .get("link")
+            .and_then(Value::as_str)
+            .expect("fabric lane link");
+        let virtual_network = lane
+            .get("virtual_network")
+            .and_then(Value::as_u64)
+            .expect("fabric lane virtual network");
+        let prefix = format!(
+            "sim.memory.fabric.link.{}.vn{virtual_network}",
+            stat_path_segment(link)
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.transfers"),
+            "Count",
+            lane_u64(lane, "transfer_count"),
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.bytes"),
+            "Byte",
+            lane_u64(lane, "byte_count"),
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.flits"),
+            "Count",
+            lane_u64(lane, "flit_count"),
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.occupied_ticks"),
+            "Tick",
+            lane_u64(lane, "occupied_ticks"),
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.queue_delay_ticks"),
+            "Tick",
+            lane_u64(lane, "queue_delay_ticks"),
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.max_queue_delay_ticks"),
+            "Tick",
+            lane_u64(lane, "max_queue_delay_ticks"),
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.credit_delay_ticks"),
+            "Tick",
+            lane_u64(lane, "credit_delay_ticks"),
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.max_credit_delay_ticks"),
+            "Tick",
+            lane_u64(lane, "max_credit_delay_ticks"),
+            "monotonic",
+        );
+    }
+}
+
 fn lane_u64(lane: &Value, field: &str) -> u64 {
     lane.get(field).and_then(Value::as_u64).unwrap_or(0)
+}
+
+fn stat_path_segment(segment: &str) -> String {
+    let mut output = String::new();
+    for (index, character) in segment.chars().enumerate() {
+        if index == 0 {
+            if character.is_ascii_alphabetic() || character == '_' {
+                output.push(character);
+            } else {
+                output.push('_');
+                if character.is_ascii_alphanumeric() {
+                    output.push(character);
+                }
+            }
+        } else if character.is_ascii_alphanumeric() || character == '_' {
+            output.push(character);
+        } else {
+            output.push('_');
+        }
+    }
+    if output.is_empty() {
+        "_".to_string()
+    } else {
+        output
+    }
 }

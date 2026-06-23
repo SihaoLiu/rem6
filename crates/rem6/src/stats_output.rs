@@ -1203,7 +1203,7 @@ fn endpoint_stat_path(endpoint: &str) -> String {
         .join(".")
 }
 
-fn stat_path_segment(segment: &str) -> String {
+pub(super) fn stat_path_segment(segment: &str) -> String {
     let mut output = String::new();
     for (index, character) in segment.chars().enumerate() {
         if index == 0 {

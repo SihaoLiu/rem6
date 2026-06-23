@@ -1,9 +1,9 @@
-use rem6_fabric::FabricVirtualNetworkActivity;
+use rem6_fabric::{FabricLaneActivity, FabricVirtualNetworkActivity};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use crate::{Rem6CliError, Rem6RunFabricSummary};
 
-use super::increment_stat;
+use super::{increment_stat, stat_path_segment};
 
 pub(super) fn emit_run_fabric_stats(
     stats: &mut StatsRegistry,
@@ -87,7 +87,8 @@ pub(super) fn emit_run_fabric_stats(
         StatResetPolicy::Monotonic,
         summary.contended_lanes(),
     )?;
-    emit_fabric_virtual_network_stats(stats, prefix, summary.virtual_network_activities())
+    emit_fabric_virtual_network_stats(stats, prefix, summary.virtual_network_activities())?;
+    emit_fabric_lane_stats(stats, prefix, summary.lane_activities())
 }
 
 pub(super) fn emit_fabric_virtual_network_stats<I>(
@@ -172,6 +173,77 @@ where
             "Count",
             StatResetPolicy::Monotonic,
             activity.contended_lane_count() as u64,
+        )?;
+    }
+    Ok(())
+}
+
+fn emit_fabric_lane_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    activities: &[FabricLaneActivity],
+) -> Result<(), Rem6CliError> {
+    for activity in activities {
+        let prefix = format!(
+            "{prefix}.link.{}.vn{}",
+            stat_path_segment(activity.link().as_str()),
+            activity.virtual_network().get()
+        );
+        increment_stat(
+            stats,
+            &format!("{prefix}.transfers"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            activity.transfer_count() as u64,
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.bytes"),
+            "Byte",
+            StatResetPolicy::Monotonic,
+            activity.byte_count(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.flits"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            activity.flit_count(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.occupied_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            activity.occupied_ticks(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.queue_delay_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            activity.queue_delay_ticks(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.max_queue_delay_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            activity.max_queue_delay_ticks(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.credit_delay_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            activity.credit_delay_ticks(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.max_credit_delay_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            activity.max_credit_delay_ticks(),
         )?;
     }
     Ok(())
