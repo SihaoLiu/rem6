@@ -953,6 +953,64 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         .pointer("/transport/active")
         .and_then(Value::as_u64)
         .expect("active transport resources");
+    let fetch_transport = json.pointer("/transport/fetch").expect("fetch transport");
+    let data_transport = json.pointer("/transport/data").expect("data transport");
+    let transport_fetch_activity = memory_resources
+        .pointer("/transport/fetch/activity")
+        .and_then(Value::as_u64)
+        .expect("fetch transport resource activity");
+    let transport_data_activity = memory_resources
+        .pointer("/transport/data/activity")
+        .and_then(Value::as_u64)
+        .expect("data transport resource activity");
+    let transport_fetch_request_arrivals = memory_resources
+        .pointer("/transport/fetch/request_arrivals")
+        .and_then(Value::as_u64)
+        .expect("fetch transport resource request arrivals");
+    let transport_data_request_arrivals = memory_resources
+        .pointer("/transport/data/request_arrivals")
+        .and_then(Value::as_u64)
+        .expect("data transport resource request arrivals");
+    let transport_fetch_responses = memory_resources
+        .pointer("/transport/fetch/responses")
+        .and_then(Value::as_u64)
+        .expect("fetch transport resource responses");
+    let transport_data_responses = memory_resources
+        .pointer("/transport/data/responses")
+        .and_then(Value::as_u64)
+        .expect("data transport resource responses");
+    let transport_fetch_response_arrivals = memory_resources
+        .pointer("/transport/fetch/response_arrivals")
+        .and_then(Value::as_u64)
+        .expect("fetch transport resource response arrivals");
+    let transport_data_response_arrivals = memory_resources
+        .pointer("/transport/data/response_arrivals")
+        .and_then(Value::as_u64)
+        .expect("data transport resource response arrivals");
+    let transport_fetch_round_trip_ticks = memory_resources
+        .pointer("/transport/fetch/round_trip_ticks")
+        .and_then(Value::as_u64)
+        .expect("fetch transport resource round trip ticks");
+    let transport_data_round_trip_ticks = memory_resources
+        .pointer("/transport/data/round_trip_ticks")
+        .and_then(Value::as_u64)
+        .expect("data transport resource round trip ticks");
+    let transport_fetch_max_round_trip_ticks = memory_resources
+        .pointer("/transport/fetch/max_round_trip_ticks")
+        .and_then(Value::as_u64)
+        .expect("fetch transport resource max round trip ticks");
+    let transport_data_max_round_trip_ticks = memory_resources
+        .pointer("/transport/data/max_round_trip_ticks")
+        .and_then(Value::as_u64)
+        .expect("data transport resource max round trip ticks");
+    let transport_fetch_active = memory_resources
+        .pointer("/transport/fetch/active")
+        .and_then(Value::as_u64)
+        .expect("active fetch transport resources");
+    let transport_data_active = memory_resources
+        .pointer("/transport/data/active")
+        .and_then(Value::as_u64)
+        .expect("active data transport resources");
     let dram_active = memory_resources
         .pointer("/dram/active")
         .and_then(Value::as_u64)
@@ -968,6 +1026,106 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
             .pointer("/fabric/active")
             .and_then(Value::as_u64),
         Some(fabric_active_lanes)
+    );
+    assert_eq!(
+        transport_fetch_activity,
+        fetch_transport
+            .pointer("/requests")
+            .and_then(Value::as_u64)
+            .expect("fetch transport requests")
+    );
+    assert_eq!(
+        transport_data_activity,
+        data_transport
+            .pointer("/requests")
+            .and_then(Value::as_u64)
+            .expect("data transport requests")
+    );
+    assert_eq!(
+        transport_fetch_request_arrivals,
+        fetch_transport
+            .pointer("/request_arrivals")
+            .and_then(Value::as_u64)
+            .expect("fetch transport request arrivals")
+    );
+    assert_eq!(
+        transport_data_request_arrivals,
+        data_transport
+            .pointer("/request_arrivals")
+            .and_then(Value::as_u64)
+            .expect("data transport request arrivals")
+    );
+    assert_eq!(
+        transport_fetch_responses,
+        fetch_transport
+            .pointer("/responses")
+            .and_then(Value::as_u64)
+            .expect("fetch transport responses")
+    );
+    assert_eq!(
+        transport_data_responses,
+        data_transport
+            .pointer("/responses")
+            .and_then(Value::as_u64)
+            .expect("data transport responses")
+    );
+    assert_eq!(
+        transport_fetch_response_arrivals,
+        fetch_transport
+            .pointer("/response_arrivals")
+            .and_then(Value::as_u64)
+            .expect("fetch transport response arrivals")
+    );
+    assert_eq!(
+        transport_data_response_arrivals,
+        data_transport
+            .pointer("/response_arrivals")
+            .and_then(Value::as_u64)
+            .expect("data transport response arrivals")
+    );
+    assert_eq!(
+        transport_fetch_round_trip_ticks,
+        fetch_transport
+            .pointer("/round_trip_ticks")
+            .and_then(Value::as_u64)
+            .expect("fetch transport round trip ticks")
+    );
+    assert_eq!(
+        transport_data_round_trip_ticks,
+        data_transport
+            .pointer("/round_trip_ticks")
+            .and_then(Value::as_u64)
+            .expect("data transport round trip ticks")
+    );
+    assert_eq!(
+        transport_fetch_max_round_trip_ticks,
+        fetch_transport
+            .pointer("/max_round_trip_ticks")
+            .and_then(Value::as_u64)
+            .expect("fetch transport max round trip ticks")
+    );
+    assert_eq!(
+        transport_data_max_round_trip_ticks,
+        data_transport
+            .pointer("/max_round_trip_ticks")
+            .and_then(Value::as_u64)
+            .expect("data transport max round trip ticks")
+    );
+    assert_eq!(
+        transport_fetch_active,
+        u64::from(transport_fetch_activity != 0)
+    );
+    assert_eq!(
+        transport_data_active,
+        u64::from(transport_data_activity != 0)
+    );
+    assert_eq!(
+        transport_activity,
+        transport_fetch_activity.saturating_add(transport_data_activity)
+    );
+    assert_eq!(
+        transport_active,
+        transport_fetch_active.saturating_add(transport_data_active)
     );
     assert_eq!(
         memory_resources
@@ -1063,6 +1221,104 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         "sim.memory.resources.fabric.active",
         "Count",
         fabric_active_lanes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.transport.fetch.activity",
+        "Count",
+        transport_fetch_activity,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.transport.fetch.round_trip_ticks",
+        "Tick",
+        transport_fetch_round_trip_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.transport.fetch.request_arrivals",
+        "Count",
+        transport_fetch_request_arrivals,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.transport.fetch.responses",
+        "Count",
+        transport_fetch_responses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.transport.fetch.response_arrivals",
+        "Count",
+        transport_fetch_response_arrivals,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.transport.fetch.max_round_trip_ticks",
+        "Tick",
+        transport_fetch_max_round_trip_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.transport.fetch.active",
+        "Count",
+        transport_fetch_active,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.transport.data.activity",
+        "Count",
+        transport_data_activity,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.transport.data.round_trip_ticks",
+        "Tick",
+        transport_data_round_trip_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.transport.data.request_arrivals",
+        "Count",
+        transport_data_request_arrivals,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.transport.data.responses",
+        "Count",
+        transport_data_responses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.transport.data.response_arrivals",
+        "Count",
+        transport_data_response_arrivals,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.transport.data.max_round_trip_ticks",
+        "Tick",
+        transport_data_max_round_trip_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.transport.data.active",
+        "Count",
+        transport_data_active,
         "monotonic",
     );
     assert_stat(

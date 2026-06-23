@@ -11,8 +11,9 @@ pub(crate) struct Rem6MemoryResourceSummary {
     pub(crate) cache_l1: Rem6CacheResourceSummary,
     pub(crate) cache_l2: Rem6CacheResourceSummary,
     pub(crate) cache_l3: Rem6CacheResourceSummary,
-    pub(crate) transport_activity: u64,
-    pub(crate) active_transports: u64,
+    pub(crate) transport: Rem6TransportResourceSummary,
+    pub(crate) transport_fetch: Rem6TransportResourceSummary,
+    pub(crate) transport_data: Rem6TransportResourceSummary,
     pub(crate) fabric_activity: u64,
     pub(crate) active_fabric_resources: u64,
     pub(crate) dram_activity: u64,
@@ -30,6 +31,17 @@ pub(crate) struct Rem6CacheResourceSummary {
     pub(crate) bank_immediate_hits: u64,
     pub(crate) bank_scheduled_misses: u64,
     pub(crate) bank_coalesced_misses: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct Rem6TransportResourceSummary {
+    pub(crate) activity: u64,
+    pub(crate) active: u64,
+    pub(crate) request_arrivals: u64,
+    pub(crate) responses: u64,
+    pub(crate) response_arrivals: u64,
+    pub(crate) round_trip_ticks: u64,
+    pub(crate) max_round_trip_ticks: u64,
 }
 
 pub(crate) struct Rem6MemoryResourceInputs<'a> {
@@ -77,6 +89,44 @@ impl Rem6CacheResourceSummary {
     }
 }
 
+impl Rem6TransportResourceSummary {
+    fn from_transport(summary: &Rem6MemoryTransportSummary) -> Self {
+        let counters = summary.counters;
+        Self {
+            activity: counters.requests,
+            active: u64::from(counters.requests != 0),
+            request_arrivals: counters.request_arrivals,
+            responses: counters.responses,
+            response_arrivals: counters.response_arrivals,
+            round_trip_ticks: counters.round_trip_ticks,
+            max_round_trip_ticks: counters.max_round_trip_ticks,
+        }
+    }
+
+    fn combine(summaries: [Self; 2]) -> Self {
+        summaries
+            .into_iter()
+            .fold(Self::default(), |mut combined, summary| {
+                combined.activity = combined.activity.saturating_add(summary.activity);
+                combined.active = combined.active.saturating_add(summary.active);
+                combined.request_arrivals = combined
+                    .request_arrivals
+                    .saturating_add(summary.request_arrivals);
+                combined.responses = combined.responses.saturating_add(summary.responses);
+                combined.response_arrivals = combined
+                    .response_arrivals
+                    .saturating_add(summary.response_arrivals);
+                combined.round_trip_ticks = combined
+                    .round_trip_ticks
+                    .saturating_add(summary.round_trip_ticks);
+                combined.max_round_trip_ticks = combined
+                    .max_round_trip_ticks
+                    .max(summary.max_round_trip_ticks);
+                combined
+            })
+    }
+}
+
 impl Rem6MemoryResourceSummary {
     pub(crate) fn from_run_resources(inputs: Rem6MemoryResourceInputs<'_>) -> Self {
         let cache = Rem6CacheResourceSummary::from_cache_summaries(inputs.cache_summaries());
@@ -92,13 +142,12 @@ impl Rem6MemoryResourceSummary {
             inputs.instruction_caches[2],
             inputs.data_caches[2],
         ]);
-        let transport_activity = inputs
-            .fetch_transport
-            .counters
-            .requests
-            .saturating_add(inputs.data_transport.counters.requests);
-        let active_transports = u64::from(inputs.fetch_transport.counters.requests != 0)
-            + u64::from(inputs.data_transport.counters.requests != 0);
+        let transport_fetch = Rem6TransportResourceSummary::from_transport(inputs.fetch_transport);
+        let transport_data = Rem6TransportResourceSummary::from_transport(inputs.data_transport);
+        let transport = Rem6TransportResourceSummary::combine([
+            transport_fetch.clone(),
+            transport_data.clone(),
+        ]);
         let fabric_activity = inputs.fabric.transfers();
         let active_fabric_resources = inputs.fabric.active_lanes();
         let dram = inputs.dram;
@@ -124,20 +173,21 @@ impl Rem6MemoryResourceSummary {
         Self {
             activity: cache
                 .activity
-                .saturating_add(transport_activity)
+                .saturating_add(transport.activity)
                 .saturating_add(fabric_activity)
                 .saturating_add(dram_activity),
             active: cache
                 .active
-                .saturating_add(active_transports)
+                .saturating_add(transport.active)
                 .saturating_add(active_fabric_resources)
                 .saturating_add(active_dram_resources),
             cache,
             cache_l1,
             cache_l2,
             cache_l3,
-            transport_activity,
-            active_transports,
+            transport,
+            transport_fetch,
+            transport_data,
             fabric_activity,
             active_fabric_resources,
             dram_activity,

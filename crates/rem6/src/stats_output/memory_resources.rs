@@ -1,6 +1,6 @@
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
-use crate::Rem6CacheResourceSummary;
+use crate::{Rem6CacheResourceSummary, Rem6TransportResourceSummary};
 
 use super::{increment_stat, Rem6CliError, Rem6ExecutionSummary};
 
@@ -16,14 +16,6 @@ pub(super) fn emit_memory_resource_stats(
         (
             "sim.memory.resources.active",
             execution.memory_resources.active,
-        ),
-        (
-            "sim.memory.resources.transport.activity",
-            execution.memory_resources.transport_activity,
-        ),
-        (
-            "sim.memory.resources.transport.active",
-            execution.memory_resources.active_transports,
         ),
         (
             "sim.memory.resources.fabric.activity",
@@ -64,6 +56,46 @@ pub(super) fn emit_memory_resource_stats(
         "sim.memory.resources.cache.l3",
         &execution.memory_resources.cache_l3,
     )?;
+    emit_transport_resource_stats(
+        stats,
+        "sim.memory.resources.transport",
+        &execution.memory_resources.transport,
+    )?;
+    emit_transport_resource_stats(
+        stats,
+        "sim.memory.resources.transport.fetch",
+        &execution.memory_resources.transport_fetch,
+    )?;
+    emit_transport_resource_stats(
+        stats,
+        "sim.memory.resources.transport.data",
+        &execution.memory_resources.transport_data,
+    )?;
+    Ok(())
+}
+
+fn emit_transport_resource_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    summary: &Rem6TransportResourceSummary,
+) -> Result<(), Rem6CliError> {
+    for (suffix, unit, value) in [
+        ("activity", "Count", summary.activity),
+        ("active", "Count", summary.active),
+        ("request_arrivals", "Count", summary.request_arrivals),
+        ("responses", "Count", summary.responses),
+        ("response_arrivals", "Count", summary.response_arrivals),
+        ("round_trip_ticks", "Tick", summary.round_trip_ticks),
+        ("max_round_trip_ticks", "Tick", summary.max_round_trip_ticks),
+    ] {
+        increment_stat(
+            stats,
+            &format!("{prefix}.{suffix}"),
+            unit,
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
     Ok(())
 }
 

@@ -1151,7 +1151,7 @@ impl Rem6ExecutionSummary {
 impl Rem6MemoryResourceSummary {
     fn to_json(&self) -> String {
         format!(
-            "{{\"activity\":{},\"active\":{},\"cache\":{{\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{},\"l1\":{},\"l2\":{},\"l3\":{}}},\"transport\":{{\"activity\":{},\"active\":{}}},\"fabric\":{{\"activity\":{},\"active\":{}}},\"dram\":{{\"activity\":{},\"active\":{}}}}}",
+            "{{\"activity\":{},\"active\":{},\"cache\":{{\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{},\"l1\":{},\"l2\":{},\"l3\":{}}},\"transport\":{{\"activity\":{},\"active\":{},\"request_arrivals\":{},\"responses\":{},\"response_arrivals\":{},\"round_trip_ticks\":{},\"max_round_trip_ticks\":{},\"fetch\":{},\"data\":{}}},\"fabric\":{{\"activity\":{},\"active\":{}}},\"dram\":{{\"activity\":{},\"active\":{}}}}}",
             self.activity,
             self.active,
             self.cache.activity,
@@ -1166,14 +1166,34 @@ impl Rem6MemoryResourceSummary {
             cache_resource_json(&self.cache_l1),
             cache_resource_json(&self.cache_l2),
             cache_resource_json(&self.cache_l3),
-            self.transport_activity,
-            self.active_transports,
+            self.transport.activity,
+            self.transport.active,
+            self.transport.request_arrivals,
+            self.transport.responses,
+            self.transport.response_arrivals,
+            self.transport.round_trip_ticks,
+            self.transport.max_round_trip_ticks,
+            transport_resource_json(&self.transport_fetch),
+            transport_resource_json(&self.transport_data),
             self.fabric_activity,
             self.active_fabric_resources,
             self.dram_activity,
             self.active_dram_resources,
         )
     }
+}
+
+fn transport_resource_json(summary: &super::Rem6TransportResourceSummary) -> String {
+    format!(
+        "{{\"activity\":{},\"active\":{},\"request_arrivals\":{},\"responses\":{},\"response_arrivals\":{},\"round_trip_ticks\":{},\"max_round_trip_ticks\":{}}}",
+        summary.activity,
+        summary.active,
+        summary.request_arrivals,
+        summary.responses,
+        summary.response_arrivals,
+        summary.round_trip_ticks,
+        summary.max_round_trip_ticks,
+    )
 }
 
 fn cache_resource_json(summary: &super::Rem6CacheResourceSummary) -> String {

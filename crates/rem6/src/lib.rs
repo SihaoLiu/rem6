@@ -94,6 +94,7 @@ pub(crate) use instruction_probe_summary::{
 };
 pub(crate) use memory_resource_summary::{
     Rem6CacheResourceSummary, Rem6MemoryResourceInputs, Rem6MemoryResourceSummary,
+    Rem6TransportResourceSummary,
 };
 pub use multi_run_cli::{run_multi_run_config, Rem6MultiRunArtifact, Rem6MultiRunConfig};
 use pipeline_stats::Rem6InOrderPipelineStageSummary;

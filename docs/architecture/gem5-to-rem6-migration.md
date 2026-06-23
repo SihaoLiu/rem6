@@ -362,6 +362,10 @@ fetch requests; CLI `run` cache/DRAM resource smoke coverage exposes unified
 memory-resource cache CPU-response, directory-decision, backing-DRAM access,
 cache-bank, and L1/L2/L3 cache hierarchy counters in artifact JSON and
 `StatsRegistry`.
+CLI `run` cache/fabric/DRAM resource smoke coverage also exposes fetch/data
+memory-transport resource activity, active-resource, arrival/response,
+round-trip, and max-round-trip counters in artifact JSON and `StatsRegistry`,
+derived from real fetch/data `MemoryTrace` summaries.
 CLI
 trace-replay fabric-route smoke coverage exposes nonzero active-lane,
 active-virtual-network, transfer, byte, and flit stats plus request/response virtual
@@ -1192,7 +1196,7 @@ flag slices.
 1. Connect in-order and O3 CPU state to executable engines.
 2. Run more real static-libc SE programs, then expand SBI runtime coverage and real Linux boot.
 3. Route CPU instruction/data traffic through cache, coherence, NoC, and DRAM.
-4. Promote remaining non-cache hierarchy resource counters to first-class stats.
+4. Promote remaining fabric/DRAM hierarchy resource counters to first-class stats.
 5. Split broad rows as evidence grows: `se_mode`, `cpu_tests`, `traffic_gen`, `stats`, and `tests/test-progs`.
 
 ## Update Rules

@@ -332,13 +332,14 @@ fn memory_transport_power_record(
     resources: &Rem6MemoryResourceSummary,
     final_tick: u64,
 ) -> Option<PowerAnalysisRecord> {
-    if resources.transport_activity == 0 && resources.active_transports == 0 {
+    let transport = &resources.transport;
+    if transport.activity == 0 && transport.active == 0 {
         return None;
     }
     let dynamic_watts = watts_from_activity(
-        resources.transport_activity,
-        resources.active_transports,
-        resources.transport_activity.saturating_mul(64),
+        transport.activity,
+        transport.active,
+        transport.activity.saturating_mul(64),
         0.000_003,
         0.000_500,
         0.000_000_25,
@@ -349,7 +350,7 @@ fn memory_transport_power_record(
             PowerStateKind::On,
             PowerResidency::new(vec![(
                 PowerStateKind::On,
-                final_tick.max(resources.transport_activity).max(1),
+                final_tick.max(transport.activity).max(1),
             )]),
             37.0 + dynamic_watts.min(4.0),
             PowerEstimate::new(dynamic_watts, 0.006),
