@@ -401,6 +401,18 @@ pub(super) fn emit_dram_target_stats(
         "Tick",
         target.max_ready_latency_ticks,
     )?;
+    emit_dram_low_power_stats(
+        stats,
+        &prefix,
+        target.low_power_active_powerdown_entries,
+        target.low_power_active_powerdown_ticks,
+        target.low_power_precharge_powerdown_entries,
+        target.low_power_precharge_powerdown_ticks,
+        target.low_power_self_refresh_entries,
+        target.low_power_self_refresh_ticks,
+        target.low_power_exits,
+        target.low_power_exit_latency_ticks,
+    )?;
     for port in &target.ports {
         emit_dram_port_stats(stats, &prefix, port)?;
     }
@@ -451,7 +463,66 @@ fn emit_dram_bank_stats(
         "max_ready_latency_ticks",
         "Tick",
         bank.max_ready_latency_ticks,
+    )?;
+    emit_dram_low_power_stats(
+        stats,
+        &prefix,
+        bank.low_power_active_powerdown_entries,
+        bank.low_power_active_powerdown_ticks,
+        bank.low_power_precharge_powerdown_entries,
+        bank.low_power_precharge_powerdown_ticks,
+        bank.low_power_self_refresh_entries,
+        bank.low_power_self_refresh_ticks,
+        bank.low_power_exits,
+        bank.low_power_exit_latency_ticks,
     )
+}
+
+fn emit_dram_low_power_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    active_powerdown_entries: u64,
+    active_powerdown_ticks: u64,
+    precharge_powerdown_entries: u64,
+    precharge_powerdown_ticks: u64,
+    self_refresh_entries: u64,
+    self_refresh_ticks: u64,
+    exits: u64,
+    exit_latency_ticks: u64,
+) -> Result<(), Rem6CliError> {
+    for (suffix, unit, value) in [
+        (
+            "low_power.active_powerdown.entries",
+            "Count",
+            active_powerdown_entries,
+        ),
+        (
+            "low_power.active_powerdown.ticks",
+            "Tick",
+            active_powerdown_ticks,
+        ),
+        (
+            "low_power.precharge_powerdown.entries",
+            "Count",
+            precharge_powerdown_entries,
+        ),
+        (
+            "low_power.precharge_powerdown.ticks",
+            "Tick",
+            precharge_powerdown_ticks,
+        ),
+        (
+            "low_power.self_refresh.entries",
+            "Count",
+            self_refresh_entries,
+        ),
+        ("low_power.self_refresh.ticks", "Tick", self_refresh_ticks),
+        ("low_power.exits", "Count", exits),
+        ("low_power.exit_latency_ticks", "Tick", exit_latency_ticks),
+    ] {
+        emit_dram_counter(stats, prefix, suffix, unit, value)?;
+    }
+    Ok(())
 }
 
 fn emit_dram_counter(

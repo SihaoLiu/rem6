@@ -1097,6 +1097,23 @@ impl Rem6DramTargetSummary {
             turnarounds: profile.turnaround_count() as u64,
             total_ready_latency_ticks: profile.total_ready_latency_cycles(),
             max_ready_latency_ticks: profile.max_ready_latency_cycles(),
+            low_power_active_powerdown_entries: profile
+                .low_power_entry_count(DramLowPowerState::ActivePowerdown)
+                as u64,
+            low_power_active_powerdown_ticks: profile
+                .low_power_cycle_count(DramLowPowerState::ActivePowerdown),
+            low_power_precharge_powerdown_entries: profile
+                .low_power_entry_count(DramLowPowerState::PrechargePowerdown)
+                as u64,
+            low_power_precharge_powerdown_ticks: profile
+                .low_power_cycle_count(DramLowPowerState::PrechargePowerdown),
+            low_power_self_refresh_entries: profile
+                .low_power_entry_count(DramLowPowerState::SelfRefresh)
+                as u64,
+            low_power_self_refresh_ticks: profile
+                .low_power_cycle_count(DramLowPowerState::SelfRefresh),
+            low_power_exits: profile.low_power_exit_count() as u64,
+            low_power_exit_latency_ticks: profile.low_power_exit_latency_cycles(),
             ports,
         }
     }
@@ -1130,6 +1147,23 @@ impl Rem6DramBankSummary {
             commands: activity.command_count() as u64,
             total_ready_latency_ticks: activity.total_ready_latency_cycles(),
             max_ready_latency_ticks: activity.max_ready_latency_cycles(),
+            low_power_active_powerdown_entries: activity
+                .low_power_entry_count(DramLowPowerState::ActivePowerdown)
+                as u64,
+            low_power_active_powerdown_ticks: activity
+                .low_power_cycle_count(DramLowPowerState::ActivePowerdown),
+            low_power_precharge_powerdown_entries: activity
+                .low_power_entry_count(DramLowPowerState::PrechargePowerdown)
+                as u64,
+            low_power_precharge_powerdown_ticks: activity
+                .low_power_cycle_count(DramLowPowerState::PrechargePowerdown),
+            low_power_self_refresh_entries: activity
+                .low_power_entry_count(DramLowPowerState::SelfRefresh)
+                as u64,
+            low_power_self_refresh_ticks: activity
+                .low_power_cycle_count(DramLowPowerState::SelfRefresh),
+            low_power_exits: activity.low_power_exit_count() as u64,
+            low_power_exit_latency_ticks: activity.low_power_exit_latency_cycles(),
         }
     }
 }

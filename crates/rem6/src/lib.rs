@@ -318,6 +318,14 @@ pub struct Rem6DramTargetSummary {
     turnarounds: u64,
     total_ready_latency_ticks: u64,
     max_ready_latency_ticks: u64,
+    low_power_active_powerdown_entries: u64,
+    low_power_active_powerdown_ticks: u64,
+    low_power_precharge_powerdown_entries: u64,
+    low_power_precharge_powerdown_ticks: u64,
+    low_power_self_refresh_entries: u64,
+    low_power_self_refresh_ticks: u64,
+    low_power_exits: u64,
+    low_power_exit_latency_ticks: u64,
     ports: Vec<Rem6DramPortSummary>,
 }
 
@@ -345,6 +353,14 @@ pub struct Rem6DramBankSummary {
     commands: u64,
     total_ready_latency_ticks: u64,
     max_ready_latency_ticks: u64,
+    low_power_active_powerdown_entries: u64,
+    low_power_active_powerdown_ticks: u64,
+    low_power_precharge_powerdown_entries: u64,
+    low_power_precharge_powerdown_ticks: u64,
+    low_power_self_refresh_entries: u64,
+    low_power_self_refresh_ticks: u64,
+    low_power_exits: u64,
+    low_power_exit_latency_ticks: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
