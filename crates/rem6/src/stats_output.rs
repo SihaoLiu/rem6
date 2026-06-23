@@ -785,6 +785,14 @@ pub(super) fn run_stats_output(
             emit_in_order_stage_stats(
                 &mut stats,
                 core,
+                "width",
+                "Count",
+                StatResetPolicy::Constant,
+                core.in_order_pipeline_stage_widths.values(),
+            )?;
+            emit_in_order_stage_stats(
+                &mut stats,
+                core,
                 "in_flight",
                 "Count",
                 StatResetPolicy::Constant,

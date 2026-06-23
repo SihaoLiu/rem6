@@ -66,6 +66,9 @@ pub enum Rem6CliError {
     InvalidRiscvBranchPredictor {
         value: String,
     },
+    InvalidRiscvInOrderWidth {
+        value: String,
+    },
     InvalidStartAddress {
         value: String,
     },
@@ -261,6 +264,7 @@ pub enum Rem6CliError {
     RiscvPcCountTargetRequiresExecution,
     RiscvBranchLookaheadRequiresExecution,
     RiscvBranchPredictorRequiresExecution,
+    RiscvInOrderWidthRequiresExecution,
     DebugFlagsRequireExecution,
     DebugFlagsRequireJsonStats,
     PowerOutputRequiresExecution,
@@ -286,6 +290,7 @@ pub enum Rem6CliError {
     RiscvPcCountTargetRequiresRiscv,
     RiscvBranchLookaheadRequiresRiscv,
     RiscvBranchPredictorRequiresRiscv,
+    RiscvInOrderWidthRequiresRiscv,
     CheckerCpuRequiresRiscv,
     RiscvSbiRequiresRiscv,
     RiscvSbiConflictsWithRiscvSe,
@@ -440,6 +445,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidRiscvBranchPredictor { value } => {
                 write!(formatter, "invalid RISC-V branch predictor {value}")
+            }
+            Self::InvalidRiscvInOrderWidth { value } => {
+                write!(formatter, "invalid RISC-V in-order width {value}")
             }
             Self::InvalidStartAddress { value } => {
                 write!(formatter, "invalid start address {value}")
@@ -709,6 +717,9 @@ impl fmt::Display for Rem6CliError {
             Self::RiscvBranchPredictorRequiresExecution => {
                 write!(formatter, "--riscv-branch-predictor requires --execute")
             }
+            Self::RiscvInOrderWidthRequiresExecution => {
+                write!(formatter, "--riscv-in-order-width requires --execute")
+            }
             Self::DebugFlagsRequireExecution => {
                 write!(formatter, "--debug-flags requires --execute")
             }
@@ -798,6 +809,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::RiscvBranchPredictorRequiresRiscv => {
                 write!(formatter, "--riscv-branch-predictor requires --isa riscv")
+            }
+            Self::RiscvInOrderWidthRequiresRiscv => {
+                write!(formatter, "--riscv-in-order-width requires --isa riscv")
             }
             Self::CheckerCpuRequiresRiscv => {
                 write!(formatter, "--checker-cpu requires --isa riscv")

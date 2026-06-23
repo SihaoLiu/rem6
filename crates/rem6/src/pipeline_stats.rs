@@ -6,7 +6,7 @@ use rem6_cpu::{
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct Rem6InOrderPipelineStageInFlightSummary {
+pub(crate) struct Rem6InOrderPipelineStageSummary {
     pub(crate) fetch1: u64,
     pub(crate) fetch2: u64,
     pub(crate) decode: u64,
@@ -14,7 +14,7 @@ pub(crate) struct Rem6InOrderPipelineStageInFlightSummary {
     pub(crate) commit: u64,
 }
 
-impl Rem6InOrderPipelineStageInFlightSummary {
+impl Rem6InOrderPipelineStageSummary {
     fn max_with(self, other: Self) -> Self {
         Self {
             fetch1: self.fetch1.max(other.fetch1),
@@ -52,14 +52,26 @@ pub(super) fn in_order_pipeline_run_summary(core: &RiscvCore) -> InOrderPipeline
 
 pub(super) fn in_order_pipeline_stage_in_flight(
     snapshot: &InOrderPipelineSnapshot,
-) -> Rem6InOrderPipelineStageInFlightSummary {
+) -> Rem6InOrderPipelineStageSummary {
     stage_in_flight_from_snapshot(snapshot)
+}
+
+pub(super) fn in_order_pipeline_stage_widths(
+    snapshot: &InOrderPipelineSnapshot,
+) -> Rem6InOrderPipelineStageSummary {
+    Rem6InOrderPipelineStageSummary {
+        fetch1: snapshot.config().width(InOrderPipelineStage::Fetch1) as u64,
+        fetch2: snapshot.config().width(InOrderPipelineStage::Fetch2) as u64,
+        decode: snapshot.config().width(InOrderPipelineStage::Decode) as u64,
+        execute: snapshot.config().width(InOrderPipelineStage::Execute) as u64,
+        commit: snapshot.config().width(InOrderPipelineStage::Commit) as u64,
+    }
 }
 
 pub(super) fn in_order_pipeline_stage_max_in_flight(
     core: &RiscvCore,
     final_snapshot: &InOrderPipelineSnapshot,
-) -> Rem6InOrderPipelineStageInFlightSummary {
+) -> Rem6InOrderPipelineStageSummary {
     core.in_order_pipeline_cycle_records().into_iter().fold(
         stage_in_flight_from_snapshot(final_snapshot),
         |summary, record| {
@@ -72,17 +84,17 @@ pub(super) fn in_order_pipeline_stage_max_in_flight(
 
 pub(super) fn in_order_pipeline_stage_occupied_cycles(
     core: &RiscvCore,
-) -> Rem6InOrderPipelineStageInFlightSummary {
+) -> Rem6InOrderPipelineStageSummary {
     core.in_order_pipeline_cycle_records().into_iter().fold(
-        Rem6InOrderPipelineStageInFlightSummary::default(),
+        Rem6InOrderPipelineStageSummary::default(),
         |summary, record| summary.saturating_add(stage_in_flight_from_snapshot(record.before())),
     )
 }
 
 fn stage_in_flight_from_snapshot(
     snapshot: &InOrderPipelineSnapshot,
-) -> Rem6InOrderPipelineStageInFlightSummary {
-    let mut summary = Rem6InOrderPipelineStageInFlightSummary::default();
+) -> Rem6InOrderPipelineStageSummary {
+    let mut summary = Rem6InOrderPipelineStageSummary::default();
     for instruction in snapshot.in_flight() {
         match instruction.stage() {
             InOrderPipelineStage::Fetch1 => summary.fetch1 += 1,

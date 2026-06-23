@@ -8,6 +8,9 @@ use serde::Deserialize;
 
 use crate::Rem6CliError;
 
+const DEFAULT_RISCV_IN_ORDER_WIDTH: usize = 1;
+const MAX_RISCV_IN_ORDER_WIDTH: usize = u32::MAX as usize;
+
 mod cache;
 mod debug;
 mod dram;
@@ -72,6 +75,7 @@ pub struct Rem6RunConfig {
     riscv_pc_count_targets: Vec<PcCountPair>,
     riscv_branch_lookahead: usize,
     riscv_branch_predictor: RiscvBranchPredictorKind,
+    riscv_in_order_width: Option<usize>,
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
@@ -204,6 +208,7 @@ struct Rem6RunFileConfig {
     riscv_pc_count_targets: Option<Vec<String>>,
     riscv_branch_lookahead: Option<usize>,
     riscv_branch_predictor: Option<String>,
+    riscv_in_order_width: Option<usize>,
     max_instructions: Option<u64>,
     stats_format: Option<String>,
     execute: Option<bool>,
@@ -326,6 +331,22 @@ fn resolve_config_path(config_dir: Option<&Path>, path: &Path) -> PathBuf {
     } else {
         path.to_path_buf()
     }
+}
+
+fn parse_riscv_in_order_width(value: &str) -> Result<usize, Rem6CliError> {
+    let width = value
+        .parse()
+        .map_err(|_| Rem6CliError::InvalidRiscvInOrderWidth {
+            value: value.to_string(),
+        })?;
+    validate_riscv_in_order_width(width, value.to_string())
+}
+
+fn validate_riscv_in_order_width(width: usize, value: String) -> Result<usize, Rem6CliError> {
+    if width == 0 || width > MAX_RISCV_IN_ORDER_WIDTH {
+        return Err(Rem6CliError::InvalidRiscvInOrderWidth { value });
+    }
+    Ok(width)
 }
 
 impl Rem6RunConfig {
@@ -455,6 +476,10 @@ impl Rem6RunConfig {
             })
             .transpose()?
             .unwrap_or_default();
+        let mut riscv_in_order_width = file_config
+            .riscv_in_order_width
+            .map(|width| validate_riscv_in_order_width(width, width.to_string()))
+            .transpose()?;
         let mut stats_format = file_config
             .stats_format
             .as_deref()
@@ -788,6 +813,10 @@ impl Rem6RunConfig {
                                 value: value.clone(),
                             }
                         })?;
+                }
+                "--riscv-in-order-width" => {
+                    let value = required_value(&flag, args.next())?;
+                    riscv_in_order_width = Some(parse_riscv_in_order_width(&value)?);
                 }
                 "--max-instructions" => {
                     let value = required_value(&flag, args.next())?;
@@ -1163,6 +1192,7 @@ impl Rem6RunConfig {
             riscv_pc_count_targets,
             riscv_branch_lookahead,
             riscv_branch_predictor,
+            riscv_in_order_width,
             max_instructions,
             stats_format,
             execute,
@@ -1271,6 +1301,15 @@ impl Rem6RunConfig {
 
     pub const fn riscv_branch_predictor(&self) -> RiscvBranchPredictorKind {
         self.riscv_branch_predictor
+    }
+
+    pub fn riscv_in_order_width(&self) -> usize {
+        self.riscv_in_order_width
+            .unwrap_or(DEFAULT_RISCV_IN_ORDER_WIDTH)
+    }
+
+    pub const fn riscv_in_order_width_is_explicit(&self) -> bool {
+        self.riscv_in_order_width.is_some()
     }
 
     pub const fn max_instructions(&self) -> Option<u64> {

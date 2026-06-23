@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_cpu::{
-    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, RiscvCluster, RiscvCore,
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineConfig,
+    InOrderPipelineStage, InOrderPipelineStageWidth, RiscvCluster, RiscvCore,
 };
 use rem6_fabric::{FabricLinkId, FabricPath, FabricPathHop, VirtualNetworkId};
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode};
@@ -93,7 +94,7 @@ pub(crate) use instruction_probe_summary::{
 };
 pub(crate) use memory_resource_summary::{Rem6MemoryResourceInputs, Rem6MemoryResourceSummary};
 pub use multi_run_cli::{run_multi_run_config, Rem6MultiRunArtifact, Rem6MultiRunConfig};
-use pipeline_stats::Rem6InOrderPipelineStageInFlightSummary;
+use pipeline_stats::Rem6InOrderPipelineStageSummary;
 use power_output::{run_power_analysis_artifact, Rem6PowerAnalysisArtifact};
 use readfile_runtime::{read_readfiles, readfile_mmio_bus, LoadedReadfile, Rem6ReadfileSummary};
 pub use resource_acquire_cli::{
@@ -405,9 +406,10 @@ pub struct Rem6CoreSummary {
     committed_instructions: u64,
     in_order_pipeline_cycles: u64,
     in_order_pipeline_in_flight: u64,
-    in_order_pipeline_stage_in_flight: Rem6InOrderPipelineStageInFlightSummary,
-    in_order_pipeline_stage_max_in_flight: Rem6InOrderPipelineStageInFlightSummary,
-    in_order_pipeline_stage_occupied_cycles: Rem6InOrderPipelineStageInFlightSummary,
+    in_order_pipeline_stage_widths: Rem6InOrderPipelineStageSummary,
+    in_order_pipeline_stage_in_flight: Rem6InOrderPipelineStageSummary,
+    in_order_pipeline_stage_max_in_flight: Rem6InOrderPipelineStageSummary,
+    in_order_pipeline_stage_occupied_cycles: Rem6InOrderPipelineStageSummary,
     in_order_pipeline_retired: u64,
     in_order_pipeline_advanced: u64,
     in_order_pipeline_flushed: u64,
@@ -751,6 +753,7 @@ fn execute_riscv(
     .map_err(execute_error)?;
     let mut transport = run_memory_transport(config.fabric());
     let mut cores = Vec::new();
+    let in_order_pipeline_config = cli_in_order_pipeline_config(config.riscv_in_order_width())?;
     for cpu_index in 0..core_count {
         let cpu_partition = PartitionId::new(cpu_index);
         let fetch_route = add_memory_route(
@@ -810,6 +813,7 @@ fn execute_riscv(
         if config.checker_cpu() {
             core.enable_checker_cpu();
         }
+        core.reset_in_order_pipeline_config(in_order_pipeline_config.clone());
         core.set_branch_lookahead(config.riscv_branch_lookahead());
         core.set_branch_predictor_kind(config.riscv_branch_predictor());
         cores.push(core);
@@ -1112,6 +1116,14 @@ fn run_fabric_path(
         None => hop,
     };
     FabricPath::new([hop]).map_err(execute_error)
+}
+
+fn cli_in_order_pipeline_config(width: usize) -> Result<InOrderPipelineConfig, Rem6CliError> {
+    InOrderPipelineConfig::new(InOrderPipelineStage::ALL.map(|stage| {
+        InOrderPipelineStageWidth::new(stage, width)
+            .expect("validated RISC-V in-order pipeline width is nonzero")
+    }))
+    .map_err(execute_error)
 }
 
 fn cli_instruction_stats(

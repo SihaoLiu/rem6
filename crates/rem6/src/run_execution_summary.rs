@@ -16,6 +16,7 @@ use crate::pipeline_stats::{
     in_order_pipeline_data_wait_cycles, in_order_pipeline_fetch_wait_cycles,
     in_order_pipeline_run_summary, in_order_pipeline_stage_in_flight,
     in_order_pipeline_stage_max_in_flight, in_order_pipeline_stage_occupied_cycles,
+    in_order_pipeline_stage_widths,
 };
 use crate::runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use crate::{
@@ -139,6 +140,7 @@ pub(super) fn execution_summary(
         let pipeline_summary = in_order_pipeline_run_summary(&core);
         let pipeline_snapshot = core.in_order_pipeline_snapshot();
         let pipeline_stage_in_flight = in_order_pipeline_stage_in_flight(&pipeline_snapshot);
+        let pipeline_stage_widths = in_order_pipeline_stage_widths(&pipeline_snapshot);
         let pipeline_stage_max_in_flight =
             in_order_pipeline_stage_max_in_flight(&core, &pipeline_snapshot);
         let pipeline_stage_occupied_cycles = in_order_pipeline_stage_occupied_cycles(&core);
@@ -155,6 +157,7 @@ pub(super) fn execution_summary(
             committed_instructions: committed_by_cpu.get(&cpu).copied().unwrap_or(0),
             in_order_pipeline_cycles: pipeline_snapshot.cycle(),
             in_order_pipeline_in_flight: pipeline_snapshot.in_flight().len() as u64,
+            in_order_pipeline_stage_widths: pipeline_stage_widths,
             in_order_pipeline_stage_in_flight: pipeline_stage_in_flight,
             in_order_pipeline_stage_max_in_flight: pipeline_stage_max_in_flight,
             in_order_pipeline_stage_occupied_cycles: pipeline_stage_occupied_cycles,

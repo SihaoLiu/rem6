@@ -924,6 +924,12 @@ impl RiscvCore {
             .snapshot()
     }
 
+    pub fn reset_in_order_pipeline_config(&self, config: InOrderPipelineConfig) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.in_order_pipeline = InOrderPipelineState::new(config);
+        state.in_order_pipeline_cycle_records.clear();
+    }
+
     pub fn restore_in_order_pipeline_snapshot(
         &self,
         snapshot: InOrderPipelineSnapshot,
