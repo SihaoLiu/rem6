@@ -25,7 +25,9 @@ use rem6_workload::{
 use sha2::{Digest, Sha256};
 
 use crate::cli_output::emit_cli_output;
-use crate::config::{Rem6TraceReplayConfig, StatsFormat, TraceReplayExternalAdapterKind};
+use crate::config::{
+    CliDramLowPowerTiming, Rem6TraceReplayConfig, StatsFormat, TraceReplayExternalAdapterKind,
+};
 use crate::data_cache_runtime::CliDataCacheSummary;
 use crate::formatting::bytes_to_hex;
 use crate::guest_memory::build_cli_dram_profile;
@@ -642,7 +644,11 @@ fn trace_replay_memory_target(
         WorkloadMemoryTarget::new(0, config.line_bytes(), memory_range).map_err(execute_error)?;
     match config.data_cache_dram_memory_profile() {
         Some(profile) => target
-            .with_external_memory_profile(build_cli_dram_profile(line_layout, profile)?)
+            .with_external_memory_profile(build_cli_dram_profile(
+                line_layout,
+                profile,
+                CliDramLowPowerTiming::default(),
+            )?)
             .map_err(execute_error),
         None => Ok(target),
     }

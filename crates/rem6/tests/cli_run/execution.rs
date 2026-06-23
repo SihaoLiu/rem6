@@ -1947,6 +1947,127 @@ fn rem6_run_lpddr_fetches_record_dram_low_power_residency() {
 }
 
 #[test]
+fn rem6_run_lpddr_accepts_custom_low_power_timing() {
+    let program = riscv64_program(&[
+        b_type(0, 0, 0, 0x0), // beq x0, x0, self
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("lpddr-custom-low-power", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "260",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--dram-memory-profile",
+            "lpddr",
+            "--dram-low-power-precharge-powerdown-entry-delay",
+            "8",
+            "--dram-low-power-self-refresh-entry-delay",
+            "24",
+            "--dram-low-power-exit-latency",
+            "5",
+            "--dram-low-power-self-refresh-exit-latency",
+            "11",
+            "--memory-route-delay",
+            "72",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert!(stdout.contains("\"technology\":\"lpddr\""));
+    assert_eq!(
+        json_u64(
+            &json,
+            "/dram/profile/low_power_timing/precharge_powerdown_entry_delay"
+        ),
+        8
+    );
+    assert_eq!(
+        json_u64(
+            &json,
+            "/dram/profile/low_power_timing/self_refresh_entry_delay"
+        ),
+        24
+    );
+    assert_eq!(
+        json_u64(&json, "/dram/profile/low_power_timing/exit_latency"),
+        5
+    );
+    assert_eq!(
+        json_u64(
+            &json,
+            "/dram/profile/low_power_timing/self_refresh_exit_latency"
+        ),
+        11
+    );
+
+    let active_powerdown_entries = json_u64(&json, "/dram/low_power/active_powerdown/entries");
+    let self_refresh_entries = json_u64(&json, "/dram/low_power/self_refresh/entries");
+    assert!(active_powerdown_entries > 0);
+    assert!(self_refresh_entries > 0);
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.low_power_timing.precharge_powerdown_entry_delay",
+        "Tick",
+        8,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.low_power_timing.self_refresh_entry_delay",
+        "Tick",
+        24,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.low_power_timing.exit_latency",
+        "Tick",
+        5,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.low_power_timing.self_refresh_exit_latency",
+        "Tick",
+        11,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.low_power.active_powerdown.entries",
+        "Count",
+        active_powerdown_entries,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.low_power.self_refresh.entries",
+        "Count",
+        self_refresh_entries,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_accepts_jedec_dram_profile_presets() {
     struct Case {
         cli_profile: &'static str,

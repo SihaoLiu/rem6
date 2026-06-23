@@ -20,7 +20,8 @@ mod nomali;
 
 use crate::cli_output;
 use crate::config::{
-    CliCachePrefetcher, CliDramMemoryProfile, MemoryDumpRequest, PowerAnalysisFormat, StatsFormat,
+    CliCachePrefetcher, CliDramLowPowerTiming, CliDramMemoryProfile, MemoryDumpRequest,
+    PowerAnalysisFormat, StatsFormat,
 };
 use crate::data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, cli_data_memory_response, CliCacheHierarchy,
@@ -1125,6 +1126,7 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
         line_layout,
         config.dram_memory(),
         config.dram_memory_profile(),
+        CliDramLowPowerTiming::default(),
     )?;
     let data_cache = cli_cache_runtime_with_prefetcher(
         config.data_cache_protocol(),

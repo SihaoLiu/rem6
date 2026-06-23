@@ -1535,6 +1535,30 @@ fn rem6_run_config_scan_treats_riscv_in_order_width_as_value_taking() {
 }
 
 #[test]
+fn rem6_run_config_scan_treats_dram_low_power_timing_as_value_taking() {
+    let bogus_config = temp_output("dram-low-power-prescan-bogus-config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--dram-low-power-precharge-powerdown-entry-delay",
+            "--config",
+            bogus_config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("invalid DRAM low-power timing --config"),
+        "stderr: {stderr}"
+    );
+    assert!(!stderr.contains(&format!("failed to read config {}", bogus_config.display())));
+}
+
+#[test]
 fn rem6_run_rejects_toml_riscv_se_inputs_without_riscv_se() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x73, 0, 0, 0]);
     let binary = temp_binary("riscv-se-toml-inputs-without-riscv-se", &elf);
@@ -1691,6 +1715,38 @@ fn rem6_run_rejects_unsupported_dram_memory_profile() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("unsupported DRAM memory profile wideio"));
+}
+
+#[test]
+fn rem6_run_rejects_dram_low_power_timing_for_non_low_power_profile() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("dram-low-power-timing-with-ddr", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--dram-memory",
+            "--dram-low-power-precharge-powerdown-entry-delay",
+            "8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("DRAM low-power timing requires lpddr, lpddr4-3200-16gb, or nvm profile")
+    );
 }
 
 #[test]

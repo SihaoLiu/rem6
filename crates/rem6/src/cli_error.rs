@@ -48,6 +48,10 @@ pub enum Rem6CliError {
         profile: String,
     },
     DramMemoryProfileRequiresDramMemory,
+    DramLowPowerTimingRequiresDramMemory,
+    DramLowPowerTimingRequiresLowPowerProfile {
+        profile: String,
+    },
     InvalidMaxTick {
         value: String,
     },
@@ -58,6 +62,9 @@ pub enum Rem6CliError {
         value: String,
     },
     InvalidHostEventDelay {
+        value: String,
+    },
+    InvalidDramLowPowerTiming {
         value: String,
     },
     InvalidRiscvBranchLookahead {
@@ -437,6 +444,13 @@ impl fmt::Display for Rem6CliError {
             Self::DramMemoryProfileRequiresDramMemory => {
                 write!(formatter, "--dram-memory-profile requires --dram-memory")
             }
+            Self::DramLowPowerTimingRequiresDramMemory => {
+                write!(formatter, "DRAM low-power timing requires --dram-memory")
+            }
+            Self::DramLowPowerTimingRequiresLowPowerProfile { profile } => write!(
+                formatter,
+                "DRAM low-power timing requires lpddr, lpddr4-3200-16gb, or nvm profile, got {profile}"
+            ),
             Self::InvalidMaxTick { value } => write!(formatter, "invalid max tick {value}"),
             Self::InvalidMinRemoteDelay { value } => {
                 write!(formatter, "invalid min remote delay {value}")
@@ -446,6 +460,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidHostEventDelay { value } => {
                 write!(formatter, "invalid host event delay {value}")
+            }
+            Self::InvalidDramLowPowerTiming { value } => {
+                write!(formatter, "invalid DRAM low-power timing {value}")
             }
             Self::InvalidRiscvBranchLookahead { value } => {
                 write!(formatter, "invalid RISC-V branch lookahead {value}")

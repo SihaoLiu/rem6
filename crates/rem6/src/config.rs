@@ -30,7 +30,8 @@ pub use cache::CliCachePrefetcher;
 use cache::{parse_data_cache_protocol, parse_run_data_cache_protocol};
 pub use debug::CliDebugFlag;
 use debug::{parse_debug_flag_list, parse_debug_flags};
-pub use dram::CliDramMemoryProfile;
+use dram::CliDramLowPowerTimingOptions;
+pub use dram::{CliDramLowPowerTiming, CliDramMemoryProfile};
 pub use fabric::RunFabricConfig;
 use fabric::{
     parse_run_fabric_credit_depth, parse_run_fabric_virtual_network, run_fabric_config_from_parts,
@@ -84,6 +85,7 @@ pub struct Rem6RunConfig {
     memory_system: Option<RunMemorySystem>,
     dram_memory: bool,
     dram_memory_profile: CliDramMemoryProfile,
+    dram_low_power_timing: CliDramLowPowerTiming,
     data_cache_protocol: Option<RiscvDataCacheProtocol>,
     data_cache_l2_protocol: Option<RiscvDataCacheProtocol>,
     data_cache_l3_protocol: Option<RiscvDataCacheProtocol>,
@@ -219,6 +221,10 @@ struct Rem6RunFileConfig {
     memory_system: Option<String>,
     dram_memory: Option<bool>,
     dram_memory_profile: Option<String>,
+    dram_low_power_precharge_powerdown_entry_delay: Option<u64>,
+    dram_low_power_self_refresh_entry_delay: Option<u64>,
+    dram_low_power_exit_latency: Option<u64>,
+    dram_low_power_self_refresh_exit_latency: Option<u64>,
     data_cache_protocol: Option<String>,
     data_cache_l2_protocol: Option<String>,
     data_cache_l3_protocol: Option<String>,
@@ -511,6 +517,12 @@ impl Rem6RunConfig {
             .transpose()?
             .unwrap_or(CliDramMemoryProfile::Ddr);
         let mut dram_memory_profile_was_set = file_config.dram_memory_profile.is_some();
+        let mut dram_low_power_timing_options = CliDramLowPowerTimingOptions::new(
+            file_config.dram_low_power_precharge_powerdown_entry_delay,
+            file_config.dram_low_power_self_refresh_entry_delay,
+            file_config.dram_low_power_exit_latency,
+            file_config.dram_low_power_self_refresh_exit_latency,
+        );
         let mut data_cache_protocol = file_config
             .data_cache_protocol
             .as_deref()
@@ -860,6 +872,22 @@ impl Rem6RunConfig {
                     dram_memory_profile =
                         CliDramMemoryProfile::parse(&required_value(&flag, args.next())?)?;
                 }
+                "--dram-low-power-precharge-powerdown-entry-delay" => {
+                    let value = required_value(&flag, args.next())?;
+                    dram_low_power_timing_options.set_precharge_powerdown_entry_delay(&value)?;
+                }
+                "--dram-low-power-self-refresh-entry-delay" => {
+                    let value = required_value(&flag, args.next())?;
+                    dram_low_power_timing_options.set_self_refresh_entry_delay(&value)?;
+                }
+                "--dram-low-power-exit-latency" => {
+                    let value = required_value(&flag, args.next())?;
+                    dram_low_power_timing_options.set_exit_latency(&value)?;
+                }
+                "--dram-low-power-self-refresh-exit-latency" => {
+                    let value = required_value(&flag, args.next())?;
+                    dram_low_power_timing_options.set_self_refresh_exit_latency(&value)?;
+                }
                 "--data-cache-protocol" => {
                     let value = required_value(&flag, args.next())?;
                     data_cache_protocol =
@@ -1071,8 +1099,10 @@ impl Rem6RunConfig {
             });
         }
         let explicit_memory_system = memory_system.is_some();
+        let dram_low_power_timing_was_set = dram_low_power_timing_options.was_set();
         let explicit_enabled_memory_hierarchy = dram_memory
             || dram_memory_profile_was_set
+            || dram_low_power_timing_was_set
             || data_cache_protocol.is_some()
             || data_cache_l2_protocol.is_some()
             || data_cache_l3_protocol.is_some()
@@ -1123,6 +1153,14 @@ impl Rem6RunConfig {
         }
         if dram_memory_profile_was_set && !dram_memory {
             return Err(Rem6CliError::DramMemoryProfileRequiresDramMemory);
+        }
+        if dram_low_power_timing_was_set && !dram_memory {
+            return Err(Rem6CliError::DramLowPowerTimingRequiresDramMemory);
+        }
+        if dram_low_power_timing_was_set && !dram_memory_profile.supports_low_power_timing() {
+            return Err(Rem6CliError::DramLowPowerTimingRequiresLowPowerProfile {
+                profile: dram_memory_profile.as_str().to_string(),
+            });
         }
         if !riscv_se {
             if !riscv_se_args.is_empty() {
@@ -1175,6 +1213,7 @@ impl Rem6RunConfig {
             fabric_response_virtual_network,
             fabric_credit_depth,
         )?;
+        let dram_low_power_timing = dram_low_power_timing_options.timing()?;
 
         Ok(Self {
             isa: isa.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--isa" })?,
@@ -1205,6 +1244,7 @@ impl Rem6RunConfig {
             memory_system,
             dram_memory,
             dram_memory_profile,
+            dram_low_power_timing,
             data_cache_protocol,
             data_cache_l2_protocol,
             data_cache_l3_protocol,
@@ -1343,6 +1383,10 @@ impl Rem6RunConfig {
 
     pub const fn dram_memory_profile(&self) -> CliDramMemoryProfile {
         self.dram_memory_profile
+    }
+
+    pub const fn dram_low_power_timing(&self) -> CliDramLowPowerTiming {
+        self.dram_low_power_timing
     }
 
     pub const fn data_cache_protocol(&self) -> Option<RiscvDataCacheProtocol> {
