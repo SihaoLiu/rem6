@@ -13,7 +13,11 @@ impl RiscvSyscallState {
         path: &[u8],
     ) -> Option<(Vec<u8>, Vec<u8>)> {
         let path = virtual_proc_path(self.current_directory(), path)?;
-        (path == b"proc/self/maps").then(|| (path, self.proc_self_maps_bytes()))
+        match path.as_slice() {
+            b"proc/self/comm" => Some((path, self.proc_self_comm_bytes())),
+            b"proc/self/maps" => Some((path, self.proc_self_maps_bytes())),
+            _ => None,
+        }
     }
 
     pub(super) fn virtual_proc_link_target_result_for_path(
@@ -74,6 +78,17 @@ impl RiscvSyscallState {
             push_mmap_region_line(&mut output, region);
         }
         output.into_bytes()
+    }
+
+    fn proc_self_comm_bytes(&self) -> Vec<u8> {
+        let name = self.process_name();
+        let end = name
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(name.len());
+        let mut output = name[..end].to_vec();
+        output.push(b'\n');
+        output
     }
 }
 
@@ -221,6 +236,7 @@ fn is_virtual_proc_path_prefix(components: &[Vec<u8>]) -> bool {
             proc.as_slice() == b"proc"
                 && current.as_slice() == b"self"
                 && (leaf.as_slice() == b"maps"
+                    || leaf.as_slice() == b"comm"
                     || leaf.as_slice() == b"fd"
                     || leaf.as_slice() == b"cwd")
         }

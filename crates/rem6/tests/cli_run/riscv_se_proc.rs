@@ -815,6 +815,132 @@ int main(void) {
 }
 
 #[test]
+fn rem6_run_riscv_se_reads_proc_self_comm_from_prctl_name_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE proc-self-comm smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE proc-self-comm smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-proc-self-comm");
+    let source = workspace.join("proc-self-comm.c");
+    let binary = workspace.join("proc-self-comm");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+#include <string.h>
+
+static long linux_syscall2(long number, long arg0, long arg1) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall4(long number, long arg0, long arg1, long arg2, long arg3) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3), "r"(a7) : "memory");
+    return a0;
+}
+
+int main(void) {
+    char comm[32] = {0};
+    long set_name = linux_syscall2(167, 15, (long)"rem6-comm");
+    long fd = linux_syscall4(56, -100, (long)"/proc/self/comm", 0, 0);
+    long count = -1;
+    if (fd >= 0) {
+        count = linux_syscall3(63, fd, (long)comm, sizeof(comm) - 1);
+        if (count > 0) {
+            comm[count] = 0;
+        }
+    }
+    int matches = count == 10 && strcmp(comm, "rem6-comm\n") == 0;
+    printf("proc-self-comm:%ld:%ld:%ld:%d\n", set_name, fd >= 0, count, matches);
+    return set_name == 0 && fd >= 0 && matches ? 49 : 81;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu).arg(&binary).output().unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(49),
+        "qemu stdout: {}; qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stdout),
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    assert_eq!(qemu_output.stdout, b"proc-self-comm:0:1:10:1\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":49"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"proc-self-comm:0:1:10:1\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 49, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_prctl_no_new_privs_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(

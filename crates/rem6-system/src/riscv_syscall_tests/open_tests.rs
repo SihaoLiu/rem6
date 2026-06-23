@@ -30,6 +30,7 @@ const RISCV_LINUX_EEXIST_FOR_OPEN_TEST: u64 = 17;
 const RISCV_LINUX_EINVAL_FOR_OPEN_TEST: u64 = 22;
 const RISCV_LINUX_ELOOP_FOR_OPEN_TEST: u64 = 40;
 const RISCV_LINUX_MAP_ANONYMOUS_FOR_OPEN_TEST: u64 = 0x20;
+const RISCV_LINUX_PR_SET_NAME_FOR_OPEN_TEST: u64 = 15;
 
 #[test]
 fn linux_table_openat_reads_virtual_proc_self_maps() {
@@ -111,6 +112,84 @@ fn linux_table_openat_reads_virtual_proc_self_maps() {
     assert_eq!(
         &*writes.lock().unwrap(),
         &[(0xa000, expected_maps.as_bytes().to_vec())]
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_openat_reads_virtual_proc_self_comm_from_prctl_name() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0x20000);
+    let process_name = b"rem6-comm\0".to_vec();
+    let proc_path = b"/proc/self/comm\0".to_vec();
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if bytes != 1 {
+            return None;
+        }
+        if address >= 0x8800 {
+            let offset = usize::try_from(address - 0x8800).ok()?;
+            if let Some(byte) = process_name.get(offset).copied() {
+                return Some(vec![byte]);
+            }
+        }
+        if address >= 0x9000 {
+            let offset = usize::try_from(address - 0x9000).ok()?;
+            if let Some(byte) = proc_path.get(offset).copied() {
+                return Some(vec![byte]);
+            }
+        }
+        None
+    });
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_PRCTL,
+                [RISCV_LINUX_PR_SET_NAME_FOR_OPEN_TEST, 0x8800, 0, 0, 0, 0],
+            ),
+            &mut state,
+            6,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_OPENAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8008, RISCV_LINUX_READ, [3, 0xa000, 32, 0, 0, 0]),
+            &mut state,
+            8,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 10 })
+    );
+    assert_eq!(
+        &*writes.lock().unwrap(),
+        &[(0xa000, b"rem6-comm\n".to_vec())]
     );
     assert!(state.unknown_syscalls().is_empty());
 }
