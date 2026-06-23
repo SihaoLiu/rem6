@@ -1,6 +1,7 @@
 use rem6_system::{
     RiscvGuestWriteRecord, RiscvSbiHsmRecord, RiscvSbiHsmWakeRecord, RiscvSbiIpiRecord,
-    RiscvSbiResetRecord, RiscvSbiRfenceRecord, RiscvUnknownSyscallRecord,
+    RiscvSbiResetRecord, RiscvSbiRfenceCompletionRecord, RiscvSbiRfenceRecord,
+    RiscvUnknownSyscallRecord,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -68,6 +69,18 @@ pub(crate) struct Rem6RiscvSbiRfenceSummary {
     size: u64,
     address_space: Option<u64>,
     targets: Vec<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6RiscvSbiRfenceCompletionSummary {
+    source_cpu: u32,
+    target_hart: u64,
+    function: u64,
+    start_addr: u64,
+    size: u64,
+    address_space: Option<u64>,
+    completed_tick: u64,
+    flushed_entries: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -258,6 +271,53 @@ impl Rem6RiscvSbiRfenceSummary {
 
     pub(crate) fn target_count(&self) -> u64 {
         self.targets.len() as u64
+    }
+}
+
+impl Rem6RiscvSbiRfenceCompletionSummary {
+    pub(crate) fn from_record(record: &RiscvSbiRfenceCompletionRecord) -> Self {
+        Self {
+            source_cpu: record.source_cpu().get(),
+            target_hart: record.target_hart(),
+            function: record.function(),
+            start_addr: record.start_addr(),
+            size: record.size(),
+            address_space: record.address_space(),
+            completed_tick: record.completed_tick(),
+            flushed_entries: record.flushed_entries(),
+        }
+    }
+
+    pub(crate) const fn source_cpu(&self) -> u32 {
+        self.source_cpu
+    }
+
+    pub(crate) const fn target_hart(&self) -> u64 {
+        self.target_hart
+    }
+
+    pub(crate) const fn function(&self) -> u64 {
+        self.function
+    }
+
+    pub(crate) const fn start_addr(&self) -> u64 {
+        self.start_addr
+    }
+
+    pub(crate) const fn size(&self) -> u64 {
+        self.size
+    }
+
+    pub(crate) const fn address_space(&self) -> Option<u64> {
+        self.address_space
+    }
+
+    pub(crate) const fn completed_tick(&self) -> u64 {
+        self.completed_tick
+    }
+
+    pub(crate) const fn flushed_entries(&self) -> Option<u64> {
+        self.flushed_entries
     }
 }
 

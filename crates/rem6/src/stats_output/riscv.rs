@@ -144,6 +144,13 @@ pub(super) fn emit_riscv_run_stats(
             )?;
             increment_stat(
                 stats,
+                "sim.riscv.sbi.rfence.completions",
+                "Count",
+                StatResetPolicy::Constant,
+                execution.riscv_sbi_rfence_completions.len() as u64,
+            )?;
+            increment_stat(
+                stats,
                 "sim.riscv.sbi.reset.requests",
                 "Count",
                 StatResetPolicy::Constant,

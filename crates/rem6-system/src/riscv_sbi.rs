@@ -11,6 +11,14 @@ use crate::{
     RiscvSystemRunDriver, SystemError,
 };
 
+mod records;
+
+use records::RiscvSbiTimerState;
+pub use records::{
+    RiscvSbiHsmRecord, RiscvSbiHsmWakeRecord, RiscvSbiIpiRecord, RiscvSbiResetRecord,
+    RiscvSbiRfenceCompletionRecord, RiscvSbiRfenceRecord,
+};
+
 const SBI_SUCCESS: u64 = 0;
 const SBI_ERR_NOT_SUPPORTED: u64 = (-2_i64) as u64;
 const SBI_ERR_INVALID_PARAM: u64 = (-3_i64) as u64;
@@ -79,260 +87,13 @@ pub struct RiscvSbiFirmware {
     hsm_wakes: Arc<Mutex<Vec<RiscvSbiHsmWakeRecord>>>,
     ipis: Arc<Mutex<Vec<RiscvSbiIpiRecord>>>,
     rfences: Arc<Mutex<Vec<RiscvSbiRfenceRecord>>>,
+    rfence_completions: Arc<Mutex<Vec<RiscvSbiRfenceCompletionRecord>>>,
     resets: Arc<Mutex<Vec<RiscvSbiResetRecord>>>,
     debug_console: Arc<Mutex<Vec<u8>>>,
     debug_console_dbcn_bytes: Arc<Mutex<u64>>,
     debug_console_input: Arc<Mutex<VecDeque<u8>>>,
     functional_guest_memory_reader: Option<RiscvGuestMemoryReader>,
     functional_guest_memory_writer: Option<RiscvGuestMemoryWriter>,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct RiscvSbiTimerState {
-    generations: BTreeMap<CpuId, u64>,
-    deadlines: BTreeMap<CpuId, u64>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvSbiHsmRecord {
-    source_cpu: CpuId,
-    function: u64,
-    arg0: u64,
-    arg1: u64,
-    arg2: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvSbiHsmWakeRecord {
-    source_cpu: CpuId,
-    target_hart: u64,
-    interrupt_bits: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvSbiIpiRecord {
-    source_cpu: CpuId,
-    hart_mask: u64,
-    hart_mask_base: u64,
-    targets: Vec<u64>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvSbiRfenceRecord {
-    source_cpu: CpuId,
-    function: u64,
-    hart_mask: u64,
-    hart_mask_base: u64,
-    start_addr: u64,
-    size: u64,
-    address_space: Option<u64>,
-    targets: Vec<u64>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RiscvSbiResetRecord {
-    cpu: CpuId,
-    reset_type: u32,
-    reset_reason: u32,
-    code: i32,
-}
-
-impl RiscvSbiResetRecord {
-    pub const fn new(cpu: CpuId, reset_type: u32, reset_reason: u32, code: i32) -> Self {
-        Self {
-            cpu,
-            reset_type,
-            reset_reason,
-            code,
-        }
-    }
-
-    pub const fn cpu(&self) -> CpuId {
-        self.cpu
-    }
-
-    pub const fn reset_type(&self) -> u32 {
-        self.reset_type
-    }
-
-    pub const fn reset_reason(&self) -> u32 {
-        self.reset_reason
-    }
-
-    pub const fn code(&self) -> i32 {
-        self.code
-    }
-}
-
-impl RiscvSbiHsmRecord {
-    pub const fn new(source_cpu: CpuId, function: u64, arg0: u64, arg1: u64, arg2: u64) -> Self {
-        Self {
-            source_cpu,
-            function,
-            arg0,
-            arg1,
-            arg2,
-        }
-    }
-
-    pub const fn source_cpu(&self) -> CpuId {
-        self.source_cpu
-    }
-
-    pub const fn function(&self) -> u64 {
-        self.function
-    }
-
-    pub const fn arg0(&self) -> u64 {
-        self.arg0
-    }
-
-    pub const fn arg1(&self) -> u64 {
-        self.arg1
-    }
-
-    pub const fn arg2(&self) -> u64 {
-        self.arg2
-    }
-}
-
-impl RiscvSbiHsmWakeRecord {
-    pub const fn new(source_cpu: CpuId, target_hart: u64, interrupt_bits: u64) -> Self {
-        Self {
-            source_cpu,
-            target_hart,
-            interrupt_bits,
-        }
-    }
-
-    pub const fn source_cpu(&self) -> CpuId {
-        self.source_cpu
-    }
-
-    pub const fn target_hart(&self) -> u64 {
-        self.target_hart
-    }
-
-    pub const fn interrupt_bits(&self) -> u64 {
-        self.interrupt_bits
-    }
-}
-
-impl RiscvSbiIpiRecord {
-    pub fn new(source_cpu: CpuId, hart_mask: u64, hart_mask_base: u64, targets: Vec<u64>) -> Self {
-        Self {
-            source_cpu,
-            hart_mask,
-            hart_mask_base,
-            targets,
-        }
-    }
-
-    pub const fn source_cpu(&self) -> CpuId {
-        self.source_cpu
-    }
-
-    pub const fn hart_mask(&self) -> u64 {
-        self.hart_mask
-    }
-
-    pub const fn hart_mask_base(&self) -> u64 {
-        self.hart_mask_base
-    }
-
-    pub fn targets(&self) -> &[u64] {
-        &self.targets
-    }
-}
-
-impl RiscvSbiRfenceRecord {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        source_cpu: CpuId,
-        function: u64,
-        hart_mask: u64,
-        hart_mask_base: u64,
-        start_addr: u64,
-        size: u64,
-        address_space: Option<u64>,
-        targets: Vec<u64>,
-    ) -> Self {
-        Self {
-            source_cpu,
-            function,
-            hart_mask,
-            hart_mask_base,
-            start_addr,
-            size,
-            address_space,
-            targets,
-        }
-    }
-
-    pub const fn source_cpu(&self) -> CpuId {
-        self.source_cpu
-    }
-
-    pub const fn function(&self) -> u64 {
-        self.function
-    }
-
-    pub const fn hart_mask(&self) -> u64 {
-        self.hart_mask
-    }
-
-    pub const fn hart_mask_base(&self) -> u64 {
-        self.hart_mask_base
-    }
-
-    pub const fn start_addr(&self) -> u64 {
-        self.start_addr
-    }
-
-    pub const fn size(&self) -> u64 {
-        self.size
-    }
-
-    pub const fn address_space(&self) -> Option<u64> {
-        self.address_space
-    }
-
-    pub fn targets(&self) -> &[u64] {
-        &self.targets
-    }
-}
-
-impl RiscvSbiTimerState {
-    fn program(&mut self, cpu: CpuId, deadline: u64) -> u64 {
-        let generation = self
-            .generations
-            .get(&cpu)
-            .copied()
-            .unwrap_or_default()
-            .wrapping_add(1);
-        self.generations.insert(cpu, generation);
-        self.deadlines.insert(cpu, deadline);
-        generation
-    }
-
-    fn cancel(&mut self, cpu: CpuId) {
-        let generation = self
-            .generations
-            .get(&cpu)
-            .copied()
-            .unwrap_or_default()
-            .wrapping_add(1);
-        self.generations.insert(cpu, generation);
-        self.deadlines.remove(&cpu);
-    }
-
-    fn generation_matches(&self, cpu: CpuId, generation: u64) -> bool {
-        self.generations.get(&cpu).copied() == Some(generation)
-    }
-
-    fn deadline(&self, cpu: CpuId) -> Option<u64> {
-        self.deadlines.get(&cpu).copied()
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -458,14 +219,12 @@ impl RiscvSbiFirmware {
     pub fn new() -> Self {
         Self {
             cores: Arc::new(Mutex::new(BTreeMap::new())),
-            timer: Arc::new(Mutex::new(RiscvSbiTimerState {
-                generations: BTreeMap::new(),
-                deadlines: BTreeMap::new(),
-            })),
+            timer: Arc::new(Mutex::new(RiscvSbiTimerState::default())),
             hsm: Arc::new(Mutex::new(Vec::new())),
             hsm_wakes: Arc::new(Mutex::new(Vec::new())),
             ipis: Arc::new(Mutex::new(Vec::new())),
             rfences: Arc::new(Mutex::new(Vec::new())),
+            rfence_completions: Arc::new(Mutex::new(Vec::new())),
             resets: Arc::new(Mutex::new(Vec::new())),
             debug_console: Arc::new(Mutex::new(Vec::new())),
             debug_console_dbcn_bytes: Arc::new(Mutex::new(0)),
@@ -525,6 +284,10 @@ impl RiscvSbiFirmware {
         self.rfences
             .lock()
             .expect("RISC-V SBI RFENCE record lock")
+            .clear();
+        self.rfence_completions
+            .lock()
+            .expect("RISC-V SBI RFENCE completion record lock")
             .clear();
         self.resets
             .lock()
@@ -603,6 +366,27 @@ impl RiscvSbiFirmware {
             .lock()
             .expect("RISC-V SBI RFENCE record lock")
             .clone()
+    }
+
+    pub fn rfence_completion_records(&self) -> Vec<RiscvSbiRfenceCompletionRecord> {
+        let mut records = self
+            .rfence_completions
+            .lock()
+            .expect("RISC-V SBI RFENCE completion record lock")
+            .clone();
+        records.sort_by_key(|record| {
+            (
+                record.source_cpu().get(),
+                record.target_hart(),
+                record.function(),
+                record.start_addr(),
+                record.size(),
+                record.address_space(),
+                record.completed_tick(),
+                record.flushed_entries(),
+            )
+        });
+        records
     }
 
     pub fn reset_records(&self) -> Vec<RiscvSbiResetRecord> {
@@ -1161,7 +945,13 @@ impl RiscvSbiFirmware {
             return Ok(RiscvSbiOutcome::invalid_param());
         };
         let target_harts = targets.iter().map(RiscvCore::hart_id).collect();
-        self.schedule_remote_instruction_fence(scheduler, source, targets, parallel)?;
+        self.schedule_remote_instruction_fence(
+            scheduler,
+            source,
+            targets,
+            rfence_completion_scope(request),
+            parallel,
+        )?;
         self.record_rfence(source.id(), request, target_harts);
         Ok(RiscvSbiOutcome::success(0))
     }
@@ -1171,16 +961,28 @@ impl RiscvSbiFirmware {
         scheduler: &mut PartitionedScheduler,
         source: &RiscvCore,
         targets: Vec<RiscvCore>,
+        scope: RiscvSbiRfenceCompletionScope,
         parallel: bool,
     ) -> Result<(), SchedulerError> {
         for (target, deadline) in remote_target_deadlines(scheduler, source, targets)? {
+            let completions = self.rfence_completions.clone();
+            let source_cpu = source.id();
+            let target_hart = target.hart_id();
             if parallel {
-                scheduler.schedule_parallel_at(target.partition(), deadline, move |_context| {
+                scheduler.schedule_parallel_at(target.partition(), deadline, move |context| {
                     target.reset_instruction_fetch_stream();
+                    record_rfence_completion(
+                        &completions,
+                        scope.completion_record(source_cpu, target_hart, context.now(), None),
+                    );
                 })?;
             } else {
-                scheduler.schedule_at(target.partition(), deadline, move |_context| {
+                scheduler.schedule_at(target.partition(), deadline, move |context| {
                     target.reset_instruction_fetch_stream();
+                    record_rfence_completion(
+                        &completions,
+                        scope.completion_record(source_cpu, target_hart, context.now(), None),
+                    );
                 })?;
             }
         }
@@ -1212,8 +1014,11 @@ impl RiscvSbiFirmware {
             scheduler,
             source,
             targets,
-            virtual_range,
-            address_space,
+            RiscvSbiRemoteDataTlbFlush::new(
+                virtual_range,
+                address_space,
+                rfence_completion_scope(request),
+            ),
             parallel,
         )?;
         self.record_rfence(source.id(), request, target_harts);
@@ -1245,8 +1050,11 @@ impl RiscvSbiFirmware {
             scheduler,
             source,
             targets,
-            virtual_range,
-            address_space,
+            RiscvSbiRemoteDataTlbFlush::new(
+                virtual_range,
+                address_space,
+                rfence_completion_scope(request),
+            ),
             parallel,
         )?;
         self.record_rfence(source.id(), request, target_harts);
@@ -1254,26 +1062,18 @@ impl RiscvSbiFirmware {
     }
 
     fn record_rfence(&self, source_cpu: CpuId, request: RiscvSbiRequest, targets: Vec<u64>) {
-        let (start_addr, size, address_space) = if request.function() == SBI_RFENCE_REMOTE_FENCE_I {
-            (0, 0, None)
-        } else {
-            (
-                request.arg2(),
-                request.arg3(),
-                rfence_record_address_space(request),
-            )
-        };
+        let scope = rfence_completion_scope(request);
         self.rfences
             .lock()
             .expect("RISC-V SBI RFENCE record lock")
             .push(RiscvSbiRfenceRecord::new(
                 source_cpu,
-                request.function(),
+                scope.function,
                 request.arg0(),
                 request.arg1(),
-                start_addr,
-                size,
-                address_space,
+                scope.start_addr,
+                scope.size,
+                scope.address_space,
                 targets,
             ));
     }
@@ -1283,18 +1083,38 @@ impl RiscvSbiFirmware {
         scheduler: &mut PartitionedScheduler,
         source: &RiscvCore,
         targets: Vec<RiscvCore>,
-        virtual_range: Option<AddressRange>,
-        address_space: Option<TranslationAddressSpaceId>,
+        flush: RiscvSbiRemoteDataTlbFlush,
         parallel: bool,
     ) -> Result<(), SchedulerError> {
         for (target, deadline) in remote_target_deadlines(scheduler, source, targets)? {
+            let completions = self.rfence_completions.clone();
+            let source_cpu = source.id();
+            let target_hart = target.hart_id();
             if parallel {
-                scheduler.schedule_parallel_at(target.partition(), deadline, move |_context| {
-                    target.flush_data_translation_tlb_range(virtual_range, address_space);
+                scheduler.schedule_parallel_at(target.partition(), deadline, move |context| {
+                    let flushed_entries = flush.execute(&target);
+                    record_rfence_completion(
+                        &completions,
+                        flush.completion_record(
+                            source_cpu,
+                            target_hart,
+                            context.now(),
+                            flushed_entries,
+                        ),
+                    );
                 })?;
             } else {
-                scheduler.schedule_at(target.partition(), deadline, move |_context| {
-                    target.flush_data_translation_tlb_range(virtual_range, address_space);
+                scheduler.schedule_at(target.partition(), deadline, move |context| {
+                    let flushed_entries = flush.execute(&target);
+                    record_rfence_completion(
+                        &completions,
+                        flush.completion_record(
+                            source_cpu,
+                            target_hart,
+                            context.now(),
+                            flushed_entries,
+                        ),
+                    );
                 })?;
             }
         }
@@ -1396,6 +1216,104 @@ fn remote_target_deadlines(
             Ok((target, source_deadline.max(target_now)))
         })
         .collect()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvSbiRfenceCompletionScope {
+    function: u64,
+    start_addr: u64,
+    size: u64,
+    address_space: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RiscvSbiRemoteDataTlbFlush {
+    virtual_range: Option<AddressRange>,
+    address_space: Option<TranslationAddressSpaceId>,
+    completion_scope: RiscvSbiRfenceCompletionScope,
+}
+
+impl RiscvSbiRemoteDataTlbFlush {
+    const fn new(
+        virtual_range: Option<AddressRange>,
+        address_space: Option<TranslationAddressSpaceId>,
+        completion_scope: RiscvSbiRfenceCompletionScope,
+    ) -> Self {
+        Self {
+            virtual_range,
+            address_space,
+            completion_scope,
+        }
+    }
+
+    fn execute(self, target: &RiscvCore) -> Option<u64> {
+        target
+            .flush_data_translation_tlb_range(self.virtual_range, self.address_space)
+            .map(|entries| entries as u64)
+    }
+
+    const fn completion_record(
+        self,
+        source_cpu: CpuId,
+        target_hart: u64,
+        completed_tick: u64,
+        flushed_entries: Option<u64>,
+    ) -> RiscvSbiRfenceCompletionRecord {
+        self.completion_scope.completion_record(
+            source_cpu,
+            target_hart,
+            completed_tick,
+            flushed_entries,
+        )
+    }
+}
+
+impl RiscvSbiRfenceCompletionScope {
+    const fn completion_record(
+        self,
+        source_cpu: CpuId,
+        target_hart: u64,
+        completed_tick: u64,
+        flushed_entries: Option<u64>,
+    ) -> RiscvSbiRfenceCompletionRecord {
+        RiscvSbiRfenceCompletionRecord::new(
+            source_cpu,
+            target_hart,
+            self.function,
+            self.start_addr,
+            self.size,
+            self.address_space,
+            completed_tick,
+            flushed_entries,
+        )
+    }
+}
+
+fn rfence_completion_scope(request: RiscvSbiRequest) -> RiscvSbiRfenceCompletionScope {
+    if request.function() == SBI_RFENCE_REMOTE_FENCE_I {
+        return RiscvSbiRfenceCompletionScope {
+            function: request.function(),
+            start_addr: 0,
+            size: 0,
+            address_space: None,
+        };
+    }
+    RiscvSbiRfenceCompletionScope {
+        function: request.function(),
+        start_addr: request.arg2(),
+        size: request.arg3(),
+        address_space: rfence_record_address_space(request),
+    }
+}
+
+fn record_rfence_completion(
+    completions: &Arc<Mutex<Vec<RiscvSbiRfenceCompletionRecord>>>,
+    record: RiscvSbiRfenceCompletionRecord,
+) {
+    completions
+        .lock()
+        .expect("RISC-V SBI RFENCE completion record lock")
+        .push(record);
 }
 
 fn set_ipi_and_record_hsm_wake(

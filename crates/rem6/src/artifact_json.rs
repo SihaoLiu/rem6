@@ -10,8 +10,8 @@ use super::{
     Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary, Rem6PcCountTrackerSummary,
     Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmSummary,
     Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary,
-    Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
-    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary,
+    Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
+    Rem6RiscvUnknownSyscallSummary, Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary,
     Rem6TraceReplayExternalAdapterSummary, RunMemorySystem,
 };
 
@@ -1109,6 +1109,17 @@ impl Rem6ExecutionSummary {
         )
     }
 
+    fn to_riscv_sbi_rfence_completions_json(&self) -> String {
+        format!(
+            "[{}]",
+            self.riscv_sbi_rfence_completions
+                .iter()
+                .map(Rem6RiscvSbiRfenceCompletionSummary::to_json)
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    }
+
     fn to_riscv_sbi_resets_json(&self) -> String {
         format!(
             "[{}]",
@@ -1290,6 +1301,30 @@ impl Rem6RiscvSbiRfenceSummary {
             self.size(),
             address_space,
             targets,
+        )
+    }
+}
+
+impl Rem6RiscvSbiRfenceCompletionSummary {
+    fn to_json(&self) -> String {
+        let address_space = self
+            .address_space()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "null".to_string());
+        let flushed_entries = self
+            .flushed_entries()
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "null".to_string());
+        format!(
+            "{{\"source_cpu\":{},\"target_hart\":{},\"function\":{},\"start_addr\":\"0x{:x}\",\"size\":\"0x{:x}\",\"address_space\":{},\"completed_tick\":{},\"flushed_entries\":{}}}",
+            self.source_cpu(),
+            self.target_hart(),
+            self.function(),
+            self.start_addr(),
+            self.size(),
+            address_space,
+            self.completed_tick(),
+            flushed_entries,
         )
     }
 }

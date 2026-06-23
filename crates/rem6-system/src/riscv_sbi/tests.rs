@@ -413,8 +413,7 @@ fn execute_hsm_hart_start_ecall(
     );
 }
 
-#[test]
-fn remote_sfence_vma_flushes_target_tlb_when_completion_event_runs() {
+fn assert_remote_sfence_vma_records_completion(parallel: bool) {
     let (mut scheduler, transport, firmware, core0, core1) = registered_rfence_pair();
     assert_eq!(core1.data_translation_tlb_entry_count(), Some(1));
     assert_eq!(
@@ -433,16 +432,42 @@ fn remote_sfence_vma_flushes_target_tlb_when_completion_event_runs() {
     );
 
     let outcome = firmware
-        .handle_pending_core_trap(&mut scheduler, &core0, false)
+        .handle_pending_core_trap(&mut scheduler, &core0, parallel)
         .expect("handled SBI trap")
         .expect("SBI outcome");
 
     assert_eq!(outcome, RiscvSbiOutcome::success(0));
     assert_eq!(core1.data_translation_tlb_entry_count(), Some(1));
+    assert!(firmware.rfence_completion_records().is_empty());
 
-    scheduler.run_until_idle_conservative();
+    if parallel {
+        scheduler
+            .run_until_idle_parallel()
+            .expect("parallel RFENCE completion event");
+    } else {
+        scheduler.run_until_idle_conservative();
+    }
 
     assert_eq!(core1.data_translation_tlb_entry_count(), Some(0));
+    let completions = firmware.rfence_completion_records();
+    assert_eq!(completions.len(), 1);
+    assert_eq!(completions[0].source_cpu(), core0.id());
+    assert_eq!(completions[0].target_hart(), core1.hart_id());
+    assert_eq!(completions[0].function(), SBI_RFENCE_REMOTE_SFENCE_VMA);
+    assert_eq!(completions[0].start_addr(), 0);
+    assert_eq!(completions[0].size(), 0);
+    assert_eq!(completions[0].address_space(), None);
+    assert_eq!(completions[0].flushed_entries(), Some(1));
+}
+
+#[test]
+fn remote_sfence_vma_flushes_target_tlb_when_completion_event_runs() {
+    assert_remote_sfence_vma_records_completion(false);
+}
+
+#[test]
+fn parallel_remote_sfence_vma_records_completion() {
+    assert_remote_sfence_vma_records_completion(true);
 }
 
 #[test]

@@ -25,8 +25,8 @@ use crate::{
     Rem6ExecutionStop, Rem6ExecutionSummary, Rem6HostActionSummary, Rem6MemoryResourceInputs,
     Rem6MemoryResourceSummary, Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary,
     Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary,
-    Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
-    Rem6RiscvUnknownSyscallSummary, Rem6RunConfig, Rem6RunFabricSummary,
+    Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary,
+    Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary, Rem6RunConfig, Rem6RunFabricSummary,
     RISCV_DATA_PROBE_PAGE_BYTES,
 };
 
@@ -52,6 +52,7 @@ pub(super) struct ExecutionSummaryInputs<'a> {
     pub(super) riscv_sbi_hsm_wakes: Vec<Rem6RiscvSbiHsmWakeSummary>,
     pub(super) riscv_sbi_ipis: Vec<Rem6RiscvSbiIpiSummary>,
     pub(super) riscv_sbi_rfences: Vec<Rem6RiscvSbiRfenceSummary>,
+    pub(super) riscv_sbi_rfence_completions: Vec<Rem6RiscvSbiRfenceCompletionSummary>,
     pub(super) riscv_sbi_resets: Vec<Rem6RiscvSbiResetSummary>,
     pub(super) riscv_syscall_trace: Vec<RiscvSyscallTraceRecord>,
     pub(super) host_actions: Rem6HostActionSummary,
@@ -299,6 +300,7 @@ pub(super) fn execution_summary(
         riscv_sbi_hsm_wakes: inputs.riscv_sbi_hsm_wakes,
         riscv_sbi_ipis: inputs.riscv_sbi_ipis,
         riscv_sbi_rfences: inputs.riscv_sbi_rfences,
+        riscv_sbi_rfence_completions: inputs.riscv_sbi_rfence_completions,
         riscv_sbi_resets: inputs.riscv_sbi_resets,
         host_actions: inputs.host_actions,
     })

@@ -2,6 +2,9 @@ use std::process::Command;
 
 use crate::support::*;
 
+#[path = "riscv_sbi/rfence_completion.rs"]
+mod rfence_completion;
+
 const SBI_BASE_GET_SPEC_VERSION: i32 = 0;
 const SBI_BASE_PROBE_EXTENSION: i32 = 3;
 const SBI_BASE_EXTENSION: i32 = 0x10;
@@ -13,6 +16,7 @@ const SBI_IPI_EXTENSION: i32 = 0x0073_5049;
 const SBI_IPI_SEND_IPI: i32 = 0;
 const SBI_RFENCE_EXTENSION: i32 = 0x5246_4e43;
 const SBI_RFENCE_REMOTE_FENCE_I: i32 = 0;
+const SBI_RFENCE_REMOTE_SFENCE_VMA: i32 = 1;
 const SBI_SRST_EXTENSION: i32 = 0x5352_5354;
 const SBI_SRST_SYSTEM_RESET: i32 = 0;
 const SBI_RESET_TYPE_SHUTDOWN: i32 = 0;
