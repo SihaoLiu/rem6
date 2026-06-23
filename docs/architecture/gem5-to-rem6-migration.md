@@ -374,6 +374,10 @@ Top-level `rem6 run` cache/DRAM resource smoke coverage exposes
 memory-resource DRAM active target/port/bank, access, read/write, row,
 command, turnaround, and ready-latency counters in artifact JSON and
 `StatsRegistry`, derived from the executed DRAM summary.
+Top-level `rem6 run --dram-memory` smoke coverage also exposes executed DRAM
+target, port, and bank hierarchy counters as structured `/dram/targets` and
+`/memory_resources/dram/targets` artifact JSON plus matching
+`sim.memory.resources.dram.target*.port*.bank*` stats.
 CLI
 trace-replay fabric-route smoke coverage exposes nonzero active-lane,
 active-virtual-network, transfer, byte, and flit stats plus request/response virtual
@@ -1204,7 +1208,7 @@ flag slices.
 1. Connect in-order and O3 CPU state to executable engines.
 2. Run more real static-libc SE programs, then expand SBI runtime coverage and real Linux boot.
 3. Route CPU instruction/data traffic through cache, coherence, NoC, and DRAM.
-4. Promote remaining fabric/DRAM hierarchy resource counters to first-class stats.
+4. Broaden remaining fabric/DRAM hierarchy resource counters to first-class stats.
 5. Split broad rows as evidence grows: `se_mode`, `cpu_tests`, `traffic_gen`, `stats`, and `tests/test-progs`.
 
 ## Update Rules

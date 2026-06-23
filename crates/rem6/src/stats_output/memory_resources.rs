@@ -5,7 +5,7 @@ use crate::{
     Rem6TransportResourceSummary,
 };
 
-use super::{increment_stat, Rem6CliError, Rem6ExecutionSummary};
+use super::{dram::emit_dram_target_stats, increment_stat, Rem6CliError, Rem6ExecutionSummary};
 
 pub(super) fn emit_memory_resource_stats(
     stats: &mut StatsRegistry,
@@ -107,6 +107,9 @@ fn emit_dram_resource_stats(
             StatResetPolicy::Monotonic,
             value,
         )?;
+    }
+    for target in &summary.targets {
+        emit_dram_target_stats(stats, prefix, target)?;
     }
     Ok(())
 }

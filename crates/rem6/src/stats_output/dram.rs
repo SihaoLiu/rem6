@@ -364,7 +364,7 @@ pub(super) fn emit_dram_stats(
     Ok(())
 }
 
-fn emit_dram_target_stats(
+pub(super) fn emit_dram_target_stats(
     stats: &mut StatsRegistry,
     prefix: &str,
     target: &Rem6DramTargetSummary,

@@ -1239,6 +1239,71 @@ fn rem6_run_can_execute_riscv_elf_through_dram_memory_and_emit_dram_stats() {
     assert!(stdout.contains("\"self_refresh_entry_delay\":0"));
     assert!(stdout.contains("\"exit_latency\":0"));
     assert!(stdout.contains("\"self_refresh_exit_latency\":0"));
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let resources = json
+        .pointer("/memory_resources")
+        .expect("run JSON should include memory resources");
+    let resource_bank_read_bytes =
+        json_u64(resources, "/dram/targets/0/ports/0/banks/0/read_bytes");
+    let resource_bank_total_ready_latency_ticks = json_u64(
+        resources,
+        "/dram/targets/0/ports/0/banks/0/total_ready_latency_ticks",
+    );
+    assert_eq!(
+        json_u64(resources, "/dram/targets/0/target"),
+        json_u64(&json, "/dram/targets/0/target")
+    );
+    assert_eq!(
+        json_u64(resources, "/dram/targets/0/accesses"),
+        json_u64(&json, "/dram/targets/0/accesses")
+    );
+    assert_eq!(
+        json_u64(resources, "/dram/targets/0/reads"),
+        json_u64(&json, "/dram/targets/0/reads")
+    );
+    assert_eq!(
+        json_u64(resources, "/dram/targets/0/row_misses"),
+        json_u64(&json, "/dram/targets/0/row_misses")
+    );
+    assert_eq!(
+        json_u64(resources, "/dram/targets/0/ports/0/port"),
+        json_u64(&json, "/dram/targets/0/ports/0/port")
+    );
+    assert_eq!(
+        json_u64(resources, "/dram/targets/0/ports/0/accesses"),
+        json_u64(&json, "/dram/targets/0/ports/0/accesses")
+    );
+    assert_eq!(
+        json_u64(resources, "/dram/targets/0/ports/0/commands"),
+        json_u64(&json, "/dram/targets/0/ports/0/commands")
+    );
+    assert_eq!(
+        json_u64(resources, "/dram/targets/0/ports/0/banks/0/bank"),
+        json_u64(&json, "/dram/targets/0/ports/0/banks/0/bank")
+    );
+    assert_eq!(
+        json_u64(resources, "/dram/targets/0/ports/0/banks/0/accesses"),
+        json_u64(&json, "/dram/targets/0/ports/0/banks/0/accesses")
+    );
+    assert_eq!(
+        json_u64(resources, "/dram/targets/0/ports/0/banks/0/row_hits"),
+        json_u64(&json, "/dram/targets/0/ports/0/banks/0/row_hits")
+    );
+    assert_eq!(
+        resource_bank_read_bytes,
+        json_u64(&json, "/dram/targets/0/ports/0/banks/0/read_bytes")
+    );
+    assert_eq!(
+        json_u64(resources, "/dram/targets/0/ports/0/banks/0/row_misses"),
+        json_u64(&json, "/dram/targets/0/ports/0/banks/0/row_misses")
+    );
+    assert_eq!(
+        resource_bank_total_ready_latency_ticks,
+        json_u64(
+            &json,
+            "/dram/targets/0/ports/0/banks/0/total_ready_latency_ticks"
+        )
+    );
     assert_stat(
         &stdout,
         "sim.memory.dram.active_targets",
@@ -1338,6 +1403,76 @@ fn rem6_run_can_execute_riscv_elf_through_dram_memory_and_emit_dram_stats() {
         "sim.memory.dram.target0.port0.bank0.row_misses",
         "Count",
         1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.accesses",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.reads",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.row_misses",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.port0.accesses",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.port0.commands",
+        "Count",
+        3,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.port0.bank0.accesses",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.port0.bank0.row_hits",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.port0.bank0.read_bytes",
+        "Byte",
+        resource_bank_read_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.port0.bank0.row_misses",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.port0.bank0.total_ready_latency_ticks",
+        "Tick",
+        resource_bank_total_ready_latency_ticks,
         "monotonic",
     );
     assert_stat(

@@ -1183,7 +1183,7 @@ impl Rem6MemoryResourceSummary {
 
 fn dram_resource_json(summary: &super::Rem6DramResourceSummary) -> String {
     format!(
-        "{{\"activity\":{},\"active\":{},\"active_targets\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{}}}",
+        "{{\"activity\":{},\"active\":{},\"active_targets\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"targets\":[{}]}}",
         summary.activity,
         summary.active,
         summary.active_targets,
@@ -1198,6 +1198,7 @@ fn dram_resource_json(summary: &super::Rem6DramResourceSummary) -> String {
         summary.turnarounds,
         summary.total_ready_latency_ticks,
         summary.max_ready_latency_ticks,
+        dram_targets_json(&summary.targets),
     )
 }
 
@@ -1680,7 +1681,7 @@ impl Rem6DramSummary {
         let profile_parallel_port_label = optional_string_json(self.profile_parallel_port_label);
         let profile_topology_unit_label = optional_string_json(self.profile_topology_unit_label);
         format!(
-            "{{\"active_targets\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"profile\":{{\"technology\":{},\"parallel_port_label\":{},\"topology_unit_label\":{},\"geometry\":{{\"bank_count\":{},\"row_size\":{},\"line_size\":{},\"lines_per_row\":{},\"bank_group_count\":{}}},\"timing\":{{\"activate_latency\":{},\"read_latency\":{},\"write_latency\":{},\"precharge_latency\":{},\"bus_turnaround\":{},\"burst_spacing\":{},\"same_bank_group_burst_spacing\":{},\"refresh_interval\":{},\"refresh_recovery\":{},\"command_window\":{{\"window_cycles\":{},\"max_commands\":{}}}}},\"low_power_timing\":{{\"precharge_powerdown_entry_delay\":{},\"self_refresh_entry_delay\":{},\"exit_latency\":{},\"self_refresh_exit_latency\":{}}},\"nvm_media\":{{\"read_media_latency\":{},\"write_media_latency\":{},\"send_latency\":{},\"max_pending_reads\":{},\"max_pending_writes\":{}}},\"profiled_targets\":{},\"parallel_ports\":{},\"topology_units\":{},\"scheduler_banks\":{},\"topology_banks\":{},\"scheduler_bank_groups\":{}}},\"nvm\":{{\"persistent_writes\":{},\"persistent_write_bytes\":{},\"max_pending_reads\":{},\"max_pending_persistent_writes\":{}}},\"low_power\":{{\"active_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"precharge_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"self_refresh\":{{\"entries\":{},\"ticks\":{}}},\"exits\":{},\"exit_latency_ticks\":{}}}}}",
+            "{{\"active_targets\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"profile\":{{\"technology\":{},\"parallel_port_label\":{},\"topology_unit_label\":{},\"geometry\":{{\"bank_count\":{},\"row_size\":{},\"line_size\":{},\"lines_per_row\":{},\"bank_group_count\":{}}},\"timing\":{{\"activate_latency\":{},\"read_latency\":{},\"write_latency\":{},\"precharge_latency\":{},\"bus_turnaround\":{},\"burst_spacing\":{},\"same_bank_group_burst_spacing\":{},\"refresh_interval\":{},\"refresh_recovery\":{},\"command_window\":{{\"window_cycles\":{},\"max_commands\":{}}}}},\"low_power_timing\":{{\"precharge_powerdown_entry_delay\":{},\"self_refresh_entry_delay\":{},\"exit_latency\":{},\"self_refresh_exit_latency\":{}}},\"nvm_media\":{{\"read_media_latency\":{},\"write_media_latency\":{},\"send_latency\":{},\"max_pending_reads\":{},\"max_pending_writes\":{}}},\"profiled_targets\":{},\"parallel_ports\":{},\"topology_units\":{},\"scheduler_banks\":{},\"topology_banks\":{},\"scheduler_bank_groups\":{}}},\"nvm\":{{\"persistent_writes\":{},\"persistent_write_bytes\":{},\"max_pending_reads\":{},\"max_pending_persistent_writes\":{}}},\"low_power\":{{\"active_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"precharge_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"self_refresh\":{{\"entries\":{},\"ticks\":{}}},\"exits\":{},\"exit_latency_ticks\":{}}},\"targets\":[{}]}}",
             self.active_targets,
             self.active_ports,
             self.active_banks,
@@ -1741,8 +1742,84 @@ impl Rem6DramSummary {
             self.low_power_self_refresh_ticks,
             self.low_power_exits,
             self.low_power_exit_latency_ticks,
+            dram_targets_json(&self.targets),
         )
     }
+}
+
+fn dram_targets_json(targets: &[super::Rem6DramTargetSummary]) -> String {
+    targets
+        .iter()
+        .map(dram_target_json)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn dram_target_json(summary: &super::Rem6DramTargetSummary) -> String {
+    format!(
+        "{{\"target\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"ports\":[{}]}}",
+        summary.target,
+        summary.active_ports,
+        summary.active_banks,
+        summary.accesses,
+        summary.reads,
+        summary.writes,
+        summary.row_hits,
+        summary.row_misses,
+        summary.refreshes,
+        summary.refresh_ticks,
+        summary.commands,
+        summary.turnarounds,
+        summary.total_ready_latency_ticks,
+        summary.max_ready_latency_ticks,
+        dram_ports_json(&summary.ports),
+    )
+}
+
+fn dram_ports_json(ports: &[super::Rem6DramPortSummary]) -> String {
+    ports
+        .iter()
+        .map(dram_port_json)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn dram_port_json(summary: &super::Rem6DramPortSummary) -> String {
+    format!(
+        "{{\"port\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"turnarounds\":{},\"commands\":{},\"banks\":[{}]}}",
+        summary.port,
+        summary.accesses,
+        summary.reads,
+        summary.writes,
+        summary.turnarounds,
+        summary.commands,
+        dram_banks_json(&summary.banks),
+    )
+}
+
+fn dram_banks_json(banks: &[super::Rem6DramBankSummary]) -> String {
+    banks
+        .iter()
+        .map(dram_bank_json)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn dram_bank_json(summary: &super::Rem6DramBankSummary) -> String {
+    format!(
+        "{{\"bank\":{},\"accesses\":{},\"read_bytes\":{},\"write_bytes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{}}}",
+        summary.bank,
+        summary.accesses,
+        summary.read_bytes,
+        summary.write_bytes,
+        summary.row_hits,
+        summary.row_misses,
+        summary.refreshes,
+        summary.refresh_ticks,
+        summary.commands,
+        summary.total_ready_latency_ticks,
+        summary.max_ready_latency_ticks,
+    )
 }
 
 fn optional_string_json(value: Option<&str>) -> String {

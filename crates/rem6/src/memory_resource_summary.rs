@@ -1,6 +1,6 @@
 use crate::{
     data_cache_runtime::CliDataCacheSummary, transport_summary::Rem6MemoryTransportSummary,
-    Rem6DramSummary, Rem6RunFabricSummary,
+    Rem6DramSummary, Rem6DramTargetSummary, Rem6RunFabricSummary,
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -73,6 +73,7 @@ pub(crate) struct Rem6DramResourceSummary {
     pub(crate) turnarounds: u64,
     pub(crate) total_ready_latency_ticks: u64,
     pub(crate) max_ready_latency_ticks: u64,
+    pub(crate) targets: Vec<Rem6DramTargetSummary>,
 }
 
 pub(crate) struct Rem6MemoryResourceInputs<'a> {
@@ -213,6 +214,7 @@ impl Rem6DramResourceSummary {
             turnarounds: summary.turnarounds,
             total_ready_latency_ticks: summary.total_ready_latency_ticks,
             max_ready_latency_ticks: summary.max_ready_latency_ticks,
+            targets: summary.targets.clone(),
         }
     }
 }
