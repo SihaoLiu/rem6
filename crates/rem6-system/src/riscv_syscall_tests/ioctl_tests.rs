@@ -3,7 +3,9 @@ use std::sync::{Arc, Mutex};
 
 const RISCV_LINUX_TIOCGWINSZ_FOR_TEST: u64 = 0x5413;
 
-fn recording_writer(writes: Arc<Mutex<Vec<(u64, Vec<u8>)>>>) -> RiscvGuestMemoryWriter {
+type RecordedGuestWrites = Arc<Mutex<Vec<(u64, Vec<u8>)>>>;
+
+fn recording_writer(writes: RecordedGuestWrites) -> RiscvGuestMemoryWriter {
     RiscvGuestMemoryWriter::new(move |address, bytes| {
         writes.lock().unwrap().push((address, bytes.to_vec()));
         true

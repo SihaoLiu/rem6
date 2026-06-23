@@ -669,6 +669,58 @@ fn rem6_run_gdb_listen_pmp_csr_write_is_consumed_by_fetch_access_check() {
 }
 
 #[test]
+fn rem6_run_gdb_listen_packed_pmpcfg0_entry1_is_consumed_by_fetch_access_check() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let (child, mut stream) = start_riscv_gdb_run("gdb-listen-pmp-entry1-fetch-deny", program, 40);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    let mut csr_description = String::new();
+    for payload in [
+        b"qXfer:features:read:riscv-64bit-csr.xml:500,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:5a0,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:640,a0".as_slice(),
+    ] {
+        csr_description.push_str(&String::from_utf8_lossy(&send_gdb_packet(
+            &mut stream,
+            payload,
+        )));
+    }
+    assert!(
+        csr_description.contains("pmpaddr1"),
+        "missing pmpaddr1 in {csr_description}"
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P8c=0008000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P88=0088000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p88"),
+        gdb_response(b"0088000000000000")
+    );
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        !output.status.success(),
+        "stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("PMP") || stderr.contains("pmp"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
 fn rem6_run_gdb_listen_single_steps_before_detach() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7

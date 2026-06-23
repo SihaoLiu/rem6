@@ -20,6 +20,11 @@ use rem6_memory::{
 use std::error::Error;
 use std::fmt::{self, Write as _};
 
+use crate::riscv_debug_pmp::{
+    read_core_pmp_addr_csr, read_core_pmp_config_csr, write_core_pmp_config_csr,
+    write_pmp_config_csr,
+};
+
 const RISCV_GDB_INTEGER_REGISTER_COUNT: u8 = 32;
 const RISCV_GDB_PC_REGISTER: u64 = 32;
 const RISCV_GDB_FLOAT_REGISTER_BASE: u64 = 33;
@@ -50,7 +55,8 @@ const RISCV_GDB_PMP_CONFIG0_REGISTER: u64 = 136;
 const RISCV_GDB_PMP_ADDR0_REGISTER: u64 = 137;
 const RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER: u64 = 138;
 const RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER: u64 = 139;
-const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 18;
+const RISCV_GDB_PMP_ADDR1_REGISTER: u64 = 140;
+const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 19;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 const RISCV_GDB_RV32_VTYPE_PAYLOAD_MASK: u64 = 0x7fff_ffff;
 const RISCV_GDB_RV32_VTYPE_VILL_BIT: u64 = 1_u64 << 31;
@@ -958,8 +964,8 @@ fn validate_core_csr_register_value(
 ) -> Result<(), RiscvGdbRegisterWriteError> {
     let value = normalize_register_value(xlen, number, value);
     match riscv_gdb_csr_register(xlen, number) {
-        RiscvGdbCsrRegister::PmpConfig(index) => {
-            pmp.write_config_bits(index, value as u8)
+        RiscvGdbCsrRegister::PmpConfig(first_index) => {
+            write_pmp_config_csr(xlen, pmp, first_index, value)
                 .map_err(|_| RiscvGdbRegisterWriteError::RejectedRegisterWrite { number })?;
         }
         RiscvGdbCsrRegister::PmpAddr(index) => {
@@ -1091,29 +1097,21 @@ fn read_core_register_bytes(
     core: &RiscvCore,
     number: u64,
 ) -> Vec<u8> {
-    if number == RISCV_GDB_PMP_CONFIG0_REGISTER {
-        encode_register_value(xlen, number, read_core_pmp_config_csr(core, 0))
-    } else if number == RISCV_GDB_PMP_ADDR0_REGISTER {
-        encode_register_value(xlen, number, read_core_pmp_addr_csr(core, 0))
+    if is_riscv_gdb_csr_register(xlen, number) {
+        match riscv_gdb_csr_register(xlen, number) {
+            RiscvGdbCsrRegister::PmpConfig(first_index) => encode_register_value(
+                xlen,
+                number,
+                read_core_pmp_config_csr(xlen, core, first_index),
+            ),
+            RiscvGdbCsrRegister::PmpAddr(index) => {
+                encode_register_value(xlen, number, read_core_pmp_addr_csr(core, index))
+            }
+            _ => read_hart_register_bytes(xlen, hart, number),
+        }
     } else {
         read_hart_register_bytes(xlen, hart, number)
     }
-}
-
-fn read_core_pmp_config_csr(core: &RiscvCore, index: usize) -> u64 {
-    core.pmp_snapshot()
-        .entries()
-        .get(index)
-        .map(|entry| u64::from(entry.config().bits()))
-        .unwrap_or(0)
-}
-
-fn read_core_pmp_addr_csr(core: &RiscvCore, index: usize) -> u64 {
-    core.pmp_snapshot()
-        .entries()
-        .get(index)
-        .map(|entry| entry.raw_addr())
-        .unwrap_or(0)
 }
 
 fn for_each_register_bytes(xlen: RiscvGdbXlen, bytes: &[u8], mut visit: impl FnMut(u64, &[u8])) {
@@ -1272,8 +1270,8 @@ fn write_core_csr_register_value(
         }
         RiscvGdbCsrRegister::MachineIdentity(_) => {}
         RiscvGdbCsrRegister::MachineIsa(_) => {}
-        RiscvGdbCsrRegister::PmpConfig(index) => {
-            core.write_pmp_config_bits(index, value as u8)
+        RiscvGdbCsrRegister::PmpConfig(first_index) => {
+            write_core_pmp_config_csr(xlen, core, first_index, value)
                 .map_err(|_| RiscvGdbRegisterWriteError::RejectedRegisterWrite { number })?;
         }
         RiscvGdbCsrRegister::PmpAddr(index) => {
@@ -1332,6 +1330,9 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     }
     if number == RISCV_GDB_PMP_ADDR0_REGISTER {
         return RiscvGdbCsrRegister::PmpAddr(0);
+    }
+    if number == RISCV_GDB_PMP_ADDR1_REGISTER {
+        return RiscvGdbCsrRegister::PmpAddr(1);
     }
     if number == RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER {
         return RiscvGdbCsrRegister::Counter(RiscvCounterCsr::Cycle);
@@ -1652,6 +1653,7 @@ fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
             RISCV_GDB_PMP_ADDR0_REGISTER,
             RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER,
             RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER,
+            RISCV_GDB_PMP_ADDR1_REGISTER,
         ])
 }
 
@@ -1728,6 +1730,7 @@ const fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool {
         || number == RISCV_GDB_PMP_ADDR0_REGISTER
         || number == RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER
         || number == RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER
+        || number == RISCV_GDB_PMP_ADDR1_REGISTER
 }
 
 fn encode_register_value(xlen: RiscvGdbXlen, number: u64, value: u64) -> Vec<u8> {
