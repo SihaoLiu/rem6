@@ -32,6 +32,15 @@ pub(crate) struct Rem6CacheResourceSummary {
     pub(crate) bank_immediate_hits: u64,
     pub(crate) bank_scheduled_misses: u64,
     pub(crate) bank_coalesced_misses: u64,
+    pub(crate) prefetch_identified: u64,
+    pub(crate) prefetch_issued: u64,
+    pub(crate) prefetch_queue_enqueued: u64,
+    pub(crate) prefetch_queue_issued: u64,
+    pub(crate) prefetch_queue_dropped: u64,
+    pub(crate) prefetch_translation_queue_enqueued: u64,
+    pub(crate) prefetch_translation_queue_issued: u64,
+    pub(crate) prefetch_translation_queue_translated: u64,
+    pub(crate) prefetch_translation_queue_dropped: u64,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -129,6 +138,33 @@ impl Rem6CacheResourceSummary {
                 summary.bank_coalesced_misses = summary
                     .bank_coalesced_misses
                     .saturating_add(cache.bank_coalesced_misses);
+                summary.prefetch_identified = summary
+                    .prefetch_identified
+                    .saturating_add(cache.prefetch_identified);
+                summary.prefetch_issued = summary
+                    .prefetch_issued
+                    .saturating_add(cache.prefetch_issued);
+                summary.prefetch_queue_enqueued = summary
+                    .prefetch_queue_enqueued
+                    .saturating_add(cache.prefetch_queue_enqueued);
+                summary.prefetch_queue_issued = summary
+                    .prefetch_queue_issued
+                    .saturating_add(cache.prefetch_queue_issued);
+                summary.prefetch_queue_dropped = summary
+                    .prefetch_queue_dropped
+                    .saturating_add(cache.prefetch_queue_dropped);
+                summary.prefetch_translation_queue_enqueued = summary
+                    .prefetch_translation_queue_enqueued
+                    .saturating_add(cache.prefetch_translation_queue_enqueued);
+                summary.prefetch_translation_queue_issued = summary
+                    .prefetch_translation_queue_issued
+                    .saturating_add(cache.prefetch_translation_queue_issued);
+                summary.prefetch_translation_queue_translated = summary
+                    .prefetch_translation_queue_translated
+                    .saturating_add(cache.prefetch_translation_queue_translated);
+                summary.prefetch_translation_queue_dropped = summary
+                    .prefetch_translation_queue_dropped
+                    .saturating_add(cache.prefetch_translation_queue_dropped);
                 summary
             })
     }

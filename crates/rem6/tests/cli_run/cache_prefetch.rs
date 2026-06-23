@@ -1,6 +1,7 @@
 use std::process::Command;
 
 use crate::support::*;
+use serde_json::Value;
 
 fn tagged_next_line_prefetch_two_load_elf() -> Vec<u8> {
     const DATA_OFFSET: usize = 64;
@@ -87,6 +88,22 @@ fn rem6_run_data_cache_prefetcher_translates_page_crossing_next_line() {
     assert!(stdout.contains("\"data_cache_prefetch_translation_queue_issued\":1"));
     assert!(stdout.contains("\"data_cache_prefetch_translation_queue_translated\":1"));
     assert!(stdout.contains("\"data_cache_prefetch_translation_queue_dropped\":0"));
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json_u64(&json, "/memory_resources/cache/prefetch_identified"),
+        1
+    );
+    assert_eq!(
+        json_u64(&json, "/memory_resources/cache/data/prefetch_identified"),
+        1
+    );
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/cache/data/l1/prefetch_translation_queue_translated"
+        ),
+        1
+    );
     assert_stat(
         &stdout,
         "sim.data_cache.prefetch.translation_queue.enqueued",
@@ -113,6 +130,27 @@ fn rem6_run_data_cache_prefetcher_translates_page_crossing_next_line() {
         "sim.data_cache.prefetch.translation_queue.dropped",
         "Count",
         0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.prefetch.translation_queue.translated",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.data.prefetch.translation_queue.enqueued",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.data.l1.prefetch.translation_queue.translated",
+        "Count",
+        1,
         "monotonic",
     );
 }
@@ -303,6 +341,25 @@ fn rem6_run_instruction_cache_prefetcher_issues_tagged_next_line_prefetch() {
     assert!(stdout.contains("\"instruction_cache_prefetch_issued\":1"));
     assert!(stdout.contains("\"instruction_cache_prefetch_queue_enqueued\":1"));
     assert!(stdout.contains("\"instruction_cache_prefetch_queue_issued\":1"));
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json_u64(&json, "/memory_resources/cache/prefetch_identified"),
+        1
+    );
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/cache/instruction/prefetch_identified"
+        ),
+        1
+    );
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/cache/instruction/l1/prefetch_queue_issued"
+        ),
+        1
+    );
     assert_stat(
         &stdout,
         "sim.instruction_cache.prefetch.identified",
@@ -313,6 +370,27 @@ fn rem6_run_instruction_cache_prefetcher_issues_tagged_next_line_prefetch() {
     assert_stat(
         &stdout,
         "sim.instruction_cache.prefetch.issued",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.prefetch.issued",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.instruction.prefetch.identified",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.instruction.l1.prefetch.queue.issued",
         "Count",
         1,
         "monotonic",
@@ -392,6 +470,12 @@ fn rem6_run_instruction_cache_prefetcher_translates_page_crossing_next_line() {
         0,
         "monotonic",
     );
+}
+
+fn json_u64(json: &Value, pointer: &str) -> u64 {
+    json.pointer(pointer)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing u64 JSON field {pointer}"))
 }
 
 #[test]

@@ -210,6 +210,27 @@ fn emit_cache_resource_stats(
         ("bank.immediate_hits", summary.bank_immediate_hits),
         ("bank.scheduled_misses", summary.bank_scheduled_misses),
         ("bank.coalesced_misses", summary.bank_coalesced_misses),
+        ("prefetch.identified", summary.prefetch_identified),
+        ("prefetch.issued", summary.prefetch_issued),
+        ("prefetch.queue.enqueued", summary.prefetch_queue_enqueued),
+        ("prefetch.queue.issued", summary.prefetch_queue_issued),
+        ("prefetch.queue.dropped", summary.prefetch_queue_dropped),
+        (
+            "prefetch.translation_queue.enqueued",
+            summary.prefetch_translation_queue_enqueued,
+        ),
+        (
+            "prefetch.translation_queue.issued",
+            summary.prefetch_translation_queue_issued,
+        ),
+        (
+            "prefetch.translation_queue.translated",
+            summary.prefetch_translation_queue_translated,
+        ),
+        (
+            "prefetch.translation_queue.dropped",
+            summary.prefetch_translation_queue_dropped,
+        ),
     ] {
         increment_stat(
             stats,

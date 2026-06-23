@@ -159,7 +159,7 @@ fn cache_resource_json(summary: &Rem6CacheResourceSummary) -> String {
 
 fn cache_resource_fields_json(summary: &Rem6CacheResourceSummary) -> String {
     format!(
-        "\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{}",
+        "\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{},\"prefetch_identified\":{},\"prefetch_issued\":{},\"prefetch_queue_enqueued\":{},\"prefetch_queue_issued\":{},\"prefetch_queue_dropped\":{},\"prefetch_translation_queue_enqueued\":{},\"prefetch_translation_queue_issued\":{},\"prefetch_translation_queue_translated\":{},\"prefetch_translation_queue_dropped\":{}",
         summary.activity,
         summary.active,
         summary.cpu_responses,
@@ -169,5 +169,14 @@ fn cache_resource_fields_json(summary: &Rem6CacheResourceSummary) -> String {
         summary.bank_immediate_hits,
         summary.bank_scheduled_misses,
         summary.bank_coalesced_misses,
+        summary.prefetch_identified,
+        summary.prefetch_issued,
+        summary.prefetch_queue_enqueued,
+        summary.prefetch_queue_issued,
+        summary.prefetch_queue_dropped,
+        summary.prefetch_translation_queue_enqueued,
+        summary.prefetch_translation_queue_issued,
+        summary.prefetch_translation_queue_translated,
+        summary.prefetch_translation_queue_dropped,
     )
 }
