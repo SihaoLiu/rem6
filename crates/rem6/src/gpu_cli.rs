@@ -1127,6 +1127,7 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
         config.dram_memory(),
         config.dram_memory_profile(),
         CliDramLowPowerTiming::default(),
+        None,
     )?;
     let data_cache = cli_cache_runtime_with_prefetcher(
         config.data_cache_protocol(),

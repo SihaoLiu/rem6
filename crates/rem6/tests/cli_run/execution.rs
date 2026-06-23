@@ -2068,6 +2068,116 @@ fn rem6_run_lpddr_accepts_custom_low_power_timing() {
 }
 
 #[test]
+fn rem6_run_accepts_custom_dram_refresh_timing() {
+    let mut words = vec![i_type(0, 0, 0x0, 5, 0x13); 64];
+    words.push(0x0000_0073); // ecall
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("dram-memory-custom-refresh", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "2000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--dram-memory-profile",
+            "ddr",
+            "--dram-refresh-interval",
+            "17",
+            "--dram-refresh-recovery",
+            "4",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"technology\":\"ddr\""));
+    assert_eq!(json_u64(&json, "/dram/profile/timing/refresh_interval"), 17);
+    assert_eq!(json_u64(&json, "/dram/profile/timing/refresh_recovery"), 4);
+    assert!(json_u64(&json, "/dram/refreshes") > 0);
+    assert!(json_u64(&json, "/dram/refresh_ticks") > 0);
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.refresh_interval",
+        "Tick",
+        17,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.refresh_recovery",
+        "Tick",
+        4,
+        "constant",
+    );
+}
+
+#[test]
+fn rem6_run_accepts_toml_jedec_profile_with_custom_dram_refresh_timing() {
+    let mut words = vec![i_type(0, 0, 0x0, 5, 0x13); 64];
+    words.push(0x0000_0073); // ecall
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let binary = temp_binary("toml-jedec-custom-refresh-bin", &elf);
+    let config = temp_config(
+        "toml-jedec-custom-refresh",
+        &format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 2000\nstats_format = \"json\"\nexecute = true\ncores = 1\ndram_memory = true\ndram_memory_profile = \"ddr4-2400-8gb\"\ndram_refresh_interval = 19\ndram_refresh_recovery = 6\n",
+            binary.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"technology\":\"ddr\""));
+    assert_eq!(json_u64(&json, "/dram/profile/timing/refresh_interval"), 19);
+    assert_eq!(json_u64(&json, "/dram/profile/timing/refresh_recovery"), 6);
+    assert!(json_u64(&json, "/dram/refreshes") > 0);
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.refresh_interval",
+        "Tick",
+        19,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.refresh_recovery",
+        "Tick",
+        6,
+        "constant",
+    );
+}
+
+#[test]
 fn rem6_run_accepts_jedec_dram_profile_presets() {
     struct Case {
         cli_profile: &'static str,

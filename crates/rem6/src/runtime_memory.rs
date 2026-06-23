@@ -12,7 +12,7 @@ use rem6_memory::{
 use rem6_system::{RiscvGuestMemoryMapResult, RiscvSeStartupImage, RISCV_LINUX_STACK_LIMIT_BYTES};
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
-use crate::config::{CliDramLowPowerTiming, CliDramMemoryProfile};
+use crate::config::{CliDramLowPowerTiming, CliDramMemoryProfile, CliDramRefreshTiming};
 use crate::guest_memory::{
     build_cli_dram_memory, build_cli_dram_profile, build_cli_memory_store,
     cli_fully_covered_cache_line_ranges, cli_source_backed_cache_line_ranges, merge_line_ranges,
@@ -51,6 +51,7 @@ impl CliMemoryRuntime {
         use_dram: bool,
         dram_profile: CliDramMemoryProfile,
         dram_low_power_timing: CliDramLowPowerTiming,
+        dram_refresh_timing: Option<CliDramRefreshTiming>,
     ) -> Result<Self, Rem6CliError> {
         let size = AccessSize::new(bytes).map_err(execute_error)?;
         let full_line_backing = Arc::new(Mutex::new(Vec::new()));
@@ -61,6 +62,7 @@ impl CliMemoryRuntime {
                     line_layout,
                     dram_profile,
                     dram_low_power_timing,
+                    dram_refresh_timing,
                 )?)
                 .map_err(execute_error)?;
             memory
@@ -100,6 +102,7 @@ impl CliMemoryRuntime {
         use_dram: bool,
         dram_profile: CliDramMemoryProfile,
         dram_low_power_timing: CliDramLowPowerTiming,
+        dram_refresh_timing: Option<CliDramRefreshTiming>,
     ) -> Result<Self, Rem6CliError> {
         let full_line_backing = Arc::new(Mutex::new(cli_source_backed_cache_line_ranges(
             image,
@@ -114,6 +117,7 @@ impl CliMemoryRuntime {
                     line_layout,
                     dram_profile,
                     dram_low_power_timing,
+                    dram_refresh_timing,
                 )?)),
                 full_line_backing,
             });

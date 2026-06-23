@@ -69,10 +69,11 @@ mod transport_summary_tests;
 pub use cli_error::Rem6CliError;
 pub use config::{
     CliCachePrefetcher, CliDebugFlag, CliDramLowPowerTiming, CliDramMemoryProfile,
-    KernelResourceSelector, LoadBlobRequest, LoadBlobSource, MemoryDumpRequest,
-    PowerAnalysisFormat, ReadfileRequest, ReadfileSource, Rem6GupsConfig, Rem6RunConfig,
-    Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource, RunFabricConfig,
-    RunMemorySystem, StatsFormat, SuiteResourceSelector, TraceReplayExternalAdapterKind,
+    CliDramRefreshTiming, KernelResourceSelector, LoadBlobRequest, LoadBlobSource,
+    MemoryDumpRequest, PowerAnalysisFormat, ReadfileRequest, ReadfileSource, Rem6GupsConfig,
+    Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource,
+    RunFabricConfig, RunMemorySystem, StatsFormat, SuiteResourceSelector,
+    TraceReplayExternalAdapterKind,
 };
 use data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io, CliCacheHierarchy,
@@ -695,6 +696,7 @@ fn execute_riscv(
         config.dram_memory(),
         config.dram_memory_profile(),
         config.dram_low_power_timing(),
+        config.dram_refresh_timing(),
     )?;
     let instruction_cache = cli_cache_runtime_with_prefetcher(
         config.instruction_cache_protocol(),

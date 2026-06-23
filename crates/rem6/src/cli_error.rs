@@ -52,6 +52,11 @@ pub enum Rem6CliError {
     DramLowPowerTimingRequiresLowPowerProfile {
         profile: String,
     },
+    DramRefreshTimingRequiresDramMemory,
+    DramRefreshTimingRequiresRefreshProfile {
+        profile: String,
+    },
+    IncompleteDramRefreshTiming,
     InvalidMaxTick {
         value: String,
     },
@@ -65,6 +70,9 @@ pub enum Rem6CliError {
         value: String,
     },
     InvalidDramLowPowerTiming {
+        value: String,
+    },
+    InvalidDramRefreshTiming {
         value: String,
     },
     InvalidRiscvBranchLookahead {
@@ -451,6 +459,17 @@ impl fmt::Display for Rem6CliError {
                 formatter,
                 "DRAM low-power timing requires lpddr, lpddr4-3200-16gb, or nvm profile, got {profile}"
             ),
+            Self::DramRefreshTimingRequiresDramMemory => {
+                write!(formatter, "DRAM refresh timing requires --dram-memory")
+            }
+            Self::DramRefreshTimingRequiresRefreshProfile { profile } => write!(
+                formatter,
+                "DRAM refresh timing requires ddr, ddr4-2400-8gb, ddr5-4800-16gb, hbm, hbm2-2000-2gb, lpddr, or lpddr4-3200-16gb profile, got {profile}"
+            ),
+            Self::IncompleteDramRefreshTiming => write!(
+                formatter,
+                "DRAM refresh timing requires both --dram-refresh-interval and --dram-refresh-recovery"
+            ),
             Self::InvalidMaxTick { value } => write!(formatter, "invalid max tick {value}"),
             Self::InvalidMinRemoteDelay { value } => {
                 write!(formatter, "invalid min remote delay {value}")
@@ -463,6 +482,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidDramLowPowerTiming { value } => {
                 write!(formatter, "invalid DRAM low-power timing {value}")
+            }
+            Self::InvalidDramRefreshTiming { value } => {
+                write!(formatter, "invalid DRAM refresh timing {value}")
             }
             Self::InvalidRiscvBranchLookahead { value } => {
                 write!(formatter, "invalid RISC-V branch lookahead {value}")

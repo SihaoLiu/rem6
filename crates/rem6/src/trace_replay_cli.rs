@@ -648,6 +648,7 @@ fn trace_replay_memory_target(
                 line_layout,
                 profile,
                 CliDramLowPowerTiming::default(),
+                None,
             )?)
             .map_err(execute_error),
         None => Ok(target),

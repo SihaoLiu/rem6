@@ -1559,6 +1559,30 @@ fn rem6_run_config_scan_treats_dram_low_power_timing_as_value_taking() {
 }
 
 #[test]
+fn rem6_run_config_scan_treats_dram_refresh_timing_as_value_taking() {
+    let bogus_config = temp_output("dram-refresh-prescan-bogus-config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--dram-refresh-interval",
+            "--config",
+            bogus_config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("invalid DRAM refresh timing --config"),
+        "stderr: {stderr}"
+    );
+    assert!(!stderr.contains(&format!("failed to read config {}", bogus_config.display())));
+}
+
+#[test]
 fn rem6_run_rejects_toml_riscv_se_inputs_without_riscv_se() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x73, 0, 0, 0]);
     let binary = temp_binary("riscv-se-toml-inputs-without-riscv-se", &elf);
@@ -1746,6 +1770,66 @@ fn rem6_run_rejects_dram_low_power_timing_for_non_low_power_profile() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
         stderr.contains("DRAM low-power timing requires lpddr, lpddr4-3200-16gb, or nvm profile")
+    );
+}
+
+#[test]
+fn rem6_run_rejects_dram_refresh_timing_for_non_refresh_profile() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("dram-refresh-timing-with-nvm", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--dram-memory",
+            "--dram-memory-profile",
+            "nvm",
+            "--dram-refresh-interval",
+            "17",
+            "--dram-refresh-recovery",
+            "4",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("DRAM refresh timing requires ddr, ddr4-2400-8gb, ddr5-4800-16gb, hbm, hbm2-2000-2gb, lpddr, or lpddr4-3200-16gb profile"));
+}
+
+#[test]
+fn rem6_run_rejects_zero_dram_refresh_timing_from_toml_config() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let binary = temp_binary("zero-dram-refresh-timing-config-bin", &elf);
+    let config = temp_config(
+        "zero-dram-refresh-timing-config",
+        &format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 40\nstats_format = \"json\"\nexecute = true\ndram_memory = true\ndram_refresh_interval = 0\ndram_refresh_recovery = 4\n",
+            binary.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("invalid DRAM refresh timing 0"),
+        "stderr: {stderr}"
     );
 }
 

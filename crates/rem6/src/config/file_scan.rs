@@ -33,6 +33,8 @@ pub(super) fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBu
             "--dram-low-power-self-refresh-entry-delay",
             "--dram-low-power-exit-latency",
             "--dram-low-power-self-refresh-exit-latency",
+            "--dram-refresh-interval",
+            "--dram-refresh-recovery",
             "--data-cache-protocol",
             "--data-cache-l2-protocol",
             "--data-cache-l3-protocol",

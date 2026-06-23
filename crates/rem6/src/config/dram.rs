@@ -50,6 +50,30 @@ impl CliDramMemoryProfile {
     pub const fn supports_low_power_timing(self) -> bool {
         matches!(self, Self::Lpddr | Self::Lpddr4_3200_16Gb | Self::Nvm)
     }
+
+    pub const fn supports_refresh_timing(self) -> bool {
+        !matches!(self, Self::Nvm)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CliDramRefreshTiming {
+    interval: u64,
+    recovery: u64,
+}
+
+impl CliDramRefreshTiming {
+    pub(crate) const fn new(interval: u64, recovery: u64) -> Self {
+        Self { interval, recovery }
+    }
+
+    pub const fn interval(self) -> u64 {
+        self.interval
+    }
+
+    pub const fn recovery(self) -> u64 {
+        self.recovery
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -209,6 +233,60 @@ fn parse_low_power_timing_value(value: &str) -> Result<u64, Rem6CliError> {
         .ok()
         .filter(|value| *value > 0)
         .ok_or_else(|| Rem6CliError::InvalidDramLowPowerTiming {
+            value: value.to_string(),
+        })
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct CliDramRefreshTimingOptions {
+    interval: Option<u64>,
+    recovery: Option<u64>,
+}
+
+impl CliDramRefreshTimingOptions {
+    pub(super) const fn new(interval: Option<u64>, recovery: Option<u64>) -> Self {
+        Self { interval, recovery }
+    }
+
+    pub(super) const fn was_set(self) -> bool {
+        self.interval.is_some() || self.recovery.is_some()
+    }
+
+    pub(super) fn set_interval(&mut self, value: &str) -> Result<(), Rem6CliError> {
+        self.interval = Some(parse_refresh_timing_value(value)?);
+        Ok(())
+    }
+
+    pub(super) fn set_recovery(&mut self, value: &str) -> Result<(), Rem6CliError> {
+        self.recovery = Some(parse_refresh_timing_value(value)?);
+        Ok(())
+    }
+
+    pub(super) fn timing(self) -> Result<Option<CliDramRefreshTiming>, Rem6CliError> {
+        match (self.interval, self.recovery) {
+            (None, None) => Ok(None),
+            (Some(interval), Some(recovery)) => Ok(Some(CliDramRefreshTiming::new(
+                validate_refresh_timing_value(interval)?,
+                validate_refresh_timing_value(recovery)?,
+            ))),
+            _ => Err(Rem6CliError::IncompleteDramRefreshTiming),
+        }
+    }
+}
+
+fn parse_refresh_timing_value(value: &str) -> Result<u64, Rem6CliError> {
+    value
+        .parse::<u64>()
+        .map_err(|_| Rem6CliError::InvalidDramRefreshTiming {
+            value: value.to_string(),
+        })
+        .and_then(validate_refresh_timing_value)
+}
+
+fn validate_refresh_timing_value(value: u64) -> Result<u64, Rem6CliError> {
+    (value > 0)
+        .then_some(value)
+        .ok_or_else(|| Rem6CliError::InvalidDramRefreshTiming {
             value: value.to_string(),
         })
 }
