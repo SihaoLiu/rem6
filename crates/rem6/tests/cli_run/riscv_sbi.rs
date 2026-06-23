@@ -6,6 +6,7 @@ const SBI_BASE_GET_SPEC_VERSION: i32 = 0;
 const SBI_BASE_PROBE_EXTENSION: i32 = 3;
 const SBI_BASE_EXTENSION: i32 = 0x10;
 const SBI_LEGACY_CONSOLE_PUTCHAR: i32 = 1;
+const SBI_LEGACY_CONSOLE_GETCHAR: i32 = 2;
 const SBI_TIME_EXTENSION: i32 = 0x5449_4d45u32 as i32;
 const SBI_TIME_SET_TIMER: i32 = 0;
 const SBI_IPI_EXTENSION: i32 = 0x0073_5049;
@@ -330,6 +331,53 @@ fn rem6_run_riscv_sbi_probe_reports_legacy_console_putchar() {
     assert!(stdout.contains("\"trap\":\"breakpoint\""));
     assert!(!stdout.contains("\"x5\":\""));
     assert!(stdout.contains("\"x6\":\"0x1\""));
+}
+
+#[test]
+fn rem6_run_riscv_sbi_legacy_console_getchar_reports_empty_input() {
+    let program = riscv64_program(&[
+        i_type(SBI_LEGACY_CONSOLE_GETCHAR, 0, 0x0, 17, 0x13),
+        0x0000_0073,
+        i_type(0, 10, 0x0, 5, 0x13),
+        i_type(SBI_BASE_EXTENSION, 0, 0x0, 17, 0x13),
+        i_type(SBI_BASE_PROBE_EXTENSION, 0, 0x0, 16, 0x13),
+        i_type(SBI_LEGACY_CONSOLE_GETCHAR, 0, 0x0, 10, 0x13),
+        0x0000_0073,
+        i_type(0, 10, 0x0, 6, 0x13),
+        i_type(0, 11, 0x0, 7, 0x13),
+        0x0010_0073,
+    ]);
+    let elf = riscv64_elf(RISCV_SBI_ENTRY, RISCV_SBI_ENTRY, &program);
+    let path = temp_binary("riscv-sbi-legacy-console-getchar", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "96",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-sbi",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"trap\":\"breakpoint\""));
+    assert!(stdout.contains("\"x5\":\"0xffffffffffffffff\""));
+    assert!(!stdout.contains("\"x6\":\""));
+    assert!(stdout.contains("\"x7\":\"0x1\""));
 }
 
 #[test]

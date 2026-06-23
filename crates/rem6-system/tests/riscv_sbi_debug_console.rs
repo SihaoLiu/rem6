@@ -8,6 +8,7 @@ use support::*;
 const SBI_BASE_EXTENSION: u64 = 0x10;
 const SBI_BASE_GET_SPEC_VERSION: i32 = 0;
 const SBI_BASE_PROBE_EXTENSION: i32 = 3;
+const SBI_LEGACY_CONSOLE_GETCHAR: i32 = 2;
 const SBI_DEBUG_CONSOLE_EXTENSION: u64 = 0x4442_434e;
 const SBI_DEBUG_CONSOLE_WRITE: i32 = 0;
 const SBI_DEBUG_CONSOLE_READ: i32 = 1;
@@ -110,6 +111,82 @@ fn supervisor_sbi_debug_console_write_byte_records_output() {
         b"A"
     );
     assert_eq!(run.riscv_debug_console_bytes(), b"A");
+}
+
+#[test]
+fn supervisor_sbi_legacy_console_getchar_consumes_debug_console_input() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(76);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
+    core.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    let cluster = RiscvCluster::new([core.clone()]).unwrap();
+    let store = loaded_program_store(&[
+        (0x8000, addi(17, 0, SBI_LEGACY_CONSOLE_GETCHAR)),
+        (0x8004, 0x0000_0073),
+        (0x8008, addi(5, 10, 0)),
+        (0x800c, addi(17, 0, SBI_LEGACY_CONSOLE_GETCHAR)),
+        (0x8010, 0x0000_0073),
+        (0x8014, addi(6, 10, 0)),
+        (0x8018, addi(17, 0, SBI_LEGACY_CONSOLE_GETCHAR)),
+        (0x801c, 0x0000_0073),
+        (0x8020, addi(7, 10, 0)),
+        (0x8024, 0x0010_0073),
+    ]);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port)
+        .with_riscv_sbi_firmware()
+        .with_riscv_sbi_debug_console_input(b"Q?".to_vec())
+        .with_riscv_syscall_emulation();
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            120,
+            |cpu| GuestEventId::new(760 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(760), source, 1);
+    assert_eq!(run.host_stop(), Some(stop));
+    assert_eq!(
+        run.scheduled_traps()
+            .iter()
+            .map(|record| record.trap())
+            .collect::<Vec<_>>(),
+        vec![GuestTrap::new(GuestTrapKind::Breakpoint, 0x8024)]
+    );
+    assert_eq!(core.read_register(reg(5)), u64::from(b'Q'));
+    assert_eq!(core.read_register(reg(6)), u64::from(b'?'));
+    assert_eq!(core.read_register(reg(7)), u64::MAX);
+    assert!(run.riscv_debug_console_bytes().is_empty());
 }
 
 #[test]

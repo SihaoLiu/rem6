@@ -515,7 +515,8 @@ regular-file modes, cwd-aware registered-path lookup, at-family
 hard-link/`renameat`/`renameat2` flags=0, `RENAME_NOREPLACE`, and regular-file `RENAME_EXCHANGE`/unlink/legacy `mkdir`/`mkdirat`/`AT_REMOVEDIR`, and
 registered-directory `getdents64` slices; supervisor SBI base read-only
 identity/probe calls, SBI 2.0 spec-version reporting, conservative standard
-extension probes plus legacy console putchar probe, top-level CLI legacy console putchar and DBCN shared-memory write, top-level CLI TIME
+extension probes plus legacy console putchar/getchar probes, top-level CLI
+legacy console putchar, legacy console empty-getchar, and DBCN shared-memory write, top-level CLI TIME
 `set_timer` deadline artifact/stat reporting plus boot-hart and HSM-started secondary-hart supervisor-handler interrupt delivery and retentive HSM wake by SBI TIME/STIP, library/workload
 replay DBCN shared-memory read/write, direct write-byte debug-console output,
 DBCN advertisement when functional guest memory I/O is configured, and workload replay Linux handoff DBCN read

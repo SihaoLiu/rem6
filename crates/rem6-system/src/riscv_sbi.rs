@@ -16,6 +16,7 @@ const SBI_ERR_NOT_SUPPORTED: u64 = (-2_i64) as u64;
 const SBI_ERR_INVALID_PARAM: u64 = (-3_i64) as u64;
 const SBI_ERR_ALREADY_AVAILABLE: u64 = (-6_i64) as u64;
 const SBI_LEGACY_CONSOLE_PUTCHAR: u64 = 1;
+const SBI_LEGACY_CONSOLE_GETCHAR: u64 = 2;
 const SBI_BASE_EXTENSION: u64 = 0x10;
 const SBI_TIME_EXTENSION: u64 = 0x5449_4d45;
 const SBI_HSM_EXTENSION: u64 = 0x0048_534d;
@@ -622,6 +623,7 @@ impl RiscvSbiFirmware {
         };
         Ok(Some(match (request.extension(), request.function()) {
             (SBI_LEGACY_CONSOLE_PUTCHAR, _) => self.legacy_console_putchar(request),
+            (SBI_LEGACY_CONSOLE_GETCHAR, _) => self.legacy_console_getchar(),
             (SBI_BASE_EXTENSION, SBI_BASE_GET_SPEC_VERSION) => {
                 RiscvSbiOutcome::success(SBI_SPEC_VERSION_2_0)
             }
@@ -633,6 +635,7 @@ impl RiscvSbiFirmware {
             }
             (SBI_BASE_EXTENSION, SBI_BASE_PROBE_EXTENSION) => RiscvSbiOutcome::success(u64::from(
                 request.arg0() == SBI_LEGACY_CONSOLE_PUTCHAR
+                    || request.arg0() == SBI_LEGACY_CONSOLE_GETCHAR
                     || request.arg0() == SBI_BASE_EXTENSION
                     || request.arg0() == SBI_TIME_EXTENSION
                     || request.arg0() == SBI_HSM_EXTENSION
@@ -798,6 +801,16 @@ impl RiscvSbiFirmware {
     fn legacy_console_putchar(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
         self.push_debug_console_byte(request.arg0() as u8, false);
         RiscvSbiOutcome::LegacyReturn { value: 0 }
+    }
+
+    fn legacy_console_getchar(&self) -> RiscvSbiOutcome {
+        let mut input = self
+            .debug_console_input
+            .lock()
+            .expect("RISC-V SBI debug console input lock");
+        RiscvSbiOutcome::LegacyReturn {
+            value: input.pop_front().map_or(u64::MAX, u64::from),
+        }
     }
 
     fn push_debug_console_byte(&self, byte: u8, count_dbcn: bool) {
