@@ -81,6 +81,8 @@ pub struct Rem6TraceReplayExternalAdapterSummary {
     pub(crate) restored_endpoints: usize,
     pub(crate) restored_completed_events: usize,
     pub(crate) restored_pending_events: usize,
+    pub(crate) runtime_restores: usize,
+    pub(crate) post_restore_completed_events: usize,
     pub(crate) first_tick: Option<u64>,
     pub(crate) last_tick: Option<u64>,
 }
@@ -282,6 +284,12 @@ fn trace_replay_external_adapter_summary(
     generator.enter(0);
 
     let mut events = 0usize;
+    let mut runtime_restores = 0usize;
+    let mut post_restore_completed_events = 0usize;
+    let mut checkpoint_endpoints = None;
+    let mut checkpoint_completed_events = None;
+    let mut restored_from_runtime_checkpoint = false;
+    let checkpoint_after_events = config.external_adapter_checkpoint_after_events();
     let mut first_tick = None;
     let mut last_tick = None;
     while let Some(event) = generator.next_event(0, 0).map_err(execute_error)? {
@@ -321,16 +329,30 @@ fn trace_replay_external_adapter_summary(
         boundary
             .acknowledge_event(sequence, request.tick())
             .map_err(execute_error)?;
+        if restored_from_runtime_checkpoint {
+            post_restore_completed_events += 1;
+        }
         events += 1;
         first_tick = Some(first_tick.map_or(request.tick(), |tick: u64| tick.min(request.tick())));
         last_tick = Some(last_tick.map_or(request.tick(), |tick: u64| tick.max(request.tick())));
+        if !restored_from_runtime_checkpoint
+            && checkpoint_after_events.is_some_and(|after_events| events >= after_events)
+        {
+            let checkpoint = boundary.snapshot().map_err(execute_error)?;
+            checkpoint_endpoints = Some(checkpoint.endpoints().len());
+            checkpoint_completed_events = Some(checkpoint.completed_events().len());
+            boundary = CoSimAdapterBoundary::restore(checkpoint).map_err(execute_error)?;
+            restored_from_runtime_checkpoint = true;
+            runtime_restores += 1;
+        }
     }
 
     let completed_events = boundary.completed_events().len();
     let pending_events = boundary.pending_events().len();
     let snapshot = boundary.snapshot().map_err(execute_error)?;
-    let checkpoint_endpoints = snapshot.endpoints().len();
-    let checkpoint_completed_events = snapshot.completed_events().len();
+    let checkpoint_endpoints = checkpoint_endpoints.unwrap_or_else(|| snapshot.endpoints().len());
+    let checkpoint_completed_events =
+        checkpoint_completed_events.unwrap_or_else(|| snapshot.completed_events().len());
     let restored = CoSimAdapterBoundary::restore(snapshot).map_err(execute_error)?;
     let restored_snapshot = restored.snapshot().map_err(execute_error)?;
     Ok(Some(Rem6TraceReplayExternalAdapterSummary {
@@ -344,6 +366,8 @@ fn trace_replay_external_adapter_summary(
         restored_endpoints: restored_snapshot.endpoints().len(),
         restored_completed_events: restored_snapshot.completed_events().len(),
         restored_pending_events: restored.pending_events().len(),
+        runtime_restores,
+        post_restore_completed_events,
         first_tick,
         last_tick,
     }))

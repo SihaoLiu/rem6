@@ -161,6 +161,10 @@ impl Rem6TraceReplayConfig {
             .map(TraceReplayExternalAdapterKind::parse)
             .transpose()?;
         let mut external_adapter_endpoint = file_config.external_adapter_endpoint.clone();
+        let mut external_adapter_checkpoint_after_events = file_config
+            .external_adapter_checkpoint_after_events
+            .map(trace_replay_external_adapter_checkpoint_after_events_from_file)
+            .transpose()?;
         let mut stats_format = file_config
             .stats_format
             .as_deref()
@@ -304,6 +308,12 @@ impl Rem6TraceReplayConfig {
                 "--external-adapter-endpoint" => {
                     external_adapter_endpoint = Some(required_value(&flag, args.next())?);
                 }
+                "--external-adapter-checkpoint-after-events" => {
+                    let value = required_value(&flag, args.next())?;
+                    external_adapter_checkpoint_after_events = Some(
+                        parse_trace_replay_external_adapter_checkpoint_after_events(&value)?,
+                    );
+                }
                 "--stats-format" => {
                     stats_format = StatsFormat::parse(&required_value(&flag, args.next())?)?;
                 }
@@ -350,6 +360,11 @@ impl Rem6TraceReplayConfig {
         }
         if external_adapter_endpoint.is_some() && external_adapter_kind.is_none() {
             return Err(Rem6CliError::TraceReplayExternalAdapterEndpointRequiresKind);
+        }
+        if external_adapter_checkpoint_after_events.is_some() && external_adapter_kind.is_none() {
+            return Err(Rem6CliError::MissingRequiredFlag {
+                flag: "--external-adapter-kind",
+            });
         }
         if let (Some(output), Some(stats_output)) = (&output, &stats_output) {
             if output == stats_output {
@@ -415,6 +430,7 @@ impl Rem6TraceReplayConfig {
             fabric_credit_depth,
             external_adapter_kind,
             external_adapter_endpoint,
+            external_adapter_checkpoint_after_events,
             stats_format,
             output,
             stats_output,
@@ -518,6 +534,10 @@ impl Rem6TraceReplayConfig {
         self.external_adapter_endpoint.as_deref()
     }
 
+    pub const fn external_adapter_checkpoint_after_events(&self) -> Option<usize> {
+        self.external_adapter_checkpoint_after_events
+    }
+
     pub const fn stats_format(&self) -> StatsFormat {
         self.stats_format
     }
@@ -563,13 +583,37 @@ fn parse_fabric_credit_depth(value: &str) -> Result<u32, Rem6CliError> {
         })
 }
 
+fn parse_trace_replay_external_adapter_checkpoint_after_events(
+    value: &str,
+) -> Result<usize, Rem6CliError> {
+    parse_positive_u64(value)
+        .and_then(|events| usize::try_from(events).ok())
+        .ok_or_else(
+            || Rem6CliError::InvalidTraceReplayExternalAdapterCheckpointAfterEvents {
+                value: value.to_string(),
+            },
+        )
+}
+
+fn trace_replay_external_adapter_checkpoint_after_events_from_file(
+    value: u64,
+) -> Result<usize, Rem6CliError> {
+    usize::try_from(value)
+        .ok()
+        .filter(|events| *events > 0)
+        .ok_or_else(
+            || Rem6CliError::InvalidTraceReplayExternalAdapterCheckpointAfterEvents {
+                value: value.to_string(),
+            },
+        )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn trace_replay_data_cache_dram_memory_profile_requires_data_cache_protocol() {
-        let error = Rem6TraceReplayConfig::parse_args([
+    fn minimal_trace_replay_args() -> [&'static str; 11] {
+        [
             "trace-replay",
             "--trace",
             "trace.pb",
@@ -581,15 +625,72 @@ mod tests {
             "0x1000",
             "--max-tick",
             "64",
-            "--data-cache-dram-memory-profile",
-            "hbm",
-        ])
-        .unwrap_err();
+        ]
+    }
+
+    #[test]
+    fn trace_replay_data_cache_dram_memory_profile_requires_data_cache_protocol() {
+        let mut args = minimal_trace_replay_args().to_vec();
+        args.extend(["--data-cache-dram-memory-profile", "hbm"]);
+        let error = Rem6TraceReplayConfig::parse_args(args).unwrap_err();
 
         assert!(matches!(
             error,
             Rem6CliError::MissingRequiredFlag {
                 flag: "--data-cache-protocol"
+            }
+        ));
+    }
+
+    #[test]
+    fn trace_replay_external_adapter_checkpoint_after_events_parses() {
+        let mut args = minimal_trace_replay_args().to_vec();
+        args.extend([
+            "--external-adapter-kind",
+            "sst",
+            "--external-adapter-endpoint",
+            "sst.link0",
+            "--external-adapter-checkpoint-after-events",
+            "3",
+        ]);
+
+        let config = Rem6TraceReplayConfig::parse_args(args).unwrap();
+
+        assert_eq!(config.external_adapter_checkpoint_after_events(), Some(3));
+    }
+
+    #[test]
+    fn trace_replay_external_adapter_checkpoint_after_events_rejects_zero() {
+        let mut args = minimal_trace_replay_args().to_vec();
+        args.extend([
+            "--external-adapter-kind",
+            "sst",
+            "--external-adapter-endpoint",
+            "sst.link0",
+            "--external-adapter-checkpoint-after-events",
+            "0",
+        ]);
+
+        let error = Rem6TraceReplayConfig::parse_args(args).unwrap_err();
+
+        assert!(matches!(
+            error,
+            Rem6CliError::InvalidTraceReplayExternalAdapterCheckpointAfterEvents { value }
+                if value == "0"
+        ));
+    }
+
+    #[test]
+    fn trace_replay_external_adapter_checkpoint_after_events_requires_adapter_kind() {
+        let mut args = minimal_trace_replay_args().to_vec();
+        args.extend(["--external-adapter-checkpoint-after-events", "1"]);
+
+        let error = Rem6TraceReplayConfig::parse_args(args).unwrap_err();
+
+        assert!(matches!(
+            error,
+            Rem6CliError::MissingRequiredFlag {
+                flag: "--external-adapter-kind"
             }
         ));
     }

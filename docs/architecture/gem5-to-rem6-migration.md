@@ -1074,40 +1074,32 @@ adapter boundary, but no external SystemC simulator or TLM model executes throug
 - [x] Adapter checkpoint capture and restore are consumed by the top-level trace-replay runtime adapter path.
 - [ ] Runtime SystemC/TLM model integration executes through the adapter.
 
-**Migrated:** `CoSimAdapterBoundary` SystemC/TLM endpoint tests exist, and
-`rem6 trace-replay --external-adapter-kind systemc|tlm --external-adapter-endpoint <id>`
-hands packet-trace requests into that boundary, acknowledges them, snapshots
-and restores a clean boundary, and emits `external_adapter` JSON plus
-`sim.trace_replay.external_adapter.*` stats.
+**Migrated:** `CoSimAdapterBoundary` SystemC/TLM endpoint tests exist, and `rem6 trace-replay --external-adapter-kind systemc|tlm --external-adapter-endpoint <id>` hands packet-trace requests into that boundary, acknowledges them, captures a runtime checkpoint when `--external-adapter-checkpoint-after-events` is set, restores it, completes later packet requests through the restored boundary, and emits `external_adapter` JSON plus `sim.trace_replay.external_adapter.*` stats.
 
-**Not migrated:** External SystemC simulator or TLM model execution, runtime adapter-owned state, and `src/systemc`, `util/tlm`, and `ext/systemc` behavior.
+**Not migrated:** External SystemC simulator or TLM model execution, external model-owned state, and `src/systemc`, `util/tlm`, and `ext/systemc` behavior.
 
 **Evidence:** `cosim_adapter`; `rem6_trace_replay_hands_off_packet_requests_to_systemc_and_tlm_adapters`; TOML/CLI external-adapter validation tests.
 
-**Next evidence:** External SystemC/TLM bridge execution and adapter-owned checkpoint restore tests.
+**Next evidence:** External SystemC/TLM bridge execution and external model-owned checkpoint restore tests.
 
-### SST Adapter - 50% single-axis
+### SST Adapter - 59% single-axis
 
-**Score calculation:** 2 of 4 items have executable evidence, or 50% raw. The
+**Score calculation:** 3 of 4 items have executable evidence, or 75% raw. The
 bucket cap is single-axis because `trace-replay` drives the typed SST adapter
 boundary, but no external SST simulator runtime executes through it.
 
 - [x] A typed SST adapter boundary exists.
 - [x] SST traffic handoff executes from the top-level trace-replay runtime adapter path.
-- [ ] SST adapter checkpoint capture and restore are consumed by runtime SST state.
+- [x] SST adapter checkpoint capture and restore are consumed by the top-level runtime adapter path.
 - [ ] Runtime SST execution uses an external SST simulator bridge.
 
-**Migrated:** `CoSimAdapterBoundary` SST endpoint tests exist, and `rem6
-trace-replay --external-adapter-kind sst --external-adapter-endpoint <id>`
-hands packet-trace requests into that boundary, acknowledges them, snapshots a
-clean boundary, and emits `external_adapter` JSON plus
-`sim.trace_replay.external_adapter.*` stats.
+**Migrated:** `CoSimAdapterBoundary` SST endpoint tests exist, and `rem6 trace-replay --external-adapter-kind sst --external-adapter-endpoint <id>` hands packet-trace requests into that boundary, acknowledges them, captures a runtime checkpoint when `--external-adapter-checkpoint-after-events` is set, restores it, completes later packet requests through the restored boundary, and emits `external_adapter` JSON plus `sim.trace_replay.external_adapter.*` stats.
 
-**Not migrated:** External SST simulator bridge execution, SST-owned runtime state, and `ext/sst` plus `configs/example/sst` behavior.
+**Not migrated:** External SST simulator bridge execution, external SST-owned runtime state, and `ext/sst` plus `configs/example/sst` behavior.
 
 **Evidence:** `cosim_adapter`; `rem6_trace_replay_hands_off_packet_requests_to_sst_adapter`; TOML/CLI external-adapter validation tests in the `rem6` CLI suite.
 
-**Next evidence:** External SST bridge execution and SST-owned checkpoint restore tests.
+**Next evidence:** External SST bridge execution and external SST-owned checkpoint restore tests.
 
 ### Power and Physical-Design Export Adapters - 59% single-axis
 

@@ -686,6 +686,16 @@ pub(super) fn emit_trace_replay_external_adapter_stats(
         "sim.trace_replay.external_adapter.restored_pending_events",
         summary.restored_pending_events as u64,
     )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.external_adapter.runtime_restores",
+        summary.runtime_restores as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.external_adapter.post_restore_completed_events",
+        summary.post_restore_completed_events as u64,
+    )?;
     if let Some(first_tick) = summary.first_tick {
         increment_stat(
             stats,
@@ -809,6 +819,8 @@ mod tests {
             restored_endpoints: 2,
             restored_completed_events: 3,
             restored_pending_events: 1,
+            runtime_restores: 1,
+            post_restore_completed_events: 2,
             first_tick: Some(7),
             last_tick: Some(19),
         };
@@ -864,6 +876,18 @@ mod tests {
             "sim.trace_replay.external_adapter.restored_pending_events",
             "Count",
             1,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.external_adapter.runtime_restores",
+            "Count",
+            1,
+        );
+        assert_stat_value(
+            &json,
+            "sim.trace_replay.external_adapter.post_restore_completed_events",
+            "Count",
+            2,
         );
         assert_stat_value(
             &json,

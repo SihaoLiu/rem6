@@ -11,9 +11,52 @@ fn rem6_trace_replay_hands_off_packet_requests_to_sst_adapter() {
 fn rem6_trace_replay_hands_off_packet_requests_to_systemc_and_tlm_adapters() {
     assert_external_adapter_handoff("systemc", "systemc.bridge0", "cpu0.systemc");
     assert_external_adapter_handoff("tlm", "tlm.bridge0", "cpu0.tlm");
+    assert_external_adapter_handoff_with_checkpoint(
+        "systemc",
+        "systemc.bridge1",
+        "cpu1.systemc",
+        Some("1"),
+        1,
+        1,
+        1,
+    );
+    assert_external_adapter_handoff_with_checkpoint(
+        "tlm",
+        "tlm.bridge1",
+        "cpu1.tlm",
+        Some("1"),
+        1,
+        1,
+        1,
+    );
 }
 
 fn assert_external_adapter_handoff(kind: &str, endpoint: &str, route: &str) {
+    assert_external_adapter_handoff_with_checkpoint(kind, endpoint, route, None, 2, 0, 0);
+}
+
+#[test]
+fn rem6_trace_replay_sst_adapter_resumes_after_checkpoint_restore() {
+    assert_external_adapter_handoff_with_checkpoint(
+        "sst",
+        "sst.link0",
+        "cpu0.sst",
+        Some("1"),
+        1,
+        1,
+        1,
+    );
+}
+
+fn assert_external_adapter_handoff_with_checkpoint(
+    kind: &str,
+    endpoint: &str,
+    route: &str,
+    checkpoint_after_events: Option<&str>,
+    expected_checkpoint_completed_events: usize,
+    expected_runtime_restores: usize,
+    expected_post_restore_completed_events: usize,
+) {
     let trace = temp_trace(
         &format!("trace-replay-{kind}-adapter"),
         &packet_trace_bytes(
@@ -51,34 +94,40 @@ fn assert_external_adapter_handoff(kind: &str, endpoint: &str, route: &str) {
         ),
     );
 
+    let trace_path = trace.to_str().unwrap();
+    let mut args = vec![
+        "trace-replay",
+        "--trace",
+        trace_path,
+        "--route",
+        route,
+        "--memory-start",
+        "0x1000",
+        "--memory-size",
+        "0x1000",
+        "--max-tick",
+        "64",
+        "--tick-frequency",
+        "1000",
+        "--line-bytes",
+        "64",
+        "--agent",
+        "7",
+        "--control-partition",
+        "2",
+        "--external-adapter-kind",
+        kind,
+        "--external-adapter-endpoint",
+        endpoint,
+        "--stats-format",
+        "json",
+    ];
+    if let Some(value) = checkpoint_after_events {
+        args.extend(["--external-adapter-checkpoint-after-events", value]);
+    }
+
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-        .args([
-            "trace-replay",
-            "--trace",
-            trace.to_str().unwrap(),
-            "--route",
-            route,
-            "--memory-start",
-            "0x1000",
-            "--memory-size",
-            "0x1000",
-            "--max-tick",
-            "64",
-            "--tick-frequency",
-            "1000",
-            "--line-bytes",
-            "64",
-            "--agent",
-            "7",
-            "--control-partition",
-            "2",
-            "--external-adapter-kind",
-            kind,
-            "--external-adapter-endpoint",
-            endpoint,
-            "--stats-format",
-            "json",
-        ])
+        .args(args)
         .output()
         .unwrap();
 
@@ -94,10 +143,16 @@ fn assert_external_adapter_handoff(kind: &str, endpoint: &str, route: &str) {
     assert!(stdout.contains("\"completed_events\":2"));
     assert!(stdout.contains("\"pending_events\":0"));
     assert!(stdout.contains("\"checkpoint_endpoints\":1"));
-    assert!(stdout.contains("\"checkpoint_completed_events\":2"));
+    assert!(stdout.contains(&format!(
+        "\"checkpoint_completed_events\":{expected_checkpoint_completed_events}"
+    )));
     assert!(stdout.contains("\"restored_endpoints\":1"));
     assert!(stdout.contains("\"restored_completed_events\":2"));
     assert!(stdout.contains("\"restored_pending_events\":0"));
+    assert!(stdout.contains(&format!("\"runtime_restores\":{expected_runtime_restores}")));
+    assert!(stdout.contains(&format!(
+        "\"post_restore_completed_events\":{expected_post_restore_completed_events}"
+    )));
     assert!(stdout.contains("\"first_tick\":2"));
     assert!(stdout.contains("\"last_tick\":7"));
     assert!(stdout.contains("\"scheduled_count\":2"));
@@ -133,9 +188,30 @@ fn assert_external_adapter_handoff(kind: &str, endpoint: &str, route: &str) {
     );
     assert_stat(
         &stdout,
+        "sim.trace_replay.external_adapter.checkpoint_completed_events",
+        "Count",
+        expected_checkpoint_completed_events as u64,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
         "sim.trace_replay.external_adapter.restored_completed_events",
         "Count",
         2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.external_adapter.runtime_restores",
+        "Count",
+        expected_runtime_restores as u64,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.external_adapter.post_restore_completed_events",
+        "Count",
+        expected_post_restore_completed_events as u64,
         "monotonic",
     );
 }

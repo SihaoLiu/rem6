@@ -109,6 +109,7 @@ pub(super) fn trace_replay_file_config_from_args(
             "--fabric-credit-depth",
             "--external-adapter-kind",
             "--external-adapter-endpoint",
+            "--external-adapter-checkpoint-after-events",
             "--stats-format",
             "--output",
             "--stats-output",
