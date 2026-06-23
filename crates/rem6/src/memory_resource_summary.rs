@@ -2,6 +2,7 @@ use crate::{
     data_cache_runtime::CliDataCacheSummary, transport_summary::Rem6MemoryTransportSummary,
     Rem6DramSummary, Rem6DramTargetSummary, Rem6RunFabricSummary,
 };
+use rem6_fabric::{FabricHopActivity, FabricLaneActivity, FabricVirtualNetworkActivity};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Rem6MemoryResourceSummary {
@@ -55,6 +56,8 @@ pub(crate) struct Rem6FabricResourceSummary {
     pub(crate) credit_delay_ticks: u64,
     pub(crate) max_credit_delay_ticks: u64,
     pub(crate) contended_lanes: u64,
+    pub(crate) lane_activities: Vec<FabricLaneActivity>,
+    pub(crate) hop_activities: Vec<FabricHopActivity>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -173,7 +176,21 @@ impl Rem6FabricResourceSummary {
             credit_delay_ticks: summary.credit_delay_ticks(),
             max_credit_delay_ticks: summary.max_credit_delay_ticks(),
             contended_lanes: summary.contended_lanes(),
+            lane_activities: summary.lane_activities().to_vec(),
+            hop_activities: summary.hop_activities().to_vec(),
         }
+    }
+
+    pub(crate) fn lane_activities(&self) -> &[FabricLaneActivity] {
+        &self.lane_activities
+    }
+
+    pub(crate) fn hop_activities(&self) -> &[FabricHopActivity] {
+        &self.hop_activities
+    }
+
+    pub(crate) fn virtual_network_activities(&self) -> Vec<FabricVirtualNetworkActivity> {
+        FabricVirtualNetworkActivity::from_lanes(self.lane_activities.iter())
     }
 }
 

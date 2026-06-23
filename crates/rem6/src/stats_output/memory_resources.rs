@@ -5,7 +5,11 @@ use crate::{
     Rem6TransportResourceSummary,
 };
 
-use super::{dram::emit_dram_target_stats, increment_stat, Rem6CliError, Rem6ExecutionSummary};
+use super::{
+    dram::emit_dram_target_stats,
+    fabric::{emit_fabric_lane_stats, emit_fabric_virtual_network_stats},
+    increment_stat, Rem6CliError, Rem6ExecutionSummary,
+};
 
 pub(super) fn emit_memory_resource_stats(
     stats: &mut StatsRegistry,
@@ -152,7 +156,8 @@ fn emit_fabric_resource_stats(
             value,
         )?;
     }
-    Ok(())
+    emit_fabric_virtual_network_stats(stats, prefix, summary.virtual_network_activities())?;
+    emit_fabric_lane_stats(stats, prefix, summary.lane_activities())
 }
 
 fn emit_transport_resource_stats(

@@ -6,16 +6,17 @@ use super::{
     Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary, Rem6HostInjectedCommandSummary,
     Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary, Rem6HostStopActionSummary,
     Rem6HostWorkMarkerSummary, Rem6InstructionProbeSummary, Rem6MemoryDump,
-    Rem6MemoryResourceSummary, Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary,
-    Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary, Rem6PcCountTrackerSummary,
-    Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmSummary,
-    Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary,
-    Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
-    Rem6RiscvUnknownSyscallSummary, Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary,
+    Rem6ParallelFrontierSummary, Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary,
+    Rem6PcCountPairSummary, Rem6PcCountTrackerSummary, Rem6RiscvGuestWriteSummary,
+    Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary,
+    Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary,
+    Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
+    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary,
     Rem6TraceReplayExternalAdapterSummary, RunMemorySystem,
 };
 
 mod parallel;
+mod resources;
 mod run;
 #[cfg(test)]
 mod tests;
@@ -1146,105 +1147,6 @@ impl Rem6ExecutionSummary {
     fn to_dram_json(&self) -> String {
         self.dram.to_json()
     }
-}
-
-impl Rem6MemoryResourceSummary {
-    fn to_json(&self) -> String {
-        format!(
-            "{{\"activity\":{},\"active\":{},\"cache\":{{\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{},\"l1\":{},\"l2\":{},\"l3\":{}}},\"transport\":{{\"activity\":{},\"active\":{},\"request_arrivals\":{},\"responses\":{},\"response_arrivals\":{},\"round_trip_ticks\":{},\"max_round_trip_ticks\":{},\"fetch\":{},\"data\":{}}},\"fabric\":{},\"dram\":{}}}",
-            self.activity,
-            self.active,
-            self.cache.activity,
-            self.cache.active,
-            self.cache.cpu_responses,
-            self.cache.directory_decisions,
-            self.cache.dram_accesses,
-            self.cache.bank_accepted,
-            self.cache.bank_immediate_hits,
-            self.cache.bank_scheduled_misses,
-            self.cache.bank_coalesced_misses,
-            cache_resource_json(&self.cache_l1),
-            cache_resource_json(&self.cache_l2),
-            cache_resource_json(&self.cache_l3),
-            self.transport.activity,
-            self.transport.active,
-            self.transport.request_arrivals,
-            self.transport.responses,
-            self.transport.response_arrivals,
-            self.transport.round_trip_ticks,
-            self.transport.max_round_trip_ticks,
-            transport_resource_json(&self.transport_fetch),
-            transport_resource_json(&self.transport_data),
-            fabric_resource_json(&self.fabric),
-            dram_resource_json(&self.dram),
-        )
-    }
-}
-
-fn dram_resource_json(summary: &super::Rem6DramResourceSummary) -> String {
-    format!(
-        "{{\"activity\":{},\"active\":{},\"active_targets\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"targets\":[{}]}}",
-        summary.activity,
-        summary.active,
-        summary.active_targets,
-        summary.active_ports,
-        summary.active_banks,
-        summary.accesses,
-        summary.reads,
-        summary.writes,
-        summary.row_hits,
-        summary.row_misses,
-        summary.commands,
-        summary.turnarounds,
-        summary.total_ready_latency_ticks,
-        summary.max_ready_latency_ticks,
-        dram_targets_json(&summary.targets),
-    )
-}
-
-fn fabric_resource_json(summary: &super::Rem6FabricResourceSummary) -> String {
-    format!(
-        "{{\"activity\":{},\"active\":{},\"active_virtual_networks\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{}}}",
-        summary.activity,
-        summary.active,
-        summary.active_virtual_networks,
-        summary.bytes,
-        summary.flits,
-        summary.occupied_ticks,
-        summary.queue_delay_ticks,
-        summary.max_queue_delay_ticks,
-        summary.credit_delay_ticks,
-        summary.max_credit_delay_ticks,
-        summary.contended_lanes,
-    )
-}
-
-fn transport_resource_json(summary: &super::Rem6TransportResourceSummary) -> String {
-    format!(
-        "{{\"activity\":{},\"active\":{},\"request_arrivals\":{},\"responses\":{},\"response_arrivals\":{},\"round_trip_ticks\":{},\"max_round_trip_ticks\":{}}}",
-        summary.activity,
-        summary.active,
-        summary.request_arrivals,
-        summary.responses,
-        summary.response_arrivals,
-        summary.round_trip_ticks,
-        summary.max_round_trip_ticks,
-    )
-}
-
-fn cache_resource_json(summary: &super::Rem6CacheResourceSummary) -> String {
-    format!(
-        "{{\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{}}}",
-        summary.activity,
-        summary.active,
-        summary.cpu_responses,
-        summary.directory_decisions,
-        summary.dram_accesses,
-        summary.bank_accepted,
-        summary.bank_immediate_hits,
-        summary.bank_scheduled_misses,
-        summary.bank_coalesced_misses,
-    )
 }
 
 impl Rem6RiscvGuestWriteSummary {

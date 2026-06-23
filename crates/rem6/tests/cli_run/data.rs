@@ -969,6 +969,9 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
     let memory_resources = json
         .pointer("/memory_resources")
         .expect("memory resource summary");
+    let fabric_resources = memory_resources
+        .pointer("/fabric")
+        .expect("fabric resource summary");
     let cache_activity = memory_resources
         .pointer("/cache/activity")
         .and_then(Value::as_u64)
@@ -1268,6 +1271,16 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
                             .is_some()
                 })
         }));
+    assert_eq!(
+        fabric_resources.pointer("/lane_activities"),
+        fabric.get("lane_activities"),
+        "fabric resource lanes should mirror run fabric lanes"
+    );
+    assert_eq!(
+        fabric_resources.pointer("/hop_activities"),
+        fabric.get("hop_activities"),
+        "fabric resource hops should mirror run fabric hops"
+    );
     assert_stat_greater_than(
         &stdout,
         "sim.memory.fabric.transfers",
@@ -1473,9 +1486,22 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         expected_active_memory_resources,
         "monotonic",
     );
-    assert_run_fabric_virtual_network_stats(&stdout, fabric, 3);
-    assert_run_fabric_virtual_network_stats(&stdout, fabric, 4);
-    assert_run_fabric_lane_stats(&stdout, fabric);
+    assert_run_fabric_virtual_network_stats(&stdout, "sim.memory.fabric", fabric, 3);
+    assert_run_fabric_virtual_network_stats(&stdout, "sim.memory.fabric", fabric, 4);
+    assert_run_fabric_lane_stats(&stdout, "sim.memory.fabric", fabric);
+    assert_run_fabric_virtual_network_stats(
+        &stdout,
+        "sim.memory.resources.fabric",
+        fabric_resources,
+        3,
+    );
+    assert_run_fabric_virtual_network_stats(
+        &stdout,
+        "sim.memory.resources.fabric",
+        fabric_resources,
+        4,
+    );
+    assert_run_fabric_lane_stats(&stdout, "sim.memory.resources.fabric", fabric_resources);
 }
 
 #[test]
@@ -1536,7 +1562,7 @@ fn rem6_run_sanitizes_configured_fabric_link_stat_paths() {
         fabric.get("link").and_then(Value::as_str),
         Some("cpu-mem.link 0")
     );
-    assert_run_fabric_lane_stats(&stdout, fabric);
+    assert_run_fabric_lane_stats(&stdout, "sim.memory.fabric", fabric);
 }
 
 #[test]
@@ -3381,7 +3407,12 @@ fn json_u64(json: &Value, pointer: &str) -> u64 {
         .unwrap_or_else(|| panic!("missing u64 JSON field {pointer}"))
 }
 
-fn assert_run_fabric_virtual_network_stats(stdout: &str, fabric: &Value, virtual_network: u64) {
+fn assert_run_fabric_virtual_network_stats(
+    stdout: &str,
+    stat_prefix: &str,
+    fabric: &Value,
+    virtual_network: u64,
+) {
     let lanes = fabric
         .get("lane_activities")
         .and_then(Value::as_array)
@@ -3425,7 +3456,7 @@ fn assert_run_fabric_virtual_network_stats(stdout: &str, fabric: &Value, virtual
         !active_links.is_empty(),
         "missing VN{virtual_network} lane activity"
     );
-    let prefix = format!("sim.memory.fabric.vn{virtual_network}");
+    let prefix = format!("{stat_prefix}.vn{virtual_network}");
     assert_stat(
         stdout,
         &format!("{prefix}.active_lanes"),
@@ -3498,7 +3529,7 @@ fn assert_run_fabric_virtual_network_stats(stdout: &str, fabric: &Value, virtual
     );
 }
 
-fn assert_run_fabric_lane_stats(stdout: &str, fabric: &Value) {
+fn assert_run_fabric_lane_stats(stdout: &str, stat_prefix: &str, fabric: &Value) {
     let lanes = fabric
         .get("lane_activities")
         .and_then(Value::as_array)
@@ -3515,7 +3546,7 @@ fn assert_run_fabric_lane_stats(stdout: &str, fabric: &Value) {
             .and_then(Value::as_u64)
             .expect("fabric lane virtual network");
         let prefix = format!(
-            "sim.memory.fabric.link.{}.vn{virtual_network}",
+            "{stat_prefix}.link.{}.vn{virtual_network}",
             stat_path_segment(link)
         );
         assert_stat(
