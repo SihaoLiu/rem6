@@ -7,11 +7,12 @@ use super::{
     socket::RiscvGuestSocketRead,
     RiscvGuestMemoryReader, RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState,
     RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL,
-    RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_WRONLY,
+    RISCV_LINUX_ENOTSUP, RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_WRONLY,
 };
 
 pub(super) const RISCV_LINUX_READV: u64 = 65;
 pub(super) const RISCV_LINUX_PREADV: u64 = 69;
+pub(super) const RISCV_LINUX_PREADV2: u64 = 286;
 
 pub(super) fn syscall_readv(
     request: RiscvSyscallRequest,
@@ -196,4 +197,16 @@ pub(super) fn syscall_preadv(
         return linux_error(RISCV_LINUX_EFAULT);
     }
     bytes.len() as u64
+}
+
+pub(super) fn syscall_preadv2(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> u64 {
+    if request.argument(5) != 0 {
+        return linux_error(RISCV_LINUX_ENOTSUP);
+    }
+    syscall_preadv(request, state, guest_memory_reader, guest_memory_writer)
 }

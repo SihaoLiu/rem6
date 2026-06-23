@@ -221,7 +221,10 @@ use process::{
     RISCV_LINUX_UNSHARE,
 };
 use random::{invalid_getrandom_flags, syscall_getrandom, RISCV_LINUX_GETRANDOM};
-use readv::{syscall_preadv, syscall_readv, RISCV_LINUX_PREADV, RISCV_LINUX_READV};
+use readv::{
+    syscall_preadv, syscall_preadv2, syscall_readv, RISCV_LINUX_PREADV, RISCV_LINUX_PREADV2,
+    RISCV_LINUX_READV,
+};
 use rename::{syscall_renameat, syscall_renameat2, RISCV_LINUX_RENAMEAT, RISCV_LINUX_RENAMEAT2};
 pub use request::RiscvSyscallRequest;
 use robust::{syscall_get_robust_list, syscall_set_robust_list, RiscvRobustList};
@@ -285,7 +288,10 @@ use wait4::{
     syscall_getrusage, syscall_process_group_id, syscall_wait4, syscall_waitid,
     RISCV_LINUX_GETRUSAGE, RISCV_LINUX_WAIT4, RISCV_LINUX_WAITID,
 };
-use writev::{syscall_pwritev, syscall_writev, RISCV_LINUX_PWRITEV, RISCV_LINUX_WRITEV};
+use writev::{
+    syscall_pwritev, syscall_pwritev2, syscall_writev, RISCV_LINUX_PWRITEV, RISCV_LINUX_PWRITEV2,
+    RISCV_LINUX_WRITEV,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvSyscallOutcome {

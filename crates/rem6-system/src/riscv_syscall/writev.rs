@@ -9,13 +9,14 @@ use super::{
     socket::{socket_write_result, RiscvGuestSocketWrite},
     RiscvGuestMemoryReader, RiscvGuestWriteRecord, RiscvSyscallRequest, RiscvSyscallState,
     RISCV_LINUX_EAGAIN, RISCV_LINUX_EBADF, RISCV_LINUX_EFAULT, RISCV_LINUX_EFBIG,
-    RISCV_LINUX_EINVAL, RISCV_LINUX_EPERM, RISCV_LINUX_ESPIPE, RISCV_LINUX_O_ACCMODE,
-    RISCV_LINUX_O_RDONLY,
+    RISCV_LINUX_EINVAL, RISCV_LINUX_ENOTSUP, RISCV_LINUX_EPERM, RISCV_LINUX_ESPIPE,
+    RISCV_LINUX_O_ACCMODE, RISCV_LINUX_O_RDONLY,
 };
 use crate::Tick;
 
 pub(super) const RISCV_LINUX_WRITEV: u64 = 66;
 pub(super) const RISCV_LINUX_PWRITEV: u64 = 70;
+pub(super) const RISCV_LINUX_PWRITEV2: u64 = 287;
 
 pub(super) fn syscall_writev(
     request: RiscvSyscallRequest,
@@ -210,4 +211,16 @@ pub(super) fn syscall_pwritev(
 
     state.push_guest_write(RiscvGuestWriteRecord::new(fd, iov_base, tick, bytes));
     total
+}
+
+pub(super) fn syscall_pwritev2(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    tick: Tick,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> u64 {
+    if request.argument(5) != 0 {
+        return linux_error(RISCV_LINUX_ENOTSUP);
+    }
+    syscall_pwritev(request, state, tick, guest_memory)
 }
