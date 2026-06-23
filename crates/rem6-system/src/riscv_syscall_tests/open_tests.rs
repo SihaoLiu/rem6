@@ -195,6 +195,113 @@ fn linux_table_openat_reads_virtual_proc_self_comm_from_prctl_name() {
 }
 
 #[test]
+fn linux_table_openat_reads_virtual_proc_self_status_from_modeled_state() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::with_identity(
+        0x20000,
+        RiscvSyscallIdentity::new(41, 42, 43, 7, 8, 9, 10),
+    );
+    let process_name = b"rem6-status\0".to_vec();
+    let proc_path = b"/proc/self/status\0".to_vec();
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if bytes != 1 {
+            return None;
+        }
+        if address >= 0x8800 {
+            let offset = usize::try_from(address - 0x8800).ok()?;
+            if let Some(byte) = process_name.get(offset).copied() {
+                return Some(vec![byte]);
+            }
+        }
+        if address >= 0x9000 {
+            let offset = usize::try_from(address - 0x9000).ok()?;
+            if let Some(byte) = proc_path.get(offset).copied() {
+                return Some(vec![byte]);
+            }
+        }
+        None
+    });
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_PRCTL,
+                [RISCV_LINUX_PR_SET_NAME_FOR_OPEN_TEST, 0x8800, 0, 0, 0, 0],
+            ),
+            &mut state,
+            6,
+            Some(&guest_memory_reader),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_OPENAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+
+    let expected = concat!(
+        "Name:\trem6-status\n",
+        "Umask:\t0000\n",
+        "State:\tR (running)\n",
+        "Tgid:\t41\n",
+        "Ngid:\t0\n",
+        "Pid:\t42\n",
+        "PPid:\t43\n",
+        "TracerPid:\t0\n",
+        "Uid:\t7\t8\t8\t8\n",
+        "Gid:\t9\t10\t10\t10\n",
+        "Groups:\t\n",
+        "NStgid:\t41\n",
+        "NSpid:\t42\n",
+        "NSpgid:\t41\n",
+        "NSsid:\t41\n",
+        "Threads:\t1\n",
+        "NoNewPrivs:\t0\n",
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_READ,
+                [3, 0xa000, expected.len() as u64 + 64, 0, 0, 0],
+            ),
+            &mut state,
+            8,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: expected.len() as u64
+        })
+    );
+    assert_eq!(
+        &*writes.lock().unwrap(),
+        &[(0xa000, expected.as_bytes().to_vec())]
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
 fn linux_table_openat_rejects_virtual_proc_maps_through_missing_parent() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0x20000);

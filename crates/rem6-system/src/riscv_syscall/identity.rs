@@ -101,6 +101,10 @@ impl RiscvSyscallIdentity {
         self.saved_user_id
     }
 
+    pub(crate) const fn file_system_user_id(self) -> u64 {
+        self.file_system_user_id
+    }
+
     pub(crate) const fn group_id(self) -> u64 {
         self.group_id
     }
@@ -111,6 +115,10 @@ impl RiscvSyscallIdentity {
 
     pub(crate) const fn saved_group_id(self) -> u64 {
         self.saved_group_id
+    }
+
+    pub(crate) const fn file_system_group_id(self) -> u64 {
+        self.file_system_group_id
     }
 }
 

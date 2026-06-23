@@ -16,6 +16,7 @@ impl RiscvSyscallState {
         match path.as_slice() {
             b"proc/self/comm" => Some((path, self.proc_self_comm_bytes())),
             b"proc/self/maps" => Some((path, self.proc_self_maps_bytes())),
+            b"proc/self/status" => Some((path, self.proc_self_status_bytes())),
             _ => None,
         }
     }
@@ -81,15 +82,96 @@ impl RiscvSyscallState {
     }
 
     fn proc_self_comm_bytes(&self) -> Vec<u8> {
+        let mut output = self.process_name_text();
+        output.push(b'\n');
+        output
+    }
+
+    fn proc_self_status_bytes(&self) -> Vec<u8> {
+        let identity = self.identity();
+        let mut output = Vec::new();
+        output.extend_from_slice(b"Name:\t");
+        output.extend_from_slice(&self.process_name_text());
+        output.push(b'\n');
+        push_proc_status_octal_line(&mut output, b"Umask", u64::from(self.file_creation_mask()));
+        output.extend_from_slice(b"State:\tR (running)\n");
+        push_proc_status_decimal_line(&mut output, b"Tgid", identity.thread_group_id());
+        push_proc_status_decimal_line(&mut output, b"Ngid", 0);
+        push_proc_status_decimal_line(&mut output, b"Pid", identity.thread_id());
+        push_proc_status_decimal_line(&mut output, b"PPid", identity.parent_process_id());
+        push_proc_status_decimal_line(&mut output, b"TracerPid", 0);
+        push_proc_status_id_line(
+            &mut output,
+            b"Uid",
+            identity.user_id(),
+            identity.effective_user_id(),
+            identity.saved_user_id(),
+            identity.file_system_user_id(),
+        );
+        push_proc_status_id_line(
+            &mut output,
+            b"Gid",
+            identity.group_id(),
+            identity.effective_group_id(),
+            identity.saved_group_id(),
+            identity.file_system_group_id(),
+        );
+        output.extend_from_slice(b"Groups:\t\n");
+        push_proc_status_decimal_line(&mut output, b"NStgid", identity.thread_group_id());
+        push_proc_status_decimal_line(&mut output, b"NSpid", identity.thread_id());
+        push_proc_status_decimal_line(
+            &mut output,
+            b"NSpgid",
+            u64::from(self.guest_wait.current_process_group().get()),
+        );
+        push_proc_status_decimal_line(&mut output, b"NSsid", self.session_id());
+        push_proc_status_decimal_line(&mut output, b"Threads", 1);
+        push_proc_status_decimal_line(&mut output, b"NoNewPrivs", u64::from(self.no_new_privs()));
+        output
+    }
+
+    fn process_name_text(&self) -> Vec<u8> {
         let name = self.process_name();
         let end = name
             .iter()
             .position(|byte| *byte == 0)
             .unwrap_or(name.len());
-        let mut output = name[..end].to_vec();
-        output.push(b'\n');
-        output
+        name[..end].to_vec()
     }
+}
+
+fn push_proc_status_decimal_line(output: &mut Vec<u8>, label: &[u8], value: u64) {
+    output.extend_from_slice(label);
+    output.extend_from_slice(b":\t");
+    output.extend_from_slice(value.to_string().as_bytes());
+    output.push(b'\n');
+}
+
+fn push_proc_status_octal_line(output: &mut Vec<u8>, label: &[u8], value: u64) {
+    output.extend_from_slice(label);
+    output.extend_from_slice(b":\t");
+    output.extend_from_slice(format!("{value:04o}").as_bytes());
+    output.push(b'\n');
+}
+
+fn push_proc_status_id_line(
+    output: &mut Vec<u8>,
+    label: &[u8],
+    real: u64,
+    effective: u64,
+    saved: u64,
+    file_system: u64,
+) {
+    output.extend_from_slice(label);
+    output.extend_from_slice(b":\t");
+    output.extend_from_slice(real.to_string().as_bytes());
+    output.push(b'\t');
+    output.extend_from_slice(effective.to_string().as_bytes());
+    output.push(b'\t');
+    output.extend_from_slice(saved.to_string().as_bytes());
+    output.push(b'\t');
+    output.extend_from_slice(file_system.to_string().as_bytes());
+    output.push(b'\n');
 }
 
 fn push_mmap_region_line(output: &mut String, region: &RiscvMmapRegion) {
@@ -237,6 +319,7 @@ fn is_virtual_proc_path_prefix(components: &[Vec<u8>]) -> bool {
                 && current.as_slice() == b"self"
                 && (leaf.as_slice() == b"maps"
                     || leaf.as_slice() == b"comm"
+                    || leaf.as_slice() == b"status"
                     || leaf.as_slice() == b"fd"
                     || leaf.as_slice() == b"cwd")
         }
