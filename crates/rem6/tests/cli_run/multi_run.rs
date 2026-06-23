@@ -353,6 +353,142 @@ config = "checkpoint.toml"
 }
 
 #[test]
+fn rem6_multi_run_reports_trace_replay_child_checkpoint_actions() {
+    let workspace = temp_workspace("multi-run-trace-child-checkpoint-actions");
+    fs::write(
+        workspace.join("packet.pb"),
+        packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("trace.toml"),
+        r#"[trace_replay]
+trace = "packet.pb"
+route = "cpu0.trace"
+memory_start = 4096
+memory_size = 4096
+max_tick = 64
+tick_frequency = 1000
+line_bytes = 64
+agent = 7
+control_partition = 2
+host_checkpoints = ["1:trace-cp"]
+host_checkpoint_restores = ["2:trace-cp"]
+stats_format = "json"
+output = "artifacts/trace-run.json"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("multi-run.toml"),
+        r#"[multi_run]
+suite_id = "trace-checkpoint-suite"
+stats_format = "json"
+
+[[multi_run.runs]]
+id = "trace"
+command = "trace-replay"
+config = "trace.toml"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "multi-run",
+            "--config",
+            workspace.join("multi-run.toml").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.get("total_checkpoints").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        json.get("total_checkpoint_restores")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let summary = multi_run_summary_by_id(&json, "trace");
+    assert_eq!(
+        summary.get("checkpoint_count").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        summary
+            .get("checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoints",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoint_restores",
+        "Count",
+        1,
+        "monotonic",
+    );
+
+    let child_artifact = fs::read_to_string(workspace.join("artifacts/trace-run.json"))
+        .unwrap_or_else(|error| panic!("missing trace child artifact: {error}"));
+    let child_json: Value = serde_json::from_str(&child_artifact).unwrap();
+    assert_eq!(
+        child_json
+            .pointer("/simulation/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        child_json
+            .pointer("/simulation/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_nonzero_json_u64(&child_json, "/simulation/checkpoint_component_count");
+    assert_nonzero_json_u64(&child_json, "/simulation/checkpoint_chunk_count");
+    assert_nonzero_json_u64(&child_json, "/simulation/checkpoint_payload_bytes");
+    assert_nonzero_json_u64(
+        &child_json,
+        "/simulation/checkpoint_restored_component_count",
+    );
+    assert_nonzero_json_u64(&child_json, "/simulation/checkpoint_restored_chunk_count");
+    assert_nonzero_json_u64(&child_json, "/simulation/checkpoint_restored_payload_bytes");
+}
+
+#[test]
 fn rem6_multi_run_preserves_child_output_artifacts() {
     let workspace = temp_workspace("multi-run-child-output-artifacts");
     fs::write(
@@ -725,6 +861,14 @@ fn assert_summary_extra_artifacts(summary: &Value, expected: &[(&str, &Path)]) {
             Some(expected_path.as_str())
         );
     }
+}
+
+fn assert_nonzero_json_u64(json: &Value, path: &str) {
+    let value = json
+        .pointer(path)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing nonzero JSON value {path}: {json}"));
+    assert!(value > 0, "expected {path} to be nonzero in {json}");
 }
 
 #[test]

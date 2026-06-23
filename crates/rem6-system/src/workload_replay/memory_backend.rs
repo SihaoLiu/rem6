@@ -112,7 +112,7 @@ impl WorkloadDramQosState {
 
 #[derive(Clone, Debug)]
 pub(super) struct WorkloadDramBackend {
-    controller: DramMemoryController,
+    controller: Arc<Mutex<DramMemoryController>>,
     qos: Option<WorkloadDramQosState>,
 }
 
@@ -122,9 +122,13 @@ impl WorkloadDramBackend {
         qos_policy: Option<&WorkloadQosPolicy>,
     ) -> Self {
         Self {
-            controller,
+            controller: Arc::new(Mutex::new(controller)),
             qos: qos_policy.map(WorkloadDramQosState::new),
         }
+    }
+
+    pub(super) fn controller_handle(&self) -> Arc<Mutex<DramMemoryController>> {
+        Arc::clone(&self.controller)
     }
 
     fn accept(
@@ -132,10 +136,11 @@ impl WorkloadDramBackend {
         arrival_cycle: u64,
         request: &MemoryRequest,
     ) -> Result<DramMemoryOutcome, DramMemoryError> {
+        let mut controller = self.controller.lock().expect("workload DRAM lock");
         if let Some(qos) = self.qos.as_mut() {
-            return qos.accept(&mut self.controller, arrival_cycle, request);
+            return qos.accept(&mut controller, arrival_cycle, request);
         }
-        self.controller.accept(arrival_cycle, request)
+        controller.accept(arrival_cycle, request)
     }
 
     fn accept_batch(
@@ -148,7 +153,8 @@ impl WorkloadDramBackend {
             .iter()
             .map(|delivery| (delivery.request().id(), delivery.tick()))
             .collect::<BTreeMap<_, _>>();
-        let outcomes = match qos.accept_batch(&mut self.controller, arrival_cycle, deliveries) {
+        let mut controller = self.controller.lock().expect("workload DRAM lock");
+        let outcomes = match qos.accept_batch(&mut controller, arrival_cycle, deliveries) {
             Ok(outcomes) => outcomes,
             Err(error) => return Some(Err(error)),
         };
@@ -164,14 +170,6 @@ impl WorkloadDramBackend {
             })
             .collect()))
     }
-
-    pub(super) fn controller(&self) -> &DramMemoryController {
-        &self.controller
-    }
-
-    pub(super) fn controller_mut(&mut self) -> &mut DramMemoryController {
-        &mut self.controller
-    }
 }
 
 impl WorkloadMemoryBackend {
@@ -184,7 +182,9 @@ impl WorkloadMemoryBackend {
             Self::Dram(dram) => dram
                 .lock()
                 .expect("workload replay DRAM lock")
-                .controller()
+                .controller_handle()
+                .lock()
+                .expect("workload replay DRAM controller lock")
                 .snapshot()
                 .store()
                 .clone(),
@@ -197,7 +197,9 @@ impl WorkloadMemoryBackend {
             Self::Dram(dram) => Some(
                 dram.lock()
                     .expect("workload replay DRAM lock")
-                    .controller()
+                    .controller_handle()
+                    .lock()
+                    .expect("workload replay DRAM controller lock")
                     .snapshot(),
             ),
         }
@@ -209,7 +211,9 @@ impl WorkloadMemoryBackend {
             Self::Dram(dram) => dram
                 .lock()
                 .expect("workload replay DRAM lock")
-                .controller()
+                .controller_handle()
+                .lock()
+                .expect("workload replay DRAM controller lock")
                 .target_activities(),
         }
     }
@@ -220,7 +224,9 @@ impl WorkloadMemoryBackend {
             Self::Dram(dram) => Some(
                 dram.lock()
                     .expect("workload replay DRAM lock")
-                    .controller()
+                    .controller_handle()
+                    .lock()
+                    .expect("workload replay DRAM controller lock")
                     .mark_wait_for(),
             ),
         }
@@ -238,7 +244,9 @@ impl WorkloadMemoryBackend {
             Self::Dram(dram) => dram
                 .lock()
                 .expect("workload replay DRAM lock")
-                .controller()
+                .controller_handle()
+                .lock()
+                .expect("workload replay DRAM controller lock")
                 .wait_for_graph_since(&marker),
         }
     }
@@ -257,7 +265,9 @@ impl WorkloadMemoryBackend {
             Self::Dram(dram) => dram
                 .lock()
                 .expect("workload replay DRAM lock")
-                .controller()
+                .controller_handle()
+                .lock()
+                .expect("workload replay DRAM controller lock")
                 .line_data(target, line)
                 .map_err(RiscvWorkloadReplayError::Dram),
         }
@@ -281,7 +291,9 @@ impl WorkloadMemoryBackend {
             Self::Dram(dram) => dram
                 .lock()
                 .expect("workload replay DRAM lock")
-                .controller()
+                .controller_handle()
+                .lock()
+                .expect("workload replay DRAM controller lock")
                 .response_data(request)
                 .map_err(RiscvWorkloadReplayError::Dram),
         }
@@ -302,7 +314,9 @@ impl WorkloadMemoryBackend {
             Self::Dram(dram) => dram
                 .lock()
                 .expect("workload replay DRAM lock")
-                .controller_mut()
+                .controller_handle()
+                .lock()
+                .expect("workload replay DRAM controller lock")
                 .insert_line(target, line, data)
                 .map_err(RiscvWorkloadReplayError::Dram),
         }

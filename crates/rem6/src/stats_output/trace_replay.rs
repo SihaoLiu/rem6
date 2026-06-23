@@ -1,6 +1,7 @@
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 use rem6_workload::{
-    WorkloadDataCacheProtocol, WorkloadParallelExecutionSummary, WorkloadTrafficTraceReplaySummary,
+    WorkloadDataCacheProtocol, WorkloadHostActionSummary, WorkloadParallelExecutionSummary,
+    WorkloadTrafficTraceReplaySummary,
 };
 
 use super::fabric::emit_fabric_virtual_network_stats;
@@ -639,6 +640,27 @@ pub(super) fn emit_trace_replay_resource_stats(
         stats,
         "sim.trace_replay.resources.active",
         summary.active_resource_count() as u64,
+    )
+}
+
+pub(super) fn emit_trace_replay_host_action_stats(
+    stats: &mut StatsRegistry,
+    summary: &WorkloadHostActionSummary,
+) -> Result<(), Rem6CliError> {
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.host_actions.total",
+        summary.total_action_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.host_actions.checkpoints",
+        summary.checkpoint_count() as u64,
+    )?;
+    emit_trace_count(
+        stats,
+        "sim.trace_replay.host_actions.checkpoint_restores",
+        summary.checkpoint_restore_count() as u64,
     )
 }
 

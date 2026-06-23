@@ -173,9 +173,17 @@ impl Rem6TraceReplayExternalAdapterSummary {
 impl Rem6TraceReplayExecutionSummary {
     fn to_json(&self, max_tick: u64) -> String {
         format!(
-            "{{\"status\":\"completed\",\"max_tick\":{},\"final_tick\":{}}}",
+            "{{\"status\":\"completed\",\"max_tick\":{},\"final_tick\":{},\"checkpoint_count\":{},\"checkpoint_restored_count\":{},\"checkpoint_component_count\":{},\"checkpoint_chunk_count\":{},\"checkpoint_payload_bytes\":{},\"checkpoint_restored_component_count\":{},\"checkpoint_restored_chunk_count\":{},\"checkpoint_restored_payload_bytes\":{}}}",
             max_tick,
             self.final_tick(),
+            self.host_actions().checkpoint_count(),
+            self.host_actions().checkpoint_restore_count(),
+            self.checkpoint_component_count(),
+            self.checkpoint_chunk_count(),
+            self.checkpoint_payload_bytes(),
+            self.checkpoint_restored_component_count(),
+            self.checkpoint_restored_chunk_count(),
+            self.checkpoint_restored_payload_bytes(),
         )
     }
 }

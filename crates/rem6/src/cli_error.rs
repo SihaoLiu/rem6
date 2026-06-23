@@ -123,6 +123,9 @@ pub enum Rem6CliError {
     InvalidTraceReplayExternalAdapterCheckpointAfterEvents {
         value: String,
     },
+    InvalidTraceReplayHostEvent {
+        value: String,
+    },
     InvalidGpuRunFabricBandwidth {
         value: String,
     },
@@ -502,6 +505,12 @@ impl fmt::Display for Rem6CliError {
                 write!(
                     formatter,
                     "invalid trace replay external adapter checkpoint after events {value}"
+                )
+            }
+            Self::InvalidTraceReplayHostEvent { value } => {
+                write!(
+                    formatter,
+                    "invalid trace replay host event {value}; expected tick:label"
                 )
             }
             Self::InvalidGpuRunFabricBandwidth { value } => {

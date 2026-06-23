@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use rem6_accelerator::{AcceleratorEngineId, AcceleratorEngineSnapshot, AcceleratorError};
 use rem6_boot::BootError;
-use rem6_checkpoint::CheckpointManifest;
+use rem6_checkpoint::{CheckpointComponentId, CheckpointManifest};
 use rem6_coherence::{
     ChiHarnessError, HarnessError, MesiHarnessError, MoesiHarnessError,
     PartitionedDramMemoryConfig, PartitionedDramQosState,
@@ -121,7 +121,8 @@ use crate::workload_replay_heterogeneous::{
 };
 use crate::workload_replay_host::schedule_planned_host_events;
 use crate::{
-    ExecutionMode, GuestEventId, GuestSourceId, HostEventPolicy,
+    DramMemoryCheckpointBank, DramMemoryCheckpointPort, ExecutionMode, GuestEventId, GuestSourceId,
+    HostEventPolicy, MemoryStoreCheckpointBank, MemoryStoreCheckpointPort,
     RiscvDataCacheControllerErrorRecord, RiscvSystemRun, RiscvSystemRunDriver,
     RiscvSystemRunStopReason, RiscvTrapEventPort, SystemActionOutcome, SystemHostController,
     SystemHostEventPort, TrafficTraceReplayControllerParallelErrors,
@@ -291,6 +292,7 @@ impl RiscvWorkloadReplay {
             HostEventPolicy,
             stats,
         )));
+        attach_workload_memory_checkpoint_bank(&controller, &memory)?;
         sinic_mmio
             .attach_checkpoint_ports(
                 controller
@@ -1207,6 +1209,11 @@ impl RiscvWorkloadReplay {
         };
 
         let controller = controller.lock().expect("system host controller lock");
+        if !controller.action_errors().is_empty() {
+            return Err(RiscvWorkloadReplayError::HostActionErrors {
+                errors: controller.action_errors().to_vec(),
+            });
+        }
         let host_action_outcomes = controller.run().action_outcomes().to_vec();
         let mut host_action_summary = WorkloadHostActionSummary::default();
         for outcome in &host_action_outcomes {
@@ -1286,6 +1293,51 @@ impl RiscvWorkloadReplay {
                 ),
             host_action_outcomes,
         ))
+    }
+}
+
+fn attach_workload_memory_checkpoint_bank(
+    host_controller: &Arc<Mutex<SystemHostController>>,
+    memory: &WorkloadMemoryBackend,
+) -> Result<(), RiscvWorkloadReplayError> {
+    let component = CheckpointComponentId::new("memory0")
+        .map_err(|error| RiscvWorkloadReplayError::System(crate::SystemError::Checkpoint(error)))?;
+    let mut host_controller = host_controller.lock().expect("system host controller lock");
+    match memory {
+        WorkloadMemoryBackend::Store(store) => {
+            let bank = MemoryStoreCheckpointBank::new([MemoryStoreCheckpointPort::new(
+                component,
+                Arc::clone(store),
+            )])
+            .map_err(|error| {
+                RiscvWorkloadReplayError::System(crate::SystemError::Checkpoint(error))
+            })?;
+            host_controller
+                .executor_mut()
+                .attach_memory_checkpoint_bank(bank)
+                .map_err(|error| {
+                    RiscvWorkloadReplayError::System(crate::SystemError::Checkpoint(error))
+                })
+        }
+        WorkloadMemoryBackend::Dram(dram) => {
+            let dram_controller = dram
+                .lock()
+                .expect("workload replay DRAM lock")
+                .controller_handle();
+            let bank = DramMemoryCheckpointBank::new([DramMemoryCheckpointPort::new(
+                component,
+                dram_controller,
+            )])
+            .map_err(|error| {
+                RiscvWorkloadReplayError::System(crate::SystemError::Checkpoint(error))
+            })?;
+            host_controller
+                .executor_mut()
+                .attach_dram_memory_checkpoint_bank(bank)
+                .map_err(|error| {
+                    RiscvWorkloadReplayError::System(crate::SystemError::Checkpoint(error))
+                })
+        }
     }
 }
 
@@ -1632,6 +1684,9 @@ pub enum RiscvWorkloadReplayError {
         route: WorkloadRouteId,
         errors: TrafficTraceReplayControllerParallelErrors,
     },
+    HostActionErrors {
+        errors: Vec<crate::SystemError>,
+    },
     System(crate::SystemError),
 }
 
@@ -1716,6 +1771,18 @@ impl fmt::Display for RiscvWorkloadReplayError {
                 errors.target().len(),
                 errors.control().len(),
             ),
+            Self::HostActionErrors { errors } => match errors.as_slice() {
+                [error] => write!(formatter, "host action failed: {error}"),
+                errors => write!(
+                    formatter,
+                    "host actions recorded {} errors; first error: {}",
+                    errors.len(),
+                    errors
+                        .first()
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| "none".to_string())
+                ),
+            },
             Self::System(error) => write!(formatter, "{error}"),
         }
     }
@@ -1743,6 +1810,9 @@ impl Error for RiscvWorkloadReplayError {
             Self::Transport(error) => Some(error),
             Self::TrafficTraceReplay(error) => Some(error),
             Self::System(error) => Some(error),
+            Self::HostActionErrors { errors } => {
+                errors.first().map(|error| error as &(dyn Error + 'static))
+            }
             Self::MissingTopology
             | Self::MissingMemoryTarget
             | Self::MissingDataCacheAgent

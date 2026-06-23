@@ -141,11 +141,36 @@ pub struct Rem6TraceReplayConfig {
     external_adapter_kind: Option<TraceReplayExternalAdapterKind>,
     external_adapter_endpoint: Option<String>,
     external_adapter_checkpoint_after_events: Option<usize>,
+    host_checkpoints: Vec<TraceReplayHostEventSpec>,
+    host_checkpoint_restores: Vec<TraceReplayHostEventSpec>,
     stats_format: StatsFormat,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,
     power_format: PowerAnalysisFormat,
     power_output: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TraceReplayHostEventSpec {
+    tick: u64,
+    label: String,
+}
+
+impl TraceReplayHostEventSpec {
+    pub(crate) fn new(tick: u64, label: impl Into<String>) -> Self {
+        Self {
+            tick,
+            label: label.into(),
+        }
+    }
+
+    pub const fn tick(&self) -> u64 {
+        self.tick
+    }
+
+    pub fn label(&self) -> &str {
+        &self.label
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -276,6 +301,8 @@ struct Rem6TraceReplayFileConfig {
     external_adapter_kind: Option<String>,
     external_adapter_endpoint: Option<String>,
     external_adapter_checkpoint_after_events: Option<u64>,
+    host_checkpoints: Option<Vec<String>>,
+    host_checkpoint_restores: Option<Vec<String>>,
     stats_format: Option<String>,
     output: Option<PathBuf>,
     stats_output: Option<PathBuf>,

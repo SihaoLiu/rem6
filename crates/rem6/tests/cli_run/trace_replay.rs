@@ -2,6 +2,8 @@ use std::io::ErrorKind;
 use std::net::TcpListener;
 use std::process::Command;
 
+use serde_json::Value;
+
 use crate::support::*;
 
 #[path = "trace_replay/data_cache_fabric.rs"]
@@ -221,6 +223,314 @@ fn rem6_trace_replay_loads_toml_config_relative_trace_and_cli_route_override() {
         2,
         "monotonic",
     );
+}
+
+#[test]
+fn rem6_trace_replay_executes_planned_checkpoint_restore_host_events() {
+    let workspace = temp_workspace("trace-replay-host-checkpoint-restore");
+    let trace = workspace.join("packet.pb");
+    std::fs::write(
+        &trace,
+        packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    )
+    .unwrap();
+    let config = workspace.join("trace-replay.toml");
+    std::fs::write(
+        &config,
+        r#"[trace_replay]
+trace = "packet.pb"
+route = "cpu0.restore"
+memory_start = 4096
+memory_size = 4096
+max_tick = 64
+tick_frequency = 1000
+line_bytes = 64
+agent = 7
+control_partition = 2
+host_checkpoints = ["1:trace-cp"]
+host_checkpoint_restores = ["2:trace-cp"]
+stats_format = "json"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["trace-replay", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/simulation/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        json.pointer("/simulation/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_nonzero_json_u64(&json, "/simulation/checkpoint_component_count");
+    assert_nonzero_json_u64(&json, "/simulation/checkpoint_chunk_count");
+    assert_nonzero_json_u64(&json, "/simulation/checkpoint_payload_bytes");
+    assert_nonzero_json_u64(&json, "/simulation/checkpoint_restored_component_count");
+    assert_nonzero_json_u64(&json, "/simulation/checkpoint_restored_chunk_count");
+    assert_nonzero_json_u64(&json, "/simulation/checkpoint_restored_payload_bytes");
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.host_actions.checkpoints",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.host_actions.checkpoint_restores",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_trace_replay_executes_planned_checkpoint_restore_host_event_flags() {
+    let trace = temp_trace(
+        "trace-replay-host-checkpoint-restore-flags",
+        &packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "trace-replay",
+            "--trace",
+            trace.to_str().unwrap(),
+            "--route",
+            "cpu0.restore.flags",
+            "--memory-start",
+            "0x1000",
+            "--memory-size",
+            "0x1000",
+            "--max-tick",
+            "64",
+            "--tick-frequency",
+            "1000",
+            "--line-bytes",
+            "64",
+            "--agent",
+            "7",
+            "--control-partition",
+            "2",
+            "--host-checkpoint",
+            "1:flag-cp",
+            "--host-restore-checkpoint",
+            "2:flag-cp",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/simulation/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        json.pointer("/simulation/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_nonzero_json_u64(&json, "/simulation/checkpoint_payload_bytes");
+    assert_nonzero_json_u64(&json, "/simulation/checkpoint_restored_payload_bytes");
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.host_actions.checkpoints",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.host_actions.checkpoint_restores",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_trace_replay_fails_on_missing_host_checkpoint_restore_label() {
+    let trace = temp_trace(
+        "trace-replay-missing-host-checkpoint-label",
+        &packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "trace-replay",
+            "--trace",
+            trace.to_str().unwrap(),
+            "--route",
+            "cpu0.restore.missing",
+            "--memory-start",
+            "0x1000",
+            "--memory-size",
+            "0x1000",
+            "--max-tick",
+            "64",
+            "--tick-frequency",
+            "1000",
+            "--line-bytes",
+            "64",
+            "--agent",
+            "7",
+            "--control-partition",
+            "2",
+            "--host-restore-checkpoint",
+            "1:missing-cp",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("missing-cp"), "stderr: {stderr}");
+    assert!(stderr.contains("host action"), "stderr: {stderr}");
+}
+
+#[test]
+fn rem6_trace_replay_rejects_host_checkpoint_with_data_cache_protocol() {
+    let trace = temp_trace(
+        "trace-replay-data-cache-host-checkpoint",
+        &packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "trace-replay",
+            "--trace",
+            trace.to_str().unwrap(),
+            "--route",
+            "cpu0.cache.checkpoint",
+            "--memory-start",
+            "0x1000",
+            "--memory-size",
+            "0x1000",
+            "--max-tick",
+            "64",
+            "--tick-frequency",
+            "1000",
+            "--line-bytes",
+            "64",
+            "--agent",
+            "7",
+            "--control-partition",
+            "2",
+            "--data-cache-protocol",
+            "msi",
+            "--host-checkpoint",
+            "1:cache-cp",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("host checkpoint"), "stderr: {stderr}");
+    assert!(stderr.contains("data cache"), "stderr: {stderr}");
+}
+
+fn assert_nonzero_json_u64(json: &Value, path: &str) {
+    let value = json
+        .pointer(path)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing nonzero JSON value {path}: {json}"));
+    assert!(value > 0, "expected {path} to be nonzero in {json}");
 }
 
 #[test]

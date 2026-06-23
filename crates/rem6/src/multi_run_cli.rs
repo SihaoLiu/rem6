@@ -499,8 +499,9 @@ impl Rem6MultiRunSummary {
             final_tick: artifact.execution.final_tick,
             committed_instructions: 0,
             scheduled_requests: artifact.execution.summary.scheduled_count() as u64,
-            checkpoint_count: 0,
-            checkpoint_restored_count: 0,
+            checkpoint_count: artifact.execution.host_actions.checkpoint_count() as u64,
+            checkpoint_restored_count: artifact.execution.host_actions.checkpoint_restore_count()
+                as u64,
             artifact: artifact.config.output().map(Path::to_path_buf),
             stats_artifact: artifact.config.stats_output().map(Path::to_path_buf),
             extra_artifacts: artifact

@@ -110,6 +110,8 @@ pub(super) fn trace_replay_file_config_from_args(
             "--external-adapter-kind",
             "--external-adapter-endpoint",
             "--external-adapter-checkpoint-after-events",
+            "--host-checkpoint",
+            "--host-restore-checkpoint",
             "--stats-format",
             "--output",
             "--stats-output",

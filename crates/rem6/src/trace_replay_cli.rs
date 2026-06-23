@@ -13,12 +13,13 @@ use rem6_proto::{
 use rem6_system::RiscvWorkloadReplay;
 use rem6_traffic::{TrafficTrace, TrafficTraceConfig, TrafficTraceEvent, TrafficTraceGenerator};
 use rem6_workload::{
-    WorkloadAcquiredResource, WorkloadAcquiredSuiteResource, WorkloadDataCacheProtocol,
-    WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
-    WorkloadParallelExecutionSummary, WorkloadReplayPlan, WorkloadResolvedResources,
-    WorkloadResource, WorkloadResourceId, WorkloadResourceKind, WorkloadResourcePayload,
-    WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteId, WorkloadTopology,
-    WorkloadTrafficTraceReplayRun,
+    HostEventIntent, WorkloadAcquiredResource, WorkloadAcquiredSuiteResource,
+    WorkloadCheckpointManifestSummary, WorkloadDataCacheProtocol, WorkloadHostActionSummary,
+    WorkloadHostEvent, WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute,
+    WorkloadMemoryTarget, WorkloadParallelExecutionSummary, WorkloadReplayPlan,
+    WorkloadResolvedResources, WorkloadResource, WorkloadResourceId, WorkloadResourceKind,
+    WorkloadResourcePayload, WorkloadRiscvDataCache, WorkloadRouteFabric, WorkloadRouteId,
+    WorkloadTopology, WorkloadTrafficTraceReplayRun,
 };
 use sha2::{Digest, Sha256};
 
@@ -67,6 +68,13 @@ pub struct Rem6TraceReplayExecutionSummary {
     pub(crate) data_cache: CliDataCacheSummary,
     pub(crate) data_cache_dram_summary: WorkloadParallelExecutionSummary,
     pub(crate) data_cache_dram_accesses: usize,
+    pub(crate) host_actions: WorkloadHostActionSummary,
+    pub(crate) checkpoint_component_count: usize,
+    pub(crate) checkpoint_chunk_count: usize,
+    pub(crate) checkpoint_payload_bytes: usize,
+    pub(crate) checkpoint_restored_component_count: usize,
+    pub(crate) checkpoint_restored_chunk_count: usize,
+    pub(crate) checkpoint_restored_payload_bytes: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -206,6 +214,10 @@ pub fn run_trace_replay_config(
     let data_cache_runs = run.data_cache_runs();
     let data_cache = CliDataCacheSummary::from_records(&run.data_cache_run_records());
     let data_cache_dram_summary = data_cache_dram_summary(data_cache_runs);
+    let checkpoint_totals =
+        checkpoint_manifest_totals(outcome.result().checkpoint_manifest_summaries());
+    let restored_checkpoint_totals =
+        checkpoint_manifest_totals(outcome.result().restored_checkpoint_manifest_summaries());
     let execution = Rem6TraceReplayExecutionSummary {
         final_tick,
         summary,
@@ -216,6 +228,17 @@ pub fn run_trace_replay_config(
             .map(|run| run.dram_access_count())
             .sum(),
         data_cache_dram_summary,
+        host_actions: outcome
+            .result()
+            .host_action_summary()
+            .cloned()
+            .unwrap_or_default(),
+        checkpoint_component_count: checkpoint_totals.component_count,
+        checkpoint_chunk_count: checkpoint_totals.chunk_count,
+        checkpoint_payload_bytes: checkpoint_totals.payload_bytes,
+        checkpoint_restored_component_count: restored_checkpoint_totals.component_count,
+        checkpoint_restored_chunk_count: restored_checkpoint_totals.chunk_count,
+        checkpoint_restored_payload_bytes: restored_checkpoint_totals.payload_bytes,
     };
     let external_adapter = trace_replay_external_adapter_summary(&config, &trace)?;
     let stats = trace_replay_stats_output(Rem6TraceReplayStatsInputs {
@@ -244,6 +267,32 @@ pub fn run_trace_replay_config(
         stats_text: stats.text,
         power_analysis,
     })
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TraceReplayCheckpointTotals {
+    component_count: usize,
+    chunk_count: usize,
+    payload_bytes: usize,
+}
+
+fn checkpoint_manifest_totals(
+    summaries: &[WorkloadCheckpointManifestSummary],
+) -> TraceReplayCheckpointTotals {
+    TraceReplayCheckpointTotals {
+        component_count: summaries
+            .iter()
+            .map(WorkloadCheckpointManifestSummary::component_count)
+            .sum(),
+        chunk_count: summaries
+            .iter()
+            .map(WorkloadCheckpointManifestSummary::chunk_count)
+            .sum(),
+        payload_bytes: summaries
+            .iter()
+            .map(WorkloadCheckpointManifestSummary::payload_bytes)
+            .sum(),
+    }
 }
 
 fn trace_replay_external_adapter_summary(
@@ -491,6 +540,15 @@ fn trace_replay_manifest(
     trace_digest: &str,
     duration: u64,
 ) -> Result<WorkloadManifest, Rem6CliError> {
+    if config.data_cache_protocol().is_some()
+        && (!config.host_checkpoints().is_empty() || !config.host_checkpoint_restores().is_empty())
+    {
+        return Err(Rem6CliError::Execute {
+            error: "trace-replay host checkpoint events currently require direct memory; data cache checkpoint capture is not wired"
+                .to_string(),
+        });
+    }
+
     let memory_range = AddressRange::new(
         Address::new(config.memory_start()),
         AccessSize::new(config.memory_size()).map_err(execute_error)?,
@@ -531,7 +589,7 @@ fn trace_replay_manifest(
         trace_replay = trace_replay.with_data_cache();
     }
 
-    WorkloadManifest::builder(
+    let mut builder = WorkloadManifest::builder(
         WorkloadId::new("cli-trace-replay").map_err(execute_error)?,
         trace_replay_boot_image(config, trace)?,
     )
@@ -548,9 +606,26 @@ fn trace_replay_manifest(
     .with_topology(topology)
     .with_expected_stop_reason("idle")
     .add_traffic_trace_replay(trace_replay)
-    .map_err(execute_error)?
-    .build()
-    .map_err(execute_error)
+    .map_err(execute_error)?;
+
+    for checkpoint in config.host_checkpoints() {
+        builder = builder.add_host_event(WorkloadHostEvent::new(
+            checkpoint.tick(),
+            HostEventIntent::Checkpoint {
+                label: checkpoint.label().to_string(),
+            },
+        ));
+    }
+    for restore in config.host_checkpoint_restores() {
+        builder = builder.add_host_event(WorkloadHostEvent::new(
+            restore.tick(),
+            HostEventIntent::RestoreCheckpoint {
+                label: restore.label().to_string(),
+            },
+        ));
+    }
+
+    builder.build().map_err(execute_error)
 }
 
 fn trace_replay_memory_target(
@@ -784,6 +859,34 @@ impl Rem6TraceReplayExecutionSummary {
 
     pub(crate) const fn data_cache_dram_accesses(&self) -> usize {
         self.data_cache_dram_accesses
+    }
+
+    pub(crate) const fn host_actions(&self) -> &WorkloadHostActionSummary {
+        &self.host_actions
+    }
+
+    pub(crate) const fn checkpoint_component_count(&self) -> usize {
+        self.checkpoint_component_count
+    }
+
+    pub(crate) const fn checkpoint_chunk_count(&self) -> usize {
+        self.checkpoint_chunk_count
+    }
+
+    pub(crate) const fn checkpoint_payload_bytes(&self) -> usize {
+        self.checkpoint_payload_bytes
+    }
+
+    pub(crate) const fn checkpoint_restored_component_count(&self) -> usize {
+        self.checkpoint_restored_component_count
+    }
+
+    pub(crate) const fn checkpoint_restored_chunk_count(&self) -> usize {
+        self.checkpoint_restored_chunk_count
+    }
+
+    pub(crate) const fn checkpoint_restored_payload_bytes(&self) -> usize {
+        self.checkpoint_restored_payload_bytes
     }
 }
 

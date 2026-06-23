@@ -7,6 +7,7 @@ use super::{
     parse::{parse_number, parse_positive_u64, required_value},
     parse_data_cache_protocol, trace_replay_file_config_from_args, CliDramMemoryProfile,
     PowerAnalysisFormat, Rem6TraceReplayConfig, StatsFormat, SuiteResourceSelector,
+    TraceReplayHostEventSpec,
 };
 use crate::Rem6CliError;
 
@@ -165,6 +166,10 @@ impl Rem6TraceReplayConfig {
             .external_adapter_checkpoint_after_events
             .map(trace_replay_external_adapter_checkpoint_after_events_from_file)
             .transpose()?;
+        let mut host_checkpoints =
+            trace_replay_host_events_from_file(file_config.host_checkpoints.as_deref())?;
+        let mut host_checkpoint_restores =
+            trace_replay_host_events_from_file(file_config.host_checkpoint_restores.as_deref())?;
         let mut stats_format = file_config
             .stats_format
             .as_deref()
@@ -314,6 +319,14 @@ impl Rem6TraceReplayConfig {
                         parse_trace_replay_external_adapter_checkpoint_after_events(&value)?,
                     );
                 }
+                "--host-checkpoint" => {
+                    let value = required_value(&flag, args.next())?;
+                    host_checkpoints.push(parse_trace_replay_host_event(&value)?);
+                }
+                "--host-restore-checkpoint" => {
+                    let value = required_value(&flag, args.next())?;
+                    host_checkpoint_restores.push(parse_trace_replay_host_event(&value)?);
+                }
                 "--stats-format" => {
                     stats_format = StatsFormat::parse(&required_value(&flag, args.next())?)?;
                 }
@@ -431,6 +444,8 @@ impl Rem6TraceReplayConfig {
             external_adapter_kind,
             external_adapter_endpoint,
             external_adapter_checkpoint_after_events,
+            host_checkpoints,
+            host_checkpoint_restores,
             stats_format,
             output,
             stats_output,
@@ -538,6 +553,14 @@ impl Rem6TraceReplayConfig {
         self.external_adapter_checkpoint_after_events
     }
 
+    pub fn host_checkpoints(&self) -> &[TraceReplayHostEventSpec] {
+        &self.host_checkpoints
+    }
+
+    pub fn host_checkpoint_restores(&self) -> &[TraceReplayHostEventSpec] {
+        &self.host_checkpoint_restores
+    }
+
     pub const fn stats_format(&self) -> StatsFormat {
         self.stats_format
     }
@@ -606,6 +629,35 @@ fn trace_replay_external_adapter_checkpoint_after_events_from_file(
                 value: value.to_string(),
             },
         )
+}
+
+fn trace_replay_host_events_from_file(
+    values: Option<&[String]>,
+) -> Result<Vec<TraceReplayHostEventSpec>, Rem6CliError> {
+    values
+        .unwrap_or_default()
+        .iter()
+        .map(|value| parse_trace_replay_host_event(value))
+        .collect()
+}
+
+fn parse_trace_replay_host_event(value: &str) -> Result<TraceReplayHostEventSpec, Rem6CliError> {
+    let Some((tick, label)) = value.split_once(':') else {
+        return Err(Rem6CliError::InvalidTraceReplayHostEvent {
+            value: value.to_string(),
+        });
+    };
+    let tick = tick
+        .parse::<u64>()
+        .map_err(|_| Rem6CliError::InvalidTraceReplayHostEvent {
+            value: value.to_string(),
+        })?;
+    if label.is_empty() {
+        return Err(Rem6CliError::InvalidTraceReplayHostEvent {
+            value: value.to_string(),
+        });
+    }
+    Ok(TraceReplayHostEventSpec::new(tick, label))
 }
 
 #[cfg(test)]
@@ -692,6 +744,37 @@ mod tests {
             Rem6CliError::MissingRequiredFlag {
                 flag: "--external-adapter-kind"
             }
+        ));
+    }
+
+    #[test]
+    fn trace_replay_host_checkpoint_events_parse_from_cli() {
+        let mut args = minimal_trace_replay_args().to_vec();
+        args.extend([
+            "--host-checkpoint",
+            "1:trace-cp",
+            "--host-restore-checkpoint",
+            "2:trace-cp",
+        ]);
+
+        let config = Rem6TraceReplayConfig::parse_args(args).unwrap();
+
+        assert_eq!(config.host_checkpoints()[0].tick(), 1);
+        assert_eq!(config.host_checkpoints()[0].label(), "trace-cp");
+        assert_eq!(config.host_checkpoint_restores()[0].tick(), 2);
+        assert_eq!(config.host_checkpoint_restores()[0].label(), "trace-cp");
+    }
+
+    #[test]
+    fn trace_replay_host_checkpoint_event_rejects_missing_label() {
+        let mut args = minimal_trace_replay_args().to_vec();
+        args.extend(["--host-checkpoint", "1:"]);
+
+        let error = Rem6TraceReplayConfig::parse_args(args).unwrap_err();
+
+        assert!(matches!(
+            error,
+            Rem6CliError::InvalidTraceReplayHostEvent { value } if value == "1:"
         ));
     }
 }
