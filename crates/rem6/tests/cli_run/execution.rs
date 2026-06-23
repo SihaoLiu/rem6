@@ -1914,6 +1914,9 @@ fn rem6_run_cache_dram_path_emits_unified_resource_activity_stats() {
     let active = json_u64(resources, "/active");
     let cache_activity = json_u64(resources, "/cache/activity");
     let active_caches = json_u64(resources, "/cache/active");
+    let cache_cpu_responses = json_u64(resources, "/cache/cpu_responses");
+    let cache_directory_decisions = json_u64(resources, "/cache/directory_decisions");
+    let cache_dram_accesses = json_u64(resources, "/cache/dram_accesses");
     let cache_bank_accepted = json_u64(resources, "/cache/bank_accepted");
     let cache_bank_immediate_hits = json_u64(resources, "/cache/bank_immediate_hits");
     let cache_bank_scheduled_misses = json_u64(resources, "/cache/bank_scheduled_misses");
@@ -1957,8 +1960,26 @@ fn rem6_run_cache_dram_path_emits_unified_resource_activity_stats() {
         .max(json_u64(&json, "/dram/low_power/exits"));
     assert_eq!(dram_activity, dram_operation_activity);
     assert!(cache_activity > 0);
+    assert!(cache_cpu_responses > 0);
+    assert!(cache_directory_decisions > 0);
+    assert!(cache_dram_accesses > 0);
     assert!(cache_bank_accepted > 0);
     assert!(cache_bank_scheduled_misses > 0);
+    assert_eq!(
+        cache_cpu_responses,
+        json_u64(&json, "/simulation/instruction_cache_cpu_responses")
+            + json_u64(&json, "/simulation/data_cache_cpu_responses")
+    );
+    assert_eq!(
+        cache_directory_decisions,
+        json_u64(&json, "/simulation/instruction_cache_directory_decisions")
+            + json_u64(&json, "/simulation/data_cache_directory_decisions")
+    );
+    assert_eq!(
+        cache_dram_accesses,
+        json_u64(&json, "/simulation/instruction_cache_dram_accesses")
+            + json_u64(&json, "/simulation/data_cache_dram_accesses")
+    );
     assert_eq!(
         cache_bank_accepted,
         json_u64(&json, "/simulation/instruction_cache_bank_accepted")
@@ -1990,6 +2011,21 @@ fn rem6_run_cache_dram_path_emits_unified_resource_activity_stats() {
         cache_activity,
     );
     assert_resource_stat_matches_json(&stdout, "sim.memory.resources.cache.active", active_caches);
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.cache.cpu_responses",
+        cache_cpu_responses,
+    );
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.cache.directory_decisions",
+        cache_directory_decisions,
+    );
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.cache.dram_accesses",
+        cache_dram_accesses,
+    );
     assert_resource_stat_matches_json(
         &stdout,
         "sim.memory.resources.cache.bank.accepted",

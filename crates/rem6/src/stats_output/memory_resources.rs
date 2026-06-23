@@ -24,6 +24,18 @@ pub(super) fn emit_memory_resource_stats(
             execution.memory_resources.active_caches,
         ),
         (
+            "sim.memory.resources.cache.cpu_responses",
+            execution.memory_resources.cache_cpu_responses,
+        ),
+        (
+            "sim.memory.resources.cache.directory_decisions",
+            execution.memory_resources.cache_directory_decisions,
+        ),
+        (
+            "sim.memory.resources.cache.dram_accesses",
+            execution.memory_resources.cache_dram_accesses,
+        ),
+        (
             "sim.memory.resources.cache.bank.accepted",
             execution.memory_resources.cache_bank_accepted,
         ),

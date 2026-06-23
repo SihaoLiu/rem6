@@ -9,6 +9,9 @@ pub(crate) struct Rem6MemoryResourceSummary {
     pub(crate) active: u64,
     pub(crate) cache_activity: u64,
     pub(crate) active_caches: u64,
+    pub(crate) cache_cpu_responses: u64,
+    pub(crate) cache_directory_decisions: u64,
+    pub(crate) cache_dram_accesses: u64,
     pub(crate) cache_bank_accepted: u64,
     pub(crate) cache_bank_immediate_hits: u64,
     pub(crate) cache_bank_scheduled_misses: u64,
@@ -48,6 +51,15 @@ impl Rem6MemoryResourceSummary {
             .cache_summaries()
             .filter(|cache| cache.runs != 0)
             .count() as u64;
+        let cache_cpu_responses = inputs
+            .cache_summaries()
+            .fold(0_u64, |sum, cache| sum.saturating_add(cache.cpu_responses));
+        let cache_directory_decisions = inputs.cache_summaries().fold(0_u64, |sum, cache| {
+            sum.saturating_add(cache.directory_decisions)
+        });
+        let cache_dram_accesses = inputs
+            .cache_summaries()
+            .fold(0_u64, |sum, cache| sum.saturating_add(cache.dram_accesses));
         let cache_bank_accepted = inputs
             .cache_summaries()
             .fold(0_u64, |sum, cache| sum.saturating_add(cache.bank_accepted));
@@ -100,6 +112,9 @@ impl Rem6MemoryResourceSummary {
                 .saturating_add(active_dram_resources),
             cache_activity,
             active_caches,
+            cache_cpu_responses,
+            cache_directory_decisions,
+            cache_dram_accesses,
             cache_bank_accepted,
             cache_bank_immediate_hits,
             cache_bank_scheduled_misses,

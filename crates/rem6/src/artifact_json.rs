@@ -1151,11 +1151,14 @@ impl Rem6ExecutionSummary {
 impl Rem6MemoryResourceSummary {
     fn to_json(&self) -> String {
         format!(
-            "{{\"activity\":{},\"active\":{},\"cache\":{{\"activity\":{},\"active\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{}}},\"transport\":{{\"activity\":{},\"active\":{}}},\"fabric\":{{\"activity\":{},\"active\":{}}},\"dram\":{{\"activity\":{},\"active\":{}}}}}",
+            "{{\"activity\":{},\"active\":{},\"cache\":{{\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{}}},\"transport\":{{\"activity\":{},\"active\":{}}},\"fabric\":{{\"activity\":{},\"active\":{}}},\"dram\":{{\"activity\":{},\"active\":{}}}}}",
             self.activity,
             self.active,
             self.cache_activity,
             self.active_caches,
+            self.cache_cpu_responses,
+            self.cache_directory_decisions,
+            self.cache_dram_accesses,
             self.cache_bank_accepted,
             self.cache_bank_immediate_hits,
             self.cache_bank_scheduled_misses,

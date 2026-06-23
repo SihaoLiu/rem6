@@ -1320,6 +1320,28 @@ fn rem6_run_memory_system_preset_routes_cpu_through_cache_fabric_and_dram() {
     assert!(json_u64(&json, "/simulation/instruction_cache_l3_runs") > 0);
     assert!(json_u64(&json, "/simulation/data_cache_l2_runs") > 0);
     assert!(json_u64(&json, "/simulation/data_cache_l3_runs") > 0);
+    let cache_dram_accesses = json_u64(&json, "/memory_resources/cache/dram_accesses");
+    let hierarchy_cache_dram_accesses =
+        json_u64(&json, "/simulation/instruction_cache_dram_accesses")
+            + json_u64(&json, "/simulation/instruction_cache_l2_dram_accesses")
+            + json_u64(&json, "/simulation/instruction_cache_l3_dram_accesses")
+            + json_u64(&json, "/simulation/data_cache_dram_accesses")
+            + json_u64(&json, "/simulation/data_cache_l2_dram_accesses")
+            + json_u64(&json, "/simulation/data_cache_l3_dram_accesses");
+    let lower_level_cache_dram_accesses =
+        json_u64(&json, "/simulation/instruction_cache_l2_dram_accesses")
+            + json_u64(&json, "/simulation/instruction_cache_l3_dram_accesses")
+            + json_u64(&json, "/simulation/data_cache_l2_dram_accesses")
+            + json_u64(&json, "/simulation/data_cache_l3_dram_accesses");
+    assert_eq!(cache_dram_accesses, hierarchy_cache_dram_accesses);
+    assert!(lower_level_cache_dram_accesses > 0);
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.dram_accesses",
+        "Count",
+        cache_dram_accesses,
+        "monotonic",
+    );
     assert_stat_greater_than(
         &stdout,
         "sim.memory.fabric.transfers",
