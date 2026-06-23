@@ -12,6 +12,7 @@ use rem6_transport::{
 };
 
 const FLOAT_FLAG_INEXACT: u64 = 1 << 0;
+const FLOAT_FLAG_OVERFLOW: u64 = 1 << 2;
 
 fn endpoint(name: &str) -> TransportEndpointId {
     TransportEndpointId::new(name).unwrap()
@@ -239,4 +240,30 @@ fn riscv_core_driver_executes_fmul_d_round_up_from_fetch_stream() {
     );
     assert_eq!(core.read_float_register(freg(3)), 0x3ff0_0000_0000_0003);
     assert_eq!(core.float_status().fflags(), FLOAT_FLAG_INEXACT);
+}
+
+#[test]
+fn riscv_core_driver_executes_fmul_d_overflow_round_up_from_fetch_stream() {
+    let (mut scheduler, transport, route) = fetch_route();
+    let core = core(route, 0x8000);
+    core.write_float_register(freg(1), 0x3ff0_0000_0262_5a00);
+    core.write_float_register(freg(2), 0x7fef_ffff_fb3b_4c00);
+    let store = loaded_program(0x8000, &[fmul_d_round_up(2, 1, 3)]);
+
+    let instruction = drive_until_execution(&core, store, &mut scheduler, &transport);
+
+    assert_eq!(
+        instruction,
+        RiscvInstruction::FloatMulD {
+            rd: freg(3),
+            rs1: freg(1),
+            rs2: freg(2),
+            rounding_mode: RiscvFloatRoundingMode::RoundUp,
+        }
+    );
+    assert_eq!(core.read_float_register(freg(3)), f64::INFINITY.to_bits());
+    assert_eq!(
+        core.float_status().fflags(),
+        FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
+    );
 }

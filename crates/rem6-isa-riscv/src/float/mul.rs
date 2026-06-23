@@ -34,7 +34,7 @@ pub(super) fn register_write_double(
     rounding_mode: RiscvFloatRoundingMode,
 ) -> u64 {
     double_exact::rounded_mul_bits(lhs, rhs, rounding_mode)
-        .map(|(bits, _inexact)| bits)
+        .map(|rounded| rounded.bits())
         .unwrap_or_else(|| native_register_write_double(lhs, rhs))
 }
 
@@ -75,13 +75,18 @@ pub(super) fn exception_flags_double(
     if !is_finite_double(lhs) || !is_finite_double(rhs) {
         return 0;
     }
-    if native_product_overflows_double(lhs, rhs) {
-        return FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT;
+    if let Some(rounded) = double_exact::rounded_mul_bits(lhs, rhs, rounding_mode) {
+        return if rounded.overflow() {
+            FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
+        } else if rounded.inexact() {
+            FLOAT_FLAG_INEXACT
+        } else {
+            0
+        };
     }
-    if double_exact::rounded_mul_bits(lhs, rhs, rounding_mode)
-        .map(|(_bits, inexact)| inexact)
-        .unwrap_or_else(|| double_exact::mul_bits(lhs, rhs).is_none())
-    {
+    if native_product_overflows_double(lhs, rhs) {
+        FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
+    } else if double_exact::mul_bits(lhs, rhs).is_none() {
         FLOAT_FLAG_INEXACT
     } else {
         0
