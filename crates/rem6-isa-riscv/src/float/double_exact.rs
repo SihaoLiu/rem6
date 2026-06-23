@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use crate::RiscvFloatRoundingMode;
 
 use super::{DOUBLE_EXP_MASK, DOUBLE_FRACTION_MASK, DOUBLE_SIGN_BIT};
@@ -6,14 +8,16 @@ pub(super) struct RoundedDouble {
     bits: u64,
     inexact: bool,
     overflow: bool,
+    underflow: bool,
 }
 
 impl RoundedDouble {
-    const fn new(bits: u64, inexact: bool, overflow: bool) -> Self {
+    const fn new(bits: u64, inexact: bool, overflow: bool, underflow: bool) -> Self {
         Self {
             bits,
             inexact,
             overflow,
+            underflow,
         }
     }
 
@@ -27,6 +31,10 @@ impl RoundedDouble {
 
     pub(super) const fn overflow(&self) -> bool {
         self.overflow
+    }
+
+    pub(super) const fn underflow(&self) -> bool {
+        self.underflow
     }
 }
 
@@ -96,7 +104,7 @@ pub(super) fn rounded_mul_bits(
         0
     };
     if lhs_significand == 0 || rhs_significand == 0 {
-        return Some(RoundedDouble::new(result_sign, false, false));
+        return Some(RoundedDouble::new(result_sign, false, false, false));
     }
 
     let exact_significand = lhs_significand.checked_mul(rhs_significand)?;
@@ -159,6 +167,11 @@ fn round_significand_to_double(
     rounding_mode: RiscvFloatRoundingMode,
 ) -> Option<RoundedDouble> {
     let bit_width = bit_width(significand);
+    let exponent = shift.checked_add((bit_width - 1).try_into().ok()?)?;
+    if exponent < DOUBLE_MIN_NORMAL_EXPONENT {
+        return round_subnormal_significand(sign, significand, shift, rounding_mode);
+    }
+
     if bit_width < DOUBLE_SIGNIFICAND_BITS {
         return None;
     }
@@ -170,7 +183,7 @@ fn round_significand_to_double(
     } else {
         significand & ((1_u128 << discarded_bits) - 1)
     };
-    let mut exponent = shift.checked_add((bit_width - 1).try_into().ok()?)?;
+    let mut exponent = exponent;
 
     if should_increment(
         sign != 0,
@@ -191,6 +204,7 @@ fn round_significand_to_double(
             overflow_bits(sign, rounding_mode),
             true,
             true,
+            false,
         ));
     }
     if retained < (1_u128 << DOUBLE_FRACTION_BITS) || exponent < DOUBLE_MIN_NORMAL_EXPONENT {
@@ -203,6 +217,58 @@ fn round_significand_to_double(
         sign | (exponent_bits << DOUBLE_FRACTION_BITS) | fraction,
         remainder != 0,
         false,
+        false,
+    ))
+}
+
+fn round_subnormal_significand(
+    sign: u64,
+    significand: u128,
+    shift: i32,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> Option<RoundedDouble> {
+    let scale = shift.checked_add(DOUBLE_SUBNORMAL_EXPONENT)?;
+    let (mut fraction, remainder, discarded_bits) = if scale >= 0 {
+        (significand.checked_shl(scale.try_into().ok()?)?, 0, 0)
+    } else {
+        let discarded_bits: u32 = scale.checked_neg()?.try_into().ok()?;
+        if discarded_bits >= u128::BITS {
+            (0, significand, discarded_bits)
+        } else {
+            (
+                significand >> discarded_bits,
+                significand & ((1_u128 << discarded_bits) - 1),
+                discarded_bits,
+            )
+        }
+    };
+
+    if should_increment(
+        sign != 0,
+        fraction,
+        remainder,
+        discarded_bits,
+        rounding_mode,
+    ) {
+        fraction = fraction.checked_add(1)?;
+    }
+
+    let min_normal = 1_u128 << DOUBLE_FRACTION_BITS;
+    if fraction > min_normal {
+        return None;
+    }
+
+    let inexact = remainder != 0;
+    let bits = if fraction == min_normal {
+        sign | (1_u64 << DOUBLE_FRACTION_BITS)
+    } else {
+        sign | u64::try_from(fraction).ok()?
+    };
+    Some(RoundedDouble::new(
+        bits,
+        inexact,
+        false,
+        inexact && fraction < min_normal,
     ))
 }
 
@@ -228,24 +294,32 @@ fn should_increment(
     discarded_bits: u32,
     rounding_mode: RiscvFloatRoundingMode,
 ) -> bool {
-    if remainder == 0 {
+    if remainder == 0 || discarded_bits == 0 {
         return false;
     }
 
     match rounding_mode {
         RiscvFloatRoundingMode::RoundNearestEven => {
-            let half = 1_u128 << (discarded_bits - 1);
-            remainder > half || (remainder == half && retained & 1 == 1)
+            let half_ordering = compare_remainder_to_half(remainder, discarded_bits);
+            half_ordering == Ordering::Greater
+                || (half_ordering == Ordering::Equal && retained & 1 == 1)
         }
         RiscvFloatRoundingMode::RoundTowardZero => false,
         RiscvFloatRoundingMode::RoundDown => negative,
         RiscvFloatRoundingMode::RoundUp => !negative,
         RiscvFloatRoundingMode::RoundNearestMaxMagnitude => {
-            let half = 1_u128 << (discarded_bits - 1);
-            remainder >= half
+            compare_remainder_to_half(remainder, discarded_bits) != Ordering::Less
         }
         RiscvFloatRoundingMode::Dynamic => unreachable!("dynamic rounding mode must be resolved"),
     }
+}
+
+fn compare_remainder_to_half(remainder: u128, discarded_bits: u32) -> Ordering {
+    if discarded_bits > u128::BITS {
+        return Ordering::Less;
+    }
+    let half = 1_u128 << (discarded_bits - 1);
+    remainder.cmp(&half)
 }
 
 fn bit_width(value: u128) -> u32 {
@@ -317,6 +391,7 @@ fn significand_shift(value: u64) -> Option<(bool, u128, i32)> {
 const DOUBLE_FRACTION_BITS: u32 = 52;
 const DOUBLE_SIGNIFICAND_BITS: u32 = 53;
 const DOUBLE_EXPONENT_BIAS: i32 = 1023;
+const DOUBLE_SUBNORMAL_EXPONENT: i32 = 1074;
 const DOUBLE_MIN_NORMAL_EXPONENT: i32 = -1022;
 const DOUBLE_MAX_NORMAL_EXPONENT: i32 = 1023;
 const DOUBLE_MAX_FINITE_MAGNITUDE: u64 = DOUBLE_EXP_MASK - 1;

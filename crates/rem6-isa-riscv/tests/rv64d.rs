@@ -73,6 +73,7 @@ const FFLAGS_CSR: u16 = 0x001;
 const FLOAT_FLAG_INVALID: u64 = 1 << 4;
 const FLOAT_FLAG_DIVIDE_BY_ZERO: u64 = 1 << 3;
 const FLOAT_FLAG_OVERFLOW: u64 = 1 << 2;
+const FLOAT_FLAG_UNDERFLOW: u64 = 1 << 1;
 const FLOAT_FLAG_INEXACT: u64 = 1 << 0;
 
 #[test]
@@ -915,6 +916,93 @@ fn hart_executes_rv64d_fmul_directed_rounding_on_overflow_boundary() {
         hart.float_status().fflags(),
         FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
     );
+}
+
+#[test]
+fn hart_executes_rv64d_fmul_directed_rounding_on_underflow_boundary() {
+    for (lhs, rounding_mode, expected_bits) in [
+        (
+            f64::MIN_POSITIVE.to_bits(),
+            RiscvFloatRoundingMode::RoundTowardZero,
+            0x0008_0000_0000_0000,
+        ),
+        (
+            f64::MIN_POSITIVE.to_bits(),
+            RiscvFloatRoundingMode::RoundUp,
+            0x0008_0000_0000_0001,
+        ),
+        (
+            (-f64::MIN_POSITIVE).to_bits(),
+            RiscvFloatRoundingMode::RoundUp,
+            0x8008_0000_0000_0000,
+        ),
+        (
+            (-f64::MIN_POSITIVE).to_bits(),
+            RiscvFloatRoundingMode::RoundDown,
+            0x8008_0000_0000_0001,
+        ),
+    ] {
+        let mut hart = RiscvHartState::new(0xd1e0);
+        hart.write_float(freg(1), lhs);
+        hart.write_float(freg(2), 0x3fe0_0000_0000_0001);
+
+        let multiply = hart
+            .execute(RiscvInstruction::FloatMulD {
+                rd: freg(3),
+                rs1: freg(1),
+                rs2: freg(2),
+                rounding_mode,
+            })
+            .unwrap();
+
+        assert_eq!(multiply.trap(), None);
+        assert_eq!(hart.read_float(freg(3)), expected_bits);
+        assert_eq!(
+            hart.float_status().fflags(),
+            FLOAT_FLAG_UNDERFLOW | FLOAT_FLAG_INEXACT
+        );
+    }
+}
+
+#[test]
+fn hart_executes_rv64d_fmul_subnormal_boundaries_without_underflow() {
+    for (rhs, rounding_mode, expected_bits, expected_flags) in [
+        (
+            0x3fe0_0000_0000_0000,
+            RiscvFloatRoundingMode::RoundNearestEven,
+            0x0008_0000_0000_0000,
+            0,
+        ),
+        (
+            0x3fef_ffff_ffff_ffff,
+            RiscvFloatRoundingMode::RoundNearestEven,
+            f64::MIN_POSITIVE.to_bits(),
+            FLOAT_FLAG_INEXACT,
+        ),
+        (
+            0x3fef_ffff_ffff_ffff,
+            RiscvFloatRoundingMode::RoundUp,
+            f64::MIN_POSITIVE.to_bits(),
+            FLOAT_FLAG_INEXACT,
+        ),
+    ] {
+        let mut hart = RiscvHartState::new(0xd220);
+        hart.write_float(freg(1), f64::MIN_POSITIVE.to_bits());
+        hart.write_float(freg(2), rhs);
+
+        let multiply = hart
+            .execute(RiscvInstruction::FloatMulD {
+                rd: freg(3),
+                rs1: freg(1),
+                rs2: freg(2),
+                rounding_mode,
+            })
+            .unwrap();
+
+        assert_eq!(multiply.trap(), None);
+        assert_eq!(hart.read_float(freg(3)), expected_bits);
+        assert_eq!(hart.float_status().fflags(), expected_flags);
+    }
 }
 
 #[test]

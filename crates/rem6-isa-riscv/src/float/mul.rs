@@ -78,6 +78,8 @@ pub(super) fn exception_flags_double(
     if let Some(rounded) = double_exact::rounded_mul_bits(lhs, rhs, rounding_mode) {
         return if rounded.overflow() {
             FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
+        } else if rounded.underflow() {
+            FLOAT_FLAG_UNDERFLOW | FLOAT_FLAG_INEXACT
         } else if rounded.inexact() {
             FLOAT_FLAG_INEXACT
         } else {
