@@ -1554,8 +1554,21 @@ fn rem6_run_ddr_profile_refreshes_during_riscv_dram_execution() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
     assert!(stdout.contains("\"status\":\"executed_until_trap\""));
     assert!(stdout.contains("\"technology\":\"ddr\""));
+    let refreshes = json_u64(&json, "/dram/refreshes");
+    let refresh_ticks = json_u64(&json, "/dram/refresh_ticks");
+    assert!(refreshes > 0);
+    assert!(refresh_ticks > 0);
+    assert_eq!(
+        json_u64(&json, "/memory_resources/dram/refreshes"),
+        refreshes
+    );
+    assert_eq!(
+        json_u64(&json, "/memory_resources/dram/refresh_ticks"),
+        refresh_ticks
+    );
     assert_stat_greater_than(
         &stdout,
         "sim.memory.dram.refreshes",
@@ -1585,6 +1598,20 @@ fn rem6_run_ddr_profile_refreshes_during_riscv_dram_execution() {
         "Tick",
         5,
         "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.refreshes",
+        "Count",
+        refreshes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.refresh_ticks",
+        "Tick",
+        refresh_ticks,
+        "monotonic",
     );
 }
 
@@ -1784,9 +1811,53 @@ fn rem6_run_lpddr_fetches_record_dram_low_power_residency() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
     assert!(stdout.contains("\"status\":\"stopped_at_tick_limit\""));
     assert!(stdout.contains("\"technology\":\"lpddr\""));
     assert!(stdout.contains("\"committed_instructions\":1"));
+    let precharge_powerdown_entries =
+        json_u64(&json, "/dram/low_power/precharge_powerdown/entries");
+    let precharge_powerdown_ticks = json_u64(&json, "/dram/low_power/precharge_powerdown/ticks");
+    assert!(precharge_powerdown_entries > 0);
+    assert!(precharge_powerdown_ticks > 0);
+    for (json_suffix, stat_suffix, unit) in [
+        (
+            "active_powerdown/entries",
+            "active_powerdown.entries",
+            "Count",
+        ),
+        ("active_powerdown/ticks", "active_powerdown.ticks", "Tick"),
+        (
+            "precharge_powerdown/entries",
+            "precharge_powerdown.entries",
+            "Count",
+        ),
+        (
+            "precharge_powerdown/ticks",
+            "precharge_powerdown.ticks",
+            "Tick",
+        ),
+        ("self_refresh/entries", "self_refresh.entries", "Count"),
+        ("self_refresh/ticks", "self_refresh.ticks", "Tick"),
+        ("exits", "exits", "Count"),
+        ("exit_latency_ticks", "exit_latency_ticks", "Tick"),
+    ] {
+        let dram_value = json_u64(&json, &format!("/dram/low_power/{json_suffix}"));
+        assert_eq!(
+            json_u64(
+                &json,
+                &format!("/memory_resources/dram/low_power/{json_suffix}")
+            ),
+            dram_value
+        );
+        assert_stat(
+            &stdout,
+            &format!("sim.memory.resources.dram.low_power.{stat_suffix}"),
+            unit,
+            dram_value,
+            "monotonic",
+        );
+    }
     assert_stat_greater_than(
         &stdout,
         "sim.memory.fetch.requests",

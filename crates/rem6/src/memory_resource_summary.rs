@@ -91,10 +91,20 @@ pub(crate) struct Rem6DramResourceSummary {
     pub(crate) writes: u64,
     pub(crate) row_hits: u64,
     pub(crate) row_misses: u64,
+    pub(crate) refreshes: u64,
+    pub(crate) refresh_ticks: u64,
     pub(crate) commands: u64,
     pub(crate) turnarounds: u64,
     pub(crate) total_ready_latency_ticks: u64,
     pub(crate) max_ready_latency_ticks: u64,
+    pub(crate) low_power_active_powerdown_entries: u64,
+    pub(crate) low_power_active_powerdown_ticks: u64,
+    pub(crate) low_power_precharge_powerdown_entries: u64,
+    pub(crate) low_power_precharge_powerdown_ticks: u64,
+    pub(crate) low_power_self_refresh_entries: u64,
+    pub(crate) low_power_self_refresh_ticks: u64,
+    pub(crate) low_power_exits: u64,
+    pub(crate) low_power_exit_latency_ticks: u64,
     pub(crate) targets: Vec<Rem6DramTargetSummary>,
 }
 
@@ -289,10 +299,20 @@ impl Rem6DramResourceSummary {
             writes: summary.writes,
             row_hits: summary.row_hits,
             row_misses: summary.row_misses,
+            refreshes: summary.refreshes,
+            refresh_ticks: summary.refresh_ticks,
             commands: summary.commands,
             turnarounds: summary.turnarounds,
             total_ready_latency_ticks: summary.total_ready_latency_ticks,
             max_ready_latency_ticks: summary.max_ready_latency_ticks,
+            low_power_active_powerdown_entries: summary.low_power_active_powerdown_entries,
+            low_power_active_powerdown_ticks: summary.low_power_active_powerdown_ticks,
+            low_power_precharge_powerdown_entries: summary.low_power_precharge_powerdown_entries,
+            low_power_precharge_powerdown_ticks: summary.low_power_precharge_powerdown_ticks,
+            low_power_self_refresh_entries: summary.low_power_self_refresh_entries,
+            low_power_self_refresh_ticks: summary.low_power_self_refresh_ticks,
+            low_power_exits: summary.low_power_exits,
+            low_power_exit_latency_ticks: summary.low_power_exit_latency_ticks,
             targets: summary.targets.clone(),
         }
     }
@@ -367,6 +387,8 @@ mod tests {
 
         assert_eq!(resource.activity, 7);
         assert_eq!(resource.active, 1);
+        assert_eq!(resource.refreshes, 7);
+        assert_eq!(resource.refresh_ticks, 91);
     }
 
     #[test]
@@ -383,5 +405,9 @@ mod tests {
 
         assert_eq!(resource.activity, 10);
         assert_eq!(resource.active, 1);
+        assert_eq!(resource.low_power_active_powerdown_entries, 2);
+        assert_eq!(resource.low_power_precharge_powerdown_entries, 3);
+        assert_eq!(resource.low_power_self_refresh_entries, 5);
+        assert_eq!(resource.low_power_exits, 4);
     }
 }

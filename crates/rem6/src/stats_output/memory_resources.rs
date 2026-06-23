@@ -101,6 +101,8 @@ fn emit_dram_resource_stats(
         ("writes", "Count", summary.writes),
         ("row_hits", "Count", summary.row_hits),
         ("row_misses", "Count", summary.row_misses),
+        ("refreshes", "Count", summary.refreshes),
+        ("refresh_ticks", "Tick", summary.refresh_ticks),
         ("commands", "Count", summary.commands),
         ("turnarounds", "Count", summary.turnarounds),
         (
@@ -112,6 +114,42 @@ fn emit_dram_resource_stats(
             "max_ready_latency_ticks",
             "Tick",
             summary.max_ready_latency_ticks,
+        ),
+        (
+            "low_power.active_powerdown.entries",
+            "Count",
+            summary.low_power_active_powerdown_entries,
+        ),
+        (
+            "low_power.active_powerdown.ticks",
+            "Tick",
+            summary.low_power_active_powerdown_ticks,
+        ),
+        (
+            "low_power.precharge_powerdown.entries",
+            "Count",
+            summary.low_power_precharge_powerdown_entries,
+        ),
+        (
+            "low_power.precharge_powerdown.ticks",
+            "Tick",
+            summary.low_power_precharge_powerdown_ticks,
+        ),
+        (
+            "low_power.self_refresh.entries",
+            "Count",
+            summary.low_power_self_refresh_entries,
+        ),
+        (
+            "low_power.self_refresh.ticks",
+            "Tick",
+            summary.low_power_self_refresh_ticks,
+        ),
+        ("low_power.exits", "Count", summary.low_power_exits),
+        (
+            "low_power.exit_latency_ticks",
+            "Tick",
+            summary.low_power_exit_latency_ticks,
         ),
     ] {
         increment_stat(
