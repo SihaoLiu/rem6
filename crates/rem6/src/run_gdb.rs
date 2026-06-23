@@ -9,7 +9,7 @@ use rem6_cpu::{
 use rem6_debug::{
     parse_gdb_remote_frame, GdbRemoteCommand, GdbRemoteControlState, GdbRemoteError,
     GdbRemoteFrame, GdbRemotePacket, GdbRemoteResumeKind, GdbRemoteResumeRequest, GdbRemoteSession,
-    GdbRemoteThreadId, GdbRemoteTrapKind,
+    GdbRemoteStopReply, GdbRemoteThreadId, GdbRemoteTrapKind, GdbRemoteTrapPoint,
 };
 use rem6_isa_riscv::RiscvGdbXlen;
 use rem6_kernel::PartitionedScheduler;
@@ -241,7 +241,7 @@ where
         match control {
             RiscvGdbRunControl::None => {}
             RiscvGdbRunControl::SingleStep => {
-                session.set_stop_reply(rem6_debug::GdbRemoteStopReply::signal(0x05));
+                session.set_stop_reply(GdbRemoteStopReply::signal(0x05));
                 let step = if instruction_budget
                     .is_some_and(|budget| outcome.gdb_retired_instruction_count() >= budget)
                     || cluster_hits_active_gdb_hardware_breakpoint(&session, cluster)
@@ -249,15 +249,25 @@ where
                     RiscvGdbSingleStepOutcome::NoInstructionRetired
                 } else if has_active_gdb_runtime_stops(&session) {
                     data_access_cursor.sync_to_cluster(cluster);
+                    let mut watchpoint_stop = None;
                     let mut debug_stop = |cluster: &RiscvCluster, _turn: &RiscvClusterTurn| {
-                        cluster_hits_active_gdb_hardware_breakpoint(&session, cluster)
-                            || cluster_hits_active_gdb_data_watchpoint(
-                                &session,
-                                &mut data_access_cursor,
-                                cluster,
-                            )
+                        if cluster_hits_active_gdb_hardware_breakpoint(&session, cluster) {
+                            return true;
+                        }
+                        if let Some(point) = cluster_hits_active_gdb_data_watchpoint(
+                            &session,
+                            &mut data_access_cursor,
+                            cluster,
+                        ) {
+                            watchpoint_stop = Some(data_watchpoint_stop_reply(point));
+                            return true;
+                        }
+                        false
                     };
                     let (run, _stopped_at_watchpoint) = drive(Some(1), Some(&mut debug_stop))?;
+                    if let Some(stop) = watchpoint_stop {
+                        session.set_stop_reply(stop);
+                    }
                     let retired_by_cpu = riscv_run_retired_instructions_by_cpu(&run);
                     let retired = retired_by_cpu.values().sum::<u64>();
                     if retired == 1 {
@@ -275,17 +285,13 @@ where
                         RiscvGdbSingleStepOutcome::NoInstructionRetired
                     }
                 };
-                let frames = session
-                    .async_response_with_payload(b"S05".to_vec())
-                    .map_err(|error| {
-                        execute_error(format!("failed to build GDB step response: {error}"))
-                    })?;
-                write_gdb_frames(&mut stream, &frames)?;
+                write_gdb_stop_reply(&mut session, &mut stream, "step")?;
                 if let RiscvGdbSingleStepOutcome::InstructionRetired { retired_by_cpu } = step {
                     outcome.record_retired_by_cpu(retired_by_cpu);
                 }
             }
             RiscvGdbRunControl::Continue => {
+                session.set_stop_reply(GdbRemoteStopReply::signal(0x05));
                 let remaining_instructions = instruction_budget
                     .map(|budget| budget.saturating_sub(outcome.gdb_retired_instruction_count()));
                 let continue_outcome =
@@ -295,17 +301,27 @@ where
                         }
                     } else if has_active_gdb_runtime_stops(&session) {
                         data_access_cursor.sync_to_cluster(cluster);
+                        let mut watchpoint_stop = None;
                         let mut debug_stop = |cluster: &RiscvCluster, _turn: &RiscvClusterTurn| {
-                            cluster_hits_active_gdb_hardware_breakpoint(&session, cluster)
-                                || cluster_hits_active_gdb_data_watchpoint(
-                                    &session,
-                                    &mut data_access_cursor,
-                                    cluster,
-                                )
+                            if cluster_hits_active_gdb_hardware_breakpoint(&session, cluster) {
+                                return true;
+                            }
+                            if let Some(point) = cluster_hits_active_gdb_data_watchpoint(
+                                &session,
+                                &mut data_access_cursor,
+                                cluster,
+                            ) {
+                                watchpoint_stop = Some(data_watchpoint_stop_reply(point));
+                                return true;
+                            }
+                            false
                         };
                         let (run, stopped_at_watchpoint) =
                             drive(remaining_instructions, Some(&mut debug_stop))?;
                         if stopped_at_watchpoint {
+                            if let Some(stop) = watchpoint_stop {
+                                session.set_stop_reply(stop);
+                            }
                             RiscvGdbContinueOutcome::StoppedAtTrap {
                                 retired_by_cpu: riscv_run_retired_instructions_by_cpu(&run),
                             }
@@ -317,13 +333,7 @@ where
                             run: Box::new(drive(remaining_instructions, None)?.0),
                         }
                     };
-                session.set_stop_reply(rem6_debug::GdbRemoteStopReply::signal(0x05));
-                let frames = session
-                    .async_response_with_payload(b"S05".to_vec())
-                    .map_err(|error| {
-                        execute_error(format!("failed to build GDB continue response: {error}"))
-                    })?;
-                write_gdb_frames(&mut stream, &frames)?;
+                write_gdb_stop_reply(&mut session, &mut stream, "continue")?;
                 match continue_outcome {
                     RiscvGdbContinueOutcome::StoppedAtTrap { retired_by_cpu } => {
                         outcome.record_retired_by_cpu(retired_by_cpu);
@@ -668,22 +678,22 @@ fn cluster_hits_active_gdb_data_watchpoint(
     session: &GdbRemoteSession,
     data_access_cursor: &mut RiscvGdbDataAccessCursor,
     cluster: &RiscvCluster,
-) -> bool {
+) -> Option<GdbRemoteTrapPoint> {
     let active_traps = session.active_traps();
     let data_events = data_access_cursor.take_new_events(cluster);
     data_events
         .iter()
-        .any(|(_, event)| data_event_hits_active_data_watchpoint(event, active_traps))
+        .find_map(|(_, event)| data_event_hits_active_data_watchpoint(event, active_traps))
 }
 
 fn data_event_hits_active_data_watchpoint(
     event: &RiscvDataAccessEvent,
     active_traps: &[rem6_debug::GdbRemoteTrapPoint],
-) -> bool {
+) -> Option<GdbRemoteTrapPoint> {
     if event.kind() != RiscvDataAccessEventKind::Completed {
-        return false;
+        return None;
     }
-    active_traps.iter().any(|point| {
+    active_traps.iter().copied().find(|point| {
         data_watchpoint_kind_matches_access(point.kind(), event.operation())
             && range_overlaps(
                 event.physical_address().get(),
@@ -692,6 +702,24 @@ fn data_event_hits_active_data_watchpoint(
                 point.size(),
             )
     })
+}
+
+fn data_watchpoint_stop_reply(point: GdbRemoteTrapPoint) -> GdbRemoteStopReply {
+    GdbRemoteStopReply::data_watchpoint(0x05, point.kind(), point.address())
+        .expect("data watchpoint stop reply requires a data watchpoint trap kind")
+}
+
+fn write_gdb_stop_reply(
+    session: &mut GdbRemoteSession,
+    stream: &mut impl Write,
+    command: &str,
+) -> Result<(), Rem6CliError> {
+    let frames = session
+        .async_response_with_payload(session.stop_reply().encode_payload())
+        .map_err(|error| {
+            execute_error(format!("failed to build GDB {command} response: {error}"))
+        })?;
+    write_gdb_frames(stream, &frames)
 }
 
 fn data_watchpoint_kind_matches_access(

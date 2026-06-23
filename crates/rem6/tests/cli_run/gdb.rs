@@ -1401,7 +1401,10 @@ fn rem6_run_gdb_listen_write_watchpoint_stops_on_riscv_store() {
     );
     stream.write_all(&gdb_packet(b"c")).unwrap();
     read_gdb_ack(&mut stream);
-    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(
+        read_gdb_response(&mut stream),
+        gdb_packet(b"T05watch:1040;")
+    );
     assert_eq!(
         send_gdb_packet(&mut stream, b"p7"),
         gdb_response(b"0000000000000000")
@@ -1448,7 +1451,10 @@ fn rem6_run_gdb_listen_read_watchpoint_stops_on_riscv_load() {
     );
     stream.write_all(&gdb_packet(b"c")).unwrap();
     read_gdb_ack(&mut stream);
-    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(
+        read_gdb_response(&mut stream),
+        gdb_packet(b"T05rwatch:1040;")
+    );
     assert_eq!(
         send_gdb_packet(&mut stream, b"p6"),
         gdb_response(b"8877665544332211")
@@ -1495,7 +1501,10 @@ fn rem6_run_gdb_listen_access_watchpoint_stops_on_riscv_store() {
     );
     stream.write_all(&gdb_packet(b"c")).unwrap();
     read_gdb_ack(&mut stream);
-    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(
+        read_gdb_response(&mut stream),
+        gdb_packet(b"T05awatch:1040;")
+    );
     assert_eq!(
         send_gdb_packet(&mut stream, b"p7"),
         gdb_response(b"0000000000000000")
@@ -1638,7 +1647,10 @@ fn rem6_run_gdb_listen_write_watchpoint_single_step_drains_pending_store_before_
     );
     assert_eq!(send_gdb_packet(&mut stream, b"s"), gdb_response(b"S05"));
     assert_eq!(send_gdb_packet(&mut stream, b"s"), gdb_response(b"S05"));
-    assert_eq!(send_gdb_packet(&mut stream, b"s"), gdb_response(b"S05"));
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"s"),
+        gdb_response(b"T05watch:1040;")
+    );
     assert_eq!(
         send_gdb_packet(&mut stream, b"p7"),
         gdb_response(b"0000000000000000")
@@ -1724,7 +1736,10 @@ fn rem6_run_gdb_listen_write_watchpoint_wins_over_instruction_budget_drain() {
     );
     stream.write_all(&gdb_packet(b"c")).unwrap();
     read_gdb_ack(&mut stream);
-    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(
+        read_gdb_response(&mut stream),
+        gdb_packet(b"T05watch:1040;")
+    );
     assert_eq!(
         send_gdb_packet(&mut stream, b"p7"),
         gdb_response(b"0000000000000000")
