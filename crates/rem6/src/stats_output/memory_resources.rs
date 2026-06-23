@@ -1,8 +1,8 @@
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use crate::{
-    Rem6CacheResourceSummary, Rem6DramResourceSummary, Rem6FabricResourceSummary,
-    Rem6TransportResourceSummary,
+    Rem6CacheResourceHierarchySummary, Rem6CacheResourceSummary, Rem6DramResourceSummary,
+    Rem6FabricResourceSummary, Rem6TransportResourceSummary,
 };
 
 use super::{
@@ -46,6 +46,16 @@ pub(super) fn emit_memory_resource_stats(
         stats,
         "sim.memory.resources.cache.l3",
         &execution.memory_resources.cache_l3,
+    )?;
+    emit_cache_resource_hierarchy_stats(
+        stats,
+        "sim.memory.resources.cache.instruction",
+        &execution.memory_resources.cache_instruction,
+    )?;
+    emit_cache_resource_hierarchy_stats(
+        stats,
+        "sim.memory.resources.cache.data",
+        &execution.memory_resources.cache_data,
     )?;
     emit_transport_resource_stats(
         stats,
@@ -210,4 +220,15 @@ fn emit_cache_resource_stats(
         )?;
     }
     Ok(())
+}
+
+fn emit_cache_resource_hierarchy_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    summary: &Rem6CacheResourceHierarchySummary,
+) -> Result<(), Rem6CliError> {
+    emit_cache_resource_stats(stats, prefix, &summary.aggregate)?;
+    emit_cache_resource_stats(stats, &format!("{prefix}.l1"), &summary.l1)?;
+    emit_cache_resource_stats(stats, &format!("{prefix}.l2"), &summary.l2)?;
+    emit_cache_resource_stats(stats, &format!("{prefix}.l3"), &summary.l3)
 }

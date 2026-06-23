@@ -1748,12 +1748,45 @@ fn rem6_run_memory_system_preset_routes_cpu_through_cache_fabric_and_dram() {
     assert!(json_u64(&json, "/simulation/data_cache_l2_runs") > 0);
     assert!(json_u64(&json, "/simulation/data_cache_l3_runs") > 0);
     let cache_dram_accesses = json_u64(&json, "/memory_resources/cache/dram_accesses");
+    let instruction_cache_activity =
+        json_u64(&json, "/memory_resources/cache/instruction/activity");
+    let data_cache_activity = json_u64(&json, "/memory_resources/cache/data/activity");
+    let instruction_cache_dram_accesses =
+        json_u64(&json, "/memory_resources/cache/instruction/dram_accesses");
+    let data_cache_dram_accesses = json_u64(&json, "/memory_resources/cache/data/dram_accesses");
     let cache_l1_activity = json_u64(&json, "/memory_resources/cache/l1/activity");
     let cache_l2_activity = json_u64(&json, "/memory_resources/cache/l2/activity");
     let cache_l3_activity = json_u64(&json, "/memory_resources/cache/l3/activity");
+    let instruction_cache_l1_activity =
+        json_u64(&json, "/memory_resources/cache/instruction/l1/activity");
+    let instruction_cache_l2_activity =
+        json_u64(&json, "/memory_resources/cache/instruction/l2/activity");
+    let instruction_cache_l3_activity =
+        json_u64(&json, "/memory_resources/cache/instruction/l3/activity");
+    let data_cache_l1_activity = json_u64(&json, "/memory_resources/cache/data/l1/activity");
+    let data_cache_l2_activity = json_u64(&json, "/memory_resources/cache/data/l2/activity");
+    let data_cache_l3_activity = json_u64(&json, "/memory_resources/cache/data/l3/activity");
     let cache_l1_dram_accesses = json_u64(&json, "/memory_resources/cache/l1/dram_accesses");
     let cache_l2_dram_accesses = json_u64(&json, "/memory_resources/cache/l2/dram_accesses");
     let cache_l3_dram_accesses = json_u64(&json, "/memory_resources/cache/l3/dram_accesses");
+    let instruction_cache_l1_dram_accesses = json_u64(
+        &json,
+        "/memory_resources/cache/instruction/l1/dram_accesses",
+    );
+    let instruction_cache_l2_dram_accesses = json_u64(
+        &json,
+        "/memory_resources/cache/instruction/l2/dram_accesses",
+    );
+    let instruction_cache_l3_dram_accesses = json_u64(
+        &json,
+        "/memory_resources/cache/instruction/l3/dram_accesses",
+    );
+    let data_cache_l1_dram_accesses =
+        json_u64(&json, "/memory_resources/cache/data/l1/dram_accesses");
+    let data_cache_l2_dram_accesses =
+        json_u64(&json, "/memory_resources/cache/data/l2/dram_accesses");
+    let data_cache_l3_dram_accesses =
+        json_u64(&json, "/memory_resources/cache/data/l3/dram_accesses");
     let hierarchy_cache_dram_accesses =
         json_u64(&json, "/simulation/instruction_cache_dram_accesses")
             + json_u64(&json, "/simulation/instruction_cache_l2_dram_accesses")
@@ -1767,6 +1800,21 @@ fn rem6_run_memory_system_preset_routes_cpu_through_cache_fabric_and_dram() {
         + json_u64(&json, "/simulation/data_cache_runs")
         + json_u64(&json, "/simulation/data_cache_l2_runs")
         + json_u64(&json, "/simulation/data_cache_l3_runs");
+    let instruction_hierarchy_cache_activity =
+        json_u64(&json, "/simulation/instruction_cache_runs")
+            + json_u64(&json, "/simulation/instruction_cache_l2_runs")
+            + json_u64(&json, "/simulation/instruction_cache_l3_runs");
+    let data_hierarchy_cache_activity = json_u64(&json, "/simulation/data_cache_runs")
+        + json_u64(&json, "/simulation/data_cache_l2_runs")
+        + json_u64(&json, "/simulation/data_cache_l3_runs");
+    let instruction_hierarchy_cache_dram_accesses =
+        json_u64(&json, "/simulation/instruction_cache_dram_accesses")
+            + json_u64(&json, "/simulation/instruction_cache_l2_dram_accesses")
+            + json_u64(&json, "/simulation/instruction_cache_l3_dram_accesses");
+    let data_hierarchy_cache_dram_accesses =
+        json_u64(&json, "/simulation/data_cache_dram_accesses")
+            + json_u64(&json, "/simulation/data_cache_l2_dram_accesses")
+            + json_u64(&json, "/simulation/data_cache_l3_dram_accesses");
     let lower_level_cache_dram_accesses =
         json_u64(&json, "/simulation/instruction_cache_l2_dram_accesses")
             + json_u64(&json, "/simulation/instruction_cache_l3_dram_accesses")
@@ -1778,9 +1826,25 @@ fn rem6_run_memory_system_preset_routes_cpu_through_cache_fabric_and_dram() {
             + json_u64(&json, "/simulation/data_cache_runs")
     );
     assert_eq!(
+        instruction_cache_l1_activity,
+        json_u64(&json, "/simulation/instruction_cache_runs")
+    );
+    assert_eq!(
+        data_cache_l1_activity,
+        json_u64(&json, "/simulation/data_cache_runs")
+    );
+    assert_eq!(
         cache_l2_activity,
         json_u64(&json, "/simulation/instruction_cache_l2_runs")
             + json_u64(&json, "/simulation/data_cache_l2_runs")
+    );
+    assert_eq!(
+        instruction_cache_l2_activity,
+        json_u64(&json, "/simulation/instruction_cache_l2_runs")
+    );
+    assert_eq!(
+        data_cache_l2_activity,
+        json_u64(&json, "/simulation/data_cache_l2_runs")
     );
     assert_eq!(
         cache_l3_activity,
@@ -1788,9 +1852,25 @@ fn rem6_run_memory_system_preset_routes_cpu_through_cache_fabric_and_dram() {
             + json_u64(&json, "/simulation/data_cache_l3_runs")
     );
     assert_eq!(
+        instruction_cache_l3_activity,
+        json_u64(&json, "/simulation/instruction_cache_l3_runs")
+    );
+    assert_eq!(
+        data_cache_l3_activity,
+        json_u64(&json, "/simulation/data_cache_l3_runs")
+    );
+    assert_eq!(
         cache_l1_dram_accesses,
         json_u64(&json, "/simulation/instruction_cache_dram_accesses")
             + json_u64(&json, "/simulation/data_cache_dram_accesses")
+    );
+    assert_eq!(
+        instruction_cache_l1_dram_accesses,
+        json_u64(&json, "/simulation/instruction_cache_dram_accesses")
+    );
+    assert_eq!(
+        data_cache_l1_dram_accesses,
+        json_u64(&json, "/simulation/data_cache_dram_accesses")
     );
     assert_eq!(
         cache_l2_dram_accesses,
@@ -1798,15 +1878,49 @@ fn rem6_run_memory_system_preset_routes_cpu_through_cache_fabric_and_dram() {
             + json_u64(&json, "/simulation/data_cache_l2_dram_accesses")
     );
     assert_eq!(
+        instruction_cache_l2_dram_accesses,
+        json_u64(&json, "/simulation/instruction_cache_l2_dram_accesses")
+    );
+    assert_eq!(
+        data_cache_l2_dram_accesses,
+        json_u64(&json, "/simulation/data_cache_l2_dram_accesses")
+    );
+    assert_eq!(
         cache_l3_dram_accesses,
         json_u64(&json, "/simulation/instruction_cache_l3_dram_accesses")
             + json_u64(&json, "/simulation/data_cache_l3_dram_accesses")
     );
     assert_eq!(
+        instruction_cache_l3_dram_accesses,
+        json_u64(&json, "/simulation/instruction_cache_l3_dram_accesses")
+    );
+    assert_eq!(
+        data_cache_l3_dram_accesses,
+        json_u64(&json, "/simulation/data_cache_l3_dram_accesses")
+    );
+    assert_eq!(
+        instruction_cache_activity,
+        instruction_hierarchy_cache_activity
+    );
+    assert_eq!(data_cache_activity, data_hierarchy_cache_activity);
+    assert_eq!(
+        instruction_cache_dram_accesses,
+        instruction_hierarchy_cache_dram_accesses
+    );
+    assert_eq!(data_cache_dram_accesses, data_hierarchy_cache_dram_accesses);
+    assert_eq!(
         cache_l1_activity + cache_l2_activity + cache_l3_activity,
         hierarchy_cache_activity
     );
+    assert_eq!(
+        instruction_cache_activity + data_cache_activity,
+        hierarchy_cache_activity
+    );
     assert_eq!(cache_dram_accesses, hierarchy_cache_dram_accesses);
+    assert_eq!(
+        instruction_cache_dram_accesses + data_cache_dram_accesses,
+        hierarchy_cache_dram_accesses
+    );
     assert_eq!(
         cache_l1_dram_accesses + cache_l2_dram_accesses + cache_l3_dram_accesses,
         hierarchy_cache_dram_accesses
@@ -1859,6 +1973,76 @@ fn rem6_run_memory_system_preset_routes_cpu_through_cache_fabric_and_dram() {
         "sim.memory.resources.cache.l3.dram_accesses",
         "Count",
         cache_l3_dram_accesses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.instruction.activity",
+        "Count",
+        instruction_cache_activity,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.instruction.l1.activity",
+        "Count",
+        instruction_cache_l1_activity,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.instruction.l2.activity",
+        "Count",
+        instruction_cache_l2_activity,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.instruction.dram_accesses",
+        "Count",
+        instruction_cache_dram_accesses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.instruction.l3.dram_accesses",
+        "Count",
+        instruction_cache_l3_dram_accesses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.data.activity",
+        "Count",
+        data_cache_activity,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.data.l1.dram_accesses",
+        "Count",
+        data_cache_l1_dram_accesses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.data.l2.activity",
+        "Count",
+        data_cache_l2_activity,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.data.dram_accesses",
+        "Count",
+        data_cache_dram_accesses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.data.l3.dram_accesses",
+        "Count",
+        data_cache_l3_dram_accesses,
         "monotonic",
     );
     assert_stat_greater_than(

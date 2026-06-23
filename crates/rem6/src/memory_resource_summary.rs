@@ -12,6 +12,8 @@ pub(crate) struct Rem6MemoryResourceSummary {
     pub(crate) cache_l1: Rem6CacheResourceSummary,
     pub(crate) cache_l2: Rem6CacheResourceSummary,
     pub(crate) cache_l3: Rem6CacheResourceSummary,
+    pub(crate) cache_instruction: Rem6CacheResourceHierarchySummary,
+    pub(crate) cache_data: Rem6CacheResourceHierarchySummary,
     pub(crate) transport: Rem6TransportResourceSummary,
     pub(crate) transport_fetch: Rem6TransportResourceSummary,
     pub(crate) transport_data: Rem6TransportResourceSummary,
@@ -30,6 +32,14 @@ pub(crate) struct Rem6CacheResourceSummary {
     pub(crate) bank_immediate_hits: u64,
     pub(crate) bank_scheduled_misses: u64,
     pub(crate) bank_coalesced_misses: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct Rem6CacheResourceHierarchySummary {
+    pub(crate) aggregate: Rem6CacheResourceSummary,
+    pub(crate) l1: Rem6CacheResourceSummary,
+    pub(crate) l2: Rem6CacheResourceSummary,
+    pub(crate) l3: Rem6CacheResourceSummary,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -121,6 +131,22 @@ impl Rem6CacheResourceSummary {
                     .saturating_add(cache.bank_coalesced_misses);
                 summary
             })
+    }
+}
+
+impl Rem6CacheResourceHierarchySummary {
+    fn from_cache_levels(caches: [&CliDataCacheSummary; 3]) -> Self {
+        let l1 = Rem6CacheResourceSummary::from_cache_summaries([caches[0]]);
+        let l2 = Rem6CacheResourceSummary::from_cache_summaries([caches[1]]);
+        let l3 = Rem6CacheResourceSummary::from_cache_summaries([caches[2]]);
+        let aggregate = Rem6CacheResourceSummary::from_cache_summaries(caches);
+
+        Self {
+            aggregate,
+            l1,
+            l2,
+            l3,
+        }
     }
 }
 
@@ -251,6 +277,9 @@ impl Rem6MemoryResourceSummary {
             inputs.instruction_caches[2],
             inputs.data_caches[2],
         ]);
+        let cache_instruction =
+            Rem6CacheResourceHierarchySummary::from_cache_levels(inputs.instruction_caches);
+        let cache_data = Rem6CacheResourceHierarchySummary::from_cache_levels(inputs.data_caches);
         let transport_fetch = Rem6TransportResourceSummary::from_transport(inputs.fetch_transport);
         let transport_data = Rem6TransportResourceSummary::from_transport(inputs.data_transport);
         let transport = Rem6TransportResourceSummary::combine([
@@ -275,6 +304,8 @@ impl Rem6MemoryResourceSummary {
             cache_l1,
             cache_l2,
             cache_l3,
+            cache_instruction,
+            cache_data,
             transport,
             transport_fetch,
             transport_data,

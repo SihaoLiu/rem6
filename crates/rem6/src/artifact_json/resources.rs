@@ -1,6 +1,6 @@
 use crate::{
-    Rem6CacheResourceSummary, Rem6DramResourceSummary, Rem6FabricResourceSummary,
-    Rem6MemoryResourceSummary, Rem6TransportResourceSummary,
+    Rem6CacheResourceHierarchySummary, Rem6CacheResourceSummary, Rem6DramResourceSummary,
+    Rem6FabricResourceSummary, Rem6MemoryResourceSummary, Rem6TransportResourceSummary,
 };
 
 use super::{dram_targets_json, json_escape};
@@ -8,21 +8,10 @@ use super::{dram_targets_json, json_escape};
 impl Rem6MemoryResourceSummary {
     pub(crate) fn to_json(&self) -> String {
         format!(
-            "{{\"activity\":{},\"active\":{},\"cache\":{{\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{},\"l1\":{},\"l2\":{},\"l3\":{}}},\"transport\":{{\"activity\":{},\"active\":{},\"request_arrivals\":{},\"responses\":{},\"response_arrivals\":{},\"round_trip_ticks\":{},\"max_round_trip_ticks\":{},\"fetch\":{},\"data\":{}}},\"fabric\":{},\"dram\":{}}}",
+            "{{\"activity\":{},\"active\":{},\"cache\":{},\"transport\":{{\"activity\":{},\"active\":{},\"request_arrivals\":{},\"responses\":{},\"response_arrivals\":{},\"round_trip_ticks\":{},\"max_round_trip_ticks\":{},\"fetch\":{},\"data\":{}}},\"fabric\":{},\"dram\":{}}}",
             self.activity,
             self.active,
-            self.cache.activity,
-            self.cache.active,
-            self.cache.cpu_responses,
-            self.cache.directory_decisions,
-            self.cache.dram_accesses,
-            self.cache.bank_accepted,
-            self.cache.bank_immediate_hits,
-            self.cache.bank_scheduled_misses,
-            self.cache.bank_coalesced_misses,
-            cache_resource_json(&self.cache_l1),
-            cache_resource_json(&self.cache_l2),
-            cache_resource_json(&self.cache_l3),
+            aggregate_cache_resource_json(self),
             self.transport.activity,
             self.transport.active,
             self.transport.request_arrivals,
@@ -36,6 +25,28 @@ impl Rem6MemoryResourceSummary {
             dram_resource_json(&self.dram),
         )
     }
+}
+
+fn aggregate_cache_resource_json(summary: &Rem6MemoryResourceSummary) -> String {
+    format!(
+        "{{{},\"l1\":{},\"l2\":{},\"l3\":{},\"instruction\":{},\"data\":{}}}",
+        cache_resource_fields_json(&summary.cache),
+        cache_resource_json(&summary.cache_l1),
+        cache_resource_json(&summary.cache_l2),
+        cache_resource_json(&summary.cache_l3),
+        cache_resource_hierarchy_json(&summary.cache_instruction),
+        cache_resource_hierarchy_json(&summary.cache_data),
+    )
+}
+
+fn cache_resource_hierarchy_json(summary: &Rem6CacheResourceHierarchySummary) -> String {
+    format!(
+        "{{{},\"l1\":{},\"l2\":{},\"l3\":{}}}",
+        cache_resource_fields_json(&summary.aggregate),
+        cache_resource_json(&summary.l1),
+        cache_resource_json(&summary.l2),
+        cache_resource_json(&summary.l3),
+    )
 }
 
 fn dram_resource_json(summary: &Rem6DramResourceSummary) -> String {
@@ -143,8 +154,12 @@ fn transport_resource_json(summary: &Rem6TransportResourceSummary) -> String {
 }
 
 fn cache_resource_json(summary: &Rem6CacheResourceSummary) -> String {
+    format!("{{{}}}", cache_resource_fields_json(summary))
+}
+
+fn cache_resource_fields_json(summary: &Rem6CacheResourceSummary) -> String {
     format!(
-        "{{\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{}}}",
+        "\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{}",
         summary.activity,
         summary.active,
         summary.cpu_responses,
