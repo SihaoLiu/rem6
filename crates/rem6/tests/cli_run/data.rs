@@ -3065,28 +3065,3 @@ fn assert_run_fabric_lane_stats(stdout: &str, fabric: &Value) {
 fn lane_u64(lane: &Value, field: &str) -> u64 {
     lane.get(field).and_then(Value::as_u64).unwrap_or(0)
 }
-
-fn stat_path_segment(segment: &str) -> String {
-    let mut output = String::new();
-    for (index, character) in segment.chars().enumerate() {
-        if index == 0 {
-            if character.is_ascii_alphabetic() || character == '_' {
-                output.push(character);
-            } else {
-                output.push('_');
-                if character.is_ascii_alphanumeric() {
-                    output.push(character);
-                }
-            }
-        } else if character.is_ascii_alphanumeric() || character == '_' {
-            output.push(character);
-        } else {
-            output.push('_');
-        }
-    }
-    if output.is_empty() {
-        "_".to_string()
-    } else {
-        output
-    }
-}

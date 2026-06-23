@@ -271,6 +271,31 @@ pub(crate) fn assert_stat(stdout: &str, path: &str, unit: &str, value: u64, rese
     }
 }
 
+pub(crate) fn stat_path_segment(segment: &str) -> String {
+    let mut output = String::new();
+    for (index, character) in segment.chars().enumerate() {
+        if index == 0 {
+            if character.is_ascii_alphabetic() || character == '_' {
+                output.push(character);
+            } else {
+                output.push('_');
+                if character.is_ascii_alphanumeric() {
+                    output.push(character);
+                }
+            }
+        } else if character.is_ascii_alphanumeric() || character == '_' {
+            output.push(character);
+        } else {
+            output.push('_');
+        }
+    }
+    if output.is_empty() {
+        "_".to_string()
+    } else {
+        output
+    }
+}
+
 pub(crate) fn assert_stat_greater_than(
     stdout: &str,
     path: &str,

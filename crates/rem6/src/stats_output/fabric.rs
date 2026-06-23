@@ -178,7 +178,7 @@ where
     Ok(())
 }
 
-fn emit_fabric_lane_stats(
+pub(super) fn emit_fabric_lane_stats(
     stats: &mut StatsRegistry,
     prefix: &str,
     activities: &[FabricLaneActivity],
