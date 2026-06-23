@@ -241,7 +241,12 @@ impl RiscvCore {
         state
             .executed_fetches
             .extend(consumed_requests.iter().copied());
+        let discarded_sequences = discarded_requests
+            .iter()
+            .map(|request| request.sequence())
+            .collect::<BTreeSet<_>>();
         state.executed_fetches.extend(discarded_requests);
+        remove_fetch_sequences_from_pipeline(state, &discarded_sequences)?;
         state.events.push(event.clone());
         Ok(event)
     }
@@ -355,6 +360,8 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
                 InOrderPipelineStage::Fetch1,
             )])
             .map_err(RiscvCpuError::InOrderPipeline)?;
+    } else {
+        discard_stale_in_order_pipeline_before_retire(state, sequence)?;
     }
     let mut wait_recorded = wait_cycles == 0;
     let max_retire_cycles =
@@ -401,7 +408,24 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
         }
     }
 
-    unreachable!("default in-order pipeline retires an instruction within its stage count")
+    unreachable!(
+        "default in-order pipeline retires an instruction within its stage count: retiring sequence {sequence}, in_flight {:?}",
+        state.in_order_pipeline.in_flight()
+    )
+}
+
+fn discard_stale_in_order_pipeline_before_retire(
+    state: &mut RiscvCoreState,
+    sequence: u64,
+) -> Result<(), RiscvCpuError> {
+    let stale_sequences = state
+        .in_order_pipeline
+        .in_flight()
+        .iter()
+        .filter(|instruction| instruction.sequence() < sequence)
+        .map(|instruction| instruction.sequence())
+        .collect::<BTreeSet<_>>();
+    remove_fetch_sequences_from_pipeline(state, &stale_sequences)
 }
 
 fn in_order_pipeline_sequence_is_in_execute(state: &RiscvCoreState, sequence: u64) -> bool {
@@ -964,6 +988,34 @@ mod tests {
             .advanced()
             .iter()
             .any(|advance| advance.sequence() == 0 && advance.retires()));
+        assert!(!state.in_order_pipeline.contains_sequence(0));
+        assert!(state.in_order_pipeline.in_flight().is_empty());
+    }
+
+    #[test]
+    fn discarded_fetch_sequences_leave_in_order_pipeline_state() {
+        let mut state = RiscvCoreState::new(0x8000, 0);
+        state
+            .in_order_pipeline
+            .replace_in_flight([
+                InOrderPipelineInstruction::new(1, InOrderPipelineStage::Commit),
+                InOrderPipelineInstruction::new(2, InOrderPipelineStage::Fetch2),
+                InOrderPipelineInstruction::new(3, InOrderPipelineStage::Fetch1),
+            ])
+            .unwrap();
+        let discarded = [2, 3].into_iter().collect::<BTreeSet<_>>();
+
+        remove_fetch_sequences_from_pipeline(&mut state, &discarded).unwrap();
+
+        assert_eq!(
+            state
+                .in_order_pipeline
+                .in_flight()
+                .iter()
+                .map(|instruction| (instruction.sequence(), instruction.stage()))
+                .collect::<Vec<_>>(),
+            vec![(1, InOrderPipelineStage::Commit)]
+        );
     }
 
     #[test]

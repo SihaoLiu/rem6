@@ -232,7 +232,7 @@ in-order cycle-plan advance, general flush, resource-blocked,
 ordering-blocked, branch-prediction, branch-misprediction,
 branch-prediction flush, and redirect counters from the same executed RISC-V
 timing records, including nonzero branch-prediction flush evidence for a real
-taken RISC-V branch; they also expose branch-speculation prediction, repair, younger-removal, and maximum-pending counters for a real nested conditional branch run where the corrected older branch prevents younger wrong-path register writes from committing. CLI `rem6 run --riscv-branch-predictor gshare`, `bimode`, `tage-sc-l`, and `multiperspective-perceptron` drive the normal RISC-V fetch-ahead path with the selected predictor and change deterministic fetch-steering timing while preserving the final architectural register state.
+taken RISC-V branch; they also expose branch-speculation prediction, repair, younger-removal, and maximum-pending counters for a real nested conditional branch run where the corrected older branch prevents younger wrong-path register writes from committing. CLI `rem6 run --riscv-branch-predictor gshare`, `bimode`, `tage-sc-l`, and `multiperspective-perceptron` drive the normal RISC-V fetch-ahead path with the selected predictor, clean stale wrong-path in-order state across loop backedges, and change deterministic fetch-steering timing while preserving the final architectural register state.
 CLI `rem6 run --riscv-in-order-width 2` applies a uniform stage-width config to
 the live `RiscvCore` in-order pipeline snapshot and emits per-stage width plus
 max-in-flight occupancy stats from the executed run, with width 2 reaching two in-flight instructions in affected stages.
