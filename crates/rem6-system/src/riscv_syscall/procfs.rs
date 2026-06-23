@@ -1,6 +1,8 @@
 use std::fmt::Write as _;
 
-use super::{guest_fd_argument, RiscvMmapRegion, RiscvSyscallState, RISCV_LINUX_ENOTDIR};
+use super::{
+    guest_fd_argument, RiscvMmapRegion, RiscvSyscallState, RISCV_LINUX_EINVAL, RISCV_LINUX_ENOTDIR,
+};
 
 const RISCV_LINUX_PROT_READ: u64 = 0x1;
 const RISCV_LINUX_PROT_WRITE: u64 = 0x2;
@@ -22,6 +24,12 @@ impl RiscvSyscallState {
             Some(resolved) => resolved,
             None => return Ok(None),
         };
+        if resolved.crossed_proc_cwd_link {
+            return Err(RISCV_LINUX_EINVAL);
+        }
+        if resolved.path == b"proc/self/cwd" {
+            return Ok(Some(self.current_directory().to_vec()));
+        }
         let Some(fd_text) = resolved.path.strip_prefix(b"proc/self/fd/") else {
             return Ok(None);
         };
@@ -120,12 +128,13 @@ fn push_proc_maps_line(
 
 struct VirtualProcPath {
     path: Vec<u8>,
+    crossed_proc_cwd_link: bool,
     crossed_proc_fd_link: bool,
 }
 
 fn virtual_proc_path(current_directory: &[u8], path: &[u8]) -> Option<Vec<u8>> {
     let resolved = virtual_proc_path_result(current_directory, path)?;
-    (!resolved.crossed_proc_fd_link).then_some(resolved.path)
+    (!resolved.crossed_proc_cwd_link && !resolved.crossed_proc_fd_link).then_some(resolved.path)
 }
 
 fn virtual_proc_path_result(current_directory: &[u8], path: &[u8]) -> Option<VirtualProcPath> {
@@ -134,8 +143,12 @@ fn virtual_proc_path_result(current_directory: &[u8], path: &[u8]) -> Option<Vir
     } else {
         virtual_proc_path_components(current_directory)?
     };
+    let mut crossed_proc_cwd_link = false;
     let mut crossed_proc_fd_link = false;
     for component in path.split(|byte| *byte == b'/') {
+        if is_proc_self_cwd_component(&components) {
+            crossed_proc_cwd_link = true;
+        }
         if is_proc_self_fd_component(&components) {
             crossed_proc_fd_link = true;
         }
@@ -154,6 +167,7 @@ fn virtual_proc_path_result(current_directory: &[u8], path: &[u8]) -> Option<Vir
     }
     Some(VirtualProcPath {
         path: join_virtual_proc_path_components(&components),
+        crossed_proc_cwd_link,
         crossed_proc_fd_link,
     })
 }
@@ -189,6 +203,13 @@ fn is_proc_self_fd_component(components: &[Vec<u8>]) -> bool {
             && is_virtual_proc_fd_component(number))
 }
 
+fn is_proc_self_cwd_component(components: &[Vec<u8>]) -> bool {
+    matches!(components, [proc, current, cwd]
+        if proc.as_slice() == b"proc"
+            && current.as_slice() == b"self"
+            && cwd.as_slice() == b"cwd")
+}
+
 fn is_virtual_proc_path_prefix(components: &[Vec<u8>]) -> bool {
     match components {
         [] => true,
@@ -197,7 +218,9 @@ fn is_virtual_proc_path_prefix(components: &[Vec<u8>]) -> bool {
         [proc, current, leaf] => {
             proc.as_slice() == b"proc"
                 && current.as_slice() == b"self"
-                && (leaf.as_slice() == b"maps" || leaf.as_slice() == b"fd")
+                && (leaf.as_slice() == b"maps"
+                    || leaf.as_slice() == b"fd"
+                    || leaf.as_slice() == b"cwd")
         }
         [proc, current, fd, number] => {
             proc.as_slice() == b"proc"
