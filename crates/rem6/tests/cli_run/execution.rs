@@ -1860,6 +1860,8 @@ fn rem6_run_lpddr_fetches_record_dram_low_power_residency() {
         for prefix in [
             "/dram/targets/0",
             "/memory_resources/dram/targets/0",
+            "/dram/targets/0/ports/0",
+            "/memory_resources/dram/targets/0/ports/0",
             "/dram/targets/0/ports/0/banks/0",
             "/memory_resources/dram/targets/0/ports/0/banks/0",
         ] {
@@ -1871,6 +1873,8 @@ fn rem6_run_lpddr_fetches_record_dram_low_power_residency() {
         for stat_prefix in [
             "sim.memory.dram.target0",
             "sim.memory.resources.dram.target0",
+            "sim.memory.dram.target0.port0",
+            "sim.memory.resources.dram.target0.port0",
             "sim.memory.dram.target0.port0.bank0",
             "sim.memory.resources.dram.target0.port0.bank0",
         ] {

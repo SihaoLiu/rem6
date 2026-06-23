@@ -430,6 +430,18 @@ fn emit_dram_port_stats(
     emit_dram_counter(stats, &prefix, "writes", "Count", port.writes)?;
     emit_dram_counter(stats, &prefix, "turnarounds", "Count", port.turnarounds)?;
     emit_dram_counter(stats, &prefix, "commands", "Count", port.commands)?;
+    emit_dram_low_power_stats(
+        stats,
+        &prefix,
+        port.low_power_active_powerdown_entries,
+        port.low_power_active_powerdown_ticks,
+        port.low_power_precharge_powerdown_entries,
+        port.low_power_precharge_powerdown_ticks,
+        port.low_power_self_refresh_entries,
+        port.low_power_self_refresh_ticks,
+        port.low_power_exits,
+        port.low_power_exit_latency_ticks,
+    )?;
     for bank in &port.banks {
         emit_dram_bank_stats(stats, &prefix, bank)?;
     }

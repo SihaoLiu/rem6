@@ -51,7 +51,7 @@ fn cache_resource_hierarchy_json(summary: &Rem6CacheResourceHierarchySummary) ->
 
 fn dram_resource_json(summary: &Rem6DramResourceSummary) -> String {
     format!(
-        "{{\"activity\":{},\"active\":{},\"active_targets\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"low_power\":{{\"active_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"precharge_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"self_refresh\":{{\"entries\":{},\"ticks\":{}}},\"exits\":{},\"exit_latency_ticks\":{}}},\"targets\":[{}]}}",
+        "{{\"activity\":{},\"active\":{},\"active_targets\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"low_power\":{},\"targets\":[{}]}}",
         summary.activity,
         summary.active,
         summary.active_targets,
@@ -68,15 +68,40 @@ fn dram_resource_json(summary: &Rem6DramResourceSummary) -> String {
         summary.turnarounds,
         summary.total_ready_latency_ticks,
         summary.max_ready_latency_ticks,
-        summary.low_power_active_powerdown_entries,
-        summary.low_power_active_powerdown_ticks,
-        summary.low_power_precharge_powerdown_entries,
-        summary.low_power_precharge_powerdown_ticks,
-        summary.low_power_self_refresh_entries,
-        summary.low_power_self_refresh_ticks,
-        summary.low_power_exits,
-        summary.low_power_exit_latency_ticks,
+        dram_low_power_json(
+            summary.low_power_active_powerdown_entries,
+            summary.low_power_active_powerdown_ticks,
+            summary.low_power_precharge_powerdown_entries,
+            summary.low_power_precharge_powerdown_ticks,
+            summary.low_power_self_refresh_entries,
+            summary.low_power_self_refresh_ticks,
+            summary.low_power_exits,
+            summary.low_power_exit_latency_ticks,
+        ),
         dram_targets_json(&summary.targets),
+    )
+}
+
+pub(super) fn dram_low_power_json(
+    active_powerdown_entries: u64,
+    active_powerdown_ticks: u64,
+    precharge_powerdown_entries: u64,
+    precharge_powerdown_ticks: u64,
+    self_refresh_entries: u64,
+    self_refresh_ticks: u64,
+    exits: u64,
+    exit_latency_ticks: u64,
+) -> String {
+    format!(
+        "{{\"active_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"precharge_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"self_refresh\":{{\"entries\":{},\"ticks\":{}}},\"exits\":{},\"exit_latency_ticks\":{}}}",
+        active_powerdown_entries,
+        active_powerdown_ticks,
+        precharge_powerdown_entries,
+        precharge_powerdown_ticks,
+        self_refresh_entries,
+        self_refresh_ticks,
+        exits,
+        exit_latency_ticks,
     )
 }
 

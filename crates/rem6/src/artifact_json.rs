@@ -1674,7 +1674,7 @@ fn dram_target_json(summary: &super::Rem6DramTargetSummary) -> String {
         summary.turnarounds,
         summary.total_ready_latency_ticks,
         summary.max_ready_latency_ticks,
-        dram_low_power_json(
+        resources::dram_low_power_json(
             summary.low_power_active_powerdown_entries,
             summary.low_power_active_powerdown_ticks,
             summary.low_power_precharge_powerdown_entries,
@@ -1698,13 +1698,23 @@ fn dram_ports_json(ports: &[super::Rem6DramPortSummary]) -> String {
 
 fn dram_port_json(summary: &super::Rem6DramPortSummary) -> String {
     format!(
-        "{{\"port\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"turnarounds\":{},\"commands\":{},\"banks\":[{}]}}",
+        "{{\"port\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"turnarounds\":{},\"commands\":{},\"low_power\":{},\"banks\":[{}]}}",
         summary.port,
         summary.accesses,
         summary.reads,
         summary.writes,
         summary.turnarounds,
         summary.commands,
+        resources::dram_low_power_json(
+            summary.low_power_active_powerdown_entries,
+            summary.low_power_active_powerdown_ticks,
+            summary.low_power_precharge_powerdown_entries,
+            summary.low_power_precharge_powerdown_ticks,
+            summary.low_power_self_refresh_entries,
+            summary.low_power_self_refresh_ticks,
+            summary.low_power_exits,
+            summary.low_power_exit_latency_ticks,
+        ),
         dram_banks_json(&summary.banks),
     )
 }
@@ -1731,7 +1741,7 @@ fn dram_bank_json(summary: &super::Rem6DramBankSummary) -> String {
         summary.commands,
         summary.total_ready_latency_ticks,
         summary.max_ready_latency_ticks,
-        dram_low_power_json(
+        resources::dram_low_power_json(
             summary.low_power_active_powerdown_entries,
             summary.low_power_active_powerdown_ticks,
             summary.low_power_precharge_powerdown_entries,
@@ -1741,29 +1751,6 @@ fn dram_bank_json(summary: &super::Rem6DramBankSummary) -> String {
             summary.low_power_exits,
             summary.low_power_exit_latency_ticks,
         ),
-    )
-}
-
-fn dram_low_power_json(
-    active_powerdown_entries: u64,
-    active_powerdown_ticks: u64,
-    precharge_powerdown_entries: u64,
-    precharge_powerdown_ticks: u64,
-    self_refresh_entries: u64,
-    self_refresh_ticks: u64,
-    exits: u64,
-    exit_latency_ticks: u64,
-) -> String {
-    format!(
-        "{{\"active_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"precharge_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"self_refresh\":{{\"entries\":{},\"ticks\":{}}},\"exits\":{},\"exit_latency_ticks\":{}}}",
-        active_powerdown_entries,
-        active_powerdown_ticks,
-        precharge_powerdown_entries,
-        precharge_powerdown_ticks,
-        self_refresh_entries,
-        self_refresh_ticks,
-        exits,
-        exit_latency_ticks,
     )
 }
 

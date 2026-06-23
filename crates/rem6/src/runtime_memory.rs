@@ -1062,13 +1062,13 @@ impl Rem6DramTargetSummary {
             .map(|(port, activity)| (*port, Rem6DramPortSummary::from_activity(*port, *activity)))
             .collect::<BTreeMap<_, _>>();
         for ((port, bank), activity) in activity.bank_activities() {
+            let bank_summary = Rem6DramBankSummary::from_activity(*bank, activity);
             ports
                 .entry(*port)
                 .or_insert_with(|| {
                     Rem6DramPortSummary::from_activity(*port, DramPortActivity::default())
                 })
-                .banks
-                .push(Rem6DramBankSummary::from_activity(*bank, activity));
+                .record_bank(bank_summary);
         }
         Self::from_profile(
             activity.target().get(),
@@ -1128,8 +1128,28 @@ impl Rem6DramPortSummary {
             writes: activity.write_count() as u64,
             turnarounds: activity.turnaround_count() as u64,
             commands: activity.command_count() as u64,
+            low_power_active_powerdown_entries: 0,
+            low_power_active_powerdown_ticks: 0,
+            low_power_precharge_powerdown_entries: 0,
+            low_power_precharge_powerdown_ticks: 0,
+            low_power_self_refresh_entries: 0,
+            low_power_self_refresh_ticks: 0,
+            low_power_exits: 0,
+            low_power_exit_latency_ticks: 0,
             banks: Vec::new(),
         }
+    }
+
+    fn record_bank(&mut self, bank: Rem6DramBankSummary) {
+        self.low_power_active_powerdown_entries += bank.low_power_active_powerdown_entries;
+        self.low_power_active_powerdown_ticks += bank.low_power_active_powerdown_ticks;
+        self.low_power_precharge_powerdown_entries += bank.low_power_precharge_powerdown_entries;
+        self.low_power_precharge_powerdown_ticks += bank.low_power_precharge_powerdown_ticks;
+        self.low_power_self_refresh_entries += bank.low_power_self_refresh_entries;
+        self.low_power_self_refresh_ticks += bank.low_power_self_refresh_ticks;
+        self.low_power_exits += bank.low_power_exits;
+        self.low_power_exit_latency_ticks += bank.low_power_exit_latency_ticks;
+        self.banks.push(bank);
     }
 }
 
