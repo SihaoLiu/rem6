@@ -406,6 +406,46 @@ fn rem6_run_stats_emit_configured_in_order_pipeline_widths_from_execution() {
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_width_changes_executed_stage_occupancy() {
+    let program = riscv64_program(&[
+        0x0010_0093, // addi x1, x0, 1
+        0x0020_0113, // addi x2, x0, 2
+        0x0030_0193, // addi x3, x0, 3
+        0x0040_0213, // addi x4, x0, 4
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-pipeline-width-timing", &elf);
+
+    let width_one = in_order_pipeline_stats_for_width(&path, 1);
+    let width_two = in_order_pipeline_stats_for_width(&path, 2);
+
+    for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+        assert_stat(
+            &width_one,
+            &format!("sim.cpu0.pipeline.in_order.stage.{stage}.max_in_flight"),
+            "Count",
+            1,
+            "monotonic",
+        );
+        assert_stat(
+            &width_two,
+            &format!("sim.cpu0.pipeline.in_order.stage.{stage}.max_in_flight"),
+            "Count",
+            2,
+            "monotonic",
+        );
+    }
+    assert_stat_greater_than(
+        &width_two,
+        "sim.cpu0.pipeline.in_order.cycles",
+        "Cycle",
+        stat_value(&width_two, "sim.cpu0.instructions.committed"),
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_stats_emit_checker_cpu_counts_from_execution() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
@@ -452,6 +492,40 @@ fn rem6_run_stats_emit_checker_cpu_counts_from_execution() {
         0,
         "monotonic",
     );
+}
+
+fn in_order_pipeline_stats_for_width(path: &std::path::Path, width: u64) -> String {
+    let width = width.to_string();
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+            "--riscv-in-order-width",
+            &width,
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"committed_instructions\":5"));
+    stdout
 }
 
 #[test]

@@ -377,16 +377,14 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
                     && instruction.stage() == redirect.resolved_stage()
             })
         });
-        let record = if active_prediction.is_some() {
-            state
-                .in_order_pipeline
-                .try_advance_cycle_recorded_with_prediction(active_prediction)
-        } else {
-            state
-                .in_order_pipeline
-                .try_advance_cycle_recorded_with_redirect(active_redirect)
-        }
-        .map_err(RiscvCpuError::InOrderPipeline)?;
+        let record = state
+            .in_order_pipeline
+            .try_advance_cycle_recorded_retiring_sequence(
+                sequence,
+                active_prediction,
+                active_redirect,
+            )
+            .map_err(RiscvCpuError::InOrderPipeline)?;
         let retires_sequence = record_retires_sequence(&record, sequence);
         state.in_order_pipeline_cycle_records.push(record.clone());
         if !wait_recorded

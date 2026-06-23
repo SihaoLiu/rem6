@@ -1019,11 +1019,17 @@ impl InOrderPipelineState {
         if self.contains_sequence(sequence) {
             return Ok(None);
         }
+        let fetch1_occupancy = self
+            .in_flight
+            .iter()
+            .filter(|instruction| instruction.stage() == InOrderPipelineStage::Fetch1)
+            .count();
+        let fetch1_has_slot = fetch1_occupancy < self.config.width(InOrderPipelineStage::Fetch1);
         let commit_busy = self
             .in_flight
             .iter()
             .any(|instruction| instruction.stage() == InOrderPipelineStage::Commit);
-        let record = if !self.in_flight.is_empty() && !commit_busy {
+        let record = if !self.in_flight.is_empty() && !fetch1_has_slot && !commit_busy {
             Some(self.try_advance_cycle_recorded()?)
         } else {
             None
@@ -1119,6 +1125,37 @@ impl InOrderPipelineState {
         })
     }
 
+    pub(crate) fn try_advance_cycle_recorded_retiring_sequence(
+        &mut self,
+        sequence: u64,
+        prediction: Option<InOrderBranchPrediction>,
+        redirect: Option<InOrderBranchRedirect>,
+    ) -> Result<InOrderPipelineCycleRecord, InOrderPipelineError> {
+        let before = self.snapshot();
+        validate_branch_prediction(prediction, before.in_flight())?;
+        let redirect = prediction
+            .map(|prediction| prediction.redirect())
+            .transpose()?
+            .flatten()
+            .or(redirect);
+        let plan =
+            self.advance_cycle_with_redirect_and_retire_sequence(redirect, Some(sequence))?;
+        let branch_predictions = prediction
+            .map(|prediction| InOrderBranchPredictionRecord::from_plan(prediction, &plan))
+            .into_iter()
+            .collect();
+        let after = self.snapshot();
+
+        Ok(InOrderPipelineCycleRecord {
+            cycle: before.cycle(),
+            stall_cycle_count: 0,
+            before,
+            plan,
+            branch_predictions,
+            after,
+        })
+    }
+
     pub fn try_advance_cycle(&mut self) -> Result<InOrderPipelinePlan, InOrderPipelineError> {
         self.advance_cycle_with_redirect(None)
     }
@@ -1127,9 +1164,21 @@ impl InOrderPipelineState {
         &mut self,
         redirect: Option<InOrderBranchRedirect>,
     ) -> Result<InOrderPipelinePlan, InOrderPipelineError> {
+        self.advance_cycle_with_redirect_and_retire_sequence(redirect, None)
+    }
+
+    fn advance_cycle_with_redirect_and_retire_sequence(
+        &mut self,
+        redirect: Option<InOrderBranchRedirect>,
+        retire_sequence: Option<u64>,
+    ) -> Result<InOrderPipelinePlan, InOrderPipelineError> {
         let next_cycle = next_cycle(self.cycle)?;
         let plan = InOrderPipelineScheduler::new(self.config.clone())
-            .plan_with_redirect(self.in_flight.iter().copied(), redirect)?;
+            .plan_with_redirect_and_retire_sequence(
+                self.in_flight.iter().copied(),
+                redirect,
+                retire_sequence,
+            )?;
         self.apply_plan(&plan);
         self.cycle = next_cycle;
         Ok(plan)
@@ -1180,7 +1229,7 @@ impl InOrderPipelineScheduler {
     where
         I: IntoIterator<Item = InOrderPipelineInstruction>,
     {
-        match self.plan_ready(instructions, None) {
+        match self.plan_ready(instructions, None, None) {
             Ok(plan) => plan,
             Err(error) => unreachable!("planning without a redirect cannot fail: {error}"),
         }
@@ -1194,13 +1243,26 @@ impl InOrderPipelineScheduler {
     where
         I: IntoIterator<Item = InOrderPipelineInstruction>,
     {
-        self.plan_ready(instructions, redirect)
+        self.plan_ready(instructions, redirect, None)
+    }
+
+    pub(crate) fn plan_with_redirect_and_retire_sequence<I>(
+        &self,
+        instructions: I,
+        redirect: Option<InOrderBranchRedirect>,
+        retire_sequence: Option<u64>,
+    ) -> Result<InOrderPipelinePlan, InOrderPipelineError>
+    where
+        I: IntoIterator<Item = InOrderPipelineInstruction>,
+    {
+        self.plan_ready(instructions, redirect, retire_sequence)
     }
 
     fn plan_ready<I>(
         &self,
         instructions: I,
         redirect: Option<InOrderBranchRedirect>,
+        retire_sequence: Option<u64>,
     ) -> Result<InOrderPipelinePlan, InOrderPipelineError>
     where
         I: IntoIterator<Item = InOrderPipelineInstruction>,
@@ -1228,6 +1290,14 @@ impl InOrderPipelineScheduler {
             }
 
             let stage = instruction.stage();
+            if stage == InOrderPipelineStage::Commit
+                && retire_sequence.is_some_and(|sequence| sequence != instruction.sequence())
+            {
+                resource_blocked.push(instruction);
+                older_blocked = true;
+                continue;
+            }
+
             let used = used_slots.entry(stage).or_insert(0);
             if *used >= self.config.width(stage) {
                 resource_blocked.push(instruction);

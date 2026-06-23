@@ -3,7 +3,8 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuFetchEventKind, CpuId, CpuResetState,
-    HtmFailureCause, InOrderPipelineStage, RiscvCore, RiscvCoreDriveAction, RiscvCpuError,
+    HtmFailureCause, InOrderPipelineConfig, InOrderPipelineStage, InOrderPipelineStageWidth,
+    RiscvCore, RiscvCoreDriveAction, RiscvCpuError, RiscvCpuExecutionEvent,
     RiscvDataAccessEventKind, RiscvLoadReservation,
 };
 use rem6_isa_riscv::{
@@ -574,6 +575,14 @@ fn data_core(fetch_route: MemoryRouteId, data_route: MemoryRouteId, entry: u64) 
     )
 }
 
+fn uniform_in_order_pipeline_config(width: usize) -> InOrderPipelineConfig {
+    InOrderPipelineConfig::new(
+        InOrderPipelineStage::ALL
+            .map(|stage| InOrderPipelineStageWidth::new(stage, width).unwrap()),
+    )
+    .unwrap()
+}
+
 fn loaded_store(entry: u64, instruction: u32) -> Arc<Mutex<PartitionedMemoryStore>> {
     let target = MemoryTargetId::new(0);
     let mut store = PartitionedMemoryStore::new();
@@ -800,6 +809,15 @@ fn drive_until_instruction(
     scheduler: &mut PartitionedScheduler,
     transport: &MemoryTransport,
 ) -> RiscvInstruction {
+    drive_until_execution_event(core, store, scheduler, transport).instruction()
+}
+
+fn drive_until_execution_event(
+    core: &RiscvCore,
+    store: Arc<Mutex<PartitionedMemoryStore>>,
+    scheduler: &mut PartitionedScheduler,
+    transport: &MemoryTransport,
+) -> RiscvCpuExecutionEvent {
     for _ in 0..8 {
         match drive_one_action(core, store.clone(), scheduler, transport) {
             Some(RiscvCoreDriveAction::FetchIssued { .. })
@@ -807,7 +825,7 @@ fn drive_until_instruction(
                 scheduler.run_until_idle_conservative();
             }
             Some(RiscvCoreDriveAction::InstructionExecuted(event)) => {
-                return event.instruction();
+                return *event;
             }
             None => {
                 scheduler.run_until_idle_conservative();
@@ -2733,6 +2751,64 @@ fn riscv_core_driver_retires_completed_fetch_while_fetch_ahead_is_pending() {
         panic!("expected pending fetch-ahead instruction to retire after it completes");
     };
     assert_eq!(trap.instruction(), RiscvInstruction::Ebreak);
+}
+
+#[test]
+fn riscv_core_driver_in_order_width_allows_frontend_overlap_without_false_retire() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.reset_in_order_pipeline_config(uniform_in_order_pipeline_config(2));
+    core.set_branch_lookahead(2);
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            i_type(7, 0, 0x0, 1, 0x13),
+            i_type(9, 0, 0x0, 2, 0x13),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert_eq!(
+        in_order_in_flight(&core),
+        vec![
+            (0, InOrderPipelineStage::Fetch1),
+            (1, InOrderPipelineStage::Fetch1)
+        ]
+    );
+
+    scheduler.run_until_idle_conservative();
+
+    let first = drive_until_execution_event(&core, store.clone(), &mut scheduler, &transport);
+    let first_cycle = first.in_order_pipeline_cycle().unwrap();
+    assert_eq!(first_cycle.summary().retired_count(), 1);
+    assert!(
+        first_cycle
+            .after()
+            .in_flight()
+            .iter()
+            .any(|instruction| instruction.sequence() == 1),
+        "executing the first instruction must not retire the younger completed fetch"
+    );
+    assert_eq!(core.read_register(reg(1)), 7);
+    assert_eq!(core.read_register(reg(2)), 0);
+
+    let second = drive_until_execution_event(&core, store, &mut scheduler, &transport);
+    assert_eq!(
+        second.instruction(),
+        RiscvInstruction::decode(i_type(9, 0, 0x0, 2, 0x13)).unwrap()
+    );
+    assert_eq!(core.read_register(reg(2)), 9);
 }
 
 #[test]
