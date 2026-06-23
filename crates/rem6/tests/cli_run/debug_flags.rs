@@ -352,6 +352,136 @@ fn rem6_run_memory_debug_flag_emits_real_transport_trace() {
 }
 
 #[test]
+fn rem6_run_fabric_debug_flag_emits_real_fabric_activity_trace() {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),                  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),                        // sd x6, 8(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET, 0);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-fabric", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--instruction-cache-protocol",
+            "msi",
+            "--data-cache-protocol",
+            "msi",
+            "--fabric-link",
+            "cpu_mem",
+            "--fabric-bandwidth-bytes-per-tick",
+            "8",
+            "--fabric-request-virtual-network",
+            "3",
+            "--fabric-response-virtual-network",
+            "4",
+            "--fabric-credit-depth",
+            "2",
+            "--debug-flags",
+            "Fabric",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![Value::String("Fabric".to_string())])
+    );
+    let trace = json
+        .pointer("/debug/fabric_trace")
+        .and_then(Value::as_array)
+        .expect("debug fabric trace array");
+    assert!(
+        trace.iter().any(|record| {
+            record.get("kind").and_then(Value::as_str) == Some("lane")
+                && record.get("link").and_then(Value::as_str) == Some("cpu_mem")
+                && record.get("virtual_network").and_then(Value::as_u64) == Some(3)
+                && record
+                    .get("transfer_count")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|transfers| transfers > 0)
+                && record
+                    .get("flit_count")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|flits| flits > 0)
+        }),
+        "missing request-lane fabric record: {trace:?}"
+    );
+    assert!(
+        trace.iter().any(|record| {
+            record.get("kind").and_then(Value::as_str) == Some("hop")
+                && record.get("link").and_then(Value::as_str) == Some("cpu_mem")
+                && record.get("virtual_network").and_then(Value::as_u64) == Some(4)
+                && record
+                    .get("arrival_tick")
+                    .and_then(Value::as_u64)
+                    .zip(record.get("start_tick").and_then(Value::as_u64))
+                    .is_some_and(|(arrival, start)| arrival >= start)
+        }),
+        "missing response-hop fabric record: {trace:?}"
+    );
+    let lane_records = trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some("lane"))
+        .count() as u64;
+    let hop_records = trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some("hop"))
+        .count() as u64;
+    assert!(lane_records >= 2, "trace: {trace:?}");
+    assert!(hop_records >= 2, "trace: {trace:?}");
+    assert_stat(
+        &stdout,
+        "sim.debug.fabric_trace.records",
+        "Count",
+        trace.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.fabric_trace.lanes",
+        "Count",
+        lane_records,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.fabric_trace.hops",
+        "Count",
+        hop_records,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_syscall_debug_flag_emits_real_riscv_se_syscall_trace() {
     let program = riscv64_program(&[
         i_type(172, 0, 0x0, 17, 0x13), // addi a7, x0, getpid

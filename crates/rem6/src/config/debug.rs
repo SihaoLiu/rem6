@@ -4,6 +4,7 @@ use crate::Rem6CliError;
 pub enum CliDebugFlag {
     Data,
     Exec,
+    Fabric,
     Fetch,
     Memory,
     Power,
@@ -18,6 +19,7 @@ impl CliDebugFlag {
         match value {
             "Data" => Ok(Self::Data),
             "Exec" => Ok(Self::Exec),
+            "Fabric" => Ok(Self::Fabric),
             "Fetch" => Ok(Self::Fetch),
             "Memory" => Ok(Self::Memory),
             "Power" => Ok(Self::Power),
@@ -32,6 +34,7 @@ impl CliDebugFlag {
         match self {
             Self::Data => "Data",
             Self::Exec => "Exec",
+            Self::Fabric => "Fabric",
             Self::Fetch => "Fetch",
             Self::Memory => "Memory",
             Self::Power => "Power",

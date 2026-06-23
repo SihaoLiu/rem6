@@ -1468,6 +1468,10 @@ impl Rem6RunConfig {
         self.debug_flags.contains(&CliDebugFlag::Exec)
     }
 
+    pub fn debug_fabric_enabled(&self) -> bool {
+        self.debug_flags.contains(&CliDebugFlag::Fabric)
+    }
+
     pub fn debug_fetch_enabled(&self) -> bool {
         self.debug_flags.contains(&CliDebugFlag::Fetch)
     }

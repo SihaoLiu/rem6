@@ -18,6 +18,15 @@ pub(super) fn emit_debug_stats(
         ("sim.debug.exec_trace.records", debug.exec_trace_count()),
         ("sim.debug.fetch_trace.records", debug.fetch_trace_count()),
         ("sim.debug.data_trace.records", debug.data_trace_count()),
+        ("sim.debug.fabric_trace.records", debug.fabric_trace_count()),
+        (
+            "sim.debug.fabric_trace.lanes",
+            debug.fabric_lane_trace_count(),
+        ),
+        (
+            "sim.debug.fabric_trace.hops",
+            debug.fabric_hop_trace_count(),
+        ),
         ("sim.debug.memory_trace.records", debug.memory_trace_count()),
         (
             "sim.debug.memory_trace.fetch.records",

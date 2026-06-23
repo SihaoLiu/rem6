@@ -5,7 +5,7 @@ use rem6_system::{RiscvSyscallTraceOutcome, RiscvSyscallTraceRecord, RiscvSystem
 use rem6_transport::{MemoryTrace, MemoryTraceEvent, MemoryTraceKind};
 
 use crate::formatting::{bytes_to_hex, json_escape};
-use crate::{CliDebugFlag, Rem6RunConfig};
+use crate::{CliDebugFlag, Rem6RunConfig, Rem6RunFabricSummary};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Rem6DebugSummary {
@@ -13,6 +13,7 @@ pub(crate) struct Rem6DebugSummary {
     exec_trace: Vec<Rem6ExecTraceRecord>,
     fetch_trace: Vec<Rem6FetchTraceRecord>,
     data_trace: Vec<Rem6DataTraceRecord>,
+    fabric_trace: Vec<Rem6FabricTraceRecord>,
     memory_trace: Vec<Rem6MemoryTraceRecord>,
     power_trace: Vec<Rem6PowerTraceRecord>,
     syscall_trace: Vec<Rem6SyscallTraceRecord>,
@@ -45,6 +46,39 @@ struct Rem6DataTraceRecord {
     kind: &'static str,
     address: u64,
     size: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Rem6FabricTraceRecord {
+    Lane {
+        link: String,
+        virtual_network: u64,
+        transfer_count: u64,
+        byte_count: u64,
+        flit_count: u64,
+        occupied_ticks: u64,
+        queue_delay_ticks: u64,
+        max_queue_delay_ticks: u64,
+        credit_delay_ticks: u64,
+        max_credit_delay_ticks: u64,
+        first_tick: u64,
+        last_tick: u64,
+    },
+    Hop {
+        packet: u64,
+        hop_index: u64,
+        link: String,
+        virtual_network: u64,
+        bytes: u64,
+        flits: u64,
+        ready_tick: u64,
+        start_tick: u64,
+        occupied_ticks: u64,
+        queue_delay_ticks: u64,
+        credit_delay_ticks: u64,
+        depart_tick: u64,
+        arrival_tick: u64,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -87,6 +121,7 @@ impl Rem6DebugSummary {
         run: &RiscvSystemRun,
         fetch_memory_trace: &MemoryTrace,
         data_memory_trace: &MemoryTrace,
+        fabric: &Rem6RunFabricSummary,
         power_records: &[PowerAnalysisRecord],
         syscall_trace: &[RiscvSyscallTraceRecord],
     ) -> Self {
@@ -103,6 +138,11 @@ impl Rem6DebugSummary {
         };
         let data_trace = if config.debug_data_enabled() {
             data_trace_records(cluster, config.cores() as u32)
+        } else {
+            Vec::new()
+        };
+        let fabric_trace = if config.debug_fabric_enabled() {
+            fabric_trace_records(fabric)
         } else {
             Vec::new()
         };
@@ -126,6 +166,7 @@ impl Rem6DebugSummary {
             exec_trace,
             fetch_trace,
             data_trace,
+            fabric_trace,
             memory_trace,
             power_trace,
             syscall_trace,
@@ -150,6 +191,24 @@ impl Rem6DebugSummary {
 
     pub(crate) fn data_trace_count(&self) -> u64 {
         self.data_trace.len() as u64
+    }
+
+    pub(crate) fn fabric_trace_count(&self) -> u64 {
+        self.fabric_trace.len() as u64
+    }
+
+    pub(crate) fn fabric_lane_trace_count(&self) -> u64 {
+        self.fabric_trace
+            .iter()
+            .filter(|record| matches!(record, Rem6FabricTraceRecord::Lane { .. }))
+            .count() as u64
+    }
+
+    pub(crate) fn fabric_hop_trace_count(&self) -> u64 {
+        self.fabric_trace
+            .iter()
+            .filter(|record| matches!(record, Rem6FabricTraceRecord::Hop { .. }))
+            .count() as u64
     }
 
     pub(crate) fn memory_trace_count(&self) -> u64 {
@@ -197,6 +256,12 @@ impl Rem6DebugSummary {
             .map(Rem6DataTraceRecord::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let fabric_trace = self
+            .fabric_trace
+            .iter()
+            .map(Rem6FabricTraceRecord::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         let memory_trace = self
             .memory_trace
             .iter()
@@ -216,8 +281,8 @@ impl Rem6DebugSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"flags\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"data_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"syscall_trace\":[{}]}}",
-            flags, exec_trace, fetch_trace, data_trace, memory_trace, power_trace, syscall_trace
+            "{{\"flags\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"data_trace\":[{}],\"fabric_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"syscall_trace\":[{}]}}",
+            flags, exec_trace, fetch_trace, data_trace, fabric_trace, memory_trace, power_trace, syscall_trace
         )
     }
 
@@ -263,6 +328,97 @@ impl Rem6DataTraceRecord {
             "{{\"cpu\":{},\"tick\":{},\"kind\":\"{}\",\"address\":\"0x{:x}\",\"size\":{}}}",
             self.cpu, self.tick, self.kind, self.address, self.size,
         )
+    }
+}
+
+impl Rem6FabricTraceRecord {
+    fn to_json(&self) -> String {
+        match self {
+            Self::Lane {
+                link,
+                virtual_network,
+                transfer_count,
+                byte_count,
+                flit_count,
+                occupied_ticks,
+                queue_delay_ticks,
+                max_queue_delay_ticks,
+                credit_delay_ticks,
+                max_credit_delay_ticks,
+                first_tick,
+                last_tick,
+            } => format!(
+                "{{\"kind\":\"lane\",\"link\":\"{}\",\"virtual_network\":{},\"transfer_count\":{},\"byte_count\":{},\"flit_count\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                json_escape(link),
+                virtual_network,
+                transfer_count,
+                byte_count,
+                flit_count,
+                occupied_ticks,
+                queue_delay_ticks,
+                max_queue_delay_ticks,
+                credit_delay_ticks,
+                max_credit_delay_ticks,
+                first_tick,
+                last_tick,
+            ),
+            Self::Hop {
+                packet,
+                hop_index,
+                link,
+                virtual_network,
+                bytes,
+                flits,
+                ready_tick,
+                start_tick,
+                occupied_ticks,
+                queue_delay_ticks,
+                credit_delay_ticks,
+                depart_tick,
+                arrival_tick,
+            } => format!(
+                "{{\"kind\":\"hop\",\"packet\":{},\"hop_index\":{},\"link\":\"{}\",\"virtual_network\":{},\"bytes\":{},\"flits\":{},\"ready_tick\":{},\"start_tick\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"depart_tick\":{},\"arrival_tick\":{}}}",
+                packet,
+                hop_index,
+                json_escape(link),
+                virtual_network,
+                bytes,
+                flits,
+                ready_tick,
+                start_tick,
+                occupied_ticks,
+                queue_delay_ticks,
+                credit_delay_ticks,
+                depart_tick,
+                arrival_tick,
+            ),
+        }
+    }
+
+    fn sort_key(&self) -> (u64, u8, String, u64, u64, u64) {
+        match self {
+            Self::Lane {
+                first_tick,
+                link,
+                virtual_network,
+                ..
+            } => (*first_tick, 0, link.clone(), *virtual_network, 0, 0),
+            Self::Hop {
+                start_tick,
+                link,
+                virtual_network,
+                packet,
+                hop_index,
+                ..
+            } => (
+                *start_tick,
+                1,
+                link.clone(),
+                *virtual_network,
+                *packet,
+                *hop_index,
+            ),
+        }
     }
 }
 
@@ -440,6 +596,51 @@ fn data_trace_kind(operation: MemoryOperation) -> Option<&'static str> {
         | MemoryOperation::Invalidate
         | MemoryOperation::InvalidateWritable => None,
     }
+}
+
+fn fabric_trace_records(fabric: &Rem6RunFabricSummary) -> Vec<Rem6FabricTraceRecord> {
+    let mut records = Vec::new();
+    records.extend(
+        fabric
+            .lane_activities()
+            .iter()
+            .map(|activity| Rem6FabricTraceRecord::Lane {
+                link: activity.link().as_str().to_string(),
+                virtual_network: u64::from(activity.virtual_network().get()),
+                transfer_count: activity.transfer_count() as u64,
+                byte_count: activity.byte_count(),
+                flit_count: activity.flit_count(),
+                occupied_ticks: activity.occupied_ticks(),
+                queue_delay_ticks: activity.queue_delay_ticks(),
+                max_queue_delay_ticks: activity.max_queue_delay_ticks(),
+                credit_delay_ticks: activity.credit_delay_ticks(),
+                max_credit_delay_ticks: activity.max_credit_delay_ticks(),
+                first_tick: activity.first_tick(),
+                last_tick: activity.last_tick(),
+            }),
+    );
+    records.extend(
+        fabric
+            .hop_activities()
+            .iter()
+            .map(|activity| Rem6FabricTraceRecord::Hop {
+                packet: activity.packet().get(),
+                hop_index: activity.hop_index() as u64,
+                link: activity.link().as_str().to_string(),
+                virtual_network: u64::from(activity.virtual_network().get()),
+                bytes: activity.bytes(),
+                flits: activity.flits(),
+                ready_tick: activity.ready_tick(),
+                start_tick: activity.start_tick(),
+                occupied_ticks: activity.occupied_ticks(),
+                queue_delay_ticks: activity.queue_delay_ticks(),
+                credit_delay_ticks: activity.credit_delay_ticks(),
+                depart_tick: activity.depart_tick(),
+                arrival_tick: activity.arrival_tick(),
+            }),
+    );
+    records.sort_by_key(Rem6FabricTraceRecord::sort_key);
+    records
 }
 
 fn memory_trace_records(
