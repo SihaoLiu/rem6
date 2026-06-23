@@ -125,6 +125,23 @@ impl RiscvVectorMicroOp {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvVectorExtensionFactor {
+    F2,
+    F4,
+    F8,
+}
+
+impl RiscvVectorExtensionFactor {
+    pub const fn divisor(self) -> usize {
+        match self {
+            Self::F2 => 2,
+            Self::F4 => 4,
+            Self::F8 => 8,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvVectorFloatInstruction {
     AddVv {
         vd: VectorRegister,

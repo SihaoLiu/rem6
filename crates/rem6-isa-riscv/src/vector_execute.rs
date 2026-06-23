@@ -1,10 +1,10 @@
 use crate::{
     vector_group::{
-        read_mask_bit, read_register_group, valid_register_group, write_register_group,
-        VectorBinaryPlan, MAX_VECTOR_GROUP_BYTES,
+        read_mask_bit, read_register_group, register_groups_overlap, valid_register_group,
+        write_register_group, VectorBinaryPlan, MAX_VECTOR_GROUP_BYTES,
     },
-    RiscvHartState, RiscvInstruction, RiscvVectorConfig, RiscvVectorMaskMode, VectorRegister,
-    RISCV_VECTOR_REGISTER_BYTES,
+    RiscvHartState, RiscvInstruction, RiscvVectorConfig, RiscvVectorExtensionFactor,
+    RiscvVectorMaskMode, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 
 pub(crate) fn execute_vector_integer_binary(
@@ -141,6 +141,18 @@ pub(crate) fn execute_vector_integer_binary(
                 hart, vd, vs2, shift,
             )
         }
+        RiscvInstruction::VectorZeroExtend {
+            vd,
+            vs2,
+            factor,
+            mask,
+        } => execute_vector_extend(hart, vd, vs2, factor, mask, ExtensionSignedness::Unsigned),
+        RiscvInstruction::VectorSignExtend {
+            vd,
+            vs2,
+            factor,
+            mask,
+        } => execute_vector_extend(hart, vd, vs2, factor, mask, ExtensionSignedness::Signed),
         RiscvInstruction::VectorMoveVv { vd, vs1 } => execute_vector_move_vv(hart, vd, vs1),
         RiscvInstruction::VectorMoveVx { vd, rs1 } => {
             execute_vector_move_vx(hart, vd, hart.read(rs1))
@@ -343,6 +355,141 @@ pub(crate) fn execute_vector_integer_binary(
             )
         }
         _ => false,
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ExtensionSignedness {
+    Unsigned,
+    Signed,
+}
+
+fn execute_vector_extend(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    factor: RiscvVectorExtensionFactor,
+    mask: RiscvVectorMaskMode,
+    signedness: ExtensionSignedness,
+) -> bool {
+    let config = hart.vector_config();
+    let Some(element_bytes) = config.element_width_bytes() else {
+        return false;
+    };
+    let source_element_bytes = element_bytes / factor.divisor();
+    if source_element_bytes == 0 {
+        return false;
+    }
+    let Some(destination_group_registers) = config.register_group_registers() else {
+        return false;
+    };
+    let source_group_registers =
+        source_register_group_registers(destination_group_registers, factor);
+    if !valid_register_group(vd, destination_group_registers)
+        || !valid_register_group(vs2, source_group_registers)
+        || (mask.is_masked() && register_group_overlaps_v0(vd, destination_group_registers))
+        || !extension_overlap_allowed(
+            vd,
+            destination_group_registers,
+            vs2,
+            source_group_registers,
+            factor,
+        )
+    {
+        return false;
+    }
+
+    let active_elements = config.vl() as usize;
+    let Some(destination_active_bytes) = active_elements.checked_mul(element_bytes) else {
+        return false;
+    };
+    let Some(source_active_bytes) = active_elements.checked_mul(source_element_bytes) else {
+        return false;
+    };
+    if destination_active_bytes > destination_group_registers * RISCV_VECTOR_REGISTER_BYTES
+        || source_active_bytes > source_group_registers * RISCV_VECTOR_REGISTER_BYTES
+    {
+        return false;
+    }
+
+    let mask = mask
+        .is_masked()
+        .then(|| hart.read_vector(VectorRegister::from_field(0)));
+    let source = read_register_group(hart, vs2, source_group_registers);
+    let mut result = read_register_group(hart, vd, destination_group_registers);
+    for element in 0..active_elements {
+        if !mask
+            .as_ref()
+            .is_none_or(|mask| read_mask_bit(mask, element))
+        {
+            continue;
+        }
+        let source_offset = element * source_element_bytes;
+        let destination_offset = element * element_bytes;
+        let value = extend_lane(
+            &source[source_offset..source_offset + source_element_bytes],
+            element_bytes,
+            signedness,
+        );
+        result[destination_offset..destination_offset + element_bytes]
+            .copy_from_slice(&value.to_le_bytes()[..element_bytes]);
+    }
+    write_register_group(hart, vd, destination_group_registers, &result);
+    true
+}
+
+fn extension_overlap_allowed(
+    vd: VectorRegister,
+    destination_group_registers: usize,
+    vs2: VectorRegister,
+    source_group_registers: usize,
+    factor: RiscvVectorExtensionFactor,
+) -> bool {
+    if !register_groups_overlap(vd, destination_group_registers, vs2, source_group_registers) {
+        return true;
+    }
+    if destination_group_registers < factor.divisor() {
+        return false;
+    }
+
+    vs2.index() as usize
+        == vd.index() as usize + destination_group_registers - source_group_registers
+}
+
+fn source_register_group_registers(
+    destination_group_registers: usize,
+    factor: RiscvVectorExtensionFactor,
+) -> usize {
+    destination_group_registers
+        .checked_div(factor.divisor())
+        .filter(|registers| *registers != 0)
+        .unwrap_or(1)
+}
+
+fn extend_lane(bytes: &[u8], element_bytes: usize, signedness: ExtensionSignedness) -> u64 {
+    match signedness {
+        ExtensionSignedness::Unsigned => mask_lane_unsigned(bytes),
+        ExtensionSignedness::Signed => sign_extend_lane(bytes, element_bytes),
+    }
+}
+
+fn sign_extend_lane(bytes: &[u8], element_bytes: usize) -> u64 {
+    let sign_extended = match bytes.len() {
+        1 => i64::from(bytes[0] as i8),
+        2 => i64::from(i16::from_le_bytes([bytes[0], bytes[1]])),
+        4 => i64::from(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+        _ => unreachable!("validated vector extension source width"),
+    } as u64;
+    sign_extended & destination_element_mask(element_bytes)
+}
+
+fn destination_element_mask(element_bytes: usize) -> u64 {
+    match element_bytes {
+        1 => u64::from(u8::MAX),
+        2 => u64::from(u16::MAX),
+        4 => u64::from(u32::MAX),
+        8 => u64::MAX,
+        _ => unreachable!("validated vector element width"),
     }
 }
 

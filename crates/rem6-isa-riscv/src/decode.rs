@@ -2,7 +2,8 @@ use crate::decode_csr::decode_csr;
 use crate::encoding::{b_imm, funct3, funct7, i_imm, rd, rs1, rs2, shamt32, shamt64, shift_funct6};
 use crate::{
     FloatRegister, Immediate, RiscvError, RiscvFenceSet, RiscvInstruction,
-    RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode, RiscvVectorMaskMode, VectorRegister,
+    RiscvVectorExtensionFactor, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
+    RiscvVectorMaskMode, VectorRegister,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -559,6 +560,7 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vector_register(raw, 20),
             vector_register(raw, 15),
         )),
+        (0x2, 0b010010, _) => decode_vector_extend(raw),
         (0x3, 0b101110, true) => Ok(RiscvInstruction::VectorNarrowClipUnsignedWi(
             vector_register(raw, 7),
             vector_register(raw, 20),
@@ -850,6 +852,51 @@ fn vector_float_mul_add_mode(funct6: u32) -> RiscvVectorFloatMulAddMode {
         0b101110 => RiscvVectorFloatMulAddMode::ProductMinusAccumulator,
         0b101111 => RiscvVectorFloatMulAddMode::NegativeProductPlusAccumulator,
         _ => unreachable!("vector FMA mode funct6 is range-checked by decode_vector"),
+    }
+}
+
+fn decode_vector_extend(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    let vd = vector_register(raw, 7);
+    let vs2 = vector_register(raw, 20);
+    let mask = vector_mask_mode(raw);
+    match (raw >> 15) & 0x1f {
+        0b00110 => Ok(RiscvInstruction::VectorZeroExtend {
+            vd,
+            vs2,
+            factor: RiscvVectorExtensionFactor::F2,
+            mask,
+        }),
+        0b00100 => Ok(RiscvInstruction::VectorZeroExtend {
+            vd,
+            vs2,
+            factor: RiscvVectorExtensionFactor::F4,
+            mask,
+        }),
+        0b00010 => Ok(RiscvInstruction::VectorZeroExtend {
+            vd,
+            vs2,
+            factor: RiscvVectorExtensionFactor::F8,
+            mask,
+        }),
+        0b00111 => Ok(RiscvInstruction::VectorSignExtend {
+            vd,
+            vs2,
+            factor: RiscvVectorExtensionFactor::F2,
+            mask,
+        }),
+        0b00101 => Ok(RiscvInstruction::VectorSignExtend {
+            vd,
+            vs2,
+            factor: RiscvVectorExtensionFactor::F4,
+            mask,
+        }),
+        0b00011 => Ok(RiscvInstruction::VectorSignExtend {
+            vd,
+            vs2,
+            factor: RiscvVectorExtensionFactor::F8,
+            mask,
+        }),
+        _ => Err(RiscvError::UnknownEncoding { raw }),
     }
 }
 

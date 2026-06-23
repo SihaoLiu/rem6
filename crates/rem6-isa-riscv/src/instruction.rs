@@ -1,3 +1,4 @@
+use crate::vector::RiscvVectorExtensionFactor;
 use crate::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryWidth, Register, RiscvCounterCsr,
     RiscvEnvironmentConfigCsrInstruction, RiscvFenceSet, RiscvFloatCsr, RiscvFloatRoundingMode,
@@ -459,6 +460,18 @@ pub enum RiscvInstruction {
     },
     VectorCompressVm(VectorRegister, VectorRegister, VectorRegister),
     VectorNarrowClipUnsignedWi(VectorRegister, VectorRegister, u8),
+    VectorZeroExtend {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        factor: RiscvVectorExtensionFactor,
+        mask: RiscvVectorMaskMode,
+    },
+    VectorSignExtend {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        factor: RiscvVectorExtensionFactor,
+        mask: RiscvVectorMaskMode,
+    },
     VectorMoveVv {
         vd: VectorRegister,
         vs1: VectorRegister,

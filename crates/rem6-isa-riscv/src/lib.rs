@@ -84,10 +84,10 @@ pub use types::{
 };
 pub use vector::{
     RiscvInstructionFlags, RiscvVectorCompressPlan, RiscvVectorCompressResult, RiscvVectorElements,
-    RiscvVectorError, RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode,
-    RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode, RiscvVectorMicroOp,
-    RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult,
-    RiscvVectorTailPolicy,
+    RiscvVectorError, RiscvVectorExtensionFactor, RiscvVectorFixedPointState,
+    RiscvVectorFixedRoundingMode, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
+    RiscvVectorMicroOp, RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan,
+    RiscvVectorNarrowClipResult, RiscvVectorTailPolicy,
 };
 
 impl RiscvInstruction {
@@ -487,6 +487,8 @@ impl RiscvHartState {
             | RiscvInstruction::VectorMergeVim { .. }
             | RiscvInstruction::VectorCompressVm(..)
             | RiscvInstruction::VectorNarrowClipUnsignedWi(..)
+            | RiscvInstruction::VectorZeroExtend { .. }
+            | RiscvInstruction::VectorSignExtend { .. }
             | RiscvInstruction::VectorMoveVv { .. }
             | RiscvInstruction::VectorMoveVx { .. }
             | RiscvInstruction::VectorMoveVi { .. }
