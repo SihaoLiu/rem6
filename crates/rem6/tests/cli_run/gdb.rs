@@ -2127,6 +2127,43 @@ fn rem6_run_rejects_gdb_listen_from_toml_config() {
 }
 
 #[test]
+fn rem6_run_config_prescan_treats_gdb_listen_argument_as_a_value() {
+    let program = riscv64_program(&[0x0000_0073]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let binary = temp_binary("gdb-listen-prescan", &elf);
+    let config = temp_config(
+        "gdb-listen-prescan",
+        &format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 40\nexecute = true\n",
+            binary.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--gdb-listen",
+            "--config",
+            "--config",
+            config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("--gdb-listen requires an explicit loopback address"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("failed to read config --config"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
 fn rem6_run_rejects_non_loopback_gdb_listen_before_accepting_connections() {
     let program = riscv64_program(&[0x0000_0073]);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
