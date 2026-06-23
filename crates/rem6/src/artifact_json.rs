@@ -1151,18 +1151,21 @@ impl Rem6ExecutionSummary {
 impl Rem6MemoryResourceSummary {
     fn to_json(&self) -> String {
         format!(
-            "{{\"activity\":{},\"active\":{},\"cache\":{{\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{}}},\"transport\":{{\"activity\":{},\"active\":{}}},\"fabric\":{{\"activity\":{},\"active\":{}}},\"dram\":{{\"activity\":{},\"active\":{}}}}}",
+            "{{\"activity\":{},\"active\":{},\"cache\":{{\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{},\"l1\":{},\"l2\":{},\"l3\":{}}},\"transport\":{{\"activity\":{},\"active\":{}}},\"fabric\":{{\"activity\":{},\"active\":{}}},\"dram\":{{\"activity\":{},\"active\":{}}}}}",
             self.activity,
             self.active,
-            self.cache_activity,
-            self.active_caches,
-            self.cache_cpu_responses,
-            self.cache_directory_decisions,
-            self.cache_dram_accesses,
-            self.cache_bank_accepted,
-            self.cache_bank_immediate_hits,
-            self.cache_bank_scheduled_misses,
-            self.cache_bank_coalesced_misses,
+            self.cache.activity,
+            self.cache.active,
+            self.cache.cpu_responses,
+            self.cache.directory_decisions,
+            self.cache.dram_accesses,
+            self.cache.bank_accepted,
+            self.cache.bank_immediate_hits,
+            self.cache.bank_scheduled_misses,
+            self.cache.bank_coalesced_misses,
+            cache_resource_json(&self.cache_l1),
+            cache_resource_json(&self.cache_l2),
+            cache_resource_json(&self.cache_l3),
             self.transport_activity,
             self.active_transports,
             self.fabric_activity,
@@ -1171,6 +1174,21 @@ impl Rem6MemoryResourceSummary {
             self.active_dram_resources,
         )
     }
+}
+
+fn cache_resource_json(summary: &super::Rem6CacheResourceSummary) -> String {
+    format!(
+        "{{\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{}}}",
+        summary.activity,
+        summary.active,
+        summary.cpu_responses,
+        summary.directory_decisions,
+        summary.dram_accesses,
+        summary.bank_accepted,
+        summary.bank_immediate_hits,
+        summary.bank_scheduled_misses,
+        summary.bank_coalesced_misses,
+    )
 }
 
 impl Rem6RiscvGuestWriteSummary {

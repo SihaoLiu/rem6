@@ -309,7 +309,8 @@ CLI RISC-V runs aggregate executed instruction-cache, data-cache,
 memory-transport, and DRAM activity into unified memory-resource activity and
 active-resource JSON/stat counters, including unified cache CPU-response,
 directory-decision, backing-DRAM access, cache-bank accepted, immediate-hit,
-scheduled-miss, and coalesced-miss counters. CLI trace
+scheduled-miss, and coalesced-miss counters plus L1/L2/L3 cache hierarchy
+resource breakdowns. CLI trace
 replay can route packet traces through an explicit workload fabric link and
 configure request/response virtual networks and link credit depth from CLI or
 TOML config while emitting active-lane, active-virtual-network, transfer, byte, flit,
@@ -359,7 +360,8 @@ timing fields and nonzero refresh stats from RISC-V DRAM execution, plus LPDDR
 low-power timing and precharge-powerdown residency stats from routed RISC-V
 fetch requests; CLI `run` cache/DRAM resource smoke coverage exposes unified
 memory-resource cache CPU-response, directory-decision, backing-DRAM access,
-and cache-bank counters in artifact JSON and `StatsRegistry`.
+cache-bank, and L1/L2/L3 cache hierarchy counters in artifact JSON and
+`StatsRegistry`.
 CLI
 trace-replay fabric-route smoke coverage exposes nonzero active-lane,
 active-virtual-network, transfer, byte, and flit stats plus request/response virtual
@@ -1190,7 +1192,7 @@ flag slices.
 1. Connect in-order and O3 CPU state to executable engines.
 2. Run more real static-libc SE programs, then expand SBI runtime coverage and real Linux boot.
 3. Route CPU instruction/data traffic through cache, coherence, NoC, and DRAM.
-4. Promote hierarchy resource counters to first-class stats.
+4. Promote remaining non-cache hierarchy resource counters to first-class stats.
 5. Split broad rows as evidence grows: `se_mode`, `cpu_tests`, `traffic_gen`, `stats`, and `tests/test-progs`.
 
 ## Update Rules

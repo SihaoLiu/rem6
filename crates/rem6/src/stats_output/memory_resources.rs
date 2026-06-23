@@ -1,5 +1,7 @@
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
+use crate::Rem6CacheResourceSummary;
+
 use super::{increment_stat, Rem6CliError, Rem6ExecutionSummary};
 
 pub(super) fn emit_memory_resource_stats(
@@ -14,42 +16,6 @@ pub(super) fn emit_memory_resource_stats(
         (
             "sim.memory.resources.active",
             execution.memory_resources.active,
-        ),
-        (
-            "sim.memory.resources.cache.activity",
-            execution.memory_resources.cache_activity,
-        ),
-        (
-            "sim.memory.resources.cache.active",
-            execution.memory_resources.active_caches,
-        ),
-        (
-            "sim.memory.resources.cache.cpu_responses",
-            execution.memory_resources.cache_cpu_responses,
-        ),
-        (
-            "sim.memory.resources.cache.directory_decisions",
-            execution.memory_resources.cache_directory_decisions,
-        ),
-        (
-            "sim.memory.resources.cache.dram_accesses",
-            execution.memory_resources.cache_dram_accesses,
-        ),
-        (
-            "sim.memory.resources.cache.bank.accepted",
-            execution.memory_resources.cache_bank_accepted,
-        ),
-        (
-            "sim.memory.resources.cache.bank.immediate_hits",
-            execution.memory_resources.cache_bank_immediate_hits,
-        ),
-        (
-            "sim.memory.resources.cache.bank.scheduled_misses",
-            execution.memory_resources.cache_bank_scheduled_misses,
-        ),
-        (
-            "sim.memory.resources.cache.bank.coalesced_misses",
-            execution.memory_resources.cache_bank_coalesced_misses,
         ),
         (
             "sim.memory.resources.transport.activity",
@@ -77,6 +43,53 @@ pub(super) fn emit_memory_resource_stats(
         ),
     ] {
         increment_stat(stats, path, "Count", StatResetPolicy::Monotonic, value)?;
+    }
+    emit_cache_resource_stats(
+        stats,
+        "sim.memory.resources.cache",
+        &execution.memory_resources.cache,
+    )?;
+    emit_cache_resource_stats(
+        stats,
+        "sim.memory.resources.cache.l1",
+        &execution.memory_resources.cache_l1,
+    )?;
+    emit_cache_resource_stats(
+        stats,
+        "sim.memory.resources.cache.l2",
+        &execution.memory_resources.cache_l2,
+    )?;
+    emit_cache_resource_stats(
+        stats,
+        "sim.memory.resources.cache.l3",
+        &execution.memory_resources.cache_l3,
+    )?;
+    Ok(())
+}
+
+fn emit_cache_resource_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    summary: &Rem6CacheResourceSummary,
+) -> Result<(), Rem6CliError> {
+    for (suffix, value) in [
+        ("activity", summary.activity),
+        ("active", summary.active),
+        ("cpu_responses", summary.cpu_responses),
+        ("directory_decisions", summary.directory_decisions),
+        ("dram_accesses", summary.dram_accesses),
+        ("bank.accepted", summary.bank_accepted),
+        ("bank.immediate_hits", summary.bank_immediate_hits),
+        ("bank.scheduled_misses", summary.bank_scheduled_misses),
+        ("bank.coalesced_misses", summary.bank_coalesced_misses),
+    ] {
+        increment_stat(
+            stats,
+            &format!("{prefix}.{suffix}"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
     }
     Ok(())
 }

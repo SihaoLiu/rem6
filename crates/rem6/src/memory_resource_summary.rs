@@ -7,21 +7,29 @@ use crate::{
 pub(crate) struct Rem6MemoryResourceSummary {
     pub(crate) activity: u64,
     pub(crate) active: u64,
-    pub(crate) cache_activity: u64,
-    pub(crate) active_caches: u64,
-    pub(crate) cache_cpu_responses: u64,
-    pub(crate) cache_directory_decisions: u64,
-    pub(crate) cache_dram_accesses: u64,
-    pub(crate) cache_bank_accepted: u64,
-    pub(crate) cache_bank_immediate_hits: u64,
-    pub(crate) cache_bank_scheduled_misses: u64,
-    pub(crate) cache_bank_coalesced_misses: u64,
+    pub(crate) cache: Rem6CacheResourceSummary,
+    pub(crate) cache_l1: Rem6CacheResourceSummary,
+    pub(crate) cache_l2: Rem6CacheResourceSummary,
+    pub(crate) cache_l3: Rem6CacheResourceSummary,
     pub(crate) transport_activity: u64,
     pub(crate) active_transports: u64,
     pub(crate) fabric_activity: u64,
     pub(crate) active_fabric_resources: u64,
     pub(crate) dram_activity: u64,
     pub(crate) active_dram_resources: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct Rem6CacheResourceSummary {
+    pub(crate) activity: u64,
+    pub(crate) active: u64,
+    pub(crate) cpu_responses: u64,
+    pub(crate) directory_decisions: u64,
+    pub(crate) dram_accesses: u64,
+    pub(crate) bank_accepted: u64,
+    pub(crate) bank_immediate_hits: u64,
+    pub(crate) bank_scheduled_misses: u64,
+    pub(crate) bank_coalesced_misses: u64,
 }
 
 pub(crate) struct Rem6MemoryResourceInputs<'a> {
@@ -42,36 +50,48 @@ impl Rem6MemoryResourceInputs<'_> {
     }
 }
 
+impl Rem6CacheResourceSummary {
+    fn from_cache_summaries<'a>(caches: impl IntoIterator<Item = &'a CliDataCacheSummary>) -> Self {
+        caches
+            .into_iter()
+            .fold(Self::default(), |mut summary, cache| {
+                summary.activity = summary.activity.saturating_add(cache.runs);
+                summary.active += u64::from(cache.runs != 0);
+                summary.cpu_responses = summary.cpu_responses.saturating_add(cache.cpu_responses);
+                summary.directory_decisions = summary
+                    .directory_decisions
+                    .saturating_add(cache.directory_decisions);
+                summary.dram_accesses = summary.dram_accesses.saturating_add(cache.dram_accesses);
+                summary.bank_accepted = summary.bank_accepted.saturating_add(cache.bank_accepted);
+                summary.bank_immediate_hits = summary
+                    .bank_immediate_hits
+                    .saturating_add(cache.bank_immediate_hits);
+                summary.bank_scheduled_misses = summary
+                    .bank_scheduled_misses
+                    .saturating_add(cache.bank_scheduled_misses);
+                summary.bank_coalesced_misses = summary
+                    .bank_coalesced_misses
+                    .saturating_add(cache.bank_coalesced_misses);
+                summary
+            })
+    }
+}
+
 impl Rem6MemoryResourceSummary {
     pub(crate) fn from_run_resources(inputs: Rem6MemoryResourceInputs<'_>) -> Self {
-        let cache_activity = inputs
-            .cache_summaries()
-            .fold(0_u64, |sum, cache| sum.saturating_add(cache.runs));
-        let active_caches = inputs
-            .cache_summaries()
-            .filter(|cache| cache.runs != 0)
-            .count() as u64;
-        let cache_cpu_responses = inputs
-            .cache_summaries()
-            .fold(0_u64, |sum, cache| sum.saturating_add(cache.cpu_responses));
-        let cache_directory_decisions = inputs.cache_summaries().fold(0_u64, |sum, cache| {
-            sum.saturating_add(cache.directory_decisions)
-        });
-        let cache_dram_accesses = inputs
-            .cache_summaries()
-            .fold(0_u64, |sum, cache| sum.saturating_add(cache.dram_accesses));
-        let cache_bank_accepted = inputs
-            .cache_summaries()
-            .fold(0_u64, |sum, cache| sum.saturating_add(cache.bank_accepted));
-        let cache_bank_immediate_hits = inputs.cache_summaries().fold(0_u64, |sum, cache| {
-            sum.saturating_add(cache.bank_immediate_hits)
-        });
-        let cache_bank_scheduled_misses = inputs.cache_summaries().fold(0_u64, |sum, cache| {
-            sum.saturating_add(cache.bank_scheduled_misses)
-        });
-        let cache_bank_coalesced_misses = inputs.cache_summaries().fold(0_u64, |sum, cache| {
-            sum.saturating_add(cache.bank_coalesced_misses)
-        });
+        let cache = Rem6CacheResourceSummary::from_cache_summaries(inputs.cache_summaries());
+        let cache_l1 = Rem6CacheResourceSummary::from_cache_summaries([
+            inputs.instruction_caches[0],
+            inputs.data_caches[0],
+        ]);
+        let cache_l2 = Rem6CacheResourceSummary::from_cache_summaries([
+            inputs.instruction_caches[1],
+            inputs.data_caches[1],
+        ]);
+        let cache_l3 = Rem6CacheResourceSummary::from_cache_summaries([
+            inputs.instruction_caches[2],
+            inputs.data_caches[2],
+        ]);
         let transport_activity = inputs
             .fetch_transport
             .counters
@@ -102,23 +122,20 @@ impl Rem6MemoryResourceSummary {
             .max(u64::from(dram_activity != 0));
 
         Self {
-            activity: cache_activity
+            activity: cache
+                .activity
                 .saturating_add(transport_activity)
                 .saturating_add(fabric_activity)
                 .saturating_add(dram_activity),
-            active: active_caches
+            active: cache
+                .active
                 .saturating_add(active_transports)
                 .saturating_add(active_fabric_resources)
                 .saturating_add(active_dram_resources),
-            cache_activity,
-            active_caches,
-            cache_cpu_responses,
-            cache_directory_decisions,
-            cache_dram_accesses,
-            cache_bank_accepted,
-            cache_bank_immediate_hits,
-            cache_bank_scheduled_misses,
-            cache_bank_coalesced_misses,
+            cache,
+            cache_l1,
+            cache_l2,
+            cache_l3,
             transport_activity,
             active_transports,
             fabric_activity,
