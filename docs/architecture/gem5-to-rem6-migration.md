@@ -204,6 +204,8 @@ instruction in-order stage advancement with runtime stats, non-retire fetch and
 intermediate retire-loop cycle records retained in per-core in-order pipeline
 history and consumed by top-level stats, data-response wait cycles emitted as
 explicit non-retire resource-stall in-order cycle records before data-instruction retire, per-stage occupied-cycle stats, explicit data-stall cycle stats,
+fixed scalar integer multiply execute-stage latency emitted as additional
+in-order resource-stall cycles from a top-level CLI run,
 per-core fetch-response and data-response wait cycle stats, retired branch
 prediction, speculation repair, and redirect summaries in normal in-order timing records, RISC-V
 normal parallel-cluster pending-fetch resource-stall accounting consumed by CLI run stats, core checkpoints preserving the fetch-steering branch predictor payload, including live fetch-ahead pending branch speculation state, a RISC-V checker CPU option that runs an
@@ -241,7 +243,8 @@ and register-target `JALR` fetch-ahead preservation, compressed
 fetch-ahead, wrong-path repair, pending occupancy before response completion,
 serial trap repair, stream-reset discard, and normal-driver fetch-response wait
 resource-stall records that preserve in-flight fetch state without breaking
-completed-fetch overlap, plus normal parallel-cluster pending-fetch resource
+completed-fetch overlap, scalar integer multiply execute-stage latency through
+top-level CLI in-order cycle and stall stats, plus normal parallel-cluster pending-fetch resource
 stalls emitted through top-level CLI stats. CLI tick-limit runs expose pending fetch occupancy,
 per-stage occupied-cycle stats, non-retire cycle advancement, and direct `JAL`
 target-fetch-in-flight behavior without committing the fall-through register
@@ -251,7 +254,8 @@ CLI `rem6 run --checker-cpu` executes the same RISC-V retire path and emits per-
 checker tests cover retire comparison, data writeback sync, environment-call
 completion sync, public register writes, and HTM abort rollback.
 
-**Next evidence:** Broader per-cycle in-order stalls/squashes, broader
+**Next evidence:** Broader per-cycle in-order stalls/squashes, a broader
+functional-unit latency table, broader
 predictor-family speculation snapshots and rollback, full checker integration for future timing
 CPU modes, then a ROB/LSQ-backed O3 run test.
 

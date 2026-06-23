@@ -14,6 +14,8 @@ use crate::{
     RISCV_LOCAL_TAGE_SC_L_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
+const RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES: u64 = 2;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RiscvPendingFetchPrefix {
     fetch: CpuFetchEvent,
@@ -200,13 +202,17 @@ impl RiscvCore {
                 next_pc.get(),
             )
         });
+        let execute_wait_cycles = in_order_execute_wait_cycles(instruction);
         let pipeline_cycle = if execution.memory_access().is_none() {
-            Some(record_retired_in_order_pipeline_cycle_with_redirect(
-                state,
-                fetch.request_id().sequence(),
-                pipeline_branch_prediction,
-                pipeline_redirect,
-            )?)
+            Some(
+                record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
+                    state,
+                    fetch.request_id().sequence(),
+                    pipeline_branch_prediction,
+                    pipeline_redirect,
+                    execute_wait_cycles,
+                )?,
+            )
         } else {
             None
         };
@@ -330,21 +336,6 @@ pub(crate) fn record_retired_in_order_pipeline_cycle_after_wait(
     )
 }
 
-fn record_retired_in_order_pipeline_cycle_with_redirect(
-    state: &mut RiscvCoreState,
-    sequence: u64,
-    branch_prediction: Option<InOrderBranchPrediction>,
-    redirect: Option<InOrderBranchRedirect>,
-) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
-    record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
-        state,
-        sequence,
-        branch_prediction,
-        redirect,
-        0,
-    )
-}
-
 fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
     state: &mut RiscvCoreState,
     sequence: u64,
@@ -368,7 +359,7 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
         InOrderPipelineStage::ALL.len() + state.in_order_pipeline.in_flight().len();
     for _ in 0..max_retire_cycles {
         if !wait_recorded && in_order_pipeline_sequence_is_in_execute(state, sequence) {
-            record_data_wait_in_order_stall_cycles(state, wait_cycles)?;
+            record_in_order_resource_wait_cycles(state, wait_cycles)?;
             wait_recorded = true;
         }
         let snapshot = state.in_order_pipeline.snapshot();
@@ -400,7 +391,7 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
                     && instruction.stage() == InOrderPipelineStage::Execute
             })
         {
-            record_data_wait_in_order_stall_cycles(state, wait_cycles)?;
+            record_in_order_resource_wait_cycles(state, wait_cycles)?;
             wait_recorded = true;
         }
         if retires_sequence {
@@ -439,7 +430,7 @@ fn in_order_pipeline_sequence_is_in_execute(state: &RiscvCoreState, sequence: u6
         })
 }
 
-fn record_data_wait_in_order_stall_cycles(
+fn record_in_order_resource_wait_cycles(
     state: &mut RiscvCoreState,
     wait_cycles: u64,
 ) -> Result<(), RiscvCpuError> {
@@ -451,6 +442,16 @@ fn record_data_wait_in_order_stall_cycles(
         state.in_order_pipeline_cycle_records.push(stall_record);
     }
     Ok(())
+}
+
+fn in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64 {
+    match instruction {
+        RiscvInstruction::Mul { .. }
+        | RiscvInstruction::Mulh { .. }
+        | RiscvInstruction::Mulhsu { .. }
+        | RiscvInstruction::Mulhu { .. } => RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES,
+        _ => 0,
+    }
 }
 
 fn record_retires_sequence(record: &InOrderPipelineCycleRecord, sequence: u64) -> bool {

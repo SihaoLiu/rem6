@@ -446,6 +446,65 @@ fn rem6_run_in_order_pipeline_width_changes_executed_stage_occupancy() {
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_integer_mul_execute_latency() {
+    const EXPECTED_MUL_EXTRA_EXECUTE_CYCLES: u64 = 2;
+
+    let add_stats = in_order_pipeline_latency_stats(
+        "in-order-add-execute-latency",
+        &[
+            0x0060_0093, // addi x1, x0, 6
+            0x0070_0113, // addi x2, x0, 7
+            0x0020_81b3, // add x3, x1, x2
+            0x0000_0073, // ecall
+        ],
+    );
+    assert_eq!(stat_value(&add_stats, "sim.cpu0.instructions.committed"), 4);
+    assert_eq!(
+        stat_value(&add_stats, "sim.cpu0.pipeline.in_order.data_wait_cycles"),
+        0
+    );
+
+    let add_cycles = stat_value(&add_stats, "sim.cpu0.pipeline.in_order.cycles");
+    let add_stall = stat_value(&add_stats, "sim.cpu0.pipeline.in_order.stall_cycles");
+    for (name, word) in [
+        ("mul", 0x0220_81b3),
+        ("mulh", 0x0220_91b3),
+        ("mulhsu", 0x0220_a1b3),
+        ("mulhu", 0x0220_b1b3),
+    ] {
+        let mul_stats = in_order_pipeline_latency_stats(
+            &format!("in-order-{name}-execute-latency"),
+            &[
+                0x0060_0093, // addi x1, x0, 6
+                0x0070_0113, // addi x2, x0, 7
+                word,
+                0x0000_0073, // ecall
+            ],
+        );
+
+        assert_eq!(stat_value(&mul_stats, "sim.cpu0.instructions.committed"), 4);
+        assert_eq!(
+            stat_value(&mul_stats, "sim.cpu0.pipeline.in_order.data_wait_cycles"),
+            0
+        );
+
+        let mul_cycles = stat_value(&mul_stats, "sim.cpu0.pipeline.in_order.cycles");
+        assert_eq!(
+            mul_cycles - add_cycles,
+            EXPECTED_MUL_EXTRA_EXECUTE_CYCLES,
+            "{name} should consume the fixed extra execute latency: add={add_cycles}, {name}={mul_cycles}\nadd stats:\n{add_stats}\n{name} stats:\n{mul_stats}"
+        );
+
+        let mul_stall = stat_value(&mul_stats, "sim.cpu0.pipeline.in_order.stall_cycles");
+        assert_eq!(
+            mul_stall - add_stall,
+            EXPECTED_MUL_EXTRA_EXECUTE_CYCLES,
+            "{name} should add the fixed execute-stage pipeline stall cycles: add={add_stall}, {name}={mul_stall}\nadd stats:\n{add_stats}\n{name} stats:\n{mul_stats}"
+        );
+    }
+}
+
+#[test]
 fn rem6_run_stats_emit_checker_cpu_counts_from_execution() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
@@ -492,6 +551,37 @@ fn rem6_run_stats_emit_checker_cpu_counts_from_execution() {
         0,
         "monotonic",
     );
+}
+
+fn in_order_pipeline_latency_stats(name: &str, words: &[u32]) -> String {
+    let program = riscv64_program(words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary(name, &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
 }
 
 fn in_order_pipeline_stats_for_width(path: &std::path::Path, width: u64) -> String {
