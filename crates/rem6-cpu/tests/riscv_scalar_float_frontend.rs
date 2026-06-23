@@ -50,6 +50,10 @@ fn fdiv_d_round_down(rs2: u8, rs1: u8, rd: u8) -> u32 {
     r_type(0x0d, rs2, rs1, 0x2, rd, 0x53)
 }
 
+fn fmul_d_round_up(rs2: u8, rs1: u8, rd: u8) -> u32 {
+    r_type(0x09, rs2, rs1, 0x3, rd, 0x53)
+}
+
 fn core(route: MemoryRouteId, entry: u64) -> RiscvCore {
     RiscvCore::new(
         CpuCore::new(
@@ -211,5 +215,28 @@ fn riscv_core_driver_executes_fdiv_d_round_down_from_fetch_stream() {
         }
     );
     assert_eq!(core.read_float_register(freg(3)), 0x3fb9_9999_9999_9999);
+    assert_eq!(core.float_status().fflags(), FLOAT_FLAG_INEXACT);
+}
+
+#[test]
+fn riscv_core_driver_executes_fmul_d_round_up_from_fetch_stream() {
+    let (mut scheduler, transport, route) = fetch_route();
+    let core = core(route, 0x8000);
+    core.write_float_register(freg(1), 0x3ff0_0000_0000_0001);
+    core.write_float_register(freg(2), 0x3ff0_0000_0000_0001);
+    let store = loaded_program(0x8000, &[fmul_d_round_up(2, 1, 3)]);
+
+    let instruction = drive_until_execution(&core, store, &mut scheduler, &transport);
+
+    assert_eq!(
+        instruction,
+        RiscvInstruction::FloatMulD {
+            rd: freg(3),
+            rs1: freg(1),
+            rs2: freg(2),
+            rounding_mode: RiscvFloatRoundingMode::RoundUp,
+        }
+    );
+    assert_eq!(core.read_float_register(freg(3)), 0x3ff0_0000_0000_0003);
     assert_eq!(core.float_status().fflags(), FLOAT_FLAG_INEXACT);
 }

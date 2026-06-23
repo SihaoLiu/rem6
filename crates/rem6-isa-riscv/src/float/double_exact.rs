@@ -55,6 +55,27 @@ pub(super) fn mul_bits(lhs: u64, rhs: u64) -> Option<u64> {
     .then_some(result)
 }
 
+pub(super) fn rounded_mul_bits(
+    lhs: u64,
+    rhs: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> Option<(u64, bool)> {
+    let (lhs_negative, lhs_significand, lhs_shift) = significand_shift(lhs)?;
+    let (rhs_negative, rhs_significand, rhs_shift) = significand_shift(rhs)?;
+    let result_sign = if lhs_negative ^ rhs_negative {
+        DOUBLE_SIGN_BIT
+    } else {
+        0
+    };
+    if lhs_significand == 0 || rhs_significand == 0 {
+        return Some((result_sign, false));
+    }
+
+    let exact_significand = lhs_significand.checked_mul(rhs_significand)?;
+    let exact_shift = lhs_shift.checked_add(rhs_shift)?;
+    round_significand_to_double(result_sign, exact_significand, exact_shift, rounding_mode)
+}
+
 pub(super) fn div_bits(lhs: u64, rhs: u64) -> Option<u64> {
     let result = (f64::from_bits(lhs) / f64::from_bits(rhs)).to_bits();
     let (lhs_negative, lhs_significand, lhs_shift) = significand_shift(lhs)?;
@@ -101,6 +122,86 @@ fn scaled_equal(
     let lhs_scaled = scaled_significand(lhs_significand, lhs_shift, target_shift)?;
     let rhs_scaled = scaled_significand(rhs_significand, rhs_shift, target_shift)?;
     Some(lhs_scaled == rhs_scaled)
+}
+
+fn round_significand_to_double(
+    sign: u64,
+    significand: u128,
+    shift: i32,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> Option<(u64, bool)> {
+    let bit_width = bit_width(significand);
+    if bit_width < DOUBLE_SIGNIFICAND_BITS {
+        return None;
+    }
+
+    let discarded_bits = bit_width - DOUBLE_SIGNIFICAND_BITS;
+    let mut retained = significand >> discarded_bits;
+    let remainder = if discarded_bits == 0 {
+        0
+    } else {
+        significand & ((1_u128 << discarded_bits) - 1)
+    };
+    let mut exponent = shift.checked_add((bit_width - 1).try_into().ok()?)?;
+
+    if should_increment(
+        sign != 0,
+        retained,
+        remainder,
+        discarded_bits,
+        rounding_mode,
+    ) {
+        retained = retained.checked_add(1)?;
+        if retained == (1_u128 << DOUBLE_SIGNIFICAND_BITS) {
+            retained >>= 1;
+            exponent = exponent.checked_add(1)?;
+        }
+    }
+
+    if retained < (1_u128 << DOUBLE_FRACTION_BITS) {
+        return None;
+    }
+    if !(-1022..=1023).contains(&exponent) {
+        return None;
+    }
+
+    let exponent_bits = u64::try_from(exponent + DOUBLE_EXPONENT_BIAS).ok()?;
+    let fraction = u64::try_from(retained & u128::from(DOUBLE_FRACTION_MASK)).ok()?;
+    Some((
+        sign | (exponent_bits << DOUBLE_FRACTION_BITS) | fraction,
+        remainder != 0,
+    ))
+}
+
+fn should_increment(
+    negative: bool,
+    retained: u128,
+    remainder: u128,
+    discarded_bits: u32,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> bool {
+    if remainder == 0 {
+        return false;
+    }
+
+    match rounding_mode {
+        RiscvFloatRoundingMode::RoundNearestEven => {
+            let half = 1_u128 << (discarded_bits - 1);
+            remainder > half || (remainder == half && retained & 1 == 1)
+        }
+        RiscvFloatRoundingMode::RoundTowardZero => false,
+        RiscvFloatRoundingMode::RoundDown => negative,
+        RiscvFloatRoundingMode::RoundUp => !negative,
+        RiscvFloatRoundingMode::RoundNearestMaxMagnitude => {
+            let half = 1_u128 << (discarded_bits - 1);
+            remainder >= half
+        }
+        RiscvFloatRoundingMode::Dynamic => unreachable!("dynamic rounding mode must be resolved"),
+    }
+}
+
+fn bit_width(value: u128) -> u32 {
+    u128::BITS - value.leading_zeros()
 }
 
 fn scaled_significand(significand: u128, shift: i32, target_shift: i32) -> Option<u128> {
@@ -164,3 +265,7 @@ fn significand_shift(value: u64) -> Option<(bool, u128, i32)> {
         exponent as i32 - 1023 - 52,
     ))
 }
+
+const DOUBLE_FRACTION_BITS: u32 = 52;
+const DOUBLE_SIGNIFICAND_BITS: u32 = 53;
+const DOUBLE_EXPONENT_BIAS: i32 = 1023;

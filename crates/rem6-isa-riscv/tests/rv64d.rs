@@ -791,6 +791,61 @@ fn hart_executes_rv64d_fdiv_directed_rounding_when_inexact() {
 }
 
 #[test]
+fn hart_executes_rv64d_fmul_directed_rounding_when_inexact() {
+    for (rounding_mode, expected_bits) in [
+        (
+            RiscvFloatRoundingMode::RoundTowardZero,
+            0x3ff0_0000_0000_0002,
+        ),
+        (RiscvFloatRoundingMode::RoundDown, 0x3ff0_0000_0000_0002),
+        (RiscvFloatRoundingMode::RoundUp, 0x3ff0_0000_0000_0003),
+        (
+            RiscvFloatRoundingMode::RoundNearestMaxMagnitude,
+            0x3ff0_0000_0000_0002,
+        ),
+    ] {
+        let mut hart = RiscvHartState::new(0xd100);
+        hart.write_float(freg(1), 0x3ff0_0000_0000_0001);
+        hart.write_float(freg(2), 0x3ff0_0000_0000_0001);
+
+        let multiply = hart
+            .execute(RiscvInstruction::FloatMulD {
+                rd: freg(3),
+                rs1: freg(1),
+                rs2: freg(2),
+                rounding_mode,
+            })
+            .unwrap();
+
+        assert_eq!(multiply.trap(), None);
+        assert_eq!(hart.read_float(freg(3)), expected_bits);
+        assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INEXACT);
+    }
+
+    for (rounding_mode, expected_bits) in [
+        (RiscvFloatRoundingMode::RoundDown, 0xbff0_0000_0000_0003),
+        (RiscvFloatRoundingMode::RoundUp, 0xbff0_0000_0000_0002),
+    ] {
+        let mut hart = RiscvHartState::new(0xd120);
+        hart.write_float(freg(1), 0x3ff0_0000_0000_0001);
+        hart.write_float(freg(2), 0xbff0_0000_0000_0001);
+
+        let multiply = hart
+            .execute(RiscvInstruction::FloatMulD {
+                rd: freg(3),
+                rs1: freg(1),
+                rs2: freg(2),
+                rounding_mode,
+            })
+            .unwrap();
+
+        assert_eq!(multiply.trap(), None);
+        assert_eq!(hart.read_float(freg(3)), expected_bits);
+        assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INEXACT);
+    }
+}
+
+#[test]
 fn hart_executes_rv64d_sign_injection_with_raw_bits() {
     let mut hart = RiscvHartState::new(0x8000);
     let positive = 1.25f64.to_bits();
