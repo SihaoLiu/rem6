@@ -915,7 +915,7 @@ mixed-command multi-run slices including GPU micro-runs.
 - [x] CLI workload-resource acquisition consumes a resource executor for suite required artifacts.
 - [x] CLI `run` consumes a manifest-acquired kernel resource at runtime.
 - [x] CLI `run` consumes unique or selected suite-acquired kernel resources at runtime.
-- [x] CLI `run` consumes acquired input/initrd resources as guest readfile/load-blob payloads and RISC-V SE stdin/guest-file inputs, including `suite-resource:<workload>/<resource>` selectors for same-name suite resources.
+- [x] CLI `run` consumes acquired input/initrd resources as guest readfile/load-blob payloads and RISC-V SE stdin/guest-file inputs, including `suite-resource:<workload>/<resource>` selectors for same-name suite resources and runtime rejection of non-initrd load-blob resources.
 - [x] CLI `trace-replay` consumes manifest and suite-acquired trace resources at runtime, including TOML/CLI `suite-resource:<workload>/<resource>` selectors for same-name suite traces and runtime rejection of non-input trace resources.
 - [x] GPU and accelerator command routing, DMA routes, topology validation, and replay evidence exist.
 - [x] Dispatch plans and execution summaries expose typed parallel evidence.

@@ -86,17 +86,7 @@ impl RunResourcePayloads {
     }
 
     pub(crate) fn input_payload(&self, use_case: &str, id: &str) -> Result<&[u8], Rem6CliError> {
-        let payload = self.payload_by_id(use_case, id)?;
-        if payload.kind != WorkloadResourceKind::Input {
-            return Err(Rem6CliError::Execute {
-                error: format!(
-                    "{use_case} resource {id} in run resource config {} has kind {}; expected input",
-                    self.resource_config.display(),
-                    payload.kind.as_str(),
-                ),
-            });
-        }
-        Ok(payload.payload.data())
+        self.typed_payload(use_case, id, WorkloadResourceKind::Input)
     }
 
     pub(crate) fn input_suite_payload(
@@ -105,22 +95,11 @@ impl RunResourcePayloads {
         workload_id: &str,
         id: &str,
     ) -> Result<&[u8], Rem6CliError> {
-        let payload = self.payload_by_suite_id(use_case, workload_id, id)?;
-        if payload.kind != WorkloadResourceKind::Input {
-            return Err(Rem6CliError::Execute {
-                error: format!(
-                    "{use_case} suite resource {workload_id}/{id} in run resource config {} has kind {}; expected input",
-                    self.resource_config.display(),
-                    payload.kind.as_str(),
-                ),
-            });
-        }
-        Ok(payload.payload.data())
+        self.typed_suite_payload(use_case, workload_id, id, WorkloadResourceKind::Input)
     }
 
     pub(crate) fn blob_payload(&self, id: &str) -> Result<&[u8], Rem6CliError> {
-        let payload = self.payload_by_id("load blob", id)?;
-        Ok(payload.payload.data())
+        self.typed_payload("load blob", id, WorkloadResourceKind::Initrd)
     }
 
     pub(crate) fn blob_suite_payload(
@@ -128,7 +107,47 @@ impl RunResourcePayloads {
         workload_id: &str,
         id: &str,
     ) -> Result<&[u8], Rem6CliError> {
-        let payload = self.payload_by_suite_id("load blob", workload_id, id)?;
+        self.typed_suite_payload("load blob", workload_id, id, WorkloadResourceKind::Initrd)
+    }
+
+    fn typed_payload(
+        &self,
+        use_case: &str,
+        id: &str,
+        expected: WorkloadResourceKind,
+    ) -> Result<&[u8], Rem6CliError> {
+        let payload = self.payload_by_id(use_case, id)?;
+        if payload.kind != expected {
+            return Err(Rem6CliError::Execute {
+                error: format!(
+                    "{use_case} resource {id} in run resource config {} has kind {}; expected {}",
+                    self.resource_config.display(),
+                    payload.kind.as_str(),
+                    expected.as_str(),
+                ),
+            });
+        }
+        Ok(payload.payload.data())
+    }
+
+    fn typed_suite_payload(
+        &self,
+        use_case: &str,
+        workload_id: &str,
+        id: &str,
+        expected: WorkloadResourceKind,
+    ) -> Result<&[u8], Rem6CliError> {
+        let payload = self.payload_by_suite_id(use_case, workload_id, id)?;
+        if payload.kind != expected {
+            return Err(Rem6CliError::Execute {
+                error: format!(
+                    "{use_case} suite resource {workload_id}/{id} in run resource config {} has kind {}; expected {}",
+                    self.resource_config.display(),
+                    payload.kind.as_str(),
+                    expected.as_str(),
+                ),
+            });
+        }
         Ok(payload.payload.data())
     }
 

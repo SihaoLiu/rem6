@@ -164,6 +164,97 @@ artifact_size = 4
 }
 
 #[test]
+fn rem6_run_rejects_non_initrd_load_blob_resource() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x0000_0073]);
+    let workspace = temp_workspace("run-load-blob-resource-wrong-kind");
+    fs::write(workspace.join("kernel.elf"), &elf).unwrap();
+    let resource_config = workspace.join("resource-acquire.toml");
+    fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+workload_id = "wrong-kind-load-blob-resource"
+boot_entry = 2147483648
+
+[[resource_acquire.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:wrong-kind-load-blob-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel"
+artifact = "kernel.elf"
+artifact_digest = "sha256:wrong-kind-load-blob-kernel"
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("run.toml");
+    fs::write(
+        &config,
+        "[run]\nisa = \"riscv\"\nresource_config = \"resource-acquire.toml\"\nmax_tick = 40\nexecute = true\nstats_format = \"json\"\nload_blobs = [\"0x80001000:resource:kernel\"]\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("load blob resource kernel"));
+    assert!(stderr.contains("has kind kernel; expected initrd"));
+}
+
+#[test]
+fn rem6_run_rejects_non_initrd_suite_load_blob_resource() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x0000_0073]);
+    let workspace = temp_workspace("run-suite-load-blob-resource-wrong-kind");
+    fs::write(workspace.join("kernel.elf"), &elf).unwrap();
+    let resource_config = workspace.join("resource-acquire-suite.toml");
+    fs::write(
+        &resource_config,
+        r#"[resource_acquire]
+suite_id = "wrong-kind-load-blob-suite"
+
+[[resource_acquire.manifests]]
+workload_id = "boot-workload"
+boot_entry = 2147483648
+
+[[resource_acquire.manifests.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:wrong-kind-suite-load-blob-kernel"
+locator = "resources/kernel.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel"
+artifact = "kernel.elf"
+artifact_digest = "sha256:wrong-kind-suite-load-blob-kernel"
+"#,
+    )
+    .unwrap();
+    let config = workspace.join("run.toml");
+    fs::write(
+        &config,
+        "[run]\nisa = \"riscv\"\nresource_config = \"resource-acquire-suite.toml\"\nmax_tick = 40\nexecute = true\nstats_format = \"json\"\nload_blobs = [\"0x80001000:suite-resource:boot-workload/kernel\"]\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("load blob suite resource boot-workload/kernel"));
+    assert!(stderr.contains("has kind kernel; expected initrd"));
+}
+
+#[test]
 fn rem6_run_rejects_ambiguous_suite_load_blob_resource() {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x0000_0073]);
     let workspace = temp_workspace("run-suite-load-blob-resource-ambiguous");
