@@ -265,6 +265,146 @@ int main(void) {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_readlink_proc_self_fd_against_qemu() {
+    let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
+        eprintln!(
+            "skipping static RISC-V SE proc-self-fd smoke: riscv64-unknown-elf-gcc not found"
+        );
+        return;
+    };
+    let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
+        eprintln!("skipping static RISC-V SE proc-self-fd smoke: qemu-riscv64 not found");
+        return;
+    };
+    let workspace = temp_workspace("riscv-se-raw-proc-self-fd");
+    let source = workspace.join("proc-self-fd.c");
+    let binary = workspace.join("proc-self-fd");
+    let guest_file = workspace.join("fd-target.txt");
+    fs::write(&guest_file, b"fd target\n").unwrap();
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+#include <string.h>
+
+static long linux_syscall3(long number, long arg0, long arg1, long arg2) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a7) : "memory");
+    return a0;
+}
+
+static long linux_syscall4(long number, long arg0, long arg1, long arg2, long arg3) {
+    register long a0 asm("a0") = arg0;
+    register long a1 asm("a1") = arg1;
+    register long a2 asm("a2") = arg2;
+    register long a3 asm("a3") = arg3;
+    register long a7 asm("a7") = number;
+    asm volatile ("ecall" : "+r"(a0) : "r"(a1), "r"(a2), "r"(a3), "r"(a7) : "memory");
+    return a0;
+}
+
+static int ends_with(const char *text, const char *suffix) {
+    size_t text_len = strlen(text);
+    size_t suffix_len = strlen(suffix);
+    return text_len >= suffix_len &&
+           memcmp(text + text_len - suffix_len, suffix, suffix_len) == 0;
+}
+
+int main(void) {
+    char proc_path[64] = {0};
+    char target[256] = {0};
+    long fd = linux_syscall4(56, -100, (long)"fd-target.txt", 0, 0);
+    snprintf(proc_path, sizeof(proc_path), "/proc/self/fd/%ld", fd);
+    long len = fd >= 0 ? linux_syscall4(78, -100, (long)proc_path, (long)target, sizeof(target) - 1) : -1;
+    if (len > 0 && len < (long)sizeof(target)) {
+        target[len] = 0;
+    }
+    long missing = linux_syscall4(78, -100, (long)"/proc/self/fd/99", (long)target, sizeof(target) - 1);
+    int suffix = len > 0 && ends_with(target, "fd-target.txt");
+    printf("proc-self-fd:%ld:%ld:%d:%ld\n", fd, len, suffix, missing);
+    return fd >= 0 && len > 0 && suffix && missing == -2 ? 45 : 77;
+}
+"#,
+    )
+    .unwrap();
+
+    let compile = Command::new(&gcc)
+        .args([
+            "-O1",
+            "-static",
+            "-march=rv64gc",
+            "-mabi=lp64d",
+            source.to_str().unwrap(),
+            "-o",
+            binary.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        compile.status.success(),
+        "gcc stderr: {}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+
+    let qemu_output = Command::new(&qemu)
+        .current_dir(&workspace)
+        .arg(&binary)
+        .output()
+        .unwrap();
+    assert_eq!(
+        qemu_output.status.code(),
+        Some(45),
+        "qemu stderr: {}",
+        String::from_utf8_lossy(&qemu_output.stderr)
+    );
+    let qemu_stdout = String::from_utf8(qemu_output.stdout).unwrap();
+    assert!(
+        qemu_stdout.starts_with("proc-self-fd:3:"),
+        "qemu stdout: {qemu_stdout}"
+    );
+    assert!(
+        qemu_stdout.ends_with(":1:-2\n"),
+        "qemu stdout: {qemu_stdout}"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "300000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+            "--riscv-se-file",
+            &format!("fd-target.txt={}", guest_file.display()),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":45"));
+    assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
+    assert!(stdout.contains("\"text\":\"proc-self-fd:3:"));
+    assert!(stdout.contains(":1:-2\\n\""));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 45, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_prctl_name_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!("skipping static RISC-V SE prctl smoke: riscv64-unknown-elf-gcc not found");

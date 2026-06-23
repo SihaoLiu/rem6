@@ -142,6 +142,32 @@ fn linux_table_openat_rejects_virtual_proc_maps_through_missing_parent() {
 }
 
 #[test]
+fn linux_table_openat_rejects_virtual_proc_maps_through_proc_fd_parent() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0x20000);
+    let guest_memory_reader = c_string_reader(0x9000, b"/proc/self/fd/03/../../maps");
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPENAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, 0, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOENT)
+        })
+    );
+    assert!(state.guest_opens().is_empty());
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
 fn linux_table_openat_rejects_writable_virtual_proc_self_maps() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0x20000);

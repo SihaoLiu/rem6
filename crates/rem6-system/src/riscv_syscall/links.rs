@@ -34,10 +34,14 @@ pub(super) fn syscall_readlinkat(
     let Ok(buffer_bytes) = usize::try_from(request.argument(3)) else {
         return linux_error(RISCV_LINUX_EINVAL);
     };
-    let target = match state.guest_link_target_result(&path) {
+    let target = match state.virtual_proc_link_target_result_for_path(&path) {
         Ok(Some(target)) => target,
-        Ok(None) => return linux_error(RISCV_LINUX_ENOENT),
-        Err(error) => return linux_error(error.linux_error_code()),
+        Ok(None) => match state.guest_link_target_result(&path) {
+            Ok(Some(target)) => target.to_vec(),
+            Ok(None) => return linux_error(RISCV_LINUX_ENOENT),
+            Err(error) => return linux_error(error.linux_error_code()),
+        },
+        Err(error) => return linux_error(error),
     };
     let bytes = &target[..target.len().min(buffer_bytes)];
     if bytes.is_empty() {

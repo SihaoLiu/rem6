@@ -125,6 +125,79 @@ fn linux_table_readlinkat_rejects_trailing_slash_on_symlink_to_regular_file() {
 }
 
 #[test]
+fn linux_table_readlinkat_rejects_proc_self_fd_noncanonical_links() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    state.register_guest_file(b"/guest/procfd.txt", b"file-backed input\n");
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if bytes != 1 {
+            return None;
+        }
+        match address {
+            0x9000..=0x9011 => b"/guest/procfd.txt\0"
+                .get((address - 0x9000) as usize)
+                .copied(),
+            0x9100..=0x9110 => b"/proc/self/fd/3/\0"
+                .get((address - 0x9100) as usize)
+                .copied(),
+            0x9200..=0x9210 => b"/proc/self/fd/03\0"
+                .get((address - 0x9200) as usize)
+                .copied(),
+            _ => None,
+        }
+        .map(|byte| vec![byte])
+    });
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(|_address, _bytes| true);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_OPENAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9000, RISCV_LINUX_O_RDONLY, 0, 0, 0],
+            ),
+            &mut state,
+            7,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 3 })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8004,
+                RISCV_LINUX_READLINKAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9100, 0x9300, 32, 0, 0],
+            ),
+            &mut state,
+            8,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOTDIR_FOR_READLINK_TEST)
+        })
+    );
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8008,
+                RISCV_LINUX_READLINKAT,
+                [RISCV_LINUX_AT_FDCWD, 0x9200, 0x9300, 32, 0, 0],
+            ),
+            &mut state,
+            9,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_ENOENT)
+        })
+    );
+}
+
+#[test]
 fn linux_table_readlinkat_requires_guest_memory_io() {
     let table = RiscvSyscallTable::new();
     let mut state = RiscvSyscallState::new(0);
