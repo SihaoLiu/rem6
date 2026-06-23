@@ -10,15 +10,10 @@ rem6.
 `docs/architecture/rem6-architecture.md` owns the stable architecture story:
 runtime shape, ownership model, invariants, and design motivation.
 
-`docs/architecture/gem5-to-rem6-alignment.md` is only a compatibility index.
-
-This migration ledger owns changing state: component scores and score
-calculations, markdown checklists for migrated and missing behavior, concise
-migrated, not migrated, evidence, and next-evidence notes, gem5 test-anchor
-crosswalks, and external-adapter rows.
-
-Do not duplicate the architecture document's invariant list here. Do not put
-current percentages or proof logs in the architecture document.
+This migration ledger owns changing state: component scores and calculations,
+checklists, migrated and missing behavior, evidence notes, gem5 test-anchor
+crosswalks, and external-adapter rows. Do not duplicate the architecture
+document's invariant list here or put percentages/proof logs there.
 
 ## Scoring Rubric
 

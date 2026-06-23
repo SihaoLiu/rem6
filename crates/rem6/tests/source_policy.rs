@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 const MAX_FACADE_LINES: usize = 1300;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_ARCHITECTURE_OVERVIEW_LINES: usize = 600;
-const MAX_ALIGNMENT_INDEX_LINES: usize = 80;
 const MAX_MIGRATION_LEDGER_LINES: usize = 1200;
+const MAX_ARCHITECTURE_README_LINES: usize = 80;
 const MIGRATION_SCORE_BUCKETS: &[MigrationScoreBucket] = &[
     MigrationScoreBucket {
         name: "open",
@@ -159,17 +159,17 @@ fn cli_stats_output_root_stays_focused() {
 #[test]
 fn architecture_docs_have_clear_boundaries() {
     let repo_root = repo_root();
+    let readme = repo_root.join("docs/architecture/README.md");
     let architecture = repo_root.join("docs/architecture/rem6-architecture.md");
-    let alignment = repo_root.join("docs/architecture/gem5-to-rem6-alignment.md");
     let migration = repo_root.join("docs/architecture/gem5-to-rem6-migration.md");
 
     assert!(
-        architecture.exists(),
-        "rem6 architecture needs one canonical doc"
+        readme.exists(),
+        "architecture directory needs a content index"
     );
     assert!(
-        alignment.exists(),
-        "gem5 to rem6 alignment needs a stable compatibility index"
+        architecture.exists(),
+        "rem6 architecture needs one canonical doc"
     );
     assert!(
         migration.exists(),
@@ -179,11 +179,11 @@ fn architecture_docs_have_clear_boundaries() {
     assert_eq!(
         architecture_docs,
         [
-            "docs/architecture/gem5-to-rem6-alignment.md",
+            "docs/architecture/README.md",
             "docs/architecture/gem5-to-rem6-migration.md",
             "docs/architecture/rem6-architecture.md",
         ],
-        "docs/architecture should contain only the architecture overview, alignment index, and migration ledger"
+        "docs/architecture should contain only the directory index, architecture overview, and migration ledger"
     );
     for retired in [
         "docs/architecture/gem5-test-migration.md",
@@ -195,21 +195,23 @@ fn architecture_docs_have_clear_boundaries() {
         );
     }
 
-    let alignment_contents = fs::read_to_string(&alignment).unwrap();
-    let alignment_lines = alignment_contents.lines().count();
+    let readme_contents = fs::read_to_string(&readme).unwrap();
+    let readme_lines = readme_contents.lines().count();
     assert!(
-        alignment_lines <= MAX_ALIGNMENT_INDEX_LINES,
-        "gem5-to-rem6-alignment.md should stay a concise compatibility index, but it has {alignment_lines} lines"
+        readme_lines <= MAX_ARCHITECTURE_README_LINES,
+        "docs/architecture/README.md should stay a concise index, but it has {readme_lines} lines"
     );
     for required in [
-        "## Boundary",
+        "# Architecture Documents",
+        "## Content Index",
         "docs/architecture/rem6-architecture.md",
         "docs/architecture/gem5-to-rem6-migration.md",
-        "does not own migration scores",
+        "stable architecture overview",
+        "mutable migration ledger",
     ] {
         assert!(
-            alignment_contents.contains(required),
-            "gem5-to-rem6-alignment.md is missing required marker `{required}`"
+            readme_contents.contains(required),
+            "docs/architecture/README.md is missing required marker `{required}`"
         );
     }
     for forbidden in [
@@ -219,8 +221,8 @@ fn architecture_docs_have_clear_boundaries() {
         "- [ ]",
     ] {
         assert!(
-            !alignment_contents.contains(forbidden),
-            "gem5-to-rem6-alignment.md should not duplicate migration ledger marker `{forbidden}`"
+            !readme_contents.contains(forbidden),
+            "docs/architecture/README.md should not duplicate migration ledger marker `{forbidden}`"
         );
     }
 

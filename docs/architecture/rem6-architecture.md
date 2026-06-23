@@ -10,15 +10,15 @@ build outputs, or require it at runtime.
 
 ## Document Boundary
 
-`docs/architecture/` has three architecture-level documents:
+`docs/architecture/` has two canonical architecture-level documents and a
+directory index:
 
 - `rem6-architecture.md` describes the stable simulator architecture, ownership
   model, design invariants, and the gem5 pain points that rem6 is designed to
   address.
-- `gem5-to-rem6-alignment.md` is a short compatibility index for review gates
-  and older plans that still reference the alignment path.
 - `gem5-to-rem6-migration.md` describes current gem5-to-rem6 migration
   progress, scoring, migrated behavior, missing behavior, and next evidence.
+- `README.md` is a short content index for this directory.
 
 This file should not carry migration percentages, current coverage claims, or
 proof logs. Those change with implementation progress and belong in the
