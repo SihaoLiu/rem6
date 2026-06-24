@@ -39,6 +39,7 @@ mod vector_mask_mode;
 mod vector_mask_prefix_execute;
 mod vector_mask_reduction_execute;
 mod vector_narrow_execute;
+mod vector_saturating;
 mod vector_scalar_move_execute;
 mod vector_slide_execute;
 
@@ -101,10 +102,10 @@ pub use vector::{
     RiscvVectorNarrowInstruction, RiscvVectorNarrowOperation, RiscvVectorScalarMoveInstruction,
     RiscvVectorSlideInstruction, RiscvVectorTailPolicy, RiscvVectorWholeMoveInstruction,
 };
-pub use vector_fixed_point_shift::{
-    RiscvVectorFixedPointShiftInstruction, RiscvVectorFixedPointShiftOperation,
-};
+pub use vector_fixed_point_shift::RiscvVectorFixedPointShiftInstruction;
+pub use vector_fixed_point_shift::RiscvVectorFixedPointShiftOperation;
 pub use vector_mask_mode::RiscvVectorMaskMode;
+pub use vector_saturating::RiscvVectorSaturatingInstruction;
 
 impl RiscvInstruction {
     pub fn decode(raw: u32) -> Result<Self, RiscvError> {
@@ -248,7 +249,7 @@ impl RiscvHartState {
                 write_register(self, &mut register_writes, rd, value);
             }
             RiscvInstruction::Addi { rd, rs1, imm } => {
-                let value = wrapping_add_signed(self.read(rs1), imm.value());
+                let value = self.read(rs1).wrapping_add_signed(imm.value());
                 write_register(self, &mut register_writes, rd, value);
             }
             RiscvInstruction::Slti { rd, rs1, imm } => {
@@ -536,6 +537,7 @@ impl RiscvHartState {
             | RiscvInstruction::VectorCompressVm(..)
             | RiscvInstruction::VectorNarrow(..)
             | RiscvInstruction::VectorFixedPointShift(..)
+            | RiscvInstruction::VectorSaturating(..)
             | RiscvInstruction::VectorZeroExtend { .. }
             | RiscvInstruction::VectorSignExtend { .. }
             | RiscvInstruction::VectorMoveVv { .. }
@@ -851,7 +853,7 @@ impl RiscvHartState {
                     address_space: (!rs2.is_zero()).then(|| self.read(rs2)),
                 });
             }
-            RiscvInstruction::Gem5PseudoOp { op } => {
+            RiscvInstruction::Gem5PseudoOp(op) => {
                 system_event = pseudo::execute_gem5_pseudo_op(op, pc, self, &mut register_writes);
             }
             RiscvInstruction::MachineInformationCsr(csr_instruction) => {
@@ -1287,13 +1289,5 @@ fn add_signed(value: u64, offset: i64) -> Result<u64, RiscvError> {
         value
             .checked_sub(offset.unsigned_abs())
             .ok_or(RiscvError::AddressOverflow { value, offset })
-    }
-}
-
-fn wrapping_add_signed(value: u64, offset: i64) -> u64 {
-    if offset >= 0 {
-        value.wrapping_add(offset as u64)
-    } else {
-        value.wrapping_sub(offset.unsigned_abs())
     }
 }

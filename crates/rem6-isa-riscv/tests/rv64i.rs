@@ -2705,15 +2705,11 @@ fn hart_decodes_and_records_gem5_work_marker_pseudo_ops() {
 
     assert_eq!(
         work_begin,
-        RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::WorkBegin
-        }
+        RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::WorkBegin)
     );
     assert_eq!(
         work_end,
-        RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::WorkEnd
-        }
+        RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::WorkEnd)
     );
 
     let mut hart = RiscvHartState::new(0x7200);
@@ -2761,18 +2757,8 @@ fn hart_decodes_and_records_gem5_exit_fail_pseudo_ops() {
     let exit = RiscvInstruction::decode(gem5_m5op_type(0x21)).unwrap();
     let fail = RiscvInstruction::decode(gem5_m5op_type(0x22)).unwrap();
 
-    assert_eq!(
-        exit,
-        RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::Exit
-        }
-    );
-    assert_eq!(
-        fail,
-        RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::Fail
-        }
-    );
+    assert_eq!(exit, RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::Exit));
+    assert_eq!(fail, RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::Fail));
 
     let mut hart = RiscvHartState::new(0x7300);
     hart.write(reg(10), 0);
@@ -2818,12 +2804,7 @@ fn hart_decodes_and_records_gem5_exit_fail_pseudo_ops() {
 fn hart_decodes_and_executes_gem5_sum_pseudo_op() {
     let sum = RiscvInstruction::decode(gem5_m5op_type(0x23)).unwrap();
 
-    assert_eq!(
-        sum,
-        RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::Sum
-        }
-    );
+    assert_eq!(sum, RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::Sum));
 
     let mut hart = RiscvHartState::new(0x7310);
     for (index, value) in (10..=15).zip([1, 2, 3, 4, 5, 6]) {
@@ -2847,21 +2828,15 @@ fn hart_decodes_and_records_gem5_stats_pseudo_ops() {
 
     assert_eq!(
         reset,
-        RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::ResetStats
-        }
+        RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::ResetStats)
     );
     assert_eq!(
         dump,
-        RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::DumpStats
-        }
+        RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::DumpStats)
     );
     assert_eq!(
         dump_reset,
-        RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::DumpResetStats
-        }
+        RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::DumpResetStats)
     );
 
     let mut hart = RiscvHartState::new(0x7400);
@@ -2935,9 +2910,7 @@ fn hart_decodes_and_records_gem5_checkpoint_pseudo_op() {
 
     assert_eq!(
         checkpoint,
-        RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::Checkpoint
-        }
+        RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::Checkpoint)
     );
 
     let mut hart = RiscvHartState::new(0x7500);
@@ -2967,9 +2940,7 @@ fn hart_decodes_and_records_gem5_switch_cpu_pseudo_op() {
 
     assert_eq!(
         switch_cpu,
-        RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::SwitchCpu
-        }
+        RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::SwitchCpu)
     );
 
     let mut hart = RiscvHartState::new(0x7580);
@@ -2996,9 +2967,7 @@ fn hart_decodes_and_records_gem5_hypercall_pseudo_op() {
 
     assert_eq!(
         hypercall,
-        RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::Hypercall
-        }
+        RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::Hypercall)
     );
 
     let mut hart = RiscvHartState::new(0x7600);

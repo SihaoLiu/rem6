@@ -23,39 +23,19 @@ pub(crate) fn decode_gem5_pseudo_op(raw: u32) -> Result<RiscvInstruction, RiscvE
         return Err(RiscvError::UnknownEncoding { raw });
     }
     match raw >> 25 {
-        0x21 => Ok(RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::Exit,
-        }),
-        0x22 => Ok(RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::Fail,
-        }),
-        0x23 => Ok(RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::Sum,
-        }),
-        0x40 => Ok(RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::ResetStats,
-        }),
-        0x41 => Ok(RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::DumpStats,
-        }),
-        0x42 => Ok(RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::DumpResetStats,
-        }),
-        0x43 => Ok(RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::Checkpoint,
-        }),
-        0x52 => Ok(RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::SwitchCpu,
-        }),
-        0x71 => Ok(RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::Hypercall,
-        }),
-        0x5a => Ok(RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::WorkBegin,
-        }),
-        0x5b => Ok(RiscvInstruction::Gem5PseudoOp {
-            op: RiscvPseudoOp::WorkEnd,
-        }),
+        0x21 => Ok(RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::Exit)),
+        0x22 => Ok(RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::Fail)),
+        0x23 => Ok(RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::Sum)),
+        0x40 => Ok(RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::ResetStats)),
+        0x41 => Ok(RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::DumpStats)),
+        0x42 => Ok(RiscvInstruction::Gem5PseudoOp(
+            RiscvPseudoOp::DumpResetStats,
+        )),
+        0x43 => Ok(RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::Checkpoint)),
+        0x52 => Ok(RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::SwitchCpu)),
+        0x71 => Ok(RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::Hypercall)),
+        0x5a => Ok(RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::WorkBegin)),
+        0x5b => Ok(RiscvInstruction::Gem5PseudoOp(RiscvPseudoOp::WorkEnd)),
         _ => Err(RiscvError::UnknownEncoding { raw }),
     }
 }

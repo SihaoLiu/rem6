@@ -520,6 +520,10 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs1: vector_register(raw, 15),
             vs2: vector_register(raw, 20),
         }),
+        (0x0, 0b100000, true) => Ok(crate::vector_saturating::decode_add_unsigned_vv(raw)),
+        (0x0, 0b100001, true) => Ok(crate::vector_saturating::decode_add_signed_vv(raw)),
+        (0x0, 0b100010, true) => Ok(crate::vector_saturating::decode_sub_unsigned_vv(raw)),
+        (0x0, 0b100011, true) => Ok(crate::vector_saturating::decode_sub_signed_vv(raw)),
         (0x0, 0b101010, true) => Ok(RiscvInstruction::VectorFixedPointShift(
             RiscvVectorFixedPointShiftInstruction::shift_right_logical_vv(
                 vector_register(raw, 7),
@@ -860,6 +864,8 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             shamt: vector_unsigned_imm5(raw),
         }),
+        (0x3, 0b100000, true) => Ok(crate::vector_saturating::decode_add_unsigned_vi(raw)),
+        (0x3, 0b100001, true) => Ok(crate::vector_saturating::decode_add_signed_vi(raw)),
         (0x3, 0b101010, true) => Ok(RiscvInstruction::VectorFixedPointShift(
             RiscvVectorFixedPointShiftInstruction::shift_right_logical_vi(
                 vector_register(raw, 7),
@@ -1010,6 +1016,10 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             rs1: rs1(raw),
         }),
+        (0x4, 0b100000, true) => Ok(crate::vector_saturating::decode_add_unsigned_vx(raw)),
+        (0x4, 0b100001, true) => Ok(crate::vector_saturating::decode_add_signed_vx(raw)),
+        (0x4, 0b100010, true) => Ok(crate::vector_saturating::decode_sub_unsigned_vx(raw)),
+        (0x4, 0b100011, true) => Ok(crate::vector_saturating::decode_sub_signed_vx(raw)),
         (0x4, 0b101010, true) => Ok(RiscvInstruction::VectorFixedPointShift(
             RiscvVectorFixedPointShiftInstruction::shift_right_logical_vx(
                 vector_register(raw, 7),

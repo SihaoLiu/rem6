@@ -3,7 +3,8 @@ use rem6_isa_riscv::{
     RiscvTrapKind, RiscvVectorConfig, RiscvVectorFixedPointShiftInstruction,
     RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, RiscvVectorGatherInstruction,
     RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction,
-    RiscvVectorMaskReductionInstruction, RiscvVectorSlideInstruction, VectorRegister,
+    RiscvVectorMaskReductionInstruction, RiscvVectorSaturatingInstruction,
+    RiscvVectorSlideInstruction, VectorRegister,
 };
 
 fn reg(index: u8) -> Register {
@@ -306,6 +307,46 @@ fn vssra_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
 
 fn vssra_vi_type(vs2: u8, shamt: u8, vd: u8) -> u32 {
     vector_vi_type(0b101011, vs2, shamt as i8, vd)
+}
+
+fn vsaddu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b100000, vs2, vs1, vd)
+}
+
+fn vsaddu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b100000, vs2, rs1, vd)
+}
+
+fn vsaddu_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
+    vector_vi_type(0b100000, vs2, imm, vd)
+}
+
+fn vsadd_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b100001, vs2, vs1, vd)
+}
+
+fn vsadd_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b100001, vs2, rs1, vd)
+}
+
+fn vsadd_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
+    vector_vi_type(0b100001, vs2, imm, vd)
+}
+
+fn vssubu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b100010, vs2, vs1, vd)
+}
+
+fn vssubu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b100010, vs2, rs1, vd)
+}
+
+fn vssub_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b100011, vs2, vs1, vd)
+}
+
+fn vssub_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b100011, vs2, rs1, vd)
 }
 
 fn vminu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -990,6 +1031,117 @@ fn decoder_accepts_unmasked_vector_fixed_point_shift_operations() {
             RiscvVectorFixedPointShiftInstruction::shift_right_arithmetic_vi(vreg(3), vreg(4), 5,),
         )
     );
+}
+
+#[test]
+fn decoder_accepts_unmasked_vector_saturating_add_sub_operations() {
+    assert_eq!(vsaddu_vv_type(4, 5, 3), 0x8242_81d7);
+    assert_eq!(vsadd_vv_type(4, 5, 3), 0x8642_81d7);
+    assert_eq!(vssubu_vv_type(4, 5, 3), 0x8a42_81d7);
+    assert_eq!(vssub_vv_type(4, 5, 3), 0x8e42_81d7);
+    assert_eq!(vsaddu_vx_type(4, 5, 3), 0x8242_c1d7);
+    assert_eq!(vsadd_vx_type(4, 5, 3), 0x8642_c1d7);
+    assert_eq!(vssubu_vx_type(4, 5, 3), 0x8a42_c1d7);
+    assert_eq!(vssub_vx_type(4, 5, 3), 0x8e42_c1d7);
+    assert_eq!(vsaddu_vi_type(4, 5, 3), 0x8242_b1d7);
+    assert_eq!(vsadd_vi_type(4, 5, 3), 0x8642_b1d7);
+
+    assert_eq!(
+        RiscvInstruction::decode(vsaddu_vv_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_unsigned_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vsadd_vv_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_signed_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vssubu_vv_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::sub_unsigned_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vssub_vv_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::sub_signed_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vsaddu_vx_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_unsigned_vx(
+            vreg(3),
+            vreg(4),
+            reg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vsadd_vx_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_signed_vx(
+            vreg(3),
+            vreg(4),
+            reg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vssubu_vx_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::sub_unsigned_vx(
+            vreg(3),
+            vreg(4),
+            reg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vssub_vx_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::sub_signed_vx(
+            vreg(3),
+            vreg(4),
+            reg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vsaddu_vi_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_unsigned_vi(
+            vreg(3),
+            vreg(4),
+            5,
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vsadd_vi_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_signed_vi(
+            vreg(3),
+            vreg(4),
+            5,
+        ))
+    );
+}
+
+#[test]
+fn decoder_rejects_masked_and_unsupported_vector_saturating_forms() {
+    for raw in [
+        vsaddu_vv_type(4, 5, 3) & !(1 << 25),
+        vsadd_vx_type(4, 5, 3) & !(1 << 25),
+        vsaddu_vi_type(4, 5, 3) & !(1 << 25),
+        vector_vi_type(0b100010, 4, 5, 3),
+        vector_vi_type(0b100011, 4, 5, 3),
+    ] {
+        assert_eq!(
+            RiscvInstruction::decode(raw),
+            Err(RiscvError::UnknownEncoding { raw })
+        );
+    }
 }
 
 #[test]
@@ -2143,6 +2295,280 @@ fn hart_executes_vector_fixed_point_shift_vv_vx_and_vi_forms() {
         )
     );
     assert!(vi.vector_fixed_point().vxsat());
+}
+
+#[test]
+fn hart_executes_vector_saturating_add_sub_vv_vx_and_vi_forms() {
+    let mut add_unsigned_vv = RiscvHartState::new(0x80f4);
+    add_unsigned_vv.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    add_unsigned_vv.write_vector(
+        vreg(4),
+        bytes_with_u16([0xfffe, 10, 0x8000, 0xffff, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    add_unsigned_vv.write_vector(vreg(5), bytes_with_u16([5, 20, 0x7fff, 0, 0, 0, 0, 0]));
+    add_unsigned_vv.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let add_unsigned_vv_record = add_unsigned_vv
+        .execute(RiscvInstruction::decode(vsaddu_vv_type(4, 5, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        add_unsigned_vv.read_vector(vreg(3)),
+        bytes_with_u16([0xffff, 30, 0xffff, 0xffff, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        add_unsigned_vv_record.instruction(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_unsigned_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+    assert!(add_unsigned_vv.vector_fixed_point().vxsat());
+
+    let mut add_unsigned_vx = RiscvHartState::new(0x8110);
+    add_unsigned_vx.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    add_unsigned_vx.write(reg(6), 1);
+    add_unsigned_vx.write_vector(
+        vreg(4),
+        bytes_with_u16([1, 2, 3, 4, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    add_unsigned_vx.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let add_unsigned_vx_record = add_unsigned_vx
+        .execute(RiscvInstruction::decode(vsaddu_vx_type(4, 6, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        add_unsigned_vx.read_vector(vreg(3)),
+        bytes_with_u16([2, 3, 4, 5, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        add_unsigned_vx_record.instruction(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_unsigned_vx(
+            vreg(3),
+            vreg(4),
+            reg(6),
+        ))
+    );
+    assert!(!add_unsigned_vx.vector_fixed_point().vxsat());
+
+    let mut add_unsigned_vx_preserves_vxsat = RiscvHartState::new(0x8114);
+    add_unsigned_vx_preserves_vxsat.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    let mut preserved_fixed =
+        RiscvVectorFixedPointState::new(RiscvVectorFixedRoundingMode::RoundNearestEven);
+    preserved_fixed.write_vxsat_bit(true);
+    add_unsigned_vx_preserves_vxsat.set_vector_fixed_point(preserved_fixed);
+    add_unsigned_vx_preserves_vxsat.write(reg(6), 1);
+    add_unsigned_vx_preserves_vxsat.write_vector(
+        vreg(4),
+        bytes_with_u16([1, 2, 3, 4, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    add_unsigned_vx_preserves_vxsat.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    add_unsigned_vx_preserves_vxsat
+        .execute(RiscvInstruction::decode(vsaddu_vx_type(4, 6, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        add_unsigned_vx_preserves_vxsat.read_vector(vreg(3)),
+        bytes_with_u16([2, 3, 4, 5, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert!(add_unsigned_vx_preserves_vxsat.vector_fixed_point().vxsat());
+
+    let mut add_signed_vv = RiscvHartState::new(0x8118);
+    add_signed_vv.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    add_signed_vv.write_vector(
+        vreg(4),
+        bytes_with_u16([0x7fff, 0x7ffe, 0x8000, 0, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    add_signed_vv.write_vector(vreg(5), bytes_with_u16([1, 1, 0xffff, 0xffff, 0, 0, 0, 0]));
+    add_signed_vv.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let add_signed_vv_record = add_signed_vv
+        .execute(RiscvInstruction::decode(vsadd_vv_type(4, 5, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        add_signed_vv.read_vector(vreg(3)),
+        bytes_with_u16([0x7fff, 0x7fff, 0x8000, 0xffff, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        add_signed_vv_record.instruction(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_signed_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+    assert!(add_signed_vv.vector_fixed_point().vxsat());
+
+    let mut add_signed_vx = RiscvHartState::new(0x80f8);
+    add_signed_vx.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    add_signed_vx.write(reg(6), 1);
+    add_signed_vx.write_vector(
+        vreg(4),
+        bytes_with_u16([
+            0x7fff, 0x7ffe, 0x8000, 0xffff, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd,
+        ]),
+    );
+    add_signed_vx.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let add_signed_vx_record = add_signed_vx
+        .execute(RiscvInstruction::decode(vsadd_vx_type(4, 6, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        add_signed_vx.read_vector(vreg(3)),
+        bytes_with_u16([0x7fff, 0x7fff, 0x8001, 0, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        add_signed_vx_record.instruction(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_signed_vx(
+            vreg(3),
+            vreg(4),
+            reg(6),
+        ))
+    );
+    assert!(add_signed_vx.vector_fixed_point().vxsat());
+
+    let mut sub_unsigned_vv = RiscvHartState::new(0x811c);
+    sub_unsigned_vv.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    sub_unsigned_vv.write_vector(
+        vreg(4),
+        bytes_with_u16([0, 1, 10, 0xffff, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    sub_unsigned_vv.write_vector(vreg(5), bytes_with_u16([1, 1, 2, 0xffff, 0, 0, 0, 0]));
+    sub_unsigned_vv.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let sub_unsigned_vv_record = sub_unsigned_vv
+        .execute(RiscvInstruction::decode(vssubu_vv_type(4, 5, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        sub_unsigned_vv.read_vector(vreg(3)),
+        bytes_with_u16([0, 0, 8, 0, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        sub_unsigned_vv_record.instruction(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::sub_unsigned_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+    assert!(sub_unsigned_vv.vector_fixed_point().vxsat());
+
+    let mut sub_unsigned_vx = RiscvHartState::new(0x80fc);
+    sub_unsigned_vx.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    sub_unsigned_vx.write(reg(6), 2);
+    sub_unsigned_vx.write_vector(
+        vreg(4),
+        bytes_with_u16([0, 1, 10, 0xffff, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    sub_unsigned_vx.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let sub_unsigned_vx_record = sub_unsigned_vx
+        .execute(RiscvInstruction::decode(vssubu_vx_type(4, 6, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        sub_unsigned_vx.read_vector(vreg(3)),
+        bytes_with_u16([0, 0, 8, 0xfffd, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        sub_unsigned_vx_record.instruction(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::sub_unsigned_vx(
+            vreg(3),
+            vreg(4),
+            reg(6),
+        ))
+    );
+    assert!(sub_unsigned_vx.vector_fixed_point().vxsat());
+
+    let mut sub_signed_vv = RiscvHartState::new(0x8100);
+    sub_signed_vv.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    sub_signed_vv.write_vector(
+        vreg(4),
+        bytes_with_u16([0x8000, 0xfffc, 0x7fff, 5, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    sub_signed_vv.write_vector(vreg(5), bytes_with_u16([1, 0xfff6, 0xffff, 20, 0, 0, 0, 0]));
+    sub_signed_vv.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let sub_signed_vv_record = sub_signed_vv
+        .execute(RiscvInstruction::decode(vssub_vv_type(4, 5, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        sub_signed_vv.read_vector(vreg(3)),
+        bytes_with_u16([0x8000, 6, 0x7fff, 0xfff1, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        sub_signed_vv_record.instruction(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::sub_signed_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+    assert!(sub_signed_vv.vector_fixed_point().vxsat());
+
+    let mut sub_signed_vx = RiscvHartState::new(0x8120);
+    sub_signed_vx.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    sub_signed_vx.write(reg(6), 1);
+    sub_signed_vx.write_vector(
+        vreg(4),
+        bytes_with_u16([0x8000, 0x8001, 0, 1, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    sub_signed_vx.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let sub_signed_vx_record = sub_signed_vx
+        .execute(RiscvInstruction::decode(vssub_vx_type(4, 6, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        sub_signed_vx.read_vector(vreg(3)),
+        bytes_with_u16([0x8000, 0x8000, 0xffff, 0, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        sub_signed_vx_record.instruction(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::sub_signed_vx(
+            vreg(3),
+            vreg(4),
+            reg(6),
+        ))
+    );
+    assert!(sub_signed_vx.vector_fixed_point().vxsat());
+
+    let mut add_unsigned_vi = RiscvHartState::new(0x8104);
+    add_unsigned_vi.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    add_unsigned_vi.write_vector(
+        vreg(4),
+        bytes_with_u16([0xfffc, 2, 0, 10, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    add_unsigned_vi.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let add_unsigned_vi_record = add_unsigned_vi
+        .execute(RiscvInstruction::decode(vsaddu_vi_type(4, 5, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        add_unsigned_vi.read_vector(vreg(3)),
+        bytes_with_u16([0xffff, 7, 5, 15, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        add_unsigned_vi_record.instruction(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_unsigned_vi(
+            vreg(3),
+            vreg(4),
+            5,
+        ))
+    );
+    assert!(add_unsigned_vi.vector_fixed_point().vxsat());
+
+    let mut add_signed_vi = RiscvHartState::new(0x8108);
+    add_signed_vi.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    add_signed_vi.write_vector(
+        vreg(4),
+        bytes_with_u16([0x8000, 0x8001, 0, 1, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    add_signed_vi.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let add_signed_vi_record = add_signed_vi
+        .execute(RiscvInstruction::decode(vsadd_vi_type(4, -1, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        add_signed_vi.read_vector(vreg(3)),
+        bytes_with_u16([0x8000, 0x8000, 0xffff, 0, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        add_signed_vi_record.instruction(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_signed_vi(
+            vreg(3),
+            vreg(4),
+            -1,
+        ))
+    );
+    assert!(add_signed_vi.vector_fixed_point().vxsat());
 }
 
 #[test]

@@ -605,6 +605,8 @@ fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -
             | RiscvInstruction::VectorMergeVim { .. }
             | RiscvInstruction::VectorCompressVm(..)
             | RiscvInstruction::VectorNarrow(..)
+            | RiscvInstruction::VectorFixedPointShift(..)
+            | RiscvInstruction::VectorSaturating(..)
             | RiscvInstruction::VectorMoveVv { .. }
             | RiscvInstruction::VectorMoveVx { .. }
             | RiscvInstruction::VectorMoveVi { .. }

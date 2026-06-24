@@ -165,6 +165,9 @@ pub(crate) fn execute_vector_integer_binary(
         RiscvInstruction::VectorFixedPointShift(instruction) => {
             execute_vector_fixed_point_shift(hart, instruction)
         }
+        RiscvInstruction::VectorSaturating(instruction) => {
+            crate::vector_saturating::execute(hart, instruction)
+        }
         RiscvInstruction::VectorZeroExtend {
             vd,
             vs2,

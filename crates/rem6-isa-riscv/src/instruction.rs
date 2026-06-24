@@ -450,6 +450,7 @@ pub enum RiscvInstruction {
     VectorCompressVm(VectorRegister, VectorRegister, VectorRegister),
     VectorNarrow(crate::vector::RiscvVectorNarrowInstruction),
     VectorFixedPointShift(crate::vector_fixed_point_shift::RiscvVectorFixedPointShiftInstruction),
+    VectorSaturating(crate::vector_saturating::RiscvVectorSaturatingInstruction),
     VectorZeroExtend {
         vd: VectorRegister,
         vs2: VectorRegister,
@@ -1080,9 +1081,7 @@ pub enum RiscvInstruction {
         rs1: Register,
         rs2: Register,
     },
-    Gem5PseudoOp {
-        op: RiscvPseudoOp,
-    },
+    Gem5PseudoOp(RiscvPseudoOp),
     MachineInformationCsr(crate::csr::RiscvMachineInformationCsrInstruction),
     EnvironmentConfigCsr(RiscvEnvironmentConfigCsrInstruction),
     ReadCounterCsr {

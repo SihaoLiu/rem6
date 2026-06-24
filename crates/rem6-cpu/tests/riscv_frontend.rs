@@ -15,8 +15,9 @@ use rem6_isa_riscv::{
     RiscvVectorFixedPointCsrInstruction, RiscvVectorFixedPointShiftInstruction,
     RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode,
     RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
-    RiscvVectorNarrowInstruction, RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction,
-    RiscvVectorWholeMoveInstruction, VectorRegister,
+    RiscvVectorNarrowInstruction, RiscvVectorSaturatingInstruction,
+    RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction, RiscvVectorWholeMoveInstruction,
+    VectorRegister,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -412,6 +413,46 @@ fn vssra_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
 
 fn vssra_vi_type(vs2: u8, shamt: u8, vd: u8) -> u32 {
     vector_vi_type(0b101011, vs2, shamt as i8, vd)
+}
+
+fn vsaddu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b100000, vs2, vs1, vd)
+}
+
+fn vsaddu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b100000, vs2, rs1, vd)
+}
+
+fn vsaddu_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
+    vector_vi_type(0b100000, vs2, imm, vd)
+}
+
+fn vsadd_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b100001, vs2, vs1, vd)
+}
+
+fn vsadd_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b100001, vs2, rs1, vd)
+}
+
+fn vsadd_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
+    vector_vi_type(0b100001, vs2, imm, vd)
+}
+
+fn vssubu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b100010, vs2, rs1, vd)
+}
+
+fn vssubu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b100010, vs2, vs1, vd)
+}
+
+fn vssub_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b100011, vs2, vs1, vd)
+}
+
+fn vssub_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b100011, vs2, rs1, vd)
 }
 
 fn vminu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -2190,6 +2231,221 @@ fn riscv_core_driver_executes_vector_fixed_point_shift_operations_from_fetch_str
 }
 
 #[test]
+fn riscv_core_driver_executes_vector_saturating_operations_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 4);
+    core.write_register(reg(6), 1);
+    core.write_register(reg(7), 2);
+    core.write_vector_register(vreg(1), bytes_with_u16([5, 20, 0x7fff, 0, 0, 0, 0, 0]));
+    core.write_vector_register(
+        vreg(2),
+        bytes_with_u16([0xfffe, 10, 0x8000, 0xffff, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    core.write_vector_register(
+        vreg(5),
+        bytes_with_u16([
+            0x7fff, 0x7ffe, 0x8000, 0xffff, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd,
+        ]),
+    );
+    core.write_vector_register(
+        vreg(9),
+        bytes_with_u16([0, 1, 10, 0xffff, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    core.write_vector_register(
+        vreg(12),
+        bytes_with_u16([0x8000, 0xfffc, 0x7fff, 5, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    core.write_vector_register(
+        vreg(13),
+        bytes_with_u16([1, 0xfff6, 0xffff, 20, 0, 0, 0, 0]),
+    );
+    core.write_vector_register(
+        vreg(15),
+        bytes_with_u16([0xfffc, 2, 0, 10, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    core.write_vector_register(
+        vreg(17),
+        bytes_with_u16([0x8000, 0x8001, 0, 1, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    core.write_vector_register(
+        vreg(19),
+        bytes_with_u16([0xfffe, 1, 0, 0xffff, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    core.write_vector_register(
+        vreg(21),
+        bytes_with_u16([0x7fff, 0x7ffe, 0x8000, 0, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    core.write_vector_register(vreg(27), bytes_with_u16([1, 1, 0xffff, 0xffff, 0, 0, 0, 0]));
+    core.write_vector_register(
+        vreg(23),
+        bytes_with_u16([0, 1, 10, 0xffff, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    core.write_vector_register(vreg(28), bytes_with_u16([1, 1, 2, 0xffff, 0, 0, 0, 0]));
+    core.write_vector_register(
+        vreg(25),
+        bytes_with_u16([0x8000, 0x8001, 0, 1, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    core.write_vector_register(vreg(4), bytes_with_u16([0xeeee; 8]));
+    core.write_vector_register(vreg(8), bytes_with_u16([0xdddd; 8]));
+    core.write_vector_register(vreg(11), bytes_with_u16([0xcccc; 8]));
+    core.write_vector_register(vreg(14), bytes_with_u16([0xbbbb; 8]));
+    core.write_vector_register(vreg(16), bytes_with_u16([0x9999; 8]));
+    core.write_vector_register(vreg(18), bytes_with_u16([0x8888; 8]));
+    core.write_vector_register(vreg(20), bytes_with_u16([0x7777; 8]));
+    core.write_vector_register(vreg(22), bytes_with_u16([0x6666; 8]));
+    core.write_vector_register(vreg(24), bytes_with_u16([0x5555; 8]));
+    core.write_vector_register(vreg(26), bytes_with_u16([0x4444; 8]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xc8, 10, 5),
+            vsaddu_vv_type(2, 1, 4),
+            vsaddu_vx_type(19, 6, 20),
+            vsadd_vv_type(21, 27, 22),
+            vsadd_vx_type(5, 6, 8),
+            vssubu_vv_type(23, 28, 24),
+            vssubu_vx_type(9, 7, 11),
+            vssub_vv_type(12, 13, 14),
+            vssub_vx_type(25, 6, 26),
+            vsaddu_vi_type(15, 5, 16),
+            vsadd_vi_type(17, -1, 18),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xc8,
+        }
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_unsigned_vv(
+            vreg(4),
+            vreg(2),
+            vreg(1),
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_unsigned_vx(
+            vreg(20),
+            vreg(19),
+            reg(6),
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_signed_vv(
+            vreg(22),
+            vreg(21),
+            vreg(27),
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_signed_vx(
+            vreg(8),
+            vreg(5),
+            reg(6),
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::sub_unsigned_vv(
+            vreg(24),
+            vreg(23),
+            vreg(28),
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::sub_unsigned_vx(
+            vreg(11),
+            vreg(9),
+            reg(7),
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::sub_signed_vv(
+            vreg(14),
+            vreg(12),
+            vreg(13),
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::sub_signed_vx(
+            vreg(26),
+            vreg(25),
+            reg(6),
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_unsigned_vi(
+            vreg(16),
+            vreg(15),
+            5,
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_signed_vi(
+            vreg(18),
+            vreg(17),
+            -1,
+        ))
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(4)),
+        bytes_with_u16([0xffff, 30, 0xffff, 0xffff, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(20)),
+        bytes_with_u16([0xffff, 2, 1, 0xffff, 0x7777, 0x7777, 0x7777, 0x7777])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(22)),
+        bytes_with_u16([0x7fff, 0x7fff, 0x8000, 0xffff, 0x6666, 0x6666, 0x6666, 0x6666])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(8)),
+        bytes_with_u16([0x7fff, 0x7fff, 0x8001, 0, 0xdddd, 0xdddd, 0xdddd, 0xdddd])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(24)),
+        bytes_with_u16([0, 0, 8, 0, 0x5555, 0x5555, 0x5555, 0x5555])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(11)),
+        bytes_with_u16([0, 0, 8, 0xfffd, 0xcccc, 0xcccc, 0xcccc, 0xcccc])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(14)),
+        bytes_with_u16([0x8000, 6, 0x7fff, 0xfff1, 0xbbbb, 0xbbbb, 0xbbbb, 0xbbbb])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(26)),
+        bytes_with_u16([0x8000, 0x8000, 0xffff, 0, 0x4444, 0x4444, 0x4444, 0x4444])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(16)),
+        bytes_with_u16([0xffff, 7, 5, 15, 0x9999, 0x9999, 0x9999, 0x9999])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(18)),
+        bytes_with_u16([0x8000, 0x8000, 0xffff, 0, 0x8888, 0x8888, 0x8888, 0x8888])
+    );
+}
+
+#[test]
 fn riscv_core_driver_executes_vector_minmax_operations_from_fetch_stream() {
     let (mut scheduler, transport, fetch_route, data_route) = data_routes();
     let core = data_core(fetch_route, data_route, 0x8000);
@@ -3808,6 +4064,79 @@ fn riscv_core_driver_fetches_ahead_for_vnclipu_wi_instruction() {
             vreg(4),
             1,
         ))
+    );
+}
+
+#[test]
+fn riscv_core_driver_fetches_ahead_for_vector_saturating_instruction() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 4);
+    core.write_vector_register(
+        vreg(4),
+        bytes_with_u16([1, 2, 3, 4, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    core.write_vector_register(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xc8, 10, 5),
+            vsaddu_vi_type(4, 1, 3),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(vsetvli) = action else {
+        panic!("expected vsetvli execution after vector saturating fetch-ahead");
+    };
+    assert_eq!(
+        vsetvli.instruction(),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xc8,
+        }
+    );
+
+    let action = drive_one_action(&core, store.clone(), &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::FetchIssued { .. } = action else {
+        panic!("expected ebreak fetch before retiring vector saturating instruction");
+    };
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        bytes_with_u16([0xeeee; 8])
+    );
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::InstructionExecuted(saturating) = action else {
+        panic!("expected vector saturating instruction to retire after successor fetch");
+    };
+    assert_eq!(
+        saturating.instruction(),
+        RiscvInstruction::VectorSaturating(RiscvVectorSaturatingInstruction::add_unsigned_vi(
+            vreg(3),
+            vreg(4),
+            1,
+        ))
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        bytes_with_u16([2, 3, 4, 5, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
     );
 }
 
