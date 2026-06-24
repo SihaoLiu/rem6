@@ -27,6 +27,25 @@ fn vnclipu_wi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
         | 0x57
 }
 
+fn vnclipu_wv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    (0b101110 << 26)
+        | (1 << 25)
+        | ((vs2 as u32) << 20)
+        | ((vs1 as u32) << 15)
+        | ((vd as u32) << 7)
+        | 0x57
+}
+
+fn vnclipu_wx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    (0b101110 << 26)
+        | (1 << 25)
+        | ((vs2 as u32) << 20)
+        | ((rs1 as u32) << 15)
+        | (0x4 << 12)
+        | ((vd as u32) << 7)
+        | 0x57
+}
+
 fn vnsrl_wi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
     (0b101100 << 26)
         | (1 << 25)
@@ -91,6 +110,25 @@ fn vnclip_wi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
         | ((vs2 as u32) << 20)
         | (u32::from(imm & 0x1f) << 15)
         | (0x3 << 12)
+        | ((vd as u32) << 7)
+        | 0x57
+}
+
+fn vnclip_wv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    (0b101111 << 26)
+        | (1 << 25)
+        | ((vs2 as u32) << 20)
+        | ((vs1 as u32) << 15)
+        | ((vd as u32) << 7)
+        | 0x57
+}
+
+fn vnclip_wx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    (0b101111 << 26)
+        | (1 << 25)
+        | ((vs2 as u32) << 20)
+        | ((rs1 as u32) << 15)
+        | (0x4 << 12)
         | ((vd as u32) << 7)
         | 0x57
 }
@@ -225,6 +263,50 @@ fn decoder_accepts_unmasked_vnclip_wi() {
             vreg(3),
             vreg(4),
             1,
+        ))
+    );
+}
+
+#[test]
+fn decoder_accepts_unmasked_vnclipu_and_vnclip_wv() {
+    assert_eq!(vnclipu_wv_type(4, 5, 3), 0xba42_81d7);
+    assert_eq!(vnclip_wv_type(4, 5, 3), 0xbe42_81d7);
+    assert_eq!(
+        RiscvInstruction::decode(vnclipu_wv_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorNarrow(RiscvVectorNarrowInstruction::clip_unsigned_wv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vnclip_wv_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorNarrow(RiscvVectorNarrowInstruction::clip_signed_wv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+}
+
+#[test]
+fn decoder_accepts_unmasked_vnclipu_and_vnclip_wx() {
+    assert_eq!(vnclipu_wx_type(4, 5, 3), 0xba42_c1d7);
+    assert_eq!(vnclip_wx_type(4, 5, 3), 0xbe42_c1d7);
+    assert_eq!(
+        RiscvInstruction::decode(vnclipu_wx_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorNarrow(RiscvVectorNarrowInstruction::clip_unsigned_wx(
+            vreg(3),
+            vreg(4),
+            reg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vnclip_wx_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorNarrow(RiscvVectorNarrowInstruction::clip_signed_wx(
+            vreg(3),
+            vreg(4),
+            reg(5),
         ))
     );
 }
@@ -370,6 +452,115 @@ fn hart_executes_vnclip_wi_with_default_round_nearest_up() {
         ]
     );
     assert!(hart.vector_fixed_point().vxsat());
+}
+
+#[test]
+fn hart_executes_vnclipu_and_vnclip_wv_with_per_lane_shift_counts() {
+    let mut unsigned = RiscvHartState::new(0x800c);
+    unsigned.set_vector_config(RiscvVectorConfig::new(4, 0x80));
+    unsigned.write_vector(vreg(3), [0xee; 16]);
+    unsigned.write_vector(
+        vreg(4),
+        [
+            5, 0, 0xff, 0x01, 4, 0, 0x00, 0x01, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+        ],
+    );
+    unsigned.write_vector(
+        vreg(5),
+        [
+            1, 1, 2, 17, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb,
+        ],
+    );
+
+    unsigned
+        .execute(RiscvInstruction::decode(vnclipu_wv_type(4, 5, 3)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        unsigned.read_vector(vreg(3)),
+        [
+            3, 0xff, 1, 0x80, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee,
+        ]
+    );
+    assert!(unsigned.vector_fixed_point().vxsat());
+
+    let mut signed = RiscvHartState::new(0x8010);
+    signed.set_vector_config(RiscvVectorConfig::new(4, 0x80));
+    signed.write_vector(vreg(3), [0xee; 16]);
+    signed.write_vector(
+        vreg(4),
+        [
+            5, 0, 0xfb, 0xff, 0xff, 0, 0xfd, 0xfe, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+        ],
+    );
+    signed.write_vector(
+        vreg(5),
+        [
+            1, 1, 1, 17, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb,
+        ],
+    );
+
+    signed
+        .execute(RiscvInstruction::decode(vnclip_wv_type(4, 5, 3)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        signed.read_vector(vreg(3)),
+        [
+            3, 0xfe, 0x7f, 0x80, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee,
+        ]
+    );
+    assert!(signed.vector_fixed_point().vxsat());
+}
+
+#[test]
+fn hart_executes_vnclipu_and_vnclip_wx_with_scalar_shift_count() {
+    let mut unsigned = RiscvHartState::new(0x8014);
+    unsigned.set_vector_config(RiscvVectorConfig::new(4, 0x80));
+    unsigned.write(reg(5), 17);
+    unsigned.write_vector(vreg(3), [0xee; 16]);
+    unsigned.write_vector(
+        vreg(4),
+        [
+            5, 0, 0xff, 0x01, 4, 0, 6, 0, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+        ],
+    );
+
+    unsigned
+        .execute(RiscvInstruction::decode(vnclipu_wx_type(4, 5, 3)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        unsigned.read_vector(vreg(3)),
+        [3, 0xff, 2, 3, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,]
+    );
+    assert!(unsigned.vector_fixed_point().vxsat());
+
+    let mut signed = RiscvHartState::new(0x8018);
+    signed.set_vector_config(RiscvVectorConfig::new(4, 0x80));
+    signed.write(reg(5), 17);
+    signed.write_vector(vreg(3), [0xee; 16]);
+    signed.write_vector(
+        vreg(4),
+        [
+            5, 0, 0xfb, 0xff, 0xff, 0, 0xfd, 0xfe, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+        ],
+    );
+
+    signed
+        .execute(RiscvInstruction::decode(vnclip_wx_type(4, 5, 3)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        signed.read_vector(vreg(3)),
+        [
+            3, 0xfe, 0x7f, 0x80, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee,
+        ]
+    );
+    assert!(signed.vector_fixed_point().vxsat());
 }
 
 #[test]

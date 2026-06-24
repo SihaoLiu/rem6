@@ -169,6 +169,14 @@ fn vnclipu_wi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
         | 0x57
 }
 
+fn vnclipu_wv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b101110, vs2, vs1, vd)
+}
+
+fn vnclipu_wx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b101110, vs2, rs1, vd)
+}
+
 fn vnsrl_wi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
     (0b101100 << 26)
         | (1 << 25)
@@ -213,6 +221,14 @@ fn vnclip_wi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
         | (0x3 << 12)
         | (u32::from(vd) << 7)
         | 0x57
+}
+
+fn vnclip_wv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b101111, vs2, vs1, vd)
+}
+
+fn vnclip_wx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b101111, vs2, rs1, vd)
 }
 
 fn vector_vx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
@@ -3019,6 +3035,133 @@ fn riscv_core_driver_executes_vnclip_wi_from_fetch_stream() {
         [
             3, 0xfe, 0x7f, 0x80, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
             0xee,
+        ]
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vnclipu_and_vnclip_wv_wx_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 4);
+    core.write_register(reg(11), 17);
+    core.write_register(reg(12), 17);
+    core.write_vector_register(vreg(3), [0xee; 16]);
+    core.write_vector_register(vreg(4), [0xdd; 16]);
+    core.write_vector_register(vreg(14), [0xcc; 16]);
+    core.write_vector_register(vreg(18), [0xbb; 16]);
+    core.write_vector_register(
+        vreg(5),
+        [
+            1, 1, 2, 17, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99, 0x99,
+        ],
+    );
+    core.write_vector_register(
+        vreg(6),
+        [
+            5, 0, 0xff, 0x01, 4, 0, 0x00, 0x01, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+        ],
+    );
+    core.write_vector_register(
+        vreg(8),
+        [
+            5, 0, 0xfb, 0xff, 0xff, 0, 0xfd, 0xfe, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+        ],
+    );
+    core.write_vector_register(
+        vreg(9),
+        [
+            1, 1, 1, 17, 0x98, 0x98, 0x98, 0x98, 0x98, 0x98, 0x98, 0x98, 0x98, 0x98, 0x98, 0x98,
+        ],
+    );
+    core.write_vector_register(
+        vreg(12),
+        [
+            5, 0, 0xff, 0x01, 4, 0, 6, 0, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+        ],
+    );
+    core.write_vector_register(
+        vreg(16),
+        [
+            5, 0, 0xfb, 0xff, 0xff, 0, 0xfd, 0xfe, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+        ],
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0x80, 10, 5),
+            vnclipu_wv_type(6, 5, 3),
+            vnclip_wv_type(8, 9, 4),
+            vnclipu_wx_type(12, 11, 14),
+            vnclip_wx_type(16, 12, 18),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0x80,
+        }
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorNarrow(RiscvVectorNarrowInstruction::clip_unsigned_wv(
+            vreg(3),
+            vreg(6),
+            vreg(5),
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorNarrow(RiscvVectorNarrowInstruction::clip_signed_wv(
+            vreg(4),
+            vreg(8),
+            vreg(9),
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorNarrow(RiscvVectorNarrowInstruction::clip_unsigned_wx(
+            vreg(14),
+            vreg(12),
+            reg(11),
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorNarrow(RiscvVectorNarrowInstruction::clip_signed_wx(
+            vreg(18),
+            vreg(16),
+            reg(12),
+        ))
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        [
+            3, 0xff, 1, 0x80, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee,
+        ]
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(4)),
+        [
+            3, 0xfe, 0x7f, 0x80, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd, 0xdd,
+            0xdd,
+        ]
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(14)),
+        [3, 0xff, 2, 3, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc,]
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(18)),
+        [
+            3, 0xfe, 0x7f, 0x80, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb,
+            0xbb,
         ]
     );
 }

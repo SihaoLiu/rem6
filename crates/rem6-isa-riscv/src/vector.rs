@@ -663,6 +663,50 @@ impl RiscvVectorNarrowInstruction {
         }
     }
 
+    pub const fn clip_unsigned_wv(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+    ) -> Self {
+        Self::Wv {
+            vd,
+            vs2,
+            vs1,
+            operation: RiscvVectorNarrowOperation::ClipUnsigned,
+        }
+    }
+
+    pub const fn clip_signed_wv(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+    ) -> Self {
+        Self::Wv {
+            vd,
+            vs2,
+            vs1,
+            operation: RiscvVectorNarrowOperation::ClipSigned,
+        }
+    }
+
+    pub const fn clip_unsigned_wx(vd: VectorRegister, vs2: VectorRegister, rs1: Register) -> Self {
+        Self::Wx {
+            vd,
+            vs2,
+            rs1,
+            operation: RiscvVectorNarrowOperation::ClipUnsigned,
+        }
+    }
+
+    pub const fn clip_signed_wx(vd: VectorRegister, vs2: VectorRegister, rs1: Register) -> Self {
+        Self::Wx {
+            vd,
+            vs2,
+            rs1,
+            operation: RiscvVectorNarrowOperation::ClipSigned,
+        }
+    }
+
     pub const fn shift_right_logical_wi(
         vd: VectorRegister,
         vs2: VectorRegister,
