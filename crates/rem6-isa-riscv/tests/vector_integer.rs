@@ -1,6 +1,7 @@
 use rem6_isa_riscv::{
-    Register, RiscvHartState, RiscvInstruction, RiscvTrap, RiscvTrapKind, RiscvVectorConfig,
-    RiscvVectorGatherInstruction, RiscvVectorMaskMode, RiscvVectorSlideInstruction, VectorRegister,
+    Register, RegisterWrite, RiscvHartState, RiscvInstruction, RiscvTrap, RiscvTrapKind,
+    RiscvVectorConfig, RiscvVectorGatherInstruction, RiscvVectorMaskMode,
+    RiscvVectorMaskReductionInstruction, RiscvVectorSlideInstruction, VectorRegister,
 };
 
 fn reg(index: u8) -> Register {
@@ -114,6 +115,30 @@ fn vrgather_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
 
 fn vrgather_vi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
     vector_vi_type(0b001100, vs2, imm as i8, vd)
+}
+
+fn vcpop_m_type(vs2: u8, rd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mask_reduction_type(0x10, vs2, 0x10, rd, mask)
+}
+
+fn vfirst_m_type(vs2: u8, rd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mask_reduction_type(0x10, vs2, 0x11, rd, mask)
+}
+
+fn vector_mask_reduction_type(
+    funct6: u32,
+    vs2: u8,
+    vs1: u8,
+    rd: u8,
+    mask: RiscvVectorMaskMode,
+) -> u32 {
+    (funct6 << 26)
+        | (u32::from(matches!(mask, RiscvVectorMaskMode::Unmasked)) << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(vs1) << 15)
+        | (0b010 << 12)
+        | (u32::from(rd) << 7)
+        | 0x57
 }
 
 fn vector_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -349,6 +374,12 @@ fn bytes_with_u16(lanes: [u16; 8]) -> [u8; 16] {
     bytes
 }
 
+fn mask_bytes(mask: u8) -> [u8; 16] {
+    let mut bytes = [0; 16];
+    bytes[0] = mask;
+    bytes
+}
+
 fn bytes_with_u64(lanes: [u64; 2]) -> [u8; 16] {
     let mut bytes = [0; 16];
     for (index, lane) in lanes.into_iter().enumerate() {
@@ -563,6 +594,43 @@ fn decoder_accepts_unmasked_vector_gather_vv_vx_and_vi() {
             vd: vreg(4),
             vs2: vreg(5),
             index: 2,
+        })
+    );
+}
+
+#[test]
+fn decoder_accepts_vector_mask_population_and_first_set_reductions() {
+    assert_eq!(
+        vcpop_m_type(6, 5, RiscvVectorMaskMode::Unmasked),
+        0x4268_22d7
+    );
+    assert_eq!(vcpop_m_type(6, 5, RiscvVectorMaskMode::Masked), 0x4068_22d7);
+    assert_eq!(
+        vfirst_m_type(7, 8, RiscvVectorMaskMode::Unmasked),
+        0x4278_a457
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vcpop_m_type(6, 5, RiscvVectorMaskMode::Unmasked)).unwrap(),
+        RiscvInstruction::VectorMaskReduction(RiscvVectorMaskReductionInstruction::PopCount {
+            rd: reg(5),
+            vs2: vreg(6),
+            mask: RiscvVectorMaskMode::Unmasked,
+        })
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vcpop_m_type(6, 5, RiscvVectorMaskMode::Masked)).unwrap(),
+        RiscvInstruction::VectorMaskReduction(RiscvVectorMaskReductionInstruction::PopCount {
+            rd: reg(5),
+            vs2: vreg(6),
+            mask: RiscvVectorMaskMode::Masked,
+        })
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vfirst_m_type(7, 8, RiscvVectorMaskMode::Unmasked)).unwrap(),
+        RiscvInstruction::VectorMaskReduction(RiscvVectorMaskReductionInstruction::FirstSet {
+            rd: reg(8),
+            vs2: vreg(7),
+            mask: RiscvVectorMaskMode::Unmasked,
         })
     );
 }
@@ -1415,6 +1483,70 @@ fn hart_executes_vector_gather_vv_vx_and_vi_for_active_lanes() {
         vi.read_vector(vreg(4)),
         bytes_with_u16([0, 0, 0, 0, 0xcccc, 0xcccc, 0xcccc, 0xcccc])
     );
+}
+
+#[test]
+fn hart_executes_vector_mask_population_and_first_set_reductions() {
+    let mut unmasked = RiscvHartState::new(0x80b0);
+    unmasked.set_vector_config(RiscvVectorConfig::new(7, 0xc8));
+    unmasked.write_vector(vreg(6), mask_bytes(0b1011_0101));
+
+    let pop_record = unmasked
+        .execute(
+            RiscvInstruction::decode(vcpop_m_type(6, 5, RiscvVectorMaskMode::Unmasked)).unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(unmasked.read(reg(5)), 4);
+    assert_eq!(
+        pop_record.register_writes(),
+        &[RegisterWrite::new(reg(5), 4)]
+    );
+    assert_eq!(
+        pop_record.instruction(),
+        RiscvInstruction::VectorMaskReduction(RiscvVectorMaskReductionInstruction::PopCount {
+            rd: reg(5),
+            vs2: vreg(6),
+            mask: RiscvVectorMaskMode::Unmasked,
+        })
+    );
+
+    let mut masked = RiscvHartState::new(0x80b4);
+    masked.set_vector_config(RiscvVectorConfig::new(7, 0xc8));
+    masked.write_vector(vreg(0), mask_bytes(0b0011_0100));
+    masked.write_vector(vreg(6), mask_bytes(0b1011_0101));
+
+    masked
+        .execute(RiscvInstruction::decode(vcpop_m_type(6, 5, RiscvVectorMaskMode::Masked)).unwrap())
+        .unwrap();
+
+    assert_eq!(masked.read(reg(5)), 3);
+
+    let mut first = RiscvHartState::new(0x80b8);
+    first.set_vector_config(RiscvVectorConfig::new(7, 0xc8));
+    first.write_vector(vreg(0), mask_bytes(0b0011_0100));
+    first.write_vector(vreg(7), mask_bytes(0b1011_0001));
+
+    let first_record = first
+        .execute(
+            RiscvInstruction::decode(vfirst_m_type(7, 8, RiscvVectorMaskMode::Masked)).unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(first.read(reg(8)), 4);
+    assert_eq!(
+        first_record.register_writes(),
+        &[RegisterWrite::new(reg(8), 4)]
+    );
+
+    first.write_vector(vreg(7), mask_bytes(0b1000_0001));
+    first
+        .execute(
+            RiscvInstruction::decode(vfirst_m_type(7, 8, RiscvVectorMaskMode::Masked)).unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(first.read(reg(8)), u64::MAX);
 }
 
 #[test]

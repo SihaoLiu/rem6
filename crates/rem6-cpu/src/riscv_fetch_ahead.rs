@@ -614,6 +614,7 @@ fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -
             | RiscvInstruction::VectorMaskNorMm { .. }
             | RiscvInstruction::VectorMaskOrNotMm { .. }
             | RiscvInstruction::VectorMaskXnorMm { .. }
+            | RiscvInstruction::VectorMaskReduction(_)
             | RiscvInstruction::VectorMaskEqualVv { .. }
             | RiscvInstruction::VectorMaskEqualVx { .. }
             | RiscvInstruction::VectorMaskEqualVi { .. }

@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::{FloatRegister, MemoryWidth, Register, VectorRegister};
+use crate::{FloatRegister, MemoryWidth, Register, RiscvVectorMaskMode, VectorRegister};
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct RiscvInstructionFlags {
@@ -191,6 +191,20 @@ pub enum RiscvVectorGatherInstruction {
         vd: VectorRegister,
         vs2: VectorRegister,
         index: u8,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvVectorMaskReductionInstruction {
+    PopCount {
+        rd: Register,
+        vs2: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    },
+    FirstSet {
+        rd: Register,
+        vs2: VectorRegister,
+        mask: RiscvVectorMaskMode,
     },
 }
 

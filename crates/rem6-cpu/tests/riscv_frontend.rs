@@ -12,7 +12,7 @@ use rem6_isa_riscv::{
     RiscvMemoryOrdering, RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmpAccessKind,
     RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvStatusWord,
     RiscvTrap, RiscvTrapKind, RiscvVectorConfig, RiscvVectorGatherInstruction, RiscvVectorMaskMode,
-    RiscvVectorSlideInstruction, VectorRegister,
+    RiscvVectorMaskReductionInstruction, RiscvVectorSlideInstruction, VectorRegister,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -210,6 +210,30 @@ fn vrgather_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
 
 fn vrgather_vi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
     vector_vi_type(0b001100, vs2, imm as i8, vd)
+}
+
+fn vcpop_m_type(vs2: u8, rd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mask_reduction_type(0x10, vs2, 0x10, rd, mask)
+}
+
+fn vfirst_m_type(vs2: u8, rd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mask_reduction_type(0x10, vs2, 0x11, rd, mask)
+}
+
+fn vector_mask_reduction_type(
+    funct6: u32,
+    vs2: u8,
+    vs1: u8,
+    rd: u8,
+    mask: RiscvVectorMaskMode,
+) -> u32 {
+    (funct6 << 26)
+        | (u32::from(matches!(mask, RiscvVectorMaskMode::Unmasked)) << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(vs1) << 15)
+        | (0b010 << 12)
+        | (u32::from(rd) << 7)
+        | 0x57
 }
 
 fn vector_mvv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -489,6 +513,12 @@ fn bytes_with_u16(lanes: [u16; 8]) -> [u8; 16] {
     for (index, lane) in lanes.into_iter().enumerate() {
         bytes[index * 2..index * 2 + 2].copy_from_slice(&lane.to_le_bytes());
     }
+    bytes
+}
+
+fn mask_bytes(mask: u8) -> [u8; 16] {
+    let mut bytes = [0; 16];
+    bytes[0] = mask;
     bytes
 }
 
@@ -1603,6 +1633,67 @@ fn riscv_core_driver_executes_vector_gather_operations_from_fetch_stream() {
         core.read_vector_register(vreg(9)),
         bytes_with_u16([0, 0, 0, 0, 0, 0, 0xcccc, 0xcccc])
     );
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_mask_reductions_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 7);
+    core.write_vector_register(vreg(0), mask_bytes(0b0011_0100));
+    core.write_vector_register(vreg(6), mask_bytes(0b1011_0101));
+    core.write_vector_register(vreg(7), mask_bytes(0b1011_0001));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xc8, 10, 5),
+            vcpop_m_type(6, 11, RiscvVectorMaskMode::Unmasked),
+            vcpop_m_type(6, 12, RiscvVectorMaskMode::Masked),
+            vfirst_m_type(7, 13, RiscvVectorMaskMode::Masked),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xc8,
+        }
+    );
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(7, 0xc8));
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMaskReduction(RiscvVectorMaskReductionInstruction::PopCount {
+            rd: reg(11),
+            vs2: vreg(6),
+            mask: RiscvVectorMaskMode::Unmasked,
+        })
+    );
+    assert_eq!(core.read_register(reg(11)), 4);
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMaskReduction(RiscvVectorMaskReductionInstruction::PopCount {
+            rd: reg(12),
+            vs2: vreg(6),
+            mask: RiscvVectorMaskMode::Masked,
+        })
+    );
+    assert_eq!(core.read_register(reg(12)), 3);
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorMaskReduction(RiscvVectorMaskReductionInstruction::FirstSet {
+            rd: reg(13),
+            vs2: vreg(7),
+            mask: RiscvVectorMaskMode::Masked,
+        })
+    );
+    assert_eq!(core.read_register(reg(13)), 4);
 }
 
 #[test]

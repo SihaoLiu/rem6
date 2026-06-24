@@ -34,6 +34,7 @@ mod vector_gather_execute;
 mod vector_group;
 mod vector_lane_op;
 mod vector_mask_mode;
+mod vector_mask_reduction_execute;
 mod vector_narrow_clip_execute;
 mod vector_slide_execute;
 
@@ -90,9 +91,9 @@ pub use vector::{
     RiscvInstructionFlags, RiscvVectorCompressPlan, RiscvVectorCompressResult, RiscvVectorElements,
     RiscvVectorError, RiscvVectorExtensionFactor, RiscvVectorFixedPointState,
     RiscvVectorFixedRoundingMode, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
-    RiscvVectorGatherInstruction, RiscvVectorMicroOp, RiscvVectorMicroOpExpansion,
-    RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult, RiscvVectorSlideInstruction,
-    RiscvVectorTailPolicy,
+    RiscvVectorGatherInstruction, RiscvVectorMaskReductionInstruction, RiscvVectorMicroOp,
+    RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult,
+    RiscvVectorSlideInstruction, RiscvVectorTailPolicy,
 };
 pub use vector_mask_mode::RiscvVectorMaskMode;
 
@@ -458,6 +459,21 @@ impl RiscvHartState {
             }
             RiscvInstruction::VectorSetVl { rd, rs1, rs2 } => {
                 vector_config_execute::execute_vsetvl(self, &mut register_writes, rd, rs1, rs2);
+            }
+            RiscvInstruction::VectorMaskReduction(mask_reduction) => {
+                if !vector_mask_reduction_execute::execute(
+                    self,
+                    &mut register_writes,
+                    mask_reduction,
+                ) {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                }
             }
             RiscvInstruction::VectorAddVv { .. }
             | RiscvInstruction::VectorAddVx { .. }

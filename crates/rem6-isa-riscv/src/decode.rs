@@ -3,7 +3,8 @@ use crate::encoding::{b_imm, funct3, funct7, i_imm, rd, rs1, rs2, shamt32, shamt
 use crate::{
     FloatRegister, Immediate, RiscvError, RiscvFenceSet, RiscvInstruction,
     RiscvVectorExtensionFactor, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
-    RiscvVectorGatherInstruction, RiscvVectorMaskMode, RiscvVectorSlideInstruction, VectorRegister,
+    RiscvVectorGatherInstruction, RiscvVectorMaskMode, RiscvVectorMaskReductionInstruction,
+    RiscvVectorSlideInstruction, VectorRegister,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -562,6 +563,20 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             vs1: vector_register(raw, 15),
         }),
+        (0x2, 0b010000, _) if ((raw >> 15) & 0x1f) == 0x10 => Ok(
+            RiscvInstruction::VectorMaskReduction(RiscvVectorMaskReductionInstruction::PopCount {
+                rd: rd(raw),
+                vs2: vector_register(raw, 20),
+                mask: vector_mask_mode(raw),
+            }),
+        ),
+        (0x2, 0b010000, _) if ((raw >> 15) & 0x1f) == 0x11 => Ok(
+            RiscvInstruction::VectorMaskReduction(RiscvVectorMaskReductionInstruction::FirstSet {
+                rd: rd(raw),
+                vs2: vector_register(raw, 20),
+                mask: vector_mask_mode(raw),
+            }),
+        ),
         (0x2, 0b010111, true) => Ok(RiscvInstruction::VectorCompressVm(
             vector_register(raw, 7),
             vector_register(raw, 20),
