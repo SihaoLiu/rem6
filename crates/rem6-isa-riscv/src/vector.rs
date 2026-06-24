@@ -209,6 +209,25 @@ pub enum RiscvVectorMaskReductionInstruction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvVectorMaskPrefixInstruction {
+    BeforeFirst {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    },
+    OnlyFirst {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    },
+    IncludingFirst {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvVectorFloatInstruction {
     AddVv {
         vd: VectorRegister,

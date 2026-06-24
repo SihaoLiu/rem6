@@ -598,6 +598,7 @@ fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -
             | RiscvInstruction::VectorRemainderSignedVx { .. }
             | RiscvInstruction::VectorSlide(_)
             | RiscvInstruction::VectorGather(_)
+            | RiscvInstruction::VectorMaskPrefix(_)
             | RiscvInstruction::VectorMergeVvm { .. }
             | RiscvInstruction::VectorMergeVxm { .. }
             | RiscvInstruction::VectorMergeVim { .. }

@@ -3,8 +3,8 @@ use crate::encoding::{b_imm, funct3, funct7, i_imm, rd, rs1, rs2, shamt32, shamt
 use crate::{
     FloatRegister, Immediate, RiscvError, RiscvFenceSet, RiscvInstruction,
     RiscvVectorExtensionFactor, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
-    RiscvVectorGatherInstruction, RiscvVectorMaskMode, RiscvVectorMaskReductionInstruction,
-    RiscvVectorSlideInstruction, VectorRegister,
+    RiscvVectorGatherInstruction, RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction,
+    RiscvVectorMaskReductionInstruction, RiscvVectorSlideInstruction, VectorRegister,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -573,6 +573,27 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         (0x2, 0b010000, _) if ((raw >> 15) & 0x1f) == 0x11 => Ok(
             RiscvInstruction::VectorMaskReduction(RiscvVectorMaskReductionInstruction::FirstSet {
                 rd: rd(raw),
+                vs2: vector_register(raw, 20),
+                mask: vector_mask_mode(raw),
+            }),
+        ),
+        (0x2, 0b010100, _) if ((raw >> 15) & 0x1f) == 0x01 => Ok(
+            RiscvInstruction::VectorMaskPrefix(RiscvVectorMaskPrefixInstruction::BeforeFirst {
+                vd: vector_register(raw, 7),
+                vs2: vector_register(raw, 20),
+                mask: vector_mask_mode(raw),
+            }),
+        ),
+        (0x2, 0b010100, _) if ((raw >> 15) & 0x1f) == 0x02 => Ok(
+            RiscvInstruction::VectorMaskPrefix(RiscvVectorMaskPrefixInstruction::OnlyFirst {
+                vd: vector_register(raw, 7),
+                vs2: vector_register(raw, 20),
+                mask: vector_mask_mode(raw),
+            }),
+        ),
+        (0x2, 0b010100, _) if ((raw >> 15) & 0x1f) == 0x03 => Ok(
+            RiscvInstruction::VectorMaskPrefix(RiscvVectorMaskPrefixInstruction::IncludingFirst {
+                vd: vector_register(raw, 7),
                 vs2: vector_register(raw, 20),
                 mask: vector_mask_mode(raw),
             }),

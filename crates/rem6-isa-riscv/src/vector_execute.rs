@@ -137,6 +137,9 @@ pub(crate) fn execute_vector_integer_binary(
         RiscvInstruction::VectorGather(instruction) => {
             crate::vector_gather_execute::execute(hart, instruction)
         }
+        RiscvInstruction::VectorMaskPrefix(instruction) => {
+            crate::vector_mask_prefix_execute::execute(hart, instruction)
+        }
         RiscvInstruction::VectorMergeVvm { vd, vs2, vs1 } => {
             execute_vector_merge_vv(hart, vd, vs2, vs1)
         }
