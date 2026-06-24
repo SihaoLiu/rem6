@@ -33,6 +33,24 @@ pub enum RiscvVectorWideningIntegerInstruction {
         vs1: VectorRegister,
         mask: RiscvVectorMaskMode,
     },
+    MultiplyUnsignedVv {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    },
+    MultiplySignedUnsignedVv {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    },
+    MultiplySignedVv {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    },
     AddUnsignedWv {
         vd: VectorRegister,
         vs2: VectorRegister,
@@ -81,6 +99,24 @@ pub enum RiscvVectorWideningIntegerInstruction {
         rs1: Register,
         mask: RiscvVectorMaskMode,
     },
+    MultiplyUnsignedVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+        mask: RiscvVectorMaskMode,
+    },
+    MultiplySignedUnsignedVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+        mask: RiscvVectorMaskMode,
+    },
+    MultiplySignedVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+        mask: RiscvVectorMaskMode,
+    },
     AddUnsignedWx {
         vd: VectorRegister,
         vs2: VectorRegister,
@@ -113,6 +149,9 @@ enum WideningIntegerOp {
     AddSigned,
     SubUnsigned,
     SubSigned,
+    MultiplyUnsigned,
+    MultiplySignedUnsigned,
+    MultiplySigned,
 }
 
 impl RiscvVectorWideningIntegerInstruction {
@@ -150,6 +189,33 @@ impl RiscvVectorWideningIntegerInstruction {
         mask: RiscvVectorMaskMode,
     ) -> Self {
         Self::SubSignedVv { vd, vs2, vs1, mask }
+    }
+
+    pub const fn multiply_unsigned_vv(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::MultiplyUnsignedVv { vd, vs2, vs1, mask }
+    }
+
+    pub const fn multiply_signed_unsigned_vv(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::MultiplySignedUnsignedVv { vd, vs2, vs1, mask }
+    }
+
+    pub const fn multiply_signed_vv(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::MultiplySignedVv { vd, vs2, vs1, mask }
     }
 
     pub const fn add_unsigned_wv(
@@ -224,6 +290,33 @@ impl RiscvVectorWideningIntegerInstruction {
         Self::SubSignedVx { vd, vs2, rs1, mask }
     }
 
+    pub const fn multiply_unsigned_vx(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::MultiplyUnsignedVx { vd, vs2, rs1, mask }
+    }
+
+    pub const fn multiply_signed_unsigned_vx(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::MultiplySignedUnsignedVx { vd, vs2, rs1, mask }
+    }
+
+    pub const fn multiply_signed_vx(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::MultiplySignedVx { vd, vs2, rs1, mask }
+    }
+
     pub const fn add_unsigned_wx(
         vd: VectorRegister,
         vs2: VectorRegister,
@@ -268,6 +361,9 @@ pub(crate) fn decode_vv(raw: u32) -> RiscvInstruction {
         0b110001 => RiscvVectorWideningIntegerInstruction::add_signed_vv,
         0b110010 => RiscvVectorWideningIntegerInstruction::sub_unsigned_vv,
         0b110011 => RiscvVectorWideningIntegerInstruction::sub_signed_vv,
+        0b111000 => RiscvVectorWideningIntegerInstruction::multiply_unsigned_vv,
+        0b111010 => RiscvVectorWideningIntegerInstruction::multiply_signed_unsigned_vv,
+        0b111011 => RiscvVectorWideningIntegerInstruction::multiply_signed_vv,
         0b110100 => RiscvVectorWideningIntegerInstruction::add_unsigned_wv,
         0b110101 => RiscvVectorWideningIntegerInstruction::add_signed_wv,
         0b110110 => RiscvVectorWideningIntegerInstruction::sub_unsigned_wv,
@@ -289,6 +385,9 @@ pub(crate) fn decode_vx(raw: u32) -> RiscvInstruction {
         0b110001 => RiscvVectorWideningIntegerInstruction::add_signed_vx,
         0b110010 => RiscvVectorWideningIntegerInstruction::sub_unsigned_vx,
         0b110011 => RiscvVectorWideningIntegerInstruction::sub_signed_vx,
+        0b111000 => RiscvVectorWideningIntegerInstruction::multiply_unsigned_vx,
+        0b111010 => RiscvVectorWideningIntegerInstruction::multiply_signed_unsigned_vx,
+        0b111011 => RiscvVectorWideningIntegerInstruction::multiply_signed_vx,
         0b110100 => RiscvVectorWideningIntegerInstruction::add_unsigned_wx,
         0b110101 => RiscvVectorWideningIntegerInstruction::add_signed_wx,
         0b110110 => RiscvVectorWideningIntegerInstruction::sub_unsigned_wx,
@@ -323,6 +422,29 @@ pub(crate) fn execute(
         }
         RiscvVectorWideningIntegerInstruction::SubSignedVv { vd, vs2, vs1, mask } => {
             execute_vv(hart, vd, vs2, vs1, mask, WideningIntegerOp::SubSigned)
+        }
+        RiscvVectorWideningIntegerInstruction::MultiplyUnsignedVv { vd, vs2, vs1, mask } => {
+            execute_vv(
+                hart,
+                vd,
+                vs2,
+                vs1,
+                mask,
+                WideningIntegerOp::MultiplyUnsigned,
+            )
+        }
+        RiscvVectorWideningIntegerInstruction::MultiplySignedUnsignedVv { vd, vs2, vs1, mask } => {
+            execute_vv(
+                hart,
+                vd,
+                vs2,
+                vs1,
+                mask,
+                WideningIntegerOp::MultiplySignedUnsigned,
+            )
+        }
+        RiscvVectorWideningIntegerInstruction::MultiplySignedVv { vd, vs2, vs1, mask } => {
+            execute_vv(hart, vd, vs2, vs1, mask, WideningIntegerOp::MultiplySigned)
         }
         RiscvVectorWideningIntegerInstruction::AddUnsignedWv { vd, vs2, vs1, mask } => {
             execute_wv(hart, vd, vs2, vs1, mask, WideningIntegerOp::AddUnsigned)
@@ -368,6 +490,36 @@ pub(crate) fn execute(
             mask,
             WideningIntegerOp::SubSigned,
         ),
+        RiscvVectorWideningIntegerInstruction::MultiplyUnsignedVx { vd, vs2, rs1, mask } => {
+            execute_vx(
+                hart,
+                vd,
+                vs2,
+                hart.read(rs1),
+                mask,
+                WideningIntegerOp::MultiplyUnsigned,
+            )
+        }
+        RiscvVectorWideningIntegerInstruction::MultiplySignedUnsignedVx { vd, vs2, rs1, mask } => {
+            execute_vx(
+                hart,
+                vd,
+                vs2,
+                hart.read(rs1),
+                mask,
+                WideningIntegerOp::MultiplySignedUnsigned,
+            )
+        }
+        RiscvVectorWideningIntegerInstruction::MultiplySignedVx { vd, vs2, rs1, mask } => {
+            execute_vx(
+                hart,
+                vd,
+                vs2,
+                hart.read(rs1),
+                mask,
+                WideningIntegerOp::MultiplySigned,
+            )
+        }
         RiscvVectorWideningIntegerInstruction::AddUnsignedWx { vd, vs2, rs1, mask } => execute_wx(
             hart,
             vd,
@@ -556,12 +708,9 @@ fn apply_widening_integer(
     result_bits: usize,
 ) -> u128 {
     let mask = unsigned_max(result_bits);
-    let signed = matches!(
-        op,
-        WideningIntegerOp::AddSigned | WideningIntegerOp::SubSigned
-    );
-    let left = extend_operand(left, left_bits, result_bits, signed);
-    let right = extend_operand(right, right_bits, result_bits, signed);
+    let (left_signed, right_signed) = widening_operand_signedness(op);
+    let left = extend_operand(left, left_bits, result_bits, left_signed);
+    let right = extend_operand(right, right_bits, result_bits, right_signed);
     match op {
         WideningIntegerOp::AddUnsigned | WideningIntegerOp::AddSigned => {
             left.wrapping_add(right) & mask
@@ -569,6 +718,21 @@ fn apply_widening_integer(
         WideningIntegerOp::SubUnsigned | WideningIntegerOp::SubSigned => {
             left.wrapping_sub(right) & mask
         }
+        WideningIntegerOp::MultiplyUnsigned
+        | WideningIntegerOp::MultiplySignedUnsigned
+        | WideningIntegerOp::MultiplySigned => left.wrapping_mul(right) & mask,
+    }
+}
+
+fn widening_operand_signedness(op: WideningIntegerOp) -> (bool, bool) {
+    match op {
+        WideningIntegerOp::AddSigned
+        | WideningIntegerOp::SubSigned
+        | WideningIntegerOp::MultiplySigned => (true, true),
+        WideningIntegerOp::MultiplySignedUnsigned => (true, false),
+        WideningIntegerOp::AddUnsigned
+        | WideningIntegerOp::SubUnsigned
+        | WideningIntegerOp::MultiplyUnsigned => (false, false),
     }
 }
 

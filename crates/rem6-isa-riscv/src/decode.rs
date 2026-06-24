@@ -772,6 +772,9 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
         }),
         (0x2, 0b110000..=0b110111, _) => Ok(crate::vector_widening_integer::decode_vv(raw)),
+        (0x2, 0b111000 | 0b111010 | 0b111011, _) => {
+            Ok(crate::vector_widening_integer::decode_vv(raw))
+        }
         (0x3, 0, _) => Ok(RiscvInstruction::VectorAddVi {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
@@ -927,6 +930,9 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             rs1: rs1(raw),
         }),
         (0x6, 0b110000..=0b110111, _) => Ok(crate::vector_widening_integer::decode_vx(raw)),
+        (0x6, 0b111000 | 0b111010 | 0b111011, _) => {
+            Ok(crate::vector_widening_integer::decode_vx(raw))
+        }
         (0x4, 0b001001, true) => Ok(RiscvInstruction::VectorAndVx {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),

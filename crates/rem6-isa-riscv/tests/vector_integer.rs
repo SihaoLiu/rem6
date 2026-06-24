@@ -479,6 +479,30 @@ fn vwsub_wx_type(vs2: u8, rs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
     vector_widening_vx_type(0b110111, vs2, rs1, vd, mask)
 }
 
+fn vwmulu_vv_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_widening_vv_type(0b111000, vs2, vs1, vd, mask)
+}
+
+fn vwmulsu_vv_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_widening_vv_type(0b111010, vs2, vs1, vd, mask)
+}
+
+fn vwmul_vv_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_widening_vv_type(0b111011, vs2, vs1, vd, mask)
+}
+
+fn vwmulu_vx_type(vs2: u8, rs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_widening_vx_type(0b111000, vs2, rs1, vd, mask)
+}
+
+fn vwmulsu_vx_type(vs2: u8, rs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_widening_vx_type(0b111010, vs2, rs1, vd, mask)
+}
+
+fn vwmul_vx_type(vs2: u8, rs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_widening_vx_type(0b111011, vs2, rs1, vd, mask)
+}
+
 fn vaaddu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_mvv_type(0b001000, vs2, vs1, vd)
 }
@@ -1547,6 +1571,90 @@ fn decoder_accepts_vector_integer_widening_add_sub_operations() {
                 vreg(4),
                 reg(5),
                 RiscvVectorMaskMode::Masked,
+            ),
+        ),
+    ];
+
+    for (raw, expected) in cases {
+        assert_eq!(
+            RiscvInstruction::decode(raw).unwrap(),
+            RiscvInstruction::VectorWideningInteger(expected)
+        );
+    }
+}
+
+#[test]
+fn decoder_accepts_vector_integer_widening_multiply_operations() {
+    assert_eq!(
+        vwmulu_vv_type(4, 5, 2, RiscvVectorMaskMode::Unmasked),
+        0xe242_a157
+    );
+    assert_eq!(
+        vwmulsu_vx_type(4, 5, 2, RiscvVectorMaskMode::Masked),
+        0xe842_e157
+    );
+    assert_eq!(
+        vwmul_vv_type(4, 5, 2, RiscvVectorMaskMode::Masked),
+        0xec42_a157
+    );
+    assert_eq!(
+        vwmul_vx_type(4, 5, 2, RiscvVectorMaskMode::Unmasked),
+        0xee42_e157
+    );
+
+    let cases = [
+        (
+            vwmulu_vv_type(4, 5, 2, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorWideningIntegerInstruction::multiply_unsigned_vv(
+                vreg(2),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        ),
+        (
+            vwmulsu_vv_type(4, 5, 2, RiscvVectorMaskMode::Masked),
+            RiscvVectorWideningIntegerInstruction::multiply_signed_unsigned_vv(
+                vreg(2),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Masked,
+            ),
+        ),
+        (
+            vwmul_vv_type(4, 5, 2, RiscvVectorMaskMode::Masked),
+            RiscvVectorWideningIntegerInstruction::multiply_signed_vv(
+                vreg(2),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Masked,
+            ),
+        ),
+        (
+            vwmulu_vx_type(4, 5, 2, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorWideningIntegerInstruction::multiply_unsigned_vx(
+                vreg(2),
+                vreg(4),
+                reg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        ),
+        (
+            vwmulsu_vx_type(4, 5, 2, RiscvVectorMaskMode::Masked),
+            RiscvVectorWideningIntegerInstruction::multiply_signed_unsigned_vx(
+                vreg(2),
+                vreg(4),
+                reg(5),
+                RiscvVectorMaskMode::Masked,
+            ),
+        ),
+        (
+            vwmul_vx_type(4, 5, 2, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorWideningIntegerInstruction::multiply_signed_vx(
+                vreg(2),
+                vreg(4),
+                reg(5),
+                RiscvVectorMaskMode::Unmasked,
             ),
         ),
     ];
@@ -3403,6 +3511,94 @@ fn hart_executes_vector_integer_widening_add_sub_wv_and_wx_forms() {
     assert_eq!(
         sub_signed_wx.read_vector(vreg(2)),
         lanes_u32([1, 2, 0x8000_0001, 0])
+    );
+}
+
+#[test]
+fn hart_executes_vector_integer_widening_multiply_vv_and_vx_forms() {
+    let mut unsigned_vv = RiscvHartState::new(0x81b4);
+    unsigned_vv.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    unsigned_vv.write_vector(vreg(4), bytes_with_u16([0xffff, 2, 3, 4, 0, 0, 0, 0]));
+    unsigned_vv.write_vector(vreg(5), bytes_with_u16([2, 0xffff, 3, 4, 0, 0, 0, 0]));
+    unsigned_vv.write_vector(vreg(2), lanes_u32([0xeeee_eeee; 4]));
+    unsigned_vv.write_vector(vreg(3), lanes_u32([0xdddd_dddd; 4]));
+    let unsigned_vv_record = unsigned_vv
+        .execute(
+            RiscvInstruction::decode(vwmulu_vv_type(4, 5, 2, RiscvVectorMaskMode::Unmasked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        unsigned_vv_record.instruction(),
+        RiscvInstruction::VectorWideningInteger(
+            RiscvVectorWideningIntegerInstruction::multiply_unsigned_vv(
+                vreg(2),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        )
+    );
+    assert_eq!(
+        unsigned_vv.read_vector(vreg(2)),
+        lanes_u32([0x0001_fffe, 0x0001_fffe, 9, 16])
+    );
+    assert_eq!(
+        unsigned_vv.read_vector(vreg(3)),
+        lanes_u32([0xdddd_dddd; 4])
+    );
+
+    let mut signed_vx = RiscvHartState::new(0x81b8);
+    signed_vx.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    signed_vx.write(reg(6), 0xfffe);
+    signed_vx.write_vector(vreg(4), bytes_with_u16([0, 1, 0x8000, 0xffff, 0, 0, 0, 0]));
+    signed_vx.write_vector(vreg(2), lanes_u32([0xeeee_eeee; 4]));
+    signed_vx
+        .execute(
+            RiscvInstruction::decode(vwmul_vx_type(4, 6, 2, RiscvVectorMaskMode::Unmasked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        signed_vx.read_vector(vreg(2)),
+        lanes_u32([0, 0xffff_fffe, 0x0001_0000, 2])
+    );
+
+    let mut signed_unsigned_vv = RiscvHartState::new(0x81bc);
+    signed_unsigned_vv.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    signed_unsigned_vv.write_vector(
+        vreg(4),
+        bytes_with_u16([0xffff, 0x8000, 2, 0x7fff, 0, 0, 0, 0]),
+    );
+    signed_unsigned_vv.write_vector(vreg(5), bytes_with_u16([2, 3, 0xffff, 2, 0, 0, 0, 0]));
+    signed_unsigned_vv.write_vector(vreg(2), lanes_u32([0xeeee_eeee; 4]));
+    signed_unsigned_vv
+        .execute(
+            RiscvInstruction::decode(vwmulsu_vv_type(4, 5, 2, RiscvVectorMaskMode::Unmasked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        signed_unsigned_vv.read_vector(vreg(2)),
+        lanes_u32([0xffff_fffe, 0xfffe_8000, 0x0001_fffe, 0x0000_fffe])
+    );
+
+    let mut masked_signed_unsigned_vx = RiscvHartState::new(0x81c0);
+    masked_signed_unsigned_vx.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    masked_signed_unsigned_vx.write(reg(6), 3);
+    masked_signed_unsigned_vx.write_vector(vreg(0), mask_bytes(0b0101));
+    masked_signed_unsigned_vx
+        .write_vector(vreg(4), bytes_with_u16([1, 2, 0xffff, 0x8000, 0, 0, 0, 0]));
+    masked_signed_unsigned_vx.write_vector(vreg(2), lanes_u32([0xeeee_eeee; 4]));
+    masked_signed_unsigned_vx
+        .execute(
+            RiscvInstruction::decode(vwmulsu_vx_type(4, 6, 2, RiscvVectorMaskMode::Masked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        masked_signed_unsigned_vx.read_vector(vreg(2)),
+        lanes_u32([3, 0xeeee_eeee, 0xffff_fffd, 0xeeee_eeee])
     );
 }
 
