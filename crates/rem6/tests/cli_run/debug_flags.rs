@@ -227,7 +227,8 @@ fn rem6_run_data_debug_flag_emits_real_data_access_trace() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let json = stdout_json(output.stdout);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(
         json.pointer("/debug/flags").and_then(Value::as_array),
         Some(&vec![Value::String("Data".to_string())])
@@ -239,6 +240,39 @@ fn rem6_run_data_debug_flag_emits_real_data_access_trace() {
     assert_eq!(trace.len(), 2);
     assert_eq!(trace[0].get("kind").and_then(Value::as_str), Some("store"));
     assert_eq!(trace[1].get("kind").and_then(Value::as_str), Some("load"));
+    let load_records = trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some("load"))
+        .count() as u64;
+    let store_records = trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some("store"))
+        .count() as u64;
+    let atomic_records = trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some("atomic"))
+        .count() as u64;
+    assert_stat(
+        &stdout,
+        "sim.debug.data_trace.loads",
+        "Count",
+        load_records,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.data_trace.stores",
+        "Count",
+        store_records,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.data_trace.atomics",
+        "Count",
+        atomic_records,
+        "monotonic",
+    );
     for record in trace {
         assert_eq!(record.get("cpu").and_then(Value::as_u64), Some(0));
         assert_eq!(
@@ -721,7 +755,8 @@ fn rem6_run_syscall_debug_flag_emits_real_riscv_se_syscall_trace() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let json = stdout_json(output.stdout);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(
         json.pointer("/debug/flags").and_then(Value::as_array),
         Some(&vec![Value::String("Syscall".to_string())])
@@ -760,6 +795,34 @@ fn rem6_run_syscall_debug_flag_emits_real_riscv_se_syscall_trace() {
     assert_eq!(
         trace[1].pointer("/outcome/code").and_then(Value::as_i64),
         Some(0)
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.syscall_trace.records",
+        "Count",
+        trace.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.syscall_trace.returns",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.syscall_trace.exits",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.syscall_trace.blocked",
+        "Count",
+        0,
+        "monotonic",
     );
 }
 

@@ -18,6 +18,15 @@ pub(super) fn emit_debug_stats(
         ("sim.debug.exec_trace.records", debug.exec_trace_count()),
         ("sim.debug.fetch_trace.records", debug.fetch_trace_count()),
         ("sim.debug.data_trace.records", debug.data_trace_count()),
+        ("sim.debug.data_trace.loads", debug.data_load_trace_count()),
+        (
+            "sim.debug.data_trace.stores",
+            debug.data_store_trace_count(),
+        ),
+        (
+            "sim.debug.data_trace.atomics",
+            debug.data_atomic_trace_count(),
+        ),
         ("sim.debug.dram_trace.records", debug.dram_trace_count()),
         (
             "sim.debug.dram_trace.targets",
@@ -47,6 +56,18 @@ pub(super) fn emit_debug_stats(
         (
             "sim.debug.syscall_trace.records",
             debug.syscall_trace_count(),
+        ),
+        (
+            "sim.debug.syscall_trace.returns",
+            debug.syscall_return_trace_count(),
+        ),
+        (
+            "sim.debug.syscall_trace.exits",
+            debug.syscall_exit_trace_count(),
+        ),
+        (
+            "sim.debug.syscall_trace.blocked",
+            debug.syscall_blocked_trace_count(),
         ),
     ] {
         increment_stat(stats, path, "Count", StatResetPolicy::Monotonic, value)?;

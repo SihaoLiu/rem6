@@ -243,6 +243,18 @@ impl Rem6DebugSummary {
         self.data_trace.len() as u64
     }
 
+    pub(crate) fn data_load_trace_count(&self) -> u64 {
+        self.data_kind_trace_count("load")
+    }
+
+    pub(crate) fn data_store_trace_count(&self) -> u64 {
+        self.data_kind_trace_count("store")
+    }
+
+    pub(crate) fn data_atomic_trace_count(&self) -> u64 {
+        self.data_kind_trace_count("atomic")
+    }
+
     pub(crate) fn dram_trace_count(&self) -> u64 {
         self.dram_trace.len() as u64
     }
@@ -295,6 +307,24 @@ impl Rem6DebugSummary {
 
     pub(crate) fn syscall_trace_count(&self) -> u64 {
         self.syscall_trace.len() as u64
+    }
+
+    pub(crate) fn syscall_return_trace_count(&self) -> u64 {
+        self.syscall_outcome_trace_count(|outcome| {
+            matches!(outcome, RiscvSyscallTraceOutcome::Return { .. })
+        })
+    }
+
+    pub(crate) fn syscall_exit_trace_count(&self) -> u64 {
+        self.syscall_outcome_trace_count(|outcome| {
+            matches!(outcome, RiscvSyscallTraceOutcome::Exit { .. })
+        })
+    }
+
+    pub(crate) fn syscall_blocked_trace_count(&self) -> u64 {
+        self.syscall_outcome_trace_count(|outcome| {
+            matches!(outcome, RiscvSyscallTraceOutcome::Blocked)
+        })
     }
 
     pub(crate) fn to_json(&self) -> String {
@@ -365,10 +395,27 @@ impl Rem6DebugSummary {
             .count() as u64
     }
 
+    fn data_kind_trace_count(&self, kind: &str) -> u64 {
+        self.data_trace
+            .iter()
+            .filter(|record| record.kind == kind)
+            .count() as u64
+    }
+
     fn dram_kind_trace_count(&self, kind: &str) -> u64 {
         self.dram_trace
             .iter()
             .filter(|record| record.kind() == kind)
+            .count() as u64
+    }
+
+    fn syscall_outcome_trace_count(
+        &self,
+        matches_outcome: impl Fn(RiscvSyscallTraceOutcome) -> bool,
+    ) -> u64 {
+        self.syscall_trace
+            .iter()
+            .filter(|record| matches_outcome(record.outcome))
             .count() as u64
     }
 }
