@@ -1103,6 +1103,7 @@ fn rem6_run_dram_debug_flag_participates_in_sorted_deduped_flag_lists() {
 #[test]
 fn rem6_run_syscall_debug_flag_emits_real_riscv_se_syscall_trace() {
     let program = riscv64_program(&[
+        i_type(7, 0, 0x0, 10, 0x13),   // addi a0, x0, 7
         i_type(172, 0, 0x0, 17, 0x13), // addi a7, x0, getpid
         0x0000_0073,                   // ecall
         i_type(93, 0, 0x0, 17, 0x13),  // addi a7, x0, exit
@@ -1151,9 +1152,13 @@ fn rem6_run_syscall_debug_flag_emits_real_riscv_se_syscall_trace() {
     assert_eq!(trace[0].get("cpu").and_then(Value::as_u64), Some(0));
     assert_eq!(
         trace[0].get("pc").and_then(Value::as_str),
-        Some("0x80000004")
+        Some("0x80000008")
     );
     assert_eq!(trace[0].get("number").and_then(Value::as_u64), Some(172));
+    assert_eq!(
+        trace[0].pointer("/arguments/0").and_then(Value::as_u64),
+        Some(7)
+    );
     assert_eq!(
         trace[0].pointer("/outcome/kind").and_then(Value::as_str),
         Some("return")
@@ -1166,7 +1171,7 @@ fn rem6_run_syscall_debug_flag_emits_real_riscv_se_syscall_trace() {
     assert_eq!(trace[1].get("cpu").and_then(Value::as_u64), Some(0));
     assert_eq!(
         trace[1].get("pc").and_then(Value::as_str),
-        Some("0x80000010")
+        Some("0x80000014")
     );
     assert_eq!(trace[1].get("number").and_then(Value::as_u64), Some(93));
     assert_eq!(
@@ -1177,6 +1182,16 @@ fn rem6_run_syscall_debug_flag_emits_real_riscv_se_syscall_trace() {
         trace[1].pointer("/outcome/code").and_then(Value::as_i64),
         Some(0)
     );
+    let syscall_numbers = syscall_trace_unique_u64(trace, "number");
+    let call_sites = syscall_trace_unique_strings(trace, "pc");
+    let cpus = syscall_trace_unique_u64(trace, "cpu");
+    let argument_words = syscall_trace_argument_words(trace);
+    let nonzero_arguments = syscall_trace_nonzero_arguments(trace);
+    assert_eq!(syscall_numbers, 2, "trace: {trace:?}");
+    assert_eq!(call_sites, 2, "trace: {trace:?}");
+    assert_eq!(cpus, 1, "trace: {trace:?}");
+    assert_eq!(argument_words, 12, "trace: {trace:?}");
+    assert_eq!(nonzero_arguments, 1, "trace: {trace:?}");
     assert_stat(
         &stdout,
         "sim.debug.syscall_trace.records",
@@ -1203,6 +1218,41 @@ fn rem6_run_syscall_debug_flag_emits_real_riscv_se_syscall_trace() {
         "sim.debug.syscall_trace.blocked",
         "Count",
         0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.syscall_trace.syscall_numbers",
+        "Count",
+        syscall_numbers,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.syscall_trace.call_sites",
+        "Count",
+        call_sites,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.syscall_trace.cpus",
+        "Count",
+        cpus,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.syscall_trace.argument_words",
+        "Count",
+        argument_words,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.syscall_trace.nonzero_arguments",
+        "Count",
+        nonzero_arguments,
         "monotonic",
     );
 }
@@ -1597,4 +1647,53 @@ fn memory_trace_channel_matches(record: &Value, channel: Option<&str>) -> bool {
     channel.map_or(true, |expected| {
         record.get("channel").and_then(Value::as_str) == Some(expected)
     })
+}
+
+fn syscall_trace_unique_u64(trace: &[Value], field: &str) -> u64 {
+    trace
+        .iter()
+        .map(|record| {
+            record
+                .get(field)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("syscall trace {field}"))
+        })
+        .collect::<BTreeSet<_>>()
+        .len() as u64
+}
+
+fn syscall_trace_unique_strings(trace: &[Value], field: &str) -> u64 {
+    trace
+        .iter()
+        .map(|record| {
+            record
+                .get(field)
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("syscall trace {field}"))
+        })
+        .collect::<BTreeSet<_>>()
+        .len() as u64
+}
+
+fn syscall_trace_argument_words(trace: &[Value]) -> u64 {
+    trace
+        .iter()
+        .map(|record| syscall_trace_arguments(record).len() as u64)
+        .sum()
+}
+
+fn syscall_trace_nonzero_arguments(trace: &[Value]) -> u64 {
+    trace
+        .iter()
+        .flat_map(syscall_trace_arguments)
+        .filter(|argument| argument.as_u64().is_some_and(|value| value != 0))
+        .count() as u64
+}
+
+fn syscall_trace_arguments(record: &Value) -> &[Value] {
+    record
+        .get("arguments")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .expect("syscall trace arguments")
 }

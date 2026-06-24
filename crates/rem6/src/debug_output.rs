@@ -508,6 +508,45 @@ impl Rem6DebugSummary {
         })
     }
 
+    pub(crate) fn syscall_number_trace_count(&self) -> u64 {
+        let mut numbers = BTreeSet::new();
+        for record in &self.syscall_trace {
+            numbers.insert(record.number);
+        }
+        numbers.len() as u64
+    }
+
+    pub(crate) fn syscall_call_site_trace_count(&self) -> u64 {
+        let mut call_sites = BTreeSet::new();
+        for record in &self.syscall_trace {
+            call_sites.insert(record.pc);
+        }
+        call_sites.len() as u64
+    }
+
+    pub(crate) fn syscall_cpu_trace_count(&self) -> u64 {
+        let mut cpus = BTreeSet::new();
+        for record in &self.syscall_trace {
+            cpus.insert(record.cpu);
+        }
+        cpus.len() as u64
+    }
+
+    pub(crate) fn syscall_argument_word_trace_count(&self) -> u64 {
+        self.syscall_trace
+            .iter()
+            .map(|record| record.arguments.len() as u64)
+            .sum()
+    }
+
+    pub(crate) fn syscall_nonzero_argument_trace_count(&self) -> u64 {
+        self.syscall_trace
+            .iter()
+            .flat_map(|record| record.arguments)
+            .filter(|argument| *argument != 0)
+            .count() as u64
+    }
+
     pub(crate) fn to_json(&self) -> String {
         let flags = self
             .flags

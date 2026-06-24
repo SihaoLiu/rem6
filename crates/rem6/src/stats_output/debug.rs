@@ -153,6 +153,26 @@ pub(super) fn emit_debug_stats(
             "sim.debug.syscall_trace.blocked",
             debug.syscall_blocked_trace_count(),
         ),
+        (
+            "sim.debug.syscall_trace.syscall_numbers",
+            debug.syscall_number_trace_count(),
+        ),
+        (
+            "sim.debug.syscall_trace.call_sites",
+            debug.syscall_call_site_trace_count(),
+        ),
+        (
+            "sim.debug.syscall_trace.cpus",
+            debug.syscall_cpu_trace_count(),
+        ),
+        (
+            "sim.debug.syscall_trace.argument_words",
+            debug.syscall_argument_word_trace_count(),
+        ),
+        (
+            "sim.debug.syscall_trace.nonzero_arguments",
+            debug.syscall_nonzero_argument_trace_count(),
+        ),
     ] {
         increment_stat(stats, path, "Count", StatResetPolicy::Monotonic, value)?;
     }
