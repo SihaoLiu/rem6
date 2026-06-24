@@ -3520,6 +3520,54 @@ fn hart_traps_vector_integer_widening_add_sub_reserved_register_groups() {
         mixed_eew_source_overlap_record.trap(),
         Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x81a0))
     );
+
+    let mut masked_narrow_source_v0 = RiscvHartState::new(0x81a4);
+    masked_narrow_source_v0.set_vector_config(RiscvVectorConfig::new(1, 0xc8));
+    let masked_narrow_source_v0_record = masked_narrow_source_v0
+        .execute(
+            RiscvInstruction::decode(vwadd_vv_type(0, 4, 8, RiscvVectorMaskMode::Masked)).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        masked_narrow_source_v0_record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x81a4))
+    );
+
+    let mut masked_wide_source_v0 = RiscvHartState::new(0x81a8);
+    masked_wide_source_v0.set_vector_config(RiscvVectorConfig::new(1, 0xc8));
+    let masked_wide_source_v0_record = masked_wide_source_v0
+        .execute(
+            RiscvInstruction::decode(vwaddu_wv_type(0, 4, 8, RiscvVectorMaskMode::Masked)).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        masked_wide_source_v0_record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x81a8))
+    );
+
+    let mut masked_second_source_v0 = RiscvHartState::new(0x81ac);
+    masked_second_source_v0.set_vector_config(RiscvVectorConfig::new(1, 0xc8));
+    let masked_second_source_v0_record = masked_second_source_v0
+        .execute(
+            RiscvInstruction::decode(vwsub_wv_type(2, 0, 8, RiscvVectorMaskMode::Masked)).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        masked_second_source_v0_record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x81ac))
+    );
+
+    let mut masked_scalar_wide_source_v0 = RiscvHartState::new(0x81b0);
+    masked_scalar_wide_source_v0.set_vector_config(RiscvVectorConfig::new(1, 0xc8));
+    let masked_scalar_wide_source_v0_record = masked_scalar_wide_source_v0
+        .execute(
+            RiscvInstruction::decode(vwsubu_wx_type(0, 4, 8, RiscvVectorMaskMode::Masked)).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        masked_scalar_wide_source_v0_record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x81b0))
+    );
 }
 
 #[test]

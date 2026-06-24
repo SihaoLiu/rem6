@@ -618,7 +618,13 @@ impl WideningIntegerPlan {
                 )
             })
             || (mask.is_masked()
-                && register_groups_overlap(vd, wide_registers, VectorRegister::from_field(0), 1))
+                && (register_groups_overlap(vd, wide_registers, VectorRegister::from_field(0), 1)
+                    || sources_overlap_mask(
+                        wide_sources,
+                        wide_registers,
+                        narrow_sources,
+                        narrow_registers,
+                    )))
         {
             return None;
         }
@@ -675,6 +681,21 @@ fn valid_widening_narrow_source(
 
 fn source_emul_at_least_one(vtype: u64) -> bool {
     matches!(vtype & 0x7, 0..=3)
+}
+
+fn sources_overlap_mask(
+    wide_sources: &[VectorRegister],
+    wide_registers: usize,
+    narrow_sources: &[VectorRegister],
+    narrow_registers: usize,
+) -> bool {
+    let mask = VectorRegister::from_field(0);
+    wide_sources
+        .iter()
+        .any(|source| register_groups_overlap(*source, wide_registers, mask, 1))
+        || narrow_sources
+            .iter()
+            .any(|source| register_groups_overlap(*source, narrow_registers, mask, 1))
 }
 
 fn extend_operand(value: u128, operand_bits: usize, result_bits: usize, signed: bool) -> u128 {
