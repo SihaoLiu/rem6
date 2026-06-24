@@ -33,6 +33,9 @@ pub(crate) fn execute(
         || source_element_bytes > 16
         || !valid_register_group(instruction.vd(), destination_registers)
         || !valid_register_group(instruction.vs2(), source_registers)
+        || instruction
+            .vs1()
+            .is_some_and(|vs1| !valid_register_group(vs1, destination_registers))
         || !narrowing_overlap_allowed(
             instruction.vd(),
             destination_registers,
@@ -45,6 +48,9 @@ pub(crate) fn execute(
 
     let mut destination_bytes = read_register_group(hart, instruction.vd(), destination_registers);
     let source_bytes = read_register_group(hart, instruction.vs2(), source_registers);
+    let shift_bytes = instruction
+        .vs1()
+        .map(|vs1| read_register_group(hart, vs1, destination_registers));
     let mut fixed = hart.vector_fixed_point();
 
     for element_index in 0..vl {
@@ -52,7 +58,15 @@ pub(crate) fn execute(
         let destination_offset = element_index * element_bytes;
         let source =
             lane_bytes_to_u128(&source_bytes[source_offset..source_offset + source_element_bytes]);
-        let shift = narrow_shift_amount(instruction.shift(), source_element_bytes);
+        let shift = narrow_shift_amount(
+            shift_value(
+                instruction,
+                shift_bytes.as_ref().map(|bytes| bytes.as_slice()),
+                element_index,
+                element_bytes,
+            ),
+            source_element_bytes,
+        );
         let value = match instruction.operation() {
             RiscvVectorNarrowOperation::ShiftRightLogical => source >> shift,
             RiscvVectorNarrowOperation::ShiftRightArithmetic => {
@@ -100,9 +114,24 @@ fn sign_extend(value: u128, bits: usize) -> i128 {
     ((value << shift) as i128) >> shift
 }
 
-fn narrow_shift_amount(shift: u8, source_element_bytes: usize) -> u32 {
+fn shift_value(
+    instruction: RiscvVectorNarrowInstruction,
+    shift_bytes: Option<&[u8]>,
+    element_index: usize,
+    element_bytes: usize,
+) -> u128 {
+    if let Some(shift) = instruction.immediate_shift() {
+        return u128::from(shift);
+    }
+    let offset = element_index * element_bytes;
+    lane_bytes_to_u128(
+        &shift_bytes.expect("validated vector narrow shift source")[offset..offset + element_bytes],
+    )
+}
+
+fn narrow_shift_amount(shift: u128, source_element_bytes: usize) -> u32 {
     let source_bits = (source_element_bytes * 8) as u32;
-    u32::from(shift) & (source_bits - 1)
+    (shift & u128::from(source_bits - 1)) as u32
 }
 
 fn widening_source_registers(vtype: u64) -> Option<usize> {
