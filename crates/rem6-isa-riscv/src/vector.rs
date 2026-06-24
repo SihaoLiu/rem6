@@ -581,31 +581,65 @@ impl RiscvVectorFixedPointState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RiscvVectorNarrowClipInstruction {
+pub enum RiscvVectorNarrowInstruction {
     Wi {
         vd: VectorRegister,
         vs2: VectorRegister,
         shift: u8,
-        signed: bool,
+        operation: RiscvVectorNarrowOperation,
     },
 }
 
-impl RiscvVectorNarrowClipInstruction {
-    pub const fn unsigned_wi(vd: VectorRegister, vs2: VectorRegister, shift: u8) -> Self {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvVectorNarrowOperation {
+    ShiftRightLogical,
+    ShiftRightArithmetic,
+    ClipUnsigned,
+    ClipSigned,
+}
+
+impl RiscvVectorNarrowInstruction {
+    pub const fn shift_right_logical_wi(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        shift: u8,
+    ) -> Self {
         Self::Wi {
             vd,
             vs2,
             shift,
-            signed: false,
+            operation: RiscvVectorNarrowOperation::ShiftRightLogical,
         }
     }
 
-    pub const fn signed_wi(vd: VectorRegister, vs2: VectorRegister, shift: u8) -> Self {
+    pub const fn shift_right_arithmetic_wi(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        shift: u8,
+    ) -> Self {
         Self::Wi {
             vd,
             vs2,
             shift,
-            signed: true,
+            operation: RiscvVectorNarrowOperation::ShiftRightArithmetic,
+        }
+    }
+
+    pub const fn clip_unsigned_wi(vd: VectorRegister, vs2: VectorRegister, shift: u8) -> Self {
+        Self::Wi {
+            vd,
+            vs2,
+            shift,
+            operation: RiscvVectorNarrowOperation::ClipUnsigned,
+        }
+    }
+
+    pub const fn clip_signed_wi(vd: VectorRegister, vs2: VectorRegister, shift: u8) -> Self {
+        Self::Wi {
+            vd,
+            vs2,
+            shift,
+            operation: RiscvVectorNarrowOperation::ClipSigned,
         }
     }
 
@@ -627,9 +661,9 @@ impl RiscvVectorNarrowClipInstruction {
         }
     }
 
-    pub const fn is_signed(self) -> bool {
+    pub const fn operation(self) -> RiscvVectorNarrowOperation {
         match self {
-            Self::Wi { signed, .. } => signed,
+            Self::Wi { operation, .. } => operation,
         }
     }
 }

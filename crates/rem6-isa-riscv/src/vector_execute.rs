@@ -156,8 +156,8 @@ pub(crate) fn execute_vector_integer_binary(
         RiscvInstruction::VectorCompressVm(vd, vs2, vs1) => {
             crate::vector_compress_execute::execute_vector_compress_vm(hart, vd, vs2, vs1)
         }
-        RiscvInstruction::VectorNarrowClip(instruction) => {
-            crate::vector_narrow_clip_execute::execute(hart, instruction)
+        RiscvInstruction::VectorNarrow(instruction) => {
+            crate::vector_narrow_execute::execute(hart, instruction)
         }
         RiscvInstruction::VectorZeroExtend {
             vd,

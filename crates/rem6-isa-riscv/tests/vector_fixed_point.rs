@@ -1,8 +1,8 @@
 use rem6_isa_riscv::{
     MemoryWidth, Register, RiscvCsrOp, RiscvHartState, RiscvInstruction, RiscvTrap, RiscvTrapKind,
     RiscvVectorConfig, RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction,
-    RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, RiscvVectorNarrowClipInstruction,
-    RiscvVectorNarrowClipPlan, VectorRegister,
+    RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, RiscvVectorNarrowClipPlan,
+    RiscvVectorNarrowInstruction, VectorRegister,
 };
 
 fn reg(index: u8) -> Register {
@@ -19,6 +19,26 @@ fn csr_type(csr: u16, rs1: u8, funct3: u32, rd: u8) -> u32 {
 
 fn vnclipu_wi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
     (0b101110 << 26)
+        | (1 << 25)
+        | ((vs2 as u32) << 20)
+        | (u32::from(imm & 0x1f) << 15)
+        | (0x3 << 12)
+        | ((vd as u32) << 7)
+        | 0x57
+}
+
+fn vnsrl_wi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
+    (0b101100 << 26)
+        | (1 << 25)
+        | ((vs2 as u32) << 20)
+        | (u32::from(imm & 0x1f) << 15)
+        | (0x3 << 12)
+        | ((vd as u32) << 7)
+        | 0x57
+}
+
+fn vnsra_wi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
+    (0b101101 << 26)
         | (1 << 25)
         | ((vs2 as u32) << 20)
         | (u32::from(imm & 0x1f) << 15)
@@ -150,7 +170,7 @@ fn decoder_accepts_unmasked_vnclipu_wi() {
     assert_eq!(vnclipu_wi_type(4, 1, 3), 0xba40_b1d7);
     assert_eq!(
         RiscvInstruction::decode(vnclipu_wi_type(4, 1, 3)).unwrap(),
-        RiscvInstruction::VectorNarrowClip(RiscvVectorNarrowClipInstruction::unsigned_wi(
+        RiscvInstruction::VectorNarrow(RiscvVectorNarrowInstruction::clip_unsigned_wi(
             vreg(3),
             vreg(4),
             1,
@@ -163,7 +183,29 @@ fn decoder_accepts_unmasked_vnclip_wi() {
     assert_eq!(vnclip_wi_type(4, 1, 3), 0xbe40_b1d7);
     assert_eq!(
         RiscvInstruction::decode(vnclip_wi_type(4, 1, 3)).unwrap(),
-        RiscvInstruction::VectorNarrowClip(RiscvVectorNarrowClipInstruction::signed_wi(
+        RiscvInstruction::VectorNarrow(RiscvVectorNarrowInstruction::clip_signed_wi(
+            vreg(3),
+            vreg(4),
+            1,
+        ))
+    );
+}
+
+#[test]
+fn decoder_accepts_unmasked_vnsrl_and_vnsra_wi() {
+    assert_eq!(vnsrl_wi_type(4, 1, 3), 0xb240_b1d7);
+    assert_eq!(vnsra_wi_type(4, 1, 3), 0xb640_b1d7);
+    assert_eq!(
+        RiscvInstruction::decode(vnsrl_wi_type(4, 1, 3)).unwrap(),
+        RiscvInstruction::VectorNarrow(RiscvVectorNarrowInstruction::shift_right_logical_wi(
+            vreg(3),
+            vreg(4),
+            1,
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vnsra_wi_type(4, 1, 3)).unwrap(),
+        RiscvInstruction::VectorNarrow(RiscvVectorNarrowInstruction::shift_right_arithmetic_wi(
             vreg(3),
             vreg(4),
             1,
@@ -246,6 +288,108 @@ fn hart_executes_vnclip_wi_with_default_round_nearest_up() {
         ]
     );
     assert!(hart.vector_fixed_point().vxsat());
+}
+
+#[test]
+fn hart_executes_vnsrl_and_vnsra_wi_for_active_lanes_without_saturation() {
+    let mut logical = RiscvHartState::new(0x8010);
+    logical.set_vector_config(RiscvVectorConfig::new(4, 0x80));
+    logical.write_vector(vreg(3), [0xee; 16]);
+    logical.write_vector(
+        vreg(4),
+        [
+            0x05, 0x01, 0xff, 0x00, 0x01, 0x80, 0xff, 0xff, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            0xaa, 0xaa,
+        ],
+    );
+
+    logical
+        .execute(RiscvInstruction::decode(vnsrl_wi_type(4, 1, 3)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        logical.read_vector(vreg(3)),
+        [
+            0x82, 0x7f, 0x00, 0xff, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee, 0xee,
+        ]
+    );
+    assert!(!logical.vector_fixed_point().vxsat());
+
+    let mut arithmetic = RiscvHartState::new(0x8018);
+    arithmetic.set_vector_config(RiscvVectorConfig::new(4, 0x80));
+    arithmetic.write_vector(vreg(3), [0xee; 16]);
+    arithmetic.write_vector(
+        vreg(4),
+        [
+            0xfb, 0xff, 0xff, 0xff, 0x7f, 0x00, 0x80, 0xff, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            0xaa, 0xaa,
+        ],
+    );
+
+    arithmetic
+        .execute(RiscvInstruction::decode(vnsra_wi_type(4, 1, 3)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        arithmetic.read_vector(vreg(3)),
+        [
+            0xfd, 0xff, 0x3f, 0xc0, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee, 0xee,
+        ]
+    );
+    assert!(!arithmetic.vector_fixed_point().vxsat());
+}
+
+#[test]
+fn hart_masks_vnsrl_and_vnsra_wi_shift_by_widened_source_width() {
+    let mut logical = RiscvHartState::new(0x8020);
+    logical.set_vector_config(RiscvVectorConfig::new(4, 0x80));
+    logical.write_vector(vreg(3), [0xee; 16]);
+    logical.write_vector(
+        vreg(4),
+        [
+            0x05, 0x01, 0xff, 0x00, 0x01, 0x80, 0xff, 0xff, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            0xaa, 0xaa,
+        ],
+    );
+
+    logical
+        .execute(RiscvInstruction::decode(vnsrl_wi_type(4, 16, 3)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        logical.read_vector(vreg(3)),
+        [
+            0x05, 0xff, 0x01, 0xff, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee, 0xee,
+        ]
+    );
+    assert!(!logical.vector_fixed_point().vxsat());
+
+    let mut arithmetic = RiscvHartState::new(0x8028);
+    arithmetic.set_vector_config(RiscvVectorConfig::new(4, 0x80));
+    arithmetic.write_vector(vreg(3), [0xee; 16]);
+    arithmetic.write_vector(
+        vreg(4),
+        [
+            0xfb, 0xff, 0xff, 0x7f, 0x80, 0x00, 0x80, 0xff, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            0xaa, 0xaa,
+        ],
+    );
+
+    arithmetic
+        .execute(RiscvInstruction::decode(vnsra_wi_type(4, 16, 3)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        arithmetic.read_vector(vreg(3)),
+        [
+            0xfb, 0xff, 0x80, 0x80, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee, 0xee,
+        ]
+    );
+    assert!(!arithmetic.vector_fixed_point().vxsat());
 }
 
 #[test]

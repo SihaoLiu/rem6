@@ -3,13 +3,13 @@ use crate::{
         lane_bytes_to_u128, memory_width_from_element_bytes, read_register_group,
         register_groups_overlap, valid_register_group, write_register_group, write_u128_lane,
     },
-    RiscvHartState, RiscvVectorConfig, RiscvVectorNarrowClipInstruction, RiscvVectorNarrowClipPlan,
-    VectorRegister,
+    RiscvHartState, RiscvVectorConfig, RiscvVectorNarrowClipPlan, RiscvVectorNarrowInstruction,
+    RiscvVectorNarrowOperation, VectorRegister,
 };
 
 pub(crate) fn execute(
     hart: &mut RiscvHartState,
-    instruction: RiscvVectorNarrowClipInstruction,
+    instruction: RiscvVectorNarrowInstruction,
 ) -> bool {
     let config = hart.vector_config();
     let Some(element_bytes) = config.element_width_bytes() else {
@@ -45,11 +45,6 @@ pub(crate) fn execute(
 
     let mut destination_bytes = read_register_group(hart, instruction.vd(), destination_registers);
     let source_bytes = read_register_group(hart, instruction.vs2(), source_registers);
-    let plan = if instruction.is_signed() {
-        RiscvVectorNarrowClipPlan::signed(width)
-    } else {
-        RiscvVectorNarrowClipPlan::unsigned(width)
-    };
     let mut fixed = hart.vector_fixed_point();
 
     for element_index in 0..vl {
@@ -57,26 +52,36 @@ pub(crate) fn execute(
         let destination_offset = element_index * element_bytes;
         let source =
             lane_bytes_to_u128(&source_bytes[source_offset..source_offset + source_element_bytes]);
-        let result = if instruction.is_signed() {
-            plan.execute_signed(
-                sign_extend(source, source_element_bytes * 8),
-                u32::from(instruction.shift()),
-                fixed.rounding_mode(),
-            )
-        } else {
-            plan.execute_unsigned(
-                source,
-                u32::from(instruction.shift()),
-                fixed.rounding_mode(),
-            )
+        let shift = narrow_shift_amount(instruction.shift(), source_element_bytes);
+        let value = match instruction.operation() {
+            RiscvVectorNarrowOperation::ShiftRightLogical => source >> shift,
+            RiscvVectorNarrowOperation::ShiftRightArithmetic => {
+                (sign_extend(source, source_element_bytes * 8) >> shift) as u128
+            }
+            RiscvVectorNarrowOperation::ClipUnsigned => {
+                let plan = RiscvVectorNarrowClipPlan::unsigned(width);
+                let Ok(result) = plan.execute_unsigned(source, shift, fixed.rounding_mode()) else {
+                    return false;
+                };
+                fixed.apply_narrow_clip_result(result);
+                result.value() as u128
+            }
+            RiscvVectorNarrowOperation::ClipSigned => {
+                let plan = RiscvVectorNarrowClipPlan::signed(width);
+                let Ok(result) = plan.execute_signed(
+                    sign_extend(source, source_element_bytes * 8),
+                    shift,
+                    fixed.rounding_mode(),
+                ) else {
+                    return false;
+                };
+                fixed.apply_narrow_clip_result(result);
+                result.value() as u128
+            }
         };
-        let Ok(result) = result else {
-            return false;
-        };
-        fixed.apply_narrow_clip_result(result);
         write_u128_lane(
             &mut destination_bytes[destination_offset..destination_offset + element_bytes],
-            result.value() as u128,
+            value,
         );
     }
 
@@ -93,6 +98,11 @@ pub(crate) fn execute(
 fn sign_extend(value: u128, bits: usize) -> i128 {
     let shift = 128 - bits;
     ((value << shift) as i128) >> shift
+}
+
+fn narrow_shift_amount(shift: u8, source_element_bytes: usize) -> u32 {
+    let source_bits = (source_element_bytes * 8) as u32;
+    u32::from(shift) & (source_bits - 1)
 }
 
 fn widening_source_registers(vtype: u64) -> Option<usize> {
