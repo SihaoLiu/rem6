@@ -728,6 +728,13 @@ pub(super) fn run_stats_output(
             )?;
             increment_stat(
                 &mut stats,
+                &format!("{gem5_cpu_alias_prefix}.numOps"),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.committed_instructions,
+            )?;
+            increment_stat(
+                &mut stats,
                 &format!("sim.cpu{}.pipeline.in_order.cycles", core.cpu),
                 "Cycle",
                 StatResetPolicy::Monotonic,

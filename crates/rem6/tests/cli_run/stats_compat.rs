@@ -150,6 +150,10 @@ fn rem6_run_text_stats_emit_gem5_cpu_numinsts_and_numcycles_aliases() {
         text_stat_value(&stdout, "sim.cpu0.instructions.committed")
     );
     assert_eq!(
+        text_stat_value(&stdout, "system.cpu.numOps"),
+        text_stat_value(&stdout, "sim.cpu0.instructions.committed")
+    );
+    assert_eq!(
         text_stat_value(&stdout, "system.cpu.numCycles"),
         text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.cycles")
     );
@@ -195,11 +199,16 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_without_ambiguous_cpu_pat
             text_stat_value(&stdout, &format!("sim.cpu{cpu}.instructions.committed"))
         );
         assert_eq!(
+            text_stat_value(&stdout, &format!("system.cpu{cpu}.numOps")),
+            text_stat_value(&stdout, &format!("sim.cpu{cpu}.instructions.committed"))
+        );
+        assert_eq!(
             text_stat_value(&stdout, &format!("system.cpu{cpu}.numCycles")),
             text_stat_value(&stdout, &format!("sim.cpu{cpu}.pipeline.in_order.cycles"))
         );
     }
     assert!(!has_text_stat(&stdout, "system.cpu.numInsts"));
+    assert!(!has_text_stat(&stdout, "system.cpu.numOps"));
     assert!(!has_text_stat(&stdout, "system.cpu.numCycles"));
 }
 
