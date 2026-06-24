@@ -51,6 +51,7 @@ pub(crate) fn execute(
     let shift_bytes = instruction
         .vs1()
         .map(|vs1| read_register_group(hart, vs1, destination_registers));
+    let scalar_shift = instruction.rs1().map(|rs1| u128::from(hart.read(rs1)));
     let mut fixed = hart.vector_fixed_point();
 
     for element_index in 0..vl {
@@ -62,6 +63,7 @@ pub(crate) fn execute(
             shift_value(
                 instruction,
                 shift_bytes.as_ref().map(|bytes| bytes.as_slice()),
+                scalar_shift,
                 element_index,
                 element_bytes,
             ),
@@ -117,11 +119,15 @@ fn sign_extend(value: u128, bits: usize) -> i128 {
 fn shift_value(
     instruction: RiscvVectorNarrowInstruction,
     shift_bytes: Option<&[u8]>,
+    scalar_shift: Option<u128>,
     element_index: usize,
     element_bytes: usize,
 ) -> u128 {
     if let Some(shift) = instruction.immediate_shift() {
         return u128::from(shift);
+    }
+    if let Some(shift) = scalar_shift {
+        return shift;
     }
     let offset = element_index * element_bytes;
     lane_bytes_to_u128(

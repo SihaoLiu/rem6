@@ -588,6 +588,12 @@ pub enum RiscvVectorNarrowInstruction {
         vs1: VectorRegister,
         operation: RiscvVectorNarrowOperation,
     },
+    Wx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+        operation: RiscvVectorNarrowOperation,
+    },
     Wi {
         vd: VectorRegister,
         vs2: VectorRegister,
@@ -627,6 +633,32 @@ impl RiscvVectorNarrowInstruction {
             vd,
             vs2,
             vs1,
+            operation: RiscvVectorNarrowOperation::ShiftRightArithmetic,
+        }
+    }
+
+    pub const fn shift_right_logical_wx(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    ) -> Self {
+        Self::Wx {
+            vd,
+            vs2,
+            rs1,
+            operation: RiscvVectorNarrowOperation::ShiftRightLogical,
+        }
+    }
+
+    pub const fn shift_right_arithmetic_wx(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    ) -> Self {
+        Self::Wx {
+            vd,
+            vs2,
+            rs1,
             operation: RiscvVectorNarrowOperation::ShiftRightArithmetic,
         }
     }
@@ -677,33 +709,42 @@ impl RiscvVectorNarrowInstruction {
 
     pub const fn vd(self) -> VectorRegister {
         match self {
-            Self::Wv { vd, .. } | Self::Wi { vd, .. } => vd,
+            Self::Wv { vd, .. } | Self::Wx { vd, .. } | Self::Wi { vd, .. } => vd,
         }
     }
 
     pub const fn vs2(self) -> VectorRegister {
         match self {
-            Self::Wv { vs2, .. } | Self::Wi { vs2, .. } => vs2,
+            Self::Wv { vs2, .. } | Self::Wx { vs2, .. } | Self::Wi { vs2, .. } => vs2,
         }
     }
 
     pub const fn vs1(self) -> Option<VectorRegister> {
         match self {
             Self::Wv { vs1, .. } => Some(vs1),
-            Self::Wi { .. } => None,
+            Self::Wx { .. } | Self::Wi { .. } => None,
+        }
+    }
+
+    pub const fn rs1(self) -> Option<Register> {
+        match self {
+            Self::Wx { rs1, .. } => Some(rs1),
+            Self::Wv { .. } | Self::Wi { .. } => None,
         }
     }
 
     pub const fn immediate_shift(self) -> Option<u8> {
         match self {
             Self::Wi { shift, .. } => Some(shift),
-            Self::Wv { .. } => None,
+            Self::Wv { .. } | Self::Wx { .. } => None,
         }
     }
 
     pub const fn operation(self) -> RiscvVectorNarrowOperation {
         match self {
-            Self::Wv { operation, .. } | Self::Wi { operation, .. } => operation,
+            Self::Wv { operation, .. }
+            | Self::Wx { operation, .. }
+            | Self::Wi { operation, .. } => operation,
         }
     }
 }

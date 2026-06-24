@@ -65,6 +65,26 @@ fn vnsra_wv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
         | 0x57
 }
 
+fn vnsrl_wx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    (0b101100 << 26)
+        | (1 << 25)
+        | ((vs2 as u32) << 20)
+        | ((rs1 as u32) << 15)
+        | (0x4 << 12)
+        | ((vd as u32) << 7)
+        | 0x57
+}
+
+fn vnsra_wx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    (0b101101 << 26)
+        | (1 << 25)
+        | ((vs2 as u32) << 20)
+        | ((rs1 as u32) << 15)
+        | (0x4 << 12)
+        | ((vd as u32) << 7)
+        | 0x57
+}
+
 fn vnclip_wi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
     (0b101111 << 26)
         | (1 << 25)
@@ -249,6 +269,28 @@ fn decoder_accepts_unmasked_vnsrl_and_vnsra_wv() {
             vreg(3),
             vreg(4),
             vreg(5),
+        ))
+    );
+}
+
+#[test]
+fn decoder_accepts_unmasked_vnsrl_and_vnsra_wx() {
+    assert_eq!(vnsrl_wx_type(4, 5, 3), 0xb242_c1d7);
+    assert_eq!(vnsra_wx_type(4, 5, 3), 0xb642_c1d7);
+    assert_eq!(
+        RiscvInstruction::decode(vnsrl_wx_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorNarrow(RiscvVectorNarrowInstruction::shift_right_logical_wx(
+            vreg(3),
+            vreg(4),
+            reg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vnsra_wx_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorNarrow(RiscvVectorNarrowInstruction::shift_right_arithmetic_wx(
+            vreg(3),
+            vreg(4),
+            reg(5),
         ))
     );
 }
@@ -510,6 +552,59 @@ fn hart_traps_vnsrl_wv_with_unaligned_shift_source_group() {
         Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8040))
     );
     assert_eq!(hart.read_vector(vreg(2)), [0xee; 16]);
+}
+
+#[test]
+fn hart_executes_vnsrl_and_vnsra_wx_with_scalar_shift_count() {
+    let mut logical = RiscvHartState::new(0x8050);
+    logical.set_vector_config(RiscvVectorConfig::new(4, 0x80));
+    logical.write(reg(5), 17);
+    logical.write_vector(vreg(3), [0xee; 16]);
+    logical.write_vector(
+        vreg(4),
+        [
+            0x05, 0x01, 0xff, 0x00, 0x01, 0x80, 0xff, 0xff, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            0xaa, 0xaa,
+        ],
+    );
+
+    logical
+        .execute(RiscvInstruction::decode(vnsrl_wx_type(4, 5, 3)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        logical.read_vector(vreg(3)),
+        [
+            0x82, 0x7f, 0x00, 0xff, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee, 0xee,
+        ]
+    );
+    assert!(!logical.vector_fixed_point().vxsat());
+
+    let mut arithmetic = RiscvHartState::new(0x8058);
+    arithmetic.set_vector_config(RiscvVectorConfig::new(4, 0x80));
+    arithmetic.write(reg(5), 17);
+    arithmetic.write_vector(vreg(3), [0xee; 16]);
+    arithmetic.write_vector(
+        vreg(4),
+        [
+            0xfb, 0xff, 0xff, 0x7f, 0x80, 0x00, 0x80, 0xff, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+            0xaa, 0xaa,
+        ],
+    );
+
+    arithmetic
+        .execute(RiscvInstruction::decode(vnsra_wx_type(4, 5, 3)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        arithmetic.read_vector(vreg(3)),
+        [
+            0xfd, 0xff, 0x40, 0xc0, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee, 0xee,
+        ]
+    );
+    assert!(!arithmetic.vector_fixed_point().vxsat());
 }
 
 #[test]
