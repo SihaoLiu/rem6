@@ -356,6 +356,37 @@ fn rem6_run_memory_debug_flag_emits_real_transport_trace() {
         .iter()
         .filter(|record| record.get("channel").and_then(Value::as_str) == Some("data"))
         .count() as u64;
+    let request_sent_records = trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some("request_sent"))
+        .count() as u64;
+    let request_arrived_records = trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some("request_arrived"))
+        .count() as u64;
+    let response_arrived_records = trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some("response_arrived"))
+        .count() as u64;
+    let completed_responses = trace
+        .iter()
+        .filter(|record| record.get("response_status").and_then(Value::as_str) == Some("completed"))
+        .count() as u64;
+    let retry_responses = trace
+        .iter()
+        .filter(|record| record.get("response_status").and_then(Value::as_str) == Some("retry"))
+        .count() as u64;
+    let store_conditional_failed_responses = trace
+        .iter()
+        .filter(|record| {
+            record.get("response_status").and_then(Value::as_str)
+                == Some("store_conditional_failed")
+        })
+        .count() as u64;
+    assert!(request_sent_records > 0, "trace: {trace:?}");
+    assert!(request_arrived_records > 0, "trace: {trace:?}");
+    assert!(response_arrived_records > 0, "trace: {trace:?}");
+    assert!(completed_responses > 0, "trace: {trace:?}");
     assert_stat(
         &stdout,
         "sim.debug.memory_trace.records",
@@ -375,6 +406,48 @@ fn rem6_run_memory_debug_flag_emits_real_transport_trace() {
         "sim.debug.memory_trace.data.records",
         "Count",
         data_records,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.events.request_sent",
+        "Count",
+        request_sent_records,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.events.request_arrived",
+        "Count",
+        request_arrived_records,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.events.response_arrived",
+        "Count",
+        response_arrived_records,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.response_status.completed",
+        "Count",
+        completed_responses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.response_status.retry",
+        "Count",
+        retry_responses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.response_status.store_conditional_failed",
+        "Count",
+        store_conditional_failed_responses,
         "monotonic",
     );
     for record in trace {

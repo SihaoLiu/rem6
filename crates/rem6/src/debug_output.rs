@@ -301,6 +301,30 @@ impl Rem6DebugSummary {
         self.memory_channel_trace_count("data")
     }
 
+    pub(crate) fn memory_request_sent_trace_count(&self) -> u64 {
+        self.memory_kind_trace_count("request_sent")
+    }
+
+    pub(crate) fn memory_request_arrived_trace_count(&self) -> u64 {
+        self.memory_kind_trace_count("request_arrived")
+    }
+
+    pub(crate) fn memory_response_arrived_trace_count(&self) -> u64 {
+        self.memory_kind_trace_count("response_arrived")
+    }
+
+    pub(crate) fn memory_completed_response_trace_count(&self) -> u64 {
+        self.memory_response_status_trace_count("completed")
+    }
+
+    pub(crate) fn memory_retry_response_trace_count(&self) -> u64 {
+        self.memory_response_status_trace_count("retry")
+    }
+
+    pub(crate) fn memory_store_conditional_failed_response_trace_count(&self) -> u64 {
+        self.memory_response_status_trace_count("store_conditional_failed")
+    }
+
     pub(crate) fn power_trace_count(&self) -> u64 {
         self.power_trace.len() as u64
     }
@@ -392,6 +416,20 @@ impl Rem6DebugSummary {
         self.memory_trace
             .iter()
             .filter(|record| record.channel == channel)
+            .count() as u64
+    }
+
+    fn memory_kind_trace_count(&self, kind: &str) -> u64 {
+        self.memory_trace
+            .iter()
+            .filter(|record| record.kind == kind)
+            .count() as u64
+    }
+
+    fn memory_response_status_trace_count(&self, status: &str) -> u64 {
+        self.memory_trace
+            .iter()
+            .filter(|record| record.response_status == Some(status))
             .count() as u64
     }
 

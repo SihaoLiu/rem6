@@ -52,6 +52,30 @@ pub(super) fn emit_debug_stats(
             "sim.debug.memory_trace.data.records",
             debug.memory_data_trace_count(),
         ),
+        (
+            "sim.debug.memory_trace.events.request_sent",
+            debug.memory_request_sent_trace_count(),
+        ),
+        (
+            "sim.debug.memory_trace.events.request_arrived",
+            debug.memory_request_arrived_trace_count(),
+        ),
+        (
+            "sim.debug.memory_trace.events.response_arrived",
+            debug.memory_response_arrived_trace_count(),
+        ),
+        (
+            "sim.debug.memory_trace.response_status.completed",
+            debug.memory_completed_response_trace_count(),
+        ),
+        (
+            "sim.debug.memory_trace.response_status.retry",
+            debug.memory_retry_response_trace_count(),
+        ),
+        (
+            "sim.debug.memory_trace.response_status.store_conditional_failed",
+            debug.memory_store_conditional_failed_response_trace_count(),
+        ),
         ("sim.debug.power_trace.records", debug.power_trace_count()),
         (
             "sim.debug.syscall_trace.records",
