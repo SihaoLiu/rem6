@@ -486,6 +486,53 @@ impl Rem6DebugSummary {
         self.power_trace.len() as u64
     }
 
+    pub(crate) fn power_target_trace_count(&self) -> u64 {
+        let mut targets = BTreeSet::new();
+        for record in &self.power_trace {
+            targets.insert(record.target.as_str());
+        }
+        targets.len() as u64
+    }
+
+    pub(crate) fn power_state_trace_count(&self) -> u64 {
+        let mut states = BTreeSet::new();
+        for record in &self.power_trace {
+            states.insert(record.state);
+        }
+        states.len() as u64
+    }
+
+    pub(crate) fn power_on_state_trace_count(&self) -> u64 {
+        self.power_trace
+            .iter()
+            .filter(|record| record.state == "on")
+            .count() as u64
+    }
+
+    pub(crate) fn power_residency_tick_count(&self) -> u64 {
+        self.power_trace.iter().fold(0u64, |acc, record| {
+            acc.saturating_add(record.residency_ticks)
+        })
+    }
+
+    pub(crate) fn power_dynamic_microwatt_count(&self) -> u64 {
+        self.power_trace.iter().fold(0u64, |acc, record| {
+            acc.saturating_add(watts_to_microwatts(&record.dynamic_watts))
+        })
+    }
+
+    pub(crate) fn power_static_microwatt_count(&self) -> u64 {
+        self.power_trace.iter().fold(0u64, |acc, record| {
+            acc.saturating_add(watts_to_microwatts(&record.static_watts))
+        })
+    }
+
+    pub(crate) fn power_total_microwatt_count(&self) -> u64 {
+        self.power_trace.iter().fold(0u64, |acc, record| {
+            acc.saturating_add(watts_to_microwatts(&record.total_watts))
+        })
+    }
+
     pub(crate) fn syscall_trace_count(&self) -> u64 {
         self.syscall_trace.len() as u64
     }
@@ -978,16 +1025,32 @@ impl Rem6SyscallTraceRecord {
 fn power_trace_records(records: &[PowerAnalysisRecord]) -> Vec<Rem6PowerTraceRecord> {
     records
         .iter()
-        .map(|record| Rem6PowerTraceRecord {
-            target: record.target().to_string(),
-            state: power_state_name(record.current_state()),
-            residency_ticks: record.residency_ticks(record.current_state()),
-            temperature_c: format!("{:.6}", record.temperature_c()),
-            dynamic_watts: format!("{:.6}", record.dynamic_watts()),
-            static_watts: format!("{:.6}", record.static_watts()),
-            total_watts: format!("{:.6}", record.total_watts()),
+        .map(|record| {
+            let dynamic_watts = format!("{:.6}", record.dynamic_watts());
+            let static_watts = format!("{:.6}", record.static_watts());
+            let total_watts = format!("{:.6}", record.total_watts());
+            Rem6PowerTraceRecord {
+                target: record.target().to_string(),
+                state: power_state_name(record.current_state()),
+                residency_ticks: record.residency_ticks(record.current_state()),
+                temperature_c: format!("{:.6}", record.temperature_c()),
+                dynamic_watts,
+                static_watts,
+                total_watts,
+            }
         })
         .collect()
+}
+
+fn watts_to_microwatts(watts: &str) -> u64 {
+    let Ok(watts) = watts.parse::<f64>() else {
+        return 0;
+    };
+    if !watts.is_finite() || watts <= 0.0 {
+        0
+    } else {
+        (watts * 1_000_000.0).round() as u64
+    }
 }
 
 const fn power_state_name(state: PowerStateKind) -> &'static str {

@@ -138,6 +138,18 @@ pub(super) fn emit_debug_stats(
         ),
         ("sim.debug.power_trace.records", debug.power_trace_count()),
         (
+            "sim.debug.power_trace.targets",
+            debug.power_target_trace_count(),
+        ),
+        (
+            "sim.debug.power_trace.states",
+            debug.power_state_trace_count(),
+        ),
+        (
+            "sim.debug.power_trace.states.on",
+            debug.power_on_state_trace_count(),
+        ),
+        (
             "sim.debug.syscall_trace.records",
             debug.syscall_trace_count(),
         ),
@@ -238,6 +250,34 @@ pub(super) fn emit_debug_stats(
         "Byte",
         StatResetPolicy::Monotonic,
         debug.dram_bank_write_byte_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.power_trace.residency_ticks",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        debug.power_residency_tick_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.power_trace.dynamic_microwatts",
+        "MicroWatt",
+        StatResetPolicy::Monotonic,
+        debug.power_dynamic_microwatt_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.power_trace.static_microwatts",
+        "MicroWatt",
+        StatResetPolicy::Monotonic,
+        debug.power_static_microwatt_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.power_trace.total_microwatts",
+        "MicroWatt",
+        StatResetPolicy::Monotonic,
+        debug.power_total_microwatt_count(),
     )?;
     Ok(())
 }

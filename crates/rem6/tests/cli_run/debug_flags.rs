@@ -1320,6 +1320,21 @@ fn rem6_run_power_debug_flag_emits_activity_power_trace() {
         .pointer("/debug/power_trace")
         .and_then(Value::as_array)
         .expect("debug power trace array");
+    let targets = power_trace_unique_strings(trace, "target");
+    let states = power_trace_unique_strings(trace, "state");
+    let on_records = power_trace_state_count(trace, "on");
+    let residency_ticks = power_trace_sum_u64(trace, "residency_ticks");
+    let dynamic_microwatts = power_trace_microwatts(trace, "dynamic_watts");
+    let static_microwatts = power_trace_microwatts(trace, "static_watts");
+    let total_microwatts = power_trace_microwatts(trace, "total_watts");
+    let json_text = json.to_string();
+    assert!(targets > 0, "trace: {trace:?}");
+    assert!(states > 0, "trace: {trace:?}");
+    assert!(on_records > 0, "trace: {trace:?}");
+    assert!(residency_ticks > 0, "trace: {trace:?}");
+    assert!(dynamic_microwatts > 0, "trace: {trace:?}");
+    assert!(static_microwatts > 0, "trace: {trace:?}");
+    assert!(total_microwatts >= dynamic_microwatts, "trace: {trace:?}");
     for target in [
         "cpu0.core",
         "cpu.instruction_cache",
@@ -1347,6 +1362,62 @@ fn rem6_run_power_debug_flag_emits_activity_power_trace() {
             "missing dynamic watts for {target}: {record:?}"
         );
     }
+    assert_stat(
+        &json_text,
+        "sim.debug.power_trace.records",
+        "Count",
+        trace.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        &json_text,
+        "sim.debug.power_trace.targets",
+        "Count",
+        targets,
+        "monotonic",
+    );
+    assert_stat(
+        &json_text,
+        "sim.debug.power_trace.states",
+        "Count",
+        states,
+        "monotonic",
+    );
+    assert_stat(
+        &json_text,
+        "sim.debug.power_trace.states.on",
+        "Count",
+        on_records,
+        "monotonic",
+    );
+    assert_stat(
+        &json_text,
+        "sim.debug.power_trace.residency_ticks",
+        "Tick",
+        residency_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &json_text,
+        "sim.debug.power_trace.dynamic_microwatts",
+        "MicroWatt",
+        dynamic_microwatts,
+        "monotonic",
+    );
+    assert_stat(
+        &json_text,
+        "sim.debug.power_trace.static_microwatts",
+        "MicroWatt",
+        static_microwatts,
+        "monotonic",
+    );
+    assert_stat(
+        &json_text,
+        "sim.debug.power_trace.total_microwatts",
+        "MicroWatt",
+        total_microwatts,
+        "monotonic",
+    );
 }
 
 #[test]
@@ -1696,4 +1767,57 @@ fn syscall_trace_arguments(record: &Value) -> &[Value] {
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .expect("syscall trace arguments")
+}
+
+fn power_trace_unique_strings(trace: &[Value], field: &str) -> u64 {
+    trace
+        .iter()
+        .map(|record| {
+            record
+                .get(field)
+                .and_then(Value::as_str)
+                .unwrap_or_else(|| panic!("power trace {field}"))
+        })
+        .collect::<BTreeSet<_>>()
+        .len() as u64
+}
+
+fn power_trace_state_count(trace: &[Value], state: &str) -> u64 {
+    trace
+        .iter()
+        .filter(|record| record.get("state").and_then(Value::as_str) == Some(state))
+        .count() as u64
+}
+
+fn power_trace_sum_u64(trace: &[Value], field: &str) -> u64 {
+    trace
+        .iter()
+        .map(|record| {
+            record
+                .get(field)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("power trace {field}"))
+        })
+        .sum()
+}
+
+fn power_trace_microwatts(trace: &[Value], field: &str) -> u64 {
+    trace
+        .iter()
+        .map(|record| {
+            let watts = record
+                .get(field)
+                .and_then(Value::as_f64)
+                .unwrap_or_else(|| panic!("power trace {field}"));
+            watts_to_microwatts(watts)
+        })
+        .sum()
+}
+
+fn watts_to_microwatts(watts: f64) -> u64 {
+    if !watts.is_finite() || watts <= 0.0 {
+        0
+    } else {
+        (watts * 1_000_000.0).round() as u64
+    }
 }
