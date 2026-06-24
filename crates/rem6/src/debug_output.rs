@@ -233,6 +233,42 @@ impl Rem6DebugSummary {
         self.flags.len() as u64
     }
 
+    pub(crate) fn trace_record_count(&self) -> u64 {
+        self.trace_counts()
+            .into_iter()
+            .fold(0u64, |acc, value| acc.saturating_add(value))
+    }
+
+    pub(crate) fn trace_category_count(&self) -> u64 {
+        self.trace_counts()
+            .into_iter()
+            .filter(|count| *count > 0)
+            .count() as u64
+    }
+
+    pub(crate) fn active_flag_count(&self) -> u64 {
+        self.flags
+            .iter()
+            .filter(|flag| self.trace_count_for_flag(**flag) > 0)
+            .count() as u64
+    }
+
+    pub(crate) fn trace_payload_byte_count(&self) -> u64 {
+        [
+            self.exec_trace_byte_count(),
+            self.fetch_trace_byte_count(),
+            self.data_load_trace_byte_count(),
+            self.data_store_trace_byte_count(),
+            self.data_atomic_trace_byte_count(),
+            self.dram_bank_read_byte_count(),
+            self.dram_bank_write_byte_count(),
+            self.fabric_lane_byte_count(),
+            self.fabric_hop_byte_count(),
+        ]
+        .into_iter()
+        .fold(0u64, |acc, value| acc.saturating_add(value))
+    }
+
     pub(crate) fn exec_trace_count(&self) -> u64 {
         self.exec_trace.len() as u64
     }
@@ -737,6 +773,32 @@ impl Rem6DebugSummary {
             .iter()
             .filter(|record| matches_outcome(record.outcome))
             .count() as u64
+    }
+
+    fn trace_counts(&self) -> [u64; 8] {
+        [
+            self.exec_trace_count(),
+            self.fetch_trace_count(),
+            self.data_trace_count(),
+            self.dram_trace_count(),
+            self.fabric_trace_count(),
+            self.memory_trace_count(),
+            self.power_trace_count(),
+            self.syscall_trace_count(),
+        ]
+    }
+
+    fn trace_count_for_flag(&self, flag: CliDebugFlag) -> u64 {
+        match flag {
+            CliDebugFlag::Data => self.data_trace_count(),
+            CliDebugFlag::Dram => self.dram_trace_count(),
+            CliDebugFlag::Exec => self.exec_trace_count(),
+            CliDebugFlag::Fabric => self.fabric_trace_count(),
+            CliDebugFlag::Fetch => self.fetch_trace_count(),
+            CliDebugFlag::Memory => self.memory_trace_count(),
+            CliDebugFlag::Power => self.power_trace_count(),
+            CliDebugFlag::Syscall => self.syscall_trace_count(),
+        }
     }
 }
 

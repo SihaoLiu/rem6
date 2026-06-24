@@ -176,6 +176,10 @@ fn rem6_run_fetch_debug_flag_emits_real_fetch_issue_trace() {
         .pointer("/debug/fetch_trace")
         .and_then(Value::as_array)
         .expect("debug fetch trace array");
+    let exec_trace = json
+        .pointer("/debug/exec_trace")
+        .and_then(Value::as_array)
+        .expect("debug exec trace array");
     let fetch_bytes = fetch_trace
         .iter()
         .map(|record| {
@@ -185,12 +189,49 @@ fn rem6_run_fetch_debug_flag_emits_real_fetch_issue_trace() {
                 .expect("fetch size")
         })
         .sum::<u64>();
+    let exec_bytes = exec_trace
+        .iter()
+        .map(|record| {
+            record
+                .get("bytes")
+                .and_then(Value::as_str)
+                .expect("exec bytes")
+                .len() as u64
+                / 2
+        })
+        .sum::<u64>();
+    let trace_records = fetch_trace.len() as u64 + exec_trace.len() as u64;
+    let trace_payload_bytes = fetch_bytes + exec_bytes;
     assert!(fetch_bytes > 0, "trace: {fetch_trace:?}");
-    assert_eq!(
-        json.pointer("/debug/exec_trace")
-            .and_then(Value::as_array)
-            .map(Vec::len),
-        Some(3)
+    assert!(exec_bytes > 0, "trace: {exec_trace:?}");
+    assert_eq!(exec_trace.len(), 3);
+    assert_stat(
+        &stdout,
+        "sim.debug.trace.records",
+        "Count",
+        trace_records,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.trace.categories",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.trace.active_flags",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.trace.payload_bytes",
+        "Byte",
+        trace_payload_bytes,
+        "monotonic",
     );
     assert_stat(
         &stdout,

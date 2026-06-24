@@ -826,6 +826,7 @@ plus lane/hop byte and flit stats, memory-transport trace
 JSON emitted from real fetch/data `MemoryTrace` events with top-level debug trace
 record-count, request/route/request-agent, event-kind, and response-status stats, plus data-trace load/store/atomic classification stats,
 RISC-V SE syscall-trace JSON/outcome plus syscall-number/call-site/CPU/argument stats emitted from real syscall trap handling, and power-trace JSON plus target/state/residency/microwatt stats emitted from executed-run activity,
+top-level debug trace record/category/active-flag/payload-byte roll-up stats emitted from the same debug summary,
 target-description-aligned register-cache seeding, top-level trace-replay
 fabric-route activity and flit counters, top-level run fabric resource roll-up, top-level trace-replay aggregate resource
 activity counters, top-level trace-replay data-cache run and protocol
@@ -870,6 +871,7 @@ single-step, continue, `vCont;c`, hardware-breakpoint, and data-watchpoint
 stop-reply smoke tests, trap CSR pre-execution smoke tests, GDB cache-runtime smoke tests,
 power-analysis export tests, CLI power-output tests, system GDB software
 breakpoint patch/restore tests, CLI data-access probe tests, CLI `Exec`, `Fetch`, `Data`, `Dram`, `Fabric`, `Memory`, `Syscall`, and `Power` debug-flag tests, including `Exec` retired-record and byte stats, `Fetch` byte stats, `Data` load/store/atomic classification and byte stats, `Memory` event-kind, response-status, and request/route/request-agent stats, `Syscall` return/exit/blocked outcome plus syscall-number/call-site/CPU/argument stats, `Power` target/state/residency/microwatt stats, `Memory` debug trace record-count stats, `Dram` debug trace record-count plus target access/read/write, port-command, and bank read/write byte aggregate stats, `Fabric` debug trace record-count plus lane-transfer and lane/hop byte/flit aggregate stats, and histogram registry/output tests.
+CLI `Exec,Fetch` debug-flag evidence covers top-level debug trace record, category, active-flag, and payload-byte roll-up stats against the emitted debug JSON.
 CLI retired-instruction probe tests expose InstTracker-backed event counts and
 tracked-instruction counts from executed RISC-V instructions.
 The CLI data-access probe tests include stack-distance histogram stats emitted

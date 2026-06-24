@@ -15,6 +15,9 @@ pub(super) fn emit_debug_stats(
         debug.enabled_flag_count(),
     )?;
     for (path, value) in [
+        ("sim.debug.trace.records", debug.trace_record_count()),
+        ("sim.debug.trace.categories", debug.trace_category_count()),
+        ("sim.debug.trace.active_flags", debug.active_flag_count()),
         ("sim.debug.exec_trace.records", debug.exec_trace_count()),
         (
             "sim.debug.exec_trace.retired",
@@ -188,6 +191,13 @@ pub(super) fn emit_debug_stats(
     ] {
         increment_stat(stats, path, "Count", StatResetPolicy::Monotonic, value)?;
     }
+    increment_stat(
+        stats,
+        "sim.debug.trace.payload_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        debug.trace_payload_byte_count(),
+    )?;
     increment_stat(
         stats,
         "sim.debug.exec_trace.bytes",
