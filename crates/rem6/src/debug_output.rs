@@ -5,7 +5,7 @@ use rem6_system::{RiscvSyscallTraceOutcome, RiscvSyscallTraceRecord, RiscvSystem
 use rem6_transport::{MemoryTrace, MemoryTraceEvent, MemoryTraceKind};
 
 use crate::formatting::{bytes_to_hex, json_escape};
-use crate::{CliDebugFlag, Rem6RunConfig, Rem6RunFabricSummary};
+use crate::{CliDebugFlag, Rem6DramSummary, Rem6RunConfig, Rem6RunFabricSummary};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Rem6DebugSummary {
@@ -13,6 +13,7 @@ pub(crate) struct Rem6DebugSummary {
     exec_trace: Vec<Rem6ExecTraceRecord>,
     fetch_trace: Vec<Rem6FetchTraceRecord>,
     data_trace: Vec<Rem6DataTraceRecord>,
+    dram_trace: Vec<Rem6DramTraceRecord>,
     fabric_trace: Vec<Rem6FabricTraceRecord>,
     memory_trace: Vec<Rem6MemoryTraceRecord>,
     power_trace: Vec<Rem6PowerTraceRecord>,
@@ -46,6 +47,48 @@ struct Rem6DataTraceRecord {
     kind: &'static str,
     address: u64,
     size: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Rem6DramTraceRecord {
+    Target {
+        target: u32,
+        accesses: u64,
+        reads: u64,
+        writes: u64,
+        row_hits: u64,
+        row_misses: u64,
+        refreshes: u64,
+        refresh_ticks: u64,
+        commands: u64,
+        turnarounds: u64,
+        total_ready_latency_ticks: u64,
+        max_ready_latency_ticks: u64,
+    },
+    Port {
+        target: u32,
+        port: u32,
+        accesses: u64,
+        reads: u64,
+        writes: u64,
+        commands: u64,
+        turnarounds: u64,
+    },
+    Bank {
+        target: u32,
+        port: u32,
+        bank: u32,
+        accesses: u64,
+        read_bytes: u64,
+        write_bytes: u64,
+        row_hits: u64,
+        row_misses: u64,
+        refreshes: u64,
+        refresh_ticks: u64,
+        commands: u64,
+        total_ready_latency_ticks: u64,
+        max_ready_latency_ticks: u64,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -122,6 +165,7 @@ impl Rem6DebugSummary {
         fetch_memory_trace: &MemoryTrace,
         data_memory_trace: &MemoryTrace,
         fabric: &Rem6RunFabricSummary,
+        dram: &Rem6DramSummary,
         power_records: &[PowerAnalysisRecord],
         syscall_trace: &[RiscvSyscallTraceRecord],
     ) -> Self {
@@ -138,6 +182,11 @@ impl Rem6DebugSummary {
         };
         let data_trace = if config.debug_data_enabled() {
             data_trace_records(cluster, config.cores() as u32)
+        } else {
+            Vec::new()
+        };
+        let dram_trace = if config.debug_dram_enabled() {
+            dram_trace_records(dram)
         } else {
             Vec::new()
         };
@@ -166,6 +215,7 @@ impl Rem6DebugSummary {
             exec_trace,
             fetch_trace,
             data_trace,
+            dram_trace,
             fabric_trace,
             memory_trace,
             power_trace,
@@ -191,6 +241,22 @@ impl Rem6DebugSummary {
 
     pub(crate) fn data_trace_count(&self) -> u64 {
         self.data_trace.len() as u64
+    }
+
+    pub(crate) fn dram_trace_count(&self) -> u64 {
+        self.dram_trace.len() as u64
+    }
+
+    pub(crate) fn dram_target_trace_count(&self) -> u64 {
+        self.dram_kind_trace_count("target")
+    }
+
+    pub(crate) fn dram_port_trace_count(&self) -> u64 {
+        self.dram_kind_trace_count("port")
+    }
+
+    pub(crate) fn dram_bank_trace_count(&self) -> u64 {
+        self.dram_kind_trace_count("bank")
     }
 
     pub(crate) fn fabric_trace_count(&self) -> u64 {
@@ -256,6 +322,12 @@ impl Rem6DebugSummary {
             .map(Rem6DataTraceRecord::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let dram_trace = self
+            .dram_trace
+            .iter()
+            .map(Rem6DramTraceRecord::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         let fabric_trace = self
             .fabric_trace
             .iter()
@@ -281,8 +353,8 @@ impl Rem6DebugSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"flags\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"data_trace\":[{}],\"fabric_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"syscall_trace\":[{}]}}",
-            flags, exec_trace, fetch_trace, data_trace, fabric_trace, memory_trace, power_trace, syscall_trace
+            "{{\"flags\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"data_trace\":[{}],\"dram_trace\":[{}],\"fabric_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"syscall_trace\":[{}]}}",
+            flags, exec_trace, fetch_trace, data_trace, dram_trace, fabric_trace, memory_trace, power_trace, syscall_trace
         )
     }
 
@@ -290,6 +362,13 @@ impl Rem6DebugSummary {
         self.memory_trace
             .iter()
             .filter(|record| record.channel == channel)
+            .count() as u64
+    }
+
+    fn dram_kind_trace_count(&self, kind: &str) -> u64 {
+        self.dram_trace
+            .iter()
+            .filter(|record| record.kind() == kind)
             .count() as u64
     }
 }
@@ -328,6 +407,101 @@ impl Rem6DataTraceRecord {
             "{{\"cpu\":{},\"tick\":{},\"kind\":\"{}\",\"address\":\"0x{:x}\",\"size\":{}}}",
             self.cpu, self.tick, self.kind, self.address, self.size,
         )
+    }
+}
+
+impl Rem6DramTraceRecord {
+    fn to_json(&self) -> String {
+        match self {
+            Self::Target {
+                target,
+                accesses,
+                reads,
+                writes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                turnarounds,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+            } => format!(
+                "{{\"kind\":\"target\",\"target\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{}}}",
+                target,
+                accesses,
+                reads,
+                writes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                turnarounds,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+            ),
+            Self::Port {
+                target,
+                port,
+                accesses,
+                reads,
+                writes,
+                commands,
+                turnarounds,
+            } => format!(
+                "{{\"kind\":\"port\",\"target\":{},\"port\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"commands\":{},\"turnarounds\":{}}}",
+                target, port, accesses, reads, writes, commands, turnarounds,
+            ),
+            Self::Bank {
+                target,
+                port,
+                bank,
+                accesses,
+                read_bytes,
+                write_bytes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+            } => format!(
+                "{{\"kind\":\"bank\",\"target\":{},\"port\":{},\"bank\":{},\"accesses\":{},\"read_bytes\":{},\"write_bytes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{}}}",
+                target,
+                port,
+                bank,
+                accesses,
+                read_bytes,
+                write_bytes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+            ),
+        }
+    }
+
+    const fn kind(&self) -> &'static str {
+        match self {
+            Self::Target { .. } => "target",
+            Self::Port { .. } => "port",
+            Self::Bank { .. } => "bank",
+        }
+    }
+
+    const fn sort_key(&self) -> (u32, u8, u32, u32) {
+        match self {
+            Self::Target { target, .. } => (*target, 0, u32::MAX, u32::MAX),
+            Self::Port { target, port, .. } => (*target, 1, *port, u32::MAX),
+            Self::Bank {
+                target, port, bank, ..
+            } => (*target, 2, *port, *bank),
+        }
     }
 }
 
@@ -596,6 +770,56 @@ fn data_trace_kind(operation: MemoryOperation) -> Option<&'static str> {
         | MemoryOperation::Invalidate
         | MemoryOperation::InvalidateWritable => None,
     }
+}
+
+fn dram_trace_records(dram: &Rem6DramSummary) -> Vec<Rem6DramTraceRecord> {
+    let mut records = Vec::new();
+    for target in &dram.targets {
+        records.push(Rem6DramTraceRecord::Target {
+            target: target.target,
+            accesses: target.accesses,
+            reads: target.reads,
+            writes: target.writes,
+            row_hits: target.row_hits,
+            row_misses: target.row_misses,
+            refreshes: target.refreshes,
+            refresh_ticks: target.refresh_ticks,
+            commands: target.commands,
+            turnarounds: target.turnarounds,
+            total_ready_latency_ticks: target.total_ready_latency_ticks,
+            max_ready_latency_ticks: target.max_ready_latency_ticks,
+        });
+        for port in &target.ports {
+            records.push(Rem6DramTraceRecord::Port {
+                target: target.target,
+                port: port.port,
+                accesses: port.accesses,
+                reads: port.reads,
+                writes: port.writes,
+                commands: port.commands,
+                turnarounds: port.turnarounds,
+            });
+            for bank in &port.banks {
+                records.push(Rem6DramTraceRecord::Bank {
+                    target: target.target,
+                    port: port.port,
+                    bank: bank.bank,
+                    accesses: bank.accesses,
+                    read_bytes: bank.read_bytes,
+                    write_bytes: bank.write_bytes,
+                    row_hits: bank.row_hits,
+                    row_misses: bank.row_misses,
+                    refreshes: bank.refreshes,
+                    refresh_ticks: bank.refresh_ticks,
+                    commands: bank.commands,
+                    total_ready_latency_ticks: bank.total_ready_latency_ticks,
+                    max_ready_latency_ticks: bank.max_ready_latency_ticks,
+                });
+            }
+        }
+    }
+    records.sort_by_key(Rem6DramTraceRecord::sort_key);
+    records
 }
 
 fn fabric_trace_records(fabric: &Rem6RunFabricSummary) -> Vec<Rem6FabricTraceRecord> {

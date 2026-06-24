@@ -230,6 +230,7 @@ pub(super) fn execution_summary(
         inputs.fetch_trace,
         inputs.data_trace,
         &inputs.fabric,
+        &dram,
         &power_records,
         &inputs.riscv_syscall_trace,
     );

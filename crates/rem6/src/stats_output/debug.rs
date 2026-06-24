@@ -18,6 +18,13 @@ pub(super) fn emit_debug_stats(
         ("sim.debug.exec_trace.records", debug.exec_trace_count()),
         ("sim.debug.fetch_trace.records", debug.fetch_trace_count()),
         ("sim.debug.data_trace.records", debug.data_trace_count()),
+        ("sim.debug.dram_trace.records", debug.dram_trace_count()),
+        (
+            "sim.debug.dram_trace.targets",
+            debug.dram_target_trace_count(),
+        ),
+        ("sim.debug.dram_trace.ports", debug.dram_port_trace_count()),
+        ("sim.debug.dram_trace.banks", debug.dram_bank_trace_count()),
         ("sim.debug.fabric_trace.records", debug.fabric_trace_count()),
         (
             "sim.debug.fabric_trace.lanes",

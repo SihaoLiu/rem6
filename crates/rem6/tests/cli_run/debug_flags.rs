@@ -482,6 +482,210 @@ fn rem6_run_fabric_debug_flag_emits_real_fabric_activity_trace() {
 }
 
 #[test]
+fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),                  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),                        // sd x6, 8(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET, 0);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-dram", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--debug-flags",
+            "Dram",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![Value::String("Dram".to_string())])
+    );
+    let trace = json
+        .pointer("/debug/dram_trace")
+        .and_then(Value::as_array)
+        .expect("debug DRAM trace array");
+    let target_record = trace
+        .iter()
+        .find(|record| {
+            record.get("kind").and_then(Value::as_str) == Some("target")
+                && record.get("target").and_then(Value::as_u64) == Some(0)
+                && record
+                    .get("accesses")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|accesses| accesses > 0)
+                && record
+                    .get("reads")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|reads| reads > 0)
+        })
+        .unwrap_or_else(|| panic!("missing target DRAM record: {trace:?}"));
+    assert!(target_record.get("read_bytes").is_none());
+    assert!(target_record.get("write_bytes").is_none());
+
+    let port_record = trace
+        .iter()
+        .find(|record| {
+            record.get("kind").and_then(Value::as_str) == Some("port")
+                && record.get("target").and_then(Value::as_u64) == Some(0)
+                && record.get("port").and_then(Value::as_u64).is_some()
+                && record
+                    .get("commands")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|commands| commands > 0)
+        })
+        .unwrap_or_else(|| panic!("missing port DRAM record: {trace:?}"));
+    assert!(port_record.get("row_hits").is_none());
+    assert!(port_record.get("refreshes").is_none());
+
+    let bank_record = trace
+        .iter()
+        .find(|record| {
+            record.get("kind").and_then(Value::as_str) == Some("bank")
+                && record.get("target").and_then(Value::as_u64) == Some(0)
+                && record.get("port").and_then(Value::as_u64).is_some()
+                && record.get("bank").and_then(Value::as_u64).is_some()
+                && record
+                    .get("read_bytes")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|bytes| bytes > 0)
+                && record
+                    .get("max_ready_latency_ticks")
+                    .and_then(Value::as_u64)
+                    .is_some()
+        })
+        .unwrap_or_else(|| panic!("missing bank DRAM record: {trace:?}"));
+    assert!(bank_record.get("reads").is_none());
+    assert!(bank_record.get("writes").is_none());
+    assert!(bank_record.get("turnarounds").is_none());
+    let target_records = trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some("target"))
+        .count() as u64;
+    let port_records = trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some("port"))
+        .count() as u64;
+    let bank_records = trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some("bank"))
+        .count() as u64;
+    assert!(target_records >= 1, "trace: {trace:?}");
+    assert!(port_records >= 1, "trace: {trace:?}");
+    assert!(bank_records >= 1, "trace: {trace:?}");
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.records",
+        "Count",
+        trace.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.targets",
+        "Count",
+        target_records,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.ports",
+        "Count",
+        port_records,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.banks",
+        "Count",
+        bank_records,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_dram_debug_flag_participates_in_sorted_deduped_flag_lists() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-dram-dedup", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--dram-memory",
+            "--debug-flags",
+            "Fetch,Dram,Data,Dram",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json = stdout_json(output.stdout);
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![
+            Value::String("Data".to_string()),
+            Value::String("Dram".to_string()),
+            Value::String("Fetch".to_string())
+        ])
+    );
+    assert!(json
+        .pointer("/debug/dram_trace")
+        .and_then(Value::as_array)
+        .is_some_and(|trace| !trace.is_empty()));
+    assert!(json
+        .pointer("/debug/fetch_trace")
+        .and_then(Value::as_array)
+        .is_some_and(|trace| !trace.is_empty()));
+}
+
+#[test]
 fn rem6_run_syscall_debug_flag_emits_real_riscv_se_syscall_trace() {
     let program = riscv64_program(&[
         i_type(172, 0, 0x0, 17, 0x13), // addi a7, x0, getpid
