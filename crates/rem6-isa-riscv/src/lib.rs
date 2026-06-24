@@ -44,7 +44,7 @@ mod vector_reduction;
 mod vector_saturating;
 mod vector_scalar_move_execute;
 mod vector_slide_execute;
-
+mod vector_widening_integer;
 use encoding::{j_imm, rd, u_imm};
 use instruction_privilege::csr_privilege_allowed;
 use integer::{
@@ -110,7 +110,7 @@ pub use vector_fixed_point_shift::RiscvVectorFixedPointShiftOperation;
 pub use vector_mask_mode::RiscvVectorMaskMode;
 pub use vector_reduction::{RiscvVectorReductionInstruction, RiscvVectorReductionOperation};
 pub use vector_saturating::RiscvVectorSaturatingInstruction;
-
+pub use vector_widening_integer::RiscvVectorWideningIntegerInstruction;
 impl RiscvInstruction {
     pub fn decode(raw: u32) -> Result<Self, RiscvError> {
         if raw & 0x3 != 0x3 {
@@ -544,6 +544,7 @@ impl RiscvHartState {
             | RiscvInstruction::VectorAveraging(..)
             | RiscvInstruction::VectorFixedPointShift(..)
             | RiscvInstruction::VectorSaturating(..)
+            | RiscvInstruction::VectorWideningInteger(..)
             | RiscvInstruction::VectorZeroExtend { .. }
             | RiscvInstruction::VectorSignExtend { .. }
             | RiscvInstruction::VectorMoveVv { .. }

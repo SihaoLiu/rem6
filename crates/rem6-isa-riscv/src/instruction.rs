@@ -451,6 +451,7 @@ pub enum RiscvInstruction {
     VectorFixedPointShift(crate::vector_fixed_point_shift::RiscvVectorFixedPointShiftInstruction),
     VectorReduction(crate::vector_reduction::RiscvVectorReductionInstruction),
     VectorSaturating(crate::vector_saturating::RiscvVectorSaturatingInstruction),
+    VectorWideningInteger(crate::vector_widening_integer::RiscvVectorWideningIntegerInstruction),
     VectorZeroExtend {
         vd: VectorRegister,
         vs2: VectorRegister,

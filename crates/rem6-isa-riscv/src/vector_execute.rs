@@ -174,6 +174,9 @@ pub(crate) fn execute_vector_integer_binary(
         RiscvInstruction::VectorSaturating(instruction) => {
             crate::vector_saturating::execute(hart, instruction)
         }
+        RiscvInstruction::VectorWideningInteger(instruction) => {
+            crate::vector_widening_integer::execute(hart, instruction)
+        }
         RiscvInstruction::VectorZeroExtend {
             vd,
             vs2,

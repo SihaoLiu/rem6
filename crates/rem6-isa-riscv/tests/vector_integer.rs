@@ -5,7 +5,7 @@ use rem6_isa_riscv::{
     RiscvVectorFixedRoundingMode, RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction,
     RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
     RiscvVectorReductionInstruction, RiscvVectorSaturatingInstruction, RiscvVectorSlideInstruction,
-    VectorRegister,
+    RiscvVectorWideningIntegerInstruction, VectorRegister,
 };
 
 fn reg(index: u8) -> Register {
@@ -204,6 +204,38 @@ fn vector_mvx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
         | 0x57
 }
 
+fn vector_widening_vv_type(
+    funct6: u32,
+    vs2: u8,
+    vs1: u8,
+    vd: u8,
+    mask: RiscvVectorMaskMode,
+) -> u32 {
+    (funct6 << 26)
+        | (u32::from(matches!(mask, RiscvVectorMaskMode::Unmasked)) << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(vs1) << 15)
+        | (0b010 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vector_widening_vx_type(
+    funct6: u32,
+    vs2: u8,
+    rs1: u8,
+    vd: u8,
+    mask: RiscvVectorMaskMode,
+) -> u32 {
+    (funct6 << 26)
+        | (u32::from(matches!(mask, RiscvVectorMaskMode::Unmasked)) << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (0b110 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
 fn vector_reduction_type(funct6: u32, vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
     (funct6 << 26)
         | (u32::from(matches!(mask, RiscvVectorMaskMode::Unmasked)) << 25)
@@ -381,6 +413,38 @@ fn vwredsumu_vs_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32
 
 fn vwredsum_vs_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
     vector_widening_reduction_type(0b110001, vs2, vs1, vd, mask)
+}
+
+fn vwaddu_vv_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_widening_vv_type(0b110000, vs2, vs1, vd, mask)
+}
+
+fn vwadd_vv_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_widening_vv_type(0b110001, vs2, vs1, vd, mask)
+}
+
+fn vwsubu_vv_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_widening_vv_type(0b110010, vs2, vs1, vd, mask)
+}
+
+fn vwsub_vv_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_widening_vv_type(0b110011, vs2, vs1, vd, mask)
+}
+
+fn vwaddu_vx_type(vs2: u8, rs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_widening_vx_type(0b110000, vs2, rs1, vd, mask)
+}
+
+fn vwadd_vx_type(vs2: u8, rs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_widening_vx_type(0b110001, vs2, rs1, vd, mask)
+}
+
+fn vwsubu_vx_type(vs2: u8, rs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_widening_vx_type(0b110010, vs2, rs1, vd, mask)
+}
+
+fn vwsub_vx_type(vs2: u8, rs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_widening_vx_type(0b110011, vs2, rs1, vd, mask)
 }
 
 fn vaaddu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -1289,6 +1353,90 @@ fn decoder_accepts_vector_integer_widening_reduction_operations() {
             RiscvVectorMaskMode::Masked,
         ))
     );
+}
+
+#[test]
+fn decoder_accepts_vector_integer_widening_add_sub_operations() {
+    assert_eq!(
+        vwaddu_vv_type(4, 5, 2, RiscvVectorMaskMode::Unmasked),
+        0xc242_a157
+    );
+    assert_eq!(
+        vwadd_vx_type(4, 5, 2, RiscvVectorMaskMode::Unmasked),
+        0xc642_e157
+    );
+    assert_eq!(
+        vwsubu_vv_type(4, 5, 2, RiscvVectorMaskMode::Masked),
+        0xc842_a157
+    );
+    assert_eq!(
+        vwsub_vx_type(4, 5, 2, RiscvVectorMaskMode::Masked),
+        0xcc42_e157
+    );
+
+    let cases = [
+        (
+            vwaddu_vv_type(4, 5, 2, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorWideningIntegerInstruction::add_unsigned_vv(
+                vreg(2),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        ),
+        (
+            vwadd_vv_type(4, 5, 2, RiscvVectorMaskMode::Masked),
+            RiscvVectorWideningIntegerInstruction::add_signed_vv(
+                vreg(2),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Masked,
+            ),
+        ),
+        (
+            vwsub_vv_type(4, 5, 2, RiscvVectorMaskMode::Masked),
+            RiscvVectorWideningIntegerInstruction::sub_signed_vv(
+                vreg(2),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Masked,
+            ),
+        ),
+        (
+            vwaddu_vx_type(4, 5, 2, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorWideningIntegerInstruction::add_unsigned_vx(
+                vreg(2),
+                vreg(4),
+                reg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        ),
+        (
+            vwsubu_vx_type(4, 5, 2, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorWideningIntegerInstruction::sub_unsigned_vx(
+                vreg(2),
+                vreg(4),
+                reg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        ),
+        (
+            vwsub_vx_type(4, 5, 2, RiscvVectorMaskMode::Masked),
+            RiscvVectorWideningIntegerInstruction::sub_signed_vx(
+                vreg(2),
+                vreg(4),
+                reg(5),
+                RiscvVectorMaskMode::Masked,
+            ),
+        ),
+    ];
+
+    for (raw, expected) in cases {
+        assert_eq!(
+            RiscvInstruction::decode(raw).unwrap(),
+            RiscvInstruction::VectorWideningInteger(expected)
+        );
+    }
 }
 
 #[test]
@@ -2950,6 +3098,161 @@ fn hart_executes_vector_integer_widening_reductions() {
         )
         .unwrap();
     assert_eq!(wrapping_e64.read_vector(vreg(3)), 1_u128.to_le_bytes());
+}
+
+#[test]
+fn hart_executes_vector_integer_widening_add_sub_vv_and_vx_forms() {
+    let mut add_unsigned_vv = RiscvHartState::new(0x8170);
+    add_unsigned_vv.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    add_unsigned_vv.write_vector(vreg(4), bytes_with_u16([0xffff, 1, 2, 3, 0, 0, 0, 0]));
+    add_unsigned_vv.write_vector(vreg(5), bytes_with_u16([1, 2, 3, 4, 0, 0, 0, 0]));
+    add_unsigned_vv.write_vector(vreg(2), lanes_u32([0xeeee_eeee; 4]));
+    add_unsigned_vv.write_vector(vreg(3), lanes_u32([0xdddd_dddd; 4]));
+    let add_unsigned_vv_record = add_unsigned_vv
+        .execute(
+            RiscvInstruction::decode(vwaddu_vv_type(4, 5, 2, RiscvVectorMaskMode::Unmasked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        add_unsigned_vv_record.instruction(),
+        RiscvInstruction::VectorWideningInteger(
+            RiscvVectorWideningIntegerInstruction::add_unsigned_vv(
+                vreg(2),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        )
+    );
+    assert_eq!(
+        add_unsigned_vv.read_vector(vreg(2)),
+        lanes_u32([0x0001_0000, 3, 5, 7])
+    );
+    assert_eq!(
+        add_unsigned_vv.read_vector(vreg(3)),
+        lanes_u32([0xdddd_dddd; 4])
+    );
+
+    let mut add_signed_vx = RiscvHartState::new(0x8171);
+    add_signed_vx.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    add_signed_vx.write(reg(6), 0xffff);
+    add_signed_vx.write_vector(vreg(4), bytes_with_u16([0, 1, 0x8000, 0xffff, 0, 0, 0, 0]));
+    add_signed_vx.write_vector(vreg(2), lanes_u32([0xeeee_eeee; 4]));
+    add_signed_vx.write_vector(vreg(3), lanes_u32([0xdddd_dddd; 4]));
+    let add_signed_vx_record = add_signed_vx
+        .execute(
+            RiscvInstruction::decode(vwadd_vx_type(4, 6, 2, RiscvVectorMaskMode::Unmasked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        add_signed_vx_record.instruction(),
+        RiscvInstruction::VectorWideningInteger(
+            RiscvVectorWideningIntegerInstruction::add_signed_vx(
+                vreg(2),
+                vreg(4),
+                reg(6),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        )
+    );
+    assert_eq!(
+        add_signed_vx.read_vector(vreg(2)),
+        lanes_u32([0xffff_ffff, 0, 0xffff_7fff, 0xffff_fffe])
+    );
+
+    let mut sub_unsigned_vv = RiscvHartState::new(0x8172);
+    sub_unsigned_vv.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    sub_unsigned_vv.write_vector(vreg(4), bytes_with_u16([0, 5, 0xffff, 1, 0, 0, 0, 0]));
+    sub_unsigned_vv.write_vector(vreg(5), bytes_with_u16([1, 2, 0xffff, 2, 0, 0, 0, 0]));
+    sub_unsigned_vv.write_vector(vreg(2), lanes_u32([0xeeee_eeee; 4]));
+    sub_unsigned_vv
+        .execute(
+            RiscvInstruction::decode(vwsubu_vv_type(4, 5, 2, RiscvVectorMaskMode::Unmasked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        sub_unsigned_vv.read_vector(vreg(2)),
+        lanes_u32([0xffff_ffff, 3, 0, 0xffff_ffff])
+    );
+
+    let mut sub_signed_vx_masked = RiscvHartState::new(0x8173);
+    sub_signed_vx_masked.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    sub_signed_vx_masked.write(reg(6), 1);
+    sub_signed_vx_masked.write_vector(vreg(0), mask_bytes(0b0101));
+    sub_signed_vx_masked.write_vector(
+        vreg(4),
+        bytes_with_u16([0, 0x1234, 0x8000, 0x5678, 0, 0, 0, 0]),
+    );
+    sub_signed_vx_masked.write_vector(vreg(2), lanes_u32([0xeeee_eeee; 4]));
+    sub_signed_vx_masked
+        .execute(
+            RiscvInstruction::decode(vwsub_vx_type(4, 6, 2, RiscvVectorMaskMode::Masked)).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        sub_signed_vx_masked.read_vector(vreg(2)),
+        lanes_u32([0xffff_ffff, 0xeeee_eeee, 0xffff_7fff, 0xeeee_eeee])
+    );
+}
+
+#[test]
+fn hart_traps_vector_integer_widening_add_sub_reserved_register_groups() {
+    let mut low_overlap = RiscvHartState::new(0x8174);
+    low_overlap.set_vector_config(RiscvVectorConfig::new(1, 0xc8));
+    let low_overlap_record = low_overlap
+        .execute(
+            RiscvInstruction::decode(vwaddu_vv_type(2, 4, 2, RiscvVectorMaskMode::Unmasked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        low_overlap_record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8174))
+    );
+
+    let mut high_overlap = RiscvHartState::new(0x8178);
+    high_overlap.set_vector_config(RiscvVectorConfig::new(2, 0xc8));
+    high_overlap.write_vector(vreg(3), bytes_with_u16([1, 2, 0, 0, 0, 0, 0, 0]));
+    high_overlap.write_vector(vreg(4), bytes_with_u16([3, 4, 0, 0, 0, 0, 0, 0]));
+    high_overlap.write_vector(vreg(2), lanes_u32([0xeeee_eeee; 4]));
+    high_overlap
+        .execute(
+            RiscvInstruction::decode(vwaddu_vv_type(3, 4, 2, RiscvVectorMaskMode::Unmasked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        high_overlap.read_vector(vreg(2)),
+        lanes_u32([4, 6, 0xeeee_eeee, 0xeeee_eeee])
+    );
+
+    let mut mask_overlap = RiscvHartState::new(0x817c);
+    mask_overlap.set_vector_config(RiscvVectorConfig::new(1, 0xc8));
+    let mask_overlap_record = mask_overlap
+        .execute(
+            RiscvInstruction::decode(vwadd_vv_type(4, 5, 0, RiscvVectorMaskMode::Masked)).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        mask_overlap_record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x817c))
+    );
+
+    let mut emul_overflow = RiscvHartState::new(0x8180);
+    emul_overflow.set_vector_config(RiscvVectorConfig::new(1, 0xcb));
+    let emul_overflow_record = emul_overflow
+        .execute(
+            RiscvInstruction::decode(vwaddu_vv_type(8, 16, 0, RiscvVectorMaskMode::Unmasked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        emul_overflow_record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8180))
+    );
 }
 
 #[test]
