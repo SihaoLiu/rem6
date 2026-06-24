@@ -31,6 +31,8 @@ mod vector_execute;
 mod vector_fixed_point_csr;
 mod vector_float_execute;
 mod vector_group;
+mod vector_lane_op;
+mod vector_mask_mode;
 mod vector_narrow_clip_execute;
 
 use encoding::{j_imm, rd, u_imm};
@@ -61,7 +63,7 @@ pub use csr::{
 pub use error::{RiscvCsrError, RiscvError};
 pub use gdb_target::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
 pub use hart::RiscvHartState;
-pub use instruction::{RiscvInstruction, RiscvVectorMaskMode};
+pub use instruction::RiscvInstruction;
 pub use pma::{RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmaTable};
 pub use pmp::{
     RiscvPmpAccessKind, RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpEntry, RiscvPmpError,
@@ -89,6 +91,7 @@ pub use vector::{
     RiscvVectorMicroOp, RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan,
     RiscvVectorNarrowClipResult, RiscvVectorTailPolicy,
 };
+pub use vector_mask_mode::RiscvVectorMaskMode;
 
 impl RiscvInstruction {
     pub fn decode(raw: u32) -> Result<Self, RiscvError> {
@@ -458,6 +461,8 @@ impl RiscvHartState {
             | RiscvInstruction::VectorAddVi { .. }
             | RiscvInstruction::VectorSubVv { .. }
             | RiscvInstruction::VectorSubVx { .. }
+            | RiscvInstruction::VectorReverseSubVx { .. }
+            | RiscvInstruction::VectorReverseSubVi { .. }
             | RiscvInstruction::VectorMinUnsignedVv { .. }
             | RiscvInstruction::VectorMinUnsignedVx { .. }
             | RiscvInstruction::VectorMinSignedVv { .. }

@@ -607,6 +607,11 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             imm: vector_signed_imm5(raw),
             mask: vector_mask_mode(raw),
         }),
+        (0x3, 0b000011, true) => Ok(RiscvInstruction::VectorReverseSubVi {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            imm: vector_signed_imm5(raw),
+        }),
         (0x3, 0b001001, true) => Ok(RiscvInstruction::VectorAndVi {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
@@ -683,6 +688,11 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             mask: vector_mask_mode(raw),
         }),
         (0x4, 0b000010, true) => Ok(RiscvInstruction::VectorSubVx {
+            vd: vector_register(raw, 7),
+            vs2: vector_register(raw, 20),
+            rs1: rs1(raw),
+        }),
+        (0x4, 0b000011, true) => Ok(RiscvInstruction::VectorReverseSubVx {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
             rs1: rs1(raw),

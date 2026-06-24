@@ -4,6 +4,7 @@ use crate::{
 };
 
 mod add_sub;
+mod constants;
 mod convert_flags;
 mod decode;
 mod div;
@@ -13,6 +14,14 @@ mod int_to_float;
 mod mul;
 mod ternary;
 
+pub(crate) use constants::{
+    DEFAULT_NAN_DOUBLE, DEFAULT_NAN_SINGLE, DEFAULT_NAN_SINGLE_BITS, DOUBLE_EXP_MASK,
+    DOUBLE_FRACTION_MASK, DOUBLE_QUIET_NAN_BIT, DOUBLE_SIGN_BIT, FLOAT_FLAG_DIVIDE_BY_ZERO,
+    FLOAT_FLAG_INEXACT, FLOAT_FLAG_INVALID, FLOAT_FLAG_OVERFLOW, FLOAT_FLAG_UNDERFLOW,
+    I32_MAX_PLUS_ONE_AS_SINGLE, I64_MAX_PLUS_ONE_AS_SINGLE, SINGLE_BOX_MASK, SINGLE_EXP_MASK,
+    SINGLE_FRACTION_MASK, SINGLE_QUIET_NAN_BIT, SINGLE_SIGN_BIT, U32_MAX_PLUS_ONE_AS_SINGLE,
+    U64_MAX_PLUS_ONE_AS_SINGLE,
+};
 pub(crate) use decode::{
     decode_float_load, decode_float_multiply_add, decode_float_op, decode_float_store,
 };
@@ -1279,25 +1288,3 @@ fn is_negative_nonzero_non_nan_single(value: u32) -> bool {
 fn is_negative_nonzero_non_nan_double(value: u64) -> bool {
     has_double_sign(value) && value & !DOUBLE_SIGN_BIT != 0 && !is_nan_double(value)
 }
-
-const SINGLE_BOX_MASK: u64 = 0xffff_ffff_0000_0000;
-const SINGLE_SIGN_BIT: u32 = 1 << 31;
-const SINGLE_EXP_MASK: u32 = 0x7f80_0000;
-const SINGLE_FRACTION_MASK: u32 = 0x007f_ffff;
-const SINGLE_QUIET_NAN_BIT: u32 = 1 << 22;
-const DEFAULT_NAN_SINGLE_BITS: u32 = 0x7fc0_0000;
-const DEFAULT_NAN_SINGLE: u64 = SINGLE_BOX_MASK | DEFAULT_NAN_SINGLE_BITS as u64;
-const I32_MAX_PLUS_ONE_AS_SINGLE: f32 = 2_147_483_648.0;
-const U32_MAX_PLUS_ONE_AS_SINGLE: f32 = 4_294_967_296.0;
-const I64_MAX_PLUS_ONE_AS_SINGLE: f32 = 9_223_372_036_854_775_808.0;
-const U64_MAX_PLUS_ONE_AS_SINGLE: f32 = 18_446_744_073_709_551_616.0;
-const DOUBLE_SIGN_BIT: u64 = 1 << 63;
-const DOUBLE_EXP_MASK: u64 = 0x7ff0_0000_0000_0000;
-const DOUBLE_FRACTION_MASK: u64 = 0x000f_ffff_ffff_ffff;
-const DOUBLE_QUIET_NAN_BIT: u64 = 1 << 51;
-const DEFAULT_NAN_DOUBLE: u64 = 0x7ff8_0000_0000_0000;
-const FLOAT_FLAG_INVALID: u64 = 1 << 4;
-const FLOAT_FLAG_DIVIDE_BY_ZERO: u64 = 1 << 3;
-const FLOAT_FLAG_OVERFLOW: u64 = 1 << 2;
-const FLOAT_FLAG_UNDERFLOW: u64 = 1 << 1;
-const FLOAT_FLAG_INEXACT: u64 = 1 << 0;

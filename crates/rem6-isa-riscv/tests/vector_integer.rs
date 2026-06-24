@@ -72,6 +72,14 @@ fn vsub_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
         | 0x57
 }
 
+fn vrsub_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b000011, vs2, rs1, vd)
+}
+
+fn vrsub_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
+    vector_vi_type(0b000011, vs2, imm, vd)
+}
+
 fn vector_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
     (funct6 << 26)
         | (1 << 25)
@@ -404,6 +412,28 @@ fn decoder_accepts_unmasked_vsub_vv_and_vx() {
             vd: vreg(4),
             vs2: vreg(5),
             rs1: reg(6),
+        }
+    );
+}
+
+#[test]
+fn decoder_accepts_unmasked_vrsub_vx_and_vi() {
+    assert_eq!(vrsub_vx_type(5, 6, 4), 0x0e53_4257);
+    assert_eq!(vrsub_vi_type(5, -1, 4), 0x0e5f_b257);
+    assert_eq!(
+        RiscvInstruction::decode(vrsub_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorReverseSubVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vrsub_vi_type(5, -1, 4)).unwrap(),
+        RiscvInstruction::VectorReverseSubVi {
+            vd: vreg(4),
+            vs2: vreg(5),
+            imm: -1,
         }
     );
 }
@@ -1035,6 +1065,54 @@ fn hart_executes_vsub_vx_for_active_u16_lanes() {
             vd: vreg(4),
             vs2: vreg(5),
             rs1: reg(6),
+        }
+    );
+}
+
+#[test]
+fn hart_executes_vrsub_vx_and_vi_for_active_lanes() {
+    let mut vx = RiscvHartState::new(0x8088);
+    vx.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    vx.write(reg(6), 3);
+    vx.write_vector(vreg(5), bytes_with_u16([10, 0, 3, 1, 50, 60, 70, 80]));
+    vx.write_vector(vreg(4), bytes_with_u16([0xaaaa; 8]));
+
+    let vx_record = vx
+        .execute(RiscvInstruction::decode(vrsub_vx_type(5, 6, 4)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        vx.read_vector(vreg(4)),
+        bytes_with_u16([u16::MAX - 6, 3, 0, 2, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa])
+    );
+    assert_eq!(
+        vx_record.instruction(),
+        RiscvInstruction::VectorReverseSubVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        }
+    );
+
+    let mut vi = RiscvHartState::new(0x808c);
+    vi.set_vector_config(RiscvVectorConfig::new(3, 0xd0));
+    vi.write_vector(vreg(5), lanes_u32([0, 1, u32::MAX, u32::MAX - 1]));
+    vi.write_vector(vreg(4), lanes_u32([0xaaaa_0000; 4]));
+
+    let vi_record = vi
+        .execute(RiscvInstruction::decode(vrsub_vi_type(5, -1, 4)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        vi.read_vector(vreg(4)),
+        lanes_u32([u32::MAX, u32::MAX - 1, 0, 0xaaaa_0000])
+    );
+    assert_eq!(
+        vi_record.instruction(),
+        RiscvInstruction::VectorReverseSubVi {
+            vd: vreg(4),
+            vs2: vreg(5),
+            imm: -1,
         }
     );
 }

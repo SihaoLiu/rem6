@@ -3,28 +3,9 @@ use crate::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryWidth, Register, RiscvCounterCsr,
     RiscvEnvironmentConfigCsrInstruction, RiscvFenceSet, RiscvFloatCsr, RiscvFloatRoundingMode,
     RiscvInterruptCsr, RiscvMachineInformationCsrInstruction, RiscvMachineTrapCsr, RiscvPseudoOp,
-    RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsrInstruction, VectorRegister,
+    RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsrInstruction, RiscvVectorMaskMode,
+    VectorRegister,
 };
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RiscvVectorMaskMode {
-    Masked,
-    Unmasked,
-}
-
-impl RiscvVectorMaskMode {
-    pub const fn from_vm_bit(unmasked: bool) -> Self {
-        if unmasked {
-            Self::Unmasked
-        } else {
-            Self::Masked
-        }
-    }
-
-    pub const fn is_masked(self) -> bool {
-        matches!(self, Self::Masked)
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvInstruction {
@@ -322,6 +303,16 @@ pub enum RiscvInstruction {
         vd: VectorRegister,
         vs2: VectorRegister,
         rs1: Register,
+    },
+    VectorReverseSubVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    VectorReverseSubVi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        imm: i8,
     },
     VectorMinUnsignedVv {
         vd: VectorRegister,
