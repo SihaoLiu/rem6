@@ -705,6 +705,7 @@ pub enum RiscvInstruction {
         vs2: VectorRegister,
         shamt: u8,
     },
+    VectorSlide(crate::vector::RiscvVectorSlideInstruction),
     VectorFloat(crate::vector::RiscvVectorFloatInstruction),
     Load {
         rd: Register,

@@ -11,7 +11,8 @@ use rem6_isa_riscv::{
     FloatRegister, MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction,
     RiscvMemoryOrdering, RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmpAccessKind,
     RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvStatusWord,
-    RiscvTrap, RiscvTrapKind, RiscvVectorConfig, RiscvVectorMaskMode, VectorRegister,
+    RiscvTrap, RiscvTrapKind, RiscvVectorConfig, RiscvVectorMaskMode, RiscvVectorSlideInstruction,
+    VectorRegister,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -173,6 +174,22 @@ fn vector_vx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
         | (0b100 << 12)
         | (u32::from(vd) << 7)
         | 0x57
+}
+
+fn vslideup_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b001110, vs2, rs1, vd)
+}
+
+fn vslidedown_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b001111, vs2, rs1, vd)
+}
+
+fn vslideup_vi_type(vs2: u8, offset: u8, vd: u8) -> u32 {
+    vector_vi_type(0b001110, vs2, offset as i8, vd)
+}
+
+fn vslidedown_vi_type(vs2: u8, offset: u8, vd: u8) -> u32 {
+    vector_vi_type(0b001111, vs2, offset as i8, vd)
 }
 
 fn vector_mvv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -443,6 +460,14 @@ fn lanes_u32(lanes: [u32; 4]) -> [u8; 16] {
     let mut bytes = [0; 16];
     for (index, lane) in lanes.into_iter().enumerate() {
         bytes[index * 4..index * 4 + 4].copy_from_slice(&lane.to_le_bytes());
+    }
+    bytes
+}
+
+fn bytes_with_u16(lanes: [u16; 8]) -> [u8; 16] {
+    let mut bytes = [0; 16];
+    for (index, lane) in lanes.into_iter().enumerate() {
+        bytes[index * 2..index * 2 + 2].copy_from_slice(&lane.to_le_bytes());
     }
     bytes
 }
@@ -1357,6 +1382,97 @@ fn riscv_core_driver_executes_vsub_vv_and_vx_from_fetch_stream() {
     assert_eq!(
         core.read_vector_register(vreg(6)),
         lanes_u32([15, u32::MAX - 2, u32::MAX - 3, 0xdddd_dddd])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_slide_operations_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 6);
+    core.write_register(reg(8), 2);
+    core.write_register(reg(9), 3);
+    core.write_vector_register(vreg(2), bytes_with_u16([10, 11, 12, 13, 14, 15, 16, 17]));
+    core.write_vector_register(vreg(4), bytes_with_u16([0xaaa0; 8]));
+    core.write_vector_register(vreg(5), bytes_with_u16([20, 21, 22, 23, 24, 25, 26, 27]));
+    core.write_vector_register(vreg(6), bytes_with_u16([0xbbbb; 8]));
+    core.write_vector_register(vreg(7), bytes_with_u16([30, 31, 32, 33, 34, 35, 36, 37]));
+    core.write_vector_register(vreg(11), bytes_with_u16([0xcccc; 8]));
+    core.write_vector_register(vreg(12), bytes_with_u16([40, 41, 42, 43, 44, 45, 46, 47]));
+    core.write_vector_register(vreg(13), bytes_with_u16([0xdddd; 8]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xc8, 10, 5),
+            vslideup_vx_type(2, 8, 4),
+            vslidedown_vx_type(5, 9, 6),
+            vslideup_vi_type(7, 1, 11),
+            vslidedown_vi_type(12, 6, 13),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xc8,
+        }
+    );
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(6, 0xc8));
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSlide(RiscvVectorSlideInstruction::UpVx {
+            vd: vreg(4),
+            vs2: vreg(2),
+            rs1: reg(8),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(4)),
+        bytes_with_u16([0xaaa0, 0xaaa0, 10, 11, 12, 13, 0xaaa0, 0xaaa0])
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSlide(RiscvVectorSlideInstruction::DownVx {
+            vd: vreg(6),
+            vs2: vreg(5),
+            rs1: reg(9),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(6)),
+        bytes_with_u16([23, 24, 25, 26, 27, 0, 0xbbbb, 0xbbbb])
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSlide(RiscvVectorSlideInstruction::UpVi {
+            vd: vreg(11),
+            vs2: vreg(7),
+            offset: 1,
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(11)),
+        bytes_with_u16([0xcccc, 30, 31, 32, 33, 34, 0xcccc, 0xcccc])
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorSlide(RiscvVectorSlideInstruction::DownVi {
+            vd: vreg(13),
+            vs2: vreg(12),
+            offset: 6,
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(13)),
+        bytes_with_u16([46, 47, 0, 0, 0, 0, 0xdddd, 0xdddd])
     );
 }
 

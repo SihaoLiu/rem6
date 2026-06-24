@@ -596,6 +596,7 @@ fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -
             | RiscvInstruction::VectorRemainderUnsignedVx { .. }
             | RiscvInstruction::VectorRemainderSignedVv { .. }
             | RiscvInstruction::VectorRemainderSignedVx { .. }
+            | RiscvInstruction::VectorSlide(_)
             | RiscvInstruction::VectorMergeVvm { .. }
             | RiscvInstruction::VectorMergeVxm { .. }
             | RiscvInstruction::VectorMergeVim { .. }

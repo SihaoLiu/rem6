@@ -1,6 +1,6 @@
 use rem6_isa_riscv::{
     Register, RiscvHartState, RiscvInstruction, RiscvTrap, RiscvTrapKind, RiscvVectorConfig,
-    RiscvVectorMaskMode, VectorRegister,
+    RiscvVectorMaskMode, RiscvVectorSlideInstruction, VectorRegister,
 };
 
 fn reg(index: u8) -> Register {
@@ -78,6 +78,22 @@ fn vrsub_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
 
 fn vrsub_vi_type(vs2: u8, imm: i8, vd: u8) -> u32 {
     vector_vi_type(0b000011, vs2, imm, vd)
+}
+
+fn vslideup_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b001110, vs2, rs1, vd)
+}
+
+fn vslidedown_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b001111, vs2, rs1, vd)
+}
+
+fn vslideup_vi_type(vs2: u8, offset: u8, vd: u8) -> u32 {
+    vector_vi_type(0b001110, vs2, offset as i8, vd)
+}
+
+fn vslidedown_vi_type(vs2: u8, offset: u8, vd: u8) -> u32 {
+    vector_vi_type(0b001111, vs2, offset as i8, vd)
 }
 
 fn vector_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -435,6 +451,46 @@ fn decoder_accepts_unmasked_vrsub_vx_and_vi() {
             vs2: vreg(5),
             imm: -1,
         }
+    );
+}
+
+#[test]
+fn decoder_accepts_unmasked_vector_slide_vx_and_vi() {
+    assert_eq!(vslideup_vx_type(5, 6, 4), 0x3a53_4257);
+    assert_eq!(vslidedown_vx_type(5, 6, 4), 0x3e53_4257);
+    assert_eq!(vslideup_vi_type(5, 2, 4), 0x3a51_3257);
+    assert_eq!(vslidedown_vi_type(5, 6, 4), 0x3e53_3257);
+    assert_eq!(
+        RiscvInstruction::decode(vslideup_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorSlide(RiscvVectorSlideInstruction::UpVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        })
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vslidedown_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorSlide(RiscvVectorSlideInstruction::DownVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        })
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vslideup_vi_type(5, 2, 4)).unwrap(),
+        RiscvInstruction::VectorSlide(RiscvVectorSlideInstruction::UpVi {
+            vd: vreg(4),
+            vs2: vreg(5),
+            offset: 2,
+        })
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vslidedown_vi_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorSlide(RiscvVectorSlideInstruction::DownVi {
+            vd: vreg(4),
+            vs2: vreg(5),
+            offset: 6,
+        })
     );
 }
 
@@ -1114,6 +1170,112 @@ fn hart_executes_vrsub_vx_and_vi_for_active_lanes() {
             vs2: vreg(5),
             imm: -1,
         }
+    );
+}
+
+#[test]
+fn hart_executes_vector_slide_vx_and_vi_for_active_lanes() {
+    let mut up_vx = RiscvHartState::new(0x808c);
+    up_vx.set_vector_config(RiscvVectorConfig::new(6, 0xc8));
+    up_vx.write(reg(6), 2);
+    up_vx.write_vector(vreg(5), bytes_with_u16([10, 11, 12, 13, 14, 15, 16, 17]));
+    up_vx.write_vector(vreg(4), bytes_with_u16([0xaaa0; 8]));
+
+    let up_vx_record = up_vx
+        .execute(RiscvInstruction::decode(vslideup_vx_type(5, 6, 4)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        up_vx.read_vector(vreg(4)),
+        bytes_with_u16([0xaaa0, 0xaaa0, 10, 11, 12, 13, 0xaaa0, 0xaaa0])
+    );
+    assert_eq!(
+        up_vx_record.instruction(),
+        RiscvInstruction::VectorSlide(RiscvVectorSlideInstruction::UpVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        })
+    );
+
+    let mut down_vx = RiscvHartState::new(0x8090);
+    down_vx.set_vector_config(RiscvVectorConfig::new(5, 0xc8));
+    down_vx.write(reg(6), 3);
+    down_vx.write_vector(vreg(5), bytes_with_u16([20, 21, 22, 23, 24, 25, 26, 27]));
+    down_vx.write_vector(vreg(4), bytes_with_u16([0xbbbb; 8]));
+
+    down_vx
+        .execute(RiscvInstruction::decode(vslidedown_vx_type(5, 6, 4)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        down_vx.read_vector(vreg(4)),
+        bytes_with_u16([23, 24, 25, 26, 27, 0xbbbb, 0xbbbb, 0xbbbb])
+    );
+
+    let mut up_vi = RiscvHartState::new(0x8094);
+    up_vi.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    up_vi.write_vector(vreg(5), bytes_with_u16([30, 31, 32, 33, 34, 35, 36, 37]));
+    up_vi.write_vector(vreg(4), bytes_with_u16([0xcccc; 8]));
+
+    up_vi
+        .execute(RiscvInstruction::decode(vslideup_vi_type(5, 1, 4)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        up_vi.read_vector(vreg(4)),
+        bytes_with_u16([0xcccc, 30, 31, 32, 0xcccc, 0xcccc, 0xcccc, 0xcccc])
+    );
+
+    let mut down_vi = RiscvHartState::new(0x8098);
+    down_vi.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    down_vi.write_vector(vreg(5), bytes_with_u16([40, 41, 42, 43, 44, 45, 46, 47]));
+    down_vi.write_vector(vreg(4), bytes_with_u16([0xdddd; 8]));
+
+    down_vi
+        .execute(RiscvInstruction::decode(vslidedown_vi_type(5, 6, 4)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        down_vi.read_vector(vreg(4)),
+        bytes_with_u16([46, 47, 0, 0, 0xdddd, 0xdddd, 0xdddd, 0xdddd])
+    );
+}
+
+#[test]
+fn hart_executes_vslidedown_with_fractional_lmul_vlmax_zero_fill() {
+    let mut hart = RiscvHartState::new(0x809c);
+    hart.set_vector_config(RiscvVectorConfig::new(4, 0xcf));
+    hart.write_vector(vreg(5), bytes_with_u16([10, 11, 12, 13, 14, 15, 16, 17]));
+    hart.write_vector(vreg(4), bytes_with_u16([0xeeee; 8]));
+
+    hart.execute(RiscvInstruction::decode(vslidedown_vi_type(5, 2, 4)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        hart.read_vector(vreg(4)),
+        bytes_with_u16([12, 13, 0, 0, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+}
+
+#[test]
+fn hart_traps_vslideup_when_destination_overlaps_source() {
+    let mut hart = RiscvHartState::new(0x80a0);
+    hart.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    hart.write(reg(6), 1);
+    hart.write_vector(vreg(4), bytes_with_u16([10, 11, 12, 13, 14, 15, 16, 17]));
+
+    let record = hart
+        .execute(RiscvInstruction::decode(vslideup_vx_type(4, 6, 4)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x80a0))
+    );
+    assert_eq!(
+        hart.read_vector(vreg(4)),
+        bytes_with_u16([10, 11, 12, 13, 14, 15, 16, 17])
     );
 }
 

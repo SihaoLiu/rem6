@@ -34,6 +34,7 @@ mod vector_group;
 mod vector_lane_op;
 mod vector_mask_mode;
 mod vector_narrow_clip_execute;
+mod vector_slide_execute;
 
 use encoding::{j_imm, rd, u_imm};
 use instruction_privilege::csr_privilege_allowed;
@@ -89,7 +90,7 @@ pub use vector::{
     RiscvVectorError, RiscvVectorExtensionFactor, RiscvVectorFixedPointState,
     RiscvVectorFixedRoundingMode, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
     RiscvVectorMicroOp, RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan,
-    RiscvVectorNarrowClipResult, RiscvVectorTailPolicy,
+    RiscvVectorNarrowClipResult, RiscvVectorSlideInstruction, RiscvVectorTailPolicy,
 };
 pub use vector_mask_mode::RiscvVectorMaskMode;
 
@@ -487,6 +488,7 @@ impl RiscvHartState {
             | RiscvInstruction::VectorRemainderUnsignedVx { .. }
             | RiscvInstruction::VectorRemainderSignedVv { .. }
             | RiscvInstruction::VectorRemainderSignedVx { .. }
+            | RiscvInstruction::VectorSlide(..)
             | RiscvInstruction::VectorMergeVvm { .. }
             | RiscvInstruction::VectorMergeVxm { .. }
             | RiscvInstruction::VectorMergeVim { .. }

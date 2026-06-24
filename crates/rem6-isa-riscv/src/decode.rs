@@ -3,7 +3,7 @@ use crate::encoding::{b_imm, funct3, funct7, i_imm, rd, rs1, rs2, shamt32, shamt
 use crate::{
     FloatRegister, Immediate, RiscvError, RiscvFenceSet, RiscvInstruction,
     RiscvVectorExtensionFactor, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
-    RiscvVectorMaskMode, VectorRegister,
+    RiscvVectorMaskMode, RiscvVectorSlideInstruction, VectorRegister,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -627,6 +627,20 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             imm: vector_signed_imm5(raw),
         }),
+        (0x3, 0b001110, true) => Ok(RiscvInstruction::VectorSlide(
+            RiscvVectorSlideInstruction::UpVi {
+                vd: vector_register(raw, 7),
+                vs2: vector_register(raw, 20),
+                offset: vector_unsigned_imm5(raw),
+            },
+        )),
+        (0x3, 0b001111, true) => Ok(RiscvInstruction::VectorSlide(
+            RiscvVectorSlideInstruction::DownVi {
+                vd: vector_register(raw, 7),
+                vs2: vector_register(raw, 20),
+                offset: vector_unsigned_imm5(raw),
+            },
+        )),
         (0x3, 0b010111, false) => Ok(RiscvInstruction::VectorMergeVim {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
@@ -732,6 +746,20 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             rs1: rs1(raw),
         }),
+        (0x4, 0b001110, true) => Ok(RiscvInstruction::VectorSlide(
+            RiscvVectorSlideInstruction::UpVx {
+                vd: vector_register(raw, 7),
+                vs2: vector_register(raw, 20),
+                rs1: rs1(raw),
+            },
+        )),
+        (0x4, 0b001111, true) => Ok(RiscvInstruction::VectorSlide(
+            RiscvVectorSlideInstruction::DownVx {
+                vd: vector_register(raw, 7),
+                vs2: vector_register(raw, 20),
+                rs1: rs1(raw),
+            },
+        )),
         (0x4, 0b010111, false) => Ok(RiscvInstruction::VectorMergeVxm {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),

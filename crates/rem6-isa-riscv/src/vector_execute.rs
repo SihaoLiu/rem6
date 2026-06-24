@@ -131,6 +131,9 @@ pub(crate) fn execute_vector_integer_binary(
         RiscvInstruction::VectorRemainderSignedVx { vd, vs2, rs1 } => {
             execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::RemainderSigned)
         }
+        RiscvInstruction::VectorSlide(instruction) => {
+            crate::vector_slide_execute::execute(hart, instruction)
+        }
         RiscvInstruction::VectorMergeVvm { vd, vs2, vs1 } => {
             execute_vector_merge_vv(hart, vd, vs2, vs1)
         }

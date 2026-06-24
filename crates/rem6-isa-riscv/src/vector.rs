@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::{FloatRegister, MemoryWidth, VectorRegister};
+use crate::{FloatRegister, MemoryWidth, Register, VectorRegister};
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct RiscvInstructionFlags {
@@ -139,6 +139,30 @@ impl RiscvVectorExtensionFactor {
             Self::F8 => 8,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvVectorSlideInstruction {
+    UpVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    DownVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    UpVi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        offset: u8,
+    },
+    DownVi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        offset: u8,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
