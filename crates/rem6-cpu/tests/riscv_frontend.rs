@@ -11,9 +11,9 @@ use rem6_isa_riscv::{
     FloatRegister, MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction,
     RiscvMemoryOrdering, RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmpAccessKind,
     RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvStatusWord,
-    RiscvTrap, RiscvTrapKind, RiscvVectorConfig, RiscvVectorGatherInstruction, RiscvVectorMaskMode,
-    RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
-    RiscvVectorSlideInstruction, VectorRegister,
+    RiscvTrap, RiscvTrapKind, RiscvVectorConfig, RiscvVectorGatherInstruction,
+    RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction,
+    RiscvVectorMaskReductionInstruction, RiscvVectorSlideInstruction, VectorRegister,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -231,6 +231,14 @@ fn vmsof_m_type(vs2: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
 
 fn vmsif_m_type(vs2: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
     vector_mask_reduction_type(0x14, vs2, 0x03, vd, mask)
+}
+
+fn viota_m_type(vs2: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mask_reduction_type(0x14, vs2, 0x10, vd, mask)
+}
+
+fn vid_v_type(vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mask_reduction_type(0x14, 0, 0x11, vd, mask)
 }
 
 fn vector_mask_reduction_type(
@@ -1770,6 +1778,62 @@ fn riscv_core_driver_executes_vector_mask_prefixes_from_fetch_stream() {
         })
     );
     assert_eq!(core.read_vector_register(vreg(6)), mask_bytes(0b1010_1111));
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_mask_indexes_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 7);
+    core.write_vector_register(vreg(0), mask_bytes(0b0110_1010));
+    core.write_vector_register(vreg(7), mask_bytes(0b0011_0000));
+    core.write_vector_register(vreg(8), bytes_with_u16([10, 11, 12, 13, 14, 15, 16, 17]));
+    core.write_vector_register(vreg(9), bytes_with_u16([20, 21, 22, 23, 24, 25, 26, 27]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xc8, 10, 5),
+            viota_m_type(7, 8, RiscvVectorMaskMode::Masked),
+            vid_v_type(9, RiscvVectorMaskMode::Masked),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xc8,
+        }
+    );
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(7, 0xc8));
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorMaskIndex(RiscvVectorMaskIndexInstruction::Iota {
+            vd: vreg(8),
+            vs2: vreg(7),
+            mask: RiscvVectorMaskMode::Masked,
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(8)),
+        bytes_with_u16([10, 0, 12, 0, 14, 0, 1, 17])
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorMaskIndex(RiscvVectorMaskIndexInstruction::Id {
+            vd: vreg(9),
+            mask: RiscvVectorMaskMode::Masked,
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(9)),
+        bytes_with_u16([20, 1, 22, 3, 24, 5, 6, 27])
+    );
 }
 
 #[test]

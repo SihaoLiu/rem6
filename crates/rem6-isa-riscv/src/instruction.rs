@@ -517,6 +517,7 @@ pub enum RiscvInstruction {
     },
     VectorMaskReduction(crate::vector::RiscvVectorMaskReductionInstruction),
     VectorMaskPrefix(crate::vector::RiscvVectorMaskPrefixInstruction),
+    VectorMaskIndex(crate::vector::RiscvVectorMaskIndexInstruction),
     VectorMaskEqualVv {
         vd: VectorRegister,
         vs1: VectorRegister,

@@ -33,6 +33,7 @@ mod vector_float_execute;
 mod vector_gather_execute;
 mod vector_group;
 mod vector_lane_op;
+mod vector_mask_index_execute;
 mod vector_mask_mode;
 mod vector_mask_prefix_execute;
 mod vector_mask_reduction_execute;
@@ -92,10 +93,10 @@ pub use vector::{
     RiscvInstructionFlags, RiscvVectorCompressPlan, RiscvVectorCompressResult, RiscvVectorElements,
     RiscvVectorError, RiscvVectorExtensionFactor, RiscvVectorFixedPointState,
     RiscvVectorFixedRoundingMode, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
-    RiscvVectorGatherInstruction, RiscvVectorMaskPrefixInstruction,
-    RiscvVectorMaskReductionInstruction, RiscvVectorMicroOp, RiscvVectorMicroOpExpansion,
-    RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult, RiscvVectorSlideInstruction,
-    RiscvVectorTailPolicy,
+    RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction,
+    RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction, RiscvVectorMicroOp,
+    RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult,
+    RiscvVectorSlideInstruction, RiscvVectorTailPolicy,
 };
 pub use vector_mask_mode::RiscvVectorMaskMode;
 
@@ -511,6 +512,7 @@ impl RiscvHartState {
             | RiscvInstruction::VectorSlide(..)
             | RiscvInstruction::VectorGather(..)
             | RiscvInstruction::VectorMaskPrefix(..)
+            | RiscvInstruction::VectorMaskIndex(..)
             | RiscvInstruction::VectorMergeVvm { .. }
             | RiscvInstruction::VectorMergeVxm { .. }
             | RiscvInstruction::VectorMergeVim { .. }

@@ -1,8 +1,8 @@
 use rem6_isa_riscv::{
-    Register, RegisterWrite, RiscvHartState, RiscvInstruction, RiscvTrap, RiscvTrapKind,
-    RiscvVectorConfig, RiscvVectorGatherInstruction, RiscvVectorMaskMode,
-    RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
-    RiscvVectorSlideInstruction, VectorRegister,
+    Register, RegisterWrite, RiscvError, RiscvHartState, RiscvInstruction, RiscvTrap,
+    RiscvTrapKind, RiscvVectorConfig, RiscvVectorGatherInstruction,
+    RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction,
+    RiscvVectorMaskReductionInstruction, RiscvVectorSlideInstruction, VectorRegister,
 };
 
 fn reg(index: u8) -> Register {
@@ -136,6 +136,14 @@ fn vmsof_m_type(vs2: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
 
 fn vmsif_m_type(vs2: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
     vector_mask_reduction_type(0x14, vs2, 0x03, vd, mask)
+}
+
+fn viota_m_type(vs2: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mask_reduction_type(0x14, vs2, 0x10, vd, mask)
+}
+
+fn vid_v_type(vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mask_reduction_type(0x14, 0, 0x11, vd, mask)
 }
 
 fn vector_mask_reduction_type(
@@ -682,6 +690,48 @@ fn decoder_accepts_vector_mask_prefix_operations() {
             vd: vreg(9),
             vs2: vreg(7),
             mask: RiscvVectorMaskMode::Masked,
+        })
+    );
+}
+
+#[test]
+fn decoder_accepts_vector_mask_index_operations() {
+    assert_eq!(
+        viota_m_type(6, 5, RiscvVectorMaskMode::Unmasked),
+        0x5268_22d7
+    );
+    assert_eq!(viota_m_type(7, 8, RiscvVectorMaskMode::Masked), 0x5078_2457);
+    assert_eq!(vid_v_type(9, RiscvVectorMaskMode::Masked), 0x5008_a4d7);
+    assert_eq!(
+        RiscvInstruction::decode(viota_m_type(6, 5, RiscvVectorMaskMode::Unmasked)).unwrap(),
+        RiscvInstruction::VectorMaskIndex(RiscvVectorMaskIndexInstruction::Iota {
+            vd: vreg(5),
+            vs2: vreg(6),
+            mask: RiscvVectorMaskMode::Unmasked,
+        })
+    );
+    assert_eq!(
+        RiscvInstruction::decode(viota_m_type(7, 8, RiscvVectorMaskMode::Masked)).unwrap(),
+        RiscvInstruction::VectorMaskIndex(RiscvVectorMaskIndexInstruction::Iota {
+            vd: vreg(8),
+            vs2: vreg(7),
+            mask: RiscvVectorMaskMode::Masked,
+        })
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vid_v_type(9, RiscvVectorMaskMode::Masked)).unwrap(),
+        RiscvInstruction::VectorMaskIndex(RiscvVectorMaskIndexInstruction::Id {
+            vd: vreg(9),
+            mask: RiscvVectorMaskMode::Masked,
+        })
+    );
+
+    let reserved_vid_vs2 =
+        vector_mask_reduction_type(0x14, 3, 0x11, 9, RiscvVectorMaskMode::Masked);
+    assert_eq!(
+        RiscvInstruction::decode(reserved_vid_vs2),
+        Err(RiscvError::UnknownEncoding {
+            raw: reserved_vid_vs2,
         })
     );
 }
@@ -1658,6 +1708,86 @@ fn hart_executes_vector_mask_prefix_operations() {
     assert_eq!(masked.read_vector(vreg(4)), mask_bytes(0b1000_1111));
     assert_eq!(masked.read_vector(vreg(5)), mask_bytes(0b1010_0101));
     assert_eq!(masked.read_vector(vreg(6)), mask_bytes(0b1010_1111));
+}
+
+#[test]
+fn hart_executes_vector_mask_index_operations() {
+    let mut unmasked = RiscvHartState::new(0x80c4);
+    unmasked.set_vector_config(RiscvVectorConfig::new(7, 0xc8));
+    unmasked.write_vector(vreg(7), mask_bytes(0b0101_1010));
+    unmasked.write_vector(vreg(8), bytes_with_u16([0xaaaa; 8]));
+    unmasked.write_vector(vreg(9), bytes_with_u16([0xbbbb; 8]));
+
+    let iota_record = unmasked
+        .execute(
+            RiscvInstruction::decode(viota_m_type(7, 8, RiscvVectorMaskMode::Unmasked)).unwrap(),
+        )
+        .unwrap();
+    unmasked
+        .execute(RiscvInstruction::decode(vid_v_type(9, RiscvVectorMaskMode::Unmasked)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        unmasked.read_vector(vreg(8)),
+        bytes_with_u16([0, 0, 1, 1, 2, 3, 3, 0xaaaa])
+    );
+    assert_eq!(
+        unmasked.read_vector(vreg(9)),
+        bytes_with_u16([0, 1, 2, 3, 4, 5, 6, 0xbbbb])
+    );
+    assert_eq!(
+        iota_record.instruction(),
+        RiscvInstruction::VectorMaskIndex(RiscvVectorMaskIndexInstruction::Iota {
+            vd: vreg(8),
+            vs2: vreg(7),
+            mask: RiscvVectorMaskMode::Unmasked,
+        })
+    );
+
+    let mut masked = RiscvHartState::new(0x80c8);
+    masked.set_vector_config(RiscvVectorConfig::new(7, 0xc8));
+    masked.write_vector(vreg(0), mask_bytes(0b0110_1010));
+    masked.write_vector(vreg(7), mask_bytes(0b0011_0000));
+    masked.write_vector(vreg(8), bytes_with_u16([10, 11, 12, 13, 14, 15, 16, 17]));
+    masked.write_vector(vreg(9), bytes_with_u16([20, 21, 22, 23, 24, 25, 26, 27]));
+
+    masked
+        .execute(RiscvInstruction::decode(viota_m_type(7, 8, RiscvVectorMaskMode::Masked)).unwrap())
+        .unwrap();
+    masked
+        .execute(RiscvInstruction::decode(vid_v_type(9, RiscvVectorMaskMode::Masked)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        masked.read_vector(vreg(8)),
+        bytes_with_u16([10, 0, 12, 0, 14, 0, 1, 17])
+    );
+    assert_eq!(
+        masked.read_vector(vreg(9)),
+        bytes_with_u16([20, 1, 22, 3, 24, 5, 6, 27])
+    );
+}
+
+#[test]
+fn hart_traps_viota_when_destination_overlaps_source_mask() {
+    let mut hart = RiscvHartState::new(0x80cc);
+    hart.set_vector_config(RiscvVectorConfig::new(4, 0xc9));
+    hart.write_vector(vreg(7), mask_bytes(0b0000_1010));
+    hart.write_vector(vreg(6), bytes_with_u16([0xaaaa; 8]));
+    hart.write_vector(vreg(7), bytes_with_u16([0xbbbb; 8]));
+
+    let record = hart
+        .execute(
+            RiscvInstruction::decode(viota_m_type(7, 6, RiscvVectorMaskMode::Unmasked)).unwrap(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x80cc))
+    );
+    assert_eq!(hart.read_vector(vreg(6)), bytes_with_u16([0xaaaa; 8]));
+    assert_eq!(hart.read_vector(vreg(7)), bytes_with_u16([0xbbbb; 8]));
 }
 
 #[test]

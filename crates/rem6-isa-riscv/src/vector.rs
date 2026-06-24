@@ -228,6 +228,19 @@ pub enum RiscvVectorMaskPrefixInstruction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvVectorMaskIndexInstruction {
+    Iota {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    },
+    Id {
+        vd: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvVectorFloatInstruction {
     AddVv {
         vd: VectorRegister,

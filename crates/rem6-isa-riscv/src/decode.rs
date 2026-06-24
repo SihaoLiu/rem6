@@ -3,8 +3,9 @@ use crate::encoding::{b_imm, funct3, funct7, i_imm, rd, rs1, rs2, shamt32, shamt
 use crate::{
     FloatRegister, Immediate, RiscvError, RiscvFenceSet, RiscvInstruction,
     RiscvVectorExtensionFactor, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
-    RiscvVectorGatherInstruction, RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction,
-    RiscvVectorMaskReductionInstruction, RiscvVectorSlideInstruction, VectorRegister,
+    RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode,
+    RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
+    RiscvVectorSlideInstruction, VectorRegister,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -595,6 +596,19 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             RiscvInstruction::VectorMaskPrefix(RiscvVectorMaskPrefixInstruction::IncludingFirst {
                 vd: vector_register(raw, 7),
                 vs2: vector_register(raw, 20),
+                mask: vector_mask_mode(raw),
+            }),
+        ),
+        (0x2, 0b010100, _) if ((raw >> 15) & 0x1f) == 0x10 => Ok(
+            RiscvInstruction::VectorMaskIndex(RiscvVectorMaskIndexInstruction::Iota {
+                vd: vector_register(raw, 7),
+                vs2: vector_register(raw, 20),
+                mask: vector_mask_mode(raw),
+            }),
+        ),
+        (0x2, 0b010100, _) if ((raw >> 15) & 0x1f) == 0x11 && ((raw >> 20) & 0x1f) == 0 => Ok(
+            RiscvInstruction::VectorMaskIndex(RiscvVectorMaskIndexInstruction::Id {
+                vd: vector_register(raw, 7),
                 mask: vector_mask_mode(raw),
             }),
         ),
