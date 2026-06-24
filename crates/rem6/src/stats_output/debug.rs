@@ -85,6 +85,34 @@ pub(super) fn emit_debug_stats(
             debug.memory_data_trace_count(),
         ),
         (
+            "sim.debug.memory_trace.requests",
+            debug.memory_request_trace_count(),
+        ),
+        (
+            "sim.debug.memory_trace.fetch.requests",
+            debug.memory_fetch_request_trace_count(),
+        ),
+        (
+            "sim.debug.memory_trace.data.requests",
+            debug.memory_data_request_trace_count(),
+        ),
+        (
+            "sim.debug.memory_trace.routes",
+            debug.memory_route_trace_count(),
+        ),
+        (
+            "sim.debug.memory_trace.fetch.routes",
+            debug.memory_fetch_route_trace_count(),
+        ),
+        (
+            "sim.debug.memory_trace.data.routes",
+            debug.memory_data_route_trace_count(),
+        ),
+        (
+            "sim.debug.memory_trace.request_agents",
+            debug.memory_request_agent_trace_count(),
+        ),
+        (
             "sim.debug.memory_trace.events.request_sent",
             debug.memory_request_sent_trace_count(),
         ),

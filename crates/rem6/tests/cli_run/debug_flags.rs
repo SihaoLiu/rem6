@@ -1,4 +1,4 @@
-use std::{fs, process::Command};
+use std::{collections::BTreeSet, fs, process::Command};
 
 use serde_json::Value;
 
@@ -484,10 +484,24 @@ fn rem6_run_memory_debug_flag_emits_real_transport_trace() {
                 == Some("store_conditional_failed")
         })
         .count() as u64;
+    let requests = memory_trace_unique_requests(trace, None);
+    let fetch_requests = memory_trace_unique_requests(trace, Some("fetch"));
+    let data_requests = memory_trace_unique_requests(trace, Some("data"));
+    let routes = memory_trace_unique_routes(trace, None);
+    let fetch_routes = memory_trace_unique_routes(trace, Some("fetch"));
+    let data_routes = memory_trace_unique_routes(trace, Some("data"));
+    let request_agents = memory_trace_unique_request_agents(trace);
     assert!(request_sent_records > 0, "trace: {trace:?}");
     assert!(request_arrived_records > 0, "trace: {trace:?}");
     assert!(response_arrived_records > 0, "trace: {trace:?}");
     assert!(completed_responses > 0, "trace: {trace:?}");
+    assert!(requests > 0, "trace: {trace:?}");
+    assert!(fetch_requests > 0, "trace: {trace:?}");
+    assert!(data_requests > 0, "trace: {trace:?}");
+    assert!(routes > 0, "trace: {trace:?}");
+    assert!(fetch_routes > 0, "trace: {trace:?}");
+    assert!(data_routes > 0, "trace: {trace:?}");
+    assert!(request_agents > 0, "trace: {trace:?}");
     assert_stat(
         &stdout,
         "sim.debug.memory_trace.records",
@@ -549,6 +563,55 @@ fn rem6_run_memory_debug_flag_emits_real_transport_trace() {
         "sim.debug.memory_trace.response_status.store_conditional_failed",
         "Count",
         store_conditional_failed_responses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.requests",
+        "Count",
+        requests,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.fetch.requests",
+        "Count",
+        fetch_requests,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.data.requests",
+        "Count",
+        data_requests,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.routes",
+        "Count",
+        routes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.fetch.routes",
+        "Count",
+        fetch_routes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.data.routes",
+        "Count",
+        data_routes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.request_agents",
+        "Count",
+        request_agents,
         "monotonic",
     );
     for record in trace {
@@ -1473,4 +1536,65 @@ fn assert_fetch_pcs(json: &Value, expected: &[&str]) {
         .map(|record| record.get("pc").and_then(Value::as_str).unwrap_or(""))
         .collect::<Vec<_>>();
     assert_eq!(pcs, expected);
+}
+
+fn memory_trace_unique_requests(trace: &[Value], channel: Option<&str>) -> u64 {
+    let mut requests = BTreeSet::new();
+    for record in trace {
+        if !memory_trace_channel_matches(record, channel) {
+            continue;
+        }
+        let channel = record
+            .get("channel")
+            .and_then(Value::as_str)
+            .expect("memory trace channel");
+        let request_agent = record
+            .get("request_agent")
+            .and_then(Value::as_u64)
+            .expect("memory trace request agent");
+        let request = record
+            .get("request")
+            .and_then(Value::as_u64)
+            .expect("memory trace request");
+        requests.insert((channel, request_agent, request));
+    }
+    requests.len() as u64
+}
+
+fn memory_trace_unique_routes(trace: &[Value], channel: Option<&str>) -> u64 {
+    let mut routes = BTreeSet::new();
+    for record in trace {
+        if !memory_trace_channel_matches(record, channel) {
+            continue;
+        }
+        let channel = record
+            .get("channel")
+            .and_then(Value::as_str)
+            .expect("memory trace channel");
+        let route = record
+            .get("route")
+            .and_then(Value::as_u64)
+            .expect("memory trace route");
+        routes.insert((channel, route));
+    }
+    routes.len() as u64
+}
+
+fn memory_trace_unique_request_agents(trace: &[Value]) -> u64 {
+    trace
+        .iter()
+        .map(|record| {
+            record
+                .get("request_agent")
+                .and_then(Value::as_u64)
+                .expect("memory trace request agent")
+        })
+        .collect::<BTreeSet<_>>()
+        .len() as u64
+}
+
+fn memory_trace_channel_matches(record: &Value, channel: Option<&str>) -> bool {
+    channel.map_or(true, |expected| {
+        record.get("channel").and_then(Value::as_str) == Some(expected)
+    })
 }

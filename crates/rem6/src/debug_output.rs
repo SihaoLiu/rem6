@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use rem6_cpu::{CpuFetchEventKind, RiscvCluster, RiscvCoreDriveAction, RiscvDataAccessEventKind};
 use rem6_memory::{MemoryOperation, ResponseStatus};
 use rem6_power::{PowerAnalysisRecord, PowerStateKind};
@@ -424,6 +426,38 @@ impl Rem6DebugSummary {
         self.memory_channel_trace_count("data")
     }
 
+    pub(crate) fn memory_request_trace_count(&self) -> u64 {
+        self.memory_request_key_count(None)
+    }
+
+    pub(crate) fn memory_fetch_request_trace_count(&self) -> u64 {
+        self.memory_request_key_count(Some("fetch"))
+    }
+
+    pub(crate) fn memory_data_request_trace_count(&self) -> u64 {
+        self.memory_request_key_count(Some("data"))
+    }
+
+    pub(crate) fn memory_route_trace_count(&self) -> u64 {
+        self.memory_route_key_count(None)
+    }
+
+    pub(crate) fn memory_fetch_route_trace_count(&self) -> u64 {
+        self.memory_route_key_count(Some("fetch"))
+    }
+
+    pub(crate) fn memory_data_route_trace_count(&self) -> u64 {
+        self.memory_route_key_count(Some("data"))
+    }
+
+    pub(crate) fn memory_request_agent_trace_count(&self) -> u64 {
+        let mut request_agents = BTreeSet::new();
+        for record in &self.memory_trace {
+            request_agents.insert(record.request_agent);
+        }
+        request_agents.len() as u64
+    }
+
     pub(crate) fn memory_request_sent_trace_count(&self) -> u64 {
         self.memory_kind_trace_count("request_sent")
     }
@@ -554,6 +588,28 @@ impl Rem6DebugSummary {
             .iter()
             .filter(|record| record.response_status == Some(status))
             .count() as u64
+    }
+
+    fn memory_request_key_count(&self, channel: Option<&str>) -> u64 {
+        let mut requests = BTreeSet::new();
+        for record in &self.memory_trace {
+            if !memory_trace_channel_matches(record, channel) {
+                continue;
+            }
+            requests.insert((record.channel, record.request_agent, record.request));
+        }
+        requests.len() as u64
+    }
+
+    fn memory_route_key_count(&self, channel: Option<&str>) -> u64 {
+        let mut routes = BTreeSet::new();
+        for record in &self.memory_trace {
+            if !memory_trace_channel_matches(record, channel) {
+                continue;
+            }
+            routes.insert((record.channel, record.route));
+        }
+        routes.len() as u64
     }
 
     fn data_kind_trace_count(&self, kind: &str) -> u64 {
@@ -819,6 +875,10 @@ impl Rem6FabricTraceRecord {
             ),
         }
     }
+}
+
+fn memory_trace_channel_matches(record: &Rem6MemoryTraceRecord, channel: Option<&str>) -> bool {
+    channel.map_or(true, |expected| record.channel == expected)
 }
 
 impl Rem6MemoryTraceRecord {
