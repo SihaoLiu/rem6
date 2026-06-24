@@ -163,6 +163,16 @@ pub enum RiscvVectorSlideInstruction {
         vs2: VectorRegister,
         offset: u8,
     },
+    OneUpVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    OneDownVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

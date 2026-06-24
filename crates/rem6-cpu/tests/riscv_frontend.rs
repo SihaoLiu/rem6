@@ -192,6 +192,14 @@ fn vslidedown_vi_type(vs2: u8, offset: u8, vd: u8) -> u32 {
     vector_vi_type(0b001111, vs2, offset as i8, vd)
 }
 
+fn vslide1up_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b001110, vs2, rs1, vd)
+}
+
+fn vslide1down_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b001111, vs2, rs1, vd)
+}
+
 fn vector_mvv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
     (funct6 << 26)
         | (1 << 25)
@@ -1392,6 +1400,8 @@ fn riscv_core_driver_executes_vector_slide_operations_from_fetch_stream() {
     core.write_register(reg(10), 6);
     core.write_register(reg(8), 2);
     core.write_register(reg(9), 3);
+    core.write_register(reg(11), 0x9999);
+    core.write_register(reg(12), 0x8888);
     core.write_vector_register(vreg(2), bytes_with_u16([10, 11, 12, 13, 14, 15, 16, 17]));
     core.write_vector_register(vreg(4), bytes_with_u16([0xaaa0; 8]));
     core.write_vector_register(vreg(5), bytes_with_u16([20, 21, 22, 23, 24, 25, 26, 27]));
@@ -1400,6 +1410,10 @@ fn riscv_core_driver_executes_vector_slide_operations_from_fetch_stream() {
     core.write_vector_register(vreg(11), bytes_with_u16([0xcccc; 8]));
     core.write_vector_register(vreg(12), bytes_with_u16([40, 41, 42, 43, 44, 45, 46, 47]));
     core.write_vector_register(vreg(13), bytes_with_u16([0xdddd; 8]));
+    core.write_vector_register(vreg(14), bytes_with_u16([50, 51, 52, 53, 54, 55, 56, 57]));
+    core.write_vector_register(vreg(15), bytes_with_u16([0xeeee; 8]));
+    core.write_vector_register(vreg(16), bytes_with_u16([60, 61, 62, 63, 64, 65, 66, 67]));
+    core.write_vector_register(vreg(17), bytes_with_u16([0xffff; 8]));
     let store = loaded_program_store(
         0x8000,
         &[
@@ -1408,6 +1422,8 @@ fn riscv_core_driver_executes_vector_slide_operations_from_fetch_stream() {
             vslidedown_vx_type(5, 9, 6),
             vslideup_vi_type(7, 1, 11),
             vslidedown_vi_type(12, 6, 13),
+            vslide1up_vx_type(14, 11, 15),
+            vslide1down_vx_type(16, 12, 17),
             0x0010_0073,
         ],
         &[],
@@ -1463,7 +1479,7 @@ fn riscv_core_driver_executes_vector_slide_operations_from_fetch_stream() {
     );
 
     assert_eq!(
-        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
         RiscvInstruction::VectorSlide(RiscvVectorSlideInstruction::DownVi {
             vd: vreg(13),
             vs2: vreg(12),
@@ -1473,6 +1489,32 @@ fn riscv_core_driver_executes_vector_slide_operations_from_fetch_stream() {
     assert_eq!(
         core.read_vector_register(vreg(13)),
         bytes_with_u16([46, 47, 0, 0, 0, 0, 0xdddd, 0xdddd])
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSlide(RiscvVectorSlideInstruction::OneUpVx {
+            vd: vreg(15),
+            vs2: vreg(14),
+            rs1: reg(11),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(15)),
+        bytes_with_u16([0x9999, 50, 51, 52, 53, 54, 0xeeee, 0xeeee])
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorSlide(RiscvVectorSlideInstruction::OneDownVx {
+            vd: vreg(17),
+            vs2: vreg(16),
+            rs1: reg(12),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(17)),
+        bytes_with_u16([61, 62, 63, 64, 65, 0x8888, 0xffff, 0xffff])
     );
 }
 

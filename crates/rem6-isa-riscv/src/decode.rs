@@ -824,6 +824,20 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             rs1: rs1(raw),
         }),
+        (0x6, 0b001110, true) => Ok(RiscvInstruction::VectorSlide(
+            RiscvVectorSlideInstruction::OneUpVx {
+                vd: vector_register(raw, 7),
+                vs2: vector_register(raw, 20),
+                rs1: rs1(raw),
+            },
+        )),
+        (0x6, 0b001111, true) => Ok(RiscvInstruction::VectorSlide(
+            RiscvVectorSlideInstruction::OneDownVx {
+                vd: vector_register(raw, 7),
+                vs2: vector_register(raw, 20),
+                rs1: rs1(raw),
+            },
+        )),
         (0x6, 0b100100, true) => Ok(RiscvInstruction::VectorMultiplyHighUnsignedVx {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),

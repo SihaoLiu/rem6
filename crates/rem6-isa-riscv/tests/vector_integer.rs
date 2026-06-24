@@ -96,6 +96,14 @@ fn vslidedown_vi_type(vs2: u8, offset: u8, vd: u8) -> u32 {
     vector_vi_type(0b001111, vs2, offset as i8, vd)
 }
 
+fn vslide1up_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b001110, vs2, rs1, vd)
+}
+
+fn vslide1down_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b001111, vs2, rs1, vd)
+}
+
 fn vector_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
     (funct6 << 26)
         | (1 << 25)
@@ -490,6 +498,28 @@ fn decoder_accepts_unmasked_vector_slide_vx_and_vi() {
             vd: vreg(4),
             vs2: vreg(5),
             offset: 6,
+        })
+    );
+}
+
+#[test]
+fn decoder_accepts_unmasked_vector_slide1_vx() {
+    assert_eq!(vslide1up_vx_type(5, 6, 4), 0x3a53_6257);
+    assert_eq!(vslide1down_vx_type(5, 6, 4), 0x3e53_6257);
+    assert_eq!(
+        RiscvInstruction::decode(vslide1up_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorSlide(RiscvVectorSlideInstruction::OneUpVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        })
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vslide1down_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorSlide(RiscvVectorSlideInstruction::OneDownVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
         })
     );
 }
@@ -1239,6 +1269,46 @@ fn hart_executes_vector_slide_vx_and_vi_for_active_lanes() {
     assert_eq!(
         down_vi.read_vector(vreg(4)),
         bytes_with_u16([46, 47, 0, 0, 0xdddd, 0xdddd, 0xdddd, 0xdddd])
+    );
+}
+
+#[test]
+fn hart_executes_vector_slide1_vx_for_active_lanes() {
+    let mut up = RiscvHartState::new(0x809c);
+    up.set_vector_config(RiscvVectorConfig::new(5, 0xc8));
+    up.write(reg(6), 0x1234);
+    up.write_vector(vreg(5), bytes_with_u16([10, 11, 12, 13, 14, 15, 16, 17]));
+    up.write_vector(vreg(4), bytes_with_u16([0xaaaa; 8]));
+
+    let up_record = up
+        .execute(RiscvInstruction::decode(vslide1up_vx_type(5, 6, 4)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        up.read_vector(vreg(4)),
+        bytes_with_u16([0x1234, 10, 11, 12, 13, 0xaaaa, 0xaaaa, 0xaaaa])
+    );
+    assert_eq!(
+        up_record.instruction(),
+        RiscvInstruction::VectorSlide(RiscvVectorSlideInstruction::OneUpVx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        })
+    );
+
+    let mut down = RiscvHartState::new(0x80a0);
+    down.set_vector_config(RiscvVectorConfig::new(5, 0xc8));
+    down.write(reg(6), 0x5678);
+    down.write_vector(vreg(5), bytes_with_u16([20, 21, 22, 23, 24, 25, 26, 27]));
+    down.write_vector(vreg(4), bytes_with_u16([0xbbbb; 8]));
+
+    down.execute(RiscvInstruction::decode(vslide1down_vx_type(5, 6, 4)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        down.read_vector(vreg(4)),
+        bytes_with_u16([21, 22, 23, 24, 0x5678, 0xbbbb, 0xbbbb, 0xbbbb])
     );
 }
 

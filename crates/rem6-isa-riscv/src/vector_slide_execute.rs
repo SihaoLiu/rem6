@@ -20,6 +20,12 @@ pub(crate) fn execute(hart: &mut RiscvHartState, instruction: RiscvVectorSlideIn
         RiscvVectorSlideInstruction::DownVi { vd, vs2, offset } => {
             execute_slide_down(hart, vd, vs2, usize::from(offset))
         }
+        RiscvVectorSlideInstruction::OneUpVx { vd, vs2, rs1 } => {
+            execute_slide_one_up(hart, vd, vs2, hart.read(rs1))
+        }
+        RiscvVectorSlideInstruction::OneDownVx { vd, vs2, rs1 } => {
+            execute_slide_one_down(hart, vd, vs2, hart.read(rs1))
+        }
     }
 }
 
@@ -63,6 +69,49 @@ fn execute_slide_down(
     true
 }
 
+fn execute_slide_one_up(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    scalar: u64,
+) -> bool {
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2]) else {
+        return false;
+    };
+    if register_groups_overlap(vd, plan.group_registers, vs2, plan.group_registers) {
+        return false;
+    }
+
+    let source = read_register_group(hart, vs2, plan.group_registers);
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    apply_slide_up(&plan, &mut result, &source, 1);
+    if plan.active_element_count() > 0 {
+        write_scalar_lane(&plan, &mut result, 0, scalar);
+    }
+    write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
+
+fn execute_slide_one_down(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    scalar: u64,
+) -> bool {
+    let Some(plan) = VectorBinaryPlan::new(hart, vd, &[vs2]) else {
+        return false;
+    };
+    let Some(vlmax) = RiscvVectorConfig::vlmax(hart.vector_config().vtype()) else {
+        return false;
+    };
+
+    let source = read_register_group(hart, vs2, plan.group_registers);
+    let mut result = read_register_group(hart, vd, plan.group_registers);
+    apply_slide_one_down(&plan, &mut result, &source, scalar, vlmax as usize);
+    write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
+
 fn apply_slide_up(
     plan: &VectorBinaryPlan,
     result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
@@ -94,6 +143,28 @@ fn apply_slide_down(
     }
 }
 
+fn apply_slide_one_down(
+    plan: &VectorBinaryPlan,
+    result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
+    source: &[u8; MAX_VECTOR_GROUP_BYTES],
+    scalar: u64,
+    vlmax: usize,
+) {
+    let active_elements = plan.active_element_count();
+    if active_elements == 0 {
+        return;
+    }
+    for element_index in 0..active_elements - 1 {
+        let source_index = element_index + 1;
+        if source_index < vlmax {
+            copy_lane(plan, result, element_index, source, source_index);
+        } else {
+            zero_lane(plan, result, element_index);
+        }
+    }
+    write_scalar_lane(plan, result, active_elements - 1, scalar);
+}
+
 fn copy_lane(
     plan: &VectorBinaryPlan,
     result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
@@ -114,6 +185,17 @@ fn zero_lane(
 ) {
     let offset = element_index * plan.element_bytes;
     result[offset..offset + plan.element_bytes].fill(0);
+}
+
+fn write_scalar_lane(
+    plan: &VectorBinaryPlan,
+    result: &mut [u8; MAX_VECTOR_GROUP_BYTES],
+    element_index: usize,
+    scalar: u64,
+) {
+    let offset = element_index * plan.element_bytes;
+    result[offset..offset + plan.element_bytes]
+        .copy_from_slice(&scalar.to_le_bytes()[..plan.element_bytes]);
 }
 
 fn scalar_offset(offset: u64) -> usize {
