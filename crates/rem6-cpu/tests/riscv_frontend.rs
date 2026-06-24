@@ -11,8 +11,8 @@ use rem6_isa_riscv::{
     FloatRegister, MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction,
     RiscvMemoryOrdering, RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmpAccessKind,
     RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvStatusWord,
-    RiscvTrap, RiscvTrapKind, RiscvVectorConfig, RiscvVectorMaskMode, RiscvVectorSlideInstruction,
-    VectorRegister,
+    RiscvTrap, RiscvTrapKind, RiscvVectorConfig, RiscvVectorGatherInstruction, RiscvVectorMaskMode,
+    RiscvVectorSlideInstruction, VectorRegister,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -198,6 +198,18 @@ fn vslide1up_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
 
 fn vslide1down_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
     vector_mvx_type(0b001111, vs2, rs1, vd)
+}
+
+fn vrgather_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b001100, vs2, vs1, vd)
+}
+
+fn vrgather_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b001100, vs2, rs1, vd)
+}
+
+fn vrgather_vi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
+    vector_vi_type(0b001100, vs2, imm as i8, vd)
 }
 
 fn vector_mvv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -1515,6 +1527,81 @@ fn riscv_core_driver_executes_vector_slide_operations_from_fetch_stream() {
     assert_eq!(
         core.read_vector_register(vreg(17)),
         bytes_with_u16([61, 62, 63, 64, 65, 0x8888, 0xffff, 0xffff])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_gather_operations_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 6);
+    core.write_register(reg(8), 4);
+    core.write_vector_register(vreg(2), bytes_with_u16([10, 11, 12, 13, 14, 15, 16, 17]));
+    core.write_vector_register(vreg(3), bytes_with_u16([2, 5, 9, 0, 7, 1, 4, 6]));
+    core.write_vector_register(vreg(4), bytes_with_u16([0xaaaa; 8]));
+    core.write_vector_register(vreg(5), bytes_with_u16([20, 21, 22, 23, 24, 25, 26, 27]));
+    core.write_vector_register(vreg(6), bytes_with_u16([0xbbbb; 8]));
+    core.write_vector_register(vreg(7), bytes_with_u16([30, 31, 32, 33, 34, 35, 36, 37]));
+    core.write_vector_register(vreg(9), bytes_with_u16([0xcccc; 8]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xc8, 10, 5),
+            vrgather_vv_type(2, 3, 4),
+            vrgather_vx_type(5, 8, 6),
+            vrgather_vi_type(7, 9, 9),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xc8,
+        }
+    );
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(6, 0xc8));
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorGather(RiscvVectorGatherInstruction::Vv {
+            vd: vreg(4),
+            vs2: vreg(2),
+            vs1: vreg(3),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(4)),
+        bytes_with_u16([12, 15, 0, 10, 17, 11, 0xaaaa, 0xaaaa])
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorGather(RiscvVectorGatherInstruction::Vx {
+            vd: vreg(6),
+            vs2: vreg(5),
+            rs1: reg(8),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(6)),
+        bytes_with_u16([24, 24, 24, 24, 24, 24, 0xbbbb, 0xbbbb])
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorGather(RiscvVectorGatherInstruction::Vi {
+            vd: vreg(9),
+            vs2: vreg(7),
+            index: 9,
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(9)),
+        bytes_with_u16([0, 0, 0, 0, 0, 0, 0xcccc, 0xcccc])
     );
 }
 

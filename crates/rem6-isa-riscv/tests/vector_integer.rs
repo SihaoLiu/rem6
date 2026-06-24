@@ -1,6 +1,6 @@
 use rem6_isa_riscv::{
     Register, RiscvHartState, RiscvInstruction, RiscvTrap, RiscvTrapKind, RiscvVectorConfig,
-    RiscvVectorMaskMode, RiscvVectorSlideInstruction, VectorRegister,
+    RiscvVectorGatherInstruction, RiscvVectorMaskMode, RiscvVectorSlideInstruction, VectorRegister,
 };
 
 fn reg(index: u8) -> Register {
@@ -102,6 +102,18 @@ fn vslide1up_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
 
 fn vslide1down_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
     vector_mvx_type(0b001111, vs2, rs1, vd)
+}
+
+fn vrgather_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b001100, vs2, vs1, vd)
+}
+
+fn vrgather_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b001100, vs2, rs1, vd)
+}
+
+fn vrgather_vi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
+    vector_vi_type(0b001100, vs2, imm as i8, vd)
 }
 
 fn vector_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -520,6 +532,37 @@ fn decoder_accepts_unmasked_vector_slide1_vx() {
             vd: vreg(4),
             vs2: vreg(5),
             rs1: reg(6),
+        })
+    );
+}
+
+#[test]
+fn decoder_accepts_unmasked_vector_gather_vv_vx_and_vi() {
+    assert_eq!(vrgather_vv_type(5, 6, 4), 0x3253_0257);
+    assert_eq!(vrgather_vx_type(5, 6, 4), 0x3253_4257);
+    assert_eq!(vrgather_vi_type(5, 2, 4), 0x3251_3257);
+    assert_eq!(
+        RiscvInstruction::decode(vrgather_vv_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorGather(RiscvVectorGatherInstruction::Vv {
+            vd: vreg(4),
+            vs2: vreg(5),
+            vs1: vreg(6),
+        })
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vrgather_vx_type(5, 6, 4)).unwrap(),
+        RiscvInstruction::VectorGather(RiscvVectorGatherInstruction::Vx {
+            vd: vreg(4),
+            vs2: vreg(5),
+            rs1: reg(6),
+        })
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vrgather_vi_type(5, 2, 4)).unwrap(),
+        RiscvInstruction::VectorGather(RiscvVectorGatherInstruction::Vi {
+            vd: vreg(4),
+            vs2: vreg(5),
+            index: 2,
         })
     );
 }
@@ -1309,6 +1352,68 @@ fn hart_executes_vector_slide1_vx_for_active_lanes() {
     assert_eq!(
         down.read_vector(vreg(4)),
         bytes_with_u16([21, 22, 23, 24, 0x5678, 0xbbbb, 0xbbbb, 0xbbbb])
+    );
+}
+
+#[test]
+fn hart_executes_vector_gather_vv_vx_and_vi_for_active_lanes() {
+    let mut vv = RiscvHartState::new(0x80a4);
+    vv.set_vector_config(RiscvVectorConfig::new(6, 0xc8));
+    vv.write_vector(
+        vreg(5),
+        bytes_with_u16([100, 101, 102, 103, 104, 105, 106, 107]),
+    );
+    vv.write_vector(vreg(6), bytes_with_u16([4, 0, 7, 8, 2, 1, 3, 3]));
+    vv.write_vector(vreg(4), bytes_with_u16([0xaaaa; 8]));
+
+    let vv_record = vv
+        .execute(RiscvInstruction::decode(vrgather_vv_type(5, 6, 4)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        vv.read_vector(vreg(4)),
+        bytes_with_u16([104, 100, 107, 0, 102, 101, 0xaaaa, 0xaaaa])
+    );
+    assert_eq!(
+        vv_record.instruction(),
+        RiscvInstruction::VectorGather(RiscvVectorGatherInstruction::Vv {
+            vd: vreg(4),
+            vs2: vreg(5),
+            vs1: vreg(6),
+        })
+    );
+
+    let mut vx = RiscvHartState::new(0x80a8);
+    vx.set_vector_config(RiscvVectorConfig::new(5, 0xc8));
+    vx.write(reg(6), 3);
+    vx.write_vector(
+        vreg(5),
+        bytes_with_u16([200, 201, 202, 203, 204, 205, 206, 207]),
+    );
+    vx.write_vector(vreg(4), bytes_with_u16([0xbbbb; 8]));
+
+    vx.execute(RiscvInstruction::decode(vrgather_vx_type(5, 6, 4)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        vx.read_vector(vreg(4)),
+        bytes_with_u16([203, 203, 203, 203, 203, 0xbbbb, 0xbbbb, 0xbbbb])
+    );
+
+    let mut vi = RiscvHartState::new(0x80ac);
+    vi.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    vi.write_vector(
+        vreg(5),
+        bytes_with_u16([300, 301, 302, 303, 304, 305, 306, 307]),
+    );
+    vi.write_vector(vreg(4), bytes_with_u16([0xcccc; 8]));
+
+    vi.execute(RiscvInstruction::decode(vrgather_vi_type(5, 9, 4)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        vi.read_vector(vreg(4)),
+        bytes_with_u16([0, 0, 0, 0, 0xcccc, 0xcccc, 0xcccc, 0xcccc])
     );
 }
 

@@ -3,7 +3,7 @@ use crate::encoding::{b_imm, funct3, funct7, i_imm, rd, rs1, rs2, shamt32, shamt
 use crate::{
     FloatRegister, Immediate, RiscvError, RiscvFenceSet, RiscvInstruction,
     RiscvVectorExtensionFactor, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
-    RiscvVectorMaskMode, RiscvVectorSlideInstruction, VectorRegister,
+    RiscvVectorGatherInstruction, RiscvVectorMaskMode, RiscvVectorSlideInstruction, VectorRegister,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -456,6 +456,13 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs1: vector_register(raw, 15),
             vs2: vector_register(raw, 20),
         }),
+        (0x0, 0b001100, true) => Ok(RiscvInstruction::VectorGather(
+            RiscvVectorGatherInstruction::Vv {
+                vd: vector_register(raw, 7),
+                vs2: vector_register(raw, 20),
+                vs1: vector_register(raw, 15),
+            },
+        )),
         (0x0, 0b010111, false) => Ok(RiscvInstruction::VectorMergeVvm {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
@@ -627,6 +634,13 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             imm: vector_signed_imm5(raw),
         }),
+        (0x3, 0b001100, true) => Ok(RiscvInstruction::VectorGather(
+            RiscvVectorGatherInstruction::Vi {
+                vd: vector_register(raw, 7),
+                vs2: vector_register(raw, 20),
+                index: vector_unsigned_imm5(raw),
+            },
+        )),
         (0x3, 0b001110, true) => Ok(RiscvInstruction::VectorSlide(
             RiscvVectorSlideInstruction::UpVi {
                 vd: vector_register(raw, 7),
@@ -746,6 +760,13 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             rs1: rs1(raw),
         }),
+        (0x4, 0b001100, true) => Ok(RiscvInstruction::VectorGather(
+            RiscvVectorGatherInstruction::Vx {
+                vd: vector_register(raw, 7),
+                vs2: vector_register(raw, 20),
+                rs1: rs1(raw),
+            },
+        )),
         (0x4, 0b001110, true) => Ok(RiscvInstruction::VectorSlide(
             RiscvVectorSlideInstruction::UpVx {
                 vd: vector_register(raw, 7),

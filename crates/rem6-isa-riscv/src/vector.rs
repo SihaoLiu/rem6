@@ -176,6 +176,25 @@ pub enum RiscvVectorSlideInstruction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvVectorGatherInstruction {
+    Vv {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+    },
+    Vx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
+    Vi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        index: u8,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvVectorFloatInstruction {
     AddVv {
         vd: VectorRegister,
