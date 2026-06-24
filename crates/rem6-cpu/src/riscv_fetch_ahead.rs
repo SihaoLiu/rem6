@@ -609,6 +609,7 @@ fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -
             | RiscvInstruction::VectorMoveVx { .. }
             | RiscvInstruction::VectorMoveVi { .. }
             | RiscvInstruction::VectorScalarMove(_)
+            | RiscvInstruction::VectorWholeMove(_)
             | RiscvInstruction::VectorMaskAndMm { .. }
             | RiscvInstruction::VectorMaskNandMm { .. }
             | RiscvInstruction::VectorMaskAndNotMm { .. }

@@ -14,7 +14,7 @@ use rem6_isa_riscv::{
     RiscvTrap, RiscvTrapKind, RiscvVectorConfig, RiscvVectorGatherInstruction,
     RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction,
     RiscvVectorMaskReductionInstruction, RiscvVectorScalarMoveInstruction,
-    RiscvVectorSlideInstruction, VectorRegister,
+    RiscvVectorSlideInstruction, RiscvVectorWholeMoveInstruction, VectorRegister,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -524,6 +524,10 @@ fn vmv_x_s_type(vs2: u8, rd: u8) -> u32 {
 
 fn vmv_s_x_type(rs1: u8, vd: u8) -> u32 {
     vector_mvx_type(0b010000, 0, rs1, vd)
+}
+
+fn vmv_whole_type(register_count: u8, vs2: u8, vd: u8) -> u32 {
+    vector_vi_type(0b100111, vs2, (register_count - 1) as i8, vd)
 }
 
 fn vreg(index: u8) -> VectorRegister {
@@ -2802,6 +2806,34 @@ fn riscv_core_driver_executes_vector_merge_and_move_operations_from_fetch_stream
             0xee, 0xee,
         ]
     );
+}
+
+#[test]
+fn riscv_core_driver_executes_whole_register_move_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_vector_register(vreg(8), [0x10; 16]);
+    core.write_vector_register(vreg(9), [0x11; 16]);
+    core.write_vector_register(vreg(10), [0x12; 16]);
+    core.write_vector_register(vreg(11), [0x13; 16]);
+    for index in [16, 17, 18, 19, 20] {
+        core.write_vector_register(vreg(index), [0xee; 16]);
+    }
+    let store = loaded_program_store(0x8000, &[vmv_whole_type(4, 8, 16), 0x0010_0073], &[]);
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorWholeMove(RiscvVectorWholeMoveInstruction::new(
+            vreg(16),
+            vreg(8),
+            4,
+        ))
+    );
+    assert_eq!(core.read_vector_register(vreg(16)), [0x10; 16]);
+    assert_eq!(core.read_vector_register(vreg(17)), [0x11; 16]);
+    assert_eq!(core.read_vector_register(vreg(18)), [0x12; 16]);
+    assert_eq!(core.read_vector_register(vreg(19)), [0x13; 16]);
+    assert_eq!(core.read_vector_register(vreg(20)), [0xee; 16]);
 }
 
 #[test]

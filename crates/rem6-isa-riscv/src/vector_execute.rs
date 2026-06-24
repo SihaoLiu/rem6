@@ -5,7 +5,8 @@ use crate::{
     },
     vector_lane_op::LaneBinaryOp,
     RiscvHartState, RiscvInstruction, RiscvVectorConfig, RiscvVectorExtensionFactor,
-    RiscvVectorMaskMode, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
+    RiscvVectorMaskMode, RiscvVectorWholeMoveInstruction, VectorRegister,
+    RISCV_VECTOR_REGISTER_BYTES,
 };
 
 pub(crate) fn execute_vector_integer_binary(
@@ -177,6 +178,9 @@ pub(crate) fn execute_vector_integer_binary(
             execute_vector_move_vx(hart, vd, hart.read(rs1))
         }
         RiscvInstruction::VectorMoveVi { vd, imm } => execute_vector_move_vi(hart, vd, imm),
+        RiscvInstruction::VectorWholeMove(instruction) => {
+            execute_vector_whole_move(hart, instruction)
+        }
         RiscvInstruction::VectorMaskAndMm { vd, vs2, vs1 } => {
             execute_vector_mask_logical_mm(hart, vd, vs2, vs1, MaskLogicalOp::And)
         }
@@ -690,6 +694,23 @@ fn execute_vector_move_vx(hart: &mut RiscvHartState, vd: VectorRegister, scalar:
     let mut result = read_register_group(hart, vd, plan.group_registers);
     apply_scalar_move_lanes(&plan, &mut result, scalar);
     write_register_group(hart, vd, plan.group_registers, &result);
+    true
+}
+
+fn execute_vector_whole_move(
+    hart: &mut RiscvHartState,
+    instruction: RiscvVectorWholeMoveInstruction,
+) -> bool {
+    let register_count = usize::from(instruction.register_count());
+    if !matches!(register_count, 1 | 2 | 4 | 8)
+        || !valid_register_group(instruction.vd(), register_count)
+        || !valid_register_group(instruction.vs2(), register_count)
+    {
+        return false;
+    }
+
+    let source = read_register_group(hart, instruction.vs2(), register_count);
+    write_register_group(hart, instruction.vd(), register_count, &source);
     true
 }
 

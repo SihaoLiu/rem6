@@ -247,6 +247,35 @@ pub enum RiscvVectorScalarMoveInstruction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RiscvVectorWholeMoveInstruction {
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    register_count: u8,
+}
+
+impl RiscvVectorWholeMoveInstruction {
+    pub const fn new(vd: VectorRegister, vs2: VectorRegister, register_count: u8) -> Self {
+        Self {
+            vd,
+            vs2,
+            register_count,
+        }
+    }
+
+    pub const fn vd(self) -> VectorRegister {
+        self.vd
+    }
+
+    pub const fn vs2(self) -> VectorRegister {
+        self.vs2
+    }
+
+    pub const fn register_count(self) -> u8 {
+        self.register_count
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvVectorFloatInstruction {
     AddVv {
         vd: VectorRegister,

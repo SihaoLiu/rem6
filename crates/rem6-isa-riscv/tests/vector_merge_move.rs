@@ -1,6 +1,7 @@
 use rem6_isa_riscv::{
     Register, RegisterWrite, RiscvHartState, RiscvInstruction, RiscvTrap, RiscvTrapKind,
-    RiscvVectorConfig, RiscvVectorScalarMoveInstruction, VectorRegister,
+    RiscvVectorConfig, RiscvVectorScalarMoveInstruction, RiscvVectorWholeMoveInstruction,
+    VectorRegister,
 };
 
 fn reg(index: u8) -> Register {
@@ -40,6 +41,15 @@ fn vector_vi_type(funct6: u32, vs2: u8, imm: i8, vd: u8) -> u32 {
         | 0x57
 }
 
+fn vector_masked_vi_type(funct6: u32, vs2: u8, imm: i8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (u32::from(vs2) << 20)
+        | (u32::from(imm as u8 & 0x1f) << 15)
+        | (0b011 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
 fn vector_masked_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
     (funct6 << 26) | (u32::from(vs2) << 20) | (u32::from(vs1) << 15) | (u32::from(vd) << 7) | 0x57
 }
@@ -49,15 +59,6 @@ fn vector_masked_vx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
         | (u32::from(vs2) << 20)
         | (u32::from(rs1) << 15)
         | (0b100 << 12)
-        | (u32::from(vd) << 7)
-        | 0x57
-}
-
-fn vector_masked_vi_type(funct6: u32, vs2: u8, imm: i8, vd: u8) -> u32 {
-    (funct6 << 26)
-        | (u32::from(vs2) << 20)
-        | (u32::from(imm as u8 & 0x1f) << 15)
-        | (0b011 << 12)
         | (u32::from(vd) << 7)
         | 0x57
 }
@@ -140,6 +141,18 @@ fn vmv_s_x_masked_type(rs1: u8, vd: u8) -> u32 {
     vector_masked_mvx_type(0b010000, 0, rs1, vd)
 }
 
+fn vmv_whole_type(register_count: u8, vs2: u8, vd: u8) -> u32 {
+    vector_vi_type(0b100111, vs2, (register_count - 1) as i8, vd)
+}
+
+fn vmv_whole_masked_type(register_count: u8, vs2: u8, vd: u8) -> u32 {
+    vector_masked_vi_type(0b100111, vs2, (register_count - 1) as i8, vd)
+}
+
+fn vmv_whole_reserved_imm_type(imm: i8, vs2: u8, vd: u8) -> u32 {
+    vector_vi_type(0b100111, vs2, imm, vd)
+}
+
 #[test]
 fn decoder_accepts_vector_merge_and_move_operations() {
     assert_eq!(vmerge_vvm_type(5, 6, 4), 0x5c53_0257);
@@ -150,6 +163,10 @@ fn decoder_accepts_vector_merge_and_move_operations() {
     assert_eq!(vmv_v_i_type(-4, 7), 0x5e0e_33d7);
     assert_eq!(vmv_x_s_type(8, 6), 0x4280_2357);
     assert_eq!(vmv_s_x_type(7, 6), 0x4203_e357);
+    assert_eq!(vmv_whole_type(1, 8, 4), 0x9e80_3257);
+    assert_eq!(vmv_whole_type(2, 8, 4), 0x9e80_b257);
+    assert_eq!(vmv_whole_type(4, 8, 4), 0x9e81_b257);
+    assert_eq!(vmv_whole_type(8, 8, 8), 0x9e83_b457);
 
     assert_eq!(
         RiscvInstruction::decode(vmerge_vvm_type(5, 6, 4)).unwrap(),
@@ -210,6 +227,38 @@ fn decoder_accepts_vector_merge_and_move_operations() {
             rs1: reg(7),
         })
     );
+    assert_eq!(
+        RiscvInstruction::decode(vmv_whole_type(1, 8, 4)).unwrap(),
+        RiscvInstruction::VectorWholeMove(RiscvVectorWholeMoveInstruction::new(
+            vreg(4),
+            vreg(8),
+            1,
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmv_whole_type(2, 8, 4)).unwrap(),
+        RiscvInstruction::VectorWholeMove(RiscvVectorWholeMoveInstruction::new(
+            vreg(4),
+            vreg(8),
+            2,
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmv_whole_type(4, 8, 4)).unwrap(),
+        RiscvInstruction::VectorWholeMove(RiscvVectorWholeMoveInstruction::new(
+            vreg(4),
+            vreg(8),
+            4,
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vmv_whole_type(8, 8, 8)).unwrap(),
+        RiscvInstruction::VectorWholeMove(RiscvVectorWholeMoveInstruction::new(
+            vreg(8),
+            vreg(8),
+            8,
+        ))
+    );
 }
 
 #[test]
@@ -219,6 +268,20 @@ fn decoder_rejects_reserved_scalar_vector_move_forms() {
         vmv_s_x_masked_type(7, 6),
         vector_mvv_type(0b010000, 8, 1, 6),
         vector_mvx_type(0b010000, 2, 7, 6),
+    ] {
+        assert_eq!(
+            RiscvInstruction::decode(raw),
+            Err(rem6_isa_riscv::RiscvError::UnknownEncoding { raw })
+        );
+    }
+}
+
+#[test]
+fn decoder_rejects_reserved_whole_register_move_forms() {
+    for raw in [
+        vmv_whole_masked_type(2, 8, 4),
+        vmv_whole_reserved_imm_type(2, 8, 4),
+        vmv_whole_reserved_imm_type(8, 8, 4),
     ] {
         assert_eq!(
             RiscvInstruction::decode(raw),
@@ -404,6 +467,60 @@ fn hart_executes_vector_merge_and_move_operations() {
         .execute(RiscvInstruction::decode(vmv_s_x_type(7, 6)).unwrap())
         .unwrap();
     assert_eq!(move_from_scalar_vl_zero.read_vector(vreg(6)), [0xee; 16]);
+
+    let mut whole_move = RiscvHartState::new(0x82e0);
+    whole_move.set_vector_config(RiscvVectorConfig::invalid());
+    whole_move.write_vector(vreg(8), [0x10; 16]);
+    whole_move.write_vector(vreg(9), [0x11; 16]);
+    whole_move.write_vector(vreg(4), [0xee; 16]);
+    whole_move.write_vector(vreg(5), [0xdd; 16]);
+    whole_move.write_vector(vreg(6), [0xcc; 16]);
+    let whole_move_record = whole_move
+        .execute(RiscvInstruction::decode(vmv_whole_type(2, 8, 4)).unwrap())
+        .unwrap();
+    assert_eq!(
+        whole_move_record.instruction(),
+        RiscvInstruction::VectorWholeMove(RiscvVectorWholeMoveInstruction::new(
+            vreg(4),
+            vreg(8),
+            2,
+        ))
+    );
+    assert_eq!(whole_move.read_vector(vreg(4)), [0x10; 16]);
+    assert_eq!(whole_move.read_vector(vreg(5)), [0x11; 16]);
+    assert_eq!(whole_move.read_vector(vreg(6)), [0xcc; 16]);
+}
+
+#[test]
+fn hart_traps_whole_register_move_when_register_groups_are_misaligned_or_overflow() {
+    assert_whole_move_trap(vmv_whole_type(2, 4, 3));
+    assert_whole_move_trap(vmv_whole_type(4, 10, 8));
+    assert_whole_move_trap(vmv_whole_type(8, 0, 28));
+}
+
+#[test]
+fn hart_traps_whole_register_move_with_non_architectural_register_count() {
+    let mut hart = RiscvHartState::new(0x8910);
+    hart.write_vector(vreg(6), [0xdd; 16]);
+    hart.write_vector(vreg(7), [0xee; 16]);
+    hart.write_vector(vreg(8), [0xff; 16]);
+    hart.write_vector(vreg(9), [0x10; 16]);
+    hart.write_vector(vreg(10), [0x11; 16]);
+    hart.write_vector(vreg(11), [0x12; 16]);
+
+    let record = hart
+        .execute(RiscvInstruction::VectorWholeMove(
+            RiscvVectorWholeMoveInstruction::new(vreg(6), vreg(9), 3),
+        ))
+        .unwrap();
+
+    assert_eq!(
+        record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8910))
+    );
+    assert_eq!(hart.read_vector(vreg(6)), [0xdd; 16]);
+    assert_eq!(hart.read_vector(vreg(7)), [0xee; 16]);
+    assert_eq!(hart.read_vector(vreg(8)), [0xff; 16]);
 }
 
 #[test]
@@ -430,4 +547,23 @@ fn assert_merge_overlap_trap(raw: u32) {
         Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8800))
     );
     assert_eq!(hart.read_vector(vreg(4)), [0xee; 16]);
+}
+
+fn assert_whole_move_trap(raw: u32) {
+    let mut hart = RiscvHartState::new(0x8900);
+    hart.write_vector(vreg(3), [0xee; 16]);
+    hart.write_vector(vreg(4), [0xdd; 16]);
+    hart.write_vector(vreg(8), [0xcc; 16]);
+
+    let record = hart
+        .execute(RiscvInstruction::decode(raw).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x8900))
+    );
+    assert_eq!(hart.read_vector(vreg(3)), [0xee; 16]);
+    assert_eq!(hart.read_vector(vreg(4)), [0xdd; 16]);
+    assert_eq!(hart.read_vector(vreg(8)), [0xcc; 16]);
 }

@@ -5,7 +5,8 @@ use crate::{
     RiscvVectorExtensionFactor, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
     RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode,
     RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
-    RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction, VectorRegister,
+    RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction, RiscvVectorWholeMoveInstruction,
+    VectorRegister,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -720,6 +721,7 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vd: vector_register(raw, 7),
             imm: vector_signed_imm5(raw),
         }),
+        (0x3, 0b100111, true) => decode_vector_whole_move(raw),
         (0x3, 0b011000, true) => Ok(RiscvInstruction::VectorMaskEqualVi {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
@@ -1032,6 +1034,29 @@ fn decode_vector_extend(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             mask,
         }),
         _ => Err(RiscvError::UnknownEncoding { raw }),
+    }
+}
+
+fn decode_vector_whole_move(raw: u32) -> Result<RiscvInstruction, RiscvError> {
+    let Some(register_count) = vector_whole_register_count(raw) else {
+        return Err(RiscvError::UnknownEncoding { raw });
+    };
+    Ok(RiscvInstruction::VectorWholeMove(
+        RiscvVectorWholeMoveInstruction::new(
+            vector_register(raw, 7),
+            vector_register(raw, 20),
+            register_count,
+        ),
+    ))
+}
+
+fn vector_whole_register_count(raw: u32) -> Option<u8> {
+    match ((raw >> 15) & 0x1f) as u8 {
+        0 => Some(1),
+        1 => Some(2),
+        3 => Some(4),
+        7 => Some(8),
+        _ => None,
     }
 }
 

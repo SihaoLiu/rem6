@@ -98,6 +98,7 @@ pub use vector::{
     RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction, RiscvVectorMicroOp,
     RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult,
     RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction, RiscvVectorTailPolicy,
+    RiscvVectorWholeMoveInstruction,
 };
 pub use vector_mask_mode::RiscvVectorMaskMode;
 
@@ -535,6 +536,7 @@ impl RiscvHartState {
             | RiscvInstruction::VectorMoveVv { .. }
             | RiscvInstruction::VectorMoveVx { .. }
             | RiscvInstruction::VectorMoveVi { .. }
+            | RiscvInstruction::VectorWholeMove(_)
             | RiscvInstruction::VectorMaskAndMm { .. }
             | RiscvInstruction::VectorMaskNandMm { .. }
             | RiscvInstruction::VectorMaskAndNotMm { .. }
