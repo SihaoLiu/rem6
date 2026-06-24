@@ -734,6 +734,7 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 vector_unsigned_imm5(raw),
             ),
         )),
+        (0x2, 0b000000..=0b000111, _) => Ok(crate::vector_reduction::decode(raw)),
         (0x2, 0b100101, true) => Ok(RiscvInstruction::VectorMultiplyLowVv {
             vd: vector_register(raw, 7),
             vs1: vector_register(raw, 15),

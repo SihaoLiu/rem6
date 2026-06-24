@@ -16,8 +16,9 @@ use rem6_isa_riscv::{
     RiscvVectorFixedPointShiftInstruction, RiscvVectorGatherInstruction,
     RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction,
     RiscvVectorMaskReductionInstruction, RiscvVectorNarrowInstruction,
-    RiscvVectorSaturatingInstruction, RiscvVectorScalarMoveInstruction,
-    RiscvVectorSlideInstruction, RiscvVectorWholeMoveInstruction, VectorRegister,
+    RiscvVectorReductionInstruction, RiscvVectorSaturatingInstruction,
+    RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction, RiscvVectorWholeMoveInstruction,
+    VectorRegister,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -343,6 +344,10 @@ fn vector_mvx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
         | 0x57
 }
 
+fn vector_reduction_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(funct6, vs2, vs1, vd)
+}
+
 fn vector_vi_type(funct6: u32, vs2: u8, imm: i8, vd: u8) -> u32 {
     (funct6 << 26)
         | (1 << 25)
@@ -509,6 +514,38 @@ fn vmaxu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
 
 fn vmax_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_vv_type(0b000111, vs2, vs1, vd)
+}
+
+fn vredsum_vs_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_reduction_type(0b000000, vs2, vs1, vd)
+}
+
+fn vredand_vs_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_reduction_type(0b000001, vs2, vs1, vd)
+}
+
+fn vredor_vs_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_reduction_type(0b000010, vs2, vs1, vd)
+}
+
+fn vredxor_vs_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_reduction_type(0b000011, vs2, vs1, vd)
+}
+
+fn vredminu_vs_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_reduction_type(0b000100, vs2, vs1, vd)
+}
+
+fn vredmin_vs_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_reduction_type(0b000101, vs2, vs1, vd)
+}
+
+fn vredmaxu_vs_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_reduction_type(0b000110, vs2, vs1, vd)
+}
+
+fn vredmax_vs_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_reduction_type(0b000111, vs2, vs1, vd)
 }
 
 fn vmul_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -2813,6 +2850,188 @@ fn riscv_core_driver_executes_vector_minmax_operations_from_fetch_stream() {
     assert_eq!(
         core.read_vector_register(vreg(14)),
         lanes_u32([0, 0x7fff_ffff, 4, 0xaaaa_aaaa])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_integer_reductions_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 4);
+    core.write_vector_register(vreg(1), bytes_with_u16([10, 0, 0, 0, 0, 0, 0, 0]));
+    core.write_vector_register(vreg(2), bytes_with_u16([1, 2, 3, 4, 0, 0, 0, 0]));
+    core.write_vector_register(vreg(3), bytes_with_u16([0xeeee; 8]));
+    core.write_vector_register(
+        vreg(4),
+        bytes_with_u16([0x0fff, 0xf0ff, 0xffff, 0xaaaa, 0, 0, 0, 0]),
+    );
+    core.write_vector_register(vreg(5), bytes_with_u16([0xff0f, 0, 0, 0, 0, 0, 0, 0]));
+    core.write_vector_register(vreg(6), bytes_with_u16([0xdddd; 8]));
+    core.write_vector_register(
+        vreg(7),
+        bytes_with_u16([1, 0x20, 0x300, 0x4000, 0, 0, 0, 0]),
+    );
+    core.write_vector_register(vreg(8), bytes_with_u16([0x1000, 0, 0, 0, 0, 0, 0, 0]));
+    core.write_vector_register(vreg(9), bytes_with_u16([0xcccc; 8]));
+    core.write_vector_register(
+        vreg(10),
+        bytes_with_u16([0x00ff, 0x0f0f, 0xf000, 0xaaaa, 0, 0, 0, 0]),
+    );
+    core.write_vector_register(vreg(11), bytes_with_u16([0xffff, 0, 0, 0, 0, 0, 0, 0]));
+    core.write_vector_register(vreg(12), bytes_with_u16([0xbbbb; 8]));
+    core.write_vector_register(
+        vreg(13),
+        bytes_with_u16([0xffff, 0x7fff, 0x9000, 1, 0, 0, 0, 0]),
+    );
+    core.write_vector_register(vreg(14), bytes_with_u16([0x8000, 0, 0, 0, 0, 0, 0, 0]));
+    core.write_vector_register(vreg(15), bytes_with_u16([0xaaaa; 8]));
+    core.write_vector_register(
+        vreg(16),
+        bytes_with_u16([0xffff, 0x8000, 2, 0x7ffe, 0, 0, 0, 0]),
+    );
+    core.write_vector_register(vreg(17), bytes_with_u16([0x7fff, 0, 0, 0, 0, 0, 0, 0]));
+    core.write_vector_register(vreg(18), bytes_with_u16([0x9999; 8]));
+    core.write_vector_register(
+        vreg(19),
+        bytes_with_u16([2, 0xffff, 0x8000, 0x7fff, 0, 0, 0, 0]),
+    );
+    core.write_vector_register(vreg(20), bytes_with_u16([1, 0, 0, 0, 0, 0, 0, 0]));
+    core.write_vector_register(vreg(21), bytes_with_u16([0x8888; 8]));
+    core.write_vector_register(
+        vreg(22),
+        bytes_with_u16([0xffff, 0x7fff, 1, 0x8001, 0, 0, 0, 0]),
+    );
+    core.write_vector_register(vreg(23), bytes_with_u16([0x8000, 0, 0, 0, 0, 0, 0, 0]));
+    core.write_vector_register(vreg(24), bytes_with_u16([0x7777; 8]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xc8, 10, 5),
+            vredsum_vs_type(2, 1, 3),
+            vredand_vs_type(4, 5, 6),
+            vredor_vs_type(7, 8, 9),
+            vredxor_vs_type(10, 11, 12),
+            vredminu_vs_type(13, 14, 15),
+            vredmin_vs_type(16, 17, 18),
+            vredmaxu_vs_type(19, 20, 21),
+            vredmax_vs_type(22, 23, 24),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xc8,
+        }
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorReduction(RiscvVectorReductionInstruction::sum(
+            vreg(3),
+            vreg(2),
+            vreg(1),
+            RiscvVectorMaskMode::Unmasked,
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorReduction(RiscvVectorReductionInstruction::and(
+            vreg(6),
+            vreg(4),
+            vreg(5),
+            RiscvVectorMaskMode::Unmasked,
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorReduction(RiscvVectorReductionInstruction::or(
+            vreg(9),
+            vreg(7),
+            vreg(8),
+            RiscvVectorMaskMode::Unmasked,
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorReduction(RiscvVectorReductionInstruction::xor(
+            vreg(12),
+            vreg(10),
+            vreg(11),
+            RiscvVectorMaskMode::Unmasked,
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorReduction(RiscvVectorReductionInstruction::min_unsigned(
+            vreg(15),
+            vreg(13),
+            vreg(14),
+            RiscvVectorMaskMode::Unmasked,
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorReduction(RiscvVectorReductionInstruction::min_signed(
+            vreg(18),
+            vreg(16),
+            vreg(17),
+            RiscvVectorMaskMode::Unmasked,
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorReduction(RiscvVectorReductionInstruction::max_unsigned(
+            vreg(21),
+            vreg(19),
+            vreg(20),
+            RiscvVectorMaskMode::Unmasked,
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorReduction(RiscvVectorReductionInstruction::max_signed(
+            vreg(24),
+            vreg(22),
+            vreg(23),
+            RiscvVectorMaskMode::Unmasked,
+        ))
+    );
+
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        bytes_with_u16([20, 0xeeee, 0xeeee, 0xeeee, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(6)),
+        bytes_with_u16([0x000a, 0xdddd, 0xdddd, 0xdddd, 0xdddd, 0xdddd, 0xdddd, 0xdddd])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(9)),
+        bytes_with_u16([0x5321, 0xcccc, 0xcccc, 0xcccc, 0xcccc, 0xcccc, 0xcccc, 0xcccc])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(12)),
+        bytes_with_u16([0xaaa5, 0xbbbb, 0xbbbb, 0xbbbb, 0xbbbb, 0xbbbb, 0xbbbb, 0xbbbb])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(15)),
+        bytes_with_u16([1, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa, 0xaaaa])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(18)),
+        bytes_with_u16([0x8000, 0x9999, 0x9999, 0x9999, 0x9999, 0x9999, 0x9999, 0x9999])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(21)),
+        bytes_with_u16([0xffff, 0x8888, 0x8888, 0x8888, 0x8888, 0x8888, 0x8888, 0x8888])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(24)),
+        bytes_with_u16([0x7fff, 0x7777, 0x7777, 0x7777, 0x7777, 0x7777, 0x7777, 0x7777])
     );
 }
 

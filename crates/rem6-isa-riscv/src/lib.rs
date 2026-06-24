@@ -40,6 +40,7 @@ mod vector_mask_mode;
 mod vector_mask_prefix_execute;
 mod vector_mask_reduction_execute;
 mod vector_narrow_execute;
+mod vector_reduction;
 mod vector_saturating;
 mod vector_scalar_move_execute;
 mod vector_slide_execute;
@@ -107,6 +108,7 @@ pub use vector_averaging::RiscvVectorAveragingInstruction;
 pub use vector_fixed_point_shift::RiscvVectorFixedPointShiftInstruction;
 pub use vector_fixed_point_shift::RiscvVectorFixedPointShiftOperation;
 pub use vector_mask_mode::RiscvVectorMaskMode;
+pub use vector_reduction::{RiscvVectorReductionInstruction, RiscvVectorReductionOperation};
 pub use vector_saturating::RiscvVectorSaturatingInstruction;
 
 impl RiscvInstruction {
@@ -529,6 +531,7 @@ impl RiscvHartState {
             | RiscvInstruction::VectorRemainderUnsignedVx { .. }
             | RiscvInstruction::VectorRemainderSignedVv { .. }
             | RiscvInstruction::VectorRemainderSignedVx { .. }
+            | RiscvInstruction::VectorReduction(..)
             | RiscvInstruction::VectorSlide(..)
             | RiscvInstruction::VectorGather(..)
             | RiscvInstruction::VectorMaskPrefix(..)

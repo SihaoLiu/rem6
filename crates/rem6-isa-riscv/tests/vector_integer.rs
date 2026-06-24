@@ -4,7 +4,8 @@ use rem6_isa_riscv::{
     RiscvVectorFixedPointShiftInstruction, RiscvVectorFixedPointState,
     RiscvVectorFixedRoundingMode, RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction,
     RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
-    RiscvVectorSaturatingInstruction, RiscvVectorSlideInstruction, VectorRegister,
+    RiscvVectorReductionInstruction, RiscvVectorSaturatingInstruction, RiscvVectorSlideInstruction,
+    VectorRegister,
 };
 
 fn reg(index: u8) -> Register {
@@ -203,6 +204,16 @@ fn vector_mvx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
         | 0x57
 }
 
+fn vector_reduction_type(funct6: u32, vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    (funct6 << 26)
+        | (u32::from(matches!(mask, RiscvVectorMaskMode::Unmasked)) << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(vs1) << 15)
+        | (0b010 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
 fn vector_vi_type(funct6: u32, vs2: u8, imm: i8, vd: u8) -> u32 {
     (funct6 << 26)
         | (1 << 25)
@@ -315,6 +326,38 @@ fn vsmul_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
 
 fn vsmul_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
     vector_vx_type(0b100111, vs2, rs1, vd)
+}
+
+fn vredsum_vs_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_reduction_type(0b000000, vs2, vs1, vd, mask)
+}
+
+fn vredand_vs_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_reduction_type(0b000001, vs2, vs1, vd, mask)
+}
+
+fn vredor_vs_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_reduction_type(0b000010, vs2, vs1, vd, mask)
+}
+
+fn vredxor_vs_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_reduction_type(0b000011, vs2, vs1, vd, mask)
+}
+
+fn vredminu_vs_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_reduction_type(0b000100, vs2, vs1, vd, mask)
+}
+
+fn vredmin_vs_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_reduction_type(0b000101, vs2, vs1, vd, mask)
+}
+
+fn vredmaxu_vs_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_reduction_type(0b000110, vs2, vs1, vd, mask)
+}
+
+fn vredmax_vs_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_reduction_type(0b000111, vs2, vs1, vd, mask)
 }
 
 fn vaaddu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -1090,6 +1133,100 @@ fn decoder_accepts_unmasked_vector_signed_fractional_multiply_operations() {
             RiscvVectorSaturatingInstruction::mul_signed_fractional_vx(vreg(3), vreg(4), reg(5),),
         )
     );
+}
+
+#[test]
+fn decoder_accepts_vector_integer_reduction_operations() {
+    assert_eq!(
+        vredsum_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+        0x0242_a1d7
+    );
+    assert_eq!(
+        vredmax_vs_type(4, 5, 3, RiscvVectorMaskMode::Masked),
+        0x1c42_a1d7
+    );
+
+    let cases = [
+        (
+            vredsum_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorReductionInstruction::sum(
+                vreg(3),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        ),
+        (
+            vredand_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorReductionInstruction::and(
+                vreg(3),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        ),
+        (
+            vredor_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorReductionInstruction::or(
+                vreg(3),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        ),
+        (
+            vredxor_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorReductionInstruction::xor(
+                vreg(3),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        ),
+        (
+            vredminu_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorReductionInstruction::min_unsigned(
+                vreg(3),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        ),
+        (
+            vredmin_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorReductionInstruction::min_signed(
+                vreg(3),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        ),
+        (
+            vredmaxu_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorReductionInstruction::max_unsigned(
+                vreg(3),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        ),
+        (
+            vredmax_vs_type(4, 5, 3, RiscvVectorMaskMode::Masked),
+            RiscvVectorReductionInstruction::max_signed(
+                vreg(3),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Masked,
+            ),
+        ),
+    ];
+
+    for (raw, expected) in cases {
+        assert_eq!(
+            RiscvInstruction::decode(raw).unwrap(),
+            RiscvInstruction::VectorReduction(expected)
+        );
+    }
 }
 
 #[test]
@@ -2505,6 +2642,149 @@ fn hart_executes_vector_signed_fractional_multiply_vv_and_vx_forms() {
         )
     );
     assert!(vx.vector_fixed_point().vxsat());
+}
+
+#[test]
+fn hart_executes_vector_integer_reductions() {
+    let cases = [
+        (
+            vredsum_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+            [1, 2, 3, 4, 0, 0, 0, 0],
+            [10, 0, 0, 0, 0, 0, 0, 0],
+            20,
+        ),
+        (
+            vredand_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+            [0x0fff, 0xf0ff, 0xffff, 0xaaaa, 0, 0, 0, 0],
+            [0xff0f, 0, 0, 0, 0, 0, 0, 0],
+            0x000a,
+        ),
+        (
+            vredor_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+            [1, 0x20, 0x300, 0x4000, 0, 0, 0, 0],
+            [0x1000, 0, 0, 0, 0, 0, 0, 0],
+            0x5321,
+        ),
+        (
+            vredxor_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+            [0x00ff, 0x0f0f, 0xf000, 0xaaaa, 0, 0, 0, 0],
+            [0xffff, 0, 0, 0, 0, 0, 0, 0],
+            0xaaa5,
+        ),
+        (
+            vredminu_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+            [0xffff, 0x7fff, 0x9000, 1, 0, 0, 0, 0],
+            [0x8000, 0, 0, 0, 0, 0, 0, 0],
+            1,
+        ),
+        (
+            vredmin_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+            [0xffff, 0x8000, 2, 0x7ffe, 0, 0, 0, 0],
+            [0x7fff, 0, 0, 0, 0, 0, 0, 0],
+            0x8000,
+        ),
+        (
+            vredmaxu_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+            [2, 0xffff, 0x8000, 0x7fff, 0, 0, 0, 0],
+            [1, 0, 0, 0, 0, 0, 0, 0],
+            0xffff,
+        ),
+        (
+            vredmax_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked),
+            [0xffff, 0x7fff, 1, 0x8001, 0, 0, 0, 0],
+            [0x8000, 0, 0, 0, 0, 0, 0, 0],
+            0x7fff,
+        ),
+    ];
+
+    for (raw, source, seed, expected) in cases {
+        let mut hart = RiscvHartState::new(0x8160);
+        hart.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+        hart.write_vector(vreg(4), bytes_with_u16(source));
+        hart.write_vector(vreg(5), bytes_with_u16(seed));
+        hart.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+        hart.execute(RiscvInstruction::decode(raw).unwrap())
+            .unwrap();
+        assert_eq!(
+            hart.read_vector(vreg(3)),
+            bytes_with_u16([expected, 0xeeee, 0xeeee, 0xeeee, 0xeeee, 0xeeee, 0xeeee, 0xeeee,])
+        );
+    }
+
+    let mut wrapping_sum = RiscvHartState::new(0x8161);
+    wrapping_sum.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    wrapping_sum.write_vector(vreg(4), bytes_with_u16([1, 2, 0, 0, 0, 0, 0, 0]));
+    wrapping_sum.write_vector(vreg(5), bytes_with_u16([0xfffe, 0, 0, 0, 0, 0, 0, 0]));
+    wrapping_sum.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    wrapping_sum
+        .execute(
+            RiscvInstruction::decode(vredsum_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        wrapping_sum.read_vector(vreg(3)),
+        bytes_with_u16([1, 0xeeee, 0xeeee, 0xeeee, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+
+    let mut vl_zero = RiscvHartState::new(0x8162);
+    vl_zero.set_vector_config(RiscvVectorConfig::new(0, 0xc8));
+    vl_zero.write_vector(vreg(4), bytes_with_u16([1, 2, 3, 4, 0, 0, 0, 0]));
+    vl_zero.write_vector(vreg(5), bytes_with_u16([10, 0, 0, 0, 0, 0, 0, 0]));
+    vl_zero.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    vl_zero
+        .execute(
+            RiscvInstruction::decode(vredsum_vs_type(4, 5, 3, RiscvVectorMaskMode::Unmasked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(vl_zero.read_vector(vreg(3)), bytes_with_u16([0xeeee; 8]));
+
+    let mut all_masked = RiscvHartState::new(0x8163);
+    all_masked.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    all_masked.write_vector(vreg(0), [0; 16]);
+    all_masked.write_vector(vreg(4), bytes_with_u16([1, 2, 3, 4, 0, 0, 0, 0]));
+    all_masked.write_vector(vreg(5), bytes_with_u16([0x1234, 0, 0, 0, 0, 0, 0, 0]));
+    all_masked.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    all_masked
+        .execute(
+            RiscvInstruction::decode(vredsum_vs_type(4, 5, 3, RiscvVectorMaskMode::Masked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        all_masked.read_vector(vreg(3)),
+        bytes_with_u16([0x1234, 0xeeee, 0xeeee, 0xeeee, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+
+    let mut masked = RiscvHartState::new(0x8164);
+    masked.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    masked.write_vector(
+        vreg(0),
+        [0b0000_0101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+    masked.write_vector(vreg(4), bytes_with_u16([1, 100, 3, 100, 0, 0, 0, 0]));
+    masked.write_vector(vreg(5), bytes_with_u16([10, 0, 0, 0, 0, 0, 0, 0]));
+    masked.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let record = masked
+        .execute(
+            RiscvInstruction::decode(vredsum_vs_type(4, 5, 3, RiscvVectorMaskMode::Masked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        record.instruction(),
+        RiscvInstruction::VectorReduction(RiscvVectorReductionInstruction::sum(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+            RiscvVectorMaskMode::Masked,
+        ))
+    );
+    assert_eq!(
+        masked.read_vector(vreg(3)),
+        bytes_with_u16([14, 0xeeee, 0xeeee, 0xeeee, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
 }
 
 #[test]

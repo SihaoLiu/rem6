@@ -7,10 +7,8 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvInstruction {
-    Lui {
-        rd: Register,
-        imm: Immediate,
-    },
+    #[rustfmt::skip]
+    Lui { rd: Register, imm: Immediate },
     Auipc {
         rd: Register,
         imm: Immediate,
@@ -451,6 +449,7 @@ pub enum RiscvInstruction {
     VectorNarrow(crate::vector::RiscvVectorNarrowInstruction),
     VectorAveraging(crate::vector_averaging::RiscvVectorAveragingInstruction),
     VectorFixedPointShift(crate::vector_fixed_point_shift::RiscvVectorFixedPointShiftInstruction),
+    VectorReduction(crate::vector_reduction::RiscvVectorReductionInstruction),
     VectorSaturating(crate::vector_saturating::RiscvVectorSaturatingInstruction),
     VectorZeroExtend {
         vd: VectorRegister,
