@@ -34,6 +34,22 @@ pub(super) fn emit_debug_stats(
         ),
         ("sim.debug.dram_trace.ports", debug.dram_port_trace_count()),
         ("sim.debug.dram_trace.banks", debug.dram_bank_trace_count()),
+        (
+            "sim.debug.dram_trace.target.accesses",
+            debug.dram_target_access_count(),
+        ),
+        (
+            "sim.debug.dram_trace.target.reads",
+            debug.dram_target_read_count(),
+        ),
+        (
+            "sim.debug.dram_trace.target.writes",
+            debug.dram_target_write_count(),
+        ),
+        (
+            "sim.debug.dram_trace.port.commands",
+            debug.dram_port_command_count(),
+        ),
         ("sim.debug.fabric_trace.records", debug.fabric_trace_count()),
         (
             "sim.debug.fabric_trace.lanes",
@@ -121,6 +137,20 @@ pub(super) fn emit_debug_stats(
         "Byte",
         StatResetPolicy::Monotonic,
         debug.fabric_hop_byte_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.dram_trace.bank.read_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        debug.dram_bank_read_byte_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.dram_trace.bank.write_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        debug.dram_bank_write_byte_count(),
     )?;
     Ok(())
 }

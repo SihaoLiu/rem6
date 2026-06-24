@@ -271,6 +271,48 @@ impl Rem6DebugSummary {
         self.dram_kind_trace_count("bank")
     }
 
+    pub(crate) fn dram_target_access_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Target { accesses, .. } => Some(*accesses),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_target_read_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Target { reads, .. } => Some(*reads),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_target_write_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Target { writes, .. } => Some(*writes),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_port_command_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Port { commands, .. } => Some(*commands),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_bank_read_byte_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Bank { read_bytes, .. } => Some(*read_bytes),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_bank_write_byte_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Bank { write_bytes, .. } => Some(*write_bytes),
+            _ => None,
+        })
+    }
+
     pub(crate) fn fabric_trace_count(&self) -> u64 {
         self.fabric_trace.len() as u64
     }
@@ -495,6 +537,16 @@ impl Rem6DebugSummary {
             .iter()
             .filter(|record| record.kind() == kind)
             .count() as u64
+    }
+
+    fn dram_trace_sum<F>(&self, value: F) -> u64
+    where
+        F: Fn(&Rem6DramTraceRecord) -> Option<u64>,
+    {
+        self.dram_trace
+            .iter()
+            .filter_map(value)
+            .fold(0u64, |acc, value| acc.saturating_add(value))
     }
 
     fn syscall_outcome_trace_count(

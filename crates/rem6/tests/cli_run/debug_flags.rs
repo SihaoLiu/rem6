@@ -797,9 +797,21 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
         .iter()
         .filter(|record| record.get("kind").and_then(Value::as_str) == Some("bank"))
         .count() as u64;
+    let target_accesses = debug_trace_sum(trace, "target", "accesses");
+    let target_reads = debug_trace_sum(trace, "target", "reads");
+    let target_writes = debug_trace_sum(trace, "target", "writes");
+    let port_commands = debug_trace_sum(trace, "port", "commands");
+    let bank_read_bytes = debug_trace_sum(trace, "bank", "read_bytes");
+    let bank_write_bytes = debug_trace_sum(trace, "bank", "write_bytes");
     assert!(target_records >= 1, "trace: {trace:?}");
     assert!(port_records >= 1, "trace: {trace:?}");
     assert!(bank_records >= 1, "trace: {trace:?}");
+    assert!(target_accesses > 0, "trace: {trace:?}");
+    assert!(target_reads > 0, "trace: {trace:?}");
+    assert!(target_writes > 0, "trace: {trace:?}");
+    assert!(port_commands > 0, "trace: {trace:?}");
+    assert!(bank_read_bytes > 0, "trace: {trace:?}");
+    assert!(bank_write_bytes > 0, "trace: {trace:?}");
     assert_stat(
         &stdout,
         "sim.debug.dram_trace.records",
@@ -826,6 +838,48 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
         "sim.debug.dram_trace.banks",
         "Count",
         bank_records,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.target.accesses",
+        "Count",
+        target_accesses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.target.reads",
+        "Count",
+        target_reads,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.target.writes",
+        "Count",
+        target_writes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.port.commands",
+        "Count",
+        port_commands,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.bank.read_bytes",
+        "Byte",
+        bank_read_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.bank.write_bytes",
+        "Byte",
+        bank_write_bytes,
         "monotonic",
     );
 }
@@ -987,6 +1041,19 @@ fn rem6_run_syscall_debug_flag_emits_real_riscv_se_syscall_trace() {
         0,
         "monotonic",
     );
+}
+
+fn debug_trace_sum(trace: &[Value], kind: &str, field: &str) -> u64 {
+    trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some(kind))
+        .map(|record| {
+            record
+                .get(field)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("{kind} {field}"))
+        })
+        .sum()
 }
 
 #[test]
