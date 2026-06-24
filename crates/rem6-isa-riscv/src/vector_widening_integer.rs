@@ -33,6 +33,30 @@ pub enum RiscvVectorWideningIntegerInstruction {
         vs1: VectorRegister,
         mask: RiscvVectorMaskMode,
     },
+    AddUnsignedWv {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    },
+    AddSignedWv {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    },
+    SubUnsignedWv {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    },
+    SubSignedWv {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    },
     AddUnsignedVx {
         vd: VectorRegister,
         vs2: VectorRegister,
@@ -52,6 +76,30 @@ pub enum RiscvVectorWideningIntegerInstruction {
         mask: RiscvVectorMaskMode,
     },
     SubSignedVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+        mask: RiscvVectorMaskMode,
+    },
+    AddUnsignedWx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+        mask: RiscvVectorMaskMode,
+    },
+    AddSignedWx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+        mask: RiscvVectorMaskMode,
+    },
+    SubUnsignedWx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+        mask: RiscvVectorMaskMode,
+    },
+    SubSignedWx {
         vd: VectorRegister,
         vs2: VectorRegister,
         rs1: Register,
@@ -104,6 +152,42 @@ impl RiscvVectorWideningIntegerInstruction {
         Self::SubSignedVv { vd, vs2, vs1, mask }
     }
 
+    pub const fn add_unsigned_wv(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::AddUnsignedWv { vd, vs2, vs1, mask }
+    }
+
+    pub const fn add_signed_wv(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::AddSignedWv { vd, vs2, vs1, mask }
+    }
+
+    pub const fn sub_unsigned_wv(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::SubUnsignedWv { vd, vs2, vs1, mask }
+    }
+
+    pub const fn sub_signed_wv(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::SubSignedWv { vd, vs2, vs1, mask }
+    }
+
     pub const fn add_unsigned_vx(
         vd: VectorRegister,
         vs2: VectorRegister,
@@ -139,6 +223,42 @@ impl RiscvVectorWideningIntegerInstruction {
     ) -> Self {
         Self::SubSignedVx { vd, vs2, rs1, mask }
     }
+
+    pub const fn add_unsigned_wx(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::AddUnsignedWx { vd, vs2, rs1, mask }
+    }
+
+    pub const fn add_signed_wx(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::AddSignedWx { vd, vs2, rs1, mask }
+    }
+
+    pub const fn sub_unsigned_wx(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::SubUnsignedWx { vd, vs2, rs1, mask }
+    }
+
+    pub const fn sub_signed_wx(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::SubSignedWx { vd, vs2, rs1, mask }
+    }
 }
 
 pub(crate) fn decode_vv(raw: u32) -> RiscvInstruction {
@@ -148,7 +268,11 @@ pub(crate) fn decode_vv(raw: u32) -> RiscvInstruction {
         0b110001 => RiscvVectorWideningIntegerInstruction::add_signed_vv,
         0b110010 => RiscvVectorWideningIntegerInstruction::sub_unsigned_vv,
         0b110011 => RiscvVectorWideningIntegerInstruction::sub_signed_vv,
-        _ => unreachable!("widening integer vv funct6 is range-checked by decode_vector"),
+        0b110100 => RiscvVectorWideningIntegerInstruction::add_unsigned_wv,
+        0b110101 => RiscvVectorWideningIntegerInstruction::add_signed_wv,
+        0b110110 => RiscvVectorWideningIntegerInstruction::sub_unsigned_wv,
+        0b110111 => RiscvVectorWideningIntegerInstruction::sub_signed_wv,
+        _ => unreachable!("widening integer vector funct6 is range-checked by decode_vector"),
     };
     RiscvInstruction::VectorWideningInteger(build(
         vector_register(raw, 7),
@@ -165,7 +289,11 @@ pub(crate) fn decode_vx(raw: u32) -> RiscvInstruction {
         0b110001 => RiscvVectorWideningIntegerInstruction::add_signed_vx,
         0b110010 => RiscvVectorWideningIntegerInstruction::sub_unsigned_vx,
         0b110011 => RiscvVectorWideningIntegerInstruction::sub_signed_vx,
-        _ => unreachable!("widening integer vx funct6 is range-checked by decode_vector"),
+        0b110100 => RiscvVectorWideningIntegerInstruction::add_unsigned_wx,
+        0b110101 => RiscvVectorWideningIntegerInstruction::add_signed_wx,
+        0b110110 => RiscvVectorWideningIntegerInstruction::sub_unsigned_wx,
+        0b110111 => RiscvVectorWideningIntegerInstruction::sub_signed_wx,
+        _ => unreachable!("widening integer scalar funct6 is range-checked by decode_vector"),
     };
     RiscvInstruction::VectorWideningInteger(build(
         vector_register(raw, 7),
@@ -195,6 +323,18 @@ pub(crate) fn execute(
         }
         RiscvVectorWideningIntegerInstruction::SubSignedVv { vd, vs2, vs1, mask } => {
             execute_vv(hart, vd, vs2, vs1, mask, WideningIntegerOp::SubSigned)
+        }
+        RiscvVectorWideningIntegerInstruction::AddUnsignedWv { vd, vs2, vs1, mask } => {
+            execute_wv(hart, vd, vs2, vs1, mask, WideningIntegerOp::AddUnsigned)
+        }
+        RiscvVectorWideningIntegerInstruction::AddSignedWv { vd, vs2, vs1, mask } => {
+            execute_wv(hart, vd, vs2, vs1, mask, WideningIntegerOp::AddSigned)
+        }
+        RiscvVectorWideningIntegerInstruction::SubUnsignedWv { vd, vs2, vs1, mask } => {
+            execute_wv(hart, vd, vs2, vs1, mask, WideningIntegerOp::SubUnsigned)
+        }
+        RiscvVectorWideningIntegerInstruction::SubSignedWv { vd, vs2, vs1, mask } => {
+            execute_wv(hart, vd, vs2, vs1, mask, WideningIntegerOp::SubSigned)
         }
         RiscvVectorWideningIntegerInstruction::AddUnsignedVx { vd, vs2, rs1, mask } => execute_vx(
             hart,
@@ -228,6 +368,38 @@ pub(crate) fn execute(
             mask,
             WideningIntegerOp::SubSigned,
         ),
+        RiscvVectorWideningIntegerInstruction::AddUnsignedWx { vd, vs2, rs1, mask } => execute_wx(
+            hart,
+            vd,
+            vs2,
+            hart.read(rs1),
+            mask,
+            WideningIntegerOp::AddUnsigned,
+        ),
+        RiscvVectorWideningIntegerInstruction::AddSignedWx { vd, vs2, rs1, mask } => execute_wx(
+            hart,
+            vd,
+            vs2,
+            hart.read(rs1),
+            mask,
+            WideningIntegerOp::AddSigned,
+        ),
+        RiscvVectorWideningIntegerInstruction::SubUnsignedWx { vd, vs2, rs1, mask } => execute_wx(
+            hart,
+            vd,
+            vs2,
+            hart.read(rs1),
+            mask,
+            WideningIntegerOp::SubUnsigned,
+        ),
+        RiscvVectorWideningIntegerInstruction::SubSignedWx { vd, vs2, rs1, mask } => execute_wx(
+            hart,
+            vd,
+            vs2,
+            hart.read(rs1),
+            mask,
+            WideningIntegerOp::SubSigned,
+        ),
     }
 }
 
@@ -239,19 +411,20 @@ fn execute_vv(
     mask: RiscvVectorMaskMode,
     op: WideningIntegerOp,
 ) -> bool {
-    let Some(plan) = WideningIntegerPlan::new(hart, vd, &[vs2, vs1], mask) else {
+    let Some(plan) = WideningIntegerPlan::new(hart, vd, &[], &[vs2, vs1], mask) else {
         return false;
     };
-    let left = read_register_group(hart, vs2, plan.source_registers);
-    let right = read_register_group(hart, vs1, plan.source_registers);
+    let left = read_register_group(hart, vs2, plan.narrow_registers);
+    let right = read_register_group(hart, vs1, plan.narrow_registers);
     execute_lanes(
         hart,
         vd,
         &plan,
         &left,
-        |element_index, element_bytes| {
-            let offset = element_index * element_bytes;
-            lane_bytes_to_u128(&right[offset..offset + element_bytes])
+        plan.narrow_element_bytes,
+        |element_index| {
+            let offset = element_index * plan.narrow_element_bytes;
+            lane_bytes_to_u128(&right[offset..offset + plan.narrow_element_bytes])
         },
         op,
     )
@@ -265,16 +438,67 @@ fn execute_vx(
     mask: RiscvVectorMaskMode,
     op: WideningIntegerOp,
 ) -> bool {
-    let Some(plan) = WideningIntegerPlan::new(hart, vd, &[vs2], mask) else {
+    let Some(plan) = WideningIntegerPlan::new(hart, vd, &[], &[vs2], mask) else {
         return false;
     };
-    let left = read_register_group(hart, vs2, plan.source_registers);
+    let left = read_register_group(hart, vs2, plan.narrow_registers);
     execute_lanes(
         hart,
         vd,
         &plan,
         &left,
-        |_, element_bytes| u128::from(scalar) & unsigned_max(element_bytes * 8),
+        plan.narrow_element_bytes,
+        |_| u128::from(scalar) & unsigned_max(plan.narrow_element_bits),
+        op,
+    )
+}
+
+fn execute_wv(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    vs1: VectorRegister,
+    mask: RiscvVectorMaskMode,
+    op: WideningIntegerOp,
+) -> bool {
+    let Some(plan) = WideningIntegerPlan::new(hart, vd, &[vs2], &[vs1], mask) else {
+        return false;
+    };
+    let left = read_register_group(hart, vs2, plan.wide_registers);
+    let right = read_register_group(hart, vs1, plan.narrow_registers);
+    execute_lanes(
+        hart,
+        vd,
+        &plan,
+        &left,
+        plan.wide_element_bytes,
+        |element_index| {
+            let offset = element_index * plan.narrow_element_bytes;
+            lane_bytes_to_u128(&right[offset..offset + plan.narrow_element_bytes])
+        },
+        op,
+    )
+}
+
+fn execute_wx(
+    hart: &mut RiscvHartState,
+    vd: VectorRegister,
+    vs2: VectorRegister,
+    scalar: u64,
+    mask: RiscvVectorMaskMode,
+    op: WideningIntegerOp,
+) -> bool {
+    let Some(plan) = WideningIntegerPlan::new(hart, vd, &[vs2], &[], mask) else {
+        return false;
+    };
+    let left = read_register_group(hart, vs2, plan.wide_registers);
+    execute_lanes(
+        hart,
+        vd,
+        &plan,
+        &left,
+        plan.wide_element_bytes,
+        |_| u128::from(scalar) & unsigned_max(plan.narrow_element_bits),
         op,
     )
 }
@@ -284,14 +508,15 @@ fn execute_lanes(
     vd: VectorRegister,
     plan: &WideningIntegerPlan,
     left: &[u8; MAX_VECTOR_GROUP_BYTES],
-    right_lane: impl Fn(usize, usize) -> u128,
+    left_element_bytes: usize,
+    right_lane: impl Fn(usize) -> u128,
     op: WideningIntegerOp,
 ) -> bool {
     let selector = plan
         .mask
         .is_masked()
         .then(|| hart.read_vector(VectorRegister::from_field(0)));
-    let mut result = read_register_group(hart, vd, plan.destination_registers);
+    let mut result = read_register_group(hart, vd, plan.wide_registers);
 
     for element_index in 0..plan.active_elements {
         if selector
@@ -300,50 +525,60 @@ fn execute_lanes(
         {
             continue;
         }
-        let source_offset = element_index * plan.source_element_bytes;
-        let destination_offset = element_index * plan.destination_element_bytes;
-        let left =
-            lane_bytes_to_u128(&left[source_offset..source_offset + plan.source_element_bytes]);
-        let right = right_lane(element_index, plan.source_element_bytes);
-        let value = apply_widening_integer(op, left, right, plan.source_element_bits);
+        let source_offset = element_index * left_element_bytes;
+        let destination_offset = element_index * plan.wide_element_bytes;
+        let left = lane_bytes_to_u128(&left[source_offset..source_offset + left_element_bytes]);
+        let right = right_lane(element_index);
+        let value = apply_widening_integer(
+            op,
+            left,
+            left_element_bytes * 8,
+            right,
+            plan.narrow_element_bits,
+            plan.wide_element_bits,
+        );
         write_u128_lane(
-            &mut result[destination_offset..destination_offset + plan.destination_element_bytes],
+            &mut result[destination_offset..destination_offset + plan.wide_element_bytes],
             value,
         );
     }
 
-    write_register_group(hart, vd, plan.destination_registers, &result);
+    write_register_group(hart, vd, plan.wide_registers, &result);
     true
 }
 
 fn apply_widening_integer(
     op: WideningIntegerOp,
     left: u128,
+    left_bits: usize,
     right: u128,
-    source_bits: usize,
+    right_bits: usize,
+    result_bits: usize,
 ) -> u128 {
-    let result_bits = source_bits * 2;
     let mask = unsigned_max(result_bits);
+    let signed = matches!(
+        op,
+        WideningIntegerOp::AddSigned | WideningIntegerOp::SubSigned
+    );
+    let left = extend_operand(left, left_bits, result_bits, signed);
+    let right = extend_operand(right, right_bits, result_bits, signed);
     match op {
-        WideningIntegerOp::AddUnsigned => left.wrapping_add(right) & mask,
-        WideningIntegerOp::SubUnsigned => left.wrapping_sub(right) & mask,
-        WideningIntegerOp::AddSigned => signed_operand_bits(
-            sign_extend(left, source_bits) + sign_extend(right, source_bits),
-            result_bits,
-        ),
-        WideningIntegerOp::SubSigned => signed_operand_bits(
-            sign_extend(left, source_bits) - sign_extend(right, source_bits),
-            result_bits,
-        ),
+        WideningIntegerOp::AddUnsigned | WideningIntegerOp::AddSigned => {
+            left.wrapping_add(right) & mask
+        }
+        WideningIntegerOp::SubUnsigned | WideningIntegerOp::SubSigned => {
+            left.wrapping_sub(right) & mask
+        }
     }
 }
 
 struct WideningIntegerPlan {
-    source_element_bytes: usize,
-    source_element_bits: usize,
-    destination_element_bytes: usize,
-    source_registers: usize,
-    destination_registers: usize,
+    narrow_element_bytes: usize,
+    narrow_element_bits: usize,
+    wide_element_bytes: usize,
+    wide_element_bits: usize,
+    narrow_registers: usize,
+    wide_registers: usize,
     active_elements: usize,
     mask: RiscvVectorMaskMode,
 }
@@ -352,60 +587,65 @@ impl WideningIntegerPlan {
     fn new(
         hart: &RiscvHartState,
         vd: VectorRegister,
-        sources: &[VectorRegister],
+        wide_sources: &[VectorRegister],
+        narrow_sources: &[VectorRegister],
         mask: RiscvVectorMaskMode,
     ) -> Option<Self> {
         let config = hart.vector_config();
-        let source_element_bytes = config.element_width_bytes()?;
-        let destination_element_bytes = source_element_bytes.checked_mul(2)?;
-        if destination_element_bytes > 16 {
+        let narrow_element_bytes = config.element_width_bytes()?;
+        let wide_element_bytes = narrow_element_bytes.checked_mul(2)?;
+        if wide_element_bytes > 16 {
             return None;
         }
-        let source_registers = config.register_group_registers()?;
-        let destination_registers = widening_destination_registers(config.vtype())?;
-        if !valid_register_group(vd, destination_registers)
-            || sources.iter().any(|source| {
-                !valid_widening_source(
+        let narrow_registers = config.register_group_registers()?;
+        let wide_registers = widening_registers(config.vtype())?;
+        if !valid_register_group(vd, wide_registers)
+            || wide_sources
+                .iter()
+                .any(|source| !valid_register_group(*source, wide_registers))
+            || wide_sources.iter().any(|wide| {
+                narrow_sources.iter().any(|narrow| {
+                    register_groups_overlap(*wide, wide_registers, *narrow, narrow_registers)
+                })
+            })
+            || narrow_sources.iter().any(|source| {
+                !valid_widening_narrow_source(
                     config.vtype(),
                     vd,
-                    destination_registers,
+                    wide_registers,
                     *source,
-                    source_registers,
+                    narrow_registers,
                 )
             })
             || (mask.is_masked()
-                && register_groups_overlap(
-                    vd,
-                    destination_registers,
-                    VectorRegister::from_field(0),
-                    1,
-                ))
+                && register_groups_overlap(vd, wide_registers, VectorRegister::from_field(0), 1))
         {
             return None;
         }
 
         let active_elements = config.vl() as usize;
-        let source_active_bytes = active_elements.checked_mul(source_element_bytes)?;
-        let destination_active_bytes = active_elements.checked_mul(destination_element_bytes)?;
-        if source_active_bytes > source_registers * RISCV_VECTOR_REGISTER_BYTES
-            || destination_active_bytes > destination_registers * RISCV_VECTOR_REGISTER_BYTES
+        let narrow_active_bytes = active_elements.checked_mul(narrow_element_bytes)?;
+        let wide_active_bytes = active_elements.checked_mul(wide_element_bytes)?;
+        if narrow_active_bytes > narrow_registers * RISCV_VECTOR_REGISTER_BYTES
+            || wide_active_bytes > wide_registers * RISCV_VECTOR_REGISTER_BYTES
         {
             return None;
         }
 
         Some(Self {
-            source_element_bytes,
-            source_element_bits: source_element_bytes * 8,
-            destination_element_bytes,
-            source_registers,
-            destination_registers,
+            narrow_element_bytes,
+            narrow_element_bits: narrow_element_bytes * 8,
+            wide_element_bytes,
+            wide_element_bits: wide_element_bytes * 8,
+            narrow_registers,
+            wide_registers,
             active_elements,
             mask,
         })
     }
 }
 
-fn widening_destination_registers(vtype: u64) -> Option<usize> {
+fn widening_registers(vtype: u64) -> Option<usize> {
     match vtype & 0x7 {
         0 => Some(2),
         1 => Some(4),
@@ -416,7 +656,7 @@ fn widening_destination_registers(vtype: u64) -> Option<usize> {
     }
 }
 
-fn valid_widening_source(
+fn valid_widening_narrow_source(
     vtype: u64,
     vd: VectorRegister,
     destination_registers: usize,
@@ -437,13 +677,15 @@ fn source_emul_at_least_one(vtype: u64) -> bool {
     matches!(vtype & 0x7, 0..=3)
 }
 
-fn sign_extend(value: u128, bits: usize) -> i128 {
-    let shift = 128 - bits;
-    ((value << shift) as i128) >> shift
-}
-
-fn signed_operand_bits(value: i128, bits: usize) -> u128 {
-    (value as u128) & unsigned_max(bits)
+fn extend_operand(value: u128, operand_bits: usize, result_bits: usize, signed: bool) -> u128 {
+    let result_mask = unsigned_max(result_bits);
+    let operand_mask = unsigned_max(operand_bits);
+    let value = value & operand_mask;
+    if signed && operand_bits < result_bits && (value & (1_u128 << (operand_bits - 1))) != 0 {
+        value | (!operand_mask & result_mask)
+    } else {
+        value
+    }
 }
 
 fn unsigned_max(bits: usize) -> u128 {

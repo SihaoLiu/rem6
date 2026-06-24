@@ -572,8 +572,20 @@ fn vwaddu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_widening_vv_type(0b110000, vs2, vs1, vd)
 }
 
+fn vwaddu_wv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_widening_vv_type(0b110100, vs2, vs1, vd)
+}
+
+fn vwsubu_wv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_widening_vv_type(0b110110, vs2, vs1, vd)
+}
+
 fn vwadd_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
     vector_widening_vx_type(0b110001, vs2, rs1, vd)
+}
+
+fn vwadd_wx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_widening_vx_type(0b110101, vs2, rs1, vd)
 }
 
 fn vwsubu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -582,6 +594,10 @@ fn vwsubu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
 
 fn vwsub_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
     vector_widening_vx_type(0b110011, vs2, rs1, vd)
+}
+
+fn vwsub_wx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_widening_vx_type(0b110111, vs2, rs1, vd)
 }
 
 fn vmul_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -3246,6 +3262,124 @@ fn riscv_core_driver_executes_vector_integer_widening_add_sub_from_fetch_stream(
     assert_eq!(
         core.read_vector_register(vreg(21)),
         lanes_u32([0x7777_7777; 4])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_integer_widening_add_sub_wide_source_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 4);
+    core.write_register(reg(8), 0xffff);
+    core.write_register(reg(9), 1);
+    core.write_vector_register(vreg(4), lanes_u32([0xffff_ffff, 5, 0x8000_0000, 7]));
+    core.write_vector_register(vreg(5), lanes_u32([0xcccc_cccc; 4]));
+    core.write_vector_register(vreg(6), bytes_with_u16([1, 2, 3, 4, 0, 0, 0, 0]));
+    core.write_vector_register(vreg(2), lanes_u32([0xeeee_eeee; 4]));
+    core.write_vector_register(vreg(3), lanes_u32([0xdddd_dddd; 4]));
+    core.write_vector_register(vreg(12), lanes_u32([0, 1, 0x8000_0000, 0xffff_ffff]));
+    core.write_vector_register(vreg(13), lanes_u32([0xbbbb_bbbb; 4]));
+    core.write_vector_register(vreg(10), lanes_u32([0xaaaa_aaaa; 4]));
+    core.write_vector_register(vreg(11), lanes_u32([0x9999_9999; 4]));
+    core.write_vector_register(vreg(16), lanes_u32([0, 5, 0xffff_ffff, 1]));
+    core.write_vector_register(vreg(17), lanes_u32([0x8888_8888; 4]));
+    core.write_vector_register(vreg(18), bytes_with_u16([1, 2, 3, 4, 0, 0, 0, 0]));
+    core.write_vector_register(vreg(20), lanes_u32([0, 1, 0x8000_0000, 0xffff_ffff]));
+    core.write_vector_register(vreg(21), lanes_u32([0x7777_7777; 4]));
+    core.write_vector_register(vreg(22), lanes_u32([0x6666_6666; 4]));
+    core.write_vector_register(vreg(23), lanes_u32([0x5555_5555; 4]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xc8, 10, 7),
+            vwaddu_wv_type(4, 6, 2),
+            vwadd_wx_type(12, 8, 10),
+            vwsubu_wv_type(16, 18, 22),
+            vwsub_wx_type(20, 9, 24),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(7),
+            rs1: reg(10),
+            vtype: 0xc8,
+        }
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorWideningInteger(
+            RiscvVectorWideningIntegerInstruction::add_unsigned_wv(
+                vreg(2),
+                vreg(4),
+                vreg(6),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        )
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorWideningInteger(
+            RiscvVectorWideningIntegerInstruction::add_signed_wx(
+                vreg(10),
+                vreg(12),
+                reg(8),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        )
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorWideningInteger(
+            RiscvVectorWideningIntegerInstruction::sub_unsigned_wv(
+                vreg(22),
+                vreg(16),
+                vreg(18),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        )
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorWideningInteger(
+            RiscvVectorWideningIntegerInstruction::sub_signed_wx(
+                vreg(24),
+                vreg(20),
+                reg(9),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        )
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(2)),
+        lanes_u32([0, 7, 0x8000_0003, 11])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_u32([0xdddd_dddd; 4])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(10)),
+        lanes_u32([0xffff_ffff, 0, 0x7fff_ffff, 0xffff_fffe])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(11)),
+        lanes_u32([0x9999_9999; 4])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(22)),
+        lanes_u32([0xffff_ffff, 3, 0xffff_fffc, 0xffff_fffd])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(23)),
+        lanes_u32([0x5555_5555; 4])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(24)),
+        lanes_u32([0xffff_ffff, 0, 0x7fff_ffff, 0xffff_fffe])
     );
 }
 
