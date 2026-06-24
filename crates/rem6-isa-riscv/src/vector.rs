@@ -581,6 +581,60 @@ impl RiscvVectorFixedPointState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvVectorNarrowClipInstruction {
+    Wi {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        shift: u8,
+        signed: bool,
+    },
+}
+
+impl RiscvVectorNarrowClipInstruction {
+    pub const fn unsigned_wi(vd: VectorRegister, vs2: VectorRegister, shift: u8) -> Self {
+        Self::Wi {
+            vd,
+            vs2,
+            shift,
+            signed: false,
+        }
+    }
+
+    pub const fn signed_wi(vd: VectorRegister, vs2: VectorRegister, shift: u8) -> Self {
+        Self::Wi {
+            vd,
+            vs2,
+            shift,
+            signed: true,
+        }
+    }
+
+    pub const fn vd(self) -> VectorRegister {
+        match self {
+            Self::Wi { vd, .. } => vd,
+        }
+    }
+
+    pub const fn vs2(self) -> VectorRegister {
+        match self {
+            Self::Wi { vs2, .. } => vs2,
+        }
+    }
+
+    pub const fn shift(self) -> u8 {
+        match self {
+            Self::Wi { shift, .. } => shift,
+        }
+    }
+
+    pub const fn is_signed(self) -> bool {
+        match self {
+            Self::Wi { signed, .. } => signed,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvVectorNarrowClipPlan {
     width: MemoryWidth,
     signed: bool,
@@ -655,7 +709,16 @@ impl RiscvVectorNarrowClipPlan {
         }
         validate_fixed_point_shift(shift)?;
 
-        let rounded = round_signed(value, shift, rounding_mode)?;
+        let rounded = match round_signed(value, shift, rounding_mode) {
+            Ok(value) => value,
+            Err(RiscvVectorError::FixedPointRoundingOverflow) => {
+                return Ok(RiscvVectorNarrowClipResult {
+                    value: signed_max(self.width),
+                    saturated: true,
+                });
+            }
+            Err(error) => return Err(error),
+        };
         let shifted = rounded >> shift;
         let min = signed_min(self.width);
         let max = signed_max(self.width);

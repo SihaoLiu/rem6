@@ -3,14 +3,13 @@ use crate::{
         lane_bytes_to_u128, memory_width_from_element_bytes, read_register_group,
         register_groups_overlap, valid_register_group, write_register_group, write_u128_lane,
     },
-    RiscvHartState, RiscvVectorConfig, RiscvVectorNarrowClipPlan, VectorRegister,
+    RiscvHartState, RiscvVectorConfig, RiscvVectorNarrowClipInstruction, RiscvVectorNarrowClipPlan,
+    VectorRegister,
 };
 
-pub(crate) fn execute_vector_narrow_clip_unsigned_wi(
+pub(crate) fn execute(
     hart: &mut RiscvHartState,
-    vd: VectorRegister,
-    vs2: VectorRegister,
-    shift: u8,
+    instruction: RiscvVectorNarrowClipInstruction,
 ) -> bool {
     let config = hart.vector_config();
     let Some(element_bytes) = config.element_width_bytes() else {
@@ -32,16 +31,25 @@ pub(crate) fn execute_vector_narrow_clip_unsigned_wi(
     let vl = config.vl() as usize;
     if vl > vlmax as usize
         || source_element_bytes > 16
-        || !valid_register_group(vd, destination_registers)
-        || !valid_register_group(vs2, source_registers)
-        || !narrowing_overlap_allowed(vd, destination_registers, vs2, source_registers)
+        || !valid_register_group(instruction.vd(), destination_registers)
+        || !valid_register_group(instruction.vs2(), source_registers)
+        || !narrowing_overlap_allowed(
+            instruction.vd(),
+            destination_registers,
+            instruction.vs2(),
+            source_registers,
+        )
     {
         return false;
     }
 
-    let mut destination_bytes = read_register_group(hart, vd, destination_registers);
-    let source_bytes = read_register_group(hart, vs2, source_registers);
-    let plan = RiscvVectorNarrowClipPlan::unsigned(width);
+    let mut destination_bytes = read_register_group(hart, instruction.vd(), destination_registers);
+    let source_bytes = read_register_group(hart, instruction.vs2(), source_registers);
+    let plan = if instruction.is_signed() {
+        RiscvVectorNarrowClipPlan::signed(width)
+    } else {
+        RiscvVectorNarrowClipPlan::unsigned(width)
+    };
     let mut fixed = hart.vector_fixed_point();
 
     for element_index in 0..vl {
@@ -49,8 +57,20 @@ pub(crate) fn execute_vector_narrow_clip_unsigned_wi(
         let destination_offset = element_index * element_bytes;
         let source =
             lane_bytes_to_u128(&source_bytes[source_offset..source_offset + source_element_bytes]);
-        let Ok(result) = plan.execute_unsigned(source, u32::from(shift), fixed.rounding_mode())
-        else {
+        let result = if instruction.is_signed() {
+            plan.execute_signed(
+                sign_extend(source, source_element_bytes * 8),
+                u32::from(instruction.shift()),
+                fixed.rounding_mode(),
+            )
+        } else {
+            plan.execute_unsigned(
+                source,
+                u32::from(instruction.shift()),
+                fixed.rounding_mode(),
+            )
+        };
+        let Ok(result) = result else {
             return false;
         };
         fixed.apply_narrow_clip_result(result);
@@ -61,8 +81,18 @@ pub(crate) fn execute_vector_narrow_clip_unsigned_wi(
     }
 
     hart.set_vector_fixed_point(fixed);
-    write_register_group(hart, vd, destination_registers, &destination_bytes);
+    write_register_group(
+        hart,
+        instruction.vd(),
+        destination_registers,
+        &destination_bytes,
+    );
     true
+}
+
+fn sign_extend(value: u128, bits: usize) -> i128 {
+    let shift = 128 - bits;
+    ((value << shift) as i128) >> shift
 }
 
 fn widening_source_registers(vtype: u64) -> Option<usize> {

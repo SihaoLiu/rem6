@@ -449,7 +449,7 @@ pub enum RiscvInstruction {
         imm: i8,
     },
     VectorCompressVm(VectorRegister, VectorRegister, VectorRegister),
-    VectorNarrowClipUnsignedWi(VectorRegister, VectorRegister, u8),
+    VectorNarrowClip(crate::vector::RiscvVectorNarrowClipInstruction),
     VectorZeroExtend {
         vd: VectorRegister,
         vs2: VectorRegister,

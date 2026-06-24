@@ -96,9 +96,9 @@ pub use vector::{
     RiscvVectorFixedRoundingMode, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
     RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction,
     RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction, RiscvVectorMicroOp,
-    RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult,
-    RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction, RiscvVectorTailPolicy,
-    RiscvVectorWholeMoveInstruction,
+    RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipInstruction, RiscvVectorNarrowClipPlan,
+    RiscvVectorNarrowClipResult, RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction,
+    RiscvVectorTailPolicy, RiscvVectorWholeMoveInstruction,
 };
 pub use vector_mask_mode::RiscvVectorMaskMode;
 
@@ -530,7 +530,7 @@ impl RiscvHartState {
             | RiscvInstruction::VectorMergeVxm { .. }
             | RiscvInstruction::VectorMergeVim { .. }
             | RiscvInstruction::VectorCompressVm(..)
-            | RiscvInstruction::VectorNarrowClipUnsignedWi(..)
+            | RiscvInstruction::VectorNarrowClip(..)
             | RiscvInstruction::VectorZeroExtend { .. }
             | RiscvInstruction::VectorSignExtend { .. }
             | RiscvInstruction::VectorMoveVv { .. }

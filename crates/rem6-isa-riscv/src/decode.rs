@@ -5,8 +5,8 @@ use crate::{
     RiscvVectorExtensionFactor, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
     RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode,
     RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
-    RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction, RiscvVectorWholeMoveInstruction,
-    VectorRegister,
+    RiscvVectorNarrowClipInstruction, RiscvVectorScalarMoveInstruction,
+    RiscvVectorSlideInstruction, RiscvVectorWholeMoveInstruction, VectorRegister,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -625,10 +625,19 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vector_register(raw, 15),
         )),
         (0x2, 0b010010, _) => decode_vector_extend(raw),
-        (0x3, 0b101110, true) => Ok(RiscvInstruction::VectorNarrowClipUnsignedWi(
-            vector_register(raw, 7),
-            vector_register(raw, 20),
-            vector_unsigned_imm5(raw),
+        (0x3, 0b101110, true) => Ok(RiscvInstruction::VectorNarrowClip(
+            RiscvVectorNarrowClipInstruction::unsigned_wi(
+                vector_register(raw, 7),
+                vector_register(raw, 20),
+                vector_unsigned_imm5(raw),
+            ),
+        )),
+        (0x3, 0b101111, true) => Ok(RiscvInstruction::VectorNarrowClip(
+            RiscvVectorNarrowClipInstruction::signed_wi(
+                vector_register(raw, 7),
+                vector_register(raw, 20),
+                vector_unsigned_imm5(raw),
+            ),
         )),
         (0x2, 0b100101, true) => Ok(RiscvInstruction::VectorMultiplyLowVv {
             vd: vector_register(raw, 7),

@@ -13,8 +13,9 @@ use rem6_isa_riscv::{
     RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvStatusWord,
     RiscvTrap, RiscvTrapKind, RiscvVectorConfig, RiscvVectorGatherInstruction,
     RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction,
-    RiscvVectorMaskReductionInstruction, RiscvVectorScalarMoveInstruction,
-    RiscvVectorSlideInstruction, RiscvVectorWholeMoveInstruction, VectorRegister,
+    RiscvVectorMaskReductionInstruction, RiscvVectorNarrowClipInstruction,
+    RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction, RiscvVectorWholeMoveInstruction,
+    VectorRegister,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -160,6 +161,16 @@ fn vcompress_vm_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
 
 fn vnclipu_wi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
     (0b101110 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(imm & 0x1f) << 15)
+        | (0x3 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vnclip_wi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
+    (0b101111 << 26)
         | (1 << 25)
         | (u32::from(vs2) << 20)
         | (u32::from(imm & 0x1f) << 15)
@@ -2917,11 +2928,62 @@ fn riscv_core_driver_executes_vnclipu_wi_from_fetch_stream() {
     );
     assert_eq!(
         drive_until_instruction(&core, store, &mut scheduler, &transport),
-        RiscvInstruction::VectorNarrowClipUnsignedWi(vreg(3), vreg(4), 1)
+        RiscvInstruction::VectorNarrowClip(RiscvVectorNarrowClipInstruction::unsigned_wi(
+            vreg(3),
+            vreg(4),
+            1,
+        ))
     );
     assert_eq!(
         core.read_vector_register(vreg(3)),
         [3, 0xff, 2, 3, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee]
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vnclip_wi_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 4);
+    core.write_vector_register(vreg(3), [0xee; 16]);
+    core.write_vector_register(
+        vreg(4),
+        [
+            5, 0, 0xfb, 0xff, 0xff, 0, 0xfd, 0xfe, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+        ],
+    );
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0x80, 10, 6),
+            vnclip_wi_type(4, 1, 3),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(6),
+            rs1: reg(10),
+            vtype: 0x80,
+        }
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorNarrowClip(RiscvVectorNarrowClipInstruction::signed_wi(
+            vreg(3),
+            vreg(4),
+            1,
+        ))
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        [
+            3, 0xfe, 0x7f, 0x80, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee,
+        ]
     );
 }
 
@@ -3207,7 +3269,11 @@ fn riscv_core_driver_fetches_ahead_for_vnclipu_wi_instruction() {
     };
     assert_eq!(
         vnclipu.instruction(),
-        RiscvInstruction::VectorNarrowClipUnsignedWi(vreg(3), vreg(4), 1)
+        RiscvInstruction::VectorNarrowClip(RiscvVectorNarrowClipInstruction::unsigned_wi(
+            vreg(3),
+            vreg(4),
+            1,
+        ))
     );
 }
 

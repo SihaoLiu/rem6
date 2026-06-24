@@ -1,8 +1,8 @@
 use rem6_isa_riscv::{
     MemoryWidth, Register, RiscvCsrOp, RiscvHartState, RiscvInstruction, RiscvTrap, RiscvTrapKind,
     RiscvVectorConfig, RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction,
-    RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, RiscvVectorNarrowClipPlan,
-    VectorRegister,
+    RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, RiscvVectorNarrowClipInstruction,
+    RiscvVectorNarrowClipPlan, VectorRegister,
 };
 
 fn reg(index: u8) -> Register {
@@ -19,6 +19,16 @@ fn csr_type(csr: u16, rs1: u8, funct3: u32, rd: u8) -> u32 {
 
 fn vnclipu_wi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
     (0b101110 << 26)
+        | (1 << 25)
+        | ((vs2 as u32) << 20)
+        | (u32::from(imm & 0x1f) << 15)
+        | (0x3 << 12)
+        | ((vd as u32) << 7)
+        | 0x57
+}
+
+fn vnclip_wi_type(vs2: u8, imm: u8, vd: u8) -> u32 {
+    (0b101111 << 26)
         | (1 << 25)
         | ((vs2 as u32) << 20)
         | (u32::from(imm & 0x1f) << 15)
@@ -122,11 +132,42 @@ fn vector_narrow_clip_records_saturation_without_extra_micro_op() {
 }
 
 #[test]
+fn vector_narrow_clip_signed_saturates_positive_rounding_overflow() {
+    let mut state = RiscvVectorFixedPointState::new(RiscvVectorFixedRoundingMode::RoundNearestUp);
+    let plan = RiscvVectorNarrowClipPlan::signed(MemoryWidth::Doubleword);
+    let result = plan
+        .execute_signed(i128::MAX, 1, state.rounding_mode())
+        .unwrap();
+
+    assert_eq!(result.value(), i64::MAX as i128);
+    assert!(result.saturated());
+    state.apply_narrow_clip_result(result);
+    assert!(state.vxsat());
+}
+
+#[test]
 fn decoder_accepts_unmasked_vnclipu_wi() {
     assert_eq!(vnclipu_wi_type(4, 1, 3), 0xba40_b1d7);
     assert_eq!(
         RiscvInstruction::decode(vnclipu_wi_type(4, 1, 3)).unwrap(),
-        RiscvInstruction::VectorNarrowClipUnsignedWi(vreg(3), vreg(4), 1)
+        RiscvInstruction::VectorNarrowClip(RiscvVectorNarrowClipInstruction::unsigned_wi(
+            vreg(3),
+            vreg(4),
+            1,
+        ))
+    );
+}
+
+#[test]
+fn decoder_accepts_unmasked_vnclip_wi() {
+    assert_eq!(vnclip_wi_type(4, 1, 3), 0xbe40_b1d7);
+    assert_eq!(
+        RiscvInstruction::decode(vnclip_wi_type(4, 1, 3)).unwrap(),
+        RiscvInstruction::VectorNarrowClip(RiscvVectorNarrowClipInstruction::signed_wi(
+            vreg(3),
+            vreg(4),
+            1,
+        ))
     );
 }
 
@@ -178,6 +219,31 @@ fn hart_executes_vnclipu_wi_with_default_round_nearest_up() {
     assert_eq!(
         hart.read_vector(vreg(3)),
         [3, 0xff, 2, 3, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee]
+    );
+    assert!(hart.vector_fixed_point().vxsat());
+}
+
+#[test]
+fn hart_executes_vnclip_wi_with_default_round_nearest_up() {
+    let mut hart = RiscvHartState::new(0x8008);
+    hart.set_vector_config(RiscvVectorConfig::new(4, 0x80));
+    hart.write_vector(vreg(3), [0xee; 16]);
+    hart.write_vector(
+        vreg(4),
+        [
+            5, 0, 0xfb, 0xff, 0xff, 0, 0xfd, 0xfe, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+        ],
+    );
+
+    hart.execute(RiscvInstruction::decode(vnclip_wi_type(4, 1, 3)).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        hart.read_vector(vreg(3)),
+        [
+            3, 0xfe, 0x7f, 0x80, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee,
+        ]
     );
     assert!(hart.vector_fixed_point().vxsat());
 }
