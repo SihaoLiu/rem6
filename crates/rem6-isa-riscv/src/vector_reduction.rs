@@ -28,6 +28,8 @@ pub enum RiscvVectorReductionOperation {
     MinSigned,
     MaxUnsigned,
     MaxSigned,
+    WideningSumUnsigned,
+    WideningSumSigned,
 }
 
 impl RiscvVectorReductionInstruction {
@@ -115,6 +117,36 @@ impl RiscvVectorReductionInstruction {
         Self::new(vd, vs2, vs1, mask, RiscvVectorReductionOperation::MaxSigned)
     }
 
+    pub const fn widening_sum_unsigned(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::new(
+            vd,
+            vs2,
+            vs1,
+            mask,
+            RiscvVectorReductionOperation::WideningSumUnsigned,
+        )
+    }
+
+    pub const fn widening_sum_signed(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+        mask: RiscvVectorMaskMode,
+    ) -> Self {
+        Self::new(
+            vd,
+            vs2,
+            vs1,
+            mask,
+            RiscvVectorReductionOperation::WideningSumSigned,
+        )
+    }
+
     const fn new(
         vd: VectorRegister,
         vs2: VectorRegister,
@@ -153,6 +185,21 @@ pub(crate) fn decode(raw: u32) -> RiscvInstruction {
     ))
 }
 
+pub(crate) fn decode_widening(raw: u32) -> RiscvInstruction {
+    let operation = match (raw >> 26) & 0x3f {
+        0b110000 => RiscvVectorReductionOperation::WideningSumUnsigned,
+        0b110001 => RiscvVectorReductionOperation::WideningSumSigned,
+        _ => unreachable!("widening reduction funct6 is range-checked by decode_vector"),
+    };
+    RiscvInstruction::VectorReduction(RiscvVectorReductionInstruction::new(
+        vector_register(raw, 7),
+        vector_register(raw, 20),
+        vector_register(raw, 15),
+        RiscvVectorMaskMode::from_vm_bit((raw & (1 << 25)) != 0),
+        operation,
+    ))
+}
+
 pub(crate) fn execute(
     hart: &mut RiscvHartState,
     instruction: RiscvVectorReductionInstruction,
@@ -165,7 +212,7 @@ pub(crate) fn execute(
         operation,
     } = instruction;
 
-    let Some(plan) = ReductionPlan::new(hart, vs2) else {
+    let Some(plan) = ReductionPlan::new(hart, vs2, operation) else {
         return false;
     };
     if plan.active_elements == 0 {
@@ -176,7 +223,7 @@ pub(crate) fn execute(
     let selector = mask
         .is_masked()
         .then(|| hart.read_vector(VectorRegister::from_field(0)));
-    let mut accumulator = lane_bytes_to_u128(&seed[..plan.element_bytes]);
+    let mut accumulator = lane_bytes_to_u128(&seed[..plan.result_element_bytes]);
     for element_index in 0..plan.active_elements {
         if selector
             .as_ref()
@@ -184,20 +231,29 @@ pub(crate) fn execute(
         {
             continue;
         }
-        let offset = element_index * plan.element_bytes;
-        let lane = lane_bytes_to_u128(&source[offset..offset + plan.element_bytes]);
-        accumulator = operation.apply(accumulator, lane, plan.element_bits);
+        let offset = element_index * plan.source_element_bytes;
+        let lane = lane_bytes_to_u128(&source[offset..offset + plan.source_element_bytes]);
+        accumulator = operation.apply(
+            accumulator,
+            lane,
+            plan.source_element_bits,
+            plan.result_element_bits,
+        );
     }
 
     let mut destination = hart.read_vector(vd);
-    write_u128_lane(&mut destination[..plan.element_bytes], accumulator);
+    write_u128_lane(&mut destination[..plan.result_element_bytes], accumulator);
     hart.write_vector(vd, destination);
     true
 }
 
 impl RiscvVectorReductionOperation {
-    fn apply(self, left: u128, right: u128, bits: usize) -> u128 {
-        let mask = unsigned_max(bits);
+    const fn is_widening(self) -> bool {
+        matches!(self, Self::WideningSumUnsigned | Self::WideningSumSigned)
+    }
+
+    fn apply(self, left: u128, right: u128, source_bits: usize, result_bits: usize) -> u128 {
+        let mask = unsigned_max(result_bits);
         match self {
             Self::Sum => left.wrapping_add(right) & mask,
             Self::And => left & right,
@@ -205,7 +261,7 @@ impl RiscvVectorReductionOperation {
             Self::Xor => left ^ right,
             Self::MinUnsigned => left.min(right),
             Self::MinSigned => {
-                if sign_extend(left, bits) <= sign_extend(right, bits) {
+                if sign_extend(left, result_bits) <= sign_extend(right, result_bits) {
                     left
                 } else {
                     right
@@ -213,39 +269,58 @@ impl RiscvVectorReductionOperation {
             }
             Self::MaxUnsigned => left.max(right),
             Self::MaxSigned => {
-                if sign_extend(left, bits) >= sign_extend(right, bits) {
+                if sign_extend(left, result_bits) >= sign_extend(right, result_bits) {
                     left
                 } else {
                     right
                 }
+            }
+            Self::WideningSumUnsigned => left.wrapping_add(right) & mask,
+            Self::WideningSumSigned => {
+                left.wrapping_add(sign_extend(right, source_bits) as u128) & mask
             }
         }
     }
 }
 
 struct ReductionPlan {
-    element_bytes: usize,
-    element_bits: usize,
+    source_element_bytes: usize,
+    source_element_bits: usize,
+    result_element_bytes: usize,
+    result_element_bits: usize,
     source_registers: usize,
     active_elements: usize,
 }
 
 impl ReductionPlan {
-    fn new(hart: &RiscvHartState, vs2: VectorRegister) -> Option<Self> {
+    fn new(
+        hart: &RiscvHartState,
+        vs2: VectorRegister,
+        operation: RiscvVectorReductionOperation,
+    ) -> Option<Self> {
         let config = hart.vector_config();
-        let element_bytes = config.element_width_bytes()?;
+        let source_element_bytes = config.element_width_bytes()?;
+        let result_element_bytes = if operation.is_widening() {
+            source_element_bytes.checked_mul(2)?
+        } else {
+            source_element_bytes
+        };
         let source_registers = config.register_group_registers()?;
-        if !valid_register_group(vs2, source_registers) {
+        if result_element_bytes > RISCV_VECTOR_REGISTER_BYTES
+            || !valid_register_group(vs2, source_registers)
+        {
             return None;
         }
         let active_elements = config.vl() as usize;
-        let active_bytes = active_elements.checked_mul(element_bytes)?;
+        let active_bytes = active_elements.checked_mul(source_element_bytes)?;
         if active_bytes > source_registers * RISCV_VECTOR_REGISTER_BYTES {
             return None;
         }
         Some(Self {
-            element_bytes,
-            element_bits: element_bytes * 8,
+            source_element_bytes,
+            source_element_bits: source_element_bytes * 8,
+            result_element_bytes,
+            result_element_bits: result_element_bytes * 8,
             source_registers,
             active_elements,
         })
@@ -257,7 +332,11 @@ fn vector_register(raw: u32, shift: u32) -> VectorRegister {
 }
 
 fn unsigned_max(bits: usize) -> u128 {
-    (1_u128 << bits) - 1
+    if bits == 128 {
+        u128::MAX
+    } else {
+        (1_u128 << bits) - 1
+    }
 }
 
 fn sign_extend(value: u128, bits: usize) -> i128 {

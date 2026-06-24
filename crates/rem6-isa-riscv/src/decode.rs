@@ -678,6 +678,7 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 vector_register(raw, 15),
             ),
         )),
+        (0x0, 0b110000..=0b110001, _) => Ok(crate::vector_reduction::decode_widening(raw)),
         (0x4, 0b101100, true) => Ok(RiscvInstruction::VectorNarrow(
             RiscvVectorNarrowInstruction::shift_right_logical_wx(
                 vector_register(raw, 7),
