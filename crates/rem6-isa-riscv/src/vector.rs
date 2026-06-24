@@ -241,6 +241,12 @@ pub enum RiscvVectorMaskIndexInstruction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvVectorScalarMoveInstruction {
+    MoveToScalar { rd: Register, vs2: VectorRegister },
+    MoveFromScalar { vd: VectorRegister, rs1: Register },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvVectorFloatInstruction {
     AddVv {
         vd: VectorRegister,

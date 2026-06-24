@@ -38,6 +38,7 @@ mod vector_mask_mode;
 mod vector_mask_prefix_execute;
 mod vector_mask_reduction_execute;
 mod vector_narrow_clip_execute;
+mod vector_scalar_move_execute;
 mod vector_slide_execute;
 
 use encoding::{j_imm, rd, u_imm};
@@ -96,7 +97,7 @@ pub use vector::{
     RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction,
     RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction, RiscvVectorMicroOp,
     RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult,
-    RiscvVectorSlideInstruction, RiscvVectorTailPolicy,
+    RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction, RiscvVectorTailPolicy,
 };
 pub use vector_mask_mode::RiscvVectorMaskMode;
 
@@ -469,6 +470,17 @@ impl RiscvHartState {
                     &mut register_writes,
                     mask_reduction,
                 ) {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                }
+            }
+            RiscvInstruction::VectorScalarMove(scalar_move) => {
+                if !vector_scalar_move_execute::execute(self, &mut register_writes, scalar_move) {
                     return Ok(enter_synchronous_trap(
                         self,
                         instruction,

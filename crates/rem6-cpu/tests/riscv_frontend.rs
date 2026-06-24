@@ -13,7 +13,8 @@ use rem6_isa_riscv::{
     RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvStatusWord,
     RiscvTrap, RiscvTrapKind, RiscvVectorConfig, RiscvVectorGatherInstruction,
     RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction,
-    RiscvVectorMaskReductionInstruction, RiscvVectorSlideInstruction, VectorRegister,
+    RiscvVectorMaskReductionInstruction, RiscvVectorScalarMoveInstruction,
+    RiscvVectorSlideInstruction, VectorRegister,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -515,6 +516,14 @@ fn vmv_v_x_type(rs1: u8, vd: u8) -> u32 {
 
 fn vmv_v_i_type(imm: i8, vd: u8) -> u32 {
     vector_vi_type(0b010111, 0, imm, vd)
+}
+
+fn vmv_x_s_type(vs2: u8, rd: u8) -> u32 {
+    vector_mvv_type(0b010000, vs2, 0, rd)
+}
+
+fn vmv_s_x_type(rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b010000, 0, rs1, vd)
 }
 
 fn vreg(index: u8) -> VectorRegister {
@@ -2635,6 +2644,7 @@ fn riscv_core_driver_executes_vector_merge_and_move_operations_from_fetch_stream
     core.write_register(reg(10), 6);
     core.write_register(reg(6), 0xab);
     core.write_register(reg(7), 0x44);
+    core.write_register(reg(8), 0xffff_ffff_ffff_ff9a);
     core.write_vector_register(vreg(0), [0x0b, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     core.write_vector_register(
         vreg(5),
@@ -2646,7 +2656,13 @@ fn riscv_core_driver_executes_vector_merge_and_move_operations_from_fetch_stream
         vreg(6),
         [1, 2, 3, 4, 5, 6, 0xbb, 0xbb, 0xbb, 0xbb, 0, 0, 0, 0, 0, 0],
     );
-    for index in [4, 9, 10, 11, 12, 13] {
+    core.write_vector_register(
+        vreg(14),
+        [
+            0x80, 0x7f, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0, 0, 0, 0, 0, 0, 0, 0,
+        ],
+    );
+    for index in [4, 9, 10, 11, 12, 13, 15] {
         core.write_vector_register(vreg(index), [0xee; 16]);
     }
     let store = loaded_program_store(
@@ -2659,6 +2675,8 @@ fn riscv_core_driver_executes_vector_merge_and_move_operations_from_fetch_stream
             vmv_v_v_type(6, 11),
             vmv_v_x_type(7, 12),
             vmv_v_i_type(-4, 13),
+            vmv_x_s_type(14, 11),
+            vmv_s_x_type(8, 15),
             0x0010_0073,
         ],
         &[],
@@ -2747,7 +2765,7 @@ fn riscv_core_driver_executes_vector_merge_and_move_operations_from_fetch_stream
     );
 
     assert_eq!(
-        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
         RiscvInstruction::VectorMoveVi {
             vd: vreg(13),
             imm: -4,
@@ -2757,6 +2775,30 @@ fn riscv_core_driver_executes_vector_merge_and_move_operations_from_fetch_stream
         core.read_vector_register(vreg(13)),
         [
             0xfc, 0xfc, 0xfc, 0xfc, 0xfc, 0xfc, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
+            0xee, 0xee,
+        ]
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorScalarMove(RiscvVectorScalarMoveInstruction::MoveToScalar {
+            rd: reg(11),
+            vs2: vreg(14),
+        })
+    );
+    assert_eq!(core.read_register(reg(11)), 0xffff_ffff_ffff_ff80);
+
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorScalarMove(RiscvVectorScalarMoveInstruction::MoveFromScalar {
+            vd: vreg(15),
+            rs1: reg(8),
+        })
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(15)),
+        [
+            0x9a, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee, 0xee,
             0xee, 0xee,
         ]
     );

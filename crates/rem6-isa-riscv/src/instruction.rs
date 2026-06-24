@@ -1,4 +1,4 @@
-use crate::vector::RiscvVectorExtensionFactor;
+use crate::vector::{RiscvVectorExtensionFactor, RiscvVectorScalarMoveInstruction};
 use crate::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryWidth, Register, RiscvCounterCsr,
     RiscvEnvironmentConfigCsrInstruction, RiscvFenceSet, RiscvFloatCsr, RiscvFloatRoundingMode,
@@ -475,6 +475,7 @@ pub enum RiscvInstruction {
         vd: VectorRegister,
         imm: i8,
     },
+    VectorScalarMove(RiscvVectorScalarMoveInstruction),
     VectorMaskAndMm {
         vd: VectorRegister,
         vs2: VectorRegister,

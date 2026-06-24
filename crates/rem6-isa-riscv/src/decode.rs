@@ -5,7 +5,7 @@ use crate::{
     RiscvVectorExtensionFactor, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
     RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode,
     RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
-    RiscvVectorSlideInstruction, VectorRegister,
+    RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction, VectorRegister,
 };
 
 pub(crate) fn decode_system(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -564,6 +564,12 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             vs1: vector_register(raw, 15),
         }),
+        (0x2, 0b010000, true) if ((raw >> 15) & 0x1f) == 0 => Ok(
+            RiscvInstruction::VectorScalarMove(RiscvVectorScalarMoveInstruction::MoveToScalar {
+                rd: rd(raw),
+                vs2: vector_register(raw, 20),
+            }),
+        ),
         (0x2, 0b010000, _) if ((raw >> 15) & 0x1f) == 0x10 => Ok(
             RiscvInstruction::VectorMaskReduction(RiscvVectorMaskReductionInstruction::PopCount {
                 rd: rd(raw),
@@ -949,6 +955,12 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             rs1: rs1(raw),
         }),
+        (0x6, 0b010000, true) if vector_vs2_is_zero(raw) => Ok(RiscvInstruction::VectorScalarMove(
+            RiscvVectorScalarMoveInstruction::MoveFromScalar {
+                vd: vector_register(raw, 7),
+                rs1: rs1(raw),
+            },
+        )),
         (0x7, _, _) if (raw & 0x8000_0000) == 0 => Ok(RiscvInstruction::VectorSetVli {
             rd: rd(raw),
             rs1: rs1(raw),
