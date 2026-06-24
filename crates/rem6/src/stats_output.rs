@@ -28,7 +28,7 @@ use super::{
 use cpu::emit_cpu_run_stats;
 use data_cache::{emit_data_cache_prefetch_summary_stats, emit_data_cache_summary_stats};
 use debug::emit_debug_stats;
-use dram::emit_dram_stats;
+use dram::{emit_dram_stats, emit_gem5_mem_ctrl_dram_alias_stats};
 use fabric::emit_run_fabric_stats;
 pub(super) use gpu_run::gpu_run_stats_output;
 pub(super) use gups::gups_stats_output;
@@ -706,6 +706,7 @@ pub(super) fn run_stats_output(
         emit_transport_stats(&mut stats, "sim.memory.data", &execution.data_transport)?;
         emit_run_fabric_stats(&mut stats, "sim.memory.fabric", &execution.fabric)?;
         emit_dram_stats(&mut stats, "sim.memory.dram", &execution.dram)?;
+        emit_gem5_mem_ctrl_dram_alias_stats(&mut stats, &execution.dram)?;
         emit_memory_resource_stats(&mut stats, execution)?;
         emit_cpu_run_stats(&mut stats, &execution.cores)?;
         emit_debug_stats(&mut stats, execution)?;

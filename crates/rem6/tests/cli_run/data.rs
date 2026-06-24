@@ -163,8 +163,94 @@ fn rem6_run_executes_riscv_elf_load_store_and_emits_data_stats() {
         "monotonic",
     );
     assert_stat_greater_than(&stdout, "sim.memory.dram.accesses", "Count", 0, "monotonic");
+    let dram_reads = json_u64(&json, "/dram/reads");
+    let dram_writes = json_u64(&json, "/dram/writes");
+    let dram_read_bytes = sum_dram_bank_field(&json, "read_bytes");
+    let dram_write_bytes = sum_dram_bank_field(&json, "write_bytes");
+    assert!(dram_read_bytes > 0);
+    assert!(dram_write_bytes > 0);
+    assert_stat(
+        &stdout,
+        "system.mem_ctrl.readReqs",
+        "Count",
+        dram_reads,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "system.mem_ctrl.writeReqs",
+        "Count",
+        dram_writes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "system.mem_ctrl.readBursts",
+        "Count",
+        dram_reads,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "system.mem_ctrl.writeBursts",
+        "Count",
+        dram_writes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "system.mem_ctrl.bytesReadSys",
+        "Byte",
+        dram_read_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "system.mem_ctrl.bytesWrittenSys",
+        "Byte",
+        dram_write_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "system.mem_ctrl.dram.dramBytesRead",
+        "Byte",
+        dram_read_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "system.mem_ctrl.dram.dramBytesWritten",
+        "Byte",
+        dram_write_bytes,
+        "monotonic",
+    );
     assert_transport_stats(&stdout, "sim.memory.fetch", 6, 24, 4);
     assert_transport_stats(&stdout, "sim.memory.data", 2, 8, 4);
+}
+
+fn sum_dram_bank_field(json: &Value, field: &str) -> u64 {
+    json.pointer("/dram/targets")
+        .and_then(Value::as_array)
+        .expect("DRAM targets")
+        .iter()
+        .flat_map(|target| {
+            target
+                .get("ports")
+                .and_then(Value::as_array)
+                .expect("DRAM target ports")
+        })
+        .flat_map(|port| {
+            port.get("banks")
+                .and_then(Value::as_array)
+                .expect("DRAM port banks")
+        })
+        .map(|bank| {
+            bank.get(field)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("missing DRAM bank field {field}: {bank}"))
+        })
+        .sum()
 }
 
 #[test]

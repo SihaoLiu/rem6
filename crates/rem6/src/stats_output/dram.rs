@@ -364,6 +364,27 @@ pub(super) fn emit_dram_stats(
     Ok(())
 }
 
+pub(super) fn emit_gem5_mem_ctrl_dram_alias_stats(
+    stats: &mut StatsRegistry,
+    summary: &Rem6DramSummary,
+) -> Result<(), Rem6CliError> {
+    let read_bytes = dram_bank_read_bytes(summary);
+    let write_bytes = dram_bank_write_bytes(summary);
+    for (path, unit, value) in [
+        ("system.mem_ctrl.readReqs", "Count", summary.reads),
+        ("system.mem_ctrl.writeReqs", "Count", summary.writes),
+        ("system.mem_ctrl.readBursts", "Count", summary.reads),
+        ("system.mem_ctrl.writeBursts", "Count", summary.writes),
+        ("system.mem_ctrl.bytesReadSys", "Byte", read_bytes),
+        ("system.mem_ctrl.bytesWrittenSys", "Byte", write_bytes),
+        ("system.mem_ctrl.dram.dramBytesRead", "Byte", read_bytes),
+        ("system.mem_ctrl.dram.dramBytesWritten", "Byte", write_bytes),
+    ] {
+        increment_stat(stats, path, unit, StatResetPolicy::Monotonic, value)?;
+    }
+    Ok(())
+}
+
 pub(super) fn emit_dram_target_stats(
     stats: &mut StatsRegistry,
     prefix: &str,
@@ -488,6 +509,26 @@ fn emit_dram_bank_stats(
         bank.low_power_exits,
         bank.low_power_exit_latency_ticks,
     )
+}
+
+fn dram_bank_read_bytes(summary: &Rem6DramSummary) -> u64 {
+    summary
+        .targets
+        .iter()
+        .flat_map(|target| &target.ports)
+        .flat_map(|port| &port.banks)
+        .map(|bank| bank.read_bytes)
+        .sum()
+}
+
+fn dram_bank_write_bytes(summary: &Rem6DramSummary) -> u64 {
+    summary
+        .targets
+        .iter()
+        .flat_map(|target| &target.ports)
+        .flat_map(|port| &port.banks)
+        .map(|bank| bank.write_bytes)
+        .sum()
 }
 
 fn emit_dram_low_power_stats(
