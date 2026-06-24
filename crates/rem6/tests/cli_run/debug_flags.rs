@@ -39,7 +39,8 @@ fn rem6_run_exec_debug_flag_emits_real_instruction_trace() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let json = stdout_json(output.stdout);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
     assert_exec_trace(
         &json,
         &[
@@ -59,6 +60,48 @@ fn rem6_run_exec_debug_flag_emits_real_instruction_trace() {
                 bytes: "73000000",
             },
         ],
+    );
+    let trace = json
+        .pointer("/debug/exec_trace")
+        .and_then(Value::as_array)
+        .expect("debug exec trace array");
+    let retired_records = trace
+        .iter()
+        .filter(|record| record.get("retired").and_then(Value::as_bool) == Some(true))
+        .count() as u64;
+    let exec_bytes = trace
+        .iter()
+        .map(|record| {
+            record
+                .get("bytes")
+                .and_then(Value::as_str)
+                .expect("exec bytes")
+                .len() as u64
+                / 2
+        })
+        .sum::<u64>();
+    assert_eq!(retired_records, trace.len() as u64);
+    assert!(exec_bytes > 0, "trace: {trace:?}");
+    assert_stat(
+        &stdout,
+        "sim.debug.exec_trace.records",
+        "Count",
+        trace.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.exec_trace.retired",
+        "Count",
+        retired_records,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.exec_trace.bytes",
+        "Byte",
+        exec_bytes,
+        "monotonic",
     );
 }
 
@@ -97,7 +140,8 @@ fn rem6_run_fetch_debug_flag_emits_real_fetch_issue_trace() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let json = stdout_json(output.stdout);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(
         json.pointer("/debug/flags").and_then(Value::as_array),
         Some(&vec![
@@ -128,11 +172,39 @@ fn rem6_run_fetch_debug_flag_emits_real_fetch_issue_trace() {
             },
         ],
     );
+    let fetch_trace = json
+        .pointer("/debug/fetch_trace")
+        .and_then(Value::as_array)
+        .expect("debug fetch trace array");
+    let fetch_bytes = fetch_trace
+        .iter()
+        .map(|record| {
+            record
+                .get("size")
+                .and_then(Value::as_u64)
+                .expect("fetch size")
+        })
+        .sum::<u64>();
+    assert!(fetch_bytes > 0, "trace: {fetch_trace:?}");
     assert_eq!(
         json.pointer("/debug/exec_trace")
             .and_then(Value::as_array)
             .map(Vec::len),
         Some(3)
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.fetch_trace.records",
+        "Count",
+        fetch_trace.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.fetch_trace.bytes",
+        "Byte",
+        fetch_bytes,
+        "monotonic",
     );
 }
 
@@ -194,11 +266,12 @@ fn rem6_run_fetch_debug_flag_keeps_fetches_across_riscv_se_stream_reset() {
 #[test]
 fn rem6_run_data_debug_flag_emits_real_data_access_trace() {
     let mut program = riscv64_program(&[
-        0x0000_0297, // auipc x5, 0
-        0x0402_8293, // addi x5, x5, 64
-        0x0052_b023, // sd x5, 0(x5)
-        0x0002_b303, // ld x6, 0(x5)
-        0x0000_0073, // ecall
+        0x0000_0297,                                   // auipc x5, 0
+        0x0402_8293,                                   // addi x5, x5, 64
+        0x0052_b023,                                   // sd x5, 0(x5)
+        0x0002_b303,                                   // ld x6, 0(x5)
+        atomic_type(0x00, false, false, 6, 5, 0x3, 7), // amoadd.d x7, x6, (x5)
+        0x0000_0073,                                   // ecall
     ]);
     program.resize(0x50, 0);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
@@ -237,9 +310,10 @@ fn rem6_run_data_debug_flag_emits_real_data_access_trace() {
         .pointer("/debug/data_trace")
         .and_then(Value::as_array)
         .expect("debug data trace array");
-    assert_eq!(trace.len(), 2);
+    assert_eq!(trace.len(), 3);
     assert_eq!(trace[0].get("kind").and_then(Value::as_str), Some("store"));
     assert_eq!(trace[1].get("kind").and_then(Value::as_str), Some("load"));
+    assert_eq!(trace[2].get("kind").and_then(Value::as_str), Some("atomic"));
     let load_records = trace
         .iter()
         .filter(|record| record.get("kind").and_then(Value::as_str) == Some("load"))
@@ -252,6 +326,12 @@ fn rem6_run_data_debug_flag_emits_real_data_access_trace() {
         .iter()
         .filter(|record| record.get("kind").and_then(Value::as_str) == Some("atomic"))
         .count() as u64;
+    let load_bytes = debug_trace_sum(trace, "load", "size");
+    let store_bytes = debug_trace_sum(trace, "store", "size");
+    let atomic_bytes = debug_trace_sum(trace, "atomic", "size");
+    assert!(load_bytes > 0, "trace: {trace:?}");
+    assert!(store_bytes > 0, "trace: {trace:?}");
+    assert!(atomic_bytes > 0, "trace: {trace:?}");
     assert_stat(
         &stdout,
         "sim.debug.data_trace.loads",
@@ -271,6 +351,27 @@ fn rem6_run_data_debug_flag_emits_real_data_access_trace() {
         "sim.debug.data_trace.atomics",
         "Count",
         atomic_records,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.data_trace.load_bytes",
+        "Byte",
+        load_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.data_trace.store_bytes",
+        "Byte",
+        store_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.data_trace.atomic_bytes",
+        "Byte",
+        atomic_bytes,
         "monotonic",
     );
     for record in trace {

@@ -235,8 +235,27 @@ impl Rem6DebugSummary {
         self.exec_trace.len() as u64
     }
 
+    pub(crate) fn exec_retired_trace_count(&self) -> u64 {
+        self.exec_trace
+            .iter()
+            .filter(|record| record.retired)
+            .count() as u64
+    }
+
+    pub(crate) fn exec_trace_byte_count(&self) -> u64 {
+        self.exec_trace.iter().fold(0u64, |acc, record| {
+            acc.saturating_add(record.bytes.len() as u64)
+        })
+    }
+
     pub(crate) fn fetch_trace_count(&self) -> u64 {
         self.fetch_trace.len() as u64
+    }
+
+    pub(crate) fn fetch_trace_byte_count(&self) -> u64 {
+        self.fetch_trace
+            .iter()
+            .fold(0u64, |acc, record| acc.saturating_add(record.size))
     }
 
     pub(crate) fn data_trace_count(&self) -> u64 {
@@ -253,6 +272,18 @@ impl Rem6DebugSummary {
 
     pub(crate) fn data_atomic_trace_count(&self) -> u64 {
         self.data_kind_trace_count("atomic")
+    }
+
+    pub(crate) fn data_load_trace_byte_count(&self) -> u64 {
+        self.data_kind_trace_byte_count("load")
+    }
+
+    pub(crate) fn data_store_trace_byte_count(&self) -> u64 {
+        self.data_kind_trace_byte_count("store")
+    }
+
+    pub(crate) fn data_atomic_trace_byte_count(&self) -> u64 {
+        self.data_kind_trace_byte_count("atomic")
     }
 
     pub(crate) fn dram_trace_count(&self) -> u64 {
@@ -530,6 +561,13 @@ impl Rem6DebugSummary {
             .iter()
             .filter(|record| record.kind == kind)
             .count() as u64
+    }
+
+    fn data_kind_trace_byte_count(&self, kind: &str) -> u64 {
+        self.data_trace
+            .iter()
+            .filter(|record| record.kind == kind)
+            .fold(0u64, |acc, record| acc.saturating_add(record.size))
     }
 
     fn dram_kind_trace_count(&self, kind: &str) -> u64 {

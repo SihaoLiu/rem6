@@ -16,6 +16,10 @@ pub(super) fn emit_debug_stats(
     )?;
     for (path, value) in [
         ("sim.debug.exec_trace.records", debug.exec_trace_count()),
+        (
+            "sim.debug.exec_trace.retired",
+            debug.exec_retired_trace_count(),
+        ),
         ("sim.debug.fetch_trace.records", debug.fetch_trace_count()),
         ("sim.debug.data_trace.records", debug.data_trace_count()),
         ("sim.debug.data_trace.loads", debug.data_load_trace_count()),
@@ -124,6 +128,41 @@ pub(super) fn emit_debug_stats(
     ] {
         increment_stat(stats, path, "Count", StatResetPolicy::Monotonic, value)?;
     }
+    increment_stat(
+        stats,
+        "sim.debug.exec_trace.bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        debug.exec_trace_byte_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.fetch_trace.bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        debug.fetch_trace_byte_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.data_trace.load_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        debug.data_load_trace_byte_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.data_trace.store_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        debug.data_store_trace_byte_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.data_trace.atomic_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        debug.data_atomic_trace_byte_count(),
+    )?;
     increment_stat(
         stats,
         "sim.debug.fabric_trace.lane.bytes",
