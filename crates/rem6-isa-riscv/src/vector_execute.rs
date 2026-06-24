@@ -1,12 +1,15 @@
 use crate::{
+    vector_fixed_point_shift::{
+        RiscvVectorFixedPointShiftInstruction, RiscvVectorFixedPointShiftOperation,
+    },
     vector_group::{
         read_mask_bit, read_register_group, register_groups_overlap, valid_register_group,
         write_register_group, VectorBinaryPlan, MAX_VECTOR_GROUP_BYTES,
     },
     vector_lane_op::LaneBinaryOp,
     RiscvHartState, RiscvInstruction, RiscvVectorConfig, RiscvVectorExtensionFactor,
-    RiscvVectorMaskMode, RiscvVectorWholeMoveInstruction, VectorRegister,
-    RISCV_VECTOR_REGISTER_BYTES,
+    RiscvVectorFixedRoundingMode, RiscvVectorMaskMode, RiscvVectorWholeMoveInstruction,
+    VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 
 pub(crate) fn execute_vector_integer_binary(
@@ -158,6 +161,9 @@ pub(crate) fn execute_vector_integer_binary(
         }
         RiscvInstruction::VectorNarrow(instruction) => {
             crate::vector_narrow_execute::execute(hart, instruction)
+        }
+        RiscvInstruction::VectorFixedPointShift(instruction) => {
+            execute_vector_fixed_point_shift(hart, instruction)
         }
         RiscvInstruction::VectorZeroExtend {
             vd,
@@ -376,6 +382,68 @@ pub(crate) fn execute_vector_integer_binary(
             )
         }
         _ => false,
+    }
+}
+
+fn execute_vector_fixed_point_shift(
+    hart: &mut RiscvHartState,
+    instruction: RiscvVectorFixedPointShiftInstruction,
+) -> bool {
+    let rounding_mode = hart.vector_fixed_point().rounding_mode();
+    match instruction {
+        RiscvVectorFixedPointShiftInstruction::Vv {
+            vd,
+            vs2,
+            vs1,
+            operation,
+        } => execute_vector_binary_vv(
+            hart,
+            vd,
+            vs1,
+            vs2,
+            fixed_point_shift_operation(operation, rounding_mode),
+        ),
+        RiscvVectorFixedPointShiftInstruction::Vx {
+            vd,
+            vs2,
+            rs1,
+            operation,
+        } => {
+            let scalar = hart.read(rs1);
+            execute_vector_binary_vx(
+                hart,
+                vd,
+                vs2,
+                scalar,
+                fixed_point_shift_operation(operation, rounding_mode),
+            )
+        }
+        RiscvVectorFixedPointShiftInstruction::Vi {
+            vd,
+            vs2,
+            shamt,
+            operation,
+        } => execute_vector_binary_vx(
+            hart,
+            vd,
+            vs2,
+            u64::from(shamt),
+            fixed_point_shift_operation(operation, rounding_mode),
+        ),
+    }
+}
+
+fn fixed_point_shift_operation(
+    operation: RiscvVectorFixedPointShiftOperation,
+    rounding_mode: RiscvVectorFixedRoundingMode,
+) -> LaneBinaryOp {
+    match operation {
+        RiscvVectorFixedPointShiftOperation::ShiftRightLogical => {
+            LaneBinaryOp::ScalingShiftRightLogical { rounding_mode }
+        }
+        RiscvVectorFixedPointShiftOperation::ShiftRightArithmetic => {
+            LaneBinaryOp::ScalingShiftRightArithmetic { rounding_mode }
+        }
     }
 }
 

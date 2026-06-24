@@ -2,9 +2,9 @@ use crate::decode_csr::decode_csr;
 use crate::encoding::{b_imm, funct3, funct7, i_imm, rd, rs1, rs2, shamt32, shamt64, shift_funct6};
 use crate::{
     FloatRegister, Immediate, RiscvError, RiscvFenceSet, RiscvInstruction,
-    RiscvVectorExtensionFactor, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
-    RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode,
-    RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
+    RiscvVectorExtensionFactor, RiscvVectorFixedPointShiftInstruction, RiscvVectorFloatInstruction,
+    RiscvVectorFloatMulAddMode, RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction,
+    RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
     RiscvVectorNarrowInstruction, RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction,
     RiscvVectorWholeMoveInstruction, VectorRegister,
 };
@@ -520,6 +520,20 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs1: vector_register(raw, 15),
             vs2: vector_register(raw, 20),
         }),
+        (0x0, 0b101010, true) => Ok(RiscvInstruction::VectorFixedPointShift(
+            RiscvVectorFixedPointShiftInstruction::shift_right_logical_vv(
+                vector_register(raw, 7),
+                vector_register(raw, 20),
+                vector_register(raw, 15),
+            ),
+        )),
+        (0x0, 0b101011, true) => Ok(RiscvInstruction::VectorFixedPointShift(
+            RiscvVectorFixedPointShiftInstruction::shift_right_arithmetic_vv(
+                vector_register(raw, 7),
+                vector_register(raw, 20),
+                vector_register(raw, 15),
+            ),
+        )),
         (0x2, 0b100100, true) => Ok(RiscvInstruction::VectorMultiplyHighUnsignedVv {
             vd: vector_register(raw, 7),
             vs1: vector_register(raw, 15),
@@ -846,6 +860,20 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             shamt: vector_unsigned_imm5(raw),
         }),
+        (0x3, 0b101010, true) => Ok(RiscvInstruction::VectorFixedPointShift(
+            RiscvVectorFixedPointShiftInstruction::shift_right_logical_vi(
+                vector_register(raw, 7),
+                vector_register(raw, 20),
+                vector_unsigned_imm5(raw),
+            ),
+        )),
+        (0x3, 0b101011, true) => Ok(RiscvInstruction::VectorFixedPointShift(
+            RiscvVectorFixedPointShiftInstruction::shift_right_arithmetic_vi(
+                vector_register(raw, 7),
+                vector_register(raw, 20),
+                vector_unsigned_imm5(raw),
+            ),
+        )),
         (0x4, 0, _) => Ok(RiscvInstruction::VectorAddVx {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
@@ -982,6 +1010,20 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             rs1: rs1(raw),
         }),
+        (0x4, 0b101010, true) => Ok(RiscvInstruction::VectorFixedPointShift(
+            RiscvVectorFixedPointShiftInstruction::shift_right_logical_vx(
+                vector_register(raw, 7),
+                vector_register(raw, 20),
+                rs1(raw),
+            ),
+        )),
+        (0x4, 0b101011, true) => Ok(RiscvInstruction::VectorFixedPointShift(
+            RiscvVectorFixedPointShiftInstruction::shift_right_arithmetic_vx(
+                vector_register(raw, 7),
+                vector_register(raw, 20),
+                rs1(raw),
+            ),
+        )),
         (0x6, 0b001110, true) => Ok(RiscvInstruction::VectorSlide(
             RiscvVectorSlideInstruction::OneUpVx {
                 vd: vector_register(raw, 7),

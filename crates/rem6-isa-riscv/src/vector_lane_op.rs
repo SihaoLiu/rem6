@@ -1,3 +1,8 @@
+use crate::{
+    vector::RiscvVectorFixedRoundingMode,
+    vector_fixed_point_shift::{round_signed, round_unsigned},
+};
+
 #[derive(Clone, Copy)]
 pub(crate) enum LaneBinaryOp {
     Add,
@@ -21,6 +26,12 @@ pub(crate) enum LaneBinaryOp {
     ShiftLeftLogical,
     ShiftRightLogical,
     ShiftRightArithmetic,
+    ScalingShiftRightLogical {
+        rounding_mode: RiscvVectorFixedRoundingMode,
+    },
+    ScalingShiftRightArithmetic {
+        rounding_mode: RiscvVectorFixedRoundingMode,
+    },
 }
 
 impl LaneBinaryOp {
@@ -68,6 +79,12 @@ impl LaneBinaryOp {
             Self::ShiftLeftLogical => left << shift,
             Self::ShiftRightLogical => left >> shift,
             Self::ShiftRightArithmetic => ((left as i8) >> shift) as u8,
+            Self::ScalingShiftRightLogical { rounding_mode } => {
+                scaling_shift_right_unsigned(u128::from(left), shift, rounding_mode) as u8
+            }
+            Self::ScalingShiftRightArithmetic { rounding_mode } => {
+                scaling_shift_right_signed(i128::from(left as i8), shift, rounding_mode) as u8
+            }
         }
     }
 
@@ -115,6 +132,12 @@ impl LaneBinaryOp {
             Self::ShiftLeftLogical => left << shift,
             Self::ShiftRightLogical => left >> shift,
             Self::ShiftRightArithmetic => ((left as i16) >> shift) as u16,
+            Self::ScalingShiftRightLogical { rounding_mode } => {
+                scaling_shift_right_unsigned(u128::from(left), shift, rounding_mode) as u16
+            }
+            Self::ScalingShiftRightArithmetic { rounding_mode } => {
+                scaling_shift_right_signed(i128::from(left as i16), shift, rounding_mode) as u16
+            }
         }
     }
 
@@ -162,6 +185,12 @@ impl LaneBinaryOp {
             Self::ShiftLeftLogical => left << shift,
             Self::ShiftRightLogical => left >> shift,
             Self::ShiftRightArithmetic => ((left as i32) >> shift) as u32,
+            Self::ScalingShiftRightLogical { rounding_mode } => {
+                scaling_shift_right_unsigned(u128::from(left), shift, rounding_mode) as u32
+            }
+            Self::ScalingShiftRightArithmetic { rounding_mode } => {
+                scaling_shift_right_signed(i128::from(left as i32), shift, rounding_mode) as u32
+            }
         }
     }
 
@@ -209,8 +238,34 @@ impl LaneBinaryOp {
             Self::ShiftLeftLogical => left << shift,
             Self::ShiftRightLogical => left >> shift,
             Self::ShiftRightArithmetic => ((left as i64) >> shift) as u64,
+            Self::ScalingShiftRightLogical { rounding_mode } => {
+                scaling_shift_right_unsigned(u128::from(left), shift, rounding_mode) as u64
+            }
+            Self::ScalingShiftRightArithmetic { rounding_mode } => {
+                scaling_shift_right_signed(i128::from(left as i64), shift, rounding_mode) as u64
+            }
         }
     }
+}
+
+fn scaling_shift_right_unsigned(
+    value: u128,
+    shift: u32,
+    rounding_mode: RiscvVectorFixedRoundingMode,
+) -> u128 {
+    round_unsigned(value, shift, rounding_mode)
+        .expect("single-width unsigned vector scaling shift cannot overflow")
+        >> shift
+}
+
+fn scaling_shift_right_signed(
+    value: i128,
+    shift: u32,
+    rounding_mode: RiscvVectorFixedRoundingMode,
+) -> u128 {
+    (round_signed(value, shift, rounding_mode)
+        .expect("single-width signed vector scaling shift cannot overflow")
+        >> shift) as u128
 }
 
 fn multiply_high_unsigned(left: u128, right: u128, element_bits: u32) -> u128 {

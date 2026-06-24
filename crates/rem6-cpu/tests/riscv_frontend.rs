@@ -8,14 +8,15 @@ use rem6_cpu::{
     RiscvDataAccessEventKind, RiscvLoadReservation,
 };
 use rem6_isa_riscv::{
-    FloatRegister, MemoryAccessKind, MemoryWidth, Register, RiscvFenceSet, RiscvInstruction,
-    RiscvMemoryOrdering, RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange, RiscvPmpAccessKind,
-    RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode, RiscvStatusWord,
-    RiscvTrap, RiscvTrapKind, RiscvVectorConfig, RiscvVectorGatherInstruction,
-    RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction,
-    RiscvVectorMaskReductionInstruction, RiscvVectorNarrowInstruction,
-    RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction, RiscvVectorWholeMoveInstruction,
-    VectorRegister,
+    FloatRegister, MemoryAccessKind, MemoryWidth, Register, RiscvCsrOp, RiscvFenceSet,
+    RiscvInstruction, RiscvMemoryOrdering, RiscvPmaAccessKind, RiscvPmaError, RiscvPmaRange,
+    RiscvPmpAccessKind, RiscvPmpAddressMode, RiscvPmpConfig, RiscvPmpError, RiscvPrivilegeMode,
+    RiscvStatusWord, RiscvTrap, RiscvTrapKind, RiscvVectorConfig, RiscvVectorFixedPointCsr,
+    RiscvVectorFixedPointCsrInstruction, RiscvVectorFixedPointShiftInstruction,
+    RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode,
+    RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
+    RiscvVectorNarrowInstruction, RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction,
+    RiscvVectorWholeMoveInstruction, VectorRegister,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{
@@ -395,6 +396,22 @@ fn vsrl_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
 
 fn vsra_vi_type(vs2: u8, shamt: u8, vd: u8) -> u32 {
     vector_vi_type(0b101001, vs2, shamt as i8, vd)
+}
+
+fn vssrl_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b101010, vs2, vs1, vd)
+}
+
+fn vssrl_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b101010, vs2, rs1, vd)
+}
+
+fn vssra_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b101011, vs2, vs1, vd)
+}
+
+fn vssra_vi_type(vs2: u8, shamt: u8, vd: u8) -> u32 {
+    vector_vi_type(0b101011, vs2, shamt as i8, vd)
 }
 
 fn vminu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -2061,6 +2078,114 @@ fn riscv_core_driver_executes_vector_shift_operations_from_fetch_stream() {
     assert_eq!(
         core.read_vector_register(vreg(9)),
         lanes_u32([0, 0, 0, 0xcccc_cccc])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_fixed_point_shift_operations_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 4);
+    core.write_register(reg(8), 1);
+    core.write_vector_register(vreg(1), bytes_with_u16([1, 2, 17, 15, 0, 0, 0, 0]));
+    core.write_vector_register(
+        vreg(2),
+        bytes_with_u16([5, 0x01ff, 4, 0xffff, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    core.write_vector_register(
+        vreg(5),
+        bytes_with_u16([5, 0xfffb, 0x7fff, 0x8000, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    core.write_vector_register(
+        vreg(7),
+        bytes_with_u16([5, 7, 8, 0xffff, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    core.write_vector_register(
+        vreg(11),
+        bytes_with_u16([5, 7, 0xfffb, 0xfff9, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    core.write_vector_register(vreg(4), bytes_with_u16([0xeeee; 8]));
+    core.write_vector_register(vreg(6), bytes_with_u16([0xdddd; 8]));
+    core.write_vector_register(vreg(9), bytes_with_u16([0xcccc; 8]));
+    core.write_vector_register(vreg(12), bytes_with_u16([0xbbbb; 8]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            csr_type(0x00a, 1, 0x5, 0),
+            vsetvli_type(0xc8, 10, 5),
+            vssrl_vv_type(2, 1, 4),
+            vssra_vv_type(5, 1, 6),
+            vssrl_vx_type(7, 8, 9),
+            vssra_vi_type(11, 1, 12),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorFixedPointCsr(RiscvVectorFixedPointCsrInstruction::immediate(
+            reg(0),
+            RiscvVectorFixedPointCsr::Vxrm,
+            RiscvCsrOp::Write,
+            1,
+        ))
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(5),
+            rs1: reg(10),
+            vtype: 0xc8,
+        }
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorFixedPointShift(
+            RiscvVectorFixedPointShiftInstruction::shift_right_logical_vv(
+                vreg(4),
+                vreg(2),
+                vreg(1),
+            ),
+        )
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorFixedPointShift(
+            RiscvVectorFixedPointShiftInstruction::shift_right_arithmetic_vv(
+                vreg(6),
+                vreg(5),
+                vreg(1),
+            ),
+        )
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorFixedPointShift(
+            RiscvVectorFixedPointShiftInstruction::shift_right_logical_vx(vreg(9), vreg(7), reg(8),),
+        )
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorFixedPointShift(
+            RiscvVectorFixedPointShiftInstruction::shift_right_arithmetic_vi(vreg(12), vreg(11), 1,),
+        )
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(4)),
+        bytes_with_u16([2, 0x80, 2, 2, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(6)),
+        bytes_with_u16([2, 0xffff, 0x4000, 0xffff, 0xdddd, 0xdddd, 0xdddd, 0xdddd])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(9)),
+        bytes_with_u16([2, 4, 4, 0x8000, 0xcccc, 0xcccc, 0xcccc, 0xcccc])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(12)),
+        bytes_with_u16([2, 4, 0xfffe, 0xfffc, 0xbbbb, 0xbbbb, 0xbbbb, 0xbbbb])
     );
 }
 

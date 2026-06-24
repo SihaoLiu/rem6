@@ -1,7 +1,10 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::{FloatRegister, MemoryWidth, Register, RiscvVectorMaskMode, VectorRegister};
+use crate::{
+    vector_fixed_point_shift::{round_signed, round_unsigned, validate_fixed_point_shift},
+    FloatRegister, MemoryWidth, Register, RiscvVectorMaskMode, VectorRegister,
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct RiscvInstructionFlags {
@@ -1090,94 +1093,6 @@ fn signed_min(width: MemoryWidth) -> i128 {
 
 fn signed_max(width: MemoryWidth) -> i128 {
     (1_i128 << (element_bits(width) - 1)) - 1
-}
-
-fn validate_fixed_point_shift(shift: u32) -> Result<(), RiscvVectorError> {
-    if shift >= 128 {
-        return Err(RiscvVectorError::InvalidFixedPointShift { shift });
-    }
-    Ok(())
-}
-
-fn round_unsigned(
-    value: u128,
-    shift: u32,
-    rounding_mode: RiscvVectorFixedRoundingMode,
-) -> Result<u128, RiscvVectorError> {
-    if shift == 0 {
-        return Ok(value);
-    }
-
-    let lsb = 1_u128 << shift;
-    let lsb_half = lsb >> 1;
-    match rounding_mode {
-        RiscvVectorFixedRoundingMode::RoundNearestUp => value
-            .checked_add(lsb_half)
-            .ok_or(RiscvVectorError::FixedPointRoundingOverflow),
-        RiscvVectorFixedRoundingMode::RoundNearestEven => {
-            let round =
-                (value & lsb_half) != 0 && ((value & (lsb_half - 1)) != 0 || (value & lsb) != 0);
-            if round {
-                value
-                    .checked_add(lsb)
-                    .ok_or(RiscvVectorError::FixedPointRoundingOverflow)
-            } else {
-                Ok(value)
-            }
-        }
-        RiscvVectorFixedRoundingMode::RoundDown => Ok(value),
-        RiscvVectorFixedRoundingMode::RoundToOdd => {
-            if value & (lsb - 1) != 0 {
-                Ok(value | lsb)
-            } else {
-                Ok(value)
-            }
-        }
-    }
-}
-
-fn round_signed(
-    value: i128,
-    shift: u32,
-    rounding_mode: RiscvVectorFixedRoundingMode,
-) -> Result<i128, RiscvVectorError> {
-    if shift == 0 {
-        return Ok(value);
-    }
-
-    let value_bits = value as u128;
-    let lsb = 1_u128 << shift;
-    let lsb_half = lsb >> 1;
-    match rounding_mode {
-        RiscvVectorFixedRoundingMode::RoundNearestUp => {
-            let increment = i128::try_from(lsb_half)
-                .map_err(|_| RiscvVectorError::FixedPointRoundingOverflow)?;
-            value
-                .checked_add(increment)
-                .ok_or(RiscvVectorError::FixedPointRoundingOverflow)
-        }
-        RiscvVectorFixedRoundingMode::RoundNearestEven => {
-            let round = (value_bits & lsb_half) != 0
-                && ((value_bits & (lsb_half - 1)) != 0 || (value_bits & lsb) != 0);
-            if round {
-                let increment = i128::try_from(lsb)
-                    .map_err(|_| RiscvVectorError::FixedPointRoundingOverflow)?;
-                value
-                    .checked_add(increment)
-                    .ok_or(RiscvVectorError::FixedPointRoundingOverflow)
-            } else {
-                Ok(value)
-            }
-        }
-        RiscvVectorFixedRoundingMode::RoundDown => Ok(value),
-        RiscvVectorFixedRoundingMode::RoundToOdd => {
-            if value_bits & (lsb - 1) != 0 {
-                Ok((value_bits | lsb) as i128)
-            } else {
-                Ok(value)
-            }
-        }
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

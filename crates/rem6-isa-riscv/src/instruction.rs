@@ -1,9 +1,8 @@
 use crate::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryWidth, Register, RiscvCounterCsr,
     RiscvEnvironmentConfigCsrInstruction, RiscvFenceSet, RiscvFloatCsr, RiscvFloatRoundingMode,
-    RiscvInterruptCsr, RiscvMachineInformationCsrInstruction, RiscvMachineTrapCsr, RiscvPseudoOp,
-    RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsrInstruction, RiscvVectorMaskMode,
-    VectorRegister,
+    RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvPseudoOp, RiscvStatusCsr, RiscvSupervisorTrapCsr,
+    RiscvTranslationCsrInstruction, RiscvVectorMaskMode, VectorRegister,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -450,6 +449,7 @@ pub enum RiscvInstruction {
     },
     VectorCompressVm(VectorRegister, VectorRegister, VectorRegister),
     VectorNarrow(crate::vector::RiscvVectorNarrowInstruction),
+    VectorFixedPointShift(crate::vector_fixed_point_shift::RiscvVectorFixedPointShiftInstruction),
     VectorZeroExtend {
         vd: VectorRegister,
         vs2: VectorRegister,
@@ -1083,7 +1083,7 @@ pub enum RiscvInstruction {
     Gem5PseudoOp {
         op: RiscvPseudoOp,
     },
-    MachineInformationCsr(RiscvMachineInformationCsrInstruction),
+    MachineInformationCsr(crate::csr::RiscvMachineInformationCsrInstruction),
     EnvironmentConfigCsr(RiscvEnvironmentConfigCsrInstruction),
     ReadCounterCsr {
         rd: Register,

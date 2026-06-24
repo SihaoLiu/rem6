@@ -29,6 +29,7 @@ mod vector_compress_execute;
 mod vector_config_execute;
 mod vector_execute;
 mod vector_fixed_point_csr;
+mod vector_fixed_point_shift;
 mod vector_float_execute;
 mod vector_gather_execute;
 mod vector_group;
@@ -99,6 +100,9 @@ pub use vector::{
     RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult,
     RiscvVectorNarrowInstruction, RiscvVectorNarrowOperation, RiscvVectorScalarMoveInstruction,
     RiscvVectorSlideInstruction, RiscvVectorTailPolicy, RiscvVectorWholeMoveInstruction,
+};
+pub use vector_fixed_point_shift::{
+    RiscvVectorFixedPointShiftInstruction, RiscvVectorFixedPointShiftOperation,
 };
 pub use vector_mask_mode::RiscvVectorMaskMode;
 
@@ -531,6 +535,7 @@ impl RiscvHartState {
             | RiscvInstruction::VectorMergeVim { .. }
             | RiscvInstruction::VectorCompressVm(..)
             | RiscvInstruction::VectorNarrow(..)
+            | RiscvInstruction::VectorFixedPointShift(..)
             | RiscvInstruction::VectorZeroExtend { .. }
             | RiscvInstruction::VectorSignExtend { .. }
             | RiscvInstruction::VectorMoveVv { .. }
