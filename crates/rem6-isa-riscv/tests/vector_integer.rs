@@ -1,10 +1,10 @@
 use rem6_isa_riscv::{
     Register, RegisterWrite, RiscvError, RiscvHartState, RiscvInstruction, RiscvTrap,
-    RiscvTrapKind, RiscvVectorConfig, RiscvVectorFixedPointShiftInstruction,
-    RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, RiscvVectorGatherInstruction,
-    RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction,
-    RiscvVectorMaskReductionInstruction, RiscvVectorSaturatingInstruction,
-    RiscvVectorSlideInstruction, VectorRegister,
+    RiscvTrapKind, RiscvVectorAveragingInstruction, RiscvVectorConfig,
+    RiscvVectorFixedPointShiftInstruction, RiscvVectorFixedPointState,
+    RiscvVectorFixedRoundingMode, RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction,
+    RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
+    RiscvVectorSaturatingInstruction, RiscvVectorSlideInstruction, VectorRegister,
 };
 
 fn reg(index: u8) -> Register {
@@ -307,6 +307,38 @@ fn vssra_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
 
 fn vssra_vi_type(vs2: u8, shamt: u8, vd: u8) -> u32 {
     vector_vi_type(0b101011, vs2, shamt as i8, vd)
+}
+
+fn vaaddu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b001000, vs2, vs1, vd)
+}
+
+fn vaaddu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b001000, vs2, rs1, vd)
+}
+
+fn vaadd_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b001001, vs2, vs1, vd)
+}
+
+fn vaadd_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b001001, vs2, rs1, vd)
+}
+
+fn vasubu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b001010, vs2, vs1, vd)
+}
+
+fn vasubu_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b001010, vs2, rs1, vd)
+}
+
+fn vasub_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b001011, vs2, vs1, vd)
+}
+
+fn vasub_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b001011, vs2, rs1, vd)
 }
 
 fn vsaddu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -1031,6 +1063,98 @@ fn decoder_accepts_unmasked_vector_fixed_point_shift_operations() {
             RiscvVectorFixedPointShiftInstruction::shift_right_arithmetic_vi(vreg(3), vreg(4), 5,),
         )
     );
+}
+
+#[test]
+fn decoder_accepts_unmasked_vector_averaging_add_sub_operations() {
+    assert_eq!(vaaddu_vv_type(4, 5, 3), 0x2242_a1d7);
+    assert_eq!(vaadd_vv_type(4, 5, 3), 0x2642_a1d7);
+    assert_eq!(vasubu_vv_type(4, 5, 3), 0x2a42_a1d7);
+    assert_eq!(vasub_vv_type(4, 5, 3), 0x2e42_a1d7);
+    assert_eq!(vaaddu_vx_type(4, 5, 3), 0x2242_e1d7);
+    assert_eq!(vaadd_vx_type(4, 5, 3), 0x2642_e1d7);
+    assert_eq!(vasubu_vx_type(4, 5, 3), 0x2a42_e1d7);
+    assert_eq!(vasub_vx_type(4, 5, 3), 0x2e42_e1d7);
+
+    assert_eq!(
+        RiscvInstruction::decode(vaaddu_vv_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::add_unsigned_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vaadd_vv_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::add_signed_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vasubu_vv_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::sub_unsigned_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vasub_vv_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::sub_signed_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vaaddu_vx_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::add_unsigned_vx(
+            vreg(3),
+            vreg(4),
+            reg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vaadd_vx_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::add_signed_vx(
+            vreg(3),
+            vreg(4),
+            reg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vasubu_vx_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::sub_unsigned_vx(
+            vreg(3),
+            vreg(4),
+            reg(5),
+        ))
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vasub_vx_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::sub_signed_vx(
+            vreg(3),
+            vreg(4),
+            reg(5),
+        ))
+    );
+}
+
+#[test]
+fn decoder_rejects_masked_vector_averaging_add_sub_operations() {
+    for raw in [
+        vaaddu_vv_type(4, 5, 3) & !(1 << 25),
+        vaadd_vx_type(4, 5, 3) & !(1 << 25),
+        vasubu_vv_type(4, 5, 3) & !(1 << 25),
+        vasub_vx_type(4, 5, 3) & !(1 << 25),
+    ] {
+        assert_eq!(
+            RiscvInstruction::decode(raw),
+            Err(RiscvError::UnknownEncoding { raw })
+        );
+    }
 }
 
 #[test]
@@ -2295,6 +2419,210 @@ fn hart_executes_vector_fixed_point_shift_vv_vx_and_vi_forms() {
         )
     );
     assert!(vi.vector_fixed_point().vxsat());
+}
+
+#[test]
+fn hart_executes_vector_averaging_add_sub_vv_and_vx_forms() {
+    let mut add_unsigned_vv = RiscvHartState::new(0x8124);
+    add_unsigned_vv.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    add_unsigned_vv.write_vector(
+        vreg(4),
+        bytes_with_u16([5, 6, 7, 8, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    add_unsigned_vv.write_vector(vreg(5), bytes_with_u16([0, 1, 2, 3, 0, 0, 0, 0]));
+    add_unsigned_vv.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let add_unsigned_vv_record = add_unsigned_vv
+        .execute(RiscvInstruction::decode(vaaddu_vv_type(4, 5, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        add_unsigned_vv.read_vector(vreg(3)),
+        bytes_with_u16([3, 4, 5, 6, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        add_unsigned_vv_record.instruction(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::add_unsigned_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+    assert!(!add_unsigned_vv.vector_fixed_point().vxsat());
+
+    let mut add_unsigned_vx = RiscvHartState::new(0x8128);
+    add_unsigned_vx.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    let mut preserved_fixed =
+        RiscvVectorFixedPointState::new(RiscvVectorFixedRoundingMode::RoundDown);
+    preserved_fixed.write_vxsat_bit(true);
+    add_unsigned_vx.set_vector_fixed_point(preserved_fixed);
+    add_unsigned_vx.write(reg(6), 1);
+    add_unsigned_vx.write_vector(
+        vreg(4),
+        bytes_with_u16([5, 6, 7, 8, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    add_unsigned_vx.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let add_unsigned_vx_record = add_unsigned_vx
+        .execute(RiscvInstruction::decode(vaaddu_vx_type(4, 6, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        add_unsigned_vx.read_vector(vreg(3)),
+        bytes_with_u16([3, 3, 4, 4, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        add_unsigned_vx_record.instruction(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::add_unsigned_vx(
+            vreg(3),
+            vreg(4),
+            reg(6),
+        ))
+    );
+    assert!(add_unsigned_vx.vector_fixed_point().vxsat());
+
+    let mut add_signed_vv = RiscvHartState::new(0x812c);
+    add_signed_vv.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    add_signed_vv.write_vector(
+        vreg(4),
+        bytes_with_u16([2, 0xfffc, 6, 0xfff8, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    add_signed_vv.write_vector(vreg(5), bytes_with_u16([4, 2, 0xfffe, 0xfffc, 0, 0, 0, 0]));
+    add_signed_vv.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let add_signed_vv_record = add_signed_vv
+        .execute(RiscvInstruction::decode(vaadd_vv_type(4, 5, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        add_signed_vv.read_vector(vreg(3)),
+        bytes_with_u16([3, 0xffff, 2, 0xfffa, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        add_signed_vv_record.instruction(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::add_signed_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+
+    let mut add_signed_vx = RiscvHartState::new(0x8130);
+    add_signed_vx.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    add_signed_vx.write(reg(6), 1);
+    add_signed_vx.write_vector(
+        vreg(4),
+        bytes_with_u16([5, 7, 0xfffb, 0xfff9, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    add_signed_vx.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let add_signed_vx_record = add_signed_vx
+        .execute(RiscvInstruction::decode(vaadd_vx_type(4, 6, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        add_signed_vx.read_vector(vreg(3)),
+        bytes_with_u16([3, 4, 0xfffe, 0xfffd, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        add_signed_vx_record.instruction(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::add_signed_vx(
+            vreg(3),
+            vreg(4),
+            reg(6),
+        ))
+    );
+
+    let mut sub_unsigned_vv = RiscvHartState::new(0x8134);
+    sub_unsigned_vv.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    sub_unsigned_vv.write_vector(
+        vreg(4),
+        bytes_with_u16([9, 8, 0, 6, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    sub_unsigned_vv.write_vector(vreg(5), bytes_with_u16([2, 1, 1, 3, 0, 0, 0, 0]));
+    sub_unsigned_vv.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let sub_unsigned_vv_record = sub_unsigned_vv
+        .execute(RiscvInstruction::decode(vasubu_vv_type(4, 5, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        sub_unsigned_vv.read_vector(vreg(3)),
+        bytes_with_u16([4, 4, 0x8000, 2, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        sub_unsigned_vv_record.instruction(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::sub_unsigned_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+
+    let mut sub_unsigned_vx = RiscvHartState::new(0x8138);
+    sub_unsigned_vx.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    sub_unsigned_vx.set_vector_fixed_point(RiscvVectorFixedPointState::new(
+        RiscvVectorFixedRoundingMode::RoundDown,
+    ));
+    sub_unsigned_vx.write(reg(6), 3);
+    sub_unsigned_vx.write_vector(
+        vreg(4),
+        bytes_with_u16([9, 8, 1, 6, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    sub_unsigned_vx.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let sub_unsigned_vx_record = sub_unsigned_vx
+        .execute(RiscvInstruction::decode(vasubu_vx_type(4, 6, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        sub_unsigned_vx.read_vector(vreg(3)),
+        bytes_with_u16([3, 2, 0x7fff, 1, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        sub_unsigned_vx_record.instruction(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::sub_unsigned_vx(
+            vreg(3),
+            vreg(4),
+            reg(6),
+        ))
+    );
+
+    let mut sub_signed_vv = RiscvHartState::new(0x813c);
+    sub_signed_vv.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    sub_signed_vv.write_vector(
+        vreg(4),
+        bytes_with_u16([8, 0xfff8, 4, 0x7fff, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    sub_signed_vv.write_vector(vreg(5), bytes_with_u16([2, 2, 0xfffe, 0x8000, 0, 0, 0, 0]));
+    sub_signed_vv.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let sub_signed_vv_record = sub_signed_vv
+        .execute(RiscvInstruction::decode(vasub_vv_type(4, 5, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        sub_signed_vv.read_vector(vreg(3)),
+        bytes_with_u16([3, 0xfffb, 3, 0x8000, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        sub_signed_vv_record.instruction(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::sub_signed_vv(
+            vreg(3),
+            vreg(4),
+            vreg(5),
+        ))
+    );
+
+    let mut sub_signed_vx = RiscvHartState::new(0x8140);
+    sub_signed_vx.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    sub_signed_vx.write(reg(6), 2);
+    sub_signed_vx.write_vector(
+        vreg(4),
+        bytes_with_u16([8, 0xfff8, 4, 0xfffc, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    sub_signed_vx.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let sub_signed_vx_record = sub_signed_vx
+        .execute(RiscvInstruction::decode(vasub_vx_type(4, 6, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        sub_signed_vx.read_vector(vreg(3)),
+        bytes_with_u16([3, 0xfffb, 1, 0xfffd, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        sub_signed_vx_record.instruction(),
+        RiscvInstruction::VectorAveraging(RiscvVectorAveragingInstruction::sub_signed_vx(
+            vreg(3),
+            vreg(4),
+            reg(6),
+        ))
+    );
 }
 
 #[test]

@@ -25,6 +25,7 @@ mod translation_csr;
 mod trap;
 mod types;
 mod vector;
+mod vector_averaging;
 mod vector_compress_execute;
 mod vector_config_execute;
 mod vector_execute;
@@ -102,6 +103,7 @@ pub use vector::{
     RiscvVectorNarrowInstruction, RiscvVectorNarrowOperation, RiscvVectorScalarMoveInstruction,
     RiscvVectorSlideInstruction, RiscvVectorTailPolicy, RiscvVectorWholeMoveInstruction,
 };
+pub use vector_averaging::RiscvVectorAveragingInstruction;
 pub use vector_fixed_point_shift::RiscvVectorFixedPointShiftInstruction;
 pub use vector_fixed_point_shift::RiscvVectorFixedPointShiftOperation;
 pub use vector_mask_mode::RiscvVectorMaskMode;
@@ -536,6 +538,7 @@ impl RiscvHartState {
             | RiscvInstruction::VectorMergeVim { .. }
             | RiscvInstruction::VectorCompressVm(..)
             | RiscvInstruction::VectorNarrow(..)
+            | RiscvInstruction::VectorAveraging(..)
             | RiscvInstruction::VectorFixedPointShift(..)
             | RiscvInstruction::VectorSaturating(..)
             | RiscvInstruction::VectorZeroExtend { .. }

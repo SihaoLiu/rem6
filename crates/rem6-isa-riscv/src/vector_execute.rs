@@ -162,6 +162,9 @@ pub(crate) fn execute_vector_integer_binary(
         RiscvInstruction::VectorNarrow(instruction) => {
             crate::vector_narrow_execute::execute(hart, instruction)
         }
+        RiscvInstruction::VectorAveraging(instruction) => {
+            crate::vector_averaging::execute(hart, instruction)
+        }
         RiscvInstruction::VectorFixedPointShift(instruction) => {
             execute_vector_fixed_point_shift(hart, instruction)
         }

@@ -538,6 +538,10 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 vector_register(raw, 15),
             ),
         )),
+        (0x2, 0b001000, true) => Ok(crate::vector_averaging::decode_add_unsigned_vv(raw)),
+        (0x2, 0b001001, true) => Ok(crate::vector_averaging::decode_add_signed_vv(raw)),
+        (0x2, 0b001010, true) => Ok(crate::vector_averaging::decode_sub_unsigned_vv(raw)),
+        (0x2, 0b001011, true) => Ok(crate::vector_averaging::decode_sub_signed_vv(raw)),
         (0x2, 0b100100, true) => Ok(RiscvInstruction::VectorMultiplyHighUnsignedVv {
             vd: vector_register(raw, 7),
             vs1: vector_register(raw, 15),
@@ -1034,6 +1038,10 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 rs1(raw),
             ),
         )),
+        (0x6, 0b001000, true) => Ok(crate::vector_averaging::decode_add_unsigned_vx(raw)),
+        (0x6, 0b001001, true) => Ok(crate::vector_averaging::decode_add_signed_vx(raw)),
+        (0x6, 0b001010, true) => Ok(crate::vector_averaging::decode_sub_unsigned_vx(raw)),
+        (0x6, 0b001011, true) => Ok(crate::vector_averaging::decode_sub_signed_vx(raw)),
         (0x6, 0b001110, true) => Ok(RiscvInstruction::VectorSlide(
             RiscvVectorSlideInstruction::OneUpVx {
                 vd: vector_register(raw, 7),

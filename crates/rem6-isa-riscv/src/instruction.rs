@@ -449,6 +449,7 @@ pub enum RiscvInstruction {
     },
     VectorCompressVm(VectorRegister, VectorRegister, VectorRegister),
     VectorNarrow(crate::vector::RiscvVectorNarrowInstruction),
+    VectorAveraging(crate::vector_averaging::RiscvVectorAveragingInstruction),
     VectorFixedPointShift(crate::vector_fixed_point_shift::RiscvVectorFixedPointShiftInstruction),
     VectorSaturating(crate::vector_saturating::RiscvVectorSaturatingInstruction),
     VectorZeroExtend {
