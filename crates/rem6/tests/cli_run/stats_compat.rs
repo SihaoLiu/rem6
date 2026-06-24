@@ -114,7 +114,7 @@ fn rem6_run_text_stats_emit_gem5_instruction_alias() {
 }
 
 #[test]
-fn rem6_run_text_stats_emit_gem5_cpu_numinsts_and_numcycles_aliases() {
+fn rem6_run_text_stats_emit_gem5_cpu_instruction_cycle_and_rate_aliases() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
         0x0000_0073, // ecall
@@ -157,10 +157,24 @@ fn rem6_run_text_stats_emit_gem5_cpu_numinsts_and_numcycles_aliases() {
         text_stat_value(&stdout, "system.cpu.numCycles"),
         text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.cycles")
     );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.cpu.ipc"),
+        fixed_ratio(
+            text_stat_value(&stdout, "system.cpu.numInsts"),
+            text_stat_value(&stdout, "system.cpu.numCycles")
+        )
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.cpu.cpi"),
+        fixed_ratio(
+            text_stat_value(&stdout, "system.cpu.numCycles"),
+            text_stat_value(&stdout, "system.cpu.numInsts")
+        )
+    );
 }
 
 #[test]
-fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_without_ambiguous_cpu_path() {
+fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguous_cpu_path() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
         0x0000_0073, // ecall
@@ -206,10 +220,26 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_without_ambiguous_cpu_pat
             text_stat_value(&stdout, &format!("system.cpu{cpu}.numCycles")),
             text_stat_value(&stdout, &format!("sim.cpu{cpu}.pipeline.in_order.cycles"))
         );
+        assert_eq!(
+            text_stat_decimal(&stdout, &format!("system.cpu{cpu}.ipc")),
+            fixed_ratio(
+                text_stat_value(&stdout, &format!("system.cpu{cpu}.numInsts")),
+                text_stat_value(&stdout, &format!("system.cpu{cpu}.numCycles"))
+            )
+        );
+        assert_eq!(
+            text_stat_decimal(&stdout, &format!("system.cpu{cpu}.cpi")),
+            fixed_ratio(
+                text_stat_value(&stdout, &format!("system.cpu{cpu}.numCycles")),
+                text_stat_value(&stdout, &format!("system.cpu{cpu}.numInsts"))
+            )
+        );
     }
     assert!(!has_text_stat(&stdout, "system.cpu.numInsts"));
     assert!(!has_text_stat(&stdout, "system.cpu.numOps"));
     assert!(!has_text_stat(&stdout, "system.cpu.numCycles"));
+    assert!(!has_text_stat(&stdout, "system.cpu.ipc"));
+    assert!(!has_text_stat(&stdout, "system.cpu.cpi"));
 }
 
 #[test]
@@ -1340,6 +1370,11 @@ fn text_stat_decimal(stdout: &str, path: &str) -> String {
             Some(fields.next()?.to_string())
         })
         .unwrap_or_else(|| panic!("missing text stat {path} in output:\n{stdout}"))
+}
+
+fn fixed_ratio(numerator: u64, denominator: u64) -> String {
+    assert_ne!(denominator, 0);
+    format!("{:.6}", numerator as f64 / denominator as f64)
 }
 
 fn text_stat_value(stdout: &str, path: &str) -> u64 {

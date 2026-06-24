@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use rem6_stats::StatSnapshot;
 
 pub(super) fn stats_snapshot_text(snapshot: &StatSnapshot) -> String {
@@ -28,20 +30,19 @@ pub(super) fn stats_snapshot_text(snapshot: &StatSnapshot) -> String {
 }
 
 fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) {
-    let Some(final_tick) = snapshot_value(snapshot, "finalTick") else {
-        return;
-    };
-    let Some(sim_freq) = snapshot_value(snapshot, "simFreq") else {
-        return;
-    };
-    if sim_freq == 0 {
-        return;
+    if let (Some(final_tick), Some(sim_freq)) = (
+        snapshot_value(snapshot, "finalTick"),
+        snapshot_value(snapshot, "simFreq"),
+    ) {
+        if sim_freq != 0 {
+            output.push_str(&format!(
+                "{:<64} {:>20} # kind=derived unit=Second reset_policy=constant\n",
+                "simSeconds",
+                format_sim_seconds(final_tick, sim_freq)
+            ));
+        }
     }
-    output.push_str(&format!(
-        "{:<64} {:>20} # kind=derived unit=Second reset_policy=constant\n",
-        "simSeconds",
-        format_sim_seconds(final_tick, sim_freq)
-    ));
+    append_gem5_cpu_ratio_stats(output, snapshot);
 }
 
 fn format_sim_seconds(final_tick: u64, sim_freq: u64) -> String {
@@ -57,6 +58,56 @@ fn snapshot_value(snapshot: &StatSnapshot, path: &str) -> Option<u64> {
         .iter()
         .find(|sample| sample.path() == path)
         .map(|sample| sample.value())
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CpuRatioInputs {
+    instructions: Option<u64>,
+    cycles: Option<u64>,
+}
+
+fn append_gem5_cpu_ratio_stats(output: &mut String, snapshot: &StatSnapshot) {
+    let mut cpus = BTreeMap::<String, CpuRatioInputs>::new();
+    for sample in snapshot.samples() {
+        if let Some(prefix) = sample.path().strip_suffix(".numInsts") {
+            if is_gem5_cpu_prefix(prefix) {
+                cpus.entry(prefix.to_string()).or_default().instructions = Some(sample.value());
+            }
+        } else if let Some(prefix) = sample.path().strip_suffix(".numCycles") {
+            if is_gem5_cpu_prefix(prefix) {
+                cpus.entry(prefix.to_string()).or_default().cycles = Some(sample.value());
+            }
+        }
+    }
+    for (prefix, inputs) in cpus {
+        let (Some(instructions), Some(cycles)) = (inputs.instructions, inputs.cycles) else {
+            continue;
+        };
+        if instructions == 0 || cycles == 0 {
+            continue;
+        }
+        output.push_str(&format!(
+            "{:<64} {:>20} # kind=derived unit=(Count/Cycle) reset_policy=monotonic\n",
+            format!("{prefix}.ipc"),
+            format_fixed_ratio(instructions, cycles)
+        ));
+        output.push_str(&format!(
+            "{:<64} {:>20} # kind=derived unit=(Cycle/Count) reset_policy=monotonic\n",
+            format!("{prefix}.cpi"),
+            format_fixed_ratio(cycles, instructions)
+        ));
+    }
+}
+
+fn is_gem5_cpu_prefix(prefix: &str) -> bool {
+    prefix == "system.cpu"
+        || prefix.strip_prefix("system.cpu").is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
+        })
+}
+
+fn format_fixed_ratio(numerator: u64, denominator: u64) -> String {
+    format!("{:.6}", numerator as f64 / denominator as f64)
 }
 
 #[cfg(test)]
@@ -77,5 +128,43 @@ mod tests {
 
         assert!(text.contains("simSeconds"));
         assert!(text.contains("9007.199254740993"));
+    }
+
+    #[test]
+    fn stats_output_renders_only_valid_gem5_cpu_ratio_prefixes() {
+        let mut stats = StatsRegistry::new();
+        let cpu0_insts = stats
+            .register_counter("system.cpu0.numInsts", "Count")
+            .unwrap();
+        let cpu0_cycles = stats
+            .register_counter("system.cpu0.numCycles", "Cycle")
+            .unwrap();
+        let cpu_named_insts = stats
+            .register_counter("system.cpu.main.numInsts", "Count")
+            .unwrap();
+        let cpu_named_cycles = stats
+            .register_counter("system.cpu.main.numCycles", "Cycle")
+            .unwrap();
+        let cpu1_insts = stats
+            .register_counter("system.cpu1.numInsts", "Count")
+            .unwrap();
+        let cpu1_cycles = stats
+            .register_counter("system.cpu1.numCycles", "Cycle")
+            .unwrap();
+        stats.increment(cpu0_insts, 3).unwrap();
+        stats.increment(cpu0_cycles, 12).unwrap();
+        stats.increment(cpu_named_insts, 7).unwrap();
+        stats.increment(cpu_named_cycles, 14).unwrap();
+        stats.increment(cpu1_insts, 5).unwrap();
+        stats.increment(cpu1_cycles, 0).unwrap();
+
+        let text = stats_snapshot_text(&stats.snapshot(0));
+
+        assert!(text.contains("system.cpu0.ipc"));
+        assert!(text.contains("0.250000"));
+        assert!(text.contains("system.cpu0.cpi"));
+        assert!(text.contains("4.000000"));
+        assert!(!text.contains("system.cpu.main.ipc"));
+        assert!(!text.contains("system.cpu1.ipc"));
     }
 }
