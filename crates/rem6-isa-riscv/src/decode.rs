@@ -524,6 +524,9 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         (0x0, 0b100001, true) => Ok(crate::vector_saturating::decode_add_signed_vv(raw)),
         (0x0, 0b100010, true) => Ok(crate::vector_saturating::decode_sub_unsigned_vv(raw)),
         (0x0, 0b100011, true) => Ok(crate::vector_saturating::decode_sub_signed_vv(raw)),
+        (0x0, 0b100111, true) => Ok(crate::vector_saturating::decode_mul_signed_fractional_vv(
+            raw,
+        )),
         (0x0, 0b101010, true) => Ok(RiscvInstruction::VectorFixedPointShift(
             RiscvVectorFixedPointShiftInstruction::shift_right_logical_vv(
                 vector_register(raw, 7),
@@ -1024,6 +1027,9 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         (0x4, 0b100001, true) => Ok(crate::vector_saturating::decode_add_signed_vx(raw)),
         (0x4, 0b100010, true) => Ok(crate::vector_saturating::decode_sub_unsigned_vx(raw)),
         (0x4, 0b100011, true) => Ok(crate::vector_saturating::decode_sub_signed_vx(raw)),
+        (0x4, 0b100111, true) => Ok(crate::vector_saturating::decode_mul_signed_fractional_vx(
+            raw,
+        )),
         (0x4, 0b101010, true) => Ok(RiscvInstruction::VectorFixedPointShift(
             RiscvVectorFixedPointShiftInstruction::shift_right_logical_vx(
                 vector_register(raw, 7),

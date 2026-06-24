@@ -309,6 +309,14 @@ fn vssra_vi_type(vs2: u8, shamt: u8, vd: u8) -> u32 {
     vector_vi_type(0b101011, vs2, shamt as i8, vd)
 }
 
+fn vsmul_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b100111, vs2, vs1, vd)
+}
+
+fn vsmul_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b100111, vs2, rs1, vd)
+}
+
 fn vaaddu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_mvv_type(0b001000, vs2, vs1, vd)
 }
@@ -1066,6 +1074,25 @@ fn decoder_accepts_unmasked_vector_fixed_point_shift_operations() {
 }
 
 #[test]
+fn decoder_accepts_unmasked_vector_signed_fractional_multiply_operations() {
+    assert_eq!(vsmul_vv_type(4, 5, 3), 0x9e42_81d7);
+    assert_eq!(vsmul_vx_type(4, 5, 3), 0x9e42_c1d7);
+
+    assert_eq!(
+        RiscvInstruction::decode(vsmul_vv_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorSaturating(
+            RiscvVectorSaturatingInstruction::mul_signed_fractional_vv(vreg(3), vreg(4), vreg(5),),
+        )
+    );
+    assert_eq!(
+        RiscvInstruction::decode(vsmul_vx_type(4, 5, 3)).unwrap(),
+        RiscvInstruction::VectorSaturating(
+            RiscvVectorSaturatingInstruction::mul_signed_fractional_vx(vreg(3), vreg(4), reg(5),),
+        )
+    );
+}
+
+#[test]
 fn decoder_accepts_unmasked_vector_averaging_add_sub_operations() {
     assert_eq!(vaaddu_vv_type(4, 5, 3), 0x2242_a1d7);
     assert_eq!(vaadd_vv_type(4, 5, 3), 0x2642_a1d7);
@@ -1257,6 +1284,8 @@ fn decoder_rejects_masked_and_unsupported_vector_saturating_forms() {
     for raw in [
         vsaddu_vv_type(4, 5, 3) & !(1 << 25),
         vsadd_vx_type(4, 5, 3) & !(1 << 25),
+        vsmul_vv_type(4, 5, 3) & !(1 << 25),
+        vsmul_vx_type(4, 5, 3) & !(1 << 25),
         vsaddu_vi_type(4, 5, 3) & !(1 << 25),
         vector_vi_type(0b100010, 4, 5, 3),
         vector_vi_type(0b100011, 4, 5, 3),
@@ -2419,6 +2448,63 @@ fn hart_executes_vector_fixed_point_shift_vv_vx_and_vi_forms() {
         )
     );
     assert!(vi.vector_fixed_point().vxsat());
+}
+
+#[test]
+fn hart_executes_vector_signed_fractional_multiply_vv_and_vx_forms() {
+    let mut vv = RiscvHartState::new(0x8144);
+    vv.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    vv.write_vector(
+        vreg(4),
+        bytes_with_u16([
+            0x4000, 0x4000, 0x7fff, 0x8000, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd,
+        ]),
+    );
+    vv.write_vector(
+        vreg(5),
+        bytes_with_u16([0x4000, 0xc000, 0x7fff, 0x8000, 0, 0, 0, 0]),
+    );
+    vv.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let vv_record = vv
+        .execute(RiscvInstruction::decode(vsmul_vv_type(4, 5, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        vv.read_vector(vreg(3)),
+        bytes_with_u16([0x2000, 0xe000, 0x7ffe, 0x7fff, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        vv_record.instruction(),
+        RiscvInstruction::VectorSaturating(
+            RiscvVectorSaturatingInstruction::mul_signed_fractional_vv(vreg(3), vreg(4), vreg(5),),
+        )
+    );
+    assert!(vv.vector_fixed_point().vxsat());
+
+    let mut vx = RiscvHartState::new(0x8148);
+    vx.set_vector_config(RiscvVectorConfig::new(4, 0xc8));
+    let mut fixed = RiscvVectorFixedPointState::new(RiscvVectorFixedRoundingMode::RoundDown);
+    fixed.write_vxsat_bit(true);
+    vx.set_vector_fixed_point(fixed);
+    vx.write(reg(6), 1);
+    vx.write_vector(
+        vreg(4),
+        bytes_with_u16([0x4000, 0x4001, 0x7fff, 2, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    vx.write_vector(vreg(3), bytes_with_u16([0xeeee; 8]));
+    let vx_record = vx
+        .execute(RiscvInstruction::decode(vsmul_vx_type(4, 6, 3)).unwrap())
+        .unwrap();
+    assert_eq!(
+        vx.read_vector(vreg(3)),
+        bytes_with_u16([0, 0, 0, 0, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        vx_record.instruction(),
+        RiscvInstruction::VectorSaturating(
+            RiscvVectorSaturatingInstruction::mul_signed_fractional_vx(vreg(3), vreg(4), reg(6),),
+        )
+    );
+    assert!(vx.vector_fixed_point().vxsat());
 }
 
 #[test]

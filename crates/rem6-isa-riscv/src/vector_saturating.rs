@@ -1,4 +1,6 @@
 use crate::{
+    vector::RiscvVectorFixedRoundingMode,
+    vector_fixed_point_shift::round_signed,
     vector_group::{
         lane_bytes_to_u128, read_register_group, write_register_group, write_u128_lane,
         VectorBinaryPlan,
@@ -48,6 +50,16 @@ pub enum RiscvVectorSaturatingInstruction {
         vs2: VectorRegister,
         rs1: Register,
     },
+    MulSignedFractionalVv {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+    },
+    MulSignedFractionalVx {
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    },
     AddUnsignedVi {
         vd: VectorRegister,
         vs2: VectorRegister,
@@ -66,6 +78,7 @@ enum SaturatingOp {
     AddSigned,
     SubUnsigned,
     SubSigned,
+    MulSignedFractional,
 }
 
 impl RiscvVectorSaturatingInstruction {
@@ -117,6 +130,22 @@ impl RiscvVectorSaturatingInstruction {
         Self::SubSignedVx { vd, vs2, rs1 }
     }
 
+    pub const fn mul_signed_fractional_vv(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        vs1: VectorRegister,
+    ) -> Self {
+        Self::MulSignedFractionalVv { vd, vs2, vs1 }
+    }
+
+    pub const fn mul_signed_fractional_vx(
+        vd: VectorRegister,
+        vs2: VectorRegister,
+        rs1: Register,
+    ) -> Self {
+        Self::MulSignedFractionalVx { vd, vs2, rs1 }
+    }
+
     pub const fn add_unsigned_vi(vd: VectorRegister, vs2: VectorRegister, imm: i8) -> Self {
         Self::AddUnsignedVi { vd, vs2, imm }
     }
@@ -156,6 +185,20 @@ pub(crate) fn decode_sub_unsigned_vx(raw: u32) -> RiscvInstruction {
 
 pub(crate) fn decode_sub_signed_vx(raw: u32) -> RiscvInstruction {
     decode_vx(raw, RiscvVectorSaturatingInstruction::sub_signed_vx)
+}
+
+pub(crate) fn decode_mul_signed_fractional_vv(raw: u32) -> RiscvInstruction {
+    decode_vv(
+        raw,
+        RiscvVectorSaturatingInstruction::mul_signed_fractional_vv,
+    )
+}
+
+pub(crate) fn decode_mul_signed_fractional_vx(raw: u32) -> RiscvInstruction {
+    decode_vx(
+        raw,
+        RiscvVectorSaturatingInstruction::mul_signed_fractional_vx,
+    )
 }
 
 pub(crate) fn decode_add_unsigned_vi(raw: u32) -> RiscvInstruction {
@@ -237,6 +280,16 @@ pub(crate) fn execute(
         RiscvVectorSaturatingInstruction::SubSignedVx { vd, vs2, rs1 } => {
             execute_vx(hart, vd, vs2, hart.read(rs1), SaturatingOp::SubSigned)
         }
+        RiscvVectorSaturatingInstruction::MulSignedFractionalVv { vd, vs2, vs1 } => {
+            execute_vv(hart, vd, vs2, vs1, SaturatingOp::MulSignedFractional)
+        }
+        RiscvVectorSaturatingInstruction::MulSignedFractionalVx { vd, vs2, rs1 } => execute_vx(
+            hart,
+            vd,
+            vs2,
+            hart.read(rs1),
+            SaturatingOp::MulSignedFractional,
+        ),
         RiscvVectorSaturatingInstruction::AddUnsignedVi { vd, vs2, imm } => {
             execute_vi(hart, vd, vs2, imm, SaturatingOp::AddUnsigned)
         }
@@ -325,12 +378,13 @@ fn execute_lanes(
     let mut fixed = hart.vector_fixed_point();
     let element_bytes = plan.element_bytes;
     let element_bits = element_bytes * 8;
+    let rounding_mode = fixed.rounding_mode();
 
     for element_index in 0..plan.active_element_count() {
         let offset = element_index * element_bytes;
         let left = lane_bytes_to_u128(&left[offset..offset + element_bytes]);
         let right = right_lane(element_index, element_bytes);
-        let outcome = apply_saturating(op, left, right, element_bits);
+        let outcome = apply_saturating(op, left, right, element_bits, rounding_mode);
         if outcome.saturated {
             fixed.write_vxsat_bit(true);
         }
@@ -348,12 +402,21 @@ struct SaturatingOutcome {
     saturated: bool,
 }
 
-fn apply_saturating(op: SaturatingOp, left: u128, right: u128, bits: usize) -> SaturatingOutcome {
+fn apply_saturating(
+    op: SaturatingOp,
+    left: u128,
+    right: u128,
+    bits: usize,
+    rounding_mode: RiscvVectorFixedRoundingMode,
+) -> SaturatingOutcome {
     match op {
         SaturatingOp::AddUnsigned => saturating_add_unsigned(left, right, bits),
         SaturatingOp::AddSigned => saturating_add_signed(left, right, bits),
         SaturatingOp::SubUnsigned => saturating_sub_unsigned(left, right),
         SaturatingOp::SubSigned => saturating_sub_signed(left, right, bits),
+        SaturatingOp::MulSignedFractional => {
+            saturating_mul_signed_fractional(left, right, bits, rounding_mode)
+        }
     }
 }
 
@@ -397,6 +460,20 @@ fn saturating_sub_signed(left: u128, right: u128, bits: usize) -> SaturatingOutc
     let left = sign_extend(left, bits);
     let right = sign_extend(right, bits);
     saturating_signed_result(left - right, bits)
+}
+
+fn saturating_mul_signed_fractional(
+    left: u128,
+    right: u128,
+    bits: usize,
+    rounding_mode: RiscvVectorFixedRoundingMode,
+) -> SaturatingOutcome {
+    let product = sign_extend(left, bits) * sign_extend(right, bits);
+    let shift = (bits - 1) as u32;
+    let rounded = round_signed(product, shift, rounding_mode)
+        .expect("single-width signed vector fractional multiply cannot overflow")
+        >> shift;
+    saturating_signed_result(rounded, bits)
 }
 
 fn saturating_signed_result(value: i128, bits: usize) -> SaturatingOutcome {

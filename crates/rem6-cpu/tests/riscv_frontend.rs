@@ -415,6 +415,14 @@ fn vssra_vi_type(vs2: u8, shamt: u8, vd: u8) -> u32 {
     vector_vi_type(0b101011, vs2, shamt as i8, vd)
 }
 
+fn vsmul_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type(0b100111, vs2, vs1, vd)
+}
+
+fn vsmul_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b100111, vs2, rs1, vd)
+}
+
 fn vaaddu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_mvv_type(0b001000, vs2, vs1, vd)
 }
@@ -2259,6 +2267,69 @@ fn riscv_core_driver_executes_vector_fixed_point_shift_operations_from_fetch_str
     assert_eq!(
         core.read_vector_register(vreg(12)),
         bytes_with_u16([2, 4, 0xfffe, 0xfffc, 0xbbbb, 0xbbbb, 0xbbbb, 0xbbbb])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_signed_fractional_multiply_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 4);
+    core.write_register(reg(6), 1);
+    core.write_vector_register(
+        vreg(1),
+        bytes_with_u16([0x4000, 0xc000, 0x7fff, 0x8000, 0, 0, 0, 0]),
+    );
+    core.write_vector_register(
+        vreg(2),
+        bytes_with_u16([
+            0x4000, 0x4000, 0x7fff, 0x8000, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd,
+        ]),
+    );
+    core.write_vector_register(
+        vreg(5),
+        bytes_with_u16([0x4000, 0x4001, 0x7fff, 2, 0xaaaa, 0xbbbb, 0xcccc, 0xdddd]),
+    );
+    core.write_vector_register(vreg(3), bytes_with_u16([0xeeee; 8]));
+    core.write_vector_register(vreg(7), bytes_with_u16([0xdddd; 8]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xc8, 10, 4),
+            vsmul_vv_type(2, 1, 3),
+            vsmul_vx_type(5, 6, 7),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(4),
+            rs1: reg(10),
+            vtype: 0xc8,
+        }
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSaturating(
+            RiscvVectorSaturatingInstruction::mul_signed_fractional_vv(vreg(3), vreg(2), vreg(1),),
+        )
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorSaturating(
+            RiscvVectorSaturatingInstruction::mul_signed_fractional_vx(vreg(7), vreg(5), reg(6),),
+        )
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        bytes_with_u16([0x2000, 0xe000, 0x7ffe, 0x7fff, 0xeeee, 0xeeee, 0xeeee, 0xeeee])
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(7)),
+        bytes_with_u16([1, 1, 1, 0, 0xdddd, 0xdddd, 0xdddd, 0xdddd])
     );
 }
 
