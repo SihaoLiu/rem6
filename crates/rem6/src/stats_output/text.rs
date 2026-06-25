@@ -101,6 +101,21 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 mispredictions,
             );
         }
+        if let Some(lookups) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.branch_predictor.btb.lookups"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.BTBLookups"),
+                lookups,
+            );
+        }
+        if let Some(hits) =
+            snapshot_value(snapshot, &format!("sim.cpu{cpu}.branch_predictor.btb.hits"))
+        {
+            append_derived_count_stat(output, &format!("{alias_prefix}.branchPred.BTBHits"), hits);
+        }
     }
 }
 

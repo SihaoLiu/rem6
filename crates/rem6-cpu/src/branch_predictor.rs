@@ -77,6 +77,9 @@ pub enum BranchPredictorError {
     InvalidCheckpointNextSpeculationOverflow {
         next: BranchSpeculationId,
     },
+    InvalidBranchTargetBufferCheckpoint {
+        error: BranchTargetBufferError,
+    },
     DuplicateCheckpointSpeculationSequence {
         sequence: u64,
     },
@@ -185,6 +188,10 @@ impl fmt::Display for BranchPredictorError {
                 formatter,
                 "branch predictor checkpoint next speculation {} cannot advance",
                 next.get()
+            ),
+            Self::InvalidBranchTargetBufferCheckpoint { error } => write!(
+                formatter,
+                "branch predictor checkpoint has invalid branch target buffer snapshot: {error}"
             ),
             Self::DuplicateCheckpointSpeculationSequence { sequence } => write!(
                 formatter,
@@ -860,6 +867,8 @@ pub enum BranchTargetBufferError {
         actual_entries: usize,
         actual_associativity: usize,
     },
+    SnapshotEntrySetMismatch(Address, usize, usize),
+    DuplicateSnapshotEntry(Address),
 }
 
 impl fmt::Display for BranchTargetBufferError {
@@ -910,6 +919,16 @@ impl fmt::Display for BranchTargetBufferError {
             } => write!(
                 formatter,
                 "branch target buffer snapshot has {actual_entries} entries and associativity {actual_associativity} but buffer has {expected_entries} entries and associativity {expected_associativity}"
+            ),
+            Self::SnapshotEntrySetMismatch(pc, expected_set, actual_set) => write!(
+                formatter,
+                "branch target buffer snapshot entry for PC {} is in set {actual_set}; expected {expected_set}",
+                pc.get()
+            ),
+            Self::DuplicateSnapshotEntry(pc) => write!(
+                formatter,
+                "branch target buffer snapshot repeats entry for PC {}",
+                pc.get()
             ),
         }
     }
@@ -1260,12 +1279,12 @@ impl BranchTargetBuffer {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BranchTargetEntry {
-    pc: Address,
-    target: Address,
-    kind: BranchTargetKind,
-    set: usize,
-    way: usize,
-    last_used: u64,
+    pub(crate) pc: Address,
+    pub(crate) target: Address,
+    pub(crate) kind: BranchTargetKind,
+    pub(crate) set: usize,
+    pub(crate) way: usize,
+    pub(crate) last_used: u64,
 }
 
 impl BranchTargetEntry {
@@ -1383,14 +1402,14 @@ impl BranchTargetUpdate {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BranchTargetBufferSnapshot {
-    config: BranchTargetBufferConfig,
-    entries: Vec<Option<BranchTargetEntry>>,
-    access_sequence: u64,
-    lookup_count: u64,
-    hit_count: u64,
-    miss_count: u64,
-    update_count: u64,
-    eviction_count: u64,
+    pub(crate) config: BranchTargetBufferConfig,
+    pub(crate) entries: Vec<Option<BranchTargetEntry>>,
+    pub(crate) access_sequence: u64,
+    pub(crate) lookup_count: u64,
+    pub(crate) hit_count: u64,
+    pub(crate) miss_count: u64,
+    pub(crate) update_count: u64,
+    pub(crate) eviction_count: u64,
 }
 
 impl BranchTargetBufferSnapshot {

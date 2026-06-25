@@ -469,6 +469,8 @@ pub struct Rem6CoreSummary {
     in_order_pipeline_branch_speculation_repairs: u64,
     in_order_pipeline_branch_speculation_removed_youngers: u64,
     in_order_pipeline_branch_speculation_max_pending: u64,
+    branch_target_buffer_lookups: u64,
+    branch_target_buffer_hits: u64,
     data_loads: u64,
     data_stores: u64,
     data_atomics: u64,

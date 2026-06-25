@@ -76,6 +76,8 @@ pub use public_api::*;
 
 pub const DEFAULT_RISCV_PMP_ENTRIES: usize = 16;
 pub const DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES: usize = 1024;
+pub const DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ENTRIES: usize = 128;
+pub const DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ASSOCIATIVITY: usize = 4;
 pub const DEFAULT_RISCV_GSHARE_BRANCH_PREDICTOR_ENTRIES: usize = 1024;
 pub const DEFAULT_RISCV_BIMODE_CHOICE_ENTRIES: usize = 1024;
 pub const DEFAULT_RISCV_BIMODE_GLOBAL_ENTRIES: usize = 1024;
@@ -970,10 +972,19 @@ impl RiscvCore {
             .snapshot()
     }
 
+    pub fn branch_target_buffer_snapshot(&self) -> BranchTargetBufferSnapshot {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .branch_target_buffer
+            .snapshot()
+    }
+
     pub fn branch_predictor_checkpoint_payload(&self) -> BranchPredictorCheckpointPayload {
         let state = self.state.lock().expect("riscv core lock");
-        BranchPredictorCheckpointPayload::from_snapshot(
+        BranchPredictorCheckpointPayload::from_snapshots(
             state.branch_predictor.snapshot(),
+            state.branch_target_buffer.snapshot(),
             state
                 .branch_speculations
                 .iter()
@@ -983,10 +994,18 @@ impl RiscvCore {
     }
 
     pub fn default_branch_predictor_checkpoint_payload() -> BranchPredictorCheckpointPayload {
-        BranchPredictorCheckpointPayload::from_snapshot(
+        BranchPredictorCheckpointPayload::from_snapshots(
             BranchPredictor::new(
                 BranchPredictorConfig::new(DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES)
                     .expect("default RISC-V branch predictor entries are valid"),
+            )
+            .snapshot(),
+            BranchTargetBuffer::new(
+                BranchTargetBufferConfig::new(
+                    DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ENTRIES,
+                    DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ASSOCIATIVITY,
+                )
+                .expect("default RISC-V branch target buffer config is valid"),
             )
             .snapshot(),
             [],
@@ -998,9 +1017,16 @@ impl RiscvCore {
         &self,
         payload: BranchPredictorCheckpointPayload,
     ) -> Result<(), BranchPredictorError> {
-        let (snapshot, active_speculations) = payload.into_parts();
+        let (snapshot, branch_target_buffer, active_speculations) = payload.into_parts();
         let mut state = self.state.lock().expect("riscv core lock");
-        state.branch_predictor.restore(&snapshot)?;
+        let mut restored_branch_predictor = state.branch_predictor.clone();
+        restored_branch_predictor.restore(&snapshot)?;
+        let mut restored_branch_target_buffer = state.branch_target_buffer.clone();
+        restored_branch_target_buffer
+            .restore(&branch_target_buffer)
+            .map_err(|error| BranchPredictorError::InvalidBranchTargetBufferCheckpoint { error })?;
+        state.branch_predictor = restored_branch_predictor;
+        state.branch_target_buffer = restored_branch_target_buffer;
         state.branch_speculations.clear();
         state.branch_speculations.extend(active_speculations);
         Ok(())
@@ -1012,7 +1038,11 @@ impl RiscvCore {
     ) -> Result<(), BranchPredictorError> {
         let state = self.state.lock().expect("riscv core lock");
         let mut branch_predictor = state.branch_predictor.clone();
-        branch_predictor.restore(payload.snapshot())
+        branch_predictor.restore(payload.snapshot())?;
+        let mut branch_target_buffer = state.branch_target_buffer.clone();
+        branch_target_buffer
+            .restore(payload.branch_target_buffer_snapshot())
+            .map_err(|error| BranchPredictorError::InvalidBranchTargetBufferCheckpoint { error })
     }
 
     pub fn gshare_branch_predictor_snapshot(&self) -> GShareBranchPredictorSnapshot {
@@ -1141,6 +1171,7 @@ struct RiscvCoreState {
     htm_hart_checkpoint: Option<RiscvHartState>,
     checker: Option<riscv_checker::RiscvCheckerCpu>,
     branch_predictor: BranchPredictor,
+    branch_target_buffer: BranchTargetBuffer,
     branch_speculations: BTreeMap<u64, BranchSpeculationId>,
     branch_speculation_summary: RiscvBranchSpeculationSummary,
     branch_lookahead: usize,
@@ -1182,6 +1213,13 @@ impl RiscvCoreState {
             branch_predictor: BranchPredictor::new(
                 BranchPredictorConfig::new(DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES)
                     .expect("default RISC-V branch predictor entries are valid"),
+            ),
+            branch_target_buffer: BranchTargetBuffer::new(
+                BranchTargetBufferConfig::new(
+                    DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ENTRIES,
+                    DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ASSOCIATIVITY,
+                )
+                .expect("default RISC-V branch target buffer config is valid"),
             ),
             branch_speculations: BTreeMap::new(),
             branch_speculation_summary: RiscvBranchSpeculationSummary::default(),

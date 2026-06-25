@@ -339,7 +339,9 @@ fn riscv_core_checkpoint_captures_and_restores_branch_predictor_state() {
         &transport,
     );
     let captured_predictor = core.branch_predictor_snapshot();
+    let captured_btb = core.branch_target_buffer_snapshot();
     assert_eq!(captured_predictor.update_count(), 1);
+    assert_eq!(captured_btb.update_count(), 1);
 
     port.register(&mut registry).unwrap();
     let captured = port.capture_into(&mut registry).unwrap();
@@ -353,11 +355,13 @@ fn riscv_core_checkpoint_captures_and_restores_branch_predictor_state() {
         &transport,
     );
     assert_ne!(core.branch_predictor_snapshot(), captured_predictor);
+    assert_ne!(core.branch_target_buffer_snapshot(), captured_btb);
 
     let restored = port.restore_from(&registry).unwrap();
 
     assert_eq!(restored, captured);
     assert_eq!(core.branch_predictor_snapshot(), captured_predictor);
+    assert_eq!(core.branch_target_buffer_snapshot(), captured_btb);
 }
 
 #[test]

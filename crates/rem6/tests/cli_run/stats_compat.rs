@@ -356,6 +356,17 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
                 &format!("sim.cpu{cpu}.pipeline.in_order.conditional_branch_mispredictions")
             )
         );
+        assert_eq!(
+            text_stat_value(&stdout, &format!("system.cpu{cpu}.branchPred.BTBLookups")),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.btb.lookups")
+            )
+        );
+        assert_eq!(
+            text_stat_value(&stdout, &format!("system.cpu{cpu}.branchPred.BTBHits")),
+            text_stat_value(&stdout, &format!("sim.cpu{cpu}.branch_predictor.btb.hits"))
+        );
         assert!(
             text_stat_line(
                 &stdout,
@@ -380,6 +391,16 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
             .contains("unit=Count"),
             "{stdout}"
         );
+        assert!(
+            text_stat_line(&stdout, &format!("system.cpu{cpu}.branchPred.BTBLookups"))
+                .contains("unit=Count"),
+            "{stdout}"
+        );
+        assert!(
+            text_stat_line(&stdout, &format!("system.cpu{cpu}.branchPred.BTBHits"))
+                .contains("unit=Count"),
+            "{stdout}"
+        );
     }
     assert!(!has_text_stat(&stdout, "system.cpu.numInsts"));
     assert!(!has_text_stat(&stdout, "system.cpu.numOps"));
@@ -402,6 +423,8 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
         &stdout,
         "system.cpu.branchPred.condIncorrect"
     ));
+    assert!(!has_text_stat(&stdout, "system.cpu.branchPred.BTBLookups"));
+    assert!(!has_text_stat(&stdout, "system.cpu.branchPred.BTBHits"));
 }
 
 #[test]
@@ -3589,6 +3612,14 @@ fn rem6_run_stats_emit_conditional_branch_predicted_taken_from_execution() {
         json_u64_field(&stdout, "\"conditional_branch_predictions\":");
     let conditional_branch_predicted_taken =
         json_u64_field(&stdout, "\"conditional_branch_predicted_taken\":");
+    let branch_target_buffer_lookups =
+        json_u64_field(&stdout, "\"branch_predictor\":{\"btb\":{\"lookups\":");
+    let branch_target_buffer_hits = json_u64_field(
+        &stdout,
+        &format!(
+            "\"branch_predictor\":{{\"btb\":{{\"lookups\":{branch_target_buffer_lookups},\"hits\":"
+        ),
+    );
 
     assert_eq!(
         stat_value(
@@ -3597,11 +3628,26 @@ fn rem6_run_stats_emit_conditional_branch_predicted_taken_from_execution() {
         ),
         conditional_branch_predicted_taken
     );
+    assert_eq!(
+        stat_value(&stdout, "sim.cpu0.branch_predictor.btb.lookups"),
+        branch_target_buffer_lookups
+    );
+    assert_eq!(
+        stat_value(&stdout, "sim.cpu0.branch_predictor.btb.hits"),
+        branch_target_buffer_hits
+    );
+    assert!(branch_target_buffer_lookups > 0, "{stdout}");
+    assert!(branch_target_buffer_hits > 0, "{stdout}");
+    assert!(branch_target_buffer_hits <= branch_target_buffer_lookups);
     assert!(conditional_branch_predictions > 0, "{stdout}");
     assert!(conditional_branch_predicted_taken > 0, "{stdout}");
     assert!(conditional_branch_predicted_taken <= conditional_branch_predictions);
     assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.condPredictedTaken\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.BTBLookups\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.BTBHits\""));
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condPredictedTaken\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.BTBLookups\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.BTBHits\""));
 }
 
 #[test]
@@ -3648,6 +3694,8 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
         &stdout,
         "sim.cpu0.pipeline.in_order.conditional_branch_mispredictions",
     );
+    let btb_lookups = text_stat_value(&stdout, "sim.cpu0.branch_predictor.btb.lookups");
+    let btb_hits = text_stat_value(&stdout, "sim.cpu0.branch_predictor.btb.hits");
 
     assert_eq!(
         text_stat_value(&stdout, "system.cpu.branchPred.condPredicted"),
@@ -3661,7 +3709,18 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
         text_stat_value(&stdout, "system.cpu.branchPred.condIncorrect"),
         branch_mispredictions
     );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.BTBLookups"),
+        btb_lookups
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.BTBHits"),
+        btb_hits
+    );
     assert!(branch_predicted_taken > 0, "{stdout}");
+    assert!(btb_lookups > 0, "{stdout}");
+    assert!(btb_hits > 0, "{stdout}");
+    assert!(btb_hits <= btb_lookups);
     assert!(
         text_stat_line(&stdout, "system.cpu.branchPred.condPredicted").contains("unit=Count"),
         "{stdout}"
@@ -3672,6 +3731,14 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
     );
     assert!(
         text_stat_line(&stdout, "system.cpu.branchPred.condIncorrect").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.branchPred.BTBLookups").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.branchPred.BTBHits").contains("unit=Count"),
         "{stdout}"
     );
 }
@@ -3749,6 +3816,12 @@ fn rem6_run_text_stats_do_not_count_unconditional_jumps_as_cond_branch_predictio
     assert_eq!(
         text_stat_value(&stdout, "system.cpu.branchPred.condIncorrect"),
         0
+    );
+    let btb_lookups = text_stat_value(&stdout, "sim.cpu0.branch_predictor.btb.lookups");
+    assert!(btb_lookups > 0, "{stdout}");
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.BTBLookups"),
+        btb_lookups
     );
 }
 

@@ -248,6 +248,20 @@ pub(super) fn emit_cpu_run_stats(
                 value,
             )?;
         }
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.branch_predictor.btb.lookups", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.branch_target_buffer_lookups,
+        )?;
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.branch_predictor.btb.hits", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.branch_target_buffer_hits,
+        )?;
         if let Some(checker) = &core.checker {
             increment_stat(
                 stats,

@@ -3,7 +3,8 @@ use rem6_cpu::{
     BranchSpeculationId, BranchTargetBuffer, BranchTargetBufferConfig, BranchTargetBufferError,
     BranchTargetKind, BranchTargetSafetyConfig, BranchTargetSafetyProfile, ReturnAddressStack,
     ReturnAddressStackConfig, ReturnAddressStackError, ReturnAddressStackOperationId,
-    ReturnAddressStackOperationKind,
+    ReturnAddressStackOperationKind, DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ASSOCIATIVITY,
+    DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ENTRIES,
 };
 use rem6_memory::Address;
 
@@ -375,9 +376,19 @@ fn checkpoint_payload_round_trips_snapshot_and_active_mapping() {
     let first = predictor.predict_speculative(taken_pc);
     let second = predictor.predict_speculative(skipped_pc);
     let snapshot = predictor.snapshot();
+    let mut branch_target_buffer = btb(8, 2);
+    branch_target_buffer.lookup(taken_pc, BranchTargetKind::DirectConditional);
+    branch_target_buffer.update(
+        taken_pc,
+        Address::new(0x1080),
+        BranchTargetKind::DirectConditional,
+    );
+    branch_target_buffer.lookup(taken_pc, BranchTargetKind::DirectConditional);
+    let branch_target_buffer_snapshot = branch_target_buffer.snapshot();
 
-    let payload = BranchPredictorCheckpointPayload::from_snapshot(
+    let payload = BranchPredictorCheckpointPayload::from_snapshots(
         snapshot.clone(),
+        branch_target_buffer_snapshot.clone(),
         [(22, second.id()), (21, first.id())],
     )
     .unwrap();
@@ -390,7 +401,184 @@ fn checkpoint_payload_round_trips_snapshot_and_active_mapping() {
     let decoded = BranchPredictorCheckpointPayload::decode(&payload.encode()).unwrap();
 
     assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(
+        decoded.branch_target_buffer_snapshot(),
+        &branch_target_buffer_snapshot
+    );
     assert_eq!(decoded.active_speculations(), payload.active_speculations());
+}
+
+#[test]
+fn checkpoint_payload_decodes_legacy_v1_with_default_btb_snapshot() {
+    const VERSION_OFFSET: usize = 4;
+    const HEADER_BYTES: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4 * 2;
+    const LEGACY_COUNTER_BYTES: usize = 8;
+    const LEGACY_TARGET_BYTES: usize = 8 * (1 + 8);
+    let snapshot = predictor(8).snapshot();
+    let payload = BranchPredictorCheckpointPayload::from_snapshot(
+        snapshot.clone(),
+        std::iter::empty::<(u64, BranchSpeculationId)>(),
+    )
+    .unwrap();
+    let mut encoded = payload.encode();
+    encoded[VERSION_OFFSET] = 1;
+    encoded.truncate(HEADER_BYTES + LEGACY_COUNTER_BYTES + LEGACY_TARGET_BYTES);
+
+    let decoded = BranchPredictorCheckpointPayload::decode(&encoded).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+    assert_eq!(decoded.active_speculations(), &[]);
+    assert_eq!(
+        decoded.branch_target_buffer_snapshot().config().entries(),
+        DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ENTRIES
+    );
+    assert_eq!(
+        decoded
+            .branch_target_buffer_snapshot()
+            .config()
+            .associativity(),
+        DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ASSOCIATIVITY
+    );
+    assert_eq!(decoded.branch_target_buffer_snapshot().lookup_count(), 0);
+    assert_eq!(decoded.branch_target_buffer_snapshot().hit_count(), 0);
+    assert!(decoded
+        .branch_target_buffer_snapshot()
+        .entries()
+        .iter()
+        .all(Option::is_none));
+}
+
+#[test]
+fn checkpoint_payload_rejects_btb_config_outside_decode_limits() {
+    let oversized_config = BranchTargetBufferConfig::with_limits(8192, 4, 8192, 4).unwrap();
+    let oversized_snapshot = BranchTargetBuffer::new(oversized_config).snapshot();
+
+    assert!(matches!(
+        BranchPredictorCheckpointPayload::from_snapshots(
+            predictor(8).snapshot(),
+            oversized_snapshot,
+            std::iter::empty::<(u64, BranchSpeculationId)>(),
+        ),
+        Err(BranchPredictorError::InvalidBranchTargetBufferCheckpoint { .. })
+    ));
+}
+
+#[test]
+fn checkpoint_payload_rejects_btb_entry_in_wrong_serialized_set() {
+    const HEADER_BYTES: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4 * 2;
+    const CHECKPOINT_TARGET_BYTES: usize = 1 + 8;
+    const BTB_HEADER_BYTES: usize = 4 * 2 + 8 * 6;
+    const BTB_ENTRY_VALID_BYTES: usize = 1;
+    let mut branch_target_buffer = btb(8, 2);
+    branch_target_buffer.update(
+        Address::new(0x1000),
+        Address::new(0x1080),
+        BranchTargetKind::DirectConditional,
+    );
+    let payload = BranchPredictorCheckpointPayload::from_snapshots(
+        predictor(8).snapshot(),
+        branch_target_buffer.snapshot(),
+        std::iter::empty::<(u64, BranchSpeculationId)>(),
+    )
+    .unwrap();
+    let mut encoded = payload.encode();
+    let first_btb_entry_pc =
+        HEADER_BYTES + 8 + 8 * CHECKPOINT_TARGET_BYTES + BTB_HEADER_BYTES + BTB_ENTRY_VALID_BYTES;
+    encoded[first_btb_entry_pc..first_btb_entry_pc + 8].copy_from_slice(&0x1004_u64.to_le_bytes());
+
+    assert!(matches!(
+        BranchPredictorCheckpointPayload::decode(&encoded),
+        Err(BranchPredictorError::InvalidBranchTargetBufferCheckpoint { .. })
+    ));
+}
+
+#[test]
+fn checkpoint_payload_rejects_duplicate_btb_entry_pc() {
+    const HEADER_BYTES: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4 * 2;
+    const CHECKPOINT_TARGET_BYTES: usize = 1 + 8;
+    const BTB_HEADER_BYTES: usize = 4 * 2 + 8 * 6;
+    const BTB_ENTRY_BYTES: usize = 1 + 8 + 8 + 1 + 8;
+    let mut branch_target_buffer = btb(8, 2);
+    branch_target_buffer.update(
+        Address::new(0x1000),
+        Address::new(0x1080),
+        BranchTargetKind::DirectConditional,
+    );
+    let payload = BranchPredictorCheckpointPayload::from_snapshots(
+        predictor(8).snapshot(),
+        branch_target_buffer.snapshot(),
+        std::iter::empty::<(u64, BranchSpeculationId)>(),
+    )
+    .unwrap();
+    let mut encoded = payload.encode();
+    let first_btb_entry = HEADER_BYTES + 8 + 8 * CHECKPOINT_TARGET_BYTES + BTB_HEADER_BYTES;
+    let second_btb_entry = first_btb_entry + BTB_ENTRY_BYTES;
+    encoded[second_btb_entry] = 1;
+    encoded[second_btb_entry + 1..second_btb_entry + 9].copy_from_slice(&0x1000_u64.to_le_bytes());
+    encoded[second_btb_entry + 9..second_btb_entry + 17].copy_from_slice(&0x1090_u64.to_le_bytes());
+    encoded[second_btb_entry + 17] = 1;
+    encoded[second_btb_entry + 18..second_btb_entry + 26].copy_from_slice(&2_u64.to_le_bytes());
+
+    assert!(matches!(
+        BranchPredictorCheckpointPayload::decode(&encoded),
+        Err(BranchPredictorError::InvalidBranchTargetBufferCheckpoint { .. })
+    ));
+}
+
+#[test]
+fn checkpoint_payload_rejects_v2_pending_count_before_allocation() {
+    const HEADER_BYTES: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4 * 2;
+    const PENDING_COUNT_OFFSET: usize = 4 + 1 + 4 + 1 + 8 * 4;
+    const COUNTER_BYTES: usize = 8;
+    const TARGET_BYTES: usize = 8 * (1 + 8);
+    const PENDING_SPECULATION_BYTES: usize = 49;
+    const BTB_HEADER_BYTES: usize = 4 * 2 + 8 * 6;
+    let payload = BranchPredictorCheckpointPayload::from_snapshot(
+        predictor(8).snapshot(),
+        std::iter::empty::<(u64, BranchSpeculationId)>(),
+    )
+    .unwrap();
+    let mut encoded = payload.encode();
+    let pending_count = 100_u32;
+    let expected = HEADER_BYTES
+        + COUNTER_BYTES
+        + TARGET_BYTES
+        + pending_count as usize * PENDING_SPECULATION_BYTES
+        + BTB_HEADER_BYTES;
+    encoded[PENDING_COUNT_OFFSET..PENDING_COUNT_OFFSET + 4]
+        .copy_from_slice(&pending_count.to_le_bytes());
+
+    assert_eq!(
+        BranchPredictorCheckpointPayload::decode(&encoded),
+        Err(BranchPredictorError::InvalidCheckpointPayloadSize {
+            expected,
+            actual: encoded.len(),
+        })
+    );
+}
+
+#[test]
+fn checkpoint_payload_rejects_v2_active_count_before_allocation() {
+    const ACTIVE_COUNT_OFFSET: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4;
+    const ACTIVE_SPECULATION_BYTES: usize = 16;
+    let payload = BranchPredictorCheckpointPayload::from_snapshot(
+        predictor(8).snapshot(),
+        std::iter::empty::<(u64, BranchSpeculationId)>(),
+    )
+    .unwrap();
+    let mut encoded = payload.encode();
+    let active_count = 300_u32;
+    let expected = encoded.len() + active_count as usize * ACTIVE_SPECULATION_BYTES;
+    encoded[ACTIVE_COUNT_OFFSET..ACTIVE_COUNT_OFFSET + 4]
+        .copy_from_slice(&active_count.to_le_bytes());
+
+    assert_eq!(
+        BranchPredictorCheckpointPayload::decode(&encoded),
+        Err(BranchPredictorError::InvalidCheckpointPayloadSize {
+            expected,
+            actual: encoded.len(),
+        })
+    );
 }
 
 #[test]

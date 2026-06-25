@@ -146,6 +146,7 @@ pub(super) fn execution_summary(
             in_order_pipeline_stage_max_in_flight(&core, &pipeline_snapshot);
         let pipeline_stage_occupied_cycles = in_order_pipeline_stage_occupied_cycles(&core);
         let branch_speculation_summary = core.branch_speculation_summary();
+        let branch_target_buffer = core.branch_target_buffer_snapshot();
         let checker = core
             .checker_cpu_snapshot()
             .map(|snapshot| Rem6CheckerSummary {
@@ -193,6 +194,8 @@ pub(super) fn execution_summary(
                 .removed_youngers(),
             in_order_pipeline_branch_speculation_max_pending: branch_speculation_summary
                 .max_pending(),
+            branch_target_buffer_lookups: branch_target_buffer.lookup_count(),
+            branch_target_buffer_hits: branch_target_buffer.hit_count(),
             data_loads: data.loads,
             data_stores: data.stores,
             data_atomics: data.atomics,

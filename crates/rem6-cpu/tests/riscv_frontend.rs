@@ -6284,6 +6284,12 @@ fn riscv_core_driver_fetch_ahead_uses_trained_branch_target() {
     );
     assert_eq!(core.read_register(reg(2)), 2);
     assert_eq!(core.read_register(reg(1)), 0);
+
+    let btb = core.branch_target_buffer_snapshot();
+    assert!(btb.update_count() > 0);
+    assert!(btb.lookup_count() > 0);
+    assert!(btb.hit_count() > 0);
+    assert!(btb.hit_count() <= btb.lookup_count());
 }
 
 #[test]

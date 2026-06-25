@@ -2,8 +2,8 @@ use rem6_isa_riscv::{RiscvHartState, RiscvInstruction, RiscvPrivilegeMode};
 use rem6_memory::Address;
 
 use crate::{
-    CpuFetchEvent, CpuFetchEventKind, RiscvBranchPredictorKind, RiscvCore, RiscvCoreState,
-    RiscvCpuError, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+    BranchTargetKind, CpuFetchEvent, CpuFetchEventKind, RiscvBranchPredictorKind, RiscvCore,
+    RiscvCoreState, RiscvCpuError, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
     RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TAGE_SC_L_THREAD,
     RISCV_LOCAL_TOURNAMENT_THREAD,
 };
@@ -394,12 +394,19 @@ fn selected_conditional_branch_prediction(
     fetch_pc: Address,
     instruction: RiscvInstruction,
 ) -> Option<RiscvFetchAheadBranchPrediction> {
+    let target_lookup = state
+        .branch_target_buffer
+        .lookup(fetch_pc, BranchTargetKind::DirectConditional);
     match state.branch_predictor_kind {
         RiscvBranchPredictorKind::Basic => {
             let prediction = state.branch_predictor.predict(fetch_pc);
             Some(RiscvFetchAheadBranchPrediction {
                 predicted_taken: prediction.predicted_taken(),
-                target: prediction.target(),
+                target: if prediction.predicted_taken() {
+                    target_lookup.target().or_else(|| prediction.target())
+                } else {
+                    None
+                },
             })
         }
         RiscvBranchPredictorKind::GShare => {
@@ -493,10 +500,16 @@ fn conditional_branch_target(fetch_pc: Address, instruction: RiscvInstruction) -
 }
 
 fn direct_jump_fetch_ahead_target(
-    state: &RiscvCoreState,
+    state: &mut RiscvCoreState,
     fetch_pc: Address,
     instruction: RiscvInstruction,
 ) -> Option<Address> {
+    let kind = match instruction {
+        RiscvInstruction::Jal { .. } => BranchTargetKind::DirectUnconditional,
+        RiscvInstruction::Jalr { .. } => BranchTargetKind::IndirectUnconditional,
+        _ => return None,
+    };
+    state.branch_target_buffer.lookup(fetch_pc, kind);
     match instruction {
         RiscvInstruction::Jal { offset, .. } => {
             checked_add_signed(fetch_pc.get(), offset.value()).map(Address::new)
@@ -681,7 +694,9 @@ fn instruction_is_conditional_branch(instruction: RiscvInstruction) -> bool {
 mod tests {
     use super::*;
     use crate::{
-        CpuCore, CpuFetchConfig, CpuFetchRecord, CpuId, CpuResetState, RiscvBranchPredictorKind,
+        BranchPredictor, BranchPredictorCheckpointPayload, BranchPredictorConfig,
+        BranchTargetBuffer, BranchTargetBufferConfig, CpuCore, CpuFetchConfig, CpuFetchRecord,
+        CpuId, CpuResetState, RiscvBranchPredictorKind, DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES,
         RISCV_LOCAL_GSHARE_THREAD,
     };
     use rem6_kernel::PartitionId;
@@ -868,6 +883,129 @@ mod tests {
         let state = core.state.lock().expect("riscv core lock");
         assert!(state.branch_speculations.is_empty());
         assert!(state.branch_predictor.pending_speculations().is_empty());
+    }
+
+    #[test]
+    fn checkpoint_restored_basic_predictor_target_steers_with_cold_btb() {
+        let branch = b_type(8, 0, 0, 0).to_le_bytes().to_vec();
+        let core = core_with_completed_fetch(branch);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            state
+                .branch_predictor
+                .update(Address::new(0x8000), true, Some(Address::new(0x8008)));
+        }
+        let captured = core.branch_predictor_checkpoint_payload();
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            state.branch_target_buffer.invalidate();
+        }
+
+        core.restore_branch_predictor_checkpoint_payload(captured)
+            .unwrap();
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+        assert_eq!(decision.pc(), Address::new(0x8008));
+        assert_eq!(
+            decision.branch_speculation().map(|speculation| {
+                (
+                    speculation.sequence(),
+                    speculation.pc(),
+                    speculation.predicted_taken(),
+                    speculation.target(),
+                )
+            }),
+            Some((0, Address::new(0x8000), true, Some(Address::new(0x8008))))
+        );
+        let btb = core.branch_target_buffer_snapshot();
+        assert_eq!(btb.lookup_count(), 1);
+        assert_eq!(btb.hit_count(), 0);
+    }
+
+    #[test]
+    fn checkpoint_restore_ignores_polluted_btb_target() {
+        let branch = b_type(8, 0, 0, 0).to_le_bytes().to_vec();
+        let core = core_with_completed_fetch(branch);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            state
+                .branch_predictor
+                .update(Address::new(0x8000), true, Some(Address::new(0x8008)));
+            state.branch_target_buffer.update(
+                Address::new(0x8000),
+                Address::new(0x8008),
+                BranchTargetKind::DirectConditional,
+            );
+        }
+        let captured = core.branch_predictor_checkpoint_payload();
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            state.branch_target_buffer.update(
+                Address::new(0x8000),
+                Address::new(0x8010),
+                BranchTargetKind::DirectConditional,
+            );
+        }
+
+        core.restore_branch_predictor_checkpoint_payload(captured)
+            .unwrap();
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+        assert_eq!(decision.pc(), Address::new(0x8008));
+        assert_eq!(
+            decision.branch_speculation().map(|speculation| {
+                (
+                    speculation.sequence(),
+                    speculation.pc(),
+                    speculation.predicted_taken(),
+                    speculation.target(),
+                )
+            }),
+            Some((0, Address::new(0x8000), true, Some(Address::new(0x8008))))
+        );
+        let btb = core.branch_target_buffer_snapshot();
+        assert_eq!(btb.lookup_count(), 1);
+        assert_eq!(btb.hit_count(), 1);
+    }
+
+    #[test]
+    fn checkpoint_restore_rejects_bad_btb_shape_without_partial_state_change() {
+        let branch = b_type(8, 0, 0, 0).to_le_bytes().to_vec();
+        let core = core_with_completed_fetch(branch);
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+        core.record_fetch_ahead_speculation(&decision);
+        let original_predictor = core.branch_predictor_snapshot();
+        let original_btb = core.branch_target_buffer_snapshot();
+        let original_speculations = {
+            let state = core.state.lock().expect("riscv core lock");
+            state.branch_speculations.clone()
+        };
+        let mut alternate_predictor = BranchPredictor::new(
+            BranchPredictorConfig::new(DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES)
+                .expect("default RISC-V branch predictor entries are valid"),
+        );
+        alternate_predictor.update(Address::new(0x9000), true, Some(Address::new(0x9008)));
+        let incompatible_btb =
+            BranchTargetBuffer::new(BranchTargetBufferConfig::new(8, 2).unwrap()).snapshot();
+        let payload = BranchPredictorCheckpointPayload::from_snapshots(
+            alternate_predictor.snapshot(),
+            incompatible_btb,
+            [],
+        )
+        .unwrap();
+
+        let error = core
+            .restore_branch_predictor_checkpoint_payload(payload)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::BranchPredictorError::InvalidBranchTargetBufferCheckpoint { .. }
+        ));
+        assert_eq!(core.branch_predictor_snapshot(), original_predictor);
+        assert_eq!(core.branch_target_buffer_snapshot(), original_btb);
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(state.branch_speculations, original_speculations);
     }
 
     #[test]
