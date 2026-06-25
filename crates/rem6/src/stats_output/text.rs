@@ -215,6 +215,21 @@ fn append_gem5_mem_ctrl_bandwidth_alias_stat(
 }
 
 fn append_gem5_dram_interface_ratio_stats(output: &mut String, snapshot: &StatSnapshot) {
+    append_gem5_dram_interface_row_hit_rate_stat(
+        output,
+        snapshot,
+        "system.mem_ctrl.dram.readRowHitRate",
+        "system.mem_ctrl.dram.readRowHits",
+        "system.mem_ctrl.dram.readBursts",
+    );
+    append_gem5_dram_interface_row_hit_rate_stat(
+        output,
+        snapshot,
+        "system.mem_ctrl.dram.writeRowHitRate",
+        "system.mem_ctrl.dram.writeRowHits",
+        "system.mem_ctrl.dram.writeBursts",
+    );
+
     let (Some(row_hits), Some(read_bursts), Some(write_bursts)) = (
         snapshot_value(snapshot, "sim.memory.dram.row_hits"),
         snapshot_value(snapshot, "system.mem_ctrl.dram.readBursts"),
@@ -226,10 +241,42 @@ fn append_gem5_dram_interface_ratio_stats(output: &mut String, snapshot: &StatSn
     if bursts == 0 {
         return;
     }
-    output.push_str(&format!(
-        "{:<64} {:>20} # kind=derived unit=Ratio reset_policy=monotonic\n",
+    append_gem5_dram_interface_percent_ratio_stat(
+        output,
         "system.mem_ctrl.dram.pageHitRate",
-        format_scaled_ratio(row_hits, 100, bursts, 1, Some(2))
+        row_hits,
+        bursts,
+    );
+}
+
+fn append_gem5_dram_interface_row_hit_rate_stat(
+    output: &mut String,
+    snapshot: &StatSnapshot,
+    alias_path: &str,
+    row_hits_path: &str,
+    bursts_path: &str,
+) {
+    let (Some(row_hits), Some(bursts)) = (
+        snapshot_value(snapshot, row_hits_path),
+        snapshot_value(snapshot, bursts_path),
+    ) else {
+        return;
+    };
+    if bursts == 0 {
+        return;
+    }
+    append_gem5_dram_interface_percent_ratio_stat(output, alias_path, row_hits, bursts);
+}
+
+fn append_gem5_dram_interface_percent_ratio_stat(
+    output: &mut String,
+    alias_path: &str,
+    numerator: u64,
+    denominator: u64,
+) {
+    output.push_str(&format!(
+        "{alias_path:<64} {:>20} # kind=derived unit=Ratio reset_policy=monotonic\n",
+        format_scaled_ratio(numerator, 100, denominator, 1, Some(2))
     ));
 }
 
