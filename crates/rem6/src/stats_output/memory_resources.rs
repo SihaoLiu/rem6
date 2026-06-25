@@ -250,6 +250,7 @@ fn emit_cache_resource_stats(
         ("bank.coalesced_misses", summary.bank_coalesced_misses),
         ("prefetch.identified", summary.prefetch_identified),
         ("prefetch.issued", summary.prefetch_issued),
+        ("prefetch.useful", summary.prefetch_useful),
         ("prefetch.span_page", summary.prefetch_span_page),
         ("prefetch.in_cache", summary.prefetch_in_cache),
         ("prefetch.queue.enqueued", summary.prefetch_queue_enqueued),

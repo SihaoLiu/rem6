@@ -85,6 +85,7 @@ struct CliDataCachePrefetchRuntime {
     tagged: TaggedPrefetcher,
     queue: QueuedPrefetcher,
     issued_lines: BTreeSet<Address>,
+    pending_useful_lines: BTreeSet<Address>,
     next_sequence: u64,
 }
 
@@ -92,6 +93,7 @@ struct CliDataCachePrefetchRuntime {
 pub(crate) struct CliDataCachePrefetchSummary {
     pub(crate) identified: u64,
     pub(crate) issued: u64,
+    pub(crate) useful: u64,
     pub(crate) span_page: u64,
     pub(crate) in_cache: u64,
     pub(crate) queue_enqueued: u64,
@@ -119,6 +121,7 @@ pub(crate) struct CliDataCacheSummary {
     pub(crate) bank_coalesced_misses: u64,
     pub(crate) prefetch_identified: u64,
     pub(crate) prefetch_issued: u64,
+    pub(crate) prefetch_useful: u64,
     pub(crate) prefetch_span_page: u64,
     pub(crate) prefetch_in_cache: u64,
     pub(crate) prefetch_queue_enqueued: u64,
@@ -184,6 +187,7 @@ impl CliDataCacheSummary {
                 .sum(),
             prefetch_identified: 0,
             prefetch_issued: 0,
+            prefetch_useful: 0,
             prefetch_span_page: 0,
             prefetch_in_cache: 0,
             prefetch_queue_enqueued: 0,
@@ -202,6 +206,7 @@ impl CliDataCacheSummary {
     ) -> Self {
         self.prefetch_identified = summary.identified;
         self.prefetch_issued = summary.issued;
+        self.prefetch_useful = summary.useful;
         self.prefetch_span_page = summary.span_page;
         self.prefetch_in_cache = summary.in_cache;
         self.prefetch_queue_enqueued = summary.queue_enqueued;
@@ -513,6 +518,9 @@ impl CliDataCacheRuntime {
                 self.record_error(error);
                 TargetOutcome::Respond(MemoryResponse::retry(request))
             });
+        if let Err(error) = self.record_prefetch_use_from_response(request, &outcome) {
+            self.record_error(error);
+        }
         if let Err(error) = self.issue_prefetches_from_request(memory, lower_caches, tick, request)
         {
             self.record_error(error);
@@ -1096,6 +1104,25 @@ impl CliDataCacheRuntime {
         Ok(())
     }
 
+    fn record_prefetch_use_from_response(
+        &self,
+        request: &MemoryRequest,
+        outcome: &TargetOutcome,
+    ) -> Result<(), Rem6CliError> {
+        if target_outcome_response_status(outcome) != Some(ResponseStatus::Completed)
+            || !is_cache_prefetch_source(request)
+        {
+            return Ok(());
+        }
+        let Some(prefetch) = self.prefetch.as_ref() else {
+            return Ok(());
+        };
+        prefetch
+            .lock()
+            .expect("CLI data cache prefetch lock")
+            .record_useful_if_issued(request.range().start(), self.layout)
+    }
+
     fn record_error(&self, error: Rem6CliError) {
         let mut slot = self.error.lock().expect("CLI data cache error lock");
         if slot.is_none() {
@@ -1122,6 +1149,7 @@ impl CliDataCachePrefetchRuntime {
                     tagged,
                     queue: QueuedPrefetcher::new(queue_config),
                     issued_lines: BTreeSet::new(),
+                    pending_useful_lines: BTreeSet::new(),
                     next_sequence: PREFETCH_REQUEST_SEQUENCE_BASE,
                 })
             }
@@ -1198,11 +1226,28 @@ impl CliDataCachePrefetchRuntime {
     }
 
     fn mark_issued(&mut self, address: Address, layout: CacheLineLayout) {
-        self.issued_lines.insert(layout.line_address(address));
+        let line = layout.line_address(address);
+        self.issued_lines.insert(line);
+        self.pending_useful_lines.insert(line);
+    }
+
+    fn record_useful_if_issued(
+        &mut self,
+        address: Address,
+        layout: CacheLineLayout,
+    ) -> Result<(), Rem6CliError> {
+        let line = layout.line_address(address);
+        if self.pending_useful_lines.remove(&line) {
+            self.queue
+                .record_useful_prefetch(false)
+                .map_err(execute_error)?;
+        }
+        Ok(())
     }
 
     fn clear_issued_lines(&mut self) {
         self.issued_lines.clear();
+        self.pending_useful_lines.clear();
     }
 
     fn summary(&self) -> CliDataCachePrefetchSummary {
@@ -1210,6 +1255,7 @@ impl CliDataCachePrefetchRuntime {
         CliDataCachePrefetchSummary {
             identified: stats.identified_prefetches(),
             issued: stats.issued_prefetches(),
+            useful: stats.useful_prefetches(),
             span_page: stats.span_page_prefetches(),
             in_cache: stats.in_cache_drops(),
             queue_enqueued: stats.prefetch_queue().enqueued(),
@@ -1244,6 +1290,14 @@ fn is_cache_prefetch_source(request: &MemoryRequest) -> bool {
             | MemoryOperation::LoadLocked
             | MemoryOperation::LockedRmwRead
     )
+}
+
+fn target_outcome_response_status(outcome: &TargetOutcome) -> Option<ResponseStatus> {
+    match outcome {
+        TargetOutcome::Respond(response) => Some(response.status()),
+        TargetOutcome::RespondAfter { response, .. } => Some(response.status()),
+        TargetOutcome::NoResponse => None,
+    }
 }
 
 fn data_cache_request_updates_backing(
