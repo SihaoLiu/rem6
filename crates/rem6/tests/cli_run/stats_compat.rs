@@ -832,6 +832,86 @@ fn rem6_run_json_stats_emit_gem5_dram_interface_burst_aliases() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_dram_interface_page_hit_rate_alias() {
+    let path = gem5_l1_cache_alias_binary("gem5-dram-interface-page-hit-rate-alias");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let row_hits = text_stat_value(&stdout, "sim.memory.dram.row_hits");
+    let read_bursts = text_stat_value(&stdout, "system.mem_ctrl.dram.readBursts");
+    let write_bursts = text_stat_value(&stdout, "system.mem_ctrl.dram.writeBursts");
+    let total_bursts = read_bursts + write_bursts;
+    assert!(total_bursts > 0, "{stdout}");
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.mem_ctrl.dram.pageHitRate"),
+        fixed_ratio_precision(row_hits * 100, total_bursts, 2)
+    );
+    assert!(
+        text_stat_line(&stdout, "system.mem_ctrl.dram.pageHitRate").contains("unit=Ratio"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn rem6_run_json_stats_omit_text_only_gem5_dram_interface_page_hit_rate_alias() {
+    let path = gem5_l1_cache_alias_binary("gem5-dram-interface-page-hit-rate-alias-json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_stat_greater_than(&stdout, "sim.memory.dram.accesses", "Count", 0, "monotonic");
+    assert!(!stdout.contains("\"path\":\"system.mem_ctrl.dram.pageHitRate\""));
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_seconds_and_ops_aliases() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7

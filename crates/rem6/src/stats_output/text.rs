@@ -43,6 +43,7 @@ fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) 
         }
     }
     append_gem5_mem_ctrl_bandwidth_alias_stats(output, snapshot);
+    append_gem5_dram_interface_ratio_stats(output, snapshot);
     append_gem5_cpu_ratio_stats(output, snapshot);
     append_gem5_l1_cache_alias_stats(output, snapshot);
 }
@@ -210,6 +211,25 @@ fn append_gem5_mem_ctrl_bandwidth_alias_stat(
     output.push_str(&format!(
         "{alias_path:<64} {:>20} # kind=derived unit=(Byte/Second) reset_policy=monotonic\n",
         format_scaled_ratio(bytes, sim_freq, final_tick, denominator_scale, precision)
+    ));
+}
+
+fn append_gem5_dram_interface_ratio_stats(output: &mut String, snapshot: &StatSnapshot) {
+    let (Some(row_hits), Some(read_bursts), Some(write_bursts)) = (
+        snapshot_value(snapshot, "sim.memory.dram.row_hits"),
+        snapshot_value(snapshot, "system.mem_ctrl.dram.readBursts"),
+        snapshot_value(snapshot, "system.mem_ctrl.dram.writeBursts"),
+    ) else {
+        return;
+    };
+    let bursts = read_bursts.saturating_add(write_bursts);
+    if bursts == 0 {
+        return;
+    }
+    output.push_str(&format!(
+        "{:<64} {:>20} # kind=derived unit=Ratio reset_policy=monotonic\n",
+        "system.mem_ctrl.dram.pageHitRate",
+        format_scaled_ratio(row_hits, 100, bursts, 1, Some(2))
     ));
 }
 
