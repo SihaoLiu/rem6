@@ -109,6 +109,14 @@ fn append_gem5_l1_cache_alias_stats_for(
             inputs.hits,
             inputs.misses,
         );
+        append_gem5_cache_mshr_alias_stats(
+            output,
+            alias_prefix,
+            "demand",
+            inputs.mshr_hits,
+            inputs.mshr_misses,
+            inputs.accesses(),
+        );
     }
     append_gem5_cache_hit_miss_alias_stats(
         output,
@@ -116,6 +124,14 @@ fn append_gem5_l1_cache_alias_stats_for(
         "overall",
         inputs.hits,
         inputs.misses,
+    );
+    append_gem5_cache_mshr_alias_stats(
+        output,
+        alias_prefix,
+        "overall",
+        inputs.mshr_hits,
+        inputs.mshr_misses,
+        inputs.accesses(),
     );
 }
 
@@ -128,6 +144,8 @@ fn can_emit_gem5_l1_cache_demand_alias_stats(snapshot: &StatSnapshot, source_pre
 struct CacheHitMissInputs {
     hits: u64,
     misses: u64,
+    mshr_hits: u64,
+    mshr_misses: u64,
 }
 
 impl CacheHitMissInputs {
@@ -139,6 +157,8 @@ impl CacheHitMissInputs {
         Self {
             hits: self.hits.saturating_add(other.hits),
             misses: self.misses.saturating_add(other.misses),
+            mshr_hits: self.mshr_hits.saturating_add(other.mshr_hits),
+            mshr_misses: self.mshr_misses.saturating_add(other.mshr_misses),
         }
     }
 }
@@ -157,6 +177,8 @@ fn gem5_cache_hit_miss_inputs(
     Some(CacheHitMissInputs {
         hits,
         misses: scheduled_misses.saturating_add(coalesced_misses),
+        mshr_hits: coalesced_misses,
+        mshr_misses: scheduled_misses,
     })
 }
 
@@ -213,6 +235,34 @@ fn append_gem5_cache_hit_miss_alias_stats(
             output,
             &format!("{alias_prefix}.{alias_kind}MissRate"),
             misses,
+            accesses,
+        );
+    }
+}
+
+fn append_gem5_cache_mshr_alias_stats(
+    output: &mut String,
+    alias_prefix: &str,
+    alias_kind: &str,
+    mshr_hits: u64,
+    mshr_misses: u64,
+    accesses: u64,
+) {
+    append_derived_count_stat(
+        output,
+        &format!("{alias_prefix}.{alias_kind}MshrHits"),
+        mshr_hits,
+    );
+    append_derived_count_stat(
+        output,
+        &format!("{alias_prefix}.{alias_kind}MshrMisses"),
+        mshr_misses,
+    );
+    if accesses != 0 {
+        append_derived_ratio_stat(
+            output,
+            &format!("{alias_prefix}.{alias_kind}MshrMissRate"),
+            mshr_misses,
             accesses,
         );
     }

@@ -458,6 +458,33 @@ fn rem6_run_text_stats_emit_gem5_l1_cache_hit_miss_aliases() {
         text_stat_decimal(&stdout, "system.cpu.icache.overallMissRate"),
         fixed_ratio(icache_misses, icache_accesses)
     );
+    let icache_mshr_hits = text_stat_value(&stdout, "sim.instruction_cache.bank.coalesced_misses");
+    let icache_mshr_misses =
+        text_stat_value(&stdout, "sim.instruction_cache.bank.scheduled_misses");
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.icache.demandMshrHits"),
+        icache_mshr_hits
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.icache.overallMshrHits"),
+        icache_mshr_hits
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.icache.demandMshrMisses"),
+        icache_mshr_misses
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.icache.overallMshrMisses"),
+        icache_mshr_misses
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.cpu.icache.demandMshrMissRate"),
+        fixed_ratio(icache_mshr_misses, icache_accesses)
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.cpu.icache.overallMshrMissRate"),
+        fixed_ratio(icache_mshr_misses, icache_accesses)
+    );
 
     let dcache_hits = text_stat_value(&stdout, "sim.data_cache.bank.immediate_hits");
     let dcache_misses = text_stat_value(&stdout, "sim.data_cache.bank.scheduled_misses")
@@ -496,6 +523,40 @@ fn rem6_run_text_stats_emit_gem5_l1_cache_hit_miss_aliases() {
     assert_eq!(
         text_stat_decimal(&stdout, "system.cpu.dcache.overallMissRate"),
         fixed_ratio(dcache_misses, dcache_accesses)
+    );
+    let dcache_mshr_hits = text_stat_value(&stdout, "sim.data_cache.bank.coalesced_misses");
+    let dcache_mshr_misses = text_stat_value(&stdout, "sim.data_cache.bank.scheduled_misses");
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.dcache.demandMshrHits"),
+        dcache_mshr_hits
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.dcache.overallMshrHits"),
+        dcache_mshr_hits
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.dcache.demandMshrMisses"),
+        dcache_mshr_misses
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.dcache.overallMshrMisses"),
+        dcache_mshr_misses
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.cpu.dcache.demandMshrMissRate"),
+        fixed_ratio(dcache_mshr_misses, dcache_accesses)
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.cpu.dcache.overallMshrMissRate"),
+        fixed_ratio(dcache_mshr_misses, dcache_accesses)
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.dcache.demandMshrHits").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.dcache.demandMshrMissRate").contains("unit=Ratio"),
+        "{stdout}"
     );
 }
 
@@ -556,6 +617,12 @@ fn rem6_run_json_stats_omit_text_only_gem5_l1_cache_hit_miss_aliases() {
     assert!(!stdout.contains("\"path\":\"system.cpu.icache.demandMisses\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.icache.demandAccesses\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.icache.demandMissRate\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.icache.overallMshrHits\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.icache.overallMshrMisses\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.icache.overallMshrMissRate\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.icache.demandMshrHits\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.icache.demandMshrMisses\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.icache.demandMshrMissRate\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.dcache.overallHits\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.dcache.overallMisses\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.dcache.overallAccesses\""));
@@ -564,6 +631,12 @@ fn rem6_run_json_stats_omit_text_only_gem5_l1_cache_hit_miss_aliases() {
     assert!(!stdout.contains("\"path\":\"system.cpu.dcache.demandMisses\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.dcache.demandAccesses\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.dcache.demandMissRate\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.dcache.overallMshrHits\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.dcache.overallMshrMisses\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.dcache.overallMshrMissRate\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.dcache.demandMshrHits\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.dcache.demandMshrMisses\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.dcache.demandMshrMissRate\""));
 }
 
 #[test]
@@ -861,10 +934,20 @@ fn rem6_run_text_stats_omit_gem5_l1_demand_aliases_when_prefetch_issued() {
 
     assert!(text_stat_value(&stdout, "sim.data_cache.prefetch.issued") > 0);
     assert!(has_text_stat(&stdout, "system.cpu.dcache.overallHits"));
+    assert!(has_text_stat(&stdout, "system.cpu.dcache.overallMshrHits"));
     assert!(!has_text_stat(&stdout, "system.cpu.dcache.demandHits"));
     assert!(!has_text_stat(&stdout, "system.cpu.dcache.demandMisses"));
     assert!(!has_text_stat(&stdout, "system.cpu.dcache.demandAccesses"));
     assert!(!has_text_stat(&stdout, "system.cpu.dcache.demandMissRate"));
+    assert!(!has_text_stat(&stdout, "system.cpu.dcache.demandMshrHits"));
+    assert!(!has_text_stat(
+        &stdout,
+        "system.cpu.dcache.demandMshrMisses"
+    ));
+    assert!(!has_text_stat(
+        &stdout,
+        "system.cpu.dcache.demandMshrMissRate"
+    ));
 }
 
 #[test]
