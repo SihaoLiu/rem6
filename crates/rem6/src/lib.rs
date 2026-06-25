@@ -255,6 +255,7 @@ pub struct Rem6DramSummary {
     commands: u64,
     turnarounds: u64,
     total_ready_latency_ticks: u64,
+    read_ready_latency_ticks: u64,
     max_ready_latency_ticks: u64,
     profiled_targets: u64,
     profile_technology: Option<&'static str>,

@@ -409,6 +409,7 @@ fn dram_memory_controller_reports_target_activity_profiles() {
     assert_eq!(low_activity.profile().row_miss_count(), 1);
     assert_eq!(low_activity.profile().command_count(), 3);
     assert_eq!(low_activity.profile().total_ready_latency_cycles(), 20);
+    assert_eq!(low_activity.profile().total_read_ready_latency_cycles(), 20);
 
     let high_activity = controller.target_activity(high).unwrap();
     assert_eq!(high_activity.target(), high);
@@ -427,6 +428,7 @@ fn dram_memory_controller_reports_target_activity_profiles() {
     assert_eq!(memory_profile.active_port_count(), 2);
     assert_eq!(memory_profile.active_bank_count(), 2);
     assert_eq!(memory_profile.total_ready_latency_cycles(), 28);
+    assert_eq!(memory_profile.total_read_ready_latency_cycles(), 20);
     assert_eq!(memory_profile.max_ready_latency_cycles(), 12);
     assert_eq!(
         controller.activity_profile_since(&activity_start),

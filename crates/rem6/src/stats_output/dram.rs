@@ -407,6 +407,11 @@ pub(super) fn emit_gem5_mem_ctrl_dram_alias_stats(
         ),
         ("system.mem_ctrl.dram.dramBytesRead", "Byte", read_bytes),
         ("system.mem_ctrl.dram.dramBytesWritten", "Byte", write_bytes),
+        (
+            "system.mem_ctrl.dram.totMemAccLat",
+            "Tick",
+            summary.read_ready_latency_ticks,
+        ),
     ] {
         increment_stat(stats, path, unit, StatResetPolicy::Monotonic, value)?;
     }

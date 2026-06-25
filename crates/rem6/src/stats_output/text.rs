@@ -44,6 +44,7 @@ fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) 
     }
     append_gem5_mem_ctrl_bandwidth_alias_stats(output, snapshot);
     append_gem5_dram_interface_ratio_stats(output, snapshot);
+    append_gem5_dram_interface_latency_stats(output, snapshot);
     append_gem5_cpu_ratio_stats(output, snapshot);
     append_gem5_l1_cache_alias_stats(output, snapshot);
 }
@@ -277,6 +278,23 @@ fn append_gem5_dram_interface_percent_ratio_stat(
     output.push_str(&format!(
         "{alias_path:<64} {:>20} # kind=derived unit=Ratio reset_policy=monotonic\n",
         format_scaled_ratio(numerator, 100, denominator, 1, Some(2))
+    ));
+}
+
+fn append_gem5_dram_interface_latency_stats(output: &mut String, snapshot: &StatSnapshot) {
+    let (Some(total_latency), Some(read_bursts)) = (
+        snapshot_value(snapshot, "system.mem_ctrl.dram.totMemAccLat"),
+        snapshot_value(snapshot, "system.mem_ctrl.dram.readBursts"),
+    ) else {
+        return;
+    };
+    if read_bursts == 0 {
+        return;
+    }
+    output.push_str(&format!(
+        "{:<64} {:>20} # kind=derived unit=(Tick/Count) reset_policy=monotonic\n",
+        "system.mem_ctrl.dram.avgMemAccLat",
+        format_scaled_ratio(total_latency, 1, read_bursts, 1, Some(2))
     ));
 }
 

@@ -541,6 +541,7 @@ fn dram_controller_reports_bank_port_and_window_activity() {
     assert_eq!(profile.command_count(), 5);
     assert_eq!(profile.turnaround_count(), 1);
     assert_eq!(profile.total_ready_latency_cycles(), 39);
+    assert_eq!(profile.total_read_ready_latency_cycles(), 20);
     assert_eq!(profile.max_ready_latency_cycles(), 19);
     assert!(profile.has_row_misses());
     assert_eq!(controller.activity_profile_since(activity_start), profile);
@@ -553,6 +554,7 @@ fn dram_controller_reports_bank_port_and_window_activity() {
     assert_eq!(bank0.first_arrival_cycle(), 0);
     assert_eq!(bank0.last_ready_cycle(), 13);
     assert_eq!(bank0.total_ready_latency_cycles(), 20);
+    assert_eq!(bank0.total_read_ready_latency_cycles(), 20);
     assert_eq!(bank0.max_ready_latency_cycles(), 12);
 
     let bank1 = controller.bank_activity(0, 1).unwrap();
@@ -560,6 +562,7 @@ fn dram_controller_reports_bank_port_and_window_activity() {
     assert_eq!(bank1.row_miss_count(), 1);
     assert_eq!(bank1.command_count(), 2);
     assert_eq!(bank1.total_ready_latency_cycles(), 19);
+    assert_eq!(bank1.total_read_ready_latency_cycles(), 0);
 
     let port = controller.port_activity(0).unwrap();
     assert_eq!(port.access_count(), 3);

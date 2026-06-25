@@ -938,6 +938,103 @@ fn rem6_run_json_stats_emit_gem5_dram_interface_per_bank_burst_aliases() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_dram_interface_mem_acc_latency_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-dram-interface-mem-acc-latency-aliases");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let all_access_latency = text_stat_value(&stdout, "sim.memory.dram.total_ready_latency_ticks");
+    let read_bursts = text_stat_value(&stdout, "system.mem_ctrl.dram.readBursts");
+    let read_latency = text_stat_value(&stdout, "system.mem_ctrl.dram.totMemAccLat");
+    assert!(all_access_latency > 0, "{stdout}");
+    assert!(read_latency > 0, "{stdout}");
+    assert!(read_latency < all_access_latency, "{stdout}");
+    assert!(read_bursts > 0, "{stdout}");
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.mem_ctrl.dram.avgMemAccLat"),
+        fixed_ratio_precision(read_latency, read_bursts, 2)
+    );
+    assert!(
+        text_stat_line(&stdout, "system.mem_ctrl.dram.totMemAccLat").contains("unit=Tick"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.mem_ctrl.dram.avgMemAccLat").contains("unit=(Tick/Count)"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn rem6_run_json_stats_emit_gem5_dram_interface_mem_acc_latency_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-dram-interface-mem-acc-latency-aliases-json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let all_access_latency = stat_value(&stdout, "sim.memory.dram.total_ready_latency_ticks");
+    let read_latency = stat_value(&stdout, "system.mem_ctrl.dram.totMemAccLat");
+    assert!(all_access_latency > 0, "{stdout}");
+    assert!(read_latency > 0, "{stdout}");
+    assert!(read_latency < all_access_latency, "{stdout}");
+    assert_stat(
+        &stdout,
+        "system.mem_ctrl.dram.totMemAccLat",
+        "Tick",
+        read_latency,
+        "monotonic",
+    );
+    assert!(!stdout.contains("\"path\":\"system.mem_ctrl.dram.avgMemAccLat\""));
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_dram_interface_row_hit_aliases() {
     let path = gem5_l1_cache_alias_binary("gem5-dram-interface-row-hit-aliases");
 

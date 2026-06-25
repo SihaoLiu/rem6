@@ -39,6 +39,7 @@ pub struct DramBankActivity {
     first_arrival_cycle: u64,
     last_ready_cycle: u64,
     total_ready_latency_cycles: u64,
+    total_read_ready_latency_cycles: u64,
     max_ready_latency_cycles: u64,
     qos_access_count: usize,
     qos_byte_count: u64,
@@ -93,6 +94,9 @@ impl DramBankActivity {
         self.last_ready_cycle = self.last_ready_cycle.max(access.ready_cycle());
         let ready_latency = access.ready_cycle() - access.arrival_cycle();
         self.total_ready_latency_cycles += ready_latency;
+        if matches!(access.kind(), DramAccessKind::Read) {
+            self.total_read_ready_latency_cycles += ready_latency;
+        }
         self.max_ready_latency_cycles = self.max_ready_latency_cycles.max(ready_latency);
         if let Some(qos) = access.qos() {
             self.qos_access_count += 1;
@@ -221,6 +225,10 @@ impl DramBankActivity {
         self.total_ready_latency_cycles
     }
 
+    pub const fn total_read_ready_latency_cycles(&self) -> u64 {
+        self.total_read_ready_latency_cycles
+    }
+
     pub const fn max_ready_latency_cycles(&self) -> u64 {
         self.max_ready_latency_cycles
     }
@@ -326,6 +334,7 @@ impl DramBankActivity {
         }
         self.last_ready_cycle = self.last_ready_cycle.max(later.last_ready_cycle);
         self.total_ready_latency_cycles += later.total_ready_latency_cycles;
+        self.total_read_ready_latency_cycles += later.total_read_ready_latency_cycles;
         self.max_ready_latency_cycles = self
             .max_ready_latency_cycles
             .max(later.max_ready_latency_cycles);
@@ -535,6 +544,7 @@ pub struct DramActivityProfile {
     command_count: usize,
     turnaround_count: usize,
     total_ready_latency_cycles: u64,
+    total_read_ready_latency_cycles: u64,
     max_ready_latency_cycles: u64,
     qos_access_count: usize,
     qos_byte_count: u64,
@@ -581,6 +591,7 @@ impl DramActivityProfile {
                 .max_pending_nvm_reads
                 .max(bank.max_pending_nvm_reads());
             profile.total_ready_latency_cycles += bank.total_ready_latency_cycles();
+            profile.total_read_ready_latency_cycles += bank.total_read_ready_latency_cycles();
             profile.max_ready_latency_cycles = profile
                 .max_ready_latency_cycles
                 .max(bank.max_ready_latency_cycles());
@@ -631,6 +642,7 @@ impl DramActivityProfile {
         self.command_count += later.command_count;
         self.turnaround_count += later.turnaround_count;
         self.total_ready_latency_cycles += later.total_ready_latency_cycles;
+        self.total_read_ready_latency_cycles += later.total_read_ready_latency_cycles;
         self.max_ready_latency_cycles = self
             .max_ready_latency_cycles
             .max(later.max_ready_latency_cycles);
@@ -727,6 +739,10 @@ impl DramActivityProfile {
 
     pub const fn total_ready_latency_cycles(&self) -> u64 {
         self.total_ready_latency_cycles
+    }
+
+    pub const fn total_read_ready_latency_cycles(&self) -> u64 {
+        self.total_read_ready_latency_cycles
     }
 
     pub const fn max_ready_latency_cycles(&self) -> u64 {
@@ -845,6 +861,7 @@ impl DramActivityProfile {
         self.command_count += profile.command_count;
         self.turnaround_count += profile.turnaround_count;
         self.total_ready_latency_cycles += profile.total_ready_latency_cycles;
+        self.total_read_ready_latency_cycles += profile.total_read_ready_latency_cycles;
         self.max_ready_latency_cycles = self
             .max_ready_latency_cycles
             .max(profile.max_ready_latency_cycles);
@@ -1310,6 +1327,10 @@ impl DramMemoryActivityProfile {
 
     pub const fn total_ready_latency_cycles(&self) -> u64 {
         self.profile.total_ready_latency_cycles()
+    }
+
+    pub const fn total_read_ready_latency_cycles(&self) -> u64 {
+        self.profile.total_read_ready_latency_cycles()
     }
 
     pub const fn max_ready_latency_cycles(&self) -> u64 {

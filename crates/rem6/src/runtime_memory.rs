@@ -944,6 +944,7 @@ impl Rem6DramSummary {
             commands: profile.command_count() as u64,
             turnarounds: profile.turnaround_count() as u64,
             total_ready_latency_ticks: profile.total_ready_latency_cycles(),
+            read_ready_latency_ticks: profile.total_read_ready_latency_cycles(),
             max_ready_latency_ticks: profile.max_ready_latency_cycles(),
             profiled_targets: profile.profiled_target_count() as u64,
             profile_technology: profile.profile_technology_label(),
