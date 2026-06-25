@@ -252,10 +252,18 @@ fn emit_cache_resource_stats(
         ("prefetch.issued", summary.prefetch_issued),
         ("prefetch.useful", summary.prefetch_useful),
         ("prefetch.useful_but_miss", summary.prefetch_useful_but_miss),
+        ("prefetch.unused", summary.prefetch_unused),
         (
             "prefetch.demand_mshr_misses",
             summary.prefetch_demand_mshr_misses,
         ),
+        ("prefetch.hit_in_cache", summary.prefetch_hit_in_cache),
+        ("prefetch.hit_in_mshr", summary.prefetch_hit_in_mshr),
+        (
+            "prefetch.hit_in_write_buffer",
+            summary.prefetch_hit_in_write_buffer,
+        ),
+        ("prefetch.late", summary.prefetch_late),
         ("prefetch.span_page", summary.prefetch_span_page),
         ("prefetch.in_cache", summary.prefetch_in_cache),
         ("prefetch.queue.enqueued", summary.prefetch_queue_enqueued),

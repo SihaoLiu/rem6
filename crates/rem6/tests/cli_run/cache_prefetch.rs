@@ -292,6 +292,15 @@ fn rem6_run_data_cache_prefetcher_counts_prefetched_line_as_useful() {
     assert!(stdout.contains("\"data_loads\":2"));
     assert!(stdout.contains("\"data_cache_prefetch_issued\":2"));
     assert!(stdout.contains("\"data_cache_prefetch_useful\":1"));
+    for field in [
+        "unused",
+        "hit_in_cache",
+        "hit_in_mshr",
+        "hit_in_write_buffer",
+        "late",
+    ] {
+        assert!(stdout.contains(&format!("\"data_cache_prefetch_{field}\":0")));
+    }
     assert!(stdout.contains("\"data_cache_prefetch_demand_mshr_misses\":1"));
     assert!(stdout.contains("\"data_cache_prefetch_accuracy_ppm\":500000"));
     assert!(stdout.contains("\"data_cache_prefetch_coverage_ppm\":500000"));
@@ -300,6 +309,25 @@ fn rem6_run_data_cache_prefetcher_counts_prefetched_line_as_useful() {
         json_u64(&json, "/memory_resources/cache/prefetch_useful"),
         1
     );
+    for pointer in [
+        "/memory_resources/cache/prefetch_unused",
+        "/memory_resources/cache/prefetch_hit_in_cache",
+        "/memory_resources/cache/prefetch_hit_in_mshr",
+        "/memory_resources/cache/prefetch_hit_in_write_buffer",
+        "/memory_resources/cache/prefetch_late",
+        "/memory_resources/cache/data/prefetch_unused",
+        "/memory_resources/cache/data/prefetch_hit_in_cache",
+        "/memory_resources/cache/data/prefetch_hit_in_mshr",
+        "/memory_resources/cache/data/prefetch_hit_in_write_buffer",
+        "/memory_resources/cache/data/prefetch_late",
+        "/memory_resources/cache/data/l1/prefetch_unused",
+        "/memory_resources/cache/data/l1/prefetch_hit_in_cache",
+        "/memory_resources/cache/data/l1/prefetch_hit_in_mshr",
+        "/memory_resources/cache/data/l1/prefetch_hit_in_write_buffer",
+        "/memory_resources/cache/data/l1/prefetch_late",
+    ] {
+        assert_eq!(json_u64(&json, pointer), 0, "{pointer}");
+    }
     assert_eq!(
         json_u64(&json, "/memory_resources/cache/prefetch_demand_mshr_misses"),
         1
@@ -363,6 +391,20 @@ fn rem6_run_data_cache_prefetcher_counts_prefetched_line_as_useful() {
         1,
         "monotonic",
     );
+    for path in [
+        "sim.data_cache.prefetch.unused",
+        "sim.data_cache.prefetch.hit_in_cache",
+        "sim.data_cache.prefetch.hit_in_mshr",
+        "sim.data_cache.prefetch.hit_in_write_buffer",
+        "sim.data_cache.prefetch.late",
+        "sim.memory.resources.cache.prefetch.unused",
+        "sim.memory.resources.cache.prefetch.hit_in_cache",
+        "sim.memory.resources.cache.prefetch.hit_in_mshr",
+        "sim.memory.resources.cache.prefetch.hit_in_write_buffer",
+        "sim.memory.resources.cache.prefetch.late",
+    ] {
+        assert_stat(&stdout, path, "Count", 0, "monotonic");
+    }
     assert_stat(
         &stdout,
         "sim.data_cache.prefetch.demand_mshr_misses",

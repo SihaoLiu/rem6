@@ -36,7 +36,12 @@ pub(crate) struct Rem6CacheResourceSummary {
     pub(crate) prefetch_issued: u64,
     pub(crate) prefetch_useful: u64,
     pub(crate) prefetch_useful_but_miss: u64,
+    pub(crate) prefetch_unused: u64,
     pub(crate) prefetch_demand_mshr_misses: u64,
+    pub(crate) prefetch_hit_in_cache: u64,
+    pub(crate) prefetch_hit_in_mshr: u64,
+    pub(crate) prefetch_hit_in_write_buffer: u64,
+    pub(crate) prefetch_late: u64,
     pub(crate) prefetch_accuracy_ppm: Option<u64>,
     pub(crate) prefetch_coverage_ppm: Option<u64>,
     pub(crate) prefetch_span_page: u64,
@@ -167,9 +172,22 @@ impl Rem6CacheResourceSummary {
                 summary.prefetch_useful_but_miss = summary
                     .prefetch_useful_but_miss
                     .saturating_add(cache.prefetch_useful_but_miss);
+                summary.prefetch_unused = summary
+                    .prefetch_unused
+                    .saturating_add(cache.prefetch_unused);
                 summary.prefetch_demand_mshr_misses = summary
                     .prefetch_demand_mshr_misses
                     .saturating_add(cache.prefetch_demand_mshr_misses);
+                summary.prefetch_hit_in_cache = summary
+                    .prefetch_hit_in_cache
+                    .saturating_add(cache.prefetch_hit_in_cache);
+                summary.prefetch_hit_in_mshr = summary
+                    .prefetch_hit_in_mshr
+                    .saturating_add(cache.prefetch_hit_in_mshr);
+                summary.prefetch_hit_in_write_buffer = summary
+                    .prefetch_hit_in_write_buffer
+                    .saturating_add(cache.prefetch_hit_in_write_buffer);
+                summary.prefetch_late = summary.prefetch_late.saturating_add(cache.prefetch_late);
                 summary.prefetch_span_page = summary
                     .prefetch_span_page
                     .saturating_add(cache.prefetch_span_page);

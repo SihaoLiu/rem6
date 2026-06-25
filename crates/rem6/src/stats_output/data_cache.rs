@@ -129,10 +129,45 @@ pub(super) fn emit_data_cache_prefetch_summary_stats(
     )?;
     increment_stat(
         stats,
+        &format!("{prefix}.prefetch.unused"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_unused,
+    )?;
+    increment_stat(
+        stats,
         &format!("{prefix}.prefetch.demand_mshr_misses"),
         "Count",
         StatResetPolicy::Monotonic,
         summary.prefetch_demand_mshr_misses,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.prefetch.hit_in_cache"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_hit_in_cache,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.prefetch.hit_in_mshr"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_hit_in_mshr,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.prefetch.hit_in_write_buffer"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_hit_in_write_buffer,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.prefetch.late"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_late,
     )?;
     if let Some(accuracy_ppm) = summary.prefetch_accuracy_ppm {
         increment_stat(
@@ -253,10 +288,45 @@ pub(super) fn emit_gem5_cache_prefetcher_alias_stats(
     )?;
     increment_stat(
         stats,
+        &format!("{cache_prefix}.prefetcher.pfUnused"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_unused,
+    )?;
+    increment_stat(
+        stats,
         &format!("{cache_prefix}.prefetcher.demandMshrMisses"),
         "Count",
         StatResetPolicy::Monotonic,
         summary.prefetch_demand_mshr_misses,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{cache_prefix}.prefetcher.pfHitInCache"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_hit_in_cache,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{cache_prefix}.prefetcher.pfHitInMSHR"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_hit_in_mshr,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{cache_prefix}.prefetcher.pfHitInWB"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_hit_in_write_buffer,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{cache_prefix}.prefetcher.pfLate"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_late,
     )?;
     increment_stat(
         stats,

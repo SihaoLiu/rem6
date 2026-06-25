@@ -1461,6 +1461,61 @@ fn rem6_run_text_stats_emit_gem5_l1_prefetcher_pf_useful_but_miss_alias() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_l1_prefetcher_late_and_unused_aliases() {
+    let path = useful_data_prefetch_binary("gem5-l1-prefetcher-late-unused-aliases");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "200",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    for (alias, source) in [
+        ("pfUnused", "unused"),
+        ("pfHitInCache", "hit_in_cache"),
+        ("pfHitInMSHR", "hit_in_mshr"),
+        ("pfHitInWB", "hit_in_write_buffer"),
+        ("pfLate", "late"),
+    ] {
+        let source_path = format!("sim.data_cache.prefetch.{source}");
+        let alias_path = format!("system.cpu.dcache.prefetcher.{alias}");
+        assert_eq!(
+            text_stat_value(&stdout, &alias_path),
+            text_stat_value(&stdout, &source_path),
+            "{stdout}"
+        );
+        assert!(
+            text_stat_line(&stdout, &alias_path).contains("unit=Count"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains(&format!("system.cpu.icache.prefetcher.{alias}")));
+    }
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_l1_prefetcher_accuracy_and_coverage_aliases() {
     let path = useful_data_prefetch_binary("gem5-l1-prefetcher-accuracy-coverage-aliases");
 

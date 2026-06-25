@@ -73,6 +73,25 @@ fn prefetch_summary_preserves_useful_but_miss_count() {
 }
 
 #[test]
+fn prefetch_summary_preserves_late_and_unused_counts() {
+    let layout = CacheLineLayout::new(32).unwrap();
+    let mut prefetch =
+        CliDataCachePrefetchRuntime::new(CliCachePrefetcher::TaggedNextLine, layout).unwrap();
+
+    prefetch.queue.record_prefetch_unused();
+    prefetch.queue.record_prefetch_hit_in_cache();
+    prefetch.queue.record_prefetch_hit_in_mshr();
+    prefetch.queue.record_prefetch_hit_in_write_buffer();
+
+    let summary = prefetch.summary();
+    assert_eq!(summary.unused, 1);
+    assert_eq!(summary.hit_in_cache, 1);
+    assert_eq!(summary.hit_in_mshr, 1);
+    assert_eq!(summary.hit_in_write_buffer, 1);
+    assert_eq!(summary.late, 3);
+}
+
+#[test]
 fn prefetch_useful_but_miss_records_upgrade_miss_on_prefetched_line() {
     let layout = CacheLineLayout::new(32).unwrap();
     let memory = memory_with_line(layout);

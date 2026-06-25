@@ -109,7 +109,12 @@ pub(crate) struct CliDataCachePrefetchSummary {
     pub(crate) issued: u64,
     pub(crate) useful: u64,
     pub(crate) useful_but_miss: u64,
+    pub(crate) unused: u64,
     pub(crate) demand_mshr_misses: u64,
+    pub(crate) hit_in_cache: u64,
+    pub(crate) hit_in_mshr: u64,
+    pub(crate) hit_in_write_buffer: u64,
+    pub(crate) late: u64,
     pub(crate) accuracy_ppm: Option<u64>,
     pub(crate) coverage_ppm: Option<u64>,
     pub(crate) span_page: u64,
@@ -141,7 +146,12 @@ pub(crate) struct CliDataCacheSummary {
     pub(crate) prefetch_issued: u64,
     pub(crate) prefetch_useful: u64,
     pub(crate) prefetch_useful_but_miss: u64,
+    pub(crate) prefetch_unused: u64,
     pub(crate) prefetch_demand_mshr_misses: u64,
+    pub(crate) prefetch_hit_in_cache: u64,
+    pub(crate) prefetch_hit_in_mshr: u64,
+    pub(crate) prefetch_hit_in_write_buffer: u64,
+    pub(crate) prefetch_late: u64,
     pub(crate) prefetch_accuracy_ppm: Option<u64>,
     pub(crate) prefetch_coverage_ppm: Option<u64>,
     pub(crate) prefetch_span_page: u64,
@@ -211,7 +221,12 @@ impl CliDataCacheSummary {
             prefetch_issued: 0,
             prefetch_useful: 0,
             prefetch_useful_but_miss: 0,
+            prefetch_unused: 0,
             prefetch_demand_mshr_misses: 0,
+            prefetch_hit_in_cache: 0,
+            prefetch_hit_in_mshr: 0,
+            prefetch_hit_in_write_buffer: 0,
+            prefetch_late: 0,
             prefetch_accuracy_ppm: None,
             prefetch_coverage_ppm: None,
             prefetch_span_page: 0,
@@ -234,7 +249,12 @@ impl CliDataCacheSummary {
         self.prefetch_issued = summary.issued;
         self.prefetch_useful = summary.useful;
         self.prefetch_useful_but_miss = summary.useful_but_miss;
+        self.prefetch_unused = summary.unused;
         self.prefetch_demand_mshr_misses = summary.demand_mshr_misses;
+        self.prefetch_hit_in_cache = summary.hit_in_cache;
+        self.prefetch_hit_in_mshr = summary.hit_in_mshr;
+        self.prefetch_hit_in_write_buffer = summary.hit_in_write_buffer;
+        self.prefetch_late = summary.late;
         self.prefetch_accuracy_ppm = summary.accuracy_ppm;
         self.prefetch_coverage_ppm = summary.coverage_ppm;
         self.prefetch_span_page = summary.span_page;
@@ -1323,7 +1343,12 @@ impl CliDataCachePrefetchRuntime {
             issued: stats.issued_prefetches(),
             useful: stats.useful_prefetches(),
             useful_but_miss: stats.useful_but_miss_prefetches(),
+            unused: stats.unused_prefetches(),
             demand_mshr_misses: stats.demand_mshr_misses(),
+            hit_in_cache: stats.prefetch_hits_in_cache(),
+            hit_in_mshr: stats.prefetch_hits_in_mshr(),
+            hit_in_write_buffer: stats.prefetch_hits_in_write_buffer(),
+            late: stats.late_prefetches(),
             accuracy_ppm: stats.accuracy_ppm().map(u64::from),
             coverage_ppm: stats.coverage_ppm().map(u64::from),
             span_page: stats.span_page_prefetches(),

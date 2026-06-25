@@ -15,6 +15,9 @@ use super::{
     Rem6TraceReplayExternalAdapterSummary, RunMemorySystem,
 };
 
+use gups::gups_response_stats_json;
+
+mod gups;
 mod parallel;
 mod resources;
 mod run;
@@ -780,19 +783,6 @@ fn push_json_u64(fields: &mut Vec<String>, name: &str, value: u64) {
     fields.push(format!("\"{name}\":{value}"));
 }
 
-fn gups_response_stats_json(stats: &rem6_system::TrafficGupsTransportResponseStats) -> String {
-    format!(
-        "{{\"responses\":{},\"completed\":{},\"retry\":{},\"store_conditional_failed\":{},\"reads\":{},\"writes\":{},\"data_bytes\":{}}}",
-        stats.response_count(),
-        stats.completed_response_count(),
-        stats.retry_response_count(),
-        stats.store_conditional_failed_response_count(),
-        stats.read_response_count(),
-        stats.write_response_count(),
-        stats.response_data_byte_count(),
-    )
-}
-
 impl Rem6ExecutionSummary {
     fn to_simulation_json(
         &self,
@@ -811,7 +801,7 @@ impl Rem6ExecutionSummary {
         };
         let memory_system = optional_string_json(memory_system.map(RunMemorySystem::as_str));
         let common = format!(
-            "\"max_tick\":{},\"instruction_limit\":{},\"memory_system\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{},\"instruction_probes\":{},\"instruction_cache_runs\":{},\"instruction_cache_msi_runs\":{},\"instruction_cache_mesi_runs\":{},\"instruction_cache_moesi_runs\":{},\"instruction_cache_chi_runs\":{},\"instruction_cache_cpu_responses\":{},\"instruction_cache_directory_decisions\":{},\"instruction_cache_dram_accesses\":{},\"instruction_cache_bank_accepted\":{},\"instruction_cache_bank_immediate_hits\":{},\"instruction_cache_bank_scheduled_misses\":{},\"instruction_cache_bank_coalesced_misses\":{},\"instruction_cache_l2_runs\":{},\"instruction_cache_l2_msi_runs\":{},\"instruction_cache_l2_mesi_runs\":{},\"instruction_cache_l2_moesi_runs\":{},\"instruction_cache_l2_chi_runs\":{},\"instruction_cache_l2_cpu_responses\":{},\"instruction_cache_l2_directory_decisions\":{},\"instruction_cache_l2_dram_accesses\":{},\"instruction_cache_l2_bank_accepted\":{},\"instruction_cache_l2_bank_immediate_hits\":{},\"instruction_cache_l2_bank_scheduled_misses\":{},\"instruction_cache_l2_bank_coalesced_misses\":{},\"instruction_cache_l3_runs\":{},\"instruction_cache_l3_msi_runs\":{},\"instruction_cache_l3_mesi_runs\":{},\"instruction_cache_l3_moesi_runs\":{},\"instruction_cache_l3_chi_runs\":{},\"instruction_cache_l3_cpu_responses\":{},\"instruction_cache_l3_directory_decisions\":{},\"instruction_cache_l3_dram_accesses\":{},\"instruction_cache_l3_bank_accepted\":{},\"instruction_cache_l3_bank_immediate_hits\":{},\"instruction_cache_l3_bank_scheduled_misses\":{},\"instruction_cache_l3_bank_coalesced_misses\":{},\"instruction_cache_prefetch_identified\":{},\"instruction_cache_prefetch_issued\":{},\"instruction_cache_prefetch_useful\":{},\"instruction_cache_prefetch_useful_but_miss\":{},\"instruction_cache_prefetch_demand_mshr_misses\":{},\"instruction_cache_prefetch_accuracy_ppm\":{},\"instruction_cache_prefetch_coverage_ppm\":{},\"instruction_cache_prefetch_span_page\":{},\"instruction_cache_prefetch_in_cache\":{},\"instruction_cache_prefetch_queue_enqueued\":{},\"instruction_cache_prefetch_queue_issued\":{},\"instruction_cache_prefetch_queue_dropped\":{},\"instruction_cache_prefetch_translation_queue_enqueued\":{},\"instruction_cache_prefetch_translation_queue_issued\":{},\"instruction_cache_prefetch_translation_queue_translated\":{},\"instruction_cache_prefetch_translation_queue_dropped\":{},\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_cache_bank_accepted\":{},\"data_cache_bank_immediate_hits\":{},\"data_cache_bank_scheduled_misses\":{},\"data_cache_bank_coalesced_misses\":{},\"data_cache_l2_runs\":{},\"data_cache_l2_msi_runs\":{},\"data_cache_l2_mesi_runs\":{},\"data_cache_l2_moesi_runs\":{},\"data_cache_l2_chi_runs\":{},\"data_cache_l2_cpu_responses\":{},\"data_cache_l2_directory_decisions\":{},\"data_cache_l2_dram_accesses\":{},\"data_cache_l2_bank_accepted\":{},\"data_cache_l2_bank_immediate_hits\":{},\"data_cache_l2_bank_scheduled_misses\":{},\"data_cache_l2_bank_coalesced_misses\":{},\"data_cache_l3_runs\":{},\"data_cache_l3_msi_runs\":{},\"data_cache_l3_mesi_runs\":{},\"data_cache_l3_moesi_runs\":{},\"data_cache_l3_chi_runs\":{},\"data_cache_l3_cpu_responses\":{},\"data_cache_l3_directory_decisions\":{},\"data_cache_l3_dram_accesses\":{},\"data_cache_l3_bank_accepted\":{},\"data_cache_l3_bank_immediate_hits\":{},\"data_cache_l3_bank_scheduled_misses\":{},\"data_cache_l3_bank_coalesced_misses\":{},\"data_cache_prefetch_identified\":{},\"data_cache_prefetch_issued\":{},\"data_cache_prefetch_useful\":{},\"data_cache_prefetch_useful_but_miss\":{},\"data_cache_prefetch_demand_mshr_misses\":{},\"data_cache_prefetch_accuracy_ppm\":{},\"data_cache_prefetch_coverage_ppm\":{},\"data_cache_prefetch_span_page\":{},\"data_cache_prefetch_in_cache\":{},\"data_cache_prefetch_queue_enqueued\":{},\"data_cache_prefetch_queue_issued\":{},\"data_cache_prefetch_queue_dropped\":{},\"data_cache_prefetch_translation_queue_enqueued\":{},\"data_cache_prefetch_translation_queue_issued\":{},\"data_cache_prefetch_translation_queue_translated\":{},\"data_cache_prefetch_translation_queue_dropped\":{},\"data_access_probes\":{}",
+            "\"max_tick\":{},\"instruction_limit\":{},\"memory_system\":{},\"memory_route_delay\":{},\"host_event_delay\":{},\"executed_ticks\":{},\"final_tick\":{},\"cores\":{},\"committed_instructions\":{},\"instruction_probes\":{},\"instruction_cache_runs\":{},\"instruction_cache_msi_runs\":{},\"instruction_cache_mesi_runs\":{},\"instruction_cache_moesi_runs\":{},\"instruction_cache_chi_runs\":{},\"instruction_cache_cpu_responses\":{},\"instruction_cache_directory_decisions\":{},\"instruction_cache_dram_accesses\":{},\"instruction_cache_bank_accepted\":{},\"instruction_cache_bank_immediate_hits\":{},\"instruction_cache_bank_scheduled_misses\":{},\"instruction_cache_bank_coalesced_misses\":{},\"instruction_cache_l2_runs\":{},\"instruction_cache_l2_msi_runs\":{},\"instruction_cache_l2_mesi_runs\":{},\"instruction_cache_l2_moesi_runs\":{},\"instruction_cache_l2_chi_runs\":{},\"instruction_cache_l2_cpu_responses\":{},\"instruction_cache_l2_directory_decisions\":{},\"instruction_cache_l2_dram_accesses\":{},\"instruction_cache_l2_bank_accepted\":{},\"instruction_cache_l2_bank_immediate_hits\":{},\"instruction_cache_l2_bank_scheduled_misses\":{},\"instruction_cache_l2_bank_coalesced_misses\":{},\"instruction_cache_l3_runs\":{},\"instruction_cache_l3_msi_runs\":{},\"instruction_cache_l3_mesi_runs\":{},\"instruction_cache_l3_moesi_runs\":{},\"instruction_cache_l3_chi_runs\":{},\"instruction_cache_l3_cpu_responses\":{},\"instruction_cache_l3_directory_decisions\":{},\"instruction_cache_l3_dram_accesses\":{},\"instruction_cache_l3_bank_accepted\":{},\"instruction_cache_l3_bank_immediate_hits\":{},\"instruction_cache_l3_bank_scheduled_misses\":{},\"instruction_cache_l3_bank_coalesced_misses\":{},\"instruction_cache_prefetch_identified\":{},\"instruction_cache_prefetch_issued\":{},\"instruction_cache_prefetch_useful\":{},\"instruction_cache_prefetch_useful_but_miss\":{},\"instruction_cache_prefetch_unused\":{},\"instruction_cache_prefetch_demand_mshr_misses\":{},\"instruction_cache_prefetch_hit_in_cache\":{},\"instruction_cache_prefetch_hit_in_mshr\":{},\"instruction_cache_prefetch_hit_in_write_buffer\":{},\"instruction_cache_prefetch_late\":{},\"instruction_cache_prefetch_accuracy_ppm\":{},\"instruction_cache_prefetch_coverage_ppm\":{},\"instruction_cache_prefetch_span_page\":{},\"instruction_cache_prefetch_in_cache\":{},\"instruction_cache_prefetch_queue_enqueued\":{},\"instruction_cache_prefetch_queue_issued\":{},\"instruction_cache_prefetch_queue_dropped\":{},\"instruction_cache_prefetch_translation_queue_enqueued\":{},\"instruction_cache_prefetch_translation_queue_issued\":{},\"instruction_cache_prefetch_translation_queue_translated\":{},\"instruction_cache_prefetch_translation_queue_dropped\":{},\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_cache_bank_accepted\":{},\"data_cache_bank_immediate_hits\":{},\"data_cache_bank_scheduled_misses\":{},\"data_cache_bank_coalesced_misses\":{},\"data_cache_l2_runs\":{},\"data_cache_l2_msi_runs\":{},\"data_cache_l2_mesi_runs\":{},\"data_cache_l2_moesi_runs\":{},\"data_cache_l2_chi_runs\":{},\"data_cache_l2_cpu_responses\":{},\"data_cache_l2_directory_decisions\":{},\"data_cache_l2_dram_accesses\":{},\"data_cache_l2_bank_accepted\":{},\"data_cache_l2_bank_immediate_hits\":{},\"data_cache_l2_bank_scheduled_misses\":{},\"data_cache_l2_bank_coalesced_misses\":{},\"data_cache_l3_runs\":{},\"data_cache_l3_msi_runs\":{},\"data_cache_l3_mesi_runs\":{},\"data_cache_l3_moesi_runs\":{},\"data_cache_l3_chi_runs\":{},\"data_cache_l3_cpu_responses\":{},\"data_cache_l3_directory_decisions\":{},\"data_cache_l3_dram_accesses\":{},\"data_cache_l3_bank_accepted\":{},\"data_cache_l3_bank_immediate_hits\":{},\"data_cache_l3_bank_scheduled_misses\":{},\"data_cache_l3_bank_coalesced_misses\":{},\"data_cache_prefetch_identified\":{},\"data_cache_prefetch_issued\":{},\"data_cache_prefetch_useful\":{},\"data_cache_prefetch_useful_but_miss\":{},\"data_cache_prefetch_unused\":{},\"data_cache_prefetch_demand_mshr_misses\":{},\"data_cache_prefetch_hit_in_cache\":{},\"data_cache_prefetch_hit_in_mshr\":{},\"data_cache_prefetch_hit_in_write_buffer\":{},\"data_cache_prefetch_late\":{},\"data_cache_prefetch_accuracy_ppm\":{},\"data_cache_prefetch_coverage_ppm\":{},\"data_cache_prefetch_span_page\":{},\"data_cache_prefetch_in_cache\":{},\"data_cache_prefetch_queue_enqueued\":{},\"data_cache_prefetch_queue_issued\":{},\"data_cache_prefetch_queue_dropped\":{},\"data_cache_prefetch_translation_queue_enqueued\":{},\"data_cache_prefetch_translation_queue_issued\":{},\"data_cache_prefetch_translation_queue_translated\":{},\"data_cache_prefetch_translation_queue_dropped\":{},\"data_access_probes\":{}",
             max_tick,
             optional_count_json(instruction_limit),
             memory_system,
@@ -862,7 +852,12 @@ impl Rem6ExecutionSummary {
             self.instruction_cache.prefetch_issued,
             self.instruction_cache.prefetch_useful,
             self.instruction_cache.prefetch_useful_but_miss,
+            self.instruction_cache.prefetch_unused,
             self.instruction_cache.prefetch_demand_mshr_misses,
+            self.instruction_cache.prefetch_hit_in_cache,
+            self.instruction_cache.prefetch_hit_in_mshr,
+            self.instruction_cache.prefetch_hit_in_write_buffer,
+            self.instruction_cache.prefetch_late,
             optional_count_json(self.instruction_cache.prefetch_accuracy_ppm),
             optional_count_json(self.instruction_cache.prefetch_coverage_ppm),
             self.instruction_cache.prefetch_span_page,
@@ -914,7 +909,12 @@ impl Rem6ExecutionSummary {
             self.data_cache.prefetch_issued,
             self.data_cache.prefetch_useful,
             self.data_cache.prefetch_useful_but_miss,
+            self.data_cache.prefetch_unused,
             self.data_cache.prefetch_demand_mshr_misses,
+            self.data_cache.prefetch_hit_in_cache,
+            self.data_cache.prefetch_hit_in_mshr,
+            self.data_cache.prefetch_hit_in_write_buffer,
+            self.data_cache.prefetch_late,
             optional_count_json(self.data_cache.prefetch_accuracy_ppm),
             optional_count_json(self.data_cache.prefetch_coverage_ppm),
             self.data_cache.prefetch_span_page,
