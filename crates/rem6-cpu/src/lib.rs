@@ -38,6 +38,8 @@ mod indirect_target_predictor;
 mod loop_predictor;
 mod ltage_predictor;
 mod multiperspective_perceptron;
+mod multiperspective_perceptron_checkpoint;
+mod multiperspective_perceptron_snapshot;
 mod o3_dependency;
 mod o3_pipeline;
 mod parallel_flow;
@@ -64,6 +66,7 @@ mod riscv_gshare_checkpoint;
 mod riscv_hart_run_state;
 mod riscv_htm;
 mod riscv_in_order_config;
+mod riscv_multiperspective_perceptron_checkpoint;
 mod riscv_reservation;
 mod riscv_sc_progress;
 mod riscv_sv39_memory_walker;
@@ -108,7 +111,7 @@ pub enum RiscvBranchPredictorKind {
     MultiperspectivePerceptron,
 }
 
-fn default_riscv_multiperspective_perceptron() -> MultiperspectivePerceptron {
+pub(crate) fn default_riscv_multiperspective_perceptron() -> MultiperspectivePerceptron {
     MultiperspectivePerceptron::new(
         MultiperspectivePerceptronConfig::eight_kb(1)
             .expect("default RISC-V multiperspective perceptron config is valid"),
@@ -1072,6 +1075,14 @@ impl RiscvCore {
             .lock()
             .expect("riscv core lock")
             .tournament_branch_predictor
+            .snapshot()
+    }
+
+    pub fn multiperspective_perceptron_snapshot(&self) -> MultiperspectivePerceptronSnapshot {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .multiperspective_perceptron
             .snapshot()
     }
 

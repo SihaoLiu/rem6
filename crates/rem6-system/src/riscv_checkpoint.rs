@@ -7,7 +7,8 @@ use rem6_cpu::{
     BiModeBranchPredictorCheckpointPayload, BiModeBranchPredictorError,
     BranchPredictorCheckpointPayload, BranchPredictorError, GShareBranchPredictorCheckpointPayload,
     GShareBranchPredictorError, InOrderPipelineCheckpointPayload, InOrderPipelineError,
-    InOrderPipelineSnapshot, RiscvCore, RiscvHartRunState,
+    InOrderPipelineSnapshot, MultiperspectivePerceptronCheckpointPayload,
+    MultiperspectivePerceptronError, RiscvCore, RiscvHartRunState,
     TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorError,
 };
 use rem6_isa_riscv::{
@@ -22,6 +23,7 @@ const BRANCH_PREDICTOR_CHUNK: &str = "branch-predictor";
 const GSHARE_BRANCH_PREDICTOR_CHUNK: &str = "gshare-branch-predictor";
 const HART_RUN_STATE_CHUNK: &str = "hart-run-state";
 const IN_ORDER_PIPELINE_CHUNK: &str = "in-order-pipeline";
+const MULTIPERSPECTIVE_PERCEPTRON_CHUNK: &str = "multiperspective-perceptron";
 const PC_CHUNK: &str = "pc";
 const TOURNAMENT_BRANCH_PREDICTOR_CHUNK: &str = "tournament-branch-predictor";
 const XREGS_CHUNK: &str = "xregs";
@@ -47,6 +49,7 @@ pub struct RiscvCoreCheckpointRecord {
     gshare_branch_predictor_payload: GShareBranchPredictorCheckpointPayload,
     bimode_branch_predictor_payload: BiModeBranchPredictorCheckpointPayload,
     tournament_branch_predictor_payload: TournamentBranchPredictorCheckpointPayload,
+    multiperspective_perceptron_payload: MultiperspectivePerceptronCheckpointPayload,
 }
 
 struct RiscvCoreCheckpointRecordParts {
@@ -61,6 +64,7 @@ struct RiscvCoreCheckpointRecordParts {
     gshare_branch_predictor_payload: GShareBranchPredictorCheckpointPayload,
     bimode_branch_predictor_payload: BiModeBranchPredictorCheckpointPayload,
     tournament_branch_predictor_payload: TournamentBranchPredictorCheckpointPayload,
+    multiperspective_perceptron_payload: MultiperspectivePerceptronCheckpointPayload,
 }
 
 impl RiscvCoreCheckpointRecord {
@@ -85,6 +89,8 @@ impl RiscvCoreCheckpointRecord {
                 RiscvCore::default_bimode_branch_predictor_checkpoint_payload(),
             tournament_branch_predictor_payload:
                 RiscvCore::default_tournament_branch_predictor_checkpoint_payload(),
+            multiperspective_perceptron_payload:
+                RiscvCore::default_multiperspective_perceptron_checkpoint_payload(),
         })
     }
 
@@ -101,6 +107,7 @@ impl RiscvCoreCheckpointRecord {
             gshare_branch_predictor_payload: parts.gshare_branch_predictor_payload,
             bimode_branch_predictor_payload: parts.bimode_branch_predictor_payload,
             tournament_branch_predictor_payload: parts.tournament_branch_predictor_payload,
+            multiperspective_perceptron_payload: parts.multiperspective_perceptron_payload,
         }
     }
 
@@ -148,6 +155,12 @@ impl RiscvCoreCheckpointRecord {
         &self,
     ) -> &TournamentBranchPredictorCheckpointPayload {
         &self.tournament_branch_predictor_payload
+    }
+
+    pub const fn multiperspective_perceptron_payload(
+        &self,
+    ) -> &MultiperspectivePerceptronCheckpointPayload {
+        &self.multiperspective_perceptron_payload
     }
 
     pub fn register(&self, register: Register) -> Option<u64> {
@@ -241,6 +254,13 @@ impl RiscvCoreCheckpointPort {
             TOURNAMENT_BRANCH_PREDICTOR_CHUNK,
             encode_tournament_branch_predictor_payload(
                 record.tournament_branch_predictor_payload(),
+            ),
+        )?;
+        registry.write_chunk(
+            &self.component,
+            MULTIPERSPECTIVE_PERCEPTRON_CHUNK,
+            encode_multiperspective_perceptron_payload(
+                record.multiperspective_perceptron_payload(),
             ),
         )?;
         Ok(record)
@@ -355,6 +375,22 @@ impl RiscvCoreCheckpointPort {
                     error,
                 }
             })?;
+        let multiperspective_perceptron_payload = match registry
+            .chunk(&self.component, MULTIPERSPECTIVE_PERCEPTRON_CHUNK)
+        {
+            Some(payload) => decode_multiperspective_perceptron_payload(&self.component, payload)?,
+            None => RiscvCore::default_multiperspective_perceptron_checkpoint_payload(),
+        };
+        self.core
+            .validate_multiperspective_perceptron_checkpoint_payload(
+                &multiperspective_perceptron_payload,
+            )
+            .map_err(|error| {
+                RiscvCoreCheckpointError::InvalidMultiperspectivePerceptronSnapshot {
+                    component: self.component.clone(),
+                    error,
+                }
+            })?;
 
         Ok(RiscvCoreCheckpointRecord::from_parts(
             RiscvCoreCheckpointRecordParts {
@@ -369,6 +405,7 @@ impl RiscvCoreCheckpointPort {
                 gshare_branch_predictor_payload,
                 bimode_branch_predictor_payload,
                 tournament_branch_predictor_payload,
+                multiperspective_perceptron_payload,
             },
         ))
     }
@@ -445,6 +482,16 @@ impl RiscvCoreCheckpointPort {
                     error,
                 }
             })?;
+        self.core
+            .restore_multiperspective_perceptron_checkpoint_payload(
+                record.multiperspective_perceptron_payload().clone(),
+            )
+            .map_err(|error| {
+                RiscvCoreCheckpointError::InvalidMultiperspectivePerceptronSnapshot {
+                    component: self.component.clone(),
+                    error,
+                }
+            })?;
         Ok(())
     }
 
@@ -463,6 +510,9 @@ impl RiscvCoreCheckpointPort {
             tournament_branch_predictor_payload: self
                 .core
                 .tournament_branch_predictor_checkpoint_payload(),
+            multiperspective_perceptron_payload: self
+                .core
+                .multiperspective_perceptron_checkpoint_payload(),
         })
     }
 }
@@ -590,6 +640,10 @@ pub enum RiscvCoreCheckpointError {
         component: CheckpointComponentId,
         error: TournamentBranchPredictorError,
     },
+    InvalidMultiperspectivePerceptronSnapshot {
+        component: CheckpointComponentId,
+        error: MultiperspectivePerceptronError,
+    },
 }
 
 impl fmt::Display for RiscvCoreCheckpointError {
@@ -653,6 +707,11 @@ impl fmt::Display for RiscvCoreCheckpointError {
             Self::InvalidTournamentBranchPredictorSnapshot { component, error } => write!(
                 formatter,
                 "RISC-V core checkpoint component {} has invalid tournament branch predictor snapshot: {error}",
+                component.as_str()
+            ),
+            Self::InvalidMultiperspectivePerceptronSnapshot { component, error } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has invalid multiperspective perceptron snapshot: {error}",
                 component.as_str()
             ),
         }
@@ -785,6 +844,12 @@ fn encode_tournament_branch_predictor_payload(
     payload.encode()
 }
 
+fn encode_multiperspective_perceptron_payload(
+    payload: &MultiperspectivePerceptronCheckpointPayload,
+) -> Vec<u8> {
+    payload.encode()
+}
+
 fn decode_branch_predictor_payload(
     component: &CheckpointComponentId,
     payload: &[u8],
@@ -827,6 +892,18 @@ fn decode_tournament_branch_predictor_payload(
 ) -> Result<TournamentBranchPredictorCheckpointPayload, RiscvCoreCheckpointError> {
     TournamentBranchPredictorCheckpointPayload::decode(payload).map_err(|error| {
         RiscvCoreCheckpointError::InvalidTournamentBranchPredictorSnapshot {
+            component: component.clone(),
+            error,
+        }
+    })
+}
+
+fn decode_multiperspective_perceptron_payload(
+    component: &CheckpointComponentId,
+    payload: &[u8],
+) -> Result<MultiperspectivePerceptronCheckpointPayload, RiscvCoreCheckpointError> {
+    MultiperspectivePerceptronCheckpointPayload::decode(payload).map_err(|error| {
+        RiscvCoreCheckpointError::InvalidMultiperspectivePerceptronSnapshot {
             component: component.clone(),
             error,
         }

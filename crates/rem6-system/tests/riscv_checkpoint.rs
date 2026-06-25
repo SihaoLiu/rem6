@@ -9,9 +9,11 @@ use rem6_cpu::{
     BiModeBranchPredictorError, BranchPredictor, BranchPredictorCheckpointPayload,
     BranchPredictorConfig, BranchPredictorError, CpuCore, CpuFetchConfig, CpuId, CpuResetState,
     GShareBranchPredictor, GShareBranchPredictorCheckpointPayload, GShareBranchPredictorConfig,
-    GShareBranchPredictorError, InOrderPipelineSnapshot, RiscvCore, RiscvHartRunState,
-    TournamentBranchPredictor, TournamentBranchPredictorCheckpointPayload,
-    TournamentBranchPredictorConfig, TournamentBranchPredictorError,
+    GShareBranchPredictorError, InOrderPipelineSnapshot, MultiperspectivePerceptron,
+    MultiperspectivePerceptronCheckpointPayload, MultiperspectivePerceptronConfig,
+    MultiperspectivePerceptronError, RiscvCore, RiscvHartRunState, TournamentBranchPredictor,
+    TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorConfig,
+    TournamentBranchPredictorError,
 };
 use rem6_isa_riscv::{FloatRegister, Register, RiscvPmpAddressMode, RiscvPmpConfig};
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerContext};
@@ -579,6 +581,74 @@ fn riscv_core_checkpoint_captures_and_restores_tournament_predictor_state() {
 }
 
 #[test]
+fn riscv_core_checkpoint_captures_and_restores_multiperspective_perceptron_state() {
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let mut registry = CheckpointRegistry::new();
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = RiscvCore::new(
+        CpuCore::new(
+            CpuResetState::new(
+                CpuId::new(0),
+                PartitionId::new(0),
+                AgentId::new(7),
+                Address::new(0x8000),
+            ),
+            CpuFetchConfig::new(
+                endpoint("cpu0.ifetch"),
+                route,
+                layout(),
+                AccessSize::new(4).unwrap(),
+            ),
+        )
+        .unwrap(),
+    );
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+
+    fetch_and_execute_one(
+        &core,
+        loaded_store(0x8000, b_type(8, 0, 0, 0x0)),
+        &mut scheduler,
+        &transport,
+    );
+    let captured_mpp = core.multiperspective_perceptron_snapshot();
+    assert_eq!(captured_mpp.update_count(), 1);
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    assert!(registry
+        .chunk(&component, "multiperspective-perceptron")
+        .is_some());
+
+    fetch_and_execute_one(
+        &core,
+        loaded_store(0x8008, b_type(8, 0, 0, 0x0)),
+        &mut scheduler,
+        &transport,
+    );
+    assert_ne!(core.multiperspective_perceptron_snapshot(), captured_mpp);
+
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored, captured);
+    assert_eq!(core.multiperspective_perceptron_snapshot(), captured_mpp);
+}
+
+#[test]
 fn riscv_core_checkpoint_rejects_incompatible_branch_predictor_without_partial_restore() {
     let core = riscv_core();
     let component = CheckpointComponentId::new("cpu0").unwrap();
@@ -748,6 +818,52 @@ fn riscv_core_checkpoint_rejects_incompatible_tournament_predictor_without_parti
             },
         }
     );
+    assert_eq!(core.pc(), Address::new(0x9000));
+    assert_eq!(core.read_register(reg(1)), 0x2222);
+}
+
+#[test]
+fn riscv_core_checkpoint_rejects_incompatible_multiperspective_perceptron_without_partial_restore()
+{
+    let core = riscv_core();
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+    let mut registry = CheckpointRegistry::new();
+    let incompatible_payload = MultiperspectivePerceptronCheckpointPayload::from_snapshot(
+        MultiperspectivePerceptron::new(MultiperspectivePerceptronConfig::eight_kb(2).unwrap())
+            .unwrap()
+            .snapshot(),
+    )
+    .unwrap()
+    .encode();
+
+    port.register(&mut registry).unwrap();
+    core.redirect_pc(Address::new(0x8040));
+    core.write_register(reg(1), 0x1111);
+    port.capture_into(&mut registry).unwrap();
+    registry
+        .write_chunk(
+            &component,
+            "multiperspective-perceptron",
+            incompatible_payload,
+        )
+        .unwrap();
+    core.redirect_pc(Address::new(0x9000));
+    core.write_register(reg(1), 0x2222);
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    match error {
+        rem6_system::RiscvCoreCheckpointError::InvalidMultiperspectivePerceptronSnapshot {
+            component: actual_component,
+            error: MultiperspectivePerceptronError::SnapshotConfigMismatch { expected, actual },
+        } => {
+            assert_eq!(actual_component, component);
+            assert_eq!(expected.threads(), 1);
+            assert_eq!(actual.threads(), 2);
+        }
+        other => panic!("unexpected checkpoint error: {other:?}"),
+    }
     assert_eq!(core.pc(), Address::new(0x9000));
     assert_eq!(core.read_register(reg(1)), 0x2222);
 }

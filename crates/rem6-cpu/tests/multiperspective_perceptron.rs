@@ -1,7 +1,7 @@
 use rem6_cpu::{
-    CpuId, MultiperspectivePerceptron, MultiperspectivePerceptronConfig,
-    MultiperspectivePerceptronError, MultiperspectivePerceptronFeature,
-    MultiperspectivePerceptronFeatureKind,
+    CpuId, MultiperspectivePerceptron, MultiperspectivePerceptronCheckpointPayload,
+    MultiperspectivePerceptronConfig, MultiperspectivePerceptronError,
+    MultiperspectivePerceptronFeature, MultiperspectivePerceptronFeatureKind,
 };
 use rem6_memory::Address;
 
@@ -167,6 +167,51 @@ fn mpp_snapshot_restore_preserves_tables_histories_and_counters() {
     predictor.restore(&snapshot).unwrap();
 
     assert_eq!(predictor.snapshot(), snapshot);
+}
+
+#[test]
+fn mpp_checkpoint_payload_round_trips_snapshot() {
+    let mut predictor = MultiperspectivePerceptron::new(compact_config(8)).unwrap();
+    let cpu = CpuId::new(0);
+    let pc = Address::new(0xc0);
+
+    let prediction = predictor.predict(cpu, pc, true).unwrap();
+    predictor
+        .train(prediction.history(), true, Address::new(0x40))
+        .unwrap();
+    let snapshot = predictor.snapshot();
+
+    let payload =
+        MultiperspectivePerceptronCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+    let encoded = payload.encode();
+    let decoded = MultiperspectivePerceptronCheckpointPayload::decode(&encoded).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+
+    let mut restored = MultiperspectivePerceptron::new(compact_config(8)).unwrap();
+    restored.restore(decoded.snapshot()).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+}
+
+#[test]
+fn mpp_checkpoint_payload_rejects_truncated_payload() {
+    let predictor = MultiperspectivePerceptron::new(compact_config(0)).unwrap();
+    let mut encoded =
+        MultiperspectivePerceptronCheckpointPayload::from_snapshot(predictor.snapshot())
+            .unwrap()
+            .encode();
+    let expected = encoded.len();
+    encoded.pop();
+
+    assert_eq!(
+        MultiperspectivePerceptronCheckpointPayload::decode(&encoded),
+        Err(
+            MultiperspectivePerceptronError::InvalidCheckpointPayloadSize {
+                expected,
+                actual: expected - 1,
+            }
+        )
+    );
 }
 
 #[test]

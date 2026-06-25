@@ -63,6 +63,7 @@ pub use crate::multiperspective_perceptron::{
     MultiperspectivePerceptronSnapshot, MultiperspectivePerceptronThreadSnapshot,
     MultiperspectivePerceptronTrainingUpdate,
 };
+pub use crate::multiperspective_perceptron_checkpoint::MultiperspectivePerceptronCheckpointPayload;
 pub use crate::o3_dependency::{
     O3DependencyProducerKind, O3DependencyReleasePlan, O3DependencyReleaseReason,
     O3DependencyReleaseStage, O3DestinationRegister, O3DestinationRelease, O3DestinationVisibility,

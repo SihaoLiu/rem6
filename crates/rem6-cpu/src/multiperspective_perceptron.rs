@@ -4,6 +4,7 @@ use std::fmt;
 
 use rem6_memory::Address;
 
+use crate::multiperspective_perceptron_snapshot::validate_snapshot_shape;
 use crate::CpuId;
 
 const XLAT_6: [i16; 32] = [
@@ -38,6 +39,45 @@ pub enum MultiperspectivePerceptronError {
     SnapshotConfigMismatch {
         expected: Box<MultiperspectivePerceptronConfig>,
         actual: Box<MultiperspectivePerceptronConfig>,
+    },
+    SnapshotShapeMismatch {
+        expected_tables: usize,
+        actual_tables: usize,
+        expected_threads: usize,
+        actual_threads: usize,
+    },
+    InvalidCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    SnapshotTableEntriesMismatch {
+        feature_index: usize,
+        expected: usize,
+        actual: usize,
+    },
+    InvalidCheckpointMagic,
+    UnsupportedCheckpointVersion {
+        version: u8,
+    },
+    CheckpointValueTooLarge {
+        name: &'static str,
+        value: usize,
+        max: usize,
+    },
+    InvalidCheckpointBool {
+        name: &'static str,
+        value: u8,
+    },
+    InvalidCheckpointFeatureKind {
+        value: u8,
+    },
+    InvalidCheckpointWeight {
+        feature_index: usize,
+        table_index: usize,
+        magnitude: u8,
+        max_magnitude: u8,
+        sign_bits: usize,
+        expected_sign_bits: usize,
     },
 }
 
@@ -78,6 +118,58 @@ impl fmt::Display for MultiperspectivePerceptronError {
                 formatter,
                 "multiperspective perceptron snapshot config {actual:?} does not match predictor config {expected:?}"
             ),
+            Self::SnapshotShapeMismatch {
+                expected_tables,
+                actual_tables,
+                expected_threads,
+                actual_threads,
+            } => write!(
+                formatter,
+                "multiperspective perceptron snapshot shape tables={actual_tables}, threads={actual_threads} does not match predictor tables={expected_tables}, threads={expected_threads}"
+            ),
+            Self::InvalidCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "multiperspective perceptron checkpoint payload has {actual} bytes; expected {expected}"
+            ),
+            Self::SnapshotTableEntriesMismatch {
+                feature_index,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "multiperspective perceptron snapshot feature {feature_index} has {actual} table entries; expected {expected}"
+            ),
+            Self::InvalidCheckpointMagic => write!(
+                formatter,
+                "multiperspective perceptron checkpoint payload has invalid magic"
+            ),
+            Self::UnsupportedCheckpointVersion { version } => write!(
+                formatter,
+                "multiperspective perceptron checkpoint payload version {version} is not supported"
+            ),
+            Self::CheckpointValueTooLarge { name, value, max } => write!(
+                formatter,
+                "multiperspective perceptron checkpoint {name} value {value} exceeds maximum {max}"
+            ),
+            Self::InvalidCheckpointBool { name, value } => write!(
+                formatter,
+                "multiperspective perceptron checkpoint {name} bool has invalid value {value}"
+            ),
+            Self::InvalidCheckpointFeatureKind { value } => write!(
+                formatter,
+                "multiperspective perceptron checkpoint feature kind {value} is invalid"
+            ),
+            Self::InvalidCheckpointWeight {
+                feature_index,
+                table_index,
+                magnitude,
+                max_magnitude,
+                sign_bits,
+                expected_sign_bits,
+            } => write!(
+                formatter,
+                "multiperspective perceptron checkpoint weight feature={feature_index}, table={table_index} has magnitude {magnitude}/{max_magnitude} and {sign_bits}/{expected_sign_bits} sign bits"
+            ),
         }
     }
 }
@@ -104,13 +196,13 @@ pub enum MultiperspectivePerceptronFeatureKind {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MultiperspectivePerceptronFeature {
-    kind: MultiperspectivePerceptronFeatureKind,
-    p1: i16,
-    p2: i16,
-    p3: i16,
-    coefficient_q6: i16,
-    table_entries: usize,
-    width: u8,
+    pub(crate) kind: MultiperspectivePerceptronFeatureKind,
+    pub(crate) p1: i16,
+    pub(crate) p2: i16,
+    pub(crate) p3: i16,
+    pub(crate) coefficient_q6: i16,
+    pub(crate) table_entries: usize,
+    pub(crate) width: u8,
 }
 
 impl MultiperspectivePerceptronFeature {
@@ -261,7 +353,7 @@ impl MultiperspectivePerceptronFeature {
         )
     }
 
-    const fn new(
+    pub(crate) const fn new(
         kind: MultiperspectivePerceptronFeatureKind,
         p1: i16,
         p2: i16,
@@ -300,37 +392,37 @@ impl MultiperspectivePerceptronFeature {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MultiperspectivePerceptronConfig {
-    threads: usize,
-    num_filter_entries: usize,
-    num_local_histories: usize,
-    local_history_length: u8,
-    block_size: u8,
-    pc_shift: i8,
-    threshold: i16,
-    bias0: i16,
-    bias1: i16,
-    bias_mostly0: i16,
-    bias_mostly1: i16,
-    nbest: usize,
-    tune_bits: u8,
-    hshift: i8,
-    imli_mask1: u64,
-    imli_mask4: u64,
-    recencypos_mask: u64,
-    fudge_q6: i16,
-    n_sign_bits: u8,
-    pcbit: u8,
-    decay: usize,
-    record_mask: u16,
-    hash_taken: bool,
-    tune_only: bool,
-    extra_rounds: i8,
-    speed: i16,
-    initial_theta: i16,
-    budget_bits: usize,
-    initial_ghist_length: usize,
-    ignore_path_size: bool,
-    features: Vec<MultiperspectivePerceptronFeature>,
+    pub(crate) threads: usize,
+    pub(crate) num_filter_entries: usize,
+    pub(crate) num_local_histories: usize,
+    pub(crate) local_history_length: u8,
+    pub(crate) block_size: u8,
+    pub(crate) pc_shift: i8,
+    pub(crate) threshold: i16,
+    pub(crate) bias0: i16,
+    pub(crate) bias1: i16,
+    pub(crate) bias_mostly0: i16,
+    pub(crate) bias_mostly1: i16,
+    pub(crate) nbest: usize,
+    pub(crate) tune_bits: u8,
+    pub(crate) hshift: i8,
+    pub(crate) imli_mask1: u64,
+    pub(crate) imli_mask4: u64,
+    pub(crate) recencypos_mask: u64,
+    pub(crate) fudge_q6: i16,
+    pub(crate) n_sign_bits: u8,
+    pub(crate) pcbit: u8,
+    pub(crate) decay: usize,
+    pub(crate) record_mask: u16,
+    pub(crate) hash_taken: bool,
+    pub(crate) tune_only: bool,
+    pub(crate) extra_rounds: i8,
+    pub(crate) speed: i16,
+    pub(crate) initial_theta: i16,
+    pub(crate) budget_bits: usize,
+    pub(crate) initial_ghist_length: usize,
+    pub(crate) ignore_path_size: bool,
+    pub(crate) features: Vec<MultiperspectivePerceptronFeature>,
 }
 
 impl MultiperspectivePerceptronConfig {
@@ -752,6 +844,7 @@ impl MultiperspectivePerceptron {
                 actual: Box::new(snapshot.config.clone()),
             });
         }
+        validate_snapshot_shape(&self.config, snapshot)?;
         self.table_entries.clone_from(&snapshot.table_entries);
         self.tables.clone_from(&snapshot.tables);
         self.threads.clone_from(&snapshot.threads);
@@ -1294,15 +1387,15 @@ impl MultiperspectivePerceptronFeatureUpdate {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MultiperspectivePerceptronThreadSnapshot {
-    max_global_history: usize,
-    max_path_entries: usize,
-    filter_table: Vec<MultiperspectivePerceptronFilterEntry>,
-    global_history: Vec<bool>,
-    local_histories: Vec<u64>,
-    path_history: Vec<u16>,
-    recency_stack: Vec<u16>,
-    imli_counters: [u16; 4],
-    last_ghist_bit: bool,
+    pub(crate) max_global_history: usize,
+    pub(crate) max_path_entries: usize,
+    pub(crate) filter_table: Vec<MultiperspectivePerceptronFilterEntry>,
+    pub(crate) global_history: Vec<bool>,
+    pub(crate) local_histories: Vec<u64>,
+    pub(crate) path_history: Vec<u16>,
+    pub(crate) recency_stack: Vec<u16>,
+    pub(crate) imli_counters: [u16; 4],
+    pub(crate) last_ghist_bit: bool,
 }
 
 impl MultiperspectivePerceptronThreadSnapshot {
@@ -1415,8 +1508,8 @@ impl MultiperspectivePerceptronThreadSnapshot {
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct MultiperspectivePerceptronFilterEntry {
-    seen_taken: bool,
-    seen_untaken: bool,
+    pub(crate) seen_taken: bool,
+    pub(crate) seen_untaken: bool,
 }
 
 impl MultiperspectivePerceptronFilterEntry {
@@ -1443,15 +1536,25 @@ impl MultiperspectivePerceptronFilterEntry {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MultiperspectivePerceptronSnapshot {
-    config: MultiperspectivePerceptronConfig,
-    table_entries: Vec<usize>,
-    tables: Vec<Vec<MultiperspectivePerceptronWeight>>,
-    threads: Vec<MultiperspectivePerceptronThreadSnapshot>,
-    mpreds: Vec<u64>,
-    theta: i16,
-    threshold_counter: i16,
-    lookup_count: u64,
-    update_count: u64,
+    pub(crate) config: MultiperspectivePerceptronConfig,
+    pub(crate) table_entries: Vec<usize>,
+    pub(crate) tables: Vec<Vec<MultiperspectivePerceptronWeight>>,
+    pub(crate) threads: Vec<MultiperspectivePerceptronThreadSnapshot>,
+    pub(crate) mpreds: Vec<u64>,
+    pub(crate) theta: i16,
+    pub(crate) threshold_counter: i16,
+    pub(crate) lookup_count: u64,
+    pub(crate) update_count: u64,
+}
+
+impl MultiperspectivePerceptronSnapshot {
+    pub const fn config(&self) -> &MultiperspectivePerceptronConfig {
+        &self.config
+    }
+
+    pub const fn update_count(&self) -> u64 {
+        self.update_count
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1463,9 +1566,9 @@ struct MultiperspectivePerceptronOutput {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct MultiperspectivePerceptronWeight {
-    magnitude: u8,
-    sign_bits: Vec<bool>,
+pub(crate) struct MultiperspectivePerceptronWeight {
+    pub(crate) magnitude: u8,
+    pub(crate) sign_bits: Vec<bool>,
 }
 
 impl MultiperspectivePerceptronWeight {
@@ -1477,7 +1580,7 @@ impl MultiperspectivePerceptronWeight {
     }
 }
 
-fn allocate_table_entries(
+pub(crate) fn allocate_table_entries(
     config: &MultiperspectivePerceptronConfig,
 ) -> Result<Vec<usize>, MultiperspectivePerceptronError> {
     let fixed_bits = config
@@ -1522,7 +1625,7 @@ fn bits_per_entry(
     feature.width as usize + config.n_sign_bits.saturating_sub(1) as usize
 }
 
-fn max_global_history(config: &MultiperspectivePerceptronConfig) -> usize {
+pub(crate) fn max_global_history(config: &MultiperspectivePerceptronConfig) -> usize {
     config
         .features
         .iter()
@@ -1539,7 +1642,7 @@ fn max_global_history(config: &MultiperspectivePerceptronConfig) -> usize {
         .max(config.initial_ghist_length)
 }
 
-fn max_path_entries(config: &MultiperspectivePerceptronConfig) -> usize {
+pub(crate) fn max_path_entries(config: &MultiperspectivePerceptronConfig) -> usize {
     if config.ignore_path_size {
         return 1;
     }
@@ -1558,7 +1661,7 @@ fn max_path_entries(config: &MultiperspectivePerceptronConfig) -> usize {
         .unwrap_or(1)
 }
 
-fn max_recency_entries(config: &MultiperspectivePerceptronConfig) -> usize {
+pub(crate) fn max_recency_entries(config: &MultiperspectivePerceptronConfig) -> usize {
     config
         .features
         .iter()
