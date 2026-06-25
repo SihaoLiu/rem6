@@ -26,7 +26,10 @@ use super::{
     RequestedIsa,
 };
 use cpu::emit_cpu_run_stats;
-use data_cache::{emit_data_cache_prefetch_summary_stats, emit_data_cache_summary_stats};
+use data_cache::{
+    emit_data_cache_prefetch_summary_stats, emit_data_cache_summary_stats,
+    emit_gem5_cache_prefetcher_alias_stats,
+};
 use debug::emit_debug_stats;
 use dram::{emit_dram_stats, emit_gem5_mem_ctrl_dram_alias_stats};
 use fabric::emit_run_fabric_stats;
@@ -536,6 +539,13 @@ pub(super) fn run_stats_output(
                 .instruction_cache
                 .prefetch_translation_queue_dropped,
         )?;
+        if execution.cores.len() == 1 && inputs.config.instruction_cache_prefetcher().is_some() {
+            emit_gem5_cache_prefetcher_alias_stats(
+                &mut stats,
+                "system.cpu.icache",
+                &execution.instruction_cache,
+            )?;
+        }
         emit_data_cache_summary_stats(&mut stats, "sim.data_cache", &execution.data_cache)?;
         increment_stat(
             &mut stats,
@@ -600,6 +610,13 @@ pub(super) fn run_stats_output(
             StatResetPolicy::Monotonic,
             execution.data_cache.prefetch_translation_queue_dropped,
         )?;
+        if execution.cores.len() == 1 && inputs.config.data_cache_prefetcher().is_some() {
+            emit_gem5_cache_prefetcher_alias_stats(
+                &mut stats,
+                "system.cpu.dcache",
+                &execution.data_cache,
+            )?;
+        }
         emit_data_cache_summary_stats(&mut stats, "sim.data_cache.l2", &execution.data_cache_l2)?;
         emit_data_cache_summary_stats(&mut stats, "sim.data_cache.l3", &execution.data_cache_l3)?;
         increment_stat(

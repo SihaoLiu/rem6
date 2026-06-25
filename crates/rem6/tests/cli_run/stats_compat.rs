@@ -868,6 +868,126 @@ fn rem6_run_text_stats_omit_gem5_l1_demand_aliases_when_prefetch_issued() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_l1_prefetcher_pf_issued_aliases() {
+    let path = tagged_next_line_prefetch_binary("gem5-l1-prefetcher-pf-issued-aliases");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--instruction-cache-protocol",
+            "msi",
+            "--instruction-cache-prefetcher",
+            "tagged-next-line",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let icache_issued = text_stat_value(&stdout, "sim.instruction_cache.prefetch.issued");
+    let dcache_issued = text_stat_value(&stdout, "sim.data_cache.prefetch.issued");
+    assert!(icache_issued > 0, "{stdout}");
+    assert!(dcache_issued > 0, "{stdout}");
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.icache.prefetcher.pfIssued"),
+        icache_issued
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.dcache.prefetcher.pfIssued"),
+        dcache_issued
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.icache.prefetcher.pfIssued").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.dcache.prefetcher.pfIssued").contains("unit=Count"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn rem6_run_json_stats_emit_gem5_l1_prefetcher_pf_issued_aliases() {
+    let path = tagged_next_line_prefetch_binary("gem5-l1-prefetcher-pf-issued-aliases-json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--instruction-cache-protocol",
+            "msi",
+            "--instruction-cache-prefetcher",
+            "tagged-next-line",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert_stat_greater_than(
+        &stdout,
+        "sim.instruction_cache.prefetch.issued",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.data_cache.prefetch.issued",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_eq!(
+        stat_value(&stdout, "system.cpu.icache.prefetcher.pfIssued"),
+        stat_value(&stdout, "sim.instruction_cache.prefetch.issued")
+    );
+    assert_eq!(
+        stat_value(&stdout, "system.cpu.dcache.prefetcher.pfIssued"),
+        stat_value(&stdout, "sim.data_cache.prefetch.issued")
+    );
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_mem_ctrl_bandwidth_aliases() {
     let path = gem5_l1_cache_alias_binary("gem5-mem-ctrl-bandwidth-aliases");
 

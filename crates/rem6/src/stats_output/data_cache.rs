@@ -164,3 +164,18 @@ pub(super) fn emit_data_cache_prefetch_summary_stats(
     )?;
     Ok(())
 }
+
+pub(super) fn emit_gem5_cache_prefetcher_alias_stats(
+    stats: &mut StatsRegistry,
+    cache_prefix: &str,
+    summary: &CliDataCacheSummary,
+) -> Result<(), Rem6CliError> {
+    increment_stat(
+        stats,
+        &format!("{cache_prefix}.prefetcher.pfIssued"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_issued,
+    )?;
+    Ok(())
+}
