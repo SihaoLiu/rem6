@@ -736,6 +736,102 @@ fn rem6_run_json_stats_omit_text_only_gem5_mem_ctrl_bandwidth_aliases() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_dram_interface_burst_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-dram-interface-burst-aliases");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let read_bursts = text_stat_value(&stdout, "system.mem_ctrl.readBursts");
+    let write_bursts = text_stat_value(&stdout, "system.mem_ctrl.writeBursts");
+    let dram_read_bursts = text_stat_value(&stdout, "system.mem_ctrl.dram.readBursts");
+    let dram_write_bursts = text_stat_value(&stdout, "system.mem_ctrl.dram.writeBursts");
+    assert!(read_bursts > 0, "{stdout}");
+    assert!(write_bursts > 0, "{stdout}");
+    assert_eq!(dram_read_bursts, read_bursts);
+    assert_eq!(dram_write_bursts, write_bursts);
+    assert!(
+        text_stat_line(&stdout, "system.mem_ctrl.dram.readBursts").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.mem_ctrl.dram.writeBursts").contains("unit=Count"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn rem6_run_json_stats_emit_gem5_dram_interface_burst_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-dram-interface-burst-aliases-json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert_stat_greater_than(
+        &stdout,
+        "system.mem_ctrl.dram.readBursts",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "system.mem_ctrl.dram.writeBursts",
+        "Count",
+        0,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_seconds_and_ops_aliases() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7

@@ -377,6 +377,8 @@ pub(super) fn emit_gem5_mem_ctrl_dram_alias_stats(
         ("system.mem_ctrl.writeBursts", "Count", summary.writes),
         ("system.mem_ctrl.bytesReadSys", "Byte", read_bytes),
         ("system.mem_ctrl.bytesWrittenSys", "Byte", write_bytes),
+        ("system.mem_ctrl.dram.readBursts", "Count", summary.reads),
+        ("system.mem_ctrl.dram.writeBursts", "Count", summary.writes),
         ("system.mem_ctrl.dram.dramBytesRead", "Byte", read_bytes),
         ("system.mem_ctrl.dram.dramBytesWritten", "Byte", write_bytes),
     ] {
