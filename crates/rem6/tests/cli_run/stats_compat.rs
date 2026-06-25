@@ -326,6 +326,42 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
                 text_stat_value(&stdout, &format!("system.cpu{cpu}.numInsts"))
             )
         );
+        assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.condPredicted")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.pipeline.in_order.conditional_branch_predictions")
+            )
+        );
+        assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.condIncorrect")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.pipeline.in_order.conditional_branch_mispredictions")
+            )
+        );
+        assert!(
+            text_stat_line(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.condPredicted")
+            )
+            .contains("unit=Count"),
+            "{stdout}"
+        );
+        assert!(
+            text_stat_line(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.condIncorrect")
+            )
+            .contains("unit=Count"),
+            "{stdout}"
+        );
     }
     assert!(!has_text_stat(&stdout, "system.cpu.numInsts"));
     assert!(!has_text_stat(&stdout, "system.cpu.numOps"));
@@ -336,6 +372,14 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
     assert!(!has_text_stat(&stdout, "system.cpu.cpi"));
     assert!(!has_text_stat(&stdout, "system.cpu.commitStats0.ipc"));
     assert!(!has_text_stat(&stdout, "system.cpu.commitStats0.cpi"));
+    assert!(!has_text_stat(
+        &stdout,
+        "system.cpu.branchPred.condPredicted"
+    ));
+    assert!(!has_text_stat(
+        &stdout,
+        "system.cpu.branchPred.condIncorrect"
+    ));
 }
 
 #[test]
@@ -3496,6 +3540,8 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     assert!(!stdout.contains("\"x6\":\"0x1\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.condPredicted\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.condIncorrect\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condPredicted\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condIncorrect\""));
 }
 
 #[test]

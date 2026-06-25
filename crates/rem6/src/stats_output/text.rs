@@ -66,24 +66,31 @@ fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) 
 }
 
 fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
-    if snapshot_value(snapshot, "sim.cores") != Some(1) {
+    let Some(core_count) = snapshot_value(snapshot, "sim.cores") else {
         return;
-    }
-    if let Some(predictions) = snapshot_value(
-        snapshot,
-        "sim.cpu0.pipeline.in_order.conditional_branch_predictions",
-    ) {
-        append_derived_count_stat(output, "system.cpu.branchPred.condPredicted", predictions);
-    }
-    if let Some(mispredictions) = snapshot_value(
-        snapshot,
-        "sim.cpu0.pipeline.in_order.conditional_branch_mispredictions",
-    ) {
-        append_derived_count_stat(
-            output,
-            "system.cpu.branchPred.condIncorrect",
-            mispredictions,
-        );
+    };
+    for cpu in 0..core_count {
+        let alias_prefix = gem5_cpu_alias_prefix(core_count, cpu);
+        if let Some(predictions) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.pipeline.in_order.conditional_branch_predictions"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.condPredicted"),
+                predictions,
+            );
+        }
+        if let Some(mispredictions) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.pipeline.in_order.conditional_branch_mispredictions"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.condIncorrect"),
+                mispredictions,
+            );
+        }
     }
 }
 
@@ -100,6 +107,14 @@ fn snapshot_value(snapshot: &StatSnapshot, path: &str) -> Option<u64> {
         .iter()
         .find(|sample| sample.path() == path)
         .map(|sample| sample.value())
+}
+
+fn gem5_cpu_alias_prefix(core_count: u64, cpu: u64) -> String {
+    if core_count == 1 {
+        "system.cpu".to_string()
+    } else {
+        format!("system.cpu{cpu}")
+    }
 }
 
 fn append_gem5_l1_cache_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
