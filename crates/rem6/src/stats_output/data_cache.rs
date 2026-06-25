@@ -196,6 +196,13 @@ pub(super) fn emit_data_cache_prefetch_summary_stats(
     )?;
     increment_stat(
         stats,
+        &format!("{prefix}.prefetch.useful_span_page"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_useful_span_page,
+    )?;
+    increment_stat(
+        stats,
         &format!("{prefix}.prefetch.in_cache"),
         "Count",
         StatResetPolicy::Monotonic,
@@ -334,6 +341,13 @@ pub(super) fn emit_gem5_cache_prefetcher_alias_stats(
         "Count",
         StatResetPolicy::Monotonic,
         summary.prefetch_span_page,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{cache_prefix}.prefetcher.pfUsefulSpanPage"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_useful_span_page,
     )?;
     increment_stat(
         stats,

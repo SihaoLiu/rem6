@@ -265,6 +265,10 @@ fn emit_cache_resource_stats(
         ),
         ("prefetch.late", summary.prefetch_late),
         ("prefetch.span_page", summary.prefetch_span_page),
+        (
+            "prefetch.useful_span_page",
+            summary.prefetch_useful_span_page,
+        ),
         ("prefetch.in_cache", summary.prefetch_in_cache),
         ("prefetch.queue.enqueued", summary.prefetch_queue_enqueued),
         ("prefetch.queue.issued", summary.prefetch_queue_issued),

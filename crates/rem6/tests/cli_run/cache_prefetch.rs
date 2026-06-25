@@ -37,6 +37,23 @@ fn tagged_next_line_prefetch_useful_elf() -> Vec<u8> {
     riscv64_elf(0x8000_0000, 0x8000_0000, &program)
 }
 
+fn tagged_next_line_prefetch_useful_span_page_elf() -> Vec<u8> {
+    const DATA_OFFSET: usize = 0xfe0;
+
+    let mut program = riscv64_program(&[
+        u_type(0x1000, 2, 0x17),      // auipc x2, 0x1000
+        i_type(-32, 2, 0x0, 2, 0x13), // addi x2, x2, -32
+        i_type(0, 2, 0x3, 5, 0x03),   // ld x5, 0(x2)
+        i_type(16, 2, 0x3, 6, 0x03),  // ld x6, 16(x2)
+        0x0000_0073,                  // ecall
+    ]);
+    program.resize(DATA_OFFSET + 64, 0);
+    program[DATA_OFFSET..DATA_OFFSET + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program[DATA_OFFSET + 16..DATA_OFFSET + 24]
+        .copy_from_slice(&0x99aa_bbcc_ddee_ff00u64.to_le_bytes());
+    riscv64_elf(0x8000_0000, 0x8000_0000, &program)
+}
+
 fn run_tagged_next_line_prefetch(
     path: &std::path::Path,
     max_tick: u64,
@@ -459,6 +476,43 @@ fn rem6_run_data_cache_prefetcher_counts_prefetched_line_as_useful() {
         "sim.memory.resources.cache.prefetch.coverage_ppm",
         "Ppm",
         500_000,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_data_cache_prefetcher_counts_useful_page_crossing_prefetch_source() {
+    let elf = tagged_next_line_prefetch_useful_span_page_elf();
+    let path = temp_binary("data-cache-prefetch-useful-span-page", &elf);
+    let stdout = run_tagged_next_line_prefetch(&path, 260, false, false);
+
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
+    assert!(stdout.contains("\"x6\":\"0x99aabbccddeeff00\""));
+    assert!(stdout.contains("\"data_loads\":2"));
+    assert!(stdout.contains("\"data_cache_prefetch_useful\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_span_page\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_useful_span_page\":1"));
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    for pointer in [
+        "/memory_resources/cache/prefetch_useful_span_page",
+        "/memory_resources/cache/data/prefetch_useful_span_page",
+        "/memory_resources/cache/data/l1/prefetch_useful_span_page",
+    ] {
+        assert_eq!(json_u64(&json, pointer), 1, "{pointer}");
+    }
+    assert_stat(
+        &stdout,
+        "sim.data_cache.prefetch.useful_span_page",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.prefetch.useful_span_page",
+        "Count",
+        1,
         "monotonic",
     );
 }

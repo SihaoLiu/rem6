@@ -2,8 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use rem6_cache::{
-    QueuedPrefetchConfig, QueuedPrefetchIssue, QueuedPrefetchRedundantLine, QueuedPrefetcher,
-    TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
+    QueuedPrefetchConfig, QueuedPrefetchIssue, QueuedPrefetchRedundantLine,
+    QueuedPrefetchSourceStatus, QueuedPrefetcher, TaggedPrefetchAccess, TaggedPrefetcher,
+    TaggedPrefetcherConfig,
 };
 use rem6_coherence::{
     ChiCpuResponseRecord, ChiDirectoryLineHarness, CpuResponseRecord, LineBackingStore,
@@ -118,6 +119,7 @@ pub(crate) struct CliDataCachePrefetchSummary {
     pub(crate) accuracy_ppm: Option<u64>,
     pub(crate) coverage_ppm: Option<u64>,
     pub(crate) span_page: u64,
+    pub(crate) useful_span_page: u64,
     pub(crate) in_cache: u64,
     pub(crate) queue_enqueued: u64,
     pub(crate) queue_issued: u64,
@@ -155,6 +157,7 @@ pub(crate) struct CliDataCacheSummary {
     pub(crate) prefetch_accuracy_ppm: Option<u64>,
     pub(crate) prefetch_coverage_ppm: Option<u64>,
     pub(crate) prefetch_span_page: u64,
+    pub(crate) prefetch_useful_span_page: u64,
     pub(crate) prefetch_in_cache: u64,
     pub(crate) prefetch_queue_enqueued: u64,
     pub(crate) prefetch_queue_issued: u64,
@@ -230,6 +233,7 @@ impl CliDataCacheSummary {
             prefetch_accuracy_ppm: None,
             prefetch_coverage_ppm: None,
             prefetch_span_page: 0,
+            prefetch_useful_span_page: 0,
             prefetch_in_cache: 0,
             prefetch_queue_enqueued: 0,
             prefetch_queue_issued: 0,
@@ -258,6 +262,7 @@ impl CliDataCacheSummary {
         self.prefetch_accuracy_ppm = summary.accuracy_ppm;
         self.prefetch_coverage_ppm = summary.coverage_ppm;
         self.prefetch_span_page = summary.span_page;
+        self.prefetch_useful_span_page = summary.useful_span_page;
         self.prefetch_in_cache = summary.in_cache;
         self.prefetch_queue_enqueued = summary.queue_enqueued;
         self.prefetch_queue_issued = summary.queue_issued;
@@ -584,13 +589,24 @@ impl CliDataCacheRuntime {
                 )
             });
         let missed_usable_state = line_was_resident && response.scheduled_miss;
-        if let Err(error) =
-            self.record_prefetch_use_from_response(request, &response.outcome, missed_usable_state)
-        {
-            self.record_error(error);
-        }
-        if let Err(error) = self.issue_prefetches_from_request(memory, lower_caches, tick, request)
-        {
+        let source_was_prefetched = match self.record_prefetch_use_from_response(
+            request,
+            &response.outcome,
+            missed_usable_state,
+        ) {
+            Ok(source_was_prefetched) => source_was_prefetched,
+            Err(error) => {
+                self.record_error(error);
+                false
+            }
+        };
+        if let Err(error) = self.issue_prefetches_from_request(
+            memory,
+            lower_caches,
+            tick,
+            request,
+            source_was_prefetched,
+        ) {
             self.record_error(error);
         }
         Some(response.outcome)
@@ -1142,6 +1158,7 @@ impl CliDataCacheRuntime {
         lower_caches: &[CliDataCacheRuntime],
         tick: u64,
         request: &MemoryRequest,
+        source_was_prefetched: bool,
     ) -> Result<(), Rem6CliError> {
         if !is_cache_prefetch_source(request) {
             return Ok(());
@@ -1155,6 +1172,7 @@ impl CliDataCacheRuntime {
                 tick,
                 request,
                 self.layout,
+                source_was_prefetched,
                 |address| self.is_prefetch_candidate_backed(memory, address),
                 |address| self.is_prefetch_candidate_resident(address),
             )?
@@ -1189,14 +1207,14 @@ impl CliDataCacheRuntime {
         request: &MemoryRequest,
         outcome: &TargetOutcome,
         missed_usable_state: bool,
-    ) -> Result<(), Rem6CliError> {
+    ) -> Result<bool, Rem6CliError> {
         if target_outcome_response_status(outcome) != Some(ResponseStatus::Completed)
             || !is_cache_prefetch_source(request)
         {
-            return Ok(());
+            return Ok(false);
         }
         let Some(prefetch) = self.prefetch.as_ref() else {
-            return Ok(());
+            return Ok(false);
         };
         prefetch
             .lock()
@@ -1242,6 +1260,7 @@ impl CliDataCachePrefetchRuntime {
         tick: u64,
         request: &MemoryRequest,
         layout: CacheLineLayout,
+        source_was_prefetched: bool,
         candidate_is_backed: impl Fn(Address) -> bool,
         candidate_is_resident: impl Fn(Address) -> bool,
     ) -> Result<Vec<(QueuedPrefetchIssue, u64)>, Rem6CliError> {
@@ -1268,8 +1287,18 @@ impl CliDataCachePrefetchRuntime {
             }
             backed_candidates.push(candidate.clone());
         }
+        let source_status = if source_was_prefetched {
+            QueuedPrefetchSourceStatus::prefetched()
+        } else {
+            QueuedPrefetchSourceStatus::demand()
+        };
         self.queue
-            .enqueue_candidates_filtered(tick, &backed_candidates, &redundant_lines)
+            .enqueue_candidates_filtered_with_source(
+                tick,
+                &backed_candidates,
+                &redundant_lines,
+                source_status,
+            )
             .map_err(execute_error)?;
         self.process_identity_translations(tick, &redundant_lines)?;
         let issues = self.queue.issue_ready(tick);
@@ -1317,14 +1346,15 @@ impl CliDataCachePrefetchRuntime {
         address: Address,
         layout: CacheLineLayout,
         missed_usable_state: bool,
-    ) -> Result<(), Rem6CliError> {
+    ) -> Result<bool, Rem6CliError> {
         let line = layout.line_address(address);
         if self.pending_useful_lines.remove(&line) {
             self.queue
                 .record_useful_prefetch(missed_usable_state)
                 .map_err(execute_error)?;
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 
     fn record_demand_mshr_miss(&mut self) {
@@ -1352,6 +1382,7 @@ impl CliDataCachePrefetchRuntime {
             accuracy_ppm: stats.accuracy_ppm().map(u64::from),
             coverage_ppm: stats.coverage_ppm().map(u64::from),
             span_page: stats.span_page_prefetches(),
+            useful_span_page: stats.useful_span_page_prefetches(),
             in_cache: stats.in_cache_drops(),
             queue_enqueued: stats.prefetch_queue().enqueued(),
             queue_issued: stats.prefetch_queue().issued(),

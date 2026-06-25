@@ -321,6 +321,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "pfHitInMSHR",
         "pfHitInWB",
         "pfLate",
+        "pfUsefulSpanPage",
         "pfUsefulButMiss",
         "accuracy_ppm",
         "coverage_ppm",

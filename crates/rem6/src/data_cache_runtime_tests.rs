@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use rem6_cache::{QueuedPrefetchSourceStatus, TaggedPrefetchAccess};
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
 use rem6_memory::{
     AccessSize, Address, AddressRange, ByteMask, MemoryRequest, MemoryRequestId, MemoryTargetId,
@@ -89,6 +90,37 @@ fn prefetch_summary_preserves_late_and_unused_counts() {
     assert_eq!(summary.hit_in_mshr, 1);
     assert_eq!(summary.hit_in_write_buffer, 1);
     assert_eq!(summary.late, 3);
+}
+
+#[test]
+fn prefetch_summary_preserves_useful_span_page_count() {
+    let layout = CacheLineLayout::new(32).unwrap();
+    let mut prefetch =
+        CliDataCachePrefetchRuntime::new(CliCachePrefetcher::TaggedNextLine, layout).unwrap();
+
+    let candidates = prefetch
+        .tagged
+        .observe(TaggedPrefetchAccess::new(
+            AgentId::new(0),
+            0x100,
+            Address::new(0xfe0),
+            false,
+        ))
+        .unwrap()
+        .to_vec();
+    prefetch
+        .queue
+        .enqueue_candidates_filtered_with_source(
+            4,
+            &candidates,
+            &[],
+            QueuedPrefetchSourceStatus::prefetched(),
+        )
+        .unwrap();
+
+    let summary = prefetch.summary();
+    assert_eq!(summary.span_page, 1);
+    assert_eq!(summary.useful_span_page, 1);
 }
 
 #[test]
