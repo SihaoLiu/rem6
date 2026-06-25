@@ -172,6 +172,13 @@ pub(super) fn emit_gem5_cache_prefetcher_alias_stats(
 ) -> Result<(), Rem6CliError> {
     increment_stat(
         stats,
+        &format!("{cache_prefix}.prefetcher.pfIdentified"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_identified,
+    )?;
+    increment_stat(
+        stats,
         &format!("{cache_prefix}.prefetcher.pfIssued"),
         "Count",
         StatResetPolicy::Monotonic,
