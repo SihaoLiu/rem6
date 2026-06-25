@@ -135,6 +135,9 @@ pub(crate) fn execute_vector_integer_binary(
         RiscvInstruction::VectorRemainderSignedVx { vd, vs2, rs1 } => {
             execute_vector_binary_vx(hart, vd, vs2, hart.read(rs1), LaneBinaryOp::RemainderSigned)
         }
+        RiscvInstruction::VectorIntegerCarryBorrow(instruction) => {
+            crate::vector_integer_carry_borrow::execute(hart, instruction)
+        }
         RiscvInstruction::VectorIntegerMultiplyAdd(instruction) => {
             crate::vector_integer_multiply_add::execute(hart, instruction)
         }

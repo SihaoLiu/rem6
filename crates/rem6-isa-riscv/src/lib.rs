@@ -34,6 +34,7 @@ mod vector_fixed_point_shift;
 mod vector_float_execute;
 mod vector_gather_execute;
 mod vector_group;
+mod vector_integer_carry_borrow;
 mod vector_integer_multiply_add;
 mod vector_lane_op;
 mod vector_mask_index_execute;
@@ -108,6 +109,7 @@ pub use vector::{
 pub use vector_averaging::RiscvVectorAveragingInstruction;
 pub use vector_fixed_point_shift::RiscvVectorFixedPointShiftInstruction;
 pub use vector_fixed_point_shift::RiscvVectorFixedPointShiftOperation;
+pub use vector_integer_carry_borrow::RiscvVectorIntegerCarryBorrowInstruction;
 pub use vector_integer_multiply_add::RiscvVectorIntegerMultiplyAddInstruction;
 pub use vector_mask_mode::RiscvVectorMaskMode;
 pub use vector_reduction::{RiscvVectorReductionInstruction, RiscvVectorReductionOperation};
@@ -533,6 +535,7 @@ impl RiscvHartState {
             | RiscvInstruction::VectorRemainderUnsignedVx { .. }
             | RiscvInstruction::VectorRemainderSignedVv { .. }
             | RiscvInstruction::VectorRemainderSignedVx { .. }
+            | RiscvInstruction::VectorIntegerCarryBorrow(..)
             | RiscvInstruction::VectorIntegerMultiplyAdd(..)
             | RiscvInstruction::VectorReduction(..)
             | RiscvInstruction::VectorSlide(..)

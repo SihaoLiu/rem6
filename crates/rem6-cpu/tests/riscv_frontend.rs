@@ -14,11 +14,11 @@ use rem6_isa_riscv::{
     RiscvStatusWord, RiscvTrap, RiscvTrapKind, RiscvVectorAveragingInstruction, RiscvVectorConfig,
     RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction,
     RiscvVectorFixedPointShiftInstruction, RiscvVectorGatherInstruction,
-    RiscvVectorIntegerMultiplyAddInstruction, RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode,
-    RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
-    RiscvVectorNarrowInstruction, RiscvVectorReductionInstruction,
-    RiscvVectorSaturatingInstruction, RiscvVectorScalarMoveInstruction,
-    RiscvVectorSlideInstruction, RiscvVectorWholeMoveInstruction,
+    RiscvVectorIntegerCarryBorrowInstruction, RiscvVectorIntegerMultiplyAddInstruction,
+    RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction,
+    RiscvVectorMaskReductionInstruction, RiscvVectorNarrowInstruction,
+    RiscvVectorReductionInstruction, RiscvVectorSaturatingInstruction,
+    RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction, RiscvVectorWholeMoveInstruction,
     RiscvVectorWideningIntegerInstruction, VectorRegister,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
@@ -151,6 +151,49 @@ fn vector_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
         | (u32::from(vs1) << 15)
         | (u32::from(vd) << 7)
         | 0x57
+}
+
+fn vector_vv_type_with_mask(
+    funct6: u32,
+    vs2: u8,
+    vs1: u8,
+    vd: u8,
+    mask: RiscvVectorMaskMode,
+) -> u32 {
+    (funct6 << 26)
+        | (u32::from(matches!(mask, RiscvVectorMaskMode::Unmasked)) << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(vs1) << 15)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vector_vx_type_with_mask(
+    funct6: u32,
+    vs2: u8,
+    rs1: u8,
+    vd: u8,
+    mask: RiscvVectorMaskMode,
+) -> u32 {
+    (funct6 << 26)
+        | (u32::from(matches!(mask, RiscvVectorMaskMode::Unmasked)) << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (0b100 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vadc_vxm_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_vx_type_with_mask(0b010000, vs2, rs1, vd, RiscvVectorMaskMode::Masked)
+}
+
+fn vmadc_vvm_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type_with_mask(0b010001, vs2, vs1, vd, RiscvVectorMaskMode::Masked)
+}
+
+fn vmadc_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_vv_type_with_mask(0b010001, vs2, vs1, vd, RiscvVectorMaskMode::Unmasked)
 }
 
 fn vcompress_vm_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -1426,6 +1469,24 @@ fn riscv_core_driver_fetches_ahead_for_vector_integer_multiply_add() {
     let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
     let RiscvCoreDriveAction::FetchIssued { .. } = action else {
         panic!("expected next fetch before retiring the completed vector multiply-add");
+    };
+}
+
+#[test]
+fn riscv_core_driver_fetches_ahead_for_vector_integer_carry_borrow() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let store = loaded_program_store(0x8000, &[vmadc_vv_type(2, 1, 4), 0x0010_0073], &[]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::FetchIssued { .. } = action else {
+        panic!("expected next fetch before retiring the completed vector carry-out");
     };
 }
 
@@ -3812,6 +3873,61 @@ fn riscv_core_driver_executes_vector_integer_multiply_add_from_fetch_stream() {
         core.read_vector_register(vreg(8)),
         lanes_u32([14, 8, 23, 0xdddd_dddd])
     );
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_integer_carry_borrow_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 4);
+    core.write_register(reg(6), 1);
+    core.write_vector_register(vreg(0), mask_bytes(0b0101));
+    core.write_vector_register(vreg(4), lanes_u32([u32::MAX, 10, 0, 20]));
+    core.write_vector_register(vreg(5), lanes_u32([0, 20, u32::MAX, 1]));
+    core.write_vector_register(vreg(3), lanes_u32([0xeeee_eeee; 4]));
+    core.write_vector_register(vreg(7), mask_bytes(0b1010_0000));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 8),
+            vadc_vxm_type(4, 6, 3),
+            vmadc_vvm_type(4, 5, 7),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(8),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(4, 0xd0));
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorIntegerCarryBorrow(
+            RiscvVectorIntegerCarryBorrowInstruction::add_with_carry_vx(vreg(3), vreg(4), reg(6),),
+        )
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(3)),
+        lanes_u32([1, 11, 2, 21])
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorIntegerCarryBorrow(
+            RiscvVectorIntegerCarryBorrowInstruction::add_carry_out_vv(
+                vreg(7),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Masked,
+            ),
+        )
+    );
+    assert_eq!(core.read_vector_register(vreg(7)), mask_bytes(0b1010_0101));
 }
 
 #[test]

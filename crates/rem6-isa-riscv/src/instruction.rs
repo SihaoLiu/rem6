@@ -428,6 +428,7 @@ pub enum RiscvInstruction {
         vs2: VectorRegister,
         rs1: Register,
     },
+    VectorIntegerCarryBorrow(crate::RiscvVectorIntegerCarryBorrowInstruction),
     VectorIntegerMultiplyAdd(crate::RiscvVectorIntegerMultiplyAddInstruction),
     VectorMergeVvm {
         vd: VectorRegister,

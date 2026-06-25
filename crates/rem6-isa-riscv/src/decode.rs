@@ -1,7 +1,7 @@
 use crate::decode_csr::decode_csr;
 use crate::encoding::{b_imm, funct3, funct7, i_imm, rd, rs1, rs2, shamt32, shamt64, shift_funct6};
-use crate::vector_integer_multiply_add as vima;
 use crate::vector_widening_integer as vwi;
+use crate::{vector_integer_carry_borrow as vicb, vector_integer_multiply_add as vima};
 use crate::{
     FloatRegister, Immediate, RiscvError, RiscvFenceSet, RiscvInstruction,
     RiscvVectorExtensionFactor, RiscvVectorFixedPointShiftInstruction, RiscvVectorFloatInstruction,
@@ -774,7 +774,9 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs1: vector_register(raw, 15),
             vs2: vector_register(raw, 20),
         }),
+        (0x0, funct6, _) if vicb::is_vv_funct6(funct6) => vicb::decode_vv(raw),
         (0x2, funct6, _) if vwi::is_vv_funct6(funct6) => Ok(vwi::decode_vv(raw)),
+        (0x3, funct6, _) if vicb::is_vi_funct6(funct6) => vicb::decode_vi(raw),
         (0x3, 0, _) => Ok(RiscvInstruction::VectorAddVi {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),
@@ -929,6 +931,7 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             vs2: vector_register(raw, 20),
             rs1: rs1(raw),
         }),
+        (0x4, funct6, _) if vicb::is_vx_funct6(funct6) => vicb::decode_vx(raw),
         (0x6, funct6, _) if vwi::is_vx_funct6(funct6) => Ok(vwi::decode_vx(raw)),
         (0x4, 0b001001, true) => Ok(RiscvInstruction::VectorAndVx {
             vd: vector_register(raw, 7),
