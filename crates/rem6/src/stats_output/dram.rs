@@ -415,6 +415,14 @@ pub(super) fn emit_gem5_mem_ctrl_dram_alias_stats(
     ] {
         increment_stat(stats, path, unit, StatResetPolicy::Monotonic, value)?;
     }
+    if summary.profile_technology == Some("nvm") {
+        for (path, value) in [
+            ("system.mem_ctrl.dram.nvmBytesRead", read_bytes),
+            ("system.mem_ctrl.dram.nvmBytesWritten", write_bytes),
+        ] {
+            increment_stat(stats, path, "Byte", StatResetPolicy::Monotonic, value)?;
+        }
+    }
     for (bank, value) in dram_bank_read_bursts(summary) {
         increment_stat(
             stats,

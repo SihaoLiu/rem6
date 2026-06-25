@@ -862,6 +862,127 @@ fn rem6_run_json_stats_omit_text_only_gem5_mem_ctrl_bandwidth_aliases() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_nvm_interface_byte_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-nvm-interface-byte-aliases");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "600",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--dram-memory-profile",
+            "nvm",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert_eq!(
+        text_stat_value(&stdout, "sim.memory.dram.profile.technology.nvm"),
+        1
+    );
+    let read_bytes = text_stat_value(&stdout, "system.mem_ctrl.bytesReadSys");
+    let written_bytes = text_stat_value(&stdout, "system.mem_ctrl.bytesWrittenSys");
+    assert!(read_bytes > 0, "{stdout}");
+    assert!(written_bytes > 0, "{stdout}");
+    assert_eq!(
+        text_stat_value(&stdout, "system.mem_ctrl.dram.nvmBytesRead"),
+        read_bytes
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.mem_ctrl.dram.nvmBytesWritten"),
+        written_bytes
+    );
+    assert!(
+        text_stat_line(&stdout, "system.mem_ctrl.dram.nvmBytesRead").contains("unit=Byte"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.mem_ctrl.dram.nvmBytesWritten").contains("unit=Byte"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn rem6_run_json_stats_emit_gem5_nvm_interface_byte_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-nvm-interface-byte-aliases-json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "600",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--dram-memory-profile",
+            "nvm",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.technology.nvm",
+        "Count",
+        1,
+        "constant",
+    );
+    let read_bytes = stat_value(&stdout, "system.mem_ctrl.bytesReadSys");
+    let written_bytes = stat_value(&stdout, "system.mem_ctrl.bytesWrittenSys");
+    assert!(read_bytes > 0, "{stdout}");
+    assert!(written_bytes > 0, "{stdout}");
+    assert_stat(
+        &stdout,
+        "system.mem_ctrl.dram.nvmBytesRead",
+        "Byte",
+        read_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "system.mem_ctrl.dram.nvmBytesWritten",
+        "Byte",
+        written_bytes,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_dram_interface_burst_aliases() {
     let path = gem5_l1_cache_alias_binary("gem5-dram-interface-burst-aliases");
 
