@@ -1228,6 +1228,99 @@ fn rem6_run_json_stats_emit_gem5_l1_prefetcher_pf_span_page_aliases() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_l1_prefetcher_pf_in_cache_alias() {
+    let path = same_line_data_prefetch_binary("gem5-l1-prefetcher-pf-in-cache-alias");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let dcache_in_cache = text_stat_value(&stdout, "sim.data_cache.prefetch.in_cache");
+    assert!(dcache_in_cache > 0, "{stdout}");
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.dcache.prefetcher.pfInCache"),
+        dcache_in_cache
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.dcache.prefetcher.pfInCache").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("system.cpu.icache.prefetcher.pfInCache"));
+}
+
+#[test]
+fn rem6_run_json_stats_emit_gem5_l1_prefetcher_pf_in_cache_alias() {
+    let path = same_line_data_prefetch_binary("gem5-l1-prefetcher-pf-in-cache-alias-json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert_stat_greater_than(
+        &stdout,
+        "sim.data_cache.prefetch.in_cache",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_eq!(
+        stat_value(&stdout, "system.cpu.dcache.prefetcher.pfInCache"),
+        stat_value(&stdout, "sim.data_cache.prefetch.in_cache")
+    );
+    assert!(!stdout.contains("\"path\":\"system.cpu.icache.prefetcher.pfInCache\""));
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_mem_ctrl_bandwidth_aliases() {
     let path = gem5_l1_cache_alias_binary("gem5-mem-ctrl-bandwidth-aliases");
 
@@ -3266,6 +3359,24 @@ fn page_crossing_prefetch_binary(name: &str) -> std::path::PathBuf {
     program.resize(DATA_OFFSET + 64, 0);
     program[DATA_OFFSET..DATA_OFFSET + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
     let elf = riscv64_elf(0x8000_0ff0, 0x8000_0ff0, &program);
+    temp_binary(name, &elf)
+}
+
+fn same_line_data_prefetch_binary(name: &str) -> std::path::PathBuf {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        i_type(8, 2, 0x3, 6, 0x03),                  // ld x6, 8(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET + 32, 0);
+    program[DATA_OFFSET..DATA_OFFSET + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program[DATA_OFFSET + 8..DATA_OFFSET + 16]
+        .copy_from_slice(&0x99aa_bbcc_ddee_ff00u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)
 }
 

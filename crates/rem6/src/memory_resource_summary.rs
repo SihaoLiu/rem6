@@ -35,6 +35,7 @@ pub(crate) struct Rem6CacheResourceSummary {
     pub(crate) prefetch_identified: u64,
     pub(crate) prefetch_issued: u64,
     pub(crate) prefetch_span_page: u64,
+    pub(crate) prefetch_in_cache: u64,
     pub(crate) prefetch_queue_enqueued: u64,
     pub(crate) prefetch_queue_issued: u64,
     pub(crate) prefetch_queue_dropped: u64,
@@ -158,6 +159,9 @@ impl Rem6CacheResourceSummary {
                 summary.prefetch_span_page = summary
                     .prefetch_span_page
                     .saturating_add(cache.prefetch_span_page);
+                summary.prefetch_in_cache = summary
+                    .prefetch_in_cache
+                    .saturating_add(cache.prefetch_in_cache);
                 summary.prefetch_queue_enqueued = summary
                     .prefetch_queue_enqueued
                     .saturating_add(cache.prefetch_queue_enqueued);

@@ -156,6 +156,60 @@ fn rem6_run_data_cache_prefetcher_translates_page_crossing_next_line() {
 }
 
 #[test]
+fn rem6_run_data_cache_prefetcher_drops_repeated_page_crossing_next_line_after_translation() {
+    const DATA_OFFSET: usize = 0x1000;
+
+    let mut program = riscv64_program(&[
+        u_type(0x1000, 2, 0x17),    // auipc x2, 0x1000
+        i_type(0, 2, 0x3, 5, 0x03), // ld x5, 0(x2)
+        i_type(8, 2, 0x3, 6, 0x03), // ld x6, 8(x2)
+        0x0000_0073,                // ecall
+    ]);
+    program.resize(DATA_OFFSET + 64, 0);
+    program[DATA_OFFSET..DATA_OFFSET + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program[DATA_OFFSET + 8..DATA_OFFSET + 16]
+        .copy_from_slice(&0x99aa_bbcc_ddee_ff00u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0ff0, 0x8000_0ff0, &program);
+    let path = temp_binary("data-cache-prefetch-repeated-page-crossing-next-line", &elf);
+    let stdout = run_tagged_next_line_prefetch(&path, 240, false, false);
+
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
+    assert!(stdout.contains("\"x6\":\"0x99aabbccddeeff00\""));
+    assert!(stdout.contains("\"data_loads\":2"));
+    assert!(stdout.contains("\"data_cache_prefetch_identified\":2"));
+    assert!(stdout.contains("\"data_cache_prefetch_issued\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_span_page\":2"));
+    assert!(stdout.contains("\"data_cache_prefetch_in_cache\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_queue_enqueued\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_queue_issued\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_queue_dropped\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_translation_queue_enqueued\":2"));
+    assert!(stdout.contains("\"data_cache_prefetch_translation_queue_issued\":2"));
+    assert!(stdout.contains("\"data_cache_prefetch_translation_queue_translated\":2"));
+    assert!(stdout.contains("\"data_cache_prefetch_translation_queue_dropped\":0"));
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json_u64(&json, "/memory_resources/cache/data/l1/prefetch_in_cache"),
+        1
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.prefetch.in_cache",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.data.l1.prefetch.in_cache",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_data_cache_prefetcher_issues_tagged_next_line_prefetches() {
     let elf = tagged_next_line_prefetch_two_load_elf();
     let path = temp_binary("data-cache-prefetch-tagged-next-line", &elf);
@@ -263,10 +317,12 @@ fn rem6_run_data_cache_prefetcher_does_not_reissue_same_next_line() {
     assert!(stdout.contains("\"data_loads\":2"));
     assert!(stdout.contains("\"data_cache_runs\":3"));
     assert!(stdout.contains("\"data_cache_cpu_responses\":2"));
-    assert!(stdout.contains("\"data_cache_prefetch_identified\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_identified\":2"));
     assert!(stdout.contains("\"data_cache_prefetch_issued\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_in_cache\":1"));
     assert!(stdout.contains("\"data_cache_prefetch_queue_enqueued\":1"));
     assert!(stdout.contains("\"data_cache_prefetch_queue_issued\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_queue_dropped\":1"));
 }
 
 #[test]
@@ -337,21 +393,34 @@ fn rem6_run_instruction_cache_prefetcher_issues_tagged_next_line_prefetch() {
     assert!(stdout.contains("\"x5\":\"0x3\""));
     assert!(stdout.contains("\"instruction_cache_runs\":5"));
     assert!(stdout.contains("\"instruction_cache_cpu_responses\":4"));
-    assert!(stdout.contains("\"instruction_cache_prefetch_identified\":1"));
+    assert!(stdout.contains("\"instruction_cache_prefetch_identified\":4"));
     assert!(stdout.contains("\"instruction_cache_prefetch_issued\":1"));
+    assert!(stdout.contains("\"instruction_cache_prefetch_in_cache\":3"));
     assert!(stdout.contains("\"instruction_cache_prefetch_queue_enqueued\":1"));
     assert!(stdout.contains("\"instruction_cache_prefetch_queue_issued\":1"));
+    assert!(stdout.contains("\"instruction_cache_prefetch_queue_dropped\":3"));
     let json: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(
         json_u64(&json, "/memory_resources/cache/prefetch_identified"),
-        1
+        4
+    );
+    assert_eq!(
+        json_u64(&json, "/memory_resources/cache/prefetch_in_cache"),
+        3
     );
     assert_eq!(
         json_u64(
             &json,
             "/memory_resources/cache/instruction/prefetch_identified"
         ),
-        1
+        4
+    );
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/cache/instruction/prefetch_in_cache"
+        ),
+        3
     );
     assert_eq!(
         json_u64(
@@ -364,7 +433,7 @@ fn rem6_run_instruction_cache_prefetcher_issues_tagged_next_line_prefetch() {
         &stdout,
         "sim.instruction_cache.prefetch.identified",
         "Count",
-        1,
+        4,
         "monotonic",
     );
     assert_stat(
@@ -372,6 +441,13 @@ fn rem6_run_instruction_cache_prefetcher_issues_tagged_next_line_prefetch() {
         "sim.instruction_cache.prefetch.issued",
         "Count",
         1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.instruction_cache.prefetch.in_cache",
+        "Count",
+        3,
         "monotonic",
     );
     assert_stat(
@@ -385,7 +461,14 @@ fn rem6_run_instruction_cache_prefetcher_issues_tagged_next_line_prefetch() {
         &stdout,
         "sim.memory.resources.cache.instruction.prefetch.identified",
         "Count",
-        1,
+        4,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.instruction.prefetch.in_cache",
+        "Count",
+        3,
         "monotonic",
     );
     assert_stat(

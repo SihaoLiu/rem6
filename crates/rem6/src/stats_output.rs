@@ -491,6 +491,13 @@ pub(super) fn run_stats_output(
         )?;
         increment_stat(
             &mut stats,
+            "sim.instruction_cache.prefetch.in_cache",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.instruction_cache.prefetch_in_cache,
+        )?;
+        increment_stat(
+            &mut stats,
             "sim.instruction_cache.prefetch.queue.enqueued",
             "Count",
             StatResetPolicy::Monotonic,
@@ -574,6 +581,13 @@ pub(super) fn run_stats_output(
             "Count",
             StatResetPolicy::Monotonic,
             execution.data_cache.prefetch_span_page,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data_cache.prefetch.in_cache",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.prefetch_in_cache,
         )?;
         increment_stat(
             &mut stats,

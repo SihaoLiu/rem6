@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use rem6_cache::{
-    QueuedPrefetchConfig, QueuedPrefetchIssue, QueuedPrefetcher, TaggedPrefetchAccess,
-    TaggedPrefetcher, TaggedPrefetcherConfig,
+    QueuedPrefetchConfig, QueuedPrefetchIssue, QueuedPrefetchRedundantLine, QueuedPrefetcher,
+    TaggedPrefetchAccess, TaggedPrefetcher, TaggedPrefetcherConfig,
 };
 use rem6_coherence::{
     ChiCpuResponseRecord, ChiDirectoryLineHarness, CpuResponseRecord, LineBackingStore,
@@ -93,6 +93,7 @@ pub(crate) struct CliDataCachePrefetchSummary {
     pub(crate) identified: u64,
     pub(crate) issued: u64,
     pub(crate) span_page: u64,
+    pub(crate) in_cache: u64,
     pub(crate) queue_enqueued: u64,
     pub(crate) queue_issued: u64,
     pub(crate) queue_dropped: u64,
@@ -119,6 +120,7 @@ pub(crate) struct CliDataCacheSummary {
     pub(crate) prefetch_identified: u64,
     pub(crate) prefetch_issued: u64,
     pub(crate) prefetch_span_page: u64,
+    pub(crate) prefetch_in_cache: u64,
     pub(crate) prefetch_queue_enqueued: u64,
     pub(crate) prefetch_queue_issued: u64,
     pub(crate) prefetch_queue_dropped: u64,
@@ -183,6 +185,7 @@ impl CliDataCacheSummary {
             prefetch_identified: 0,
             prefetch_issued: 0,
             prefetch_span_page: 0,
+            prefetch_in_cache: 0,
             prefetch_queue_enqueued: 0,
             prefetch_queue_issued: 0,
             prefetch_queue_dropped: 0,
@@ -200,6 +203,7 @@ impl CliDataCacheSummary {
         self.prefetch_identified = summary.identified;
         self.prefetch_issued = summary.issued;
         self.prefetch_span_page = summary.span_page;
+        self.prefetch_in_cache = summary.in_cache;
         self.prefetch_queue_enqueued = summary.queue_enqueued;
         self.prefetch_queue_issued = summary.queue_issued;
         self.prefetch_queue_dropped = summary.queue_dropped;
@@ -733,13 +737,13 @@ impl CliDataCacheRuntime {
         }
     }
 
-    fn should_enqueue_prefetch_candidate(
-        &self,
-        memory: &CliMemoryRuntime,
-        address: Address,
-    ) -> bool {
+    fn is_prefetch_candidate_backed(&self, memory: &CliMemoryRuntime, address: Address) -> bool {
         let line = self.layout.line_address(address);
-        !self.contains_line(line) && memory.read_guest_cache_line(line, self.layout).is_some()
+        memory.read_guest_cache_line(line, self.layout).is_some()
+    }
+
+    fn is_prefetch_candidate_resident(&self, address: Address) -> bool {
+        self.contains_line(self.layout.line_address(address))
     }
 
     fn respond_inner(
@@ -1059,9 +1063,13 @@ impl CliDataCacheRuntime {
         };
         let issues = {
             let mut prefetch = prefetch.lock().expect("CLI data cache prefetch lock");
-            prefetch.observe_and_issue(tick, request, self.layout, |address| {
-                self.should_enqueue_prefetch_candidate(memory, address)
-            })?
+            prefetch.observe_and_issue(
+                tick,
+                request,
+                self.layout,
+                |address| self.is_prefetch_candidate_backed(memory, address),
+                |address| self.is_prefetch_candidate_resident(address),
+            )?
         };
         for (issue, sequence) in issues {
             let issue_address = issue.address();
@@ -1126,6 +1134,7 @@ impl CliDataCachePrefetchRuntime {
         request: &MemoryRequest,
         layout: CacheLineLayout,
         candidate_is_backed: impl Fn(Address) -> bool,
+        candidate_is_resident: impl Fn(Address) -> bool,
     ) -> Result<Vec<(QueuedPrefetchIssue, u64)>, Rem6CliError> {
         let access = TaggedPrefetchAccess::new(
             request.id().agent(),
@@ -1134,21 +1143,26 @@ impl CliDataCachePrefetchRuntime {
             request.attributes().is_secure(),
         );
         let candidates = self.tagged.observe(access).map_err(execute_error)?.to_vec();
-        let backed_candidates = candidates
-            .iter()
-            .filter(|candidate| {
-                let address = candidate.address();
-                candidate_is_backed(address)
-                    && !self
-                        .issued_lines
-                        .contains(&layout.line_address(candidate.address()))
-            })
-            .cloned()
-            .collect::<Vec<_>>();
+        let mut backed_candidates = Vec::new();
+        let mut redundant_lines = Vec::new();
+        for candidate in &candidates {
+            let address = candidate.address();
+            if !candidate_is_backed(address) {
+                continue;
+            }
+            let line = layout.line_address(address);
+            if candidate_is_resident(address) || self.issued_lines.contains(&line) {
+                redundant_lines.push(QueuedPrefetchRedundantLine::in_cache(
+                    line,
+                    candidate.secure(),
+                ));
+            }
+            backed_candidates.push(candidate.clone());
+        }
         self.queue
-            .enqueue_candidates_filtered(tick, &backed_candidates, &[])
+            .enqueue_candidates_filtered(tick, &backed_candidates, &redundant_lines)
             .map_err(execute_error)?;
-        self.process_identity_translations(tick)?;
+        self.process_identity_translations(tick, &redundant_lines)?;
         let issues = self.queue.issue_ready(tick);
         let mut sequenced_issues = Vec::with_capacity(issues.len());
         for issue in issues {
@@ -1161,7 +1175,11 @@ impl CliDataCachePrefetchRuntime {
         Ok(sequenced_issues)
     }
 
-    fn process_identity_translations(&mut self, tick: u64) -> Result<(), Rem6CliError> {
+    fn process_identity_translations(
+        &mut self,
+        tick: u64,
+        redundant_lines: &[QueuedPrefetchRedundantLine],
+    ) -> Result<(), Rem6CliError> {
         let translations = self
             .queue
             .process_missing_translations(usize::MAX)
@@ -1172,7 +1190,7 @@ impl CliDataCachePrefetchRuntime {
                     tick,
                     translation.request().id(),
                     TranslationResolution::mapped(translation.request().virtual_address()),
-                    &[],
+                    redundant_lines,
                 )
                 .map_err(execute_error)?;
         }
@@ -1193,6 +1211,7 @@ impl CliDataCachePrefetchRuntime {
             identified: stats.identified_prefetches(),
             issued: stats.issued_prefetches(),
             span_page: stats.span_page_prefetches(),
+            in_cache: stats.in_cache_drops(),
             queue_enqueued: stats.prefetch_queue().enqueued(),
             queue_issued: stats.prefetch_queue().issued(),
             queue_dropped: stats.prefetch_queue().dropped(),
