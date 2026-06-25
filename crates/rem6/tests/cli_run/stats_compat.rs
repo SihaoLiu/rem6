@@ -684,6 +684,10 @@ fn rem6_run_text_stats_emit_gem5_l2_cache_overall_aliases() {
         + text_stat_value(&stdout, "sim.instruction_cache.l2.bank.coalesced_misses")
         + text_stat_value(&stdout, "sim.data_cache.l2.bank.scheduled_misses")
         + text_stat_value(&stdout, "sim.data_cache.l2.bank.coalesced_misses");
+    let mshr_hits = text_stat_value(&stdout, "sim.instruction_cache.l2.bank.coalesced_misses")
+        + text_stat_value(&stdout, "sim.data_cache.l2.bank.coalesced_misses");
+    let mshr_misses = text_stat_value(&stdout, "sim.instruction_cache.l2.bank.scheduled_misses")
+        + text_stat_value(&stdout, "sim.data_cache.l2.bank.scheduled_misses");
     let accesses = hits + misses;
     assert!(misses > 0, "{stdout}");
     assert_eq!(text_stat_value(&stdout, "system.l2.overallHits"), hits);
@@ -696,12 +700,32 @@ fn rem6_run_text_stats_emit_gem5_l2_cache_overall_aliases() {
         text_stat_decimal(&stdout, "system.l2.overallMissRate"),
         fixed_ratio(misses, accesses)
     );
+    assert_eq!(
+        text_stat_value(&stdout, "system.l2.overallMshrHits"),
+        mshr_hits
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.l2.overallMshrMisses"),
+        mshr_misses
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.l2.overallMshrMissRate"),
+        fixed_ratio(mshr_misses, accesses)
+    );
     assert!(
         text_stat_line(&stdout, "system.l2.overallHits").contains("unit=Count"),
         "{stdout}"
     );
     assert!(
         text_stat_line(&stdout, "system.l2.overallMissRate").contains("unit=Ratio"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.l2.overallMshrHits").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.l2.overallMshrMissRate").contains("unit=Ratio"),
         "{stdout}"
     );
 }
@@ -763,6 +787,9 @@ fn rem6_run_json_stats_omit_text_only_gem5_l2_cache_overall_aliases() {
     assert!(!stdout.contains("\"path\":\"system.l2.overallMisses\""));
     assert!(!stdout.contains("\"path\":\"system.l2.overallAccesses\""));
     assert!(!stdout.contains("\"path\":\"system.l2.overallMissRate\""));
+    assert!(!stdout.contains("\"path\":\"system.l2.overallMshrHits\""));
+    assert!(!stdout.contains("\"path\":\"system.l2.overallMshrMisses\""));
+    assert!(!stdout.contains("\"path\":\"system.l2.overallMshrMissRate\""));
 }
 
 #[test]
@@ -814,6 +841,10 @@ fn rem6_run_text_stats_emit_gem5_l3_cache_overall_aliases() {
         + text_stat_value(&stdout, "sim.instruction_cache.l3.bank.coalesced_misses")
         + text_stat_value(&stdout, "sim.data_cache.l3.bank.scheduled_misses")
         + text_stat_value(&stdout, "sim.data_cache.l3.bank.coalesced_misses");
+    let mshr_hits = text_stat_value(&stdout, "sim.instruction_cache.l3.bank.coalesced_misses")
+        + text_stat_value(&stdout, "sim.data_cache.l3.bank.coalesced_misses");
+    let mshr_misses = text_stat_value(&stdout, "sim.instruction_cache.l3.bank.scheduled_misses")
+        + text_stat_value(&stdout, "sim.data_cache.l3.bank.scheduled_misses");
     let accesses = hits + misses;
     assert!(misses > 0, "{stdout}");
     assert_eq!(text_stat_value(&stdout, "system.l3.overallHits"), hits);
@@ -826,12 +857,32 @@ fn rem6_run_text_stats_emit_gem5_l3_cache_overall_aliases() {
         text_stat_decimal(&stdout, "system.l3.overallMissRate"),
         fixed_ratio(misses, accesses)
     );
+    assert_eq!(
+        text_stat_value(&stdout, "system.l3.overallMshrHits"),
+        mshr_hits
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.l3.overallMshrMisses"),
+        mshr_misses
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.l3.overallMshrMissRate"),
+        fixed_ratio(mshr_misses, accesses)
+    );
     assert!(
         text_stat_line(&stdout, "system.l3.overallHits").contains("unit=Count"),
         "{stdout}"
     );
     assert!(
         text_stat_line(&stdout, "system.l3.overallMissRate").contains("unit=Ratio"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.l3.overallMshrHits").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.l3.overallMshrMissRate").contains("unit=Ratio"),
         "{stdout}"
     );
 }
@@ -897,6 +948,9 @@ fn rem6_run_json_stats_omit_text_only_gem5_l3_cache_overall_aliases() {
     assert!(!stdout.contains("\"path\":\"system.l3.overallMisses\""));
     assert!(!stdout.contains("\"path\":\"system.l3.overallAccesses\""));
     assert!(!stdout.contains("\"path\":\"system.l3.overallMissRate\""));
+    assert!(!stdout.contains("\"path\":\"system.l3.overallMshrHits\""));
+    assert!(!stdout.contains("\"path\":\"system.l3.overallMshrMisses\""));
+    assert!(!stdout.contains("\"path\":\"system.l3.overallMshrMissRate\""));
 }
 
 #[test]

@@ -316,6 +316,8 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "Row score",
         "Next evidence",
         "demandMshrHits",
+        "system.l2.overallMshrHits",
+        "system.l3.overallMshrMissRate",
         "demandMshrMisses",
         "demandMshrMissRate",
         "pfUnused",

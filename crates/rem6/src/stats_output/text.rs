@@ -209,6 +209,14 @@ fn append_gem5_shared_cache_alias_stats(
         inputs.hits,
         inputs.misses,
     );
+    append_gem5_cache_mshr_alias_stats(
+        output,
+        alias_prefix,
+        "overall",
+        inputs.mshr_hits,
+        inputs.mshr_misses,
+        inputs.accesses(),
+    );
 }
 
 fn append_gem5_cache_hit_miss_alias_stats(
