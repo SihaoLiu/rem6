@@ -693,6 +693,140 @@ fn rem6_run_json_stats_omit_text_only_gem5_l2_cache_overall_aliases() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_l3_cache_overall_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-l3-cache-overall-aliases");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--instruction-cache-protocol",
+            "msi",
+            "--instruction-cache-l2-protocol",
+            "msi",
+            "--instruction-cache-l3-protocol",
+            "msi",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-l2-protocol",
+            "msi",
+            "--data-cache-l3-protocol",
+            "msi",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let hits = text_stat_value(&stdout, "sim.instruction_cache.l3.bank.immediate_hits")
+        + text_stat_value(&stdout, "sim.data_cache.l3.bank.immediate_hits");
+    let misses = text_stat_value(&stdout, "sim.instruction_cache.l3.bank.scheduled_misses")
+        + text_stat_value(&stdout, "sim.instruction_cache.l3.bank.coalesced_misses")
+        + text_stat_value(&stdout, "sim.data_cache.l3.bank.scheduled_misses")
+        + text_stat_value(&stdout, "sim.data_cache.l3.bank.coalesced_misses");
+    let accesses = hits + misses;
+    assert!(misses > 0, "{stdout}");
+    assert_eq!(text_stat_value(&stdout, "system.l3.overallHits"), hits);
+    assert_eq!(text_stat_value(&stdout, "system.l3.overallMisses"), misses);
+    assert_eq!(
+        text_stat_value(&stdout, "system.l3.overallAccesses"),
+        accesses
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.l3.overallMissRate"),
+        fixed_ratio(misses, accesses)
+    );
+    assert!(
+        text_stat_line(&stdout, "system.l3.overallHits").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.l3.overallMissRate").contains("unit=Ratio"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn rem6_run_json_stats_omit_text_only_gem5_l3_cache_overall_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-l3-cache-overall-aliases-json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--instruction-cache-protocol",
+            "msi",
+            "--instruction-cache-l2-protocol",
+            "msi",
+            "--instruction-cache-l3-protocol",
+            "msi",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-l2-protocol",
+            "msi",
+            "--data-cache-l3-protocol",
+            "msi",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert_stat_greater_than(
+        &stdout,
+        "sim.instruction_cache.l3.bank.scheduled_misses",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.data_cache.l3.bank.scheduled_misses",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert!(!stdout.contains("\"path\":\"system.l3.overallHits\""));
+    assert!(!stdout.contains("\"path\":\"system.l3.overallMisses\""));
+    assert!(!stdout.contains("\"path\":\"system.l3.overallAccesses\""));
+    assert!(!stdout.contains("\"path\":\"system.l3.overallMissRate\""));
+}
+
+#[test]
 fn rem6_run_text_stats_omit_gem5_l1_demand_aliases_when_prefetch_issued() {
     let path = tagged_next_line_prefetch_binary("gem5-l1-demand-alias-prefetch-omission");
 

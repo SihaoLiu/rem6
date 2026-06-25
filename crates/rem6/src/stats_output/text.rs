@@ -47,7 +47,20 @@ fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) 
     append_gem5_dram_interface_latency_stats(output, snapshot);
     append_gem5_cpu_ratio_stats(output, snapshot);
     append_gem5_l1_cache_alias_stats(output, snapshot);
-    append_gem5_shared_l2_cache_alias_stats(output, snapshot);
+    append_gem5_shared_cache_alias_stats(
+        output,
+        snapshot,
+        "system.l2",
+        "sim.instruction_cache.l2",
+        "sim.data_cache.l2",
+    );
+    append_gem5_shared_cache_alias_stats(
+        output,
+        snapshot,
+        "system.l3",
+        "sim.instruction_cache.l3",
+        "sim.data_cache.l3",
+    );
 }
 
 fn format_sim_seconds(final_tick: u64, sim_freq: u64) -> String {
@@ -146,11 +159,17 @@ fn gem5_cache_hit_miss_inputs(
     })
 }
 
-fn append_gem5_shared_l2_cache_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
-    let instruction_l2 = gem5_cache_hit_miss_inputs(snapshot, "sim.instruction_cache.l2");
-    let data_l2 = gem5_cache_hit_miss_inputs(snapshot, "sim.data_cache.l2");
-    let inputs = match (instruction_l2, data_l2) {
-        (Some(instruction_l2), Some(data_l2)) => Some(instruction_l2.saturating_add(data_l2)),
+fn append_gem5_shared_cache_alias_stats(
+    output: &mut String,
+    snapshot: &StatSnapshot,
+    alias_prefix: &str,
+    instruction_source_prefix: &str,
+    data_source_prefix: &str,
+) {
+    let instruction = gem5_cache_hit_miss_inputs(snapshot, instruction_source_prefix);
+    let data = gem5_cache_hit_miss_inputs(snapshot, data_source_prefix);
+    let inputs = match (instruction, data) {
+        (Some(instruction), Some(data)) => Some(instruction.saturating_add(data)),
         (Some(inputs), None) | (None, Some(inputs)) => Some(inputs),
         (None, None) => None,
     };
@@ -162,7 +181,7 @@ fn append_gem5_shared_l2_cache_alias_stats(output: &mut String, snapshot: &StatS
     }
     append_gem5_cache_hit_miss_alias_stats(
         output,
-        "system.l2",
+        alias_prefix,
         "overall",
         inputs.hits,
         inputs.misses,
