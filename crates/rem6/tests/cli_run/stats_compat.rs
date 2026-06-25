@@ -642,9 +642,13 @@ fn rem6_run_text_stats_emit_gem5_mem_ctrl_bandwidth_aliases() {
     let final_tick = text_stat_value(&stdout, "finalTick");
     let read_bytes = text_stat_value(&stdout, "system.mem_ctrl.bytesReadSys");
     let written_bytes = text_stat_value(&stdout, "system.mem_ctrl.bytesWrittenSys");
+    let dram_read_bytes = text_stat_value(&stdout, "system.mem_ctrl.dram.dramBytesRead");
+    let dram_written_bytes = text_stat_value(&stdout, "system.mem_ctrl.dram.dramBytesWritten");
     assert!(final_tick > 0, "{stdout}");
     assert!(read_bytes > 0, "{stdout}");
     assert!(written_bytes > 0, "{stdout}");
+    assert_eq!(dram_read_bytes, read_bytes);
+    assert_eq!(dram_written_bytes, written_bytes);
 
     assert_eq!(
         text_stat_decimal(&stdout, "system.mem_ctrl.avgRdBWSys"),
@@ -660,6 +664,22 @@ fn rem6_run_text_stats_emit_gem5_mem_ctrl_bandwidth_aliases() {
     );
     assert!(
         text_stat_line(&stdout, "system.mem_ctrl.avgWrBWSys").contains("unit=(Byte/Second)"),
+        "{stdout}"
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.mem_ctrl.dram.avgRdBW"),
+        fixed_ratio_default_precision(dram_read_bytes * sim_freq, final_tick * 1_000_000)
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.mem_ctrl.dram.avgWrBW"),
+        fixed_ratio_default_precision(dram_written_bytes * sim_freq, final_tick * 1_000_000)
+    );
+    assert!(
+        text_stat_line(&stdout, "system.mem_ctrl.dram.avgRdBW").contains("unit=(Byte/Second)"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.mem_ctrl.dram.avgWrBW").contains("unit=(Byte/Second)"),
         "{stdout}"
     );
 }
@@ -711,6 +731,8 @@ fn rem6_run_json_stats_omit_text_only_gem5_mem_ctrl_bandwidth_aliases() {
     );
     assert!(!stdout.contains("\"path\":\"system.mem_ctrl.avgRdBWSys\""));
     assert!(!stdout.contains("\"path\":\"system.mem_ctrl.avgWrBWSys\""));
+    assert!(!stdout.contains("\"path\":\"system.mem_ctrl.dram.avgRdBW\""));
+    assert!(!stdout.contains("\"path\":\"system.mem_ctrl.dram.avgWrBW\""));
 }
 
 #[test]
@@ -1862,6 +1884,16 @@ fn fixed_ratio_precision(numerator: u64, denominator: u64, precision: usize) -> 
         numerator as f64 / denominator as f64,
         precision = precision
     )
+}
+
+fn fixed_ratio_default_precision(numerator: u64, denominator: u64) -> String {
+    assert_ne!(denominator, 0);
+    let value = numerator as f64 / denominator as f64;
+    if value == value.round() {
+        format!("{value:.0}")
+    } else {
+        format!("{value:.6}")
+    }
 }
 
 fn gem5_l1_cache_alias_binary(name: &str) -> std::path::PathBuf {

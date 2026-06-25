@@ -159,6 +159,8 @@ fn append_gem5_mem_ctrl_bandwidth_alias_stats(output: &mut String, snapshot: &St
         "system.mem_ctrl.bytesReadSys",
         sim_freq,
         final_tick,
+        1,
+        Some(8),
     );
     append_gem5_mem_ctrl_bandwidth_alias_stat(
         output,
@@ -167,6 +169,28 @@ fn append_gem5_mem_ctrl_bandwidth_alias_stats(output: &mut String, snapshot: &St
         "system.mem_ctrl.bytesWrittenSys",
         sim_freq,
         final_tick,
+        1,
+        Some(8),
+    );
+    append_gem5_mem_ctrl_bandwidth_alias_stat(
+        output,
+        snapshot,
+        "system.mem_ctrl.dram.avgRdBW",
+        "system.mem_ctrl.dram.dramBytesRead",
+        sim_freq,
+        final_tick,
+        1_000_000,
+        None,
+    );
+    append_gem5_mem_ctrl_bandwidth_alias_stat(
+        output,
+        snapshot,
+        "system.mem_ctrl.dram.avgWrBW",
+        "system.mem_ctrl.dram.dramBytesWritten",
+        sim_freq,
+        final_tick,
+        1_000_000,
+        None,
     );
 }
 
@@ -177,13 +201,15 @@ fn append_gem5_mem_ctrl_bandwidth_alias_stat(
     bytes_path: &str,
     sim_freq: u64,
     final_tick: u64,
+    denominator_scale: u64,
+    precision: Option<usize>,
 ) {
     let Some(bytes) = snapshot_value(snapshot, bytes_path) else {
         return;
     };
     output.push_str(&format!(
         "{alias_path:<64} {:>20} # kind=derived unit=(Byte/Second) reset_policy=monotonic\n",
-        format_scaled_ratio(bytes, sim_freq, final_tick, 8)
+        format_scaled_ratio(bytes, sim_freq, final_tick, denominator_scale, precision)
     ));
 }
 
@@ -264,12 +290,19 @@ fn format_fixed_ratio(numerator: u64, denominator: u64) -> String {
     format!("{:.6}", numerator as f64 / denominator as f64)
 }
 
-fn format_scaled_ratio(value: u64, multiplier: u64, denominator: u64, precision: usize) -> String {
-    format!(
-        "{:.precision$}",
-        (value as f64 * multiplier as f64) / denominator as f64,
-        precision = precision
-    )
+fn format_scaled_ratio(
+    value: u64,
+    multiplier: u64,
+    denominator: u64,
+    denominator_scale: u64,
+    precision: Option<usize>,
+) -> String {
+    let value = (value as f64 * multiplier as f64) / denominator as f64 / denominator_scale as f64;
+    match precision {
+        Some(precision) => format!("{value:.precision$}"),
+        None if value == value.round() => format!("{value:.0}"),
+        None => format!("{value:.6}"),
+    }
 }
 
 #[cfg(test)]
