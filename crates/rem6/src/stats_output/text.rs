@@ -47,6 +47,7 @@ fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) 
     append_gem5_dram_interface_latency_stats(output, snapshot);
     append_gem5_cpu_ratio_stats(output, snapshot);
     append_gem5_l1_cache_alias_stats(output, snapshot);
+    append_gem5_shared_l2_cache_alias_stats(output, snapshot);
 }
 
 fn format_sim_seconds(final_tick: u64, sim_freq: u64) -> String {
@@ -83,23 +84,89 @@ fn append_gem5_l1_cache_alias_stats_for(
     alias_prefix: &str,
     source_prefix: &str,
 ) {
-    let (Some(hits), Some(scheduled_misses), Some(coalesced_misses)) = (
-        snapshot_value(snapshot, &format!("{source_prefix}.bank.immediate_hits")),
-        snapshot_value(snapshot, &format!("{source_prefix}.bank.scheduled_misses")),
-        snapshot_value(snapshot, &format!("{source_prefix}.bank.coalesced_misses")),
-    ) else {
+    let Some(inputs) = gem5_cache_hit_miss_inputs(snapshot, source_prefix) else {
         return;
     };
-    let misses = scheduled_misses.saturating_add(coalesced_misses);
     if can_emit_gem5_l1_cache_demand_alias_stats(snapshot, source_prefix) {
-        append_gem5_cache_hit_miss_alias_stats(output, alias_prefix, "demand", hits, misses);
+        append_gem5_cache_hit_miss_alias_stats(
+            output,
+            alias_prefix,
+            "demand",
+            inputs.hits,
+            inputs.misses,
+        );
     }
-    append_gem5_cache_hit_miss_alias_stats(output, alias_prefix, "overall", hits, misses);
+    append_gem5_cache_hit_miss_alias_stats(
+        output,
+        alias_prefix,
+        "overall",
+        inputs.hits,
+        inputs.misses,
+    );
 }
 
 fn can_emit_gem5_l1_cache_demand_alias_stats(snapshot: &StatSnapshot, source_prefix: &str) -> bool {
     snapshot_value(snapshot, &format!("{source_prefix}.prefetch.issued")) == Some(0)
         && snapshot_value(snapshot, &format!("{source_prefix}.prefetch.queue.issued")) == Some(0)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CacheHitMissInputs {
+    hits: u64,
+    misses: u64,
+}
+
+impl CacheHitMissInputs {
+    fn accesses(self) -> u64 {
+        self.hits.saturating_add(self.misses)
+    }
+
+    fn saturating_add(self, other: Self) -> Self {
+        Self {
+            hits: self.hits.saturating_add(other.hits),
+            misses: self.misses.saturating_add(other.misses),
+        }
+    }
+}
+
+fn gem5_cache_hit_miss_inputs(
+    snapshot: &StatSnapshot,
+    source_prefix: &str,
+) -> Option<CacheHitMissInputs> {
+    let (Some(hits), Some(scheduled_misses), Some(coalesced_misses)) = (
+        snapshot_value(snapshot, &format!("{source_prefix}.bank.immediate_hits")),
+        snapshot_value(snapshot, &format!("{source_prefix}.bank.scheduled_misses")),
+        snapshot_value(snapshot, &format!("{source_prefix}.bank.coalesced_misses")),
+    ) else {
+        return None;
+    };
+    Some(CacheHitMissInputs {
+        hits,
+        misses: scheduled_misses.saturating_add(coalesced_misses),
+    })
+}
+
+fn append_gem5_shared_l2_cache_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
+    let instruction_l2 = gem5_cache_hit_miss_inputs(snapshot, "sim.instruction_cache.l2");
+    let data_l2 = gem5_cache_hit_miss_inputs(snapshot, "sim.data_cache.l2");
+    let inputs = match (instruction_l2, data_l2) {
+        (Some(instruction_l2), Some(data_l2)) => Some(instruction_l2.saturating_add(data_l2)),
+        (Some(inputs), None) | (None, Some(inputs)) => Some(inputs),
+        (None, None) => None,
+    };
+    let Some(inputs) = inputs else {
+        return;
+    };
+    if inputs.accesses() == 0 {
+        return;
+    }
+    append_gem5_cache_hit_miss_alias_stats(
+        output,
+        "system.l2",
+        "overall",
+        inputs.hits,
+        inputs.misses,
+    );
 }
 
 fn append_gem5_cache_hit_miss_alias_stats(
