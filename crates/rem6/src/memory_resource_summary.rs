@@ -34,6 +34,7 @@ pub(crate) struct Rem6CacheResourceSummary {
     pub(crate) bank_coalesced_misses: u64,
     pub(crate) prefetch_identified: u64,
     pub(crate) prefetch_issued: u64,
+    pub(crate) prefetch_span_page: u64,
     pub(crate) prefetch_queue_enqueued: u64,
     pub(crate) prefetch_queue_issued: u64,
     pub(crate) prefetch_queue_dropped: u64,
@@ -154,6 +155,9 @@ impl Rem6CacheResourceSummary {
                 summary.prefetch_issued = summary
                     .prefetch_issued
                     .saturating_add(cache.prefetch_issued);
+                summary.prefetch_span_page = summary
+                    .prefetch_span_page
+                    .saturating_add(cache.prefetch_span_page);
                 summary.prefetch_queue_enqueued = summary
                     .prefetch_queue_enqueued
                     .saturating_add(cache.prefetch_queue_enqueued);

@@ -1108,6 +1108,126 @@ fn rem6_run_json_stats_emit_gem5_l1_prefetcher_pf_identified_aliases() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_l1_prefetcher_pf_span_page_aliases() {
+    let path = page_crossing_prefetch_binary("gem5-l1-prefetcher-pf-span-page-aliases");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "260",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--instruction-cache-protocol",
+            "msi",
+            "--instruction-cache-prefetcher",
+            "tagged-next-line",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let icache_span_page = text_stat_value(&stdout, "sim.instruction_cache.prefetch.span_page");
+    let dcache_span_page = text_stat_value(&stdout, "sim.data_cache.prefetch.span_page");
+    assert!(icache_span_page > 0, "{stdout}");
+    assert!(dcache_span_page > 0, "{stdout}");
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.icache.prefetcher.pfSpanPage"),
+        icache_span_page
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.dcache.prefetcher.pfSpanPage"),
+        dcache_span_page
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.icache.prefetcher.pfSpanPage").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.dcache.prefetcher.pfSpanPage").contains("unit=Count"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn rem6_run_json_stats_emit_gem5_l1_prefetcher_pf_span_page_aliases() {
+    let path = page_crossing_prefetch_binary("gem5-l1-prefetcher-pf-span-page-aliases-json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "260",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--instruction-cache-protocol",
+            "msi",
+            "--instruction-cache-prefetcher",
+            "tagged-next-line",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert_stat_greater_than(
+        &stdout,
+        "sim.instruction_cache.prefetch.span_page",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.data_cache.prefetch.span_page",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_eq!(
+        stat_value(&stdout, "system.cpu.icache.prefetcher.pfSpanPage"),
+        stat_value(&stdout, "sim.instruction_cache.prefetch.span_page")
+    );
+    assert_eq!(
+        stat_value(&stdout, "system.cpu.dcache.prefetcher.pfSpanPage"),
+        stat_value(&stdout, "sim.data_cache.prefetch.span_page")
+    );
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_mem_ctrl_bandwidth_aliases() {
     let path = gem5_l1_cache_alias_binary("gem5-mem-ctrl-bandwidth-aliases");
 
@@ -3132,6 +3252,20 @@ fn tagged_next_line_prefetch_binary(name: &str) -> std::path::PathBuf {
     program[DATA_OFFSET + 32..DATA_OFFSET + 40]
         .copy_from_slice(&0x99aa_bbcc_ddee_ff00u64.to_le_bytes());
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn page_crossing_prefetch_binary(name: &str) -> std::path::PathBuf {
+    const DATA_OFFSET: usize = 0x1000;
+
+    let mut program = riscv64_program(&[
+        u_type(0x1000, 2, 0x17),    // auipc x2, 0x1000
+        i_type(0, 2, 0x3, 5, 0x03), // ld x5, 0(x2)
+        0x0000_0073,                // ecall
+    ]);
+    program.resize(DATA_OFFSET + 64, 0);
+    program[DATA_OFFSET..DATA_OFFSET + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0ff0, 0x8000_0ff0, &program);
     temp_binary(name, &elf)
 }
 

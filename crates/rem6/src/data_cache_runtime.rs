@@ -92,6 +92,7 @@ struct CliDataCachePrefetchRuntime {
 pub(crate) struct CliDataCachePrefetchSummary {
     pub(crate) identified: u64,
     pub(crate) issued: u64,
+    pub(crate) span_page: u64,
     pub(crate) queue_enqueued: u64,
     pub(crate) queue_issued: u64,
     pub(crate) queue_dropped: u64,
@@ -117,6 +118,7 @@ pub(crate) struct CliDataCacheSummary {
     pub(crate) bank_coalesced_misses: u64,
     pub(crate) prefetch_identified: u64,
     pub(crate) prefetch_issued: u64,
+    pub(crate) prefetch_span_page: u64,
     pub(crate) prefetch_queue_enqueued: u64,
     pub(crate) prefetch_queue_issued: u64,
     pub(crate) prefetch_queue_dropped: u64,
@@ -180,6 +182,7 @@ impl CliDataCacheSummary {
                 .sum(),
             prefetch_identified: 0,
             prefetch_issued: 0,
+            prefetch_span_page: 0,
             prefetch_queue_enqueued: 0,
             prefetch_queue_issued: 0,
             prefetch_queue_dropped: 0,
@@ -196,6 +199,7 @@ impl CliDataCacheSummary {
     ) -> Self {
         self.prefetch_identified = summary.identified;
         self.prefetch_issued = summary.issued;
+        self.prefetch_span_page = summary.span_page;
         self.prefetch_queue_enqueued = summary.queue_enqueued;
         self.prefetch_queue_issued = summary.queue_issued;
         self.prefetch_queue_dropped = summary.queue_dropped;
@@ -1188,6 +1192,7 @@ impl CliDataCachePrefetchRuntime {
         CliDataCachePrefetchSummary {
             identified: stats.identified_prefetches(),
             issued: stats.issued_prefetches(),
+            span_page: stats.span_page_prefetches(),
             queue_enqueued: stats.prefetch_queue().enqueued(),
             queue_issued: stats.prefetch_queue().issued(),
             queue_dropped: stats.prefetch_queue().dropped(),
