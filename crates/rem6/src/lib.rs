@@ -357,6 +357,8 @@ pub struct Rem6DramPortSummary {
 pub struct Rem6DramBankSummary {
     bank: u32,
     accesses: u64,
+    reads: u64,
+    writes: u64,
     read_bytes: u64,
     write_bytes: u64,
     row_hits: u64,

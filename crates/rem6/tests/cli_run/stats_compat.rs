@@ -832,6 +832,112 @@ fn rem6_run_json_stats_emit_gem5_dram_interface_burst_aliases() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_dram_interface_per_bank_burst_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-dram-interface-per-bank-burst-aliases");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let read_bursts = text_stat_value(&stdout, "system.mem_ctrl.dram.readBursts");
+    let write_bursts = text_stat_value(&stdout, "system.mem_ctrl.dram.writeBursts");
+    let per_bank_reads =
+        text_stat_values_with_prefix(&stdout, "system.mem_ctrl.dram.perBankRdBursts.bank");
+    let per_bank_writes =
+        text_stat_values_with_prefix(&stdout, "system.mem_ctrl.dram.perBankWrBursts.bank");
+    assert!(!per_bank_reads.is_empty(), "{stdout}");
+    assert!(!per_bank_writes.is_empty(), "{stdout}");
+    assert_eq!(per_bank_reads.iter().sum::<u64>(), read_bursts);
+    assert_eq!(per_bank_writes.iter().sum::<u64>(), write_bursts);
+    assert!(
+        text_stat_lines_with_prefix(&stdout, "system.mem_ctrl.dram.perBankRdBursts.bank",)
+            .iter()
+            .all(|line| line.contains("unit=Count")),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_lines_with_prefix(&stdout, "system.mem_ctrl.dram.perBankWrBursts.bank",)
+            .iter()
+            .all(|line| line.contains("unit=Count")),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn rem6_run_json_stats_emit_gem5_dram_interface_per_bank_burst_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-dram-interface-per-bank-burst-aliases-json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let read_bursts = stat_value(&stdout, "system.mem_ctrl.dram.readBursts");
+    let write_bursts = stat_value(&stdout, "system.mem_ctrl.dram.writeBursts");
+    let per_bank_reads = json_stat_values_with_prefix(
+        &stdout,
+        "system.mem_ctrl.dram.perBankRdBursts.bank",
+        "Count",
+        "monotonic",
+    );
+    let per_bank_writes = json_stat_values_with_prefix(
+        &stdout,
+        "system.mem_ctrl.dram.perBankWrBursts.bank",
+        "Count",
+        "monotonic",
+    );
+    assert!(!per_bank_reads.is_empty(), "{stdout}");
+    assert!(!per_bank_writes.is_empty(), "{stdout}");
+    assert_eq!(per_bank_reads.iter().sum::<u64>(), read_bursts);
+    assert_eq!(per_bank_writes.iter().sum::<u64>(), write_bursts);
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_dram_interface_row_hit_aliases() {
     let path = gem5_l1_cache_alias_binary("gem5-dram-interface-row-hit-aliases");
 
@@ -2322,6 +2428,78 @@ fn text_stat_value(stdout: &str, path: &str) -> u64 {
             fields.next()?.parse().ok()
         })
         .unwrap_or_else(|| panic!("missing text stat {path} in output:\n{stdout}"))
+}
+
+fn text_stat_values_with_prefix(stdout: &str, prefix: &str) -> Vec<u64> {
+    text_stat_lines_with_prefix(stdout, prefix)
+        .iter()
+        .map(|line| {
+            line.split_whitespace()
+                .nth(1)
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or_else(|| panic!("invalid text stat value in line {line}"))
+        })
+        .collect()
+}
+
+fn text_stat_lines_with_prefix<'a>(stdout: &'a str, prefix: &str) -> Vec<&'a str> {
+    stdout
+        .lines()
+        .filter(|line| {
+            line.split_whitespace()
+                .next()
+                .is_some_and(|path| path_has_numeric_suffix(path, prefix))
+        })
+        .collect()
+}
+
+fn json_stat_values_with_prefix(
+    stdout: &str,
+    prefix: &str,
+    unit: &str,
+    reset_policy: &str,
+) -> Vec<u64> {
+    stdout
+        .split("{\"id\":")
+        .skip(1)
+        .filter_map(|tail| {
+            let sample_end = tail.find('}').unwrap_or(tail.len());
+            let sample = &tail[..sample_end];
+            let path_tail = sample.split("\"path\":\"").nth(1)?;
+            let path_end = path_tail.find('"')?;
+            let path = &path_tail[..path_end];
+            if !path_has_numeric_suffix(path, prefix) {
+                return None;
+            }
+            assert!(
+                sample.contains(&format!("\"unit\":\"{unit}\"")),
+                "missing stat unit {unit} in {sample}"
+            );
+            assert!(
+                sample.contains(&format!("\"reset_policy\":\"{reset_policy}\"")),
+                "missing stat reset policy {reset_policy} in {sample}"
+            );
+            let value_tail = sample
+                .split("\"value\":")
+                .nth(1)
+                .unwrap_or_else(|| panic!("missing stat value in {sample}"));
+            let value_end = value_tail
+                .find(',')
+                .or_else(|| value_tail.find('}'))
+                .unwrap_or(value_tail.len());
+            Some(
+                value_tail[..value_end]
+                    .parse::<u64>()
+                    .unwrap_or_else(|error| panic!("invalid stat value in {sample}: {error}")),
+            )
+        })
+        .collect()
+}
+
+fn path_has_numeric_suffix(path: &str, prefix: &str) -> bool {
+    path.strip_prefix(prefix).is_some_and(|suffix| {
+        !suffix.is_empty() && suffix.chars().all(|character| character.is_ascii_digit())
+    })
 }
 
 fn has_text_stat(stdout: &str, path: &str) -> bool {

@@ -1173,6 +1173,8 @@ impl Rem6DramBankSummary {
         Self {
             bank,
             accesses: activity.access_count() as u64,
+            reads: activity.read_count() as u64,
+            writes: activity.write_count() as u64,
             read_bytes: activity.read_byte_count(),
             write_bytes: activity.write_byte_count(),
             row_hits: activity.row_hit_count() as u64,

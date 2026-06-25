@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::increment_stat;
@@ -408,6 +410,24 @@ pub(super) fn emit_gem5_mem_ctrl_dram_alias_stats(
     ] {
         increment_stat(stats, path, unit, StatResetPolicy::Monotonic, value)?;
     }
+    for (bank, value) in dram_bank_read_bursts(summary) {
+        increment_stat(
+            stats,
+            &format!("system.mem_ctrl.dram.perBankRdBursts.bank{bank}"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    for (bank, value) in dram_bank_write_bursts(summary) {
+        increment_stat(
+            stats,
+            &format!("system.mem_ctrl.dram.perBankWrBursts.bank{bank}"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
     Ok(())
 }
 
@@ -577,6 +597,30 @@ fn dram_bank_write_bytes(summary: &Rem6DramSummary) -> u64 {
         .flat_map(|port| &port.banks)
         .map(|bank| bank.write_bytes)
         .sum()
+}
+
+fn dram_bank_read_bursts(summary: &Rem6DramSummary) -> BTreeMap<u32, u64> {
+    dram_bank_bursts_by_bank(summary, |bank| bank.reads)
+}
+
+fn dram_bank_write_bursts(summary: &Rem6DramSummary) -> BTreeMap<u32, u64> {
+    dram_bank_bursts_by_bank(summary, |bank| bank.writes)
+}
+
+fn dram_bank_bursts_by_bank(
+    summary: &Rem6DramSummary,
+    bursts: impl Fn(&Rem6DramBankSummary) -> u64,
+) -> BTreeMap<u32, u64> {
+    let mut by_bank = BTreeMap::<u32, u64>::new();
+    for bank in summary
+        .targets
+        .iter()
+        .flat_map(|target| &target.ports)
+        .flat_map(|port| &port.banks)
+    {
+        *by_bank.entry(bank.bank).or_default() += bursts(bank);
+    }
+    by_bank
 }
 
 fn emit_dram_low_power_stats(
