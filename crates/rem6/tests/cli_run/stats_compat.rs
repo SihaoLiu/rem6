@@ -1414,6 +1414,53 @@ fn rem6_run_json_stats_emit_gem5_l1_prefetcher_pf_useful_alias() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_l1_prefetcher_pf_useful_but_miss_alias() {
+    let path = useful_data_prefetch_binary("gem5-l1-prefetcher-pf-useful-but-miss-alias");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "200",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let dcache_useful_but_miss =
+        text_stat_value(&stdout, "sim.data_cache.prefetch.useful_but_miss");
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.dcache.prefetcher.pfUsefulButMiss"),
+        dcache_useful_but_miss
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.dcache.prefetcher.pfUsefulButMiss")
+            .contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("system.cpu.icache.prefetcher.pfUsefulButMiss"));
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_l1_prefetcher_accuracy_and_coverage_aliases() {
     let path = useful_data_prefetch_binary("gem5-l1-prefetcher-accuracy-coverage-aliases");
 

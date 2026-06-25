@@ -35,6 +35,7 @@ pub(crate) struct Rem6CacheResourceSummary {
     pub(crate) prefetch_identified: u64,
     pub(crate) prefetch_issued: u64,
     pub(crate) prefetch_useful: u64,
+    pub(crate) prefetch_useful_but_miss: u64,
     pub(crate) prefetch_demand_mshr_misses: u64,
     pub(crate) prefetch_accuracy_ppm: Option<u64>,
     pub(crate) prefetch_coverage_ppm: Option<u64>,
@@ -163,6 +164,9 @@ impl Rem6CacheResourceSummary {
                 summary.prefetch_useful = summary
                     .prefetch_useful
                     .saturating_add(cache.prefetch_useful);
+                summary.prefetch_useful_but_miss = summary
+                    .prefetch_useful_but_miss
+                    .saturating_add(cache.prefetch_useful_but_miss);
                 summary.prefetch_demand_mshr_misses = summary
                     .prefetch_demand_mshr_misses
                     .saturating_add(cache.prefetch_demand_mshr_misses);

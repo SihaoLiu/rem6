@@ -251,6 +251,7 @@ fn emit_cache_resource_stats(
         ("prefetch.identified", summary.prefetch_identified),
         ("prefetch.issued", summary.prefetch_issued),
         ("prefetch.useful", summary.prefetch_useful),
+        ("prefetch.useful_but_miss", summary.prefetch_useful_but_miss),
         (
             "prefetch.demand_mshr_misses",
             summary.prefetch_demand_mshr_misses,

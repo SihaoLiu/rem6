@@ -1508,7 +1508,7 @@ fn gpu_memory_request(
 
 fn data_cache_summary_json(summary: &CliDataCacheSummary) -> String {
     format!(
-        "{{\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_cache_bank_accepted\":{},\"data_cache_bank_immediate_hits\":{},\"data_cache_bank_scheduled_misses\":{},\"data_cache_bank_coalesced_misses\":{},\"data_cache_prefetch_identified\":{},\"data_cache_prefetch_issued\":{},\"data_cache_prefetch_useful\":{},\"data_cache_prefetch_demand_mshr_misses\":{},\"data_cache_prefetch_accuracy_ppm\":{},\"data_cache_prefetch_coverage_ppm\":{},\"data_cache_prefetch_span_page\":{},\"data_cache_prefetch_in_cache\":{},\"data_cache_prefetch_queue_enqueued\":{},\"data_cache_prefetch_queue_issued\":{},\"data_cache_prefetch_queue_dropped\":{},\"data_cache_prefetch_translation_queue_enqueued\":{},\"data_cache_prefetch_translation_queue_issued\":{},\"data_cache_prefetch_translation_queue_translated\":{},\"data_cache_prefetch_translation_queue_dropped\":{}}}",
+        "{{\"data_cache_runs\":{},\"data_cache_msi_runs\":{},\"data_cache_mesi_runs\":{},\"data_cache_moesi_runs\":{},\"data_cache_chi_runs\":{},\"data_cache_cpu_responses\":{},\"data_cache_directory_decisions\":{},\"data_cache_dram_accesses\":{},\"data_cache_bank_accepted\":{},\"data_cache_bank_immediate_hits\":{},\"data_cache_bank_scheduled_misses\":{},\"data_cache_bank_coalesced_misses\":{},\"data_cache_prefetch_identified\":{},\"data_cache_prefetch_issued\":{},\"data_cache_prefetch_useful\":{},\"data_cache_prefetch_useful_but_miss\":{},\"data_cache_prefetch_demand_mshr_misses\":{},\"data_cache_prefetch_accuracy_ppm\":{},\"data_cache_prefetch_coverage_ppm\":{},\"data_cache_prefetch_span_page\":{},\"data_cache_prefetch_in_cache\":{},\"data_cache_prefetch_queue_enqueued\":{},\"data_cache_prefetch_queue_issued\":{},\"data_cache_prefetch_queue_dropped\":{},\"data_cache_prefetch_translation_queue_enqueued\":{},\"data_cache_prefetch_translation_queue_issued\":{},\"data_cache_prefetch_translation_queue_translated\":{},\"data_cache_prefetch_translation_queue_dropped\":{}}}",
         summary.runs,
         summary.msi_runs,
         summary.mesi_runs,
@@ -1524,6 +1524,7 @@ fn data_cache_summary_json(summary: &CliDataCacheSummary) -> String {
         summary.prefetch_identified,
         summary.prefetch_issued,
         summary.prefetch_useful,
+        summary.prefetch_useful_but_miss,
         summary.prefetch_demand_mshr_misses,
         optional_count_json(summary.prefetch_accuracy_ppm),
         optional_count_json(summary.prefetch_coverage_ppm),

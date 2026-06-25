@@ -316,6 +316,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "Row score",
         "Next evidence",
         "demandMshrMisses",
+        "pfUsefulButMiss",
         "accuracy_ppm",
         "coverage_ppm",
     ] {

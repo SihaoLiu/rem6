@@ -491,6 +491,13 @@ pub(super) fn run_stats_output(
         )?;
         increment_stat(
             &mut stats,
+            "sim.instruction_cache.prefetch.useful_but_miss",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.instruction_cache.prefetch_useful_but_miss,
+        )?;
+        increment_stat(
+            &mut stats,
             "sim.instruction_cache.prefetch.demand_mshr_misses",
             "Count",
             StatResetPolicy::Monotonic,
@@ -613,6 +620,13 @@ pub(super) fn run_stats_output(
             "Count",
             StatResetPolicy::Monotonic,
             execution.data_cache.prefetch_useful,
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.data_cache.prefetch.useful_but_miss",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.prefetch_useful_but_miss,
         )?;
         increment_stat(
             &mut stats,

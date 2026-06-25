@@ -122,6 +122,13 @@ pub(super) fn emit_data_cache_prefetch_summary_stats(
     )?;
     increment_stat(
         stats,
+        &format!("{prefix}.prefetch.useful_but_miss"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_useful_but_miss,
+    )?;
+    increment_stat(
+        stats,
         &format!("{prefix}.prefetch.demand_mshr_misses"),
         "Count",
         StatResetPolicy::Monotonic,
@@ -236,6 +243,13 @@ pub(super) fn emit_gem5_cache_prefetcher_alias_stats(
         "Count",
         StatResetPolicy::Monotonic,
         summary.prefetch_useful,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{cache_prefix}.prefetcher.pfUsefulButMiss"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_useful_but_miss,
     )?;
     increment_stat(
         stats,
