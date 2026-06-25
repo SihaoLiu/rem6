@@ -88,15 +88,41 @@ fn append_gem5_l1_cache_alias_stats_for(
     ) else {
         return;
     };
-    append_derived_count_stat(output, &format!("{alias_prefix}.overallHits"), hits);
     let misses = scheduled_misses.saturating_add(coalesced_misses);
-    append_derived_count_stat(output, &format!("{alias_prefix}.overallMisses"), misses);
+    if can_emit_gem5_l1_cache_demand_alias_stats(snapshot, source_prefix) {
+        append_gem5_cache_hit_miss_alias_stats(output, alias_prefix, "demand", hits, misses);
+    }
+    append_gem5_cache_hit_miss_alias_stats(output, alias_prefix, "overall", hits, misses);
+}
+
+fn can_emit_gem5_l1_cache_demand_alias_stats(snapshot: &StatSnapshot, source_prefix: &str) -> bool {
+    snapshot_value(snapshot, &format!("{source_prefix}.prefetch.issued")) == Some(0)
+        && snapshot_value(snapshot, &format!("{source_prefix}.prefetch.queue.issued")) == Some(0)
+}
+
+fn append_gem5_cache_hit_miss_alias_stats(
+    output: &mut String,
+    alias_prefix: &str,
+    alias_kind: &str,
+    hits: u64,
+    misses: u64,
+) {
+    append_derived_count_stat(output, &format!("{alias_prefix}.{alias_kind}Hits"), hits);
+    append_derived_count_stat(
+        output,
+        &format!("{alias_prefix}.{alias_kind}Misses"),
+        misses,
+    );
     let accesses = hits.saturating_add(misses);
-    append_derived_count_stat(output, &format!("{alias_prefix}.overallAccesses"), accesses);
+    append_derived_count_stat(
+        output,
+        &format!("{alias_prefix}.{alias_kind}Accesses"),
+        accesses,
+    );
     if accesses != 0 {
         append_derived_ratio_stat(
             output,
-            &format!("{alias_prefix}.overallMissRate"),
+            &format!("{alias_prefix}.{alias_kind}MissRate"),
             misses,
             accesses,
         );

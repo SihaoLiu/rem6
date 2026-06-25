@@ -357,6 +357,22 @@ fn rem6_run_text_stats_emit_gem5_l1_cache_hit_miss_aliases() {
     );
     let icache_accesses = icache_hits + icache_misses;
     assert_eq!(
+        text_stat_value(&stdout, "system.cpu.icache.demandHits"),
+        icache_hits
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.icache.demandMisses"),
+        icache_misses
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.icache.demandAccesses"),
+        icache_accesses
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.cpu.icache.demandMissRate"),
+        fixed_ratio(icache_misses, icache_accesses)
+    );
+    assert_eq!(
         text_stat_value(&stdout, "system.cpu.icache.overallAccesses"),
         icache_accesses
     );
@@ -379,6 +395,22 @@ fn rem6_run_text_stats_emit_gem5_l1_cache_hit_miss_aliases() {
         dcache_misses
     );
     let dcache_accesses = dcache_hits + dcache_misses;
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.dcache.demandHits"),
+        dcache_hits
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.dcache.demandMisses"),
+        dcache_misses
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.dcache.demandAccesses"),
+        dcache_accesses
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.cpu.dcache.demandMissRate"),
+        fixed_ratio(dcache_misses, dcache_accesses)
+    );
     assert_eq!(
         text_stat_value(&stdout, "system.cpu.dcache.overallAccesses"),
         dcache_accesses
@@ -442,10 +474,59 @@ fn rem6_run_json_stats_omit_text_only_gem5_l1_cache_hit_miss_aliases() {
     assert!(!stdout.contains("\"path\":\"system.cpu.icache.overallMisses\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.icache.overallAccesses\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.icache.overallMissRate\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.icache.demandHits\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.icache.demandMisses\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.icache.demandAccesses\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.icache.demandMissRate\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.dcache.overallHits\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.dcache.overallMisses\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.dcache.overallAccesses\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.dcache.overallMissRate\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.dcache.demandHits\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.dcache.demandMisses\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.dcache.demandAccesses\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.dcache.demandMissRate\""));
+}
+
+#[test]
+fn rem6_run_text_stats_omit_gem5_l1_demand_aliases_when_prefetch_issued() {
+    let path = tagged_next_line_prefetch_binary("gem5-l1-demand-alias-prefetch-omission");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "200",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(text_stat_value(&stdout, "sim.data_cache.prefetch.issued") > 0);
+    assert!(has_text_stat(&stdout, "system.cpu.dcache.overallHits"));
+    assert!(!has_text_stat(&stdout, "system.cpu.dcache.demandHits"));
+    assert!(!has_text_stat(&stdout, "system.cpu.dcache.demandMisses"));
+    assert!(!has_text_stat(&stdout, "system.cpu.dcache.demandAccesses"));
+    assert!(!has_text_stat(&stdout, "system.cpu.dcache.demandMissRate"));
 }
 
 #[test]
@@ -1721,6 +1802,24 @@ fn gem5_l1_cache_alias_binary(name: &str) -> std::path::PathBuf {
     program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
     program.extend_from_slice(&0u64.to_le_bytes());
     program.extend_from_slice(&[0; 16]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
+}
+
+fn tagged_next_line_prefetch_binary(name: &str) -> std::path::PathBuf {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        i_type(32, 2, 0x3, 6, 0x03),                 // ld x6, 32(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET + 96, 0);
+    program[DATA_OFFSET..DATA_OFFSET + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program[DATA_OFFSET + 32..DATA_OFFSET + 40]
+        .copy_from_slice(&0x99aa_bbcc_ddee_ff00u64.to_le_bytes());
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     temp_binary(name, &elf)
 }
