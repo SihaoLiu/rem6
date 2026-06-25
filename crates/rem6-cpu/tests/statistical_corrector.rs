@@ -231,6 +231,38 @@ fn statistical_corrector_rejects_bad_config_thread_and_snapshot_config() {
         ),
         Err(StatisticalCorrectorError::LogSizeUpTooSmall { bits: 1 })
     );
+    assert_eq!(
+        StatisticalCorrectorConfig::with_options(
+            1,
+            1,
+            21,
+            64,
+            vec![6, 3],
+            vec![16, 8],
+            vec![6, 3],
+            vec![8],
+            7,
+            7,
+            7,
+            7,
+            7,
+            7,
+            7,
+            6,
+            7,
+            12,
+            8,
+            6,
+            6,
+            0,
+            2,
+            false,
+        ),
+        Err(StatisticalCorrectorError::LogSizeOutOfRange {
+            field: "update",
+            bits: 21,
+        })
+    );
 
     let mut corrector = sc(false);
     assert_eq!(

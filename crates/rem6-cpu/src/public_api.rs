@@ -131,6 +131,7 @@ pub use crate::tage_sc_l_predictor::{
     TageScLBranchPredictorSnapshot, TageScLHistory, TageScLHistoryUpdate, TageScLPrediction,
     TageScLProvider, TageScLRepair, TageScLTrainingUpdate,
 };
+pub use crate::tage_sc_l_predictor_checkpoint::TageScLBranchPredictorCheckpointPayload;
 pub use crate::topology::{
     CpuTopologyError, RiscvClusterTopologyConfig, RiscvCoreTopologyConfig,
     RiscvCoreTopologyDataTranslationConfig,

@@ -140,22 +140,22 @@ impl Error for LoopBranchPredictorError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoopBranchPredictorConfig {
-    threads: usize,
-    log_size: u8,
-    log_assoc: u8,
-    age_bits: u8,
-    confidence_bits: u8,
-    tag_bits: u8,
-    iter_bits: u8,
-    with_loop_bits: u8,
-    inst_shift: u8,
-    use_direction_bit: bool,
-    use_speculation: bool,
-    use_hashing: bool,
-    restrict_allocation: bool,
-    initial_iter: u16,
-    initial_age: u8,
-    optional_age_reset: bool,
+    pub(crate) threads: usize,
+    pub(crate) log_size: u8,
+    pub(crate) log_assoc: u8,
+    pub(crate) age_bits: u8,
+    pub(crate) confidence_bits: u8,
+    pub(crate) tag_bits: u8,
+    pub(crate) iter_bits: u8,
+    pub(crate) with_loop_bits: u8,
+    pub(crate) inst_shift: u8,
+    pub(crate) use_direction_bit: bool,
+    pub(crate) use_speculation: bool,
+    pub(crate) use_hashing: bool,
+    pub(crate) restrict_allocation: bool,
+    pub(crate) initial_iter: u16,
+    pub(crate) initial_age: u8,
+    pub(crate) optional_age_reset: bool,
 }
 
 impl LoopBranchPredictorConfig {
@@ -1209,13 +1209,13 @@ impl LoopSquash {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoopEntrySnapshot {
-    num_iter: u16,
-    current_iter: u16,
-    current_iter_spec: u16,
-    confidence: u8,
-    tag: u16,
-    age: u8,
-    direction: bool,
+    pub(crate) num_iter: u16,
+    pub(crate) current_iter: u16,
+    pub(crate) current_iter_spec: u16,
+    pub(crate) confidence: u8,
+    pub(crate) tag: u16,
+    pub(crate) age: u8,
+    pub(crate) direction: bool,
 }
 
 impl LoopEntrySnapshot {
@@ -1228,6 +1228,26 @@ impl LoopEntrySnapshot {
             tag: 0,
             age: 0,
             direction: false,
+        }
+    }
+
+    pub(crate) const fn from_parts(
+        num_iter: u16,
+        current_iter: u16,
+        current_iter_spec: u16,
+        confidence: u8,
+        tag: u16,
+        age: u8,
+        direction: bool,
+    ) -> Self {
+        Self {
+            num_iter,
+            current_iter,
+            current_iter_spec,
+            confidence,
+            tag,
+            age,
+            direction,
         }
     }
 
@@ -1262,19 +1282,46 @@ impl LoopEntrySnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoopBranchPredictorSnapshot {
-    config: LoopBranchPredictorConfig,
-    entries: Vec<LoopEntrySnapshot>,
-    allocation_cursors: Vec<usize>,
-    loop_use_counter: i16,
-    lookup_count: u64,
-    update_count: u64,
-    squash_count: u64,
-    used_count: u64,
-    correct_count: u64,
-    wrong_count: u64,
+    pub(crate) config: LoopBranchPredictorConfig,
+    pub(crate) entries: Vec<LoopEntrySnapshot>,
+    pub(crate) allocation_cursors: Vec<usize>,
+    pub(crate) loop_use_counter: i16,
+    pub(crate) lookup_count: u64,
+    pub(crate) update_count: u64,
+    pub(crate) squash_count: u64,
+    pub(crate) used_count: u64,
+    pub(crate) correct_count: u64,
+    pub(crate) wrong_count: u64,
 }
 
 impl LoopBranchPredictorSnapshot {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_parts(
+        config: LoopBranchPredictorConfig,
+        entries: Vec<LoopEntrySnapshot>,
+        allocation_cursors: Vec<usize>,
+        loop_use_counter: i16,
+        lookup_count: u64,
+        update_count: u64,
+        squash_count: u64,
+        used_count: u64,
+        correct_count: u64,
+        wrong_count: u64,
+    ) -> Self {
+        Self {
+            config,
+            entries,
+            allocation_cursors,
+            loop_use_counter,
+            lookup_count,
+            update_count,
+            squash_count,
+            used_count,
+            correct_count,
+            wrong_count,
+        }
+    }
+
     pub const fn config(&self) -> &LoopBranchPredictorConfig {
         &self.config
     }

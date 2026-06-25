@@ -31,6 +31,10 @@ pub enum TageBranchPredictorError {
         bank: usize,
         bits: u8,
     },
+    BimodalHysteresisRatioOutOfRange {
+        bits: u8,
+        max: u8,
+    },
     CounterBitsOutOfRange {
         bits: u8,
     },
@@ -46,6 +50,10 @@ pub enum TageBranchPredictorError {
     InstShiftOutOfRange {
         bits: u8,
     },
+    UsefulResetPeriodOutOfRange {
+        bits: u8,
+    },
+    ZeroUseAltOnNewCounters,
     UnknownThread {
         cpu: CpuId,
     },
@@ -114,7 +122,11 @@ impl fmt::Display for TageBranchPredictorError {
             ),
             Self::TagWidthOutOfRange { bank, bits } => write!(
                 formatter,
-                "tage table {bank} tag width {bits} is outside 1..=16"
+                "tage table {bank} tag width {bits} is outside 2..=16"
+            ),
+            Self::BimodalHysteresisRatioOutOfRange { bits, max } => write!(
+                formatter,
+                "tage bimodal hysteresis log ratio {bits} is outside 0..={max}"
             ),
             Self::CounterBitsOutOfRange { bits } => {
                 write!(formatter, "tage counter width {bits} is outside 2..=8")
@@ -132,6 +144,13 @@ impl fmt::Display for TageBranchPredictorError {
                 formatter,
                 "tage instruction shift {bits} is outside 0..=63"
             ),
+            Self::UsefulResetPeriodOutOfRange { bits } => write!(
+                formatter,
+                "tage useful reset period log size {bits} is outside 0..=63"
+            ),
+            Self::ZeroUseAltOnNewCounters => {
+                write!(formatter, "tage alt-on-new counter table is empty")
+            }
             Self::UnknownThread { cpu } => {
                 write!(formatter, "tage thread {} is not configured", cpu.get())
             }
@@ -184,24 +203,24 @@ impl Error for TageBranchPredictorError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TageBranchPredictorConfig {
-    threads: usize,
-    history_tables: usize,
-    min_history: usize,
-    max_history: usize,
-    tag_widths: Vec<u8>,
-    log_table_sizes: Vec<u8>,
-    log_ratio_bimodal_hysteresis: u8,
-    counter_bits: u8,
-    useful_bits: u8,
-    path_history_bits: u8,
-    log_useful_reset_period: u8,
-    use_alt_on_new_counters: usize,
-    use_alt_on_new_bits: u8,
-    max_allocations: usize,
-    inst_shift: u8,
-    taken_only_history: bool,
-    speculative_history: bool,
-    history_lengths: Vec<usize>,
+    pub(crate) threads: usize,
+    pub(crate) history_tables: usize,
+    pub(crate) min_history: usize,
+    pub(crate) max_history: usize,
+    pub(crate) tag_widths: Vec<u8>,
+    pub(crate) log_table_sizes: Vec<u8>,
+    pub(crate) log_ratio_bimodal_hysteresis: u8,
+    pub(crate) counter_bits: u8,
+    pub(crate) useful_bits: u8,
+    pub(crate) path_history_bits: u8,
+    pub(crate) log_useful_reset_period: u8,
+    pub(crate) use_alt_on_new_counters: usize,
+    pub(crate) use_alt_on_new_bits: u8,
+    pub(crate) max_allocations: usize,
+    pub(crate) inst_shift: u8,
+    pub(crate) taken_only_history: bool,
+    pub(crate) speculative_history: bool,
+    pub(crate) history_lengths: Vec<usize>,
 }
 
 impl TageBranchPredictorConfig {
@@ -256,9 +275,15 @@ impl TageBranchPredictorConfig {
             }
         }
         for (bank, bits) in tag_widths.iter().copied().enumerate().skip(1) {
-            if !(1..=16).contains(&bits) {
+            if !(2..=16).contains(&bits) {
                 return Err(TageBranchPredictorError::TagWidthOutOfRange { bank, bits });
             }
+        }
+        if log_ratio_bimodal_hysteresis > log_table_sizes[0] {
+            return Err(TageBranchPredictorError::BimodalHysteresisRatioOutOfRange {
+                bits: log_ratio_bimodal_hysteresis,
+                max: log_table_sizes[0],
+            });
         }
         if !(2..=8).contains(&counter_bits) {
             return Err(TageBranchPredictorError::CounterBitsOutOfRange { bits: counter_bits });
@@ -278,6 +303,14 @@ impl TageBranchPredictorConfig {
         }
         if inst_shift > 63 {
             return Err(TageBranchPredictorError::InstShiftOutOfRange { bits: inst_shift });
+        }
+        if log_useful_reset_period > 63 {
+            return Err(TageBranchPredictorError::UsefulResetPeriodOutOfRange {
+                bits: log_useful_reset_period,
+            });
+        }
+        if use_alt_on_new_counters == 0 {
+            return Err(TageBranchPredictorError::ZeroUseAltOnNewCounters);
         }
 
         let mut history_lengths = vec![0; expected];
@@ -1289,9 +1322,9 @@ impl TageTrainingUpdate {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TageTableEntry {
-    counter: i8,
-    tag: u16,
-    useful: u8,
+    pub(crate) counter: i8,
+    pub(crate) tag: u16,
+    pub(crate) useful: u8,
 }
 
 impl TageTableEntry {
@@ -1318,10 +1351,10 @@ impl TageTableEntry {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FoldedHistorySnapshot {
-    compressed: u32,
-    compressed_bits: u8,
-    original_bits: usize,
-    outpoint: usize,
+    pub(crate) compressed: u32,
+    pub(crate) compressed_bits: u8,
+    pub(crate) original_bits: usize,
+    pub(crate) outpoint: usize,
 }
 
 impl FoldedHistorySnapshot {
@@ -1338,6 +1371,16 @@ impl FoldedHistorySnapshot {
         self.compressed
     }
 
+    pub(crate) fn from_compressed(
+        original_bits: usize,
+        compressed_bits: u8,
+        compressed: u32,
+    ) -> Self {
+        let mut snapshot = Self::new(original_bits, compressed_bits);
+        snapshot.compressed = compressed & bit_mask_u32(compressed_bits);
+        snapshot
+    }
+
     fn update(&mut self, newest_bit: u8, falling_bit: u8) {
         self.compressed = (self.compressed << 1) | u32::from(newest_bit & 1);
         self.compressed ^= u32::from(falling_bit & 1) << self.outpoint;
@@ -1348,11 +1391,11 @@ impl FoldedHistorySnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TageThreadSnapshot {
-    path_history: u32,
-    non_spec_path_history: u32,
-    global_history: Vec<u8>,
-    compute_indices: Vec<FoldedHistorySnapshot>,
-    compute_tags: [Vec<FoldedHistorySnapshot>; 2],
+    pub(crate) path_history: u32,
+    pub(crate) non_spec_path_history: u32,
+    pub(crate) global_history: Vec<u8>,
+    pub(crate) compute_indices: Vec<FoldedHistorySnapshot>,
+    pub(crate) compute_tags: [Vec<FoldedHistorySnapshot>; 2],
 }
 
 impl TageThreadSnapshot {
@@ -1381,6 +1424,22 @@ impl TageThreadSnapshot {
             global_history: vec![0; config.max_history + 1],
             compute_indices,
             compute_tags: [compute_tags0, compute_tags1],
+        }
+    }
+
+    pub(crate) fn from_parts(
+        path_history: u32,
+        non_spec_path_history: u32,
+        global_history: Vec<u8>,
+        compute_indices: Vec<FoldedHistorySnapshot>,
+        compute_tags: [Vec<FoldedHistorySnapshot>; 2],
+    ) -> Self {
+        Self {
+            path_history,
+            non_spec_path_history,
+            global_history,
+            compute_indices,
+            compute_tags,
         }
     }
 
@@ -1417,19 +1476,46 @@ impl TageThreadSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TageBranchPredictorSnapshot {
-    config: TageBranchPredictorConfig,
-    bimodal_prediction: Vec<bool>,
-    bimodal_hysteresis: Vec<bool>,
-    tagged_tables: Vec<Vec<TageTableEntry>>,
-    threads: Vec<TageThreadSnapshot>,
-    use_alt_on_new_counters: Vec<i8>,
-    t_counter: u64,
-    lookup_count: u64,
-    update_count: u64,
-    history_update_count: u64,
+    pub(crate) config: TageBranchPredictorConfig,
+    pub(crate) bimodal_prediction: Vec<bool>,
+    pub(crate) bimodal_hysteresis: Vec<bool>,
+    pub(crate) tagged_tables: Vec<Vec<TageTableEntry>>,
+    pub(crate) threads: Vec<TageThreadSnapshot>,
+    pub(crate) use_alt_on_new_counters: Vec<i8>,
+    pub(crate) t_counter: u64,
+    pub(crate) lookup_count: u64,
+    pub(crate) update_count: u64,
+    pub(crate) history_update_count: u64,
 }
 
 impl TageBranchPredictorSnapshot {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_parts(
+        config: TageBranchPredictorConfig,
+        bimodal_prediction: Vec<bool>,
+        bimodal_hysteresis: Vec<bool>,
+        tagged_tables: Vec<Vec<TageTableEntry>>,
+        threads: Vec<TageThreadSnapshot>,
+        use_alt_on_new_counters: Vec<i8>,
+        t_counter: u64,
+        lookup_count: u64,
+        update_count: u64,
+        history_update_count: u64,
+    ) -> Self {
+        Self {
+            config,
+            bimodal_prediction,
+            bimodal_hysteresis,
+            tagged_tables,
+            threads,
+            use_alt_on_new_counters,
+            t_counter,
+            lookup_count,
+            update_count,
+            history_update_count,
+        }
+    }
+
     pub const fn config(&self) -> &TageBranchPredictorConfig {
         &self.config
     }

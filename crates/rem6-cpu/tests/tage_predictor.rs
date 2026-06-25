@@ -355,6 +355,28 @@ fn tage_predictor_rejects_bad_config_thread_and_snapshot_shape() {
             2,
             2,
             6,
+            vec![0, 1, 5],
+            vec![4, 3, 3],
+            1,
+            3,
+            2,
+            8,
+            4,
+            1,
+            4,
+            1,
+            2,
+            false,
+            false,
+        ),
+        Err(TageBranchPredictorError::TagWidthOutOfRange { bank: 1, bits: 1 })
+    );
+    assert_eq!(
+        TageBranchPredictorConfig::with_options(
+            1,
+            2,
+            2,
+            6,
             vec![0, 4, 5],
             vec![4, 3, 3],
             1,
@@ -392,6 +414,72 @@ fn tage_predictor_rejects_bad_config_thread_and_snapshot_shape() {
             false,
         ),
         Err(TageBranchPredictorError::PathHistoryBitsOutOfRange { bits: 0 })
+    );
+    assert_eq!(
+        TageBranchPredictorConfig::with_options(
+            1,
+            2,
+            2,
+            6,
+            vec![0, 4, 5],
+            vec![4, 3, 3],
+            5,
+            3,
+            2,
+            8,
+            4,
+            1,
+            4,
+            1,
+            2,
+            false,
+            false,
+        ),
+        Err(TageBranchPredictorError::BimodalHysteresisRatioOutOfRange { bits: 5, max: 4 })
+    );
+    assert_eq!(
+        TageBranchPredictorConfig::with_options(
+            1,
+            2,
+            2,
+            6,
+            vec![0, 4, 5],
+            vec![4, 3, 3],
+            1,
+            3,
+            2,
+            8,
+            64,
+            1,
+            4,
+            1,
+            2,
+            false,
+            false,
+        ),
+        Err(TageBranchPredictorError::UsefulResetPeriodOutOfRange { bits: 64 })
+    );
+    assert_eq!(
+        TageBranchPredictorConfig::with_options(
+            1,
+            2,
+            2,
+            6,
+            vec![0, 4, 5],
+            vec![4, 3, 3],
+            1,
+            3,
+            2,
+            8,
+            4,
+            0,
+            4,
+            1,
+            2,
+            false,
+            false,
+        ),
+        Err(TageBranchPredictorError::ZeroUseAltOnNewCounters)
     );
 
     let mut predictor = tage(false);

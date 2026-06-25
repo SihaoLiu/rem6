@@ -9,6 +9,7 @@ use rem6_cpu::{
     GShareBranchPredictorError, InOrderPipelineCheckpointPayload, InOrderPipelineError,
     InOrderPipelineSnapshot, MultiperspectivePerceptronCheckpointPayload,
     MultiperspectivePerceptronError, RiscvCore, RiscvHartRunState,
+    TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorError,
     TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorError,
 };
 use rem6_isa_riscv::{
@@ -25,6 +26,7 @@ const HART_RUN_STATE_CHUNK: &str = "hart-run-state";
 const IN_ORDER_PIPELINE_CHUNK: &str = "in-order-pipeline";
 const MULTIPERSPECTIVE_PERCEPTRON_CHUNK: &str = "multiperspective-perceptron";
 const PC_CHUNK: &str = "pc";
+const TAGE_SC_L_BRANCH_PREDICTOR_CHUNK: &str = "tage-sc-l-branch-predictor";
 const TOURNAMENT_BRANCH_PREDICTOR_CHUNK: &str = "tournament-branch-predictor";
 const XREGS_CHUNK: &str = "xregs";
 const PMP_CHUNK: &str = "pmp";
@@ -49,6 +51,7 @@ pub struct RiscvCoreCheckpointRecord {
     gshare_branch_predictor_payload: GShareBranchPredictorCheckpointPayload,
     bimode_branch_predictor_payload: BiModeBranchPredictorCheckpointPayload,
     tournament_branch_predictor_payload: TournamentBranchPredictorCheckpointPayload,
+    tage_sc_l_branch_predictor_payload: TageScLBranchPredictorCheckpointPayload,
     multiperspective_perceptron_payload: MultiperspectivePerceptronCheckpointPayload,
 }
 
@@ -64,6 +67,7 @@ struct RiscvCoreCheckpointRecordParts {
     gshare_branch_predictor_payload: GShareBranchPredictorCheckpointPayload,
     bimode_branch_predictor_payload: BiModeBranchPredictorCheckpointPayload,
     tournament_branch_predictor_payload: TournamentBranchPredictorCheckpointPayload,
+    tage_sc_l_branch_predictor_payload: TageScLBranchPredictorCheckpointPayload,
     multiperspective_perceptron_payload: MultiperspectivePerceptronCheckpointPayload,
 }
 
@@ -89,6 +93,8 @@ impl RiscvCoreCheckpointRecord {
                 RiscvCore::default_bimode_branch_predictor_checkpoint_payload(),
             tournament_branch_predictor_payload:
                 RiscvCore::default_tournament_branch_predictor_checkpoint_payload(),
+            tage_sc_l_branch_predictor_payload:
+                RiscvCore::default_tage_sc_l_branch_predictor_checkpoint_payload(),
             multiperspective_perceptron_payload:
                 RiscvCore::default_multiperspective_perceptron_checkpoint_payload(),
         })
@@ -107,6 +113,7 @@ impl RiscvCoreCheckpointRecord {
             gshare_branch_predictor_payload: parts.gshare_branch_predictor_payload,
             bimode_branch_predictor_payload: parts.bimode_branch_predictor_payload,
             tournament_branch_predictor_payload: parts.tournament_branch_predictor_payload,
+            tage_sc_l_branch_predictor_payload: parts.tage_sc_l_branch_predictor_payload,
             multiperspective_perceptron_payload: parts.multiperspective_perceptron_payload,
         }
     }
@@ -155,6 +162,12 @@ impl RiscvCoreCheckpointRecord {
         &self,
     ) -> &TournamentBranchPredictorCheckpointPayload {
         &self.tournament_branch_predictor_payload
+    }
+
+    pub const fn tage_sc_l_branch_predictor_payload(
+        &self,
+    ) -> &TageScLBranchPredictorCheckpointPayload {
+        &self.tage_sc_l_branch_predictor_payload
     }
 
     pub const fn multiperspective_perceptron_payload(
@@ -255,6 +268,11 @@ impl RiscvCoreCheckpointPort {
             encode_tournament_branch_predictor_payload(
                 record.tournament_branch_predictor_payload(),
             ),
+        )?;
+        registry.write_chunk(
+            &self.component,
+            TAGE_SC_L_BRANCH_PREDICTOR_CHUNK,
+            encode_tage_sc_l_branch_predictor_payload(record.tage_sc_l_branch_predictor_payload()),
         )?;
         registry.write_chunk(
             &self.component,
@@ -375,6 +393,22 @@ impl RiscvCoreCheckpointPort {
                     error,
                 }
             })?;
+        let tage_sc_l_branch_predictor_payload = match registry
+            .chunk(&self.component, TAGE_SC_L_BRANCH_PREDICTOR_CHUNK)
+        {
+            Some(payload) => decode_tage_sc_l_branch_predictor_payload(&self.component, payload)?,
+            None => RiscvCore::default_tage_sc_l_branch_predictor_checkpoint_payload(),
+        };
+        self.core
+            .validate_tage_sc_l_branch_predictor_checkpoint_payload(
+                &tage_sc_l_branch_predictor_payload,
+            )
+            .map_err(
+                |error| RiscvCoreCheckpointError::InvalidTageScLBranchPredictorSnapshot {
+                    component: self.component.clone(),
+                    error,
+                },
+            )?;
         let multiperspective_perceptron_payload = match registry
             .chunk(&self.component, MULTIPERSPECTIVE_PERCEPTRON_CHUNK)
         {
@@ -405,6 +439,7 @@ impl RiscvCoreCheckpointPort {
                 gshare_branch_predictor_payload,
                 bimode_branch_predictor_payload,
                 tournament_branch_predictor_payload,
+                tage_sc_l_branch_predictor_payload,
                 multiperspective_perceptron_payload,
             },
         ))
@@ -483,6 +518,16 @@ impl RiscvCoreCheckpointPort {
                 }
             })?;
         self.core
+            .restore_tage_sc_l_branch_predictor_checkpoint_payload(
+                record.tage_sc_l_branch_predictor_payload().clone(),
+            )
+            .map_err(
+                |error| RiscvCoreCheckpointError::InvalidTageScLBranchPredictorSnapshot {
+                    component: self.component.clone(),
+                    error,
+                },
+            )?;
+        self.core
             .restore_multiperspective_perceptron_checkpoint_payload(
                 record.multiperspective_perceptron_payload().clone(),
             )
@@ -510,6 +555,9 @@ impl RiscvCoreCheckpointPort {
             tournament_branch_predictor_payload: self
                 .core
                 .tournament_branch_predictor_checkpoint_payload(),
+            tage_sc_l_branch_predictor_payload: self
+                .core
+                .tage_sc_l_branch_predictor_checkpoint_payload(),
             multiperspective_perceptron_payload: self
                 .core
                 .multiperspective_perceptron_checkpoint_payload(),
@@ -640,6 +688,10 @@ pub enum RiscvCoreCheckpointError {
         component: CheckpointComponentId,
         error: TournamentBranchPredictorError,
     },
+    InvalidTageScLBranchPredictorSnapshot {
+        component: CheckpointComponentId,
+        error: TageScLBranchPredictorError,
+    },
     InvalidMultiperspectivePerceptronSnapshot {
         component: CheckpointComponentId,
         error: MultiperspectivePerceptronError,
@@ -707,6 +759,11 @@ impl fmt::Display for RiscvCoreCheckpointError {
             Self::InvalidTournamentBranchPredictorSnapshot { component, error } => write!(
                 formatter,
                 "RISC-V core checkpoint component {} has invalid tournament branch predictor snapshot: {error}",
+                component.as_str()
+            ),
+            Self::InvalidTageScLBranchPredictorSnapshot { component, error } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has invalid TAGE-SC-L branch predictor snapshot: {error}",
                 component.as_str()
             ),
             Self::InvalidMultiperspectivePerceptronSnapshot { component, error } => write!(
@@ -844,6 +901,12 @@ fn encode_tournament_branch_predictor_payload(
     payload.encode()
 }
 
+fn encode_tage_sc_l_branch_predictor_payload(
+    payload: &TageScLBranchPredictorCheckpointPayload,
+) -> Vec<u8> {
+    payload.encode()
+}
+
 fn encode_multiperspective_perceptron_payload(
     payload: &MultiperspectivePerceptronCheckpointPayload,
 ) -> Vec<u8> {
@@ -892,6 +955,18 @@ fn decode_tournament_branch_predictor_payload(
 ) -> Result<TournamentBranchPredictorCheckpointPayload, RiscvCoreCheckpointError> {
     TournamentBranchPredictorCheckpointPayload::decode(payload).map_err(|error| {
         RiscvCoreCheckpointError::InvalidTournamentBranchPredictorSnapshot {
+            component: component.clone(),
+            error,
+        }
+    })
+}
+
+fn decode_tage_sc_l_branch_predictor_payload(
+    component: &CheckpointComponentId,
+    payload: &[u8],
+) -> Result<TageScLBranchPredictorCheckpointPayload, RiscvCoreCheckpointError> {
+    TageScLBranchPredictorCheckpointPayload::decode(payload).map_err(|error| {
+        RiscvCoreCheckpointError::InvalidTageScLBranchPredictorSnapshot {
             component: component.clone(),
             error,
         }

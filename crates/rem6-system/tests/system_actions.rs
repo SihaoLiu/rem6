@@ -599,6 +599,10 @@ fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest()
         .checkpoints()
         .chunk(&component, "tournament-branch-predictor")
         .unwrap();
+    let tage_sc_l_branch_predictor = executor
+        .checkpoints()
+        .chunk(&component, "tage-sc-l-branch-predictor")
+        .unwrap();
     let multiperspective_perceptron = executor
         .checkpoints()
         .chunk(&component, "multiperspective-perceptron")
@@ -633,6 +637,10 @@ fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest()
                         ),
                         CheckpointChunk::new("pc", 0x8040_u64.to_le_bytes().to_vec()),
                         CheckpointChunk::new("pmp", pmp.to_vec()),
+                        CheckpointChunk::new(
+                            "tage-sc-l-branch-predictor",
+                            tage_sc_l_branch_predictor.to_vec(),
+                        ),
                         CheckpointChunk::new(
                             "tournament-branch-predictor",
                             tournament_branch_predictor.to_vec(),

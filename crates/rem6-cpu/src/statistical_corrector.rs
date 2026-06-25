@@ -114,31 +114,31 @@ impl Error for StatisticalCorrectorError {}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatisticalCorrectorConfig {
-    threads: usize,
-    log_bias: u8,
-    log_size_up: u8,
-    log_size_ups: u8,
-    num_entries_first_local_histories: usize,
-    global_lengths: Vec<u8>,
-    backward_lengths: Vec<u8>,
-    local_lengths: Vec<u8>,
-    imli_lengths: Vec<u8>,
-    log_global: u8,
-    log_backward: u8,
-    log_local: u8,
-    log_imli: u8,
-    global_weight_init: i8,
-    backward_weight_init: i8,
-    local_weight_init: i8,
-    imli_weight_init: i8,
-    chooser_conf_width: u8,
-    update_threshold_width: u8,
-    per_pc_threshold_width: u8,
-    extra_weights_width: u8,
-    counter_width: u8,
-    initial_update_threshold: i16,
-    inst_shift: u8,
-    speculative_history: bool,
+    pub(crate) threads: usize,
+    pub(crate) log_bias: u8,
+    pub(crate) log_size_up: u8,
+    pub(crate) log_size_ups: u8,
+    pub(crate) num_entries_first_local_histories: usize,
+    pub(crate) global_lengths: Vec<u8>,
+    pub(crate) backward_lengths: Vec<u8>,
+    pub(crate) local_lengths: Vec<u8>,
+    pub(crate) imli_lengths: Vec<u8>,
+    pub(crate) log_global: u8,
+    pub(crate) log_backward: u8,
+    pub(crate) log_local: u8,
+    pub(crate) log_imli: u8,
+    pub(crate) global_weight_init: i8,
+    pub(crate) backward_weight_init: i8,
+    pub(crate) local_weight_init: i8,
+    pub(crate) imli_weight_init: i8,
+    pub(crate) chooser_conf_width: u8,
+    pub(crate) update_threshold_width: u8,
+    pub(crate) per_pc_threshold_width: u8,
+    pub(crate) extra_weights_width: u8,
+    pub(crate) counter_width: u8,
+    pub(crate) initial_update_threshold: i16,
+    pub(crate) inst_shift: u8,
+    pub(crate) speculative_history: bool,
 }
 
 impl StatisticalCorrectorConfig {
@@ -209,6 +209,7 @@ impl StatisticalCorrectorConfig {
         if log_size_up < 2 {
             return Err(StatisticalCorrectorError::LogSizeUpTooSmall { bits: log_size_up });
         }
+        check_log_size("update", log_size_up)?;
         check_log_size("global", log_global)?;
         check_log_size("backward", log_backward)?;
         check_log_size("local", log_local)?;
@@ -1434,11 +1435,11 @@ impl StatisticalCorrectorHistoryUpdate {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatisticalCorrectorThreadSnapshot {
-    global_history: u64,
-    backward_history: u64,
-    imli_count: u64,
-    path_history: u64,
-    first_local_histories: Vec<u64>,
+    pub(crate) global_history: u64,
+    pub(crate) backward_history: u64,
+    pub(crate) imli_count: u64,
+    pub(crate) path_history: u64,
+    pub(crate) first_local_histories: Vec<u64>,
 }
 
 impl StatisticalCorrectorThreadSnapshot {
@@ -1449,6 +1450,22 @@ impl StatisticalCorrectorThreadSnapshot {
             imli_count: 0,
             path_history: 0,
             first_local_histories: vec![0; config.num_entries_first_local_histories],
+        }
+    }
+
+    pub(crate) fn from_parts(
+        global_history: u64,
+        backward_history: u64,
+        imli_count: u64,
+        path_history: u64,
+        first_local_histories: Vec<u64>,
+    ) -> Self {
+        Self {
+            global_history,
+            backward_history,
+            imli_count,
+            path_history,
+            first_local_histories,
         }
     }
 
@@ -1475,32 +1492,85 @@ impl StatisticalCorrectorThreadSnapshot {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StatisticalCorrectorSnapshot {
-    config: StatisticalCorrectorConfig,
-    global_gehl: Vec<Vec<i8>>,
-    backward_gehl: Vec<Vec<i8>>,
-    local_gehl: Vec<Vec<i8>>,
-    imli_gehl: Vec<Vec<i8>>,
-    global_weights: Vec<i8>,
-    backward_weights: Vec<i8>,
-    local_weights: Vec<i8>,
-    imli_weights: Vec<i8>,
-    bias: Vec<i8>,
-    bias_sk: Vec<i8>,
-    bias_bank: Vec<i8>,
-    bias_weights: Vec<i8>,
-    update_threshold: i16,
-    per_pc_update_threshold: Vec<i16>,
-    threads: Vec<StatisticalCorrectorThreadSnapshot>,
-    first_chooser: i8,
-    second_chooser: i8,
-    lookup_count: u64,
-    update_count: u64,
-    history_update_count: u64,
-    correct_count: u64,
-    wrong_count: u64,
+    pub(crate) config: StatisticalCorrectorConfig,
+    pub(crate) global_gehl: Vec<Vec<i8>>,
+    pub(crate) backward_gehl: Vec<Vec<i8>>,
+    pub(crate) local_gehl: Vec<Vec<i8>>,
+    pub(crate) imli_gehl: Vec<Vec<i8>>,
+    pub(crate) global_weights: Vec<i8>,
+    pub(crate) backward_weights: Vec<i8>,
+    pub(crate) local_weights: Vec<i8>,
+    pub(crate) imli_weights: Vec<i8>,
+    pub(crate) bias: Vec<i8>,
+    pub(crate) bias_sk: Vec<i8>,
+    pub(crate) bias_bank: Vec<i8>,
+    pub(crate) bias_weights: Vec<i8>,
+    pub(crate) update_threshold: i16,
+    pub(crate) per_pc_update_threshold: Vec<i16>,
+    pub(crate) threads: Vec<StatisticalCorrectorThreadSnapshot>,
+    pub(crate) first_chooser: i8,
+    pub(crate) second_chooser: i8,
+    pub(crate) lookup_count: u64,
+    pub(crate) update_count: u64,
+    pub(crate) history_update_count: u64,
+    pub(crate) correct_count: u64,
+    pub(crate) wrong_count: u64,
 }
 
 impl StatisticalCorrectorSnapshot {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_parts(
+        config: StatisticalCorrectorConfig,
+        global_gehl: Vec<Vec<i8>>,
+        backward_gehl: Vec<Vec<i8>>,
+        local_gehl: Vec<Vec<i8>>,
+        imli_gehl: Vec<Vec<i8>>,
+        global_weights: Vec<i8>,
+        backward_weights: Vec<i8>,
+        local_weights: Vec<i8>,
+        imli_weights: Vec<i8>,
+        bias: Vec<i8>,
+        bias_sk: Vec<i8>,
+        bias_bank: Vec<i8>,
+        bias_weights: Vec<i8>,
+        update_threshold: i16,
+        per_pc_update_threshold: Vec<i16>,
+        threads: Vec<StatisticalCorrectorThreadSnapshot>,
+        first_chooser: i8,
+        second_chooser: i8,
+        lookup_count: u64,
+        update_count: u64,
+        history_update_count: u64,
+        correct_count: u64,
+        wrong_count: u64,
+    ) -> Self {
+        Self {
+            config,
+            global_gehl,
+            backward_gehl,
+            local_gehl,
+            imli_gehl,
+            global_weights,
+            backward_weights,
+            local_weights,
+            imli_weights,
+            bias,
+            bias_sk,
+            bias_bank,
+            bias_weights,
+            update_threshold,
+            per_pc_update_threshold,
+            threads,
+            first_chooser,
+            second_chooser,
+            lookup_count,
+            update_count,
+            history_update_count,
+            correct_count,
+            wrong_count,
+        }
+    }
+
     pub const fn config(&self) -> &StatisticalCorrectorConfig {
         &self.config
     }

@@ -203,7 +203,7 @@ fixed scalar integer multiply execute-stage latency emitted as additional
 in-order resource-stall cycles from a top-level CLI run,
 per-core fetch-response and data-response wait cycle stats, retired branch
 prediction, speculation repair, and redirect summaries in normal in-order timing records, RISC-V
-normal parallel-cluster pending-fetch resource-stall accounting consumed by CLI run stats, core checkpoints preserving the basic fetch-steering branch predictor/BTB payload, including live fetch-ahead pending branch speculation state, plus GShare, BiMode, Tournament, and multiperspective perceptron predictor checkpoint payloads, a RISC-V checker CPU option that runs an
+normal parallel-cluster pending-fetch resource-stall accounting consumed by CLI run stats, core checkpoints preserving the basic fetch-steering branch predictor/BTB payload, including live fetch-ahead pending branch speculation state, plus GShare, BiMode, Tournament, TAGE-SC-L, and multiperspective perceptron predictor checkpoint payloads, a RISC-V checker CPU option that runs an
 independent reference hart at retire, records structured execution/state
 mismatches, and exposes checked/mismatch counts through `rem6 run --checker-cpu`
 stats, top-level `rem6 run --riscv-in-order-width` configuring the live

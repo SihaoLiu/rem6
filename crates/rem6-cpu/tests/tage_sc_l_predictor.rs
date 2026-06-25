@@ -2,8 +2,8 @@ use rem6_cpu::{
     CpuId, LTageBranchPredictorConfig, LTageBranchPredictorError, LTageProvider,
     LoopBranchPredictorConfig, StatisticalCorrectorBranchKind, StatisticalCorrectorConfig,
     StatisticalCorrectorError, TageBranchPredictorConfig, TageBranchPredictorError, TageProvider,
-    TageScLBranchPredictor, TageScLBranchPredictorConfig, TageScLBranchPredictorError,
-    TageScLProvider,
+    TageScLBranchPredictor, TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorConfig,
+    TageScLBranchPredictorError, TageScLProvider,
 };
 use rem6_memory::Address;
 
@@ -304,6 +304,233 @@ fn tage_sc_l_snapshot_restore_preserves_inner_predictors_and_counts() {
     );
     assert_eq!(predictor.lookup_count(), snapshot.lookup_count());
     assert_eq!(predictor.update_count(), snapshot.update_count());
+}
+
+#[test]
+fn tage_sc_l_checkpoint_payload_round_trips_snapshot() {
+    let mut predictor = predictor(false, false, false);
+    let cpu = CpuId::new(0);
+    let pc = Address::new(0x44);
+
+    let prediction = predictor.predict(cpu, pc, true).unwrap();
+    predictor
+        .train(
+            prediction.history(),
+            true,
+            StatisticalCorrectorBranchKind::DirectConditional,
+            Address::new(0),
+        )
+        .unwrap();
+    let snapshot = predictor.snapshot();
+
+    let encoded = TageScLBranchPredictorCheckpointPayload::from_snapshot(snapshot.clone())
+        .unwrap()
+        .encode();
+    let decoded = TageScLBranchPredictorCheckpointPayload::decode(&encoded).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+
+    let diverged = predictor.predict(cpu, pc, true).unwrap();
+    predictor
+        .train(
+            diverged.history(),
+            false,
+            StatisticalCorrectorBranchKind::DirectConditional,
+            Address::new(0x80),
+        )
+        .unwrap();
+    assert_ne!(predictor.snapshot(), snapshot);
+
+    predictor.restore(&decoded.into_snapshot()).unwrap();
+
+    assert_eq!(predictor.snapshot(), snapshot);
+}
+
+#[test]
+fn tage_sc_l_checkpoint_payload_rejects_truncated_payload() {
+    let payload = TageScLBranchPredictorCheckpointPayload::from_snapshot(
+        predictor(false, false, false).snapshot(),
+    )
+    .unwrap()
+    .encode();
+
+    let error = TageScLBranchPredictorCheckpointPayload::decode(&payload[..3]).unwrap_err();
+
+    assert_eq!(
+        error,
+        TageScLBranchPredictorError::InvalidCheckpointPayloadSize {
+            expected: 5,
+            actual: 3,
+        }
+    );
+}
+
+#[test]
+fn tage_sc_l_checkpoint_payload_rejects_oversized_config_vector_length_without_allocating() {
+    let mut payload = TageScLBranchPredictorCheckpointPayload::from_snapshot(
+        predictor(false, false, false).snapshot(),
+    )
+    .unwrap()
+    .encode();
+    let tag_widths_len_offset = checkpoint_tage_tag_widths_len_offset();
+    assert_eq!(
+        u32::from_le_bytes(
+            payload[tag_widths_len_offset..tag_widths_len_offset + 4]
+                .try_into()
+                .unwrap()
+        ),
+        3
+    );
+    payload[tag_widths_len_offset..tag_widths_len_offset + 4]
+        .copy_from_slice(&u32::MAX.to_le_bytes());
+
+    let error = TageScLBranchPredictorCheckpointPayload::decode(&payload).unwrap_err();
+
+    assert_eq!(
+        error,
+        TageScLBranchPredictorError::InvalidCheckpointVectorLength {
+            name: "tage-tag-widths",
+            expected: 3,
+            actual: u32::MAX as usize,
+        }
+    );
+}
+
+#[test]
+fn tage_sc_l_checkpoint_payload_rejects_oversized_sc_config_vector_length_without_allocating() {
+    let mut payload = TageScLBranchPredictorCheckpointPayload::from_snapshot(
+        predictor(false, false, false).snapshot(),
+    )
+    .unwrap()
+    .encode();
+    let sc_global_lengths_len_offset = checkpoint_sc_global_lengths_len_offset(&payload);
+    assert_eq!(
+        u32::from_le_bytes(
+            payload[sc_global_lengths_len_offset..sc_global_lengths_len_offset + 4]
+                .try_into()
+                .unwrap()
+        ),
+        2
+    );
+    payload[sc_global_lengths_len_offset..sc_global_lengths_len_offset + 4]
+        .copy_from_slice(&u32::MAX.to_le_bytes());
+
+    let error = TageScLBranchPredictorCheckpointPayload::decode(&payload).unwrap_err();
+
+    assert_eq!(
+        error,
+        TageScLBranchPredictorError::InvalidCheckpointVectorLength {
+            name: "sc-global-lengths",
+            expected: 64,
+            actual: u32::MAX as usize,
+        }
+    );
+}
+
+#[test]
+fn tage_sc_l_checkpoint_payload_rejects_oversized_vector_length_without_allocating() {
+    let mut payload = TageScLBranchPredictorCheckpointPayload::from_snapshot(
+        predictor(false, false, false).snapshot(),
+    )
+    .unwrap()
+    .encode();
+    let bimodal_prediction_len_offset = checkpoint_tage_bimodal_prediction_len_offset(&payload);
+    assert_eq!(
+        u32::from_le_bytes(
+            payload[bimodal_prediction_len_offset..bimodal_prediction_len_offset + 4]
+                .try_into()
+                .unwrap()
+        ),
+        16
+    );
+    payload[bimodal_prediction_len_offset..bimodal_prediction_len_offset + 4]
+        .copy_from_slice(&u32::MAX.to_le_bytes());
+
+    let error = TageScLBranchPredictorCheckpointPayload::decode(&payload).unwrap_err();
+
+    assert_eq!(
+        error,
+        TageScLBranchPredictorError::InvalidCheckpointVectorLength {
+            name: "tage-bimodal-prediction",
+            expected: 16,
+            actual: u32::MAX as usize,
+        }
+    );
+}
+
+fn checkpoint_tage_tag_widths_len_offset() -> usize {
+    5 + 4 * 4
+}
+
+fn checkpoint_sc_global_lengths_len_offset(payload: &[u8]) -> usize {
+    let mut offset = 5;
+
+    offset += 4 * 4;
+    skip_u8_vec(payload, &mut offset);
+    skip_u8_vec(payload, &mut offset);
+    offset += 5;
+    offset += 4;
+    offset += 1;
+    offset += 4;
+    offset += 1;
+    offset += 2;
+
+    offset += 4;
+    offset += 8;
+    offset += 4;
+    offset += 2;
+    offset += 1;
+    offset += 1;
+
+    offset += 4;
+    offset += 1;
+    offset += 1;
+    offset += 4;
+
+    offset
+}
+
+fn checkpoint_tage_bimodal_prediction_len_offset(payload: &[u8]) -> usize {
+    let mut offset = 5;
+
+    offset += 4 * 4;
+    skip_u8_vec(payload, &mut offset);
+    skip_u8_vec(payload, &mut offset);
+    offset += 5;
+    offset += 4;
+    offset += 1;
+    offset += 4;
+    offset += 1;
+    offset += 2;
+
+    offset += 4;
+    offset += 8;
+    offset += 4;
+    offset += 2;
+    offset += 1;
+    offset += 1;
+
+    offset += 4;
+    offset += 1;
+    offset += 1;
+    offset += 4;
+    skip_u8_vec(payload, &mut offset);
+    skip_u8_vec(payload, &mut offset);
+    skip_u8_vec(payload, &mut offset);
+    skip_u8_vec(payload, &mut offset);
+    offset += 4;
+    offset += 4;
+    offset += 5;
+    offset += 2;
+    offset += 1;
+    offset += 1;
+
+    offset
+}
+
+fn skip_u8_vec(payload: &[u8], offset: &mut usize) {
+    let len = u32::from_le_bytes(payload[*offset..*offset + 4].try_into().unwrap()) as usize;
+    *offset += 4 + len;
 }
 
 #[test]

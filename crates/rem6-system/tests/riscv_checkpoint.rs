@@ -9,9 +9,12 @@ use rem6_cpu::{
     BiModeBranchPredictorError, BranchPredictor, BranchPredictorCheckpointPayload,
     BranchPredictorConfig, BranchPredictorError, CpuCore, CpuFetchConfig, CpuId, CpuResetState,
     GShareBranchPredictor, GShareBranchPredictorCheckpointPayload, GShareBranchPredictorConfig,
-    GShareBranchPredictorError, InOrderPipelineSnapshot, MultiperspectivePerceptron,
+    GShareBranchPredictorError, InOrderPipelineSnapshot, LTageBranchPredictorConfig,
+    LoopBranchPredictorConfig, MultiperspectivePerceptron,
     MultiperspectivePerceptronCheckpointPayload, MultiperspectivePerceptronConfig,
-    MultiperspectivePerceptronError, RiscvCore, RiscvHartRunState, TournamentBranchPredictor,
+    MultiperspectivePerceptronError, RiscvCore, RiscvHartRunState, StatisticalCorrectorConfig,
+    TageBranchPredictorConfig, TageScLBranchPredictor, TageScLBranchPredictorCheckpointPayload,
+    TageScLBranchPredictorConfig, TageScLBranchPredictorError, TournamentBranchPredictor,
     TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorConfig,
     TournamentBranchPredictorError,
 };
@@ -581,6 +584,80 @@ fn riscv_core_checkpoint_captures_and_restores_tournament_predictor_state() {
 }
 
 #[test]
+fn riscv_core_checkpoint_captures_and_restores_tage_sc_l_predictor_state() {
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let mut registry = CheckpointRegistry::new();
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(2, 1).unwrap();
+    let mut transport = MemoryTransport::new();
+    let route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(1),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = RiscvCore::new(
+        CpuCore::new(
+            CpuResetState::new(
+                CpuId::new(0),
+                PartitionId::new(0),
+                AgentId::new(7),
+                Address::new(0x8000),
+            ),
+            CpuFetchConfig::new(
+                endpoint("cpu0.ifetch"),
+                route,
+                layout(),
+                AccessSize::new(4).unwrap(),
+            ),
+        )
+        .unwrap(),
+    );
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+
+    fetch_and_execute_one(
+        &core,
+        loaded_store(0x8000, b_type(8, 0, 0, 0x0)),
+        &mut scheduler,
+        &transport,
+    );
+    let captured_tage_sc_l = core.tage_sc_l_branch_predictor_snapshot();
+    assert_eq!(captured_tage_sc_l.update_count(), 1);
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    assert!(registry
+        .chunk(&component, "tage-sc-l-branch-predictor")
+        .is_some());
+
+    fetch_and_execute_one(
+        &core,
+        loaded_store(0x8008, b_type(8, 0, 0, 0x0)),
+        &mut scheduler,
+        &transport,
+    );
+    assert_ne!(
+        core.tage_sc_l_branch_predictor_snapshot(),
+        captured_tage_sc_l
+    );
+
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored, captured);
+    assert_eq!(
+        core.tage_sc_l_branch_predictor_snapshot(),
+        captured_tage_sc_l
+    );
+}
+
+#[test]
 fn riscv_core_checkpoint_captures_and_restores_multiperspective_perceptron_state() {
     let component = CheckpointComponentId::new("cpu0").unwrap();
     let mut registry = CheckpointRegistry::new();
@@ -820,6 +897,85 @@ fn riscv_core_checkpoint_rejects_incompatible_tournament_predictor_without_parti
     );
     assert_eq!(core.pc(), Address::new(0x9000));
     assert_eq!(core.read_register(reg(1)), 0x2222);
+}
+
+#[test]
+fn riscv_core_checkpoint_rejects_incompatible_tage_sc_l_predictor_without_partial_restore() {
+    let core = riscv_core();
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+    let mut registry = CheckpointRegistry::new();
+    let incompatible_payload = TageScLBranchPredictorCheckpointPayload::from_snapshot(
+        incompatible_tage_sc_l_branch_predictor(2).snapshot(),
+    )
+    .unwrap()
+    .encode();
+
+    port.register(&mut registry).unwrap();
+    core.redirect_pc(Address::new(0x8040));
+    core.write_register(reg(1), 0x1111);
+    port.capture_into(&mut registry).unwrap();
+    registry
+        .write_chunk(
+            &component,
+            "tage-sc-l-branch-predictor",
+            incompatible_payload,
+        )
+        .unwrap();
+    core.redirect_pc(Address::new(0x9000));
+    core.write_register(reg(1), 0x2222);
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    match error {
+        rem6_system::RiscvCoreCheckpointError::InvalidTageScLBranchPredictorSnapshot {
+            component: actual_component,
+            error: TageScLBranchPredictorError::SnapshotConfigMismatch { expected, actual },
+        } => {
+            assert_eq!(actual_component, component);
+            assert_eq!(expected.threads(), 1);
+            assert_eq!(actual.threads(), 2);
+        }
+        other => panic!("unexpected checkpoint error: {other:?}"),
+    }
+    assert_eq!(core.pc(), Address::new(0x9000));
+    assert_eq!(core.read_register(reg(1)), 0x2222);
+}
+
+fn incompatible_tage_sc_l_branch_predictor(threads: usize) -> TageScLBranchPredictor {
+    TageScLBranchPredictor::new(
+        TageScLBranchPredictorConfig::new(
+            LTageBranchPredictorConfig::new(
+                TageBranchPredictorConfig::with_options(
+                    threads,
+                    2,
+                    2,
+                    6,
+                    vec![0, 4, 5],
+                    vec![4, 3, 3],
+                    1,
+                    3,
+                    2,
+                    8,
+                    4,
+                    1,
+                    4,
+                    1,
+                    2,
+                    false,
+                    false,
+                )
+                .unwrap(),
+                LoopBranchPredictorConfig::with_options(
+                    threads, 3, 1, 3, 2, 4, 4, 3, 2, false, false, false, false, 1, 3, true,
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+            StatisticalCorrectorConfig::tage_sc_l_8kb(threads, 2, false).unwrap(),
+        )
+        .unwrap(),
+    )
 }
 
 #[test]

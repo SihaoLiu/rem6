@@ -85,8 +85,8 @@ impl From<LoopBranchPredictorError> for LTageBranchPredictorError {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LTageBranchPredictorConfig {
-    tage: TageBranchPredictorConfig,
-    loop_predictor: LoopBranchPredictorConfig,
+    pub(crate) tage: TageBranchPredictorConfig,
+    pub(crate) loop_predictor: LoopBranchPredictorConfig,
 }
 
 impl LTageBranchPredictorConfig {
@@ -491,15 +491,33 @@ impl LTageRepair {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LTageBranchPredictorSnapshot {
-    config: LTageBranchPredictorConfig,
-    tage: TageBranchPredictorSnapshot,
-    loop_predictor: LoopBranchPredictorSnapshot,
-    lookup_count: u64,
-    update_count: u64,
-    repair_count: u64,
+    pub(crate) config: LTageBranchPredictorConfig,
+    pub(crate) tage: TageBranchPredictorSnapshot,
+    pub(crate) loop_predictor: LoopBranchPredictorSnapshot,
+    pub(crate) lookup_count: u64,
+    pub(crate) update_count: u64,
+    pub(crate) repair_count: u64,
 }
 
 impl LTageBranchPredictorSnapshot {
+    pub(crate) fn from_parts(
+        config: LTageBranchPredictorConfig,
+        tage: TageBranchPredictorSnapshot,
+        loop_predictor: LoopBranchPredictorSnapshot,
+        lookup_count: u64,
+        update_count: u64,
+        repair_count: u64,
+    ) -> Self {
+        Self {
+            config,
+            tage,
+            loop_predictor,
+            lookup_count,
+            update_count,
+            repair_count,
+        }
+    }
+
     pub const fn config(&self) -> &LTageBranchPredictorConfig {
         &self.config
     }

@@ -33,6 +33,34 @@ pub enum TageScLBranchPredictorError {
         expected: Box<TageScLBranchPredictorConfig>,
         actual: Box<TageScLBranchPredictorConfig>,
     },
+    InvalidCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidCheckpointMagic,
+    UnsupportedCheckpointVersion {
+        version: u8,
+    },
+    CheckpointValueTooLarge {
+        name: &'static str,
+        value: usize,
+        max: usize,
+    },
+    InvalidCheckpointVectorLength {
+        name: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+    InvalidCheckpointCounter {
+        name: &'static str,
+        value: i64,
+        min: i64,
+        max: i64,
+    },
+    InvalidCheckpointBool {
+        name: &'static str,
+        value: u8,
+    },
 }
 
 impl fmt::Display for TageScLBranchPredictorError {
@@ -60,6 +88,42 @@ impl fmt::Display for TageScLBranchPredictorError {
                 formatter,
                 "tage-sc-l snapshot config {actual:?} does not match predictor config {expected:?}"
             ),
+            Self::InvalidCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "tage-sc-l checkpoint payload has {actual} bytes; expected {expected}"
+            ),
+            Self::InvalidCheckpointMagic => {
+                write!(formatter, "tage-sc-l checkpoint payload has invalid magic")
+            }
+            Self::UnsupportedCheckpointVersion { version } => write!(
+                formatter,
+                "tage-sc-l checkpoint payload version {version} is not supported"
+            ),
+            Self::CheckpointValueTooLarge { name, value, max } => write!(
+                formatter,
+                "tage-sc-l checkpoint {name} value {value} exceeds maximum {max}"
+            ),
+            Self::InvalidCheckpointVectorLength {
+                name,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "tage-sc-l checkpoint {name} vector has length {actual}; expected {expected}"
+            ),
+            Self::InvalidCheckpointCounter {
+                name,
+                value,
+                min,
+                max,
+            } => write!(
+                formatter,
+                "tage-sc-l checkpoint {name} counter {value} is outside {min}..={max}"
+            ),
+            Self::InvalidCheckpointBool { name, value } => write!(
+                formatter,
+                "tage-sc-l checkpoint {name} boolean has invalid value {value}"
+            ),
         }
     }
 }
@@ -71,7 +135,14 @@ impl Error for TageScLBranchPredictorError {
             Self::StatisticalCorrector(error) => Some(error),
             Self::ThreadCountMismatch { .. }
             | Self::InstShiftMismatch { .. }
-            | Self::SnapshotConfigMismatch { .. } => None,
+            | Self::SnapshotConfigMismatch { .. }
+            | Self::InvalidCheckpointPayloadSize { .. }
+            | Self::InvalidCheckpointMagic
+            | Self::UnsupportedCheckpointVersion { .. }
+            | Self::CheckpointValueTooLarge { .. }
+            | Self::InvalidCheckpointVectorLength { .. }
+            | Self::InvalidCheckpointCounter { .. }
+            | Self::InvalidCheckpointBool { .. } => None,
         }
     }
 }
@@ -90,8 +161,8 @@ impl From<StatisticalCorrectorError> for TageScLBranchPredictorError {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TageScLBranchPredictorConfig {
-    ltage: LTageBranchPredictorConfig,
-    statistical_corrector: StatisticalCorrectorConfig,
+    pub(crate) ltage: LTageBranchPredictorConfig,
+    pub(crate) statistical_corrector: StatisticalCorrectorConfig,
 }
 
 impl TageScLBranchPredictorConfig {
@@ -560,16 +631,36 @@ impl TageScLRepair {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TageScLBranchPredictorSnapshot {
-    config: TageScLBranchPredictorConfig,
-    ltage: LTageBranchPredictorSnapshot,
-    statistical_corrector: StatisticalCorrectorSnapshot,
-    lookup_count: u64,
-    update_count: u64,
-    history_update_count: u64,
-    repair_count: u64,
+    pub(crate) config: TageScLBranchPredictorConfig,
+    pub(crate) ltage: LTageBranchPredictorSnapshot,
+    pub(crate) statistical_corrector: StatisticalCorrectorSnapshot,
+    pub(crate) lookup_count: u64,
+    pub(crate) update_count: u64,
+    pub(crate) history_update_count: u64,
+    pub(crate) repair_count: u64,
 }
 
 impl TageScLBranchPredictorSnapshot {
+    pub(crate) fn from_parts(
+        config: TageScLBranchPredictorConfig,
+        ltage: LTageBranchPredictorSnapshot,
+        statistical_corrector: StatisticalCorrectorSnapshot,
+        lookup_count: u64,
+        update_count: u64,
+        history_update_count: u64,
+        repair_count: u64,
+    ) -> Self {
+        Self {
+            config,
+            ltage,
+            statistical_corrector,
+            lookup_count,
+            update_count,
+            history_update_count,
+            repair_count,
+        }
+    }
+
     pub const fn config(&self) -> &TageScLBranchPredictorConfig {
         &self.config
     }
