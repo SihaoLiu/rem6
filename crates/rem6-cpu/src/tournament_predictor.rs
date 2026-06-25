@@ -65,6 +65,28 @@ pub enum TournamentBranchPredictorError {
         expected: TournamentBranchPredictorConfig,
         actual: TournamentBranchPredictorConfig,
     },
+    InvalidCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidCheckpointMagic,
+    UnsupportedCheckpointVersion {
+        version: u8,
+    },
+    CheckpointValueTooLarge {
+        name: &'static str,
+        value: usize,
+        max: usize,
+    },
+    InvalidCheckpointCounter {
+        table: &'static str,
+        value: u8,
+        max: u8,
+    },
+    InvalidCheckpointLocalHistory {
+        value: u64,
+        max: u64,
+    },
 }
 
 impl fmt::Display for TournamentBranchPredictorError {
@@ -147,6 +169,29 @@ impl fmt::Display for TournamentBranchPredictorError {
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "tournament snapshot config {actual:?} does not match predictor config {expected:?}"
+            ),
+            Self::InvalidCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "tournament checkpoint payload has {actual} bytes; expected {expected}"
+            ),
+            Self::InvalidCheckpointMagic => {
+                write!(formatter, "tournament checkpoint payload has invalid magic")
+            }
+            Self::UnsupportedCheckpointVersion { version } => write!(
+                formatter,
+                "tournament checkpoint payload version {version} is not supported"
+            ),
+            Self::CheckpointValueTooLarge { name, value, max } => write!(
+                formatter,
+                "tournament checkpoint {name} value {value} exceeds maximum {max}"
+            ),
+            Self::InvalidCheckpointCounter { table, value, max } => write!(
+                formatter,
+                "tournament checkpoint {table} counter {value} exceeds maximum {max}"
+            ),
+            Self::InvalidCheckpointLocalHistory { value, max } => write!(
+                formatter,
+                "tournament checkpoint local history {value} exceeds maximum {max}"
             ),
         }
     }
@@ -746,6 +791,25 @@ impl TournamentBranchPredictor {
                 actual: snapshot.config.clone(),
             });
         }
+        if snapshot.local_counters.len() != snapshot.config.local_entries()
+            || snapshot.local_history_table.len() != snapshot.config.local_history_entries()
+            || snapshot.global_counters.len() != snapshot.config.global_entries()
+            || snapshot.choice_counters.len() != snapshot.config.choice_entries()
+            || snapshot.threads.len() != snapshot.config.threads()
+        {
+            return Err(TournamentBranchPredictorError::SnapshotShapeMismatch {
+                expected_threads: snapshot.config.threads(),
+                actual_threads: snapshot.threads.len(),
+                expected_local_entries: snapshot.config.local_entries(),
+                actual_local_entries: snapshot.local_counters.len(),
+                expected_local_history_entries: snapshot.config.local_history_entries(),
+                actual_local_history_entries: snapshot.local_history_table.len(),
+                expected_global_entries: snapshot.config.global_entries(),
+                actual_global_entries: snapshot.global_counters.len(),
+                expected_choice_entries: snapshot.config.choice_entries(),
+                actual_choice_entries: snapshot.choice_counters.len(),
+            });
+        }
 
         self.local_counters.clone_from(&snapshot.local_counters);
         self.local_history_table
@@ -1180,6 +1244,10 @@ impl TournamentThreadSnapshot {
         Self { global_history: 0 }
     }
 
+    pub(crate) const fn from_global_history(global_history: u64) -> Self {
+        Self { global_history }
+    }
+
     pub const fn global_history(&self) -> u64 {
         self.global_history
     }
@@ -1200,6 +1268,33 @@ pub struct TournamentBranchPredictorSnapshot {
 }
 
 impl TournamentBranchPredictorSnapshot {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_parts(
+        config: TournamentBranchPredictorConfig,
+        local_counters: Vec<u8>,
+        local_history_table: Vec<u64>,
+        global_counters: Vec<u8>,
+        choice_counters: Vec<u8>,
+        threads: Vec<TournamentThreadSnapshot>,
+        lookup_count: u64,
+        history_update_count: u64,
+        update_count: u64,
+        squash_count: u64,
+    ) -> Self {
+        Self {
+            config,
+            local_counters,
+            local_history_table,
+            global_counters,
+            choice_counters,
+            threads,
+            lookup_count,
+            history_update_count,
+            update_count,
+            squash_count,
+        }
+    }
+
     pub const fn config(&self) -> &TournamentBranchPredictorConfig {
         &self.config
     }

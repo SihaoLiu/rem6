@@ -494,6 +494,7 @@ fn rem6_run_emits_m5_checkpoint_host_action_detail_from_real_riscv_execution() {
             "in-order-pipeline",
             "pc",
             "pmp",
+            "tournament-branch-predictor",
             "xregs",
         ],
     );
@@ -578,6 +579,7 @@ fn rem6_run_emits_m5_dram_checkpoint_host_action_detail_from_real_riscv_executio
             "in-order-pipeline",
             "pc",
             "pmp",
+            "tournament-branch-predictor",
             "xregs",
         ],
     );

@@ -595,6 +595,10 @@ fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest()
         .checkpoints()
         .chunk(&component, "gshare-branch-predictor")
         .unwrap();
+    let tournament_branch_predictor = executor
+        .checkpoints()
+        .chunk(&component, "tournament-branch-predictor")
+        .unwrap();
     assert_eq!(
         outcome,
         SystemActionOutcome::Checkpoint {
@@ -621,6 +625,10 @@ fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest()
                         CheckpointChunk::new("in-order-pipeline", in_order_pipeline.to_vec()),
                         CheckpointChunk::new("pc", 0x8040_u64.to_le_bytes().to_vec()),
                         CheckpointChunk::new("pmp", pmp.to_vec()),
+                        CheckpointChunk::new(
+                            "tournament-branch-predictor",
+                            tournament_branch_predictor.to_vec(),
+                        ),
                         CheckpointChunk::new("xregs", xregs.to_vec()),
                     ],
                 )],

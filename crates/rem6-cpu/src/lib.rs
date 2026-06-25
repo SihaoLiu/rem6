@@ -67,6 +67,7 @@ mod riscv_in_order_config;
 mod riscv_reservation;
 mod riscv_sc_progress;
 mod riscv_sv39_memory_walker;
+mod riscv_tournament_checkpoint;
 mod riscv_translation;
 mod riscv_trap_completion;
 mod statistical_corrector;
@@ -74,6 +75,7 @@ mod tage_predictor;
 mod tage_sc_l_predictor;
 mod topology;
 mod tournament_predictor;
+mod tournament_predictor_checkpoint;
 mod translation;
 
 pub use public_api::*;

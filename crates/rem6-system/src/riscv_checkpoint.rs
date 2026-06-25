@@ -8,6 +8,7 @@ use rem6_cpu::{
     BranchPredictorCheckpointPayload, BranchPredictorError, GShareBranchPredictorCheckpointPayload,
     GShareBranchPredictorError, InOrderPipelineCheckpointPayload, InOrderPipelineError,
     InOrderPipelineSnapshot, RiscvCore, RiscvHartRunState,
+    TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorError,
 };
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot,
@@ -22,6 +23,7 @@ const GSHARE_BRANCH_PREDICTOR_CHUNK: &str = "gshare-branch-predictor";
 const HART_RUN_STATE_CHUNK: &str = "hart-run-state";
 const IN_ORDER_PIPELINE_CHUNK: &str = "in-order-pipeline";
 const PC_CHUNK: &str = "pc";
+const TOURNAMENT_BRANCH_PREDICTOR_CHUNK: &str = "tournament-branch-predictor";
 const XREGS_CHUNK: &str = "xregs";
 const PMP_CHUNK: &str = "pmp";
 const U64_BYTES: usize = 8;
@@ -44,6 +46,7 @@ pub struct RiscvCoreCheckpointRecord {
     branch_predictor_payload: BranchPredictorCheckpointPayload,
     gshare_branch_predictor_payload: GShareBranchPredictorCheckpointPayload,
     bimode_branch_predictor_payload: BiModeBranchPredictorCheckpointPayload,
+    tournament_branch_predictor_payload: TournamentBranchPredictorCheckpointPayload,
 }
 
 struct RiscvCoreCheckpointRecordParts {
@@ -57,6 +60,7 @@ struct RiscvCoreCheckpointRecordParts {
     branch_predictor_payload: BranchPredictorCheckpointPayload,
     gshare_branch_predictor_payload: GShareBranchPredictorCheckpointPayload,
     bimode_branch_predictor_payload: BiModeBranchPredictorCheckpointPayload,
+    tournament_branch_predictor_payload: TournamentBranchPredictorCheckpointPayload,
 }
 
 impl RiscvCoreCheckpointRecord {
@@ -79,6 +83,8 @@ impl RiscvCoreCheckpointRecord {
                 RiscvCore::default_gshare_branch_predictor_checkpoint_payload(),
             bimode_branch_predictor_payload:
                 RiscvCore::default_bimode_branch_predictor_checkpoint_payload(),
+            tournament_branch_predictor_payload:
+                RiscvCore::default_tournament_branch_predictor_checkpoint_payload(),
         })
     }
 
@@ -94,6 +100,7 @@ impl RiscvCoreCheckpointRecord {
             branch_predictor_payload: parts.branch_predictor_payload,
             gshare_branch_predictor_payload: parts.gshare_branch_predictor_payload,
             bimode_branch_predictor_payload: parts.bimode_branch_predictor_payload,
+            tournament_branch_predictor_payload: parts.tournament_branch_predictor_payload,
         }
     }
 
@@ -135,6 +142,12 @@ impl RiscvCoreCheckpointRecord {
 
     pub const fn bimode_branch_predictor_payload(&self) -> &BiModeBranchPredictorCheckpointPayload {
         &self.bimode_branch_predictor_payload
+    }
+
+    pub const fn tournament_branch_predictor_payload(
+        &self,
+    ) -> &TournamentBranchPredictorCheckpointPayload {
+        &self.tournament_branch_predictor_payload
     }
 
     pub fn register(&self, register: Register) -> Option<u64> {
@@ -222,6 +235,13 @@ impl RiscvCoreCheckpointPort {
             &self.component,
             BIMODE_BRANCH_PREDICTOR_CHUNK,
             encode_bimode_branch_predictor_payload(record.bimode_branch_predictor_payload()),
+        )?;
+        registry.write_chunk(
+            &self.component,
+            TOURNAMENT_BRANCH_PREDICTOR_CHUNK,
+            encode_tournament_branch_predictor_payload(
+                record.tournament_branch_predictor_payload(),
+            ),
         )?;
         Ok(record)
     }
@@ -319,6 +339,22 @@ impl RiscvCoreCheckpointPort {
                     error,
                 },
             )?;
+        let tournament_branch_predictor_payload = match registry
+            .chunk(&self.component, TOURNAMENT_BRANCH_PREDICTOR_CHUNK)
+        {
+            Some(payload) => decode_tournament_branch_predictor_payload(&self.component, payload)?,
+            None => RiscvCore::default_tournament_branch_predictor_checkpoint_payload(),
+        };
+        self.core
+            .validate_tournament_branch_predictor_checkpoint_payload(
+                &tournament_branch_predictor_payload,
+            )
+            .map_err(|error| {
+                RiscvCoreCheckpointError::InvalidTournamentBranchPredictorSnapshot {
+                    component: self.component.clone(),
+                    error,
+                }
+            })?;
 
         Ok(RiscvCoreCheckpointRecord::from_parts(
             RiscvCoreCheckpointRecordParts {
@@ -332,6 +368,7 @@ impl RiscvCoreCheckpointPort {
                 branch_predictor_payload,
                 gshare_branch_predictor_payload,
                 bimode_branch_predictor_payload,
+                tournament_branch_predictor_payload,
             },
         ))
     }
@@ -398,6 +435,16 @@ impl RiscvCoreCheckpointPort {
                     error,
                 },
             )?;
+        self.core
+            .restore_tournament_branch_predictor_checkpoint_payload(
+                record.tournament_branch_predictor_payload().clone(),
+            )
+            .map_err(|error| {
+                RiscvCoreCheckpointError::InvalidTournamentBranchPredictorSnapshot {
+                    component: self.component.clone(),
+                    error,
+                }
+            })?;
         Ok(())
     }
 
@@ -413,6 +460,9 @@ impl RiscvCoreCheckpointPort {
             branch_predictor_payload: self.core.branch_predictor_checkpoint_payload(),
             gshare_branch_predictor_payload: self.core.gshare_branch_predictor_checkpoint_payload(),
             bimode_branch_predictor_payload: self.core.bimode_branch_predictor_checkpoint_payload(),
+            tournament_branch_predictor_payload: self
+                .core
+                .tournament_branch_predictor_checkpoint_payload(),
         })
     }
 }
@@ -536,6 +586,10 @@ pub enum RiscvCoreCheckpointError {
         component: CheckpointComponentId,
         error: BiModeBranchPredictorError,
     },
+    InvalidTournamentBranchPredictorSnapshot {
+        component: CheckpointComponentId,
+        error: TournamentBranchPredictorError,
+    },
 }
 
 impl fmt::Display for RiscvCoreCheckpointError {
@@ -594,6 +648,11 @@ impl fmt::Display for RiscvCoreCheckpointError {
             Self::InvalidBiModeBranchPredictorSnapshot { component, error } => write!(
                 formatter,
                 "RISC-V core checkpoint component {} has invalid bimode branch predictor snapshot: {error}",
+                component.as_str()
+            ),
+            Self::InvalidTournamentBranchPredictorSnapshot { component, error } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has invalid tournament branch predictor snapshot: {error}",
                 component.as_str()
             ),
         }
@@ -720,6 +779,12 @@ fn encode_bimode_branch_predictor_payload(
     payload.encode()
 }
 
+fn encode_tournament_branch_predictor_payload(
+    payload: &TournamentBranchPredictorCheckpointPayload,
+) -> Vec<u8> {
+    payload.encode()
+}
+
 fn decode_branch_predictor_payload(
     component: &CheckpointComponentId,
     payload: &[u8],
@@ -750,6 +815,18 @@ fn decode_bimode_branch_predictor_payload(
 ) -> Result<BiModeBranchPredictorCheckpointPayload, RiscvCoreCheckpointError> {
     BiModeBranchPredictorCheckpointPayload::decode(payload).map_err(|error| {
         RiscvCoreCheckpointError::InvalidBiModeBranchPredictorSnapshot {
+            component: component.clone(),
+            error,
+        }
+    })
+}
+
+fn decode_tournament_branch_predictor_payload(
+    component: &CheckpointComponentId,
+    payload: &[u8],
+) -> Result<TournamentBranchPredictorCheckpointPayload, RiscvCoreCheckpointError> {
+    TournamentBranchPredictorCheckpointPayload::decode(payload).map_err(|error| {
+        RiscvCoreCheckpointError::InvalidTournamentBranchPredictorSnapshot {
             component: component.clone(),
             error,
         }

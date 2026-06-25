@@ -1,6 +1,6 @@
 use rem6_cpu::{
-    CpuId, TournamentBranchPredictor, TournamentBranchPredictorConfig,
-    TournamentBranchPredictorError, TournamentPredictorSelection,
+    CpuId, TournamentBranchPredictor, TournamentBranchPredictorCheckpointPayload,
+    TournamentBranchPredictorConfig, TournamentBranchPredictorError, TournamentPredictorSelection,
 };
 use rem6_memory::Address;
 
@@ -234,6 +234,51 @@ fn tournament_predictor_snapshot_restore_preserves_tables_histories_and_counts()
         snapshot.history_update_count()
     );
     assert_eq!(predictor.update_count(), snapshot.update_count());
+}
+
+#[test]
+fn tournament_checkpoint_payload_round_trips_snapshot() {
+    let mut predictor = tournament(2, 8, 4, 8, 4, 2);
+    let cpu = CpuId::new(0);
+    let pc = Address::new(0x1000);
+    let prediction = predictor.predict(cpu, pc).unwrap();
+    predictor
+        .update_history(prediction.history(), true)
+        .unwrap();
+    predictor.train(prediction.history(), true, false).unwrap();
+    let snapshot = predictor.snapshot();
+
+    let payload =
+        TournamentBranchPredictorCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+    let encoded = payload.encode();
+    let decoded = TournamentBranchPredictorCheckpointPayload::decode(&encoded).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+
+    let mut restored = tournament(2, 8, 4, 8, 4, 2);
+    restored.restore(decoded.snapshot()).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+}
+
+#[test]
+fn tournament_checkpoint_payload_rejects_truncated_payload() {
+    let predictor = tournament(1, 8, 4, 8, 4, 2);
+    let mut encoded =
+        TournamentBranchPredictorCheckpointPayload::from_snapshot(predictor.snapshot())
+            .unwrap()
+            .encode();
+    let expected = encoded.len();
+    encoded.pop();
+
+    assert_eq!(
+        TournamentBranchPredictorCheckpointPayload::decode(&encoded),
+        Err(
+            TournamentBranchPredictorError::InvalidCheckpointPayloadSize {
+                expected,
+                actual: expected - 1,
+            }
+        )
+    );
 }
 
 #[test]

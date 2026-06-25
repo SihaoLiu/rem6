@@ -140,6 +140,7 @@ pub use crate::tournament_predictor::{
     TournamentPrediction, TournamentPredictorSelection, TournamentSquash, TournamentThreadSnapshot,
     TournamentTrainingUpdate,
 };
+pub use crate::tournament_predictor_checkpoint::TournamentBranchPredictorCheckpointPayload;
 pub use crate::translation::{
     CpuSegmentedTranslationOutcome, CpuTranslatedMemoryOperation, CpuTranslatedMemoryRequest,
     CpuTranslatedMemorySegment, CpuTranslationFaultRecord, CpuTranslationFrontend,
