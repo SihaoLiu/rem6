@@ -449,6 +449,112 @@ fn rem6_run_json_stats_omit_text_only_gem5_l1_cache_hit_miss_aliases() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_mem_ctrl_bandwidth_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-mem-ctrl-bandwidth-aliases");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let sim_freq = text_stat_value(&stdout, "simFreq");
+    let final_tick = text_stat_value(&stdout, "finalTick");
+    let read_bytes = text_stat_value(&stdout, "system.mem_ctrl.bytesReadSys");
+    let written_bytes = text_stat_value(&stdout, "system.mem_ctrl.bytesWrittenSys");
+    assert!(final_tick > 0, "{stdout}");
+    assert!(read_bytes > 0, "{stdout}");
+    assert!(written_bytes > 0, "{stdout}");
+
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.mem_ctrl.avgRdBWSys"),
+        fixed_ratio_precision(read_bytes * sim_freq, final_tick, 8)
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.mem_ctrl.avgWrBWSys"),
+        fixed_ratio_precision(written_bytes * sim_freq, final_tick, 8)
+    );
+    assert!(
+        text_stat_line(&stdout, "system.mem_ctrl.avgRdBWSys").contains("unit=(Byte/Second)"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.mem_ctrl.avgWrBWSys").contains("unit=(Byte/Second)"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn rem6_run_json_stats_omit_text_only_gem5_mem_ctrl_bandwidth_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-mem-ctrl-bandwidth-aliases-json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert_stat_greater_than(
+        &stdout,
+        "system.mem_ctrl.bytesReadSys",
+        "Byte",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "system.mem_ctrl.bytesWrittenSys",
+        "Byte",
+        0,
+        "monotonic",
+    );
+    assert!(!stdout.contains("\"path\":\"system.mem_ctrl.avgRdBWSys\""));
+    assert!(!stdout.contains("\"path\":\"system.mem_ctrl.avgWrBWSys\""));
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_seconds_and_ops_aliases() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
@@ -1578,9 +1684,25 @@ fn text_stat_decimal(stdout: &str, path: &str) -> String {
         .unwrap_or_else(|| panic!("missing text stat {path} in output:\n{stdout}"))
 }
 
+fn text_stat_line<'a>(stdout: &'a str, path: &str) -> &'a str {
+    stdout
+        .lines()
+        .find(|line| line.split_whitespace().next() == Some(path))
+        .unwrap_or_else(|| panic!("missing text stat {path} in output:\n{stdout}"))
+}
+
 fn fixed_ratio(numerator: u64, denominator: u64) -> String {
     assert_ne!(denominator, 0);
     format!("{:.6}", numerator as f64 / denominator as f64)
+}
+
+fn fixed_ratio_precision(numerator: u64, denominator: u64, precision: usize) -> String {
+    assert_ne!(denominator, 0);
+    format!(
+        "{:.precision$}",
+        numerator as f64 / denominator as f64,
+        precision = precision
+    )
 }
 
 fn gem5_l1_cache_alias_binary(name: &str) -> std::path::PathBuf {

@@ -42,6 +42,7 @@ fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) 
             ));
         }
     }
+    append_gem5_mem_ctrl_bandwidth_alias_stats(output, snapshot);
     append_gem5_cpu_ratio_stats(output, snapshot);
     append_gem5_l1_cache_alias_stats(output, snapshot);
 }
@@ -115,6 +116,51 @@ fn append_derived_ratio_stat(output: &mut String, path: &str, numerator: u64, de
     ));
 }
 
+fn append_gem5_mem_ctrl_bandwidth_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
+    let (Some(final_tick), Some(sim_freq)) = (
+        snapshot_value(snapshot, "finalTick"),
+        snapshot_value(snapshot, "simFreq"),
+    ) else {
+        return;
+    };
+    if final_tick == 0 || sim_freq == 0 {
+        return;
+    }
+    append_gem5_mem_ctrl_bandwidth_alias_stat(
+        output,
+        snapshot,
+        "system.mem_ctrl.avgRdBWSys",
+        "system.mem_ctrl.bytesReadSys",
+        sim_freq,
+        final_tick,
+    );
+    append_gem5_mem_ctrl_bandwidth_alias_stat(
+        output,
+        snapshot,
+        "system.mem_ctrl.avgWrBWSys",
+        "system.mem_ctrl.bytesWrittenSys",
+        sim_freq,
+        final_tick,
+    );
+}
+
+fn append_gem5_mem_ctrl_bandwidth_alias_stat(
+    output: &mut String,
+    snapshot: &StatSnapshot,
+    alias_path: &str,
+    bytes_path: &str,
+    sim_freq: u64,
+    final_tick: u64,
+) {
+    let Some(bytes) = snapshot_value(snapshot, bytes_path) else {
+        return;
+    };
+    output.push_str(&format!(
+        "{alias_path:<64} {:>20} # kind=derived unit=(Byte/Second) reset_policy=monotonic\n",
+        format_scaled_ratio(bytes, sim_freq, final_tick, 8)
+    ));
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 struct CpuRatioInputs {
     instructions: Option<u64>,
@@ -163,6 +209,14 @@ fn is_gem5_cpu_prefix(prefix: &str) -> bool {
 
 fn format_fixed_ratio(numerator: u64, denominator: u64) -> String {
     format!("{:.6}", numerator as f64 / denominator as f64)
+}
+
+fn format_scaled_ratio(value: u64, multiplier: u64, denominator: u64, precision: usize) -> String {
+    format!(
+        "{:.precision$}",
+        (value as f64 * multiplier as f64) / denominator as f64,
+        precision = precision
+    )
 }
 
 #[cfg(test)]
