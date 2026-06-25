@@ -315,6 +315,9 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "Score",
         "Row score",
         "Next evidence",
+        "demandMshrMisses",
+        "accuracy_ppm",
+        "coverage_ppm",
     ] {
         assert!(
             contents.contains(required),
