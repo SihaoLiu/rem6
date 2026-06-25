@@ -192,6 +192,7 @@ impl RiscvCore {
             fetch.request_id().sequence(),
             fetch.pc(),
             next_pc,
+            instruction_is_conditional_branch(instruction),
             retired_branch.fetch_prediction(),
             direct_jump_fetch_ahead_target,
         );
@@ -520,6 +521,7 @@ fn in_order_pipeline_branch_prediction(
     sequence: u64,
     fetch_pc: Address,
     actual_next_pc: Address,
+    conditional_branch: bool,
     branch_prediction: Option<RiscvResolvedBranchPrediction>,
     direct_jump_fetch_ahead_target: Option<Address>,
 ) -> Option<InOrderBranchPrediction> {
@@ -528,6 +530,7 @@ fn in_order_pipeline_branch_prediction(
             sequence,
             InOrderPipelineStage::Commit,
             fetch_pc.get(),
+            conditional_branch,
             true,
             Some(predicted_target.get()),
             true,
@@ -542,6 +545,7 @@ fn in_order_pipeline_branch_prediction(
         sequence,
         InOrderPipelineStage::Commit,
         fetch_pc.get(),
+        conditional_branch,
         prediction.predicted_taken(),
         prediction.predicted_target().map(Address::get),
         prediction.actual_taken(),
@@ -631,22 +635,17 @@ fn retire_branch_predictions(
         .get()
         .wrapping_add(u64::from(execution.instruction_bytes()));
     let next_pc = execution.next_pc();
-    let (conditional, actual_taken, actual_target) = match instruction {
-        RiscvInstruction::Beq { .. }
-        | RiscvInstruction::Bne { .. }
-        | RiscvInstruction::Blt { .. }
-        | RiscvInstruction::Bge { .. }
-        | RiscvInstruction::Bltu { .. }
-        | RiscvInstruction::Bgeu { .. } => {
-            let taken = next_pc != sequential_pc;
-            (true, taken, taken.then_some(Address::new(next_pc)))
-        }
-        RiscvInstruction::Jal { .. } | RiscvInstruction::Jalr { .. } => {
-            (false, true, Some(Address::new(next_pc)))
-        }
-        _ => {
-            return Ok(RiscvRetiredBranchResolution::default());
-        }
+    let conditional = instruction_is_conditional_branch(instruction);
+    let (actual_taken, actual_target) = if conditional {
+        let taken = next_pc != sequential_pc;
+        (taken, taken.then_some(Address::new(next_pc)))
+    } else if matches!(
+        instruction,
+        RiscvInstruction::Jal { .. } | RiscvInstruction::Jalr { .. }
+    ) {
+        (true, Some(Address::new(next_pc)))
+    } else {
+        return Ok(RiscvRetiredBranchResolution::default());
     };
 
     let branch_update = state
@@ -792,6 +791,18 @@ fn static_conditional_branch_target(pc: Address, instruction: RiscvInstruction) 
         _ => return None,
     };
     checked_add_signed(pc.get(), offset).map(Address::new)
+}
+
+fn instruction_is_conditional_branch(instruction: RiscvInstruction) -> bool {
+    matches!(
+        instruction,
+        RiscvInstruction::Beq { .. }
+            | RiscvInstruction::Bne { .. }
+            | RiscvInstruction::Blt { .. }
+            | RiscvInstruction::Bge { .. }
+            | RiscvInstruction::Bltu { .. }
+            | RiscvInstruction::Bgeu { .. }
+    )
 }
 
 fn checked_add_signed(value: u64, offset: i64) -> Option<u64> {

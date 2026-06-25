@@ -166,6 +166,7 @@ pub struct InOrderBranchPrediction {
     sequence: u64,
     resolved_stage: InOrderPipelineStage,
     fetch_pc: u64,
+    conditional: bool,
     predicted_taken: bool,
     predicted_target_pc: Option<u64>,
     resolved_taken: bool,
@@ -177,6 +178,7 @@ impl InOrderBranchPrediction {
         sequence: u64,
         resolved_stage: InOrderPipelineStage,
         fetch_pc: u64,
+        conditional: bool,
         predicted_taken: bool,
         predicted_target_pc: Option<u64>,
         resolved_taken: bool,
@@ -186,6 +188,7 @@ impl InOrderBranchPrediction {
             sequence,
             resolved_stage,
             fetch_pc,
+            conditional,
             predicted_taken,
             predicted_target_pc,
             resolved_taken,
@@ -203,6 +206,10 @@ impl InOrderBranchPrediction {
 
     pub const fn fetch_pc(self) -> u64 {
         self.fetch_pc
+    }
+
+    pub const fn is_conditional(self) -> bool {
+        self.conditional
     }
 
     pub const fn predicted_taken(self) -> bool {
@@ -278,6 +285,10 @@ impl InOrderBranchPredictionRecord {
 
     pub const fn fetch_pc(&self) -> u64 {
         self.prediction.fetch_pc()
+    }
+
+    pub const fn is_conditional(&self) -> bool {
+        self.prediction.is_conditional()
     }
 
     pub const fn predicted_taken(&self) -> bool {
@@ -583,6 +594,8 @@ pub struct InOrderPipelineCycleSummary {
     branch_prediction_count: usize,
     correct_branch_prediction_count: usize,
     branch_misprediction_count: usize,
+    conditional_branch_prediction_count: usize,
+    conditional_branch_misprediction_count: usize,
     branch_prediction_flushed_count: usize,
     state_changed: bool,
     redirect_target_pc: Option<u64>,
@@ -602,6 +615,8 @@ pub struct InOrderPipelineRunSummary {
     branch_prediction_count: usize,
     correct_branch_prediction_count: usize,
     branch_misprediction_count: usize,
+    conditional_branch_prediction_count: usize,
+    conditional_branch_misprediction_count: usize,
     branch_prediction_flushed_count: usize,
     redirect_count: usize,
     state_changed_cycle_count: usize,
@@ -621,6 +636,8 @@ impl InOrderPipelineRunSummary {
         branch_prediction_count: 0,
         correct_branch_prediction_count: 0,
         branch_misprediction_count: 0,
+        conditional_branch_prediction_count: 0,
+        conditional_branch_misprediction_count: 0,
         branch_prediction_flushed_count: 0,
         redirect_count: 0,
         state_changed_cycle_count: 0,
@@ -660,6 +677,10 @@ impl InOrderPipelineRunSummary {
             summary.branch_prediction_count += cycle.branch_prediction_count();
             summary.correct_branch_prediction_count += cycle.correct_branch_prediction_count();
             summary.branch_misprediction_count += cycle.branch_misprediction_count();
+            summary.conditional_branch_prediction_count +=
+                cycle.conditional_branch_prediction_count();
+            summary.conditional_branch_misprediction_count +=
+                cycle.conditional_branch_misprediction_count();
             summary.branch_prediction_flushed_count += cycle.branch_prediction_flushed_count();
             if cycle.redirect_target_pc().is_some() {
                 summary.redirect_count += 1;
@@ -690,6 +711,10 @@ impl InOrderPipelineRunSummary {
                 + other.correct_branch_prediction_count,
             branch_misprediction_count: self.branch_misprediction_count
                 + other.branch_misprediction_count,
+            conditional_branch_prediction_count: self.conditional_branch_prediction_count
+                + other.conditional_branch_prediction_count,
+            conditional_branch_misprediction_count: self.conditional_branch_misprediction_count
+                + other.conditional_branch_misprediction_count,
             branch_prediction_flushed_count: self.branch_prediction_flushed_count
                 + other.branch_prediction_flushed_count,
             redirect_count: self.redirect_count + other.redirect_count,
@@ -748,6 +773,14 @@ impl InOrderPipelineRunSummary {
 
     pub const fn branch_misprediction_count(self) -> usize {
         self.branch_misprediction_count
+    }
+
+    pub const fn conditional_branch_prediction_count(self) -> usize {
+        self.conditional_branch_prediction_count
+    }
+
+    pub const fn conditional_branch_misprediction_count(self) -> usize {
+        self.conditional_branch_misprediction_count
     }
 
     pub const fn branch_prediction_flushed_count(self) -> usize {
@@ -890,6 +923,14 @@ impl InOrderPipelineCycleSummary {
         self.branch_misprediction_count
     }
 
+    pub const fn conditional_branch_prediction_count(self) -> usize {
+        self.conditional_branch_prediction_count
+    }
+
+    pub const fn conditional_branch_misprediction_count(self) -> usize {
+        self.conditional_branch_misprediction_count
+    }
+
     pub const fn branch_prediction_flushed_count(self) -> usize {
         self.branch_prediction_flushed_count
     }
@@ -941,6 +982,16 @@ impl InOrderPipelineCycleRecord {
             .iter()
             .filter(|prediction| prediction.mispredicted())
             .count();
+        let conditional_branch_prediction_count = self
+            .branch_predictions
+            .iter()
+            .filter(|prediction| prediction.is_conditional())
+            .count();
+        let conditional_branch_misprediction_count = self
+            .branch_predictions
+            .iter()
+            .filter(|prediction| prediction.is_conditional() && prediction.mispredicted())
+            .count();
         let branch_prediction_flushed_count = self
             .branch_predictions
             .iter()
@@ -958,6 +1009,8 @@ impl InOrderPipelineCycleRecord {
             branch_prediction_count,
             correct_branch_prediction_count: branch_prediction_count - branch_misprediction_count,
             branch_misprediction_count,
+            conditional_branch_prediction_count,
+            conditional_branch_misprediction_count,
             branch_prediction_flushed_count,
             state_changed: self.before.in_flight() != self.after.in_flight(),
             redirect_target_pc: self.plan.redirect().map(|redirect| redirect.target_pc()),

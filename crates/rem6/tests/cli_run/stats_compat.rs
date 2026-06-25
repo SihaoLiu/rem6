@@ -3423,6 +3423,10 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let branch_predictions = json_u64_field(&stdout, "\"branch_predictions\":");
     let branch_mispredictions = json_u64_field(&stdout, "\"branch_mispredictions\":");
+    let conditional_branch_predictions =
+        json_u64_field(&stdout, "\"conditional_branch_predictions\":");
+    let conditional_branch_mispredictions =
+        json_u64_field(&stdout, "\"conditional_branch_mispredictions\":");
     let advanced = json_u64_field(&stdout, "\"advanced\":");
     let flushed = json_u64_field(&stdout, "\"flushed\":");
     let resource_blocked = json_u64_field(&stdout, "\"resource_blocked\":");
@@ -3437,6 +3441,20 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     assert_eq!(
         stat_value(&stdout, "sim.cpu0.pipeline.in_order.branch_mispredictions"),
         branch_mispredictions
+    );
+    assert_eq!(
+        stat_value(
+            &stdout,
+            "sim.cpu0.pipeline.in_order.conditional_branch_predictions"
+        ),
+        conditional_branch_predictions
+    );
+    assert_eq!(
+        stat_value(
+            &stdout,
+            "sim.cpu0.pipeline.in_order.conditional_branch_mispredictions"
+        ),
+        conditional_branch_mispredictions
     );
     assert_eq!(
         stat_value(&stdout, "sim.cpu0.pipeline.in_order.advanced"),
@@ -3467,6 +3485,8 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     );
     assert!(branch_predictions > 0);
     assert!(branch_mispredictions > 0);
+    assert_eq!(conditional_branch_predictions, branch_predictions);
+    assert_eq!(conditional_branch_mispredictions, branch_mispredictions);
     assert!(advanced > 0);
     assert!(flushed > 0);
     assert!(flushed >= branch_prediction_flushes);
@@ -3474,6 +3494,133 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     assert!(redirects > 0);
     assert!(stdout.contains("\"x5\":\"0x7\""));
     assert!(!stdout.contains("\"x6\":\"0x1\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.condPredicted\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.condIncorrect\""));
+}
+
+#[test]
+fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
+    let program = riscv64_program(&[
+        0x0070_0293,          // addi x5, x0, 7
+        b_type(8, 0, 0, 0x0), // beq x0, x0, target
+        0x0010_0313,          // addi x6, x0, 1
+        0x0000_0073,          // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-branch-prediction-aliases", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "text",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let branch_predictions = text_stat_value(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.conditional_branch_predictions",
+    );
+    let branch_mispredictions = text_stat_value(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.conditional_branch_mispredictions",
+    );
+
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.condPredicted"),
+        branch_predictions
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.condIncorrect"),
+        branch_mispredictions
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.branchPred.condPredicted").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.branchPred.condIncorrect").contains("unit=Count"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn rem6_run_text_stats_do_not_count_unconditional_jumps_as_cond_branch_predictions() {
+    let program = riscv64_program(&[
+        0x0070_0293,  // addi x5, x0, 7
+        j_type(8, 0), // jal x0, target
+        0x0010_0313,  // addi x6, x0, 1
+        0x0000_0073,  // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-unconditional-branch-prediction-aliases", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "21",
+            "--memory-route-delay",
+            "5",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.branch_predictions") > 0,
+        "{stdout}"
+    );
+    assert_eq!(
+        text_stat_value(
+            &stdout,
+            "sim.cpu0.pipeline.in_order.conditional_branch_predictions"
+        ),
+        0
+    );
+    assert_eq!(
+        text_stat_value(
+            &stdout,
+            "sim.cpu0.pipeline.in_order.conditional_branch_mispredictions"
+        ),
+        0
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.condPredicted"),
+        0
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.condIncorrect"),
+        0
+    );
 }
 
 #[test]

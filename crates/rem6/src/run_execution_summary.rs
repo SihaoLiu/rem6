@@ -173,6 +173,12 @@ pub(super) fn execution_summary(
             in_order_pipeline_branch_predictions: pipeline_summary.branch_prediction_count() as u64,
             in_order_pipeline_branch_mispredictions: pipeline_summary.branch_misprediction_count()
                 as u64,
+            in_order_pipeline_conditional_branch_predictions: pipeline_summary
+                .conditional_branch_prediction_count()
+                as u64,
+            in_order_pipeline_conditional_branch_mispredictions: pipeline_summary
+                .conditional_branch_misprediction_count()
+                as u64,
             in_order_pipeline_branch_prediction_flushes: pipeline_summary
                 .branch_prediction_flushed_count()
                 as u64,

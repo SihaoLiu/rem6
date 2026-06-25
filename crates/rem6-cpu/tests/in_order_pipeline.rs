@@ -125,6 +125,7 @@ fn in_order_pipeline_records_pc_only_branch_prediction() {
         InOrderPipelineStage::Execute,
         0x1000,
         true,
+        true,
         Some(0x2000),
         true,
         Some(0x2000),
@@ -139,6 +140,7 @@ fn in_order_pipeline_records_pc_only_branch_prediction() {
     assert_eq!(evidence.sequence(), 30);
     assert_eq!(evidence.resolved_stage(), InOrderPipelineStage::Execute);
     assert_eq!(evidence.fetch_pc(), 0x1000);
+    assert!(evidence.is_conditional());
     assert!(evidence.predicted_taken());
     assert_eq!(evidence.predicted_target_pc(), Some(0x2000));
     assert!(evidence.resolved_taken());
@@ -151,6 +153,8 @@ fn in_order_pipeline_records_pc_only_branch_prediction() {
     assert_eq!(summary.branch_prediction_count(), 1);
     assert_eq!(summary.correct_branch_prediction_count(), 1);
     assert_eq!(summary.branch_misprediction_count(), 0);
+    assert_eq!(summary.conditional_branch_prediction_count(), 1);
+    assert_eq!(summary.conditional_branch_misprediction_count(), 0);
     assert_eq!(summary.branch_prediction_flushed_count(), 0);
 }
 
@@ -169,6 +173,7 @@ fn in_order_pipeline_prediction_mispredict_flushes_younger_work() {
         30,
         InOrderPipelineStage::Execute,
         0x1000,
+        true,
         false,
         None,
         true,
@@ -209,6 +214,8 @@ fn in_order_pipeline_prediction_mispredict_flushes_younger_work() {
     let summary = record.summary();
     assert_eq!(summary.branch_prediction_count(), 1);
     assert_eq!(summary.branch_misprediction_count(), 1);
+    assert_eq!(summary.conditional_branch_prediction_count(), 1);
+    assert_eq!(summary.conditional_branch_misprediction_count(), 1);
     assert_eq!(summary.branch_prediction_flushed_count(), 2);
 }
 
@@ -222,6 +229,7 @@ fn in_order_pipeline_prediction_mispredict_requires_repair_target() {
         30,
         InOrderPipelineStage::Execute,
         0x1000,
+        true,
         true,
         Some(0x2000),
         false,
@@ -255,6 +263,7 @@ fn in_order_pipeline_correct_prediction_rejects_absent_instruction() {
         30,
         InOrderPipelineStage::Execute,
         0x1000,
+        true,
         false,
         None,
         false,
@@ -288,6 +297,7 @@ fn in_order_pipeline_correct_prediction_rejects_wrong_stage() {
         30,
         InOrderPipelineStage::Execute,
         0x1000,
+        true,
         true,
         Some(0x2000),
         true,
@@ -757,6 +767,7 @@ fn in_order_pipeline_prediction_summary_merges_disjoint_windows() {
         50,
         InOrderPipelineStage::Execute,
         0x4000,
+        true,
         false,
         None,
         false,
@@ -781,6 +792,7 @@ fn in_order_pipeline_prediction_summary_merges_disjoint_windows() {
         InOrderPipelineStage::Execute,
         0x5000,
         false,
+        false,
         None,
         true,
         Some(0x5800),
@@ -797,6 +809,8 @@ fn in_order_pipeline_prediction_summary_merges_disjoint_windows() {
     assert_eq!(merged.branch_prediction_count(), 2);
     assert_eq!(merged.correct_branch_prediction_count(), 1);
     assert_eq!(merged.branch_misprediction_count(), 1);
+    assert_eq!(merged.conditional_branch_prediction_count(), 1);
+    assert_eq!(merged.conditional_branch_misprediction_count(), 0);
     assert_eq!(merged.branch_prediction_flushed_count(), 2);
 }
 
@@ -867,6 +881,7 @@ fn in_order_pipeline_prediction_flush_checkpoint_round_trips_remaining_state() {
         30,
         InOrderPipelineStage::Execute,
         0x1000,
+        true,
         false,
         None,
         true,

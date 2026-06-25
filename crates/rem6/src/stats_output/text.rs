@@ -46,6 +46,7 @@ fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) 
     append_gem5_dram_interface_ratio_stats(output, snapshot);
     append_gem5_dram_interface_latency_stats(output, snapshot);
     append_gem5_cpu_ratio_stats(output, snapshot);
+    append_gem5_branch_prediction_alias_stats(output, snapshot);
     append_gem5_l1_cache_alias_stats(output, snapshot);
     append_gem5_l1_prefetcher_formula_alias_stats(output, snapshot);
     append_gem5_shared_cache_alias_stats(
@@ -62,6 +63,28 @@ fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) 
         "sim.instruction_cache.l3",
         "sim.data_cache.l3",
     );
+}
+
+fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
+    if snapshot_value(snapshot, "sim.cores") != Some(1) {
+        return;
+    }
+    if let Some(predictions) = snapshot_value(
+        snapshot,
+        "sim.cpu0.pipeline.in_order.conditional_branch_predictions",
+    ) {
+        append_derived_count_stat(output, "system.cpu.branchPred.condPredicted", predictions);
+    }
+    if let Some(mispredictions) = snapshot_value(
+        snapshot,
+        "sim.cpu0.pipeline.in_order.conditional_branch_mispredictions",
+    ) {
+        append_derived_count_stat(
+            output,
+            "system.cpu.branchPred.condIncorrect",
+            mispredictions,
+        );
+    }
 }
 
 fn format_sim_seconds(final_tick: u64, sim_freq: u64) -> String {
