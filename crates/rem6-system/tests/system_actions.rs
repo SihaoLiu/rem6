@@ -583,6 +583,10 @@ fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest()
         .checkpoints()
         .chunk(&component, "in-order-pipeline")
         .unwrap();
+    let bimode_branch_predictor = executor
+        .checkpoints()
+        .chunk(&component, "bimode-branch-predictor")
+        .unwrap();
     let branch_predictor = executor
         .checkpoints()
         .chunk(&component, "branch-predictor")
@@ -603,6 +607,10 @@ fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest()
                 vec![CheckpointState::new(
                     component,
                     vec![
+                        CheckpointChunk::new(
+                            "bimode-branch-predictor",
+                            bimode_branch_predictor.to_vec(),
+                        ),
                         CheckpointChunk::new("branch-predictor", branch_predictor.to_vec()),
                         CheckpointChunk::new("fregs", fregs.to_vec()),
                         CheckpointChunk::new(

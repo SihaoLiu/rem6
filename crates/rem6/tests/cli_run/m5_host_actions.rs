@@ -486,6 +486,7 @@ fn rem6_run_emits_m5_checkpoint_host_action_detail_from_real_riscv_execution() {
         0,
         "cpu0",
         &[
+            "bimode-branch-predictor",
             "branch-predictor",
             "fregs",
             "gshare-branch-predictor",
@@ -569,6 +570,7 @@ fn rem6_run_emits_m5_dram_checkpoint_host_action_detail_from_real_riscv_executio
         0,
         "cpu0",
         &[
+            "bimode-branch-predictor",
             "branch-predictor",
             "fregs",
             "gshare-branch-predictor",

@@ -4,6 +4,7 @@ use std::fmt;
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_cpu::{
+    BiModeBranchPredictorCheckpointPayload, BiModeBranchPredictorError,
     BranchPredictorCheckpointPayload, BranchPredictorError, GShareBranchPredictorCheckpointPayload,
     GShareBranchPredictorError, InOrderPipelineCheckpointPayload, InOrderPipelineError,
     InOrderPipelineSnapshot, RiscvCore, RiscvHartRunState,
@@ -15,6 +16,7 @@ use rem6_isa_riscv::{
 use rem6_memory::Address;
 
 const FREGS_CHUNK: &str = "fregs";
+const BIMODE_BRANCH_PREDICTOR_CHUNK: &str = "bimode-branch-predictor";
 const BRANCH_PREDICTOR_CHUNK: &str = "branch-predictor";
 const GSHARE_BRANCH_PREDICTOR_CHUNK: &str = "gshare-branch-predictor";
 const HART_RUN_STATE_CHUNK: &str = "hart-run-state";
@@ -41,6 +43,7 @@ pub struct RiscvCoreCheckpointRecord {
     in_order_pipeline_snapshot: InOrderPipelineSnapshot,
     branch_predictor_payload: BranchPredictorCheckpointPayload,
     gshare_branch_predictor_payload: GShareBranchPredictorCheckpointPayload,
+    bimode_branch_predictor_payload: BiModeBranchPredictorCheckpointPayload,
 }
 
 struct RiscvCoreCheckpointRecordParts {
@@ -53,6 +56,7 @@ struct RiscvCoreCheckpointRecordParts {
     in_order_pipeline_snapshot: InOrderPipelineSnapshot,
     branch_predictor_payload: BranchPredictorCheckpointPayload,
     gshare_branch_predictor_payload: GShareBranchPredictorCheckpointPayload,
+    bimode_branch_predictor_payload: BiModeBranchPredictorCheckpointPayload,
 }
 
 impl RiscvCoreCheckpointRecord {
@@ -73,6 +77,8 @@ impl RiscvCoreCheckpointRecord {
             branch_predictor_payload: RiscvCore::default_branch_predictor_checkpoint_payload(),
             gshare_branch_predictor_payload:
                 RiscvCore::default_gshare_branch_predictor_checkpoint_payload(),
+            bimode_branch_predictor_payload:
+                RiscvCore::default_bimode_branch_predictor_checkpoint_payload(),
         })
     }
 
@@ -87,6 +93,7 @@ impl RiscvCoreCheckpointRecord {
             in_order_pipeline_snapshot: parts.in_order_pipeline_snapshot,
             branch_predictor_payload: parts.branch_predictor_payload,
             gshare_branch_predictor_payload: parts.gshare_branch_predictor_payload,
+            bimode_branch_predictor_payload: parts.bimode_branch_predictor_payload,
         }
     }
 
@@ -124,6 +131,10 @@ impl RiscvCoreCheckpointRecord {
 
     pub const fn gshare_branch_predictor_payload(&self) -> &GShareBranchPredictorCheckpointPayload {
         &self.gshare_branch_predictor_payload
+    }
+
+    pub const fn bimode_branch_predictor_payload(&self) -> &BiModeBranchPredictorCheckpointPayload {
+        &self.bimode_branch_predictor_payload
     }
 
     pub fn register(&self, register: Register) -> Option<u64> {
@@ -206,6 +217,11 @@ impl RiscvCoreCheckpointPort {
             &self.component,
             GSHARE_BRANCH_PREDICTOR_CHUNK,
             encode_gshare_branch_predictor_payload(record.gshare_branch_predictor_payload()),
+        )?;
+        registry.write_chunk(
+            &self.component,
+            BIMODE_BRANCH_PREDICTOR_CHUNK,
+            encode_bimode_branch_predictor_payload(record.bimode_branch_predictor_payload()),
         )?;
         Ok(record)
     }
@@ -290,6 +306,19 @@ impl RiscvCoreCheckpointPort {
                     error,
                 },
             )?;
+        let bimode_branch_predictor_payload =
+            match registry.chunk(&self.component, BIMODE_BRANCH_PREDICTOR_CHUNK) {
+                Some(payload) => decode_bimode_branch_predictor_payload(&self.component, payload)?,
+                None => RiscvCore::default_bimode_branch_predictor_checkpoint_payload(),
+            };
+        self.core
+            .validate_bimode_branch_predictor_checkpoint_payload(&bimode_branch_predictor_payload)
+            .map_err(
+                |error| RiscvCoreCheckpointError::InvalidBiModeBranchPredictorSnapshot {
+                    component: self.component.clone(),
+                    error,
+                },
+            )?;
 
         Ok(RiscvCoreCheckpointRecord::from_parts(
             RiscvCoreCheckpointRecordParts {
@@ -302,6 +331,7 @@ impl RiscvCoreCheckpointPort {
                 in_order_pipeline_snapshot,
                 branch_predictor_payload,
                 gshare_branch_predictor_payload,
+                bimode_branch_predictor_payload,
             },
         ))
     }
@@ -358,6 +388,16 @@ impl RiscvCoreCheckpointPort {
                     error,
                 },
             )?;
+        self.core
+            .restore_bimode_branch_predictor_checkpoint_payload(
+                record.bimode_branch_predictor_payload().clone(),
+            )
+            .map_err(
+                |error| RiscvCoreCheckpointError::InvalidBiModeBranchPredictorSnapshot {
+                    component: self.component.clone(),
+                    error,
+                },
+            )?;
         Ok(())
     }
 
@@ -372,6 +412,7 @@ impl RiscvCoreCheckpointPort {
             in_order_pipeline_snapshot: self.core.in_order_pipeline_snapshot(),
             branch_predictor_payload: self.core.branch_predictor_checkpoint_payload(),
             gshare_branch_predictor_payload: self.core.gshare_branch_predictor_checkpoint_payload(),
+            bimode_branch_predictor_payload: self.core.bimode_branch_predictor_checkpoint_payload(),
         })
     }
 }
@@ -491,6 +532,10 @@ pub enum RiscvCoreCheckpointError {
         component: CheckpointComponentId,
         error: GShareBranchPredictorError,
     },
+    InvalidBiModeBranchPredictorSnapshot {
+        component: CheckpointComponentId,
+        error: BiModeBranchPredictorError,
+    },
 }
 
 impl fmt::Display for RiscvCoreCheckpointError {
@@ -544,6 +589,11 @@ impl fmt::Display for RiscvCoreCheckpointError {
             Self::InvalidGShareBranchPredictorSnapshot { component, error } => write!(
                 formatter,
                 "RISC-V core checkpoint component {} has invalid gshare branch predictor snapshot: {error}",
+                component.as_str()
+            ),
+            Self::InvalidBiModeBranchPredictorSnapshot { component, error } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has invalid bimode branch predictor snapshot: {error}",
                 component.as_str()
             ),
         }
@@ -664,6 +714,12 @@ fn encode_gshare_branch_predictor_payload(
     payload.encode()
 }
 
+fn encode_bimode_branch_predictor_payload(
+    payload: &BiModeBranchPredictorCheckpointPayload,
+) -> Vec<u8> {
+    payload.encode()
+}
+
 fn decode_branch_predictor_payload(
     component: &CheckpointComponentId,
     payload: &[u8],
@@ -682,6 +738,18 @@ fn decode_gshare_branch_predictor_payload(
 ) -> Result<GShareBranchPredictorCheckpointPayload, RiscvCoreCheckpointError> {
     GShareBranchPredictorCheckpointPayload::decode(payload).map_err(|error| {
         RiscvCoreCheckpointError::InvalidGShareBranchPredictorSnapshot {
+            component: component.clone(),
+            error,
+        }
+    })
+}
+
+fn decode_bimode_branch_predictor_payload(
+    component: &CheckpointComponentId,
+    payload: &[u8],
+) -> Result<BiModeBranchPredictorCheckpointPayload, RiscvCoreCheckpointError> {
+    BiModeBranchPredictorCheckpointPayload::decode(payload).map_err(|error| {
+        RiscvCoreCheckpointError::InvalidBiModeBranchPredictorSnapshot {
             component: component.clone(),
             error,
         }

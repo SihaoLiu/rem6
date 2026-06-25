@@ -48,6 +48,24 @@ pub enum BiModeBranchPredictorError {
         expected: BiModeBranchPredictorConfig,
         actual: BiModeBranchPredictorConfig,
     },
+    InvalidCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidCheckpointMagic,
+    UnsupportedCheckpointVersion {
+        version: u8,
+    },
+    CheckpointValueTooLarge {
+        name: &'static str,
+        value: usize,
+        max: usize,
+    },
+    InvalidCheckpointCounter {
+        table: &'static str,
+        value: u8,
+        max: u8,
+    },
 }
 
 impl fmt::Display for BiModeBranchPredictorError {
@@ -104,6 +122,25 @@ impl fmt::Display for BiModeBranchPredictorError {
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "bimode snapshot config {actual:?} does not match predictor config {expected:?}"
+            ),
+            Self::InvalidCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "bimode checkpoint payload has {actual} bytes; expected {expected}"
+            ),
+            Self::InvalidCheckpointMagic => {
+                write!(formatter, "bimode checkpoint payload has invalid magic")
+            }
+            Self::UnsupportedCheckpointVersion { version } => write!(
+                formatter,
+                "bimode checkpoint payload version {version} is not supported"
+            ),
+            Self::CheckpointValueTooLarge { name, value, max } => write!(
+                formatter,
+                "bimode checkpoint {name} value {value} exceeds maximum {max}"
+            ),
+            Self::InvalidCheckpointCounter { table, value, max } => write!(
+                formatter,
+                "bimode checkpoint {table} counter {value} exceeds maximum {max}"
             ),
         }
     }
@@ -546,6 +583,23 @@ impl BiModeBranchPredictor {
                 actual: snapshot.config.clone(),
             });
         }
+        if snapshot.choice_counters.len() != snapshot.config.choice_entries()
+            || snapshot.taken_counters.len() != snapshot.config.global_entries()
+            || snapshot.not_taken_counters.len() != snapshot.config.global_entries()
+            || snapshot.threads.len() != snapshot.config.threads()
+        {
+            return Err(BiModeBranchPredictorError::SnapshotShapeMismatch {
+                expected_threads: snapshot.config.threads(),
+                actual_threads: snapshot.threads.len(),
+                expected_choice_entries: snapshot.config.choice_entries(),
+                actual_choice_entries: snapshot.choice_counters.len(),
+                expected_global_entries: snapshot.config.global_entries(),
+                actual_global_entries: snapshot
+                    .taken_counters
+                    .len()
+                    .max(snapshot.not_taken_counters.len()),
+            });
+        }
 
         self.choice_counters.clone_from(&snapshot.choice_counters);
         self.taken_counters.clone_from(&snapshot.taken_counters);
@@ -874,6 +928,10 @@ impl BiModeThreadSnapshot {
         Self { global_history: 0 }
     }
 
+    pub(crate) const fn from_global_history(global_history: u64) -> Self {
+        Self { global_history }
+    }
+
     pub const fn global_history(&self) -> u64 {
         self.global_history
     }
@@ -893,6 +951,30 @@ pub struct BiModeBranchPredictorSnapshot {
 }
 
 impl BiModeBranchPredictorSnapshot {
+    pub(crate) fn from_parts(
+        config: BiModeBranchPredictorConfig,
+        choice_counters: Vec<u8>,
+        taken_counters: Vec<u8>,
+        not_taken_counters: Vec<u8>,
+        threads: Vec<BiModeThreadSnapshot>,
+        lookup_count: u64,
+        history_update_count: u64,
+        update_count: u64,
+        squash_count: u64,
+    ) -> Self {
+        Self {
+            config,
+            choice_counters,
+            taken_counters,
+            not_taken_counters,
+            threads,
+            lookup_count,
+            history_update_count,
+            update_count,
+            squash_count,
+        }
+    }
+
     pub const fn config(&self) -> &BiModeBranchPredictorConfig {
         &self.config
     }

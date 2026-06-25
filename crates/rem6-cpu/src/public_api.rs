@@ -3,6 +3,7 @@ pub use crate::bimode_predictor::{
     BiModeBranchPredictorSnapshot, BiModeDirectionArray, BiModeHistory, BiModeHistoryUpdate,
     BiModePrediction, BiModeSquash, BiModeThreadSnapshot, BiModeTrainingUpdate,
 };
+pub use crate::bimode_predictor_checkpoint::BiModeBranchPredictorCheckpointPayload;
 pub use crate::branch_predictor::{
     BranchPrediction, BranchPredictor, BranchPredictorConfig, BranchPredictorError,
     BranchPredictorSnapshot, BranchSpeculation, BranchSpeculationDiscard, BranchSpeculationId,

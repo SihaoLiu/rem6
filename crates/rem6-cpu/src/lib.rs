@@ -21,6 +21,7 @@ use rem6_transport::{
 };
 
 mod bimode_predictor;
+mod bimode_predictor_checkpoint;
 mod branch_predictor;
 mod branch_predictor_checkpoint;
 mod cpu_cluster;
@@ -42,6 +43,7 @@ mod o3_pipeline;
 mod parallel_flow;
 mod public_api;
 mod riscv_activity;
+mod riscv_bimode_checkpoint;
 mod riscv_branch_speculation;
 mod riscv_checker;
 mod riscv_cluster;
