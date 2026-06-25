@@ -832,6 +832,102 @@ fn rem6_run_json_stats_emit_gem5_dram_interface_burst_aliases() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_dram_interface_row_hit_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-dram-interface-row-hit-aliases");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let row_hits = text_stat_value(&stdout, "sim.memory.dram.row_hits");
+    let read_row_hits = text_stat_value(&stdout, "system.mem_ctrl.dram.readRowHits");
+    let write_row_hits = text_stat_value(&stdout, "system.mem_ctrl.dram.writeRowHits");
+    assert_eq!(read_row_hits + write_row_hits, row_hits);
+    assert!(
+        text_stat_line(&stdout, "system.mem_ctrl.dram.readRowHits").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.mem_ctrl.dram.writeRowHits").contains("unit=Count"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn rem6_run_json_stats_emit_gem5_dram_interface_row_hit_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-dram-interface-row-hit-aliases-json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let row_hits = stat_value(&stdout, "sim.memory.dram.row_hits");
+    let read_row_hits = stat_value(&stdout, "system.mem_ctrl.dram.readRowHits");
+    let write_row_hits = stat_value(&stdout, "system.mem_ctrl.dram.writeRowHits");
+    assert_eq!(read_row_hits + write_row_hits, row_hits);
+    assert_stat(
+        &stdout,
+        "system.mem_ctrl.dram.readRowHits",
+        "Count",
+        read_row_hits,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "system.mem_ctrl.dram.writeRowHits",
+        "Count",
+        write_row_hits,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_dram_interface_page_hit_rate_alias() {
     let path = gem5_l1_cache_alias_binary("gem5-dram-interface-page-hit-rate-alias");
 

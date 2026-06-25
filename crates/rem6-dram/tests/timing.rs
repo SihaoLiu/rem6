@@ -573,6 +573,28 @@ fn dram_controller_reports_bank_port_and_window_activity() {
 }
 
 #[test]
+fn dram_controller_splits_read_and_write_row_hit_activity() {
+    let mut controller = DramController::new(geometry(), timing());
+
+    controller.schedule(0, &read(0x0000, 8, 20)).unwrap();
+    let read_hit = controller.schedule(1, &read(0x0100, 8, 21)).unwrap();
+    let write_hit = controller.schedule(2, &write(0x0200, 22)).unwrap();
+
+    assert!(read_hit.row_hit());
+    assert!(write_hit.row_hit());
+
+    let profile = controller.activity_profile();
+    assert_eq!(profile.row_hit_count(), 2);
+    assert_eq!(profile.read_row_hit_count(), 1);
+    assert_eq!(profile.write_row_hit_count(), 1);
+
+    let bank = controller.bank_activity(0, 0).unwrap();
+    assert_eq!(bank.row_hit_count(), 2);
+    assert_eq!(bank.read_row_hit_count(), 1);
+    assert_eq!(bank.write_row_hit_count(), 1);
+}
+
+#[test]
 fn dram_controller_activity_until_excludes_later_accesses() {
     let mut controller = DramController::new(geometry(), timing());
 

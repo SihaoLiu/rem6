@@ -23,6 +23,20 @@ pub(super) fn emit_dram_stats(
     emit_dram_counter(stats, prefix, "reads", "Count", summary.reads)?;
     emit_dram_counter(stats, prefix, "writes", "Count", summary.writes)?;
     emit_dram_counter(stats, prefix, "row_hits", "Count", summary.row_hits)?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "read_row_hits",
+        "Count",
+        summary.read_row_hits,
+    )?;
+    emit_dram_counter(
+        stats,
+        prefix,
+        "write_row_hits",
+        "Count",
+        summary.write_row_hits,
+    )?;
     emit_dram_counter(stats, prefix, "row_misses", "Count", summary.row_misses)?;
     emit_dram_counter(stats, prefix, "refreshes", "Count", summary.refreshes)?;
     emit_dram_counter(
@@ -379,6 +393,16 @@ pub(super) fn emit_gem5_mem_ctrl_dram_alias_stats(
         ("system.mem_ctrl.bytesWrittenSys", "Byte", write_bytes),
         ("system.mem_ctrl.dram.readBursts", "Count", summary.reads),
         ("system.mem_ctrl.dram.writeBursts", "Count", summary.writes),
+        (
+            "system.mem_ctrl.dram.readRowHits",
+            "Count",
+            summary.read_row_hits,
+        ),
+        (
+            "system.mem_ctrl.dram.writeRowHits",
+            "Count",
+            summary.write_row_hits,
+        ),
         ("system.mem_ctrl.dram.dramBytesRead", "Byte", read_bytes),
         ("system.mem_ctrl.dram.dramBytesWritten", "Byte", write_bytes),
     ] {
@@ -399,6 +423,20 @@ pub(super) fn emit_dram_target_stats(
     emit_dram_counter(stats, &prefix, "reads", "Count", target.reads)?;
     emit_dram_counter(stats, &prefix, "writes", "Count", target.writes)?;
     emit_dram_counter(stats, &prefix, "row_hits", "Count", target.row_hits)?;
+    emit_dram_counter(
+        stats,
+        &prefix,
+        "read_row_hits",
+        "Count",
+        target.read_row_hits,
+    )?;
+    emit_dram_counter(
+        stats,
+        &prefix,
+        "write_row_hits",
+        "Count",
+        target.write_row_hits,
+    )?;
     emit_dram_counter(stats, &prefix, "row_misses", "Count", target.row_misses)?;
     emit_dram_counter(stats, &prefix, "refreshes", "Count", target.refreshes)?;
     emit_dram_counter(
@@ -481,6 +519,14 @@ fn emit_dram_bank_stats(
     emit_dram_counter(stats, &prefix, "read_bytes", "Byte", bank.read_bytes)?;
     emit_dram_counter(stats, &prefix, "write_bytes", "Byte", bank.write_bytes)?;
     emit_dram_counter(stats, &prefix, "row_hits", "Count", bank.row_hits)?;
+    emit_dram_counter(stats, &prefix, "read_row_hits", "Count", bank.read_row_hits)?;
+    emit_dram_counter(
+        stats,
+        &prefix,
+        "write_row_hits",
+        "Count",
+        bank.write_row_hits,
+    )?;
     emit_dram_counter(stats, &prefix, "row_misses", "Count", bank.row_misses)?;
     emit_dram_counter(stats, &prefix, "refreshes", "Count", bank.refreshes)?;
     emit_dram_counter(stats, &prefix, "refresh_ticks", "Tick", bank.refresh_ticks)?;

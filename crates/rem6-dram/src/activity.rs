@@ -30,6 +30,8 @@ pub struct DramBankActivity {
     max_pending_nvm_reads: usize,
     max_pending_persistent_writes: usize,
     row_hit_count: usize,
+    read_row_hit_count: usize,
+    write_row_hit_count: usize,
     row_miss_count: usize,
     refresh_count: usize,
     refresh_cycle_count: u64,
@@ -74,6 +76,10 @@ impl DramBankActivity {
             .max(access.pending_nvm_read_count());
         if access.row_hit() {
             self.row_hit_count += 1;
+            match access.kind() {
+                DramAccessKind::Read => self.read_row_hit_count += 1,
+                DramAccessKind::Write => self.write_row_hit_count += 1,
+            }
         } else {
             self.row_miss_count += 1;
         }
@@ -177,6 +183,14 @@ impl DramBankActivity {
 
     pub const fn row_hit_count(&self) -> usize {
         self.row_hit_count
+    }
+
+    pub const fn read_row_hit_count(&self) -> usize {
+        self.read_row_hit_count
+    }
+
+    pub const fn write_row_hit_count(&self) -> usize {
+        self.write_row_hit_count
     }
 
     pub const fn row_miss_count(&self) -> usize {
@@ -297,6 +311,8 @@ impl DramBankActivity {
             .max_pending_persistent_writes
             .max(later.max_pending_persistent_writes);
         self.row_hit_count += later.row_hit_count;
+        self.read_row_hit_count += later.read_row_hit_count;
+        self.write_row_hit_count += later.write_row_hit_count;
         self.row_miss_count += later.row_miss_count;
         self.refresh_count += later.refresh_count;
         self.refresh_cycle_count += later.refresh_cycle_count;
@@ -511,6 +527,8 @@ pub struct DramActivityProfile {
     max_pending_nvm_reads: usize,
     max_pending_persistent_writes: usize,
     row_hit_count: usize,
+    read_row_hit_count: usize,
+    write_row_hit_count: usize,
     row_miss_count: usize,
     refresh_count: usize,
     refresh_cycle_count: u64,
@@ -549,6 +567,8 @@ impl DramActivityProfile {
         }
         for bank in banks.values() {
             profile.row_hit_count += bank.row_hit_count();
+            profile.read_row_hit_count += bank.read_row_hit_count();
+            profile.write_row_hit_count += bank.write_row_hit_count();
             profile.row_miss_count += bank.row_miss_count();
             profile.refresh_count += bank.refresh_count();
             profile.refresh_cycle_count += bank.refresh_cycle_count();
@@ -603,6 +623,8 @@ impl DramActivityProfile {
             .max(later.max_pending_persistent_writes);
         self.max_pending_nvm_reads = self.max_pending_nvm_reads.max(later.max_pending_nvm_reads);
         self.row_hit_count += later.row_hit_count;
+        self.read_row_hit_count += later.read_row_hit_count;
+        self.write_row_hit_count += later.write_row_hit_count;
         self.row_miss_count += later.row_miss_count;
         self.refresh_count += later.refresh_count;
         self.refresh_cycle_count += later.refresh_cycle_count;
@@ -673,6 +695,14 @@ impl DramActivityProfile {
 
     pub const fn row_hit_count(&self) -> usize {
         self.row_hit_count
+    }
+
+    pub const fn read_row_hit_count(&self) -> usize {
+        self.read_row_hit_count
+    }
+
+    pub const fn write_row_hit_count(&self) -> usize {
+        self.write_row_hit_count
     }
 
     pub const fn row_miss_count(&self) -> usize {
@@ -807,6 +837,8 @@ impl DramActivityProfile {
             .max_pending_nvm_reads
             .max(profile.max_pending_nvm_reads);
         self.row_hit_count += profile.row_hit_count;
+        self.read_row_hit_count += profile.read_row_hit_count;
+        self.write_row_hit_count += profile.write_row_hit_count;
         self.row_miss_count += profile.row_miss_count;
         self.refresh_count += profile.refresh_count;
         self.refresh_cycle_count += profile.refresh_cycle_count;
@@ -1246,6 +1278,14 @@ impl DramMemoryActivityProfile {
 
     pub const fn row_hit_count(&self) -> usize {
         self.profile.row_hit_count()
+    }
+
+    pub const fn read_row_hit_count(&self) -> usize {
+        self.profile.read_row_hit_count()
+    }
+
+    pub const fn write_row_hit_count(&self) -> usize {
+        self.profile.write_row_hit_count()
     }
 
     pub const fn row_miss_count(&self) -> usize {
