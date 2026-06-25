@@ -195,35 +195,62 @@ struct CpuRatioInputs {
 
 fn append_gem5_cpu_ratio_stats(output: &mut String, snapshot: &StatSnapshot) {
     let mut cpus = BTreeMap::<String, CpuRatioInputs>::new();
+    let mut commit_stats0_instructions = BTreeMap::<String, u64>::new();
     for sample in snapshot.samples() {
         if let Some(prefix) = sample.path().strip_suffix(".numInsts") {
             if is_gem5_cpu_prefix(prefix) {
                 cpus.entry(prefix.to_string()).or_default().instructions = Some(sample.value());
             }
-        } else if let Some(prefix) = sample.path().strip_suffix(".numCycles") {
+        }
+        if let Some(prefix) = sample.path().strip_suffix(".numCycles") {
             if is_gem5_cpu_prefix(prefix) {
                 cpus.entry(prefix.to_string()).or_default().cycles = Some(sample.value());
             }
         }
+        if let Some(prefix) = sample.path().strip_suffix(".commitStats0.numInsts") {
+            if is_gem5_cpu_prefix(prefix) {
+                commit_stats0_instructions.insert(prefix.to_string(), sample.value());
+            }
+        }
     }
-    for (prefix, inputs) in cpus {
+    for (prefix, inputs) in &cpus {
         let (Some(instructions), Some(cycles)) = (inputs.instructions, inputs.cycles) else {
             continue;
         };
-        if instructions == 0 || cycles == 0 {
-            continue;
-        }
-        output.push_str(&format!(
-            "{:<64} {:>20} # kind=derived unit=(Count/Cycle) reset_policy=monotonic\n",
-            format!("{prefix}.ipc"),
-            format_fixed_ratio(instructions, cycles)
-        ));
-        output.push_str(&format!(
-            "{:<64} {:>20} # kind=derived unit=(Cycle/Count) reset_policy=monotonic\n",
-            format!("{prefix}.cpi"),
-            format_fixed_ratio(cycles, instructions)
-        ));
+        append_gem5_cpu_ratio_stat_pair(output, prefix, instructions, cycles);
     }
+    for (prefix, instructions) in commit_stats0_instructions {
+        let Some(cycles) = cpus.get(&prefix).and_then(|inputs| inputs.cycles) else {
+            continue;
+        };
+        append_gem5_cpu_ratio_stat_pair(
+            output,
+            &format!("{prefix}.commitStats0"),
+            instructions,
+            cycles,
+        );
+    }
+}
+
+fn append_gem5_cpu_ratio_stat_pair(
+    output: &mut String,
+    prefix: &str,
+    instructions: u64,
+    cycles: u64,
+) {
+    if instructions == 0 || cycles == 0 {
+        return;
+    }
+    output.push_str(&format!(
+        "{:<64} {:>20} # kind=derived unit=(Count/Cycle) reset_policy=monotonic\n",
+        format!("{prefix}.ipc"),
+        format_fixed_ratio(instructions, cycles)
+    ));
+    output.push_str(&format!(
+        "{:<64} {:>20} # kind=derived unit=(Cycle/Count) reset_policy=monotonic\n",
+        format!("{prefix}.cpi"),
+        format_fixed_ratio(cycles, instructions)
+    ));
 }
 
 fn is_gem5_cpu_prefix(prefix: &str) -> bool {
@@ -274,11 +301,17 @@ mod tests {
         let cpu0_cycles = stats
             .register_counter("system.cpu0.numCycles", "Cycle")
             .unwrap();
+        let cpu0_commit_insts = stats
+            .register_counter("system.cpu0.commitStats0.numInsts", "Count")
+            .unwrap();
         let cpu_named_insts = stats
             .register_counter("system.cpu.main.numInsts", "Count")
             .unwrap();
         let cpu_named_cycles = stats
             .register_counter("system.cpu.main.numCycles", "Cycle")
+            .unwrap();
+        let cpu_named_commit_insts = stats
+            .register_counter("system.cpu.main.commitStats0.numInsts", "Count")
             .unwrap();
         let cpu1_insts = stats
             .register_counter("system.cpu1.numInsts", "Count")
@@ -286,12 +319,18 @@ mod tests {
         let cpu1_cycles = stats
             .register_counter("system.cpu1.numCycles", "Cycle")
             .unwrap();
+        let cpu1_commit_insts = stats
+            .register_counter("system.cpu1.commitStats0.numInsts", "Count")
+            .unwrap();
         stats.increment(cpu0_insts, 3).unwrap();
         stats.increment(cpu0_cycles, 12).unwrap();
+        stats.increment(cpu0_commit_insts, 3).unwrap();
         stats.increment(cpu_named_insts, 7).unwrap();
         stats.increment(cpu_named_cycles, 14).unwrap();
+        stats.increment(cpu_named_commit_insts, 7).unwrap();
         stats.increment(cpu1_insts, 5).unwrap();
         stats.increment(cpu1_cycles, 0).unwrap();
+        stats.increment(cpu1_commit_insts, 5).unwrap();
 
         let text = stats_snapshot_text(&stats.snapshot(0));
 
@@ -299,7 +338,11 @@ mod tests {
         assert!(text.contains("0.250000"));
         assert!(text.contains("system.cpu0.cpi"));
         assert!(text.contains("4.000000"));
+        assert!(text.contains("system.cpu0.commitStats0.ipc"));
+        assert!(text.contains("system.cpu0.commitStats0.cpi"));
         assert!(!text.contains("system.cpu.main.ipc"));
+        assert!(!text.contains("system.cpu.main.commitStats0.ipc"));
         assert!(!text.contains("system.cpu1.ipc"));
+        assert!(!text.contains("system.cpu1.commitStats0.ipc"));
     }
 }

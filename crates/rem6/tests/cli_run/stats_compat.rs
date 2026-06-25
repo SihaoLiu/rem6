@@ -166,6 +166,28 @@ fn rem6_run_text_stats_emit_gem5_cpu_instruction_cycle_and_rate_aliases() {
         text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.cycles")
     );
     assert_eq!(
+        text_stat_decimal(&stdout, "system.cpu.commitStats0.ipc"),
+        fixed_ratio(
+            text_stat_value(&stdout, "system.cpu.commitStats0.numInsts"),
+            text_stat_value(&stdout, "system.cpu.numCycles")
+        )
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.cpu.commitStats0.cpi"),
+        fixed_ratio(
+            text_stat_value(&stdout, "system.cpu.numCycles"),
+            text_stat_value(&stdout, "system.cpu.commitStats0.numInsts")
+        )
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.commitStats0.ipc").contains("unit=(Count/Cycle)"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.commitStats0.cpi").contains("unit=(Cycle/Count)"),
+        "{stdout}"
+    );
+    assert_eq!(
         text_stat_decimal(&stdout, "system.cpu.ipc"),
         fixed_ratio(
             text_stat_value(&stdout, "system.cpu.numInsts"),
@@ -179,6 +201,46 @@ fn rem6_run_text_stats_emit_gem5_cpu_instruction_cycle_and_rate_aliases() {
             text_stat_value(&stdout, "system.cpu.numInsts")
         )
     );
+}
+
+#[test]
+fn rem6_run_json_stats_omit_text_only_gem5_cpu_rate_aliases() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("gem5-cpu-rate-aliases-json", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(stdout.contains("\"path\":\"system.cpu.numCycles\""));
+    assert!(stdout.contains("\"path\":\"system.cpu.commitStats0.numInsts\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.ipc\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.cpi\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.commitStats0.ipc\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.commitStats0.cpi\""));
 }
 
 #[test]
@@ -237,6 +299,20 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
             text_stat_value(&stdout, &format!("sim.cpu{cpu}.pipeline.in_order.cycles"))
         );
         assert_eq!(
+            text_stat_decimal(&stdout, &format!("system.cpu{cpu}.commitStats0.ipc")),
+            fixed_ratio(
+                text_stat_value(&stdout, &format!("system.cpu{cpu}.commitStats0.numInsts")),
+                text_stat_value(&stdout, &format!("system.cpu{cpu}.numCycles"))
+            )
+        );
+        assert_eq!(
+            text_stat_decimal(&stdout, &format!("system.cpu{cpu}.commitStats0.cpi")),
+            fixed_ratio(
+                text_stat_value(&stdout, &format!("system.cpu{cpu}.numCycles")),
+                text_stat_value(&stdout, &format!("system.cpu{cpu}.commitStats0.numInsts"))
+            )
+        );
+        assert_eq!(
             text_stat_decimal(&stdout, &format!("system.cpu{cpu}.ipc")),
             fixed_ratio(
                 text_stat_value(&stdout, &format!("system.cpu{cpu}.numInsts")),
@@ -258,6 +334,8 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
     assert!(!has_text_stat(&stdout, "system.cpu.commitStats0.numOps"));
     assert!(!has_text_stat(&stdout, "system.cpu.ipc"));
     assert!(!has_text_stat(&stdout, "system.cpu.cpi"));
+    assert!(!has_text_stat(&stdout, "system.cpu.commitStats0.ipc"));
+    assert!(!has_text_stat(&stdout, "system.cpu.commitStats0.cpi"));
 }
 
 #[test]
