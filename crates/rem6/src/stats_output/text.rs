@@ -43,6 +43,7 @@ fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) 
         }
     }
     append_gem5_cpu_ratio_stats(output, snapshot);
+    append_gem5_l1_cache_alias_stats(output, snapshot);
 }
 
 fn format_sim_seconds(final_tick: u64, sim_freq: u64) -> String {
@@ -58,6 +59,46 @@ fn snapshot_value(snapshot: &StatSnapshot, path: &str) -> Option<u64> {
         .iter()
         .find(|sample| sample.path() == path)
         .map(|sample| sample.value())
+}
+
+fn append_gem5_l1_cache_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
+    if snapshot_value(snapshot, "sim.cores") != Some(1) {
+        return;
+    }
+    append_gem5_l1_cache_alias_stats_for(
+        output,
+        snapshot,
+        "system.cpu.icache",
+        "sim.instruction_cache",
+    );
+    append_gem5_l1_cache_alias_stats_for(output, snapshot, "system.cpu.dcache", "sim.data_cache");
+}
+
+fn append_gem5_l1_cache_alias_stats_for(
+    output: &mut String,
+    snapshot: &StatSnapshot,
+    alias_prefix: &str,
+    source_prefix: &str,
+) {
+    let (Some(hits), Some(scheduled_misses), Some(coalesced_misses)) = (
+        snapshot_value(snapshot, &format!("{source_prefix}.bank.immediate_hits")),
+        snapshot_value(snapshot, &format!("{source_prefix}.bank.scheduled_misses")),
+        snapshot_value(snapshot, &format!("{source_prefix}.bank.coalesced_misses")),
+    ) else {
+        return;
+    };
+    append_derived_count_stat(output, &format!("{alias_prefix}.overallHits"), hits);
+    append_derived_count_stat(
+        output,
+        &format!("{alias_prefix}.overallMisses"),
+        scheduled_misses.saturating_add(coalesced_misses),
+    );
+}
+
+fn append_derived_count_stat(output: &mut String, path: &str, value: u64) {
+    output.push_str(&format!(
+        "{path:<64} {value:>20} # kind=derived unit=Count reset_policy=monotonic\n"
+    ));
 }
 
 #[derive(Clone, Copy, Debug, Default)]

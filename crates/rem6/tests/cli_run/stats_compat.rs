@@ -261,6 +261,168 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
 }
 
 #[test]
+fn rem6_run_text_stats_omit_ambiguous_gem5_l1_cache_aliases_for_multicore() {
+    let path = gem5_l1_cache_alias_binary("gem5-l1-cache-aliases-multicore");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "2",
+            "--instruction-cache-protocol",
+            "msi",
+            "--data-cache-protocol",
+            "msi",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(text_stat_value(&stdout, "sim.instruction_cache.bank.accepted") > 0);
+    assert!(text_stat_value(&stdout, "sim.data_cache.bank.accepted") > 0);
+    assert!(!has_text_stat(&stdout, "system.cpu.icache.overallHits"));
+    assert!(!has_text_stat(&stdout, "system.cpu.icache.overallMisses"));
+    assert!(!has_text_stat(&stdout, "system.cpu.dcache.overallHits"));
+    assert!(!has_text_stat(&stdout, "system.cpu.dcache.overallMisses"));
+}
+
+#[test]
+fn rem6_run_text_stats_emit_gem5_l1_cache_hit_miss_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-l1-cache-aliases");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--instruction-cache-protocol",
+            "msi",
+            "--data-cache-protocol",
+            "msi",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let icache_hits = text_stat_value(&stdout, "sim.instruction_cache.bank.immediate_hits");
+    let icache_misses = text_stat_value(&stdout, "sim.instruction_cache.bank.scheduled_misses")
+        + text_stat_value(&stdout, "sim.instruction_cache.bank.coalesced_misses");
+    assert!(icache_hits > 0, "{stdout}");
+    assert!(icache_misses > 0, "{stdout}");
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.icache.overallHits"),
+        icache_hits
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.icache.overallMisses"),
+        icache_misses
+    );
+
+    let dcache_hits = text_stat_value(&stdout, "sim.data_cache.bank.immediate_hits");
+    let dcache_misses = text_stat_value(&stdout, "sim.data_cache.bank.scheduled_misses")
+        + text_stat_value(&stdout, "sim.data_cache.bank.coalesced_misses");
+    assert!(dcache_hits > 0, "{stdout}");
+    assert!(dcache_misses > 0, "{stdout}");
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.dcache.overallHits"),
+        dcache_hits
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.dcache.overallMisses"),
+        dcache_misses
+    );
+}
+
+#[test]
+fn rem6_run_json_stats_omit_text_only_gem5_l1_cache_hit_miss_aliases() {
+    let path = gem5_l1_cache_alias_binary("gem5-l1-cache-aliases-json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "160",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--instruction-cache-protocol",
+            "msi",
+            "--data-cache-protocol",
+            "msi",
+            "--dump-memory",
+            "0x80000028:8",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert_stat_greater_than(
+        &stdout,
+        "sim.instruction_cache.bank.immediate_hits",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.data_cache.bank.immediate_hits",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert!(!stdout.contains("\"path\":\"system.cpu.icache.overallHits\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.icache.overallMisses\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.dcache.overallHits\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.dcache.overallMisses\""));
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_seconds_and_ops_aliases() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
@@ -1393,6 +1555,26 @@ fn text_stat_decimal(stdout: &str, path: &str) -> String {
 fn fixed_ratio(numerator: u64, denominator: u64) -> String {
     assert_ne!(denominator, 0);
     format!("{:.6}", numerator as f64 / denominator as f64)
+}
+
+fn gem5_l1_cache_alias_binary(name: &str) -> std::path::PathBuf {
+    const DATA_OFFSET: usize = 32;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        i_type(0, 2, 0x3, 7, 0x03),                  // ld x7, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),                  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),                        // sd x6, 8(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET, 0);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    program.extend_from_slice(&[0; 16]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    temp_binary(name, &elf)
 }
 
 fn text_stat_value(stdout: &str, path: &str) -> u64 {
