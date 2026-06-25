@@ -292,24 +292,96 @@ fn rem6_run_data_cache_prefetcher_counts_prefetched_line_as_useful() {
     assert!(stdout.contains("\"data_loads\":2"));
     assert!(stdout.contains("\"data_cache_prefetch_issued\":2"));
     assert!(stdout.contains("\"data_cache_prefetch_useful\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_demand_mshr_misses\":1"));
+    assert!(stdout.contains("\"data_cache_prefetch_accuracy_ppm\":500000"));
+    assert!(stdout.contains("\"data_cache_prefetch_coverage_ppm\":500000"));
     let json: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(
         json_u64(&json, "/memory_resources/cache/prefetch_useful"),
         1
     );
     assert_eq!(
+        json_u64(&json, "/memory_resources/cache/prefetch_demand_mshr_misses"),
+        1
+    );
+    assert_eq!(
+        json_u64(&json, "/memory_resources/cache/prefetch_accuracy_ppm"),
+        500_000
+    );
+    assert_eq!(
+        json_u64(&json, "/memory_resources/cache/prefetch_coverage_ppm"),
+        500_000
+    );
+    assert_eq!(
         json_u64(&json, "/memory_resources/cache/data/prefetch_useful"),
         1
     );
     assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/cache/data/prefetch_demand_mshr_misses"
+        ),
+        1
+    );
+    assert_eq!(
+        json_u64(&json, "/memory_resources/cache/data/prefetch_accuracy_ppm"),
+        500_000
+    );
+    assert_eq!(
+        json_u64(&json, "/memory_resources/cache/data/prefetch_coverage_ppm"),
+        500_000
+    );
+    assert_eq!(
         json_u64(&json, "/memory_resources/cache/data/l1/prefetch_useful"),
         1
+    );
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/cache/data/l1/prefetch_demand_mshr_misses"
+        ),
+        1
+    );
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/cache/data/l1/prefetch_accuracy_ppm"
+        ),
+        500_000
+    );
+    assert_eq!(
+        json_u64(
+            &json,
+            "/memory_resources/cache/data/l1/prefetch_coverage_ppm"
+        ),
+        500_000
     );
     assert_stat(
         &stdout,
         "sim.data_cache.prefetch.useful",
         "Count",
         1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.prefetch.demand_mshr_misses",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.prefetch.accuracy_ppm",
+        "Ppm",
+        500_000,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.data_cache.prefetch.coverage_ppm",
+        "Ppm",
+        500_000,
         "monotonic",
     );
     assert_stat(
@@ -324,6 +396,27 @@ fn rem6_run_data_cache_prefetcher_counts_prefetched_line_as_useful() {
         "sim.memory.resources.cache.data.l1.prefetch.useful",
         "Count",
         1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.prefetch.demand_mshr_misses",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.prefetch.accuracy_ppm",
+        "Ppm",
+        500_000,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.cache.prefetch.coverage_ppm",
+        "Ppm",
+        500_000,
         "monotonic",
     );
 }
@@ -412,8 +505,18 @@ fn rem6_run_data_cache_prefetcher_drops_unbacked_next_line_before_issue() {
     assert!(stdout.contains("\"data_cache_runs\":1"));
     assert!(stdout.contains("\"data_cache_prefetch_identified\":0"));
     assert!(stdout.contains("\"data_cache_prefetch_issued\":0"));
+    assert!(stdout.contains("\"data_cache_prefetch_accuracy_ppm\":null"));
+    assert!(stdout.contains("\"data_cache_prefetch_coverage_ppm\":0"));
     assert!(stdout.contains("\"data_cache_prefetch_queue_enqueued\":0"));
     assert!(stdout.contains("\"data_cache_prefetch_queue_issued\":0"));
+    assert!(!stdout.contains("\"path\":\"sim.data_cache.prefetch.accuracy_ppm\""));
+    assert_stat(
+        &stdout,
+        "sim.data_cache.prefetch.coverage_ppm",
+        "Ppm",
+        0,
+        "monotonic",
+    );
 }
 
 #[test]

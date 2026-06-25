@@ -251,6 +251,10 @@ fn emit_cache_resource_stats(
         ("prefetch.identified", summary.prefetch_identified),
         ("prefetch.issued", summary.prefetch_issued),
         ("prefetch.useful", summary.prefetch_useful),
+        (
+            "prefetch.demand_mshr_misses",
+            summary.prefetch_demand_mshr_misses,
+        ),
         ("prefetch.span_page", summary.prefetch_span_page),
         ("prefetch.in_cache", summary.prefetch_in_cache),
         ("prefetch.queue.enqueued", summary.prefetch_queue_enqueued),
@@ -279,6 +283,24 @@ fn emit_cache_resource_stats(
             "Count",
             StatResetPolicy::Monotonic,
             value,
+        )?;
+    }
+    if let Some(accuracy_ppm) = summary.prefetch_accuracy_ppm {
+        increment_stat(
+            stats,
+            &format!("{prefix}.prefetch.accuracy_ppm"),
+            "Ppm",
+            StatResetPolicy::Monotonic,
+            accuracy_ppm,
+        )?;
+    }
+    if let Some(coverage_ppm) = summary.prefetch_coverage_ppm {
+        increment_stat(
+            stats,
+            &format!("{prefix}.prefetch.coverage_ppm"),
+            "Ppm",
+            StatResetPolicy::Monotonic,
+            coverage_ppm,
         )?;
     }
     Ok(())

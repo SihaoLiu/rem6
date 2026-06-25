@@ -1414,6 +1414,73 @@ fn rem6_run_json_stats_emit_gem5_l1_prefetcher_pf_useful_alias() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_gem5_l1_prefetcher_accuracy_and_coverage_aliases() {
+    let path = useful_data_prefetch_binary("gem5-l1-prefetcher-accuracy-coverage-aliases");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "200",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--cores",
+            "1",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let dcache_useful = text_stat_value(&stdout, "sim.data_cache.prefetch.useful");
+    let dcache_issued = text_stat_value(&stdout, "sim.data_cache.prefetch.issued");
+    let dcache_demand_mshr_misses =
+        text_stat_value(&stdout, "sim.data_cache.prefetch.demand_mshr_misses");
+    assert_eq!(dcache_useful, 1, "{stdout}");
+    assert_eq!(dcache_issued, 2, "{stdout}");
+    assert_eq!(dcache_demand_mshr_misses, 1, "{stdout}");
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.dcache.prefetcher.demandMshrMisses"),
+        dcache_demand_mshr_misses
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.cpu.dcache.prefetcher.accuracy"),
+        fixed_ratio(dcache_useful, dcache_issued)
+    );
+    assert_eq!(
+        text_stat_decimal(&stdout, "system.cpu.dcache.prefetcher.coverage"),
+        fixed_ratio(
+            dcache_useful,
+            dcache_useful.saturating_add(dcache_demand_mshr_misses)
+        )
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.dcache.prefetcher.accuracy").contains("unit=Ratio"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.dcache.prefetcher.coverage").contains("unit=Ratio"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("system.cpu.icache.prefetcher.accuracy"));
+    assert!(!stdout.contains("system.cpu.icache.prefetcher.coverage"));
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_l1_icache_prefetcher_pf_useful_alias() {
     let path = useful_instruction_prefetch_binary("gem5-l1-icache-prefetcher-pf-useful-alias");
 

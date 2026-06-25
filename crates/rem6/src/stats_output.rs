@@ -491,6 +491,31 @@ pub(super) fn run_stats_output(
         )?;
         increment_stat(
             &mut stats,
+            "sim.instruction_cache.prefetch.demand_mshr_misses",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.instruction_cache.prefetch_demand_mshr_misses,
+        )?;
+        if let Some(accuracy_ppm) = execution.instruction_cache.prefetch_accuracy_ppm {
+            increment_stat(
+                &mut stats,
+                "sim.instruction_cache.prefetch.accuracy_ppm",
+                "Ppm",
+                StatResetPolicy::Monotonic,
+                accuracy_ppm,
+            )?;
+        }
+        if let Some(coverage_ppm) = execution.instruction_cache.prefetch_coverage_ppm {
+            increment_stat(
+                &mut stats,
+                "sim.instruction_cache.prefetch.coverage_ppm",
+                "Ppm",
+                StatResetPolicy::Monotonic,
+                coverage_ppm,
+            )?;
+        }
+        increment_stat(
+            &mut stats,
             "sim.instruction_cache.prefetch.span_page",
             "Count",
             StatResetPolicy::Monotonic,
@@ -589,6 +614,31 @@ pub(super) fn run_stats_output(
             StatResetPolicy::Monotonic,
             execution.data_cache.prefetch_useful,
         )?;
+        increment_stat(
+            &mut stats,
+            "sim.data_cache.prefetch.demand_mshr_misses",
+            "Count",
+            StatResetPolicy::Monotonic,
+            execution.data_cache.prefetch_demand_mshr_misses,
+        )?;
+        if let Some(accuracy_ppm) = execution.data_cache.prefetch_accuracy_ppm {
+            increment_stat(
+                &mut stats,
+                "sim.data_cache.prefetch.accuracy_ppm",
+                "Ppm",
+                StatResetPolicy::Monotonic,
+                accuracy_ppm,
+            )?;
+        }
+        if let Some(coverage_ppm) = execution.data_cache.prefetch_coverage_ppm {
+            increment_stat(
+                &mut stats,
+                "sim.data_cache.prefetch.coverage_ppm",
+                "Ppm",
+                StatResetPolicy::Monotonic,
+                coverage_ppm,
+            )?;
+        }
         increment_stat(
             &mut stats,
             "sim.data_cache.prefetch.span_page",

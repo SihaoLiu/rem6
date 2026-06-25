@@ -94,6 +94,9 @@ pub(crate) struct CliDataCachePrefetchSummary {
     pub(crate) identified: u64,
     pub(crate) issued: u64,
     pub(crate) useful: u64,
+    pub(crate) demand_mshr_misses: u64,
+    pub(crate) accuracy_ppm: Option<u64>,
+    pub(crate) coverage_ppm: Option<u64>,
     pub(crate) span_page: u64,
     pub(crate) in_cache: u64,
     pub(crate) queue_enqueued: u64,
@@ -122,6 +125,9 @@ pub(crate) struct CliDataCacheSummary {
     pub(crate) prefetch_identified: u64,
     pub(crate) prefetch_issued: u64,
     pub(crate) prefetch_useful: u64,
+    pub(crate) prefetch_demand_mshr_misses: u64,
+    pub(crate) prefetch_accuracy_ppm: Option<u64>,
+    pub(crate) prefetch_coverage_ppm: Option<u64>,
     pub(crate) prefetch_span_page: u64,
     pub(crate) prefetch_in_cache: u64,
     pub(crate) prefetch_queue_enqueued: u64,
@@ -188,6 +194,9 @@ impl CliDataCacheSummary {
             prefetch_identified: 0,
             prefetch_issued: 0,
             prefetch_useful: 0,
+            prefetch_demand_mshr_misses: 0,
+            prefetch_accuracy_ppm: None,
+            prefetch_coverage_ppm: None,
             prefetch_span_page: 0,
             prefetch_in_cache: 0,
             prefetch_queue_enqueued: 0,
@@ -207,6 +216,9 @@ impl CliDataCacheSummary {
         self.prefetch_identified = summary.identified;
         self.prefetch_issued = summary.issued;
         self.prefetch_useful = summary.useful;
+        self.prefetch_demand_mshr_misses = summary.demand_mshr_misses;
+        self.prefetch_accuracy_ppm = summary.accuracy_ppm;
+        self.prefetch_coverage_ppm = summary.coverage_ppm;
         self.prefetch_span_page = summary.span_page;
         self.prefetch_in_cache = summary.in_cache;
         self.prefetch_queue_enqueued = summary.queue_enqueued;
@@ -503,7 +515,18 @@ impl CliDataCacheRuntime {
         if request.line_layout() != self.layout {
             return None;
         }
+        let should_record_demand_mshr_miss = self.prefetch.is_some()
+            && is_cache_prefetch_source(request)
+            && !self.contains_line(self.layout.line_address(request.line_address()));
         let backing_dram_access_count = self.ensure_backing(memory, lower_caches, tick, request)?;
+        if should_record_demand_mshr_miss {
+            if let Some(prefetch) = self.prefetch.as_ref() {
+                prefetch
+                    .lock()
+                    .expect("CLI data cache prefetch lock")
+                    .record_demand_mshr_miss();
+            }
+        }
 
         let outcome = self
             .respond_inner(CliDataCacheResponseContext {
@@ -1245,6 +1268,10 @@ impl CliDataCachePrefetchRuntime {
         Ok(())
     }
 
+    fn record_demand_mshr_miss(&mut self) {
+        self.queue.record_demand_mshr_miss();
+    }
+
     fn clear_issued_lines(&mut self) {
         self.issued_lines.clear();
         self.pending_useful_lines.clear();
@@ -1256,6 +1283,9 @@ impl CliDataCachePrefetchRuntime {
             identified: stats.identified_prefetches(),
             issued: stats.issued_prefetches(),
             useful: stats.useful_prefetches(),
+            demand_mshr_misses: stats.demand_mshr_misses(),
+            accuracy_ppm: stats.accuracy_ppm().map(u64::from),
+            coverage_ppm: stats.coverage_ppm().map(u64::from),
             span_page: stats.span_page_prefetches(),
             in_cache: stats.in_cache_drops(),
             queue_enqueued: stats.prefetch_queue().enqueued(),

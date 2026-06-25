@@ -47,6 +47,7 @@ fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) 
     append_gem5_dram_interface_latency_stats(output, snapshot);
     append_gem5_cpu_ratio_stats(output, snapshot);
     append_gem5_l1_cache_alias_stats(output, snapshot);
+    append_gem5_l1_prefetcher_formula_alias_stats(output, snapshot);
     append_gem5_shared_cache_alias_stats(
         output,
         snapshot,
@@ -214,6 +215,46 @@ fn append_gem5_cache_hit_miss_alias_stats(
             misses,
             accesses,
         );
+    }
+}
+
+fn append_gem5_l1_prefetcher_formula_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
+    append_gem5_l1_prefetcher_formula_alias_stats_for(output, snapshot, "system.cpu.icache");
+    append_gem5_l1_prefetcher_formula_alias_stats_for(output, snapshot, "system.cpu.dcache");
+}
+
+fn append_gem5_l1_prefetcher_formula_alias_stats_for(
+    output: &mut String,
+    snapshot: &StatSnapshot,
+    alias_prefix: &str,
+) {
+    let useful = snapshot_value(snapshot, &format!("{alias_prefix}.prefetcher.pfUseful"));
+    let issued = snapshot_value(snapshot, &format!("{alias_prefix}.prefetcher.pfIssued"));
+    if let (Some(useful), Some(issued)) = (useful, issued) {
+        if issued != 0 {
+            append_derived_ratio_stat(
+                output,
+                &format!("{alias_prefix}.prefetcher.accuracy"),
+                useful,
+                issued,
+            );
+        }
+    }
+
+    let demand_mshr_misses = snapshot_value(
+        snapshot,
+        &format!("{alias_prefix}.prefetcher.demandMshrMisses"),
+    );
+    if let (Some(useful), Some(demand_mshr_misses)) = (useful, demand_mshr_misses) {
+        let denominator = useful.saturating_add(demand_mshr_misses);
+        if denominator != 0 {
+            append_derived_ratio_stat(
+                output,
+                &format!("{alias_prefix}.prefetcher.coverage"),
+                useful,
+                denominator,
+            );
+        }
     }
 }
 

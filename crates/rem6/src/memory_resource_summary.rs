@@ -35,6 +35,9 @@ pub(crate) struct Rem6CacheResourceSummary {
     pub(crate) prefetch_identified: u64,
     pub(crate) prefetch_issued: u64,
     pub(crate) prefetch_useful: u64,
+    pub(crate) prefetch_demand_mshr_misses: u64,
+    pub(crate) prefetch_accuracy_ppm: Option<u64>,
+    pub(crate) prefetch_coverage_ppm: Option<u64>,
     pub(crate) prefetch_span_page: u64,
     pub(crate) prefetch_in_cache: u64,
     pub(crate) prefetch_queue_enqueued: u64,
@@ -131,7 +134,7 @@ impl Rem6MemoryResourceInputs<'_> {
 
 impl Rem6CacheResourceSummary {
     fn from_cache_summaries<'a>(caches: impl IntoIterator<Item = &'a CliDataCacheSummary>) -> Self {
-        caches
+        let mut summary = caches
             .into_iter()
             .fold(Self::default(), |mut summary, cache| {
                 summary.activity = summary.activity.saturating_add(cache.runs);
@@ -160,6 +163,9 @@ impl Rem6CacheResourceSummary {
                 summary.prefetch_useful = summary
                     .prefetch_useful
                     .saturating_add(cache.prefetch_useful);
+                summary.prefetch_demand_mshr_misses = summary
+                    .prefetch_demand_mshr_misses
+                    .saturating_add(cache.prefetch_demand_mshr_misses);
                 summary.prefetch_span_page = summary
                     .prefetch_span_page
                     .saturating_add(cache.prefetch_span_page);
@@ -188,8 +194,24 @@ impl Rem6CacheResourceSummary {
                     .prefetch_translation_queue_dropped
                     .saturating_add(cache.prefetch_translation_queue_dropped);
                 summary
-            })
+            });
+        summary.prefetch_accuracy_ppm = ratio_ppm(summary.prefetch_useful, summary.prefetch_issued);
+        summary.prefetch_coverage_ppm = ratio_ppm(
+            summary.prefetch_useful,
+            summary
+                .prefetch_useful
+                .saturating_add(summary.prefetch_demand_mshr_misses),
+        );
+        summary
     }
+}
+
+fn ratio_ppm(numerator: u64, denominator: u64) -> Option<u64> {
+    if denominator == 0 {
+        return None;
+    }
+    let ppm = u128::from(numerator).saturating_mul(1_000_000) / u128::from(denominator);
+    Some(ppm.min(u128::from(u64::MAX)) as u64)
 }
 
 impl Rem6CacheResourceHierarchySummary {

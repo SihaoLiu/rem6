@@ -122,6 +122,31 @@ pub(super) fn emit_data_cache_prefetch_summary_stats(
     )?;
     increment_stat(
         stats,
+        &format!("{prefix}.prefetch.demand_mshr_misses"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_demand_mshr_misses,
+    )?;
+    if let Some(accuracy_ppm) = summary.prefetch_accuracy_ppm {
+        increment_stat(
+            stats,
+            &format!("{prefix}.prefetch.accuracy_ppm"),
+            "Ppm",
+            StatResetPolicy::Monotonic,
+            accuracy_ppm,
+        )?;
+    }
+    if let Some(coverage_ppm) = summary.prefetch_coverage_ppm {
+        increment_stat(
+            stats,
+            &format!("{prefix}.prefetch.coverage_ppm"),
+            "Ppm",
+            StatResetPolicy::Monotonic,
+            coverage_ppm,
+        )?;
+    }
+    increment_stat(
+        stats,
         &format!("{prefix}.prefetch.span_page"),
         "Count",
         StatResetPolicy::Monotonic,
@@ -211,6 +236,13 @@ pub(super) fn emit_gem5_cache_prefetcher_alias_stats(
         "Count",
         StatResetPolicy::Monotonic,
         summary.prefetch_useful,
+    )?;
+    increment_stat(
+        stats,
+        &format!("{cache_prefix}.prefetcher.demandMshrMisses"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_demand_mshr_misses,
     )?;
     increment_stat(
         stats,
