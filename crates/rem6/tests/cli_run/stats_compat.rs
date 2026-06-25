@@ -339,6 +339,16 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
         assert_eq!(
             text_stat_value(
                 &stdout,
+                &format!("system.cpu{cpu}.branchPred.condPredictedTaken")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.pipeline.in_order.conditional_branch_predicted_taken")
+            )
+        );
+        assert_eq!(
+            text_stat_value(
+                &stdout,
                 &format!("system.cpu{cpu}.branchPred.condIncorrect")
             ),
             text_stat_value(
@@ -350,6 +360,14 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
             text_stat_line(
                 &stdout,
                 &format!("system.cpu{cpu}.branchPred.condPredicted")
+            )
+            .contains("unit=Count"),
+            "{stdout}"
+        );
+        assert!(
+            text_stat_line(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.condPredictedTaken")
             )
             .contains("unit=Count"),
             "{stdout}"
@@ -375,6 +393,10 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
     assert!(!has_text_stat(
         &stdout,
         "system.cpu.branchPred.condPredicted"
+    ));
+    assert!(!has_text_stat(
+        &stdout,
+        "system.cpu.branchPred.condPredictedTaken"
     ));
     assert!(!has_text_stat(
         &stdout,
@@ -3469,6 +3491,8 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     let branch_mispredictions = json_u64_field(&stdout, "\"branch_mispredictions\":");
     let conditional_branch_predictions =
         json_u64_field(&stdout, "\"conditional_branch_predictions\":");
+    let conditional_branch_predicted_taken =
+        json_u64_field(&stdout, "\"conditional_branch_predicted_taken\":");
     let conditional_branch_mispredictions =
         json_u64_field(&stdout, "\"conditional_branch_mispredictions\":");
     let advanced = json_u64_field(&stdout, "\"advanced\":");
@@ -3492,6 +3516,13 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
             "sim.cpu0.pipeline.in_order.conditional_branch_predictions"
         ),
         conditional_branch_predictions
+    );
+    assert_eq!(
+        stat_value(
+            &stdout,
+            "sim.cpu0.pipeline.in_order.conditional_branch_predicted_taken"
+        ),
+        conditional_branch_predicted_taken
     );
     assert_eq!(
         stat_value(
@@ -3530,6 +3561,7 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     assert!(branch_predictions > 0);
     assert!(branch_mispredictions > 0);
     assert_eq!(conditional_branch_predictions, branch_predictions);
+    assert!(conditional_branch_predicted_taken <= conditional_branch_predictions);
     assert_eq!(conditional_branch_mispredictions, branch_mispredictions);
     assert!(advanced > 0);
     assert!(flushed > 0);
@@ -3539,19 +3571,42 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     assert!(stdout.contains("\"x5\":\"0x7\""));
     assert!(!stdout.contains("\"x6\":\"0x1\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.condPredicted\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.condPredictedTaken\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.condIncorrect\""));
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condPredicted\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condPredictedTaken\""));
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condIncorrect\""));
 }
 
 #[test]
+fn rem6_run_stats_emit_conditional_branch_predicted_taken_from_execution() {
+    let program = selected_branch_predictor_program();
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-conditional-branch-predicted-taken", &elf);
+
+    let stdout = selected_branch_predictor_stdout(&path, "basic");
+    let conditional_branch_predictions =
+        json_u64_field(&stdout, "\"conditional_branch_predictions\":");
+    let conditional_branch_predicted_taken =
+        json_u64_field(&stdout, "\"conditional_branch_predicted_taken\":");
+
+    assert_eq!(
+        stat_value(
+            &stdout,
+            "sim.cpu0.pipeline.in_order.conditional_branch_predicted_taken"
+        ),
+        conditional_branch_predicted_taken
+    );
+    assert!(conditional_branch_predictions > 0, "{stdout}");
+    assert!(conditional_branch_predicted_taken > 0, "{stdout}");
+    assert!(conditional_branch_predicted_taken <= conditional_branch_predictions);
+    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.condPredictedTaken\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condPredictedTaken\""));
+}
+
+#[test]
 fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
-    let program = riscv64_program(&[
-        0x0070_0293,          // addi x5, x0, 7
-        b_type(8, 0, 0, 0x0), // beq x0, x0, target
-        0x0010_0313,          // addi x6, x0, 1
-        0x0000_0073,          // ecall
-    ]);
+    let program = selected_branch_predictor_program();
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     let path = temp_binary("in-order-branch-prediction-aliases", &elf);
 
@@ -3563,7 +3618,11 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "80",
+            "160",
+            "--memory-route-delay",
+            "1",
+            "--riscv-branch-lookahead",
+            "2",
             "--stats-format",
             "text",
             "--execute",
@@ -3581,6 +3640,10 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
         &stdout,
         "sim.cpu0.pipeline.in_order.conditional_branch_predictions",
     );
+    let branch_predicted_taken = text_stat_value(
+        &stdout,
+        "sim.cpu0.pipeline.in_order.conditional_branch_predicted_taken",
+    );
     let branch_mispredictions = text_stat_value(
         &stdout,
         "sim.cpu0.pipeline.in_order.conditional_branch_mispredictions",
@@ -3591,11 +3654,20 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
         branch_predictions
     );
     assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.condPredictedTaken"),
+        branch_predicted_taken
+    );
+    assert_eq!(
         text_stat_value(&stdout, "system.cpu.branchPred.condIncorrect"),
         branch_mispredictions
     );
+    assert!(branch_predicted_taken > 0, "{stdout}");
     assert!(
         text_stat_line(&stdout, "system.cpu.branchPred.condPredicted").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.branchPred.condPredictedTaken").contains("unit=Count"),
         "{stdout}"
     );
     assert!(
@@ -3655,12 +3727,23 @@ fn rem6_run_text_stats_do_not_count_unconditional_jumps_as_cond_branch_predictio
     assert_eq!(
         text_stat_value(
             &stdout,
+            "sim.cpu0.pipeline.in_order.conditional_branch_predicted_taken"
+        ),
+        0
+    );
+    assert_eq!(
+        text_stat_value(
+            &stdout,
             "sim.cpu0.pipeline.in_order.conditional_branch_mispredictions"
         ),
         0
     );
     assert_eq!(
         text_stat_value(&stdout, "system.cpu.branchPred.condPredicted"),
+        0
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.condPredictedTaken"),
         0
     );
     assert_eq!(

@@ -461,6 +461,7 @@ pub struct Rem6CoreSummary {
     in_order_pipeline_branch_predictions: u64,
     in_order_pipeline_branch_mispredictions: u64,
     in_order_pipeline_conditional_branch_predictions: u64,
+    in_order_pipeline_conditional_branch_predicted_taken: u64,
     in_order_pipeline_conditional_branch_mispredictions: u64,
     in_order_pipeline_branch_prediction_flushes: u64,
     in_order_pipeline_redirects: u64,

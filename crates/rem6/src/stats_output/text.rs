@@ -81,6 +81,16 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 predictions,
             );
         }
+        if let Some(predicted_taken) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.pipeline.in_order.conditional_branch_predicted_taken"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.condPredictedTaken"),
+                predicted_taken,
+            );
+        }
         if let Some(mispredictions) = snapshot_value(
             snapshot,
             &format!("sim.cpu{cpu}.pipeline.in_order.conditional_branch_mispredictions"),

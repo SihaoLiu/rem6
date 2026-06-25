@@ -188,6 +188,16 @@ pub(super) fn emit_cpu_run_stats(
         increment_stat(
             stats,
             &format!(
+                "sim.cpu{}.pipeline.in_order.conditional_branch_predicted_taken",
+                core.cpu
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_conditional_branch_predicted_taken,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
                 "sim.cpu{}.pipeline.in_order.conditional_branch_mispredictions",
                 core.cpu
             ),

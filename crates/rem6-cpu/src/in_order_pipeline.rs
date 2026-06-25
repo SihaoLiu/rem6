@@ -595,6 +595,7 @@ pub struct InOrderPipelineCycleSummary {
     correct_branch_prediction_count: usize,
     branch_misprediction_count: usize,
     conditional_branch_prediction_count: usize,
+    conditional_branch_predicted_taken_count: usize,
     conditional_branch_misprediction_count: usize,
     branch_prediction_flushed_count: usize,
     state_changed: bool,
@@ -616,6 +617,7 @@ pub struct InOrderPipelineRunSummary {
     correct_branch_prediction_count: usize,
     branch_misprediction_count: usize,
     conditional_branch_prediction_count: usize,
+    conditional_branch_predicted_taken_count: usize,
     conditional_branch_misprediction_count: usize,
     branch_prediction_flushed_count: usize,
     redirect_count: usize,
@@ -637,6 +639,7 @@ impl InOrderPipelineRunSummary {
         correct_branch_prediction_count: 0,
         branch_misprediction_count: 0,
         conditional_branch_prediction_count: 0,
+        conditional_branch_predicted_taken_count: 0,
         conditional_branch_misprediction_count: 0,
         branch_prediction_flushed_count: 0,
         redirect_count: 0,
@@ -679,6 +682,8 @@ impl InOrderPipelineRunSummary {
             summary.branch_misprediction_count += cycle.branch_misprediction_count();
             summary.conditional_branch_prediction_count +=
                 cycle.conditional_branch_prediction_count();
+            summary.conditional_branch_predicted_taken_count +=
+                cycle.conditional_branch_predicted_taken_count();
             summary.conditional_branch_misprediction_count +=
                 cycle.conditional_branch_misprediction_count();
             summary.branch_prediction_flushed_count += cycle.branch_prediction_flushed_count();
@@ -713,6 +718,8 @@ impl InOrderPipelineRunSummary {
                 + other.branch_misprediction_count,
             conditional_branch_prediction_count: self.conditional_branch_prediction_count
                 + other.conditional_branch_prediction_count,
+            conditional_branch_predicted_taken_count: self.conditional_branch_predicted_taken_count
+                + other.conditional_branch_predicted_taken_count,
             conditional_branch_misprediction_count: self.conditional_branch_misprediction_count
                 + other.conditional_branch_misprediction_count,
             branch_prediction_flushed_count: self.branch_prediction_flushed_count
@@ -777,6 +784,10 @@ impl InOrderPipelineRunSummary {
 
     pub const fn conditional_branch_prediction_count(self) -> usize {
         self.conditional_branch_prediction_count
+    }
+
+    pub const fn conditional_branch_predicted_taken_count(self) -> usize {
+        self.conditional_branch_predicted_taken_count
     }
 
     pub const fn conditional_branch_misprediction_count(self) -> usize {
@@ -927,6 +938,10 @@ impl InOrderPipelineCycleSummary {
         self.conditional_branch_prediction_count
     }
 
+    pub const fn conditional_branch_predicted_taken_count(self) -> usize {
+        self.conditional_branch_predicted_taken_count
+    }
+
     pub const fn conditional_branch_misprediction_count(self) -> usize {
         self.conditional_branch_misprediction_count
     }
@@ -987,6 +1002,11 @@ impl InOrderPipelineCycleRecord {
             .iter()
             .filter(|prediction| prediction.is_conditional())
             .count();
+        let conditional_branch_predicted_taken_count = self
+            .branch_predictions
+            .iter()
+            .filter(|prediction| prediction.is_conditional() && prediction.predicted_taken())
+            .count();
         let conditional_branch_misprediction_count = self
             .branch_predictions
             .iter()
@@ -1010,6 +1030,7 @@ impl InOrderPipelineCycleRecord {
             correct_branch_prediction_count: branch_prediction_count - branch_misprediction_count,
             branch_misprediction_count,
             conditional_branch_prediction_count,
+            conditional_branch_predicted_taken_count,
             conditional_branch_misprediction_count,
             branch_prediction_flushed_count,
             state_changed: self.before.in_flight() != self.after.in_flight(),

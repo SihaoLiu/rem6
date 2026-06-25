@@ -154,6 +154,7 @@ fn in_order_pipeline_records_pc_only_branch_prediction() {
     assert_eq!(summary.correct_branch_prediction_count(), 1);
     assert_eq!(summary.branch_misprediction_count(), 0);
     assert_eq!(summary.conditional_branch_prediction_count(), 1);
+    assert_eq!(summary.conditional_branch_predicted_taken_count(), 1);
     assert_eq!(summary.conditional_branch_misprediction_count(), 0);
     assert_eq!(summary.branch_prediction_flushed_count(), 0);
 }
@@ -215,6 +216,7 @@ fn in_order_pipeline_prediction_mispredict_flushes_younger_work() {
     assert_eq!(summary.branch_prediction_count(), 1);
     assert_eq!(summary.branch_misprediction_count(), 1);
     assert_eq!(summary.conditional_branch_prediction_count(), 1);
+    assert_eq!(summary.conditional_branch_predicted_taken_count(), 0);
     assert_eq!(summary.conditional_branch_misprediction_count(), 1);
     assert_eq!(summary.branch_prediction_flushed_count(), 2);
 }
@@ -810,6 +812,7 @@ fn in_order_pipeline_prediction_summary_merges_disjoint_windows() {
     assert_eq!(merged.correct_branch_prediction_count(), 1);
     assert_eq!(merged.branch_misprediction_count(), 1);
     assert_eq!(merged.conditional_branch_prediction_count(), 1);
+    assert_eq!(merged.conditional_branch_predicted_taken_count(), 0);
     assert_eq!(merged.conditional_branch_misprediction_count(), 0);
     assert_eq!(merged.branch_prediction_flushed_count(), 2);
 }
