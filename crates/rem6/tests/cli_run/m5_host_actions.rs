@@ -488,6 +488,7 @@ fn rem6_run_emits_m5_checkpoint_host_action_detail_from_real_riscv_execution() {
         &[
             "branch-predictor",
             "fregs",
+            "gshare-branch-predictor",
             "hart-run-state",
             "in-order-pipeline",
             "pc",
@@ -570,6 +571,7 @@ fn rem6_run_emits_m5_dram_checkpoint_host_action_detail_from_real_riscv_executio
         &[
             "branch-predictor",
             "fregs",
+            "gshare-branch-predictor",
             "hart-run-state",
             "in-order-pipeline",
             "pc",

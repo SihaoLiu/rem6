@@ -25,6 +25,7 @@ pub use crate::gshare_predictor::{
     GShareBranchPredictorSnapshot, GShareHistory, GShareHistoryUpdate, GSharePrediction,
     GShareSquash, GShareThreadSnapshot, GShareTrainingUpdate,
 };
+pub use crate::gshare_predictor_checkpoint::GShareBranchPredictorCheckpointPayload;
 pub use crate::htm_transaction::{
     HtmAbortRecord, HtmActiveTransactionSnapshot, HtmBeginRecord, HtmCommitRecord, HtmFailureCause,
     HtmTransactionError, HtmTransactionSnapshot, HtmTransactionState, HtmTransactionUid,

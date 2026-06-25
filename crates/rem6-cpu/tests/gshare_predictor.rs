@@ -1,5 +1,6 @@
 use rem6_cpu::{
-    CpuId, GShareBranchPredictor, GShareBranchPredictorConfig, GShareBranchPredictorError,
+    CpuId, GShareBranchPredictor, GShareBranchPredictorCheckpointPayload,
+    GShareBranchPredictorConfig, GShareBranchPredictorError,
 };
 use rem6_memory::Address;
 
@@ -170,6 +171,47 @@ fn gshare_predictor_snapshot_restore_preserves_threads_counters_and_counts() {
     assert_eq!(predictor.snapshot().threads(), snapshot.threads());
     assert_eq!(predictor.lookup_count(), snapshot.lookup_count());
     assert_eq!(predictor.update_count(), snapshot.update_count());
+}
+
+#[test]
+fn gshare_checkpoint_payload_round_trips_snapshot() {
+    let mut predictor = gshare(2, 8, 2);
+    let cpu = CpuId::new(0);
+    let pc = Address::new(0x1000);
+    let prediction = predictor.predict(cpu, pc).unwrap();
+    predictor
+        .update_history(prediction.history(), true)
+        .unwrap();
+    predictor.train(prediction.history(), true, false).unwrap();
+    let snapshot = predictor.snapshot();
+
+    let payload = GShareBranchPredictorCheckpointPayload::from_snapshot(snapshot.clone()).unwrap();
+    let encoded = payload.encode();
+    let decoded = GShareBranchPredictorCheckpointPayload::decode(&encoded).unwrap();
+
+    assert_eq!(decoded.snapshot(), &snapshot);
+
+    let mut restored = gshare(2, 8, 2);
+    restored.restore(decoded.snapshot()).unwrap();
+    assert_eq!(restored.snapshot(), snapshot);
+}
+
+#[test]
+fn gshare_checkpoint_payload_rejects_truncated_payload() {
+    let predictor = gshare(1, 8, 2);
+    let mut encoded = GShareBranchPredictorCheckpointPayload::from_snapshot(predictor.snapshot())
+        .unwrap()
+        .encode();
+    let expected = encoded.len();
+    encoded.pop();
+
+    assert_eq!(
+        GShareBranchPredictorCheckpointPayload::decode(&encoded),
+        Err(GShareBranchPredictorError::InvalidCheckpointPayloadSize {
+            expected,
+            actual: expected - 1,
+        })
+    );
 }
 
 #[test]

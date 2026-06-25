@@ -4,8 +4,9 @@ use std::fmt;
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
 use rem6_cpu::{
-    BranchPredictorCheckpointPayload, BranchPredictorError, InOrderPipelineCheckpointPayload,
-    InOrderPipelineError, InOrderPipelineSnapshot, RiscvCore, RiscvHartRunState,
+    BranchPredictorCheckpointPayload, BranchPredictorError, GShareBranchPredictorCheckpointPayload,
+    GShareBranchPredictorError, InOrderPipelineCheckpointPayload, InOrderPipelineError,
+    InOrderPipelineSnapshot, RiscvCore, RiscvHartRunState,
 };
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvPmpConfig, RiscvPmpError, RiscvPmpSnapshot,
@@ -15,6 +16,7 @@ use rem6_memory::Address;
 
 const FREGS_CHUNK: &str = "fregs";
 const BRANCH_PREDICTOR_CHUNK: &str = "branch-predictor";
+const GSHARE_BRANCH_PREDICTOR_CHUNK: &str = "gshare-branch-predictor";
 const HART_RUN_STATE_CHUNK: &str = "hart-run-state";
 const IN_ORDER_PIPELINE_CHUNK: &str = "in-order-pipeline";
 const PC_CHUNK: &str = "pc";
@@ -38,6 +40,7 @@ pub struct RiscvCoreCheckpointRecord {
     hart_run_state: RiscvHartRunState,
     in_order_pipeline_snapshot: InOrderPipelineSnapshot,
     branch_predictor_payload: BranchPredictorCheckpointPayload,
+    gshare_branch_predictor_payload: GShareBranchPredictorCheckpointPayload,
 }
 
 struct RiscvCoreCheckpointRecordParts {
@@ -49,6 +52,7 @@ struct RiscvCoreCheckpointRecordParts {
     hart_run_state: RiscvHartRunState,
     in_order_pipeline_snapshot: InOrderPipelineSnapshot,
     branch_predictor_payload: BranchPredictorCheckpointPayload,
+    gshare_branch_predictor_payload: GShareBranchPredictorCheckpointPayload,
 }
 
 impl RiscvCoreCheckpointRecord {
@@ -67,6 +71,8 @@ impl RiscvCoreCheckpointRecord {
             hart_run_state: RiscvHartRunState::Started,
             in_order_pipeline_snapshot: RiscvCore::default_in_order_pipeline_snapshot(),
             branch_predictor_payload: RiscvCore::default_branch_predictor_checkpoint_payload(),
+            gshare_branch_predictor_payload:
+                RiscvCore::default_gshare_branch_predictor_checkpoint_payload(),
         })
     }
 
@@ -80,6 +86,7 @@ impl RiscvCoreCheckpointRecord {
             hart_run_state: parts.hart_run_state,
             in_order_pipeline_snapshot: parts.in_order_pipeline_snapshot,
             branch_predictor_payload: parts.branch_predictor_payload,
+            gshare_branch_predictor_payload: parts.gshare_branch_predictor_payload,
         }
     }
 
@@ -113,6 +120,10 @@ impl RiscvCoreCheckpointRecord {
 
     pub const fn branch_predictor_payload(&self) -> &BranchPredictorCheckpointPayload {
         &self.branch_predictor_payload
+    }
+
+    pub const fn gshare_branch_predictor_payload(&self) -> &GShareBranchPredictorCheckpointPayload {
+        &self.gshare_branch_predictor_payload
     }
 
     pub fn register(&self, register: Register) -> Option<u64> {
@@ -191,6 +202,11 @@ impl RiscvCoreCheckpointPort {
             BRANCH_PREDICTOR_CHUNK,
             encode_branch_predictor_payload(record.branch_predictor_payload()),
         )?;
+        registry.write_chunk(
+            &self.component,
+            GSHARE_BRANCH_PREDICTOR_CHUNK,
+            encode_gshare_branch_predictor_payload(record.gshare_branch_predictor_payload()),
+        )?;
         Ok(record)
     }
 
@@ -261,6 +277,19 @@ impl RiscvCoreCheckpointPort {
                     error,
                 },
             )?;
+        let gshare_branch_predictor_payload =
+            match registry.chunk(&self.component, GSHARE_BRANCH_PREDICTOR_CHUNK) {
+                Some(payload) => decode_gshare_branch_predictor_payload(&self.component, payload)?,
+                None => RiscvCore::default_gshare_branch_predictor_checkpoint_payload(),
+            };
+        self.core
+            .validate_gshare_branch_predictor_checkpoint_payload(&gshare_branch_predictor_payload)
+            .map_err(
+                |error| RiscvCoreCheckpointError::InvalidGShareBranchPredictorSnapshot {
+                    component: self.component.clone(),
+                    error,
+                },
+            )?;
 
         Ok(RiscvCoreCheckpointRecord::from_parts(
             RiscvCoreCheckpointRecordParts {
@@ -272,6 +301,7 @@ impl RiscvCoreCheckpointPort {
                 hart_run_state,
                 in_order_pipeline_snapshot,
                 branch_predictor_payload,
+                gshare_branch_predictor_payload,
             },
         ))
     }
@@ -318,6 +348,16 @@ impl RiscvCoreCheckpointPort {
                     error,
                 },
             )?;
+        self.core
+            .restore_gshare_branch_predictor_checkpoint_payload(
+                record.gshare_branch_predictor_payload().clone(),
+            )
+            .map_err(
+                |error| RiscvCoreCheckpointError::InvalidGShareBranchPredictorSnapshot {
+                    component: self.component.clone(),
+                    error,
+                },
+            )?;
         Ok(())
     }
 
@@ -331,6 +371,7 @@ impl RiscvCoreCheckpointPort {
             hart_run_state: self.core.hart_run_state(),
             in_order_pipeline_snapshot: self.core.in_order_pipeline_snapshot(),
             branch_predictor_payload: self.core.branch_predictor_checkpoint_payload(),
+            gshare_branch_predictor_payload: self.core.gshare_branch_predictor_checkpoint_payload(),
         })
     }
 }
@@ -446,6 +487,10 @@ pub enum RiscvCoreCheckpointError {
         component: CheckpointComponentId,
         error: BranchPredictorError,
     },
+    InvalidGShareBranchPredictorSnapshot {
+        component: CheckpointComponentId,
+        error: GShareBranchPredictorError,
+    },
 }
 
 impl fmt::Display for RiscvCoreCheckpointError {
@@ -494,6 +539,11 @@ impl fmt::Display for RiscvCoreCheckpointError {
             Self::InvalidBranchPredictorSnapshot { component, error } => write!(
                 formatter,
                 "RISC-V core checkpoint component {} has invalid branch predictor snapshot: {error}",
+                component.as_str()
+            ),
+            Self::InvalidGShareBranchPredictorSnapshot { component, error } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has invalid gshare branch predictor snapshot: {error}",
                 component.as_str()
             ),
         }
@@ -608,12 +658,30 @@ fn encode_branch_predictor_payload(payload: &BranchPredictorCheckpointPayload) -
     payload.encode()
 }
 
+fn encode_gshare_branch_predictor_payload(
+    payload: &GShareBranchPredictorCheckpointPayload,
+) -> Vec<u8> {
+    payload.encode()
+}
+
 fn decode_branch_predictor_payload(
     component: &CheckpointComponentId,
     payload: &[u8],
 ) -> Result<BranchPredictorCheckpointPayload, RiscvCoreCheckpointError> {
     BranchPredictorCheckpointPayload::decode(payload).map_err(|error| {
         RiscvCoreCheckpointError::InvalidBranchPredictorSnapshot {
+            component: component.clone(),
+            error,
+        }
+    })
+}
+
+fn decode_gshare_branch_predictor_payload(
+    component: &CheckpointComponentId,
+    payload: &[u8],
+) -> Result<GShareBranchPredictorCheckpointPayload, RiscvCoreCheckpointError> {
+    GShareBranchPredictorCheckpointPayload::decode(payload).map_err(|error| {
+        RiscvCoreCheckpointError::InvalidGShareBranchPredictorSnapshot {
             component: component.clone(),
             error,
         }

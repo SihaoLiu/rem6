@@ -39,6 +39,23 @@ pub enum GShareBranchPredictorError {
         expected: GShareBranchPredictorConfig,
         actual: GShareBranchPredictorConfig,
     },
+    InvalidCheckpointPayloadSize {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidCheckpointMagic,
+    UnsupportedCheckpointVersion {
+        version: u8,
+    },
+    CheckpointValueTooLarge {
+        name: &'static str,
+        value: usize,
+        max: usize,
+    },
+    InvalidCheckpointCounter {
+        value: u8,
+        max: u8,
+    },
 }
 
 impl fmt::Display for GShareBranchPredictorError {
@@ -84,6 +101,25 @@ impl fmt::Display for GShareBranchPredictorError {
             Self::SnapshotConfigMismatch { expected, actual } => write!(
                 formatter,
                 "gshare predictor snapshot config {actual:?} does not match predictor config {expected:?}"
+            ),
+            Self::InvalidCheckpointPayloadSize { expected, actual } => write!(
+                formatter,
+                "gshare predictor checkpoint payload has {actual} bytes; expected {expected}"
+            ),
+            Self::InvalidCheckpointMagic => {
+                write!(formatter, "gshare predictor checkpoint payload has invalid magic")
+            }
+            Self::UnsupportedCheckpointVersion { version } => write!(
+                formatter,
+                "gshare predictor checkpoint payload version {version} is not supported"
+            ),
+            Self::CheckpointValueTooLarge { name, value, max } => write!(
+                formatter,
+                "gshare predictor checkpoint {name} value {value} exceeds maximum {max}"
+            ),
+            Self::InvalidCheckpointCounter { value, max } => write!(
+                formatter,
+                "gshare predictor checkpoint counter {value} exceeds maximum {max}"
             ),
         }
     }
@@ -396,6 +432,16 @@ impl GShareBranchPredictor {
                 actual: snapshot.config.clone(),
             });
         }
+        if snapshot.counters.len() != snapshot.config.table_entries()
+            || snapshot.threads.len() != snapshot.config.threads()
+        {
+            return Err(GShareBranchPredictorError::SnapshotShapeMismatch {
+                expected_threads: snapshot.config.threads(),
+                actual_threads: snapshot.threads.len(),
+                expected_entries: snapshot.config.table_entries(),
+                actual_entries: snapshot.counters.len(),
+            });
+        }
 
         self.counters.clone_from(&snapshot.counters);
         self.threads.clone_from(&snapshot.threads);
@@ -629,6 +675,10 @@ impl GShareThreadSnapshot {
         Self { global_history: 0 }
     }
 
+    pub(crate) const fn from_global_history(global_history: u64) -> Self {
+        Self { global_history }
+    }
+
     pub const fn global_history(&self) -> u64 {
         self.global_history
     }
@@ -646,6 +696,26 @@ pub struct GShareBranchPredictorSnapshot {
 }
 
 impl GShareBranchPredictorSnapshot {
+    pub(crate) fn from_parts(
+        config: GShareBranchPredictorConfig,
+        counters: Vec<u8>,
+        threads: Vec<GShareThreadSnapshot>,
+        lookup_count: u64,
+        history_update_count: u64,
+        update_count: u64,
+        squash_count: u64,
+    ) -> Self {
+        Self {
+            config,
+            counters,
+            threads,
+            lookup_count,
+            history_update_count,
+            update_count,
+            squash_count,
+        }
+    }
+
     pub const fn config(&self) -> &GShareBranchPredictorConfig {
         &self.config
     }

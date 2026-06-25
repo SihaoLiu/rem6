@@ -203,7 +203,7 @@ fixed scalar integer multiply execute-stage latency emitted as additional
 in-order resource-stall cycles from a top-level CLI run,
 per-core fetch-response and data-response wait cycle stats, retired branch
 prediction, speculation repair, and redirect summaries in normal in-order timing records, RISC-V
-normal parallel-cluster pending-fetch resource-stall accounting consumed by CLI run stats, core checkpoints preserving the fetch-steering branch predictor payload, including live fetch-ahead pending branch speculation state, a RISC-V checker CPU option that runs an
+normal parallel-cluster pending-fetch resource-stall accounting consumed by CLI run stats, core checkpoints preserving the basic fetch-steering branch predictor/BTB payload, including live fetch-ahead pending branch speculation state, plus GShare predictor checkpoint payloads, a RISC-V checker CPU option that runs an
 independent reference hart at retire, records structured execution/state
 mismatches, and exposes checked/mismatch counts through `rem6 run --checker-cpu`
 stats, top-level `rem6 run --riscv-in-order-width` configuring the live
@@ -214,7 +214,7 @@ cache/fabric/DRAM, explicit `--memory-system direct` timing-test coverage, and
 O3 policy helpers.
 
 **Not migrated:** Full Minor-like in-order timing with realistic stalls and
-squashes, executable O3 timing, broad predictor-family speculation snapshots and rollback, gem5-class checker coverage across future timing CPU modes, and KVM equivalents.
+squashes, executable O3 timing, remaining predictor-family speculation snapshots and rollback, gem5-class checker coverage across future timing CPU modes, and KVM equivalents.
 
 **Evidence:** `RiscvCore::execute_next_completed_fetch`,
 `RiscvClusterRun`, `record_data_retire_cycle`, `RiscvCheckerCpu`,
@@ -250,7 +250,7 @@ checker tests cover retire comparison, data writeback sync, environment-call
 completion sync, public register writes, and HTM abort rollback.
 
 **Next evidence:** Broader per-cycle in-order stalls/squashes, a broader
-functional-unit latency table, broader
+functional-unit latency table, remaining
 predictor-family speculation snapshots and rollback, full checker integration for future timing
 CPU modes, then a ROB/LSQ-backed O3 run test.
 
@@ -801,8 +801,8 @@ headers plus `simOps`, deterministic `simSeconds`, single-core
 `system.cpu.numInsts`/`system.cpu.numOps`/`system.cpu.commitStats0.numInsts`/`system.cpu.commitStats0.numOps`/`system.cpu.numCycles` aliases plus text-output derived `system.cpu.ipc`/`system.cpu.cpi` and `system.cpu.commitStats0.ipc`/`system.cpu.commitStats0.cpi`, and multicore
 `system.cpuN.numInsts`/`system.cpuN.numOps`/`system.cpuN.commitStats0.numInsts`/`system.cpuN.commitStats0.numOps`/`system.cpuN.numCycles` aliases plus text-output derived `system.cpuN.ipc`/`system.cpuN.cpi` and `system.cpuN.commitStats0.ipc`/`system.cpuN.commitStats0.cpi`,
 target/port/bank-level DRAM runtime resource counters, RISC-V in-order pipeline
-per-stage current/max in-flight and occupied-cycle stats, and fetch-steering branch predictor checkpoint
-capture/restore including live fetch-ahead pending speculation, GDB byte-stream packet handling, debug
+per-stage current/max in-flight and occupied-cycle stats, fetch-steering branch predictor checkpoint
+capture/restore including live fetch-ahead pending speculation, and GShare predictor checkpoint capture/restore, GDB byte-stream packet handling, debug
 execution-control state for packet-stream step/resume and break/watch requests,
 CLI run aggregate memory-resource activity, active-resource, instruction/data cache-resource hierarchy, prefetch queue/translation-queue, DRAM refresh/low-power stats, custom LPDDR low-power timing, gem5-style `system.mem_ctrl` request/burst/byte aliases plus `system.mem_ctrl.dram` burst/per-bank burst/row-hit/byte and text-output `avgRdBW`/`avgWrBW`/`readRowHitRate`/`writeRowHitRate`/`pageHitRate` aliases, and target/port/bank DRAM low-power hierarchy stats derived from executed cache, transport, and DRAM paths,
 CLI `run --gdb-listen` attach-before-execute socket handoff for RISC-V
@@ -849,8 +849,8 @@ runtime-calibrated power/thermal, and broad O3 ROB/LSQ/rename checkpoint ownersh
 `RiscvDataAccessStats`, `SystemActionExecutor`, `GdbRemoteSession`,
 `cli_run::pc_count_probes::rem6_run_emits_riscv_pc_count_probe_stats`,
 checkpoint tests including RISC-V hart run-state, in-order pipeline restore,
-and fetch-steering branch predictor restore with live fetch-ahead pending
-speculation,
+fetch-steering branch predictor restore with live fetch-ahead pending
+speculation, and GShare predictor checkpoint restore,
 O3 writeback transfer deferred-state payload tests, GDB byte-stream,
 RV64D FP, FP CSR, RV64 CSR register-cache including supervisor `sscratch` and `senvcfg`,
 translation `satp`, interrupt aliases `sie`/`sip`, counter
