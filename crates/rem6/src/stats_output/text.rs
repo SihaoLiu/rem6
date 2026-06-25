@@ -88,16 +88,30 @@ fn append_gem5_l1_cache_alias_stats_for(
         return;
     };
     append_derived_count_stat(output, &format!("{alias_prefix}.overallHits"), hits);
-    append_derived_count_stat(
-        output,
-        &format!("{alias_prefix}.overallMisses"),
-        scheduled_misses.saturating_add(coalesced_misses),
-    );
+    let misses = scheduled_misses.saturating_add(coalesced_misses);
+    append_derived_count_stat(output, &format!("{alias_prefix}.overallMisses"), misses);
+    let accesses = hits.saturating_add(misses);
+    append_derived_count_stat(output, &format!("{alias_prefix}.overallAccesses"), accesses);
+    if accesses != 0 {
+        append_derived_ratio_stat(
+            output,
+            &format!("{alias_prefix}.overallMissRate"),
+            misses,
+            accesses,
+        );
+    }
 }
 
 fn append_derived_count_stat(output: &mut String, path: &str, value: u64) {
     output.push_str(&format!(
         "{path:<64} {value:>20} # kind=derived unit=Count reset_policy=monotonic\n"
+    ));
+}
+
+fn append_derived_ratio_stat(output: &mut String, path: &str, numerator: u64, denominator: u64) {
+    output.push_str(&format!(
+        "{path:<64} {:>20} # kind=derived unit=Ratio reset_policy=monotonic\n",
+        format_fixed_ratio(numerator, denominator)
     ));
 }
 
