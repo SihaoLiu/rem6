@@ -9,10 +9,8 @@ use crate::{
 pub enum RiscvInstruction {
     #[rustfmt::skip]
     Lui { rd: Register, imm: Immediate },
-    Auipc {
-        rd: Register,
-        imm: Immediate,
-    },
+    #[rustfmt::skip]
+    Auipc { rd: Register, imm: Immediate },
     Addi {
         rd: Register,
         rs1: Register,
@@ -430,6 +428,7 @@ pub enum RiscvInstruction {
         vs2: VectorRegister,
         rs1: Register,
     },
+    VectorIntegerMultiplyAdd(crate::RiscvVectorIntegerMultiplyAddInstruction),
     VectorMergeVvm {
         vd: VectorRegister,
         vs2: VectorRegister,

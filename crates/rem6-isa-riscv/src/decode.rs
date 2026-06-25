@@ -1,5 +1,6 @@
 use crate::decode_csr::decode_csr;
 use crate::encoding::{b_imm, funct3, funct7, i_imm, rd, rs1, rs2, shamt32, shamt64, shift_funct6};
+use crate::vector_integer_multiply_add as vima;
 use crate::vector_widening_integer as vwi;
 use crate::{
     FloatRegister, Immediate, RiscvError, RiscvFenceSet, RiscvInstruction,
@@ -546,6 +547,7 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         (0x2, 0b001001, true) => Ok(crate::vector_averaging::decode_add_signed_vv(raw)),
         (0x2, 0b001010, true) => Ok(crate::vector_averaging::decode_sub_unsigned_vv(raw)),
         (0x2, 0b001011, true) => Ok(crate::vector_averaging::decode_sub_signed_vv(raw)),
+        (0x2, funct6, _) if vima::is_vv_funct6(funct6) => Ok(vima::decode_vv(raw)),
         (0x2, 0b100100, true) => Ok(RiscvInstruction::VectorMultiplyHighUnsignedVv {
             vd: vector_register(raw, 7),
             vs1: vector_register(raw, 15),
@@ -1067,6 +1069,7 @@ pub(crate) fn decode_vector(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                 rs1: rs1(raw),
             },
         )),
+        (0x6, funct6, _) if vima::is_vx_funct6(funct6) => Ok(vima::decode_vx(raw)),
         (0x6, 0b100100, true) => Ok(RiscvInstruction::VectorMultiplyHighUnsignedVx {
             vd: vector_register(raw, 7),
             vs2: vector_register(raw, 20),

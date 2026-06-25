@@ -2,8 +2,9 @@ use rem6_isa_riscv::{
     Register, RegisterWrite, RiscvError, RiscvHartState, RiscvInstruction, RiscvTrap,
     RiscvTrapKind, RiscvVectorAveragingInstruction, RiscvVectorConfig,
     RiscvVectorFixedPointShiftInstruction, RiscvVectorFixedPointState,
-    RiscvVectorFixedRoundingMode, RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction,
-    RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
+    RiscvVectorFixedRoundingMode, RiscvVectorGatherInstruction,
+    RiscvVectorIntegerMultiplyAddInstruction, RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode,
+    RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
     RiscvVectorReductionInstruction, RiscvVectorSaturatingInstruction, RiscvVectorSlideInstruction,
     RiscvVectorWideningIntegerInstruction, VectorRegister,
 };
@@ -197,6 +198,38 @@ fn vector_mvv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
 fn vector_mvx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
     (funct6 << 26)
         | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (0b110 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vector_mvv_type_with_mask(
+    funct6: u32,
+    vs2: u8,
+    vs1: u8,
+    vd: u8,
+    mask: RiscvVectorMaskMode,
+) -> u32 {
+    (funct6 << 26)
+        | (u32::from(matches!(mask, RiscvVectorMaskMode::Unmasked)) << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(vs1) << 15)
+        | (0b010 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vector_mvx_type_with_mask(
+    funct6: u32,
+    vs2: u8,
+    rs1: u8,
+    vd: u8,
+    mask: RiscvVectorMaskMode,
+) -> u32 {
+    (funct6 << 26)
+        | (u32::from(matches!(mask, RiscvVectorMaskMode::Unmasked)) << 25)
         | (u32::from(vs2) << 20)
         | (u32::from(rs1) << 15)
         | (0b110 << 12)
@@ -665,6 +698,38 @@ fn vmulh_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
 
 fn vmulh_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
     vector_mvx_type(0b100111, vs2, rs1, vd)
+}
+
+fn vmadd_vv_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mvv_type_with_mask(0b101001, vs2, vs1, vd, mask)
+}
+
+fn vmadd_vx_type(vs2: u8, rs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mvx_type_with_mask(0b101001, vs2, rs1, vd, mask)
+}
+
+fn vnmsub_vv_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mvv_type_with_mask(0b101011, vs2, vs1, vd, mask)
+}
+
+fn vnmsub_vx_type(vs2: u8, rs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mvx_type_with_mask(0b101011, vs2, rs1, vd, mask)
+}
+
+fn vmacc_vv_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mvv_type_with_mask(0b101101, vs2, vs1, vd, mask)
+}
+
+fn vmacc_vx_type(vs2: u8, rs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mvx_type_with_mask(0b101101, vs2, rs1, vd, mask)
+}
+
+fn vnmsac_vv_type(vs2: u8, vs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mvv_type_with_mask(0b101111, vs2, vs1, vd, mask)
+}
+
+fn vnmsac_vx_type(vs2: u8, rs1: u8, vd: u8, mask: RiscvVectorMaskMode) -> u32 {
+    vector_mvx_type_with_mask(0b101111, vs2, rs1, vd, mask)
 }
 
 fn vdivu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -2174,6 +2239,90 @@ fn decoder_accepts_unmasked_vector_multiply_operations() {
             rs1: reg(6),
         }
     );
+}
+
+#[test]
+fn decoder_accepts_vector_integer_multiply_add_operations() {
+    assert_eq!(
+        vmadd_vv_type(4, 5, 2, RiscvVectorMaskMode::Unmasked),
+        0xa642_a157
+    );
+    assert_eq!(
+        vnmsub_vx_type(4, 5, 2, RiscvVectorMaskMode::Masked),
+        0xac42_e157
+    );
+    assert_eq!(
+        vmacc_vv_type(4, 5, 2, RiscvVectorMaskMode::Masked),
+        0xb442_a157
+    );
+    assert_eq!(
+        vnmsac_vx_type(4, 5, 2, RiscvVectorMaskMode::Unmasked),
+        0xbe42_e157
+    );
+
+    let cases = [
+        (
+            vmadd_vv_type(4, 5, 2, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorIntegerMultiplyAddInstruction::multiply_add_vv(
+                vreg(2),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        ),
+        (
+            vnmsub_vv_type(4, 5, 2, RiscvVectorMaskMode::Masked),
+            RiscvVectorIntegerMultiplyAddInstruction::negative_multiply_sub_vv(
+                vreg(2),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Masked,
+            ),
+        ),
+        (
+            vmadd_vx_type(4, 5, 2, RiscvVectorMaskMode::Masked),
+            RiscvVectorIntegerMultiplyAddInstruction::multiply_add_vx(
+                vreg(2),
+                vreg(4),
+                reg(5),
+                RiscvVectorMaskMode::Masked,
+            ),
+        ),
+        (
+            vnmsac_vv_type(4, 5, 2, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorIntegerMultiplyAddInstruction::negative_multiply_accumulate_vv(
+                vreg(2),
+                vreg(4),
+                vreg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        ),
+        (
+            vmacc_vx_type(4, 5, 2, RiscvVectorMaskMode::Unmasked),
+            RiscvVectorIntegerMultiplyAddInstruction::multiply_accumulate_vx(
+                vreg(2),
+                vreg(4),
+                reg(5),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        ),
+        (
+            vnmsac_vx_type(4, 5, 2, RiscvVectorMaskMode::Masked),
+            RiscvVectorIntegerMultiplyAddInstruction::negative_multiply_accumulate_vx(
+                vreg(2),
+                vreg(4),
+                reg(5),
+                RiscvVectorMaskMode::Masked,
+            ),
+        ),
+    ];
+
+    for (raw, expected) in cases {
+        assert_eq!(
+            RiscvInstruction::decode(raw).unwrap(),
+            RiscvInstruction::VectorIntegerMultiplyAdd(expected)
+        );
+    }
 }
 
 #[test]
@@ -4739,6 +4888,85 @@ fn hart_executes_vector_multiply_vv_and_vx_forms() {
     assert_eq!(
         high_signed_unsigned_e64.read_vector(vreg(6)),
         bytes_with_u64([u64::MAX - 1, 0])
+    );
+}
+
+#[test]
+fn hart_executes_vector_integer_multiply_add_vv_and_vx_forms() {
+    let mut accumulate_vv = RiscvHartState::new(0x8194);
+    accumulate_vv.set_vector_config(RiscvVectorConfig::new(3, 0xd0));
+    accumulate_vv.write_vector(vreg(7), lanes_u32([3, u32::MAX, 0x8000_0000, 0xaaaa_aaaa]));
+    accumulate_vv.write_vector(vreg(8), lanes_u32([7, 2, 2, 0]));
+    accumulate_vv.write_vector(vreg(6), lanes_u32([1, 100, u32::MAX, 0xdddd_dddd]));
+    let accumulate_vv_record = accumulate_vv
+        .execute(
+            RiscvInstruction::decode(vmacc_vv_type(7, 8, 6, RiscvVectorMaskMode::Unmasked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        accumulate_vv.read_vector(vreg(6)),
+        lanes_u32([22, 98, u32::MAX, 0xdddd_dddd])
+    );
+    assert_eq!(
+        accumulate_vv_record.instruction(),
+        RiscvInstruction::VectorIntegerMultiplyAdd(
+            RiscvVectorIntegerMultiplyAddInstruction::multiply_accumulate_vv(
+                vreg(6),
+                vreg(7),
+                vreg(8),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        )
+    );
+
+    let mut negative_accumulate_vx = RiscvHartState::new(0x8198);
+    negative_accumulate_vx.set_vector_config(RiscvVectorConfig::new(3, 0xd0));
+    negative_accumulate_vx.write(reg(6), 4);
+    negative_accumulate_vx.write_vector(vreg(5), lanes_u32([3, 0x8000_0000, u32::MAX, 0]));
+    negative_accumulate_vx.write_vector(vreg(4), lanes_u32([20, 20, 20, 0xcccc_cccc]));
+    negative_accumulate_vx
+        .execute(
+            RiscvInstruction::decode(vnmsac_vx_type(5, 6, 4, RiscvVectorMaskMode::Unmasked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        negative_accumulate_vx.read_vector(vreg(4)),
+        lanes_u32([8, 20, 24, 0xcccc_cccc])
+    );
+
+    let mut multiply_add_vv = RiscvHartState::new(0x819c);
+    multiply_add_vv.set_vector_config(RiscvVectorConfig::new(3, 0xd0));
+    multiply_add_vv.write_vector(vreg(7), lanes_u32([10, 10, 10, 0xaaaa_aaaa]));
+    multiply_add_vv.write_vector(vreg(8), lanes_u32([2, 3, u32::MAX, 0]));
+    multiply_add_vv.write_vector(vreg(6), lanes_u32([5, u32::MAX - 1, 2, 0xdddd_dddd]));
+    multiply_add_vv
+        .execute(
+            RiscvInstruction::decode(vmadd_vv_type(7, 8, 6, RiscvVectorMaskMode::Unmasked))
+                .unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        multiply_add_vv.read_vector(vreg(6)),
+        lanes_u32([20, 4, 8, 0xdddd_dddd])
+    );
+
+    let mut masked_negative_sub_vx = RiscvHartState::new(0x81a0);
+    masked_negative_sub_vx.set_vector_config(RiscvVectorConfig::new(4, 0xd0));
+    masked_negative_sub_vx.write(reg(6), 3);
+    masked_negative_sub_vx.write_vector(vreg(0), mask_bytes(0b0101));
+    masked_negative_sub_vx.write_vector(vreg(5), lanes_u32([20, 20, 20, 20]));
+    masked_negative_sub_vx
+        .write_vector(vreg(4), lanes_u32([2, 0xeeee_eeee, u32::MAX, 0xdddd_dddd]));
+    masked_negative_sub_vx
+        .execute(
+            RiscvInstruction::decode(vnmsub_vx_type(5, 6, 4, RiscvVectorMaskMode::Masked)).unwrap(),
+        )
+        .unwrap();
+    assert_eq!(
+        masked_negative_sub_vx.read_vector(vreg(4)),
+        lanes_u32([14, 0xeeee_eeee, 23, 0xdddd_dddd])
     );
 }
 

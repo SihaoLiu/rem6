@@ -34,6 +34,7 @@ mod vector_fixed_point_shift;
 mod vector_float_execute;
 mod vector_gather_execute;
 mod vector_group;
+mod vector_integer_multiply_add;
 mod vector_lane_op;
 mod vector_mask_index_execute;
 mod vector_mask_mode;
@@ -48,7 +49,7 @@ mod vector_widening_integer;
 use encoding::{j_imm, rd, u_imm};
 use instruction_privilege::csr_privilege_allowed;
 use integer::{
-    div_signed, div_signed_word, div_unsigned, div_unsigned_word, mulh_signed,
+    add_signed, div_signed, div_signed_word, div_unsigned, div_unsigned_word, mulh_signed,
     mulh_signed_unsigned, mulh_unsigned, rem_signed, rem_signed_word, rem_unsigned,
     rem_unsigned_word, sign_extend_word,
 };
@@ -107,6 +108,7 @@ pub use vector::{
 pub use vector_averaging::RiscvVectorAveragingInstruction;
 pub use vector_fixed_point_shift::RiscvVectorFixedPointShiftInstruction;
 pub use vector_fixed_point_shift::RiscvVectorFixedPointShiftOperation;
+pub use vector_integer_multiply_add::RiscvVectorIntegerMultiplyAddInstruction;
 pub use vector_mask_mode::RiscvVectorMaskMode;
 pub use vector_reduction::{RiscvVectorReductionInstruction, RiscvVectorReductionOperation};
 pub use vector_saturating::RiscvVectorSaturatingInstruction;
@@ -531,6 +533,7 @@ impl RiscvHartState {
             | RiscvInstruction::VectorRemainderUnsignedVx { .. }
             | RiscvInstruction::VectorRemainderSignedVv { .. }
             | RiscvInstruction::VectorRemainderSignedVx { .. }
+            | RiscvInstruction::VectorIntegerMultiplyAdd(..)
             | RiscvInstruction::VectorReduction(..)
             | RiscvInstruction::VectorSlide(..)
             | RiscvInstruction::VectorGather(..)
@@ -1285,16 +1288,5 @@ fn write_supervisor_trap_csr(
         RiscvSupervisorTrapCsr::Sepc => hart.set_supervisor_exception_pc(value),
         RiscvSupervisorTrapCsr::Scause => hart.set_supervisor_trap_cause(value),
         RiscvSupervisorTrapCsr::Stval => hart.set_supervisor_trap_value(value),
-    }
-}
-fn add_signed(value: u64, offset: i64) -> Result<u64, RiscvError> {
-    if offset >= 0 {
-        value
-            .checked_add(offset as u64)
-            .ok_or(RiscvError::AddressOverflow { value, offset })
-    } else {
-        value
-            .checked_sub(offset.unsigned_abs())
-            .ok_or(RiscvError::AddressOverflow { value, offset })
     }
 }

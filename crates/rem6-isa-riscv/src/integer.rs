@@ -1,3 +1,5 @@
+use crate::error::RiscvError;
+
 pub(crate) fn mulh_signed(lhs: u64, rhs: u64) -> u64 {
     (((lhs as i64 as i128) * (rhs as i64 as i128)) >> 64) as u64
 }
@@ -92,4 +94,16 @@ pub(crate) fn rem_unsigned_word(lhs: u64, rhs: u64) -> u64 {
     let rhs = rhs as u32;
     let value = if rhs == 0 { lhs } else { lhs % rhs };
     sign_extend_word(value)
+}
+
+pub(crate) fn add_signed(value: u64, offset: i64) -> Result<u64, RiscvError> {
+    if offset >= 0 {
+        value
+            .checked_add(offset as u64)
+            .ok_or(RiscvError::AddressOverflow { value, offset })
+    } else {
+        value
+            .checked_sub(offset.unsigned_abs())
+            .ok_or(RiscvError::AddressOverflow { value, offset })
+    }
 }

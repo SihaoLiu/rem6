@@ -14,10 +14,11 @@ use rem6_isa_riscv::{
     RiscvStatusWord, RiscvTrap, RiscvTrapKind, RiscvVectorAveragingInstruction, RiscvVectorConfig,
     RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction,
     RiscvVectorFixedPointShiftInstruction, RiscvVectorGatherInstruction,
-    RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode, RiscvVectorMaskPrefixInstruction,
-    RiscvVectorMaskReductionInstruction, RiscvVectorNarrowInstruction,
-    RiscvVectorReductionInstruction, RiscvVectorSaturatingInstruction,
-    RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction, RiscvVectorWholeMoveInstruction,
+    RiscvVectorIntegerMultiplyAddInstruction, RiscvVectorMaskIndexInstruction, RiscvVectorMaskMode,
+    RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
+    RiscvVectorNarrowInstruction, RiscvVectorReductionInstruction,
+    RiscvVectorSaturatingInstruction, RiscvVectorScalarMoveInstruction,
+    RiscvVectorSlideInstruction, RiscvVectorWholeMoveInstruction,
     RiscvVectorWideningIntegerInstruction, VectorRegister,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
@@ -642,6 +643,14 @@ fn vmulh_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
 
 fn vmulhsu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
     vector_mvv_type(0b100110, vs2, vs1, vd)
+}
+
+fn vmacc_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(0b101101, vs2, vs1, vd)
+}
+
+fn vnmsub_vx_type(vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(0b101011, vs2, rs1, vd)
 }
 
 fn vdivu_vv_type(vs2: u8, vs1: u8, vd: u8) -> u32 {
@@ -1400,6 +1409,24 @@ fn riscv_core_driver_fetches_ahead_for_straight_line_integer_instruction() {
         trap.execution().trap(),
         Some(&RiscvTrap::new(RiscvTrapKind::Breakpoint, 0x8004))
     );
+}
+
+#[test]
+fn riscv_core_driver_fetches_ahead_for_vector_integer_multiply_add() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    let store = loaded_program_store(0x8000, &[vmacc_vv_type(2, 1, 4), 0x0010_0073], &[]);
+
+    assert!(matches!(
+        drive_one_action(&core, store.clone(), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+
+    let action = drive_one_action(&core, store, &mut scheduler, &transport).unwrap();
+    let RiscvCoreDriveAction::FetchIssued { .. } = action else {
+        panic!("expected next fetch before retiring the completed vector multiply-add");
+    };
 }
 
 #[test]
@@ -3721,6 +3748,69 @@ fn riscv_core_driver_executes_vector_multiply_operations_from_fetch_stream() {
     assert_eq!(
         core.read_vector_register(vreg(14)),
         lanes_u32([u32::MAX, u32::MAX, 1, 0xaaaa_aaaa])
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_vector_integer_multiply_add_from_fetch_stream() {
+    let (mut scheduler, transport, fetch_route, data_route) = data_routes();
+    let core = data_core(fetch_route, data_route, 0x8000);
+    core.write_register(reg(10), 3);
+    core.write_register(reg(6), 3);
+    core.write_vector_register(vreg(1), lanes_u32([7, 2, 2, 0]));
+    core.write_vector_register(vreg(2), lanes_u32([3, u32::MAX, 0x8000_0000, 0xaaaa_aaaa]));
+    core.write_vector_register(vreg(4), lanes_u32([1, 100, u32::MAX, 0xeeee_eeee]));
+    core.write_vector_register(vreg(5), lanes_u32([20, 20, 20, 20]));
+    core.write_vector_register(vreg(8), lanes_u32([2, 4, u32::MAX, 0xdddd_dddd]));
+    let store = loaded_program_store(
+        0x8000,
+        &[
+            vsetvli_type(0xd0, 10, 7),
+            vmacc_vv_type(2, 1, 4),
+            vnmsub_vx_type(5, 6, 8),
+            0x0010_0073,
+        ],
+        &[],
+    );
+
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorSetVli {
+            rd: reg(7),
+            rs1: reg(10),
+            vtype: 0xd0,
+        }
+    );
+    assert_eq!(core.vector_config(), RiscvVectorConfig::new(3, 0xd0));
+    assert_eq!(
+        drive_until_instruction(&core, store.clone(), &mut scheduler, &transport),
+        RiscvInstruction::VectorIntegerMultiplyAdd(
+            RiscvVectorIntegerMultiplyAddInstruction::multiply_accumulate_vv(
+                vreg(4),
+                vreg(2),
+                vreg(1),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        )
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(4)),
+        lanes_u32([22, 98, u32::MAX, 0xeeee_eeee])
+    );
+    assert_eq!(
+        drive_until_instruction(&core, store, &mut scheduler, &transport),
+        RiscvInstruction::VectorIntegerMultiplyAdd(
+            RiscvVectorIntegerMultiplyAddInstruction::negative_multiply_sub_vx(
+                vreg(8),
+                vreg(5),
+                reg(6),
+                RiscvVectorMaskMode::Unmasked,
+            ),
+        )
+    );
+    assert_eq!(
+        core.read_vector_register(vreg(8)),
+        lanes_u32([14, 8, 23, 0xdddd_dddd])
     );
 }
 
