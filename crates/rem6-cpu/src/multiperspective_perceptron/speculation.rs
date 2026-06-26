@@ -30,6 +30,17 @@ impl MultiperspectivePerceptron {
         thread
     }
 
+    pub(crate) fn update_speculative_history(
+        &mut self,
+        history: &MultiperspectivePerceptronHistory,
+        taken: bool,
+        target: Address,
+    ) -> Result<(), MultiperspectivePerceptronError> {
+        let thread_index = self.thread_index(history.cpu())?;
+        self.update_thread_history(thread_index, history.pc(), taken, target);
+        Ok(())
+    }
+
     pub(super) fn predict_with_thread_snapshot_and_count(
         &self,
         cpu: CpuId,

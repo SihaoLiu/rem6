@@ -140,6 +140,94 @@ fn selected_gshare_direct_speculation_redirect_discards_live_history() {
 }
 
 #[test]
+fn selected_tage_sc_l_direct_speculation_redirect_discards_live_history() {
+    let core = core_with_recorded_selected_direct_speculation(RiscvBranchPredictorKind::TageScL);
+    {
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(state.selected_branch_speculations.len(), 1);
+        let snapshot = state.tage_sc_l_branch_predictor.snapshot();
+        assert_eq!(snapshot.history_update_count(), 1);
+        assert_eq!(
+            snapshot.ltage().tage().threads()[0].global_history_value(),
+            1
+        );
+    }
+
+    core.redirect_pc(Address::new(0x9000));
+
+    let state = core.state.lock().expect("riscv core lock");
+    assert!(state.branch_speculations.is_empty());
+    assert!(state.selected_branch_speculations.is_empty());
+    let snapshot = state.tage_sc_l_branch_predictor.snapshot();
+    assert_eq!(snapshot.history_update_count(), 0);
+    assert_eq!(
+        snapshot.ltage().tage().threads()[0].global_history_value(),
+        0
+    );
+}
+
+#[test]
+fn selected_multiperspective_direct_speculation_redirect_discards_live_history() {
+    let core = core_with_recorded_selected_direct_speculation(
+        RiscvBranchPredictorKind::MultiperspectivePerceptron,
+    );
+    {
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(state.selected_branch_speculations.len(), 1);
+        let thread = state
+            .multiperspective_perceptron
+            .thread_snapshot(RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD)
+            .unwrap();
+        assert_eq!(thread.local_history_for(Address::new(0x8000)), 1);
+    }
+
+    core.redirect_pc(Address::new(0x9000));
+
+    let state = core.state.lock().expect("riscv core lock");
+    assert!(state.branch_speculations.is_empty());
+    assert!(state.selected_branch_speculations.is_empty());
+    let thread = state
+        .multiperspective_perceptron
+        .thread_snapshot(RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD)
+        .unwrap();
+    assert_eq!(thread.local_history_for(Address::new(0x8000)), 0);
+}
+
+#[test]
+fn selected_tage_sc_l_direct_speculation_retire_keeps_single_history_update() {
+    let core = core_with_recorded_selected_direct_speculation(RiscvBranchPredictorKind::TageScL);
+
+    core.execute_next_completed_fetch().unwrap().unwrap();
+
+    let state = core.state.lock().expect("riscv core lock");
+    assert!(state.selected_branch_speculations.is_empty());
+    let snapshot = state.tage_sc_l_branch_predictor.snapshot();
+    assert_eq!(snapshot.update_count(), 1);
+    assert_eq!(snapshot.history_update_count(), 0);
+    assert_eq!(
+        snapshot.ltage().tage().threads()[0].global_history_value(),
+        1
+    );
+}
+
+#[test]
+fn selected_multiperspective_direct_speculation_retire_keeps_single_history_update() {
+    let core = core_with_recorded_selected_direct_speculation(
+        RiscvBranchPredictorKind::MultiperspectivePerceptron,
+    );
+
+    core.execute_next_completed_fetch().unwrap().unwrap();
+
+    let state = core.state.lock().expect("riscv core lock");
+    assert!(state.selected_branch_speculations.is_empty());
+    let thread = state
+        .multiperspective_perceptron
+        .thread_snapshot(RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD)
+        .unwrap();
+    assert_eq!(thread.local_history_for(Address::new(0x8000)), 1);
+}
+
+#[test]
 fn selected_record_failure_does_not_leave_generic_branch_speculation() {
     let core = core_with_completed_fetch(j_type(12, 0).to_le_bytes().to_vec());
     core.set_branch_predictor_kind(RiscvBranchPredictorKind::GShare);
@@ -215,6 +303,8 @@ fn prepared_fetch_issue_records_fetch_ahead_speculation_before_sync_failure() {
 fn selected_gshare_direct_speculation_after_restore_uses_pending_generic_history() {
     let core = core_with_completed_fetch(j_type(8, 0).to_le_bytes().to_vec());
     core.set_branch_predictor_kind(RiscvBranchPredictorKind::GShare);
+    let fetch_events = core.core.fetch_events();
+    let completed_fetches = fetch_events.iter().collect::<Vec<_>>();
     let selected = {
         let mut state = core.state.lock().expect("riscv core lock");
         insert_pending_branch_speculation(
@@ -230,9 +320,15 @@ fn selected_gshare_direct_speculation_after_restore_uses_pending_generic_history
             0
         );
 
-        selected_direct_branch_speculation(&mut state, Address::new(0x8008))
-            .unwrap()
-            .expect("selected direct speculation")
+        selected_direct_branch_speculation(
+            &mut state,
+            &completed_fetches,
+            Address::new(0x8008),
+            BranchTargetKind::DirectUnconditional,
+            Address::new(0x8010),
+        )
+        .unwrap()
+        .expect("selected direct speculation")
     };
     if let RiscvSelectedBranchSpeculation::GShare { prediction, .. } = &selected {
         assert_eq!(prediction.global_history_before(), 1);
@@ -263,12 +359,93 @@ fn selected_gshare_direct_speculation_after_restore_uses_pending_generic_history
 }
 
 #[test]
+fn selected_tage_sc_l_direct_speculation_after_restore_uses_pending_generic_history() {
+    let core = core_with_completed_fetch(j_type(8, 0).to_le_bytes().to_vec());
+    core.set_branch_predictor_kind(RiscvBranchPredictorKind::TageScL);
+    let fetch_events = core.core.fetch_events();
+    let completed_fetches = fetch_events.iter().collect::<Vec<_>>();
+    let selected = {
+        let mut state = core.state.lock().expect("riscv core lock");
+        insert_pending_branch_speculation(
+            &mut state,
+            0,
+            Address::new(0x8000),
+            Address::new(0x8008),
+        );
+        assert_eq!(state.branch_speculations.len(), 1);
+        assert!(state.selected_branch_speculations.is_empty());
+        assert_eq!(
+            state
+                .tage_sc_l_branch_predictor
+                .snapshot()
+                .ltage()
+                .tage()
+                .threads()[0]
+                .global_history_value(),
+            0
+        );
+
+        selected_direct_branch_speculation(
+            &mut state,
+            &completed_fetches,
+            Address::new(0x8008),
+            BranchTargetKind::DirectUnconditional,
+            Address::new(0x8010),
+        )
+        .unwrap()
+        .expect("selected direct speculation")
+    };
+    if let RiscvSelectedBranchSpeculation::TageScL { prediction, .. } = &selected {
+        assert_eq!(
+            prediction
+                .history()
+                .ltage_history()
+                .tage_history()
+                .thread_before()
+                .global_history_value(),
+            1
+        );
+    } else {
+        panic!("expected selected TAGE-SC-L speculation");
+    }
+    let decision = RiscvFetchAheadDecision::branch(
+        Address::new(0x8010),
+        1,
+        Address::new(0x8008),
+        BranchTargetKind::DirectUnconditional,
+        true,
+        Some(Address::new(0x8010)),
+        Some(selected),
+        None,
+        BranchTargetProvider::NoTarget,
+    );
+
+    record_fetch_ahead_speculation(&core, &decision).unwrap();
+
+    let state = core.state.lock().expect("riscv core lock");
+    assert_eq!(state.branch_speculations.len(), 2);
+    assert_eq!(state.selected_branch_speculations.len(), 2);
+    assert_eq!(
+        state
+            .tage_sc_l_branch_predictor
+            .snapshot()
+            .ltage()
+            .tage()
+            .threads()[0]
+            .global_history_value(),
+        3
+    );
+}
+
+#[test]
 fn selected_tournament_direct_replay_after_restore_keeps_local_history_unchanged() {
     let core = core_with_completed_fetches([
         (0, 0x8000, j_type(8, 0).to_le_bytes().to_vec()),
         (1, 0x8008, j_type(8, 0).to_le_bytes().to_vec()),
     ]);
     core.set_branch_predictor_kind(RiscvBranchPredictorKind::Tournament);
+    let fetch_events = core.core.fetch_events();
+    let completed_fetches = fetch_events.iter().collect::<Vec<_>>();
     let selected = {
         let mut state = core.state.lock().expect("riscv core lock");
         use_small_tournament_predictor(&mut state);
@@ -288,9 +465,15 @@ fn selected_tournament_direct_replay_after_restore_keeps_local_history_unchanged
             0
         );
 
-        selected_direct_branch_speculation(&mut state, Address::new(0x8008))
-            .unwrap()
-            .expect("selected direct speculation")
+        selected_direct_branch_speculation(
+            &mut state,
+            &completed_fetches,
+            Address::new(0x8008),
+            BranchTargetKind::DirectUnconditional,
+            Address::new(0x8010),
+        )
+        .unwrap()
+        .expect("selected direct speculation")
     };
     if let RiscvSelectedBranchSpeculation::Tournament { prediction, .. } = &selected {
         assert_eq!(prediction.global_history_before(), 1);
@@ -370,6 +553,8 @@ fn selected_tournament_replay_uses_completed_event_after_issued_event() {
         ));
     }
     core.set_branch_predictor_kind(RiscvBranchPredictorKind::Tournament);
+    let fetch_events = core.core.fetch_events();
+    let completed_fetches = fetch_events.iter().collect::<Vec<_>>();
     let selected = {
         let mut state = core.state.lock().expect("riscv core lock");
         use_small_tournament_predictor(&mut state);
@@ -379,9 +564,15 @@ fn selected_tournament_replay_uses_completed_event_after_issued_event() {
             Address::new(0x8000),
             Address::new(0x8008),
         );
-        selected_direct_branch_speculation(&mut state, Address::new(0x8008))
-            .unwrap()
-            .expect("selected direct speculation")
+        selected_direct_branch_speculation(
+            &mut state,
+            &completed_fetches,
+            Address::new(0x8008),
+            BranchTargetKind::DirectUnconditional,
+            Address::new(0x8010),
+        )
+        .unwrap()
+        .expect("selected direct speculation")
     };
     let decision = RiscvFetchAheadDecision::branch(
         Address::new(0x8010),
@@ -413,6 +604,8 @@ fn selected_tournament_replay_uses_completed_event_after_issued_event() {
 fn selected_tournament_replay_requires_completed_instruction_metadata() {
     let core = core_with_completed_fetches([(1, 0x8008, j_type(8, 0).to_le_bytes().to_vec())]);
     core.set_branch_predictor_kind(RiscvBranchPredictorKind::Tournament);
+    let fetch_events = core.core.fetch_events();
+    let completed_fetches = fetch_events.iter().collect::<Vec<_>>();
     let selected = {
         let mut state = core.state.lock().expect("riscv core lock");
         use_small_tournament_predictor(&mut state);
@@ -422,9 +615,15 @@ fn selected_tournament_replay_requires_completed_instruction_metadata() {
             Address::new(0x8000),
             Address::new(0x8008),
         );
-        selected_direct_branch_speculation(&mut state, Address::new(0x8008))
-            .unwrap()
-            .expect("selected direct speculation")
+        selected_direct_branch_speculation(
+            &mut state,
+            &completed_fetches,
+            Address::new(0x8008),
+            BranchTargetKind::DirectUnconditional,
+            Address::new(0x8010),
+        )
+        .unwrap()
+        .expect("selected direct speculation")
     };
     let decision = RiscvFetchAheadDecision::branch(
         Address::new(0x8010),
@@ -461,6 +660,8 @@ fn selected_tournament_replay_requires_completed_instruction_metadata() {
 fn selected_tournament_replay_failure_discards_partial_recording() {
     let core = core_with_completed_fetches([(0, 0x8000, j_type(8, 0).to_le_bytes().to_vec())]);
     core.set_branch_predictor_kind(RiscvBranchPredictorKind::Tournament);
+    let fetch_events = core.core.fetch_events();
+    let completed_fetches = fetch_events.iter().collect::<Vec<_>>();
     let selected = {
         let mut state = core.state.lock().expect("riscv core lock");
         use_small_tournament_predictor(&mut state);
@@ -476,9 +677,15 @@ fn selected_tournament_replay_failure_discards_partial_recording() {
             Address::new(0x8008),
             Address::new(0x8010),
         );
-        selected_direct_branch_speculation(&mut state, Address::new(0x8010))
-            .unwrap()
-            .expect("selected direct speculation")
+        selected_direct_branch_speculation(
+            &mut state,
+            &completed_fetches,
+            Address::new(0x8010),
+            BranchTargetKind::DirectUnconditional,
+            Address::new(0x8018),
+        )
+        .unwrap()
+        .expect("selected direct speculation")
     };
     let decision = RiscvFetchAheadDecision::branch(
         Address::new(0x8018),
@@ -581,6 +788,47 @@ fn selected_family_checkpoint_payloads_use_committed_fetch_ahead_history() {
             .global_history(),
         0
     );
+
+    let tage_sc_l =
+        core_with_recorded_selected_direct_speculation(RiscvBranchPredictorKind::TageScL);
+    assert_eq!(
+        tage_sc_l
+            .tage_sc_l_branch_predictor_snapshot()
+            .ltage()
+            .tage()
+            .threads()[0]
+            .global_history_value(),
+        1
+    );
+    assert_eq!(
+        tage_sc_l
+            .tage_sc_l_branch_predictor_checkpoint_payload()
+            .snapshot()
+            .ltage()
+            .tage()
+            .threads()[0]
+            .global_history_value(),
+        0
+    );
+
+    let multiperspective = core_with_recorded_selected_direct_speculation(
+        RiscvBranchPredictorKind::MultiperspectivePerceptron,
+    );
+    assert_eq!(
+        multiperspective
+            .multiperspective_perceptron_snapshot()
+            .threads[0]
+            .local_history_for(Address::new(0x8000)),
+        1
+    );
+    assert_eq!(
+        multiperspective
+            .multiperspective_perceptron_checkpoint_payload()
+            .snapshot()
+            .threads[0]
+            .local_history_for(Address::new(0x8000)),
+        0
+    );
 }
 
 #[test]
@@ -603,4 +851,88 @@ fn selected_family_checkpoint_restore_forgets_unreflected_selected_speculation()
         assert_eq!(selected_family_speculation_count(&state, kind), 0);
         assert_eq!(selected_family_global_history(&state, kind), 0);
     }
+
+    let tage_sc_l =
+        core_with_recorded_selected_direct_speculation(RiscvBranchPredictorKind::TageScL);
+    {
+        let state = tage_sc_l.state.lock().expect("riscv core lock");
+        assert_eq!(
+            selected_family_speculation_count(&state, RiscvBranchPredictorKind::TageScL),
+            1
+        );
+        assert_eq!(
+            state
+                .tage_sc_l_branch_predictor
+                .snapshot()
+                .ltage()
+                .tage()
+                .threads()[0]
+                .global_history_value(),
+            1
+        );
+    }
+
+    restore_selected_family_checkpoint(&tage_sc_l, RiscvBranchPredictorKind::TageScL);
+
+    {
+        let state = tage_sc_l.state.lock().expect("riscv core lock");
+        assert_eq!(
+            selected_family_speculation_count(&state, RiscvBranchPredictorKind::TageScL),
+            0
+        );
+        assert_eq!(
+            state
+                .tage_sc_l_branch_predictor
+                .snapshot()
+                .ltage()
+                .tage()
+                .threads()[0]
+                .global_history_value(),
+            0
+        );
+    }
+
+    let multiperspective = core_with_recorded_selected_direct_speculation(
+        RiscvBranchPredictorKind::MultiperspectivePerceptron,
+    );
+    {
+        let state = multiperspective.state.lock().expect("riscv core lock");
+        assert_eq!(
+            selected_family_speculation_count(
+                &state,
+                RiscvBranchPredictorKind::MultiperspectivePerceptron
+            ),
+            1
+        );
+        assert_eq!(
+            state
+                .multiperspective_perceptron
+                .thread_snapshot(RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD)
+                .unwrap()
+                .local_history_for(Address::new(0x8000)),
+            1
+        );
+    }
+
+    restore_selected_family_checkpoint(
+        &multiperspective,
+        RiscvBranchPredictorKind::MultiperspectivePerceptron,
+    );
+
+    let state = multiperspective.state.lock().expect("riscv core lock");
+    assert_eq!(
+        selected_family_speculation_count(
+            &state,
+            RiscvBranchPredictorKind::MultiperspectivePerceptron
+        ),
+        0
+    );
+    assert_eq!(
+        state
+            .multiperspective_perceptron
+            .thread_snapshot(RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD)
+            .unwrap()
+            .local_history_for(Address::new(0x8000)),
+        0
+    );
 }

@@ -180,6 +180,12 @@ fn selected_family_speculation_count(
                 ) | (
                     RiscvBranchPredictorKind::Tournament,
                     RiscvSelectedBranchSpeculation::Tournament { .. }
+                ) | (
+                    RiscvBranchPredictorKind::TageScL,
+                    RiscvSelectedBranchSpeculation::TageScL { .. }
+                ) | (
+                    RiscvBranchPredictorKind::MultiperspectivePerceptron,
+                    RiscvSelectedBranchSpeculation::MultiperspectivePerceptron { .. }
                 )
             )
         })
@@ -201,6 +207,16 @@ fn restore_selected_family_checkpoint(core: &RiscvCore, kind: RiscvBranchPredict
         RiscvBranchPredictorKind::Tournament => core
             .restore_tournament_branch_predictor_checkpoint_payload(
                 core.tournament_branch_predictor_checkpoint_payload(),
+            )
+            .unwrap(),
+        RiscvBranchPredictorKind::TageScL => core
+            .restore_tage_sc_l_branch_predictor_checkpoint_payload(
+                core.tage_sc_l_branch_predictor_checkpoint_payload(),
+            )
+            .unwrap(),
+        RiscvBranchPredictorKind::MultiperspectivePerceptron => core
+            .restore_multiperspective_perceptron_checkpoint_payload(
+                core.multiperspective_perceptron_checkpoint_payload(),
             )
             .unwrap(),
         other => panic!("unsupported selected predictor family: {other:?}"),

@@ -6,11 +6,12 @@ use rem6_memory::Address;
 use crate::{
     riscv_branch_kind::riscv_branch_target_kind, BiModeBranchPredictor, BranchPredictor,
     BranchSpeculationId, BranchTargetKind, BranchTargetPrediction, BranchTargetProvider,
-    CpuFetchEvent, CpuFetchEventKind, GShareBranchPredictor,
+    CpuFetchEvent, CpuFetchEventKind, GShareBranchPredictor, MultiperspectivePerceptron,
     MultiperspectivePerceptronThreadSnapshot, RiscvBranchPredictorKind, RiscvCore, RiscvCoreState,
-    RiscvCpuError, RiscvSelectedBranchSpeculation, TournamentBranchPredictor,
-    RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
-    RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
+    RiscvCpuError, RiscvSelectedBranchSpeculation, StatisticalCorrectorBranchKind,
+    TageScLBranchPredictor, TournamentBranchPredictor, RISCV_LOCAL_BIMODE_THREAD,
+    RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
+    RISCV_LOCAL_TAGE_SC_L_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
 mod speculation;
@@ -174,6 +175,8 @@ struct SelectedBranchRecordingState<'a> {
     gshare_branch_predictor: GShareBranchPredictor,
     bimode_branch_predictor: BiModeBranchPredictor,
     tournament_branch_predictor: TournamentBranchPredictor,
+    tage_sc_l_branch_predictor: TageScLBranchPredictor,
+    multiperspective_perceptron: MultiperspectivePerceptron,
 }
 
 impl<'a> SelectedBranchRecordingState<'a> {
@@ -185,6 +188,8 @@ impl<'a> SelectedBranchRecordingState<'a> {
             gshare_branch_predictor: state.gshare_branch_predictor.clone(),
             bimode_branch_predictor: state.bimode_branch_predictor.clone(),
             tournament_branch_predictor: state.tournament_branch_predictor.clone(),
+            tage_sc_l_branch_predictor: state.tage_sc_l_branch_predictor.clone(),
+            multiperspective_perceptron: state.multiperspective_perceptron.clone(),
         }
     }
 
@@ -194,6 +199,8 @@ impl<'a> SelectedBranchRecordingState<'a> {
             gshare_branch_predictor: self.gshare_branch_predictor,
             bimode_branch_predictor: self.bimode_branch_predictor,
             tournament_branch_predictor: self.tournament_branch_predictor,
+            tage_sc_l_branch_predictor: self.tage_sc_l_branch_predictor,
+            multiperspective_perceptron: self.multiperspective_perceptron,
         }
     }
 }
@@ -203,6 +210,8 @@ struct SelectedBranchRecordedState {
     gshare_branch_predictor: GShareBranchPredictor,
     bimode_branch_predictor: BiModeBranchPredictor,
     tournament_branch_predictor: TournamentBranchPredictor,
+    tage_sc_l_branch_predictor: TageScLBranchPredictor,
+    multiperspective_perceptron: MultiperspectivePerceptron,
 }
 
 impl SelectedBranchRecordedState {
@@ -211,6 +220,8 @@ impl SelectedBranchRecordedState {
         state.gshare_branch_predictor = self.gshare_branch_predictor;
         state.bimode_branch_predictor = self.bimode_branch_predictor;
         state.tournament_branch_predictor = self.tournament_branch_predictor;
+        state.tage_sc_l_branch_predictor = self.tage_sc_l_branch_predictor;
+        state.multiperspective_perceptron = self.multiperspective_perceptron;
     }
 }
 
@@ -254,6 +265,26 @@ fn record_selected_branch_speculation(
                 prediction.predicted_taken(),
             )?
         }
+        RiscvSelectedBranchSpeculation::TageScL {
+            prediction,
+            kind,
+            target,
+            ..
+        } => record_tage_sc_l_selected_prediction(
+            state,
+            prediction.clone(),
+            *kind,
+            *target,
+            prediction.predicted_taken(),
+        )?,
+        RiscvSelectedBranchSpeculation::MultiperspectivePerceptron {
+            prediction, target, ..
+        } => record_multiperspective_selected_prediction(
+            state,
+            prediction.clone(),
+            *target,
+            prediction.predicted_taken(),
+        )?,
     };
     state
         .selected_branch_speculations
@@ -293,6 +324,7 @@ fn record_missing_selected_branch_speculations(
             selected,
             pending_sequence,
             pending.pc(),
+            pending.target(),
             pending.predicted_taken(),
         )?;
         state
@@ -317,6 +349,12 @@ fn selected_branch_speculation_same_family(
         ) | (
             RiscvSelectedBranchSpeculation::Tournament { .. },
             RiscvSelectedBranchSpeculation::Tournament { .. }
+        ) | (
+            RiscvSelectedBranchSpeculation::TageScL { .. },
+            RiscvSelectedBranchSpeculation::TageScL { .. }
+        ) | (
+            RiscvSelectedBranchSpeculation::MultiperspectivePerceptron { .. },
+            RiscvSelectedBranchSpeculation::MultiperspectivePerceptron { .. }
         )
     )
 }
@@ -327,6 +365,7 @@ fn replay_selected_branch_speculation(
     selected: &RiscvSelectedBranchSpeculation,
     sequence: u64,
     pc: Address,
+    recorded_target: Option<Address>,
     predicted_taken: bool,
 ) -> Result<RiscvSelectedBranchSpeculation, RiscvCpuError> {
     match selected {
@@ -397,6 +436,55 @@ fn replay_selected_branch_speculation(
             };
             record_tournament_selected_prediction(state, prediction, predicted_taken)
         }
+        RiscvSelectedBranchSpeculation::TageScL { .. } => {
+            let (conditional, kind, target) =
+                pending_selected_branch_history(fetch_events, sequence, pc, recorded_target)?;
+            let prediction = state
+                .tage_sc_l_branch_predictor
+                .predict(RISCV_LOCAL_TAGE_SC_L_THREAD, pc, conditional)
+                .map_err(RiscvCpuError::TageScLBranchPredictor)?;
+            record_tage_sc_l_selected_prediction(state, prediction, kind, target, predicted_taken)
+        }
+        RiscvSelectedBranchSpeculation::MultiperspectivePerceptron { .. } => {
+            let (conditional, _, target) =
+                pending_selected_branch_history(fetch_events, sequence, pc, recorded_target)?;
+            let prediction = state
+                .multiperspective_perceptron
+                .predict(
+                    RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
+                    pc,
+                    conditional,
+                )
+                .map_err(RiscvCpuError::MultiperspectivePerceptron)?;
+            record_multiperspective_selected_prediction(state, prediction, target, predicted_taken)
+        }
+    }
+}
+
+fn pending_selected_branch_history(
+    fetch_events: &[CpuFetchEvent],
+    sequence: u64,
+    pc: Address,
+    recorded_target: Option<Address>,
+) -> Result<(bool, StatisticalCorrectorBranchKind, Address), RiscvCpuError> {
+    let instruction = completed_fetch_instruction_from_events(fetch_events, sequence)
+        .ok_or(RiscvCpuError::MissingBranchSpeculationInstruction { sequence })?;
+    let conditional = instruction_is_conditional_branch(instruction);
+    let kind = statistical_corrector_branch_kind(instruction);
+    let target = pending_selected_branch_history_target(pc, recorded_target, instruction)
+        .ok_or(RiscvCpuError::MissingBranchSpeculationInstruction { sequence })?;
+    Ok((conditional, kind, target))
+}
+
+fn pending_selected_branch_history_target(
+    fetch_pc: Address,
+    recorded_target: Option<Address>,
+    instruction: RiscvInstruction,
+) -> Option<Address> {
+    if instruction_is_conditional_branch(instruction) {
+        conditional_branch_target(fetch_pc, instruction).or(recorded_target)
+    } else {
+        recorded_target
     }
 }
 
@@ -442,6 +530,44 @@ fn record_tournament_selected_prediction(
     Ok(RiscvSelectedBranchSpeculation::Tournament {
         prediction,
         history_update: Some(history_update),
+    })
+}
+
+fn record_tage_sc_l_selected_prediction(
+    state: &mut SelectedBranchRecordingState<'_>,
+    prediction: crate::TageScLPrediction,
+    kind: StatisticalCorrectorBranchKind,
+    target: Address,
+    taken: bool,
+) -> Result<RiscvSelectedBranchSpeculation, RiscvCpuError> {
+    let snapshot_before_update = state.tage_sc_l_branch_predictor.snapshot();
+    state
+        .tage_sc_l_branch_predictor
+        .update_history(prediction.history(), taken, kind, target)
+        .map_err(RiscvCpuError::TageScLBranchPredictor)?;
+    Ok(RiscvSelectedBranchSpeculation::TageScL {
+        prediction,
+        kind,
+        target,
+        snapshot_before_update: Some(snapshot_before_update),
+    })
+}
+
+fn record_multiperspective_selected_prediction(
+    state: &mut SelectedBranchRecordingState<'_>,
+    prediction: crate::MultiperspectivePerceptronPrediction,
+    target: Address,
+    taken: bool,
+) -> Result<RiscvSelectedBranchSpeculation, RiscvCpuError> {
+    let snapshot_before_update = state.multiperspective_perceptron.snapshot();
+    state
+        .multiperspective_perceptron
+        .update_speculative_history(prediction.history(), taken, target)
+        .map_err(RiscvCpuError::MultiperspectivePerceptron)?;
+    Ok(RiscvSelectedBranchSpeculation::MultiperspectivePerceptron {
+        prediction,
+        target,
+        snapshot_before_update: Some(snapshot_before_update),
     })
 }
 
@@ -741,7 +867,13 @@ fn fetch_ahead_decision(
     if let Some((target, branch_kind, branch_target_prediction, target_provider)) =
         direct_jump_fetch_ahead_target(state, fetch_pc, instruction)
     {
-        let selected_speculation = selected_direct_branch_speculation(state, fetch_pc)?;
+        let selected_speculation = selected_direct_branch_speculation(
+            state,
+            completed_fetches,
+            fetch_pc,
+            branch_kind,
+            target,
+        )?;
         return Some(RiscvFetchAheadDecision::branch(
             target,
             sequence,
@@ -909,10 +1041,18 @@ fn selected_conditional_branch_prediction(
                 .predicted_taken()
                 .then(|| conditional_branch_target(fetch_pc, instruction))
                 .flatten();
+            let selected_speculation =
+                conditional_branch_target(fetch_pc, instruction).map(|branch_target| {
+                    RiscvSelectedBranchSpeculation::MultiperspectivePerceptron {
+                        prediction: prediction.clone(),
+                        target: branch_target,
+                        snapshot_before_update: None,
+                    }
+                });
             Some(RiscvFetchAheadBranchPrediction {
                 predicted_taken: prediction.predicted_taken(),
                 target,
-                selected_speculation: None,
+                selected_speculation,
                 branch_target_prediction: None,
                 target_provider: BranchTargetProvider::NoTarget,
             })
@@ -924,12 +1064,13 @@ fn selected_conditional_branch_prediction(
 
 fn selected_direct_branch_speculation(
     state: &mut RiscvCoreState,
+    completed_fetches: &[&CpuFetchEvent],
     fetch_pc: Address,
+    branch_kind: BranchTargetKind,
+    target: Address,
 ) -> Option<Option<RiscvSelectedBranchSpeculation>> {
     match state.branch_predictor_kind {
-        RiscvBranchPredictorKind::Basic
-        | RiscvBranchPredictorKind::TageScL
-        | RiscvBranchPredictorKind::MultiperspectivePerceptron => Some(None),
+        RiscvBranchPredictorKind::Basic => Some(None),
         RiscvBranchPredictorKind::GShare => {
             let global_history = selected_gshare_speculative_history(state)?;
             let prediction = state
@@ -975,6 +1116,68 @@ fn selected_direct_branch_speculation(
                 history_update: None,
             }))
         }
+        RiscvBranchPredictorKind::TageScL => {
+            let mut predictor = selected_tage_sc_l_speculative_predictor(state, completed_fetches)?;
+            let prediction = predictor
+                .predict(RISCV_LOCAL_TAGE_SC_L_THREAD, fetch_pc, false)
+                .ok()?;
+            Some(Some(RiscvSelectedBranchSpeculation::TageScL {
+                prediction,
+                kind: statistical_corrector_branch_kind_from_target(branch_kind),
+                target,
+                snapshot_before_update: None,
+            }))
+        }
+        RiscvBranchPredictorKind::MultiperspectivePerceptron => {
+            let thread = selected_multiperspective_speculative_thread(state, completed_fetches)?;
+            let prediction = state
+                .multiperspective_perceptron
+                .predict_with_thread_snapshot(
+                    RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
+                    fetch_pc,
+                    false,
+                    thread,
+                )
+                .ok()?;
+            Some(Some(
+                RiscvSelectedBranchSpeculation::MultiperspectivePerceptron {
+                    prediction,
+                    target,
+                    snapshot_before_update: None,
+                },
+            ))
+        }
+    }
+}
+
+const fn statistical_corrector_branch_kind_from_target(
+    branch_kind: BranchTargetKind,
+) -> StatisticalCorrectorBranchKind {
+    match branch_kind {
+        BranchTargetKind::DirectConditional => StatisticalCorrectorBranchKind::DirectConditional,
+        BranchTargetKind::IndirectConditional => {
+            StatisticalCorrectorBranchKind::IndirectConditional
+        }
+        BranchTargetKind::Return
+        | BranchTargetKind::CallIndirect
+        | BranchTargetKind::IndirectUnconditional => {
+            StatisticalCorrectorBranchKind::IndirectUnconditional
+        }
+        BranchTargetKind::NoBranch
+        | BranchTargetKind::CallDirect
+        | BranchTargetKind::DirectUnconditional => {
+            StatisticalCorrectorBranchKind::DirectUnconditional
+        }
+    }
+}
+
+const fn statistical_corrector_branch_kind(
+    instruction: RiscvInstruction,
+) -> StatisticalCorrectorBranchKind {
+    match instruction {
+        RiscvInstruction::Jal { .. } => StatisticalCorrectorBranchKind::DirectUnconditional,
+        RiscvInstruction::Jalr { .. } => StatisticalCorrectorBranchKind::IndirectUnconditional,
+        _ => StatisticalCorrectorBranchKind::DirectConditional,
     }
 }
 
@@ -1030,6 +1233,42 @@ fn selected_speculative_history(
         history = shift_history(history, pending.predicted_taken());
     }
     Some(history)
+}
+
+fn selected_tage_sc_l_speculative_predictor(
+    state: &RiscvCoreState,
+    completed_fetches: &[&CpuFetchEvent],
+) -> Option<TageScLBranchPredictor> {
+    let mut predictor = state.tage_sc_l_branch_predictor.clone();
+    let latest_live_sequence = latest_live_selected_branch_speculation_sequence(
+        &state.selected_branch_speculations,
+        &mut |speculation| matches!(speculation, RiscvSelectedBranchSpeculation::TageScL { .. }),
+    );
+    for (sequence, speculation) in &state.branch_speculations {
+        if latest_live_sequence.is_some_and(|latest| *sequence <= latest) {
+            continue;
+        }
+        let pending = state.branch_predictor.pending_speculation(*speculation)?;
+        let pending_instruction = completed_fetch_instruction(completed_fetches, *sequence)?;
+        let conditional = instruction_is_conditional_branch(pending_instruction);
+        let prediction = predictor
+            .predict(RISCV_LOCAL_TAGE_SC_L_THREAD, pending.pc(), conditional)
+            .ok()?;
+        let target = pending_selected_branch_history_target(
+            pending.pc(),
+            pending.target(),
+            pending_instruction,
+        )?;
+        predictor
+            .update_history(
+                prediction.history(),
+                pending.predicted_taken(),
+                statistical_corrector_branch_kind(pending_instruction),
+                target,
+            )
+            .ok()?;
+    }
+    Some(predictor)
 }
 
 fn latest_live_selected_branch_speculation_sequence(
@@ -1128,7 +1367,19 @@ fn selected_multiperspective_speculative_thread(
         .thread_snapshot(RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD)
         .ok()?
         .clone();
+    let latest_live_sequence = latest_live_selected_branch_speculation_sequence(
+        &state.selected_branch_speculations,
+        &mut |speculation| {
+            matches!(
+                speculation,
+                RiscvSelectedBranchSpeculation::MultiperspectivePerceptron { .. }
+            )
+        },
+    );
     for (sequence, speculation) in &state.branch_speculations {
+        if latest_live_sequence.is_some_and(|latest| *sequence <= latest) {
+            continue;
+        }
         let pending = state.branch_predictor.pending_speculation(*speculation)?;
         let target = pending.target().or_else(|| {
             completed_fetch_instruction(completed_fetches, *sequence)

@@ -9,7 +9,7 @@ impl RiscvCore {
     ) -> TageScLBranchPredictorCheckpointPayload {
         let state = self.state.lock().expect("riscv core lock");
         TageScLBranchPredictorCheckpointPayload::from_snapshot(
-            state.tage_sc_l_branch_predictor.snapshot(),
+            state.committed_tage_sc_l_branch_predictor_snapshot(),
         )
         .expect("captured RISC-V TAGE-SC-L branch predictor checkpoint is internally consistent")
     }
@@ -31,6 +31,7 @@ impl RiscvCore {
         let mut restored = state.tage_sc_l_branch_predictor.clone();
         restored.restore(&snapshot)?;
         state.tage_sc_l_branch_predictor = restored;
+        state.forget_tage_sc_l_selected_branch_speculations();
         Ok(())
     }
 

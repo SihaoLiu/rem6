@@ -916,28 +916,22 @@ fn retire_branch_predictions(
         actual_taken,
         statistical_corrector_branch_kind(instruction),
         tage_sc_l_target,
+        selected_branch_speculation.as_ref(),
     )?;
-    let multiperspective_perceptron_prediction = state
-        .multiperspective_perceptron
-        .predict(
-            RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
-            pc,
-            conditional,
-        )
-        .map_err(RiscvCpuError::MultiperspectivePerceptron)?;
     let multiperspective_perceptron_target = if conditional {
         static_conditional_branch_target(pc, instruction).unwrap_or(Address::new(next_pc))
     } else {
         Address::new(next_pc)
     };
-    let multiperspective_perceptron_training_update = state
-        .multiperspective_perceptron
-        .train(
-            multiperspective_perceptron_prediction.history(),
+    let multiperspective_perceptron_branch_update =
+        retire_multiperspective_perceptron_branch_update(
+            state,
+            pc,
+            conditional,
             actual_taken,
             multiperspective_perceptron_target,
-        )
-        .map_err(RiscvCpuError::MultiperspectivePerceptron)?;
+            selected_branch_speculation.as_ref(),
+        )?;
 
     Ok(RiscvRetiredBranchResolution::new(
         RiscvRetiredBranchUpdates::new(
@@ -946,10 +940,7 @@ fn retire_branch_predictions(
             bimode_branch_update,
             tournament_branch_update,
             tage_sc_l_branch_update,
-            RiscvMultiperspectivePerceptronBranchUpdate::new(
-                multiperspective_perceptron_prediction,
-                multiperspective_perceptron_training_update,
-            ),
+            multiperspective_perceptron_branch_update,
         ),
         selected_prediction,
     ))
@@ -1151,7 +1142,31 @@ fn retire_tage_sc_l_branch_update(
     actual_taken: bool,
     kind: StatisticalCorrectorBranchKind,
     target: Address,
+    selected: Option<&RiscvSelectedBranchSpeculation>,
 ) -> Result<RiscvTageScLBranchUpdate, RiscvCpuError> {
+    if let Some(RiscvSelectedBranchSpeculation::TageScL {
+        prediction,
+        snapshot_before_update,
+        ..
+    }) = selected
+    {
+        if let Some(snapshot) = snapshot_before_update {
+            state
+                .tage_sc_l_branch_predictor
+                .restore(snapshot)
+                .map_err(RiscvCpuError::TageScLBranchPredictor)?;
+        }
+        let training_update = state
+            .tage_sc_l_branch_predictor
+            .train(prediction.history(), actual_taken, kind, target)
+            .map_err(RiscvCpuError::TageScLBranchPredictor)?;
+        state.reapply_tage_sc_l_selected_branch_speculations()?;
+        return Ok(RiscvTageScLBranchUpdate::new(
+            prediction.clone(),
+            training_update,
+        ));
+    }
+
     let prediction = state
         .tage_sc_l_branch_predictor
         .predict(RISCV_LOCAL_TAGE_SC_L_THREAD, pc, conditional)
@@ -1161,6 +1176,55 @@ fn retire_tage_sc_l_branch_update(
         .train(prediction.history(), actual_taken, kind, target)
         .map_err(RiscvCpuError::TageScLBranchPredictor)?;
     Ok(RiscvTageScLBranchUpdate::new(prediction, training_update))
+}
+
+fn retire_multiperspective_perceptron_branch_update(
+    state: &mut RiscvCoreState,
+    pc: Address,
+    conditional: bool,
+    actual_taken: bool,
+    target: Address,
+    selected: Option<&RiscvSelectedBranchSpeculation>,
+) -> Result<RiscvMultiperspectivePerceptronBranchUpdate, RiscvCpuError> {
+    if let Some(RiscvSelectedBranchSpeculation::MultiperspectivePerceptron {
+        prediction,
+        snapshot_before_update,
+        ..
+    }) = selected
+    {
+        if let Some(snapshot) = snapshot_before_update {
+            state
+                .multiperspective_perceptron
+                .restore(snapshot)
+                .map_err(RiscvCpuError::MultiperspectivePerceptron)?;
+        }
+        let training_update = state
+            .multiperspective_perceptron
+            .train(prediction.history(), actual_taken, target)
+            .map_err(RiscvCpuError::MultiperspectivePerceptron)?;
+        state.reapply_multiperspective_selected_branch_speculations()?;
+        return Ok(RiscvMultiperspectivePerceptronBranchUpdate::new(
+            prediction.clone(),
+            training_update,
+        ));
+    }
+
+    let prediction = state
+        .multiperspective_perceptron
+        .predict(
+            RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
+            pc,
+            conditional,
+        )
+        .map_err(RiscvCpuError::MultiperspectivePerceptron)?;
+    let training_update = state
+        .multiperspective_perceptron
+        .train(prediction.history(), actual_taken, target)
+        .map_err(RiscvCpuError::MultiperspectivePerceptron)?;
+    Ok(RiscvMultiperspectivePerceptronBranchUpdate::new(
+        prediction,
+        training_update,
+    ))
 }
 
 const fn statistical_corrector_branch_kind(

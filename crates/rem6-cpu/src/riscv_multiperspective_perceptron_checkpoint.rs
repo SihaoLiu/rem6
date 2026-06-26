@@ -9,7 +9,7 @@ impl RiscvCore {
     ) -> MultiperspectivePerceptronCheckpointPayload {
         let state = self.state.lock().expect("riscv core lock");
         MultiperspectivePerceptronCheckpointPayload::from_snapshot(
-            state.multiperspective_perceptron.snapshot(),
+            state.committed_multiperspective_perceptron_snapshot(),
         )
         .expect("captured RISC-V multiperspective perceptron checkpoint is internally consistent")
     }
@@ -31,6 +31,7 @@ impl RiscvCore {
         let mut restored = state.multiperspective_perceptron.clone();
         restored.restore(&snapshot)?;
         state.multiperspective_perceptron = restored;
+        state.forget_multiperspective_selected_branch_speculations();
         Ok(())
     }
 

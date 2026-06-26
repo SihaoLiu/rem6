@@ -3,9 +3,12 @@ use std::collections::BTreeSet;
 use crate::{
     BiModeBranchPredictorSnapshot, BiModeHistoryUpdate, BiModePrediction, BiModeThreadSnapshot,
     GShareBranchPredictorSnapshot, GShareHistoryUpdate, GSharePrediction, GShareThreadSnapshot,
-    RiscvCoreState, RiscvCpuError, TournamentBranchPredictorSnapshot, TournamentHistoryUpdate,
+    MultiperspectivePerceptronPrediction, MultiperspectivePerceptronSnapshot, RiscvCoreState,
+    RiscvCpuError, StatisticalCorrectorBranchKind, TageScLBranchPredictorSnapshot,
+    TageScLPrediction, TournamentBranchPredictorSnapshot, TournamentHistoryUpdate,
     TournamentPrediction, TournamentThreadSnapshot,
 };
+use rem6_memory::Address;
 
 impl RiscvCoreState {
     pub(crate) fn rollback_all_selected_branch_speculations(
@@ -62,6 +65,26 @@ impl RiscvCoreState {
                 self.tournament_branch_predictor
                     .squash(prediction.history())
                     .map_err(RiscvCpuError::TournamentBranchPredictor)?;
+            }
+            RiscvSelectedBranchSpeculation::TageScL {
+                snapshot_before_update,
+                ..
+            } => {
+                if let Some(snapshot) = snapshot_before_update {
+                    self.tage_sc_l_branch_predictor
+                        .restore(&snapshot)
+                        .map_err(RiscvCpuError::TageScLBranchPredictor)?;
+                }
+            }
+            RiscvSelectedBranchSpeculation::MultiperspectivePerceptron {
+                snapshot_before_update,
+                ..
+            } => {
+                if let Some(snapshot) = snapshot_before_update {
+                    self.multiperspective_perceptron
+                        .restore(&snapshot)
+                        .map_err(RiscvCpuError::MultiperspectivePerceptron)?;
+                }
             }
         }
         Ok(())
@@ -146,6 +169,48 @@ impl RiscvCoreState {
         )
     }
 
+    pub(crate) fn committed_tage_sc_l_branch_predictor_snapshot(
+        &self,
+    ) -> TageScLBranchPredictorSnapshot {
+        let mut snapshot = self.tage_sc_l_branch_predictor.snapshot();
+        if let Some(committed) =
+            self.selected_branch_speculations
+                .values()
+                .find_map(|speculation| match speculation {
+                    RiscvSelectedBranchSpeculation::TageScL {
+                        snapshot_before_update: Some(snapshot),
+                        ..
+                    } => Some(snapshot),
+                    _ => None,
+                })
+        {
+            snapshot.ltage.tage.threads = committed.ltage.tage.threads.clone();
+            snapshot.statistical_corrector.threads =
+                committed.statistical_corrector.threads.clone();
+        }
+        snapshot
+    }
+
+    pub(crate) fn committed_multiperspective_perceptron_snapshot(
+        &self,
+    ) -> MultiperspectivePerceptronSnapshot {
+        let mut snapshot = self.multiperspective_perceptron.snapshot();
+        if let Some(committed) =
+            self.selected_branch_speculations
+                .values()
+                .find_map(|speculation| match speculation {
+                    RiscvSelectedBranchSpeculation::MultiperspectivePerceptron {
+                        snapshot_before_update: Some(snapshot),
+                        ..
+                    } => Some(snapshot),
+                    _ => None,
+                })
+        {
+            snapshot.threads = committed.threads.clone();
+        }
+        snapshot
+    }
+
     pub(crate) fn forget_gshare_selected_branch_speculations(&mut self) {
         self.selected_branch_speculations.retain(|_, speculation| {
             !matches!(speculation, RiscvSelectedBranchSpeculation::GShare { .. })
@@ -166,6 +231,98 @@ impl RiscvCoreState {
             )
         });
     }
+
+    pub(crate) fn forget_tage_sc_l_selected_branch_speculations(&mut self) {
+        self.selected_branch_speculations.retain(|_, speculation| {
+            !matches!(speculation, RiscvSelectedBranchSpeculation::TageScL { .. })
+        });
+    }
+
+    pub(crate) fn forget_multiperspective_selected_branch_speculations(&mut self) {
+        self.selected_branch_speculations.retain(|_, speculation| {
+            !matches!(
+                speculation,
+                RiscvSelectedBranchSpeculation::MultiperspectivePerceptron { .. }
+            )
+        });
+    }
+
+    pub(crate) fn reapply_tage_sc_l_selected_branch_speculations(
+        &mut self,
+    ) -> Result<(), RiscvCpuError> {
+        let speculations = self
+            .selected_branch_speculations
+            .iter()
+            .filter_map(|(sequence, speculation)| match speculation {
+                RiscvSelectedBranchSpeculation::TageScL {
+                    prediction,
+                    kind,
+                    target,
+                    ..
+                } => Some((*sequence, prediction.clone(), *kind, *target)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        for (sequence, prediction, kind, target) in speculations {
+            let snapshot_before_update = self.tage_sc_l_branch_predictor.snapshot();
+            self.tage_sc_l_branch_predictor
+                .update_history(
+                    prediction.history(),
+                    prediction.predicted_taken(),
+                    kind,
+                    target,
+                )
+                .map_err(RiscvCpuError::TageScLBranchPredictor)?;
+            self.selected_branch_speculations.insert(
+                sequence,
+                RiscvSelectedBranchSpeculation::TageScL {
+                    prediction,
+                    kind,
+                    target,
+                    snapshot_before_update: Some(snapshot_before_update),
+                },
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn reapply_multiperspective_selected_branch_speculations(
+        &mut self,
+    ) -> Result<(), RiscvCpuError> {
+        let speculations = self
+            .selected_branch_speculations
+            .iter()
+            .filter_map(|(sequence, speculation)| match speculation {
+                RiscvSelectedBranchSpeculation::MultiperspectivePerceptron {
+                    prediction,
+                    target,
+                    ..
+                } => Some((*sequence, prediction.clone(), *target)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        for (sequence, prediction, target) in speculations {
+            let snapshot_before_update = self.multiperspective_perceptron.snapshot();
+            self.multiperspective_perceptron
+                .update_speculative_history(
+                    prediction.history(),
+                    prediction.predicted_taken(),
+                    target,
+                )
+                .map_err(RiscvCpuError::MultiperspectivePerceptron)?;
+            self.selected_branch_speculations.insert(
+                sequence,
+                RiscvSelectedBranchSpeculation::MultiperspectivePerceptron {
+                    prediction,
+                    target,
+                    snapshot_before_update: Some(snapshot_before_update),
+                },
+            );
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -181,5 +338,16 @@ pub(crate) enum RiscvSelectedBranchSpeculation {
     Tournament {
         prediction: TournamentPrediction,
         history_update: Option<TournamentHistoryUpdate>,
+    },
+    TageScL {
+        prediction: TageScLPrediction,
+        kind: StatisticalCorrectorBranchKind,
+        target: Address,
+        snapshot_before_update: Option<TageScLBranchPredictorSnapshot>,
+    },
+    MultiperspectivePerceptron {
+        prediction: MultiperspectivePerceptronPrediction,
+        target: Address,
+        snapshot_before_update: Option<MultiperspectivePerceptronSnapshot>,
     },
 }
