@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use rem6_cpu::{CpuId, RiscvCluster, RiscvCoreDriveAction};
+use rem6_cpu::{CpuId, RiscvCluster, RiscvCoreDriveAction, TournamentPredictorSelection};
 use rem6_isa_riscv::Register;
 use rem6_memory::CacheLineLayout;
 use rem6_system::{RiscvSyscallTraceRecord, RiscvSystemRun, RiscvSystemRunStopReason};
@@ -72,6 +72,7 @@ pub(super) fn execution_summary(
     let final_tick = run.final_tick().ok_or_else(|| Rem6CliError::Execute {
         error: "RISC-V execution stopped without a final tick".to_string(),
     })?;
+    let tournament_selection_counts = tournament_selection_counts_by_cpu(run);
     let stop = match run.stop_reason() {
         RiscvSystemRunStopReason::HostStop(stop) => {
             if let Some(scheduled_trap) = run.scheduled_traps().first() {
@@ -147,6 +148,10 @@ pub(super) fn execution_summary(
         let pipeline_stage_occupied_cycles = in_order_pipeline_stage_occupied_cycles(&core);
         let branch_speculation_summary = core.branch_speculation_summary();
         let branch_target_buffer = core.branch_target_buffer_snapshot();
+        let tournament_selection_counts = tournament_selection_counts
+            .get(&cpu)
+            .copied()
+            .unwrap_or_default();
         let checker = core
             .checker_cpu_snapshot()
             .map(|snapshot| Rem6CheckerSummary {
@@ -196,6 +201,8 @@ pub(super) fn execution_summary(
                 .max_pending(),
             branch_target_buffer_lookups: branch_target_buffer.lookup_count(),
             branch_target_buffer_hits: branch_target_buffer.hit_count(),
+            tournament_local_predictions: tournament_selection_counts.local_predictions,
+            tournament_global_predictions: tournament_selection_counts.global_predictions,
             data_loads: data.loads,
             data_stores: data.stores,
             data_atomics: data.atomics,
@@ -331,4 +338,30 @@ fn committed_instructions_by_cpu(run: &RiscvSystemRun) -> BTreeMap<CpuId, u64> {
         }
     }
     committed
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct TournamentSelectionCounts {
+    local_predictions: u64,
+    global_predictions: u64,
+}
+
+fn tournament_selection_counts_by_cpu(
+    run: &RiscvSystemRun,
+) -> BTreeMap<CpuId, TournamentSelectionCounts> {
+    let mut counts: BTreeMap<CpuId, TournamentSelectionCounts> = BTreeMap::new();
+    for event in run.turns().iter().flat_map(|turn| turn.core_events()) {
+        let RiscvCoreDriveAction::InstructionExecuted(instruction) = event.action() else {
+            continue;
+        };
+        let Some(update) = instruction.tournament_branch_update() else {
+            continue;
+        };
+        let entry = counts.entry(event.cpu()).or_insert_with(Default::default);
+        match update.prediction().selection() {
+            TournamentPredictorSelection::Local => entry.local_predictions += 1,
+            TournamentPredictorSelection::Global => entry.global_predictions += 1,
+        }
+    }
+    counts
 }

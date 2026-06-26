@@ -471,6 +471,8 @@ pub struct Rem6CoreSummary {
     in_order_pipeline_branch_speculation_max_pending: u64,
     branch_target_buffer_lookups: u64,
     branch_target_buffer_hits: u64,
+    tournament_local_predictions: u64,
+    tournament_global_predictions: u64,
     data_loads: u64,
     data_stores: u64,
     data_atomics: u64,

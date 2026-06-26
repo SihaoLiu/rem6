@@ -262,6 +262,18 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.branch_target_buffer_hits,
         )?;
+        for (name, value) in [
+            ("local_predictions", core.tournament_local_predictions),
+            ("global_predictions", core.tournament_global_predictions),
+        ] {
+            increment_stat(
+                stats,
+                &format!("sim.cpu{}.branch_predictor.tournament.{name}", core.cpu),
+                "Count",
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
         if let Some(checker) = &core.checker {
             increment_stat(
                 stats,

@@ -4676,6 +4676,35 @@ fn rem6_run_stats_use_selected_bimode_branch_predictor_for_fetch_steering() {
 }
 
 #[test]
+fn rem6_run_stats_emit_tournament_branch_predictor_selection_counts() {
+    let program = selected_branch_predictor_program();
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-tournament-branch-selection-stats", &elf);
+
+    let tournament = selected_branch_predictor_stdout(&path, "tournament");
+
+    let local_predictions = json_u64_field(&tournament, "\"local_predictions\":");
+    let global_predictions = json_u64_field(&tournament, "\"global_predictions\":");
+    assert!(local_predictions + global_predictions > 0, "{tournament}");
+    assert_eq!(
+        stat_value(
+            &tournament,
+            "sim.cpu0.branch_predictor.tournament.local_predictions"
+        ),
+        local_predictions
+    );
+    assert_eq!(
+        stat_value(
+            &tournament,
+            "sim.cpu0.branch_predictor.tournament.global_predictions"
+        ),
+        global_predictions
+    );
+    assert!(tournament.contains("\"x5\":\"0x7\""));
+    assert!(!tournament.contains("\"x6\":\"0x1\""));
+}
+
+#[test]
 fn rem6_run_stats_use_selected_multiperspective_perceptron_for_fetch_steering() {
     let program = selected_branch_predictor_program();
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
