@@ -29,6 +29,7 @@ use rem6_transport::{
 };
 
 mod artifact_json;
+mod branch_predictor_summary;
 mod cli_error;
 mod cli_output;
 mod config;
@@ -67,6 +68,10 @@ mod transport_summary;
 #[cfg(test)]
 mod transport_summary_tests;
 
+pub(crate) use branch_predictor_summary::{
+    Rem6BranchPredictorCounterSummary, Rem6MultiperspectivePerceptronCounterSummary,
+    Rem6TageScLBranchPredictorCounterSummary,
+};
 pub use cli_error::Rem6CliError;
 pub use config::{
     CliCachePrefetcher, CliDebugFlag, CliDramLowPowerTiming, CliDramMemoryProfile,
@@ -487,6 +492,11 @@ pub struct Rem6CoreSummary {
     branch_predictor_corrected: BranchTargetKindCounts,
     branch_predictor_target_wrong: BranchTargetKindCounts,
     branch_predictor_mispredict_due_to_predictor: BranchTargetKindCounts,
+    branch_predictor_gshare: Rem6BranchPredictorCounterSummary,
+    branch_predictor_bimode: Rem6BranchPredictorCounterSummary,
+    branch_predictor_tournament: Rem6BranchPredictorCounterSummary,
+    branch_predictor_tage_sc_l: Rem6TageScLBranchPredictorCounterSummary,
+    branch_predictor_multiperspective_perceptron: Rem6MultiperspectivePerceptronCounterSummary,
     tournament_local_predictions: u64,
     tournament_global_predictions: u64,
     data_loads: u64,

@@ -485,6 +485,48 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.branch_predictor_mispredict_due_to_predictor.total(),
         )?;
+        emit_branch_predictor_counter_stats(
+            stats,
+            core,
+            "gshare",
+            [
+                ("lookups", core.branch_predictor_gshare.lookups),
+                (
+                    "history_updates",
+                    core.branch_predictor_gshare.history_updates,
+                ),
+                ("updates", core.branch_predictor_gshare.updates),
+                ("squashes", core.branch_predictor_gshare.squashes),
+            ],
+        )?;
+        emit_branch_predictor_counter_stats(
+            stats,
+            core,
+            "bimode",
+            [
+                ("lookups", core.branch_predictor_bimode.lookups),
+                (
+                    "history_updates",
+                    core.branch_predictor_bimode.history_updates,
+                ),
+                ("updates", core.branch_predictor_bimode.updates),
+                ("squashes", core.branch_predictor_bimode.squashes),
+            ],
+        )?;
+        emit_branch_predictor_counter_stats(
+            stats,
+            core,
+            "tournament",
+            [
+                ("lookups", core.branch_predictor_tournament.lookups),
+                (
+                    "history_updates",
+                    core.branch_predictor_tournament.history_updates,
+                ),
+                ("updates", core.branch_predictor_tournament.updates),
+                ("squashes", core.branch_predictor_tournament.squashes),
+            ],
+        )?;
         for (name, value) in [
             ("local_predictions", core.tournament_local_predictions),
             ("global_predictions", core.tournament_global_predictions),
@@ -497,6 +539,35 @@ pub(super) fn emit_cpu_run_stats(
                 value,
             )?;
         }
+        emit_branch_predictor_counter_stats(
+            stats,
+            core,
+            "tage_sc_l",
+            [
+                ("lookups", core.branch_predictor_tage_sc_l.lookups),
+                (
+                    "history_updates",
+                    core.branch_predictor_tage_sc_l.history_updates,
+                ),
+                ("updates", core.branch_predictor_tage_sc_l.updates),
+                ("repairs", core.branch_predictor_tage_sc_l.repairs),
+            ],
+        )?;
+        emit_branch_predictor_counter_stats(
+            stats,
+            core,
+            "multiperspective_perceptron",
+            [
+                (
+                    "lookups",
+                    core.branch_predictor_multiperspective_perceptron.lookups,
+                ),
+                (
+                    "updates",
+                    core.branch_predictor_multiperspective_perceptron.updates,
+                ),
+            ],
+        )?;
         if let Some(checker) = &core.checker {
             increment_stat(
                 stats,
@@ -554,6 +625,24 @@ pub(super) fn emit_cpu_run_stats(
             "Byte",
             StatResetPolicy::Monotonic,
             core.data_atomic_bytes,
+        )?;
+    }
+    Ok(())
+}
+
+fn emit_branch_predictor_counter_stats<const N: usize>(
+    stats: &mut StatsRegistry,
+    core: &Rem6CoreSummary,
+    family: &str,
+    counters: [(&str, u64); N],
+) -> Result<(), Rem6CliError> {
+    for (name, value) in counters {
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.branch_predictor.{family}.{name}", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            value,
         )?;
     }
     Ok(())

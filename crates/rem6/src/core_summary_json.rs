@@ -28,6 +28,17 @@ fn branch_target_provider_counts_json(counts: BranchTargetProviderCounts) -> Str
     format!("{{{}}}", fields.join(","))
 }
 
+fn branch_predictor_counter_json(
+    lookups: u64,
+    history_updates: u64,
+    updates: u64,
+    squashes: u64,
+) -> String {
+    format!(
+        "{{\"lookups\":{lookups},\"history_updates\":{history_updates},\"updates\":{updates},\"squashes\":{squashes}}}"
+    )
+}
+
 impl Rem6CoreSummary {
     pub(crate) fn to_json(&self) -> String {
         let registers = self
@@ -57,8 +68,32 @@ impl Rem6CoreSummary {
         let target_wrong = branch_target_kind_counts_json(self.branch_predictor_target_wrong);
         let mispredict_due_to_predictor =
             branch_target_kind_counts_json(self.branch_predictor_mispredict_due_to_predictor);
+        let gshare = branch_predictor_counter_json(
+            self.branch_predictor_gshare.lookups,
+            self.branch_predictor_gshare.history_updates,
+            self.branch_predictor_gshare.updates,
+            self.branch_predictor_gshare.squashes,
+        );
+        let bimode = branch_predictor_counter_json(
+            self.branch_predictor_bimode.lookups,
+            self.branch_predictor_bimode.history_updates,
+            self.branch_predictor_bimode.updates,
+            self.branch_predictor_bimode.squashes,
+        );
+        let tage_sc_l = format!(
+            "{{\"lookups\":{},\"history_updates\":{},\"updates\":{},\"repairs\":{}}}",
+            self.branch_predictor_tage_sc_l.lookups,
+            self.branch_predictor_tage_sc_l.history_updates,
+            self.branch_predictor_tage_sc_l.updates,
+            self.branch_predictor_tage_sc_l.repairs
+        );
+        let multiperspective_perceptron = format!(
+            "{{\"lookups\":{},\"updates\":{}}}",
+            self.branch_predictor_multiperspective_perceptron.lookups,
+            self.branch_predictor_multiperspective_perceptron.updates
+        );
         format!(
-            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"in_order_pipeline\":{{\"cycles\":{},\"in_flight\":{},\"stage_widths\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_max_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_occupied_cycles\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_resource_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_ordering_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"retired\":{},\"advanced\":{},\"flushed\":{},\"resource_blocked\":{},\"ordering_blocked\":{},\"stall_cycles\":{},\"fetch_wait_cycles\":{},\"data_wait_cycles\":{},\"branch_predictions\":{},\"branch_mispredictions\":{},\"conditional_branch_predictions\":{},\"conditional_branch_predicted_taken\":{},\"conditional_branch_mispredictions\":{},\"branch_prediction_flushes\":{},\"redirects\":{},\"branch_speculation_predictions\":{},\"branch_speculation_repairs\":{},\"branch_speculation_removed_youngers\":{},\"branch_speculation_max_pending\":{}}},\"branch_predictor\":{{\"btb\":{{\"lookups\":{},\"hits\":{},\"misses\":{},\"updates\":{},\"evictions\":{},\"mispredictions\":{},\"predicted_taken_misses\":{},\"mispredict_due_to_btb_miss\":{}}},\"lookups\":{},\"target_provider\":{},\"committed\":{},\"mispredicted\":{},\"corrected\":{},\"target_wrong\":{},\"mispredict_due_to_predictor\":{},\"tournament\":{{\"local_predictions\":{},\"global_predictions\":{}}}}},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{}{},\"registers\":{{{}}}}}",
+            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"in_order_pipeline\":{{\"cycles\":{},\"in_flight\":{},\"stage_widths\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_max_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_occupied_cycles\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_resource_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_ordering_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"retired\":{},\"advanced\":{},\"flushed\":{},\"resource_blocked\":{},\"ordering_blocked\":{},\"stall_cycles\":{},\"fetch_wait_cycles\":{},\"data_wait_cycles\":{},\"branch_predictions\":{},\"branch_mispredictions\":{},\"conditional_branch_predictions\":{},\"conditional_branch_predicted_taken\":{},\"conditional_branch_mispredictions\":{},\"branch_prediction_flushes\":{},\"redirects\":{},\"branch_speculation_predictions\":{},\"branch_speculation_repairs\":{},\"branch_speculation_removed_youngers\":{},\"branch_speculation_max_pending\":{}}},\"branch_predictor\":{{\"btb\":{{\"lookups\":{},\"hits\":{},\"misses\":{},\"updates\":{},\"evictions\":{},\"mispredictions\":{},\"predicted_taken_misses\":{},\"mispredict_due_to_btb_miss\":{}}},\"lookups\":{},\"target_provider\":{},\"committed\":{},\"mispredicted\":{},\"corrected\":{},\"target_wrong\":{},\"mispredict_due_to_predictor\":{},\"gshare\":{},\"bimode\":{},\"tournament\":{{\"lookups\":{},\"history_updates\":{},\"updates\":{},\"squashes\":{},\"local_predictions\":{},\"global_predictions\":{}}},\"tage_sc_l\":{},\"multiperspective_perceptron\":{}}},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{}{},\"registers\":{{{}}}}}",
             self.cpu,
             self.pc,
             self.committed_instructions,
@@ -128,8 +163,16 @@ impl Rem6CoreSummary {
             corrected,
             target_wrong,
             mispredict_due_to_predictor,
+            gshare,
+            bimode,
+            self.branch_predictor_tournament.lookups,
+            self.branch_predictor_tournament.history_updates,
+            self.branch_predictor_tournament.updates,
+            self.branch_predictor_tournament.squashes,
             self.tournament_local_predictions,
             self.tournament_global_predictions,
+            tage_sc_l,
+            multiperspective_perceptron,
             self.data_loads,
             self.data_stores,
             self.data_atomics,

@@ -5921,6 +5921,87 @@ fn rem6_run_stats_emit_tournament_branch_predictor_selection_counts() {
 }
 
 #[test]
+fn rem6_run_stats_emit_branch_predictor_family_counters() {
+    let program = selected_branch_predictor_program();
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-branch-predictor-family-counters", &elf);
+
+    let gshare = selected_branch_predictor_stdout(&path, "gshare");
+
+    for (family, fields) in [
+        (
+            "gshare",
+            &["lookups", "history_updates", "updates", "squashes"][..],
+        ),
+        (
+            "bimode",
+            &["lookups", "history_updates", "updates", "squashes"][..],
+        ),
+        (
+            "tournament",
+            &[
+                "lookups",
+                "history_updates",
+                "updates",
+                "squashes",
+                "local_predictions",
+                "global_predictions",
+            ][..],
+        ),
+        (
+            "tage_sc_l",
+            &["lookups", "history_updates", "updates", "repairs"][..],
+        ),
+        ("multiperspective_perceptron", &["lookups", "updates"][..]),
+    ] {
+        for field in fields {
+            let value = json_object_u64_field(
+                &gshare,
+                &format!("\"{family}\":{{"),
+                &format!("\"{field}\":"),
+            );
+            assert_eq!(
+                stat_value(
+                    &gshare,
+                    &format!("sim.cpu0.branch_predictor.{family}.{field}")
+                ),
+                value,
+                "{family}.{field} should match the stats registry path\n{gshare}"
+            );
+        }
+    }
+
+    assert!(
+        json_object_u64_field(&gshare, "\"gshare\":{", "\"lookups\":") > 0,
+        "{gshare}"
+    );
+    assert!(
+        json_object_u64_field(&gshare, "\"gshare\":{", "\"history_updates\":") > 0,
+        "{gshare}"
+    );
+    assert!(
+        json_object_u64_field(&gshare, "\"gshare\":{", "\"updates\":") > 0,
+        "{gshare}"
+    );
+    assert!(
+        json_object_u64_field(&gshare, "\"bimode\":{", "\"lookups\":") > 0,
+        "{gshare}"
+    );
+    assert!(
+        json_object_u64_field(&gshare, "\"tournament\":{", "\"lookups\":") > 0,
+        "{gshare}"
+    );
+    assert!(
+        json_object_u64_field(&gshare, "\"tage_sc_l\":{", "\"lookups\":") > 0,
+        "{gshare}"
+    );
+    assert!(
+        json_object_u64_field(&gshare, "\"multiperspective_perceptron\":{", "\"lookups\":") > 0,
+        "{gshare}"
+    );
+}
+
+#[test]
 fn rem6_run_stats_use_selected_multiperspective_perceptron_for_fetch_steering() {
     let program = selected_branch_predictor_program();
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
@@ -6079,6 +6160,18 @@ fn json_u64_field(stdout: &str, marker: &str) -> u64 {
     stdout[start..end]
         .parse::<u64>()
         .unwrap_or_else(|error| panic!("invalid numeric JSON field {marker}: {error}"))
+}
+
+fn json_object_u64_field(stdout: &str, object_marker: &str, field_marker: &str) -> u64 {
+    let object_start = stdout
+        .find(object_marker)
+        .unwrap_or_else(|| panic!("missing JSON object {object_marker} in output:\n{stdout}"))
+        + object_marker.len();
+    let object_end = stdout[object_start..]
+        .find('}')
+        .map(|offset| object_start + offset)
+        .unwrap_or_else(|| panic!("unterminated JSON object {object_marker} in output:\n{stdout}"));
+    json_u64_field(&stdout[object_start..object_end], field_marker)
 }
 
 fn json_stage_summary(stdout: &str, marker: &str) -> [u64; 5] {

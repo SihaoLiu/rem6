@@ -1442,6 +1442,10 @@ impl MultiperspectivePerceptronSnapshot {
         &self.config
     }
 
+    pub const fn lookup_count(&self) -> u64 {
+        self.lookup_count
+    }
+
     pub const fn update_count(&self) -> u64 {
         self.update_count
     }

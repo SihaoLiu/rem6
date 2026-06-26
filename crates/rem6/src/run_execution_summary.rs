@@ -22,12 +22,14 @@ use crate::pipeline_stats::{
 use crate::runtime_memory::{read_memory_dumps, CliMemoryRuntime};
 use crate::{
     data_access_probe_summary, execute_error, guest_trap_name, instruction_probe_summary,
-    memory_transport_summary, Rem6CheckerSummary, Rem6CliError, Rem6CoreSummary, Rem6DebugSummary,
-    Rem6ExecutionStop, Rem6ExecutionSummary, Rem6HostActionSummary, Rem6MemoryResourceInputs,
-    Rem6MemoryResourceSummary, Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary,
-    Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary,
-    Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary,
-    Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary, Rem6RunConfig, Rem6RunFabricSummary,
+    memory_transport_summary, Rem6BranchPredictorCounterSummary, Rem6CheckerSummary, Rem6CliError,
+    Rem6CoreSummary, Rem6DebugSummary, Rem6ExecutionStop, Rem6ExecutionSummary,
+    Rem6HostActionSummary, Rem6MemoryResourceInputs, Rem6MemoryResourceSummary,
+    Rem6MultiperspectivePerceptronCounterSummary, Rem6RiscvGuestWriteSummary,
+    Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary,
+    Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary,
+    Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
+    Rem6RunConfig, Rem6RunFabricSummary, Rem6TageScLBranchPredictorCounterSummary,
     RISCV_DATA_PROBE_PAGE_BYTES,
 };
 
@@ -151,6 +153,11 @@ pub(super) fn execution_summary(
         let pipeline_stage_ordering_blocked = in_order_pipeline_stage_ordering_blocked(&core);
         let branch_speculation_summary = core.branch_speculation_summary();
         let branch_target_buffer = core.branch_target_buffer_snapshot();
+        let gshare_branch_predictor = core.gshare_branch_predictor_snapshot();
+        let bimode_branch_predictor = core.bimode_branch_predictor_snapshot();
+        let tournament_branch_predictor = core.tournament_branch_predictor_snapshot();
+        let tage_sc_l_branch_predictor = core.tage_sc_l_branch_predictor_snapshot();
+        let multiperspective_perceptron = core.multiperspective_perceptron_snapshot();
         let tournament_selection_counts = tournament_selection_counts
             .get(&cpu)
             .copied()
@@ -222,6 +229,35 @@ pub(super) fn execution_summary(
             branch_predictor_target_wrong: branch_speculation_summary.target_wrong_branch_kinds(),
             branch_predictor_mispredict_due_to_predictor: branch_speculation_summary
                 .mispredict_due_to_predictor(),
+            branch_predictor_gshare: Rem6BranchPredictorCounterSummary {
+                lookups: gshare_branch_predictor.lookup_count(),
+                history_updates: gshare_branch_predictor.history_update_count(),
+                updates: gshare_branch_predictor.update_count(),
+                squashes: gshare_branch_predictor.squash_count(),
+            },
+            branch_predictor_bimode: Rem6BranchPredictorCounterSummary {
+                lookups: bimode_branch_predictor.lookup_count(),
+                history_updates: bimode_branch_predictor.history_update_count(),
+                updates: bimode_branch_predictor.update_count(),
+                squashes: bimode_branch_predictor.squash_count(),
+            },
+            branch_predictor_tournament: Rem6BranchPredictorCounterSummary {
+                lookups: tournament_branch_predictor.lookup_count(),
+                history_updates: tournament_branch_predictor.history_update_count(),
+                updates: tournament_branch_predictor.update_count(),
+                squashes: tournament_branch_predictor.squash_count(),
+            },
+            branch_predictor_tage_sc_l: Rem6TageScLBranchPredictorCounterSummary {
+                lookups: tage_sc_l_branch_predictor.lookup_count(),
+                history_updates: tage_sc_l_branch_predictor.history_update_count(),
+                updates: tage_sc_l_branch_predictor.update_count(),
+                repairs: tage_sc_l_branch_predictor.repair_count(),
+            },
+            branch_predictor_multiperspective_perceptron:
+                Rem6MultiperspectivePerceptronCounterSummary {
+                    lookups: multiperspective_perceptron.lookup_count(),
+                    updates: multiperspective_perceptron.update_count(),
+                },
             tournament_local_predictions: tournament_selection_counts.local_predictions,
             tournament_global_predictions: tournament_selection_counts.global_predictions,
             data_loads: data.loads,
