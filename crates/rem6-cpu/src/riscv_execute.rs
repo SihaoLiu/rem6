@@ -7,14 +7,15 @@ use rem6_isa_riscv::{
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
-    riscv_execution_event::RiscvRetiredBranchUpdates, BranchTargetKind, CpuFetchEvent,
-    CpuFetchEventKind, CpuFetchRecord, InOrderBranchPrediction, InOrderBranchRedirect,
-    InOrderPipelineCycleRecord, InOrderPipelineInstruction, InOrderPipelineStage,
-    RiscvBiModeBranchUpdate, RiscvCore, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent,
-    RiscvGShareBranchUpdate, RiscvMultiperspectivePerceptronBranchUpdate, RiscvTageScLBranchUpdate,
-    RiscvTournamentBranchUpdate, StatisticalCorrectorBranchKind, RISCV_LOCAL_BIMODE_THREAD,
-    RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
-    RISCV_LOCAL_TAGE_SC_L_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
+    riscv_branch_kind::riscv_branch_target_kind, riscv_execution_event::RiscvRetiredBranchUpdates,
+    BranchTargetKind, CpuFetchEvent, CpuFetchEventKind, CpuFetchRecord, InOrderBranchPrediction,
+    InOrderBranchRedirect, InOrderPipelineCycleRecord, InOrderPipelineInstruction,
+    InOrderPipelineStage, RiscvBiModeBranchUpdate, RiscvCore, RiscvCoreState, RiscvCpuError,
+    RiscvCpuExecutionEvent, RiscvGShareBranchUpdate, RiscvMultiperspectivePerceptronBranchUpdate,
+    RiscvTageScLBranchUpdate, RiscvTournamentBranchUpdate, StatisticalCorrectorBranchKind,
+    RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+    RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TAGE_SC_L_THREAD,
+    RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
 const RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES: u64 = 2;
@@ -857,15 +858,15 @@ fn retire_branch_predictions(
         return Ok(RiscvRetiredBranchResolution::default());
     };
 
+    let branch_kind = riscv_branch_target_kind(instruction);
     let branch_update = state
         .branch_predictor
         .update(pc, actual_taken, actual_target);
     if let Some(target) = actual_target {
-        state
-            .branch_target_buffer
-            .update(pc, target, branch_target_kind(instruction));
+        state.branch_target_buffer.update(pc, target, branch_kind);
     }
-    let selected_prediction = resolve_branch_speculation(state, sequence, &branch_update)?;
+    let selected_prediction =
+        resolve_branch_speculation(state, sequence, branch_kind, &branch_update)?;
     let prediction = if conditional {
         state
             .gshare_branch_predictor
@@ -984,20 +985,6 @@ fn retire_branch_predictions(
     ))
 }
 
-const fn branch_target_kind(instruction: RiscvInstruction) -> BranchTargetKind {
-    match instruction {
-        RiscvInstruction::Beq { .. }
-        | RiscvInstruction::Bne { .. }
-        | RiscvInstruction::Blt { .. }
-        | RiscvInstruction::Bge { .. }
-        | RiscvInstruction::Bltu { .. }
-        | RiscvInstruction::Bgeu { .. } => BranchTargetKind::DirectConditional,
-        RiscvInstruction::Jal { .. } => BranchTargetKind::DirectUnconditional,
-        RiscvInstruction::Jalr { .. } => BranchTargetKind::IndirectUnconditional,
-        _ => BranchTargetKind::NoBranch,
-    }
-}
-
 const fn statistical_corrector_branch_kind(
     instruction: RiscvInstruction,
 ) -> StatisticalCorrectorBranchKind {
@@ -1044,6 +1031,7 @@ fn checked_add_signed(value: u64, offset: i64) -> Option<u64> {
 fn resolve_branch_speculation(
     state: &mut RiscvCoreState,
     sequence: u64,
+    branch_kind: BranchTargetKind,
     update: &crate::BranchUpdate,
 ) -> Result<Option<RiscvResolvedBranchPrediction>, RiscvCpuError> {
     let Some(speculation) = state.branch_speculations.remove(&sequence) else {
@@ -1065,7 +1053,10 @@ fn resolve_branch_speculation(
         actual_target: update.actual_target(),
     };
     state.branch_speculation_summary.record_btb_resolution(
+        branch_kind,
         predicted_taken,
+        predicted_target,
+        update.actual_taken(),
         update.actual_target(),
         branch_target_prediction,
     );

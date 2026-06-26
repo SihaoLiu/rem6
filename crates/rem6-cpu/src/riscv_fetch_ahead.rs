@@ -2,10 +2,11 @@ use rem6_isa_riscv::{RiscvHartState, RiscvInstruction, RiscvPrivilegeMode};
 use rem6_memory::Address;
 
 use crate::{
-    BranchTargetKind, BranchTargetPrediction, CpuFetchEvent, CpuFetchEventKind,
-    MultiperspectivePerceptronThreadSnapshot, RiscvBranchPredictorKind, RiscvCore, RiscvCoreState,
-    RiscvCpuError, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
-    RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
+    riscv_branch_kind::riscv_branch_target_kind, BranchTargetKind, BranchTargetPrediction,
+    CpuFetchEvent, CpuFetchEventKind, MultiperspectivePerceptronThreadSnapshot,
+    RiscvBranchPredictorKind, RiscvCore, RiscvCoreState, RiscvCpuError, RISCV_LOCAL_BIMODE_THREAD,
+    RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
+    RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
 mod speculation;
@@ -670,8 +671,9 @@ fn direct_jump_fetch_ahead_target(
     instruction: RiscvInstruction,
 ) -> Option<(Address, BranchTargetPrediction)> {
     let kind = match instruction {
-        RiscvInstruction::Jal { .. } => BranchTargetKind::DirectUnconditional,
-        RiscvInstruction::Jalr { .. } => BranchTargetKind::IndirectUnconditional,
+        RiscvInstruction::Jal { .. } | RiscvInstruction::Jalr { .. } => {
+            riscv_branch_target_kind(instruction)
+        }
         _ => return None,
     };
     let target_lookup = state.branch_target_buffer.lookup(fetch_pc, kind);
@@ -870,6 +872,7 @@ mod tests {
         RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
         RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
     };
+    use rem6_isa_riscv::Register;
     use rem6_kernel::PartitionId;
     use rem6_memory::{AccessSize, AgentId, CacheLineLayout, MemoryRequestId};
     use rem6_transport::{MemoryRouteId, TransportEndpointId};
@@ -908,6 +911,14 @@ mod tests {
             | 0x6f
     }
 
+    fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+        ((imm as u32 & 0x0fff) << 20)
+            | (u32::from(rs1) << 15)
+            | (funct3 << 12)
+            | (u32::from(rd) << 7)
+            | opcode
+    }
+
     fn completed(sequence: u64, pc: u64) -> crate::CpuFetchEvent {
         crate::CpuFetchEvent::completed(
             CpuFetchRecord::new(
@@ -925,6 +936,15 @@ mod tests {
 
     fn core_with_completed_fetch(data: Vec<u8>) -> RiscvCore {
         core_with_completed_fetches([(0, 0x8000, data)])
+    }
+
+    fn btb_entry_kind(core: &RiscvCore, pc: u64) -> Option<BranchTargetKind> {
+        core.branch_target_buffer_snapshot()
+            .entries()
+            .iter()
+            .flatten()
+            .find(|entry| entry.pc() == Address::new(pc))
+            .map(|entry| entry.kind())
     }
 
     fn core_with_completed_fetches(
@@ -1221,6 +1241,12 @@ mod tests {
         assert_eq!(summary.repairs(), 0);
         assert_eq!(summary.btb_mispredictions(), 1);
         assert_eq!(summary.predicted_taken_btb_misses(), 1);
+        assert_eq!(
+            summary
+                .btb_mispredict_due_to_btb_miss()
+                .value(BranchTargetKind::DirectConditional),
+            0
+        );
     }
 
     #[test]
@@ -1261,6 +1287,200 @@ mod tests {
         assert_eq!(summary.repairs(), 1);
         assert_eq!(summary.btb_mispredictions(), 1);
         assert_eq!(summary.predicted_taken_btb_misses(), 0);
+        assert_eq!(
+            summary
+                .btb_mispredict_due_to_btb_miss()
+                .value(BranchTargetKind::DirectConditional),
+            0
+        );
+    }
+
+    #[test]
+    fn btb_misprediction_counts_direct_jump_cold_btb_without_branch_type_lane() {
+        let jump = j_type(12, 0).to_le_bytes().to_vec();
+        let core = core_with_completed_fetch(jump);
+
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+        assert_eq!(decision.pc(), Address::new(0x800c));
+        core.record_fetch_ahead_speculation(&decision);
+
+        let event = core.execute_next_completed_fetch().unwrap().unwrap();
+        let cycle = event.in_order_pipeline_cycle().unwrap();
+        let prediction = cycle.branch_predictions().first().unwrap();
+        assert!(prediction.predicted_taken());
+        assert_eq!(prediction.predicted_target_pc(), Some(0x800c));
+        assert!(prediction.resolved_taken());
+        assert_eq!(prediction.resolved_target_pc(), Some(0x800c));
+        assert!(!prediction.mispredicted());
+
+        let summary = core.branch_speculation_summary();
+        assert_eq!(summary.repairs(), 0);
+        assert_eq!(summary.btb_mispredictions(), 1);
+        assert_eq!(summary.predicted_taken_btb_misses(), 1);
+        assert_eq!(
+            summary
+                .btb_mispredict_due_to_btb_miss()
+                .value(BranchTargetKind::DirectUnconditional),
+            0
+        );
+        assert_eq!(summary.btb_mispredict_due_to_btb_miss().total(), 0);
+    }
+
+    #[test]
+    fn btb_update_classifies_direct_link_jump_as_call_direct() {
+        let jump = j_type(12, 1).to_le_bytes().to_vec();
+        let core = core_with_completed_fetch(jump);
+
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+        assert_eq!(decision.pc(), Address::new(0x800c));
+        core.record_fetch_ahead_speculation(&decision);
+        core.execute_next_completed_fetch().unwrap().unwrap();
+
+        assert_eq!(
+            btb_entry_kind(&core, 0x8000),
+            Some(BranchTargetKind::CallDirect)
+        );
+    }
+
+    #[test]
+    fn btb_mispredict_due_to_btb_miss_counts_indirect_unconditional_target_change() {
+        let jalr = i_type(0, 6, 0x0, 0, 0x67).to_le_bytes().to_vec();
+        let core = core_with_completed_fetch(jalr);
+        let target_register = Register::new(6).unwrap();
+        core.write_register(target_register, 0x800c);
+
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+        assert_eq!(decision.pc(), Address::new(0x800c));
+        assert_eq!(
+            decision.branch_speculation().map(|speculation| {
+                (
+                    speculation.sequence(),
+                    speculation.pc(),
+                    speculation.predicted_taken(),
+                    speculation.target(),
+                    speculation.branch_target_prediction(),
+                )
+            }),
+            Some((
+                0,
+                Address::new(0x8000),
+                true,
+                Some(Address::new(0x800c)),
+                Some(BranchTargetPrediction::new(false, None)),
+            ))
+        );
+        core.record_fetch_ahead_speculation(&decision);
+        core.write_register(target_register, 0x8010);
+
+        let event = core.execute_next_completed_fetch().unwrap().unwrap();
+        let cycle = event.in_order_pipeline_cycle().unwrap();
+        let prediction = cycle.branch_predictions().first().unwrap();
+        assert!(prediction.predicted_taken());
+        assert_eq!(prediction.predicted_target_pc(), Some(0x800c));
+        assert!(prediction.resolved_taken());
+        assert_eq!(prediction.resolved_target_pc(), Some(0x8010));
+        assert!(prediction.mispredicted());
+        assert_eq!(prediction.repair_target_pc(), Some(0x8010));
+
+        let summary = core.branch_speculation_summary();
+        assert_eq!(summary.repairs(), 1);
+        assert_eq!(summary.btb_mispredictions(), 1);
+        assert_eq!(summary.predicted_taken_btb_misses(), 1);
+        assert_eq!(
+            summary
+                .btb_mispredict_due_to_btb_miss()
+                .value(BranchTargetKind::IndirectUnconditional),
+            1
+        );
+        assert_eq!(
+            summary
+                .btb_mispredict_due_to_btb_miss()
+                .value(BranchTargetKind::DirectConditional),
+            0
+        );
+        assert_eq!(summary.btb_mispredict_due_to_btb_miss().total(), 1);
+        assert_eq!(
+            btb_entry_kind(&core, 0x8000),
+            Some(BranchTargetKind::IndirectUnconditional)
+        );
+    }
+
+    #[test]
+    fn btb_mispredict_due_to_btb_miss_counts_indirect_call_target_change() {
+        let jalr = i_type(0, 6, 0x0, 1, 0x67).to_le_bytes().to_vec();
+        let core = core_with_completed_fetch(jalr);
+        let target_register = Register::new(6).unwrap();
+        core.write_register(target_register, 0x800c);
+
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+        assert_eq!(decision.pc(), Address::new(0x800c));
+        core.record_fetch_ahead_speculation(&decision);
+        core.write_register(target_register, 0x8010);
+
+        let event = core.execute_next_completed_fetch().unwrap().unwrap();
+        let cycle = event.in_order_pipeline_cycle().unwrap();
+        let prediction = cycle.branch_predictions().first().unwrap();
+        assert!(prediction.mispredicted());
+        assert_eq!(prediction.repair_target_pc(), Some(0x8010));
+
+        let summary = core.branch_speculation_summary();
+        assert_eq!(summary.repairs(), 1);
+        assert_eq!(
+            summary
+                .btb_mispredict_due_to_btb_miss()
+                .value(BranchTargetKind::CallIndirect),
+            1
+        );
+        assert_eq!(
+            summary
+                .btb_mispredict_due_to_btb_miss()
+                .value(BranchTargetKind::IndirectUnconditional),
+            0
+        );
+        assert_eq!(summary.btb_mispredict_due_to_btb_miss().total(), 1);
+        assert_eq!(
+            btb_entry_kind(&core, 0x8000),
+            Some(BranchTargetKind::CallIndirect)
+        );
+    }
+
+    #[test]
+    fn btb_mispredict_due_to_btb_miss_counts_return_target_change() {
+        let jalr = i_type(0, 1, 0x0, 0, 0x67).to_le_bytes().to_vec();
+        let core = core_with_completed_fetch(jalr);
+        let target_register = Register::new(1).unwrap();
+        core.write_register(target_register, 0x800c);
+
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+        assert_eq!(decision.pc(), Address::new(0x800c));
+        core.record_fetch_ahead_speculation(&decision);
+        core.write_register(target_register, 0x8010);
+
+        let event = core.execute_next_completed_fetch().unwrap().unwrap();
+        let cycle = event.in_order_pipeline_cycle().unwrap();
+        let prediction = cycle.branch_predictions().first().unwrap();
+        assert!(prediction.mispredicted());
+        assert_eq!(prediction.repair_target_pc(), Some(0x8010));
+
+        let summary = core.branch_speculation_summary();
+        assert_eq!(summary.repairs(), 1);
+        assert_eq!(
+            summary
+                .btb_mispredict_due_to_btb_miss()
+                .value(BranchTargetKind::Return),
+            1
+        );
+        assert_eq!(
+            summary
+                .btb_mispredict_due_to_btb_miss()
+                .value(BranchTargetKind::IndirectUnconditional),
+            0
+        );
+        assert_eq!(summary.btb_mispredict_due_to_btb_miss().total(), 1);
+        assert_eq!(
+            btb_entry_kind(&core, 0x8000),
+            Some(BranchTargetKind::Return)
+        );
     }
 
     #[test]
@@ -1771,6 +1991,13 @@ mod tests {
         assert!(state.branch_target_predictions.is_empty());
         assert!(state.branch_predictor.pending_speculations().is_empty());
         assert_eq!(state.branch_speculation_summary.btb_mispredictions(), 1);
+        assert_eq!(
+            state
+                .branch_speculation_summary
+                .btb_mispredict_due_to_btb_miss()
+                .value(BranchTargetKind::DirectConditional),
+            1
+        );
         assert_eq!(
             state
                 .branch_speculation_summary

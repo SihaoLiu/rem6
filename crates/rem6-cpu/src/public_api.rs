@@ -8,11 +8,12 @@ pub use crate::branch_predictor::{
     BranchPrediction, BranchPredictor, BranchPredictorConfig, BranchPredictorError,
     BranchPredictorSnapshot, BranchSpeculation, BranchSpeculationDiscard, BranchSpeculationId,
     BranchSpeculationRepair, BranchTargetBuffer, BranchTargetBufferConfig, BranchTargetBufferError,
-    BranchTargetBufferSnapshot, BranchTargetEntry, BranchTargetKind, BranchTargetLookup,
-    BranchTargetPrediction, BranchTargetSafetyConfig, BranchTargetSafetyProfile,
-    BranchTargetUpdate, BranchUpdate, ReturnAddressStack, ReturnAddressStackConfig,
-    ReturnAddressStackError, ReturnAddressStackOperation, ReturnAddressStackOperationId,
-    ReturnAddressStackOperationKind, ReturnAddressStackRepair, ReturnAddressStackSnapshot,
+    BranchTargetBufferSnapshot, BranchTargetEntry, BranchTargetKind, BranchTargetKindCounts,
+    BranchTargetLookup, BranchTargetPrediction, BranchTargetSafetyConfig,
+    BranchTargetSafetyProfile, BranchTargetUpdate, BranchUpdate, ReturnAddressStack,
+    ReturnAddressStackConfig, ReturnAddressStackError, ReturnAddressStackOperation,
+    ReturnAddressStackOperationId, ReturnAddressStackOperationKind, ReturnAddressStackRepair,
+    ReturnAddressStackSnapshot,
 };
 pub use crate::branch_predictor_checkpoint::BranchPredictorCheckpointPayload;
 pub use crate::cpu_cluster::CpuCluster;

@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use rem6_cpu::BranchTargetKind;
 use rem6_stats::StatSnapshot;
 
 pub(super) fn stats_snapshot_text(snapshot: &StatSnapshot) -> String {
@@ -144,6 +145,34 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 output,
                 &format!("{alias_prefix}.branchPred.predTakenBTBMiss"),
                 predicted_taken_misses,
+            );
+        }
+        for kind in BranchTargetKind::ALL {
+            if let Some(mispredictions) = snapshot_value(
+                snapshot,
+                &format!(
+                    "sim.cpu{cpu}.branch_predictor.btb.mispredict_due_to_btb_miss.{}",
+                    kind.canonical_stat_name()
+                ),
+            ) {
+                append_derived_count_stat(
+                    output,
+                    &format!(
+                        "{alias_prefix}.branchPred.mispredictDueToBTBMiss_0::{}",
+                        kind.gem5_branch_type_name()
+                    ),
+                    mispredictions,
+                );
+            }
+        }
+        if let Some(mispredictions) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.branch_predictor.btb.mispredict_due_to_btb_miss.total"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.mispredictDueToBTBMiss_0::total"),
+                mispredictions,
             );
         }
         if let (Some(hits), Some(lookups)) = (btb_hits, btb_lookups) {

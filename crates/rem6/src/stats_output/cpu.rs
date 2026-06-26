@@ -1,3 +1,4 @@
+use rem6_cpu::BranchTargetKind;
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::increment_stat;
@@ -315,6 +316,30 @@ pub(super) fn emit_cpu_run_stats(
             "Count",
             StatResetPolicy::Monotonic,
             core.branch_target_buffer_predicted_taken_misses,
+        )?;
+        for kind in BranchTargetKind::ALL {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.branch_predictor.btb.mispredict_due_to_btb_miss.{}",
+                    core.cpu,
+                    kind.canonical_stat_name()
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.branch_target_buffer_mispredict_due_to_btb_miss
+                    .value(kind),
+            )?;
+        }
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.branch_predictor.btb.mispredict_due_to_btb_miss.total",
+                core.cpu
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.branch_target_buffer_mispredict_due_to_btb_miss.total(),
         )?;
         for (name, value) in [
             ("local_predictions", core.tournament_local_predictions),

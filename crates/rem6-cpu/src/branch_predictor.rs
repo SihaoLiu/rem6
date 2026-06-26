@@ -1029,6 +1029,94 @@ pub enum BranchTargetKind {
     Return,
 }
 
+impl BranchTargetKind {
+    pub const COUNT: usize = 8;
+
+    pub const ALL: [Self; Self::COUNT] = [
+        Self::NoBranch,
+        Self::Return,
+        Self::CallDirect,
+        Self::CallIndirect,
+        Self::DirectConditional,
+        Self::DirectUnconditional,
+        Self::IndirectConditional,
+        Self::IndirectUnconditional,
+    ];
+
+    pub const fn index(self) -> usize {
+        match self {
+            Self::NoBranch => 0,
+            Self::Return => 1,
+            Self::CallDirect => 2,
+            Self::CallIndirect => 3,
+            Self::DirectConditional => 4,
+            Self::DirectUnconditional => 5,
+            Self::IndirectConditional => 6,
+            Self::IndirectUnconditional => 7,
+        }
+    }
+
+    pub const fn canonical_stat_name(self) -> &'static str {
+        match self {
+            Self::NoBranch => "no_branch",
+            Self::Return => "return",
+            Self::CallDirect => "call_direct",
+            Self::CallIndirect => "call_indirect",
+            Self::DirectConditional => "direct_conditional",
+            Self::DirectUnconditional => "direct_unconditional",
+            Self::IndirectConditional => "indirect_conditional",
+            Self::IndirectUnconditional => "indirect_unconditional",
+        }
+    }
+
+    pub const fn gem5_branch_type_name(self) -> &'static str {
+        match self {
+            Self::NoBranch => "NoBranch",
+            Self::Return => "Return",
+            Self::CallDirect => "CallDirect",
+            Self::CallIndirect => "CallIndirect",
+            Self::DirectConditional => "DirectCond",
+            Self::DirectUnconditional => "DirectUncond",
+            Self::IndirectConditional => "IndirectCond",
+            Self::IndirectUnconditional => "IndirectUncond",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BranchTargetKindCounts {
+    values: [u64; BranchTargetKind::COUNT],
+}
+
+impl BranchTargetKindCounts {
+    pub const fn value(self, kind: BranchTargetKind) -> u64 {
+        self.values[kind.index()]
+    }
+
+    pub fn total(self) -> u64 {
+        self.values
+            .into_iter()
+            .fold(0_u64, |total, value| total.saturating_add(value))
+    }
+
+    pub const fn values(self) -> [u64; BranchTargetKind::COUNT] {
+        self.values
+    }
+
+    pub(crate) fn increment(&mut self, kind: BranchTargetKind) {
+        let value = &mut self.values[kind.index()];
+        *value = value.saturating_add(1);
+    }
+}
+
+impl Default for BranchTargetKindCounts {
+    fn default() -> Self {
+        Self {
+            values: [0; BranchTargetKind::COUNT],
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BranchTargetPrediction {
     hit: bool,

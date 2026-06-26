@@ -46,6 +46,7 @@ mod parallel_flow;
 mod public_api;
 mod riscv_activity;
 mod riscv_bimode_checkpoint;
+mod riscv_branch_kind;
 mod riscv_branch_speculation;
 mod riscv_checker;
 mod riscv_cluster;

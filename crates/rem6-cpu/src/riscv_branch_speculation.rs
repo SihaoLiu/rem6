@@ -1,6 +1,6 @@
 use rem6_memory::Address;
 
-use crate::BranchTargetPrediction;
+use crate::{BranchTargetKind, BranchTargetKindCounts, BranchTargetPrediction};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RiscvBranchSpeculationSummary {
@@ -10,6 +10,7 @@ pub struct RiscvBranchSpeculationSummary {
     max_pending: u64,
     btb_mispredictions: u64,
     predicted_taken_btb_misses: u64,
+    btb_mispredict_due_to_btb_miss: BranchTargetKindCounts,
 }
 
 impl RiscvBranchSpeculationSummary {
@@ -37,6 +38,10 @@ impl RiscvBranchSpeculationSummary {
         self.predicted_taken_btb_misses
     }
 
+    pub const fn btb_mispredict_due_to_btb_miss(self) -> BranchTargetKindCounts {
+        self.btb_mispredict_due_to_btb_miss
+    }
+
     pub(crate) fn record_prediction(&mut self, pending: u64) {
         self.predictions = self.predictions.saturating_add(1);
         self.max_pending = self.max_pending.max(pending);
@@ -49,14 +54,24 @@ impl RiscvBranchSpeculationSummary {
 
     pub(crate) fn record_btb_resolution(
         &mut self,
+        branch_kind: BranchTargetKind,
         predicted_taken: bool,
+        predicted_target: Option<Address>,
+        actual_taken: bool,
         actual_target: Option<Address>,
         branch_target_prediction: Option<BranchTargetPrediction>,
     ) {
-        let Some(actual_target) = actual_target else {
+        let Some(branch_target_prediction) = branch_target_prediction else {
             return;
         };
-        let Some(branch_target_prediction) = branch_target_prediction else {
+
+        let mispredicted = predicted_taken != actual_taken
+            || (predicted_taken && predicted_target != actual_target);
+        if mispredicted && actual_taken && !branch_target_prediction.hit() {
+            self.btb_mispredict_due_to_btb_miss.increment(branch_kind);
+        }
+
+        let Some(actual_target) = actual_target else {
             return;
         };
 
