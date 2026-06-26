@@ -4141,9 +4141,18 @@ fn rem6_run_stats_emit_in_order_resource_stalls_for_pending_parallel_fetch() {
     let fetch_wait_cycles = json_u64_field(&stdout, "\"fetch_wait_cycles\":");
     let stall_cycles = json_u64_field(&stdout, "\"stall_cycles\":");
     let resource_blocked = json_u64_field(&stdout, "\"resource_blocked\":");
+    let ordering_blocked = json_u64_field(&stdout, "\"ordering_blocked\":");
+    let stage_resource_blocked = json_stage_summary(&stdout, "\"stage_resource_blocked\":{");
+    let stage_ordering_blocked = json_stage_summary(&stdout, "\"stage_ordering_blocked\":{");
     assert!(fetch_wait_cycles > 0, "{stdout}");
     assert!(stall_cycles > 0, "{stdout}");
     assert!(resource_blocked > 0, "{stdout}");
+    assert_eq!(stage_resource_blocked.iter().sum::<u64>(), resource_blocked);
+    assert_eq!(stage_ordering_blocked.iter().sum::<u64>(), ordering_blocked);
+    assert!(
+        stage_resource_blocked.iter().any(|value| *value > 0),
+        "{stdout}"
+    );
     assert_eq!(
         stat_value(&stdout, "sim.cpu0.pipeline.in_order.stall_cycles"),
         stall_cycles
@@ -4152,6 +4161,25 @@ fn rem6_run_stats_emit_in_order_resource_stalls_for_pending_parallel_fetch() {
         stat_value(&stdout, "sim.cpu0.pipeline.in_order.resource_blocked"),
         resource_blocked
     );
+    for (index, stage) in ["fetch1", "fetch2", "decode", "execute", "commit"]
+        .iter()
+        .enumerate()
+    {
+        assert_eq!(
+            stat_value(
+                &stdout,
+                &format!("sim.cpu0.pipeline.in_order.stage.{stage}.resource_blocked")
+            ),
+            stage_resource_blocked[index]
+        );
+        assert_eq!(
+            stat_value(
+                &stdout,
+                &format!("sim.cpu0.pipeline.in_order.stage.{stage}.ordering_blocked")
+            ),
+            stage_ordering_blocked[index]
+        );
+    }
 }
 
 #[test]
@@ -4863,6 +4891,25 @@ fn json_u64_field(stdout: &str, marker: &str) -> u64 {
     stdout[start..end]
         .parse::<u64>()
         .unwrap_or_else(|error| panic!("invalid numeric JSON field {marker}: {error}"))
+}
+
+fn json_stage_summary(stdout: &str, marker: &str) -> [u64; 5] {
+    let start = stdout
+        .find(marker)
+        .unwrap_or_else(|| panic!("missing JSON stage summary {marker} in output:\n{stdout}"))
+        + marker.len();
+    let end = stdout[start..]
+        .find('}')
+        .map(|offset| start + offset)
+        .unwrap_or_else(|| panic!("unterminated JSON stage summary {marker} in output:\n{stdout}"));
+    let object = &stdout[start..end];
+    [
+        json_u64_field(object, "\"fetch1\":"),
+        json_u64_field(object, "\"fetch2\":"),
+        json_u64_field(object, "\"decode\":"),
+        json_u64_field(object, "\"execute\":"),
+        json_u64_field(object, "\"commit\":"),
+    ]
 }
 
 fn text_stat_decimal(stdout: &str, path: &str) -> String {

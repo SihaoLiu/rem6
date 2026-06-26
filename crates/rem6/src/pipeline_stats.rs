@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use rem6_cpu::{
-    CpuFetchEventKind, InOrderPipelineRunSummary, InOrderPipelineSnapshot, InOrderPipelineStage,
-    RiscvCore,
+    CpuFetchEventKind, InOrderPipelineInstruction, InOrderPipelineRunSummary,
+    InOrderPipelineSnapshot, InOrderPipelineStage, RiscvCore,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -91,20 +91,62 @@ pub(super) fn in_order_pipeline_stage_occupied_cycles(
     )
 }
 
+pub(super) fn in_order_pipeline_stage_resource_blocked(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            summary.saturating_add(stage_summary_from_instructions(
+                record.plan().resource_blocked(),
+            ))
+        },
+    )
+}
+
+pub(super) fn in_order_pipeline_stage_ordering_blocked(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            summary.saturating_add(stage_summary_from_instructions(
+                record.plan().ordering_blocked(),
+            ))
+        },
+    )
+}
+
 fn stage_in_flight_from_snapshot(
     snapshot: &InOrderPipelineSnapshot,
 ) -> Rem6InOrderPipelineStageSummary {
     let mut summary = Rem6InOrderPipelineStageSummary::default();
     for instruction in snapshot.in_flight() {
-        match instruction.stage() {
-            InOrderPipelineStage::Fetch1 => summary.fetch1 += 1,
-            InOrderPipelineStage::Fetch2 => summary.fetch2 += 1,
-            InOrderPipelineStage::Decode => summary.decode += 1,
-            InOrderPipelineStage::Execute => summary.execute += 1,
-            InOrderPipelineStage::Commit => summary.commit += 1,
-        }
+        summary.record_stage(instruction.stage());
     }
     summary
+}
+
+fn stage_summary_from_instructions(
+    instructions: &[InOrderPipelineInstruction],
+) -> Rem6InOrderPipelineStageSummary {
+    let mut summary = Rem6InOrderPipelineStageSummary::default();
+    for instruction in instructions {
+        summary.record_stage(instruction.stage());
+    }
+    summary
+}
+
+impl Rem6InOrderPipelineStageSummary {
+    fn record_stage(&mut self, stage: InOrderPipelineStage) {
+        match stage {
+            InOrderPipelineStage::Fetch1 => self.fetch1 += 1,
+            InOrderPipelineStage::Fetch2 => self.fetch2 += 1,
+            InOrderPipelineStage::Decode => self.decode += 1,
+            InOrderPipelineStage::Execute => self.execute += 1,
+            InOrderPipelineStage::Commit => self.commit += 1,
+        }
+    }
 }
 
 pub(super) fn in_order_pipeline_fetch_wait_cycles(core: &RiscvCore) -> u64 {

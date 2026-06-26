@@ -16,6 +16,7 @@ use crate::pipeline_stats::{
     in_order_pipeline_data_wait_cycles, in_order_pipeline_fetch_wait_cycles,
     in_order_pipeline_run_summary, in_order_pipeline_stage_in_flight,
     in_order_pipeline_stage_max_in_flight, in_order_pipeline_stage_occupied_cycles,
+    in_order_pipeline_stage_ordering_blocked, in_order_pipeline_stage_resource_blocked,
     in_order_pipeline_stage_widths,
 };
 use crate::runtime_memory::{read_memory_dumps, CliMemoryRuntime};
@@ -146,6 +147,8 @@ pub(super) fn execution_summary(
         let pipeline_stage_max_in_flight =
             in_order_pipeline_stage_max_in_flight(&core, &pipeline_snapshot);
         let pipeline_stage_occupied_cycles = in_order_pipeline_stage_occupied_cycles(&core);
+        let pipeline_stage_resource_blocked = in_order_pipeline_stage_resource_blocked(&core);
+        let pipeline_stage_ordering_blocked = in_order_pipeline_stage_ordering_blocked(&core);
         let branch_speculation_summary = core.branch_speculation_summary();
         let branch_target_buffer = core.branch_target_buffer_snapshot();
         let tournament_selection_counts = tournament_selection_counts
@@ -168,6 +171,8 @@ pub(super) fn execution_summary(
             in_order_pipeline_stage_in_flight: pipeline_stage_in_flight,
             in_order_pipeline_stage_max_in_flight: pipeline_stage_max_in_flight,
             in_order_pipeline_stage_occupied_cycles: pipeline_stage_occupied_cycles,
+            in_order_pipeline_stage_resource_blocked: pipeline_stage_resource_blocked,
+            in_order_pipeline_stage_ordering_blocked: pipeline_stage_ordering_blocked,
             in_order_pipeline_retired: pipeline_summary.retired_count() as u64,
             in_order_pipeline_advanced: pipeline_summary.advanced_count() as u64,
             in_order_pipeline_flushed: pipeline_summary.flushed_count() as u64,

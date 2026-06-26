@@ -137,6 +137,22 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.in_order_pipeline_stage_occupied_cycles.values(),
         )?;
+        emit_in_order_stage_stats(
+            stats,
+            core,
+            "resource_blocked",
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_stage_resource_blocked.values(),
+        )?;
+        emit_in_order_stage_stats(
+            stats,
+            core,
+            "ordering_blocked",
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_stage_ordering_blocked.values(),
+        )?;
         increment_stat(
             stats,
             &format!("sim.cpu{}.pipeline.in_order.stall_cycles", core.cpu),
