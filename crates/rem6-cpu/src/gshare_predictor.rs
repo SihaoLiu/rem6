@@ -263,6 +263,34 @@ impl GShareBranchPredictor {
     ) -> Result<GSharePrediction, GShareBranchPredictorError> {
         let thread_index = self.thread_index(cpu)?;
         let global_history = self.threads[thread_index].global_history();
+        self.predict_with_history(cpu, pc, global_history)
+    }
+
+    pub(crate) fn predict_with_global_history(
+        &mut self,
+        cpu: CpuId,
+        pc: Address,
+        global_history: u64,
+    ) -> Result<GSharePrediction, GShareBranchPredictorError> {
+        self.thread_index(cpu)?;
+        self.predict_with_history(cpu, pc, global_history & self.config.history_mask())
+    }
+
+    pub(crate) fn global_history(&self, cpu: CpuId) -> Result<u64, GShareBranchPredictorError> {
+        let thread_index = self.thread_index(cpu)?;
+        Ok(self.threads[thread_index].global_history())
+    }
+
+    pub(crate) fn shifted_history(&self, old_history: u64, taken: bool) -> u64 {
+        self.shift_history(old_history, taken)
+    }
+
+    fn predict_with_history(
+        &mut self,
+        cpu: CpuId,
+        pc: Address,
+        global_history: u64,
+    ) -> Result<GSharePrediction, GShareBranchPredictorError> {
         let index = self.index(pc, global_history);
         let counter = self.counters[index];
         let predicted_taken = counter > self.config.taken_threshold();

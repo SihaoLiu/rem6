@@ -362,7 +362,13 @@ fn fetch_ahead_decision(
         return Some(RiscvFetchAheadDecision::straight_line(sequential_pc));
     }
     if let Some(target) = direct_jump_fetch_ahead_target(state, fetch_pc, instruction) {
-        return Some(RiscvFetchAheadDecision::straight_line(target));
+        return Some(RiscvFetchAheadDecision::branch(
+            target,
+            sequence,
+            fetch_pc,
+            true,
+            Some(target),
+        ));
     }
     if !instruction_is_conditional_branch(instruction) {
         return None;
@@ -410,9 +416,10 @@ fn selected_conditional_branch_prediction(
             })
         }
         RiscvBranchPredictorKind::GShare => {
+            let global_history = selected_gshare_speculative_history(state)?;
             let prediction = state
                 .gshare_branch_predictor
-                .predict(RISCV_LOCAL_GSHARE_THREAD, fetch_pc)
+                .predict_with_global_history(RISCV_LOCAL_GSHARE_THREAD, fetch_pc, global_history)
                 .ok()?;
             let target = prediction
                 .predicted_taken()
@@ -484,6 +491,20 @@ fn selected_conditional_branch_prediction(
             })
         }
     }
+}
+
+fn selected_gshare_speculative_history(state: &RiscvCoreState) -> Option<u64> {
+    let mut history = state
+        .gshare_branch_predictor
+        .global_history(RISCV_LOCAL_GSHARE_THREAD)
+        .ok()?;
+    for speculation in state.branch_speculations.values() {
+        let pending = state.branch_predictor.pending_speculation(*speculation)?;
+        history = state
+            .gshare_branch_predictor
+            .shifted_history(history, pending.predicted_taken());
+    }
+    Some(history)
 }
 
 fn conditional_branch_target(fetch_pc: Address, instruction: RiscvInstruction) -> Option<Address> {
@@ -753,6 +774,12 @@ mod tests {
     }
 
     fn core_with_completed_fetch(data: Vec<u8>) -> RiscvCore {
+        core_with_completed_fetches([(0, 0x8000, data)])
+    }
+
+    fn core_with_completed_fetches(
+        fetches: impl IntoIterator<Item = (u64, u64, Vec<u8>)>,
+    ) -> RiscvCore {
         let core = RiscvCore::new(
             CpuCore::new(
                 CpuResetState::new(
@@ -770,20 +797,22 @@ mod tests {
             )
             .unwrap(),
         );
-        core.core.state.lock().expect("cpu core lock").events.push(
-            crate::CpuFetchEvent::completed(
+        let mut core_state = core.core.state.lock().expect("cpu core lock");
+        for (sequence, pc, data) in fetches {
+            core_state.events.push(crate::CpuFetchEvent::completed(
                 CpuFetchRecord::new(
                     4,
                     PartitionId::new(0),
                     MemoryRouteId::new(0),
                     endpoint("cpu0.ifetch"),
-                    request(0),
-                    Address::new(0x8000),
+                    request(sequence),
+                    Address::new(pc),
                     AccessSize::new(4).unwrap(),
                 ),
                 data,
-            ),
-        );
+            ));
+        }
+        drop(core_state);
         core
     }
 
@@ -808,7 +837,17 @@ mod tests {
         let decision = core.next_fetch_ahead_before_retire().unwrap();
 
         assert_eq!(decision.pc(), Address::new(0x800c));
-        assert_eq!(decision.branch_speculation(), None);
+        assert_eq!(
+            decision.branch_speculation().map(|speculation| {
+                (
+                    speculation.sequence(),
+                    speculation.pc(),
+                    speculation.predicted_taken(),
+                    speculation.target(),
+                )
+            }),
+            Some((0, Address::new(0x8000), true, Some(Address::new(0x800c))))
+        );
     }
 
     #[test]
@@ -846,6 +885,126 @@ mod tests {
         assert!(!prediction.resolved_taken());
         assert_eq!(prediction.repair_target_pc(), Some(0x8004));
         assert_eq!(core.branch_speculation_summary().repairs(), 1);
+    }
+
+    #[test]
+    fn selected_gshare_fetch_ahead_uses_speculative_history_for_younger_branch() {
+        let core = core_with_completed_fetches([
+            (0, 0x8000, b_type(8, 0, 0, 0).to_le_bytes().to_vec()),
+            (1, 0x8008, b_type(8, 0, 0, 0).to_le_bytes().to_vec()),
+        ]);
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::GShare);
+        core.set_branch_lookahead(2);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            let first_pc = Address::new(0x8000);
+            for _ in 0..2 {
+                let prediction = state
+                    .gshare_branch_predictor
+                    .predict(RISCV_LOCAL_GSHARE_THREAD, first_pc)
+                    .unwrap();
+                state
+                    .gshare_branch_predictor
+                    .train(prediction.history(), true, false)
+                    .unwrap();
+            }
+
+            let history_seed = state
+                .gshare_branch_predictor
+                .predict(RISCV_LOCAL_GSHARE_THREAD, Address::new(0x9000))
+                .unwrap();
+            state
+                .gshare_branch_predictor
+                .update_history(history_seed.history(), true)
+                .unwrap();
+            let second_pc = Address::new(0x8008);
+            for _ in 0..2 {
+                let prediction = state
+                    .gshare_branch_predictor
+                    .predict(RISCV_LOCAL_GSHARE_THREAD, second_pc)
+                    .unwrap();
+                assert_eq!(prediction.global_history_before(), 1);
+                state
+                    .gshare_branch_predictor
+                    .train(prediction.history(), true, false)
+                    .unwrap();
+            }
+            state
+                .gshare_branch_predictor
+                .squash(history_seed.history())
+                .unwrap();
+            assert_eq!(
+                state.gshare_branch_predictor.snapshot().threads()[0].global_history(),
+                0
+            );
+        }
+
+        let first = core.next_fetch_ahead_before_retire().unwrap();
+        assert_eq!(first.pc(), Address::new(0x8008));
+        core.set_fetch_ahead_pc(first.pc());
+        core.record_fetch_ahead_speculation(&first);
+
+        assert_eq!(
+            core.gshare_branch_predictor_snapshot().threads()[0].global_history(),
+            0
+        );
+        let second = core.next_fetch_ahead_before_retire().unwrap();
+
+        assert_eq!(second.pc(), Address::new(0x8010));
+    }
+
+    #[test]
+    fn selected_gshare_fetch_ahead_uses_direct_jump_history_for_younger_branch() {
+        let core = core_with_completed_fetches([
+            (0, 0x8000, j_type(8, 0).to_le_bytes().to_vec()),
+            (1, 0x8008, b_type(8, 0, 0, 0).to_le_bytes().to_vec()),
+        ]);
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::GShare);
+        core.set_branch_lookahead(2);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            let history_seed = state
+                .gshare_branch_predictor
+                .predict(RISCV_LOCAL_GSHARE_THREAD, Address::new(0x9000))
+                .unwrap();
+            state
+                .gshare_branch_predictor
+                .update_history(history_seed.history(), true)
+                .unwrap();
+            let second_pc = Address::new(0x8008);
+            for _ in 0..2 {
+                let prediction = state
+                    .gshare_branch_predictor
+                    .predict(RISCV_LOCAL_GSHARE_THREAD, second_pc)
+                    .unwrap();
+                assert_eq!(prediction.global_history_before(), 1);
+                state
+                    .gshare_branch_predictor
+                    .train(prediction.history(), true, false)
+                    .unwrap();
+            }
+            state
+                .gshare_branch_predictor
+                .squash(history_seed.history())
+                .unwrap();
+            assert_eq!(
+                state.gshare_branch_predictor.snapshot().threads()[0].global_history(),
+                0
+            );
+        }
+
+        let first = core.next_fetch_ahead_before_retire().unwrap();
+        assert_eq!(first.pc(), Address::new(0x8008));
+        core.set_fetch_ahead_pc(first.pc());
+        core.record_fetch_ahead_speculation(&first);
+
+        assert_eq!(
+            core.gshare_branch_predictor_snapshot().threads()[0].global_history(),
+            0
+        );
+        let second = core.next_fetch_ahead_before_retire().unwrap();
+
+        assert_eq!(second.pc(), Address::new(0x8010));
     }
 
     #[test]
