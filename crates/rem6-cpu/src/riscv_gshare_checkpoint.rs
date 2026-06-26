@@ -9,7 +9,7 @@ impl RiscvCore {
     ) -> GShareBranchPredictorCheckpointPayload {
         let state = self.state.lock().expect("riscv core lock");
         GShareBranchPredictorCheckpointPayload::from_snapshot(
-            state.gshare_branch_predictor.snapshot(),
+            state.committed_gshare_branch_predictor_snapshot(),
         )
         .expect("captured RISC-V gshare branch predictor checkpoint is internally consistent")
     }
@@ -35,6 +35,7 @@ impl RiscvCore {
         let mut restored = state.gshare_branch_predictor.clone();
         restored.restore(&snapshot)?;
         state.gshare_branch_predictor = restored;
+        state.forget_gshare_selected_branch_speculations();
         Ok(())
     }
 

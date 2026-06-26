@@ -12,8 +12,8 @@ use crate::{
     InOrderBranchRedirect, InOrderPipelineCycleRecord, InOrderPipelineInstruction,
     InOrderPipelineStage, RiscvBiModeBranchUpdate, RiscvCore, RiscvCoreState, RiscvCpuError,
     RiscvCpuExecutionEvent, RiscvGShareBranchUpdate, RiscvMultiperspectivePerceptronBranchUpdate,
-    RiscvTageScLBranchUpdate, RiscvTournamentBranchUpdate, StatisticalCorrectorBranchKind,
-    RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+    RiscvSelectedBranchSpeculation, RiscvTageScLBranchUpdate, RiscvTournamentBranchUpdate,
+    StatisticalCorrectorBranchKind, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
     RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TAGE_SC_L_THREAD,
     RISCV_LOCAL_TOURNAMENT_THREAD,
 };
@@ -874,80 +874,49 @@ fn retire_branch_predictions(
     if let Some(target) = actual_target {
         state.branch_target_buffer.update(pc, target, branch_kind);
     }
+    let selected_branch_speculation = state.selected_branch_speculations.remove(&sequence);
     let selected_prediction =
         resolve_branch_speculation(state, sequence, branch_kind, &branch_update)?;
-    let prediction = if conditional {
-        state
-            .gshare_branch_predictor
-            .predict(RISCV_LOCAL_GSHARE_THREAD, pc)
-    } else {
-        state
-            .gshare_branch_predictor
-            .predict_unconditional(RISCV_LOCAL_GSHARE_THREAD, pc)
-    }
-    .map_err(RiscvCpuError::GShareBranchPredictor)?;
-    let history_update = state
-        .gshare_branch_predictor
-        .update_history(prediction.history(), actual_taken)
-        .map_err(RiscvCpuError::GShareBranchPredictor)?;
-    let training_update = state
-        .gshare_branch_predictor
-        .train(prediction.history(), actual_taken, false)
-        .map_err(RiscvCpuError::GShareBranchPredictor)?;
-    let bimode_prediction = if conditional {
-        state
-            .bimode_branch_predictor
-            .predict(RISCV_LOCAL_BIMODE_THREAD, pc)
-    } else {
-        state
-            .bimode_branch_predictor
-            .predict_unconditional(RISCV_LOCAL_BIMODE_THREAD, pc)
-    }
-    .map_err(RiscvCpuError::BiModeBranchPredictor)?;
-    let bimode_history_update = state
-        .bimode_branch_predictor
-        .update_history(bimode_prediction.history(), actual_taken)
-        .map_err(RiscvCpuError::BiModeBranchPredictor)?;
-    let bimode_training_update = state
-        .bimode_branch_predictor
-        .train(bimode_prediction.history(), actual_taken, false)
-        .map_err(RiscvCpuError::BiModeBranchPredictor)?;
-    let tournament_prediction = if conditional {
-        state
-            .tournament_branch_predictor
-            .predict(RISCV_LOCAL_TOURNAMENT_THREAD, pc)
-    } else {
-        state
-            .tournament_branch_predictor
-            .predict_unconditional(RISCV_LOCAL_TOURNAMENT_THREAD, pc)
-    }
-    .map_err(RiscvCpuError::TournamentBranchPredictor)?;
-    let tournament_history_update = state
-        .tournament_branch_predictor
-        .update_history(tournament_prediction.history(), actual_taken)
-        .map_err(RiscvCpuError::TournamentBranchPredictor)?;
-    let tournament_training_update = state
-        .tournament_branch_predictor
-        .train(tournament_prediction.history(), actual_taken, false)
-        .map_err(RiscvCpuError::TournamentBranchPredictor)?;
-    let tage_sc_l_prediction = state
-        .tage_sc_l_branch_predictor
-        .predict(RISCV_LOCAL_TAGE_SC_L_THREAD, pc, conditional)
-        .map_err(RiscvCpuError::TageScLBranchPredictor)?;
+    let selected_prediction_correct = selected_prediction
+        .map(|prediction| !branch_prediction_redirects_fetch(prediction))
+        .unwrap_or(false);
     let tage_sc_l_target = if conditional {
         static_conditional_branch_target(pc, instruction).unwrap_or(Address::new(next_pc))
     } else {
         Address::new(next_pc)
     };
-    let tage_sc_l_training_update = state
-        .tage_sc_l_branch_predictor
-        .train(
-            tage_sc_l_prediction.history(),
-            actual_taken,
-            statistical_corrector_branch_kind(instruction),
-            tage_sc_l_target,
-        )
-        .map_err(RiscvCpuError::TageScLBranchPredictor)?;
+    let gshare_branch_update = retire_gshare_branch_update(
+        state,
+        pc,
+        conditional,
+        actual_taken,
+        selected_prediction_correct,
+        selected_branch_speculation.as_ref(),
+    )?;
+    let bimode_branch_update = retire_bimode_branch_update(
+        state,
+        pc,
+        conditional,
+        actual_taken,
+        selected_prediction_correct,
+        selected_branch_speculation.as_ref(),
+    )?;
+    let tournament_branch_update = retire_tournament_branch_update(
+        state,
+        pc,
+        conditional,
+        actual_taken,
+        selected_prediction_correct,
+        selected_branch_speculation.as_ref(),
+    )?;
+    let tage_sc_l_branch_update = retire_tage_sc_l_branch_update(
+        state,
+        pc,
+        conditional,
+        actual_taken,
+        statistical_corrector_branch_kind(instruction),
+        tage_sc_l_target,
+    )?;
     let multiperspective_perceptron_prediction = state
         .multiperspective_perceptron
         .predict(
@@ -973,18 +942,10 @@ fn retire_branch_predictions(
     Ok(RiscvRetiredBranchResolution::new(
         RiscvRetiredBranchUpdates::new(
             branch_update,
-            RiscvGShareBranchUpdate::new(prediction, history_update, training_update),
-            RiscvBiModeBranchUpdate::new(
-                bimode_prediction,
-                bimode_history_update,
-                bimode_training_update,
-            ),
-            RiscvTournamentBranchUpdate::new(
-                tournament_prediction,
-                tournament_history_update,
-                tournament_training_update,
-            ),
-            RiscvTageScLBranchUpdate::new(tage_sc_l_prediction, tage_sc_l_training_update),
+            gshare_branch_update,
+            bimode_branch_update,
+            tournament_branch_update,
+            tage_sc_l_branch_update,
             RiscvMultiperspectivePerceptronBranchUpdate::new(
                 multiperspective_perceptron_prediction,
                 multiperspective_perceptron_training_update,
@@ -992,6 +953,214 @@ fn retire_branch_predictions(
         ),
         selected_prediction,
     ))
+}
+
+fn retire_gshare_branch_update(
+    state: &mut RiscvCoreState,
+    pc: Address,
+    conditional: bool,
+    actual_taken: bool,
+    selected_prediction_correct: bool,
+    selected: Option<&RiscvSelectedBranchSpeculation>,
+) -> Result<RiscvGShareBranchUpdate, RiscvCpuError> {
+    if let Some(RiscvSelectedBranchSpeculation::GShare {
+        prediction,
+        history_update,
+    }) = selected
+    {
+        let history_update = if selected_prediction_correct {
+            history_update
+                .clone()
+                .expect("recorded gshare speculation includes a history update")
+        } else {
+            state
+                .gshare_branch_predictor
+                .squash(prediction.history())
+                .map_err(RiscvCpuError::GShareBranchPredictor)?;
+            state
+                .gshare_branch_predictor
+                .update_history(prediction.history(), actual_taken)
+                .map_err(RiscvCpuError::GShareBranchPredictor)?
+        };
+        let training_update = state
+            .gshare_branch_predictor
+            .train(prediction.history(), actual_taken, false)
+            .map_err(RiscvCpuError::GShareBranchPredictor)?;
+        return Ok(RiscvGShareBranchUpdate::new(
+            prediction.clone(),
+            history_update,
+            training_update,
+        ));
+    }
+
+    let prediction = if conditional {
+        state
+            .gshare_branch_predictor
+            .predict(RISCV_LOCAL_GSHARE_THREAD, pc)
+    } else {
+        state
+            .gshare_branch_predictor
+            .predict_unconditional(RISCV_LOCAL_GSHARE_THREAD, pc)
+    }
+    .map_err(RiscvCpuError::GShareBranchPredictor)?;
+    let history_update = state
+        .gshare_branch_predictor
+        .update_history(prediction.history(), actual_taken)
+        .map_err(RiscvCpuError::GShareBranchPredictor)?;
+    let training_update = state
+        .gshare_branch_predictor
+        .train(prediction.history(), actual_taken, false)
+        .map_err(RiscvCpuError::GShareBranchPredictor)?;
+    Ok(RiscvGShareBranchUpdate::new(
+        prediction,
+        history_update,
+        training_update,
+    ))
+}
+
+fn retire_bimode_branch_update(
+    state: &mut RiscvCoreState,
+    pc: Address,
+    conditional: bool,
+    actual_taken: bool,
+    selected_prediction_correct: bool,
+    selected: Option<&RiscvSelectedBranchSpeculation>,
+) -> Result<RiscvBiModeBranchUpdate, RiscvCpuError> {
+    if let Some(RiscvSelectedBranchSpeculation::BiMode {
+        prediction,
+        history_update,
+    }) = selected
+    {
+        let history_update = if selected_prediction_correct {
+            history_update
+                .clone()
+                .expect("recorded bimode speculation includes a history update")
+        } else {
+            state
+                .bimode_branch_predictor
+                .squash(prediction.history())
+                .map_err(RiscvCpuError::BiModeBranchPredictor)?;
+            state
+                .bimode_branch_predictor
+                .update_history(prediction.history(), actual_taken)
+                .map_err(RiscvCpuError::BiModeBranchPredictor)?
+        };
+        let training_update = state
+            .bimode_branch_predictor
+            .train(prediction.history(), actual_taken, false)
+            .map_err(RiscvCpuError::BiModeBranchPredictor)?;
+        return Ok(RiscvBiModeBranchUpdate::new(
+            prediction.clone(),
+            history_update,
+            training_update,
+        ));
+    }
+
+    let prediction = if conditional {
+        state
+            .bimode_branch_predictor
+            .predict(RISCV_LOCAL_BIMODE_THREAD, pc)
+    } else {
+        state
+            .bimode_branch_predictor
+            .predict_unconditional(RISCV_LOCAL_BIMODE_THREAD, pc)
+    }
+    .map_err(RiscvCpuError::BiModeBranchPredictor)?;
+    let history_update = state
+        .bimode_branch_predictor
+        .update_history(prediction.history(), actual_taken)
+        .map_err(RiscvCpuError::BiModeBranchPredictor)?;
+    let training_update = state
+        .bimode_branch_predictor
+        .train(prediction.history(), actual_taken, false)
+        .map_err(RiscvCpuError::BiModeBranchPredictor)?;
+    Ok(RiscvBiModeBranchUpdate::new(
+        prediction,
+        history_update,
+        training_update,
+    ))
+}
+
+fn retire_tournament_branch_update(
+    state: &mut RiscvCoreState,
+    pc: Address,
+    conditional: bool,
+    actual_taken: bool,
+    selected_prediction_correct: bool,
+    selected: Option<&RiscvSelectedBranchSpeculation>,
+) -> Result<RiscvTournamentBranchUpdate, RiscvCpuError> {
+    if let Some(RiscvSelectedBranchSpeculation::Tournament {
+        prediction,
+        history_update,
+    }) = selected
+    {
+        let history_update = if selected_prediction_correct {
+            history_update
+                .clone()
+                .expect("recorded tournament speculation includes a history update")
+        } else {
+            state
+                .tournament_branch_predictor
+                .squash(prediction.history())
+                .map_err(RiscvCpuError::TournamentBranchPredictor)?;
+            state
+                .tournament_branch_predictor
+                .update_history(prediction.history(), actual_taken)
+                .map_err(RiscvCpuError::TournamentBranchPredictor)?
+        };
+        let training_update = state
+            .tournament_branch_predictor
+            .train(prediction.history(), actual_taken, false)
+            .map_err(RiscvCpuError::TournamentBranchPredictor)?;
+        return Ok(RiscvTournamentBranchUpdate::new(
+            prediction.clone(),
+            history_update,
+            training_update,
+        ));
+    }
+
+    let prediction = if conditional {
+        state
+            .tournament_branch_predictor
+            .predict(RISCV_LOCAL_TOURNAMENT_THREAD, pc)
+    } else {
+        state
+            .tournament_branch_predictor
+            .predict_unconditional(RISCV_LOCAL_TOURNAMENT_THREAD, pc)
+    }
+    .map_err(RiscvCpuError::TournamentBranchPredictor)?;
+    let history_update = state
+        .tournament_branch_predictor
+        .update_history(prediction.history(), actual_taken)
+        .map_err(RiscvCpuError::TournamentBranchPredictor)?;
+    let training_update = state
+        .tournament_branch_predictor
+        .train(prediction.history(), actual_taken, false)
+        .map_err(RiscvCpuError::TournamentBranchPredictor)?;
+    Ok(RiscvTournamentBranchUpdate::new(
+        prediction,
+        history_update,
+        training_update,
+    ))
+}
+
+fn retire_tage_sc_l_branch_update(
+    state: &mut RiscvCoreState,
+    pc: Address,
+    conditional: bool,
+    actual_taken: bool,
+    kind: StatisticalCorrectorBranchKind,
+    target: Address,
+) -> Result<RiscvTageScLBranchUpdate, RiscvCpuError> {
+    let prediction = state
+        .tage_sc_l_branch_predictor
+        .predict(RISCV_LOCAL_TAGE_SC_L_THREAD, pc, conditional)
+        .map_err(RiscvCpuError::TageScLBranchPredictor)?;
+    let training_update = state
+        .tage_sc_l_branch_predictor
+        .train(prediction.history(), actual_taken, kind, target)
+        .map_err(RiscvCpuError::TageScLBranchPredictor)?;
+    Ok(RiscvTageScLBranchUpdate::new(prediction, training_update))
 }
 
 const fn statistical_corrector_branch_kind(
@@ -1079,7 +1248,7 @@ fn resolve_branch_speculation(
         state
             .branch_speculation_summary
             .record_repair(repair.removed_youngers().len() as u64);
-        remove_branch_speculation_mappings(state, repair.removed_youngers());
+        remove_branch_speculation_mappings(state, repair.removed_youngers())?;
     }
     state
         .branch_predictor
@@ -1101,14 +1270,14 @@ fn discard_branch_speculation(
         .branch_predictor
         .discard_speculation(speculation)
         .map_err(RiscvCpuError::BranchPredictor)?;
-    remove_branch_speculation_mappings(state, discard.removed_youngers());
+    remove_branch_speculation_mappings(state, discard.removed_youngers())?;
     Ok(())
 }
 
 fn remove_branch_speculation_mappings(
     state: &mut RiscvCoreState,
     removed: &[crate::BranchSpeculation],
-) {
+) -> Result<(), RiscvCpuError> {
     state.branch_speculations.retain(|_, pending| {
         !removed
             .iter()
@@ -1122,6 +1291,7 @@ fn remove_branch_speculation_mappings(
     state
         .branch_target_predictions
         .retain(|sequence, _| active_sequences.contains(sequence));
+    state.rollback_inactive_selected_branch_speculations(&active_sequences)
 }
 
 pub(crate) fn sync_in_order_fetch_state(

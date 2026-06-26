@@ -6,7 +6,7 @@ use rem6_transport::{
 use crate::riscv_cluster::RiscvClusterError;
 use crate::riscv_cluster_run::RiscvClusterDriveEvent;
 use crate::riscv_data_issue::OutstandingDataAccess;
-use crate::riscv_fetch_ahead::RiscvFetchAheadDecision;
+use crate::riscv_fetch_ahead::PreparedRiscvFetchAheadSpeculation;
 use crate::{CpuId, OutstandingFetch, RiscvCore, RiscvCoreDriveAction};
 
 pub(crate) enum PreparedParallelAction {
@@ -15,7 +15,7 @@ pub(crate) enum PreparedParallelAction {
         cpu: CpuId,
         core: RiscvCore,
         issue: OutstandingFetch,
-        fetch_ahead: Option<RiscvFetchAheadDecision>,
+        fetch_ahead: Option<PreparedRiscvFetchAheadSpeculation>,
         transaction_index: usize,
     },
     Data {
@@ -42,7 +42,7 @@ pub(crate) fn push_prepared_parallel_fetch_action<F>(
     prepared_actions: &mut Vec<PreparedParallelAction>,
     transaction_cpus: &mut Vec<CpuId>,
     transactions: &mut Vec<ParallelMemoryTransaction>,
-    fetch_ahead: Option<RiscvFetchAheadDecision>,
+    fetch_ahead: Option<PreparedRiscvFetchAheadSpeculation>,
 ) -> Result<(), RiscvClusterError>
 where
     F: FnOnce(RequestDelivery, &mut ParallelSchedulerContext<'_>) -> TargetOutcome + Send + 'static,

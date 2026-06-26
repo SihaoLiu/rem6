@@ -167,6 +167,9 @@ pub enum RiscvCpuError {
         request: MemoryRequestId,
         bytes: u64,
     },
+    MissingBranchSpeculationInstruction {
+        sequence: u64,
+    },
     PcMismatch {
         fetch: Address,
         architectural: Address,
@@ -262,6 +265,10 @@ impl fmt::Display for RiscvCpuError {
                 "fetch response {} from agent {} has {bytes} bytes instead of 4",
                 request.sequence(),
                 request.agent().get()
+            ),
+            Self::MissingBranchSpeculationInstruction { sequence } => write!(
+                formatter,
+                "branch speculation sequence {sequence} has no decodable completed instruction"
             ),
             Self::PcMismatch {
                 fetch,

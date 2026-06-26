@@ -10,7 +10,7 @@ impl RiscvCore {
     ) -> BiModeBranchPredictorCheckpointPayload {
         let state = self.state.lock().expect("riscv core lock");
         BiModeBranchPredictorCheckpointPayload::from_snapshot(
-            state.bimode_branch_predictor.snapshot(),
+            state.committed_bimode_branch_predictor_snapshot(),
         )
         .expect("captured RISC-V bimode branch predictor checkpoint is internally consistent")
     }
@@ -40,6 +40,7 @@ impl RiscvCore {
         let mut restored = state.bimode_branch_predictor.clone();
         restored.restore(&snapshot)?;
         state.bimode_branch_predictor = restored;
+        state.forget_bimode_selected_branch_speculations();
         Ok(())
     }
 

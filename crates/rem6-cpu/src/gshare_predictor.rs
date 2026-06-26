@@ -318,6 +318,29 @@ impl GShareBranchPredictor {
     ) -> Result<GSharePrediction, GShareBranchPredictorError> {
         let thread_index = self.thread_index(cpu)?;
         let global_history = self.threads[thread_index].global_history();
+        self.predict_unconditional_with_history(cpu, pc, global_history)
+    }
+
+    pub(crate) fn predict_unconditional_with_global_history(
+        &mut self,
+        cpu: CpuId,
+        pc: Address,
+        global_history: u64,
+    ) -> Result<GSharePrediction, GShareBranchPredictorError> {
+        self.thread_index(cpu)?;
+        self.predict_unconditional_with_history(
+            cpu,
+            pc,
+            global_history & self.config.history_mask(),
+        )
+    }
+
+    fn predict_unconditional_with_history(
+        &mut self,
+        cpu: CpuId,
+        pc: Address,
+        global_history: u64,
+    ) -> Result<GSharePrediction, GShareBranchPredictorError> {
         let index = self.index(pc, global_history);
         let counter = self.counters[index];
         let history = GShareHistory {
@@ -326,6 +349,34 @@ impl GShareBranchPredictor {
             index,
             global_history_before: global_history,
             predicted_taken: true,
+            counter,
+        };
+
+        self.lookup_count += 1;
+
+        Ok(GSharePrediction {
+            history,
+            lookup_count: self.lookup_count,
+        })
+    }
+
+    pub(crate) fn predict_with_global_history_and_direction(
+        &mut self,
+        cpu: CpuId,
+        pc: Address,
+        global_history: u64,
+        predicted_taken: bool,
+    ) -> Result<GSharePrediction, GShareBranchPredictorError> {
+        self.thread_index(cpu)?;
+        let global_history = global_history & self.config.history_mask();
+        let index = self.index(pc, global_history);
+        let counter = self.counters[index];
+        let history = GShareHistory {
+            cpu,
+            pc,
+            index,
+            global_history_before: global_history,
+            predicted_taken,
             counter,
         };
 

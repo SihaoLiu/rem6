@@ -408,6 +408,29 @@ impl BiModeBranchPredictor {
     ) -> Result<BiModePrediction, BiModeBranchPredictorError> {
         let thread_index = self.thread_index(cpu)?;
         let global_history = self.threads[thread_index].global_history();
+        self.predict_unconditional_with_history(cpu, pc, global_history)
+    }
+
+    pub(crate) fn predict_unconditional_with_global_history(
+        &mut self,
+        cpu: CpuId,
+        pc: Address,
+        global_history: u64,
+    ) -> Result<BiModePrediction, BiModeBranchPredictorError> {
+        self.thread_index(cpu)?;
+        self.predict_unconditional_with_history(
+            cpu,
+            pc,
+            global_history & self.config.history_mask(),
+        )
+    }
+
+    fn predict_unconditional_with_history(
+        &mut self,
+        cpu: CpuId,
+        pc: Address,
+        global_history: u64,
+    ) -> Result<BiModePrediction, BiModeBranchPredictorError> {
         let choice_index = self.choice_index(pc);
         let global_index = self.global_index(pc, global_history);
 
@@ -427,6 +450,49 @@ impl BiModeBranchPredictor {
                 choice_counter: self.choice_counters[choice_index],
                 taken_counter: self.taken_counters[global_index],
                 not_taken_counter: self.not_taken_counters[global_index],
+            },
+            lookup_count: self.lookup_count,
+        })
+    }
+
+    pub(crate) fn predict_with_global_history_and_direction(
+        &mut self,
+        cpu: CpuId,
+        pc: Address,
+        global_history: u64,
+        predicted_taken: bool,
+    ) -> Result<BiModePrediction, BiModeBranchPredictorError> {
+        self.thread_index(cpu)?;
+        let global_history = global_history & self.config.history_mask();
+        let choice_index = self.choice_index(pc);
+        let global_index = self.global_index(pc, global_history);
+        let choice_counter = self.choice_counters[choice_index];
+        let taken_counter = self.taken_counters[global_index];
+        let not_taken_counter = self.not_taken_counters[global_index];
+        let selected_array = if choice_counter > self.config.choice_threshold() {
+            BiModeDirectionArray::Taken
+        } else {
+            BiModeDirectionArray::NotTaken
+        };
+        let taken_prediction = taken_counter > self.config.global_threshold();
+        let not_taken_prediction = not_taken_counter > self.config.global_threshold();
+
+        self.lookup_count += 1;
+
+        Ok(BiModePrediction {
+            history: BiModeHistory {
+                cpu,
+                pc,
+                choice_index,
+                global_index,
+                global_history_before: global_history,
+                selected_array,
+                taken_prediction,
+                not_taken_prediction,
+                predicted_taken,
+                choice_counter,
+                taken_counter,
+                not_taken_counter,
             },
             lookup_count: self.lookup_count,
         })

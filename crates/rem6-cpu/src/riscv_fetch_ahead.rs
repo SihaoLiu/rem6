@@ -1,11 +1,15 @@
+use std::collections::BTreeMap;
+
 use rem6_isa_riscv::{RiscvHartState, RiscvInstruction, RiscvPrivilegeMode};
 use rem6_memory::Address;
 
 use crate::{
-    riscv_branch_kind::riscv_branch_target_kind, BranchTargetKind, BranchTargetPrediction,
-    BranchTargetProvider, CpuFetchEvent, CpuFetchEventKind,
+    riscv_branch_kind::riscv_branch_target_kind, BiModeBranchPredictor, BranchPredictor,
+    BranchSpeculationId, BranchTargetKind, BranchTargetPrediction, BranchTargetProvider,
+    CpuFetchEvent, CpuFetchEventKind, GShareBranchPredictor,
     MultiperspectivePerceptronThreadSnapshot, RiscvBranchPredictorKind, RiscvCore, RiscvCoreState,
-    RiscvCpuError, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+    RiscvCpuError, RiscvSelectedBranchSpeculation, TournamentBranchPredictor,
+    RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
     RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
@@ -61,36 +65,48 @@ impl RiscvCore {
         self.core.set_pc(pc);
     }
 
-    pub(crate) fn record_fetch_ahead_speculation(&self, decision: &RiscvFetchAheadDecision) {
+    pub(crate) fn prepare_fetch_ahead_speculation(
+        &self,
+        decision: &RiscvFetchAheadDecision,
+    ) -> Result<Option<PreparedRiscvFetchAheadSpeculation>, RiscvCpuError> {
         let Some(speculation) = decision.branch_speculation() else {
+            return Ok(None);
+        };
+        let fetch_events = self.core.fetch_events();
+        let state = self.state.lock().expect("riscv core lock");
+        if state
+            .branch_speculations
+            .contains_key(&speculation.sequence)
+        {
+            return Ok(None);
+        }
+        let selected = speculation
+            .selected_speculation
+            .as_ref()
+            .map(|selected| {
+                preview_selected_branch_speculation(
+                    &state,
+                    &fetch_events,
+                    speculation.sequence,
+                    selected,
+                )
+            })
+            .transpose()?;
+        Ok(Some(PreparedRiscvFetchAheadSpeculation {
+            speculation: speculation.clone(),
+            selected,
+        }))
+    }
+
+    pub(crate) fn record_prepared_fetch_ahead_speculation(
+        &self,
+        prepared: Option<PreparedRiscvFetchAheadSpeculation>,
+    ) {
+        let Some(prepared) = prepared else {
             return;
         };
         let mut state = self.state.lock().expect("riscv core lock");
-        if state
-            .branch_speculations
-            .contains_key(&speculation.sequence())
-        {
-            return;
-        }
-        let prediction = state.branch_predictor.predict_speculative_with_prediction(
-            speculation.pc(),
-            speculation.predicted_taken(),
-            speculation.target(),
-        );
-        state
-            .branch_speculations
-            .insert(speculation.sequence(), prediction.id());
-        if let Some(branch_target_prediction) = speculation.branch_target_prediction() {
-            state
-                .branch_target_predictions
-                .insert(speculation.sequence(), branch_target_prediction);
-        }
-        let pending = state.branch_speculations.len() as u64;
-        state.branch_speculation_summary.record_prediction(
-            speculation.branch_kind(),
-            speculation.target_provider(),
-            pending,
-        );
+        prepared.apply(&mut state);
     }
 
     pub(crate) fn can_retire_completed_fetch_while_fetch_pending(
@@ -109,7 +125,327 @@ impl RiscvCore {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PreparedRiscvFetchAheadSpeculation {
+    speculation: RiscvFetchAheadSpeculation,
+    selected: Option<SelectedBranchRecordedState>,
+}
+
+impl PreparedRiscvFetchAheadSpeculation {
+    fn apply(self, state: &mut RiscvCoreState) {
+        let Self {
+            speculation,
+            selected,
+        } = self;
+        if state
+            .branch_speculations
+            .contains_key(&speculation.sequence)
+        {
+            return;
+        }
+        if let Some(selected) = selected {
+            selected.apply(state);
+        }
+        let prediction = state.branch_predictor.predict_speculative_with_prediction(
+            speculation.pc,
+            speculation.predicted_taken,
+            speculation.target,
+        );
+        state
+            .branch_speculations
+            .insert(speculation.sequence, prediction.id());
+        if let Some(branch_target_prediction) = speculation.branch_target_prediction {
+            state
+                .branch_target_predictions
+                .insert(speculation.sequence, branch_target_prediction);
+        }
+        let pending = state.branch_speculations.len() as u64;
+        state.branch_speculation_summary.record_prediction(
+            speculation.branch_kind,
+            speculation.target_provider,
+            pending,
+        );
+    }
+}
+
+struct SelectedBranchRecordingState<'a> {
+    branch_predictor: &'a BranchPredictor,
+    branch_speculations: &'a BTreeMap<u64, BranchSpeculationId>,
+    selected_branch_speculations: BTreeMap<u64, RiscvSelectedBranchSpeculation>,
+    gshare_branch_predictor: GShareBranchPredictor,
+    bimode_branch_predictor: BiModeBranchPredictor,
+    tournament_branch_predictor: TournamentBranchPredictor,
+}
+
+impl<'a> SelectedBranchRecordingState<'a> {
+    fn new(state: &'a RiscvCoreState) -> Self {
+        Self {
+            branch_predictor: &state.branch_predictor,
+            branch_speculations: &state.branch_speculations,
+            selected_branch_speculations: state.selected_branch_speculations.clone(),
+            gshare_branch_predictor: state.gshare_branch_predictor.clone(),
+            bimode_branch_predictor: state.bimode_branch_predictor.clone(),
+            tournament_branch_predictor: state.tournament_branch_predictor.clone(),
+        }
+    }
+
+    fn finish(self) -> SelectedBranchRecordedState {
+        SelectedBranchRecordedState {
+            selected_branch_speculations: self.selected_branch_speculations,
+            gshare_branch_predictor: self.gshare_branch_predictor,
+            bimode_branch_predictor: self.bimode_branch_predictor,
+            tournament_branch_predictor: self.tournament_branch_predictor,
+        }
+    }
+}
+
+struct SelectedBranchRecordedState {
+    selected_branch_speculations: BTreeMap<u64, RiscvSelectedBranchSpeculation>,
+    gshare_branch_predictor: GShareBranchPredictor,
+    bimode_branch_predictor: BiModeBranchPredictor,
+    tournament_branch_predictor: TournamentBranchPredictor,
+}
+
+impl SelectedBranchRecordedState {
+    fn apply(self, state: &mut RiscvCoreState) {
+        state.selected_branch_speculations = self.selected_branch_speculations;
+        state.gshare_branch_predictor = self.gshare_branch_predictor;
+        state.bimode_branch_predictor = self.bimode_branch_predictor;
+        state.tournament_branch_predictor = self.tournament_branch_predictor;
+    }
+}
+
+fn preview_selected_branch_speculation(
+    state: &RiscvCoreState,
+    fetch_events: &[CpuFetchEvent],
+    sequence: u64,
+    selected: &RiscvSelectedBranchSpeculation,
+) -> Result<SelectedBranchRecordedState, RiscvCpuError> {
+    let mut recording = SelectedBranchRecordingState::new(state);
+    record_selected_branch_speculation(&mut recording, fetch_events, sequence, selected)?;
+    Ok(recording.finish())
+}
+
+fn record_selected_branch_speculation(
+    state: &mut SelectedBranchRecordingState<'_>,
+    fetch_events: &[CpuFetchEvent],
+    sequence: u64,
+    selected: &RiscvSelectedBranchSpeculation,
+) -> Result<(), RiscvCpuError> {
+    record_missing_selected_branch_speculations(state, fetch_events, sequence, selected)?;
+    let recorded = match selected {
+        RiscvSelectedBranchSpeculation::GShare { prediction, .. } => {
+            record_gshare_selected_prediction(
+                state,
+                prediction.clone(),
+                prediction.predicted_taken(),
+            )?
+        }
+        RiscvSelectedBranchSpeculation::BiMode { prediction, .. } => {
+            record_bimode_selected_prediction(
+                state,
+                prediction.clone(),
+                prediction.predicted_taken(),
+            )?
+        }
+        RiscvSelectedBranchSpeculation::Tournament { prediction, .. } => {
+            record_tournament_selected_prediction(
+                state,
+                prediction.clone(),
+                prediction.predicted_taken(),
+            )?
+        }
+    };
+    state
+        .selected_branch_speculations
+        .insert(sequence, recorded);
+    Ok(())
+}
+
+fn record_missing_selected_branch_speculations(
+    state: &mut SelectedBranchRecordingState<'_>,
+    fetch_events: &[CpuFetchEvent],
+    sequence: u64,
+    selected: &RiscvSelectedBranchSpeculation,
+) -> Result<(), RiscvCpuError> {
+    let latest_live_sequence = latest_live_selected_branch_speculation_sequence(
+        &state.selected_branch_speculations,
+        &mut |speculation| selected_branch_speculation_same_family(selected, speculation),
+    );
+    let missing = state
+        .branch_speculations
+        .iter()
+        .filter(|(pending_sequence, _)| **pending_sequence < sequence)
+        .filter(|(pending_sequence, _)| {
+            latest_live_sequence.is_none_or(|latest| **pending_sequence > latest)
+        })
+        .map(|(pending_sequence, speculation)| (*pending_sequence, *speculation))
+        .collect::<Vec<_>>();
+    for (pending_sequence, speculation) in missing {
+        let pending = state
+            .branch_predictor
+            .pending_speculation(speculation)
+            .ok_or(crate::BranchPredictorError::UnknownSpeculation { id: speculation })
+            .map_err(RiscvCpuError::BranchPredictor)?
+            .clone();
+        let recorded = replay_selected_branch_speculation(
+            state,
+            fetch_events,
+            selected,
+            pending_sequence,
+            pending.pc(),
+            pending.predicted_taken(),
+        )?;
+        state
+            .selected_branch_speculations
+            .insert(pending_sequence, recorded);
+    }
+    Ok(())
+}
+
+fn selected_branch_speculation_same_family(
+    left: &RiscvSelectedBranchSpeculation,
+    right: &RiscvSelectedBranchSpeculation,
+) -> bool {
+    matches!(
+        (left, right),
+        (
+            RiscvSelectedBranchSpeculation::GShare { .. },
+            RiscvSelectedBranchSpeculation::GShare { .. }
+        ) | (
+            RiscvSelectedBranchSpeculation::BiMode { .. },
+            RiscvSelectedBranchSpeculation::BiMode { .. }
+        ) | (
+            RiscvSelectedBranchSpeculation::Tournament { .. },
+            RiscvSelectedBranchSpeculation::Tournament { .. }
+        )
+    )
+}
+
+fn replay_selected_branch_speculation(
+    state: &mut SelectedBranchRecordingState<'_>,
+    fetch_events: &[CpuFetchEvent],
+    selected: &RiscvSelectedBranchSpeculation,
+    sequence: u64,
+    pc: Address,
+    predicted_taken: bool,
+) -> Result<RiscvSelectedBranchSpeculation, RiscvCpuError> {
+    match selected {
+        RiscvSelectedBranchSpeculation::GShare { .. } => {
+            let global_history = state
+                .gshare_branch_predictor
+                .global_history(RISCV_LOCAL_GSHARE_THREAD)
+                .map_err(RiscvCpuError::GShareBranchPredictor)?;
+            let prediction = state
+                .gshare_branch_predictor
+                .predict_with_global_history_and_direction(
+                    RISCV_LOCAL_GSHARE_THREAD,
+                    pc,
+                    global_history,
+                    predicted_taken,
+                )
+                .map_err(RiscvCpuError::GShareBranchPredictor)?;
+            record_gshare_selected_prediction(state, prediction, predicted_taken)
+        }
+        RiscvSelectedBranchSpeculation::BiMode { .. } => {
+            let global_history = state
+                .bimode_branch_predictor
+                .global_history(RISCV_LOCAL_BIMODE_THREAD)
+                .map_err(RiscvCpuError::BiModeBranchPredictor)?;
+            let prediction = state
+                .bimode_branch_predictor
+                .predict_with_global_history_and_direction(
+                    RISCV_LOCAL_BIMODE_THREAD,
+                    pc,
+                    global_history,
+                    predicted_taken,
+                )
+                .map_err(RiscvCpuError::BiModeBranchPredictor)?;
+            record_bimode_selected_prediction(state, prediction, predicted_taken)
+        }
+        RiscvSelectedBranchSpeculation::Tournament { .. } => {
+            let global_history = state
+                .tournament_branch_predictor
+                .global_history(RISCV_LOCAL_TOURNAMENT_THREAD)
+                .map_err(RiscvCpuError::TournamentBranchPredictor)?;
+            let updates_local = pending_speculation_updates_tournament_local_history_from_events(
+                fetch_events,
+                sequence,
+            )
+            .ok_or(RiscvCpuError::MissingBranchSpeculationInstruction { sequence })?;
+            let prediction = if updates_local {
+                let local_history = state.tournament_branch_predictor.local_history(pc);
+                state
+                    .tournament_branch_predictor
+                    .predict_with_histories_and_direction(
+                        RISCV_LOCAL_TOURNAMENT_THREAD,
+                        pc,
+                        global_history,
+                        local_history,
+                        predicted_taken,
+                    )
+                    .map_err(RiscvCpuError::TournamentBranchPredictor)?
+            } else {
+                debug_assert!(predicted_taken);
+                state
+                    .tournament_branch_predictor
+                    .predict_unconditional_with_global_history(
+                        RISCV_LOCAL_TOURNAMENT_THREAD,
+                        pc,
+                        global_history,
+                    )
+                    .map_err(RiscvCpuError::TournamentBranchPredictor)?
+            };
+            record_tournament_selected_prediction(state, prediction, predicted_taken)
+        }
+    }
+}
+
+fn record_gshare_selected_prediction(
+    state: &mut SelectedBranchRecordingState<'_>,
+    prediction: crate::GSharePrediction,
+    taken: bool,
+) -> Result<RiscvSelectedBranchSpeculation, RiscvCpuError> {
+    let history_update = state
+        .gshare_branch_predictor
+        .update_history(prediction.history(), taken)
+        .map_err(RiscvCpuError::GShareBranchPredictor)?;
+    Ok(RiscvSelectedBranchSpeculation::GShare {
+        prediction,
+        history_update: Some(history_update),
+    })
+}
+
+fn record_bimode_selected_prediction(
+    state: &mut SelectedBranchRecordingState<'_>,
+    prediction: crate::BiModePrediction,
+    taken: bool,
+) -> Result<RiscvSelectedBranchSpeculation, RiscvCpuError> {
+    let history_update = state
+        .bimode_branch_predictor
+        .update_history(prediction.history(), taken)
+        .map_err(RiscvCpuError::BiModeBranchPredictor)?;
+    Ok(RiscvSelectedBranchSpeculation::BiMode {
+        prediction,
+        history_update: Some(history_update),
+    })
+}
+
+fn record_tournament_selected_prediction(
+    state: &mut SelectedBranchRecordingState<'_>,
+    prediction: crate::TournamentPrediction,
+    taken: bool,
+) -> Result<RiscvSelectedBranchSpeculation, RiscvCpuError> {
+    let history_update = state
+        .tournament_branch_predictor
+        .update_history(prediction.history(), taken)
+        .map_err(RiscvCpuError::TournamentBranchPredictor)?;
+    Ok(RiscvSelectedBranchSpeculation::Tournament {
+        prediction,
+        history_update: Some(history_update),
+    })
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RiscvFetchAheadDecision {
     pc: Address,
     branch_speculation: Option<RiscvFetchAheadSpeculation>,
@@ -130,6 +466,7 @@ impl RiscvFetchAheadDecision {
         branch_kind: BranchTargetKind,
         predicted_taken: bool,
         target: Option<Address>,
+        selected_speculation: Option<RiscvSelectedBranchSpeculation>,
         branch_target_prediction: Option<BranchTargetPrediction>,
         target_provider: BranchTargetProvider,
     ) -> Self {
@@ -141,59 +478,54 @@ impl RiscvFetchAheadDecision {
                 branch_kind,
                 predicted_taken,
                 target,
+                selected_speculation,
                 branch_target_prediction,
                 target_provider,
             }),
         }
     }
 
-    pub(crate) const fn pc(self) -> Address {
+    pub(crate) const fn pc(&self) -> Address {
         self.pc
     }
 
-    pub(crate) const fn branch_speculation(self) -> Option<RiscvFetchAheadSpeculation> {
-        self.branch_speculation
+    pub(crate) const fn branch_speculation(&self) -> Option<&RiscvFetchAheadSpeculation> {
+        self.branch_speculation.as_ref()
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RiscvFetchAheadSpeculation {
     sequence: u64,
     pc: Address,
     branch_kind: BranchTargetKind,
     predicted_taken: bool,
     target: Option<Address>,
+    selected_speculation: Option<RiscvSelectedBranchSpeculation>,
     branch_target_prediction: Option<BranchTargetPrediction>,
     target_provider: BranchTargetProvider,
 }
 
+#[cfg(test)]
 impl RiscvFetchAheadSpeculation {
-    const fn sequence(self) -> u64 {
+    const fn sequence(&self) -> u64 {
         self.sequence
     }
 
-    const fn pc(self) -> Address {
+    const fn pc(&self) -> Address {
         self.pc
     }
 
-    const fn branch_kind(self) -> BranchTargetKind {
-        self.branch_kind
-    }
-
-    const fn predicted_taken(self) -> bool {
+    const fn predicted_taken(&self) -> bool {
         self.predicted_taken
     }
 
-    const fn target(self) -> Option<Address> {
+    const fn target(&self) -> Option<Address> {
         self.target
     }
 
-    const fn branch_target_prediction(self) -> Option<BranchTargetPrediction> {
+    const fn branch_target_prediction(&self) -> Option<BranchTargetPrediction> {
         self.branch_target_prediction
-    }
-
-    const fn target_provider(self) -> BranchTargetProvider {
-        self.target_provider
     }
 }
 
@@ -375,6 +707,7 @@ fn discard_branch_speculation_mapping(
     state
         .branch_target_predictions
         .retain(|sequence, _| active_sequences.contains(sequence));
+    state.rollback_inactive_selected_branch_speculations(&active_sequences)?;
     Ok(())
 }
 
@@ -408,6 +741,7 @@ fn fetch_ahead_decision(
     if let Some((target, branch_kind, branch_target_prediction, target_provider)) =
         direct_jump_fetch_ahead_target(state, fetch_pc, instruction)
     {
+        let selected_speculation = selected_direct_branch_speculation(state, fetch_pc)?;
         return Some(RiscvFetchAheadDecision::branch(
             target,
             sequence,
@@ -415,6 +749,7 @@ fn fetch_ahead_decision(
             branch_kind,
             true,
             Some(target),
+            selected_speculation,
             Some(branch_target_prediction),
             target_provider,
         ));
@@ -437,15 +772,17 @@ fn fetch_ahead_decision(
         BranchTargetKind::DirectConditional,
         prediction.predicted_taken,
         prediction.target,
+        prediction.selected_speculation,
         prediction.branch_target_prediction,
         prediction.target_provider,
     ))
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct RiscvFetchAheadBranchPrediction {
     predicted_taken: bool,
     target: Option<Address>,
+    selected_speculation: Option<RiscvSelectedBranchSpeculation>,
     branch_target_prediction: Option<BranchTargetPrediction>,
     target_provider: BranchTargetProvider,
 }
@@ -471,6 +808,7 @@ fn selected_conditional_branch_prediction(
                 } else {
                     None
                 },
+                selected_speculation: None,
                 branch_target_prediction: None,
                 target_provider: BranchTargetProvider::from_btb_prediction(
                     prediction.predicted_taken(),
@@ -488,9 +826,14 @@ fn selected_conditional_branch_prediction(
                 .predicted_taken()
                 .then(|| conditional_branch_target(fetch_pc, instruction))
                 .flatten();
+            let selected_speculation = Some(RiscvSelectedBranchSpeculation::GShare {
+                prediction: prediction.clone(),
+                history_update: None,
+            });
             Some(RiscvFetchAheadBranchPrediction {
                 predicted_taken: prediction.predicted_taken(),
                 target,
+                selected_speculation,
                 branch_target_prediction: None,
                 target_provider: BranchTargetProvider::NoTarget,
             })
@@ -505,9 +848,14 @@ fn selected_conditional_branch_prediction(
                 .predicted_taken()
                 .then(|| conditional_branch_target(fetch_pc, instruction))
                 .flatten();
+            let selected_speculation = Some(RiscvSelectedBranchSpeculation::BiMode {
+                prediction: prediction.clone(),
+                history_update: None,
+            });
             Some(RiscvFetchAheadBranchPrediction {
                 predicted_taken: prediction.predicted_taken(),
                 target,
+                selected_speculation,
                 branch_target_prediction: None,
                 target_provider: BranchTargetProvider::NoTarget,
             })
@@ -528,9 +876,14 @@ fn selected_conditional_branch_prediction(
                 .predicted_taken()
                 .then(|| conditional_branch_target(fetch_pc, instruction))
                 .flatten();
+            let selected_speculation = Some(RiscvSelectedBranchSpeculation::Tournament {
+                prediction: prediction.clone(),
+                history_update: None,
+            });
             Some(RiscvFetchAheadBranchPrediction {
                 predicted_taken: prediction.predicted_taken(),
                 target,
+                selected_speculation,
                 branch_target_prediction: None,
                 target_provider: BranchTargetProvider::NoTarget,
             })
@@ -559,6 +912,7 @@ fn selected_conditional_branch_prediction(
             Some(RiscvFetchAheadBranchPrediction {
                 predicted_taken: prediction.predicted_taken(),
                 target,
+                selected_speculation: None,
                 branch_target_prediction: None,
                 target_provider: BranchTargetProvider::NoTarget,
             })
@@ -568,16 +922,77 @@ fn selected_conditional_branch_prediction(
     Some(prediction)
 }
 
+fn selected_direct_branch_speculation(
+    state: &mut RiscvCoreState,
+    fetch_pc: Address,
+) -> Option<Option<RiscvSelectedBranchSpeculation>> {
+    match state.branch_predictor_kind {
+        RiscvBranchPredictorKind::Basic
+        | RiscvBranchPredictorKind::TageScL
+        | RiscvBranchPredictorKind::MultiperspectivePerceptron => Some(None),
+        RiscvBranchPredictorKind::GShare => {
+            let global_history = selected_gshare_speculative_history(state)?;
+            let prediction = state
+                .gshare_branch_predictor
+                .predict_unconditional_with_global_history(
+                    RISCV_LOCAL_GSHARE_THREAD,
+                    fetch_pc,
+                    global_history,
+                )
+                .ok()?;
+            Some(Some(RiscvSelectedBranchSpeculation::GShare {
+                prediction,
+                history_update: None,
+            }))
+        }
+        RiscvBranchPredictorKind::BiMode => {
+            let global_history = selected_bimode_speculative_history(state)?;
+            let prediction = state
+                .bimode_branch_predictor
+                .predict_unconditional_with_global_history(
+                    RISCV_LOCAL_BIMODE_THREAD,
+                    fetch_pc,
+                    global_history,
+                )
+                .ok()?;
+            Some(Some(RiscvSelectedBranchSpeculation::BiMode {
+                prediction,
+                history_update: None,
+            }))
+        }
+        RiscvBranchPredictorKind::Tournament => {
+            let global_history = selected_tournament_speculative_global_history(state)?;
+            let prediction = state
+                .tournament_branch_predictor
+                .predict_unconditional_with_global_history(
+                    RISCV_LOCAL_TOURNAMENT_THREAD,
+                    fetch_pc,
+                    global_history,
+                )
+                .ok()?;
+            Some(Some(RiscvSelectedBranchSpeculation::Tournament {
+                prediction,
+                history_update: None,
+            }))
+        }
+    }
+}
+
 fn selected_gshare_speculative_history(state: &RiscvCoreState) -> Option<u64> {
     let history = state
         .gshare_branch_predictor
         .global_history(RISCV_LOCAL_GSHARE_THREAD)
         .ok()?;
-    selected_speculative_history(state, history, |history, taken| {
-        state
-            .gshare_branch_predictor
-            .shifted_history(history, taken)
-    })
+    selected_speculative_history(
+        state,
+        history,
+        |speculation| matches!(speculation, RiscvSelectedBranchSpeculation::GShare { .. }),
+        |history, taken| {
+            state
+                .gshare_branch_predictor
+                .shifted_history(history, taken)
+        },
+    )
 }
 
 fn selected_bimode_speculative_history(state: &RiscvCoreState) -> Option<u64> {
@@ -585,23 +1000,70 @@ fn selected_bimode_speculative_history(state: &RiscvCoreState) -> Option<u64> {
         .bimode_branch_predictor
         .global_history(RISCV_LOCAL_BIMODE_THREAD)
         .ok()?;
-    selected_speculative_history(state, history, |history, taken| {
-        state
-            .bimode_branch_predictor
-            .shifted_history(history, taken)
-    })
+    selected_speculative_history(
+        state,
+        history,
+        |speculation| matches!(speculation, RiscvSelectedBranchSpeculation::BiMode { .. }),
+        |history, taken| {
+            state
+                .bimode_branch_predictor
+                .shifted_history(history, taken)
+        },
+    )
 }
 
 fn selected_speculative_history(
     state: &RiscvCoreState,
     mut history: u64,
+    mut family_history_is_live: impl FnMut(&RiscvSelectedBranchSpeculation) -> bool,
     mut shift_history: impl FnMut(u64, bool) -> u64,
 ) -> Option<u64> {
-    for speculation in state.branch_speculations.values() {
+    let latest_live_sequence = latest_live_selected_branch_speculation_sequence(
+        &state.selected_branch_speculations,
+        &mut family_history_is_live,
+    );
+    for (sequence, speculation) in &state.branch_speculations {
+        if latest_live_sequence.is_some_and(|latest| *sequence <= latest) {
+            continue;
+        }
         let pending = state.branch_predictor.pending_speculation(*speculation)?;
         history = shift_history(history, pending.predicted_taken());
     }
     Some(history)
+}
+
+fn latest_live_selected_branch_speculation_sequence(
+    selected_branch_speculations: &BTreeMap<u64, RiscvSelectedBranchSpeculation>,
+    family_history_is_live: &mut impl FnMut(&RiscvSelectedBranchSpeculation) -> bool,
+) -> Option<u64> {
+    selected_branch_speculations
+        .iter()
+        .rev()
+        .find_map(|(sequence, speculation)| {
+            family_history_is_live(speculation).then_some(*sequence)
+        })
+}
+
+fn selected_tournament_speculative_global_history(state: &RiscvCoreState) -> Option<u64> {
+    let history = state
+        .tournament_branch_predictor
+        .global_history(RISCV_LOCAL_TOURNAMENT_THREAD)
+        .ok()?;
+    selected_speculative_history(
+        state,
+        history,
+        |speculation| {
+            matches!(
+                speculation,
+                RiscvSelectedBranchSpeculation::Tournament { .. }
+            )
+        },
+        |history, taken| {
+            state
+                .tournament_branch_predictor
+                .shifted_global_history(history, taken)
+        },
+    )
 }
 
 fn selected_tournament_speculative_histories(
@@ -614,11 +1076,36 @@ fn selected_tournament_speculative_histories(
         .global_history(RISCV_LOCAL_TOURNAMENT_THREAD)
         .ok()?;
     let mut local_history = state.tournament_branch_predictor.local_history(fetch_pc);
+    let latest_live_sequence = latest_live_selected_branch_speculation_sequence(
+        &state.selected_branch_speculations,
+        &mut |speculation| {
+            matches!(
+                speculation,
+                RiscvSelectedBranchSpeculation::Tournament { .. }
+            )
+        },
+    );
     for (sequence, speculation) in &state.branch_speculations {
+        let global_history_is_live = latest_live_sequence.is_some_and(|latest| *sequence <= latest);
+        if global_history_is_live
+            && state
+                .selected_branch_speculations
+                .get(sequence)
+                .is_some_and(|speculation| {
+                    matches!(
+                        speculation,
+                        RiscvSelectedBranchSpeculation::Tournament { .. }
+                    )
+                })
+        {
+            continue;
+        }
         let pending = state.branch_predictor.pending_speculation(*speculation)?;
-        global_history = state
-            .tournament_branch_predictor
-            .shifted_global_history(global_history, pending.predicted_taken());
+        if !global_history_is_live {
+            global_history = state
+                .tournament_branch_predictor
+                .shifted_global_history(global_history, pending.predicted_taken());
+        }
         if state
             .tournament_branch_predictor
             .shares_local_history_entry(pending.pc(), fetch_pc)
@@ -666,6 +1153,15 @@ fn pending_speculation_updates_tournament_local_history(
     ))
 }
 
+fn pending_speculation_updates_tournament_local_history_from_events(
+    fetch_events: &[CpuFetchEvent],
+    sequence: u64,
+) -> Option<bool> {
+    Some(instruction_is_conditional_branch(
+        completed_fetch_instruction_from_events(fetch_events, sequence)?,
+    ))
+}
+
 fn completed_fetch_instruction(
     completed_fetches: &[&CpuFetchEvent],
     sequence: u64,
@@ -674,6 +1170,20 @@ fn completed_fetch_instruction(
         .iter()
         .copied()
         .find(|event| event.request_id().sequence() == sequence)?;
+    decode_completed_fetch_instruction(fetch)
+}
+
+fn completed_fetch_instruction_from_events(
+    fetch_events: &[CpuFetchEvent],
+    sequence: u64,
+) -> Option<RiscvInstruction> {
+    let fetch = fetch_events.iter().find(|event| {
+        event.kind() == CpuFetchEventKind::Completed && event.request_id().sequence() == sequence
+    })?;
+    decode_completed_fetch_instruction(fetch)
+}
+
+fn decode_completed_fetch_instruction(fetch: &CpuFetchEvent) -> Option<RiscvInstruction> {
     let data = fetch.data()?;
     let raw = match data {
         [a, b, c, d] => u32::from_le_bytes([*a, *b, *c, *d]),
@@ -908,9 +1418,11 @@ mod tests {
     use crate::{
         BranchPredictor, BranchPredictorCheckpointPayload, BranchPredictorConfig,
         BranchTargetBuffer, BranchTargetBufferConfig, BranchTargetProvider, CpuCore,
-        CpuFetchConfig, CpuFetchRecord, CpuId, CpuResetState, MultiperspectivePerceptron,
-        MultiperspectivePerceptronConfig, MultiperspectivePerceptronFeature,
-        RiscvBranchPredictorKind, TournamentBranchPredictor, TournamentBranchPredictorConfig,
+        CpuFetchConfig, CpuFetchRecord, CpuId, CpuResetState, InOrderPipelineError,
+        InOrderPipelineInstruction, InOrderPipelineSnapshot, InOrderPipelineStage,
+        MultiperspectivePerceptron, MultiperspectivePerceptronConfig,
+        MultiperspectivePerceptronFeature, OutstandingFetch, RiscvBranchPredictorKind,
+        TournamentBranchPredictor, TournamentBranchPredictorConfig,
         DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES, RISCV_LOCAL_BIMODE_THREAD,
         RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
         RISCV_LOCAL_TOURNAMENT_THREAD,
@@ -1027,6 +1539,106 @@ mod tests {
         }
         drop(core_state);
         core
+    }
+
+    fn core_with_recorded_selected_direct_speculation(kind: RiscvBranchPredictorKind) -> RiscvCore {
+        let core = core_with_completed_fetch(j_type(12, 0).to_le_bytes().to_vec());
+        core.set_branch_predictor_kind(kind);
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+        assert_eq!(decision.pc(), Address::new(0x800c));
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
+        core
+    }
+
+    fn record_fetch_ahead_speculation(
+        core: &RiscvCore,
+        decision: &RiscvFetchAheadDecision,
+    ) -> Result<(), RiscvCpuError> {
+        let prepared = core.prepare_fetch_ahead_speculation(decision)?;
+        core.record_prepared_fetch_ahead_speculation(prepared);
+        Ok(())
+    }
+
+    fn selected_family_global_history(
+        state: &RiscvCoreState,
+        kind: RiscvBranchPredictorKind,
+    ) -> u64 {
+        match kind {
+            RiscvBranchPredictorKind::GShare => {
+                state.gshare_branch_predictor.snapshot().threads()[0].global_history()
+            }
+            RiscvBranchPredictorKind::BiMode => {
+                state.bimode_branch_predictor.snapshot().threads()[0].global_history()
+            }
+            RiscvBranchPredictorKind::Tournament => {
+                state.tournament_branch_predictor.snapshot().threads()[0].global_history()
+            }
+            other => panic!("unsupported selected predictor family: {other:?}"),
+        }
+    }
+
+    fn selected_family_speculation_count(
+        state: &RiscvCoreState,
+        kind: RiscvBranchPredictorKind,
+    ) -> usize {
+        state
+            .selected_branch_speculations
+            .values()
+            .filter(|speculation| {
+                matches!(
+                    (kind, speculation),
+                    (
+                        RiscvBranchPredictorKind::GShare,
+                        RiscvSelectedBranchSpeculation::GShare { .. }
+                    ) | (
+                        RiscvBranchPredictorKind::BiMode,
+                        RiscvSelectedBranchSpeculation::BiMode { .. }
+                    ) | (
+                        RiscvBranchPredictorKind::Tournament,
+                        RiscvSelectedBranchSpeculation::Tournament { .. }
+                    )
+                )
+            })
+            .count()
+    }
+
+    fn restore_selected_family_checkpoint(core: &RiscvCore, kind: RiscvBranchPredictorKind) {
+        match kind {
+            RiscvBranchPredictorKind::GShare => core
+                .restore_gshare_branch_predictor_checkpoint_payload(
+                    core.gshare_branch_predictor_checkpoint_payload(),
+                )
+                .unwrap(),
+            RiscvBranchPredictorKind::BiMode => core
+                .restore_bimode_branch_predictor_checkpoint_payload(
+                    core.bimode_branch_predictor_checkpoint_payload(),
+                )
+                .unwrap(),
+            RiscvBranchPredictorKind::Tournament => core
+                .restore_tournament_branch_predictor_checkpoint_payload(
+                    core.tournament_branch_predictor_checkpoint_payload(),
+                )
+                .unwrap(),
+            other => panic!("unsupported selected predictor family: {other:?}"),
+        }
+    }
+
+    fn train_selected_gshare_taken(state: &mut RiscvCoreState, pc: Address) {
+        for _ in 0..2 {
+            let prediction = state
+                .gshare_branch_predictor
+                .predict(RISCV_LOCAL_GSHARE_THREAD, pc)
+                .unwrap();
+            state
+                .gshare_branch_predictor
+                .train(prediction.history(), true, false)
+                .unwrap();
+        }
+        let trained = state
+            .gshare_branch_predictor
+            .predict(RISCV_LOCAL_GSHARE_THREAD, pc)
+            .unwrap();
+        assert!(trained.predicted_taken());
     }
 
     fn train_selected_bimode_taken(state: &mut RiscvCoreState, pc: Address) {
@@ -1185,7 +1797,7 @@ mod tests {
 
         assert_eq!(
             core.next_fetch_ahead_before_retire()
-                .map(RiscvFetchAheadDecision::pc),
+                .map(|decision| decision.pc()),
             Some(Address::new(0x8002))
         );
     }
@@ -1217,22 +1829,12 @@ mod tests {
         core.set_branch_predictor_kind(RiscvBranchPredictorKind::GShare);
         {
             let mut state = core.state.lock().expect("riscv core lock");
-            let pc = Address::new(0x8000);
-            for _ in 0..2 {
-                let prediction = state
-                    .gshare_branch_predictor
-                    .predict(RISCV_LOCAL_GSHARE_THREAD, pc)
-                    .unwrap();
-                state
-                    .gshare_branch_predictor
-                    .train(prediction.history(), true, false)
-                    .unwrap();
-            }
+            train_selected_gshare_taken(&mut state, Address::new(0x8000));
         }
 
         let decision = core.next_fetch_ahead_before_retire().unwrap();
         assert_eq!(decision.pc(), Address::new(0x8008));
-        core.record_fetch_ahead_speculation(&decision);
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
 
         let event = core.execute_next_completed_fetch().unwrap().unwrap();
         let basic_update = event.branch_update().unwrap();
@@ -1303,6 +1905,497 @@ mod tests {
     }
 
     #[test]
+    fn selected_gshare_direct_speculation_redirect_discards_live_history() {
+        let core = core_with_recorded_selected_direct_speculation(RiscvBranchPredictorKind::GShare);
+        {
+            let state = core.state.lock().expect("riscv core lock");
+            assert_eq!(state.selected_branch_speculations.len(), 1);
+            assert_eq!(
+                state.gshare_branch_predictor.snapshot().threads()[0].global_history(),
+                1
+            );
+        }
+
+        core.redirect_pc(Address::new(0x9000));
+
+        let state = core.state.lock().expect("riscv core lock");
+        assert!(state.branch_speculations.is_empty());
+        assert!(state.selected_branch_speculations.is_empty());
+        assert_eq!(
+            state.gshare_branch_predictor.snapshot().threads()[0].global_history(),
+            0
+        );
+    }
+
+    #[test]
+    fn selected_record_failure_does_not_leave_generic_branch_speculation() {
+        let core = core_with_completed_fetch(j_type(12, 0).to_le_bytes().to_vec());
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::GShare);
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            let prediction = state
+                .gshare_branch_predictor
+                .predict_unconditional(RISCV_LOCAL_GSHARE_THREAD, Address::new(0x9000))
+                .unwrap();
+            state
+                .gshare_branch_predictor
+                .update_history(prediction.history(), true)
+                .unwrap();
+            assert_eq!(
+                state.gshare_branch_predictor.snapshot().threads()[0].global_history(),
+                1
+            );
+        }
+
+        assert!(record_fetch_ahead_speculation(&core, &decision).is_err());
+
+        let state = core.state.lock().expect("riscv core lock");
+        assert!(state.branch_speculations.is_empty());
+        assert!(state.selected_branch_speculations.is_empty());
+        assert!(state.branch_predictor.pending_speculations().is_empty());
+    }
+
+    #[test]
+    fn prepared_fetch_issue_records_fetch_ahead_speculation_before_sync_failure() {
+        let core = core_with_completed_fetch(j_type(12, 0).to_le_bytes().to_vec());
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+        let prepared = core.prepare_fetch_ahead_speculation(&decision).unwrap();
+        let config = RiscvCore::default_in_order_pipeline_snapshot()
+            .config()
+            .clone();
+        core.restore_in_order_pipeline_snapshot(InOrderPipelineSnapshot::with_cycle(
+            config,
+            u64::MAX,
+            [InOrderPipelineInstruction::new(
+                99,
+                InOrderPipelineStage::Fetch1,
+            )],
+        ))
+        .unwrap();
+        let issue = OutstandingFetch {
+            tick: 4,
+            partition: PartitionId::new(0),
+            route: MemoryRouteId::new(0),
+            endpoint: endpoint("cpu0.ifetch"),
+            request_id: request(1),
+            pc: decision.pc(),
+            size: AccessSize::new(4).unwrap(),
+            line_layout: layout(),
+        };
+
+        let error = core
+            .record_prepared_fetch_issue_with_prepared_fetch_ahead(issue, prepared)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            RiscvCpuError::InOrderPipeline(InOrderPipelineError::CycleCursorOverflow {
+                cycle: u64::MAX
+            })
+        ));
+        let state = core.state.lock().expect("riscv core lock");
+        assert!(state.branch_speculations.contains_key(&0));
+        assert!(state.branch_predictor.pending_speculation_count() > 0);
+    }
+
+    #[test]
+    fn selected_gshare_direct_speculation_after_restore_uses_pending_generic_history() {
+        let core = core_with_completed_fetch(j_type(8, 0).to_le_bytes().to_vec());
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::GShare);
+        let selected = {
+            let mut state = core.state.lock().expect("riscv core lock");
+            insert_pending_branch_speculation(
+                &mut state,
+                0,
+                Address::new(0x8000),
+                Address::new(0x8008),
+            );
+            assert_eq!(state.branch_speculations.len(), 1);
+            assert!(state.selected_branch_speculations.is_empty());
+            assert_eq!(
+                state.gshare_branch_predictor.snapshot().threads()[0].global_history(),
+                0
+            );
+
+            selected_direct_branch_speculation(&mut state, Address::new(0x8008))
+                .unwrap()
+                .expect("selected direct speculation")
+        };
+        if let RiscvSelectedBranchSpeculation::GShare { prediction, .. } = &selected {
+            assert_eq!(prediction.global_history_before(), 1);
+        } else {
+            panic!("expected selected GShare speculation");
+        }
+        let decision = RiscvFetchAheadDecision::branch(
+            Address::new(0x8010),
+            1,
+            Address::new(0x8008),
+            BranchTargetKind::DirectUnconditional,
+            true,
+            Some(Address::new(0x8010)),
+            Some(selected),
+            None,
+            BranchTargetProvider::NoTarget,
+        );
+
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
+
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(state.branch_speculations.len(), 2);
+        assert_eq!(state.selected_branch_speculations.len(), 2);
+        assert_eq!(
+            state.gshare_branch_predictor.snapshot().threads()[0].global_history(),
+            3
+        );
+    }
+
+    #[test]
+    fn selected_tournament_direct_replay_after_restore_keeps_local_history_unchanged() {
+        let core = core_with_completed_fetches([
+            (0, 0x8000, j_type(8, 0).to_le_bytes().to_vec()),
+            (1, 0x8008, j_type(8, 0).to_le_bytes().to_vec()),
+        ]);
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::Tournament);
+        let selected = {
+            let mut state = core.state.lock().expect("riscv core lock");
+            use_small_tournament_predictor(&mut state);
+            insert_pending_branch_speculation(
+                &mut state,
+                0,
+                Address::new(0x8000),
+                Address::new(0x8008),
+            );
+            assert_eq!(state.branch_speculations.len(), 1);
+            assert!(state.selected_branch_speculations.is_empty());
+            assert_eq!(
+                state
+                    .tournament_branch_predictor
+                    .snapshot()
+                    .local_history_table()[0],
+                0
+            );
+
+            selected_direct_branch_speculation(&mut state, Address::new(0x8008))
+                .unwrap()
+                .expect("selected direct speculation")
+        };
+        if let RiscvSelectedBranchSpeculation::Tournament { prediction, .. } = &selected {
+            assert_eq!(prediction.global_history_before(), 1);
+            assert!(!prediction.local_history_valid());
+        } else {
+            panic!("expected selected Tournament speculation");
+        }
+        let decision = RiscvFetchAheadDecision::branch(
+            Address::new(0x8010),
+            1,
+            Address::new(0x8008),
+            BranchTargetKind::DirectUnconditional,
+            true,
+            Some(Address::new(0x8010)),
+            Some(selected),
+            None,
+            BranchTargetProvider::NoTarget,
+        );
+
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
+
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(state.branch_speculations.len(), 2);
+        assert_eq!(state.selected_branch_speculations.len(), 2);
+        let replayed = state.selected_branch_speculations.get(&0).unwrap();
+        let RiscvSelectedBranchSpeculation::Tournament { prediction, .. } = replayed else {
+            panic!("expected replayed Tournament speculation");
+        };
+        assert!(!prediction.local_history_valid());
+        assert_eq!(
+            state.tournament_branch_predictor.snapshot().threads()[0].global_history(),
+            1
+        );
+        assert_eq!(
+            state
+                .tournament_branch_predictor
+                .snapshot()
+                .history_update_count(),
+            2
+        );
+        assert_eq!(
+            state
+                .tournament_branch_predictor
+                .snapshot()
+                .local_history_table()[0],
+            0
+        );
+    }
+
+    #[test]
+    fn selected_tournament_replay_uses_completed_event_after_issued_event() {
+        let core = core_with_completed_fetches(std::iter::empty::<(u64, u64, Vec<u8>)>());
+        {
+            let mut core_state = core.core.state.lock().expect("cpu core lock");
+            core_state
+                .events
+                .push(crate::CpuFetchEvent::issued(CpuFetchRecord::new(
+                    3,
+                    PartitionId::new(0),
+                    MemoryRouteId::new(0),
+                    endpoint("cpu0.ifetch"),
+                    request(0),
+                    Address::new(0x8000),
+                    AccessSize::new(4).unwrap(),
+                )));
+            core_state.events.push(crate::CpuFetchEvent::completed(
+                CpuFetchRecord::new(
+                    4,
+                    PartitionId::new(0),
+                    MemoryRouteId::new(0),
+                    endpoint("cpu0.ifetch"),
+                    request(0),
+                    Address::new(0x8000),
+                    AccessSize::new(4).unwrap(),
+                ),
+                j_type(8, 0).to_le_bytes().to_vec(),
+            ));
+        }
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::Tournament);
+        let selected = {
+            let mut state = core.state.lock().expect("riscv core lock");
+            use_small_tournament_predictor(&mut state);
+            insert_pending_branch_speculation(
+                &mut state,
+                0,
+                Address::new(0x8000),
+                Address::new(0x8008),
+            );
+            selected_direct_branch_speculation(&mut state, Address::new(0x8008))
+                .unwrap()
+                .expect("selected direct speculation")
+        };
+        let decision = RiscvFetchAheadDecision::branch(
+            Address::new(0x8010),
+            1,
+            Address::new(0x8008),
+            BranchTargetKind::DirectUnconditional,
+            true,
+            Some(Address::new(0x8010)),
+            Some(selected),
+            None,
+            BranchTargetProvider::NoTarget,
+        );
+
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
+
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(state.branch_speculations.len(), 2);
+        assert_eq!(state.selected_branch_speculations.len(), 2);
+        assert_eq!(
+            state
+                .tournament_branch_predictor
+                .snapshot()
+                .history_update_count(),
+            2
+        );
+    }
+
+    #[test]
+    fn selected_tournament_replay_requires_completed_instruction_metadata() {
+        let core = core_with_completed_fetches([(1, 0x8008, j_type(8, 0).to_le_bytes().to_vec())]);
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::Tournament);
+        let selected = {
+            let mut state = core.state.lock().expect("riscv core lock");
+            use_small_tournament_predictor(&mut state);
+            insert_pending_branch_speculation(
+                &mut state,
+                0,
+                Address::new(0x8000),
+                Address::new(0x8008),
+            );
+            selected_direct_branch_speculation(&mut state, Address::new(0x8008))
+                .unwrap()
+                .expect("selected direct speculation")
+        };
+        let decision = RiscvFetchAheadDecision::branch(
+            Address::new(0x8010),
+            1,
+            Address::new(0x8008),
+            BranchTargetKind::DirectUnconditional,
+            true,
+            Some(Address::new(0x8010)),
+            Some(selected),
+            None,
+            BranchTargetProvider::NoTarget,
+        );
+
+        let error = record_fetch_ahead_speculation(&core, &decision).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RiscvCpuError::MissingBranchSpeculationInstruction { sequence: 0 }
+        ));
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(state.branch_speculations.len(), 1);
+        assert!(state.selected_branch_speculations.is_empty());
+        assert_eq!(state.branch_predictor.pending_speculation_count(), 1);
+        assert_eq!(
+            state
+                .tournament_branch_predictor
+                .snapshot()
+                .history_update_count(),
+            0
+        );
+    }
+
+    #[test]
+    fn selected_tournament_replay_failure_discards_partial_recording() {
+        let core = core_with_completed_fetches([(0, 0x8000, j_type(8, 0).to_le_bytes().to_vec())]);
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::Tournament);
+        let selected = {
+            let mut state = core.state.lock().expect("riscv core lock");
+            use_small_tournament_predictor(&mut state);
+            insert_pending_branch_speculation(
+                &mut state,
+                0,
+                Address::new(0x8000),
+                Address::new(0x8008),
+            );
+            insert_pending_branch_speculation(
+                &mut state,
+                1,
+                Address::new(0x8008),
+                Address::new(0x8010),
+            );
+            selected_direct_branch_speculation(&mut state, Address::new(0x8010))
+                .unwrap()
+                .expect("selected direct speculation")
+        };
+        let decision = RiscvFetchAheadDecision::branch(
+            Address::new(0x8018),
+            2,
+            Address::new(0x8010),
+            BranchTargetKind::DirectUnconditional,
+            true,
+            Some(Address::new(0x8018)),
+            Some(selected),
+            None,
+            BranchTargetProvider::NoTarget,
+        );
+
+        let error = record_fetch_ahead_speculation(&core, &decision).unwrap_err();
+
+        assert!(matches!(
+            error,
+            RiscvCpuError::MissingBranchSpeculationInstruction { sequence: 1 }
+        ));
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(state.branch_speculations.len(), 2);
+        assert!(state.selected_branch_speculations.is_empty());
+        assert_eq!(state.branch_predictor.pending_speculation_count(), 2);
+        assert_eq!(
+            state.tournament_branch_predictor.snapshot().threads()[0].global_history(),
+            0
+        );
+        assert_eq!(
+            state
+                .tournament_branch_predictor
+                .snapshot()
+                .history_update_count(),
+            0
+        );
+    }
+
+    #[test]
+    fn generic_branch_checkpoint_restore_rolls_back_selected_family_history() {
+        let core = core_with_recorded_selected_direct_speculation(RiscvBranchPredictorKind::GShare);
+        assert_eq!(
+            core.gshare_branch_predictor_snapshot().threads()[0].global_history(),
+            1
+        );
+
+        core.restore_branch_predictor_checkpoint_payload(
+            RiscvCore::default_branch_predictor_checkpoint_payload(),
+        )
+        .unwrap();
+
+        let state = core.state.lock().expect("riscv core lock");
+        assert!(state.branch_speculations.is_empty());
+        assert!(state.selected_branch_speculations.is_empty());
+        assert_eq!(
+            state.gshare_branch_predictor.snapshot().threads()[0].global_history(),
+            0
+        );
+    }
+
+    #[test]
+    fn selected_family_checkpoint_payloads_use_committed_fetch_ahead_history() {
+        let gshare =
+            core_with_recorded_selected_direct_speculation(RiscvBranchPredictorKind::GShare);
+        assert_eq!(
+            gshare.gshare_branch_predictor_snapshot().threads()[0].global_history(),
+            1
+        );
+        assert_eq!(
+            gshare
+                .gshare_branch_predictor_checkpoint_payload()
+                .snapshot()
+                .threads()[0]
+                .global_history(),
+            0
+        );
+
+        let bimode =
+            core_with_recorded_selected_direct_speculation(RiscvBranchPredictorKind::BiMode);
+        assert_eq!(
+            bimode.bimode_branch_predictor_snapshot().threads()[0].global_history(),
+            1
+        );
+        assert_eq!(
+            bimode
+                .bimode_branch_predictor_checkpoint_payload()
+                .snapshot()
+                .threads()[0]
+                .global_history(),
+            0
+        );
+
+        let tournament =
+            core_with_recorded_selected_direct_speculation(RiscvBranchPredictorKind::Tournament);
+        assert_eq!(
+            tournament.tournament_branch_predictor_snapshot().threads()[0].global_history(),
+            1
+        );
+        assert_eq!(
+            tournament
+                .tournament_branch_predictor_checkpoint_payload()
+                .snapshot()
+                .threads()[0]
+                .global_history(),
+            0
+        );
+    }
+
+    #[test]
+    fn selected_family_checkpoint_restore_forgets_unreflected_selected_speculation() {
+        for kind in [
+            RiscvBranchPredictorKind::GShare,
+            RiscvBranchPredictorKind::BiMode,
+            RiscvBranchPredictorKind::Tournament,
+        ] {
+            let core = core_with_recorded_selected_direct_speculation(kind);
+            {
+                let state = core.state.lock().expect("riscv core lock");
+                assert_eq!(selected_family_speculation_count(&state, kind), 1);
+                assert_eq!(selected_family_global_history(&state, kind), 1);
+            }
+
+            restore_selected_family_checkpoint(&core, kind);
+
+            let state = core.state.lock().expect("riscv core lock");
+            assert_eq!(selected_family_speculation_count(&state, kind), 0);
+            assert_eq!(selected_family_global_history(&state, kind), 0);
+        }
+    }
+
+    #[test]
     fn btb_misprediction_counts_taken_fetch_prediction_without_btb_target() {
         let branch = b_type(8, 0, 0, 0x0).to_le_bytes().to_vec();
         let core = core_with_completed_fetch(branch);
@@ -1324,7 +2417,7 @@ mod tests {
 
         let decision = core.next_fetch_ahead_before_retire().unwrap();
         assert_eq!(decision.pc(), Address::new(0x8008));
-        core.record_fetch_ahead_speculation(&decision);
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
 
         let event = core.execute_next_completed_fetch().unwrap().unwrap();
         let cycle = event.in_order_pipeline_cycle().unwrap();
@@ -1411,7 +2504,7 @@ mod tests {
                 .map(|speculation| (speculation.predicted_taken(), speculation.target())),
             Some((false, None))
         );
-        core.record_fetch_ahead_speculation(&decision);
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
 
         let event = core.execute_next_completed_fetch().unwrap().unwrap();
         let cycle = event.in_order_pipeline_cycle().unwrap();
@@ -1471,7 +2564,7 @@ mod tests {
                 .map(|speculation| (speculation.predicted_taken(), speculation.target())),
             Some((true, Some(Address::new(0x8008))))
         );
-        core.record_fetch_ahead_speculation(&decision);
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
 
         let event = core.execute_next_completed_fetch().unwrap().unwrap();
         let cycle = event.in_order_pipeline_cycle().unwrap();
@@ -1520,7 +2613,7 @@ mod tests {
 
         let decision = core.next_fetch_ahead_before_retire().unwrap();
         assert_eq!(decision.pc(), Address::new(0x8010));
-        core.record_fetch_ahead_speculation(&decision);
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
 
         let event = core.execute_next_completed_fetch().unwrap().unwrap();
         let cycle = event.in_order_pipeline_cycle().unwrap();
@@ -1597,7 +2690,7 @@ mod tests {
 
         let decision = core.next_fetch_ahead_before_retire().unwrap();
         assert_eq!(decision.pc(), Address::new(0x800c));
-        core.record_fetch_ahead_speculation(&decision);
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
 
         let event = core.execute_next_completed_fetch().unwrap().unwrap();
         let cycle = event.in_order_pipeline_cycle().unwrap();
@@ -1667,7 +2760,7 @@ mod tests {
                 .map(|speculation| (speculation.predicted_taken(), speculation.target())),
             Some((true, Some(Address::new(0x800c))))
         );
-        core.record_fetch_ahead_speculation(&decision);
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
 
         let event = core.execute_next_completed_fetch().unwrap().unwrap();
         let cycle = event.in_order_pipeline_cycle().unwrap();
@@ -1705,7 +2798,7 @@ mod tests {
 
         let decision = core.next_fetch_ahead_before_retire().unwrap();
         assert_eq!(decision.pc(), Address::new(0x800c));
-        core.record_fetch_ahead_speculation(&decision);
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
         core.execute_next_completed_fetch().unwrap().unwrap();
 
         assert_eq!(
@@ -1741,7 +2834,7 @@ mod tests {
                 Some(BranchTargetPrediction::new(false, None)),
             ))
         );
-        core.record_fetch_ahead_speculation(&decision);
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
         core.write_register(target_register, 0x8010);
 
         let event = core.execute_next_completed_fetch().unwrap().unwrap();
@@ -1786,7 +2879,7 @@ mod tests {
 
         let decision = core.next_fetch_ahead_before_retire().unwrap();
         assert_eq!(decision.pc(), Address::new(0x800c));
-        core.record_fetch_ahead_speculation(&decision);
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
         core.write_register(target_register, 0x8010);
 
         let event = core.execute_next_completed_fetch().unwrap().unwrap();
@@ -1825,7 +2918,7 @@ mod tests {
 
         let decision = core.next_fetch_ahead_before_retire().unwrap();
         assert_eq!(decision.pc(), Address::new(0x800c));
-        core.record_fetch_ahead_speculation(&decision);
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
         core.write_register(target_register, 0x8010);
 
         let event = core.execute_next_completed_fetch().unwrap().unwrap();
@@ -1910,11 +3003,11 @@ mod tests {
         let first = core.next_fetch_ahead_before_retire().unwrap();
         assert_eq!(first.pc(), Address::new(0x8008));
         core.set_fetch_ahead_pc(first.pc());
-        core.record_fetch_ahead_speculation(&first);
+        record_fetch_ahead_speculation(&core, &first).unwrap();
 
         assert_eq!(
             core.gshare_branch_predictor_snapshot().threads()[0].global_history(),
-            0
+            1
         );
         let second = core.next_fetch_ahead_before_retire().unwrap();
 
@@ -1964,11 +3057,11 @@ mod tests {
         let first = core.next_fetch_ahead_before_retire().unwrap();
         assert_eq!(first.pc(), Address::new(0x8008));
         core.set_fetch_ahead_pc(first.pc());
-        core.record_fetch_ahead_speculation(&first);
+        record_fetch_ahead_speculation(&core, &first).unwrap();
 
         assert_eq!(
             core.gshare_branch_predictor_snapshot().threads()[0].global_history(),
-            0
+            1
         );
         let second = core.next_fetch_ahead_before_retire().unwrap();
 
@@ -2016,11 +3109,11 @@ mod tests {
         let first = core.next_fetch_ahead_before_retire().unwrap();
         assert_eq!(first.pc(), Address::new(0x8008));
         core.set_fetch_ahead_pc(first.pc());
-        core.record_fetch_ahead_speculation(&first);
+        record_fetch_ahead_speculation(&core, &first).unwrap();
 
         assert_eq!(
             core.bimode_branch_predictor_snapshot().threads()[0].global_history(),
-            0
+            1
         );
         let second = core.next_fetch_ahead_before_retire().unwrap();
 
@@ -2066,11 +3159,11 @@ mod tests {
         let first = core.next_fetch_ahead_before_retire().unwrap();
         assert_eq!(first.pc(), Address::new(0x8008));
         core.set_fetch_ahead_pc(first.pc());
-        core.record_fetch_ahead_speculation(&first);
+        record_fetch_ahead_speculation(&core, &first).unwrap();
 
         assert_eq!(
             core.bimode_branch_predictor_snapshot().threads()[0].global_history(),
-            0
+            1
         );
         let second = core.next_fetch_ahead_before_retire().unwrap();
 
@@ -2330,7 +3423,7 @@ mod tests {
             Some((0, Address::new(0x8000)))
         );
 
-        core.record_fetch_ahead_speculation(&decision);
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
         let captured = core.branch_predictor_checkpoint_payload();
         {
             let mut state = core.state.lock().expect("riscv core lock");
@@ -2480,7 +3573,7 @@ mod tests {
         let branch = b_type(8, 0, 0, 0).to_le_bytes().to_vec();
         let core = core_with_completed_fetch(branch);
         let decision = core.next_fetch_ahead_before_retire().unwrap();
-        core.record_fetch_ahead_speculation(&decision);
+        record_fetch_ahead_speculation(&core, &decision).unwrap();
         let original_predictor = core.branch_predictor_snapshot();
         let original_btb = core.branch_target_buffer_snapshot();
         let original_speculations = {
@@ -2531,5 +3624,30 @@ mod tests {
         .unwrap());
         assert!(state.branch_speculations.is_empty());
         assert!(state.branch_predictor.pending_speculations().is_empty());
+    }
+
+    #[test]
+    fn retired_fetch_gate_discards_stale_selected_gshare_speculation() {
+        let core = core_with_recorded_selected_direct_speculation(RiscvBranchPredictorKind::GShare);
+        let mut state = core.state.lock().expect("riscv core lock");
+        assert_eq!(
+            state.gshare_branch_predictor.snapshot().threads()[0].global_history(),
+            1
+        );
+        state.executed_fetches.insert(request(0));
+
+        assert!(can_retire_completed_fetch_with_branch_speculations(
+            &mut state,
+            &[completed(1, 0x8000)]
+        )
+        .unwrap());
+
+        assert!(state.branch_speculations.is_empty());
+        assert!(state.selected_branch_speculations.is_empty());
+        assert!(state.branch_predictor.pending_speculations().is_empty());
+        assert_eq!(
+            state.gshare_branch_predictor.snapshot().threads()[0].global_history(),
+            0
+        );
     }
 }

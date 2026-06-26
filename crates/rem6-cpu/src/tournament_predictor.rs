@@ -570,6 +570,29 @@ impl TournamentBranchPredictor {
     ) -> Result<TournamentPrediction, TournamentBranchPredictorError> {
         let thread_index = self.thread_index(cpu)?;
         let global_history = self.threads[thread_index].global_history();
+        self.predict_unconditional_with_history(cpu, pc, global_history)
+    }
+
+    pub(crate) fn predict_unconditional_with_global_history(
+        &mut self,
+        cpu: CpuId,
+        pc: Address,
+        global_history: u64,
+    ) -> Result<TournamentPrediction, TournamentBranchPredictorError> {
+        self.thread_index(cpu)?;
+        self.predict_unconditional_with_history(
+            cpu,
+            pc,
+            global_history & self.config.history_register_mask(),
+        )
+    }
+
+    fn predict_unconditional_with_history(
+        &mut self,
+        cpu: CpuId,
+        pc: Address,
+        global_history: u64,
+    ) -> Result<TournamentPrediction, TournamentBranchPredictorError> {
         let global_index = self.global_index(global_history);
         let choice_index = self.choice_index(global_history);
 
@@ -593,6 +616,57 @@ impl TournamentBranchPredictor {
                 local_counter: self.local_counters[0],
                 global_counter: self.global_counters[global_index],
                 choice_counter: self.choice_counters[choice_index],
+            },
+            lookup_count: self.lookup_count,
+        })
+    }
+
+    pub(crate) fn predict_with_histories_and_direction(
+        &mut self,
+        cpu: CpuId,
+        pc: Address,
+        global_history: u64,
+        local_history: u64,
+        predicted_taken: bool,
+    ) -> Result<TournamentPrediction, TournamentBranchPredictorError> {
+        self.thread_index(cpu)?;
+        let global_history = global_history & self.config.history_register_mask();
+        let local_history = local_history & self.config.local_predictor_mask();
+        let local_history_index = self.local_history_index(pc);
+        let local_predictor_index = self.local_predictor_index(local_history);
+        let global_index = self.global_index(global_history);
+        let choice_index = self.choice_index(global_history);
+        let local_counter = self.local_counters[local_predictor_index];
+        let global_counter = self.global_counters[global_index];
+        let choice_counter = self.choice_counters[choice_index];
+        let local_predicted_taken = local_counter > self.config.local_threshold();
+        let global_predicted_taken = global_counter > self.config.global_threshold();
+        let selection = if choice_counter > self.config.choice_threshold() {
+            TournamentPredictorSelection::Global
+        } else {
+            TournamentPredictorSelection::Local
+        };
+
+        self.lookup_count += 1;
+
+        Ok(TournamentPrediction {
+            history: TournamentHistory {
+                cpu,
+                pc,
+                local_history_valid: true,
+                local_history_index,
+                local_predictor_index,
+                global_index,
+                choice_index,
+                global_history_before: global_history,
+                local_history_before: local_history,
+                selection,
+                local_predicted_taken,
+                global_predicted_taken,
+                predicted_taken,
+                local_counter,
+                global_counter,
+                choice_counter,
             },
             lookup_count: self.lookup_count,
         })

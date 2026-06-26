@@ -6002,6 +6002,44 @@ fn rem6_run_stats_emit_branch_predictor_family_counters() {
 }
 
 #[test]
+fn rem6_run_stats_emit_selected_branch_predictor_family_rollback_counters() {
+    let program = nested_branch_speculation_program();
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-selected-branch-predictor-family-rollback", &elf);
+
+    for (predictor, family, rollback_field) in [
+        ("gshare", "gshare", "squashes"),
+        ("bimode", "bimode", "squashes"),
+        ("tournament", "tournament", "squashes"),
+    ] {
+        let stdout = selected_branch_predictor_stdout(&path, predictor);
+        let aggregate_repairs = json_u64_field(&stdout, "\"branch_speculation_repairs\":");
+        let rollback_count = json_object_u64_field(
+            &stdout,
+            &format!("\"{family}\":{{"),
+            &format!("\"{rollback_field}\":"),
+        );
+
+        assert!(aggregate_repairs > 0, "{predictor}\n{stdout}");
+        assert_eq!(
+            stat_value(
+                &stdout,
+                &format!("sim.cpu0.branch_predictor.{family}.{rollback_field}")
+            ),
+            rollback_count,
+            "{predictor} {family}.{rollback_field} should match the stats registry path\n{stdout}"
+        );
+        assert!(
+            rollback_count > aggregate_repairs,
+            "{predictor} should include selected younger cleanup beyond top-level repair events\n{stdout}"
+        );
+        assert!(stdout.contains("\"x5\":\"0x7\""));
+        assert!(!stdout.contains("\"x6\":\"0x1\""));
+        assert!(!stdout.contains("\"x7\":\"0x2\""));
+    }
+}
+
+#[test]
 fn rem6_run_stats_use_selected_multiperspective_perceptron_for_fetch_steering() {
     let program = selected_branch_predictor_program();
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);

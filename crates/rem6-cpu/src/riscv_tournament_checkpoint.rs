@@ -11,7 +11,7 @@ impl RiscvCore {
     ) -> TournamentBranchPredictorCheckpointPayload {
         let state = self.state.lock().expect("riscv core lock");
         TournamentBranchPredictorCheckpointPayload::from_snapshot(
-            state.tournament_branch_predictor.snapshot(),
+            state.committed_tournament_branch_predictor_snapshot(),
         )
         .expect("captured RISC-V tournament branch predictor checkpoint is internally consistent")
     }
@@ -43,6 +43,7 @@ impl RiscvCore {
         let mut restored = state.tournament_branch_predictor.clone();
         restored.restore(&snapshot)?;
         state.tournament_branch_predictor = restored;
+        state.forget_tournament_selected_branch_speculations();
         Ok(())
     }
 

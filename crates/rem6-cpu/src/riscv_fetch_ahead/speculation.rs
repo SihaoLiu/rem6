@@ -47,6 +47,7 @@ pub(super) fn selected_tage_sc_l_branch_prediction(
     Some(RiscvFetchAheadBranchPrediction {
         predicted_taken: prediction.predicted_taken(),
         target,
+        selected_speculation: None,
         branch_target_prediction: None,
         target_provider: BranchTargetProvider::NoTarget,
     })

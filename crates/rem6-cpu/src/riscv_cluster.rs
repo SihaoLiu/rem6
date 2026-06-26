@@ -21,6 +21,7 @@ use crate::riscv_cluster_scheduler::{
     drive_parallel_scheduler_turn, drive_parallel_scheduler_turn_until_tick,
 };
 use crate::riscv_data_issue::PreparedDataParallelAccess;
+use crate::riscv_fetch_ahead::{PreparedRiscvFetchAheadSpeculation, RiscvFetchAheadDecision};
 use crate::riscv_reservation::RiscvReservationTracker;
 use crate::{
     CpuId, HtmFailureCause, RiscvCore, RiscvCoreDriveAction, RiscvCpuError,
@@ -47,6 +48,15 @@ fn record_pending_fetch_resource_stall(
 ) -> Result<(), RiscvClusterError> {
     core.record_in_order_resource_stall_cycle()
         .map(|_| ())
+        .map_err(|error| RiscvClusterError::Core { cpu, error })
+}
+
+fn prepare_fetch_ahead_speculation(
+    cpu: CpuId,
+    core: &RiscvCore,
+    decision: &RiscvFetchAheadDecision,
+) -> Result<Option<PreparedRiscvFetchAheadSpeculation>, RiscvClusterError> {
+    core.prepare_fetch_ahead_speculation(decision)
         .map_err(|error| RiscvClusterError::Core { cpu, error })
 }
 
@@ -307,6 +317,7 @@ impl RiscvCluster {
             }
 
             if let Some(decision) = core.next_fetch_ahead_before_retire() {
+                let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                 core.set_fetch_ahead_pc(decision.pc());
                 push_prepared_parallel_fetch_action(
                     *cpu,
@@ -318,7 +329,7 @@ impl RiscvCluster {
                     &mut prepared_actions,
                     &mut transaction_cpus,
                     &mut transactions,
-                    Some(decision),
+                    fetch_ahead,
                 )?;
                 continue;
             }
@@ -391,6 +402,7 @@ impl RiscvCluster {
             }
 
             if let Some(decision) = core.next_fetch_ahead_before_retire() {
+                let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                 core.set_fetch_ahead_pc(decision.pc());
                 push_prepared_parallel_fetch_action(
                     *cpu,
@@ -402,7 +414,7 @@ impl RiscvCluster {
                     &mut prepared_actions,
                     &mut transaction_cpus,
                     &mut transactions,
-                    Some(decision),
+                    fetch_ahead,
                 )?;
                 continue;
             }
@@ -522,6 +534,7 @@ impl RiscvCluster {
 
             if !data_only {
                 if let Some(decision) = core.next_fetch_ahead_before_retire() {
+                    let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                     core.set_fetch_ahead_pc(decision.pc());
                     push_prepared_parallel_fetch_action(
                         *cpu,
@@ -533,7 +546,7 @@ impl RiscvCluster {
                         &mut prepared_actions,
                         &mut transaction_cpus,
                         &mut transactions,
-                        Some(decision),
+                        fetch_ahead,
                     )?;
                     continue;
                 }
@@ -665,6 +678,7 @@ impl RiscvCluster {
             }
 
             if let Some(decision) = core.next_fetch_ahead_before_retire() {
+                let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                 core.set_fetch_ahead_pc(decision.pc());
                 push_prepared_parallel_fetch_action(
                     *cpu,
@@ -676,7 +690,7 @@ impl RiscvCluster {
                     &mut prepared_actions,
                     &mut transaction_cpus,
                     &mut transactions,
-                    Some(decision),
+                    fetch_ahead,
                 )?;
                 continue;
             }
@@ -805,6 +819,7 @@ impl RiscvCluster {
             }
 
             if let Some(decision) = core.next_fetch_ahead_before_retire() {
+                let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                 core.set_fetch_ahead_pc(decision.pc());
                 push_prepared_parallel_fetch_action(
                     *cpu,
@@ -816,7 +831,7 @@ impl RiscvCluster {
                     &mut prepared_actions,
                     &mut transaction_cpus,
                     &mut transactions,
-                    Some(decision),
+                    fetch_ahead,
                 )?;
                 continue;
             }
@@ -947,11 +962,8 @@ impl RiscvCluster {
                     fetch_ahead,
                     transaction_index,
                 } => {
-                    core.record_prepared_fetch_issue(issue)
+                    core.record_prepared_fetch_issue_with_prepared_fetch_ahead(issue, fetch_ahead)
                         .map_err(|error| RiscvClusterError::Core { cpu, error })?;
-                    if let Some(decision) = fetch_ahead {
-                        core.record_fetch_ahead_speculation(&decision);
-                    }
                     actions.push(RiscvClusterDriveEvent::new(
                         cpu,
                         RiscvCoreDriveAction::FetchIssued {
@@ -1029,16 +1041,17 @@ impl RiscvCluster {
             }
 
             if let Some(decision) = core.next_fetch_ahead_before_retire() {
+                let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                 core.set_fetch_ahead_pc(decision.pc());
                 let event = core
-                    .issue_next_fetch_parallel(
+                    .issue_next_fetch_parallel_with_prepared_fetch_ahead(
                         scheduler,
                         transport,
                         fetch_trace.clone(),
                         fetch_responder(*cpu),
+                        fetch_ahead,
                     )
                     .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
-                core.record_fetch_ahead_speculation(&decision);
                 actions.push(RiscvClusterDriveEvent::new(
                     *cpu,
                     RiscvCoreDriveAction::FetchIssued { event },
@@ -1149,16 +1162,17 @@ impl RiscvCluster {
 
             if !data_only {
                 if let Some(decision) = core.next_fetch_ahead_before_retire() {
+                    let fetch_ahead = prepare_fetch_ahead_speculation(*cpu, core, &decision)?;
                     core.set_fetch_ahead_pc(decision.pc());
                     let event = core
-                        .issue_next_fetch_parallel(
+                        .issue_next_fetch_parallel_with_prepared_fetch_ahead(
                             scheduler,
                             transport,
                             fetch_trace.clone(),
                             fetch_responder(*cpu),
+                            fetch_ahead,
                         )
                         .map_err(|error| RiscvClusterError::Core { cpu: *cpu, error })?;
-                    core.record_fetch_ahead_speculation(&decision);
                     actions.push(RiscvClusterDriveEvent::new(
                         *cpu,
                         RiscvCoreDriveAction::FetchIssued { event },

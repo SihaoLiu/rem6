@@ -1007,10 +1007,15 @@ impl RiscvCore {
         }
 
         if let Some(decision) = self.next_fetch_ahead_before_retire() {
+            let fetch_ahead = self.prepare_fetch_ahead_speculation(&decision)?;
             self.set_fetch_ahead_pc(decision.pc());
-            let event =
-                self.issue_next_fetch(scheduler, transport, fetch_trace, fetch_responder)?;
-            self.record_fetch_ahead_speculation(&decision);
+            let event = self.issue_next_fetch_with_prepared_fetch_ahead(
+                scheduler,
+                transport,
+                fetch_trace,
+                fetch_responder,
+                fetch_ahead,
+            )?;
             return Ok(Some(RiscvCoreDriveAction::FetchIssued { event }));
         }
 
