@@ -4008,13 +4008,20 @@ fn rem6_run_stats_use_selected_multiperspective_perceptron_for_fetch_steering() 
     let perceptron = selected_branch_predictor_stdout(&path, "multiperspective-perceptron");
 
     let perceptron_predictions = json_u64_field(&perceptron, "\"branch_speculation_predictions\":");
-    let basic_final_tick = json_u64_field(&basic, "\"final_tick\":");
-    let perceptron_final_tick = json_u64_field(&perceptron, "\"final_tick\":");
+    let basic_mispredictions = json_u64_field(&basic, "\"branch_mispredictions\":");
+    let perceptron_mispredictions = json_u64_field(&perceptron, "\"branch_mispredictions\":");
+    let basic_predicted_taken = json_u64_field(&basic, "\"conditional_branch_predicted_taken\":");
+    let perceptron_predicted_taken =
+        json_u64_field(&perceptron, "\"conditional_branch_predicted_taken\":");
 
     assert!(perceptron_predictions >= 3, "{perceptron}");
+    assert!(
+        perceptron_mispredictions < basic_mispredictions,
+        "basic branch_mispredictions={basic_mispredictions}, perceptron branch_mispredictions={perceptron_mispredictions}\nbasic:\n{basic}\nperceptron:\n{perceptron}"
+    );
     assert_ne!(
-        perceptron_final_tick, basic_final_tick,
-        "basic final_tick={basic_final_tick}, perceptron final_tick={perceptron_final_tick}\nbasic:\n{basic}\nperceptron:\n{perceptron}"
+        perceptron_predicted_taken, basic_predicted_taken,
+        "basic conditional_branch_predicted_taken={basic_predicted_taken}, perceptron conditional_branch_predicted_taken={perceptron_predicted_taken}\nbasic:\n{basic}\nperceptron:\n{perceptron}"
     );
     assert!(perceptron.contains("\"x5\":\"0x7\""));
     assert!(!perceptron.contains("\"x6\":\"0x1\""));

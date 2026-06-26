@@ -2,10 +2,10 @@ use rem6_isa_riscv::{RiscvHartState, RiscvInstruction, RiscvPrivilegeMode};
 use rem6_memory::Address;
 
 use crate::{
-    BranchTargetKind, CpuFetchEvent, CpuFetchEventKind, RiscvBranchPredictorKind, RiscvCore,
-    RiscvCoreState, RiscvCpuError, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
-    RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TAGE_SC_L_THREAD,
-    RISCV_LOCAL_TOURNAMENT_THREAD,
+    BranchTargetKind, CpuFetchEvent, CpuFetchEventKind, MultiperspectivePerceptronThreadSnapshot,
+    RiscvBranchPredictorKind, RiscvCore, RiscvCoreState, RiscvCpuError, RISCV_LOCAL_BIMODE_THREAD,
+    RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
+    RISCV_LOCAL_TAGE_SC_L_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
 const COMPLETED_FETCH_WINDOW: usize = 2;
@@ -485,12 +485,14 @@ fn selected_conditional_branch_prediction(
             })
         }
         RiscvBranchPredictorKind::MultiperspectivePerceptron => {
+            let thread = selected_multiperspective_speculative_thread(state, completed_fetches)?;
             let prediction = state
                 .multiperspective_perceptron
-                .predict(
+                .predict_with_thread_snapshot(
                     RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
                     fetch_pc,
                     true,
+                    thread,
                 )
                 .ok()?;
             let target = prediction
@@ -569,10 +571,44 @@ fn selected_tournament_speculative_histories(
     Some((global_history, local_history))
 }
 
+fn selected_multiperspective_speculative_thread(
+    state: &RiscvCoreState,
+    completed_fetches: &[&CpuFetchEvent],
+) -> Option<MultiperspectivePerceptronThreadSnapshot> {
+    let mut thread = state
+        .multiperspective_perceptron
+        .thread_snapshot(RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD)
+        .ok()?
+        .clone();
+    for (sequence, speculation) in &state.branch_speculations {
+        let pending = state.branch_predictor.pending_speculation(*speculation)?;
+        let target = pending.target().or_else(|| {
+            completed_fetch_instruction(completed_fetches, *sequence)
+                .and_then(|instruction| conditional_branch_target(pending.pc(), instruction))
+        })?;
+        thread = state.multiperspective_perceptron.shifted_thread_snapshot(
+            thread,
+            pending.pc(),
+            pending.predicted_taken(),
+            target,
+        );
+    }
+    Some(thread)
+}
+
 fn pending_speculation_updates_tournament_local_history(
     completed_fetches: &[&CpuFetchEvent],
     sequence: u64,
 ) -> Option<bool> {
+    Some(instruction_is_conditional_branch(
+        completed_fetch_instruction(completed_fetches, sequence)?,
+    ))
+}
+
+fn completed_fetch_instruction(
+    completed_fetches: &[&CpuFetchEvent],
+    sequence: u64,
+) -> Option<RiscvInstruction> {
     let fetch = completed_fetches
         .iter()
         .copied()
@@ -583,7 +619,7 @@ fn pending_speculation_updates_tournament_local_history(
         _ => return None,
     };
     let decoded = RiscvInstruction::decode_with_length(raw).ok()?;
-    Some(instruction_is_conditional_branch(decoded.instruction()))
+    Some(decoded.instruction())
 }
 
 fn conditional_branch_target(fetch_pc: Address, instruction: RiscvInstruction) -> Option<Address> {
@@ -796,9 +832,11 @@ mod tests {
     use crate::{
         BranchPredictor, BranchPredictorCheckpointPayload, BranchPredictorConfig,
         BranchTargetBuffer, BranchTargetBufferConfig, CpuCore, CpuFetchConfig, CpuFetchRecord,
-        CpuId, CpuResetState, RiscvBranchPredictorKind, TournamentBranchPredictor,
+        CpuId, CpuResetState, MultiperspectivePerceptron, MultiperspectivePerceptronConfig,
+        MultiperspectivePerceptronFeature, RiscvBranchPredictorKind, TournamentBranchPredictor,
         TournamentBranchPredictorConfig, DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES,
-        RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
+        RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+        RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
     };
     use rem6_kernel::PartitionId;
     use rem6_memory::{AccessSize, AgentId, CacheLineLayout, MemoryRequestId};
@@ -918,6 +956,46 @@ mod tests {
         state.tournament_branch_predictor = TournamentBranchPredictor::new(
             TournamentBranchPredictorConfig::new(1, 2, 2, 2, 2).unwrap(),
         );
+    }
+
+    fn use_local_bias_multiperspective_perceptron(state: &mut RiscvCoreState) {
+        state.multiperspective_perceptron = MultiperspectivePerceptron::new(
+            MultiperspectivePerceptronConfig::with_options(
+                1,
+                0,
+                1,
+                1,
+                16,
+                -4,
+                1,
+                -5,
+                5,
+                -1,
+                1,
+                1,
+                4,
+                -2,
+                0,
+                0,
+                0,
+                64,
+                2,
+                2,
+                0,
+                0xff,
+                false,
+                true,
+                0,
+                4,
+                3,
+                128,
+                1,
+                false,
+                vec![MultiperspectivePerceptronFeature::bias(64, 1, 6)],
+            )
+            .unwrap(),
+        )
+        .unwrap();
     }
 
     fn train_selected_tournament_local_history_one_taken(state: &mut RiscvCoreState, pc: Address) {
@@ -1484,6 +1562,53 @@ mod tests {
                 .tournament_branch_predictor
                 .snapshot()
                 .local_history_table()[0],
+            0
+        );
+    }
+
+    #[test]
+    fn selected_multiperspective_fetch_ahead_uses_pending_local_history_for_younger_branch() {
+        let core = core_with_completed_fetches([
+            (0, 0x8000, b_type(8, 0, 0, 0).to_le_bytes().to_vec()),
+            (1, 0x8008, b_type(8, 0, 0, 0).to_le_bytes().to_vec()),
+        ]);
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::MultiperspectivePerceptron);
+        core.set_branch_lookahead(2);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            use_local_bias_multiperspective_perceptron(&mut state);
+            let older_pc = Address::new(0x8000);
+            let younger_pc = Address::new(0x8008);
+            let base_prediction = state
+                .multiperspective_perceptron
+                .predict(
+                    RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
+                    younger_pc,
+                    true,
+                )
+                .unwrap();
+            assert!(!base_prediction.predicted_taken());
+            insert_pending_branch_speculation(&mut state, 0, older_pc, younger_pc);
+            assert_eq!(
+                state
+                    .multiperspective_perceptron
+                    .thread_snapshot(RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD)
+                    .unwrap()
+                    .local_history_for(younger_pc),
+                0
+            );
+        }
+
+        let second = core.next_fetch_ahead_before_retire().unwrap();
+
+        assert_eq!(second.pc(), Address::new(0x8010));
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(
+            state
+                .multiperspective_perceptron
+                .thread_snapshot(RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD)
+                .unwrap()
+                .local_history_for(Address::new(0x8008)),
             0
         );
     }

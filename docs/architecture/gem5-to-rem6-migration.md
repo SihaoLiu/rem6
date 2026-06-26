@@ -192,8 +192,9 @@ branches including top-level `rem6 run --riscv-branch-predictor gshare`, `bimode
 front-end predictions preserved through retire in the normal driver; compressed straight-line instructions reaching the same normal parallel-cluster fetch-ahead path, branch and direct-jump fetch-ahead speculation history recorded and resolved at retire, and explicit `--riscv-branch-lookahead 2` two-deep conditional-branch fetch-ahead through the normal `rem6 run` path with an older misprediction repairing predictor history and removing younger branch speculation before wrong-path registers commit,
 selected GShare and BiMode fetch-ahead using pending branch-speculation and
 direct-jump history, plus selected Tournament fetch-ahead using pending global
-and local branch history, when steering younger conditional branches without
-mutating committed predictor history,
+and local branch history, and selected multiperspective-perceptron fetch-ahead
+using pending thread-history snapshots, when steering younger conditional
+branches without mutating committed predictor history,
 completed younger fetches consumed by in-order branch flushes, wrong-path branch
 fetch-ahead requests from fall-through and predicted-target paths squashed even
 when their memory response is still outstanding, bounded normal-driver
@@ -218,8 +219,8 @@ cache/fabric/DRAM, explicit `--memory-system direct` timing-test coverage, and
 O3 policy helpers.
 
 **Not migrated:** Full Minor-like in-order timing with realistic stalls and
-squashes, executable O3 timing, remaining TAGE-SC-L/multiperspective
-predictor-family speculation snapshots and rollback, gem5-class checker coverage
+squashes, executable O3 timing, remaining TAGE-SC-L predictor-family
+speculation snapshots and rollback, gem5-class checker coverage
 across future timing CPU modes, and KVM equivalents.
 
 **Evidence:** `RiscvCore::execute_next_completed_fetch`,
@@ -234,7 +235,7 @@ in-order cycle-plan advance, general flush, resource-blocked,
 ordering-blocked, branch-prediction, branch-misprediction,
 branch-prediction flush, and redirect counters from the same executed RISC-V
 timing records, including nonzero branch-prediction flush evidence for a real
-taken RISC-V branch; they also expose branch-speculation prediction, repair, younger-removal, and maximum-pending counters for a real nested conditional branch run where the corrected older branch prevents younger wrong-path register writes from committing. CLI `rem6 run --riscv-branch-predictor gshare`, `bimode`, `tage-sc-l`, and `multiperspective-perceptron` drive the normal RISC-V fetch-ahead path with the selected predictor, clean stale wrong-path in-order state across loop backedges, and change deterministic fetch-steering timing while preserving the final architectural register state.
+taken RISC-V branch; they also expose branch-speculation prediction, repair, younger-removal, and maximum-pending counters for a real nested conditional branch run where the corrected older branch prevents younger wrong-path register writes from committing. CLI `rem6 run --riscv-branch-predictor gshare`, `bimode`, `tage-sc-l`, and `multiperspective-perceptron` drive the normal RISC-V fetch-ahead path with the selected predictor, clean stale wrong-path in-order state across loop backedges, and change deterministic fetch-steering timing or branch-steering counters while preserving the final architectural register state.
 CLI `rem6 run --riscv-in-order-width 2` applies a uniform stage-width config to
 the live `RiscvCore` in-order pipeline snapshot and emits per-stage width plus
 max-in-flight occupancy stats from the executed run, with width 2 reaching two in-flight instructions in affected stages.
@@ -244,8 +245,9 @@ and register-target `JALR` fetch-ahead preservation, compressed
 fetch-ahead, wrong-path repair, pending occupancy before response completion,
 serial trap repair, stream-reset discard, and normal-driver fetch-response wait
 resource-stall records that preserve in-flight fetch state without breaking
-completed-fetch overlap, selected GShare, BiMode, and Tournament speculative-history
-overlays for younger fetch-ahead branch prediction, scalar integer multiply execute-stage latency through
+completed-fetch overlap, selected GShare, BiMode, Tournament, and
+multiperspective-perceptron speculative-history overlays for younger
+fetch-ahead branch prediction, scalar integer multiply execute-stage latency through
 top-level CLI in-order cycle and stall stats, plus normal parallel-cluster pending-fetch resource
 stalls emitted through top-level CLI stats. CLI tick-limit runs expose pending fetch occupancy,
 per-stage occupied-cycle stats, non-retire cycle advancement, and direct `JAL`
@@ -258,7 +260,7 @@ completion sync, public register writes, and HTM abort rollback.
 
 **Next evidence:** Broader per-cycle in-order stalls/squashes, a broader
 functional-unit latency table, remaining
-TAGE-SC-L/multiperspective predictor-family speculation snapshots and rollback, full checker integration for future timing
+TAGE-SC-L predictor-family speculation snapshots and rollback, full checker integration for future timing
 CPU modes, then a ROB/LSQ-backed O3 run test.
 
 ### Memory, Cache, Coherence, Fabric, and DRAM - 59% single-axis
@@ -1045,7 +1047,7 @@ checklist-backed component sections above define the auditable percentages.
 | `tests/gem5/chi_protocol` | `rem6-coherence`, protocol crates, `rem6-cache` | 40% single-axis | CHI-like line, controller, bank, dirty peer sourcing, reservation, and Evict-hazard tests exist. | Add Ruby-scale CHI transactions, topology networks, directory races, and workload checks. |
 | `tests/gem5/chi_tlm_tests` | `rem6-proto`, future adapter crates, `rem6-coherence` | 19% scoped | A library-level co-simulation boundary can register TLM endpoints, validate transaction shape, hand off events, and checkpoint clean adapter state in self-tests. | Add runtime TLM bridge tests with coherence traffic. |
 | `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, text stats output, TOML-driven nested run/stats/power artifact directory creation, TOML-driven GPU run config tests, and TOML-driven GPU power-output plus NoMali adapter artifact creation exist. | Add config-driven file layouts for full-system manifests and broader multi-artifact workloads. |
-| `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line and conditional-branch fetch-ahead including compressed straight-line fetch-ahead through the normal parallel-cluster path, explicit `--riscv-branch-lookahead 2` two-deep conditional-branch fetch-ahead rollback through `rem6 run`, CLI-selected `gshare`, `bimode`, `tage-sc-l`, and `multiperspective-perceptron` branch-predictor fetch steering changing deterministic run timing, direct RISC-V `JAL` and `JALR` target fetch-ahead preserved through retire in driver tests plus direct `JAL` CLI run coverage, pending GShare, BiMode, and Tournament fetch-ahead history for older conditional-branch and direct-jump speculation, pending-fetch retire overlap for older completed straight-line fetches, issued fetch-ahead occupancy in in-order timing before response completion, normal parallel-cluster pending-fetch resource-stall stats, retained non-retire in-order cycle history consumed by top-level stats, branch speculation history repair/commit with younger-speculation removal stats, completed younger fetch squash, per-retired-instruction in-order stage timing stats, top-level configured stage width changing executed max in-flight occupancy, top-level per-stage width, in-flight, and occupied-cycle stats, top-level fetch/data wait stats, top-level in-order cycle-plan advance/block/flush stats, top-level branch redirect/misprediction/branch-prediction-flush stats, and O3 policies exist. | Add broader in-order stalls/squashes, TAGE-SC-L/multiperspective predictor-family speculation, and ROB/LSQ-backed O3 execution tests. |
+| `tests/gem5/cpu_tests` | `rem6-cpu`, `rem6-system` | 30% unit-slice | Atomic RISC-V execution, frontend slices, retired predictor training, direct completed-fetch overlap in in-order timing, bounded normal-driver straight-line and conditional-branch fetch-ahead including compressed straight-line fetch-ahead through the normal parallel-cluster path, explicit `--riscv-branch-lookahead 2` two-deep conditional-branch fetch-ahead rollback through `rem6 run`, CLI-selected `gshare`, `bimode`, `tage-sc-l`, and `multiperspective-perceptron` branch-predictor fetch steering changing deterministic timing or branch-steering counters, direct RISC-V `JAL` and `JALR` target fetch-ahead preserved through retire in driver tests plus direct `JAL` CLI run coverage, pending GShare, BiMode, Tournament, and multiperspective-perceptron fetch-ahead history for older conditional-branch and direct-jump speculation, pending-fetch retire overlap for older completed straight-line fetches, issued fetch-ahead occupancy in in-order timing before response completion, normal parallel-cluster pending-fetch resource-stall stats, retained non-retire in-order cycle history consumed by top-level stats, branch speculation history repair/commit with younger-speculation removal stats, completed younger fetch squash, per-retired-instruction in-order stage timing stats, top-level configured stage width changing executed max in-flight occupancy, top-level per-stage width, in-flight, and occupied-cycle stats, top-level fetch/data wait stats, top-level in-order cycle-plan advance/block/flush stats, top-level branch redirect/misprediction/branch-prediction-flush stats, and O3 policies exist. | Add broader in-order stalls/squashes, TAGE-SC-L predictor-family speculation, and ROB/LSQ-backed O3 execution tests. |
 | `tests/gem5/dram_lowp` | `rem6-dram`, `rem6-power` | 40% single-axis | DRAM/NVM profile counters, low-power constants, and top-level LPDDR routed-request active-powerdown, precharge-powerdown, self-refresh, and custom low-power timing stats are surfaced. | Add broader executable low-power state-transition tests across profiles, banks, and power states. |
 | `tests/gem5/example_configs`, `tests/gem5/learning_gem5` | `rem6` CLI, `rem6-platform`, `rem6-workload` | 40% single-axis | CLI and TOML tests cover several execution, trace-replay, and GPU micro-run paths, including checked-in GUPS and GPU example configs that run without recompilation. | Add broader example suites spanning run, trace replay, resources, and full-system handoff. |
 | `tests/gem5/fdp_tests` | `rem6-cache` | 45% single-axis | Fetch-directed prefetcher state, errors, and cache-local queue/translation counters have cache tests. | Add FDP execution through cache-bank and CPU/frontend consumers. |
