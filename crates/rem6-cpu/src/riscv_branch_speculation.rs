@@ -1,6 +1,9 @@
 use rem6_memory::Address;
 
-use crate::{BranchTargetKind, BranchTargetKindCounts, BranchTargetPrediction};
+use crate::{
+    BranchTargetKind, BranchTargetKindCounts, BranchTargetPrediction, BranchTargetProvider,
+    BranchTargetProviderCounts,
+};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct RiscvBranchSpeculationSummary {
@@ -9,6 +12,7 @@ pub struct RiscvBranchSpeculationSummary {
     removed_youngers: u64,
     max_pending: u64,
     lookup_branch_kinds: BranchTargetKindCounts,
+    target_provider: BranchTargetProviderCounts,
     committed_branch_kinds: BranchTargetKindCounts,
     mispredicted_branch_kinds: BranchTargetKindCounts,
     target_wrong_branch_kinds: BranchTargetKindCounts,
@@ -39,6 +43,10 @@ impl RiscvBranchSpeculationSummary {
         self.lookup_branch_kinds
     }
 
+    pub const fn target_provider(self) -> BranchTargetProviderCounts {
+        self.target_provider
+    }
+
     pub const fn committed_branch_kinds(self) -> BranchTargetKindCounts {
         self.committed_branch_kinds
     }
@@ -67,9 +75,15 @@ impl RiscvBranchSpeculationSummary {
         self.mispredict_due_to_predictor
     }
 
-    pub(crate) fn record_prediction(&mut self, branch_kind: BranchTargetKind, pending: u64) {
+    pub(crate) fn record_prediction(
+        &mut self,
+        branch_kind: BranchTargetKind,
+        target_provider: BranchTargetProvider,
+        pending: u64,
+    ) {
         self.predictions = self.predictions.saturating_add(1);
         self.lookup_branch_kinds.increment(branch_kind);
+        self.target_provider.increment(target_provider);
         self.max_pending = self.max_pending.max(pending);
     }
 

@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
 use rem6_cpu::{
-    BranchTargetKindCounts, CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState,
-    InOrderPipelineConfig, InOrderPipelineStage, InOrderPipelineStageWidth, RiscvCluster,
-    RiscvCore,
+    BranchTargetKindCounts, BranchTargetProviderCounts, CpuCore, CpuDataConfig, CpuFetchConfig,
+    CpuId, CpuResetState, InOrderPipelineConfig, InOrderPipelineStage, InOrderPipelineStageWidth,
+    RiscvCluster, RiscvCore,
 };
 use rem6_fabric::{FabricLinkId, FabricPath, FabricPathHop, VirtualNetworkId};
 use rem6_isa_riscv::{Register, RiscvPrivilegeMode};
@@ -481,6 +481,7 @@ pub struct Rem6CoreSummary {
     branch_target_buffer_predicted_taken_misses: u64,
     branch_target_buffer_mispredict_due_to_btb_miss: BranchTargetKindCounts,
     branch_predictor_lookups: BranchTargetKindCounts,
+    branch_predictor_target_provider: BranchTargetProviderCounts,
     branch_predictor_committed: BranchTargetKindCounts,
     branch_predictor_mispredicted: BranchTargetKindCounts,
     branch_predictor_target_wrong: BranchTargetKindCounts,

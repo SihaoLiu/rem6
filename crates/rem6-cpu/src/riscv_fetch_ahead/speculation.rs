@@ -2,7 +2,8 @@ use rem6_isa_riscv::RiscvInstruction;
 use rem6_memory::Address;
 
 use crate::{
-    CpuFetchEvent, RiscvCoreState, StatisticalCorrectorBranchKind, RISCV_LOCAL_TAGE_SC_L_THREAD,
+    BranchTargetProvider, CpuFetchEvent, RiscvCoreState, StatisticalCorrectorBranchKind,
+    RISCV_LOCAL_TAGE_SC_L_THREAD,
 };
 
 use super::{
@@ -47,6 +48,7 @@ pub(super) fn selected_tage_sc_l_branch_prediction(
         predicted_taken: prediction.predicted_taken(),
         target,
         branch_target_prediction: None,
+        target_provider: BranchTargetProvider::NoTarget,
     })
 }
 

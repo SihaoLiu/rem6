@@ -3,10 +3,10 @@ use rem6_memory::Address;
 
 use crate::{
     riscv_branch_kind::riscv_branch_target_kind, BranchTargetKind, BranchTargetPrediction,
-    CpuFetchEvent, CpuFetchEventKind, MultiperspectivePerceptronThreadSnapshot,
-    RiscvBranchPredictorKind, RiscvCore, RiscvCoreState, RiscvCpuError, RISCV_LOCAL_BIMODE_THREAD,
-    RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
-    RISCV_LOCAL_TOURNAMENT_THREAD,
+    BranchTargetProvider, CpuFetchEvent, CpuFetchEventKind,
+    MultiperspectivePerceptronThreadSnapshot, RiscvBranchPredictorKind, RiscvCore, RiscvCoreState,
+    RiscvCpuError, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+    RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
 mod speculation;
@@ -86,9 +86,11 @@ impl RiscvCore {
                 .insert(speculation.sequence(), branch_target_prediction);
         }
         let pending = state.branch_speculations.len() as u64;
-        state
-            .branch_speculation_summary
-            .record_prediction(speculation.branch_kind(), pending);
+        state.branch_speculation_summary.record_prediction(
+            speculation.branch_kind(),
+            speculation.target_provider(),
+            pending,
+        );
     }
 
     pub(crate) fn can_retire_completed_fetch_while_fetch_pending(
@@ -129,6 +131,7 @@ impl RiscvFetchAheadDecision {
         predicted_taken: bool,
         target: Option<Address>,
         branch_target_prediction: Option<BranchTargetPrediction>,
+        target_provider: BranchTargetProvider,
     ) -> Self {
         Self {
             pc,
@@ -139,6 +142,7 @@ impl RiscvFetchAheadDecision {
                 predicted_taken,
                 target,
                 branch_target_prediction,
+                target_provider,
             }),
         }
     }
@@ -160,6 +164,7 @@ pub(crate) struct RiscvFetchAheadSpeculation {
     predicted_taken: bool,
     target: Option<Address>,
     branch_target_prediction: Option<BranchTargetPrediction>,
+    target_provider: BranchTargetProvider,
 }
 
 impl RiscvFetchAheadSpeculation {
@@ -185,6 +190,10 @@ impl RiscvFetchAheadSpeculation {
 
     const fn branch_target_prediction(self) -> Option<BranchTargetPrediction> {
         self.branch_target_prediction
+    }
+
+    const fn target_provider(self) -> BranchTargetProvider {
+        self.target_provider
     }
 }
 
@@ -396,7 +405,7 @@ fn fetch_ahead_decision(
     if instruction_allows_straight_line_fetch_ahead(instruction) {
         return Some(RiscvFetchAheadDecision::straight_line(sequential_pc));
     }
-    if let Some((target, branch_kind, branch_target_prediction)) =
+    if let Some((target, branch_kind, branch_target_prediction, target_provider)) =
         direct_jump_fetch_ahead_target(state, fetch_pc, instruction)
     {
         return Some(RiscvFetchAheadDecision::branch(
@@ -407,6 +416,7 @@ fn fetch_ahead_decision(
             true,
             Some(target),
             Some(branch_target_prediction),
+            target_provider,
         ));
     }
     if !instruction_is_conditional_branch(instruction) {
@@ -428,6 +438,7 @@ fn fetch_ahead_decision(
         prediction.predicted_taken,
         prediction.target,
         prediction.branch_target_prediction,
+        prediction.target_provider,
     ))
 }
 
@@ -436,6 +447,7 @@ struct RiscvFetchAheadBranchPrediction {
     predicted_taken: bool,
     target: Option<Address>,
     branch_target_prediction: Option<BranchTargetPrediction>,
+    target_provider: BranchTargetProvider,
 }
 
 fn selected_conditional_branch_prediction(
@@ -460,6 +472,10 @@ fn selected_conditional_branch_prediction(
                     None
                 },
                 branch_target_prediction: None,
+                target_provider: BranchTargetProvider::from_btb_prediction(
+                    prediction.predicted_taken(),
+                    branch_target_prediction,
+                ),
             })
         }
         RiscvBranchPredictorKind::GShare => {
@@ -476,6 +492,7 @@ fn selected_conditional_branch_prediction(
                 predicted_taken: prediction.predicted_taken(),
                 target,
                 branch_target_prediction: None,
+                target_provider: BranchTargetProvider::NoTarget,
             })
         }
         RiscvBranchPredictorKind::BiMode => {
@@ -492,6 +509,7 @@ fn selected_conditional_branch_prediction(
                 predicted_taken: prediction.predicted_taken(),
                 target,
                 branch_target_prediction: None,
+                target_provider: BranchTargetProvider::NoTarget,
             })
         }
         RiscvBranchPredictorKind::Tournament => {
@@ -514,6 +532,7 @@ fn selected_conditional_branch_prediction(
                 predicted_taken: prediction.predicted_taken(),
                 target,
                 branch_target_prediction: None,
+                target_provider: BranchTargetProvider::NoTarget,
             })
         }
         RiscvBranchPredictorKind::TageScL => speculation::selected_tage_sc_l_branch_prediction(
@@ -541,6 +560,7 @@ fn selected_conditional_branch_prediction(
                 predicted_taken: prediction.predicted_taken(),
                 target,
                 branch_target_prediction: None,
+                target_provider: BranchTargetProvider::NoTarget,
             })
         }
     }?;
@@ -680,7 +700,12 @@ fn direct_jump_fetch_ahead_target(
     state: &mut RiscvCoreState,
     fetch_pc: Address,
     instruction: RiscvInstruction,
-) -> Option<(Address, BranchTargetKind, BranchTargetPrediction)> {
+) -> Option<(
+    Address,
+    BranchTargetKind,
+    BranchTargetPrediction,
+    BranchTargetProvider,
+)> {
     let kind = match instruction {
         RiscvInstruction::Jal { .. } | RiscvInstruction::Jalr { .. } => {
             riscv_branch_target_kind(instruction)
@@ -700,7 +725,12 @@ fn direct_jump_fetch_ahead_target(
         }
         _ => None,
     }?;
-    Some((target, kind, branch_target_prediction))
+    Some((
+        target,
+        kind,
+        branch_target_prediction,
+        BranchTargetProvider::NoTarget,
+    ))
 }
 
 fn checked_add_signed(value: u64, offset: i64) -> Option<u64> {
@@ -876,12 +906,13 @@ mod tests {
     use super::*;
     use crate::{
         BranchPredictor, BranchPredictorCheckpointPayload, BranchPredictorConfig,
-        BranchTargetBuffer, BranchTargetBufferConfig, CpuCore, CpuFetchConfig, CpuFetchRecord,
-        CpuId, CpuResetState, MultiperspectivePerceptron, MultiperspectivePerceptronConfig,
-        MultiperspectivePerceptronFeature, RiscvBranchPredictorKind, TournamentBranchPredictor,
-        TournamentBranchPredictorConfig, DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES,
-        RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
-        RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
+        BranchTargetBuffer, BranchTargetBufferConfig, BranchTargetProvider, CpuCore,
+        CpuFetchConfig, CpuFetchRecord, CpuId, CpuResetState, MultiperspectivePerceptron,
+        MultiperspectivePerceptronConfig, MultiperspectivePerceptronFeature,
+        RiscvBranchPredictorKind, TournamentBranchPredictor, TournamentBranchPredictorConfig,
+        DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES, RISCV_LOCAL_BIMODE_THREAD,
+        RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
+        RISCV_LOCAL_TOURNAMENT_THREAD,
     };
     use rem6_isa_riscv::Register;
     use rem6_kernel::PartitionId;
@@ -1244,6 +1275,17 @@ mod tests {
         assert_eq!(summary.target_wrong_branch_kinds().total(), 1);
         assert_eq!(
             summary
+                .target_provider()
+                .value(BranchTargetProvider::NoTarget),
+            1
+        );
+        assert_eq!(
+            summary.target_provider().value(BranchTargetProvider::BTB),
+            0
+        );
+        assert_eq!(summary.target_provider().total(), 1);
+        assert_eq!(
+            summary
                 .mispredict_due_to_predictor()
                 .value(BranchTargetKind::DirectConditional),
             1
@@ -1334,6 +1376,114 @@ mod tests {
     }
 
     #[test]
+    fn target_provider_counts_no_target_when_warm_btb_conditional_predicts_not_taken() {
+        let branch = b_type(8, 0, 0, 0x1).to_le_bytes().to_vec();
+        let core = core_with_completed_fetch(branch);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            state.branch_target_buffer.update(
+                Address::new(0x8000),
+                Address::new(0x8008),
+                BranchTargetKind::DirectConditional,
+            );
+        }
+
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+        assert_eq!(decision.pc(), Address::new(0x8004));
+        assert_eq!(
+            decision
+                .branch_speculation()
+                .map(|speculation| (speculation.predicted_taken(), speculation.target())),
+            Some((false, None))
+        );
+        core.record_fetch_ahead_speculation(&decision);
+
+        let event = core.execute_next_completed_fetch().unwrap().unwrap();
+        let cycle = event.in_order_pipeline_cycle().unwrap();
+        let prediction = cycle.branch_predictions().first().unwrap();
+        assert!(!prediction.predicted_taken());
+        assert_eq!(prediction.predicted_target_pc(), None);
+        assert!(!prediction.resolved_taken());
+        assert_eq!(prediction.resolved_target_pc(), None);
+        assert!(!prediction.mispredicted());
+
+        let summary = core.branch_speculation_summary();
+        assert_eq!(
+            summary
+                .target_provider()
+                .value(BranchTargetProvider::NoTarget),
+            1
+        );
+        assert_eq!(
+            summary.target_provider().value(BranchTargetProvider::BTB),
+            0
+        );
+        assert_eq!(summary.target_provider().total(), 1);
+        assert_eq!(summary.committed_branch_kinds().total(), 1);
+        assert_eq!(summary.mispredicted_branch_kinds().total(), 0);
+    }
+
+    #[test]
+    fn target_provider_counts_no_target_when_gshare_uses_static_conditional_target() {
+        let branch = b_type(8, 0, 0, 0x0).to_le_bytes().to_vec();
+        let core = core_with_completed_fetch(branch);
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::GShare);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            let pc = Address::new(0x8000);
+            for _ in 0..2 {
+                let prediction = state
+                    .gshare_branch_predictor
+                    .predict(RISCV_LOCAL_GSHARE_THREAD, pc)
+                    .unwrap();
+                state
+                    .gshare_branch_predictor
+                    .train(prediction.history(), true, false)
+                    .unwrap();
+            }
+            state.branch_target_buffer.update(
+                pc,
+                Address::new(0x8010),
+                BranchTargetKind::DirectConditional,
+            );
+        }
+
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+        assert_eq!(decision.pc(), Address::new(0x8008));
+        assert_eq!(
+            decision
+                .branch_speculation()
+                .map(|speculation| (speculation.predicted_taken(), speculation.target())),
+            Some((true, Some(Address::new(0x8008))))
+        );
+        core.record_fetch_ahead_speculation(&decision);
+
+        let event = core.execute_next_completed_fetch().unwrap().unwrap();
+        let cycle = event.in_order_pipeline_cycle().unwrap();
+        let prediction = cycle.branch_predictions().first().unwrap();
+        assert!(prediction.predicted_taken());
+        assert_eq!(prediction.predicted_target_pc(), Some(0x8008));
+        assert!(prediction.resolved_taken());
+        assert_eq!(prediction.resolved_target_pc(), Some(0x8008));
+        assert!(!prediction.mispredicted());
+
+        let summary = core.branch_speculation_summary();
+        assert_eq!(
+            summary
+                .target_provider()
+                .value(BranchTargetProvider::NoTarget),
+            1
+        );
+        assert_eq!(
+            summary.target_provider().value(BranchTargetProvider::BTB),
+            0
+        );
+        assert_eq!(summary.target_provider().total(), 1);
+        assert_eq!(summary.committed_branch_kinds().total(), 1);
+        assert_eq!(summary.mispredicted_branch_kinds().total(), 0);
+    }
+
+    #[test]
     fn btb_misprediction_counts_taken_fetch_prediction_with_wrong_btb_target() {
         let branch = b_type(8, 0, 0, 0x0).to_le_bytes().to_vec();
         let core = core_with_completed_fetch(branch);
@@ -1401,6 +1551,17 @@ mod tests {
         assert_eq!(summary.target_wrong_branch_kinds().total(), 1);
         assert_eq!(
             summary
+                .target_provider()
+                .value(BranchTargetProvider::NoTarget),
+            0
+        );
+        assert_eq!(
+            summary.target_provider().value(BranchTargetProvider::BTB),
+            1
+        );
+        assert_eq!(summary.target_provider().total(), 1);
+        assert_eq!(
+            summary
                 .btb_mispredict_due_to_btb_miss()
                 .value(BranchTargetKind::DirectConditional),
             0
@@ -1445,11 +1606,74 @@ mod tests {
         assert_eq!(summary.target_wrong_branch_kinds().total(), 0);
         assert_eq!(
             summary
+                .target_provider()
+                .value(BranchTargetProvider::NoTarget),
+            1
+        );
+        assert_eq!(
+            summary.target_provider().value(BranchTargetProvider::BTB),
+            0
+        );
+        assert_eq!(summary.target_provider().total(), 1);
+        assert_eq!(
+            summary
                 .btb_mispredict_due_to_btb_miss()
                 .value(BranchTargetKind::DirectUnconditional),
             0
         );
         assert_eq!(summary.btb_mispredict_due_to_btb_miss().total(), 0);
+    }
+
+    #[test]
+    fn target_provider_counts_no_target_when_direct_jump_uses_static_target() {
+        let jump = j_type(12, 0).to_le_bytes().to_vec();
+        let core = core_with_completed_fetch(jump);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            state.branch_target_buffer.update(
+                Address::new(0x8000),
+                Address::new(0x8010),
+                BranchTargetKind::DirectUnconditional,
+            );
+        }
+
+        let decision = core.next_fetch_ahead_before_retire().unwrap();
+        assert_eq!(decision.pc(), Address::new(0x800c));
+        assert_eq!(
+            decision
+                .branch_speculation()
+                .map(|speculation| (speculation.predicted_taken(), speculation.target())),
+            Some((true, Some(Address::new(0x800c))))
+        );
+        core.record_fetch_ahead_speculation(&decision);
+
+        let event = core.execute_next_completed_fetch().unwrap().unwrap();
+        let cycle = event.in_order_pipeline_cycle().unwrap();
+        let prediction = cycle.branch_predictions().first().unwrap();
+        assert!(prediction.predicted_taken());
+        assert_eq!(prediction.predicted_target_pc(), Some(0x800c));
+        assert!(prediction.resolved_taken());
+        assert_eq!(prediction.resolved_target_pc(), Some(0x800c));
+        assert!(!prediction.mispredicted());
+
+        let summary = core.branch_speculation_summary();
+        assert_eq!(
+            summary
+                .target_provider()
+                .value(BranchTargetProvider::NoTarget),
+            1
+        );
+        assert_eq!(
+            summary.target_provider().value(BranchTargetProvider::BTB),
+            0
+        );
+        assert_eq!(summary.target_provider().total(), 1);
+        assert_eq!(
+            summary
+                .lookup_branch_kinds()
+                .value(BranchTargetKind::DirectUnconditional),
+            1
+        );
     }
 
     #[test]

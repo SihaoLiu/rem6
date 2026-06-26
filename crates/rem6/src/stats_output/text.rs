@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use rem6_cpu::BranchTargetKind;
+use rem6_cpu::{BranchTargetKind, BranchTargetProvider};
 use rem6_stats::StatSnapshot;
 
 pub(super) fn stats_snapshot_text(snapshot: &StatSnapshot) -> String {
@@ -201,6 +201,34 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 output,
                 &format!("{alias_prefix}.branchPred.lookups_0::total"),
                 lookups,
+            );
+        }
+        for provider in BranchTargetProvider::ALL {
+            if let Some(target_provider) = snapshot_value(
+                snapshot,
+                &format!(
+                    "sim.cpu{cpu}.branch_predictor.target_provider.{}",
+                    provider.canonical_stat_name()
+                ),
+            ) {
+                append_derived_count_stat(
+                    output,
+                    &format!(
+                        "{alias_prefix}.branchPred.targetProvider_0::{}",
+                        provider.gem5_target_provider_name()
+                    ),
+                    target_provider,
+                );
+            }
+        }
+        if let Some(target_provider) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.branch_predictor.target_provider.total"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.targetProvider_0::total"),
+                target_provider,
             );
         }
         for kind in BranchTargetKind::ALL {

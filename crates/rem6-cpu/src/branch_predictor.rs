@@ -1118,6 +1118,92 @@ impl Default for BranchTargetKindCounts {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BranchTargetProvider {
+    NoTarget,
+    BTB,
+    RAS,
+    Indirect,
+}
+
+impl BranchTargetProvider {
+    pub const COUNT: usize = 4;
+
+    pub const ALL: [Self; Self::COUNT] = [Self::NoTarget, Self::BTB, Self::RAS, Self::Indirect];
+
+    pub const fn index(self) -> usize {
+        match self {
+            Self::NoTarget => 0,
+            Self::BTB => 1,
+            Self::RAS => 2,
+            Self::Indirect => 3,
+        }
+    }
+
+    pub const fn canonical_stat_name(self) -> &'static str {
+        match self {
+            Self::NoTarget => "no_target",
+            Self::BTB => "btb",
+            Self::RAS => "ras",
+            Self::Indirect => "indirect",
+        }
+    }
+
+    pub const fn gem5_target_provider_name(self) -> &'static str {
+        match self {
+            Self::NoTarget => "NoTarget",
+            Self::BTB => "BTB",
+            Self::RAS => "RAS",
+            Self::Indirect => "Indirect",
+        }
+    }
+
+    pub const fn from_btb_prediction(
+        predicted_taken: bool,
+        prediction: BranchTargetPrediction,
+    ) -> Self {
+        if predicted_taken && prediction.hit() {
+            Self::BTB
+        } else {
+            Self::NoTarget
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BranchTargetProviderCounts {
+    values: [u64; BranchTargetProvider::COUNT],
+}
+
+impl BranchTargetProviderCounts {
+    pub const fn value(self, provider: BranchTargetProvider) -> u64 {
+        self.values[provider.index()]
+    }
+
+    pub fn total(self) -> u64 {
+        self.values
+            .into_iter()
+            .fold(0_u64, |total, value| total.saturating_add(value))
+    }
+
+    pub const fn values(self) -> [u64; BranchTargetProvider::COUNT] {
+        self.values
+    }
+
+    pub(crate) fn increment(&mut self, provider: BranchTargetProvider) {
+        let value = &mut self.values[provider.index()];
+        *value = value.saturating_add(1);
+    }
+}
+
+impl Default for BranchTargetProviderCounts {
+    fn default() -> Self {
+        Self {
+            values: [0; BranchTargetProvider::COUNT],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BranchTargetPrediction {
     hit: bool,
     target: Option<Address>,

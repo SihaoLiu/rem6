@@ -1,4 +1,4 @@
-use rem6_cpu::BranchTargetKind;
+use rem6_cpu::{BranchTargetKind, BranchTargetProvider};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::increment_stat;
@@ -360,6 +360,26 @@ pub(super) fn emit_cpu_run_stats(
             "Count",
             StatResetPolicy::Monotonic,
             core.branch_predictor_lookups.total(),
+        )?;
+        for provider in BranchTargetProvider::ALL {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.branch_predictor.target_provider.{}",
+                    core.cpu,
+                    provider.canonical_stat_name()
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.branch_predictor_target_provider.value(provider),
+            )?;
+        }
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.branch_predictor.target_provider.total", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.branch_predictor_target_provider.total(),
         )?;
         for kind in BranchTargetKind::ALL {
             increment_stat(
