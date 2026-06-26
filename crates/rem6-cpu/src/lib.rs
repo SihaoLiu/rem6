@@ -62,6 +62,8 @@ mod riscv_execute;
 mod riscv_execution_event;
 mod riscv_fetch;
 mod riscv_fetch_ahead;
+#[cfg(test)]
+mod riscv_fetch_ahead_tage_sc_l_tests;
 mod riscv_gshare_checkpoint;
 mod riscv_hart_run_state;
 mod riscv_htm;
