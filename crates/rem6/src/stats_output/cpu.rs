@@ -425,6 +425,26 @@ pub(super) fn emit_cpu_run_stats(
             increment_stat(
                 stats,
                 &format!(
+                    "sim.cpu{}.branch_predictor.corrected.{}",
+                    core.cpu,
+                    kind.canonical_stat_name()
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.branch_predictor_corrected.value(kind),
+            )?;
+        }
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.branch_predictor.corrected.total", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.branch_predictor_corrected.total(),
+        )?;
+        for kind in BranchTargetKind::ALL {
+            increment_stat(
+                stats,
+                &format!(
                     "sim.cpu{}.branch_predictor.target_wrong.{}",
                     core.cpu,
                     kind.canonical_stat_name()

@@ -484,6 +484,7 @@ pub struct Rem6CoreSummary {
     branch_predictor_target_provider: BranchTargetProviderCounts,
     branch_predictor_committed: BranchTargetKindCounts,
     branch_predictor_mispredicted: BranchTargetKindCounts,
+    branch_predictor_corrected: BranchTargetKindCounts,
     branch_predictor_target_wrong: BranchTargetKindCounts,
     branch_predictor_mispredict_due_to_predictor: BranchTargetKindCounts,
     tournament_local_predictions: u64,

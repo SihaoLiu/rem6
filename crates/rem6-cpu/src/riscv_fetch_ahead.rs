@@ -1268,6 +1268,13 @@ mod tests {
         assert_eq!(summary.mispredicted_branch_kinds().total(), 1);
         assert_eq!(
             summary
+                .corrected_branch_kinds()
+                .value(BranchTargetKind::DirectConditional),
+            1
+        );
+        assert_eq!(summary.corrected_branch_kinds().total(), 1);
+        assert_eq!(
+            summary
                 .target_wrong_branch_kinds()
                 .value(BranchTargetKind::DirectConditional),
             1
@@ -1352,6 +1359,13 @@ mod tests {
             0
         );
         assert_eq!(summary.mispredicted_branch_kinds().total(), 0);
+        assert_eq!(
+            summary
+                .corrected_branch_kinds()
+                .value(BranchTargetKind::DirectConditional),
+            0
+        );
+        assert_eq!(summary.corrected_branch_kinds().total(), 0);
         assert_eq!(
             summary
                 .target_wrong_branch_kinds()
@@ -1542,6 +1556,13 @@ mod tests {
             1
         );
         assert_eq!(summary.mispredicted_branch_kinds().total(), 1);
+        assert_eq!(
+            summary
+                .corrected_branch_kinds()
+                .value(BranchTargetKind::DirectConditional),
+            1
+        );
+        assert_eq!(summary.corrected_branch_kinds().total(), 1);
         assert_eq!(
             summary
                 .target_wrong_branch_kinds()
