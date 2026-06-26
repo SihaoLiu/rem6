@@ -1,10 +1,10 @@
 use rem6_cpu::{
     BranchPredictor, BranchPredictorCheckpointPayload, BranchPredictorConfig, BranchPredictorError,
     BranchSpeculationId, BranchTargetBuffer, BranchTargetBufferConfig, BranchTargetBufferError,
-    BranchTargetKind, BranchTargetSafetyConfig, BranchTargetSafetyProfile, ReturnAddressStack,
-    ReturnAddressStackConfig, ReturnAddressStackError, ReturnAddressStackOperationId,
-    ReturnAddressStackOperationKind, DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ASSOCIATIVITY,
-    DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ENTRIES,
+    BranchTargetKind, BranchTargetPrediction, BranchTargetSafetyConfig, BranchTargetSafetyProfile,
+    ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,
+    ReturnAddressStackOperationId, ReturnAddressStackOperationKind,
+    DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ASSOCIATIVITY, DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ENTRIES,
 };
 use rem6_memory::Address;
 
@@ -386,16 +386,33 @@ fn checkpoint_payload_round_trips_snapshot_and_active_mapping() {
     branch_target_buffer.lookup(taken_pc, BranchTargetKind::DirectConditional);
     let branch_target_buffer_snapshot = branch_target_buffer.snapshot();
 
-    let payload = BranchPredictorCheckpointPayload::from_snapshots(
+    let payload = BranchPredictorCheckpointPayload::from_snapshots_with_branch_target_predictions(
         snapshot.clone(),
         branch_target_buffer_snapshot.clone(),
         [(22, second.id()), (21, first.id())],
+        [
+            (22, BranchTargetPrediction::new(false, None)),
+            (
+                21,
+                BranchTargetPrediction::new(true, Some(Address::new(0x1080))),
+            ),
+        ],
     )
     .unwrap();
 
     assert_eq!(
         payload.active_speculations(),
         &[(21, first.id()), (22, second.id())]
+    );
+    assert_eq!(
+        payload.active_branch_target_predictions(),
+        &[
+            (
+                21,
+                BranchTargetPrediction::new(true, Some(Address::new(0x1080)))
+            ),
+            (22, BranchTargetPrediction::new(false, None)),
+        ]
     );
 
     let decoded = BranchPredictorCheckpointPayload::decode(&payload.encode()).unwrap();
@@ -406,6 +423,40 @@ fn checkpoint_payload_round_trips_snapshot_and_active_mapping() {
         &branch_target_buffer_snapshot
     );
     assert_eq!(decoded.active_speculations(), payload.active_speculations());
+    assert_eq!(
+        decoded.active_branch_target_predictions(),
+        payload.active_branch_target_predictions()
+    );
+}
+
+#[test]
+fn checkpoint_payload_decodes_v2_active_mapping_without_branch_target_predictions() {
+    const VERSION_OFFSET: usize = 4;
+    const ACTIVE_SPECULATION_V2_BYTES: usize = 16;
+    const ACTIVE_SPECULATION_V3_BYTES: usize = 27;
+    let mut predictor =
+        BranchPredictor::new(BranchPredictorConfig::with_history_bits(8, 3).unwrap());
+    let first = predictor.predict_speculative(Address::new(0x1000));
+    let second = predictor.predict_speculative(Address::new(0x1004));
+    let payload = BranchPredictorCheckpointPayload::from_snapshot(
+        predictor.snapshot(),
+        [(21, first.id()), (22, second.id())],
+    )
+    .unwrap();
+    let encoded = payload.encode();
+    let active_start = encoded.len() - ACTIVE_SPECULATION_V3_BYTES * 2;
+    let mut v2_encoded = encoded[..active_start].to_vec();
+    v2_encoded[VERSION_OFFSET] = 2;
+    for active_index in 0..2 {
+        let entry_start = active_start + active_index * ACTIVE_SPECULATION_V3_BYTES;
+        v2_encoded
+            .extend_from_slice(&encoded[entry_start..entry_start + ACTIVE_SPECULATION_V2_BYTES]);
+    }
+
+    let decoded = BranchPredictorCheckpointPayload::decode(&v2_encoded).unwrap();
+
+    assert_eq!(decoded.active_speculations(), payload.active_speculations());
+    assert_eq!(decoded.active_branch_target_predictions(), &[]);
 }
 
 #[test]
@@ -526,7 +577,7 @@ fn checkpoint_payload_rejects_duplicate_btb_entry_pc() {
 }
 
 #[test]
-fn checkpoint_payload_rejects_v2_pending_count_before_allocation() {
+fn checkpoint_payload_rejects_v3_pending_count_before_allocation() {
     const HEADER_BYTES: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4 * 2;
     const PENDING_COUNT_OFFSET: usize = 4 + 1 + 4 + 1 + 8 * 4;
     const COUNTER_BYTES: usize = 8;
@@ -558,9 +609,9 @@ fn checkpoint_payload_rejects_v2_pending_count_before_allocation() {
 }
 
 #[test]
-fn checkpoint_payload_rejects_v2_active_count_before_allocation() {
+fn checkpoint_payload_rejects_v3_active_count_before_allocation() {
     const ACTIVE_COUNT_OFFSET: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4;
-    const ACTIVE_SPECULATION_BYTES: usize = 16;
+    const ACTIVE_SPECULATION_BYTES: usize = 27;
     let payload = BranchPredictorCheckpointPayload::from_snapshot(
         predictor(8).snapshot(),
         std::iter::empty::<(u64, BranchSpeculationId)>(),
@@ -615,7 +666,8 @@ fn checkpoint_payload_rejects_unmapped_pending_speculation() {
 
 #[test]
 fn checkpoint_payload_rejects_active_mapping_order_that_cannot_commit() {
-    const ACTIVE_SPECULATION_BYTES: usize = 16;
+    const ACTIVE_SPECULATION_BYTES: usize = 27;
+    const ACTIVE_SPECULATION_ID_OFFSET: usize = 8;
     let mut predictor = predictor(8);
     let first = predictor.predict_speculative(Address::new(0x1000));
     let second = predictor.predict_speculative(Address::new(0x1004));
@@ -627,8 +679,11 @@ fn checkpoint_payload_rejects_active_mapping_order_that_cannot_commit() {
     let mut encoded = payload.encode();
     let active_start = encoded.len() - ACTIVE_SPECULATION_BYTES * 2;
 
-    encoded[active_start + 8..active_start + 16].copy_from_slice(&second.id().get().to_le_bytes());
-    encoded[active_start + 24..active_start + 32].copy_from_slice(&first.id().get().to_le_bytes());
+    encoded[active_start + ACTIVE_SPECULATION_ID_OFFSET
+        ..active_start + ACTIVE_SPECULATION_ID_OFFSET + 8]
+        .copy_from_slice(&second.id().get().to_le_bytes());
+    let second_entry_id = active_start + ACTIVE_SPECULATION_BYTES + ACTIVE_SPECULATION_ID_OFFSET;
+    encoded[second_entry_id..second_entry_id + 8].copy_from_slice(&first.id().get().to_le_bytes());
 
     assert_eq!(
         BranchPredictorCheckpointPayload::decode(&encoded),

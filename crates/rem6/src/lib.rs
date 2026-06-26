@@ -476,6 +476,8 @@ pub struct Rem6CoreSummary {
     branch_target_buffer_misses: u64,
     branch_target_buffer_updates: u64,
     branch_target_buffer_evictions: u64,
+    branch_target_buffer_mispredictions: u64,
+    branch_target_buffer_predicted_taken_misses: u64,
     tournament_local_predictions: u64,
     tournament_global_predictions: u64,
     data_loads: u64,

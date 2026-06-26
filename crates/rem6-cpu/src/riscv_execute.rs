@@ -1057,12 +1057,18 @@ fn resolve_branch_speculation(
         .map_err(RiscvCpuError::BranchPredictor)?;
     let predicted_taken = pending.predicted_taken();
     let predicted_target = pending.target();
+    let branch_target_prediction = state.branch_target_predictions.remove(&sequence);
     let selected_prediction = RiscvResolvedBranchPrediction {
         predicted_taken,
         predicted_target,
         actual_taken: update.actual_taken(),
         actual_target: update.actual_target(),
     };
+    state.branch_speculation_summary.record_btb_resolution(
+        predicted_taken,
+        update.actual_target(),
+        branch_target_prediction,
+    );
     let predicted_correctly = predicted_taken == update.actual_taken()
         && (!predicted_taken || predicted_target == update.actual_target());
     if !predicted_correctly {
@@ -1089,6 +1095,7 @@ fn discard_branch_speculation(
     let Some(speculation) = state.branch_speculations.remove(&sequence) else {
         return Ok(());
     };
+    state.branch_target_predictions.remove(&sequence);
 
     let discard = state
         .branch_predictor
@@ -1107,6 +1114,14 @@ fn remove_branch_speculation_mappings(
             .iter()
             .any(|removed_speculation| removed_speculation.id() == *pending)
     });
+    let active_sequences = state
+        .branch_speculations
+        .keys()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    state
+        .branch_target_predictions
+        .retain(|sequence, _| active_sequences.contains(sequence));
 }
 
 pub(crate) fn sync_in_order_fetch_state(

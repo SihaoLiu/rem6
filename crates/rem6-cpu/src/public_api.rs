@@ -9,10 +9,10 @@ pub use crate::branch_predictor::{
     BranchPredictorSnapshot, BranchSpeculation, BranchSpeculationDiscard, BranchSpeculationId,
     BranchSpeculationRepair, BranchTargetBuffer, BranchTargetBufferConfig, BranchTargetBufferError,
     BranchTargetBufferSnapshot, BranchTargetEntry, BranchTargetKind, BranchTargetLookup,
-    BranchTargetSafetyConfig, BranchTargetSafetyProfile, BranchTargetUpdate, BranchUpdate,
-    ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,
-    ReturnAddressStackOperation, ReturnAddressStackOperationId, ReturnAddressStackOperationKind,
-    ReturnAddressStackRepair, ReturnAddressStackSnapshot,
+    BranchTargetPrediction, BranchTargetSafetyConfig, BranchTargetSafetyProfile,
+    BranchTargetUpdate, BranchUpdate, ReturnAddressStack, ReturnAddressStackConfig,
+    ReturnAddressStackError, ReturnAddressStackOperation, ReturnAddressStackOperationId,
+    ReturnAddressStackOperationKind, ReturnAddressStackRepair, ReturnAddressStackSnapshot,
 };
 pub use crate::branch_predictor_checkpoint::BranchPredictorCheckpointPayload;
 pub use crate::cpu_cluster::CpuCluster;

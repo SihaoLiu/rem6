@@ -209,6 +209,9 @@ pub(super) fn execution_summary(
             branch_target_buffer_misses: branch_target_buffer.miss_count(),
             branch_target_buffer_updates: branch_target_buffer.update_count(),
             branch_target_buffer_evictions: branch_target_buffer.eviction_count(),
+            branch_target_buffer_mispredictions: branch_speculation_summary.btb_mispredictions(),
+            branch_target_buffer_predicted_taken_misses: branch_speculation_summary
+                .predicted_taken_btb_misses(),
             tournament_local_predictions: tournament_selection_counts.local_predictions,
             tournament_global_predictions: tournament_selection_counts.global_predictions,
             data_loads: data.loads,

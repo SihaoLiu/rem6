@@ -299,6 +299,23 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.branch_target_buffer_evictions,
         )?;
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.branch_predictor.btb.mispredictions", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.branch_target_buffer_mispredictions,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.branch_predictor.btb.predicted_taken_misses",
+                core.cpu
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.branch_target_buffer_predicted_taken_misses,
+        )?;
         for (name, value) in [
             ("local_predictions", core.tournament_local_predictions),
             ("global_predictions", core.tournament_global_predictions),

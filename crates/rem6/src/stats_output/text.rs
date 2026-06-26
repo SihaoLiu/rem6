@@ -126,6 +126,26 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 updates,
             );
         }
+        if let Some(mispredictions) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.branch_predictor.btb.mispredictions"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.BTBMispredicted"),
+                mispredictions,
+            );
+        }
+        if let Some(predicted_taken_misses) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.branch_predictor.btb.predicted_taken_misses"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.predTakenBTBMiss"),
+                predicted_taken_misses,
+            );
+        }
         if let (Some(hits), Some(lookups)) = (btb_hits, btb_lookups) {
             if lookups != 0 {
                 append_derived_ratio_stat(

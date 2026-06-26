@@ -1029,6 +1029,26 @@ pub enum BranchTargetKind {
     Return,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BranchTargetPrediction {
+    hit: bool,
+    target: Option<Address>,
+}
+
+impl BranchTargetPrediction {
+    pub const fn new(hit: bool, target: Option<Address>) -> Self {
+        Self { hit, target }
+    }
+
+    pub const fn hit(self) -> bool {
+        self.hit
+    }
+
+    pub const fn target(self) -> Option<Address> {
+        self.target
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BranchTargetBuffer {
     config: BranchTargetBufferConfig,
