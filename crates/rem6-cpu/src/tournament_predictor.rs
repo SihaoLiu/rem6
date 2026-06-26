@@ -472,6 +472,54 @@ impl TournamentBranchPredictor {
         let global_history = self.threads[thread_index].global_history();
         let local_history_index = self.local_history_index(pc);
         let local_history = self.local_history_table[local_history_index];
+        self.predict_with_history(cpu, pc, global_history, local_history)
+    }
+
+    pub(crate) fn predict_with_histories(
+        &mut self,
+        cpu: CpuId,
+        pc: Address,
+        global_history: u64,
+        local_history: u64,
+    ) -> Result<TournamentPrediction, TournamentBranchPredictorError> {
+        self.thread_index(cpu)?;
+        self.predict_with_history(
+            cpu,
+            pc,
+            global_history & self.config.history_register_mask(),
+            local_history & self.config.local_predictor_mask(),
+        )
+    }
+
+    pub(crate) fn global_history(&self, cpu: CpuId) -> Result<u64, TournamentBranchPredictorError> {
+        let thread_index = self.thread_index(cpu)?;
+        Ok(self.threads[thread_index].global_history())
+    }
+
+    pub(crate) fn local_history(&self, pc: Address) -> u64 {
+        self.local_history_table[self.local_history_index(pc)]
+    }
+
+    pub(crate) fn shifted_global_history(&self, old_history: u64, taken: bool) -> u64 {
+        self.shift_global_history(old_history, taken)
+    }
+
+    pub(crate) fn shifted_local_history(&self, old_history: u64, taken: bool) -> u64 {
+        self.shift_local_history(old_history, taken)
+    }
+
+    pub(crate) fn shares_local_history_entry(&self, left: Address, right: Address) -> bool {
+        self.local_history_index(left) == self.local_history_index(right)
+    }
+
+    fn predict_with_history(
+        &mut self,
+        cpu: CpuId,
+        pc: Address,
+        global_history: u64,
+        local_history: u64,
+    ) -> Result<TournamentPrediction, TournamentBranchPredictorError> {
+        let local_history_index = self.local_history_index(pc);
         let local_predictor_index = self.local_predictor_index(local_history);
         let global_index = self.global_index(global_history);
         let choice_index = self.choice_index(global_history);

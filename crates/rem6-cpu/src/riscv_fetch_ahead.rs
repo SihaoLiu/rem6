@@ -46,6 +46,7 @@ impl RiscvCore {
 
         fetch_ahead_decision(
             &mut state,
+            &completed,
             fetch.request_id().sequence(),
             fetch.pc(),
             sequential_pc,
@@ -353,6 +354,7 @@ fn next_completed_fetch_sequence_for_architectural_pc(
 
 fn fetch_ahead_decision(
     state: &mut RiscvCoreState,
+    completed_fetches: &[&CpuFetchEvent],
     sequence: u64,
     fetch_pc: Address,
     sequential_pc: Address,
@@ -374,7 +376,8 @@ fn fetch_ahead_decision(
         return None;
     }
 
-    let prediction = selected_conditional_branch_prediction(state, fetch_pc, instruction)?;
+    let prediction =
+        selected_conditional_branch_prediction(state, completed_fetches, fetch_pc, instruction)?;
     let pc = if prediction.predicted_taken {
         prediction.target?
     } else {
@@ -397,6 +400,7 @@ struct RiscvFetchAheadBranchPrediction {
 
 fn selected_conditional_branch_prediction(
     state: &mut RiscvCoreState,
+    completed_fetches: &[&CpuFetchEvent],
     fetch_pc: Address,
     instruction: RiscvInstruction,
 ) -> Option<RiscvFetchAheadBranchPrediction> {
@@ -446,9 +450,16 @@ fn selected_conditional_branch_prediction(
             })
         }
         RiscvBranchPredictorKind::Tournament => {
+            let (global_history, local_history) =
+                selected_tournament_speculative_histories(state, completed_fetches, fetch_pc)?;
             let prediction = state
                 .tournament_branch_predictor
-                .predict(RISCV_LOCAL_TOURNAMENT_THREAD, fetch_pc)
+                .predict_with_histories(
+                    RISCV_LOCAL_TOURNAMENT_THREAD,
+                    fetch_pc,
+                    global_history,
+                    local_history,
+                )
                 .ok()?;
             let target = prediction
                 .predicted_taken()
@@ -528,6 +539,51 @@ fn selected_speculative_history(
         history = shift_history(history, pending.predicted_taken());
     }
     Some(history)
+}
+
+fn selected_tournament_speculative_histories(
+    state: &RiscvCoreState,
+    completed_fetches: &[&CpuFetchEvent],
+    fetch_pc: Address,
+) -> Option<(u64, u64)> {
+    let mut global_history = state
+        .tournament_branch_predictor
+        .global_history(RISCV_LOCAL_TOURNAMENT_THREAD)
+        .ok()?;
+    let mut local_history = state.tournament_branch_predictor.local_history(fetch_pc);
+    for (sequence, speculation) in &state.branch_speculations {
+        let pending = state.branch_predictor.pending_speculation(*speculation)?;
+        global_history = state
+            .tournament_branch_predictor
+            .shifted_global_history(global_history, pending.predicted_taken());
+        if state
+            .tournament_branch_predictor
+            .shares_local_history_entry(pending.pc(), fetch_pc)
+            && pending_speculation_updates_tournament_local_history(completed_fetches, *sequence)?
+        {
+            local_history = state
+                .tournament_branch_predictor
+                .shifted_local_history(local_history, pending.predicted_taken());
+        }
+    }
+    Some((global_history, local_history))
+}
+
+fn pending_speculation_updates_tournament_local_history(
+    completed_fetches: &[&CpuFetchEvent],
+    sequence: u64,
+) -> Option<bool> {
+    let fetch = completed_fetches
+        .iter()
+        .copied()
+        .find(|event| event.request_id().sequence() == sequence)?;
+    let data = fetch.data()?;
+    let raw = match data {
+        [a, b, c, d] => u32::from_le_bytes([*a, *b, *c, *d]),
+        _ => return None,
+    };
+    let decoded = RiscvInstruction::decode_with_length(raw).ok()?;
+    Some(instruction_is_conditional_branch(decoded.instruction()))
 }
 
 fn conditional_branch_target(fetch_pc: Address, instruction: RiscvInstruction) -> Option<Address> {
@@ -740,8 +796,9 @@ mod tests {
     use crate::{
         BranchPredictor, BranchPredictorCheckpointPayload, BranchPredictorConfig,
         BranchTargetBuffer, BranchTargetBufferConfig, CpuCore, CpuFetchConfig, CpuFetchRecord,
-        CpuId, CpuResetState, RiscvBranchPredictorKind, DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES,
-        RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+        CpuId, CpuResetState, RiscvBranchPredictorKind, TournamentBranchPredictor,
+        TournamentBranchPredictorConfig, DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES,
+        RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
     };
     use rem6_kernel::PartitionId;
     use rem6_memory::{AccessSize, AgentId, CacheLineLayout, MemoryRequestId};
@@ -855,6 +912,95 @@ mod tests {
             .predict(RISCV_LOCAL_BIMODE_THREAD, pc)
             .unwrap();
         assert!(trained.predicted_taken());
+    }
+
+    fn use_small_tournament_predictor(state: &mut RiscvCoreState) {
+        state.tournament_branch_predictor = TournamentBranchPredictor::new(
+            TournamentBranchPredictorConfig::new(1, 2, 2, 2, 2).unwrap(),
+        );
+    }
+
+    fn train_selected_tournament_local_history_one_taken(state: &mut RiscvCoreState, pc: Address) {
+        let history_seed = state
+            .tournament_branch_predictor
+            .predict(RISCV_LOCAL_TOURNAMENT_THREAD, pc)
+            .unwrap();
+        state
+            .tournament_branch_predictor
+            .update_history(history_seed.history(), true)
+            .unwrap();
+        for _ in 0..2 {
+            let prediction = state
+                .tournament_branch_predictor
+                .predict(RISCV_LOCAL_TOURNAMENT_THREAD, pc)
+                .unwrap();
+            assert_eq!(prediction.local_history_before(), 1);
+            assert_eq!(prediction.local_predictor_index(), 1);
+            state
+                .tournament_branch_predictor
+                .train(prediction.history(), true, false)
+                .unwrap();
+        }
+        state
+            .tournament_branch_predictor
+            .squash(history_seed.history())
+            .unwrap();
+    }
+
+    fn train_selected_tournament_global_history_one_taken(
+        state: &mut RiscvCoreState,
+        training_pc: Address,
+    ) {
+        let history_seed = state
+            .tournament_branch_predictor
+            .predict(RISCV_LOCAL_TOURNAMENT_THREAD, training_pc)
+            .unwrap();
+        state
+            .tournament_branch_predictor
+            .update_history(history_seed.history(), true)
+            .unwrap();
+        for _ in 0..2 {
+            let prediction = state
+                .tournament_branch_predictor
+                .predict_unconditional(RISCV_LOCAL_TOURNAMENT_THREAD, Address::new(0xa000))
+                .unwrap();
+            assert_eq!(prediction.global_history_before(), 1);
+            state
+                .tournament_branch_predictor
+                .train(prediction.history(), true, false)
+                .unwrap();
+        }
+        for _ in 0..2 {
+            let prediction = state
+                .tournament_branch_predictor
+                .predict(RISCV_LOCAL_TOURNAMENT_THREAD, training_pc)
+                .unwrap();
+            assert_eq!(prediction.global_history_before(), 1);
+            assert_eq!(prediction.local_history_before(), 1);
+            assert!(!prediction.local_predicted_taken());
+            assert!(prediction.global_predicted_taken());
+            state
+                .tournament_branch_predictor
+                .train(prediction.history(), true, false)
+                .unwrap();
+        }
+        state
+            .tournament_branch_predictor
+            .squash(history_seed.history())
+            .unwrap();
+    }
+
+    fn insert_pending_branch_speculation(
+        state: &mut RiscvCoreState,
+        sequence: u64,
+        pc: Address,
+        target: Address,
+    ) {
+        let speculation =
+            state
+                .branch_predictor
+                .predict_speculative_with_prediction(pc, true, Some(target));
+        state.branch_speculations.insert(sequence, speculation.id());
     }
 
     #[test]
@@ -1148,6 +1294,198 @@ mod tests {
         let second = core.next_fetch_ahead_before_retire().unwrap();
 
         assert_eq!(second.pc(), Address::new(0x8010));
+    }
+
+    #[test]
+    fn selected_tournament_fetch_ahead_uses_pending_local_history_for_younger_branch() {
+        let core = core_with_completed_fetches([
+            (0, 0x8000, b_type(8, 0, 0, 0).to_le_bytes().to_vec()),
+            (1, 0x8008, b_type(8, 0, 0, 0).to_le_bytes().to_vec()),
+        ]);
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::Tournament);
+        core.set_branch_lookahead(2);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            use_small_tournament_predictor(&mut state);
+            let older_pc = Address::new(0x8000);
+            let younger_pc = Address::new(0x8008);
+            train_selected_tournament_local_history_one_taken(&mut state, younger_pc);
+            let base_prediction = state
+                .tournament_branch_predictor
+                .predict(RISCV_LOCAL_TOURNAMENT_THREAD, younger_pc)
+                .unwrap();
+            assert_eq!(base_prediction.local_history_before(), 0);
+            assert!(!base_prediction.predicted_taken());
+            let overlay_prediction = state
+                .tournament_branch_predictor
+                .predict_with_histories(RISCV_LOCAL_TOURNAMENT_THREAD, younger_pc, 0, 1)
+                .unwrap();
+            assert!(overlay_prediction.predicted_taken());
+            insert_pending_branch_speculation(&mut state, 0, older_pc, younger_pc);
+            let fetch_events = core.core.fetch_events();
+            let completed_fetches = fetch_events.iter().collect::<Vec<_>>();
+            assert_eq!(
+                selected_tournament_speculative_histories(&state, &completed_fetches, younger_pc),
+                Some((1, 1))
+            );
+            assert_eq!(
+                state.tournament_branch_predictor.snapshot().threads()[0].global_history(),
+                0
+            );
+            assert_eq!(
+                state
+                    .tournament_branch_predictor
+                    .snapshot()
+                    .local_history_table()[0],
+                0
+            );
+        }
+
+        let second = core.next_fetch_ahead_before_retire().unwrap();
+
+        assert_eq!(second.pc(), Address::new(0x8010));
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(
+            state.tournament_branch_predictor.snapshot().threads()[0].global_history(),
+            0
+        );
+        assert_eq!(
+            state
+                .tournament_branch_predictor
+                .snapshot()
+                .local_history_table()[0],
+            0
+        );
+    }
+
+    #[test]
+    fn selected_tournament_fetch_ahead_uses_pending_conditional_global_history_for_younger_branch()
+    {
+        let core = core_with_completed_fetches([
+            (0, 0x8000, b_type(4, 0, 0, 0).to_le_bytes().to_vec()),
+            (1, 0x8004, b_type(8, 0, 0, 0).to_le_bytes().to_vec()),
+        ]);
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::Tournament);
+        core.set_branch_lookahead(2);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            use_small_tournament_predictor(&mut state);
+            let older_pc = Address::new(0x8000);
+            let younger_pc = Address::new(0x8004);
+            train_selected_tournament_global_history_one_taken(&mut state, Address::new(0x9000));
+            assert!(!state
+                .tournament_branch_predictor
+                .shares_local_history_entry(older_pc, younger_pc));
+            let base_prediction = state
+                .tournament_branch_predictor
+                .predict(RISCV_LOCAL_TOURNAMENT_THREAD, younger_pc)
+                .unwrap();
+            assert_eq!(base_prediction.global_history_before(), 0);
+            assert_eq!(base_prediction.local_history_before(), 0);
+            assert!(!base_prediction.predicted_taken());
+            let overlay_prediction = state
+                .tournament_branch_predictor
+                .predict_with_histories(RISCV_LOCAL_TOURNAMENT_THREAD, younger_pc, 1, 0)
+                .unwrap();
+            assert!(overlay_prediction.predicted_taken());
+            insert_pending_branch_speculation(&mut state, 0, older_pc, younger_pc);
+            let fetch_events = core.core.fetch_events();
+            let completed_fetches = fetch_events.iter().collect::<Vec<_>>();
+            assert_eq!(
+                selected_tournament_speculative_histories(&state, &completed_fetches, younger_pc),
+                Some((1, 0))
+            );
+            assert_eq!(
+                state.tournament_branch_predictor.snapshot().threads()[0].global_history(),
+                0
+            );
+            assert_eq!(
+                state
+                    .tournament_branch_predictor
+                    .snapshot()
+                    .local_history_table()[1],
+                0
+            );
+        }
+
+        let second = core.next_fetch_ahead_before_retire().unwrap();
+
+        assert_eq!(second.pc(), Address::new(0x800c));
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(
+            state.tournament_branch_predictor.snapshot().threads()[0].global_history(),
+            0
+        );
+        assert_eq!(
+            state
+                .tournament_branch_predictor
+                .snapshot()
+                .local_history_table()[1],
+            0
+        );
+    }
+
+    #[test]
+    fn selected_tournament_fetch_ahead_uses_direct_jump_global_history_for_younger_branch() {
+        let core = core_with_completed_fetches([
+            (0, 0x8000, j_type(8, 0).to_le_bytes().to_vec()),
+            (1, 0x8008, b_type(8, 0, 0, 0).to_le_bytes().to_vec()),
+        ]);
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::Tournament);
+        core.set_branch_lookahead(2);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            use_small_tournament_predictor(&mut state);
+            let older_pc = Address::new(0x8000);
+            let younger_pc = Address::new(0x8008);
+            train_selected_tournament_global_history_one_taken(&mut state, Address::new(0x9000));
+            let base_prediction = state
+                .tournament_branch_predictor
+                .predict(RISCV_LOCAL_TOURNAMENT_THREAD, younger_pc)
+                .unwrap();
+            assert_eq!(base_prediction.global_history_before(), 0);
+            assert_eq!(base_prediction.local_history_before(), 0);
+            assert!(!base_prediction.predicted_taken());
+            let overlay_prediction = state
+                .tournament_branch_predictor
+                .predict_with_histories(RISCV_LOCAL_TOURNAMENT_THREAD, younger_pc, 1, 0)
+                .unwrap();
+            assert!(overlay_prediction.predicted_taken());
+            insert_pending_branch_speculation(&mut state, 0, older_pc, younger_pc);
+            let fetch_events = core.core.fetch_events();
+            let completed_fetches = fetch_events.iter().collect::<Vec<_>>();
+            assert_eq!(
+                selected_tournament_speculative_histories(&state, &completed_fetches, younger_pc),
+                Some((1, 0))
+            );
+            assert_eq!(
+                state.tournament_branch_predictor.snapshot().threads()[0].global_history(),
+                0
+            );
+            assert_eq!(
+                state
+                    .tournament_branch_predictor
+                    .snapshot()
+                    .local_history_table()[0],
+                0
+            );
+        }
+
+        let second = core.next_fetch_ahead_before_retire().unwrap();
+
+        assert_eq!(second.pc(), Address::new(0x8010));
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(
+            state.tournament_branch_predictor.snapshot().threads()[0].global_history(),
+            0
+        );
+        assert_eq!(
+            state
+                .tournament_branch_predictor
+                .snapshot()
+                .local_history_table()[0],
+            0
+        );
     }
 
     #[test]
