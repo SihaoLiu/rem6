@@ -23,6 +23,9 @@ use rem6_transport::{
     TransportError,
 };
 
+use crate::riscv_translation_state::DataTranslationCompletion;
+pub(crate) use crate::riscv_translation_state::{PendingDataTranslation, TranslatedDataAccess};
+
 use crate::riscv_data_issue::{
     access_width, memory_width_size, mmio_request, store_bytes, OutstandingDataAccess,
     PreparedDataParallelAccess,
@@ -36,29 +39,6 @@ use crate::{
 };
 
 const RISCV_SV39_PTE_ACCESS_BYTES: u64 = 8;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct PendingDataTranslation {
-    request_id: MemoryRequestId,
-    fetch_request: MemoryRequestId,
-    access: rem6_isa_riscv::MemoryAccessKind,
-    size: rem6_memory::AccessSize,
-}
-
-impl PendingDataTranslation {
-    pub(crate) const fn fetch_request(&self) -> MemoryRequestId {
-        self.fetch_request
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-enum DataTranslationCompletion {
-    Access(TranslatedDataAccess),
-    Fault {
-        fetch_request: MemoryRequestId,
-        fault: CpuTranslationFaultRecord,
-    },
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RiscvSv39PageTableResolver {
@@ -605,15 +585,6 @@ impl RiscvCoreState {
                 .map(|access| (fetch_request, access.clone()))
         })
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct TranslatedDataAccess {
-    request_id: MemoryRequestId,
-    fetch_request: MemoryRequestId,
-    access: rem6_isa_riscv::MemoryAccessKind,
-    size: rem6_memory::AccessSize,
-    physical_address: Address,
 }
 
 impl RiscvCore {

@@ -11,9 +11,6 @@ pub use crate::branch_predictor::{
     BranchTargetBufferSnapshot, BranchTargetEntry, BranchTargetKind, BranchTargetKindCounts,
     BranchTargetLookup, BranchTargetPrediction, BranchTargetProvider, BranchTargetProviderCounts,
     BranchTargetSafetyConfig, BranchTargetSafetyProfile, BranchTargetUpdate, BranchUpdate,
-    ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,
-    ReturnAddressStackOperation, ReturnAddressStackOperationId, ReturnAddressStackOperationKind,
-    ReturnAddressStackRepair, ReturnAddressStackSnapshot,
 };
 pub use crate::branch_predictor_checkpoint::BranchPredictorCheckpointPayload;
 pub use crate::cpu_cluster::CpuCluster;
@@ -80,6 +77,11 @@ pub use crate::o3_pipeline::{
     O3WritebackAdmission, O3WritebackCompletion, O3WritebackCompletionAdmission,
     O3WritebackTransferBuffer, O3WritebackTransferCheckpointPayload, O3WritebackTransferCycle,
     O3WritebackTransferPlan, O3WritebackTransferPolicy, O3WritebackTransferSnapshot,
+};
+pub use crate::return_address_stack::{
+    ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,
+    ReturnAddressStackOperation, ReturnAddressStackOperationId, ReturnAddressStackOperationKind,
+    ReturnAddressStackRepair, ReturnAddressStackSnapshot,
 };
 pub use crate::riscv_activity::RiscvCoreDriveActivity;
 pub use crate::riscv_branch_speculation::RiscvBranchSpeculationSummary;
