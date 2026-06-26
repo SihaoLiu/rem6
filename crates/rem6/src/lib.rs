@@ -459,6 +459,7 @@ pub struct Rem6CoreSummary {
     in_order_pipeline_stage_resource_blocked: Rem6InOrderPipelineStageSummary,
     in_order_pipeline_stage_ordering_blocked: Rem6InOrderPipelineStageSummary,
     in_order_pipeline_stage_flushed: Rem6InOrderPipelineStageSummary,
+    in_order_pipeline_stage_branch_prediction_flushed: Rem6InOrderPipelineStageSummary,
     in_order_pipeline_retired: u64,
     in_order_pipeline_advanced: u64,
     in_order_pipeline_flushed: u64,
