@@ -101,20 +101,40 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 mispredictions,
             );
         }
-        if let Some(lookups) = snapshot_value(
+        let btb_lookups = snapshot_value(
             snapshot,
             &format!("sim.cpu{cpu}.branch_predictor.btb.lookups"),
-        ) {
+        );
+        let btb_hits = snapshot_value(snapshot, &format!("sim.cpu{cpu}.branch_predictor.btb.hits"));
+        if let Some(lookups) = btb_lookups {
             append_derived_count_stat(
                 output,
                 &format!("{alias_prefix}.branchPred.BTBLookups"),
                 lookups,
             );
         }
-        if let Some(hits) =
-            snapshot_value(snapshot, &format!("sim.cpu{cpu}.branch_predictor.btb.hits"))
-        {
+        if let Some(hits) = btb_hits {
             append_derived_count_stat(output, &format!("{alias_prefix}.branchPred.BTBHits"), hits);
+        }
+        if let Some(updates) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.branch_predictor.btb.updates"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.BTBUpdates"),
+                updates,
+            );
+        }
+        if let (Some(hits), Some(lookups)) = (btb_hits, btb_lookups) {
+            if lookups != 0 {
+                append_derived_ratio_stat(
+                    output,
+                    &format!("{alias_prefix}.branchPred.BTBHitRatio"),
+                    hits,
+                    lookups,
+                );
+            }
         }
     }
 }
