@@ -335,6 +335,34 @@ impl BiModeBranchPredictor {
     ) -> Result<BiModePrediction, BiModeBranchPredictorError> {
         let thread_index = self.thread_index(cpu)?;
         let global_history = self.threads[thread_index].global_history();
+        self.predict_with_history(cpu, pc, global_history)
+    }
+
+    pub(crate) fn predict_with_global_history(
+        &mut self,
+        cpu: CpuId,
+        pc: Address,
+        global_history: u64,
+    ) -> Result<BiModePrediction, BiModeBranchPredictorError> {
+        self.thread_index(cpu)?;
+        self.predict_with_history(cpu, pc, global_history & self.config.history_mask())
+    }
+
+    pub(crate) fn global_history(&self, cpu: CpuId) -> Result<u64, BiModeBranchPredictorError> {
+        let thread_index = self.thread_index(cpu)?;
+        Ok(self.threads[thread_index].global_history())
+    }
+
+    pub(crate) fn shifted_history(&self, old_history: u64, taken: bool) -> u64 {
+        self.shift_history(old_history, taken)
+    }
+
+    fn predict_with_history(
+        &mut self,
+        cpu: CpuId,
+        pc: Address,
+        global_history: u64,
+    ) -> Result<BiModePrediction, BiModeBranchPredictorError> {
         let choice_index = self.choice_index(pc);
         let global_index = self.global_index(pc, global_history);
         let choice_counter = self.choice_counters[choice_index];

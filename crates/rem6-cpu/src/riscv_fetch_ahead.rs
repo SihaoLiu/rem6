@@ -431,9 +431,10 @@ fn selected_conditional_branch_prediction(
             })
         }
         RiscvBranchPredictorKind::BiMode => {
+            let global_history = selected_bimode_speculative_history(state)?;
             let prediction = state
                 .bimode_branch_predictor
-                .predict(RISCV_LOCAL_BIMODE_THREAD, fetch_pc)
+                .predict_with_global_history(RISCV_LOCAL_BIMODE_THREAD, fetch_pc, global_history)
                 .ok()?;
             let target = prediction
                 .predicted_taken()
@@ -494,15 +495,37 @@ fn selected_conditional_branch_prediction(
 }
 
 fn selected_gshare_speculative_history(state: &RiscvCoreState) -> Option<u64> {
-    let mut history = state
+    let history = state
         .gshare_branch_predictor
         .global_history(RISCV_LOCAL_GSHARE_THREAD)
         .ok()?;
+    selected_speculative_history(state, history, |history, taken| {
+        state
+            .gshare_branch_predictor
+            .shifted_history(history, taken)
+    })
+}
+
+fn selected_bimode_speculative_history(state: &RiscvCoreState) -> Option<u64> {
+    let history = state
+        .bimode_branch_predictor
+        .global_history(RISCV_LOCAL_BIMODE_THREAD)
+        .ok()?;
+    selected_speculative_history(state, history, |history, taken| {
+        state
+            .bimode_branch_predictor
+            .shifted_history(history, taken)
+    })
+}
+
+fn selected_speculative_history(
+    state: &RiscvCoreState,
+    mut history: u64,
+    mut shift_history: impl FnMut(u64, bool) -> u64,
+) -> Option<u64> {
     for speculation in state.branch_speculations.values() {
         let pending = state.branch_predictor.pending_speculation(*speculation)?;
-        history = state
-            .gshare_branch_predictor
-            .shifted_history(history, pending.predicted_taken());
+        history = shift_history(history, pending.predicted_taken());
     }
     Some(history)
 }
@@ -718,7 +741,7 @@ mod tests {
         BranchPredictor, BranchPredictorCheckpointPayload, BranchPredictorConfig,
         BranchTargetBuffer, BranchTargetBufferConfig, CpuCore, CpuFetchConfig, CpuFetchRecord,
         CpuId, CpuResetState, RiscvBranchPredictorKind, DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES,
-        RISCV_LOCAL_GSHARE_THREAD,
+        RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
     };
     use rem6_kernel::PartitionId;
     use rem6_memory::{AccessSize, AgentId, CacheLineLayout, MemoryRequestId};
@@ -814,6 +837,24 @@ mod tests {
         }
         drop(core_state);
         core
+    }
+
+    fn train_selected_bimode_taken(state: &mut RiscvCoreState, pc: Address) {
+        for _ in 0..4 {
+            let prediction = state
+                .bimode_branch_predictor
+                .predict(RISCV_LOCAL_BIMODE_THREAD, pc)
+                .unwrap();
+            state
+                .bimode_branch_predictor
+                .train(prediction.history(), true, false)
+                .unwrap();
+        }
+        let trained = state
+            .bimode_branch_predictor
+            .predict(RISCV_LOCAL_BIMODE_THREAD, pc)
+            .unwrap();
+        assert!(trained.predicted_taken());
     }
 
     #[test]
@@ -1000,6 +1041,108 @@ mod tests {
 
         assert_eq!(
             core.gshare_branch_predictor_snapshot().threads()[0].global_history(),
+            0
+        );
+        let second = core.next_fetch_ahead_before_retire().unwrap();
+
+        assert_eq!(second.pc(), Address::new(0x8010));
+    }
+
+    #[test]
+    fn selected_bimode_fetch_ahead_uses_speculative_history_for_younger_branch() {
+        let core = core_with_completed_fetches([
+            (0, 0x8000, b_type(8, 0, 0, 0).to_le_bytes().to_vec()),
+            (1, 0x8008, b_type(8, 0, 0, 0).to_le_bytes().to_vec()),
+        ]);
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::BiMode);
+        core.set_branch_lookahead(2);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            train_selected_bimode_taken(&mut state, Address::new(0x8000));
+
+            let history_seed = state
+                .bimode_branch_predictor
+                .predict(RISCV_LOCAL_BIMODE_THREAD, Address::new(0x9000))
+                .unwrap();
+            state
+                .bimode_branch_predictor
+                .update_history(history_seed.history(), true)
+                .unwrap();
+            let second_pc = Address::new(0x8008);
+            train_selected_bimode_taken(&mut state, second_pc);
+            let trained_second = state
+                .bimode_branch_predictor
+                .predict(RISCV_LOCAL_BIMODE_THREAD, second_pc)
+                .unwrap();
+            assert_eq!(trained_second.global_history_before(), 1);
+            assert!(trained_second.predicted_taken());
+            state
+                .bimode_branch_predictor
+                .squash(history_seed.history())
+                .unwrap();
+            assert_eq!(
+                state.bimode_branch_predictor.snapshot().threads()[0].global_history(),
+                0
+            );
+        }
+
+        let first = core.next_fetch_ahead_before_retire().unwrap();
+        assert_eq!(first.pc(), Address::new(0x8008));
+        core.set_fetch_ahead_pc(first.pc());
+        core.record_fetch_ahead_speculation(&first);
+
+        assert_eq!(
+            core.bimode_branch_predictor_snapshot().threads()[0].global_history(),
+            0
+        );
+        let second = core.next_fetch_ahead_before_retire().unwrap();
+
+        assert_eq!(second.pc(), Address::new(0x8010));
+    }
+
+    #[test]
+    fn selected_bimode_fetch_ahead_uses_direct_jump_history_for_younger_branch() {
+        let core = core_with_completed_fetches([
+            (0, 0x8000, j_type(8, 0).to_le_bytes().to_vec()),
+            (1, 0x8008, b_type(8, 0, 0, 0).to_le_bytes().to_vec()),
+        ]);
+        core.set_branch_predictor_kind(RiscvBranchPredictorKind::BiMode);
+        core.set_branch_lookahead(2);
+        {
+            let mut state = core.state.lock().expect("riscv core lock");
+            let history_seed = state
+                .bimode_branch_predictor
+                .predict(RISCV_LOCAL_BIMODE_THREAD, Address::new(0x9000))
+                .unwrap();
+            state
+                .bimode_branch_predictor
+                .update_history(history_seed.history(), true)
+                .unwrap();
+            let second_pc = Address::new(0x8008);
+            train_selected_bimode_taken(&mut state, second_pc);
+            let trained_second = state
+                .bimode_branch_predictor
+                .predict(RISCV_LOCAL_BIMODE_THREAD, second_pc)
+                .unwrap();
+            assert_eq!(trained_second.global_history_before(), 1);
+            assert!(trained_second.predicted_taken());
+            state
+                .bimode_branch_predictor
+                .squash(history_seed.history())
+                .unwrap();
+            assert_eq!(
+                state.bimode_branch_predictor.snapshot().threads()[0].global_history(),
+                0
+            );
+        }
+
+        let first = core.next_fetch_ahead_before_retire().unwrap();
+        assert_eq!(first.pc(), Address::new(0x8008));
+        core.set_fetch_ahead_pc(first.pc());
+        core.record_fetch_ahead_speculation(&first);
+
+        assert_eq!(
+            core.bimode_branch_predictor_snapshot().threads()[0].global_history(),
             0
         );
         let second = core.next_fetch_ahead_before_retire().unwrap();
