@@ -260,6 +260,34 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
             );
         }
         for kind in BranchTargetKind::ALL {
+            if let Some(target_wrong) = snapshot_value(
+                snapshot,
+                &format!(
+                    "sim.cpu{cpu}.branch_predictor.target_wrong.{}",
+                    kind.canonical_stat_name()
+                ),
+            ) {
+                append_derived_count_stat(
+                    output,
+                    &format!(
+                        "{alias_prefix}.branchPred.targetWrong_0::{}",
+                        kind.gem5_branch_type_name()
+                    ),
+                    target_wrong,
+                );
+            }
+        }
+        if let Some(target_wrong) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.branch_predictor.target_wrong.total"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.targetWrong_0::total"),
+                target_wrong,
+            );
+        }
+        for kind in BranchTargetKind::ALL {
             if let Some(mispredictions) = snapshot_value(
                 snapshot,
                 &format!(

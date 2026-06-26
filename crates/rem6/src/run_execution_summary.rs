@@ -217,6 +217,7 @@ pub(super) fn execution_summary(
             branch_predictor_lookups: branch_speculation_summary.lookup_branch_kinds(),
             branch_predictor_committed: branch_speculation_summary.committed_branch_kinds(),
             branch_predictor_mispredicted: branch_speculation_summary.mispredicted_branch_kinds(),
+            branch_predictor_target_wrong: branch_speculation_summary.target_wrong_branch_kinds(),
             branch_predictor_mispredict_due_to_predictor: branch_speculation_summary
                 .mispredict_due_to_predictor(),
             tournament_local_predictions: tournament_selection_counts.local_predictions,

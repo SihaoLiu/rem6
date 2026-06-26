@@ -11,6 +11,7 @@ pub struct RiscvBranchSpeculationSummary {
     lookup_branch_kinds: BranchTargetKindCounts,
     committed_branch_kinds: BranchTargetKindCounts,
     mispredicted_branch_kinds: BranchTargetKindCounts,
+    target_wrong_branch_kinds: BranchTargetKindCounts,
     btb_mispredictions: u64,
     predicted_taken_btb_misses: u64,
     btb_mispredict_due_to_btb_miss: BranchTargetKindCounts,
@@ -44,6 +45,10 @@ impl RiscvBranchSpeculationSummary {
 
     pub const fn mispredicted_branch_kinds(self) -> BranchTargetKindCounts {
         self.mispredicted_branch_kinds
+    }
+
+    pub const fn target_wrong_branch_kinds(self) -> BranchTargetKindCounts {
+        self.target_wrong_branch_kinds
     }
 
     pub const fn btb_mispredictions(self) -> u64 {
@@ -87,6 +92,9 @@ impl RiscvBranchSpeculationSummary {
         self.committed_branch_kinds.increment(branch_kind);
         if mispredicted {
             self.mispredicted_branch_kinds.increment(branch_kind);
+            if predicted_target != actual_target {
+                self.target_wrong_branch_kinds.increment(branch_kind);
+            }
         }
 
         let Some(branch_target_prediction) = branch_target_prediction else {

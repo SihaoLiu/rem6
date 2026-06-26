@@ -1237,6 +1237,13 @@ mod tests {
         assert_eq!(summary.mispredicted_branch_kinds().total(), 1);
         assert_eq!(
             summary
+                .target_wrong_branch_kinds()
+                .value(BranchTargetKind::DirectConditional),
+            1
+        );
+        assert_eq!(summary.target_wrong_branch_kinds().total(), 1);
+        assert_eq!(
+            summary
                 .mispredict_due_to_predictor()
                 .value(BranchTargetKind::DirectConditional),
             1
@@ -1303,6 +1310,13 @@ mod tests {
             0
         );
         assert_eq!(summary.mispredicted_branch_kinds().total(), 0);
+        assert_eq!(
+            summary
+                .target_wrong_branch_kinds()
+                .value(BranchTargetKind::DirectConditional),
+            0
+        );
+        assert_eq!(summary.target_wrong_branch_kinds().total(), 0);
         assert_eq!(
             summary
                 .btb_mispredict_due_to_btb_miss()
@@ -1380,6 +1394,13 @@ mod tests {
         assert_eq!(summary.mispredicted_branch_kinds().total(), 1);
         assert_eq!(
             summary
+                .target_wrong_branch_kinds()
+                .value(BranchTargetKind::DirectConditional),
+            1
+        );
+        assert_eq!(summary.target_wrong_branch_kinds().total(), 1);
+        assert_eq!(
+            summary
                 .btb_mispredict_due_to_btb_miss()
                 .value(BranchTargetKind::DirectConditional),
             0
@@ -1415,6 +1436,13 @@ mod tests {
             1
         );
         assert_eq!(summary.lookup_branch_kinds().total(), 1);
+        assert_eq!(
+            summary
+                .target_wrong_branch_kinds()
+                .value(BranchTargetKind::DirectUnconditional),
+            0
+        );
+        assert_eq!(summary.target_wrong_branch_kinds().total(), 0);
         assert_eq!(
             summary
                 .btb_mispredict_due_to_btb_miss()
