@@ -3043,6 +3043,7 @@ fn rem6_run_in_order_pipeline_models_integer_mul_execute_latency() {
         ("mulh", 0x0220_91b3),
         ("mulhsu", 0x0220_a1b3),
         ("mulhu", 0x0220_b1b3),
+        ("mulw", 0x0220_81bb),
     ] {
         let mul_stats = in_order_pipeline_latency_stats(
             &format!("in-order-{name}-execute-latency"),
@@ -3072,6 +3073,69 @@ fn rem6_run_in_order_pipeline_models_integer_mul_execute_latency() {
             mul_stall - add_stall,
             EXPECTED_MUL_EXTRA_EXECUTE_CYCLES,
             "{name} should add the fixed execute-stage pipeline stall cycles: add={add_stall}, {name}={mul_stall}\nadd stats:\n{add_stats}\n{name} stats:\n{mul_stats}"
+        );
+    }
+}
+
+#[test]
+fn rem6_run_in_order_pipeline_models_integer_div_rem_execute_latency() {
+    const EXPECTED_DIV_EXTRA_EXECUTE_CYCLES: u64 = 19;
+
+    let add_stats = in_order_pipeline_latency_stats(
+        "in-order-div-add-baseline-execute-latency",
+        &[
+            0x02a0_0093, // addi x1, x0, 42
+            0x0070_0113, // addi x2, x0, 7
+            0x0020_81b3, // add x3, x1, x2
+            0x0000_0073, // ecall
+        ],
+    );
+    assert_eq!(stat_value(&add_stats, "sim.cpu0.instructions.committed"), 4);
+    assert_eq!(
+        stat_value(&add_stats, "sim.cpu0.pipeline.in_order.data_wait_cycles"),
+        0
+    );
+
+    let add_cycles = stat_value(&add_stats, "sim.cpu0.pipeline.in_order.cycles");
+    let add_stall = stat_value(&add_stats, "sim.cpu0.pipeline.in_order.stall_cycles");
+    for (name, word) in [
+        ("div", 0x0220_c1b3),
+        ("divu", 0x0220_d1b3),
+        ("rem", 0x0220_e1b3),
+        ("remu", 0x0220_f1b3),
+        ("divw", 0x0220_c1bb),
+        ("divuw", 0x0220_d1bb),
+        ("remw", 0x0220_e1bb),
+        ("remuw", 0x0220_f1bb),
+    ] {
+        let div_stats = in_order_pipeline_latency_stats(
+            &format!("in-order-{name}-execute-latency"),
+            &[
+                0x02a0_0093, // addi x1, x0, 42
+                0x0070_0113, // addi x2, x0, 7
+                word,
+                0x0000_0073, // ecall
+            ],
+        );
+
+        assert_eq!(stat_value(&div_stats, "sim.cpu0.instructions.committed"), 4);
+        assert_eq!(
+            stat_value(&div_stats, "sim.cpu0.pipeline.in_order.data_wait_cycles"),
+            0
+        );
+
+        let div_cycles = stat_value(&div_stats, "sim.cpu0.pipeline.in_order.cycles");
+        assert_eq!(
+            div_cycles - add_cycles,
+            EXPECTED_DIV_EXTRA_EXECUTE_CYCLES,
+            "{name} should consume the fixed extra execute latency: add={add_cycles}, {name}={div_cycles}\nadd stats:\n{add_stats}\n{name} stats:\n{div_stats}"
+        );
+
+        let div_stall = stat_value(&div_stats, "sim.cpu0.pipeline.in_order.stall_cycles");
+        assert_eq!(
+            div_stall - add_stall,
+            EXPECTED_DIV_EXTRA_EXECUTE_CYCLES,
+            "{name} should add the fixed execute-stage pipeline stall cycles: add={add_stall}, {name}={div_stall}\nadd stats:\n{add_stats}\n{name} stats:\n{div_stats}"
         );
     }
 }

@@ -15,6 +15,7 @@ use crate::{
 };
 
 const RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES: u64 = 2;
+const RISCV_SCALAR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES: u64 = 19;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RiscvPendingFetchPrefix {
@@ -450,7 +451,16 @@ fn in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64 {
         RiscvInstruction::Mul { .. }
         | RiscvInstruction::Mulh { .. }
         | RiscvInstruction::Mulhsu { .. }
-        | RiscvInstruction::Mulhu { .. } => RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES,
+        | RiscvInstruction::Mulhu { .. }
+        | RiscvInstruction::Mulw { .. } => RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES,
+        RiscvInstruction::Div { .. }
+        | RiscvInstruction::Divu { .. }
+        | RiscvInstruction::Rem { .. }
+        | RiscvInstruction::Remu { .. }
+        | RiscvInstruction::Divw { .. }
+        | RiscvInstruction::Divuw { .. }
+        | RiscvInstruction::Remw { .. }
+        | RiscvInstruction::Remuw { .. } => RISCV_SCALAR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES,
         _ => 0,
     }
 }
