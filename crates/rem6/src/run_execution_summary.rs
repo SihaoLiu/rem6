@@ -214,6 +214,7 @@ pub(super) fn execution_summary(
                 .predicted_taken_btb_misses(),
             branch_target_buffer_mispredict_due_to_btb_miss: branch_speculation_summary
                 .btb_mispredict_due_to_btb_miss(),
+            branch_predictor_lookups: branch_speculation_summary.lookup_branch_kinds(),
             branch_predictor_committed: branch_speculation_summary.committed_branch_kinds(),
             branch_predictor_mispredicted: branch_speculation_summary.mispredicted_branch_kinds(),
             branch_predictor_mispredict_due_to_predictor: branch_speculation_summary

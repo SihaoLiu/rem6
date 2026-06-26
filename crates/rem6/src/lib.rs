@@ -480,6 +480,7 @@ pub struct Rem6CoreSummary {
     branch_target_buffer_mispredictions: u64,
     branch_target_buffer_predicted_taken_misses: u64,
     branch_target_buffer_mispredict_due_to_btb_miss: BranchTargetKindCounts,
+    branch_predictor_lookups: BranchTargetKindCounts,
     branch_predictor_committed: BranchTargetKindCounts,
     branch_predictor_mispredicted: BranchTargetKindCounts,
     branch_predictor_mispredict_due_to_predictor: BranchTargetKindCounts,

@@ -8,6 +8,7 @@ pub struct RiscvBranchSpeculationSummary {
     repairs: u64,
     removed_youngers: u64,
     max_pending: u64,
+    lookup_branch_kinds: BranchTargetKindCounts,
     committed_branch_kinds: BranchTargetKindCounts,
     mispredicted_branch_kinds: BranchTargetKindCounts,
     btb_mispredictions: u64,
@@ -31,6 +32,10 @@ impl RiscvBranchSpeculationSummary {
 
     pub const fn max_pending(self) -> u64 {
         self.max_pending
+    }
+
+    pub const fn lookup_branch_kinds(self) -> BranchTargetKindCounts {
+        self.lookup_branch_kinds
     }
 
     pub const fn committed_branch_kinds(self) -> BranchTargetKindCounts {
@@ -57,8 +62,9 @@ impl RiscvBranchSpeculationSummary {
         self.mispredict_due_to_predictor
     }
 
-    pub(crate) fn record_prediction(&mut self, pending: u64) {
+    pub(crate) fn record_prediction(&mut self, branch_kind: BranchTargetKind, pending: u64) {
         self.predictions = self.predictions.saturating_add(1);
+        self.lookup_branch_kinds.increment(branch_kind);
         self.max_pending = self.max_pending.max(pending);
     }
 

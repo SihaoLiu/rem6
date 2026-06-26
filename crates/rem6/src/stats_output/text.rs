@@ -176,6 +176,34 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
             );
         }
         for kind in BranchTargetKind::ALL {
+            if let Some(lookups) = snapshot_value(
+                snapshot,
+                &format!(
+                    "sim.cpu{cpu}.branch_predictor.lookups.{}",
+                    kind.canonical_stat_name()
+                ),
+            ) {
+                append_derived_count_stat(
+                    output,
+                    &format!(
+                        "{alias_prefix}.branchPred.lookups_0::{}",
+                        kind.gem5_branch_type_name()
+                    ),
+                    lookups,
+                );
+            }
+        }
+        if let Some(lookups) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.branch_predictor.lookups.total"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.lookups_0::total"),
+                lookups,
+            );
+        }
+        for kind in BranchTargetKind::ALL {
             if let Some(committed) = snapshot_value(
                 snapshot,
                 &format!(

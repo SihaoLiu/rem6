@@ -482,6 +482,46 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
                 &format!("sim.cpu{cpu}.branch_predictor.mispredicted.indirect_unconditional")
             )
         );
+        assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.lookups_0::DirectCond")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.lookups.direct_conditional")
+            )
+        );
+        assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.lookups_0::DirectUncond")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.lookups.direct_unconditional")
+            )
+        );
+        assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.lookups_0::IndirectUncond")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.lookups.indirect_unconditional")
+            )
+        );
+        assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.lookups_0::total")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.lookups.total")
+            )
+        );
         let btb_lookups = text_stat_value(
             &stdout,
             &format!("sim.cpu{cpu}.branch_predictor.btb.lookups"),
@@ -598,6 +638,30 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
             .contains("unit=Count"),
             "{stdout}"
         );
+        assert!(
+            text_stat_line(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.lookups_0::DirectCond")
+            )
+            .contains("unit=Count"),
+            "{stdout}"
+        );
+        assert!(
+            text_stat_line(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.lookups_0::DirectUncond")
+            )
+            .contains("unit=Count"),
+            "{stdout}"
+        );
+        assert!(
+            text_stat_line(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.lookups_0::total")
+            )
+            .contains("unit=Count"),
+            "{stdout}"
+        );
         if btb_lookups != 0 {
             assert!(
                 text_stat_line(&stdout, &format!("system.cpu{cpu}.branchPred.BTBHitRatio"))
@@ -662,6 +726,18 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
     assert!(!has_text_stat(
         &stdout,
         "system.cpu.branchPred.mispredicted_0::DirectCond"
+    ));
+    assert!(!has_text_stat(
+        &stdout,
+        "system.cpu.branchPred.lookups_0::DirectCond"
+    ));
+    assert!(!has_text_stat(
+        &stdout,
+        "system.cpu.branchPred.lookups_0::DirectUncond"
+    ));
+    assert!(!has_text_stat(
+        &stdout,
+        "system.cpu.branchPred.lookups_0::total"
     ));
 }
 
@@ -4715,6 +4791,29 @@ fn rem6_run_stats_emit_conditional_branch_predicted_taken_from_execution() {
         ),
         0
     );
+    let direct_conditional_lookups = stat_value(
+        &stdout,
+        "sim.cpu0.branch_predictor.lookups.direct_conditional",
+    );
+    let direct_unconditional_lookups = stat_value(
+        &stdout,
+        "sim.cpu0.branch_predictor.lookups.direct_unconditional",
+    );
+    assert_eq!(
+        stat_value(&stdout, "sim.cpu0.branch_predictor.lookups.total"),
+        direct_conditional_lookups + direct_unconditional_lookups
+    );
+    assert_eq!(
+        stat_value(&stdout, "sim.cpu0.branch_predictor.lookups.no_branch"),
+        0
+    );
+    assert_eq!(
+        stat_value(
+            &stdout,
+            "sim.cpu0.branch_predictor.lookups.indirect_unconditional"
+        ),
+        0
+    );
     assert!(branch_target_buffer_lookups > 0, "{stdout}");
     assert!(branch_target_buffer_hits > 0, "{stdout}");
     assert!(branch_target_buffer_misses > 0, "{stdout}");
@@ -4725,6 +4824,9 @@ fn rem6_run_stats_emit_conditional_branch_predicted_taken_from_execution() {
     assert!(direct_conditional_predictor_mispredict > 0, "{stdout}");
     assert!(direct_conditional_committed > 0, "{stdout}");
     assert!(direct_conditional_mispredicted > 0, "{stdout}");
+    assert!(direct_conditional_lookups > 0, "{stdout}");
+    assert!(direct_unconditional_lookups > 0, "{stdout}");
+    assert!(direct_conditional_lookups >= direct_conditional_committed);
     assert!(direct_conditional_committed >= direct_conditional_mispredicted);
     assert_eq!(
         direct_conditional_mispredicted,
@@ -4757,6 +4859,7 @@ fn rem6_run_stats_emit_conditional_branch_predicted_taken_from_execution() {
         .contains("\"path\":\"system.cpu.branchPred.mispredictDueToPredictor_0::DirectCond\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.committed_0::DirectCond\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.mispredicted_0::DirectCond\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.lookups_0::DirectCond\""));
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condPredictedTaken\""));
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.BTBLookups\""));
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.BTBHits\""));
@@ -4846,6 +4949,15 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
     );
     let mispredicted_total =
         text_stat_value(&stdout, "sim.cpu0.branch_predictor.mispredicted.total");
+    let lookups_direct_conditional = text_stat_value(
+        &stdout,
+        "sim.cpu0.branch_predictor.lookups.direct_conditional",
+    );
+    let lookups_direct_unconditional = text_stat_value(
+        &stdout,
+        "sim.cpu0.branch_predictor.lookups.direct_unconditional",
+    );
+    let lookups_total = text_stat_value(&stdout, "sim.cpu0.branch_predictor.lookups.total");
 
     assert_eq!(
         text_stat_value(&stdout, "system.cpu.branchPred.condPredicted"),
@@ -4952,6 +5064,22 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
         ),
         0
     );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.lookups_0::DirectCond"),
+        lookups_direct_conditional
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.lookups_0::DirectUncond"),
+        lookups_direct_unconditional
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.lookups_0::IndirectUncond"),
+        0
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.lookups_0::total"),
+        lookups_total
+    );
     assert!(branch_predicted_taken > 0, "{stdout}");
     assert!(btb_lookups > 0, "{stdout}");
     assert!(btb_hits > 0, "{stdout}");
@@ -4978,6 +5106,13 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
     assert!(mispredicted_direct_conditional > 0, "{stdout}");
     assert!(committed_total >= committed_direct_conditional);
     assert!(mispredicted_total >= mispredicted_direct_conditional);
+    assert!(lookups_direct_conditional > 0, "{stdout}");
+    assert!(lookups_direct_unconditional > 0, "{stdout}");
+    assert_eq!(
+        lookups_total,
+        lookups_direct_conditional + lookups_direct_unconditional
+    );
+    assert!(lookups_direct_conditional >= committed_direct_conditional);
     assert!(committed_direct_conditional >= mispredicted_direct_conditional);
     assert_eq!(
         mispredicted_direct_conditional,
@@ -5045,6 +5180,16 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
     );
     assert!(
         text_stat_line(&stdout, "system.cpu.branchPred.mispredicted_0::DirectCond")
+            .contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.branchPred.lookups_0::DirectCond")
+            .contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.branchPred.lookups_0::DirectUncond")
             .contains("unit=Count"),
         "{stdout}"
     );

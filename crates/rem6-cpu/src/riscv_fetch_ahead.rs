@@ -86,7 +86,9 @@ impl RiscvCore {
                 .insert(speculation.sequence(), branch_target_prediction);
         }
         let pending = state.branch_speculations.len() as u64;
-        state.branch_speculation_summary.record_prediction(pending);
+        state
+            .branch_speculation_summary
+            .record_prediction(speculation.branch_kind(), pending);
     }
 
     pub(crate) fn can_retire_completed_fetch_while_fetch_pending(
@@ -123,6 +125,7 @@ impl RiscvFetchAheadDecision {
         pc: Address,
         sequence: u64,
         branch_pc: Address,
+        branch_kind: BranchTargetKind,
         predicted_taken: bool,
         target: Option<Address>,
         branch_target_prediction: Option<BranchTargetPrediction>,
@@ -132,6 +135,7 @@ impl RiscvFetchAheadDecision {
             branch_speculation: Some(RiscvFetchAheadSpeculation {
                 sequence,
                 pc: branch_pc,
+                branch_kind,
                 predicted_taken,
                 target,
                 branch_target_prediction,
@@ -152,6 +156,7 @@ impl RiscvFetchAheadDecision {
 pub(crate) struct RiscvFetchAheadSpeculation {
     sequence: u64,
     pc: Address,
+    branch_kind: BranchTargetKind,
     predicted_taken: bool,
     target: Option<Address>,
     branch_target_prediction: Option<BranchTargetPrediction>,
@@ -164,6 +169,10 @@ impl RiscvFetchAheadSpeculation {
 
     const fn pc(self) -> Address {
         self.pc
+    }
+
+    const fn branch_kind(self) -> BranchTargetKind {
+        self.branch_kind
     }
 
     const fn predicted_taken(self) -> bool {
@@ -387,13 +396,14 @@ fn fetch_ahead_decision(
     if instruction_allows_straight_line_fetch_ahead(instruction) {
         return Some(RiscvFetchAheadDecision::straight_line(sequential_pc));
     }
-    if let Some((target, branch_target_prediction)) =
+    if let Some((target, branch_kind, branch_target_prediction)) =
         direct_jump_fetch_ahead_target(state, fetch_pc, instruction)
     {
         return Some(RiscvFetchAheadDecision::branch(
             target,
             sequence,
             fetch_pc,
+            branch_kind,
             true,
             Some(target),
             Some(branch_target_prediction),
@@ -414,6 +424,7 @@ fn fetch_ahead_decision(
         pc,
         sequence,
         fetch_pc,
+        BranchTargetKind::DirectConditional,
         prediction.predicted_taken,
         prediction.target,
         prediction.branch_target_prediction,
@@ -669,7 +680,7 @@ fn direct_jump_fetch_ahead_target(
     state: &mut RiscvCoreState,
     fetch_pc: Address,
     instruction: RiscvInstruction,
-) -> Option<(Address, BranchTargetPrediction)> {
+) -> Option<(Address, BranchTargetKind, BranchTargetPrediction)> {
     let kind = match instruction {
         RiscvInstruction::Jal { .. } | RiscvInstruction::Jalr { .. } => {
             riscv_branch_target_kind(instruction)
@@ -689,7 +700,7 @@ fn direct_jump_fetch_ahead_target(
         }
         _ => None,
     }?;
-    Some((target, branch_target_prediction))
+    Some((target, kind, branch_target_prediction))
 }
 
 fn checked_add_signed(value: u64, offset: i64) -> Option<u64> {
@@ -1205,6 +1216,13 @@ mod tests {
         assert_eq!(summary.repairs(), 1);
         assert_eq!(
             summary
+                .lookup_branch_kinds()
+                .value(BranchTargetKind::DirectConditional),
+            1
+        );
+        assert_eq!(summary.lookup_branch_kinds().total(), 1);
+        assert_eq!(
+            summary
                 .committed_branch_kinds()
                 .value(BranchTargetKind::DirectConditional),
             1
@@ -1264,6 +1282,13 @@ mod tests {
         assert_eq!(summary.repairs(), 0);
         assert_eq!(summary.btb_mispredictions(), 1);
         assert_eq!(summary.predicted_taken_btb_misses(), 1);
+        assert_eq!(
+            summary
+                .lookup_branch_kinds()
+                .value(BranchTargetKind::DirectConditional),
+            1
+        );
+        assert_eq!(summary.lookup_branch_kinds().total(), 1);
         assert_eq!(
             summary
                 .committed_branch_kinds()
@@ -1334,6 +1359,13 @@ mod tests {
         assert_eq!(summary.predicted_taken_btb_misses(), 0);
         assert_eq!(
             summary
+                .lookup_branch_kinds()
+                .value(BranchTargetKind::DirectConditional),
+            1
+        );
+        assert_eq!(summary.lookup_branch_kinds().total(), 1);
+        assert_eq!(
+            summary
                 .committed_branch_kinds()
                 .value(BranchTargetKind::DirectConditional),
             1
@@ -1376,6 +1408,13 @@ mod tests {
         assert_eq!(summary.repairs(), 0);
         assert_eq!(summary.btb_mispredictions(), 1);
         assert_eq!(summary.predicted_taken_btb_misses(), 1);
+        assert_eq!(
+            summary
+                .lookup_branch_kinds()
+                .value(BranchTargetKind::DirectUnconditional),
+            1
+        );
+        assert_eq!(summary.lookup_branch_kinds().total(), 1);
         assert_eq!(
             summary
                 .btb_mispredict_due_to_btb_miss()

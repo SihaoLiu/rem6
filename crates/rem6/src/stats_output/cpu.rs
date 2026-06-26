@@ -345,6 +345,26 @@ pub(super) fn emit_cpu_run_stats(
             increment_stat(
                 stats,
                 &format!(
+                    "sim.cpu{}.branch_predictor.lookups.{}",
+                    core.cpu,
+                    kind.canonical_stat_name()
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.branch_predictor_lookups.value(kind),
+            )?;
+        }
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.branch_predictor.lookups.total", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.branch_predictor_lookups.total(),
+        )?;
+        for kind in BranchTargetKind::ALL {
+            increment_stat(
+                stats,
+                &format!(
                     "sim.cpu{}.branch_predictor.committed.{}",
                     core.cpu,
                     kind.canonical_stat_name()
