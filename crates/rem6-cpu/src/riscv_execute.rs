@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 
-use rem6_isa_riscv::{RiscvInstruction, RiscvVectorWideningIntegerInstruction};
+use rem6_isa_riscv::{
+    RiscvInstruction, RiscvVectorFloatInstruction, RiscvVectorWideningIntegerInstruction,
+};
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
@@ -28,6 +30,22 @@ const RISCV_SCALAR_FLOAT_MUL_EXTRA_EXECUTE_CYCLES: u64 = 3;
 const RISCV_SCALAR_FLOAT_MUL_ADD_EXTRA_EXECUTE_CYCLES: u64 = 4;
 const RISCV_SCALAR_FLOAT_DIV_EXTRA_EXECUTE_CYCLES: u64 = 11;
 const RISCV_SCALAR_FLOAT_SQRT_EXTRA_EXECUTE_CYCLES: u64 = 23;
+const RISCV_VECTOR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES: u64 =
+    RISCV_SCALAR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES;
+const RISCV_VECTOR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES: u64 =
+    RISCV_SCALAR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES;
+const RISCV_VECTOR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES: u64 =
+    RISCV_SCALAR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES;
+const RISCV_VECTOR_FLOAT_MISC_EXTRA_EXECUTE_CYCLES: u64 =
+    RISCV_SCALAR_FLOAT_MISC_EXTRA_EXECUTE_CYCLES;
+const RISCV_VECTOR_FLOAT_MUL_EXTRA_EXECUTE_CYCLES: u64 =
+    RISCV_SCALAR_FLOAT_MUL_EXTRA_EXECUTE_CYCLES;
+const RISCV_VECTOR_FLOAT_MUL_ADD_EXTRA_EXECUTE_CYCLES: u64 =
+    RISCV_SCALAR_FLOAT_MUL_ADD_EXTRA_EXECUTE_CYCLES;
+const RISCV_VECTOR_FLOAT_DIV_EXTRA_EXECUTE_CYCLES: u64 =
+    RISCV_SCALAR_FLOAT_DIV_EXTRA_EXECUTE_CYCLES;
+const RISCV_VECTOR_FLOAT_SQRT_EXTRA_EXECUTE_CYCLES: u64 =
+    RISCV_SCALAR_FLOAT_SQRT_EXTRA_EXECUTE_CYCLES;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RiscvPendingFetchPrefix {
@@ -566,7 +584,68 @@ fn in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64 {
         RiscvInstruction::FloatSqrtS { .. } | RiscvInstruction::FloatSqrtD { .. } => {
             RISCV_SCALAR_FLOAT_SQRT_EXTRA_EXECUTE_CYCLES
         }
+        RiscvInstruction::VectorFloat(vector_instruction) => {
+            vector_float_execute_wait_cycles(vector_instruction)
+        }
         _ => 0,
+    }
+}
+
+fn vector_float_execute_wait_cycles(instruction: RiscvVectorFloatInstruction) -> u64 {
+    match instruction {
+        RiscvVectorFloatInstruction::AddVv { .. }
+        | RiscvVectorFloatInstruction::AddVf { .. }
+        | RiscvVectorFloatInstruction::SubVv { .. }
+        | RiscvVectorFloatInstruction::SubVf { .. }
+        | RiscvVectorFloatInstruction::ReverseSubVf { .. } => {
+            RISCV_VECTOR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES
+        }
+        RiscvVectorFloatInstruction::MinVv { .. }
+        | RiscvVectorFloatInstruction::MinVf { .. }
+        | RiscvVectorFloatInstruction::MaxVv { .. }
+        | RiscvVectorFloatInstruction::MaxVf { .. }
+        | RiscvVectorFloatInstruction::MaskEqualVv { .. }
+        | RiscvVectorFloatInstruction::MaskEqualVf { .. }
+        | RiscvVectorFloatInstruction::MaskNotEqualVv { .. }
+        | RiscvVectorFloatInstruction::MaskNotEqualVf { .. }
+        | RiscvVectorFloatInstruction::MaskLessThanVv { .. }
+        | RiscvVectorFloatInstruction::MaskLessThanVf { .. }
+        | RiscvVectorFloatInstruction::MaskLessEqualVv { .. }
+        | RiscvVectorFloatInstruction::MaskLessEqualVf { .. } => {
+            RISCV_VECTOR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES
+        }
+        RiscvVectorFloatInstruction::ConvertFloatFromUnsignedIntV { .. }
+        | RiscvVectorFloatInstruction::ConvertFloatFromSignedIntV { .. }
+        | RiscvVectorFloatInstruction::ConvertUnsignedIntFromFloatV { .. }
+        | RiscvVectorFloatInstruction::ConvertSignedIntFromFloatV { .. }
+        | RiscvVectorFloatInstruction::ConvertUnsignedIntFromFloatTowardZeroV { .. }
+        | RiscvVectorFloatInstruction::ConvertSignedIntFromFloatTowardZeroV { .. }
+        | RiscvVectorFloatInstruction::MergeVf { .. }
+        | RiscvVectorFloatInstruction::MoveVf { .. }
+        | RiscvVectorFloatInstruction::MoveFv { .. }
+        | RiscvVectorFloatInstruction::MoveSv { .. } => RISCV_VECTOR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES,
+        RiscvVectorFloatInstruction::SignInjectVv { .. }
+        | RiscvVectorFloatInstruction::SignInjectVf { .. }
+        | RiscvVectorFloatInstruction::SignInjectNegVv { .. }
+        | RiscvVectorFloatInstruction::SignInjectNegVf { .. }
+        | RiscvVectorFloatInstruction::SignInjectXorVv { .. }
+        | RiscvVectorFloatInstruction::SignInjectXorVf { .. }
+        | RiscvVectorFloatInstruction::ClassV { .. } => {
+            RISCV_VECTOR_FLOAT_MISC_EXTRA_EXECUTE_CYCLES
+        }
+        RiscvVectorFloatInstruction::MulVv { .. } | RiscvVectorFloatInstruction::MulVf { .. } => {
+            RISCV_VECTOR_FLOAT_MUL_EXTRA_EXECUTE_CYCLES
+        }
+        RiscvVectorFloatInstruction::MulAddVv { .. }
+        | RiscvVectorFloatInstruction::MulAddVf { .. } => {
+            RISCV_VECTOR_FLOAT_MUL_ADD_EXTRA_EXECUTE_CYCLES
+        }
+        RiscvVectorFloatInstruction::DivVv { .. }
+        | RiscvVectorFloatInstruction::DivVf { .. }
+        | RiscvVectorFloatInstruction::ReverseDivVf { .. } => {
+            RISCV_VECTOR_FLOAT_DIV_EXTRA_EXECUTE_CYCLES
+        }
+        RiscvVectorFloatInstruction::SqrtV { .. } => RISCV_VECTOR_FLOAT_SQRT_EXTRA_EXECUTE_CYCLES,
     }
 }
 

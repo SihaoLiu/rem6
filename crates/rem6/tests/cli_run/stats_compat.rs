@@ -3442,6 +3442,147 @@ fn rem6_run_in_order_pipeline_models_vector_integer_execute_latency() {
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_vector_fp_execute_latency() {
+    const EXPECTED_VECTOR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES: u64 = 1;
+    const EXPECTED_VECTOR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES: u64 = 1;
+    const EXPECTED_VECTOR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES: u64 = 1;
+    const EXPECTED_VECTOR_FLOAT_MISC_EXTRA_EXECUTE_CYCLES: u64 = 2;
+    const EXPECTED_VECTOR_FLOAT_MUL_EXTRA_EXECUTE_CYCLES: u64 = 3;
+    const EXPECTED_VECTOR_FLOAT_MUL_ADD_EXTRA_EXECUTE_CYCLES: u64 = 4;
+    const EXPECTED_VECTOR_FLOAT_DIV_EXTRA_EXECUTE_CYCLES: u64 = 11;
+    const EXPECTED_VECTOR_FLOAT_SQRT_EXTRA_EXECUTE_CYCLES: u64 = 23;
+
+    let no_extra_stats = in_order_pipeline_latency_stats(
+        "in-order-vector-fp-no-extra-execute-latency",
+        &vector_fp_latency_program(vector_vv_type(0b000000, 2, 1, 3)), // vadd.vv v3, v2, v1
+    );
+    assert_eq!(
+        stat_value(&no_extra_stats, "sim.cpu0.instructions.committed"),
+        8
+    );
+    assert_eq!(
+        stat_value(
+            &no_extra_stats,
+            "sim.cpu0.pipeline.in_order.data_wait_cycles"
+        ),
+        0
+    );
+
+    let no_extra_cycles = stat_value(&no_extra_stats, "sim.cpu0.pipeline.in_order.cycles");
+    let no_extra_stall = stat_value(&no_extra_stats, "sim.cpu0.pipeline.in_order.stall_cycles");
+    for (name, word, expected_extra_cycles) in [
+        (
+            "vfadd.vv",
+            vector_float_vv_type(0b000000, 2, 1, 3),
+            EXPECTED_VECTOR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vfsub.vf",
+            vector_float_vf_type(0b000010, 2, 8, 3),
+            EXPECTED_VECTOR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vfrsub.vf",
+            vector_float_vf_type(0b100111, 2, 8, 3),
+            EXPECTED_VECTOR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vfmin.vv",
+            vector_float_vv_type(0b000100, 2, 1, 3),
+            EXPECTED_VECTOR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vmfeq.vf",
+            vector_float_vf_type(0b011000, 2, 8, 3),
+            EXPECTED_VECTOR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vfcvt.xu.f.v",
+            vector_float_vv_type(0b010010, 1, 0x00, 3),
+            EXPECTED_VECTOR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vfcvt.f.xu.v",
+            vector_float_vv_type(0b010010, 1, 0x02, 3),
+            EXPECTED_VECTOR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vfmv.v.f",
+            vector_float_vf_type(0b010111, 0, 8, 3),
+            EXPECTED_VECTOR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vfmerge.vfm",
+            vector_float_masked_type(0b010111, 0b101, 2, 8, 3),
+            EXPECTED_VECTOR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vfsgnj.vv",
+            vector_float_vv_type(0b001000, 2, 1, 3),
+            EXPECTED_VECTOR_FLOAT_MISC_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vfclass.v",
+            vector_float_type(0b010011, 0b001, 1, 0x10, 3),
+            EXPECTED_VECTOR_FLOAT_MISC_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vfmul.vf",
+            vector_float_vf_type(0b100100, 2, 8, 3),
+            EXPECTED_VECTOR_FLOAT_MUL_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vfmacc.vv",
+            vector_float_vv_type(0b101100, 2, 1, 3),
+            EXPECTED_VECTOR_FLOAT_MUL_ADD_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vfdiv.vv",
+            vector_float_vv_type(0b100000, 2, 1, 3),
+            EXPECTED_VECTOR_FLOAT_DIV_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vfrdiv.vf",
+            vector_float_vf_type(0b100001, 2, 8, 3),
+            EXPECTED_VECTOR_FLOAT_DIV_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vfsqrt.v",
+            vector_float_type(0b010011, 0b001, 1, 0x00, 3),
+            EXPECTED_VECTOR_FLOAT_SQRT_EXTRA_EXECUTE_CYCLES,
+        ),
+    ] {
+        let vector_stats = in_order_pipeline_latency_stats(
+            &format!("in-order-{name}-execute-latency"),
+            &vector_fp_latency_program(word),
+        );
+
+        assert_eq!(
+            stat_value(&vector_stats, "sim.cpu0.instructions.committed"),
+            8
+        );
+        assert_eq!(
+            stat_value(&vector_stats, "sim.cpu0.pipeline.in_order.data_wait_cycles"),
+            0
+        );
+
+        let vector_cycles = stat_value(&vector_stats, "sim.cpu0.pipeline.in_order.cycles");
+        assert_eq!(
+            vector_cycles - no_extra_cycles,
+            expected_extra_cycles,
+            "{name} should consume fixed extra execute latency: no-extra={no_extra_cycles}, {name}={vector_cycles}"
+        );
+
+        let vector_stall = stat_value(&vector_stats, "sim.cpu0.pipeline.in_order.stall_cycles");
+        assert_eq!(
+            vector_stall - no_extra_stall,
+            expected_extra_cycles,
+            "{name} should add fixed execute-stage pipeline stall cycles: no-extra={no_extra_stall}, {name}={vector_stall}"
+        );
+    }
+}
+
+#[test]
 fn rem6_run_stats_emit_checker_cpu_counts_from_execution() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
@@ -3579,6 +3720,60 @@ fn vector_widening_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
 
 fn vector_widening_vx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
     vector_mvx_type(funct6, vs2, rs1, vd)
+}
+
+fn vector_fp_latency_program(instruction: u32) -> [u32; 8] {
+    [
+        u_type(0x3f80_0000, 8, 0x37),  // lui x8, 0x3f800 (f32 1.0 bits)
+        fp_r_type(0x78, 0, 8, 0x0, 8), // fmv.w.x f8, x8
+        0x0020_0513,                   // addi x10, x0, 2
+        vsetvli_type(0xd0, 10, 5),     // vsetvli x5, x10, e32, m1, ta, ma
+        vmv_v_x_type(8, 1),            // vmv.v.x v1, x8
+        vmv_v_x_type(8, 2),            // vmv.v.x v2, x8
+        instruction,
+        0x0000_0073, // ecall
+    ]
+}
+
+fn vmv_v_x_type(rs1: u8, vd: u8) -> u32 {
+    vector_vx_type(0b010111, 0, rs1, vd)
+}
+
+fn vector_vx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (0b100 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vector_float_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_float_type(funct6, 0b001, vs2, vs1, vd)
+}
+
+fn vector_float_vf_type(funct6: u32, vs2: u8, fs1: u8, vd: u8) -> u32 {
+    vector_float_type(funct6, 0b101, vs2, fs1, vd)
+}
+
+fn vector_float_type(funct6: u32, funct3: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vector_float_masked_type(funct6: u32, funct3: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
 }
 
 fn in_order_pipeline_stats_for_width(path: &std::path::Path, width: u64) -> String {
