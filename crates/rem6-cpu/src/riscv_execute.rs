@@ -17,6 +17,9 @@ use crate::{
 const RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES: u64 = 2;
 const RISCV_SCALAR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES: u64 = 19;
 const RISCV_SCALAR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES: u64 = 1;
+const RISCV_SCALAR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES: u64 = 1;
+const RISCV_SCALAR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES: u64 = 1;
+const RISCV_SCALAR_FLOAT_MISC_EXTRA_EXECUTE_CYCLES: u64 = 2;
 const RISCV_SCALAR_FLOAT_MUL_EXTRA_EXECUTE_CYCLES: u64 = 3;
 const RISCV_SCALAR_FLOAT_MUL_ADD_EXTRA_EXECUTE_CYCLES: u64 = 4;
 const RISCV_SCALAR_FLOAT_DIV_EXTRA_EXECUTE_CYCLES: u64 = 11;
@@ -470,6 +473,48 @@ fn in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64 {
         | RiscvInstruction::FloatAddD { .. }
         | RiscvInstruction::FloatSubS { .. }
         | RiscvInstruction::FloatSubD { .. } => RISCV_SCALAR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES,
+        RiscvInstruction::FloatMinS { .. }
+        | RiscvInstruction::FloatMinD { .. }
+        | RiscvInstruction::FloatMaxS { .. }
+        | RiscvInstruction::FloatMaxD { .. }
+        | RiscvInstruction::FloatLessOrEqualS { .. }
+        | RiscvInstruction::FloatLessOrEqualD { .. }
+        | RiscvInstruction::FloatLessThanS { .. }
+        | RiscvInstruction::FloatLessThanD { .. }
+        | RiscvInstruction::FloatEqualS { .. }
+        | RiscvInstruction::FloatEqualD { .. } => RISCV_SCALAR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES,
+        RiscvInstruction::FloatMoveXFromS { .. }
+        | RiscvInstruction::FloatMoveXFromD { .. }
+        | RiscvInstruction::FloatMoveSFromX { .. }
+        | RiscvInstruction::FloatMoveDFromX { .. }
+        | RiscvInstruction::FloatConvertSFromW { .. }
+        | RiscvInstruction::FloatConvertSFromWu { .. }
+        | RiscvInstruction::FloatConvertSFromL { .. }
+        | RiscvInstruction::FloatConvertSFromLu { .. }
+        | RiscvInstruction::FloatConvertWFromS { .. }
+        | RiscvInstruction::FloatConvertWuFromS { .. }
+        | RiscvInstruction::FloatConvertLFromS { .. }
+        | RiscvInstruction::FloatConvertLuFromS { .. }
+        | RiscvInstruction::FloatConvertSFromD { .. }
+        | RiscvInstruction::FloatConvertDFromS { .. }
+        | RiscvInstruction::FloatConvertDFromW { .. }
+        | RiscvInstruction::FloatConvertDFromWu { .. }
+        | RiscvInstruction::FloatConvertDFromL { .. }
+        | RiscvInstruction::FloatConvertDFromLu { .. }
+        | RiscvInstruction::FloatConvertWFromD { .. }
+        | RiscvInstruction::FloatConvertWuFromD { .. }
+        | RiscvInstruction::FloatConvertLFromD { .. }
+        | RiscvInstruction::FloatConvertLuFromD { .. } => {
+            RISCV_SCALAR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES
+        }
+        RiscvInstruction::FloatSignInjectS { .. }
+        | RiscvInstruction::FloatSignInjectD { .. }
+        | RiscvInstruction::FloatSignInjectNegS { .. }
+        | RiscvInstruction::FloatSignInjectNegD { .. }
+        | RiscvInstruction::FloatSignInjectXorS { .. }
+        | RiscvInstruction::FloatSignInjectXorD { .. }
+        | RiscvInstruction::FloatClassS { .. }
+        | RiscvInstruction::FloatClassD { .. } => RISCV_SCALAR_FLOAT_MISC_EXTRA_EXECUTE_CYCLES,
         RiscvInstruction::FloatMulS { .. } | RiscvInstruction::FloatMulD { .. } => {
             RISCV_SCALAR_FLOAT_MUL_EXTRA_EXECUTE_CYCLES
         }

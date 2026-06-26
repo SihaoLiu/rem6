@@ -3142,30 +3142,46 @@ fn rem6_run_in_order_pipeline_models_integer_div_rem_execute_latency() {
 
 #[test]
 fn rem6_run_in_order_pipeline_models_scalar_fp_execute_latency() {
-    let fp_baseline_stats = in_order_pipeline_latency_stats(
-        "in-order-fp-baseline-execute-latency",
+    let no_extra_stats = in_order_pipeline_latency_stats(
+        "in-order-fp-no-extra-reference-execute-latency",
         &[
-            fp_r_type(0x11, 0, 0, 0x0, 5), // fsgnj.d f5, f0, f0
-            0x0000_0073,                   // ecall
+            0x0010_0293, // addi x5, x0, 1
+            0x0000_0073, // ecall
         ],
     );
     assert_eq!(
-        stat_value(&fp_baseline_stats, "sim.cpu0.instructions.committed"),
+        stat_value(&no_extra_stats, "sim.cpu0.instructions.committed"),
         2
     );
     assert_eq!(
         stat_value(
-            &fp_baseline_stats,
+            &no_extra_stats,
             "sim.cpu0.pipeline.in_order.data_wait_cycles"
         ),
         0
     );
 
-    let baseline_cycles = stat_value(&fp_baseline_stats, "sim.cpu0.pipeline.in_order.cycles");
-    let baseline_stall = stat_value(
-        &fp_baseline_stats,
-        "sim.cpu0.pipeline.in_order.stall_cycles",
+    let no_extra_stall = stat_value(&no_extra_stats, "sim.cpu0.pipeline.in_order.stall_cycles");
+    let fp_reference_stats = in_order_pipeline_latency_stats(
+        "in-order-fp-reference-execute-latency",
+        &[
+            fp_r_type(0x01, 0, 0, 0x0, 5), // fadd.d f5, f0, f0
+            0x0000_0073,                   // ecall
+        ],
     );
+    assert_eq!(
+        stat_value(&fp_reference_stats, "sim.cpu0.instructions.committed"),
+        2
+    );
+    assert_eq!(
+        stat_value(
+            &fp_reference_stats,
+            "sim.cpu0.pipeline.in_order.data_wait_cycles"
+        ),
+        0
+    );
+
+    let reference_cycles = stat_value(&fp_reference_stats, "sim.cpu0.pipeline.in_order.cycles");
     for (name, word, expected_extra_cycles) in [
         ("fadd.s", fp_r_type(0x00, 0, 0, 0x0, 5), 1),
         ("fadd.d", fp_r_type(0x01, 0, 0, 0x0, 5), 1),
@@ -3185,6 +3201,46 @@ fn rem6_run_in_order_pipeline_models_scalar_fp_execute_latency() {
         ("fdiv.d", fp_r_type(0x0d, 0, 0, 0x0, 5), 11),
         ("fsqrt.s", fp_r_type(0x2c, 0, 0, 0x0, 5), 23),
         ("fsqrt.d", fp_r_type(0x2d, 0, 0, 0x0, 5), 23),
+        ("fsgnj.s", fp_r_type(0x10, 0, 0, 0x0, 5), 2),
+        ("fsgnjn.s", fp_r_type(0x10, 0, 0, 0x1, 5), 2),
+        ("fsgnjx.s", fp_r_type(0x10, 0, 0, 0x2, 5), 2),
+        ("fsgnj.d", fp_r_type(0x11, 0, 0, 0x0, 5), 2),
+        ("fsgnjn.d", fp_r_type(0x11, 0, 0, 0x1, 5), 2),
+        ("fsgnjx.d", fp_r_type(0x11, 0, 0, 0x2, 5), 2),
+        ("fclass.s", fp_r_type(0x70, 0, 0, 0x1, 5), 2),
+        ("fclass.d", fp_r_type(0x71, 0, 0, 0x1, 5), 2),
+        ("fmin.s", fp_r_type(0x14, 0, 0, 0x0, 5), 1),
+        ("fmax.s", fp_r_type(0x14, 0, 0, 0x1, 5), 1),
+        ("fmin.d", fp_r_type(0x15, 0, 0, 0x0, 5), 1),
+        ("fmax.d", fp_r_type(0x15, 0, 0, 0x1, 5), 1),
+        ("fle.s", fp_r_type(0x50, 0, 0, 0x0, 5), 1),
+        ("flt.s", fp_r_type(0x50, 0, 0, 0x1, 5), 1),
+        ("feq.s", fp_r_type(0x50, 0, 0, 0x2, 5), 1),
+        ("fle.d", fp_r_type(0x51, 0, 0, 0x0, 5), 1),
+        ("flt.d", fp_r_type(0x51, 0, 0, 0x1, 5), 1),
+        ("feq.d", fp_r_type(0x51, 0, 0, 0x2, 5), 1),
+        ("fmv.x.w", fp_r_type(0x70, 0, 0, 0x0, 5), 1),
+        ("fmv.x.d", fp_r_type(0x71, 0, 0, 0x0, 5), 1),
+        ("fmv.w.x", fp_r_type(0x78, 0, 0, 0x0, 5), 1),
+        ("fmv.d.x", fp_r_type(0x79, 0, 0, 0x0, 5), 1),
+        ("fcvt.s.w", fp_r_type(0x68, 0, 0, 0x0, 5), 1),
+        ("fcvt.s.wu", fp_r_type(0x68, 1, 0, 0x0, 5), 1),
+        ("fcvt.s.l", fp_r_type(0x68, 2, 0, 0x0, 5), 1),
+        ("fcvt.s.lu", fp_r_type(0x68, 3, 0, 0x0, 5), 1),
+        ("fcvt.w.s", fp_r_type(0x60, 0, 0, 0x0, 5), 1),
+        ("fcvt.wu.s", fp_r_type(0x60, 1, 0, 0x0, 5), 1),
+        ("fcvt.l.s", fp_r_type(0x60, 2, 0, 0x0, 5), 1),
+        ("fcvt.lu.s", fp_r_type(0x60, 3, 0, 0x0, 5), 1),
+        ("fcvt.s.d", fp_r_type(0x20, 1, 0, 0x0, 5), 1),
+        ("fcvt.d.s", fp_r_type(0x21, 0, 0, 0x0, 5), 1),
+        ("fcvt.d.w", fp_r_type(0x69, 0, 0, 0x0, 5), 1),
+        ("fcvt.d.wu", fp_r_type(0x69, 1, 0, 0x0, 5), 1),
+        ("fcvt.d.l", fp_r_type(0x69, 2, 0, 0x0, 5), 1),
+        ("fcvt.d.lu", fp_r_type(0x69, 3, 0, 0x0, 5), 1),
+        ("fcvt.w.d", fp_r_type(0x61, 0, 0, 0x0, 5), 1),
+        ("fcvt.wu.d", fp_r_type(0x61, 1, 0, 0x0, 5), 1),
+        ("fcvt.l.d", fp_r_type(0x61, 2, 0, 0x0, 5), 1),
+        ("fcvt.lu.d", fp_r_type(0x61, 3, 0, 0x0, 5), 1),
     ] {
         let fp_stats = in_order_pipeline_latency_stats(
             &format!("in-order-{name}-execute-latency"),
@@ -3201,17 +3257,19 @@ fn rem6_run_in_order_pipeline_models_scalar_fp_execute_latency() {
         );
 
         let fp_cycles = stat_value(&fp_stats, "sim.cpu0.pipeline.in_order.cycles");
+        let cycle_delta = fp_cycles as i64 - reference_cycles as i64;
         assert_eq!(
-            fp_cycles - baseline_cycles,
-            expected_extra_cycles,
-            "{name} should consume fixed extra execute latency: baseline={baseline_cycles}, {name}={fp_cycles}\nbaseline stats:\n{fp_baseline_stats}\n{name} stats:\n{fp_stats}"
+            cycle_delta,
+            expected_extra_cycles - 1,
+            "{name} should consume fixed execute latency relative to fadd.d: reference={reference_cycles}, {name}={fp_cycles}\nreference stats:\n{fp_reference_stats}\n{name} stats:\n{fp_stats}"
         );
 
         let fp_stall = stat_value(&fp_stats, "sim.cpu0.pipeline.in_order.stall_cycles");
+        let stall_extra = fp_stall as i64 - no_extra_stall as i64;
         assert_eq!(
-            fp_stall - baseline_stall,
+            stall_extra,
             expected_extra_cycles,
-            "{name} should add fixed execute-stage pipeline stall cycles: baseline={baseline_stall}, {name}={fp_stall}\nbaseline stats:\n{fp_baseline_stats}\n{name} stats:\n{fp_stats}"
+            "{name} should add fixed extra execute-stage stall cycles: no-extra={no_extra_stall}, {name}={fp_stall}\nno-extra stats:\n{no_extra_stats}\n{name} stats:\n{fp_stats}"
         );
     }
 }
