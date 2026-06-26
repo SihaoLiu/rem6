@@ -833,6 +833,7 @@ fn instruction_allows_straight_line_fetch_ahead(instruction: RiscvInstruction) -
             | RiscvInstruction::VectorNarrow(..)
             | RiscvInstruction::VectorAveraging(..)
             | RiscvInstruction::VectorFixedPointShift(..)
+            | RiscvInstruction::VectorReduction(..)
             | RiscvInstruction::VectorSaturating(..)
             | RiscvInstruction::VectorMoveVv { .. }
             | RiscvInstruction::VectorMoveVx { .. }

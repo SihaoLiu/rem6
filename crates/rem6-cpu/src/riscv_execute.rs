@@ -24,6 +24,9 @@ const RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES: u64 =
     RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES;
 const RISCV_VECTOR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES: u64 =
     RISCV_SCALAR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES;
+const RISCV_VECTOR_INTEGER_SHIFT_EXTRA_EXECUTE_CYCLES: u64 = 1;
+const RISCV_VECTOR_INTEGER_REDUCTION_EXTRA_EXECUTE_CYCLES: u64 =
+    RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES;
 const RISCV_SCALAR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES: u64 = 1;
 const RISCV_SCALAR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES: u64 = 1;
 const RISCV_SCALAR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES: u64 = 1;
@@ -534,6 +537,12 @@ fn in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64 {
         | RiscvInstruction::VectorRemainderSignedVv { .. }
         | RiscvInstruction::VectorRemainderSignedVx { .. } => {
             RISCV_VECTOR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES
+        }
+        RiscvInstruction::VectorFixedPointShift(..) | RiscvInstruction::VectorNarrow(..) => {
+            RISCV_VECTOR_INTEGER_SHIFT_EXTRA_EXECUTE_CYCLES
+        }
+        RiscvInstruction::VectorReduction(..) => {
+            RISCV_VECTOR_INTEGER_REDUCTION_EXTRA_EXECUTE_CYCLES
         }
         RiscvInstruction::FloatAddS { .. }
         | RiscvInstruction::FloatAddD { .. }
