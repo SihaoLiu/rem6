@@ -6012,36 +6012,93 @@ fn rem6_run_stats_emit_selected_branch_predictor_family_rollback_counters() {
     let tage_program = tage_sc_l_repeated_not_taken_training_program();
     let tage_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &tage_program);
     let tage_path = temp_binary("in-order-selected-tage-sc-l-rollback", &tage_elf);
-    let perceptron_program = direct_wrong_path_branch_speculation_program();
-    let perceptron_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &perceptron_program);
-    let perceptron_path = temp_binary(
+    let direct_perceptron_program = direct_wrong_path_branch_speculation_program();
+    let direct_perceptron_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &direct_perceptron_program);
+    let direct_perceptron_path = temp_binary(
         "in-order-selected-multiperspective-perceptron-rollback",
-        &perceptron_elf,
+        &direct_perceptron_elf,
+    );
+    let conditional_perceptron_program = conditional_wrong_path_branch_speculation_program();
+    let conditional_perceptron_elf =
+        riscv64_elf(0x8000_0000, 0x8000_0000, &conditional_perceptron_program);
+    let conditional_perceptron_path = temp_binary(
+        "in-order-selected-multiperspective-perceptron-conditional-rollback",
+        &conditional_perceptron_elf,
+    );
+    let indirect_program = indirect_wrong_path_branch_speculation_program();
+    let indirect_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &indirect_program);
+    let indirect_path = temp_binary(
+        "in-order-selected-branch-predictor-family-indirect-rollback",
+        &indirect_elf,
     );
 
-    for (predictor, family, rollback_field, path) in [
-        ("gshare", "gshare", "squashes", nested_path.as_path()),
-        ("bimode", "bimode", "squashes", nested_path.as_path()),
+    for (predictor, family, rollback_field, path, expected_lookup_kind, boot_a0) in [
+        (
+            "gshare",
+            "gshare",
+            "squashes",
+            nested_path.as_path(),
+            None,
+            None,
+        ),
+        (
+            "bimode",
+            "bimode",
+            "squashes",
+            nested_path.as_path(),
+            None,
+            None,
+        ),
         (
             "tournament",
             "tournament",
             "squashes",
             nested_path.as_path(),
+            None,
+            None,
         ),
         (
             "tage-sc-l",
             "tage_sc_l",
             "selected_rollbacks",
             tage_path.as_path(),
+            None,
+            None,
         ),
         (
             "multiperspective-perceptron",
             "multiperspective_perceptron",
             "selected_rollbacks",
-            perceptron_path.as_path(),
+            direct_perceptron_path.as_path(),
+            None,
+            None,
+        ),
+        (
+            "multiperspective-perceptron",
+            "multiperspective_perceptron",
+            "selected_rollbacks",
+            conditional_perceptron_path.as_path(),
+            None,
+            None,
+        ),
+        (
+            "tage-sc-l",
+            "tage_sc_l",
+            "selected_rollbacks",
+            indirect_path.as_path(),
+            Some("indirect_unconditional"),
+            Some(0x8000_0018),
+        ),
+        (
+            "multiperspective-perceptron",
+            "multiperspective_perceptron",
+            "selected_rollbacks",
+            indirect_path.as_path(),
+            Some("indirect_unconditional"),
+            Some(0x8000_0018),
         ),
     ] {
-        let stdout = selected_branch_predictor_stdout(path, predictor);
+        let stdout = selected_branch_predictor_stdout_with_boot_a0(path, predictor, boot_a0);
         let aggregate_repairs = json_u64_field(&stdout, "\"branch_speculation_repairs\":");
         let rollback_count = json_object_u64_field(
             &stdout,
@@ -6067,6 +6124,15 @@ fn rem6_run_stats_emit_selected_branch_predictor_family_rollback_counters() {
             assert!(
                 rollback_count > aggregate_repairs,
                 "{predictor} should include selected younger cleanup beyond top-level repair events\n{stdout}"
+            );
+        }
+        if let Some(kind) = expected_lookup_kind {
+            assert!(
+                stat_value(
+                    &stdout,
+                    &format!("sim.cpu0.branch_predictor.lookups.{kind}")
+                ) > 0,
+                "{predictor} should record {kind} fetch-ahead lookup evidence\n{stdout}"
             );
         }
         assert!(stdout.contains("\"x5\":\"0x7\""));
@@ -6144,25 +6210,39 @@ fn rem6_run_stats_use_retired_tage_sc_l_training_for_later_fetch_steering() {
 }
 
 fn selected_branch_predictor_stdout(path: &std::path::Path, predictor: &str) -> String {
+    selected_branch_predictor_stdout_with_boot_a0(path, predictor, None)
+}
+
+fn selected_branch_predictor_stdout_with_boot_a0(
+    path: &std::path::Path,
+    predictor: &str,
+    boot_a0: Option<u64>,
+) -> String {
+    let boot_a0_value = boot_a0.map(|value| format!("0x{value:x}"));
+    let mut args = vec![
+        "run",
+        "--isa",
+        "riscv",
+        "--binary",
+        path.to_str().unwrap(),
+        "--max-tick",
+        "160",
+        "--memory-route-delay",
+        "1",
+        "--riscv-branch-lookahead",
+        "2",
+        "--riscv-branch-predictor",
+        predictor,
+        "--stats-format",
+        "json",
+        "--execute",
+    ];
+    if let Some(value) = boot_a0_value.as_deref() {
+        args.extend(["--riscv-boot-a0", value]);
+    }
+
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-        .args([
-            "run",
-            "--isa",
-            "riscv",
-            "--binary",
-            path.to_str().unwrap(),
-            "--max-tick",
-            "160",
-            "--memory-route-delay",
-            "1",
-            "--riscv-branch-lookahead",
-            "2",
-            "--riscv-branch-predictor",
-            predictor,
-            "--stats-format",
-            "json",
-            "--execute",
-        ])
+        .args(args)
         .output()
         .unwrap();
 
@@ -6195,6 +6275,32 @@ fn direct_wrong_path_branch_speculation_program() -> Vec<u8> {
         0x0010_0313,           // addi x6, x0, 1
         0x0020_0393,           // addi x7, x0, 2
         0x0000_0073,           // ecall
+    ])
+}
+
+fn conditional_wrong_path_branch_speculation_program() -> Vec<u8> {
+    riscv64_program(&[
+        b_type(16, 0, 0, 0x1), // bne x0, x0, wrong_path
+        0x0070_0293,           // addi x5, x0, 7
+        0x0000_0073,           // ecall
+        0x0000_0073,           // ecall
+        b_type(8, 0, 0, 0x1),  // wrong-path bne x0, x0, skipped
+        0x0010_0313,           // addi x6, x0, 1
+        0x0020_0393,           // addi x7, x0, 2
+        0x0000_0073,           // ecall
+    ])
+}
+
+fn indirect_wrong_path_branch_speculation_program() -> Vec<u8> {
+    riscv64_program(&[
+        b_type(16, 0, 0, 0x1),       // bne x0, x0, wrong_path
+        0x0070_0293,                 // addi x5, x0, 7
+        0x0000_0073,                 // ecall
+        0x0000_0073,                 // ecall
+        i_type(0, 10, 0x0, 0, 0x67), // wrong-path jalr x0, 0(x10), skipped
+        0x0010_0313,                 // addi x6, x0, 1
+        0x0020_0393,                 // addi x7, x0, 2
+        0x0000_0073,                 // ecall
     ])
 }
 
