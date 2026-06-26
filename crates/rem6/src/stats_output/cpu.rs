@@ -551,6 +551,10 @@ pub(super) fn emit_cpu_run_stats(
                 ),
                 ("updates", core.branch_predictor_tage_sc_l.updates),
                 ("repairs", core.branch_predictor_tage_sc_l.repairs),
+                (
+                    "selected_rollbacks",
+                    core.branch_predictor_tage_sc_l.selected_rollbacks,
+                ),
             ],
         )?;
         emit_branch_predictor_counter_stats(
@@ -565,6 +569,11 @@ pub(super) fn emit_cpu_run_stats(
                 (
                     "updates",
                     core.branch_predictor_multiperspective_perceptron.updates,
+                ),
+                (
+                    "selected_rollbacks",
+                    core.branch_predictor_multiperspective_perceptron
+                        .selected_rollbacks,
                 ),
             ],
         )?;

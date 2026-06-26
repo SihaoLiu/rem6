@@ -6003,16 +6003,45 @@ fn rem6_run_stats_emit_branch_predictor_family_counters() {
 
 #[test]
 fn rem6_run_stats_emit_selected_branch_predictor_family_rollback_counters() {
-    let program = nested_branch_speculation_program();
-    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
-    let path = temp_binary("in-order-selected-branch-predictor-family-rollback", &elf);
+    let nested_program = nested_branch_speculation_program();
+    let nested_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &nested_program);
+    let nested_path = temp_binary(
+        "in-order-selected-branch-predictor-family-rollback",
+        &nested_elf,
+    );
+    let tage_program = tage_sc_l_repeated_not_taken_training_program();
+    let tage_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &tage_program);
+    let tage_path = temp_binary("in-order-selected-tage-sc-l-rollback", &tage_elf);
+    let perceptron_program = direct_wrong_path_branch_speculation_program();
+    let perceptron_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &perceptron_program);
+    let perceptron_path = temp_binary(
+        "in-order-selected-multiperspective-perceptron-rollback",
+        &perceptron_elf,
+    );
 
-    for (predictor, family, rollback_field) in [
-        ("gshare", "gshare", "squashes"),
-        ("bimode", "bimode", "squashes"),
-        ("tournament", "tournament", "squashes"),
+    for (predictor, family, rollback_field, path) in [
+        ("gshare", "gshare", "squashes", nested_path.as_path()),
+        ("bimode", "bimode", "squashes", nested_path.as_path()),
+        (
+            "tournament",
+            "tournament",
+            "squashes",
+            nested_path.as_path(),
+        ),
+        (
+            "tage-sc-l",
+            "tage_sc_l",
+            "selected_rollbacks",
+            tage_path.as_path(),
+        ),
+        (
+            "multiperspective-perceptron",
+            "multiperspective_perceptron",
+            "selected_rollbacks",
+            perceptron_path.as_path(),
+        ),
     ] {
-        let stdout = selected_branch_predictor_stdout(&path, predictor);
+        let stdout = selected_branch_predictor_stdout(path, predictor);
         let aggregate_repairs = json_u64_field(&stdout, "\"branch_speculation_repairs\":");
         let rollback_count = json_object_u64_field(
             &stdout,
@@ -6029,10 +6058,17 @@ fn rem6_run_stats_emit_selected_branch_predictor_family_rollback_counters() {
             rollback_count,
             "{predictor} {family}.{rollback_field} should match the stats registry path\n{stdout}"
         );
-        assert!(
-            rollback_count > aggregate_repairs,
-            "{predictor} should include selected younger cleanup beyond top-level repair events\n{stdout}"
-        );
+        if rollback_field == "selected_rollbacks" {
+            assert!(
+                rollback_count > 0,
+                "{predictor} should expose selected younger cleanup\n{stdout}"
+            );
+        } else {
+            assert!(
+                rollback_count > aggregate_repairs,
+                "{predictor} should include selected younger cleanup beyond top-level repair events\n{stdout}"
+            );
+        }
         assert!(stdout.contains("\"x5\":\"0x7\""));
         assert!(!stdout.contains("\"x6\":\"0x1\""));
         assert!(!stdout.contains("\"x7\":\"0x2\""));
@@ -6145,6 +6181,19 @@ fn nested_branch_speculation_program() -> Vec<u8> {
         0x0010_0313,           // addi x6, x0, 1
         0x0020_0393,           // addi x7, x0, 2
         0x0070_0293,           // addi x5, x0, 7
+        0x0000_0073,           // ecall
+    ])
+}
+
+fn direct_wrong_path_branch_speculation_program() -> Vec<u8> {
+    riscv64_program(&[
+        b_type(16, 0, 0, 0x1), // bne x0, x0, wrong_path
+        0x0070_0293,           // addi x5, x0, 7
+        0x0000_0073,           // ecall
+        0x0000_0073,           // ecall
+        j_type(8, 0),          // wrong-path jal x0, skipped
+        0x0010_0313,           // addi x6, x0, 1
+        0x0020_0393,           // addi x7, x0, 2
         0x0000_0073,           // ecall
     ])
 }

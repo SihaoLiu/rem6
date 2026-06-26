@@ -81,16 +81,19 @@ impl Rem6CoreSummary {
             self.branch_predictor_bimode.squashes,
         );
         let tage_sc_l = format!(
-            "{{\"lookups\":{},\"history_updates\":{},\"updates\":{},\"repairs\":{}}}",
+            "{{\"lookups\":{},\"history_updates\":{},\"updates\":{},\"repairs\":{},\"selected_rollbacks\":{}}}",
             self.branch_predictor_tage_sc_l.lookups,
             self.branch_predictor_tage_sc_l.history_updates,
             self.branch_predictor_tage_sc_l.updates,
-            self.branch_predictor_tage_sc_l.repairs
+            self.branch_predictor_tage_sc_l.repairs,
+            self.branch_predictor_tage_sc_l.selected_rollbacks
         );
         let multiperspective_perceptron = format!(
-            "{{\"lookups\":{},\"updates\":{}}}",
+            "{{\"lookups\":{},\"updates\":{},\"selected_rollbacks\":{}}}",
             self.branch_predictor_multiperspective_perceptron.lookups,
-            self.branch_predictor_multiperspective_perceptron.updates
+            self.branch_predictor_multiperspective_perceptron.updates,
+            self.branch_predictor_multiperspective_perceptron
+                .selected_rollbacks
         );
         format!(
             "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"in_order_pipeline\":{{\"cycles\":{},\"in_flight\":{},\"stage_widths\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_max_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_occupied_cycles\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_resource_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_ordering_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"retired\":{},\"advanced\":{},\"flushed\":{},\"resource_blocked\":{},\"ordering_blocked\":{},\"stall_cycles\":{},\"fetch_wait_cycles\":{},\"data_wait_cycles\":{},\"branch_predictions\":{},\"branch_mispredictions\":{},\"conditional_branch_predictions\":{},\"conditional_branch_predicted_taken\":{},\"conditional_branch_mispredictions\":{},\"branch_prediction_flushes\":{},\"redirects\":{},\"branch_speculation_predictions\":{},\"branch_speculation_repairs\":{},\"branch_speculation_removed_youngers\":{},\"branch_speculation_max_pending\":{}}},\"branch_predictor\":{{\"btb\":{{\"lookups\":{},\"hits\":{},\"misses\":{},\"updates\":{},\"evictions\":{},\"mispredictions\":{},\"predicted_taken_misses\":{},\"mispredict_due_to_btb_miss\":{}}},\"lookups\":{},\"target_provider\":{},\"committed\":{},\"mispredicted\":{},\"corrected\":{},\"target_wrong\":{},\"mispredict_due_to_predictor\":{},\"gshare\":{},\"bimode\":{},\"tournament\":{{\"lookups\":{},\"history_updates\":{},\"updates\":{},\"squashes\":{},\"local_predictions\":{},\"global_predictions\":{}}},\"tage_sc_l\":{},\"multiperspective_perceptron\":{}}},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{}{},\"registers\":{{{}}}}}",

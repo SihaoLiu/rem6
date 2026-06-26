@@ -1060,12 +1060,26 @@ impl RiscvCore {
             .snapshot()
     }
 
+    pub fn selected_multiperspective_perceptron_rollback_count(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .selected_multiperspective_perceptron_rollbacks
+    }
+
     pub fn tage_sc_l_branch_predictor_snapshot(&self) -> TageScLBranchPredictorSnapshot {
         self.state
             .lock()
             .expect("riscv core lock")
             .tage_sc_l_branch_predictor
             .snapshot()
+    }
+
+    pub fn selected_tage_sc_l_branch_predictor_rollback_count(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .selected_tage_sc_l_branch_predictor_rollbacks
     }
 
     pub fn in_order_pipeline_snapshot(&self) -> InOrderPipelineSnapshot {
@@ -1165,6 +1179,8 @@ struct RiscvCoreState {
     branch_target_buffer: BranchTargetBuffer,
     branch_speculations: BTreeMap<u64, BranchSpeculationId>,
     selected_branch_speculations: BTreeMap<u64, RiscvSelectedBranchSpeculation>,
+    selected_tage_sc_l_branch_predictor_rollbacks: u64,
+    selected_multiperspective_perceptron_rollbacks: u64,
     branch_target_predictions: BTreeMap<u64, BranchTargetPrediction>,
     branch_speculation_summary: RiscvBranchSpeculationSummary,
     branch_lookahead: usize,
@@ -1216,6 +1232,8 @@ impl RiscvCoreState {
             ),
             branch_speculations: BTreeMap::new(),
             selected_branch_speculations: BTreeMap::new(),
+            selected_tage_sc_l_branch_predictor_rollbacks: 0,
+            selected_multiperspective_perceptron_rollbacks: 0,
             branch_target_predictions: BTreeMap::new(),
             branch_speculation_summary: RiscvBranchSpeculationSummary::default(),
             branch_lookahead: 1,

@@ -71,6 +71,9 @@ impl RiscvCoreState {
                 ..
             } => {
                 if let Some(snapshot) = snapshot_before_update {
+                    self.selected_tage_sc_l_branch_predictor_rollbacks = self
+                        .selected_tage_sc_l_branch_predictor_rollbacks
+                        .saturating_add(1);
                     self.tage_sc_l_branch_predictor
                         .restore(&snapshot)
                         .map_err(RiscvCpuError::TageScLBranchPredictor)?;
@@ -81,6 +84,9 @@ impl RiscvCoreState {
                 ..
             } => {
                 if let Some(snapshot) = snapshot_before_update {
+                    self.selected_multiperspective_perceptron_rollbacks = self
+                        .selected_multiperspective_perceptron_rollbacks
+                        .saturating_add(1);
                     self.multiperspective_perceptron
                         .restore(&snapshot)
                         .map_err(RiscvCpuError::MultiperspectivePerceptron)?;

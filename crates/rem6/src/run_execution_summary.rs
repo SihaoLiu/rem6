@@ -252,11 +252,13 @@ pub(super) fn execution_summary(
                 history_updates: tage_sc_l_branch_predictor.history_update_count(),
                 updates: tage_sc_l_branch_predictor.update_count(),
                 repairs: tage_sc_l_branch_predictor.repair_count(),
+                selected_rollbacks: core.selected_tage_sc_l_branch_predictor_rollback_count(),
             },
             branch_predictor_multiperspective_perceptron:
                 Rem6MultiperspectivePerceptronCounterSummary {
                     lookups: multiperspective_perceptron.lookup_count(),
                     updates: multiperspective_perceptron.update_count(),
+                    selected_rollbacks: core.selected_multiperspective_perceptron_rollback_count(),
                 },
             tournament_local_predictions: tournament_selection_counts.local_predictions,
             tournament_global_predictions: tournament_selection_counts.global_predictions,
