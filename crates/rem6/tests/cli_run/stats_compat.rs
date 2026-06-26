@@ -3275,6 +3275,173 @@ fn rem6_run_in_order_pipeline_models_scalar_fp_execute_latency() {
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_vector_integer_execute_latency() {
+    const EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES: u64 = 2;
+    const EXPECTED_VECTOR_DIV_EXTRA_EXECUTE_CYCLES: u64 = 19;
+
+    let add_stats = in_order_pipeline_latency_stats(
+        "in-order-vector-add-execute-latency",
+        &[
+            0x0020_0513,                       // addi x10, x0, 2
+            vsetvli_type(0xd0, 10, 5),         // vsetvli x5, x10, e32, m1, ta, ma
+            vector_vv_type(0b000000, 2, 1, 3), // vadd.vv v3, v2, v1
+            0x0000_0073,                       // ecall
+        ],
+    );
+    assert_eq!(stat_value(&add_stats, "sim.cpu0.instructions.committed"), 4);
+    assert_eq!(
+        stat_value(&add_stats, "sim.cpu0.pipeline.in_order.data_wait_cycles"),
+        0
+    );
+
+    let add_cycles = stat_value(&add_stats, "sim.cpu0.pipeline.in_order.cycles");
+    let add_stall = stat_value(&add_stats, "sim.cpu0.pipeline.in_order.stall_cycles");
+    for (name, word, expected_extra_cycles) in [
+        (
+            "vmul.vv",
+            vector_mvv_type(0b100101, 2, 1, 3),
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vmulhu.vx",
+            vector_mvx_type(0b100100, 2, 8, 3),
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vmulhsu.vv",
+            vector_mvv_type(0b100110, 2, 1, 3),
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vmulh.vx",
+            vector_mvx_type(0b100111, 2, 8, 3),
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vdivu.vv",
+            vector_mvv_type(0b100000, 2, 1, 3),
+            EXPECTED_VECTOR_DIV_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vdiv.vx",
+            vector_mvx_type(0b100001, 2, 8, 3),
+            EXPECTED_VECTOR_DIV_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vremu.vx",
+            vector_mvx_type(0b100010, 2, 8, 3),
+            EXPECTED_VECTOR_DIV_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vrem.vv",
+            vector_mvv_type(0b100011, 2, 1, 3),
+            EXPECTED_VECTOR_DIV_EXTRA_EXECUTE_CYCLES,
+        ),
+    ] {
+        let vector_stats = in_order_pipeline_latency_stats(
+            &format!("in-order-{name}-execute-latency"),
+            &[
+                0x0020_0513,               // addi x10, x0, 2
+                vsetvli_type(0xd0, 10, 5), // vsetvli x5, x10, e32, m1, ta, ma
+                word,
+                0x0000_0073, // ecall
+            ],
+        );
+
+        assert_eq!(
+            stat_value(&vector_stats, "sim.cpu0.instructions.committed"),
+            4
+        );
+        assert_eq!(
+            stat_value(&vector_stats, "sim.cpu0.pipeline.in_order.data_wait_cycles"),
+            0
+        );
+
+        let vector_cycles = stat_value(&vector_stats, "sim.cpu0.pipeline.in_order.cycles");
+        assert_eq!(
+            vector_cycles - add_cycles,
+            expected_extra_cycles,
+            "{name} should consume fixed extra execute latency: add={add_cycles}, {name}={vector_cycles}"
+        );
+
+        let vector_stall = stat_value(&vector_stats, "sim.cpu0.pipeline.in_order.stall_cycles");
+        assert_eq!(
+            vector_stall - add_stall,
+            expected_extra_cycles,
+            "{name} should add fixed execute-stage pipeline stall cycles: add={add_stall}, {name}={vector_stall}"
+        );
+    }
+
+    let widening_add_stats = in_order_pipeline_latency_stats(
+        "in-order-vector-widening-add-execute-latency",
+        &[
+            0x0020_0513,                                // addi x10, x0, 2
+            vsetvli_type(0xd0, 10, 5),                  // vsetvli x5, x10, e32, m1, ta, ma
+            vector_widening_vv_type(0b110000, 2, 1, 4), // vwaddu.vv v4, v2, v1
+            0x0000_0073,                                // ecall
+        ],
+    );
+    assert_eq!(
+        stat_value(&widening_add_stats, "sim.cpu0.instructions.committed"),
+        4
+    );
+    assert_eq!(
+        stat_value(
+            &widening_add_stats,
+            "sim.cpu0.pipeline.in_order.data_wait_cycles"
+        ),
+        0
+    );
+
+    let widening_add_cycles = stat_value(&widening_add_stats, "sim.cpu0.pipeline.in_order.cycles");
+    let widening_add_stall = stat_value(
+        &widening_add_stats,
+        "sim.cpu0.pipeline.in_order.stall_cycles",
+    );
+    for (name, word) in [
+        ("vwmulu.vv", vector_widening_vv_type(0b111000, 2, 1, 4)),
+        ("vwmulu.vx", vector_widening_vx_type(0b111000, 2, 8, 4)),
+        ("vwmulsu.vv", vector_widening_vv_type(0b111010, 2, 1, 4)),
+        ("vwmulsu.vx", vector_widening_vx_type(0b111010, 2, 8, 4)),
+        ("vwmul.vv", vector_widening_vv_type(0b111011, 2, 1, 4)),
+        ("vwmul.vx", vector_widening_vx_type(0b111011, 2, 8, 4)),
+    ] {
+        let vector_stats = in_order_pipeline_latency_stats(
+            &format!("in-order-{name}-execute-latency"),
+            &[
+                0x0020_0513,               // addi x10, x0, 2
+                vsetvli_type(0xd0, 10, 5), // vsetvli x5, x10, e32, m1, ta, ma
+                word,
+                0x0000_0073, // ecall
+            ],
+        );
+
+        assert_eq!(
+            stat_value(&vector_stats, "sim.cpu0.instructions.committed"),
+            4
+        );
+        assert_eq!(
+            stat_value(&vector_stats, "sim.cpu0.pipeline.in_order.data_wait_cycles"),
+            0
+        );
+
+        let vector_cycles = stat_value(&vector_stats, "sim.cpu0.pipeline.in_order.cycles");
+        assert_eq!(
+            vector_cycles - widening_add_cycles,
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+            "{name} should consume fixed extra execute latency: widening_add={widening_add_cycles}, {name}={vector_cycles}"
+        );
+
+        let vector_stall = stat_value(&vector_stats, "sim.cpu0.pipeline.in_order.stall_cycles");
+        assert_eq!(
+            vector_stall - widening_add_stall,
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+            "{name} should add fixed execute-stage pipeline stall cycles: widening_add={widening_add_stall}, {name}={vector_stall}"
+        );
+    }
+}
+
+#[test]
 fn rem6_run_stats_emit_checker_cpu_counts_from_execution() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
@@ -3371,6 +3538,47 @@ fn fp_r4_type(rs3: u8, funct2: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcod
         | (funct3 << 12)
         | (u32::from(rd) << 7)
         | opcode
+}
+
+fn vsetvli_type(vtype: u32, rs1: u8, rd: u8) -> u32 {
+    (vtype << 20) | (u32::from(rs1) << 15) | (0b111 << 12) | (u32::from(rd) << 7) | 0x57
+}
+
+fn vector_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(vs1) << 15)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vector_mvv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(vs1) << 15)
+        | (0b010 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vector_mvx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
+    (funct6 << 26)
+        | (1 << 25)
+        | (u32::from(vs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (0b110 << 12)
+        | (u32::from(vd) << 7)
+        | 0x57
+}
+
+fn vector_widening_vv_type(funct6: u32, vs2: u8, vs1: u8, vd: u8) -> u32 {
+    vector_mvv_type(funct6, vs2, vs1, vd)
+}
+
+fn vector_widening_vx_type(funct6: u32, vs2: u8, rs1: u8, vd: u8) -> u32 {
+    vector_mvx_type(funct6, vs2, rs1, vd)
 }
 
 fn in_order_pipeline_stats_for_width(path: &std::path::Path, width: u64) -> String {

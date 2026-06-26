@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use rem6_isa_riscv::RiscvInstruction;
+use rem6_isa_riscv::{RiscvInstruction, RiscvVectorWideningIntegerInstruction};
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
 use crate::{
@@ -16,6 +16,10 @@ use crate::{
 
 const RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES: u64 = 2;
 const RISCV_SCALAR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES: u64 = 19;
+const RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES: u64 =
+    RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES;
+const RISCV_VECTOR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES: u64 =
+    RISCV_SCALAR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES;
 const RISCV_SCALAR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES: u64 = 1;
 const RISCV_SCALAR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES: u64 = 1;
 const RISCV_SCALAR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES: u64 = 1;
@@ -469,6 +473,34 @@ fn in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64 {
         | RiscvInstruction::Divuw { .. }
         | RiscvInstruction::Remw { .. }
         | RiscvInstruction::Remuw { .. } => RISCV_SCALAR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES,
+        RiscvInstruction::VectorMultiplyLowVv { .. }
+        | RiscvInstruction::VectorMultiplyLowVx { .. }
+        | RiscvInstruction::VectorMultiplyHighUnsignedVv { .. }
+        | RiscvInstruction::VectorMultiplyHighUnsignedVx { .. }
+        | RiscvInstruction::VectorMultiplyHighSignedUnsignedVv { .. }
+        | RiscvInstruction::VectorMultiplyHighSignedUnsignedVx { .. }
+        | RiscvInstruction::VectorMultiplyHighSignedVv { .. }
+        | RiscvInstruction::VectorMultiplyHighSignedVx { .. } => {
+            RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES
+        }
+        RiscvInstruction::VectorWideningInteger(
+            RiscvVectorWideningIntegerInstruction::MultiplyUnsignedVv { .. }
+            | RiscvVectorWideningIntegerInstruction::MultiplyUnsignedVx { .. }
+            | RiscvVectorWideningIntegerInstruction::MultiplySignedUnsignedVv { .. }
+            | RiscvVectorWideningIntegerInstruction::MultiplySignedUnsignedVx { .. }
+            | RiscvVectorWideningIntegerInstruction::MultiplySignedVv { .. }
+            | RiscvVectorWideningIntegerInstruction::MultiplySignedVx { .. },
+        ) => RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES,
+        RiscvInstruction::VectorDivideUnsignedVv { .. }
+        | RiscvInstruction::VectorDivideUnsignedVx { .. }
+        | RiscvInstruction::VectorDivideSignedVv { .. }
+        | RiscvInstruction::VectorDivideSignedVx { .. }
+        | RiscvInstruction::VectorRemainderUnsignedVv { .. }
+        | RiscvInstruction::VectorRemainderUnsignedVx { .. }
+        | RiscvInstruction::VectorRemainderSignedVv { .. }
+        | RiscvInstruction::VectorRemainderSignedVx { .. } => {
+            RISCV_VECTOR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES
+        }
         RiscvInstruction::FloatAddS { .. }
         | RiscvInstruction::FloatAddD { .. }
         | RiscvInstruction::FloatSubS { .. }
