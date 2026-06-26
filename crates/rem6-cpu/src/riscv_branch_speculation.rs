@@ -8,6 +8,8 @@ pub struct RiscvBranchSpeculationSummary {
     repairs: u64,
     removed_youngers: u64,
     max_pending: u64,
+    committed_branch_kinds: BranchTargetKindCounts,
+    mispredicted_branch_kinds: BranchTargetKindCounts,
     btb_mispredictions: u64,
     predicted_taken_btb_misses: u64,
     btb_mispredict_due_to_btb_miss: BranchTargetKindCounts,
@@ -29,6 +31,14 @@ impl RiscvBranchSpeculationSummary {
 
     pub const fn max_pending(self) -> u64 {
         self.max_pending
+    }
+
+    pub const fn committed_branch_kinds(self) -> BranchTargetKindCounts {
+        self.committed_branch_kinds
+    }
+
+    pub const fn mispredicted_branch_kinds(self) -> BranchTargetKindCounts {
+        self.mispredicted_branch_kinds
     }
 
     pub const fn btb_mispredictions(self) -> u64 {
@@ -66,12 +76,17 @@ impl RiscvBranchSpeculationSummary {
         actual_target: Option<Address>,
         branch_target_prediction: Option<BranchTargetPrediction>,
     ) {
+        let mispredicted = predicted_taken != actual_taken
+            || (predicted_taken && predicted_target != actual_target);
+        self.committed_branch_kinds.increment(branch_kind);
+        if mispredicted {
+            self.mispredicted_branch_kinds.increment(branch_kind);
+        }
+
         let Some(branch_target_prediction) = branch_target_prediction else {
             return;
         };
 
-        let mispredicted = predicted_taken != actual_taken
-            || (predicted_taken && predicted_target != actual_target);
         if mispredicted {
             if actual_taken && !branch_target_prediction.hit() {
                 self.btb_mispredict_due_to_btb_miss.increment(branch_kind);

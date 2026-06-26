@@ -176,6 +176,62 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
             );
         }
         for kind in BranchTargetKind::ALL {
+            if let Some(committed) = snapshot_value(
+                snapshot,
+                &format!(
+                    "sim.cpu{cpu}.branch_predictor.committed.{}",
+                    kind.canonical_stat_name()
+                ),
+            ) {
+                append_derived_count_stat(
+                    output,
+                    &format!(
+                        "{alias_prefix}.branchPred.committed_0::{}",
+                        kind.gem5_branch_type_name()
+                    ),
+                    committed,
+                );
+            }
+        }
+        if let Some(committed) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.branch_predictor.committed.total"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.committed_0::total"),
+                committed,
+            );
+        }
+        for kind in BranchTargetKind::ALL {
+            if let Some(mispredicted) = snapshot_value(
+                snapshot,
+                &format!(
+                    "sim.cpu{cpu}.branch_predictor.mispredicted.{}",
+                    kind.canonical_stat_name()
+                ),
+            ) {
+                append_derived_count_stat(
+                    output,
+                    &format!(
+                        "{alias_prefix}.branchPred.mispredicted_0::{}",
+                        kind.gem5_branch_type_name()
+                    ),
+                    mispredicted,
+                );
+            }
+        }
+        if let Some(mispredicted) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.branch_predictor.mispredicted.total"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.mispredicted_0::total"),
+                mispredicted,
+            );
+        }
+        for kind in BranchTargetKind::ALL {
             if let Some(mispredictions) = snapshot_value(
                 snapshot,
                 &format!(

@@ -345,6 +345,46 @@ pub(super) fn emit_cpu_run_stats(
             increment_stat(
                 stats,
                 &format!(
+                    "sim.cpu{}.branch_predictor.committed.{}",
+                    core.cpu,
+                    kind.canonical_stat_name()
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.branch_predictor_committed.value(kind),
+            )?;
+        }
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.branch_predictor.committed.total", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.branch_predictor_committed.total(),
+        )?;
+        for kind in BranchTargetKind::ALL {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.branch_predictor.mispredicted.{}",
+                    core.cpu,
+                    kind.canonical_stat_name()
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.branch_predictor_mispredicted.value(kind),
+            )?;
+        }
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.branch_predictor.mispredicted.total", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.branch_predictor_mispredicted.total(),
+        )?;
+        for kind in BranchTargetKind::ALL {
+            increment_stat(
+                stats,
+                &format!(
                     "sim.cpu{}.branch_predictor.mispredict_due_to_predictor.{}",
                     core.cpu,
                     kind.canonical_stat_name()

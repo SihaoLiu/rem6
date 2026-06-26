@@ -1205,6 +1205,20 @@ mod tests {
         assert_eq!(summary.repairs(), 1);
         assert_eq!(
             summary
+                .committed_branch_kinds()
+                .value(BranchTargetKind::DirectConditional),
+            1
+        );
+        assert_eq!(summary.committed_branch_kinds().total(), 1);
+        assert_eq!(
+            summary
+                .mispredicted_branch_kinds()
+                .value(BranchTargetKind::DirectConditional),
+            1
+        );
+        assert_eq!(summary.mispredicted_branch_kinds().total(), 1);
+        assert_eq!(
+            summary
                 .mispredict_due_to_predictor()
                 .value(BranchTargetKind::DirectConditional),
             1
@@ -1250,6 +1264,20 @@ mod tests {
         assert_eq!(summary.repairs(), 0);
         assert_eq!(summary.btb_mispredictions(), 1);
         assert_eq!(summary.predicted_taken_btb_misses(), 1);
+        assert_eq!(
+            summary
+                .committed_branch_kinds()
+                .value(BranchTargetKind::DirectConditional),
+            1
+        );
+        assert_eq!(summary.committed_branch_kinds().total(), 1);
+        assert_eq!(
+            summary
+                .mispredicted_branch_kinds()
+                .value(BranchTargetKind::DirectConditional),
+            0
+        );
+        assert_eq!(summary.mispredicted_branch_kinds().total(), 0);
         assert_eq!(
             summary
                 .btb_mispredict_due_to_btb_miss()
@@ -1304,6 +1332,20 @@ mod tests {
         assert_eq!(summary.repairs(), 1);
         assert_eq!(summary.btb_mispredictions(), 1);
         assert_eq!(summary.predicted_taken_btb_misses(), 0);
+        assert_eq!(
+            summary
+                .committed_branch_kinds()
+                .value(BranchTargetKind::DirectConditional),
+            1
+        );
+        assert_eq!(summary.committed_branch_kinds().total(), 1);
+        assert_eq!(
+            summary
+                .mispredicted_branch_kinds()
+                .value(BranchTargetKind::DirectConditional),
+            1
+        );
+        assert_eq!(summary.mispredicted_branch_kinds().total(), 1);
         assert_eq!(
             summary
                 .btb_mispredict_due_to_btb_miss()
