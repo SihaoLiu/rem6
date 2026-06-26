@@ -1,7 +1,8 @@
 use std::collections::BTreeSet;
 
 use rem6_isa_riscv::{
-    RiscvInstruction, RiscvVectorFloatInstruction, RiscvVectorWideningIntegerInstruction,
+    RiscvInstruction, RiscvVectorFloatInstruction, RiscvVectorSaturatingInstruction,
+    RiscvVectorWideningIntegerInstruction,
 };
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
@@ -501,13 +502,27 @@ fn in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64 {
         | RiscvInstruction::VectorMultiplyHighSignedVx { .. } => {
             RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES
         }
+        RiscvInstruction::VectorIntegerMultiplyAdd(_) => {
+            RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES
+        }
+        RiscvInstruction::VectorSaturating(
+            RiscvVectorSaturatingInstruction::MulSignedFractionalVv { .. }
+            | RiscvVectorSaturatingInstruction::MulSignedFractionalVx { .. },
+        ) => RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES,
         RiscvInstruction::VectorWideningInteger(
             RiscvVectorWideningIntegerInstruction::MultiplyUnsignedVv { .. }
             | RiscvVectorWideningIntegerInstruction::MultiplyUnsignedVx { .. }
             | RiscvVectorWideningIntegerInstruction::MultiplySignedUnsignedVv { .. }
             | RiscvVectorWideningIntegerInstruction::MultiplySignedUnsignedVx { .. }
             | RiscvVectorWideningIntegerInstruction::MultiplySignedVv { .. }
-            | RiscvVectorWideningIntegerInstruction::MultiplySignedVx { .. },
+            | RiscvVectorWideningIntegerInstruction::MultiplySignedVx { .. }
+            | RiscvVectorWideningIntegerInstruction::MultiplyAddUnsignedVv { .. }
+            | RiscvVectorWideningIntegerInstruction::MultiplyAddUnsignedVx { .. }
+            | RiscvVectorWideningIntegerInstruction::MultiplyAddSignedVv { .. }
+            | RiscvVectorWideningIntegerInstruction::MultiplyAddSignedVx { .. }
+            | RiscvVectorWideningIntegerInstruction::MultiplyAddUnsignedSignedVx { .. }
+            | RiscvVectorWideningIntegerInstruction::MultiplyAddSignedUnsignedVv { .. }
+            | RiscvVectorWideningIntegerInstruction::MultiplyAddSignedUnsignedVx { .. },
         ) => RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES,
         RiscvInstruction::VectorDivideUnsignedVv { .. }
         | RiscvInstruction::VectorDivideUnsignedVx { .. }

@@ -3318,6 +3318,56 @@ fn rem6_run_in_order_pipeline_models_vector_integer_execute_latency() {
             EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
         ),
         (
+            "vmadd.vv",
+            vector_mvv_type(0b101001, 2, 1, 3),
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vmadd.vx",
+            vector_mvx_type(0b101001, 2, 8, 3),
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vnmsub.vv",
+            vector_mvv_type(0b101011, 2, 1, 3),
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vnmsub.vx",
+            vector_mvx_type(0b101011, 2, 8, 3),
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vmacc.vv",
+            vector_mvv_type(0b101101, 2, 1, 3),
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vmacc.vx",
+            vector_mvx_type(0b101101, 2, 8, 3),
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vnmsac.vv",
+            vector_mvv_type(0b101111, 2, 1, 3),
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vnmsac.vx",
+            vector_mvx_type(0b101111, 2, 8, 3),
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vsmul.vv",
+            vector_vv_type(0b100111, 2, 1, 3),
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
+            "vsmul.vx",
+            vector_vx_type(0b100111, 2, 8, 3),
+            EXPECTED_VECTOR_MUL_EXTRA_EXECUTE_CYCLES,
+        ),
+        (
             "vdivu.vv",
             vector_mvv_type(0b100000, 2, 1, 3),
             EXPECTED_VECTOR_DIV_EXTRA_EXECUTE_CYCLES,
@@ -3405,6 +3455,13 @@ fn rem6_run_in_order_pipeline_models_vector_integer_execute_latency() {
         ("vwmulsu.vx", vector_widening_vx_type(0b111010, 2, 8, 4)),
         ("vwmul.vv", vector_widening_vv_type(0b111011, 2, 1, 4)),
         ("vwmul.vx", vector_widening_vx_type(0b111011, 2, 8, 4)),
+        ("vwmaccu.vv", vector_widening_vv_type(0b111100, 2, 1, 4)),
+        ("vwmaccu.vx", vector_widening_vx_type(0b111100, 2, 8, 4)),
+        ("vwmacc.vv", vector_widening_vv_type(0b111101, 2, 1, 4)),
+        ("vwmacc.vx", vector_widening_vx_type(0b111101, 2, 8, 4)),
+        ("vwmaccus.vx", vector_widening_vx_type(0b111110, 2, 8, 4)),
+        ("vwmaccsu.vv", vector_widening_vv_type(0b111111, 2, 1, 4)),
+        ("vwmaccsu.vx", vector_widening_vx_type(0b111111, 2, 8, 4)),
     ] {
         let vector_stats = in_order_pipeline_latency_stats(
             &format!("in-order-{name}-execute-latency"),
