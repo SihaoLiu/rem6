@@ -341,6 +341,30 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.branch_target_buffer_mispredict_due_to_btb_miss.total(),
         )?;
+        for kind in BranchTargetKind::ALL {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.branch_predictor.mispredict_due_to_predictor.{}",
+                    core.cpu,
+                    kind.canonical_stat_name()
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.branch_predictor_mispredict_due_to_predictor
+                    .value(kind),
+            )?;
+        }
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.branch_predictor.mispredict_due_to_predictor.total",
+                core.cpu
+            ),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.branch_predictor_mispredict_due_to_predictor.total(),
+        )?;
         for (name, value) in [
             ("local_predictions", core.tournament_local_predictions),
             ("global_predictions", core.tournament_global_predictions),

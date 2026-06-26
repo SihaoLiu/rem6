@@ -11,6 +11,7 @@ pub struct RiscvBranchSpeculationSummary {
     btb_mispredictions: u64,
     predicted_taken_btb_misses: u64,
     btb_mispredict_due_to_btb_miss: BranchTargetKindCounts,
+    mispredict_due_to_predictor: BranchTargetKindCounts,
 }
 
 impl RiscvBranchSpeculationSummary {
@@ -42,6 +43,10 @@ impl RiscvBranchSpeculationSummary {
         self.btb_mispredict_due_to_btb_miss
     }
 
+    pub const fn mispredict_due_to_predictor(self) -> BranchTargetKindCounts {
+        self.mispredict_due_to_predictor
+    }
+
     pub(crate) fn record_prediction(&mut self, pending: u64) {
         self.predictions = self.predictions.saturating_add(1);
         self.max_pending = self.max_pending.max(pending);
@@ -67,8 +72,12 @@ impl RiscvBranchSpeculationSummary {
 
         let mispredicted = predicted_taken != actual_taken
             || (predicted_taken && predicted_target != actual_target);
-        if mispredicted && actual_taken && !branch_target_prediction.hit() {
-            self.btb_mispredict_due_to_btb_miss.increment(branch_kind);
+        if mispredicted {
+            if actual_taken && !branch_target_prediction.hit() {
+                self.btb_mispredict_due_to_btb_miss.increment(branch_kind);
+            } else {
+                self.mispredict_due_to_predictor.increment(branch_kind);
+            }
         }
 
         let Some(actual_target) = actual_target else {

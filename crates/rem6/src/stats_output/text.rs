@@ -175,6 +175,34 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 mispredictions,
             );
         }
+        for kind in BranchTargetKind::ALL {
+            if let Some(mispredictions) = snapshot_value(
+                snapshot,
+                &format!(
+                    "sim.cpu{cpu}.branch_predictor.mispredict_due_to_predictor.{}",
+                    kind.canonical_stat_name()
+                ),
+            ) {
+                append_derived_count_stat(
+                    output,
+                    &format!(
+                        "{alias_prefix}.branchPred.mispredictDueToPredictor_0::{}",
+                        kind.gem5_branch_type_name()
+                    ),
+                    mispredictions,
+                );
+            }
+        }
+        if let Some(mispredictions) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.branch_predictor.mispredict_due_to_predictor.total"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.mispredictDueToPredictor_0::total"),
+                mispredictions,
+            );
+        }
         if let (Some(hits), Some(lookups)) = (btb_hits, btb_lookups) {
             if lookups != 0 {
                 append_derived_ratio_stat(

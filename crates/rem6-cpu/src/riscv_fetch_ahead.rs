@@ -1201,7 +1201,16 @@ mod tests {
         assert_eq!(prediction.predicted_target_pc(), Some(0x8008));
         assert!(!prediction.resolved_taken());
         assert_eq!(prediction.repair_target_pc(), Some(0x8004));
-        assert_eq!(core.branch_speculation_summary().repairs(), 1);
+        let summary = core.branch_speculation_summary();
+        assert_eq!(summary.repairs(), 1);
+        assert_eq!(
+            summary
+                .mispredict_due_to_predictor()
+                .value(BranchTargetKind::DirectConditional),
+            1
+        );
+        assert_eq!(summary.mispredict_due_to_predictor().total(), 1);
+        assert_eq!(summary.btb_mispredict_due_to_btb_miss().total(), 0);
     }
 
     #[test]
@@ -1247,6 +1256,14 @@ mod tests {
                 .value(BranchTargetKind::DirectConditional),
             0
         );
+        assert_eq!(
+            summary
+                .mispredict_due_to_predictor()
+                .value(BranchTargetKind::DirectConditional),
+            0
+        );
+        assert_eq!(summary.mispredict_due_to_predictor().total(), 0);
+        assert_eq!(summary.btb_mispredict_due_to_btb_miss().total(), 0);
     }
 
     #[test]
@@ -1997,6 +2014,20 @@ mod tests {
                 .btb_mispredict_due_to_btb_miss()
                 .value(BranchTargetKind::DirectConditional),
             1
+        );
+        assert_eq!(
+            state
+                .branch_speculation_summary
+                .mispredict_due_to_predictor()
+                .value(BranchTargetKind::DirectConditional),
+            0
+        );
+        assert_eq!(
+            state
+                .branch_speculation_summary
+                .mispredict_due_to_predictor()
+                .total(),
+            0
         );
         assert_eq!(
             state
