@@ -3141,6 +3141,82 @@ fn rem6_run_in_order_pipeline_models_integer_div_rem_execute_latency() {
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_scalar_fp_execute_latency() {
+    let fp_baseline_stats = in_order_pipeline_latency_stats(
+        "in-order-fp-baseline-execute-latency",
+        &[
+            fp_r_type(0x11, 0, 0, 0x0, 5), // fsgnj.d f5, f0, f0
+            0x0000_0073,                   // ecall
+        ],
+    );
+    assert_eq!(
+        stat_value(&fp_baseline_stats, "sim.cpu0.instructions.committed"),
+        2
+    );
+    assert_eq!(
+        stat_value(
+            &fp_baseline_stats,
+            "sim.cpu0.pipeline.in_order.data_wait_cycles"
+        ),
+        0
+    );
+
+    let baseline_cycles = stat_value(&fp_baseline_stats, "sim.cpu0.pipeline.in_order.cycles");
+    let baseline_stall = stat_value(
+        &fp_baseline_stats,
+        "sim.cpu0.pipeline.in_order.stall_cycles",
+    );
+    for (name, word, expected_extra_cycles) in [
+        ("fadd.s", fp_r_type(0x00, 0, 0, 0x0, 5), 1),
+        ("fadd.d", fp_r_type(0x01, 0, 0, 0x0, 5), 1),
+        ("fsub.s", fp_r_type(0x04, 0, 0, 0x0, 5), 1),
+        ("fsub.d", fp_r_type(0x05, 0, 0, 0x0, 5), 1),
+        ("fmul.s", fp_r_type(0x08, 0, 0, 0x0, 5), 3),
+        ("fmul.d", fp_r_type(0x09, 0, 0, 0x0, 5), 3),
+        ("fmadd.s", fp_r4_type(0, 0x0, 0, 0, 0x0, 5, 0x43), 4),
+        ("fmadd.d", fp_r4_type(0, 0x1, 0, 0, 0x0, 5, 0x43), 4),
+        ("fmsub.s", fp_r4_type(0, 0x0, 0, 0, 0x0, 5, 0x47), 4),
+        ("fmsub.d", fp_r4_type(0, 0x1, 0, 0, 0x0, 5, 0x47), 4),
+        ("fnmsub.s", fp_r4_type(0, 0x0, 0, 0, 0x0, 5, 0x4b), 4),
+        ("fnmsub.d", fp_r4_type(0, 0x1, 0, 0, 0x0, 5, 0x4b), 4),
+        ("fnmadd.s", fp_r4_type(0, 0x0, 0, 0, 0x0, 5, 0x4f), 4),
+        ("fnmadd.d", fp_r4_type(0, 0x1, 0, 0, 0x0, 5, 0x4f), 4),
+        ("fdiv.s", fp_r_type(0x0c, 0, 0, 0x0, 5), 11),
+        ("fdiv.d", fp_r_type(0x0d, 0, 0, 0x0, 5), 11),
+        ("fsqrt.s", fp_r_type(0x2c, 0, 0, 0x0, 5), 23),
+        ("fsqrt.d", fp_r_type(0x2d, 0, 0, 0x0, 5), 23),
+    ] {
+        let fp_stats = in_order_pipeline_latency_stats(
+            &format!("in-order-{name}-execute-latency"),
+            &[
+                word,
+                0x0000_0073, // ecall
+            ],
+        );
+
+        assert_eq!(stat_value(&fp_stats, "sim.cpu0.instructions.committed"), 2);
+        assert_eq!(
+            stat_value(&fp_stats, "sim.cpu0.pipeline.in_order.data_wait_cycles"),
+            0
+        );
+
+        let fp_cycles = stat_value(&fp_stats, "sim.cpu0.pipeline.in_order.cycles");
+        assert_eq!(
+            fp_cycles - baseline_cycles,
+            expected_extra_cycles,
+            "{name} should consume fixed extra execute latency: baseline={baseline_cycles}, {name}={fp_cycles}\nbaseline stats:\n{fp_baseline_stats}\n{name} stats:\n{fp_stats}"
+        );
+
+        let fp_stall = stat_value(&fp_stats, "sim.cpu0.pipeline.in_order.stall_cycles");
+        assert_eq!(
+            fp_stall - baseline_stall,
+            expected_extra_cycles,
+            "{name} should add fixed execute-stage pipeline stall cycles: baseline={baseline_stall}, {name}={fp_stall}\nbaseline stats:\n{fp_baseline_stats}\n{name} stats:\n{fp_stats}"
+        );
+    }
+}
+
+#[test]
 fn rem6_run_stats_emit_checker_cpu_counts_from_execution() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
@@ -3218,6 +3294,25 @@ fn in_order_pipeline_latency_stats(name: &str, words: &[u32]) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).unwrap()
+}
+
+fn fp_r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {
+    (funct7 << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | 0x53
+}
+
+fn fp_r4_type(rs3: u8, funct2: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
+    (u32::from(rs3) << 27)
+        | (funct2 << 25)
+        | (u32::from(rs2) << 20)
+        | (u32::from(rs1) << 15)
+        | (funct3 << 12)
+        | (u32::from(rd) << 7)
+        | opcode
 }
 
 fn in_order_pipeline_stats_for_width(path: &std::path::Path, width: u64) -> String {

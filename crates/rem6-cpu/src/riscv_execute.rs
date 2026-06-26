@@ -16,6 +16,11 @@ use crate::{
 
 const RISCV_SCALAR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES: u64 = 2;
 const RISCV_SCALAR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES: u64 = 19;
+const RISCV_SCALAR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES: u64 = 1;
+const RISCV_SCALAR_FLOAT_MUL_EXTRA_EXECUTE_CYCLES: u64 = 3;
+const RISCV_SCALAR_FLOAT_MUL_ADD_EXTRA_EXECUTE_CYCLES: u64 = 4;
+const RISCV_SCALAR_FLOAT_DIV_EXTRA_EXECUTE_CYCLES: u64 = 11;
+const RISCV_SCALAR_FLOAT_SQRT_EXTRA_EXECUTE_CYCLES: u64 = 23;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RiscvPendingFetchPrefix {
@@ -461,6 +466,29 @@ fn in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64 {
         | RiscvInstruction::Divuw { .. }
         | RiscvInstruction::Remw { .. }
         | RiscvInstruction::Remuw { .. } => RISCV_SCALAR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES,
+        RiscvInstruction::FloatAddS { .. }
+        | RiscvInstruction::FloatAddD { .. }
+        | RiscvInstruction::FloatSubS { .. }
+        | RiscvInstruction::FloatSubD { .. } => RISCV_SCALAR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES,
+        RiscvInstruction::FloatMulS { .. } | RiscvInstruction::FloatMulD { .. } => {
+            RISCV_SCALAR_FLOAT_MUL_EXTRA_EXECUTE_CYCLES
+        }
+        RiscvInstruction::FloatMultiplyAddS { .. }
+        | RiscvInstruction::FloatMultiplyAddD { .. }
+        | RiscvInstruction::FloatMultiplySubtractS { .. }
+        | RiscvInstruction::FloatMultiplySubtractD { .. }
+        | RiscvInstruction::FloatNegativeMultiplySubtractS { .. }
+        | RiscvInstruction::FloatNegativeMultiplySubtractD { .. }
+        | RiscvInstruction::FloatNegativeMultiplyAddS { .. }
+        | RiscvInstruction::FloatNegativeMultiplyAddD { .. } => {
+            RISCV_SCALAR_FLOAT_MUL_ADD_EXTRA_EXECUTE_CYCLES
+        }
+        RiscvInstruction::FloatDivS { .. } | RiscvInstruction::FloatDivD { .. } => {
+            RISCV_SCALAR_FLOAT_DIV_EXTRA_EXECUTE_CYCLES
+        }
+        RiscvInstruction::FloatSqrtS { .. } | RiscvInstruction::FloatSqrtD { .. } => {
+            RISCV_SCALAR_FLOAT_SQRT_EXTRA_EXECUTE_CYCLES
+        }
         _ => 0,
     }
 }
