@@ -117,6 +117,15 @@ pub(super) fn in_order_pipeline_stage_ordering_blocked(
     )
 }
 
+pub(super) fn in_order_pipeline_stage_flushed(core: &RiscvCore) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            summary.saturating_add(stage_summary_from_instructions(record.plan().flushed()))
+        },
+    )
+}
+
 fn stage_in_flight_from_snapshot(
     snapshot: &InOrderPipelineSnapshot,
 ) -> Rem6InOrderPipelineStageSummary {

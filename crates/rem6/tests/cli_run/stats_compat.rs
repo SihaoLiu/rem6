@@ -4809,6 +4809,7 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     let ordering_blocked = json_u64_field(&stdout, "\"ordering_blocked\":");
     let branch_prediction_flushes = json_u64_field(&stdout, "\"branch_prediction_flushes\":");
     let redirects = json_u64_field(&stdout, "\"redirects\":");
+    let stage_flushed = json_stage_summary(&stdout, "\"stage_flushed\":{");
 
     assert_eq!(
         stat_value(&stdout, "sim.cpu0.pipeline.in_order.branch_predictions"),
@@ -4876,6 +4877,20 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     assert!(flushed >= branch_prediction_flushes);
     assert!(branch_prediction_flushes > 0);
     assert!(redirects > 0);
+    assert_eq!(stage_flushed.iter().sum::<u64>(), flushed);
+    assert!(stage_flushed.iter().any(|value| *value > 0), "{stdout}");
+    for (index, stage) in ["fetch1", "fetch2", "decode", "execute", "commit"]
+        .iter()
+        .enumerate()
+    {
+        assert_eq!(
+            stat_value(
+                &stdout,
+                &format!("sim.cpu0.pipeline.in_order.stage.{stage}.flushed")
+            ),
+            stage_flushed[index]
+        );
+    }
     assert!(stdout.contains("\"x5\":\"0x7\""));
     assert!(!stdout.contains("\"x6\":\"0x1\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.condPredicted\""));

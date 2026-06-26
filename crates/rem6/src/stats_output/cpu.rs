@@ -154,6 +154,14 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.in_order_pipeline_stage_ordering_blocked.values(),
         )?;
+        emit_in_order_stage_stats(
+            stats,
+            core,
+            "flushed",
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_stage_flushed.values(),
+        )?;
         increment_stat(
             stats,
             &format!("sim.cpu{}.pipeline.in_order.stall_cycles", core.cpu),
