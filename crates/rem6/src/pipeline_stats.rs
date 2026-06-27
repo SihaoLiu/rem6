@@ -282,3 +282,26 @@ pub(super) fn in_order_pipeline_data_wait_cycles(core: &RiscvCore) -> u64 {
         .map(|event| event.in_order_pipeline_data_wait_cycles())
         .sum()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stage_presence_summary_counts_each_stage_once_per_cycle() {
+        let instructions = [
+            InOrderPipelineInstruction::new(1, InOrderPipelineStage::Execute),
+            InOrderPipelineInstruction::new(2, InOrderPipelineStage::Execute),
+            InOrderPipelineInstruction::new(3, InOrderPipelineStage::Decode),
+        ];
+
+        assert_eq!(
+            stage_presence_summary_from_instructions(&instructions),
+            Rem6InOrderPipelineStageSummary {
+                decode: 1,
+                execute: 1,
+                ..Rem6InOrderPipelineStageSummary::default()
+            }
+        );
+    }
+}
