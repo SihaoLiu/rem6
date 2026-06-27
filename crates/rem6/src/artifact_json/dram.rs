@@ -132,7 +132,7 @@ fn dram_ports_json(ports: &[Rem6DramPortSummary]) -> String {
 
 fn dram_port_json(summary: &Rem6DramPortSummary) -> String {
     format!(
-        "{{\"port\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"read_bytes\":{},\"write_bytes\":{},\"row_hits\":{},\"read_row_hits\":{},\"write_row_hits\":{},\"row_misses\":{},\"turnarounds\":{},\"commands\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"low_power\":{},\"banks\":[{}]}}",
+        "{{\"port\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"read_bytes\":{},\"write_bytes\":{},\"row_hits\":{},\"read_row_hits\":{},\"write_row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"turnarounds\":{},\"commands\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"low_power\":{},\"banks\":[{}]}}",
         summary.port,
         summary.banks.len(),
         summary.accesses,
@@ -144,6 +144,8 @@ fn dram_port_json(summary: &Rem6DramPortSummary) -> String {
         dram_port_read_row_hits(summary),
         dram_port_write_row_hits(summary),
         dram_port_row_misses(summary),
+        dram_port_refreshes(summary),
+        dram_port_refresh_ticks(summary),
         summary.turnarounds,
         summary.commands,
         dram_port_total_ready_latency_ticks(summary),
@@ -192,6 +194,14 @@ fn dram_port_write_row_hits(summary: &Rem6DramPortSummary) -> u64 {
 
 fn dram_port_row_misses(summary: &Rem6DramPortSummary) -> u64 {
     summary.banks.iter().map(|bank| bank.row_misses).sum()
+}
+
+fn dram_port_refreshes(summary: &Rem6DramPortSummary) -> u64 {
+    summary.banks.iter().map(|bank| bank.refreshes).sum()
+}
+
+fn dram_port_refresh_ticks(summary: &Rem6DramPortSummary) -> u64 {
+    summary.banks.iter().map(|bank| bank.refresh_ticks).sum()
 }
 
 fn dram_port_total_ready_latency_ticks(summary: &Rem6DramPortSummary) -> u64 {

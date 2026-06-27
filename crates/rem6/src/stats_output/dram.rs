@@ -612,6 +612,20 @@ fn emit_dram_port_stats(
         "Count",
         dram_port_row_misses(port),
     )?;
+    emit_dram_counter(
+        stats,
+        &prefix,
+        "refreshes",
+        "Count",
+        dram_port_refreshes(port),
+    )?;
+    emit_dram_counter(
+        stats,
+        &prefix,
+        "refresh_ticks",
+        "Tick",
+        dram_port_refresh_ticks(port),
+    )?;
     emit_dram_counter(stats, &prefix, "turnarounds", "Count", port.turnarounds)?;
     emit_dram_counter(stats, &prefix, "commands", "Count", port.commands)?;
     emit_dram_counter(
@@ -668,6 +682,14 @@ fn dram_port_write_row_hits(port: &Rem6DramPortSummary) -> u64 {
 
 fn dram_port_row_misses(port: &Rem6DramPortSummary) -> u64 {
     port.banks.iter().map(|bank| bank.row_misses).sum()
+}
+
+fn dram_port_refreshes(port: &Rem6DramPortSummary) -> u64 {
+    port.banks.iter().map(|bank| bank.refreshes).sum()
+}
+
+fn dram_port_refresh_ticks(port: &Rem6DramPortSummary) -> u64 {
+    port.banks.iter().map(|bank| bank.refresh_ticks).sum()
 }
 
 fn dram_port_total_ready_latency_ticks(port: &Rem6DramPortSummary) -> u64 {
