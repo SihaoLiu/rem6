@@ -1365,6 +1365,12 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         fabric.get("lane_activities"),
         "fabric resource lanes should mirror run fabric lanes"
     );
+    assert_run_fabric_link_activity_json(fabric);
+    assert_eq!(
+        fabric_resources.pointer("/link_activities"),
+        fabric.get("link_activities"),
+        "fabric resource links should mirror run fabric links"
+    );
     assert_eq!(
         fabric_resources.pointer("/hop_activities"),
         fabric.get("hop_activities"),
@@ -1577,6 +1583,7 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
     );
     assert_run_fabric_virtual_network_stats(&stdout, "sim.memory.fabric", fabric, 3);
     assert_run_fabric_virtual_network_stats(&stdout, "sim.memory.fabric", fabric, 4);
+    assert_run_fabric_link_stats(&stdout, "sim.memory.fabric", fabric);
     assert_run_fabric_lane_stats(&stdout, "sim.memory.fabric", fabric);
     assert_run_fabric_hop_stats(&stdout, "sim.memory.fabric", fabric);
     assert_run_fabric_virtual_network_stats(
@@ -1591,6 +1598,7 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         fabric_resources,
         4,
     );
+    assert_run_fabric_link_stats(&stdout, "sim.memory.resources.fabric", fabric_resources);
     assert_run_fabric_lane_stats(&stdout, "sim.memory.resources.fabric", fabric_resources);
     assert_run_fabric_hop_stats(&stdout, "sim.memory.resources.fabric", fabric_resources);
 }
@@ -3878,6 +3886,208 @@ fn assert_run_fabric_lane_stats(stdout: &str, stat_prefix: &str, fabric: &Value)
             &format!("{prefix}.max_credit_delay_ticks"),
             "Tick",
             lane_u64(lane, "max_credit_delay_ticks"),
+            "monotonic",
+        );
+    }
+}
+
+#[derive(Default)]
+struct ExpectedFabricLinkStats {
+    active_virtual_networks: BTreeSet<u64>,
+    transfers: u64,
+    bytes: u64,
+    flits: u64,
+    occupied_ticks: u64,
+    queue_delay_ticks: u64,
+    max_queue_delay_ticks: u64,
+    credit_delay_ticks: u64,
+    max_credit_delay_ticks: u64,
+    contended_virtual_networks: BTreeSet<u64>,
+    first_tick: Option<u64>,
+    last_tick: Option<u64>,
+}
+
+fn expected_fabric_link_stats(fabric: &Value) -> BTreeMap<String, ExpectedFabricLinkStats> {
+    let lanes = fabric
+        .get("lane_activities")
+        .and_then(Value::as_array)
+        .expect("fabric lane activities");
+    let mut summaries = BTreeMap::<String, ExpectedFabricLinkStats>::new();
+    for lane in lanes {
+        let link = lane
+            .get("link")
+            .and_then(Value::as_str)
+            .expect("fabric lane link")
+            .to_owned();
+        let virtual_network = lane
+            .get("virtual_network")
+            .and_then(Value::as_u64)
+            .expect("fabric lane virtual network");
+        let summary = summaries.entry(link).or_default();
+        summary.active_virtual_networks.insert(virtual_network);
+        summary.transfers += lane_u64(lane, "transfer_count");
+        summary.bytes += lane_u64(lane, "byte_count");
+        summary.flits += lane_u64(lane, "flit_count");
+        summary.occupied_ticks += lane_u64(lane, "occupied_ticks");
+        let queue_delay_ticks = lane_u64(lane, "queue_delay_ticks");
+        summary.queue_delay_ticks += queue_delay_ticks;
+        summary.max_queue_delay_ticks = summary
+            .max_queue_delay_ticks
+            .max(lane_u64(lane, "max_queue_delay_ticks"));
+        summary.credit_delay_ticks += lane_u64(lane, "credit_delay_ticks");
+        summary.max_credit_delay_ticks = summary
+            .max_credit_delay_ticks
+            .max(lane_u64(lane, "max_credit_delay_ticks"));
+        if queue_delay_ticks != 0 {
+            summary.contended_virtual_networks.insert(virtual_network);
+        }
+        let first_tick = lane_u64(lane, "first_tick");
+        summary.first_tick = Some(
+            summary
+                .first_tick
+                .map_or(first_tick, |tick| tick.min(first_tick)),
+        );
+        let last_tick = lane_u64(lane, "last_tick");
+        summary.last_tick = Some(
+            summary
+                .last_tick
+                .map_or(last_tick, |tick| tick.max(last_tick)),
+        );
+    }
+    summaries
+}
+
+fn assert_run_fabric_link_activity_json(fabric: &Value) {
+    let expected = expected_fabric_link_stats(fabric);
+    let links = fabric
+        .get("link_activities")
+        .and_then(Value::as_array)
+        .expect("fabric link activities");
+    assert_eq!(links.len(), expected.len(), "fabric link activity count");
+
+    for link_activity in links {
+        let link = link_activity
+            .get("link")
+            .and_then(Value::as_str)
+            .expect("fabric link activity link");
+        let expected = expected.get(link).expect("expected fabric link activity");
+        assert_eq!(
+            lane_u64(link_activity, "active_virtual_networks"),
+            expected.active_virtual_networks.len() as u64
+        );
+        assert_eq!(
+            lane_u64(link_activity, "transfer_count"),
+            expected.transfers
+        );
+        assert_eq!(lane_u64(link_activity, "byte_count"), expected.bytes);
+        assert_eq!(lane_u64(link_activity, "flit_count"), expected.flits);
+        assert_eq!(
+            lane_u64(link_activity, "occupied_ticks"),
+            expected.occupied_ticks
+        );
+        assert_eq!(
+            lane_u64(link_activity, "queue_delay_ticks"),
+            expected.queue_delay_ticks
+        );
+        assert_eq!(
+            lane_u64(link_activity, "max_queue_delay_ticks"),
+            expected.max_queue_delay_ticks
+        );
+        assert_eq!(
+            lane_u64(link_activity, "credit_delay_ticks"),
+            expected.credit_delay_ticks
+        );
+        assert_eq!(
+            lane_u64(link_activity, "max_credit_delay_ticks"),
+            expected.max_credit_delay_ticks
+        );
+        assert_eq!(
+            lane_u64(link_activity, "contended_virtual_networks"),
+            expected.contended_virtual_networks.len() as u64
+        );
+        assert_eq!(
+            lane_u64(link_activity, "first_tick"),
+            expected.first_tick.expect("expected first tick")
+        );
+        assert_eq!(
+            lane_u64(link_activity, "last_tick"),
+            expected.last_tick.expect("expected last tick")
+        );
+    }
+}
+
+fn assert_run_fabric_link_stats(stdout: &str, stat_prefix: &str, fabric: &Value) {
+    assert_run_fabric_link_activity_json(fabric);
+    for (link, expected) in expected_fabric_link_stats(fabric) {
+        let prefix = format!("{stat_prefix}.link.{}", stat_path_segment(&link));
+        assert_stat(
+            stdout,
+            &format!("{prefix}.active_virtual_networks"),
+            "Count",
+            expected.active_virtual_networks.len() as u64,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.transfers"),
+            "Count",
+            expected.transfers,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.bytes"),
+            "Byte",
+            expected.bytes,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.flits"),
+            "Count",
+            expected.flits,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.occupied_ticks"),
+            "Tick",
+            expected.occupied_ticks,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.queue_delay_ticks"),
+            "Tick",
+            expected.queue_delay_ticks,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.max_queue_delay_ticks"),
+            "Tick",
+            expected.max_queue_delay_ticks,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.credit_delay_ticks"),
+            "Tick",
+            expected.credit_delay_ticks,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.max_credit_delay_ticks"),
+            "Tick",
+            expected.max_credit_delay_ticks,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.contended_virtual_networks"),
+            "Count",
+            expected.contended_virtual_networks.len() as u64,
             "monotonic",
         );
     }

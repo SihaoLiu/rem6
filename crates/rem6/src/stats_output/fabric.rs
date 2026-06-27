@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use rem6_fabric::{FabricHopActivity, FabricLaneActivity, FabricVirtualNetworkActivity};
+use rem6_fabric::{
+    FabricHopActivity, FabricLaneActivity, FabricLinkActivity, FabricVirtualNetworkActivity,
+};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use crate::{Rem6CliError, Rem6RunFabricSummary};
@@ -90,6 +92,7 @@ pub(super) fn emit_run_fabric_stats(
         summary.contended_lanes(),
     )?;
     emit_fabric_virtual_network_stats(stats, prefix, summary.virtual_network_activities())?;
+    emit_fabric_link_stats(stats, prefix, summary.link_activities())?;
     emit_fabric_lane_stats(stats, prefix, summary.lane_activities())?;
     emit_fabric_hop_stats(stats, prefix, summary.hop_activities())
 }
@@ -177,6 +180,59 @@ where
             StatResetPolicy::Monotonic,
             activity.contended_lane_count() as u64,
         )?;
+    }
+    Ok(())
+}
+
+pub(super) fn emit_fabric_link_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    activities: &[FabricLinkActivity],
+) -> Result<(), Rem6CliError> {
+    for activity in activities {
+        if activity.is_empty() {
+            continue;
+        }
+        let prefix = format!(
+            "{prefix}.link.{}",
+            stat_path_segment(activity.link().as_str())
+        );
+        for (suffix, unit, value) in [
+            (
+                "active_virtual_networks",
+                "Count",
+                activity.active_virtual_network_count() as u64,
+            ),
+            ("transfers", "Count", activity.transfer_count() as u64),
+            ("bytes", "Byte", activity.byte_count()),
+            ("flits", "Count", activity.flit_count()),
+            ("occupied_ticks", "Tick", activity.occupied_ticks()),
+            ("queue_delay_ticks", "Tick", activity.queue_delay_ticks()),
+            (
+                "max_queue_delay_ticks",
+                "Tick",
+                activity.max_queue_delay_ticks(),
+            ),
+            ("credit_delay_ticks", "Tick", activity.credit_delay_ticks()),
+            (
+                "max_credit_delay_ticks",
+                "Tick",
+                activity.max_credit_delay_ticks(),
+            ),
+            (
+                "contended_virtual_networks",
+                "Count",
+                activity.contended_virtual_network_count() as u64,
+            ),
+        ] {
+            increment_stat(
+                stats,
+                &format!("{prefix}.{suffix}"),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
     }
     Ok(())
 }

@@ -258,7 +258,7 @@ fn run_fabric_json(config: Option<&RunFabricConfig>, summary: &Rem6RunFabricSumm
         .map(|depth| depth.to_string())
         .unwrap_or_else(|| "null".to_string());
     format!(
-        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
+        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
         json_escape(config.link()),
         config.bandwidth_bytes_per_tick(),
         config.request_virtual_network(),
@@ -275,9 +275,36 @@ fn run_fabric_json(config: Option<&RunFabricConfig>, summary: &Rem6RunFabricSumm
         summary.credit_delay_ticks(),
         summary.max_credit_delay_ticks(),
         summary.contended_lanes(),
+        run_fabric_link_activities_json(summary),
         run_fabric_lane_activities_json(summary),
         run_fabric_hop_activities_json(summary),
     )
+}
+
+fn run_fabric_link_activities_json(summary: &Rem6RunFabricSummary) -> String {
+    summary
+        .link_activities()
+        .iter()
+        .map(|activity| {
+            format!(
+                "{{\"link\":\"{}\",\"active_virtual_networks\":{},\"transfer_count\":{},\"byte_count\":{},\"flit_count\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_virtual_networks\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                json_escape(activity.link().as_str()),
+                activity.active_virtual_network_count(),
+                activity.transfer_count(),
+                activity.byte_count(),
+                activity.flit_count(),
+                activity.occupied_ticks(),
+                activity.queue_delay_ticks(),
+                activity.max_queue_delay_ticks(),
+                activity.credit_delay_ticks(),
+                activity.max_credit_delay_ticks(),
+                activity.contended_virtual_network_count(),
+                activity.first_tick(),
+                activity.last_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn run_fabric_lane_activities_json(summary: &Rem6RunFabricSummary) -> String {

@@ -7,7 +7,10 @@ use crate::{
 
 use super::{
     dram::emit_dram_target_stats,
-    fabric::{emit_fabric_hop_stats, emit_fabric_lane_stats, emit_fabric_virtual_network_stats},
+    fabric::{
+        emit_fabric_hop_stats, emit_fabric_lane_stats, emit_fabric_link_stats,
+        emit_fabric_virtual_network_stats,
+    },
     increment_stat, Rem6CliError, Rem6ExecutionSummary,
 };
 
@@ -205,6 +208,7 @@ fn emit_fabric_resource_stats(
         )?;
     }
     emit_fabric_virtual_network_stats(stats, prefix, summary.virtual_network_activities())?;
+    emit_fabric_link_stats(stats, prefix, summary.link_activities())?;
     emit_fabric_lane_stats(stats, prefix, summary.lane_activities())?;
     emit_fabric_hop_stats(stats, prefix, summary.hop_activities())
 }

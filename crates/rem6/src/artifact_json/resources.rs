@@ -107,7 +107,7 @@ pub(super) fn dram_low_power_json(
 
 fn fabric_resource_json(summary: &Rem6FabricResourceSummary) -> String {
     format!(
-        "{{\"activity\":{},\"active\":{},\"active_virtual_networks\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
+        "{{\"activity\":{},\"active\":{},\"active_virtual_networks\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
         summary.activity,
         summary.active,
         summary.active_virtual_networks,
@@ -119,9 +119,36 @@ fn fabric_resource_json(summary: &Rem6FabricResourceSummary) -> String {
         summary.credit_delay_ticks,
         summary.max_credit_delay_ticks,
         summary.contended_lanes,
+        fabric_resource_link_activities_json(summary),
         fabric_resource_lane_activities_json(summary),
         fabric_resource_hop_activities_json(summary),
     )
+}
+
+fn fabric_resource_link_activities_json(summary: &Rem6FabricResourceSummary) -> String {
+    summary
+        .link_activities()
+        .iter()
+        .map(|activity| {
+            format!(
+                "{{\"link\":\"{}\",\"active_virtual_networks\":{},\"transfer_count\":{},\"byte_count\":{},\"flit_count\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_virtual_networks\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                json_escape(activity.link().as_str()),
+                activity.active_virtual_network_count(),
+                activity.transfer_count(),
+                activity.byte_count(),
+                activity.flit_count(),
+                activity.occupied_ticks(),
+                activity.queue_delay_ticks(),
+                activity.max_queue_delay_ticks(),
+                activity.credit_delay_ticks(),
+                activity.max_credit_delay_ticks(),
+                activity.contended_virtual_network_count(),
+                activity.first_tick(),
+                activity.last_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn fabric_resource_lane_activities_json(summary: &Rem6FabricResourceSummary) -> String {

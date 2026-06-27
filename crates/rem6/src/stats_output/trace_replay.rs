@@ -5,7 +5,8 @@ use rem6_workload::{
 };
 
 use super::fabric::{
-    emit_fabric_hop_stats, emit_fabric_lane_stats, emit_fabric_virtual_network_stats,
+    emit_fabric_hop_stats, emit_fabric_lane_stats, emit_fabric_link_stats,
+    emit_fabric_virtual_network_stats,
 };
 use super::{
     increment_stat, CliDataCacheSummary, Rem6CliError, Rem6TraceReplayExternalAdapterSummary,
@@ -556,6 +557,11 @@ pub(super) fn emit_trace_replay_fabric_stats(
         stats,
         "sim.trace_replay.fabric",
         summary.fabric_virtual_network_activities().iter().cloned(),
+    )?;
+    emit_fabric_link_stats(
+        stats,
+        "sim.trace_replay.fabric",
+        summary.fabric_link_activities(),
     )?;
     emit_fabric_lane_stats(
         stats,

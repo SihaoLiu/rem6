@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use rem6_fabric::{
-    FabricActivityProfile, FabricHopActivity, FabricLaneActivity, FabricLinkId, FabricModel,
-    FabricPath, FabricPathHop, FabricVirtualNetworkActivity, VirtualNetworkId,
+    FabricActivityProfile, FabricHopActivity, FabricLaneActivity, FabricLinkActivity, FabricLinkId,
+    FabricModel, FabricPath, FabricPathHop, FabricVirtualNetworkActivity, VirtualNetworkId,
 };
 use rem6_transport::{MemoryRoute, MemoryRouteHop, MemoryTransport};
 
@@ -133,6 +133,10 @@ impl Rem6GpuFabricSummary {
         &self.lane_activities
     }
 
+    pub(crate) fn link_activities(&self) -> Vec<FabricLinkActivity> {
+        FabricLinkActivity::from_lanes(self.lane_activities.iter())
+    }
+
     pub(crate) fn hop_activities(&self) -> &[FabricHopActivity] {
         &self.hop_activities
     }
@@ -220,7 +224,7 @@ pub(super) fn gpu_fabric_summary_json(
         .map(|depth| depth.to_string())
         .unwrap_or_else(|| "null".to_string());
     format!(
-        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
+        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
         json_escape(config.link()),
         config.bandwidth_bytes_per_tick(),
         config.request_virtual_network(),
@@ -237,9 +241,36 @@ pub(super) fn gpu_fabric_summary_json(
         summary.credit_delay_ticks(),
         summary.max_credit_delay_ticks(),
         summary.contended_lane_count(),
+        gpu_fabric_link_activities_json(summary),
         gpu_fabric_lane_activities_json(summary),
         gpu_fabric_hop_activities_json(summary),
     )
+}
+
+fn gpu_fabric_link_activities_json(summary: &Rem6GpuFabricSummary) -> String {
+    summary
+        .link_activities()
+        .iter()
+        .map(|activity| {
+            format!(
+                "{{\"link\":\"{}\",\"active_virtual_networks\":{},\"transfer_count\":{},\"byte_count\":{},\"flit_count\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_virtual_networks\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                json_escape(activity.link().as_str()),
+                activity.active_virtual_network_count(),
+                activity.transfer_count(),
+                activity.byte_count(),
+                activity.flit_count(),
+                activity.occupied_ticks(),
+                activity.queue_delay_ticks(),
+                activity.max_queue_delay_ticks(),
+                activity.credit_delay_ticks(),
+                activity.max_credit_delay_ticks(),
+                activity.contended_virtual_network_count(),
+                activity.first_tick(),
+                activity.last_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 fn gpu_fabric_lane_activities_json(summary: &Rem6GpuFabricSummary) -> String {

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use rem6_fabric::{
-    FabricActivityProfile, FabricHopActivity, FabricLaneActivity, FabricModel,
+    FabricActivityProfile, FabricHopActivity, FabricLaneActivity, FabricLinkActivity, FabricModel,
     FabricVirtualNetworkActivity,
 };
 use rem6_transport::MemoryTransport;
@@ -21,6 +21,7 @@ pub(crate) struct Rem6RunFabricSummary {
     credit_delay_ticks: u64,
     max_credit_delay_ticks: u64,
     contended_lanes: u64,
+    link_activities: Vec<FabricLinkActivity>,
     lane_activities: Vec<FabricLaneActivity>,
     hop_activities: Vec<FabricHopActivity>,
 }
@@ -55,6 +56,7 @@ impl Rem6RunFabricSummary {
             credit_delay_ticks: profile.credit_delay_ticks(),
             max_credit_delay_ticks: profile.max_credit_delay_ticks(),
             contended_lanes: profile.contended_lane_count() as u64,
+            link_activities: FabricLinkActivity::from_lanes(lane_activities.iter()),
             lane_activities,
             hop_activities,
         }
@@ -106,6 +108,10 @@ impl Rem6RunFabricSummary {
 
     pub(crate) fn lane_activities(&self) -> &[FabricLaneActivity] {
         &self.lane_activities
+    }
+
+    pub(crate) fn link_activities(&self) -> &[FabricLinkActivity] {
+        &self.link_activities
     }
 
     pub(crate) fn hop_activities(&self) -> &[FabricHopActivity] {

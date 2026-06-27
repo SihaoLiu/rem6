@@ -390,6 +390,43 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
             max_credit_delay_ticks: 0,
         },
     );
+    let links = artifact
+        .pointer("/summary/fabric_link_activities")
+        .and_then(Value::as_array)
+        .expect("fabric link activity details");
+    assert_eq!(links.len(), 1);
+    assert_fabric_link_activity(
+        links,
+        ExpectedFabricLinkStats {
+            link: "cpu_mem",
+            active_virtual_networks: 2,
+            transfer_count: 2,
+            byte_count: 16,
+            flit_count: 4,
+            occupied_ticks: 4,
+            queue_delay_ticks: 0,
+            max_queue_delay_ticks: 0,
+            credit_delay_ticks: 0,
+            max_credit_delay_ticks: 0,
+            contended_virtual_networks: 0,
+        },
+    );
+    assert_fabric_link_stats(
+        &stdout,
+        ExpectedFabricLinkStats {
+            link: "cpu_mem",
+            active_virtual_networks: 2,
+            transfer_count: 2,
+            byte_count: 16,
+            flit_count: 4,
+            occupied_ticks: 4,
+            queue_delay_ticks: 0,
+            max_queue_delay_ticks: 0,
+            credit_delay_ticks: 0,
+            max_credit_delay_ticks: 0,
+            contended_virtual_networks: 0,
+        },
+    );
 
     let hops = artifact
         .pointer("/summary/fabric_hop_activities")
@@ -600,6 +637,133 @@ fn assert_fabric_lane_stats(stdout: &str, expected: ExpectedFabricLaneStats<'_>)
     );
 }
 
+fn assert_fabric_link_stats(stdout: &str, expected: ExpectedFabricLinkStats<'_>) {
+    let prefix = format!(
+        "sim.trace_replay.fabric.link.{}",
+        stat_path_segment(expected.link)
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.active_virtual_networks"),
+        "Count",
+        expected.active_virtual_networks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.transfers"),
+        "Count",
+        expected.transfer_count,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.bytes"),
+        "Byte",
+        expected.byte_count,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.flits"),
+        "Count",
+        expected.flit_count,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.occupied_ticks"),
+        "Tick",
+        expected.occupied_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.queue_delay_ticks"),
+        "Tick",
+        expected.queue_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.max_queue_delay_ticks"),
+        "Tick",
+        expected.max_queue_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.credit_delay_ticks"),
+        "Tick",
+        expected.credit_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.max_credit_delay_ticks"),
+        "Tick",
+        expected.max_credit_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.contended_virtual_networks"),
+        "Count",
+        expected.contended_virtual_networks,
+        "monotonic",
+    );
+}
+
+fn assert_fabric_link_activity(links: &[Value], expected: ExpectedFabricLinkStats<'_>) {
+    let link = links
+        .iter()
+        .find(|link| link.get("link").and_then(Value::as_str) == Some(expected.link))
+        .expect("fabric link activity entry");
+    assert_eq!(
+        link.get("active_virtual_networks").and_then(Value::as_u64),
+        Some(expected.active_virtual_networks)
+    );
+    assert_eq!(
+        link.get("transfer_count").and_then(Value::as_u64),
+        Some(expected.transfer_count)
+    );
+    assert_eq!(
+        link.get("byte_count").and_then(Value::as_u64),
+        Some(expected.byte_count)
+    );
+    assert_eq!(
+        link.get("flit_count").and_then(Value::as_u64),
+        Some(expected.flit_count)
+    );
+    assert_eq!(
+        link.get("occupied_ticks").and_then(Value::as_u64),
+        Some(expected.occupied_ticks)
+    );
+    assert_eq!(
+        link.get("queue_delay_ticks").and_then(Value::as_u64),
+        Some(expected.queue_delay_ticks)
+    );
+    assert_eq!(
+        link.get("max_queue_delay_ticks").and_then(Value::as_u64),
+        Some(expected.max_queue_delay_ticks)
+    );
+    assert_eq!(
+        link.get("credit_delay_ticks").and_then(Value::as_u64),
+        Some(expected.credit_delay_ticks)
+    );
+    assert_eq!(
+        link.get("max_credit_delay_ticks").and_then(Value::as_u64),
+        Some(expected.max_credit_delay_ticks)
+    );
+    assert_eq!(
+        link.get("contended_virtual_networks")
+            .and_then(Value::as_u64),
+        Some(expected.contended_virtual_networks)
+    );
+    assert!(link.get("first_tick").and_then(Value::as_u64).is_some());
+    assert!(link.get("last_tick").and_then(Value::as_u64).is_some());
+}
+
 fn assert_fabric_lane_activity(lanes: &[Value], expected: ExpectedFabricLaneActivity<'_>) {
     let lane = lanes
         .iter()
@@ -670,6 +834,20 @@ struct ExpectedFabricLaneStats<'a> {
     max_queue_delay_ticks: u64,
     credit_delay_ticks: u64,
     max_credit_delay_ticks: u64,
+}
+
+struct ExpectedFabricLinkStats<'a> {
+    link: &'a str,
+    active_virtual_networks: u64,
+    transfer_count: u64,
+    byte_count: u64,
+    flit_count: u64,
+    occupied_ticks: u64,
+    queue_delay_ticks: u64,
+    max_queue_delay_ticks: u64,
+    credit_delay_ticks: u64,
+    max_credit_delay_ticks: u64,
+    contended_virtual_networks: u64,
 }
 
 struct ExpectedFabricLaneActivity<'a> {
