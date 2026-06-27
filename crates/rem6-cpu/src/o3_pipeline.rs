@@ -4,11 +4,16 @@ use std::fmt;
 
 const O3_WRITEBACK_CHECKPOINT_MAGIC: [u8; 4] = *b"O3WB";
 const O3_WRITEBACK_CHECKPOINT_VERSION: u8 = 1;
+const O3_PENDING_STATE_CHECKPOINT_MAGIC: [u8; 4] = *b"O3PS";
+const O3_PENDING_STATE_CHECKPOINT_VERSION: u8 = 1;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 const O3_WRITEBACK_CHECKPOINT_HEADER_BYTES: usize =
     O3_WRITEBACK_CHECKPOINT_MAGIC.len() + 1 + 1 + U32_BYTES + U64_BYTES + U32_BYTES;
 const O3_WRITEBACK_CHECKPOINT_COMPLETION_BYTES: usize = U64_BYTES;
+const O3_PENDING_STATE_CHECKPOINT_HEADER_BYTES: usize =
+    O3_PENDING_STATE_CHECKPOINT_MAGIC.len() + 1 + U32_BYTES + U32_BYTES + U32_BYTES;
+const O3_PENDING_READY_INSTRUCTION_BYTES: usize = U64_BYTES + U32_BYTES + 1 + U32_BYTES + U32_BYTES;
 const O3_WRITEBACK_CHECKPOINT_U32_MAX: usize = u32::MAX as usize;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -703,6 +708,9 @@ pub enum O3PipelineError {
     InvalidCheckpointStageCode {
         code: u8,
     },
+    InvalidCheckpointOpClassCode {
+        code: u8,
+    },
     CheckpointValueTooLarge {
         field: &'static str,
         value: usize,
@@ -775,6 +783,9 @@ impl fmt::Display for O3PipelineError {
             ),
             Self::InvalidCheckpointStageCode { code } => {
                 write!(formatter, "O3 checkpoint payload has invalid stage code {code}")
+            }
+            Self::InvalidCheckpointOpClassCode { code } => {
+                write!(formatter, "O3 checkpoint payload has invalid op-class code {code}")
             }
             Self::CheckpointValueTooLarge {
                 field,
@@ -1160,6 +1171,200 @@ impl O3WritebackTransferCheckpointPayload {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct O3PendingStateSnapshot {
+    resolved_dependency_scopes: Vec<O3DependencyScopeId>,
+    ready: Vec<O3ScopedReadyInstruction>,
+    writeback: O3WritebackTransferSnapshot,
+}
+
+impl O3PendingStateSnapshot {
+    pub fn new<R, I>(
+        resolved_dependency_scopes: R,
+        ready: I,
+        writeback: O3WritebackTransferSnapshot,
+    ) -> Result<Self, O3PipelineError>
+    where
+        R: IntoIterator<Item = O3DependencyScopeId>,
+        I: IntoIterator<Item = O3ScopedReadyInstruction>,
+    {
+        let resolved_dependency_scopes = canonical_scopes(resolved_dependency_scopes);
+        let mut ready = ready.into_iter().collect::<Vec<_>>();
+        ready.sort_by_key(|instruction| {
+            (
+                instruction.sequence(),
+                instruction.queue().get(),
+                encode_checkpoint_op_class(instruction.op_class()),
+            )
+        });
+        validate_unique_dependency_producers(&ready)?;
+
+        let snapshot = Self {
+            resolved_dependency_scopes,
+            ready,
+            writeback,
+        };
+        validate_pending_state_snapshot(&snapshot)?;
+        Ok(snapshot)
+    }
+
+    pub fn resolved_dependency_scopes(&self) -> &[O3DependencyScopeId] {
+        &self.resolved_dependency_scopes
+    }
+
+    pub fn ready(&self) -> &[O3ScopedReadyInstruction] {
+        &self.ready
+    }
+
+    pub const fn writeback(&self) -> &O3WritebackTransferSnapshot {
+        &self.writeback
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct O3PendingStateCheckpointPayload {
+    snapshot: O3PendingStateSnapshot,
+}
+
+impl O3PendingStateCheckpointPayload {
+    pub fn from_snapshot(snapshot: O3PendingStateSnapshot) -> Result<Self, O3PipelineError> {
+        validate_pending_state_snapshot(&snapshot)?;
+        Ok(Self { snapshot })
+    }
+
+    pub fn decode(payload: &[u8]) -> Result<Self, O3PipelineError> {
+        if payload.len() < O3_PENDING_STATE_CHECKPOINT_HEADER_BYTES {
+            return Err(O3PipelineError::InvalidCheckpointPayloadSize {
+                expected: O3_PENDING_STATE_CHECKPOINT_HEADER_BYTES,
+                actual: payload.len(),
+            });
+        }
+        if payload[..O3_PENDING_STATE_CHECKPOINT_MAGIC.len()] != O3_PENDING_STATE_CHECKPOINT_MAGIC {
+            return Err(O3PipelineError::InvalidCheckpointMagic);
+        }
+
+        let version = payload[O3_PENDING_STATE_CHECKPOINT_MAGIC.len()];
+        if version != O3_PENDING_STATE_CHECKPOINT_VERSION {
+            return Err(O3PipelineError::UnsupportedCheckpointVersion { version });
+        }
+
+        let mut offset = O3_PENDING_STATE_CHECKPOINT_MAGIC.len() + 1;
+        let writeback_payload_len = read_checkpoint_u32(payload, &mut offset)? as usize;
+        let resolved_count = read_checkpoint_u32(payload, &mut offset)? as usize;
+        let ready_count = read_checkpoint_u32(payload, &mut offset)? as usize;
+
+        ensure_checkpoint_remaining(payload, offset, writeback_payload_len)?;
+        let writeback_end = offset + writeback_payload_len;
+        let writeback =
+            O3WritebackTransferCheckpointPayload::decode(&payload[offset..writeback_end])?
+                .into_snapshot();
+        offset = writeback_end;
+
+        let resolved_bytes = checkpoint_field_bytes(resolved_count, U64_BYTES, payload.len())?;
+        ensure_checkpoint_remaining(payload, offset, resolved_bytes)?;
+        let mut resolved_dependency_scopes = Vec::with_capacity(resolved_count);
+        for _ in 0..resolved_count {
+            resolved_dependency_scopes.push(O3DependencyScopeId::new(read_checkpoint_u64(
+                payload,
+                &mut offset,
+            )?));
+        }
+
+        let minimum_ready_bytes = checkpoint_field_bytes(
+            ready_count,
+            O3_PENDING_READY_INSTRUCTION_BYTES,
+            payload.len(),
+        )?;
+        ensure_checkpoint_remaining(payload, offset, minimum_ready_bytes)?;
+        let mut ready = Vec::with_capacity(ready_count);
+        for _ in 0..ready_count {
+            let sequence = read_checkpoint_u64(payload, &mut offset)?;
+            let queue = O3IssueQueueId::new(read_checkpoint_u32(payload, &mut offset)?);
+            let op_class = decode_checkpoint_op_class(read_checkpoint_u8(payload, &mut offset)?)?;
+            let waits_on_count = read_checkpoint_u32(payload, &mut offset)? as usize;
+            let produces_count = read_checkpoint_u32(payload, &mut offset)? as usize;
+            let waits_on = read_checkpoint_scopes(payload, &mut offset, waits_on_count)?;
+            let produces = read_checkpoint_scopes(payload, &mut offset, produces_count)?;
+
+            ready.push(
+                O3ScopedReadyInstruction::new(sequence, queue, op_class)
+                    .with_waits_on(waits_on)
+                    .with_produces(produces),
+            );
+        }
+
+        if offset != payload.len() {
+            return Err(O3PipelineError::InvalidCheckpointPayloadSize {
+                expected: offset,
+                actual: payload.len(),
+            });
+        }
+
+        Self::from_snapshot(O3PendingStateSnapshot::new(
+            resolved_dependency_scopes,
+            ready,
+            writeback,
+        )?)
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        let writeback_payload =
+            O3WritebackTransferCheckpointPayload::from_snapshot(self.snapshot.writeback.clone())
+                .expect("pending-state checkpoint payload was validated before construction")
+                .encode();
+        let writeback_payload_len =
+            encode_checkpoint_u32("writeback_payload_length", writeback_payload.len())
+                .expect("pending-state checkpoint payload was validated before construction");
+        let resolved_count = encode_checkpoint_u32(
+            "resolved_dependency_scope_count",
+            self.snapshot.resolved_dependency_scopes.len(),
+        )
+        .expect("pending-state checkpoint payload was validated before construction");
+        let ready_count =
+            encode_checkpoint_u32("ready_instruction_count", self.snapshot.ready.len())
+                .expect("pending-state checkpoint payload was validated before construction");
+
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&O3_PENDING_STATE_CHECKPOINT_MAGIC);
+        payload.push(O3_PENDING_STATE_CHECKPOINT_VERSION);
+        payload.extend_from_slice(&writeback_payload_len.to_le_bytes());
+        payload.extend_from_slice(&resolved_count.to_le_bytes());
+        payload.extend_from_slice(&ready_count.to_le_bytes());
+        payload.extend_from_slice(&writeback_payload);
+        for scope in &self.snapshot.resolved_dependency_scopes {
+            payload.extend_from_slice(&scope.get().to_le_bytes());
+        }
+        for instruction in &self.snapshot.ready {
+            let waits_on_count =
+                encode_checkpoint_u32("waits_on_count", instruction.waits_on().len())
+                    .expect("pending-state checkpoint payload was validated before construction");
+            let produces_count =
+                encode_checkpoint_u32("produces_count", instruction.produces().len())
+                    .expect("pending-state checkpoint payload was validated before construction");
+            payload.extend_from_slice(&instruction.sequence().to_le_bytes());
+            payload.extend_from_slice(&instruction.queue().get().to_le_bytes());
+            payload.push(encode_checkpoint_op_class(instruction.op_class()));
+            payload.extend_from_slice(&waits_on_count.to_le_bytes());
+            payload.extend_from_slice(&produces_count.to_le_bytes());
+            for scope in instruction.waits_on() {
+                payload.extend_from_slice(&scope.get().to_le_bytes());
+            }
+            for scope in instruction.produces() {
+                payload.extend_from_slice(&scope.get().to_le_bytes());
+            }
+        }
+        payload
+    }
+
+    pub const fn snapshot(&self) -> &O3PendingStateSnapshot {
+        &self.snapshot
+    }
+
+    pub fn into_snapshot(self) -> O3PendingStateSnapshot {
+        self.snapshot
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct O3WritebackTransferBuffer {
     policy: O3WritebackTransferPolicy,
     deferred: VecDeque<O3WritebackCompletion>,
@@ -1266,12 +1471,120 @@ fn decode_checkpoint_stage(code: u8) -> Result<O3PipelineStage, O3PipelineError>
     }
 }
 
+fn encode_checkpoint_op_class(op_class: O3IssueOpClass) -> u8 {
+    match op_class {
+        O3IssueOpClass::IntAlu => 0,
+        O3IssueOpClass::IntMult => 1,
+        O3IssueOpClass::Float => 2,
+        O3IssueOpClass::Memory => 3,
+        O3IssueOpClass::Branch => 4,
+        O3IssueOpClass::System => 5,
+    }
+}
+
+fn decode_checkpoint_op_class(code: u8) -> Result<O3IssueOpClass, O3PipelineError> {
+    match code {
+        0 => Ok(O3IssueOpClass::IntAlu),
+        1 => Ok(O3IssueOpClass::IntMult),
+        2 => Ok(O3IssueOpClass::Float),
+        3 => Ok(O3IssueOpClass::Memory),
+        4 => Ok(O3IssueOpClass::Branch),
+        5 => Ok(O3IssueOpClass::System),
+        _ => Err(O3PipelineError::InvalidCheckpointOpClassCode { code }),
+    }
+}
+
 fn encode_checkpoint_u32(field: &'static str, value: usize) -> Result<u32, O3PipelineError> {
     u32::try_from(value).map_err(|_| O3PipelineError::CheckpointValueTooLarge {
         field,
         value,
         maximum: O3_WRITEBACK_CHECKPOINT_U32_MAX,
     })
+}
+
+fn validate_pending_state_snapshot(
+    snapshot: &O3PendingStateSnapshot,
+) -> Result<(), O3PipelineError> {
+    encode_checkpoint_u32(
+        "resolved_dependency_scope_count",
+        snapshot.resolved_dependency_scopes.len(),
+    )?;
+    encode_checkpoint_u32("ready_instruction_count", snapshot.ready.len())?;
+    let writeback_payload =
+        O3WritebackTransferCheckpointPayload::from_snapshot(snapshot.writeback.clone())?.encode();
+    encode_checkpoint_u32("writeback_payload_length", writeback_payload.len())?;
+    for instruction in &snapshot.ready {
+        encode_checkpoint_u32("waits_on_count", instruction.waits_on().len())?;
+        encode_checkpoint_u32("produces_count", instruction.produces().len())?;
+    }
+    Ok(())
+}
+
+fn ensure_checkpoint_remaining(
+    payload: &[u8],
+    offset: usize,
+    byte_count: usize,
+) -> Result<(), O3PipelineError> {
+    let expected =
+        offset
+            .checked_add(byte_count)
+            .ok_or(O3PipelineError::InvalidCheckpointPayloadSize {
+                expected: offset,
+                actual: payload.len(),
+            })?;
+    if payload.len() < expected {
+        return Err(O3PipelineError::InvalidCheckpointPayloadSize {
+            expected,
+            actual: payload.len(),
+        });
+    }
+    Ok(())
+}
+
+fn checkpoint_field_bytes(
+    count: usize,
+    bytes_per_item: usize,
+    actual: usize,
+) -> Result<usize, O3PipelineError> {
+    count
+        .checked_mul(bytes_per_item)
+        .ok_or(O3PipelineError::InvalidCheckpointPayloadSize {
+            expected: O3_PENDING_STATE_CHECKPOINT_HEADER_BYTES,
+            actual,
+        })
+}
+
+fn read_checkpoint_u8(payload: &[u8], offset: &mut usize) -> Result<u8, O3PipelineError> {
+    ensure_checkpoint_remaining(payload, *offset, 1)?;
+    let value = payload[*offset];
+    *offset += 1;
+    Ok(value)
+}
+
+fn read_checkpoint_u32(payload: &[u8], offset: &mut usize) -> Result<u32, O3PipelineError> {
+    ensure_checkpoint_remaining(payload, *offset, U32_BYTES)?;
+    Ok(read_u32(payload, offset))
+}
+
+fn read_checkpoint_u64(payload: &[u8], offset: &mut usize) -> Result<u64, O3PipelineError> {
+    ensure_checkpoint_remaining(payload, *offset, U64_BYTES)?;
+    Ok(read_u64(payload, offset))
+}
+
+fn read_checkpoint_scopes(
+    payload: &[u8],
+    offset: &mut usize,
+    count: usize,
+) -> Result<Vec<O3DependencyScopeId>, O3PipelineError> {
+    let bytes = checkpoint_field_bytes(count, U64_BYTES, payload.len())?;
+    ensure_checkpoint_remaining(payload, *offset, bytes)?;
+    let mut scopes = Vec::with_capacity(count);
+    for _ in 0..count {
+        scopes.push(O3DependencyScopeId::new(read_checkpoint_u64(
+            payload, offset,
+        )?));
+    }
+    Ok(scopes)
 }
 
 fn checkpoint_payload_size(deferred_count: usize, actual: usize) -> Result<usize, O3PipelineError> {

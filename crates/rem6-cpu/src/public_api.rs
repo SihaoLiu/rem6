@@ -70,13 +70,14 @@ pub use crate::o3_dependency::{
 };
 pub use crate::o3_pipeline::{
     O3DependencyScopeId, O3DistributedIssuePlan, O3DistributedIssueScheduler, O3IssueOpClass,
-    O3IssueQueueCapacity, O3IssueQueueId, O3PipelineError, O3PipelineStage, O3ReadyInstruction,
-    O3ScopedIssuePlan, O3ScopedIssueScheduler, O3ScopedReadyInstruction, O3UnblockDecision,
-    O3UnblockDecisionReason, O3UnblockPolicy, O3VectorReductionDependencyPlan,
-    O3VectorReductionGroupId, O3VectorReductionMicroOp, O3VectorReductionOrdering,
-    O3WritebackAdmission, O3WritebackCompletion, O3WritebackCompletionAdmission,
-    O3WritebackTransferBuffer, O3WritebackTransferCheckpointPayload, O3WritebackTransferCycle,
-    O3WritebackTransferPlan, O3WritebackTransferPolicy, O3WritebackTransferSnapshot,
+    O3IssueQueueCapacity, O3IssueQueueId, O3PendingStateCheckpointPayload, O3PendingStateSnapshot,
+    O3PipelineError, O3PipelineStage, O3ReadyInstruction, O3ScopedIssuePlan,
+    O3ScopedIssueScheduler, O3ScopedReadyInstruction, O3UnblockDecision, O3UnblockDecisionReason,
+    O3UnblockPolicy, O3VectorReductionDependencyPlan, O3VectorReductionGroupId,
+    O3VectorReductionMicroOp, O3VectorReductionOrdering, O3WritebackAdmission,
+    O3WritebackCompletion, O3WritebackCompletionAdmission, O3WritebackTransferBuffer,
+    O3WritebackTransferCheckpointPayload, O3WritebackTransferCycle, O3WritebackTransferPlan,
+    O3WritebackTransferPolicy, O3WritebackTransferSnapshot,
 };
 pub use crate::return_address_stack::{
     ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,

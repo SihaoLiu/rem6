@@ -718,10 +718,10 @@ network evidence.
 
 ### Stats, Probes, Debug, Host Actions, and Checkpointing - 59% single-axis
 
-**Score calculation:** 22 of 26 items have executable evidence, or 85% raw,
+**Score calculation:** 23 of 26 items have executable evidence, or 88% raw,
 capped to 59% by the single-axis bucket. The bucket cap is single-axis because
-probe, debug, power, and checkpoint evidence is not yet integrated across O3
-pipeline and cache/DRAM runtime state.
+probe, debug, power, and checkpoint evidence is not yet complete across broad
+O3 engine ownership, cache/DRAM runtime state, and calibrated power paths.
 
 - [x] Hierarchical stats, reset/dump history, and CLI stats artifacts exist.
 - [x] Probe registry plus real RISC-V retired-instruction, retired-PC target,
@@ -769,7 +769,7 @@ pipeline and cache/DRAM runtime state.
 - [ ] Cache/bank/fabric/DRAM hierarchy counters are complete.
 - [ ] Broader GDB CSR register-cache coverage exists.
 - [ ] Power and thermal models are calibrated against real component activity.
-- [ ] O3 pending-state checkpoints exist.
+- [x] O3 pending-state checkpoints exist.
 
 **Migrated:** Structured stats, real RISC-V probe producers, checkpoint banks,
 m5ops, host actions, GDB packet/session parsing, RISC-V integer/PC register
@@ -830,13 +830,13 @@ counters, top-level trace-replay data-cache scheduler resource and backing DRAM
 target/port/bank, row, command, latency, and QoS counters,
 top-level `rem6 run` retired-instruction probe summaries and CLI-configured
 retired-PC target counter summaries,
-O3 writeback transfer
-deferred-completion checkpoint payloads, and custom plus library-level and
+O3 pending-state checkpoint payloads covering resolved dependency scopes,
+scoped ready instructions, and writeback deferred completions, and custom plus library-level and
 `rem6 run --power-output`, `rem6 trace-replay --power-output`, and `rem6 gpu-run --power-output` McPAT-shaped and DSENT-shaped power-analysis exports.
 
 **Not migrated:** Complete gem5 text-stat parity, full debug execution control,
 remaining broad CSR GDB register-cache coverage, broader debug-run stat parity beyond current trace, classification, and selected aggregate counters, runtime resource counters,
-runtime-calibrated power/thermal, and broad O3 ROB/LSQ/rename checkpoint ownership.
+runtime-calibrated power/thermal, and broad O3 ROB/LSQ/rename runtime checkpoint ownership.
 
 **Evidence:** `StatsRegistry`, `ProbeRegistry`, `RiscvInstructionStats`,
 `RiscvDataAccessStats`, `SystemActionExecutor`, `GdbRemoteSession`,
@@ -844,7 +844,7 @@ runtime-calibrated power/thermal, and broad O3 ROB/LSQ/rename checkpoint ownersh
 checkpoint tests including RISC-V hart run-state, in-order pipeline restore,
 fetch-steering branch predictor restore with live fetch-ahead pending
 speculation, and GShare, BiMode, Tournament, and multiperspective perceptron predictor checkpoint restore,
-O3 writeback transfer deferred-state payload tests, GDB byte-stream,
+O3 pending-state and writeback deferred-state payload tests, GDB byte-stream,
 RV64D FP, FP CSR, RV64 CSR register-cache including supervisor `sscratch` and `senvcfg`,
 translation `satp`, interrupt aliases `sie`/`sip`, counter
 `cycle`/`time`/`instret`, and machine-counter aliases `mcycle`/`minstret`, RV64 machine CSR register-cache including `mscratch`
@@ -1031,7 +1031,7 @@ checklist-backed component sections above define the auditable percentages.
 | --- | --- | --- | --- | --- |
 | `tests/gem5/arm_boot_tests` | future ARM ISA crate, `rem6-platform` | 0% open | ARM device slices exist, but this row requires Arm ISA boot. | Add Arm ISA, board handoff, device tree, and kernel boot tests. |
 | `tests/gem5/asmtest` | ISA crates, `rem6` CLI | 50% single-axis | RISC-V no-libc, ISA unit tests, and CPU fetch-stream tests cover selected instruction, ecall, scalar FP directed integer-to-float, `fmul.s` exact-product and `fmul.d` normal finite exact-product plus directed-overflow and directed-underflow subnormal rounding, and `fdiv.s`/`fdiv.d` finite-quotient directed-rounding paths, RVV vector configuration, unmasked integer `vadd.vv` LMUL=1 plus m2, `vadd.vx`, `vadd.vi`, masked integer `vadd.vv`/`vadd.vx`/`vadd.vi`, `vsub.vv` LMUL=1 plus m2, `vsub.vx`, `vrsub.vx`/`vrsub.vi`, bitwise `vand`/`vor`/`vxor` vv/vx/vi, shift `vsll`/`vsrl`/`vsra` vv/vx/vi, min/max `vminu`/`vmin`/`vmaxu`/`vmax` vv/vx, multiply `vmul`/`vmulhu`/`vmulhsu`/`vmulh` vv/vx, divide/remainder `vdivu`/`vdiv`/`vremu`/`vrem` vv/vx, integer carry/borrow `vadc`/`vmadc`/`vsbc`/`vmsbc` vv/vx plus add-immediate forms with reserved-encoding, representative ISA, and CPU fetch-stream/fetch-ahead slices, single-width integer multiply-add `vmadd`/`vnmsub`/`vmacc`/`vnmsac` vv/vx decode plus representative masked/unmasked ISA and unmasked CPU fetch-stream slices, integer reductions `vredsum`/`vredand`/`vredor`/`vredxor`/`vredminu`/`vredmin`/`vredmaxu`/`vredmax` plus widening reductions `vwredsumu`/`vwredsum` and base widening add/subtract `vwaddu`/`vwadd`/`vwsubu`/`vwsub` vv/vx/wv/wx decode plus representative masked/unmasked ISA and unmasked CPU fetch-stream slices, widening multiply `vwmulu`/`vwmulsu`/`vwmul` vv/vx and widening multiply-add `vwmaccu`/`vwmacc`/`vwmaccsu` plus vx-only `vwmaccus` decode plus representative masked/unmasked ISA and unmasked CPU fetch-stream slices, equality mask compare `vmseq`/`vmsne` vv/vx/vi, ordered mask compare `vmsltu`/`vmslt`/`vmsleu`/`vmsgtu`/`vmsgt` supported vv/vx/vi, unmasked slide `vslideup`/`vslidedown`/`vslide1up`/`vslide1down`, gather `vrgather`, mask reductions `vcpop.m`/`vfirst.m`, mask prefixes `vmsbf.m`/`vmsof.m`/`vmsif.m`, mask indexes `viota.m`/`vid.v`, merge/move/compress `vmerge`/`vmv.v`/`vmv.x.s`/`vmv.s.x`/`vmv<nr>r.v`/`vcompress.vm`, zero/sign extension `vzext`/`vsext` masked/unmasked decode plus `vf2` hart execution and unmasked slide/gather, mask reductions, mask prefixes, mask indexes, plus `vzext.vf2` CPU fetch-stream execution, unmasked fixed-point saturating `vsaddu`/`vsadd`/`vssubu`/`vssub` vv/vx plus `vsaddu`/`vsadd` vi forms, unmasked fixed-point averaging `vaaddu`/`vaadd`/`vasubu`/`vasub` vv/vx forms, unmasked fixed-point signed fractional multiply `vsmul` vv/vx forms, unmasked fixed-point scaling shifts `vssrl`/`vssra` vv/vx/vi, fixed-point narrowing shifts `vnsrl.wv`/`vnsra.wv`/`vnsrl.wx`/`vnsra.wx`/`vnsrl.wi`/`vnsra.wi` and narrow clip `vnclipu.wv`/`vnclip.wv`/`vnclipu.wx`/`vnclip.wx`/`vnclipu.wi`/`vnclip.wi`, `vxrm`/`vxsat`/`vcsr`, mask logical `.mm`, and floating-point `vfadd`, `vfsub`, `vfmin`, `vfmax`, `vfmul`, and `vfdiv` vv/vf forms plus `vfrsub.vf`, `vfrdiv.vf`, `vfmacc`, `vfnmacc`, `vfmsac`, and `vfnmsac` vv/vf exact finite SEW=32 lane slices, E64 `vfadd.vv/vf`, `vfsub.vv/vf`, `vfrsub.vf`, `vfmul.vv/vf`, `vfdiv.vv/vf`, and `vfrdiv.vf` exact finite CPU fetch-stream slices, E64 `vfmin.vv/vf` and `vfmax.vv/vf` signed-zero and NaN CPU fetch-stream slices, `vfclass.v` SEW=32 classification slices, `vfmv.v.f` SEW=32 scalar splat slices, `vfmerge.vfm` SEW=32 masked scalar merge slice, `vfmv.s.f` SEW=32 scalar-to-lane-zero slice, `vfmv.f.s` SEW=32 lane-zero-to-scalar slice, integer-to-float `vfcvt.f.xu.v` and `vfcvt.f.x.v` plus float-to-integer `vfcvt.xu.f.v`, `vfcvt.x.f.v`, `vfcvt.rtz.xu.f.v`, and `vfcvt.rtz.x.f.v` dynamic/directed SEW=32 slices with NX accrual, E64 `vfcvt.f.xu.v`, `vfcvt.f.x.v`, `vfcvt.xu.f.v`, `vfcvt.x.f.v`, `vfcvt.rtz.xu.f.v`, and `vfcvt.rtz.x.f.v` CPU fetch-stream slices, FP mask compare `vmfeq`, `vmfne`, `vmflt`, and `vmfle` vv/vf SEW=32 mask slices, `vfmin`, `vfsqrt.v`, and FP compare invalid-flag accrual, `vfsqrt.v` non-exact finite rejection, and `vfsgnj`, `vfsgnjn`, and `vfsgnjx` vv/vf sign-bit slices with reserved-`frm` and NaN-boxing trap coverage. | Split RV32/RV64 and extension families with architectural-state comparison. |
-| `tests/gem5/checkpoint_tests` | `rem6-checkpoint`, subsystem checkpoint banks | 65% representative | Scheduler, memory, devices, storage, VirtIO, timer, interrupt, RISC-V started/stopped/suspended hart run-state, RISC-V in-order pipeline state, RISC-V fetch-steering branch predictor state including live fetch-ahead pending speculation, platform, workload, and manifest checkpoints exist. | Add O3 and non-quiescent restore evidence. |
+| `tests/gem5/checkpoint_tests` | `rem6-checkpoint`, subsystem checkpoint banks | 65% representative | Scheduler, memory, devices, storage, VirtIO, timer, interrupt, RISC-V started/stopped/suspended hart run-state, RISC-V in-order pipeline state, RISC-V fetch-steering branch predictor state including live fetch-ahead pending speculation, platform, workload, manifest, and O3 pending-state checkpoints exist. | Add O3 ROB/LSQ/rename restore and non-quiescent restore evidence. |
 | `tests/gem5/chi_protocol` | `rem6-coherence`, protocol crates, `rem6-cache` | 40% single-axis | CHI-like line, controller, bank, dirty peer sourcing, reservation, and Evict-hazard tests exist. | Add Ruby-scale CHI transactions, topology networks, directory races, and workload checks. |
 | `tests/gem5/chi_tlm_tests` | `rem6-proto`, future adapter crates, `rem6-coherence` | 19% scoped | A library-level co-simulation boundary can register TLM endpoints, validate transaction shape, hand off events, and checkpoint clean adapter state in self-tests. | Add runtime TLM bridge tests with coherence traffic. |
 | `tests/gem5/config_output_files` | `rem6` CLI, `rem6-workload` | 45% single-axis | CLI output paths, stats-output paths, JSON artifacts, text stats output, TOML-driven nested run/stats/power artifact directory creation, TOML-driven GPU run config tests, and TOML-driven GPU power-output plus NoMali adapter artifact creation exist. | Add config-driven file layouts for full-system manifests and broader multi-artifact workloads. |
