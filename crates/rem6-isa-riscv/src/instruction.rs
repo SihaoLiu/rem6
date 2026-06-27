@@ -1085,6 +1085,7 @@ pub enum RiscvInstruction {
     Gem5PseudoOp(RiscvPseudoOp),
     MachineInformationCsr(crate::csr::RiscvMachineInformationCsrInstruction),
     EnvironmentConfigCsr(RiscvEnvironmentConfigCsrInstruction),
+    CounterEnableCsr(crate::csr::RiscvCounterEnableCsrInstruction),
     ReadCounterCsr {
         rd: Register,
         csr: RiscvCounterCsr,

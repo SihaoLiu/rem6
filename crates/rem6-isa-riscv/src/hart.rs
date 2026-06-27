@@ -1,8 +1,9 @@
 use crate::{
     FloatRegister, Register, RiscvControlFlowSnapshot, RiscvControlFlowUpdate, RiscvCounterBank,
-    RiscvCounterSnapshot, RiscvFloatStatus, RiscvInterruptCsr, RiscvPrivilegeMode, RiscvStatusWord,
-    RiscvSv39AccessContext, RiscvVectorConfig, RiscvVectorFixedPointState,
-    RiscvVectorFixedRoundingMode, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
+    RiscvCounterEnableCsr, RiscvCounterSnapshot, RiscvFloatStatus, RiscvInterruptCsr,
+    RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext, RiscvVectorConfig,
+    RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, VectorRegister,
+    RISCV_VECTOR_REGISTER_BYTES,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -16,8 +17,10 @@ pub struct RiscvHartState {
     pub(crate) supervisor_trap_cause: u64,
     pub(crate) supervisor_trap_value: u64,
     pub(crate) supervisor_environment_config: u64,
+    pub(crate) supervisor_counter_enable: u64,
     pub(crate) machine_exception_delegation: u64,
     pub(crate) machine_interrupt_delegation: u64,
+    pub(crate) machine_counter_enable: u64,
     pub(crate) machine_interrupt_enable: u64,
     pub(crate) machine_interrupt_pending: u64,
     pub(crate) machine_trap_vector: u64,
@@ -52,8 +55,10 @@ impl RiscvHartState {
             supervisor_trap_cause: 0,
             supervisor_trap_value: 0,
             supervisor_environment_config: 0,
+            supervisor_counter_enable: 0,
             machine_exception_delegation: 0,
             machine_interrupt_delegation: 0,
+            machine_counter_enable: 0,
             machine_interrupt_enable: 0,
             machine_interrupt_pending: 0,
             machine_trap_vector: 0,
@@ -133,6 +138,14 @@ impl RiscvHartState {
 
     pub const fn supervisor_environment_config(&self) -> u64 {
         self.supervisor_environment_config
+    }
+
+    pub const fn supervisor_counter_enable(&self) -> u64 {
+        self.supervisor_counter_enable
+    }
+
+    pub const fn machine_counter_enable(&self) -> u64 {
+        self.machine_counter_enable
     }
 
     pub const fn machine_trap_vector(&self) -> u64 {
@@ -232,6 +245,28 @@ impl RiscvHartState {
 
     pub fn set_supervisor_environment_config(&mut self, value: u64) {
         self.supervisor_environment_config = value;
+    }
+
+    pub fn set_supervisor_counter_enable(&mut self, enable: u64) {
+        self.supervisor_counter_enable = enable;
+    }
+
+    pub fn set_machine_counter_enable(&mut self, enable: u64) {
+        self.machine_counter_enable = enable;
+    }
+
+    pub(crate) const fn read_counter_enable_csr(&self, csr: RiscvCounterEnableCsr) -> u64 {
+        match csr {
+            RiscvCounterEnableCsr::Scounteren => self.supervisor_counter_enable,
+            RiscvCounterEnableCsr::Mcounteren => self.machine_counter_enable,
+        }
+    }
+
+    pub(crate) fn write_counter_enable_csr(&mut self, csr: RiscvCounterEnableCsr, value: u64) {
+        match csr {
+            RiscvCounterEnableCsr::Scounteren => self.supervisor_counter_enable = value,
+            RiscvCounterEnableCsr::Mcounteren => self.machine_counter_enable = value,
+        }
     }
 
     pub fn set_machine_trap_vector(&mut self, vector: u64) {

@@ -124,6 +124,92 @@ impl RiscvEnvironmentConfigCsr {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RiscvCounterEnableCsr {
+    Scounteren,
+    Mcounteren,
+}
+
+impl RiscvCounterEnableCsr {
+    pub const fn address(self) -> u16 {
+        match self {
+            Self::Scounteren => 0x106,
+            Self::Mcounteren => 0x306,
+        }
+    }
+
+    pub const fn from_address(address: u16) -> Option<Self> {
+        match address {
+            0x106 => Some(Self::Scounteren),
+            0x306 => Some(Self::Mcounteren),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RiscvCounterEnableCsrInstruction {
+    rd: Register,
+    csr: RiscvCounterEnableCsr,
+    op: RiscvCsrOp,
+    operand: RiscvCsrOperand,
+}
+
+impl RiscvCounterEnableCsrInstruction {
+    pub const fn read(rd: Register, csr: RiscvCounterEnableCsr) -> Self {
+        Self {
+            rd,
+            csr,
+            op: RiscvCsrOp::Read,
+            operand: RiscvCsrOperand::Immediate(0),
+        }
+    }
+
+    pub const fn register(
+        rd: Register,
+        csr: RiscvCounterEnableCsr,
+        op: RiscvCsrOp,
+        rs1: Register,
+    ) -> Self {
+        Self {
+            rd,
+            csr,
+            op,
+            operand: RiscvCsrOperand::Register(rs1),
+        }
+    }
+
+    pub const fn immediate(
+        rd: Register,
+        csr: RiscvCounterEnableCsr,
+        op: RiscvCsrOp,
+        zimm: u8,
+    ) -> Self {
+        Self {
+            rd,
+            csr,
+            op,
+            operand: RiscvCsrOperand::Immediate(zimm),
+        }
+    }
+
+    pub const fn rd(self) -> Register {
+        self.rd
+    }
+
+    pub const fn csr(self) -> RiscvCounterEnableCsr {
+        self.csr
+    }
+
+    pub const fn op(self) -> RiscvCsrOp {
+        self.op
+    }
+
+    pub const fn operand(self) -> RiscvCsrOperand {
+        self.operand
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct RiscvEnvironmentConfigCsrInstruction {
     rd: Register,
     csr: RiscvEnvironmentConfigCsr,
@@ -355,6 +441,14 @@ impl RiscvCounterCsr {
             Self::Cycle => Some(0xb00),
             Self::Time => None,
             Self::Instret => Some(0xb02),
+        }
+    }
+
+    pub const fn counter_enable_bit(self) -> u64 {
+        match self {
+            Self::Cycle => 1 << 0,
+            Self::Time => 1 << 1,
+            Self::Instret => 1 << 2,
         }
     }
 

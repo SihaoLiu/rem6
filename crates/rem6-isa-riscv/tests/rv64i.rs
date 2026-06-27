@@ -1,7 +1,8 @@
 use rem6_isa_riscv::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryAccessKind, MemoryWidth, Register,
-    RegisterWrite, RiscvCounterBank, RiscvCounterCsr, RiscvCounterSnapshot, RiscvCsrError,
-    RiscvCsrOp, RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction, RiscvError,
+    RegisterWrite, RiscvCounterBank, RiscvCounterCsr, RiscvCounterEnableCsr,
+    RiscvCounterEnableCsrInstruction, RiscvCounterSnapshot, RiscvCsrError, RiscvCsrOp,
+    RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction, RiscvError,
     RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMachineIdentityCsr,
     RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction, RiscvMachineIsaCsr,
     RiscvMachineTrapCsr, RiscvMemoryOrdering, RiscvPrivilegeMode, RiscvPseudoOp, RiscvStatusCsr,
@@ -833,6 +834,114 @@ fn hart_executes_machine_counter_csr_read_modify_write_operations() {
         hart.counter_snapshot(),
         RiscvCounterSnapshot::with_time(0x54, 6, 9)
     );
+}
+
+#[test]
+fn hart_executes_counter_enable_csr_read_modify_write_operations() {
+    let read_scounteren = RiscvInstruction::decode(csr_read_type(0x106, 5)).unwrap();
+    let write_mcounteren = RiscvInstruction::decode(csr_type(0x306, 2, 0x1, 6)).unwrap();
+    let set_scounteren = RiscvInstruction::decode(csr_type(0x106, 3, 0x2, 7)).unwrap();
+    let clear_mcounteren = RiscvInstruction::decode(csr_type(0x306, 4, 0x3, 8)).unwrap();
+    let write_scounteren_imm = RiscvInstruction::decode(csr_type(0x106, 7, 0x5, 9)).unwrap();
+    let set_mcounteren_imm = RiscvInstruction::decode(csr_type(0x306, 0x10, 0x6, 10)).unwrap();
+    let clear_scounteren_imm = RiscvInstruction::decode(csr_type(0x106, 1, 0x7, 11)).unwrap();
+
+    assert_eq!(
+        read_scounteren,
+        RiscvInstruction::CounterEnableCsr(RiscvCounterEnableCsrInstruction::read(
+            reg(5),
+            RiscvCounterEnableCsr::Scounteren,
+        ))
+    );
+    assert_eq!(
+        write_mcounteren,
+        RiscvInstruction::CounterEnableCsr(RiscvCounterEnableCsrInstruction::register(
+            reg(6),
+            RiscvCounterEnableCsr::Mcounteren,
+            RiscvCsrOp::Write,
+            reg(2),
+        ))
+    );
+    assert_eq!(
+        set_scounteren,
+        RiscvInstruction::CounterEnableCsr(RiscvCounterEnableCsrInstruction::register(
+            reg(7),
+            RiscvCounterEnableCsr::Scounteren,
+            RiscvCsrOp::Set,
+            reg(3),
+        ))
+    );
+    assert_eq!(
+        clear_mcounteren,
+        RiscvInstruction::CounterEnableCsr(RiscvCounterEnableCsrInstruction::register(
+            reg(8),
+            RiscvCounterEnableCsr::Mcounteren,
+            RiscvCsrOp::Clear,
+            reg(4),
+        ))
+    );
+    assert_eq!(
+        write_scounteren_imm,
+        RiscvInstruction::CounterEnableCsr(RiscvCounterEnableCsrInstruction::immediate(
+            reg(9),
+            RiscvCounterEnableCsr::Scounteren,
+            RiscvCsrOp::Write,
+            7,
+        ))
+    );
+    assert_eq!(
+        set_mcounteren_imm,
+        RiscvInstruction::CounterEnableCsr(RiscvCounterEnableCsrInstruction::immediate(
+            reg(10),
+            RiscvCounterEnableCsr::Mcounteren,
+            RiscvCsrOp::Set,
+            0x10,
+        ))
+    );
+    assert_eq!(
+        clear_scounteren_imm,
+        RiscvInstruction::CounterEnableCsr(RiscvCounterEnableCsrInstruction::immediate(
+            reg(11),
+            RiscvCounterEnableCsr::Scounteren,
+            RiscvCsrOp::Clear,
+            1,
+        ))
+    );
+
+    let mut hart = RiscvHartState::new(0x3100);
+    hart.set_supervisor_counter_enable(0x2);
+    hart.write(reg(2), 0x65);
+    hart.write(reg(3), 0x10);
+    hart.write(reg(4), 0x60);
+
+    hart.execute(read_scounteren).unwrap();
+    assert_eq!(hart.read(reg(5)), 0x2);
+    assert_eq!(hart.supervisor_counter_enable(), 0x2);
+    assert_eq!(hart.machine_counter_enable(), 0);
+
+    hart.execute(write_mcounteren).unwrap();
+    assert_eq!(hart.read(reg(6)), 0);
+    assert_eq!(hart.machine_counter_enable(), 0x65);
+
+    hart.execute(set_scounteren).unwrap();
+    assert_eq!(hart.read(reg(7)), 0x2);
+    assert_eq!(hart.supervisor_counter_enable(), 0x12);
+
+    hart.execute(clear_mcounteren).unwrap();
+    assert_eq!(hart.read(reg(8)), 0x65);
+    assert_eq!(hart.machine_counter_enable(), 0x5);
+
+    hart.execute(write_scounteren_imm).unwrap();
+    assert_eq!(hart.read(reg(9)), 0x12);
+    assert_eq!(hart.supervisor_counter_enable(), 0x7);
+
+    hart.execute(set_mcounteren_imm).unwrap();
+    assert_eq!(hart.read(reg(10)), 0x5);
+    assert_eq!(hart.machine_counter_enable(), 0x15);
+
+    hart.execute(clear_scounteren_imm).unwrap();
+    assert_eq!(hart.read(reg(11)), 0x7);
+    assert_eq!(hart.supervisor_counter_enable(), 0x6);
 }
 
 #[test]

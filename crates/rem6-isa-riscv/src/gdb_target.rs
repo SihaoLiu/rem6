@@ -198,9 +198,9 @@ fn fpu_document(xlen: RiscvGdbXlen) -> Option<RiscvGdbTargetDocument> {
 
 fn csr_document(xlen: RiscvGdbXlen) -> Option<RiscvGdbTargetDocument> {
     let annex = xlen.csr_annex()?;
-    let rv32_registers = match xlen {
+    let xlen_registers = match xlen {
         RiscvGdbXlen::Rv32 => RV32_CSR_REGISTERS,
-        RiscvGdbXlen::Rv64 => &[],
+        RiscvGdbXlen::Rv64 => RV64_CSR_REGISTERS,
     };
     let mut content = concat!(
         "<?xml version=\"1.0\"?>\n",
@@ -208,7 +208,11 @@ fn csr_document(xlen: RiscvGdbXlen) -> Option<RiscvGdbTargetDocument> {
         "<feature name=\"org.gnu.gdb.riscv.csr\">\n",
     )
     .to_string();
-    for (index, register) in RV64_CSR_REGISTERS.iter().chain(rv32_registers).enumerate() {
+    for (index, register) in COMMON_CSR_REGISTERS
+        .iter()
+        .chain(xlen_registers)
+        .enumerate()
+    {
         content.push_str(&format!(
             "  <reg name=\"{}\" bitsize=\"{}\"",
             register.name,
@@ -341,7 +345,7 @@ impl CsrRegister {
     }
 }
 
-const RV64_CSR_REGISTERS: &[CsrRegister] = &[
+const COMMON_CSR_REGISTERS: &[CsrRegister] = &[
     CsrRegister::new("sstatus", None),
     CsrRegister::new("stvec", None),
     CsrRegister::new("sscratch", None),
@@ -398,7 +402,14 @@ const RV64_CSR_REGISTERS: &[CsrRegister] = &[
     CsrRegister::new("pmpaddr15", Some(155)),
 ];
 
+const RV64_CSR_REGISTERS: &[CsrRegister] = &[
+    CsrRegister::new("scounteren", Some(156)),
+    CsrRegister::new("mcounteren", Some(157)),
+];
+
 const RV32_CSR_REGISTERS: &[CsrRegister] = &[
     CsrRegister::new("pmpcfg1", Some(156)),
     CsrRegister::new("pmpcfg3", Some(157)),
+    CsrRegister::new("scounteren", Some(158)),
+    CsrRegister::new("mcounteren", Some(159)),
 ];

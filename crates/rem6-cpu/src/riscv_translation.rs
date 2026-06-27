@@ -2,11 +2,11 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_isa_riscv::{
-    walk_sv39_page_table_with_context, RiscvEnvironmentConfigCsr, RiscvMachineTrapCsr,
-    RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext, RiscvSv39AccessKind,
-    RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte, RiscvSv39VirtualAddress,
-    RiscvSv39WalkAdvance as IsaSv39WalkAdvance, RiscvSv39WalkState, RiscvSystemEvent,
-    RiscvTrapKind, RiscvVectorFixedPointState,
+    walk_sv39_page_table_with_context, RiscvCounterEnableCsr, RiscvEnvironmentConfigCsr,
+    RiscvMachineTrapCsr, RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext,
+    RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte,
+    RiscvSv39VirtualAddress, RiscvSv39WalkAdvance as IsaSv39WalkAdvance, RiscvSv39WalkState,
+    RiscvSystemEvent, RiscvTrapKind, RiscvVectorFixedPointState,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
@@ -708,6 +708,17 @@ impl RiscvCore {
     pub fn set_environment_config_csr(&self, csr: RiscvEnvironmentConfigCsr, value: u64) {
         let mut state = self.state.lock().expect("riscv core lock");
         write_environment_config_csr(&mut state.hart, csr, value);
+        riscv_checker::sync_checker_hart(&mut state);
+    }
+
+    pub fn counter_enable_csr(&self, csr: RiscvCounterEnableCsr) -> u64 {
+        let state = self.state.lock().expect("riscv core lock");
+        read_counter_enable_csr(&state.hart, csr)
+    }
+
+    pub fn set_counter_enable_csr(&self, csr: RiscvCounterEnableCsr, value: u64) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        write_counter_enable_csr(&mut state.hart, csr, value);
         riscv_checker::sync_checker_hart(&mut state);
     }
 
@@ -1544,6 +1555,27 @@ fn write_environment_config_csr(
 ) {
     match csr {
         RiscvEnvironmentConfigCsr::Senvcfg => hart.set_supervisor_environment_config(value),
+    }
+}
+
+fn read_counter_enable_csr(
+    hart: &rem6_isa_riscv::RiscvHartState,
+    csr: RiscvCounterEnableCsr,
+) -> u64 {
+    match csr {
+        RiscvCounterEnableCsr::Scounteren => hart.supervisor_counter_enable(),
+        RiscvCounterEnableCsr::Mcounteren => hart.machine_counter_enable(),
+    }
+}
+
+fn write_counter_enable_csr(
+    hart: &mut rem6_isa_riscv::RiscvHartState,
+    csr: RiscvCounterEnableCsr,
+    value: u64,
+) {
+    match csr {
+        RiscvCounterEnableCsr::Scounteren => hart.set_supervisor_counter_enable(value),
+        RiscvCounterEnableCsr::Mcounteren => hart.set_machine_counter_enable(value),
     }
 }
 

@@ -1,6 +1,7 @@
 mod atomic;
 mod compressed;
 mod control_flow;
+mod counter_enable_csr;
 mod csr;
 mod decode;
 mod decode_csr;
@@ -64,13 +65,14 @@ pub use control_flow::{
     RiscvVectorConfig, RiscvVectorConfigUpdate,
 };
 pub use csr::{
-    RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterSnapshot, RiscvCsrOp,
-    RiscvCsrOperand, RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction,
-    RiscvFloatCsr, RiscvFloatRoundingMode, RiscvFloatStatus, RiscvInterruptCsr,
-    RiscvMachineIdentityCsr, RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction,
-    RiscvMachineIsaCsr, RiscvMachineTrapCsr, RiscvStatusCsr, RiscvStatusWord,
-    RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvTranslationCsrInstruction,
-    RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction,
+    RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterEnableCsr,
+    RiscvCounterEnableCsrInstruction, RiscvCounterSnapshot, RiscvCsrOp, RiscvCsrOperand,
+    RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction, RiscvFloatCsr,
+    RiscvFloatRoundingMode, RiscvFloatStatus, RiscvInterruptCsr, RiscvMachineIdentityCsr,
+    RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction, RiscvMachineIsaCsr,
+    RiscvMachineTrapCsr, RiscvStatusCsr, RiscvStatusWord, RiscvSupervisorTrapCsr,
+    RiscvTranslationCsr, RiscvTranslationCsrInstruction, RiscvVectorFixedPointCsr,
+    RiscvVectorFixedPointCsrInstruction,
 };
 pub use error::{RiscvCsrError, RiscvError};
 pub use gdb_target::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
@@ -238,6 +240,17 @@ impl RiscvHartState {
 
         if let Some(required_privilege) = instruction.required_csr_privilege() {
             if !csr_privilege_allowed(self.privilege_mode(), required_privilege) {
+                return Ok(enter_synchronous_trap(
+                    self,
+                    instruction,
+                    instruction_bytes_u8,
+                    pc,
+                    RiscvTrapKind::IllegalInstruction,
+                ));
+            }
+        }
+        if let RiscvInstruction::ReadCounterCsr { csr, .. } = instruction {
+            if !counter_csr_read_allowed(self, csr) {
                 return Ok(enter_synchronous_trap(
                     self,
                     instruction,
@@ -1007,6 +1020,9 @@ impl RiscvHartState {
             RiscvInstruction::EnvironmentConfigCsr(instruction) => {
                 environment_config_csr::execute(self, &mut register_writes, instruction);
             }
+            RiscvInstruction::CounterEnableCsr(instruction) => {
+                counter_enable_csr::execute(self, &mut register_writes, instruction);
+            }
             RiscvInstruction::ReadStatusCsr { rd, csr } => {
                 write_register(self, &mut register_writes, rd, read_status_csr(self, csr));
             }
@@ -1167,6 +1183,17 @@ impl RiscvHartState {
                     memory_access,
                 ),
             ),
+        }
+    }
+}
+
+fn counter_csr_read_allowed(hart: &RiscvHartState, csr: RiscvCounterCsr) -> bool {
+    let bit = csr.counter_enable_bit();
+    match hart.privilege_mode() {
+        RiscvPrivilegeMode::Machine => true,
+        RiscvPrivilegeMode::Supervisor => hart.machine_counter_enable() & bit != 0,
+        RiscvPrivilegeMode::User => {
+            hart.machine_counter_enable() & bit != 0 && hart.supervisor_counter_enable() & bit != 0
         }
     }
 }
