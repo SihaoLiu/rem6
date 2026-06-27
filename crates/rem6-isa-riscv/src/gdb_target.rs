@@ -198,13 +198,17 @@ fn fpu_document(xlen: RiscvGdbXlen) -> Option<RiscvGdbTargetDocument> {
 
 fn csr_document(xlen: RiscvGdbXlen) -> Option<RiscvGdbTargetDocument> {
     let annex = xlen.csr_annex()?;
+    let rv32_registers = match xlen {
+        RiscvGdbXlen::Rv32 => RV32_CSR_REGISTERS,
+        RiscvGdbXlen::Rv64 => &[],
+    };
     let mut content = concat!(
         "<?xml version=\"1.0\"?>\n",
         "<!DOCTYPE feature SYSTEM \"gdb-target.dtd\">\n",
         "<feature name=\"org.gnu.gdb.riscv.csr\">\n",
     )
     .to_string();
-    for (index, register) in RV64_CSR_REGISTERS.iter().enumerate() {
+    for (index, register) in RV64_CSR_REGISTERS.iter().chain(rv32_registers).enumerate() {
         content.push_str(&format!(
             "  <reg name=\"{}\" bitsize=\"{}\"",
             register.name,
@@ -392,4 +396,9 @@ const RV64_CSR_REGISTERS: &[CsrRegister] = &[
     CsrRegister::new("pmpaddr13", Some(153)),
     CsrRegister::new("pmpaddr14", Some(154)),
     CsrRegister::new("pmpaddr15", Some(155)),
+];
+
+const RV32_CSR_REGISTERS: &[CsrRegister] = &[
+    CsrRegister::new("pmpcfg1", Some(156)),
+    CsrRegister::new("pmpcfg3", Some(157)),
 ];

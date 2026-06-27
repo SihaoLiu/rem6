@@ -1058,6 +1058,30 @@ fn riscv_gdb_remote_core_packet_handler_packs_rv32_pmpcfg0_entries() {
                 RiscvGdbXlen::Rv32,
                 &mut session,
                 &core,
+                &GdbRemotePacket::new(b"P9c=88776655".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"P9d=ccbbaa99".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &core,
                 &GdbRemotePacket::new(b"P88=44332211".to_vec()).unwrap(),
             )
             .unwrap(),
@@ -1082,6 +1106,30 @@ fn riscv_gdb_remote_core_packet_handler_packs_rv32_pmpcfg0_entries() {
                 RiscvGdbXlen::Rv32,
                 &mut session,
                 &core,
+                &GdbRemotePacket::new(b"p9c".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"88776655",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"p9d".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"ccbbaa99",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &core,
                 &GdbRemotePacket::new(b"p8c".to_vec()).unwrap(),
             )
             .unwrap(),
@@ -1094,7 +1142,10 @@ fn riscv_gdb_remote_core_packet_handler_packs_rv32_pmpcfg0_entries() {
     assert_eq!(snapshot.entries()[1].config().bits(), 0x33);
     assert_eq!(snapshot.entries()[2].config().bits(), 0x22);
     assert_eq!(snapshot.entries()[3].config().bits(), 0x11);
-    assert_eq!(snapshot.entries()[4].config().bits(), 0x00);
+    assert_eq!(snapshot.entries()[4].config().bits(), 0x88);
+    assert_eq!(snapshot.entries()[7].config().bits(), 0x55);
+    assert_eq!(snapshot.entries()[12].config().bits(), 0xcc);
+    assert_eq!(snapshot.entries()[15].config().bits(), 0x99);
     assert_eq!(snapshot.entries()[1].raw_addr(), 0x1234_5678);
 }
 

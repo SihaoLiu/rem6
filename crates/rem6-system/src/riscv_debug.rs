@@ -1333,6 +1333,9 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     if number == RISCV_GDB_PMP_CONFIG2_REGISTER {
         return RiscvGdbCsrRegister::PmpConfig(8);
     }
+    if xlen == RiscvGdbXlen::Rv32 && (number == 156 || number == 157) {
+        return RiscvGdbCsrRegister::PmpConfig(if number == 156 { 4 } else { 12 });
+    }
     if let Some(index) = RISCV_GDB_PMP_ADDR_REGISTERS
         .iter()
         .position(|&register| number == register)
@@ -1662,9 +1665,11 @@ fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
         .chain(RISCV_GDB_PMP_ADDR_REGISTERS[1..8].iter().copied())
         .chain(std::iter::once(RISCV_GDB_PMP_CONFIG2_REGISTER))
         .chain(RISCV_GDB_PMP_ADDR_REGISTERS[8..].iter().copied())
+        .chain((xlen == RiscvGdbXlen::Rv32).then_some(156))
+        .chain((xlen == RiscvGdbXlen::Rv32).then_some(157))
 }
 
-const fn register_count(_xlen: RiscvGdbXlen) -> usize {
+fn register_count(xlen: RiscvGdbXlen) -> usize {
     RISCV_GDB_INTEGER_REGISTER_COUNT as usize
         + 1
         + RISCV_GDB_FLOAT_REGISTER_COUNT as usize
@@ -1673,6 +1678,7 @@ const fn register_count(_xlen: RiscvGdbXlen) -> usize {
         + RISCV_GDB_CSR_REGISTER_COUNT as usize
         + RISCV_GDB_VECTOR_REGISTER_COUNT as usize
         + RISCV_GDB_SPARSE_CSR_REGISTER_COUNT
+        + if xlen == RiscvGdbXlen::Rv32 { 2 } else { 0 }
 }
 
 fn register_set_byte_len(xlen: RiscvGdbXlen) -> usize {
@@ -1681,7 +1687,7 @@ fn register_set_byte_len(xlen: RiscvGdbXlen) -> usize {
         .sum()
 }
 
-const fn riscv_gdb_register_number_is_supported(xlen: RiscvGdbXlen, number: u64) -> bool {
+fn riscv_gdb_register_number_is_supported(xlen: RiscvGdbXlen, number: u64) -> bool {
     number <= RISCV_GDB_PC_REGISTER
         || is_riscv_gdb_float_register(number)
         || is_riscv_gdb_float_csr_register(number)
@@ -1716,7 +1722,7 @@ const fn riscv_gdb_csr_register_base(xlen: RiscvGdbXlen) -> u64 {
     }
 }
 
-const fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool {
+fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool {
     (number >= riscv_gdb_csr_register_base(xlen)
         && number < riscv_gdb_csr_register_base(xlen) + RISCV_GDB_CSR_REGISTER_COUNT as u64)
         || number == RISCV_GDB_SUPERVISOR_INTERRUPT_ENABLE_REGISTER
@@ -1738,6 +1744,7 @@ const fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool {
         || (number >= RISCV_GDB_PMP_ADDR_REGISTERS[1] && number <= RISCV_GDB_PMP_ADDR_REGISTERS[7])
         || number == RISCV_GDB_PMP_CONFIG2_REGISTER
         || (number >= RISCV_GDB_PMP_ADDR_REGISTERS[8] && number <= RISCV_GDB_PMP_ADDR_REGISTERS[15])
+        || (xlen == RiscvGdbXlen::Rv32 && (number == 156 || number == 157))
         || number == RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER
         || number == RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER
 }

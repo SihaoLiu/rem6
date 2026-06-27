@@ -423,6 +423,8 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "  <reg name=\"pmpaddr13\" bitsize=\"32\" regnum=\"153\"/>\n",
             "  <reg name=\"pmpaddr14\" bitsize=\"32\" regnum=\"154\"/>\n",
             "  <reg name=\"pmpaddr15\" bitsize=\"32\" regnum=\"155\"/>\n",
+            "  <reg name=\"pmpcfg1\" bitsize=\"32\" regnum=\"156\"/>\n",
+            "  <reg name=\"pmpcfg3\" bitsize=\"32\" regnum=\"157\"/>\n",
             "</feature>\n",
         ),
     );
@@ -483,9 +485,11 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "pmpaddr13",
             "pmpaddr14",
             "pmpaddr15",
+            "pmpcfg1",
+            "pmpcfg3",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"32\"").count(), 54);
+    assert_eq!(csr.matches("bitsize=\"32\"").count(), 56);
 }
 
 #[test]
