@@ -584,6 +584,34 @@ fn emit_dram_port_stats(
         "Byte",
         dram_port_write_bytes(port),
     )?;
+    emit_dram_counter(
+        stats,
+        &prefix,
+        "row_hits",
+        "Count",
+        dram_port_row_hits(port),
+    )?;
+    emit_dram_counter(
+        stats,
+        &prefix,
+        "read_row_hits",
+        "Count",
+        dram_port_read_row_hits(port),
+    )?;
+    emit_dram_counter(
+        stats,
+        &prefix,
+        "write_row_hits",
+        "Count",
+        dram_port_write_row_hits(port),
+    )?;
+    emit_dram_counter(
+        stats,
+        &prefix,
+        "row_misses",
+        "Count",
+        dram_port_row_misses(port),
+    )?;
     emit_dram_counter(stats, &prefix, "turnarounds", "Count", port.turnarounds)?;
     emit_dram_counter(stats, &prefix, "commands", "Count", port.commands)?;
     emit_dram_low_power_stats(
@@ -610,6 +638,22 @@ fn dram_port_read_bytes(port: &Rem6DramPortSummary) -> u64 {
 
 fn dram_port_write_bytes(port: &Rem6DramPortSummary) -> u64 {
     port.banks.iter().map(|bank| bank.write_bytes).sum()
+}
+
+fn dram_port_row_hits(port: &Rem6DramPortSummary) -> u64 {
+    port.banks.iter().map(|bank| bank.row_hits).sum()
+}
+
+fn dram_port_read_row_hits(port: &Rem6DramPortSummary) -> u64 {
+    port.banks.iter().map(|bank| bank.read_row_hits).sum()
+}
+
+fn dram_port_write_row_hits(port: &Rem6DramPortSummary) -> u64 {
+    port.banks.iter().map(|bank| bank.write_row_hits).sum()
+}
+
+fn dram_port_row_misses(port: &Rem6DramPortSummary) -> u64 {
+    port.banks.iter().map(|bank| bank.row_misses).sum()
 }
 
 fn emit_dram_bank_stats(
