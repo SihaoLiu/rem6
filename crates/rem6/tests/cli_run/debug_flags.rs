@@ -886,6 +886,9 @@ fn rem6_run_cache_debug_flag_emits_real_cache_hierarchy_trace() {
             "monotonic",
         );
     }
+    for record in trace {
+        assert_cache_trace_hierarchy_stats(&stdout, record);
+    }
 }
 
 #[test]
@@ -1762,6 +1765,62 @@ fn cache_trace_sum(trace: &[Value], field: &str) -> u64 {
                 .unwrap_or_else(|| panic!("cache trace {field}"))
         })
         .sum()
+}
+
+fn assert_cache_trace_hierarchy_stats(stdout: &str, record: &Value) {
+    let hierarchy = record
+        .get("hierarchy")
+        .and_then(Value::as_str)
+        .expect("cache trace hierarchy");
+    let level = record
+        .get("level")
+        .and_then(Value::as_str)
+        .expect("cache trace level");
+    let prefix = format!("sim.debug.cache_trace.hierarchy.{hierarchy}.{level}");
+    for field in [
+        "activity",
+        "active",
+        "cpu_responses",
+        "directory_decisions",
+        "dram_accesses",
+    ] {
+        assert_stat(
+            stdout,
+            &format!("{prefix}.{field}"),
+            "Count",
+            record
+                .get(field)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("cache trace {hierarchy}.{level}.{field}")),
+            "monotonic",
+        );
+    }
+    for (field, stat_suffix) in CACHE_TRACE_COUNT_FIELDS {
+        assert_stat(
+            stdout,
+            &format!("{prefix}.{stat_suffix}"),
+            "Count",
+            record
+                .get(field)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("cache trace {hierarchy}.{level}.{field}")),
+            "monotonic",
+        );
+    }
+    for (field, stat_suffix) in [
+        ("prefetch_accuracy_ppm", "prefetch.accuracy_ppm"),
+        ("prefetch_coverage_ppm", "prefetch.coverage_ppm"),
+    ] {
+        if let Some(value) = record.get(field).and_then(Value::as_u64) {
+            assert_stat(
+                stdout,
+                &format!("{prefix}.{stat_suffix}"),
+                "Ppm",
+                value,
+                "monotonic",
+            );
+        }
+    }
 }
 
 fn json_path_u64(json: &Value, path: &str) -> u64 {

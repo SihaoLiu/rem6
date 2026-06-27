@@ -61,6 +61,76 @@ impl Rem6CacheTraceStat {
 }
 
 impl Rem6CacheTraceRecord {
+    pub(crate) const fn hierarchy(self) -> &'static str {
+        self.hierarchy
+    }
+
+    pub(crate) const fn level(self) -> &'static str {
+        self.level
+    }
+
+    pub(crate) fn stats(self) -> Vec<Rem6CacheTraceStat> {
+        let mut stats = Vec::new();
+        for (suffix, value) in [
+            ("activity", self.activity),
+            ("active", self.active),
+            ("cpu_responses", self.cpu_responses),
+            ("directory_decisions", self.directory_decisions),
+            ("dram_accesses", self.dram_accesses),
+            ("bank.accepted", self.bank_accepted),
+            ("bank.immediate_hits", self.bank_immediate_hits),
+            ("bank.scheduled_misses", self.bank_scheduled_misses),
+            ("bank.coalesced_misses", self.bank_coalesced_misses),
+            ("prefetch.identified", self.prefetch_identified),
+            ("prefetch.issued", self.prefetch_issued),
+            ("prefetch.useful", self.prefetch_useful),
+            ("prefetch.useful_but_miss", self.prefetch_useful_but_miss),
+            ("prefetch.unused", self.prefetch_unused),
+            (
+                "prefetch.demand_mshr_misses",
+                self.prefetch_demand_mshr_misses,
+            ),
+            ("prefetch.hit_in_cache", self.prefetch_hit_in_cache),
+            ("prefetch.hit_in_mshr", self.prefetch_hit_in_mshr),
+            (
+                "prefetch.hit_in_write_buffer",
+                self.prefetch_hit_in_write_buffer,
+            ),
+            ("prefetch.late", self.prefetch_late),
+            ("prefetch.span_page", self.prefetch_span_page),
+            ("prefetch.useful_span_page", self.prefetch_useful_span_page),
+            ("prefetch.in_cache", self.prefetch_in_cache),
+            ("prefetch.queue.enqueued", self.prefetch_queue_enqueued),
+            ("prefetch.queue.issued", self.prefetch_queue_issued),
+            ("prefetch.queue.dropped", self.prefetch_queue_dropped),
+            (
+                "prefetch.translation_queue.enqueued",
+                self.prefetch_translation_queue_enqueued,
+            ),
+            (
+                "prefetch.translation_queue.issued",
+                self.prefetch_translation_queue_issued,
+            ),
+            (
+                "prefetch.translation_queue.translated",
+                self.prefetch_translation_queue_translated,
+            ),
+            (
+                "prefetch.translation_queue.dropped",
+                self.prefetch_translation_queue_dropped,
+            ),
+        ] {
+            push_count_stat(&mut stats, suffix, value);
+        }
+        if let Some(accuracy_ppm) = self.prefetch_accuracy_ppm {
+            push_ppm_stat(&mut stats, "prefetch.accuracy_ppm", accuracy_ppm);
+        }
+        if let Some(coverage_ppm) = self.prefetch_coverage_ppm {
+            push_ppm_stat(&mut stats, "prefetch.coverage_ppm", coverage_ppm);
+        }
+        stats
+    }
+
     pub(crate) fn to_json(self) -> String {
         format!(
             "{{\"hierarchy\":\"{}\",\"level\":\"{}\",\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{},\"prefetch_identified\":{},\"prefetch_issued\":{},\"prefetch_useful\":{},\"prefetch_useful_but_miss\":{},\"prefetch_unused\":{},\"prefetch_demand_mshr_misses\":{},\"prefetch_hit_in_cache\":{},\"prefetch_hit_in_mshr\":{},\"prefetch_hit_in_write_buffer\":{},\"prefetch_late\":{},\"prefetch_accuracy_ppm\":{},\"prefetch_coverage_ppm\":{},\"prefetch_span_page\":{},\"prefetch_useful_span_page\":{},\"prefetch_in_cache\":{},\"prefetch_queue_enqueued\":{},\"prefetch_queue_issued\":{},\"prefetch_queue_dropped\":{},\"prefetch_translation_queue_enqueued\":{},\"prefetch_translation_queue_issued\":{},\"prefetch_translation_queue_translated\":{},\"prefetch_translation_queue_dropped\":{}}}",

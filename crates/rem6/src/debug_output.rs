@@ -363,6 +363,10 @@ impl Rem6DebugSummary {
         self.cache_trace.len() as u64
     }
 
+    pub(crate) fn cache_trace_records(&self) -> &[Rem6CacheTraceRecord] {
+        &self.cache_trace
+    }
+
     pub(crate) fn cache_trace_stats(&self) -> Vec<Rem6CacheTraceStat> {
         cache_trace_stats(&self.cache_trace)
     }

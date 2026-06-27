@@ -213,6 +213,20 @@ pub(super) fn emit_debug_stats(
             stat.value(),
         )?;
     }
+    for record in debug.cache_trace_records() {
+        let hierarchy = stat_path_segment(record.hierarchy());
+        let level = stat_path_segment(record.level());
+        let prefix = format!("sim.debug.cache_trace.hierarchy.{hierarchy}.{level}");
+        for stat in record.stats() {
+            increment_stat(
+                stats,
+                &format!("{prefix}.{}", stat.suffix()),
+                stat.unit(),
+                StatResetPolicy::Monotonic,
+                stat.value(),
+            )?;
+        }
+    }
     increment_stat(
         stats,
         "sim.debug.trace.payload_bytes",
