@@ -213,6 +213,15 @@ pub(super) fn emit_debug_stats(
             stat.value(),
         )?;
     }
+    for stat in debug.fetch_trace_stats(stat_path_segment) {
+        increment_stat(
+            stats,
+            &format!("sim.debug.fetch_trace.{}", stat.path()),
+            stat.unit(),
+            StatResetPolicy::Monotonic,
+            stat.value(),
+        )?;
+    }
     for stat in debug.cache_trace_stats() {
         increment_stat(
             stats,

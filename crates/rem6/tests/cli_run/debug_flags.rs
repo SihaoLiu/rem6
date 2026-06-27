@@ -252,6 +252,7 @@ fn rem6_run_fetch_debug_flag_emits_real_fetch_issue_trace() {
         fetch_bytes,
         "monotonic",
     );
+    assert_fetch_trace_hierarchy_stats(&stdout, fetch_trace);
 }
 
 #[test]
@@ -1737,6 +1738,57 @@ fn assert_exec_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
         stats.assert_stats(
             stdout,
             &format!("sim.debug.exec_trace.retirement.{retirement}"),
+        );
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct FetchTraceStats {
+    records: u64,
+    bytes: u64,
+}
+
+impl FetchTraceStats {
+    fn add_record(&mut self, record: &Value) {
+        self.records = self.records.saturating_add(1);
+        self.bytes = self.bytes.saturating_add(json_record_u64(record, "size"));
+    }
+
+    fn assert_stats(&self, stdout: &str, prefix: &str) {
+        for (suffix, unit, value) in [
+            ("records", "Count", self.records),
+            ("bytes", "Byte", self.bytes),
+        ] {
+            assert_stat(
+                stdout,
+                &format!("{prefix}.{suffix}"),
+                unit,
+                value,
+                "monotonic",
+            );
+        }
+    }
+}
+
+fn assert_fetch_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
+    let mut cpus = BTreeMap::<u64, FetchTraceStats>::new();
+    let mut endpoints = BTreeMap::<String, FetchTraceStats>::new();
+    for record in trace {
+        let cpu = json_record_u64(record, "cpu");
+        let endpoint = json_record_str(record, "endpoint").to_string();
+        cpus.entry(cpu).or_default().add_record(record);
+        endpoints.entry(endpoint).or_default().add_record(record);
+    }
+    for (cpu, stats) in cpus {
+        stats.assert_stats(stdout, &format!("sim.debug.fetch_trace.cpu.cpu{cpu}"));
+    }
+    for (endpoint, stats) in endpoints {
+        stats.assert_stats(
+            stdout,
+            &format!(
+                "sim.debug.fetch_trace.endpoint.{}",
+                stat_path_segment(&endpoint)
+            ),
         );
     }
 }
