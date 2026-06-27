@@ -1,4 +1,8 @@
-use std::{collections::BTreeSet, fs, process::Command};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fs,
+    process::Command,
+};
 
 use serde_json::Value;
 
@@ -1109,6 +1113,7 @@ fn rem6_run_fabric_debug_flag_emits_real_fabric_activity_trace() {
         hop_flits,
         "monotonic",
     );
+    assert_fabric_trace_hierarchy_stats(&stdout, trace);
 }
 
 #[test]
@@ -1767,6 +1772,134 @@ fn assert_dram_trace_record_stats(
             "monotonic",
         );
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct FabricHopStats {
+    transfers: u64,
+    bytes: u64,
+    flits: u64,
+    occupied_ticks: u64,
+    queue_delay_ticks: u64,
+    max_queue_delay_ticks: u64,
+    credit_delay_ticks: u64,
+}
+
+fn assert_fabric_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
+    let mut hop_stats = BTreeMap::<(String, u64, u64), FabricHopStats>::new();
+    for record in trace {
+        let kind = record
+            .get("kind")
+            .and_then(Value::as_str)
+            .expect("fabric trace kind");
+        match kind {
+            "lane" => assert_fabric_lane_trace_stats(stdout, record),
+            "hop" => {
+                let link = record
+                    .get("link")
+                    .and_then(Value::as_str)
+                    .expect("fabric hop link")
+                    .to_string();
+                let virtual_network = record
+                    .get("virtual_network")
+                    .and_then(Value::as_u64)
+                    .expect("fabric hop virtual_network");
+                let hop_index = record
+                    .get("hop_index")
+                    .and_then(Value::as_u64)
+                    .expect("fabric hop hop_index");
+                let summary = hop_stats
+                    .entry((link, virtual_network, hop_index))
+                    .or_default();
+                summary.transfers = summary.transfers.saturating_add(1);
+                summary.bytes = summary
+                    .bytes
+                    .saturating_add(json_record_u64(record, "bytes"));
+                summary.flits = summary
+                    .flits
+                    .saturating_add(json_record_u64(record, "flits"));
+                summary.occupied_ticks = summary
+                    .occupied_ticks
+                    .saturating_add(json_record_u64(record, "occupied_ticks"));
+                let queue_delay_ticks = json_record_u64(record, "queue_delay_ticks");
+                summary.queue_delay_ticks =
+                    summary.queue_delay_ticks.saturating_add(queue_delay_ticks);
+                summary.max_queue_delay_ticks =
+                    summary.max_queue_delay_ticks.max(queue_delay_ticks);
+                summary.credit_delay_ticks = summary
+                    .credit_delay_ticks
+                    .saturating_add(json_record_u64(record, "credit_delay_ticks"));
+            }
+            other => panic!("unexpected fabric trace kind {other}: {record:?}"),
+        }
+    }
+    for ((link, virtual_network, hop_index), summary) in hop_stats {
+        let prefix = format!(
+            "sim.debug.fabric_trace.hop.link.{}.vn{virtual_network}.hop{hop_index}",
+            stat_path_segment(&link)
+        );
+        for (suffix, unit, value) in [
+            ("transfers", "Count", summary.transfers),
+            ("bytes", "Byte", summary.bytes),
+            ("flits", "Count", summary.flits),
+            ("occupied_ticks", "Tick", summary.occupied_ticks),
+            ("queue_delay_ticks", "Tick", summary.queue_delay_ticks),
+            (
+                "max_queue_delay_ticks",
+                "Tick",
+                summary.max_queue_delay_ticks,
+            ),
+            ("credit_delay_ticks", "Tick", summary.credit_delay_ticks),
+        ] {
+            assert_stat(
+                stdout,
+                &format!("{prefix}.{suffix}"),
+                unit,
+                value,
+                "monotonic",
+            );
+        }
+    }
+}
+
+fn assert_fabric_lane_trace_stats(stdout: &str, record: &Value) {
+    let link = record
+        .get("link")
+        .and_then(Value::as_str)
+        .expect("fabric lane link");
+    let virtual_network = record
+        .get("virtual_network")
+        .and_then(Value::as_u64)
+        .expect("fabric lane virtual_network");
+    let prefix = format!(
+        "sim.debug.fabric_trace.lane.link.{}.vn{virtual_network}",
+        stat_path_segment(link)
+    );
+    for (stat_suffix, field, unit) in [
+        ("transfers", "transfer_count", "Count"),
+        ("bytes", "byte_count", "Byte"),
+        ("flits", "flit_count", "Count"),
+        ("occupied_ticks", "occupied_ticks", "Tick"),
+        ("queue_delay_ticks", "queue_delay_ticks", "Tick"),
+        ("max_queue_delay_ticks", "max_queue_delay_ticks", "Tick"),
+        ("credit_delay_ticks", "credit_delay_ticks", "Tick"),
+        ("max_credit_delay_ticks", "max_credit_delay_ticks", "Tick"),
+    ] {
+        assert_stat(
+            stdout,
+            &format!("{prefix}.{stat_suffix}"),
+            unit,
+            json_record_u64(record, field),
+            "monotonic",
+        );
+    }
+}
+
+fn json_record_u64(record: &Value, field: &str) -> u64 {
+    record
+        .get(field)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing JSON u64 field {field}: {record:?}"))
 }
 
 const CACHE_TRACE_COUNT_FIELDS: &[(&str, &str)] = &[

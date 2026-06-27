@@ -236,6 +236,15 @@ pub(super) fn emit_debug_stats(
             stat.value(),
         )?;
     }
+    for stat in debug.fabric_trace_stats(stat_path_segment) {
+        increment_stat(
+            stats,
+            &format!("sim.debug.fabric_trace.{}", stat.path()),
+            stat.unit(),
+            StatResetPolicy::Monotonic,
+            stat.value(),
+        )?;
+    }
     increment_stat(
         stats,
         "sim.debug.trace.payload_bytes",
