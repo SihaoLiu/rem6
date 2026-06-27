@@ -79,6 +79,10 @@ pub use crate::o3_pipeline::{
     O3WritebackTransferCheckpointPayload, O3WritebackTransferCycle, O3WritebackTransferPlan,
     O3WritebackTransferPolicy, O3WritebackTransferSnapshot,
 };
+pub use crate::o3_runtime::{
+    O3LoadStoreQueueEntry, O3LoadStoreQueueKind, O3RenameMapEntry, O3ReorderBufferEntry,
+    O3RuntimeCheckpointPayload, O3RuntimeError, O3RuntimeSnapshot,
+};
 pub use crate::return_address_stack::{
     ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackError,
     ReturnAddressStackOperation, ReturnAddressStackOperationId, ReturnAddressStackOperationKind,

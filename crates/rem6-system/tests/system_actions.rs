@@ -607,6 +607,14 @@ fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest()
         .checkpoints()
         .chunk(&component, "multiperspective-perceptron")
         .unwrap();
+    let o3_pending_state = executor
+        .checkpoints()
+        .chunk(&component, "o3-pending-state")
+        .unwrap();
+    let o3_runtime_state = executor
+        .checkpoints()
+        .chunk(&component, "o3-runtime-state")
+        .unwrap();
     assert_eq!(
         outcome,
         SystemActionOutcome::Checkpoint {
@@ -635,6 +643,8 @@ fn system_action_executor_refreshes_live_riscv_core_checkpoint_before_manifest()
                             "multiperspective-perceptron",
                             multiperspective_perceptron.to_vec(),
                         ),
+                        CheckpointChunk::new("o3-pending-state", o3_pending_state.to_vec()),
+                        CheckpointChunk::new("o3-runtime-state", o3_runtime_state.to_vec()),
                         CheckpointChunk::new("pc", 0x8040_u64.to_le_bytes().to_vec()),
                         CheckpointChunk::new("pmp", pmp.to_vec()),
                         CheckpointChunk::new(

@@ -42,6 +42,7 @@ mod multiperspective_perceptron_checkpoint;
 mod multiperspective_perceptron_snapshot;
 mod o3_dependency;
 mod o3_pipeline;
+mod o3_runtime;
 mod outstanding_fetch;
 mod parallel_flow;
 mod public_api;
@@ -1190,7 +1191,7 @@ struct RiscvCoreState {
     tournament_branch_predictor: TournamentBranchPredictor,
     tage_sc_l_branch_predictor: TageScLBranchPredictor,
     multiperspective_perceptron: MultiperspectivePerceptron,
-    o3_pending_state: o3_pipeline::O3PendingStateCheckpointPayload,
+    o3_runtime: o3_runtime::O3RuntimeState,
     in_order_pipeline: InOrderPipelineState,
     in_order_pipeline_cycle_records: Vec<InOrderPipelineCycleRecord>,
     events: Vec<RiscvCpuExecutionEvent>,
@@ -1263,7 +1264,7 @@ impl RiscvCoreState {
             ),
             tage_sc_l_branch_predictor: default_riscv_tage_sc_l_branch_predictor(),
             multiperspective_perceptron: default_riscv_multiperspective_perceptron(),
-            o3_pending_state: RiscvCore::default_o3_pending_state_checkpoint_payload(),
+            o3_runtime: o3_runtime::O3RuntimeState::default(),
             in_order_pipeline: InOrderPipelineState::new(
                 riscv_in_order_config::default_riscv_in_order_pipeline_config(),
             ),

@@ -13,11 +13,13 @@ use rem6_cpu::{
     LoopBranchPredictorConfig, MultiperspectivePerceptron,
     MultiperspectivePerceptronCheckpointPayload, MultiperspectivePerceptronConfig,
     MultiperspectivePerceptronError, O3DependencyScopeId, O3IssueOpClass, O3IssueQueueId,
-    O3PendingStateCheckpointPayload, O3PendingStateSnapshot, O3PipelineStage,
-    O3ScopedReadyInstruction, O3WritebackCompletion, O3WritebackTransferPolicy,
-    O3WritebackTransferSnapshot, RiscvCore, RiscvHartRunState, StatisticalCorrectorConfig,
-    TageBranchPredictorConfig, TageScLBranchPredictor, TageScLBranchPredictorCheckpointPayload,
-    TageScLBranchPredictorConfig, TageScLBranchPredictorError, TournamentBranchPredictor,
+    O3LoadStoreQueueEntry, O3PendingStateCheckpointPayload, O3PendingStateSnapshot,
+    O3PhysicalRegisterId, O3PipelineStage, O3RegisterClass, O3RenameMapEntry, O3ReorderBufferEntry,
+    O3RuntimeCheckpointPayload, O3RuntimeSnapshot, O3ScopedReadyInstruction, O3WritebackCompletion,
+    O3WritebackTransferPolicy, O3WritebackTransferSnapshot, RiscvCore, RiscvHartRunState,
+    StatisticalCorrectorConfig, TageBranchPredictorConfig, TageScLBranchPredictor,
+    TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorConfig,
+    TageScLBranchPredictorError, TournamentBranchPredictor,
     TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorConfig,
     TournamentBranchPredictorError,
 };
@@ -776,6 +778,182 @@ fn riscv_core_checkpoint_captures_and_restores_o3_pending_state() {
     assert_eq!(restored, captured);
     assert_eq!(restored.o3_pending_state_payload(), &pending_payload);
     assert_eq!(core.o3_pending_state_checkpoint_payload(), pending_payload);
+}
+
+#[test]
+fn riscv_core_checkpoint_captures_and_restores_o3_runtime_state() {
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let mut registry = CheckpointRegistry::new();
+    let core = riscv_core();
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+    let runtime_payload = O3RuntimeCheckpointPayload::from_snapshot(
+        O3RuntimeSnapshot::new(
+            [O3ReorderBufferEntry::new(
+                21,
+                Address::new(0x8000),
+                Some(O3PhysicalRegisterId::new(64)),
+            )
+            .with_ready(true)],
+            [
+                O3LoadStoreQueueEntry::store(21, Some(Address::new(0x9000)), 8)
+                    .with_completed(true),
+            ],
+            [O3RenameMapEntry::new(
+                O3RegisterClass::Integer,
+                5,
+                O3PhysicalRegisterId::new(64),
+            )],
+            O3PendingStateSnapshot::new(
+                [O3DependencyScopeId::new(0x303)],
+                [O3ScopedReadyInstruction::new(
+                    22,
+                    O3IssueQueueId::new(0),
+                    O3IssueOpClass::Memory,
+                )],
+                O3WritebackTransferSnapshot::new(
+                    O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap(),
+                    [O3WritebackCompletion::new(23)],
+                ),
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    core.restore_o3_runtime_checkpoint_payload(runtime_payload.clone())
+        .unwrap();
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    assert_eq!(captured.o3_runtime_payload(), &runtime_payload);
+    assert!(registry.chunk(&component, "o3-runtime-state").is_some());
+
+    core.restore_o3_runtime_checkpoint_payload(RiscvCore::default_o3_runtime_checkpoint_payload())
+        .unwrap();
+    assert_ne!(core.o3_runtime_checkpoint_payload(), runtime_payload);
+
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored, captured);
+    assert_eq!(restored.o3_runtime_payload(), &runtime_payload);
+    assert_eq!(core.o3_runtime_checkpoint_payload(), runtime_payload);
+    let expected_pending = O3PendingStateCheckpointPayload::from_snapshot(
+        runtime_payload.snapshot().pending_state().clone(),
+    )
+    .unwrap();
+    assert_eq!(core.o3_pending_state_checkpoint_payload(), expected_pending);
+}
+
+#[test]
+fn riscv_core_checkpoint_restores_legacy_o3_pending_chunk_without_runtime_chunk() {
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let mut registry = CheckpointRegistry::new();
+    let mut legacy_registry = CheckpointRegistry::new();
+    let core = riscv_core();
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+    let pending_payload = O3PendingStateCheckpointPayload::from_snapshot(
+        O3PendingStateSnapshot::new(
+            [O3DependencyScopeId::new(0x505)],
+            [O3ScopedReadyInstruction::new(
+                41,
+                O3IssueQueueId::new(0),
+                O3IssueOpClass::IntAlu,
+            )],
+            O3WritebackTransferSnapshot::new(
+                O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap(),
+                [O3WritebackCompletion::new(42)],
+            ),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    port.register(&mut registry).unwrap();
+    port.capture_into(&mut registry).unwrap();
+    registry
+        .write_chunk(&component, "o3-pending-state", pending_payload.encode())
+        .unwrap();
+    let manifest = registry.capture("legacy-o3-pending", 9).unwrap();
+    legacy_registry.register(component.clone()).unwrap();
+    for chunk in manifest.states()[0].chunks() {
+        if chunk.name() != "o3-runtime-state" {
+            legacy_registry
+                .write_chunk(&component, chunk.name(), chunk.payload().to_vec())
+                .unwrap();
+        }
+    }
+    core.restore_o3_pending_state_checkpoint_payload(
+        RiscvCore::default_o3_pending_state_checkpoint_payload(),
+    )
+    .unwrap();
+
+    let restored = port.restore_from(&legacy_registry).unwrap();
+
+    assert_eq!(restored.o3_pending_state_payload(), &pending_payload);
+    assert_eq!(core.o3_pending_state_checkpoint_payload(), pending_payload);
+    assert!(legacy_registry
+        .chunk(&component, "o3-runtime-state")
+        .is_none());
+}
+
+#[test]
+fn riscv_core_checkpoint_rejects_mismatched_o3_pending_chunk_without_partial_restore() {
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let mut registry = CheckpointRegistry::new();
+    let core = riscv_core();
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+    let runtime_payload = O3RuntimeCheckpointPayload::from_snapshot(
+        O3RuntimeSnapshot::new(
+            [O3ReorderBufferEntry::new(
+                31,
+                Address::new(0x8000),
+                Some(O3PhysicalRegisterId::new(70)),
+            )],
+            [],
+            [O3RenameMapEntry::new(
+                O3RegisterClass::Integer,
+                6,
+                O3PhysicalRegisterId::new(70),
+            )],
+            O3PendingStateSnapshot::new(
+                [O3DependencyScopeId::new(0x404)],
+                [],
+                O3WritebackTransferSnapshot::new(
+                    O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap(),
+                    [O3WritebackCompletion::new(32)],
+                ),
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    core.restore_o3_runtime_checkpoint_payload(runtime_payload.clone())
+        .unwrap();
+    port.register(&mut registry).unwrap();
+    port.capture_into(&mut registry).unwrap();
+    registry
+        .write_chunk(
+            &component,
+            "o3-pending-state",
+            RiscvCore::default_o3_pending_state_checkpoint_payload().encode(),
+        )
+        .unwrap();
+    core.restore_o3_runtime_checkpoint_payload(RiscvCore::default_o3_runtime_checkpoint_payload())
+        .unwrap();
+
+    let error = port.restore_from(&registry).unwrap_err();
+
+    assert_eq!(
+        error,
+        rem6_system::RiscvCoreCheckpointError::MismatchedO3PendingStateSnapshot { component }
+    );
+    assert_eq!(
+        core.o3_runtime_checkpoint_payload(),
+        RiscvCore::default_o3_runtime_checkpoint_payload()
+    );
 }
 
 #[test]
