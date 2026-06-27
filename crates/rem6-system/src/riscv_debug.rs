@@ -56,7 +56,8 @@ const RISCV_GDB_PMP_ADDR0_REGISTER: u64 = 137;
 const RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER: u64 = 138;
 const RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER: u64 = 139;
 const RISCV_GDB_PMP_ADDR1_REGISTER: u64 = 140;
-const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 19;
+const RISCV_GDB_PMP_ADDR2_REGISTER: u64 = 141;
+const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 20;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 const RISCV_GDB_RV32_VTYPE_PAYLOAD_MASK: u64 = 0x7fff_ffff;
 const RISCV_GDB_RV32_VTYPE_VILL_BIT: u64 = 1_u64 << 31;
@@ -1334,6 +1335,9 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     if number == RISCV_GDB_PMP_ADDR1_REGISTER {
         return RiscvGdbCsrRegister::PmpAddr(1);
     }
+    if number == RISCV_GDB_PMP_ADDR2_REGISTER {
+        return RiscvGdbCsrRegister::PmpAddr(2);
+    }
     if number == RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER {
         return RiscvGdbCsrRegister::Counter(RiscvCounterCsr::Cycle);
     }
@@ -1654,6 +1658,7 @@ fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
             RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER,
             RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER,
             RISCV_GDB_PMP_ADDR1_REGISTER,
+            RISCV_GDB_PMP_ADDR2_REGISTER,
         ])
 }
 
@@ -1731,6 +1736,7 @@ const fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool {
         || number == RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER
         || number == RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER
         || number == RISCV_GDB_PMP_ADDR1_REGISTER
+        || number == RISCV_GDB_PMP_ADDR2_REGISTER
 }
 
 fn encode_register_value(xlen: RiscvGdbXlen, number: u64, value: u64) -> Vec<u8> {

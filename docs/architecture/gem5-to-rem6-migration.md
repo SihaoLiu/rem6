@@ -734,7 +734,7 @@ pipeline and cache/DRAM runtime state.
   `m5_switch_cpu` as a top-level injected `switchcpu` command plus host stop.
 - [x] Decode-first checkpoint capture/restore exists across scheduler, memory, device, storage, VirtIO, timer, interrupt, RISC-V hart run-state, platform, workload, and manifest owners.
 - [x] GDB remote packet/session parsing and RISC-V integer/PC register paths exist.
-- [x] GDB RV64D floating-point, including XML-aligned `fflags`/`frm`/`fcsr` and placeholder numbering, advertised RV64 CSR target descriptions including supervisor `sscratch`, supervisor environment `senvcfg`, translation `satp`, interrupt aliases `sie`/`sip`, machine identity `mhartid`/`mvendorid`/`marchid`/`mimpid`, machine ISA `misa`, counter `cycle`/`time`/`instret`, machine-counter aliases `mcycle`/`minstret`, packed PMP config `pmpcfg0`, and PMP address registers `pmpaddr0`/`pmpaddr1`, and RV64 machine status, interrupt, trap, identity, ISA, environment-config, counter, and PMP CSR register-cache paths exist, with `cycle`/`mcycle`, `time`, and `instret`/`minstret` remaining GDB-visible across real GDB single-step execution and PMP0/PMP1 writes updating the same `RiscvCore` PMP state consumed by CPU access checks.
+- [x] GDB RV64D floating-point, including XML-aligned `fflags`/`frm`/`fcsr` and placeholder numbering, advertised RV64 CSR target descriptions including supervisor `sscratch`, supervisor environment `senvcfg`, translation `satp`, interrupt aliases `sie`/`sip`, machine identity `mhartid`/`mvendorid`/`marchid`/`mimpid`, machine ISA `misa`, counter `cycle`/`time`/`instret`, machine-counter aliases `mcycle`/`minstret`, packed PMP config `pmpcfg0`, and PMP address registers `pmpaddr0` through `pmpaddr2`, and RV64 machine status, interrupt, trap, identity, ISA, environment-config, counter, and PMP CSR register-cache paths exist, with `cycle`/`mcycle`, `time`, and `instret`/`minstret` remaining GDB-visible across real GDB single-step execution and PMP0/PMP1/PMP2 writes updating the same `RiscvCore` PMP state consumed by CPU access checks.
 - [x] GDB RV64 vector fixed-point and vector-configuration CSR target descriptions and register-cache read/write paths exist for `vxsat`, `vxrm`, `vcsr`, `vl`, `vtype`, and `vlenb`.
 - [x] GDB RV32D floating-point plus RV32 CSR target descriptions and register-cache read/write paths exist for FP registers, `fflags`/`frm`/`fcsr`, supervisor, machine, interrupt, translation, vector fixed-point CSRs, and XLEN-mapped vector-configuration CSRs.
 - [x] GDB RV32/RV64 vector data register target descriptions and register-cache read/write paths exist for `v0` through `v31`.
@@ -776,9 +776,9 @@ m5ops, host actions, GDB packet/session parsing, RISC-V integer/PC register
 paths, RV64D floating-point target descriptions including XML-aligned
 `fflags`/`frm`/`fcsr` and placeholder numbering,
 advertised RV64 CSR target descriptions including supervisor `sscratch`, supervisor environment `senvcfg`, translation `satp`, interrupt aliases `sie`/`sip`, machine identity
-`mhartid`/`mvendorid`/`marchid`/`mimpid`, machine ISA `misa`, counter `cycle`/`time`/`instret`, packed PMP config `pmpcfg0`, and PMP address registers `pmpaddr0`/`pmpaddr1`,
+`mhartid`/`mvendorid`/`marchid`/`mimpid`, machine ISA `misa`, counter `cycle`/`time`/`instret`, packed PMP config `pmpcfg0`, and PMP address registers `pmpaddr0` through `pmpaddr2`,
 RV64 machine status, interrupt, trap, identity, ISA, environment-config, counter, and PMP CSR register-cache paths, including independent
-GDB-visible `cycle` and `time` state across CSR writes and single-step execution and PMP0/PMP1 writes reflected in the live `RiscvCore` PMP table, and
+GDB-visible `cycle` and `time` state across CSR writes and single-step execution and PMP0/PMP1/PMP2 writes reflected in the live `RiscvCore` PMP table, and
 RV64 vector fixed-point and vector-configuration CSR register-cache paths for
 `vxsat`, `vxrm`, `vcsr`, `vl`, `vtype`, and `vlenb`, plus RV32D floating-point target descriptions and register-cache
 read/write paths for FP registers and `fflags`/`frm`/`fcsr`, plus RV32 CSR
@@ -850,7 +850,7 @@ translation `satp`, interrupt aliases `sie`/`sip`, counter
 `cycle`/`time`/`instret`, and machine-counter aliases `mcycle`/`minstret`, RV64 machine CSR register-cache including `mscratch`
 write/readback plus machine identity `mhartid`/`mvendorid`/`marchid`/`mimpid`
 and machine ISA `misa` readback through guest CSR execution and top-level GDB,
-PMP CSR target/register-cache coverage for packed `pmpcfg0` and `pmpaddr0`/`pmpaddr1` through both the core packet handler and top-level `rem6 run --gdb-listen`,
+PMP CSR target/register-cache coverage for packed `pmpcfg0` and `pmpaddr0` through `pmpaddr2` in both the core packet handler and top-level `rem6 run --gdb-listen`,
 live `cycle`/`time`/`instret` plus `mcycle`/`minstret` reads after top-level GDB single-step execution,
 and independent counter writes consumed by subsequent GDB single-step
 execution,
