@@ -334,6 +334,7 @@ pub(super) fn execution_summary(
         inputs.data_trace,
         &inputs.fabric,
         &dram,
+        &memory_resources,
         &power_records,
         &inputs.riscv_syscall_trace,
     );

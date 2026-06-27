@@ -34,6 +34,55 @@ pub(super) fn emit_debug_stats(
             "sim.debug.data_trace.atomics",
             debug.data_atomic_trace_count(),
         ),
+        ("sim.debug.cache_trace.records", debug.cache_trace_count()),
+        (
+            "sim.debug.cache_trace.active_scopes",
+            debug.cache_active_scope_trace_count(),
+        ),
+        (
+            "sim.debug.cache_trace.activity",
+            debug.cache_activity_trace_count(),
+        ),
+        (
+            "sim.debug.cache_trace.cpu_responses",
+            debug.cache_cpu_response_trace_count(),
+        ),
+        (
+            "sim.debug.cache_trace.directory_decisions",
+            debug.cache_directory_decision_trace_count(),
+        ),
+        (
+            "sim.debug.cache_trace.dram_accesses",
+            debug.cache_dram_access_trace_count(),
+        ),
+        (
+            "sim.debug.cache_trace.bank.accepted",
+            debug.cache_bank_accepted_trace_count(),
+        ),
+        (
+            "sim.debug.cache_trace.bank.immediate_hits",
+            debug.cache_bank_immediate_hit_trace_count(),
+        ),
+        (
+            "sim.debug.cache_trace.bank.scheduled_misses",
+            debug.cache_bank_scheduled_miss_trace_count(),
+        ),
+        (
+            "sim.debug.cache_trace.bank.coalesced_misses",
+            debug.cache_bank_coalesced_miss_trace_count(),
+        ),
+        (
+            "sim.debug.cache_trace.prefetch.identified",
+            debug.cache_prefetch_identified_trace_count(),
+        ),
+        (
+            "sim.debug.cache_trace.prefetch.issued",
+            debug.cache_prefetch_issued_trace_count(),
+        ),
+        (
+            "sim.debug.cache_trace.prefetch.translation_queue.enqueued",
+            debug.cache_prefetch_translation_queue_enqueued_trace_count(),
+        ),
         ("sim.debug.dram_trace.records", debug.dram_trace_count()),
         (
             "sim.debug.dram_trace.targets",

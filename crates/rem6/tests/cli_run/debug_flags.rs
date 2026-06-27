@@ -664,6 +664,248 @@ fn rem6_run_memory_debug_flag_emits_real_transport_trace() {
 }
 
 #[test]
+fn rem6_run_cache_debug_flag_emits_real_cache_hierarchy_trace() {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),                  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),                        // sd x6, 8(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET, 0);
+    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-cache", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "cache-fabric-dram",
+            "--instruction-cache-protocol",
+            "msi",
+            "--instruction-cache-l2-protocol",
+            "msi",
+            "--instruction-cache-l3-protocol",
+            "msi",
+            "--data-cache-protocol",
+            "msi",
+            "--data-cache-l2-protocol",
+            "msi",
+            "--data-cache-l3-protocol",
+            "msi",
+            "--debug-flags",
+            "Cache",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![Value::String("Cache".to_string())])
+    );
+    let trace = json
+        .pointer("/debug/cache_trace")
+        .and_then(Value::as_array)
+        .expect("debug cache trace array");
+    assert_eq!(trace.len(), 6, "trace should cover I/D L1/L2/L3: {trace:?}");
+
+    assert_cache_trace_record(
+        trace,
+        "instruction",
+        "l1",
+        &json,
+        "/memory_resources/cache/instruction/l1",
+    );
+    assert_cache_trace_record(
+        trace,
+        "instruction",
+        "l2",
+        &json,
+        "/memory_resources/cache/instruction/l2",
+    );
+    assert_cache_trace_record(
+        trace,
+        "instruction",
+        "l3",
+        &json,
+        "/memory_resources/cache/instruction/l3",
+    );
+    assert_cache_trace_record(
+        trace,
+        "data",
+        "l1",
+        &json,
+        "/memory_resources/cache/data/l1",
+    );
+    assert_cache_trace_record(
+        trace,
+        "data",
+        "l2",
+        &json,
+        "/memory_resources/cache/data/l2",
+    );
+    assert_cache_trace_record(
+        trace,
+        "data",
+        "l3",
+        &json,
+        "/memory_resources/cache/data/l3",
+    );
+
+    let active_scopes = cache_trace_active_count(trace);
+    let activity = cache_trace_sum(trace, "activity");
+    let cpu_responses = cache_trace_sum(trace, "cpu_responses");
+    let directory_decisions = cache_trace_sum(trace, "directory_decisions");
+    let dram_accesses = cache_trace_sum(trace, "dram_accesses");
+    let bank_accepted = cache_trace_sum(trace, "bank_accepted");
+    let bank_immediate_hits = cache_trace_sum(trace, "bank_immediate_hits");
+    let bank_scheduled_misses = cache_trace_sum(trace, "bank_scheduled_misses");
+    let bank_coalesced_misses = cache_trace_sum(trace, "bank_coalesced_misses");
+    let prefetch_identified = cache_trace_sum(trace, "prefetch_identified");
+    let prefetch_issued = cache_trace_sum(trace, "prefetch_issued");
+    let prefetch_translation_queue_enqueued =
+        cache_trace_sum(trace, "prefetch_translation_queue_enqueued");
+    assert!(active_scopes > 0, "trace: {trace:?}");
+    assert!(activity > 0, "trace: {trace:?}");
+    assert!(cpu_responses > 0, "trace: {trace:?}");
+    assert!(directory_decisions > 0, "trace: {trace:?}");
+    assert!(dram_accesses > 0, "trace: {trace:?}");
+    assert!(bank_accepted > 0, "trace: {trace:?}");
+    assert_eq!(
+        active_scopes,
+        json_path_u64(&json, "/memory_resources/cache/active")
+    );
+    assert_eq!(
+        activity,
+        json_path_u64(&json, "/memory_resources/cache/activity")
+    );
+    assert_eq!(
+        cpu_responses,
+        json_path_u64(&json, "/memory_resources/cache/cpu_responses")
+    );
+    assert_eq!(
+        directory_decisions,
+        json_path_u64(&json, "/memory_resources/cache/directory_decisions")
+    );
+    assert_eq!(
+        dram_accesses,
+        json_path_u64(&json, "/memory_resources/cache/dram_accesses")
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.cache_trace.records",
+        "Count",
+        trace.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.cache_trace.active_scopes",
+        "Count",
+        active_scopes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.cache_trace.activity",
+        "Count",
+        activity,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.cache_trace.cpu_responses",
+        "Count",
+        cpu_responses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.cache_trace.directory_decisions",
+        "Count",
+        directory_decisions,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.cache_trace.dram_accesses",
+        "Count",
+        dram_accesses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.cache_trace.bank.accepted",
+        "Count",
+        bank_accepted,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.cache_trace.bank.immediate_hits",
+        "Count",
+        bank_immediate_hits,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.cache_trace.bank.scheduled_misses",
+        "Count",
+        bank_scheduled_misses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.cache_trace.bank.coalesced_misses",
+        "Count",
+        bank_coalesced_misses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.cache_trace.prefetch.identified",
+        "Count",
+        prefetch_identified,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.cache_trace.prefetch.issued",
+        "Count",
+        prefetch_issued,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.cache_trace.prefetch.translation_queue.enqueued",
+        "Count",
+        prefetch_translation_queue_enqueued,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_fabric_debug_flag_emits_real_fabric_activity_trace() {
     const DATA_OFFSET: usize = 64;
 
@@ -1428,6 +1670,72 @@ fn debug_trace_max(trace: &[Value], kind: &str, field: &str) -> u64 {
         })
         .max()
         .unwrap_or(0)
+}
+
+fn assert_cache_trace_record(
+    trace: &[Value],
+    hierarchy: &str,
+    level: &str,
+    json: &Value,
+    resource_path: &str,
+) {
+    let record = trace
+        .iter()
+        .find(|record| {
+            record.get("hierarchy").and_then(Value::as_str) == Some(hierarchy)
+                && record.get("level").and_then(Value::as_str) == Some(level)
+        })
+        .unwrap_or_else(|| panic!("missing cache trace record {hierarchy}.{level}: {trace:?}"));
+    for field in [
+        "activity",
+        "active",
+        "cpu_responses",
+        "directory_decisions",
+        "dram_accesses",
+        "bank_accepted",
+        "bank_immediate_hits",
+        "bank_scheduled_misses",
+        "bank_coalesced_misses",
+        "prefetch_identified",
+        "prefetch_issued",
+        "prefetch_translation_queue_enqueued",
+    ] {
+        assert_eq!(
+            record.get(field).and_then(Value::as_u64),
+            Some(json_path_u64(json, &format!("{resource_path}/{field}"))),
+            "cache trace {hierarchy}.{level}.{field}: {record:?}"
+        );
+    }
+}
+
+fn cache_trace_active_count(trace: &[Value]) -> u64 {
+    trace
+        .iter()
+        .filter(|record| {
+            record
+                .get("active")
+                .and_then(Value::as_u64)
+                .is_some_and(|active| active > 0)
+        })
+        .count() as u64
+}
+
+fn cache_trace_sum(trace: &[Value], field: &str) -> u64 {
+    trace
+        .iter()
+        .map(|record| {
+            record
+                .get(field)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("cache trace {field}"))
+        })
+        .sum()
+}
+
+fn json_path_u64(json: &Value, path: &str) -> u64 {
+    json.pointer(path)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing JSON u64 path {path}"))
 }
 
 #[test]
