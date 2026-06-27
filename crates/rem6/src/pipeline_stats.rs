@@ -35,6 +35,16 @@ impl Rem6InOrderPipelineStageSummary {
         }
     }
 
+    fn presence(self) -> Self {
+        Self {
+            fetch1: u64::from(self.fetch1 > 0),
+            fetch2: u64::from(self.fetch2 > 0),
+            decode: u64::from(self.decode > 0),
+            execute: u64::from(self.execute > 0),
+            commit: u64::from(self.commit > 0),
+        }
+    }
+
     pub(crate) fn values(self) -> [u64; 5] {
         [
             self.fetch1,
@@ -152,6 +162,19 @@ pub(super) fn in_order_pipeline_stage_flushed(core: &RiscvCore) -> Rem6InOrderPi
     )
 }
 
+pub(super) fn in_order_pipeline_stage_flushed_cycles(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            summary.saturating_add(stage_presence_summary_from_instructions(
+                record.plan().flushed(),
+            ))
+        },
+    )
+}
+
 pub(super) fn in_order_pipeline_stage_branch_prediction_flushed(
     core: &RiscvCore,
 ) -> Rem6InOrderPipelineStageSummary {
@@ -164,6 +187,23 @@ pub(super) fn in_order_pipeline_stage_branch_prediction_flushed(
                 .fold(summary, |summary, prediction| {
                     summary.saturating_add(stage_summary_from_instructions(prediction.flushed()))
                 })
+        },
+    )
+}
+
+pub(super) fn in_order_pipeline_stage_branch_prediction_flushed_cycles(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            let cycle_summary = record.branch_predictions().iter().fold(
+                Rem6InOrderPipelineStageSummary::default(),
+                |summary, prediction| {
+                    summary.saturating_add(stage_summary_from_instructions(prediction.flushed()))
+                },
+            );
+            summary.saturating_add(cycle_summary.presence())
         },
     )
 }

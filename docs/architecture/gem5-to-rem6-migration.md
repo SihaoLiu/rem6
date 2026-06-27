@@ -198,8 +198,8 @@ normal parallel-cluster pending-fetch resource-stall accounting consumed by CLI 
 independent reference hart at retire, records structured execution/state
 mismatches, and exposes checked/mismatch counts through `rem6 run --checker-cpu`
 stats, per-stage in-order flush and branch-prediction flush attribution stats,
-plus aggregate flush-cycle and branch-prediction flush-cycle stats from real
-branch redirect cycle records,
+plus aggregate and per-stage flush-cycle and branch-prediction flush-cycle stats
+from real branch redirect cycle records,
 top-level `rem6 run --riscv-in-order-width` configuring the live
 five-stage in-order pipeline width, allowing wider fetch-stage overlap in real
 executed state without false younger retire, and exposing width plus max
@@ -233,8 +233,8 @@ The selected snapshot cleanup runs include conditional multiperspective-perceptr
 wrong-path branches and indirect JALR wrong-path fetch-ahead for TAGE-SC-L plus
 multiperspective-perceptron, with indirect-unconditional branch-kind lookup
 stats proving the top-level path.
-Branch redirect CLI runs now emit per-stage in-order flush counts plus
-aggregate flush-cycle and branch-prediction flush-cycle counts alongside the
+Branch redirect CLI runs now emit per-stage in-order flush counts plus aggregate
+and per-stage flush-cycle and branch-prediction flush-cycle counts alongside the
 aggregate flush and branch-prediction flush counters, proving squash attribution
 and cycle-level squash presence from the same executed cycle records.
 CLI `rem6 run --riscv-in-order-width 2` applies a uniform stage-width config to the live `RiscvCore` in-order pipeline snapshot and emits per-stage width plus max-in-flight occupancy stats from the executed run, with width 2 reaching two in-flight instructions in affected stages. Pending-fetch runs expose per-stage resource-blocked instruction counts whose total matches aggregate resource-blocked counts, plus per-stage resource-blocked and ordering-blocked cycle stat families derived from the same cycle records.
