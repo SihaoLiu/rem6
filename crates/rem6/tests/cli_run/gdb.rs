@@ -140,6 +140,117 @@ fn rem6_run_gdb_listen_serves_loaded_riscv_state_before_execution() {
 }
 
 #[test]
+fn rem6_run_gdb_listen_serves_rv32_target_description_for_rv32_elf() {
+    let program = riscv64_program(&[0x0000_0073]);
+    let elf = riscv32_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("gdb-listen-rv32-target", &elf);
+    let listen = unused_loopback_addr();
+    let child = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--gdb-listen",
+            &listen.to_string(),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stream = match connect_with_retry(listen.address(), Duration::from_secs(3)) {
+        Ok(stream) => stream,
+        Err(error) => {
+            let output = wait_with_output_timeout(child, Duration::from_secs(1));
+            panic!(
+                "failed to connect to GDB listener: {error}; stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    };
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    let mut target = String::new();
+    for payload in [
+        b"qXfer:features:read:target.xml:0,a0".as_slice(),
+        b"qXfer:features:read:target.xml:a0,a0".as_slice(),
+    ] {
+        target.push_str(&String::from_utf8_lossy(&send_gdb_packet(
+            &mut stream,
+            payload,
+        )));
+    }
+    assert!(target.contains("riscv-32bit-cpu.xml"), "target: {target}");
+    assert!(!target.contains("riscv-64bit-cpu.xml"), "target: {target}");
+    let mut csr = String::new();
+    for payload in [
+        b"qXfer:features:read:riscv-32bit-csr.xml:0,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:a0,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:140,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:1e0,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:280,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:320,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:3c0,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:460,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:500,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:5a0,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:640,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:6e0,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:780,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:820,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:8c0,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:960,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:a00,a0".as_slice(),
+    ] {
+        csr.push_str(&String::from_utf8_lossy(&send_gdb_packet(
+            &mut stream,
+            payload,
+        )));
+    }
+    assert!(csr.contains("pmpcfg1"), "csr: {csr}");
+    assert!(csr.contains("pmpcfg3"), "csr: {csr}");
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P9c=88776655"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P9d=ccbbaa99"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p9c"),
+        gdb_response(b"88776655")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p9d"),
+        gdb_response(b"ccbbaa99")
+    );
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"architecture\":\"riscv32\""));
+}
+
+#[test]
 fn rem6_run_gdb_listen_writes_sscratch_before_execution() {
     let program = riscv64_program(&[
         0x1400_22f3, // csrr x5, sscratch

@@ -74,6 +74,34 @@ pub(crate) fn riscv64_elf(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> 
     bytes
 }
 
+pub(crate) fn riscv32_elf(entry: u32, physical: u32, payload: &[u8]) -> Vec<u8> {
+    let payload_offset = 128usize;
+    let mut bytes = vec![0; payload_offset + payload.len()];
+    bytes[0..4].copy_from_slice(b"\x7fELF");
+    bytes[4] = 1;
+    bytes[5] = 1;
+    bytes[6] = 1;
+    write_u16(&mut bytes, 16, 2);
+    write_u16(&mut bytes, 18, 243);
+    write_u32(&mut bytes, 20, 1);
+    write_u32(&mut bytes, 24, entry);
+    write_u32(&mut bytes, 28, 52);
+    write_u16(&mut bytes, 40, 52);
+    write_u16(&mut bytes, 42, 32);
+    write_u16(&mut bytes, 44, 1);
+
+    write_u32(&mut bytes, 52, 1);
+    write_u32(&mut bytes, 56, payload_offset as u32);
+    write_u32(&mut bytes, 60, physical);
+    write_u32(&mut bytes, 64, physical);
+    write_u32(&mut bytes, 68, payload.len() as u32);
+    write_u32(&mut bytes, 72, payload.len() as u32);
+    write_u32(&mut bytes, 76, 5);
+    write_u32(&mut bytes, 80, 0x1000);
+    bytes[payload_offset..].copy_from_slice(payload);
+    bytes
+}
+
 pub(crate) fn x86_64_elf(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
     let mut bytes = riscv64_elf(entry, physical, payload);
     write_u16(&mut bytes, 18, 62);

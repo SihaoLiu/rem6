@@ -4,14 +4,14 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use rem6_boot::BootImage;
+use rem6_boot::{BootElfArchitecture, BootImage};
 use rem6_cpu::{
     BranchTargetKindCounts, BranchTargetProviderCounts, CpuCore, CpuDataConfig, CpuFetchConfig,
     CpuId, CpuResetState, InOrderPipelineConfig, InOrderPipelineStage, InOrderPipelineStageWidth,
     RiscvCluster, RiscvCore,
 };
 use rem6_fabric::{FabricLinkId, FabricPath, FabricPathHop, VirtualNetworkId};
-use rem6_isa_riscv::{Register, RiscvPrivilegeMode};
+use rem6_isa_riscv::{Register, RiscvGdbXlen, RiscvPrivilegeMode};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
 use rem6_stats::{
@@ -996,8 +996,13 @@ fn execute_riscv(
     }
     let fetch_trace = MemoryTrace::new();
     let data_trace = MemoryTrace::new();
+    let gdb_xlen = match image.elf_metadata().map(|metadata| metadata.architecture()) {
+        Some(BootElfArchitecture::Riscv32) => RiscvGdbXlen::Rv32,
+        _ => RiscvGdbXlen::Rv64,
+    };
     let mut gdb_outcome = if let Some(listen) = config.gdb_listen() {
         serve_riscv_gdb_with_run_control(
+            gdb_xlen,
             listen,
             &cluster,
             &memory,

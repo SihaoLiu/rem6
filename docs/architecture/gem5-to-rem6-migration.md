@@ -748,7 +748,7 @@ pipeline and cache/DRAM runtime state.
 - [x] GDB packet byte streams drive typed step/resume and break/watch control state in memory-backed sessions.
 - [x] CLI `run --gdb-listen` applies pre-execution RISC-V register writes,
   memory writes, and software breakpoint packets before the normal run consumes
-  the mutated core and memory state, including vector data registers, vector-configuration CSRs, and supervisor/machine trap CSRs.
+  the mutated core and memory state, including vector data registers, vector-configuration CSRs, and supervisor/machine trap CSRs; it also serves RV32 target descriptions from RV32 ELF metadata and accepts RV32-only packed PMP config CSR read/write packets.
 - [x] CLI `run --gdb-listen` single-step packets drive one real RISC-V
   instruction, return a GDB stop reply, and leave the stepped state visible to
   subsequent register reads and detach-time execution.
@@ -853,6 +853,7 @@ and machine ISA `misa` readback through guest CSR execution and top-level GDB,
 RV32 CSR target/register-cache coverage for packed `pmpcfg0` through `pmpcfg3`
 with core packet-handler writes reflected in the live `RiscvCore` PMP table,
 PMP CSR target/register-cache coverage for packed `pmpcfg0`/`pmpcfg2` and `pmpaddr0` through `pmpaddr15` in both the core packet handler and top-level `rem6 run --gdb-listen`,
+top-level RV32 ELF-selected `rem6 run --gdb-listen` target-description service plus `pmpcfg1`/`pmpcfg3` register read/write packets,
 live `cycle`/`time`/`instret` plus `mcycle`/`minstret` reads after top-level GDB single-step execution,
 and independent counter writes consumed by subsequent GDB single-step
 execution,
@@ -863,7 +864,8 @@ register-cache tests, and control-state tests,
 `gdb_remote_packet` execution-control tests,
 CLI `run --gdb-listen` smoke tests for RISC-V pre-execution state and
 pre-execution writes consumed by the subsequent run, including RV64 vector
-data register target-description and register-cache smoke coverage,
+data register target-description and register-cache smoke coverage and RV32
+target-description plus packed PMP config smoke coverage,
 CLI `run --gdb-listen`
 single-step, continue, `vCont;c`, hardware-breakpoint, and data-watchpoint
 stop-reply smoke tests, trap CSR pre-execution smoke tests, GDB cache-runtime smoke tests,

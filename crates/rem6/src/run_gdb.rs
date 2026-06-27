@@ -59,6 +59,7 @@ pub(super) fn validate_run_gdb_listen_config(config: &Rem6RunConfig) -> Result<(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn serve_riscv_gdb_with_run_control(
+    xlen: RiscvGdbXlen,
     listen: &str,
     cluster: &RiscvCluster,
     memory: &CliMemoryRuntime,
@@ -76,6 +77,7 @@ pub(super) fn serve_riscv_gdb_with_run_control(
     let gdb_instruction_cache = instruction_cache.clone();
     let gdb_data_cache = data_cache.clone();
     serve_riscv_gdb_once(
+        xlen,
         listen,
         cluster,
         memory,
@@ -174,6 +176,7 @@ pub(super) fn serve_riscv_gdb_with_run_control(
 type RiscvGdbDebugStopPredicate<'a> = dyn FnMut(&RiscvCluster, &RiscvClusterTurn) -> bool + 'a;
 
 pub(super) fn serve_riscv_gdb_once<D>(
+    xlen: RiscvGdbXlen,
     listen: &str,
     cluster: &RiscvCluster,
     memory: &CliMemoryRuntime,
@@ -189,8 +192,7 @@ where
     ) -> Result<(RiscvSystemRun, bool), Rem6CliError>,
 {
     let listen = parse_loopback_gdb_listen_addr(listen)?;
-    let Some(mut session) = riscv_gdb_remote_session_from_cluster(RiscvGdbXlen::Rv64, cluster)
-    else {
+    let Some(mut session) = riscv_gdb_remote_session_from_cluster(xlen, cluster) else {
         return Err(execute_error(
             "RISC-V GDB listener requires at least one hart",
         ));
@@ -222,6 +224,7 @@ where
         let consumed = memory
             .with_store_mut(|store| {
                 let mut processor = GdbPacketProcessor {
+                    xlen,
                     session: &mut session,
                     cluster,
                     memory: store,
@@ -413,6 +416,7 @@ enum RiscvGdbRunControl {
 }
 
 struct GdbPacketProcessor<'a, W: Write> {
+    xlen: RiscvGdbXlen,
     session: &'a mut GdbRemoteSession,
     cluster: &'a RiscvCluster,
     memory: &'a mut PartitionedMemoryStore,
@@ -504,7 +508,7 @@ fn process_gdb_bytes<W: Write>(
                         })?
                 } else {
                     match handle_riscv_gdb_remote_system_packet(
-                        RiscvGdbXlen::Rv64,
+                        processor.xlen,
                         processor.session,
                         processor.cluster,
                         processor.memory,
