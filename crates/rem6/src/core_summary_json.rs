@@ -2,7 +2,7 @@ use rem6_cpu::{
     BranchTargetKind, BranchTargetKindCounts, BranchTargetProvider, BranchTargetProviderCounts,
 };
 
-use super::Rem6CoreSummary;
+use super::{Rem6CoreSummary, Rem6InOrderPipelineStageSummary};
 
 fn branch_target_kind_counts_json(counts: BranchTargetKindCounts) -> String {
     let mut fields = BranchTargetKind::ALL
@@ -36,6 +36,13 @@ fn branch_predictor_counter_json(
 ) -> String {
     format!(
         "{{\"lookups\":{lookups},\"history_updates\":{history_updates},\"updates\":{updates},\"squashes\":{squashes}}}"
+    )
+}
+
+fn in_order_pipeline_stage_summary_json(summary: Rem6InOrderPipelineStageSummary) -> String {
+    format!(
+        "{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}}",
+        summary.fetch1, summary.fetch2, summary.decode, summary.execute, summary.commit
     )
 }
 
@@ -95,21 +102,17 @@ impl Rem6CoreSummary {
             self.branch_predictor_multiperspective_perceptron
                 .selected_rollbacks
         );
-        let stage_branch_prediction_flushed = format!(
-            "{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}}",
-            self.in_order_pipeline_stage_branch_prediction_flushed
-                .fetch1,
-            self.in_order_pipeline_stage_branch_prediction_flushed
-                .fetch2,
-            self.in_order_pipeline_stage_branch_prediction_flushed
-                .decode,
-            self.in_order_pipeline_stage_branch_prediction_flushed
-                .execute,
-            self.in_order_pipeline_stage_branch_prediction_flushed
-                .commit
+        let stage_resource_blocked_cycles = in_order_pipeline_stage_summary_json(
+            self.in_order_pipeline_stage_resource_blocked_cycles,
+        );
+        let stage_ordering_blocked_cycles = in_order_pipeline_stage_summary_json(
+            self.in_order_pipeline_stage_ordering_blocked_cycles,
+        );
+        let stage_branch_prediction_flushed = in_order_pipeline_stage_summary_json(
+            self.in_order_pipeline_stage_branch_prediction_flushed,
         );
         format!(
-            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"in_order_pipeline\":{{\"cycles\":{},\"in_flight\":{},\"stage_widths\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_max_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_occupied_cycles\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_resource_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_ordering_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_flushed\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_branch_prediction_flushed\":{},\"retired\":{},\"advanced\":{},\"flushed\":{},\"resource_blocked\":{},\"ordering_blocked\":{},\"stall_cycles\":{},\"fetch_wait_cycles\":{},\"data_wait_cycles\":{},\"branch_predictions\":{},\"branch_mispredictions\":{},\"conditional_branch_predictions\":{},\"conditional_branch_predicted_taken\":{},\"conditional_branch_mispredictions\":{},\"branch_prediction_flushes\":{},\"redirects\":{},\"branch_speculation_predictions\":{},\"branch_speculation_repairs\":{},\"branch_speculation_removed_youngers\":{},\"branch_speculation_max_pending\":{}}},\"branch_predictor\":{{\"btb\":{{\"lookups\":{},\"hits\":{},\"misses\":{},\"updates\":{},\"evictions\":{},\"mispredictions\":{},\"predicted_taken_misses\":{},\"mispredict_due_to_btb_miss\":{}}},\"lookups\":{},\"target_provider\":{},\"committed\":{},\"mispredicted\":{},\"corrected\":{},\"target_wrong\":{},\"mispredict_due_to_predictor\":{},\"gshare\":{},\"bimode\":{},\"tournament\":{{\"lookups\":{},\"history_updates\":{},\"updates\":{},\"squashes\":{},\"local_predictions\":{},\"global_predictions\":{}}},\"tage_sc_l\":{},\"multiperspective_perceptron\":{}}},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{}{},\"registers\":{{{}}}}}",
+            "{{\"cpu\":{},\"pc\":\"0x{:x}\",\"committed_instructions\":{},\"in_order_pipeline\":{{\"cycles\":{},\"in_flight\":{},\"stage_widths\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_max_in_flight\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_occupied_cycles\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_resource_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_resource_blocked_cycles\":{},\"stage_ordering_blocked\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_ordering_blocked_cycles\":{},\"stage_flushed\":{{\"fetch1\":{},\"fetch2\":{},\"decode\":{},\"execute\":{},\"commit\":{}}},\"stage_branch_prediction_flushed\":{},\"retired\":{},\"advanced\":{},\"flushed\":{},\"resource_blocked\":{},\"ordering_blocked\":{},\"stall_cycles\":{},\"fetch_wait_cycles\":{},\"data_wait_cycles\":{},\"branch_predictions\":{},\"branch_mispredictions\":{},\"conditional_branch_predictions\":{},\"conditional_branch_predicted_taken\":{},\"conditional_branch_mispredictions\":{},\"branch_prediction_flushes\":{},\"redirects\":{},\"branch_speculation_predictions\":{},\"branch_speculation_repairs\":{},\"branch_speculation_removed_youngers\":{},\"branch_speculation_max_pending\":{}}},\"branch_predictor\":{{\"btb\":{{\"lookups\":{},\"hits\":{},\"misses\":{},\"updates\":{},\"evictions\":{},\"mispredictions\":{},\"predicted_taken_misses\":{},\"mispredict_due_to_btb_miss\":{}}},\"lookups\":{},\"target_provider\":{},\"committed\":{},\"mispredicted\":{},\"corrected\":{},\"target_wrong\":{},\"mispredict_due_to_predictor\":{},\"gshare\":{},\"bimode\":{},\"tournament\":{{\"lookups\":{},\"history_updates\":{},\"updates\":{},\"squashes\":{},\"local_predictions\":{},\"global_predictions\":{}}},\"tage_sc_l\":{},\"multiperspective_perceptron\":{}}},\"data_loads\":{},\"data_stores\":{},\"data_atomics\":{},\"data_load_bytes\":{},\"data_store_bytes\":{},\"data_atomic_bytes\":{}{},\"registers\":{{{}}}}}",
             self.cpu,
             self.pc,
             self.committed_instructions,
@@ -140,11 +143,13 @@ impl Rem6CoreSummary {
             self.in_order_pipeline_stage_resource_blocked.decode,
             self.in_order_pipeline_stage_resource_blocked.execute,
             self.in_order_pipeline_stage_resource_blocked.commit,
+            stage_resource_blocked_cycles,
             self.in_order_pipeline_stage_ordering_blocked.fetch1,
             self.in_order_pipeline_stage_ordering_blocked.fetch2,
             self.in_order_pipeline_stage_ordering_blocked.decode,
             self.in_order_pipeline_stage_ordering_blocked.execute,
             self.in_order_pipeline_stage_ordering_blocked.commit,
+            stage_ordering_blocked_cycles,
             self.in_order_pipeline_stage_flushed.fetch1,
             self.in_order_pipeline_stage_flushed.fetch2,
             self.in_order_pipeline_stage_flushed.decode,

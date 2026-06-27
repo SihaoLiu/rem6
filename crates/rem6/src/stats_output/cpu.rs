@@ -149,10 +149,28 @@ pub(super) fn emit_cpu_run_stats(
         emit_in_order_stage_stats(
             stats,
             core,
+            "resource_blocked_cycles",
+            "Cycle",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_stage_resource_blocked_cycles
+                .values(),
+        )?;
+        emit_in_order_stage_stats(
+            stats,
+            core,
             "ordering_blocked",
             "Count",
             StatResetPolicy::Monotonic,
             core.in_order_pipeline_stage_ordering_blocked.values(),
+        )?;
+        emit_in_order_stage_stats(
+            stats,
+            core,
+            "ordering_blocked_cycles",
+            "Cycle",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_stage_ordering_blocked_cycles
+                .values(),
         )?;
         emit_in_order_stage_stats(
             stats,

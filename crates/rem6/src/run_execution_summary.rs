@@ -17,7 +17,8 @@ use crate::pipeline_stats::{
     in_order_pipeline_run_summary, in_order_pipeline_stage_branch_prediction_flushed,
     in_order_pipeline_stage_flushed, in_order_pipeline_stage_in_flight,
     in_order_pipeline_stage_max_in_flight, in_order_pipeline_stage_occupied_cycles,
-    in_order_pipeline_stage_ordering_blocked, in_order_pipeline_stage_resource_blocked,
+    in_order_pipeline_stage_ordering_blocked, in_order_pipeline_stage_ordering_blocked_cycles,
+    in_order_pipeline_stage_resource_blocked, in_order_pipeline_stage_resource_blocked_cycles,
     in_order_pipeline_stage_widths,
 };
 use crate::runtime_memory::{read_memory_dumps, CliMemoryRuntime};
@@ -151,7 +152,11 @@ pub(super) fn execution_summary(
             in_order_pipeline_stage_max_in_flight(&core, &pipeline_snapshot);
         let pipeline_stage_occupied_cycles = in_order_pipeline_stage_occupied_cycles(&core);
         let pipeline_stage_resource_blocked = in_order_pipeline_stage_resource_blocked(&core);
+        let pipeline_stage_resource_blocked_cycles =
+            in_order_pipeline_stage_resource_blocked_cycles(&core);
         let pipeline_stage_ordering_blocked = in_order_pipeline_stage_ordering_blocked(&core);
+        let pipeline_stage_ordering_blocked_cycles =
+            in_order_pipeline_stage_ordering_blocked_cycles(&core);
         let pipeline_stage_flushed = in_order_pipeline_stage_flushed(&core);
         let pipeline_stage_branch_prediction_flushed =
             in_order_pipeline_stage_branch_prediction_flushed(&core);
@@ -183,7 +188,9 @@ pub(super) fn execution_summary(
             in_order_pipeline_stage_max_in_flight: pipeline_stage_max_in_flight,
             in_order_pipeline_stage_occupied_cycles: pipeline_stage_occupied_cycles,
             in_order_pipeline_stage_resource_blocked: pipeline_stage_resource_blocked,
+            in_order_pipeline_stage_resource_blocked_cycles: pipeline_stage_resource_blocked_cycles,
             in_order_pipeline_stage_ordering_blocked: pipeline_stage_ordering_blocked,
+            in_order_pipeline_stage_ordering_blocked_cycles: pipeline_stage_ordering_blocked_cycles,
             in_order_pipeline_stage_flushed: pipeline_stage_flushed,
             in_order_pipeline_stage_branch_prediction_flushed:
                 pipeline_stage_branch_prediction_flushed,

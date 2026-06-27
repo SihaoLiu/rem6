@@ -4724,6 +4724,10 @@ fn rem6_run_stats_emit_in_order_resource_stalls_for_pending_parallel_fetch() {
     let ordering_blocked = json_u64_field(&stdout, "\"ordering_blocked\":");
     let stage_resource_blocked = json_stage_summary(&stdout, "\"stage_resource_blocked\":{");
     let stage_ordering_blocked = json_stage_summary(&stdout, "\"stage_ordering_blocked\":{");
+    let stage_resource_blocked_cycles =
+        json_stage_summary(&stdout, "\"stage_resource_blocked_cycles\":{");
+    let stage_ordering_blocked_cycles =
+        json_stage_summary(&stdout, "\"stage_ordering_blocked_cycles\":{");
     assert!(fetch_wait_cycles > 0, "{stdout}");
     assert!(stall_cycles > 0, "{stdout}");
     assert!(resource_blocked > 0, "{stdout}");
@@ -4731,6 +4735,10 @@ fn rem6_run_stats_emit_in_order_resource_stalls_for_pending_parallel_fetch() {
     assert_eq!(stage_ordering_blocked.iter().sum::<u64>(), ordering_blocked);
     assert!(
         stage_resource_blocked.iter().any(|value| *value > 0),
+        "{stdout}"
+    );
+    assert!(
+        stage_resource_blocked_cycles.iter().any(|value| *value > 0),
         "{stdout}"
     );
     assert_eq!(
@@ -4758,6 +4766,28 @@ fn rem6_run_stats_emit_in_order_resource_stalls_for_pending_parallel_fetch() {
                 &format!("sim.cpu0.pipeline.in_order.stage.{stage}.ordering_blocked")
             ),
             stage_ordering_blocked[index]
+        );
+        assert!(
+            stage_resource_blocked_cycles[index] <= stage_resource_blocked[index],
+            "{stdout}"
+        );
+        assert!(
+            stage_ordering_blocked_cycles[index] <= stage_ordering_blocked[index],
+            "{stdout}"
+        );
+        assert_eq!(
+            stat_value(
+                &stdout,
+                &format!("sim.cpu0.pipeline.in_order.stage.{stage}.resource_blocked_cycles")
+            ),
+            stage_resource_blocked_cycles[index]
+        );
+        assert_eq!(
+            stat_value(
+                &stdout,
+                &format!("sim.cpu0.pipeline.in_order.stage.{stage}.ordering_blocked_cycles")
+            ),
+            stage_ordering_blocked_cycles[index]
         );
     }
 }

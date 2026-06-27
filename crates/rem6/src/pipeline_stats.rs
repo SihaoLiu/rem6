@@ -104,6 +104,19 @@ pub(super) fn in_order_pipeline_stage_resource_blocked(
     )
 }
 
+pub(super) fn in_order_pipeline_stage_resource_blocked_cycles(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            summary.saturating_add(stage_presence_summary_from_instructions(
+                record.plan().resource_blocked(),
+            ))
+        },
+    )
+}
+
 pub(super) fn in_order_pipeline_stage_ordering_blocked(
     core: &RiscvCore,
 ) -> Rem6InOrderPipelineStageSummary {
@@ -111,6 +124,19 @@ pub(super) fn in_order_pipeline_stage_ordering_blocked(
         Rem6InOrderPipelineStageSummary::default(),
         |summary, record| {
             summary.saturating_add(stage_summary_from_instructions(
+                record.plan().ordering_blocked(),
+            ))
+        },
+    )
+}
+
+pub(super) fn in_order_pipeline_stage_ordering_blocked_cycles(
+    core: &RiscvCore,
+) -> Rem6InOrderPipelineStageSummary {
+    core.in_order_pipeline_cycle_records().into_iter().fold(
+        Rem6InOrderPipelineStageSummary::default(),
+        |summary, record| {
+            summary.saturating_add(stage_presence_summary_from_instructions(
                 record.plan().ordering_blocked(),
             ))
         },
@@ -158,6 +184,21 @@ fn stage_summary_from_instructions(
     let mut summary = Rem6InOrderPipelineStageSummary::default();
     for instruction in instructions {
         summary.record_stage(instruction.stage());
+    }
+    summary
+}
+
+fn stage_presence_summary_from_instructions(
+    instructions: &[InOrderPipelineInstruction],
+) -> Rem6InOrderPipelineStageSummary {
+    let mut summary = Rem6InOrderPipelineStageSummary::default();
+    for stage in InOrderPipelineStage::ALL {
+        if instructions
+            .iter()
+            .any(|instruction| instruction.stage() == stage)
+        {
+            summary.record_stage(stage);
+        }
     }
     summary
 }
