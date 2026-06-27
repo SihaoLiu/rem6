@@ -180,7 +180,7 @@ fn rv64_all_register_write_packet(x5: u64, pc: u64) -> Vec<u8> {
     const RV64_FLOAT_REGISTERS: usize = 32;
     const RV64_FLOAT_CSR_AND_PLACEHOLDER_REGISTERS: usize = 4;
     const RV64_CSR_REGISTERS: usize = 20;
-    const RV64_CSR_EXTENSION_REGISTERS: usize = 21;
+    const RV64_CSR_EXTENSION_REGISTERS: usize = 25;
     const RV64_VECTOR_REGISTERS: usize = 32;
     const RV64_VECTOR_REGISTER_BYTES: usize = 16;
     const RV64_SPARSE_CSR_REGISTERS_BEFORE_VECTOR_CONFIG: usize = 10;

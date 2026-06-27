@@ -52,13 +52,10 @@ const RISCV_GDB_VECTOR_TYPE_REGISTER: u64 = 133;
 const RISCV_GDB_VECTOR_LENGTH_BYTES_REGISTER: u64 = 134;
 const RISCV_GDB_SUPERVISOR_ENVIRONMENT_CONFIG_REGISTER: u64 = 135;
 const RISCV_GDB_PMP_CONFIG0_REGISTER: u64 = 136;
-const RISCV_GDB_PMP_ADDR0_REGISTER: u64 = 137;
 const RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER: u64 = 138;
 const RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER: u64 = 139;
-const RISCV_GDB_PMP_ADDR1_REGISTER: u64 = 140;
-const RISCV_GDB_PMP_ADDR2_REGISTER: u64 = 141;
-const RISCV_GDB_PMP_ADDR3_REGISTER: u64 = 142;
-const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 21;
+const RISCV_GDB_PMP_ADDR_REGISTERS: [u64; 8] = [137, 140, 141, 142, 143, 144, 145, 146];
+const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 25;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 const RISCV_GDB_RV32_VTYPE_PAYLOAD_MASK: u64 = 0x7fff_ffff;
 const RISCV_GDB_RV32_VTYPE_VILL_BIT: u64 = 1_u64 << 31;
@@ -1330,17 +1327,11 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     if number == RISCV_GDB_PMP_CONFIG0_REGISTER {
         return RiscvGdbCsrRegister::PmpConfig(0);
     }
-    if number == RISCV_GDB_PMP_ADDR0_REGISTER {
-        return RiscvGdbCsrRegister::PmpAddr(0);
-    }
-    if number == RISCV_GDB_PMP_ADDR1_REGISTER {
-        return RiscvGdbCsrRegister::PmpAddr(1);
-    }
-    if number == RISCV_GDB_PMP_ADDR2_REGISTER {
-        return RiscvGdbCsrRegister::PmpAddr(2);
-    }
-    if number == RISCV_GDB_PMP_ADDR3_REGISTER {
-        return RiscvGdbCsrRegister::PmpAddr(3);
+    if let Some(index) = RISCV_GDB_PMP_ADDR_REGISTERS
+        .iter()
+        .position(|&register| number == register)
+    {
+        return RiscvGdbCsrRegister::PmpAddr(index);
     }
     if number == RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER {
         return RiscvGdbCsrRegister::Counter(RiscvCounterCsr::Cycle);
@@ -1658,13 +1649,11 @@ fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
             RISCV_GDB_VECTOR_LENGTH_BYTES_REGISTER,
             RISCV_GDB_SUPERVISOR_ENVIRONMENT_CONFIG_REGISTER,
             RISCV_GDB_PMP_CONFIG0_REGISTER,
-            RISCV_GDB_PMP_ADDR0_REGISTER,
+            RISCV_GDB_PMP_ADDR_REGISTERS[0],
             RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER,
             RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER,
-            RISCV_GDB_PMP_ADDR1_REGISTER,
-            RISCV_GDB_PMP_ADDR2_REGISTER,
-            RISCV_GDB_PMP_ADDR3_REGISTER,
         ])
+        .chain(RISCV_GDB_PMP_ADDR_REGISTERS[1..].iter().copied())
 }
 
 const fn register_count(_xlen: RiscvGdbXlen) -> usize {
@@ -1737,12 +1726,10 @@ const fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool {
         || number == RISCV_GDB_VECTOR_LENGTH_BYTES_REGISTER
         || number == RISCV_GDB_SUPERVISOR_ENVIRONMENT_CONFIG_REGISTER
         || number == RISCV_GDB_PMP_CONFIG0_REGISTER
-        || number == RISCV_GDB_PMP_ADDR0_REGISTER
+        || number == RISCV_GDB_PMP_ADDR_REGISTERS[0]
+        || (number >= RISCV_GDB_PMP_ADDR_REGISTERS[1] && number <= RISCV_GDB_PMP_ADDR_REGISTERS[7])
         || number == RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER
         || number == RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER
-        || number == RISCV_GDB_PMP_ADDR1_REGISTER
-        || number == RISCV_GDB_PMP_ADDR2_REGISTER
-        || number == RISCV_GDB_PMP_ADDR3_REGISTER
 }
 
 fn encode_register_value(xlen: RiscvGdbXlen, number: u64, value: u64) -> Vec<u8> {

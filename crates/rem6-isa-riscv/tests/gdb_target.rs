@@ -89,6 +89,10 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "  <reg name=\"pmpaddr1\" bitsize=\"64\" regnum=\"140\"/>\n",
             "  <reg name=\"pmpaddr2\" bitsize=\"64\" regnum=\"141\"/>\n",
             "  <reg name=\"pmpaddr3\" bitsize=\"64\" regnum=\"142\"/>\n",
+            "  <reg name=\"pmpaddr4\" bitsize=\"64\" regnum=\"143\"/>\n",
+            "  <reg name=\"pmpaddr5\" bitsize=\"64\" regnum=\"144\"/>\n",
+            "  <reg name=\"pmpaddr6\" bitsize=\"64\" regnum=\"145\"/>\n",
+            "  <reg name=\"pmpaddr7\" bitsize=\"64\" regnum=\"146\"/>\n",
             "</feature>\n",
         ),
     );
@@ -136,9 +140,13 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "pmpaddr1",
             "pmpaddr2",
             "pmpaddr3",
+            "pmpaddr4",
+            "pmpaddr5",
+            "pmpaddr6",
+            "pmpaddr7",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 41);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 45);
 }
 
 #[test]
@@ -384,6 +392,10 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "  <reg name=\"pmpaddr1\" bitsize=\"32\" regnum=\"140\"/>\n",
             "  <reg name=\"pmpaddr2\" bitsize=\"32\" regnum=\"141\"/>\n",
             "  <reg name=\"pmpaddr3\" bitsize=\"32\" regnum=\"142\"/>\n",
+            "  <reg name=\"pmpaddr4\" bitsize=\"32\" regnum=\"143\"/>\n",
+            "  <reg name=\"pmpaddr5\" bitsize=\"32\" regnum=\"144\"/>\n",
+            "  <reg name=\"pmpaddr6\" bitsize=\"32\" regnum=\"145\"/>\n",
+            "  <reg name=\"pmpaddr7\" bitsize=\"32\" regnum=\"146\"/>\n",
             "</feature>\n",
         ),
     );
@@ -431,9 +443,13 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "pmpaddr1",
             "pmpaddr2",
             "pmpaddr3",
+            "pmpaddr4",
+            "pmpaddr5",
+            "pmpaddr6",
+            "pmpaddr7",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"32\"").count(), 41);
+    assert_eq!(csr.matches("bitsize=\"32\"").count(), 45);
 }
 
 #[test]
