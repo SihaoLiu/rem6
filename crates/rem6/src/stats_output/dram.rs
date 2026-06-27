@@ -24,6 +24,8 @@ pub(super) fn emit_dram_stats(
     emit_dram_counter(stats, prefix, "accesses", "Count", summary.accesses)?;
     emit_dram_counter(stats, prefix, "reads", "Count", summary.reads)?;
     emit_dram_counter(stats, prefix, "writes", "Count", summary.writes)?;
+    emit_dram_counter(stats, prefix, "read_bytes", "Byte", summary.read_bytes)?;
+    emit_dram_counter(stats, prefix, "write_bytes", "Byte", summary.write_bytes)?;
     emit_dram_counter(stats, prefix, "row_hits", "Count", summary.row_hits)?;
     emit_dram_counter(
         stats,
@@ -384,15 +386,17 @@ pub(super) fn emit_gem5_mem_ctrl_dram_alias_stats(
     stats: &mut StatsRegistry,
     summary: &Rem6DramSummary,
 ) -> Result<(), Rem6CliError> {
-    let read_bytes = dram_bank_read_bytes(summary);
-    let write_bytes = dram_bank_write_bytes(summary);
     for (path, unit, value) in [
         ("system.mem_ctrl.readReqs", "Count", summary.reads),
         ("system.mem_ctrl.writeReqs", "Count", summary.writes),
         ("system.mem_ctrl.readBursts", "Count", summary.reads),
         ("system.mem_ctrl.writeBursts", "Count", summary.writes),
-        ("system.mem_ctrl.bytesReadSys", "Byte", read_bytes),
-        ("system.mem_ctrl.bytesWrittenSys", "Byte", write_bytes),
+        ("system.mem_ctrl.bytesReadSys", "Byte", summary.read_bytes),
+        (
+            "system.mem_ctrl.bytesWrittenSys",
+            "Byte",
+            summary.write_bytes,
+        ),
         ("system.mem_ctrl.dram.readBursts", "Count", summary.reads),
         ("system.mem_ctrl.dram.writeBursts", "Count", summary.writes),
         (
@@ -405,8 +409,16 @@ pub(super) fn emit_gem5_mem_ctrl_dram_alias_stats(
             "Count",
             summary.write_row_hits,
         ),
-        ("system.mem_ctrl.dram.dramBytesRead", "Byte", read_bytes),
-        ("system.mem_ctrl.dram.dramBytesWritten", "Byte", write_bytes),
+        (
+            "system.mem_ctrl.dram.dramBytesRead",
+            "Byte",
+            summary.read_bytes,
+        ),
+        (
+            "system.mem_ctrl.dram.dramBytesWritten",
+            "Byte",
+            summary.write_bytes,
+        ),
         (
             "system.mem_ctrl.dram.totMemAccLat",
             "Tick",
@@ -417,8 +429,8 @@ pub(super) fn emit_gem5_mem_ctrl_dram_alias_stats(
     }
     if summary.profile_technology == Some("nvm") {
         for (path, value) in [
-            ("system.mem_ctrl.dram.nvmBytesRead", read_bytes),
-            ("system.mem_ctrl.dram.nvmBytesWritten", write_bytes),
+            ("system.mem_ctrl.dram.nvmBytesRead", summary.read_bytes),
+            ("system.mem_ctrl.dram.nvmBytesWritten", summary.write_bytes),
         ] {
             increment_stat(stats, path, "Byte", StatResetPolicy::Monotonic, value)?;
         }
@@ -590,26 +602,6 @@ fn emit_dram_bank_stats(
         bank.low_power_exits,
         bank.low_power_exit_latency_ticks,
     )
-}
-
-fn dram_bank_read_bytes(summary: &Rem6DramSummary) -> u64 {
-    summary
-        .targets
-        .iter()
-        .flat_map(|target| &target.ports)
-        .flat_map(|port| &port.banks)
-        .map(|bank| bank.read_bytes)
-        .sum()
-}
-
-fn dram_bank_write_bytes(summary: &Rem6DramSummary) -> u64 {
-    summary
-        .targets
-        .iter()
-        .flat_map(|target| &target.ports)
-        .flat_map(|port| &port.banks)
-        .map(|bank| bank.write_bytes)
-        .sum()
 }
 
 fn dram_bank_read_bursts(summary: &Rem6DramSummary) -> BTreeMap<u32, u64> {

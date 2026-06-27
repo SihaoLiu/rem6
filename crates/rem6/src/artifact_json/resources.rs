@@ -51,7 +51,7 @@ fn cache_resource_hierarchy_json(summary: &Rem6CacheResourceHierarchySummary) ->
 
 fn dram_resource_json(summary: &Rem6DramResourceSummary) -> String {
     format!(
-        "{{\"activity\":{},\"active\":{},\"active_targets\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"read_row_hits\":{},\"write_row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"low_power\":{},\"targets\":[{}]}}",
+        "{{\"activity\":{},\"active\":{},\"active_targets\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"read_bytes\":{},\"write_bytes\":{},\"row_hits\":{},\"read_row_hits\":{},\"write_row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"low_power\":{},\"targets\":[{}]}}",
         summary.activity,
         summary.active,
         summary.active_targets,
@@ -60,6 +60,8 @@ fn dram_resource_json(summary: &Rem6DramResourceSummary) -> String {
         summary.accesses,
         summary.reads,
         summary.writes,
+        summary.read_bytes,
+        summary.write_bytes,
         summary.row_hits,
         summary.read_row_hits,
         summary.write_row_hits,

@@ -252,6 +252,8 @@ pub struct Rem6DramSummary {
     accesses: u64,
     reads: u64,
     writes: u64,
+    read_bytes: u64,
+    write_bytes: u64,
     row_hits: u64,
     read_row_hits: u64,
     write_row_hits: u64,

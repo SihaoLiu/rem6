@@ -1574,11 +1574,17 @@ fn rem6_run_dram_memory_resources_expose_split_row_hit_counters() {
     let dram_row_hits = json_u64(&json, "/dram/row_hits");
     let dram_read_row_hits = json_u64(&json, "/dram/read_row_hits");
     let dram_write_row_hits = json_u64(&json, "/dram/write_row_hits");
+    let dram_read_bytes = sum_dram_bank_field(&json, "read_bytes");
+    let dram_write_bytes = sum_dram_bank_field(&json, "write_bytes");
 
     assert!(dram_writes > 0);
     assert!(dram_read_row_hits > 0);
     assert!(dram_write_row_hits <= dram_writes);
+    assert!(dram_read_bytes > 0);
+    assert!(dram_write_bytes > 0);
     assert_eq!(dram_row_hits, dram_read_row_hits + dram_write_row_hits);
+    assert_eq!(json_u64(&json, "/dram/read_bytes"), dram_read_bytes);
+    assert_eq!(json_u64(&json, "/dram/write_bytes"), dram_write_bytes);
     assert_eq!(
         json_u64(resources, "/dram/read_row_hits"),
         dram_read_row_hits
@@ -1587,6 +1593,8 @@ fn rem6_run_dram_memory_resources_expose_split_row_hit_counters() {
         json_u64(resources, "/dram/write_row_hits"),
         dram_write_row_hits
     );
+    assert_eq!(json_u64(resources, "/dram/read_bytes"), dram_read_bytes);
+    assert_eq!(json_u64(resources, "/dram/write_bytes"), dram_write_bytes);
     assert_stat(
         &stdout,
         "sim.memory.dram.read_row_hits",
@@ -1603,6 +1611,20 @@ fn rem6_run_dram_memory_resources_expose_split_row_hit_counters() {
     );
     assert_stat(
         &stdout,
+        "sim.memory.dram.read_bytes",
+        "Byte",
+        dram_read_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.write_bytes",
+        "Byte",
+        dram_write_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
         "sim.memory.resources.dram.read_row_hits",
         "Count",
         dram_read_row_hits,
@@ -1613,6 +1635,20 @@ fn rem6_run_dram_memory_resources_expose_split_row_hit_counters() {
         "sim.memory.resources.dram.write_row_hits",
         "Count",
         dram_write_row_hits,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.read_bytes",
+        "Byte",
+        dram_read_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.write_bytes",
+        "Byte",
+        dram_write_bytes,
         "monotonic",
     );
 }
@@ -3597,6 +3633,30 @@ fn json_u64(json: &Value, pointer: &str) -> u64 {
     json.pointer(pointer)
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("missing unsigned JSON value at {pointer}: {json}"))
+}
+
+fn sum_dram_bank_field(json: &Value, field: &str) -> u64 {
+    json.pointer("/dram/targets")
+        .and_then(Value::as_array)
+        .expect("DRAM target array")
+        .iter()
+        .flat_map(|target| {
+            target
+                .get("ports")
+                .and_then(Value::as_array)
+                .expect("DRAM target ports")
+        })
+        .flat_map(|port| {
+            port.get("banks")
+                .and_then(Value::as_array)
+                .expect("DRAM port banks")
+        })
+        .map(|bank| {
+            bank.get(field)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("DRAM bank missing unsigned field {field}: {bank}"))
+        })
+        .sum()
 }
 
 fn assert_resource_stat_matches_json(stdout: &str, path: &str, value: u64) {

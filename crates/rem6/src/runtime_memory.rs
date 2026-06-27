@@ -935,6 +935,8 @@ impl Rem6DramSummary {
             accesses: profile.access_count() as u64,
             reads: profile.read_count() as u64,
             writes: profile.write_count() as u64,
+            read_bytes: profile.read_byte_count(),
+            write_bytes: profile.write_byte_count(),
             row_hits: profile.row_hit_count() as u64,
             read_row_hits: profile.read_row_hit_count() as u64,
             write_row_hits: profile.write_row_hit_count() as u64,

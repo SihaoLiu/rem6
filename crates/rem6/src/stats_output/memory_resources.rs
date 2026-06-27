@@ -102,6 +102,8 @@ fn emit_dram_resource_stats(
         ("accesses", "Count", summary.accesses),
         ("reads", "Count", summary.reads),
         ("writes", "Count", summary.writes),
+        ("read_bytes", "Byte", summary.read_bytes),
+        ("write_bytes", "Byte", summary.write_bytes),
         ("row_hits", "Count", summary.row_hits),
         ("read_row_hits", "Count", summary.read_row_hits),
         ("write_row_hits", "Count", summary.write_row_hits),
