@@ -625,6 +625,33 @@ impl Rem6DebugSummary {
         })
     }
 
+    pub(crate) fn power_dynamic_microwatt_tick_count(&self) -> u64 {
+        self.power_trace.iter().fold(0u64, |acc, record| {
+            acc.saturating_add(watts_to_microwatt_ticks(
+                &record.dynamic_watts,
+                record.residency_ticks,
+            ))
+        })
+    }
+
+    pub(crate) fn power_static_microwatt_tick_count(&self) -> u64 {
+        self.power_trace.iter().fold(0u64, |acc, record| {
+            acc.saturating_add(watts_to_microwatt_ticks(
+                &record.static_watts,
+                record.residency_ticks,
+            ))
+        })
+    }
+
+    pub(crate) fn power_total_microwatt_tick_count(&self) -> u64 {
+        self.power_trace.iter().fold(0u64, |acc, record| {
+            acc.saturating_add(watts_to_microwatt_ticks(
+                &record.total_watts,
+                record.residency_ticks,
+            ))
+        })
+    }
+
     pub(crate) fn power_max_temperature_millicelsius(&self) -> u64 {
         self.power_trace
             .iter()
@@ -1202,6 +1229,10 @@ fn watts_to_microwatts(watts: &str) -> u64 {
     } else {
         (watts * 1_000_000.0).round() as u64
     }
+}
+
+fn watts_to_microwatt_ticks(watts: &str, residency_ticks: u64) -> u64 {
+    watts_to_microwatts(watts).saturating_mul(residency_ticks)
 }
 
 fn celsius_to_millicelsius(celsius: &str) -> u64 {

@@ -1487,6 +1487,9 @@ fn rem6_run_power_debug_flag_emits_activity_power_trace() {
     let dynamic_microwatts = power_trace_microwatts(trace, "dynamic_watts");
     let static_microwatts = power_trace_microwatts(trace, "static_watts");
     let total_microwatts = power_trace_microwatts(trace, "total_watts");
+    let dynamic_microwatt_ticks = power_trace_microwatt_ticks(trace, "dynamic_watts");
+    let static_microwatt_ticks = power_trace_microwatt_ticks(trace, "static_watts");
+    let total_microwatt_ticks = power_trace_microwatt_ticks(trace, "total_watts");
     let max_temperature_millicelsius = power_trace_max_millicelsius(trace, "temperature_c");
     let json_text = json.to_string();
     assert!(targets > 0, "trace: {trace:?}");
@@ -1496,6 +1499,12 @@ fn rem6_run_power_debug_flag_emits_activity_power_trace() {
     assert!(dynamic_microwatts > 0, "trace: {trace:?}");
     assert!(static_microwatts > 0, "trace: {trace:?}");
     assert!(total_microwatts >= dynamic_microwatts, "trace: {trace:?}");
+    assert!(dynamic_microwatt_ticks > 0, "trace: {trace:?}");
+    assert!(static_microwatt_ticks > 0, "trace: {trace:?}");
+    assert!(
+        total_microwatt_ticks >= dynamic_microwatt_ticks,
+        "trace: {trace:?}"
+    );
     assert!(max_temperature_millicelsius > 0, "trace: {trace:?}");
     for target in [
         "cpu0.core",
@@ -1578,6 +1587,27 @@ fn rem6_run_power_debug_flag_emits_activity_power_trace() {
         "sim.debug.power_trace.total_microwatts",
         "MicroWatt",
         total_microwatts,
+        "monotonic",
+    );
+    assert_stat(
+        &json_text,
+        "sim.debug.power_trace.dynamic_microwatt_ticks",
+        "MicroWattTick",
+        dynamic_microwatt_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &json_text,
+        "sim.debug.power_trace.static_microwatt_ticks",
+        "MicroWattTick",
+        static_microwatt_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &json_text,
+        "sim.debug.power_trace.total_microwatt_ticks",
+        "MicroWattTick",
+        total_microwatt_ticks,
         "monotonic",
     );
     assert_stat(
@@ -1981,6 +2011,20 @@ fn power_trace_microwatts(trace: &[Value], field: &str) -> u64 {
             watts_to_microwatts(watts)
         })
         .sum()
+}
+
+fn power_trace_microwatt_ticks(trace: &[Value], field: &str) -> u64 {
+    trace.iter().fold(0u64, |acc, record| {
+        let residency_ticks = record
+            .get("residency_ticks")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| panic!("power trace residency_ticks"));
+        let watts = record
+            .get(field)
+            .and_then(Value::as_f64)
+            .unwrap_or_else(|| panic!("power trace {field}"));
+        acc.saturating_add(watts_to_microwatts(watts).saturating_mul(residency_ticks))
+    })
 }
 
 fn power_trace_max_millicelsius(trace: &[Value], field: &str) -> u64 {

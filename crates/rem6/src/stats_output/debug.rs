@@ -324,6 +324,27 @@ pub(super) fn emit_debug_stats(
     )?;
     increment_stat(
         stats,
+        "sim.debug.power_trace.dynamic_microwatt_ticks",
+        "MicroWattTick",
+        StatResetPolicy::Monotonic,
+        debug.power_dynamic_microwatt_tick_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.power_trace.static_microwatt_ticks",
+        "MicroWattTick",
+        StatResetPolicy::Monotonic,
+        debug.power_static_microwatt_tick_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.power_trace.total_microwatt_ticks",
+        "MicroWattTick",
+        StatResetPolicy::Monotonic,
+        debug.power_total_microwatt_tick_count(),
+    )?;
+    increment_stat(
+        stats,
         "sim.debug.power_trace.max_temperature_millicelsius",
         "MilliCelsius",
         StatResetPolicy::Monotonic,
