@@ -830,8 +830,8 @@ counters, top-level trace-replay data-cache scheduler resource and backing DRAM
 target/port/bank, row, command, latency, and QoS counters,
 top-level `rem6 run` retired-instruction probe summaries and CLI-configured
 retired-PC target counter summaries,
-O3 pending-state checkpoint payloads covering resolved dependency scopes,
-scoped ready instructions, and writeback deferred completions, and custom plus library-level and
+RISC-V core checkpoint capture/restore of O3 pending-state payloads covering
+resolved dependency scopes, scoped ready instructions, and writeback deferred completions, and custom plus library-level and
 `rem6 run --power-output`, `rem6 trace-replay --power-output`, and `rem6 gpu-run --power-output` McPAT-shaped and DSENT-shaped power-analysis exports.
 
 **Not migrated:** Complete gem5 text-stat parity, full debug execution control,
@@ -844,7 +844,7 @@ runtime-calibrated power/thermal, and broad O3 ROB/LSQ/rename runtime checkpoint
 checkpoint tests including RISC-V hart run-state, in-order pipeline restore,
 fetch-steering branch predictor restore with live fetch-ahead pending
 speculation, and GShare, BiMode, Tournament, and multiperspective perceptron predictor checkpoint restore,
-O3 pending-state and writeback deferred-state payload tests, GDB byte-stream,
+RISC-V core O3 pending-state checkpoint restore tests plus O3 writeback deferred-state payload tests, GDB byte-stream,
 RV64D FP, FP CSR, RV64 CSR register-cache including supervisor `sscratch` and `senvcfg`,
 translation `satp`, interrupt aliases `sie`/`sip`, counter
 `cycle`/`time`/`instret`, and machine-counter aliases `mcycle`/`minstret`, RV64 machine CSR register-cache including `mscratch`
@@ -895,7 +895,7 @@ summary.
 
 **Next evidence:** Broader gem5 text-stat compatibility, remaining
 cache/bank/fabric runtime resource counters, remaining CSR register-cache
-families, and O3 checkpoint capture/restore.
+families, and O3 ROB/LSQ/rename runtime checkpoint capture/restore.
 
 ### Configuration, Resources, Suites, GPU, and Accelerators - 59% single-axis
 

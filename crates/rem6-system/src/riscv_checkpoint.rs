@@ -8,8 +8,8 @@ use rem6_cpu::{
     BranchPredictorCheckpointPayload, BranchPredictorError, GShareBranchPredictorCheckpointPayload,
     GShareBranchPredictorError, InOrderPipelineCheckpointPayload, InOrderPipelineError,
     InOrderPipelineSnapshot, MultiperspectivePerceptronCheckpointPayload,
-    MultiperspectivePerceptronError, RiscvCore, RiscvHartRunState,
-    TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorError,
+    MultiperspectivePerceptronError, O3PendingStateCheckpointPayload, O3PipelineError, RiscvCore,
+    RiscvHartRunState, TageScLBranchPredictorCheckpointPayload, TageScLBranchPredictorError,
     TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorError,
 };
 use rem6_isa_riscv::{
@@ -25,6 +25,7 @@ const GSHARE_BRANCH_PREDICTOR_CHUNK: &str = "gshare-branch-predictor";
 const HART_RUN_STATE_CHUNK: &str = "hart-run-state";
 const IN_ORDER_PIPELINE_CHUNK: &str = "in-order-pipeline";
 const MULTIPERSPECTIVE_PERCEPTRON_CHUNK: &str = "multiperspective-perceptron";
+const O3_PENDING_STATE_CHUNK: &str = "o3-pending-state";
 const PC_CHUNK: &str = "pc";
 const TAGE_SC_L_BRANCH_PREDICTOR_CHUNK: &str = "tage-sc-l-branch-predictor";
 const TOURNAMENT_BRANCH_PREDICTOR_CHUNK: &str = "tournament-branch-predictor";
@@ -53,6 +54,7 @@ pub struct RiscvCoreCheckpointRecord {
     tournament_branch_predictor_payload: TournamentBranchPredictorCheckpointPayload,
     tage_sc_l_branch_predictor_payload: TageScLBranchPredictorCheckpointPayload,
     multiperspective_perceptron_payload: MultiperspectivePerceptronCheckpointPayload,
+    o3_pending_state_payload: O3PendingStateCheckpointPayload,
 }
 
 struct RiscvCoreCheckpointRecordParts {
@@ -69,6 +71,7 @@ struct RiscvCoreCheckpointRecordParts {
     tournament_branch_predictor_payload: TournamentBranchPredictorCheckpointPayload,
     tage_sc_l_branch_predictor_payload: TageScLBranchPredictorCheckpointPayload,
     multiperspective_perceptron_payload: MultiperspectivePerceptronCheckpointPayload,
+    o3_pending_state_payload: O3PendingStateCheckpointPayload,
 }
 
 impl RiscvCoreCheckpointRecord {
@@ -97,6 +100,7 @@ impl RiscvCoreCheckpointRecord {
                 RiscvCore::default_tage_sc_l_branch_predictor_checkpoint_payload(),
             multiperspective_perceptron_payload:
                 RiscvCore::default_multiperspective_perceptron_checkpoint_payload(),
+            o3_pending_state_payload: RiscvCore::default_o3_pending_state_checkpoint_payload(),
         })
     }
 
@@ -115,6 +119,7 @@ impl RiscvCoreCheckpointRecord {
             tournament_branch_predictor_payload: parts.tournament_branch_predictor_payload,
             tage_sc_l_branch_predictor_payload: parts.tage_sc_l_branch_predictor_payload,
             multiperspective_perceptron_payload: parts.multiperspective_perceptron_payload,
+            o3_pending_state_payload: parts.o3_pending_state_payload,
         }
     }
 
@@ -174,6 +179,10 @@ impl RiscvCoreCheckpointRecord {
         &self,
     ) -> &MultiperspectivePerceptronCheckpointPayload {
         &self.multiperspective_perceptron_payload
+    }
+
+    pub const fn o3_pending_state_payload(&self) -> &O3PendingStateCheckpointPayload {
+        &self.o3_pending_state_payload
     }
 
     pub fn register(&self, register: Register) -> Option<u64> {
@@ -280,6 +289,11 @@ impl RiscvCoreCheckpointPort {
             encode_multiperspective_perceptron_payload(
                 record.multiperspective_perceptron_payload(),
             ),
+        )?;
+        registry.write_chunk(
+            &self.component,
+            O3_PENDING_STATE_CHUNK,
+            encode_o3_pending_state_payload(record.o3_pending_state_payload()),
         )?;
         Ok(record)
     }
@@ -425,6 +439,19 @@ impl RiscvCoreCheckpointPort {
                     error,
                 }
             })?;
+        let o3_pending_state_payload = match registry.chunk(&self.component, O3_PENDING_STATE_CHUNK)
+        {
+            Some(payload) => decode_o3_pending_state_payload(&self.component, payload)?,
+            None => RiscvCore::default_o3_pending_state_checkpoint_payload(),
+        };
+        self.core
+            .validate_o3_pending_state_checkpoint_payload(&o3_pending_state_payload)
+            .map_err(
+                |error| RiscvCoreCheckpointError::InvalidO3PendingStateSnapshot {
+                    component: self.component.clone(),
+                    error,
+                },
+            )?;
 
         Ok(RiscvCoreCheckpointRecord::from_parts(
             RiscvCoreCheckpointRecordParts {
@@ -441,6 +468,7 @@ impl RiscvCoreCheckpointPort {
                 tournament_branch_predictor_payload,
                 tage_sc_l_branch_predictor_payload,
                 multiperspective_perceptron_payload,
+                o3_pending_state_payload,
             },
         ))
     }
@@ -537,6 +565,14 @@ impl RiscvCoreCheckpointPort {
                     error,
                 }
             })?;
+        self.core
+            .restore_o3_pending_state_checkpoint_payload(record.o3_pending_state_payload().clone())
+            .map_err(
+                |error| RiscvCoreCheckpointError::InvalidO3PendingStateSnapshot {
+                    component: self.component.clone(),
+                    error,
+                },
+            )?;
         Ok(())
     }
 
@@ -561,6 +597,7 @@ impl RiscvCoreCheckpointPort {
             multiperspective_perceptron_payload: self
                 .core
                 .multiperspective_perceptron_checkpoint_payload(),
+            o3_pending_state_payload: self.core.o3_pending_state_checkpoint_payload(),
         })
     }
 }
@@ -696,6 +733,10 @@ pub enum RiscvCoreCheckpointError {
         component: CheckpointComponentId,
         error: MultiperspectivePerceptronError,
     },
+    InvalidO3PendingStateSnapshot {
+        component: CheckpointComponentId,
+        error: O3PipelineError,
+    },
 }
 
 impl fmt::Display for RiscvCoreCheckpointError {
@@ -769,6 +810,11 @@ impl fmt::Display for RiscvCoreCheckpointError {
             Self::InvalidMultiperspectivePerceptronSnapshot { component, error } => write!(
                 formatter,
                 "RISC-V core checkpoint component {} has invalid multiperspective perceptron snapshot: {error}",
+                component.as_str()
+            ),
+            Self::InvalidO3PendingStateSnapshot { component, error } => write!(
+                formatter,
+                "RISC-V core checkpoint component {} has invalid O3 pending-state snapshot: {error}",
                 component.as_str()
             ),
         }
@@ -913,6 +959,10 @@ fn encode_multiperspective_perceptron_payload(
     payload.encode()
 }
 
+fn encode_o3_pending_state_payload(payload: &O3PendingStateCheckpointPayload) -> Vec<u8> {
+    payload.encode()
+}
+
 fn decode_branch_predictor_payload(
     component: &CheckpointComponentId,
     payload: &[u8],
@@ -979,6 +1029,18 @@ fn decode_multiperspective_perceptron_payload(
 ) -> Result<MultiperspectivePerceptronCheckpointPayload, RiscvCoreCheckpointError> {
     MultiperspectivePerceptronCheckpointPayload::decode(payload).map_err(|error| {
         RiscvCoreCheckpointError::InvalidMultiperspectivePerceptronSnapshot {
+            component: component.clone(),
+            error,
+        }
+    })
+}
+
+fn decode_o3_pending_state_payload(
+    component: &CheckpointComponentId,
+    payload: &[u8],
+) -> Result<O3PendingStateCheckpointPayload, RiscvCoreCheckpointError> {
+    O3PendingStateCheckpointPayload::decode(payload).map_err(|error| {
+        RiscvCoreCheckpointError::InvalidO3PendingStateSnapshot {
             component: component.clone(),
             error,
         }

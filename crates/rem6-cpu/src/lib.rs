@@ -1190,6 +1190,7 @@ struct RiscvCoreState {
     tournament_branch_predictor: TournamentBranchPredictor,
     tage_sc_l_branch_predictor: TageScLBranchPredictor,
     multiperspective_perceptron: MultiperspectivePerceptron,
+    o3_pending_state: o3_pipeline::O3PendingStateCheckpointPayload,
     in_order_pipeline: InOrderPipelineState,
     in_order_pipeline_cycle_records: Vec<InOrderPipelineCycleRecord>,
     events: Vec<RiscvCpuExecutionEvent>,
@@ -1262,6 +1263,7 @@ impl RiscvCoreState {
             ),
             tage_sc_l_branch_predictor: default_riscv_tage_sc_l_branch_predictor(),
             multiperspective_perceptron: default_riscv_multiperspective_perceptron(),
+            o3_pending_state: RiscvCore::default_o3_pending_state_checkpoint_payload(),
             in_order_pipeline: InOrderPipelineState::new(
                 riscv_in_order_config::default_riscv_in_order_pipeline_config(),
             ),

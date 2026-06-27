@@ -1712,3 +1712,45 @@ impl O3WritebackTransferPolicy {
         }
     }
 }
+
+impl crate::RiscvCore {
+    pub fn default_o3_pending_state_checkpoint_payload() -> O3PendingStateCheckpointPayload {
+        O3PendingStateCheckpointPayload::from_snapshot(
+            O3PendingStateSnapshot::new(
+                [],
+                [],
+                O3WritebackTransferSnapshot::new(
+                    O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 1, 0)
+                        .expect("default O3 writeback policy is valid"),
+                    [],
+                ),
+            )
+            .expect("default O3 pending-state snapshot is valid"),
+        )
+        .expect("default O3 pending-state checkpoint payload is valid")
+    }
+
+    pub fn o3_pending_state_checkpoint_payload(&self) -> O3PendingStateCheckpointPayload {
+        self.state
+            .lock()
+            .expect("riscv core lock")
+            .o3_pending_state
+            .clone()
+    }
+
+    pub fn restore_o3_pending_state_checkpoint_payload(
+        &self,
+        payload: O3PendingStateCheckpointPayload,
+    ) -> Result<(), O3PipelineError> {
+        self.validate_o3_pending_state_checkpoint_payload(&payload)?;
+        self.state.lock().expect("riscv core lock").o3_pending_state = payload;
+        Ok(())
+    }
+
+    pub fn validate_o3_pending_state_checkpoint_payload(
+        &self,
+        payload: &O3PendingStateCheckpointPayload,
+    ) -> Result<(), O3PipelineError> {
+        O3PendingStateCheckpointPayload::from_snapshot(payload.snapshot().clone()).map(|_| ())
+    }
+}

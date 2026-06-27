@@ -12,7 +12,10 @@ use rem6_cpu::{
     GShareBranchPredictorError, InOrderPipelineSnapshot, LTageBranchPredictorConfig,
     LoopBranchPredictorConfig, MultiperspectivePerceptron,
     MultiperspectivePerceptronCheckpointPayload, MultiperspectivePerceptronConfig,
-    MultiperspectivePerceptronError, RiscvCore, RiscvHartRunState, StatisticalCorrectorConfig,
+    MultiperspectivePerceptronError, O3DependencyScopeId, O3IssueOpClass, O3IssueQueueId,
+    O3PendingStateCheckpointPayload, O3PendingStateSnapshot, O3PipelineStage,
+    O3ScopedReadyInstruction, O3WritebackCompletion, O3WritebackTransferPolicy,
+    O3WritebackTransferSnapshot, RiscvCore, RiscvHartRunState, StatisticalCorrectorConfig,
     TageBranchPredictorConfig, TageScLBranchPredictor, TageScLBranchPredictorCheckpointPayload,
     TageScLBranchPredictorConfig, TageScLBranchPredictorError, TournamentBranchPredictor,
     TournamentBranchPredictorCheckpointPayload, TournamentBranchPredictorConfig,
@@ -723,6 +726,56 @@ fn riscv_core_checkpoint_captures_and_restores_multiperspective_perceptron_state
 
     assert_eq!(restored, captured);
     assert_eq!(core.multiperspective_perceptron_snapshot(), captured_mpp);
+}
+
+#[test]
+fn riscv_core_checkpoint_captures_and_restores_o3_pending_state() {
+    let component = CheckpointComponentId::new("cpu0").unwrap();
+    let mut registry = CheckpointRegistry::new();
+    let core = riscv_core();
+    let port = RiscvCoreCheckpointPort::new(component.clone(), core.clone());
+    let resolved_scope = O3DependencyScopeId::new(0x101);
+    let produced_scope = O3DependencyScopeId::new(0x202);
+    let pending_payload = O3PendingStateCheckpointPayload::from_snapshot(
+        O3PendingStateSnapshot::new(
+            [resolved_scope],
+            [
+                O3ScopedReadyInstruction::new(77, O3IssueQueueId::new(3), O3IssueOpClass::Memory)
+                    .with_waits_on([resolved_scope])
+                    .with_produces([produced_scope]),
+            ],
+            O3WritebackTransferSnapshot::new(
+                O3WritebackTransferPolicy::new(O3PipelineStage::Iew, 2, 0).unwrap(),
+                [O3WritebackCompletion::new(88)],
+            ),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+
+    core.restore_o3_pending_state_checkpoint_payload(pending_payload.clone())
+        .unwrap();
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+
+    assert_eq!(captured.o3_pending_state_payload(), &pending_payload);
+    let payload = registry.chunk(&component, "o3-pending-state").unwrap();
+    assert_eq!(
+        O3PendingStateCheckpointPayload::decode(payload).unwrap(),
+        pending_payload
+    );
+
+    core.restore_o3_pending_state_checkpoint_payload(
+        RiscvCore::default_o3_pending_state_checkpoint_payload(),
+    )
+    .unwrap();
+    assert_ne!(core.o3_pending_state_checkpoint_payload(), pending_payload);
+
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(restored, captured);
+    assert_eq!(restored.o3_pending_state_payload(), &pending_payload);
+    assert_eq!(core.o3_pending_state_checkpoint_payload(), pending_payload);
 }
 
 #[test]
