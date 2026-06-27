@@ -420,6 +420,46 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
         assert!(hop.get("depart_tick").and_then(Value::as_u64).is_some());
         assert!(hop.get("arrival_tick").and_then(Value::as_u64).is_some());
     }
+    for virtual_network in [1, 2] {
+        let prefix = format!("sim.trace_replay.fabric.link.cpu_mem.vn{virtual_network}.hop0");
+        assert_stat(
+            &stdout,
+            &format!("{prefix}.transfers"),
+            "Count",
+            1,
+            "monotonic",
+        );
+        assert_stat(&stdout, &format!("{prefix}.bytes"), "Byte", 8, "monotonic");
+        assert_stat(&stdout, &format!("{prefix}.flits"), "Count", 2, "monotonic");
+        assert_stat(
+            &stdout,
+            &format!("{prefix}.occupied_ticks"),
+            "Tick",
+            2,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!("{prefix}.queue_delay_ticks"),
+            "Tick",
+            0,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!("{prefix}.max_queue_delay_ticks"),
+            "Tick",
+            0,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!("{prefix}.credit_delay_ticks"),
+            "Tick",
+            0,
+            "monotonic",
+        );
+    }
 }
 
 fn assert_fabric_virtual_network_stats(stdout: &str, expected: ExpectedFabricVirtualNetworkStats) {

@@ -1,4 +1,6 @@
-use rem6_fabric::{FabricLaneActivity, FabricVirtualNetworkActivity};
+use std::collections::BTreeMap;
+
+use rem6_fabric::{FabricHopActivity, FabricLaneActivity, FabricVirtualNetworkActivity};
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use crate::{Rem6CliError, Rem6RunFabricSummary};
@@ -88,7 +90,8 @@ pub(super) fn emit_run_fabric_stats(
         summary.contended_lanes(),
     )?;
     emit_fabric_virtual_network_stats(stats, prefix, summary.virtual_network_activities())?;
-    emit_fabric_lane_stats(stats, prefix, summary.lane_activities())
+    emit_fabric_lane_stats(stats, prefix, summary.lane_activities())?;
+    emit_fabric_hop_stats(stats, prefix, summary.hop_activities())
 }
 
 pub(super) fn emit_fabric_virtual_network_stats<I>(
@@ -246,5 +249,78 @@ pub(super) fn emit_fabric_lane_stats(
             activity.max_credit_delay_ticks(),
         )?;
     }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct FabricHopStatSummary {
+    transfers: u64,
+    bytes: u64,
+    flits: u64,
+    occupied_ticks: u64,
+    queue_delay_ticks: u64,
+    max_queue_delay_ticks: u64,
+    credit_delay_ticks: u64,
+}
+
+pub(super) fn emit_fabric_hop_stats(
+    stats: &mut StatsRegistry,
+    prefix: &str,
+    activities: &[FabricHopActivity],
+) -> Result<(), Rem6CliError> {
+    let mut summaries = BTreeMap::<(String, u64, usize), FabricHopStatSummary>::new();
+    for activity in activities {
+        let summary = summaries
+            .entry((
+                activity.link().as_str().to_owned(),
+                activity.virtual_network().get().into(),
+                activity.hop_index(),
+            ))
+            .or_default();
+        summary.transfers = summary.transfers.saturating_add(1);
+        summary.bytes = summary.bytes.saturating_add(activity.bytes());
+        summary.flits = summary.flits.saturating_add(activity.flits());
+        summary.occupied_ticks = summary
+            .occupied_ticks
+            .saturating_add(activity.occupied_ticks());
+        summary.queue_delay_ticks = summary
+            .queue_delay_ticks
+            .saturating_add(activity.queue_delay_ticks());
+        summary.max_queue_delay_ticks = summary
+            .max_queue_delay_ticks
+            .max(activity.queue_delay_ticks());
+        summary.credit_delay_ticks = summary
+            .credit_delay_ticks
+            .saturating_add(activity.credit_delay_ticks());
+    }
+
+    for ((link, virtual_network, hop_index), summary) in summaries {
+        let prefix = format!(
+            "{prefix}.link.{}.vn{virtual_network}.hop{hop_index}",
+            stat_path_segment(&link)
+        );
+        for (suffix, unit, value) in [
+            ("transfers", "Count", summary.transfers),
+            ("bytes", "Byte", summary.bytes),
+            ("flits", "Count", summary.flits),
+            ("occupied_ticks", "Tick", summary.occupied_ticks),
+            ("queue_delay_ticks", "Tick", summary.queue_delay_ticks),
+            (
+                "max_queue_delay_ticks",
+                "Tick",
+                summary.max_queue_delay_ticks,
+            ),
+            ("credit_delay_ticks", "Tick", summary.credit_delay_ticks),
+        ] {
+            increment_stat(
+                stats,
+                &format!("{prefix}.{suffix}"),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
+    }
+
     Ok(())
 }

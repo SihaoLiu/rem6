@@ -1,4 +1,7 @@
-use std::{collections::BTreeSet, process::Command};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    process::Command,
+};
 
 use serde_json::Value;
 
@@ -1575,6 +1578,7 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
     assert_run_fabric_virtual_network_stats(&stdout, "sim.memory.fabric", fabric, 3);
     assert_run_fabric_virtual_network_stats(&stdout, "sim.memory.fabric", fabric, 4);
     assert_run_fabric_lane_stats(&stdout, "sim.memory.fabric", fabric);
+    assert_run_fabric_hop_stats(&stdout, "sim.memory.fabric", fabric);
     assert_run_fabric_virtual_network_stats(
         &stdout,
         "sim.memory.resources.fabric",
@@ -1588,6 +1592,7 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         4,
     );
     assert_run_fabric_lane_stats(&stdout, "sim.memory.resources.fabric", fabric_resources);
+    assert_run_fabric_hop_stats(&stdout, "sim.memory.resources.fabric", fabric_resources);
 }
 
 #[test]
@@ -3873,6 +3878,109 @@ fn assert_run_fabric_lane_stats(stdout: &str, stat_prefix: &str, fabric: &Value)
             &format!("{prefix}.max_credit_delay_ticks"),
             "Tick",
             lane_u64(lane, "max_credit_delay_ticks"),
+            "monotonic",
+        );
+    }
+}
+
+fn assert_run_fabric_hop_stats(stdout: &str, stat_prefix: &str, fabric: &Value) {
+    #[derive(Default)]
+    struct FabricHopStats {
+        transfers: u64,
+        bytes: u64,
+        flits: u64,
+        occupied_ticks: u64,
+        queue_delay_ticks: u64,
+        max_queue_delay_ticks: u64,
+        credit_delay_ticks: u64,
+    }
+
+    let hops = fabric
+        .get("hop_activities")
+        .and_then(Value::as_array)
+        .expect("fabric hop activities");
+    assert!(!hops.is_empty(), "missing fabric hop activity");
+
+    let mut summaries: BTreeMap<(String, u64, u64), FabricHopStats> = BTreeMap::new();
+    for hop in hops {
+        let link = hop
+            .get("link")
+            .and_then(Value::as_str)
+            .expect("fabric hop link")
+            .to_owned();
+        let virtual_network = hop
+            .get("virtual_network")
+            .and_then(Value::as_u64)
+            .expect("fabric hop virtual network");
+        let hop_index = hop
+            .get("hop_index")
+            .and_then(Value::as_u64)
+            .expect("fabric hop index");
+        let summary = summaries
+            .entry((link, virtual_network, hop_index))
+            .or_default();
+        summary.transfers += 1;
+        summary.bytes += lane_u64(hop, "bytes");
+        summary.flits += lane_u64(hop, "flits");
+        summary.occupied_ticks += lane_u64(hop, "occupied_ticks");
+        let queue_delay_ticks = lane_u64(hop, "queue_delay_ticks");
+        summary.queue_delay_ticks += queue_delay_ticks;
+        summary.max_queue_delay_ticks = summary.max_queue_delay_ticks.max(queue_delay_ticks);
+        summary.credit_delay_ticks += lane_u64(hop, "credit_delay_ticks");
+    }
+
+    for ((link, virtual_network, hop_index), summary) in summaries {
+        let prefix = format!(
+            "{stat_prefix}.link.{}.vn{virtual_network}.hop{hop_index}",
+            stat_path_segment(&link)
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.transfers"),
+            "Count",
+            summary.transfers,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.bytes"),
+            "Byte",
+            summary.bytes,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.flits"),
+            "Count",
+            summary.flits,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.occupied_ticks"),
+            "Tick",
+            summary.occupied_ticks,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.queue_delay_ticks"),
+            "Tick",
+            summary.queue_delay_ticks,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.max_queue_delay_ticks"),
+            "Tick",
+            summary.max_queue_delay_ticks,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.credit_delay_ticks"),
+            "Tick",
+            summary.credit_delay_ticks,
             "monotonic",
         );
     }
