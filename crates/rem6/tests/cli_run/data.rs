@@ -1023,6 +1023,31 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         .get("active_virtual_networks")
         .and_then(Value::as_u64)
         .expect("fabric active virtual networks");
+    let fabric_active_links = fabric
+        .get("link_activities")
+        .and_then(Value::as_array)
+        .expect("fabric link activities")
+        .len() as u64;
+    let fabric_active_hops = fabric
+        .get("hop_activities")
+        .and_then(Value::as_array)
+        .expect("fabric hop activities")
+        .iter()
+        .map(|hop| {
+            (
+                hop.get("link")
+                    .and_then(Value::as_str)
+                    .expect("fabric hop link"),
+                hop.get("virtual_network")
+                    .and_then(Value::as_u64)
+                    .expect("fabric hop virtual network"),
+                hop.get("hop_index")
+                    .and_then(Value::as_u64)
+                    .expect("fabric hop index"),
+            )
+        })
+        .collect::<BTreeSet<_>>()
+        .len() as u64;
     let fabric_bytes = fabric
         .get("bytes")
         .and_then(Value::as_u64)
@@ -1160,6 +1185,18 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
             .pointer("/fabric/active_virtual_networks")
             .and_then(Value::as_u64),
         Some(fabric_active_virtual_networks)
+    );
+    assert_eq!(
+        memory_resources
+            .pointer("/fabric/active_links")
+            .and_then(Value::as_u64),
+        Some(fabric_active_links)
+    );
+    assert_eq!(
+        memory_resources
+            .pointer("/fabric/active_hops")
+            .and_then(Value::as_u64),
+        Some(fabric_active_hops)
     );
     assert_eq!(
         memory_resources
@@ -1418,6 +1455,20 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         "sim.memory.resources.fabric.active_virtual_networks",
         "Count",
         fabric_active_virtual_networks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.fabric.active_links",
+        "Count",
+        fabric_active_links,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.fabric.active_hops",
+        "Count",
+        fabric_active_hops,
         "monotonic",
     );
     assert_stat(

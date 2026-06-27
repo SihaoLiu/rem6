@@ -2,6 +2,8 @@ use crate::{
     data_cache_runtime::CliDataCacheSummary, transport_summary::Rem6MemoryTransportSummary,
     Rem6DramSummary, Rem6DramTargetSummary, Rem6RunFabricSummary,
 };
+use std::collections::BTreeSet;
+
 use rem6_fabric::{
     FabricHopActivity, FabricLaneActivity, FabricLinkActivity, FabricVirtualNetworkActivity,
 };
@@ -82,6 +84,8 @@ pub(crate) struct Rem6FabricResourceSummary {
     pub(crate) activity: u64,
     pub(crate) active: u64,
     pub(crate) active_virtual_networks: u64,
+    pub(crate) active_links: u64,
+    pub(crate) active_hops: u64,
     pub(crate) bytes: u64,
     pub(crate) flits: u64,
     pub(crate) occupied_ticks: u64,
@@ -303,6 +307,8 @@ impl Rem6FabricResourceSummary {
             activity: summary.transfers(),
             active: summary.active_lanes(),
             active_virtual_networks: summary.active_virtual_networks(),
+            active_links: summary.link_activities().len() as u64,
+            active_hops: active_fabric_hop_count(summary.hop_activities()),
             bytes: summary.bytes(),
             flits: summary.flits(),
             occupied_ticks: summary.occupied_ticks(),
@@ -332,6 +338,20 @@ impl Rem6FabricResourceSummary {
     pub(crate) fn virtual_network_activities(&self) -> Vec<FabricVirtualNetworkActivity> {
         FabricVirtualNetworkActivity::from_lanes(self.lane_activities.iter())
     }
+}
+
+fn active_fabric_hop_count(hop_activities: &[FabricHopActivity]) -> u64 {
+    hop_activities
+        .iter()
+        .map(|activity| {
+            (
+                activity.link().clone(),
+                activity.virtual_network(),
+                activity.hop_index(),
+            )
+        })
+        .collect::<BTreeSet<_>>()
+        .len() as u64
 }
 
 impl Rem6DramResourceSummary {

@@ -182,6 +182,8 @@ fn emit_fabric_resource_stats(
             "Count",
             summary.active_virtual_networks,
         ),
+        ("active_links", "Count", summary.active_links),
+        ("active_hops", "Count", summary.active_hops),
         ("bytes", "Byte", summary.bytes),
         ("flits", "Count", summary.flits),
         ("occupied_ticks", "Tick", summary.occupied_ticks),

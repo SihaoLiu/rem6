@@ -107,10 +107,12 @@ pub(super) fn dram_low_power_json(
 
 fn fabric_resource_json(summary: &Rem6FabricResourceSummary) -> String {
     format!(
-        "{{\"activity\":{},\"active\":{},\"active_virtual_networks\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
+        "{{\"activity\":{},\"active\":{},\"active_virtual_networks\":{},\"active_links\":{},\"active_hops\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
         summary.activity,
         summary.active,
         summary.active_virtual_networks,
+        summary.active_links,
+        summary.active_hops,
         summary.bytes,
         summary.flits,
         summary.occupied_ticks,
