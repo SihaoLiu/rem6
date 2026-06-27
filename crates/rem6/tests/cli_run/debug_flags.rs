@@ -1487,6 +1487,7 @@ fn rem6_run_power_debug_flag_emits_activity_power_trace() {
     let dynamic_microwatts = power_trace_microwatts(trace, "dynamic_watts");
     let static_microwatts = power_trace_microwatts(trace, "static_watts");
     let total_microwatts = power_trace_microwatts(trace, "total_watts");
+    let max_temperature_millicelsius = power_trace_max_millicelsius(trace, "temperature_c");
     let json_text = json.to_string();
     assert!(targets > 0, "trace: {trace:?}");
     assert!(states > 0, "trace: {trace:?}");
@@ -1495,6 +1496,7 @@ fn rem6_run_power_debug_flag_emits_activity_power_trace() {
     assert!(dynamic_microwatts > 0, "trace: {trace:?}");
     assert!(static_microwatts > 0, "trace: {trace:?}");
     assert!(total_microwatts >= dynamic_microwatts, "trace: {trace:?}");
+    assert!(max_temperature_millicelsius > 0, "trace: {trace:?}");
     for target in [
         "cpu0.core",
         "cpu.instruction_cache",
@@ -1576,6 +1578,13 @@ fn rem6_run_power_debug_flag_emits_activity_power_trace() {
         "sim.debug.power_trace.total_microwatts",
         "MicroWatt",
         total_microwatts,
+        "monotonic",
+    );
+    assert_stat(
+        &json_text,
+        "sim.debug.power_trace.max_temperature_millicelsius",
+        "MilliCelsius",
+        max_temperature_millicelsius,
         "monotonic",
     );
 }
@@ -1974,10 +1983,32 @@ fn power_trace_microwatts(trace: &[Value], field: &str) -> u64 {
         .sum()
 }
 
+fn power_trace_max_millicelsius(trace: &[Value], field: &str) -> u64 {
+    trace
+        .iter()
+        .map(|record| {
+            let celsius = record
+                .get(field)
+                .and_then(Value::as_f64)
+                .unwrap_or_else(|| panic!("power trace {field}"));
+            celsius_to_millicelsius(celsius)
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 fn watts_to_microwatts(watts: f64) -> u64 {
     if !watts.is_finite() || watts <= 0.0 {
         0
     } else {
         (watts * 1_000_000.0).round() as u64
+    }
+}
+
+fn celsius_to_millicelsius(celsius: f64) -> u64 {
+    if !celsius.is_finite() || celsius <= 0.0 {
+        0
+    } else {
+        (celsius * 1_000.0).round() as u64
     }
 }

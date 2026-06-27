@@ -322,5 +322,12 @@ pub(super) fn emit_debug_stats(
         StatResetPolicy::Monotonic,
         debug.power_total_microwatt_count(),
     )?;
+    increment_stat(
+        stats,
+        "sim.debug.power_trace.max_temperature_millicelsius",
+        "MilliCelsius",
+        StatResetPolicy::Monotonic,
+        debug.power_max_temperature_millicelsius(),
+    )?;
     Ok(())
 }

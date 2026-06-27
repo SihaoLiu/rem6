@@ -625,6 +625,14 @@ impl Rem6DebugSummary {
         })
     }
 
+    pub(crate) fn power_max_temperature_millicelsius(&self) -> u64 {
+        self.power_trace
+            .iter()
+            .map(|record| celsius_to_millicelsius(&record.temperature_c))
+            .max()
+            .unwrap_or(0)
+    }
+
     pub(crate) fn syscall_trace_count(&self) -> u64 {
         self.syscall_trace.len() as u64
     }
@@ -1193,6 +1201,17 @@ fn watts_to_microwatts(watts: &str) -> u64 {
         0
     } else {
         (watts * 1_000_000.0).round() as u64
+    }
+}
+
+fn celsius_to_millicelsius(celsius: &str) -> u64 {
+    let Ok(celsius) = celsius.parse::<f64>() else {
+        return 0;
+    };
+    if !celsius.is_finite() || celsius <= 0.0 {
+        0
+    } else {
+        (celsius * 1_000.0).round() as u64
     }
 }
 
