@@ -54,8 +54,11 @@ const RISCV_GDB_SUPERVISOR_ENVIRONMENT_CONFIG_REGISTER: u64 = 135;
 const RISCV_GDB_PMP_CONFIG0_REGISTER: u64 = 136;
 const RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER: u64 = 138;
 const RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER: u64 = 139;
-const RISCV_GDB_PMP_ADDR_REGISTERS: [u64; 8] = [137, 140, 141, 142, 143, 144, 145, 146];
-const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 25;
+const RISCV_GDB_PMP_CONFIG2_REGISTER: u64 = 147;
+const RISCV_GDB_PMP_ADDR_REGISTERS: [u64; 16] = [
+    137, 140, 141, 142, 143, 144, 145, 146, 148, 149, 150, 151, 152, 153, 154, 155,
+];
+const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 34;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 const RISCV_GDB_RV32_VTYPE_PAYLOAD_MASK: u64 = 0x7fff_ffff;
 const RISCV_GDB_RV32_VTYPE_VILL_BIT: u64 = 1_u64 << 31;
@@ -1327,6 +1330,9 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     if number == RISCV_GDB_PMP_CONFIG0_REGISTER {
         return RiscvGdbCsrRegister::PmpConfig(0);
     }
+    if number == RISCV_GDB_PMP_CONFIG2_REGISTER {
+        return RiscvGdbCsrRegister::PmpConfig(8);
+    }
     if let Some(index) = RISCV_GDB_PMP_ADDR_REGISTERS
         .iter()
         .position(|&register| number == register)
@@ -1653,7 +1659,9 @@ fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
             RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER,
             RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER,
         ])
-        .chain(RISCV_GDB_PMP_ADDR_REGISTERS[1..].iter().copied())
+        .chain(RISCV_GDB_PMP_ADDR_REGISTERS[1..8].iter().copied())
+        .chain(std::iter::once(RISCV_GDB_PMP_CONFIG2_REGISTER))
+        .chain(RISCV_GDB_PMP_ADDR_REGISTERS[8..].iter().copied())
 }
 
 const fn register_count(_xlen: RiscvGdbXlen) -> usize {
@@ -1728,6 +1736,8 @@ const fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool {
         || number == RISCV_GDB_PMP_CONFIG0_REGISTER
         || number == RISCV_GDB_PMP_ADDR_REGISTERS[0]
         || (number >= RISCV_GDB_PMP_ADDR_REGISTERS[1] && number <= RISCV_GDB_PMP_ADDR_REGISTERS[7])
+        || number == RISCV_GDB_PMP_CONFIG2_REGISTER
+        || (number >= RISCV_GDB_PMP_ADDR_REGISTERS[8] && number <= RISCV_GDB_PMP_ADDR_REGISTERS[15])
         || number == RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER
         || number == RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER
 }

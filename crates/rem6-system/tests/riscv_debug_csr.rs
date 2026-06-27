@@ -486,7 +486,7 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_advertised_rv64_csr_register
         )
         .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(147));
+    assert_eq!(registers.len(), rv64_register_hex_offset(156));
     assert_eq!(&registers[rv64_register_hex_range(70)], b"0000080000000000");
     assert_eq!(&registers[rv64_register_hex_range(71)], b"8877665544332211");
     assert_eq!(&registers[rv64_register_hex_range(72)], b"8877665544332211");
@@ -664,6 +664,18 @@ fn riscv_gdb_remote_core_packet_handler_reads_and_writes_pmp_csrs() {
                 RiscvGdbXlen::Rv64,
                 &mut session,
                 &core,
+                &GdbRemotePacket::new(b"p93".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"0000000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
                 &GdbRemotePacket::new(b"p8d".to_vec()).unwrap(),
             )
             .unwrap(),
@@ -691,6 +703,22 @@ fn riscv_gdb_remote_core_packet_handler_reads_and_writes_pmp_csrs() {
         (b"P91=0008000000000000".as_slice(), b"OK".as_slice()),
         (b"p92".as_slice(), b"0000000000000000".as_slice()),
         (b"P92=0009000000000000".as_slice(), b"OK".as_slice()),
+        (b"p94".as_slice(), b"0000000000000000".as_slice()),
+        (b"P94=000a000000000000".as_slice(), b"OK".as_slice()),
+        (b"p95".as_slice(), b"0000000000000000".as_slice()),
+        (b"P95=000b000000000000".as_slice(), b"OK".as_slice()),
+        (b"p96".as_slice(), b"0000000000000000".as_slice()),
+        (b"P96=000c000000000000".as_slice(), b"OK".as_slice()),
+        (b"p97".as_slice(), b"0000000000000000".as_slice()),
+        (b"P97=000d000000000000".as_slice(), b"OK".as_slice()),
+        (b"p98".as_slice(), b"0000000000000000".as_slice()),
+        (b"P98=000e000000000000".as_slice(), b"OK".as_slice()),
+        (b"p99".as_slice(), b"0000000000000000".as_slice()),
+        (b"P99=000f000000000000".as_slice(), b"OK".as_slice()),
+        (b"p9a".as_slice(), b"0000000000000000".as_slice()),
+        (b"P9a=0010000000000000".as_slice(), b"OK".as_slice()),
+        (b"p9b".as_slice(), b"0000000000000000".as_slice()),
+        (b"P9b=0011000000000000".as_slice(), b"OK".as_slice()),
     ] {
         assert_eq!(
             packet_payload(
@@ -724,6 +752,18 @@ fn riscv_gdb_remote_core_packet_handler_reads_and_writes_pmp_csrs() {
                 &mut session,
                 &core,
                 &GdbRemotePacket::new(b"P8e=0005000000000000".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"P93=0f88888888888888".to_vec()).unwrap(),
             )
             .unwrap(),
         ),
@@ -868,6 +908,41 @@ fn riscv_gdb_remote_core_packet_handler_reads_and_writes_pmp_csrs() {
             expected,
         );
     }
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_core_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &core,
+                &GdbRemotePacket::new(b"p93".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"0f88888888888888",
+    );
+    for (packet, expected) in [
+        (b"p94".as_slice(), b"000a000000000000".as_slice()),
+        (b"p95".as_slice(), b"000b000000000000".as_slice()),
+        (b"p96".as_slice(), b"000c000000000000".as_slice()),
+        (b"p97".as_slice(), b"000d000000000000".as_slice()),
+        (b"p98".as_slice(), b"000e000000000000".as_slice()),
+        (b"p99".as_slice(), b"000f000000000000".as_slice()),
+        (b"p9a".as_slice(), b"0010000000000000".as_slice()),
+        (b"p9b".as_slice(), b"0011000000000000".as_slice()),
+    ] {
+        assert_eq!(
+            packet_payload(
+                handle_riscv_gdb_remote_core_packet(
+                    RiscvGdbXlen::Rv64,
+                    &mut session,
+                    &core,
+                    &GdbRemotePacket::new(packet.to_vec()).unwrap(),
+                )
+                .unwrap(),
+            ),
+            expected,
+        );
+    }
     let registers = packet_payload(
         handle_riscv_gdb_remote_core_packet(
             RiscvGdbXlen::Rv64,
@@ -877,7 +952,7 @@ fn riscv_gdb_remote_core_packet_handler_reads_and_writes_pmp_csrs() {
         )
         .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(147));
+    assert_eq!(registers.len(), rv64_register_hex_offset(156));
     assert_eq!(
         &registers[rv64_register_hex_range(136)],
         b"0f88888888888888"
@@ -914,6 +989,18 @@ fn riscv_gdb_remote_core_packet_handler_reads_and_writes_pmp_csrs() {
         &registers[rv64_register_hex_range(146)],
         b"0009000000000000"
     );
+    assert_eq!(
+        &registers[rv64_register_hex_range(147)],
+        b"0f88888888888888"
+    );
+    assert_eq!(
+        &registers[rv64_register_hex_range(148)],
+        b"000a000000000000"
+    );
+    assert_eq!(
+        &registers[rv64_register_hex_range(155)],
+        b"0011000000000000"
+    );
 
     let snapshot = core.pmp_snapshot();
     let first = &snapshot.entries()[0];
@@ -940,6 +1027,12 @@ fn riscv_gdb_remote_core_packet_handler_reads_and_writes_pmp_csrs() {
     let eighth = &snapshot.entries()[7];
     assert_eq!(eighth.config().bits(), 0x88);
     assert_eq!(eighth.raw_addr(), 0x0900);
+    let ninth = &snapshot.entries()[8];
+    assert_eq!(ninth.config().bits(), 0x0f);
+    assert_eq!(ninth.raw_addr(), 0x0a00);
+    let sixteenth = &snapshot.entries()[15];
+    assert_eq!(sixteenth.config().bits(), 0x88);
+    assert_eq!(sixteenth.raw_addr(), 0x1100);
 }
 
 #[test]
@@ -1025,7 +1118,7 @@ fn rv64_register_hex_offset(number: u64) -> usize {
         66..=69 => (33 * 8) + (32 * 8) + ((number - 66) * 4),
         70..=89 => (33 * 8) + (32 * 8) + (4 * 4) + ((number - 70) * 8),
         90..=121 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + ((number - 90) * 16),
-        122..=147 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
+        122..=156 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
         _ => panic!("unexpected RV64 GDB register number {number}"),
     };
     byte_offset as usize * 2

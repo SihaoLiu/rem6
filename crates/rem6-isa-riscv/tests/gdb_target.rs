@@ -93,6 +93,15 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "  <reg name=\"pmpaddr5\" bitsize=\"64\" regnum=\"144\"/>\n",
             "  <reg name=\"pmpaddr6\" bitsize=\"64\" regnum=\"145\"/>\n",
             "  <reg name=\"pmpaddr7\" bitsize=\"64\" regnum=\"146\"/>\n",
+            "  <reg name=\"pmpcfg2\" bitsize=\"64\" regnum=\"147\"/>\n",
+            "  <reg name=\"pmpaddr8\" bitsize=\"64\" regnum=\"148\"/>\n",
+            "  <reg name=\"pmpaddr9\" bitsize=\"64\" regnum=\"149\"/>\n",
+            "  <reg name=\"pmpaddr10\" bitsize=\"64\" regnum=\"150\"/>\n",
+            "  <reg name=\"pmpaddr11\" bitsize=\"64\" regnum=\"151\"/>\n",
+            "  <reg name=\"pmpaddr12\" bitsize=\"64\" regnum=\"152\"/>\n",
+            "  <reg name=\"pmpaddr13\" bitsize=\"64\" regnum=\"153\"/>\n",
+            "  <reg name=\"pmpaddr14\" bitsize=\"64\" regnum=\"154\"/>\n",
+            "  <reg name=\"pmpaddr15\" bitsize=\"64\" regnum=\"155\"/>\n",
             "</feature>\n",
         ),
     );
@@ -144,9 +153,18 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "pmpaddr5",
             "pmpaddr6",
             "pmpaddr7",
+            "pmpcfg2",
+            "pmpaddr8",
+            "pmpaddr9",
+            "pmpaddr10",
+            "pmpaddr11",
+            "pmpaddr12",
+            "pmpaddr13",
+            "pmpaddr14",
+            "pmpaddr15",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 45);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 54);
 }
 
 #[test]
@@ -396,6 +414,15 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "  <reg name=\"pmpaddr5\" bitsize=\"32\" regnum=\"144\"/>\n",
             "  <reg name=\"pmpaddr6\" bitsize=\"32\" regnum=\"145\"/>\n",
             "  <reg name=\"pmpaddr7\" bitsize=\"32\" regnum=\"146\"/>\n",
+            "  <reg name=\"pmpcfg2\" bitsize=\"32\" regnum=\"147\"/>\n",
+            "  <reg name=\"pmpaddr8\" bitsize=\"32\" regnum=\"148\"/>\n",
+            "  <reg name=\"pmpaddr9\" bitsize=\"32\" regnum=\"149\"/>\n",
+            "  <reg name=\"pmpaddr10\" bitsize=\"32\" regnum=\"150\"/>\n",
+            "  <reg name=\"pmpaddr11\" bitsize=\"32\" regnum=\"151\"/>\n",
+            "  <reg name=\"pmpaddr12\" bitsize=\"32\" regnum=\"152\"/>\n",
+            "  <reg name=\"pmpaddr13\" bitsize=\"32\" regnum=\"153\"/>\n",
+            "  <reg name=\"pmpaddr14\" bitsize=\"32\" regnum=\"154\"/>\n",
+            "  <reg name=\"pmpaddr15\" bitsize=\"32\" regnum=\"155\"/>\n",
             "</feature>\n",
         ),
     );
@@ -447,9 +474,18 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "pmpaddr5",
             "pmpaddr6",
             "pmpaddr7",
+            "pmpcfg2",
+            "pmpaddr8",
+            "pmpaddr9",
+            "pmpaddr10",
+            "pmpaddr11",
+            "pmpaddr12",
+            "pmpaddr13",
+            "pmpaddr14",
+            "pmpaddr15",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"32\"").count(), 45);
+    assert_eq!(csr.matches("bitsize=\"32\"").count(), 54);
 }
 
 #[test]

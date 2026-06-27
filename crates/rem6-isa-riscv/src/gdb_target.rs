@@ -383,4 +383,13 @@ const RV64_CSR_REGISTERS: &[CsrRegister] = &[
     CsrRegister::new("pmpaddr5", Some(144)),
     CsrRegister::new("pmpaddr6", Some(145)),
     CsrRegister::new("pmpaddr7", Some(146)),
+    CsrRegister::new("pmpcfg2", Some(147)),
+    CsrRegister::new("pmpaddr8", Some(148)),
+    CsrRegister::new("pmpaddr9", Some(149)),
+    CsrRegister::new("pmpaddr10", Some(150)),
+    CsrRegister::new("pmpaddr11", Some(151)),
+    CsrRegister::new("pmpaddr12", Some(152)),
+    CsrRegister::new("pmpaddr13", Some(153)),
+    CsrRegister::new("pmpaddr14", Some(154)),
+    CsrRegister::new("pmpaddr15", Some(155)),
 ];
