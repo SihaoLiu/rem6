@@ -1,6 +1,6 @@
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
-use super::{increment_stat, Rem6CliError, Rem6ExecutionSummary};
+use super::{increment_stat, stat_path_segment, Rem6CliError, Rem6ExecutionSummary};
 
 pub(super) fn emit_debug_stats(
     stats: &mut StatsRegistry,
@@ -350,5 +350,29 @@ pub(super) fn emit_debug_stats(
         StatResetPolicy::Monotonic,
         debug.power_max_temperature_millicelsius(),
     )?;
+    for (target, residency_ticks, total_microwatt_ticks) in
+        debug.power_target_residency_and_total_microwatt_ticks()
+    {
+        let target_path = target
+            .split('.')
+            .map(stat_path_segment)
+            .collect::<Vec<_>>()
+            .join(".");
+        let prefix = format!("sim.debug.power_trace.target.{target_path}");
+        increment_stat(
+            stats,
+            &format!("{prefix}.residency_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            residency_ticks,
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.total_microwatt_ticks"),
+            "MicroWattTick",
+            StatResetPolicy::Monotonic,
+            total_microwatt_ticks,
+        )?;
+    }
     Ok(())
 }

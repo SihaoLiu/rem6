@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_cpu::{CpuFetchEventKind, RiscvCluster, RiscvCoreDriveAction, RiscvDataAccessEventKind};
 use rem6_memory::{MemoryOperation, ResponseStatus};
@@ -650,6 +650,24 @@ impl Rem6DebugSummary {
                 record.residency_ticks,
             ))
         })
+    }
+
+    pub(crate) fn power_target_residency_and_total_microwatt_ticks(&self) -> Vec<(&str, u64, u64)> {
+        let mut targets = BTreeMap::<&str, (u64, u64)>::new();
+        for record in &self.power_trace {
+            let entry = targets.entry(record.target.as_str()).or_default();
+            entry.0 = entry.0.saturating_add(record.residency_ticks);
+            entry.1 = entry.1.saturating_add(watts_to_microwatt_ticks(
+                &record.total_watts,
+                record.residency_ticks,
+            ));
+        }
+        targets
+            .into_iter()
+            .map(|(target, (residency_ticks, total_microwatt_ticks))| {
+                (target, residency_ticks, total_microwatt_ticks)
+            })
+            .collect()
     }
 
     pub(crate) fn power_max_temperature_millicelsius(&self) -> u64 {

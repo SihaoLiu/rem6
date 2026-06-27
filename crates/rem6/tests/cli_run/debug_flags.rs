@@ -1532,6 +1532,21 @@ fn rem6_run_power_debug_flag_emits_activity_power_trace() {
                 .is_some_and(|watts| watts > 0.0),
             "missing dynamic watts for {target}: {record:?}"
         );
+        let target_prefix = power_trace_target_stat_prefix(target);
+        assert_stat(
+            &json_text,
+            &format!("{target_prefix}.residency_ticks"),
+            "Tick",
+            power_trace_record_u64(record, "residency_ticks"),
+            "monotonic",
+        );
+        assert_stat(
+            &json_text,
+            &format!("{target_prefix}.total_microwatt_ticks"),
+            "MicroWattTick",
+            power_trace_record_microwatt_ticks(record, "total_watts"),
+            "monotonic",
+        );
     }
     assert_stat(
         &json_text,
@@ -1991,12 +2006,7 @@ fn power_trace_state_count(trace: &[Value], state: &str) -> u64 {
 fn power_trace_sum_u64(trace: &[Value], field: &str) -> u64 {
     trace
         .iter()
-        .map(|record| {
-            record
-                .get(field)
-                .and_then(Value::as_u64)
-                .unwrap_or_else(|| panic!("power trace {field}"))
-        })
+        .map(|record| power_trace_record_u64(record, field))
         .sum()
 }
 
@@ -2015,16 +2025,33 @@ fn power_trace_microwatts(trace: &[Value], field: &str) -> u64 {
 
 fn power_trace_microwatt_ticks(trace: &[Value], field: &str) -> u64 {
     trace.iter().fold(0u64, |acc, record| {
-        let residency_ticks = record
-            .get("residency_ticks")
-            .and_then(Value::as_u64)
-            .unwrap_or_else(|| panic!("power trace residency_ticks"));
-        let watts = record
-            .get(field)
-            .and_then(Value::as_f64)
-            .unwrap_or_else(|| panic!("power trace {field}"));
-        acc.saturating_add(watts_to_microwatts(watts).saturating_mul(residency_ticks))
+        acc.saturating_add(power_trace_record_microwatt_ticks(record, field))
     })
+}
+
+fn power_trace_record_u64(record: &Value, field: &str) -> u64 {
+    record
+        .get(field)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("power trace {field}"))
+}
+
+fn power_trace_record_microwatt_ticks(record: &Value, field: &str) -> u64 {
+    let residency_ticks = power_trace_record_u64(record, "residency_ticks");
+    let watts = record
+        .get(field)
+        .and_then(Value::as_f64)
+        .unwrap_or_else(|| panic!("power trace {field}"));
+    watts_to_microwatts(watts).saturating_mul(residency_ticks)
+}
+
+fn power_trace_target_stat_prefix(target: &str) -> String {
+    let target_path = target
+        .split('.')
+        .map(stat_path_segment)
+        .collect::<Vec<_>>()
+        .join(".");
+    format!("sim.debug.power_trace.target.{target_path}")
 }
 
 fn power_trace_max_millicelsius(trace: &[Value], field: &str) -> u64 {
