@@ -103,6 +103,8 @@ fn emit_dram_resource_stats(
         ("reads", "Count", summary.reads),
         ("writes", "Count", summary.writes),
         ("row_hits", "Count", summary.row_hits),
+        ("read_row_hits", "Count", summary.read_row_hits),
+        ("write_row_hits", "Count", summary.write_row_hits),
         ("row_misses", "Count", summary.row_misses),
         ("refreshes", "Count", summary.refreshes),
         ("refresh_ticks", "Tick", summary.refresh_ticks),

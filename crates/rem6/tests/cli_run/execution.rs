@@ -1520,6 +1520,104 @@ fn rem6_run_can_execute_riscv_elf_through_dram_memory_and_emit_dram_stats() {
 }
 
 #[test]
+fn rem6_run_dram_memory_resources_expose_split_row_hit_counters() {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(7, 0, 0x0, 5, 0x13),                  // addi x5, x0, 7
+        s_type(0, 5, 2, 0x3),                        // sd x5, 0(x2)
+        i_type(1, 5, 0x0, 5, 0x13),                  // addi x5, x5, 1
+        s_type(8, 5, 2, 0x3),                        // sd x5, 8(x2)
+        i_type(0, 2, 0x3, 6, 0x03),                  // ld x6, 0(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET, 0);
+    program.extend_from_slice(&0u64.to_le_bytes());
+    program.extend_from_slice(&0u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("dram-resource-split-row-hits", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "320",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x6\":\"0x7\""));
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let resources = json
+        .pointer("/memory_resources")
+        .expect("run JSON should include memory resources");
+    let dram_writes = json_u64(&json, "/dram/writes");
+    let dram_row_hits = json_u64(&json, "/dram/row_hits");
+    let dram_read_row_hits = json_u64(&json, "/dram/read_row_hits");
+    let dram_write_row_hits = json_u64(&json, "/dram/write_row_hits");
+
+    assert!(dram_writes > 0);
+    assert!(dram_read_row_hits > 0);
+    assert!(dram_write_row_hits <= dram_writes);
+    assert_eq!(dram_row_hits, dram_read_row_hits + dram_write_row_hits);
+    assert_eq!(
+        json_u64(resources, "/dram/read_row_hits"),
+        dram_read_row_hits
+    );
+    assert_eq!(
+        json_u64(resources, "/dram/write_row_hits"),
+        dram_write_row_hits
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.read_row_hits",
+        "Count",
+        dram_read_row_hits,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.write_row_hits",
+        "Count",
+        dram_write_row_hits,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.read_row_hits",
+        "Count",
+        dram_read_row_hits,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.write_row_hits",
+        "Count",
+        dram_write_row_hits,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_ddr_profile_refreshes_during_riscv_dram_execution() {
     let mut words = vec![i_type(0, 0, 0x0, 5, 0x13); 64];
     words.push(0x0000_0073); // ecall
