@@ -118,6 +118,11 @@ fn emit_dram_resource_stats(
             summary.total_ready_latency_ticks,
         ),
         (
+            "read_ready_latency_ticks",
+            "Tick",
+            summary.read_ready_latency_ticks,
+        ),
+        (
             "max_ready_latency_ticks",
             "Tick",
             summary.max_ready_latency_ticks,

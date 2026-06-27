@@ -62,6 +62,13 @@ pub(super) fn emit_dram_stats(
     emit_dram_counter(
         stats,
         prefix,
+        "read_ready_latency_ticks",
+        "Tick",
+        summary.read_ready_latency_ticks,
+    )?;
+    emit_dram_counter(
+        stats,
+        prefix,
         "max_ready_latency_ticks",
         "Tick",
         summary.max_ready_latency_ticks,
