@@ -1464,6 +1464,10 @@ impl Rem6RunConfig {
         &self.debug_flags
     }
 
+    pub fn debug_branch_enabled(&self) -> bool {
+        self.debug_flags.contains(&CliDebugFlag::Branch)
+    }
+
     pub fn debug_cache_enabled(&self) -> bool {
         self.debug_flags.contains(&CliDebugFlag::Cache)
     }

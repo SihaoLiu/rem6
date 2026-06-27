@@ -2,6 +2,7 @@ use crate::Rem6CliError;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum CliDebugFlag {
+    Branch,
     Cache,
     Data,
     Dram,
@@ -19,6 +20,7 @@ impl CliDebugFlag {
             return Err(Rem6CliError::EmptyDebugFlag);
         }
         match value {
+            "Branch" => Ok(Self::Branch),
             "Cache" => Ok(Self::Cache),
             "Data" => Ok(Self::Data),
             "Dram" => Ok(Self::Dram),
@@ -36,6 +38,7 @@ impl CliDebugFlag {
 
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Branch => "Branch",
             Self::Cache => "Cache",
             Self::Data => "Data",
             Self::Dram => "Dram",

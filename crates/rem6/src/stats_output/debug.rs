@@ -18,6 +18,35 @@ pub(super) fn emit_debug_stats(
         ("sim.debug.trace.records", debug.trace_record_count()),
         ("sim.debug.trace.categories", debug.trace_category_count()),
         ("sim.debug.trace.active_flags", debug.active_flag_count()),
+        ("sim.debug.branch_trace.records", debug.branch_trace_count()),
+        (
+            "sim.debug.branch_trace.conditional",
+            debug.branch_conditional_trace_count(),
+        ),
+        (
+            "sim.debug.branch_trace.unconditional",
+            debug.branch_unconditional_trace_count(),
+        ),
+        (
+            "sim.debug.branch_trace.predicted_taken",
+            debug.branch_predicted_taken_trace_count(),
+        ),
+        (
+            "sim.debug.branch_trace.resolved_taken",
+            debug.branch_resolved_taken_trace_count(),
+        ),
+        (
+            "sim.debug.branch_trace.mispredictions",
+            debug.branch_misprediction_trace_count(),
+        ),
+        (
+            "sim.debug.branch_trace.repairs",
+            debug.branch_repair_trace_count(),
+        ),
+        (
+            "sim.debug.branch_trace.flushed",
+            debug.branch_flushed_trace_count(),
+        ),
         ("sim.debug.exec_trace.records", debug.exec_trace_count()),
         (
             "sim.debug.exec_trace.retired",
@@ -208,6 +237,15 @@ pub(super) fn emit_debug_stats(
         increment_stat(
             stats,
             &format!("sim.debug.exec_trace.{}", stat.path()),
+            stat.unit(),
+            StatResetPolicy::Monotonic,
+            stat.value(),
+        )?;
+    }
+    for stat in debug.branch_trace_stats(stat_path_segment) {
+        increment_stat(
+            stats,
+            &format!("sim.debug.branch_trace.{}", stat.path()),
             stat.unit(),
             StatResetPolicy::Monotonic,
             stat.value(),

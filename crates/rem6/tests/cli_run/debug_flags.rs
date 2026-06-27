@@ -256,6 +256,136 @@ fn rem6_run_fetch_debug_flag_emits_real_fetch_issue_trace() {
 }
 
 #[test]
+fn rem6_run_branch_debug_flag_emits_real_in_order_branch_trace() {
+    let program = riscv64_program(&[
+        i_type(1, 0, 0x0, 5, 0x13), // addi x5, x0, 1
+        b_type(8, 5, 5, 0x0),       // beq x5, x5, target
+        i_type(9, 0, 0x0, 6, 0x13), // addi x6, x0, 9
+        0x0000_0073,                // target: ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-branch", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+            "--debug-flags",
+            "Branch",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![Value::String("Branch".to_string())])
+    );
+    let trace = json
+        .pointer("/debug/branch_trace")
+        .and_then(Value::as_array)
+        .expect("debug branch trace array");
+    let branch = trace
+        .iter()
+        .find(|record| record.get("pc").and_then(Value::as_str) == Some("0x80000004"))
+        .unwrap_or_else(|| panic!("missing taken branch trace record: {trace:?}"));
+    assert_eq!(branch.get("cpu").and_then(Value::as_u64), Some(0));
+    assert_eq!(branch.get("sequence").and_then(Value::as_u64), Some(1));
+    assert_eq!(
+        branch.get("resolved_stage").and_then(Value::as_str),
+        Some("commit")
+    );
+    assert_eq!(
+        branch.get("kind").and_then(Value::as_str),
+        Some("conditional")
+    );
+    assert_eq!(
+        branch.get("conditional").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        branch.get("predicted_taken").and_then(Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(branch.get("predicted_target"), Some(&Value::Null));
+    assert_eq!(
+        branch.get("resolved_taken").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        branch.get("resolved_target").and_then(Value::as_str),
+        Some("0x8000000c")
+    );
+    assert_eq!(
+        branch.get("mispredicted").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        branch.get("repair_target").and_then(Value::as_str),
+        Some("0x8000000c")
+    );
+    assert!(branch.get("cycle").and_then(Value::as_u64).is_some());
+    let flushed_sequences = branch
+        .get("flushed_sequences")
+        .and_then(Value::as_array)
+        .expect("flushed sequence array");
+    assert_eq!(
+        branch.get("flushed_count").and_then(Value::as_u64),
+        Some(flushed_sequences.len() as u64)
+    );
+    assert!(
+        !flushed_sequences.is_empty(),
+        "taken branch should flush at least one younger fetch: {branch:?}"
+    );
+
+    let mut aggregate = BranchTraceStats::default();
+    for record in trace {
+        aggregate.add_record(record);
+    }
+    aggregate.assert_stats(&stdout, "sim.debug.branch_trace");
+    assert_stat(
+        &stdout,
+        "sim.debug.trace.records",
+        "Count",
+        trace.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.trace.categories",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.trace.active_flags",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_branch_trace_hierarchy_stats(&stdout, trace);
+}
+
+#[test]
 fn rem6_run_fetch_debug_flag_keeps_fetches_across_riscv_se_stream_reset() {
     let program = riscv64_program(&[
         i_type(172, 0, 0x0, 17, 0x13), // addi a7, x0, getpid
@@ -1794,6 +1924,104 @@ fn assert_fetch_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct BranchTraceStats {
+    records: u64,
+    conditional: u64,
+    unconditional: u64,
+    predicted_taken: u64,
+    resolved_taken: u64,
+    mispredictions: u64,
+    repairs: u64,
+    flushed: u64,
+}
+
+impl BranchTraceStats {
+    fn add_record(&mut self, record: &Value) {
+        self.records = self.records.saturating_add(1);
+        if json_record_bool(record, "conditional") {
+            self.conditional = self.conditional.saturating_add(1);
+        } else {
+            self.unconditional = self.unconditional.saturating_add(1);
+        }
+        if json_record_bool(record, "predicted_taken") {
+            self.predicted_taken = self.predicted_taken.saturating_add(1);
+        }
+        if json_record_bool(record, "resolved_taken") {
+            self.resolved_taken = self.resolved_taken.saturating_add(1);
+        }
+        if json_record_bool(record, "mispredicted") {
+            self.mispredictions = self.mispredictions.saturating_add(1);
+        }
+        if record
+            .get("repair_target")
+            .and_then(Value::as_str)
+            .is_some()
+        {
+            self.repairs = self.repairs.saturating_add(1);
+        }
+        self.flushed = self
+            .flushed
+            .saturating_add(json_record_u64(record, "flushed_count"));
+    }
+
+    fn assert_stats(&self, stdout: &str, prefix: &str) {
+        for (suffix, value) in [
+            ("records", self.records),
+            ("conditional", self.conditional),
+            ("unconditional", self.unconditional),
+            ("predicted_taken", self.predicted_taken),
+            ("resolved_taken", self.resolved_taken),
+            ("mispredictions", self.mispredictions),
+            ("repairs", self.repairs),
+            ("flushed", self.flushed),
+        ] {
+            assert_stat(
+                stdout,
+                &format!("{prefix}.{suffix}"),
+                "Count",
+                value,
+                "monotonic",
+            );
+        }
+    }
+}
+
+fn assert_branch_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
+    let mut cpus = BTreeMap::<u64, BranchTraceStats>::new();
+    let mut kinds = BTreeMap::<String, BranchTraceStats>::new();
+    let mut outcomes = BTreeMap::<&'static str, BranchTraceStats>::new();
+    for record in trace {
+        let cpu = json_record_u64(record, "cpu");
+        let kind = json_record_str(record, "kind").to_string();
+        let outcome = match json_record_bool(record, "mispredicted") {
+            true => "mispredicted",
+            false => "correct",
+        };
+        cpus.entry(cpu).or_default().add_record(record);
+        kinds.entry(kind).or_default().add_record(record);
+        outcomes.entry(outcome).or_default().add_record(record);
+    }
+    for (cpu, stats) in cpus {
+        stats.assert_stats(stdout, &format!("sim.debug.branch_trace.cpu.cpu{cpu}"));
+    }
+    for (kind, stats) in kinds {
+        stats.assert_stats(
+            stdout,
+            &format!("sim.debug.branch_trace.kind.{}", stat_path_segment(&kind)),
+        );
+    }
+    for (outcome, stats) in outcomes {
+        stats.assert_stats(
+            stdout,
+            &format!(
+                "sim.debug.branch_trace.outcome.{}",
+                stat_path_segment(outcome)
+            ),
+        );
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct DataTraceStats {
     records: u64,
     loads: u64,
@@ -2103,6 +2331,13 @@ fn json_record_u64(record: &Value, field: &str) -> u64 {
         .get(field)
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("missing JSON u64 field {field}: {record:?}"))
+}
+
+fn json_record_bool(record: &Value, field: &str) -> bool {
+    record
+        .get(field)
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| panic!("missing JSON bool field {field}: {record:?}"))
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

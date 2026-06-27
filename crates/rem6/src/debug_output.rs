@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use rem6_cpu::{CpuFetchEventKind, RiscvCluster, RiscvCoreDriveAction, RiscvDataAccessEventKind};
+use rem6_cpu::{
+    CpuFetchEventKind, InOrderPipelineStage, RiscvCluster, RiscvCoreDriveAction,
+    RiscvDataAccessEventKind,
+};
 use rem6_memory::{MemoryOperation, ResponseStatus};
 use rem6_power::{PowerAnalysisRecord, PowerStateKind};
 use rem6_system::{RiscvSyscallTraceOutcome, RiscvSyscallTraceRecord, RiscvSystemRun};
@@ -20,12 +23,15 @@ use dram::{dram_trace_records, Rem6DramTraceRecord, Rem6DramTraceStat};
 use fabric::{
     fabric_trace_records, fabric_trace_stats, Rem6FabricTraceRecord, Rem6FabricTraceStat,
 };
-use trace_stats::{data_trace_stats, exec_trace_stats, fetch_trace_stats};
-pub(crate) use trace_stats::{Rem6DataTraceStat, Rem6ExecTraceStat, Rem6FetchTraceStat};
+use trace_stats::{branch_trace_stats, data_trace_stats, exec_trace_stats, fetch_trace_stats};
+pub(crate) use trace_stats::{
+    Rem6BranchTraceStat, Rem6DataTraceStat, Rem6ExecTraceStat, Rem6FetchTraceStat,
+};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Rem6DebugSummary {
     flags: Vec<CliDebugFlag>,
+    branch_trace: Vec<Rem6BranchTraceRecord>,
     exec_trace: Vec<Rem6ExecTraceRecord>,
     fetch_trace: Vec<Rem6FetchTraceRecord>,
     data_trace: Vec<Rem6DataTraceRecord>,
@@ -44,6 +50,23 @@ struct Rem6ExecTraceRecord {
     pc: u64,
     bytes: Vec<u8>,
     retired: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct Rem6BranchTraceRecord {
+    cpu: u32,
+    cycle: u64,
+    sequence: u64,
+    resolved_stage: &'static str,
+    pc: u64,
+    conditional: bool,
+    predicted_taken: bool,
+    predicted_target_pc: Option<u64>,
+    resolved_taken: bool,
+    resolved_target_pc: Option<u64>,
+    mispredicted: bool,
+    repair_target_pc: Option<u64>,
+    flushed_sequences: Vec<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -165,6 +188,11 @@ impl Rem6DebugSummary {
         syscall_trace: &[RiscvSyscallTraceRecord],
     ) -> Self {
         let flags = config.debug_flags().to_vec();
+        let branch_trace = if config.debug_branch_enabled() {
+            branch_trace_records(cluster, config.cores() as u32)
+        } else {
+            Vec::new()
+        };
         let exec_trace = if config.debug_exec_enabled() {
             exec_trace_records(run)
         } else {
@@ -212,6 +240,7 @@ impl Rem6DebugSummary {
         };
         Self {
             flags,
+            branch_trace,
             exec_trace,
             fetch_trace,
             data_trace,
@@ -287,6 +316,65 @@ impl Rem6DebugSummary {
 
     pub(crate) fn exec_trace_stats(&self) -> Vec<Rem6ExecTraceStat> {
         exec_trace_stats(&self.exec_trace)
+    }
+
+    pub(crate) fn branch_trace_count(&self) -> u64 {
+        self.branch_trace.len() as u64
+    }
+
+    pub(crate) fn branch_conditional_trace_count(&self) -> u64 {
+        self.branch_trace
+            .iter()
+            .filter(|record| record.conditional)
+            .count() as u64
+    }
+
+    pub(crate) fn branch_unconditional_trace_count(&self) -> u64 {
+        self.branch_trace
+            .iter()
+            .filter(|record| !record.conditional)
+            .count() as u64
+    }
+
+    pub(crate) fn branch_predicted_taken_trace_count(&self) -> u64 {
+        self.branch_trace
+            .iter()
+            .filter(|record| record.predicted_taken)
+            .count() as u64
+    }
+
+    pub(crate) fn branch_resolved_taken_trace_count(&self) -> u64 {
+        self.branch_trace
+            .iter()
+            .filter(|record| record.resolved_taken)
+            .count() as u64
+    }
+
+    pub(crate) fn branch_misprediction_trace_count(&self) -> u64 {
+        self.branch_trace
+            .iter()
+            .filter(|record| record.mispredicted)
+            .count() as u64
+    }
+
+    pub(crate) fn branch_repair_trace_count(&self) -> u64 {
+        self.branch_trace
+            .iter()
+            .filter(|record| record.repair_target_pc.is_some())
+            .count() as u64
+    }
+
+    pub(crate) fn branch_flushed_trace_count(&self) -> u64 {
+        self.branch_trace.iter().fold(0u64, |acc, record| {
+            acc.saturating_add(record.flushed_sequences.len() as u64)
+        })
+    }
+
+    pub(crate) fn branch_trace_stats(
+        &self,
+        stat_path_segment: impl Fn(&str) -> String,
+    ) -> Vec<Rem6BranchTraceStat> {
+        branch_trace_stats(&self.branch_trace, stat_path_segment)
     }
 
     pub(crate) fn fetch_trace_count(&self) -> u64 {
@@ -788,6 +876,12 @@ impl Rem6DebugSummary {
             .map(|flag| format!("\"{}\"", flag.as_str()))
             .collect::<Vec<_>>()
             .join(",");
+        let branch_trace = self
+            .branch_trace
+            .iter()
+            .map(Rem6BranchTraceRecord::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         let exec_trace = self
             .exec_trace
             .iter()
@@ -844,8 +938,8 @@ impl Rem6DebugSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"flags\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"data_trace\":[{}],\"cache_trace\":[{}],\"dram_trace\":[{}],\"fabric_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"syscall_trace\":[{}]}}",
-            flags, exec_trace, fetch_trace, data_trace, cache_trace, dram_trace, fabric_trace, memory_trace, power_trace, syscall_trace
+            "{{\"flags\":[{}],\"branch_trace\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"data_trace\":[{}],\"cache_trace\":[{}],\"dram_trace\":[{}],\"fabric_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"syscall_trace\":[{}]}}",
+            flags, branch_trace, exec_trace, fetch_trace, data_trace, cache_trace, dram_trace, fabric_trace, memory_trace, power_trace, syscall_trace
         )
     }
 
@@ -940,8 +1034,9 @@ impl Rem6DebugSummary {
             .count() as u64
     }
 
-    fn trace_counts(&self) -> [u64; 9] {
+    fn trace_counts(&self) -> [u64; 10] {
         [
+            self.branch_trace_count(),
             self.exec_trace_count(),
             self.fetch_trace_count(),
             self.data_trace_count(),
@@ -956,6 +1051,7 @@ impl Rem6DebugSummary {
 
     fn trace_count_for_flag(&self, flag: CliDebugFlag) -> u64 {
         match flag {
+            CliDebugFlag::Branch => self.branch_trace_count(),
             CliDebugFlag::Cache => self.cache_trace_count(),
             CliDebugFlag::Data => self.data_trace_count(),
             CliDebugFlag::Dram => self.dram_trace_count(),
@@ -966,6 +1062,42 @@ impl Rem6DebugSummary {
             CliDebugFlag::Power => self.power_trace_count(),
             CliDebugFlag::Syscall => self.syscall_trace_count(),
         }
+    }
+}
+
+impl Rem6BranchTraceRecord {
+    fn kind(&self) -> &'static str {
+        match self.conditional {
+            true => "conditional",
+            false => "unconditional",
+        }
+    }
+
+    fn to_json(&self) -> String {
+        let flushed_sequences = self
+            .flushed_sequences
+            .iter()
+            .map(u64::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        format!(
+            "{{\"cpu\":{},\"cycle\":{},\"sequence\":{},\"resolved_stage\":\"{}\",\"pc\":\"0x{:x}\",\"kind\":\"{}\",\"conditional\":{},\"predicted_taken\":{},\"predicted_target\":{},\"resolved_taken\":{},\"resolved_target\":{},\"mispredicted\":{},\"repair_target\":{},\"flushed_count\":{},\"flushed_sequences\":[{}]}}",
+            self.cpu,
+            self.cycle,
+            self.sequence,
+            self.resolved_stage,
+            self.pc,
+            self.kind(),
+            self.conditional,
+            self.predicted_taken,
+            optional_hex_json(self.predicted_target_pc),
+            self.resolved_taken,
+            optional_hex_json(self.resolved_target_pc),
+            self.mispredicted,
+            optional_hex_json(self.repair_target_pc),
+            self.flushed_sequences.len(),
+            flushed_sequences,
+        )
     }
 }
 
@@ -1401,6 +1533,57 @@ const fn power_state_name(state: PowerStateKind) -> &'static str {
         PowerStateKind::ClockGated => "clock_gated",
         PowerStateKind::SramRetention => "sram_retention",
         PowerStateKind::Off => "off",
+    }
+}
+
+fn optional_hex_json(value: Option<u64>) -> String {
+    value
+        .map(|value| format!("\"0x{value:x}\""))
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn branch_trace_records(cluster: &RiscvCluster, core_count: u32) -> Vec<Rem6BranchTraceRecord> {
+    let mut records = Vec::new();
+    for cpu_index in 0..core_count {
+        let cpu = rem6_cpu::CpuId::new(cpu_index);
+        let Ok(core) = cluster.core(cpu) else {
+            continue;
+        };
+        for cycle in core.in_order_pipeline_cycle_records() {
+            records.extend(cycle.branch_predictions().iter().map(|prediction| {
+                Rem6BranchTraceRecord {
+                    cpu: cpu.get(),
+                    cycle: cycle.cycle(),
+                    sequence: prediction.sequence(),
+                    resolved_stage: in_order_pipeline_stage_name(prediction.resolved_stage()),
+                    pc: prediction.fetch_pc(),
+                    conditional: prediction.is_conditional(),
+                    predicted_taken: prediction.predicted_taken(),
+                    predicted_target_pc: prediction.predicted_target_pc(),
+                    resolved_taken: prediction.resolved_taken(),
+                    resolved_target_pc: prediction.resolved_target_pc(),
+                    mispredicted: prediction.mispredicted(),
+                    repair_target_pc: prediction.repair_target_pc(),
+                    flushed_sequences: prediction
+                        .flushed()
+                        .iter()
+                        .map(|instruction| instruction.sequence())
+                        .collect(),
+                }
+            }));
+        }
+    }
+    records.sort_by_key(|record| (record.cycle, record.cpu, record.sequence, record.pc));
+    records
+}
+
+const fn in_order_pipeline_stage_name(stage: InOrderPipelineStage) -> &'static str {
+    match stage {
+        InOrderPipelineStage::Fetch1 => "fetch1",
+        InOrderPipelineStage::Fetch2 => "fetch2",
+        InOrderPipelineStage::Decode => "decode",
+        InOrderPipelineStage::Execute => "execute",
+        InOrderPipelineStage::Commit => "commit",
     }
 }
 

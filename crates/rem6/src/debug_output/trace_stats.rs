@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use super::{Rem6DataTraceRecord, Rem6ExecTraceRecord, Rem6FetchTraceRecord};
+use super::{
+    Rem6BranchTraceRecord, Rem6DataTraceRecord, Rem6ExecTraceRecord, Rem6FetchTraceRecord,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6ExecTraceStat {
@@ -18,6 +20,13 @@ pub(crate) struct Rem6FetchTraceStat {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6DataTraceStat {
+    path: String,
+    unit: &'static str,
+    value: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6BranchTraceStat {
     path: String,
     unit: &'static str,
     value: u64,
@@ -46,6 +55,18 @@ struct DataTraceStatSummary {
     load_bytes: u64,
     store_bytes: u64,
     atomic_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct BranchTraceStatSummary {
+    records: u64,
+    conditional: u64,
+    unconditional: u64,
+    predicted_taken: u64,
+    resolved_taken: u64,
+    mispredictions: u64,
+    repairs: u64,
+    flushed: u64,
 }
 
 impl Rem6ExecTraceStat {
@@ -77,6 +98,20 @@ impl Rem6FetchTraceStat {
 }
 
 impl Rem6DataTraceStat {
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub(crate) const fn unit(&self) -> &'static str {
+        self.unit
+    }
+
+    pub(crate) const fn value(&self) -> u64 {
+        self.value
+    }
+}
+
+impl Rem6BranchTraceStat {
     pub(crate) fn path(&self) -> &str {
         &self.path
     }
@@ -175,6 +210,51 @@ impl DataTraceStatSummary {
     }
 }
 
+impl BranchTraceStatSummary {
+    fn add_record(&mut self, record: &Rem6BranchTraceRecord) {
+        self.records = self.records.saturating_add(1);
+        if record.conditional {
+            self.conditional = self.conditional.saturating_add(1);
+        } else {
+            self.unconditional = self.unconditional.saturating_add(1);
+        }
+        if record.predicted_taken {
+            self.predicted_taken = self.predicted_taken.saturating_add(1);
+        }
+        if record.resolved_taken {
+            self.resolved_taken = self.resolved_taken.saturating_add(1);
+        }
+        if record.mispredicted {
+            self.mispredictions = self.mispredictions.saturating_add(1);
+        }
+        if record.repair_target_pc.is_some() {
+            self.repairs = self.repairs.saturating_add(1);
+        }
+        self.flushed = self
+            .flushed
+            .saturating_add(record.flushed_sequences.len() as u64);
+    }
+
+    fn push_stats(&self, stats: &mut Vec<Rem6BranchTraceStat>, prefix: &str) {
+        for (suffix, value) in [
+            ("records", self.records),
+            ("conditional", self.conditional),
+            ("unconditional", self.unconditional),
+            ("predicted_taken", self.predicted_taken),
+            ("resolved_taken", self.resolved_taken),
+            ("mispredictions", self.mispredictions),
+            ("repairs", self.repairs),
+            ("flushed", self.flushed),
+        ] {
+            stats.push(Rem6BranchTraceStat {
+                path: format!("{prefix}.{suffix}"),
+                unit: "Count",
+                value,
+            });
+        }
+    }
+}
+
 pub(super) fn exec_trace_stats(records: &[Rem6ExecTraceRecord]) -> Vec<Rem6ExecTraceStat> {
     let mut cpus = BTreeMap::<u32, ExecTraceStatSummary>::new();
     let mut retirement = BTreeMap::<&str, ExecTraceStatSummary>::new();
@@ -244,9 +324,48 @@ pub(super) fn data_trace_stats(
     stats
 }
 
+pub(super) fn branch_trace_stats(
+    records: &[Rem6BranchTraceRecord],
+    stat_path_segment: impl Fn(&str) -> String,
+) -> Vec<Rem6BranchTraceStat> {
+    let mut cpus = BTreeMap::<u32, BranchTraceStatSummary>::new();
+    let mut kinds = BTreeMap::<&str, BranchTraceStatSummary>::new();
+    let mut outcomes = BTreeMap::<&str, BranchTraceStatSummary>::new();
+    for record in records {
+        cpus.entry(record.cpu).or_default().add_record(record);
+        kinds.entry(record.kind()).or_default().add_record(record);
+        outcomes
+            .entry(branch_outcome_path(record.mispredicted))
+            .or_default()
+            .add_record(record);
+    }
+
+    let mut stats = Vec::new();
+    for (cpu, summary) in cpus {
+        summary.push_stats(&mut stats, &format!("cpu.cpu{cpu}"));
+    }
+    for (kind, summary) in kinds {
+        summary.push_stats(&mut stats, &format!("kind.{}", stat_path_segment(kind)));
+    }
+    for (outcome, summary) in outcomes {
+        summary.push_stats(
+            &mut stats,
+            &format!("outcome.{}", stat_path_segment(outcome)),
+        );
+    }
+    stats
+}
+
 const fn exec_retirement_path(retired: bool) -> &'static str {
     match retired {
         true => "retired",
         false => "not_retired",
+    }
+}
+
+const fn branch_outcome_path(mispredicted: bool) -> &'static str {
+    match mispredicted {
+        true => "mispredicted",
+        false => "correct",
     }
 }
