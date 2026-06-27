@@ -87,6 +87,13 @@ pub(super) fn emit_cpu_run_stats(
         )?;
         increment_stat(
             stats,
+            &format!("sim.cpu{}.pipeline.in_order.flush_cycles", core.cpu),
+            "Cycle",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_flush_cycles,
+        )?;
+        increment_stat(
+            stats,
             &format!("sim.cpu{}.pipeline.in_order.resource_blocked", core.cpu),
             "Count",
             StatResetPolicy::Monotonic,
@@ -266,6 +273,16 @@ pub(super) fn emit_cpu_run_stats(
             "Count",
             StatResetPolicy::Monotonic,
             core.in_order_pipeline_branch_prediction_flushes,
+        )?;
+        increment_stat(
+            stats,
+            &format!(
+                "sim.cpu{}.pipeline.in_order.branch_prediction_flush_cycles",
+                core.cpu
+            ),
+            "Cycle",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_branch_prediction_flush_cycles,
         )?;
         increment_stat(
             stats,

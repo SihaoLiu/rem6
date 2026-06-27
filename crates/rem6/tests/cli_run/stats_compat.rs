@@ -4835,9 +4835,12 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
         json_u64_field(&stdout, "\"conditional_branch_mispredictions\":");
     let advanced = json_u64_field(&stdout, "\"advanced\":");
     let flushed = json_u64_field(&stdout, "\"flushed\":");
+    let flush_cycles = json_u64_field(&stdout, "\"flush_cycles\":");
     let resource_blocked = json_u64_field(&stdout, "\"resource_blocked\":");
     let ordering_blocked = json_u64_field(&stdout, "\"ordering_blocked\":");
     let branch_prediction_flushes = json_u64_field(&stdout, "\"branch_prediction_flushes\":");
+    let branch_prediction_flush_cycles =
+        json_u64_field(&stdout, "\"branch_prediction_flush_cycles\":");
     let redirects = json_u64_field(&stdout, "\"redirects\":");
     let stage_flushed = json_stage_summary(&stdout, "\"stage_flushed\":{");
     let stage_branch_prediction_flushed =
@@ -4881,6 +4884,10 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
         flushed
     );
     assert_eq!(
+        stat_value(&stdout, "sim.cpu0.pipeline.in_order.flush_cycles"),
+        flush_cycles
+    );
+    assert_eq!(
         stat_value(&stdout, "sim.cpu0.pipeline.in_order.resource_blocked"),
         resource_blocked
     );
@@ -4896,6 +4903,13 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
         branch_prediction_flushes
     );
     assert_eq!(
+        stat_value(
+            &stdout,
+            "sim.cpu0.pipeline.in_order.branch_prediction_flush_cycles"
+        ),
+        branch_prediction_flush_cycles
+    );
+    assert_eq!(
         stat_value(&stdout, "sim.cpu0.pipeline.in_order.redirects"),
         redirects
     );
@@ -4906,8 +4920,13 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     assert_eq!(conditional_branch_mispredictions, branch_mispredictions);
     assert!(advanced > 0);
     assert!(flushed > 0);
+    assert!(flush_cycles > 0);
+    assert!(flush_cycles <= flushed);
     assert!(flushed >= branch_prediction_flushes);
     assert!(branch_prediction_flushes > 0);
+    assert!(branch_prediction_flush_cycles > 0);
+    assert!(branch_prediction_flush_cycles <= branch_prediction_flushes);
+    assert!(flush_cycles >= branch_prediction_flush_cycles);
     assert!(redirects > 0);
     assert_eq!(stage_flushed.iter().sum::<u64>(), flushed);
     assert!(stage_flushed.iter().any(|value| *value > 0), "{stdout}");

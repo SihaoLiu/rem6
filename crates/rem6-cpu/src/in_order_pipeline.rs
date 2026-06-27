@@ -611,6 +611,7 @@ pub struct InOrderPipelineRunSummary {
     advanced_count: usize,
     retired_count: usize,
     flushed_count: usize,
+    flush_cycle_count: usize,
     resource_blocked_count: usize,
     ordering_blocked_count: usize,
     branch_prediction_count: usize,
@@ -620,6 +621,7 @@ pub struct InOrderPipelineRunSummary {
     conditional_branch_predicted_taken_count: usize,
     conditional_branch_misprediction_count: usize,
     branch_prediction_flushed_count: usize,
+    branch_prediction_flush_cycle_count: usize,
     redirect_count: usize,
     state_changed_cycle_count: usize,
 }
@@ -633,6 +635,7 @@ impl InOrderPipelineRunSummary {
         advanced_count: 0,
         retired_count: 0,
         flushed_count: 0,
+        flush_cycle_count: 0,
         resource_blocked_count: 0,
         ordering_blocked_count: 0,
         branch_prediction_count: 0,
@@ -642,6 +645,7 @@ impl InOrderPipelineRunSummary {
         conditional_branch_predicted_taken_count: 0,
         conditional_branch_misprediction_count: 0,
         branch_prediction_flushed_count: 0,
+        branch_prediction_flush_cycle_count: 0,
         redirect_count: 0,
         state_changed_cycle_count: 0,
     };
@@ -675,6 +679,9 @@ impl InOrderPipelineRunSummary {
             summary.stall_cycle_count += cycle.stall_cycle_count();
             summary.retired_count += cycle.retired_count();
             summary.flushed_count += cycle.flushed_count();
+            if cycle.flushed_count() > 0 {
+                summary.flush_cycle_count += 1;
+            }
             summary.resource_blocked_count += cycle.resource_blocked_count();
             summary.ordering_blocked_count += cycle.ordering_blocked_count();
             summary.branch_prediction_count += cycle.branch_prediction_count();
@@ -687,6 +694,9 @@ impl InOrderPipelineRunSummary {
             summary.conditional_branch_misprediction_count +=
                 cycle.conditional_branch_misprediction_count();
             summary.branch_prediction_flushed_count += cycle.branch_prediction_flushed_count();
+            if cycle.branch_prediction_flushed_count() > 0 {
+                summary.branch_prediction_flush_cycle_count += 1;
+            }
             if cycle.redirect_target_pc().is_some() {
                 summary.redirect_count += 1;
             }
@@ -709,6 +719,7 @@ impl InOrderPipelineRunSummary {
             advanced_count: self.advanced_count + other.advanced_count,
             retired_count: self.retired_count + other.retired_count,
             flushed_count: self.flushed_count + other.flushed_count,
+            flush_cycle_count: self.flush_cycle_count + other.flush_cycle_count,
             resource_blocked_count: self.resource_blocked_count + other.resource_blocked_count,
             ordering_blocked_count: self.ordering_blocked_count + other.ordering_blocked_count,
             branch_prediction_count: self.branch_prediction_count + other.branch_prediction_count,
@@ -724,6 +735,8 @@ impl InOrderPipelineRunSummary {
                 + other.conditional_branch_misprediction_count,
             branch_prediction_flushed_count: self.branch_prediction_flushed_count
                 + other.branch_prediction_flushed_count,
+            branch_prediction_flush_cycle_count: self.branch_prediction_flush_cycle_count
+                + other.branch_prediction_flush_cycle_count,
             redirect_count: self.redirect_count + other.redirect_count,
             state_changed_cycle_count: self.state_changed_cycle_count
                 + other.state_changed_cycle_count,
@@ -762,6 +775,10 @@ impl InOrderPipelineRunSummary {
         self.flushed_count
     }
 
+    pub const fn flush_cycle_count(self) -> usize {
+        self.flush_cycle_count
+    }
+
     pub const fn resource_blocked_count(self) -> usize {
         self.resource_blocked_count
     }
@@ -796,6 +813,10 @@ impl InOrderPipelineRunSummary {
 
     pub const fn branch_prediction_flushed_count(self) -> usize {
         self.branch_prediction_flushed_count
+    }
+
+    pub const fn branch_prediction_flush_cycle_count(self) -> usize {
+        self.branch_prediction_flush_cycle_count
     }
 
     pub const fn redirect_count(self) -> usize {

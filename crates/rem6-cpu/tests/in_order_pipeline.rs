@@ -219,6 +219,11 @@ fn in_order_pipeline_prediction_mispredict_flushes_younger_work() {
     assert_eq!(summary.conditional_branch_predicted_taken_count(), 0);
     assert_eq!(summary.conditional_branch_misprediction_count(), 1);
     assert_eq!(summary.branch_prediction_flushed_count(), 2);
+    let run_summary = InOrderPipelineRunSummary::from_cycle_records([record]);
+    assert_eq!(run_summary.flushed_count(), 2);
+    assert_eq!(run_summary.flush_cycle_count(), 1);
+    assert_eq!(run_summary.branch_prediction_flushed_count(), 2);
+    assert_eq!(run_summary.branch_prediction_flush_cycle_count(), 1);
 }
 
 #[test]
@@ -712,6 +717,8 @@ fn in_order_pipeline_run_summary_aggregates_redirect_flush_and_ordering_counts()
     assert_eq!(summary.last_cycle(), Some(10));
     assert_eq!(summary.redirect_count(), 1);
     assert_eq!(summary.flushed_count(), 2);
+    assert_eq!(summary.flush_cycle_count(), 1);
+    assert_eq!(summary.branch_prediction_flush_cycle_count(), 0);
     assert_eq!(summary.resource_blocked_count(), 1);
     assert_eq!(summary.ordering_blocked_count(), 1);
 }
@@ -725,6 +732,8 @@ fn in_order_pipeline_empty_run_summary_has_no_cycle_window() {
     assert_eq!(summary.first_cycle(), None);
     assert_eq!(summary.last_cycle(), None);
     assert_eq!(summary.advanced_count(), 0);
+    assert_eq!(summary.flush_cycle_count(), 0);
+    assert_eq!(summary.branch_prediction_flush_cycle_count(), 0);
     assert_eq!(summary.state_changed_cycle_count(), 0);
 }
 
@@ -815,6 +824,7 @@ fn in_order_pipeline_prediction_summary_merges_disjoint_windows() {
     assert_eq!(merged.conditional_branch_predicted_taken_count(), 0);
     assert_eq!(merged.conditional_branch_misprediction_count(), 0);
     assert_eq!(merged.branch_prediction_flushed_count(), 2);
+    assert_eq!(merged.branch_prediction_flush_cycle_count(), 1);
 }
 
 #[test]

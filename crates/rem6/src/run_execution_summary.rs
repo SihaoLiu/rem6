@@ -197,6 +197,7 @@ pub(super) fn execution_summary(
             in_order_pipeline_retired: pipeline_summary.retired_count() as u64,
             in_order_pipeline_advanced: pipeline_summary.advanced_count() as u64,
             in_order_pipeline_flushed: pipeline_summary.flushed_count() as u64,
+            in_order_pipeline_flush_cycles: pipeline_summary.flush_cycle_count() as u64,
             in_order_pipeline_resource_blocked: pipeline_summary.resource_blocked_count() as u64,
             in_order_pipeline_ordering_blocked: pipeline_summary.ordering_blocked_count() as u64,
             in_order_pipeline_stall_cycles: pipeline_summary.stall_cycle_count(),
@@ -216,6 +217,9 @@ pub(super) fn execution_summary(
                 as u64,
             in_order_pipeline_branch_prediction_flushes: pipeline_summary
                 .branch_prediction_flushed_count()
+                as u64,
+            in_order_pipeline_branch_prediction_flush_cycles: pipeline_summary
+                .branch_prediction_flush_cycle_count()
                 as u64,
             in_order_pipeline_redirects: pipeline_summary.redirect_count() as u64,
             in_order_pipeline_branch_speculation_predictions: branch_speculation_summary

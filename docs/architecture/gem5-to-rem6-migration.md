@@ -197,8 +197,9 @@ prediction, speculation repair, and redirect summaries in normal in-order timing
 normal parallel-cluster pending-fetch resource-stall accounting consumed by CLI run stats, core checkpoints preserving the basic fetch-steering branch predictor/BTB payload, including live fetch-ahead pending branch speculation state, plus GShare, BiMode, Tournament, TAGE-SC-L, and multiperspective perceptron predictor checkpoint payloads, a RISC-V checker CPU option that runs an
 independent reference hart at retire, records structured execution/state
 mismatches, and exposes checked/mismatch counts through `rem6 run --checker-cpu`
-stats, per-stage in-order flush and branch-prediction flush attribution stats
-from real branch redirect cycle records,
+stats, per-stage in-order flush and branch-prediction flush attribution stats,
+plus aggregate flush-cycle and branch-prediction flush-cycle stats from real
+branch redirect cycle records,
 top-level `rem6 run --riscv-in-order-width` configuring the live
 five-stage in-order pipeline width, allowing wider fetch-stage overlap in real
 executed state without false younger retire, and exposing width plus max
@@ -232,9 +233,10 @@ The selected snapshot cleanup runs include conditional multiperspective-perceptr
 wrong-path branches and indirect JALR wrong-path fetch-ahead for TAGE-SC-L plus
 multiperspective-perceptron, with indirect-unconditional branch-kind lookup
 stats proving the top-level path.
-Branch redirect CLI runs now emit per-stage in-order flush counts alongside the
+Branch redirect CLI runs now emit per-stage in-order flush counts plus
+aggregate flush-cycle and branch-prediction flush-cycle counts alongside the
 aggregate flush and branch-prediction flush counters, proving squash attribution
-from the same executed cycle records.
+and cycle-level squash presence from the same executed cycle records.
 CLI `rem6 run --riscv-in-order-width 2` applies a uniform stage-width config to the live `RiscvCore` in-order pipeline snapshot and emits per-stage width plus max-in-flight occupancy stats from the executed run, with width 2 reaching two in-flight instructions in affected stages. Pending-fetch runs expose per-stage resource-blocked instruction counts whose total matches aggregate resource-blocked counts, plus per-stage resource-blocked and ordering-blocked cycle stat families derived from the same cycle records.
 RISC-V in-order timing tests cover retired taken/fall-through redirect, completed-fetch overlap, serial/translated/parallel fetch-ahead, direct `JAL` and register-target `JALR` fetch-ahead preservation, compressed fetch-ahead, wrong-path repair, pending occupancy before response completion, serial trap repair, stream-reset discard, and normal-driver fetch-response wait resource-stall records that preserve in-flight fetch state without breaking completed-fetch overlap, selected GShare, BiMode, and Tournament mutable speculative-history repair for younger fetch-ahead branch prediction plus TAGE-SC-L and multiperspective-perceptron speculative-history overlays, direct selected TAGE-SC-L and multiperspective-perceptron mutable history rollback on stale redirect cleanup, committed checkpoint snapshots, and restore-time selected-record invalidation, top-level retired Tournament predictor local/global selection stats, top-level predictor-family counter stats, selected GShare/BiMode/Tournament rollback counter stats, and selected TAGE-SC-L plus multiperspective-perceptron rollback counter stats, scalar integer M-extension multiply/divide/remainder, vector integer multiply and multiply-accumulate including fixed-point signed fractional multiply and widening variants, divide, remainder, fixed-point scaling shifts, narrowing shifts, narrow clip, and integer/widening reductions, scalar FP add/multiply/FMA/divide/sqrt, compare, conversion, and misc, and decoded vector FP add/sub/min/max, mask compare, conversion/move/merge, sign/class, multiply/FMA/divide/sqrt execute-stage latency through top-level CLI in-order cycle and stall stats, plus normal parallel-cluster pending-fetch resource stalls emitted through top-level CLI aggregate, per-stage instruction, and per-stage cycle stats. CLI tick-limit runs expose pending fetch occupancy, per-stage occupied-cycle stats, non-retire cycle advancement, and direct `JAL` target-fetch-in-flight behavior without committing the fall-through register update. These paths preserve branch speculation, pending-interrupt redirect, and data-access ordering.
 CLI `rem6 run --checker-cpu` executes the same RISC-V retire path and emits per-core checked-instruction and mismatch counters from the checker snapshot;
@@ -242,7 +244,7 @@ checker tests cover retire comparison, data writeback sync, environment-call
 completion sync, public register writes, and HTM abort rollback.
 
 **Next evidence:** Broader per-cycle in-order stalls/squashes beyond current
-resource/ordering blocked-cycle and branch-redirect flush attribution, remaining
+resource/ordering blocked-cycle and branch-redirect flush-cycle attribution, remaining
 vector load-store functional-unit latency tables, broader TAGE-SC-L and multiperspective-perceptron mutable predictor-family speculation snapshots
 and rollback beyond the current top-level conditional and indirect selected fetch-ahead slices, full checker integration for future timing CPU modes, then a
 ROB/LSQ-backed O3 run test.
