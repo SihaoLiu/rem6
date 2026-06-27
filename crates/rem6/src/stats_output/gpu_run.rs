@@ -1,7 +1,9 @@
 use rem6_stats::{StatResetPolicy, StatsRegistry};
 
 use super::dram::emit_dram_stats;
-use super::fabric::emit_fabric_virtual_network_stats;
+use super::fabric::{
+    emit_fabric_hop_stats, emit_fabric_lane_stats, emit_fabric_virtual_network_stats,
+};
 use super::text::stats_snapshot_text;
 use super::{
     emit_data_cache_prefetch_summary_stats, emit_data_cache_summary_stats, emit_transport_stats,
@@ -335,5 +337,7 @@ fn emit_gpu_fabric_stats(
         StatResetPolicy::Monotonic,
         summary.contended_lane_count() as u64,
     )?;
-    emit_fabric_virtual_network_stats(stats, prefix, summary.virtual_network_activities())
+    emit_fabric_virtual_network_stats(stats, prefix, summary.virtual_network_activities())?;
+    emit_fabric_lane_stats(stats, prefix, summary.lane_activities())?;
+    emit_fabric_hop_stats(stats, prefix, summary.hop_activities())
 }

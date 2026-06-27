@@ -129,11 +129,11 @@ impl Rem6GpuFabricSummary {
         self.profile.contended_lane_count()
     }
 
-    fn lane_activities(&self) -> &[FabricLaneActivity] {
+    pub(crate) fn lane_activities(&self) -> &[FabricLaneActivity] {
         &self.lane_activities
     }
 
-    fn hop_activities(&self) -> &[FabricHopActivity] {
+    pub(crate) fn hop_activities(&self) -> &[FabricHopActivity] {
         &self.hop_activities
     }
 
