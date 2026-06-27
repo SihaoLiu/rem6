@@ -64,6 +64,25 @@ struct Rem6DataTraceRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6DataTraceStat {
+    path: String,
+    unit: &'static str,
+    value: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct DataTraceStatSummary {
+    records: u64,
+    loads: u64,
+    stores: u64,
+    atomics: u64,
+    bytes: u64,
+    load_bytes: u64,
+    store_bytes: u64,
+    atomic_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct Rem6MemoryTraceRecord {
     channel: &'static str,
     tick: u64,
@@ -318,6 +337,13 @@ impl Rem6DebugSummary {
 
     pub(crate) fn data_atomic_trace_byte_count(&self) -> u64 {
         self.data_kind_trace_byte_count("atomic")
+    }
+
+    pub(crate) fn data_trace_stats(
+        &self,
+        stat_path_segment: impl Fn(&str) -> String,
+    ) -> Vec<Rem6DataTraceStat> {
+        data_trace_stats(&self.data_trace, stat_path_segment)
     }
 
     pub(crate) fn cache_trace_count(&self) -> u64 {
@@ -983,6 +1009,82 @@ impl Rem6DataTraceRecord {
             self.cpu, self.tick, self.kind, self.address, self.size,
         )
     }
+}
+
+impl Rem6DataTraceStat {
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub(crate) const fn unit(&self) -> &'static str {
+        self.unit
+    }
+
+    pub(crate) const fn value(&self) -> u64 {
+        self.value
+    }
+}
+
+impl DataTraceStatSummary {
+    fn add_record(&mut self, record: &Rem6DataTraceRecord) {
+        self.records = self.records.saturating_add(1);
+        self.bytes = self.bytes.saturating_add(record.size);
+        match record.kind {
+            "load" => {
+                self.loads = self.loads.saturating_add(1);
+                self.load_bytes = self.load_bytes.saturating_add(record.size);
+            }
+            "store" => {
+                self.stores = self.stores.saturating_add(1);
+                self.store_bytes = self.store_bytes.saturating_add(record.size);
+            }
+            "atomic" => {
+                self.atomics = self.atomics.saturating_add(1);
+                self.atomic_bytes = self.atomic_bytes.saturating_add(record.size);
+            }
+            other => unreachable!("unexpected data trace kind {other}"),
+        }
+    }
+
+    fn push_stats(&self, stats: &mut Vec<Rem6DataTraceStat>, prefix: &str) {
+        for (suffix, unit, value) in [
+            ("records", "Count", self.records),
+            ("loads", "Count", self.loads),
+            ("stores", "Count", self.stores),
+            ("atomics", "Count", self.atomics),
+            ("bytes", "Byte", self.bytes),
+            ("load_bytes", "Byte", self.load_bytes),
+            ("store_bytes", "Byte", self.store_bytes),
+            ("atomic_bytes", "Byte", self.atomic_bytes),
+        ] {
+            stats.push(Rem6DataTraceStat {
+                path: format!("{prefix}.{suffix}"),
+                unit,
+                value,
+            });
+        }
+    }
+}
+
+fn data_trace_stats(
+    records: &[Rem6DataTraceRecord],
+    stat_path_segment: impl Fn(&str) -> String,
+) -> Vec<Rem6DataTraceStat> {
+    let mut cpus = BTreeMap::<u32, DataTraceStatSummary>::new();
+    let mut kinds = BTreeMap::<&str, DataTraceStatSummary>::new();
+    for record in records {
+        cpus.entry(record.cpu).or_default().add_record(record);
+        kinds.entry(record.kind).or_default().add_record(record);
+    }
+
+    let mut stats = Vec::new();
+    for (cpu, summary) in cpus {
+        summary.push_stats(&mut stats, &format!("cpu.cpu{cpu}"));
+    }
+    for (kind, summary) in kinds {
+        summary.push_stats(&mut stats, &format!("kind.{}", stat_path_segment(kind)));
+    }
+    stats
 }
 
 fn memory_trace_channel_matches(record: &Rem6MemoryTraceRecord, channel: Option<&str>) -> bool {

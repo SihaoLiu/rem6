@@ -419,6 +419,7 @@ fn rem6_run_data_debug_flag_emits_real_data_access_trace() {
         atomic_bytes,
         "monotonic",
     );
+    assert_data_trace_hierarchy_stats(&stdout, trace);
     for record in trace {
         assert_eq!(record.get("cpu").and_then(Value::as_u64), Some(0));
         assert_eq!(
@@ -1666,6 +1667,82 @@ fn debug_trace_max(trace: &[Value], kind: &str, field: &str) -> u64 {
         })
         .max()
         .unwrap_or(0)
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct DataTraceStats {
+    records: u64,
+    loads: u64,
+    stores: u64,
+    atomics: u64,
+    bytes: u64,
+    load_bytes: u64,
+    store_bytes: u64,
+    atomic_bytes: u64,
+}
+
+impl DataTraceStats {
+    fn add_record(&mut self, record: &Value) {
+        let size = json_record_u64(record, "size");
+        self.records = self.records.saturating_add(1);
+        self.bytes = self.bytes.saturating_add(size);
+        match json_record_str(record, "kind") {
+            "load" => {
+                self.loads = self.loads.saturating_add(1);
+                self.load_bytes = self.load_bytes.saturating_add(size);
+            }
+            "store" => {
+                self.stores = self.stores.saturating_add(1);
+                self.store_bytes = self.store_bytes.saturating_add(size);
+            }
+            "atomic" => {
+                self.atomics = self.atomics.saturating_add(1);
+                self.atomic_bytes = self.atomic_bytes.saturating_add(size);
+            }
+            other => panic!("unexpected data trace kind {other}: {record:?}"),
+        }
+    }
+
+    fn assert_stats(&self, stdout: &str, prefix: &str) {
+        for (suffix, unit, value) in [
+            ("records", "Count", self.records),
+            ("loads", "Count", self.loads),
+            ("stores", "Count", self.stores),
+            ("atomics", "Count", self.atomics),
+            ("bytes", "Byte", self.bytes),
+            ("load_bytes", "Byte", self.load_bytes),
+            ("store_bytes", "Byte", self.store_bytes),
+            ("atomic_bytes", "Byte", self.atomic_bytes),
+        ] {
+            assert_stat(
+                stdout,
+                &format!("{prefix}.{suffix}"),
+                unit,
+                value,
+                "monotonic",
+            );
+        }
+    }
+}
+
+fn assert_data_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
+    let mut cpus = BTreeMap::<u64, DataTraceStats>::new();
+    let mut kinds = BTreeMap::<String, DataTraceStats>::new();
+    for record in trace {
+        let cpu = json_record_u64(record, "cpu");
+        let kind = json_record_str(record, "kind").to_string();
+        cpus.entry(cpu).or_default().add_record(record);
+        kinds.entry(kind).or_default().add_record(record);
+    }
+    for (cpu, stats) in cpus {
+        stats.assert_stats(stdout, &format!("sim.debug.data_trace.cpu.cpu{cpu}"));
+    }
+    for (kind, stats) in kinds {
+        stats.assert_stats(
+            stdout,
+            &format!("sim.debug.data_trace.kind.{}", stat_path_segment(&kind)),
+        );
+    }
 }
 
 fn assert_dram_trace_hierarchy_stats(stdout: &str, record: &Value) {

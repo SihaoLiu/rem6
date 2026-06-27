@@ -213,6 +213,15 @@ pub(super) fn emit_debug_stats(
             stat.value(),
         )?;
     }
+    for stat in debug.data_trace_stats(stat_path_segment) {
+        increment_stat(
+            stats,
+            &format!("sim.debug.data_trace.{}", stat.path()),
+            stat.unit(),
+            StatResetPolicy::Monotonic,
+            stat.value(),
+        )?;
+    }
     for record in debug.cache_trace_records() {
         let hierarchy = stat_path_segment(record.hierarchy());
         let level = stat_path_segment(record.level());
