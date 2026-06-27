@@ -359,6 +359,8 @@ pub(super) fn emit_debug_stats(
             .join(".");
         let prefix = format!("sim.debug.power_trace.target.{target_path}");
         for (suffix, unit, value) in [
+            ("records", "Count", target.records),
+            ("states.on", "Count", target.on_records),
             ("residency_ticks", "Tick", target.residency_ticks),
             ("dynamic_microwatts", "MicroWatt", target.dynamic_microwatts),
             ("static_microwatts", "MicroWatt", target.static_microwatts),

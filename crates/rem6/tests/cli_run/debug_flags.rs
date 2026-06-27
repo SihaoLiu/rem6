@@ -1535,6 +1535,20 @@ fn rem6_run_power_debug_flag_emits_activity_power_trace() {
         let target_prefix = power_trace_target_stat_prefix(target);
         assert_stat(
             &json_text,
+            &format!("{target_prefix}.records"),
+            "Count",
+            1,
+            "monotonic",
+        );
+        assert_stat(
+            &json_text,
+            &format!("{target_prefix}.states.on"),
+            "Count",
+            power_trace_record_state_count(record, "on"),
+            "monotonic",
+        );
+        assert_stat(
+            &json_text,
             &format!("{target_prefix}.residency_ticks"),
             "Tick",
             power_trace_record_u64(record, "residency_ticks"),
@@ -2070,6 +2084,10 @@ fn power_trace_record_u64(record: &Value, field: &str) -> u64 {
         .get(field)
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("power trace {field}"))
+}
+
+fn power_trace_record_state_count(record: &Value, state: &str) -> u64 {
+    u64::from(record.get("state").and_then(Value::as_str) == Some(state))
 }
 
 fn power_trace_record_microwatts(record: &Value, field: &str) -> u64 {

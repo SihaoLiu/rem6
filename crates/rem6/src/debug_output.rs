@@ -160,6 +160,8 @@ struct Rem6PowerTraceRecord {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6PowerTargetTraceStats<'a> {
     pub(crate) target: &'a str,
+    pub(crate) records: u64,
+    pub(crate) on_records: u64,
     pub(crate) residency_ticks: u64,
     pub(crate) dynamic_microwatts: u64,
     pub(crate) static_microwatts: u64,
@@ -1208,6 +1210,8 @@ impl<'a> Rem6PowerTargetTraceStats<'a> {
     fn from_record(record: &'a Rem6PowerTraceRecord) -> Self {
         let mut stats = Self {
             target: record.target.as_str(),
+            records: 0,
+            on_records: 0,
             residency_ticks: 0,
             dynamic_microwatts: 0,
             static_microwatts: 0,
@@ -1222,6 +1226,10 @@ impl<'a> Rem6PowerTargetTraceStats<'a> {
     }
 
     fn add_record(&mut self, record: &Rem6PowerTraceRecord) {
+        self.records = self.records.saturating_add(1);
+        if record.state == "on" {
+            self.on_records = self.on_records.saturating_add(1);
+        }
         self.residency_ticks = self.residency_ticks.saturating_add(record.residency_ticks);
         self.dynamic_microwatts = self
             .dynamic_microwatts
