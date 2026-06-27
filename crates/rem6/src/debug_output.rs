@@ -157,6 +157,19 @@ struct Rem6PowerTraceRecord {
     total_watts: String,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6PowerTargetTraceStats<'a> {
+    pub(crate) target: &'a str,
+    pub(crate) residency_ticks: u64,
+    pub(crate) dynamic_microwatts: u64,
+    pub(crate) static_microwatts: u64,
+    pub(crate) total_microwatts: u64,
+    pub(crate) dynamic_microwatt_ticks: u64,
+    pub(crate) static_microwatt_ticks: u64,
+    pub(crate) total_microwatt_ticks: u64,
+    pub(crate) max_temperature_millicelsius: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Rem6SyscallTraceRecord {
     cpu: u32,
@@ -652,22 +665,15 @@ impl Rem6DebugSummary {
         })
     }
 
-    pub(crate) fn power_target_residency_and_total_microwatt_ticks(&self) -> Vec<(&str, u64, u64)> {
-        let mut targets = BTreeMap::<&str, (u64, u64)>::new();
+    pub(crate) fn power_target_trace_stats(&self) -> Vec<Rem6PowerTargetTraceStats<'_>> {
+        let mut targets = BTreeMap::<&str, Rem6PowerTargetTraceStats<'_>>::new();
         for record in &self.power_trace {
-            let entry = targets.entry(record.target.as_str()).or_default();
-            entry.0 = entry.0.saturating_add(record.residency_ticks);
-            entry.1 = entry.1.saturating_add(watts_to_microwatt_ticks(
-                &record.total_watts,
-                record.residency_ticks,
-            ));
+            targets
+                .entry(record.target.as_str())
+                .and_modify(|stats| stats.add_record(record))
+                .or_insert_with(|| Rem6PowerTargetTraceStats::from_record(record));
         }
-        targets
-            .into_iter()
-            .map(|(target, (residency_ticks, total_microwatt_ticks))| {
-                (target, residency_ticks, total_microwatt_ticks)
-            })
-            .collect()
+        targets.into_values().collect()
     }
 
     pub(crate) fn power_max_temperature_millicelsius(&self) -> u64 {
@@ -1195,6 +1201,58 @@ impl Rem6PowerTraceRecord {
             self.static_watts,
             self.total_watts,
         )
+    }
+}
+
+impl<'a> Rem6PowerTargetTraceStats<'a> {
+    fn from_record(record: &'a Rem6PowerTraceRecord) -> Self {
+        let mut stats = Self {
+            target: record.target.as_str(),
+            residency_ticks: 0,
+            dynamic_microwatts: 0,
+            static_microwatts: 0,
+            total_microwatts: 0,
+            dynamic_microwatt_ticks: 0,
+            static_microwatt_ticks: 0,
+            total_microwatt_ticks: 0,
+            max_temperature_millicelsius: 0,
+        };
+        stats.add_record(record);
+        stats
+    }
+
+    fn add_record(&mut self, record: &Rem6PowerTraceRecord) {
+        self.residency_ticks = self.residency_ticks.saturating_add(record.residency_ticks);
+        self.dynamic_microwatts = self
+            .dynamic_microwatts
+            .saturating_add(watts_to_microwatts(&record.dynamic_watts));
+        self.static_microwatts = self
+            .static_microwatts
+            .saturating_add(watts_to_microwatts(&record.static_watts));
+        self.total_microwatts = self
+            .total_microwatts
+            .saturating_add(watts_to_microwatts(&record.total_watts));
+        self.dynamic_microwatt_ticks =
+            self.dynamic_microwatt_ticks
+                .saturating_add(watts_to_microwatt_ticks(
+                    &record.dynamic_watts,
+                    record.residency_ticks,
+                ));
+        self.static_microwatt_ticks =
+            self.static_microwatt_ticks
+                .saturating_add(watts_to_microwatt_ticks(
+                    &record.static_watts,
+                    record.residency_ticks,
+                ));
+        self.total_microwatt_ticks =
+            self.total_microwatt_ticks
+                .saturating_add(watts_to_microwatt_ticks(
+                    &record.total_watts,
+                    record.residency_ticks,
+                ));
+        self.max_temperature_millicelsius = self
+            .max_temperature_millicelsius
+            .max(celsius_to_millicelsius(&record.temperature_c));
     }
 }
 

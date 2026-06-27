@@ -350,29 +350,48 @@ pub(super) fn emit_debug_stats(
         StatResetPolicy::Monotonic,
         debug.power_max_temperature_millicelsius(),
     )?;
-    for (target, residency_ticks, total_microwatt_ticks) in
-        debug.power_target_residency_and_total_microwatt_ticks()
-    {
+    for target in debug.power_target_trace_stats() {
         let target_path = target
+            .target
             .split('.')
             .map(stat_path_segment)
             .collect::<Vec<_>>()
             .join(".");
         let prefix = format!("sim.debug.power_trace.target.{target_path}");
-        increment_stat(
-            stats,
-            &format!("{prefix}.residency_ticks"),
-            "Tick",
-            StatResetPolicy::Monotonic,
-            residency_ticks,
-        )?;
-        increment_stat(
-            stats,
-            &format!("{prefix}.total_microwatt_ticks"),
-            "MicroWattTick",
-            StatResetPolicy::Monotonic,
-            total_microwatt_ticks,
-        )?;
+        for (suffix, unit, value) in [
+            ("residency_ticks", "Tick", target.residency_ticks),
+            ("dynamic_microwatts", "MicroWatt", target.dynamic_microwatts),
+            ("static_microwatts", "MicroWatt", target.static_microwatts),
+            ("total_microwatts", "MicroWatt", target.total_microwatts),
+            (
+                "dynamic_microwatt_ticks",
+                "MicroWattTick",
+                target.dynamic_microwatt_ticks,
+            ),
+            (
+                "static_microwatt_ticks",
+                "MicroWattTick",
+                target.static_microwatt_ticks,
+            ),
+            (
+                "total_microwatt_ticks",
+                "MicroWattTick",
+                target.total_microwatt_ticks,
+            ),
+            (
+                "max_temperature_millicelsius",
+                "MilliCelsius",
+                target.max_temperature_millicelsius,
+            ),
+        ] {
+            increment_stat(
+                stats,
+                &format!("{prefix}.{suffix}"),
+                unit,
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
     }
     Ok(())
 }

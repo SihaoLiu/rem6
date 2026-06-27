@@ -821,7 +821,7 @@ emitted from real top-level fabric lane and hop activity with lane-transfer
 plus lane/hop byte and flit stats, memory-transport trace
 JSON emitted from real fetch/data `MemoryTrace` events with top-level debug trace
 record-count, request/route/request-agent, event-kind, and response-status stats, plus data-trace load/store/atomic classification stats,
-RISC-V SE syscall-trace JSON/outcome plus syscall-number/call-site/CPU/argument stats emitted from real syscall trap handling, and power-trace JSON plus target/state/residency/microwatt stats emitted from executed-run activity,
+RISC-V SE syscall-trace JSON/outcome plus syscall-number/call-site/CPU/argument stats emitted from real syscall trap handling, and power-trace JSON plus target-hierarchy/state/residency/temperature/microwatt/microwatt-tick stats emitted from executed-run activity,
 top-level debug trace record/category/active-flag/payload-byte roll-up stats emitted from the same debug summary,
 target-description-aligned register-cache seeding, top-level trace-replay
 fabric-route activity and flit counters, top-level run fabric resource roll-up, top-level trace-replay aggregate resource

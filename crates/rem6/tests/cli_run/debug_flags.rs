@@ -1542,9 +1542,51 @@ fn rem6_run_power_debug_flag_emits_activity_power_trace() {
         );
         assert_stat(
             &json_text,
+            &format!("{target_prefix}.dynamic_microwatts"),
+            "MicroWatt",
+            power_trace_record_microwatts(record, "dynamic_watts"),
+            "monotonic",
+        );
+        assert_stat(
+            &json_text,
+            &format!("{target_prefix}.static_microwatts"),
+            "MicroWatt",
+            power_trace_record_microwatts(record, "static_watts"),
+            "monotonic",
+        );
+        assert_stat(
+            &json_text,
+            &format!("{target_prefix}.total_microwatts"),
+            "MicroWatt",
+            power_trace_record_microwatts(record, "total_watts"),
+            "monotonic",
+        );
+        assert_stat(
+            &json_text,
+            &format!("{target_prefix}.dynamic_microwatt_ticks"),
+            "MicroWattTick",
+            power_trace_record_microwatt_ticks(record, "dynamic_watts"),
+            "monotonic",
+        );
+        assert_stat(
+            &json_text,
+            &format!("{target_prefix}.static_microwatt_ticks"),
+            "MicroWattTick",
+            power_trace_record_microwatt_ticks(record, "static_watts"),
+            "monotonic",
+        );
+        assert_stat(
+            &json_text,
             &format!("{target_prefix}.total_microwatt_ticks"),
             "MicroWattTick",
             power_trace_record_microwatt_ticks(record, "total_watts"),
+            "monotonic",
+        );
+        assert_stat(
+            &json_text,
+            &format!("{target_prefix}.max_temperature_millicelsius"),
+            "MilliCelsius",
+            power_trace_record_millicelsius(record, "temperature_c"),
             "monotonic",
         );
     }
@@ -2013,13 +2055,7 @@ fn power_trace_sum_u64(trace: &[Value], field: &str) -> u64 {
 fn power_trace_microwatts(trace: &[Value], field: &str) -> u64 {
     trace
         .iter()
-        .map(|record| {
-            let watts = record
-                .get(field)
-                .and_then(Value::as_f64)
-                .unwrap_or_else(|| panic!("power trace {field}"));
-            watts_to_microwatts(watts)
-        })
+        .map(|record| power_trace_record_microwatts(record, field))
         .sum()
 }
 
@@ -2036,13 +2072,17 @@ fn power_trace_record_u64(record: &Value, field: &str) -> u64 {
         .unwrap_or_else(|| panic!("power trace {field}"))
 }
 
-fn power_trace_record_microwatt_ticks(record: &Value, field: &str) -> u64 {
-    let residency_ticks = power_trace_record_u64(record, "residency_ticks");
+fn power_trace_record_microwatts(record: &Value, field: &str) -> u64 {
     let watts = record
         .get(field)
         .and_then(Value::as_f64)
         .unwrap_or_else(|| panic!("power trace {field}"));
-    watts_to_microwatts(watts).saturating_mul(residency_ticks)
+    watts_to_microwatts(watts)
+}
+
+fn power_trace_record_microwatt_ticks(record: &Value, field: &str) -> u64 {
+    let residency_ticks = power_trace_record_u64(record, "residency_ticks");
+    power_trace_record_microwatts(record, field).saturating_mul(residency_ticks)
 }
 
 fn power_trace_target_stat_prefix(target: &str) -> String {
@@ -2054,16 +2094,18 @@ fn power_trace_target_stat_prefix(target: &str) -> String {
     format!("sim.debug.power_trace.target.{target_path}")
 }
 
+fn power_trace_record_millicelsius(record: &Value, field: &str) -> u64 {
+    let celsius = record
+        .get(field)
+        .and_then(Value::as_f64)
+        .unwrap_or_else(|| panic!("power trace {field}"));
+    celsius_to_millicelsius(celsius)
+}
+
 fn power_trace_max_millicelsius(trace: &[Value], field: &str) -> u64 {
     trace
         .iter()
-        .map(|record| {
-            let celsius = record
-                .get(field)
-                .and_then(Value::as_f64)
-                .unwrap_or_else(|| panic!("power trace {field}"));
-            celsius_to_millicelsius(celsius)
-        })
+        .map(|record| power_trace_record_millicelsius(record, field))
         .max()
         .unwrap_or(0)
 }
