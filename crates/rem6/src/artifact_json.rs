@@ -1638,13 +1638,15 @@ fn dram_targets_json(targets: &[super::Rem6DramTargetSummary]) -> String {
 
 fn dram_target_json(summary: &super::Rem6DramTargetSummary) -> String {
     format!(
-        "{{\"target\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"read_row_hits\":{},\"write_row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"low_power\":{},\"ports\":[{}]}}",
+        "{{\"target\":{},\"active_ports\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"read_bytes\":{},\"write_bytes\":{},\"row_hits\":{},\"read_row_hits\":{},\"write_row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"low_power\":{},\"ports\":[{}]}}",
         summary.target,
         summary.active_ports,
         summary.active_banks,
         summary.accesses,
         summary.reads,
         summary.writes,
+        dram_target_read_bytes(summary),
+        dram_target_write_bytes(summary),
         summary.row_hits,
         summary.read_row_hits,
         summary.write_row_hits,
@@ -1679,11 +1681,13 @@ fn dram_ports_json(ports: &[super::Rem6DramPortSummary]) -> String {
 
 fn dram_port_json(summary: &super::Rem6DramPortSummary) -> String {
     format!(
-        "{{\"port\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"turnarounds\":{},\"commands\":{},\"low_power\":{},\"banks\":[{}]}}",
+        "{{\"port\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"read_bytes\":{},\"write_bytes\":{},\"turnarounds\":{},\"commands\":{},\"low_power\":{},\"banks\":[{}]}}",
         summary.port,
         summary.accesses,
         summary.reads,
         summary.writes,
+        dram_port_read_bytes(summary),
+        dram_port_write_bytes(summary),
         summary.turnarounds,
         summary.commands,
         resources::dram_low_power_json(
@@ -1698,6 +1702,22 @@ fn dram_port_json(summary: &super::Rem6DramPortSummary) -> String {
         ),
         dram_banks_json(&summary.banks),
     )
+}
+
+fn dram_target_read_bytes(summary: &super::Rem6DramTargetSummary) -> u64 {
+    summary.ports.iter().map(dram_port_read_bytes).sum()
+}
+
+fn dram_target_write_bytes(summary: &super::Rem6DramTargetSummary) -> u64 {
+    summary.ports.iter().map(dram_port_write_bytes).sum()
+}
+
+fn dram_port_read_bytes(summary: &super::Rem6DramPortSummary) -> u64 {
+    summary.banks.iter().map(|bank| bank.read_bytes).sum()
+}
+
+fn dram_port_write_bytes(summary: &super::Rem6DramPortSummary) -> u64 {
+    summary.banks.iter().map(|bank| bank.write_bytes).sum()
 }
 
 fn dram_banks_json(banks: &[super::Rem6DramBankSummary]) -> String {
