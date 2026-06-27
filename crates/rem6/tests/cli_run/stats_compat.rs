@@ -300,6 +300,26 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
             text_stat_value(&stdout, &format!("sim.cpu{cpu}.pipeline.in_order.cycles"))
         );
         assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu{cpu}.pipeline.inOrder.stallCycles")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.pipeline.in_order.stall_cycles")
+            )
+        );
+        assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu{cpu}.pipeline.inOrder.resourceBlocked")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.pipeline.in_order.resource_blocked")
+            )
+        );
+        assert_eq!(
             text_stat_decimal(&stdout, &format!("system.cpu{cpu}.commitStats0.ipc")),
             fixed_ratio(
                 text_stat_value(&stdout, &format!("system.cpu{cpu}.commitStats0.numInsts")),
@@ -648,6 +668,22 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
         assert!(
             text_stat_line(
                 &stdout,
+                &format!("system.cpu{cpu}.pipeline.inOrder.stallCycles")
+            )
+            .contains("unit=Cycle"),
+            "{stdout}"
+        );
+        assert!(
+            text_stat_line(
+                &stdout,
+                &format!("system.cpu{cpu}.pipeline.inOrder.resourceBlocked")
+            )
+            .contains("unit=Count"),
+            "{stdout}"
+        );
+        assert!(
+            text_stat_line(
+                &stdout,
                 &format!("system.cpu{cpu}.branchPred.BTBMispredicted")
             )
             .contains("unit=Count"),
@@ -806,6 +842,14 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
     assert!(!has_text_stat(&stdout, "system.cpu.branchPred.BTBHits"));
     assert!(!has_text_stat(&stdout, "system.cpu.branchPred.BTBUpdates"));
     assert!(!has_text_stat(&stdout, "system.cpu.branchPred.BTBHitRatio"));
+    assert!(!has_text_stat(
+        &stdout,
+        "system.cpu.pipeline.inOrder.stallCycles"
+    ));
+    assert!(!has_text_stat(
+        &stdout,
+        "system.cpu.pipeline.inOrder.resourceBlocked"
+    ));
     assert!(!has_text_stat(
         &stdout,
         "system.cpu.branchPred.BTBMispredicted"
@@ -4794,6 +4838,102 @@ fn rem6_run_stats_emit_in_order_resource_stalls_for_pending_parallel_fetch() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_in_order_resource_stall_aliases_from_pending_parallel_fetch() {
+    let program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-resource-stall-text-aliases", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--min-remote-delay",
+            "2",
+            "--memory-route-delay",
+            "5",
+            "--stats-format",
+            "text",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.pipeline.inOrder.stallCycles"),
+        text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.stall_cycles")
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.pipeline.inOrder.fetchWaitCycles"),
+        text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.fetch_wait_cycles")
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.pipeline.inOrder.resourceBlocked"),
+        text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.resource_blocked")
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.pipeline.inOrder.orderingBlocked"),
+        text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.ordering_blocked")
+    );
+    assert!(
+        text_stat_value(&stdout, "system.cpu.pipeline.inOrder.resourceBlocked") > 0,
+        "{stdout}"
+    );
+    for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+        assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu.pipeline.inOrder.stage.{stage}.resourceBlocked")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu0.pipeline.in_order.stage.{stage}.resource_blocked")
+            )
+        );
+        assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu.pipeline.inOrder.stage.{stage}.resourceBlockedCycles")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu0.pipeline.in_order.stage.{stage}.resource_blocked_cycles")
+            )
+        );
+    }
+    assert!(
+        text_stat_line(&stdout, "system.cpu.pipeline.inOrder.stallCycles").contains("unit=Cycle"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.pipeline.inOrder.resourceBlocked")
+            .contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(
+            &stdout,
+            "system.cpu.pipeline.inOrder.stage.fetch1.resourceBlockedCycles"
+        )
+        .contains("unit=Cycle"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     let program = riscv64_program(&[
         0x0070_0293,          // addi x5, x0, 7
@@ -5015,6 +5155,114 @@ fn rem6_run_stats_emit_in_order_branch_redirects_from_execution() {
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condPredicted\""));
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condPredictedTaken\""));
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condIncorrect\""));
+}
+
+#[test]
+fn rem6_run_text_stats_emit_in_order_branch_flush_aliases_from_redirect() {
+    let program = riscv64_program(&[
+        0x0070_0293,          // addi x5, x0, 7
+        b_type(8, 0, 0, 0x0), // beq x0, x0, target
+        0x0010_0313,          // addi x6, x0, 1
+        0x0000_0073,          // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-branch-flush-text-aliases", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "text",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.pipeline.inOrder.flushed"),
+        text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.flushed")
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.pipeline.inOrder.flushCycles"),
+        text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.flush_cycles")
+    );
+    assert_eq!(
+        text_stat_value(
+            &stdout,
+            "system.cpu.pipeline.inOrder.branchPredictionFlushes"
+        ),
+        text_stat_value(
+            &stdout,
+            "sim.cpu0.pipeline.in_order.branch_prediction_flushes"
+        )
+    );
+    assert_eq!(
+        text_stat_value(
+            &stdout,
+            "system.cpu.pipeline.inOrder.branchPredictionFlushCycles"
+        ),
+        text_stat_value(
+            &stdout,
+            "sim.cpu0.pipeline.in_order.branch_prediction_flush_cycles"
+        )
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.pipeline.inOrder.redirects"),
+        text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.redirects")
+    );
+    assert!(
+        text_stat_value(
+            &stdout,
+            "system.cpu.pipeline.inOrder.branchPredictionFlushes"
+        ) > 0,
+        "{stdout}"
+    );
+    for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+        assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu.pipeline.inOrder.stage.{stage}.flushed")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu0.pipeline.in_order.stage.{stage}.flushed")
+            )
+        );
+        assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu.pipeline.inOrder.stage.{stage}.branchPredictionFlushed")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu0.pipeline.in_order.stage.{stage}.branch_prediction_flushed")
+            )
+        );
+    }
+    assert!(
+        text_stat_line(&stdout, "system.cpu.pipeline.inOrder.flushCycles").contains("unit=Cycle"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(
+            &stdout,
+            "system.cpu.pipeline.inOrder.branchPredictionFlushes"
+        )
+        .contains("unit=Count"),
+        "{stdout}"
+    );
 }
 
 #[test]

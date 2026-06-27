@@ -47,6 +47,7 @@ fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) 
     append_gem5_dram_interface_ratio_stats(output, snapshot);
     append_gem5_dram_interface_latency_stats(output, snapshot);
     append_gem5_cpu_ratio_stats(output, snapshot);
+    append_gem5_in_order_pipeline_alias_stats(output, snapshot);
     append_gem5_branch_prediction_alias_stats(output, snapshot);
     append_gem5_l1_cache_alias_stats(output, snapshot);
     append_gem5_l1_prefetcher_formula_alias_stats(output, snapshot);
@@ -384,6 +385,74 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
     }
 }
 
+fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
+    let Some(core_count) = snapshot_value(snapshot, "sim.cores") else {
+        return;
+    };
+    for cpu in 0..core_count {
+        let alias_prefix = gem5_cpu_alias_prefix(core_count, cpu);
+        let pipeline_alias_prefix = format!("{alias_prefix}.pipeline.inOrder");
+        for (source_name, alias_name, unit) in [
+            ("advanced", "advanced", "Count"),
+            ("flushed", "flushed", "Count"),
+            ("flush_cycles", "flushCycles", "Cycle"),
+            ("resource_blocked", "resourceBlocked", "Count"),
+            ("ordering_blocked", "orderingBlocked", "Count"),
+            ("stall_cycles", "stallCycles", "Cycle"),
+            ("fetch_wait_cycles", "fetchWaitCycles", "Cycle"),
+            ("data_wait_cycles", "dataWaitCycles", "Cycle"),
+            (
+                "branch_prediction_flushes",
+                "branchPredictionFlushes",
+                "Count",
+            ),
+            (
+                "branch_prediction_flush_cycles",
+                "branchPredictionFlushCycles",
+                "Cycle",
+            ),
+            ("redirects", "redirects", "Count"),
+        ] {
+            append_derived_stat_from_snapshot(
+                output,
+                snapshot,
+                &format!("sim.cpu{cpu}.pipeline.in_order.{source_name}"),
+                &format!("{pipeline_alias_prefix}.{alias_name}"),
+                unit,
+            );
+        }
+        for stage in ["fetch1", "fetch2", "decode", "execute", "commit"] {
+            for (source_name, alias_name, unit) in [
+                ("occupied_cycles", "occupiedCycles", "Cycle"),
+                ("resource_blocked", "resourceBlocked", "Count"),
+                ("resource_blocked_cycles", "resourceBlockedCycles", "Cycle"),
+                ("ordering_blocked", "orderingBlocked", "Count"),
+                ("ordering_blocked_cycles", "orderingBlockedCycles", "Cycle"),
+                ("flushed", "flushed", "Count"),
+                ("flushed_cycles", "flushedCycles", "Cycle"),
+                (
+                    "branch_prediction_flushed",
+                    "branchPredictionFlushed",
+                    "Count",
+                ),
+                (
+                    "branch_prediction_flushed_cycles",
+                    "branchPredictionFlushedCycles",
+                    "Cycle",
+                ),
+            ] {
+                append_derived_stat_from_snapshot(
+                    output,
+                    snapshot,
+                    &format!("sim.cpu{cpu}.pipeline.in_order.stage.{stage}.{source_name}"),
+                    &format!("{pipeline_alias_prefix}.stage.{stage}.{alias_name}"),
+                    unit,
+                );
+            }
+        }
+    }
+}
+
 fn format_sim_seconds(final_tick: u64, sim_freq: u64) -> String {
     let whole = final_tick / sim_freq;
     let remainder = final_tick % sim_freq;
@@ -645,9 +714,34 @@ fn append_gem5_l1_prefetcher_formula_alias_stats_for(
 }
 
 fn append_derived_count_stat(output: &mut String, path: &str, value: u64) {
+    append_derived_unit_stat(output, path, value, "Count");
+}
+
+fn append_derived_cycle_stat(output: &mut String, path: &str, value: u64) {
+    append_derived_unit_stat(output, path, value, "Cycle");
+}
+
+fn append_derived_unit_stat(output: &mut String, path: &str, value: u64, unit: &str) {
     output.push_str(&format!(
-        "{path:<64} {value:>20} # kind=derived unit=Count reset_policy=monotonic\n"
+        "{path:<64} {value:>20} # kind=derived unit={unit} reset_policy=monotonic\n"
     ));
+}
+
+fn append_derived_stat_from_snapshot(
+    output: &mut String,
+    snapshot: &StatSnapshot,
+    source_path: &str,
+    alias_path: &str,
+    unit: &str,
+) {
+    let Some(value) = snapshot_value(snapshot, source_path) else {
+        return;
+    };
+    match unit {
+        "Count" => append_derived_count_stat(output, alias_path, value),
+        "Cycle" => append_derived_cycle_stat(output, alias_path, value),
+        _ => append_derived_unit_stat(output, alias_path, value, unit),
+    }
 }
 
 fn append_derived_ratio_stat(output: &mut String, path: &str, numerator: u64, denominator: u64) {
