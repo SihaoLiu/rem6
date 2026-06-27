@@ -5767,6 +5767,89 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
 }
 
 #[test]
+fn rem6_run_stats_emit_ras_target_provider_from_real_call_return_fetch() {
+    let program = riscv64_program(&[
+        j_type(12, 1),              // jal x1, function
+        i_type(7, 0, 0x0, 5, 0x13), // addi x5, x0, 7
+        0x0000_0073,                // ecall
+        i_type(1, 0, 0x0, 6, 0x13), // function: addi x6, x0, 1
+        i_type(0, 1, 0x0, 0, 0x67), // jalr x0, 0(x1)
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-branch-ras-provider", &elf);
+
+    let run = |stats_format: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "120",
+                "--memory-route-delay",
+                "1",
+                "--riscv-branch-lookahead",
+                "2",
+                "--stats-format",
+                stats_format,
+                "--execute",
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+
+    let stdout = run("json");
+    let ras_provider = stat_value(&stdout, "sim.cpu0.branch_predictor.target_provider.ras");
+    assert!(ras_provider > 0, "{stdout}");
+    assert_eq!(
+        stat_value(&stdout, "sim.cpu0.branch_predictor.target_provider.total"),
+        stat_value(
+            &stdout,
+            "sim.cpu0.branch_predictor.target_provider.no_target"
+        ) + stat_value(&stdout, "sim.cpu0.branch_predictor.target_provider.btb")
+            + ras_provider
+            + stat_value(
+                &stdout,
+                "sim.cpu0.branch_predictor.target_provider.indirect"
+            )
+    );
+    assert!(
+        stdout.contains("\"x5\":\"0x7\""),
+        "return path did not execute after RAS-predicted jalr:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("\"x6\":\"0x1\""),
+        "function body did not execute before RAS-predicted jalr:\n{stdout}"
+    );
+
+    let stdout = run("text");
+    let ras_provider = text_stat_value(&stdout, "sim.cpu0.branch_predictor.target_provider.ras");
+    assert!(ras_provider > 0, "{stdout}");
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.targetProvider_0::RAS"),
+        ras_provider
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.targetProvider_0::total"),
+        text_stat_value(&stdout, "sim.cpu0.branch_predictor.target_provider.total")
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.branchPred.targetProvider_0::RAS")
+            .contains("unit=Count"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn rem6_run_text_stats_do_not_count_unconditional_jumps_as_cond_branch_predictions() {
     let program = riscv64_program(&[
         0x0070_0293,  // addi x5, x0, 7

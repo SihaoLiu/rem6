@@ -3,6 +3,8 @@ use std::fmt;
 
 use rem6_memory::Address;
 
+use crate::return_address_stack::{ReturnAddressStackError, ReturnAddressStackOperationId};
+
 const WEAK_NOT_TAKEN: u8 = 1;
 const TAKEN_THRESHOLD: u8 = 2;
 const STRONGLY_TAKEN: u8 = 3;
@@ -79,6 +81,36 @@ pub enum BranchPredictorError {
     },
     InvalidBranchTargetBufferCheckpoint {
         error: BranchTargetBufferError,
+    },
+    InvalidReturnAddressStackCheckpoint {
+        error: ReturnAddressStackError,
+    },
+    InvalidCheckpointReturnAddressStackDepth {
+        depth: usize,
+        entries: usize,
+    },
+    InvalidCheckpointReturnAddressStackOperationOrder {
+        id: ReturnAddressStackOperationId,
+        expected: ReturnAddressStackOperationId,
+    },
+    InvalidCheckpointReturnAddressStackOperation {
+        id: ReturnAddressStackOperationId,
+    },
+    InvalidCheckpointReturnAddressStackNextOperation {
+        next: ReturnAddressStackOperationId,
+        pending: ReturnAddressStackOperationId,
+    },
+    InvalidCheckpointReturnAddressStackNextOperationOverflow {
+        next: ReturnAddressStackOperationId,
+    },
+    DuplicateCheckpointReturnAddressStackOperation {
+        id: ReturnAddressStackOperationId,
+    },
+    MissingCheckpointReturnAddressStackOperation {
+        id: ReturnAddressStackOperationId,
+    },
+    UnmappedCheckpointReturnAddressStackOperation {
+        id: ReturnAddressStackOperationId,
     },
     DuplicateCheckpointSpeculationSequence {
         sequence: u64,
@@ -193,6 +225,51 @@ impl fmt::Display for BranchPredictorError {
                 formatter,
                 "branch predictor checkpoint has invalid branch target buffer snapshot: {error}"
             ),
+            Self::InvalidReturnAddressStackCheckpoint { error } => write!(
+                formatter,
+                "branch predictor checkpoint has invalid return-address stack snapshot: {error}"
+            ),
+            Self::InvalidCheckpointReturnAddressStackDepth { depth, entries } => write!(
+                formatter,
+                "branch predictor checkpoint return-address stack has depth {depth}; expected at most {entries}"
+            ),
+            Self::InvalidCheckpointReturnAddressStackOperationOrder { id, expected } => write!(
+                formatter,
+                "branch predictor checkpoint return-address stack operation {}; expected {}",
+                id.get(),
+                expected.get()
+            ),
+            Self::InvalidCheckpointReturnAddressStackOperation { id } => write!(
+                formatter,
+                "branch predictor checkpoint return-address stack operation {} is inconsistent",
+                id.get()
+            ),
+            Self::InvalidCheckpointReturnAddressStackNextOperation { next, pending } => write!(
+                formatter,
+                "branch predictor checkpoint next return-address stack operation {} does not advance beyond pending operation {}",
+                next.get(),
+                pending.get()
+            ),
+            Self::InvalidCheckpointReturnAddressStackNextOperationOverflow { next } => write!(
+                formatter,
+                "branch predictor checkpoint next return-address stack operation {} cannot advance",
+                next.get()
+            ),
+            Self::DuplicateCheckpointReturnAddressStackOperation { id } => write!(
+                formatter,
+                "branch predictor checkpoint repeats return-address stack operation id {}",
+                id.get()
+            ),
+            Self::MissingCheckpointReturnAddressStackOperation { id } => write!(
+                formatter,
+                "branch predictor checkpoint maps unknown return-address stack operation id {}",
+                id.get()
+            ),
+            Self::UnmappedCheckpointReturnAddressStackOperation { id } => write!(
+                formatter,
+                "branch predictor checkpoint leaves return-address stack operation id {} without an active sequence",
+                id.get()
+            ),
             Self::DuplicateCheckpointSpeculationSequence { sequence } => write!(
                 formatter,
                 "branch predictor checkpoint repeats active speculation sequence {sequence}"
@@ -216,7 +293,15 @@ impl fmt::Display for BranchPredictorError {
     }
 }
 
-impl Error for BranchPredictorError {}
+impl Error for BranchPredictorError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::InvalidBranchTargetBufferCheckpoint { error } => Some(error),
+            Self::InvalidReturnAddressStackCheckpoint { error } => Some(error),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum BranchTargetSafetyProfile {

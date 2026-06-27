@@ -140,6 +140,27 @@ impl ReturnAddressStack {
         )
     }
 
+    pub fn pop_then_push_speculative(
+        &mut self,
+        return_address: Address,
+    ) -> ReturnAddressStackOperation {
+        let stack_before = self.stack.clone();
+        let predicted_return = self.stack.pop();
+        if self.stack.len() == self.config.entries() {
+            self.stack.remove(0);
+        }
+        self.stack.push(return_address);
+        let stack_after = self.stack.clone();
+
+        self.record_operation(
+            ReturnAddressStackOperationKind::PopThenPush,
+            Some(return_address),
+            predicted_return,
+            stack_before,
+            stack_after,
+        )
+    }
+
     pub fn commit_operation(
         &mut self,
         id: ReturnAddressStackOperationId,
@@ -248,6 +269,7 @@ impl ReturnAddressStackOperationId {
 pub enum ReturnAddressStackOperationKind {
     Push,
     Pop,
+    PopThenPush,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -261,6 +283,24 @@ pub struct ReturnAddressStackOperation {
 }
 
 impl ReturnAddressStackOperation {
+    pub(crate) fn from_checkpoint_parts(
+        id: ReturnAddressStackOperationId,
+        kind: ReturnAddressStackOperationKind,
+        pushed_address: Option<Address>,
+        predicted_return: Option<Address>,
+        stack_before: Vec<Address>,
+        stack_after: Vec<Address>,
+    ) -> Self {
+        Self {
+            id,
+            kind,
+            pushed_address,
+            predicted_return,
+            stack_before,
+            stack_after,
+        }
+    }
+
     pub const fn id(&self) -> ReturnAddressStackOperationId {
         self.id
     }
@@ -324,6 +364,20 @@ pub struct ReturnAddressStackSnapshot {
 }
 
 impl ReturnAddressStackSnapshot {
+    pub(crate) fn from_checkpoint_parts(
+        config: ReturnAddressStackConfig,
+        stack: Vec<Address>,
+        next_operation: ReturnAddressStackOperationId,
+        pending_operations: Vec<ReturnAddressStackOperation>,
+    ) -> Self {
+        Self {
+            config,
+            stack,
+            next_operation,
+            pending_operations,
+        }
+    }
+
     pub const fn config(&self) -> &ReturnAddressStackConfig {
         &self.config
     }

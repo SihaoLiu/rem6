@@ -100,6 +100,7 @@ pub const DEFAULT_RISCV_PMP_ENTRIES: usize = 16;
 pub const DEFAULT_RISCV_BRANCH_PREDICTOR_ENTRIES: usize = 1024;
 pub const DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ENTRIES: usize = 128;
 pub const DEFAULT_RISCV_BRANCH_TARGET_BUFFER_ASSOCIATIVITY: usize = 4;
+pub const DEFAULT_RISCV_RETURN_ADDRESS_STACK_ENTRIES: usize = 16;
 pub const DEFAULT_RISCV_GSHARE_BRANCH_PREDICTOR_ENTRIES: usize = 1024;
 pub const DEFAULT_RISCV_BIMODE_CHOICE_ENTRIES: usize = 1024;
 pub const DEFAULT_RISCV_BIMODE_GLOBAL_ENTRIES: usize = 1024;
@@ -954,7 +955,7 @@ impl RiscvCore {
 
     pub fn branch_predictor_checkpoint_payload(&self) -> BranchPredictorCheckpointPayload {
         let state = self.state.lock().expect("riscv core lock");
-        BranchPredictorCheckpointPayload::from_snapshots_with_branch_target_predictions(
+        BranchPredictorCheckpointPayload::from_snapshots_with_branch_target_predictions_and_return_address_stack(
             state.branch_predictor.snapshot(),
             state.branch_target_buffer.snapshot(),
             state
@@ -965,6 +966,11 @@ impl RiscvCore {
                 .branch_target_predictions
                 .iter()
                 .map(|(sequence, prediction)| (*sequence, *prediction)),
+            state.return_address_stack.snapshot(),
+            state
+                .return_address_stack_operations
+                .iter()
+                .map(|(sequence, operation)| (*sequence, *operation)),
         )
         .expect("captured RISC-V branch predictor checkpoint is internally consistent")
     }
@@ -993,8 +999,14 @@ impl RiscvCore {
         &self,
         payload: BranchPredictorCheckpointPayload,
     ) -> Result<(), BranchPredictorError> {
-        let (snapshot, branch_target_buffer, active_speculations, active_branch_target_predictions) =
-            payload.into_parts_with_branch_target_predictions();
+        let (
+            snapshot,
+            branch_target_buffer,
+            return_address_stack,
+            active_speculations,
+            active_branch_target_predictions,
+            active_return_address_stack_operations,
+        ) = payload.into_parts_with_branch_target_predictions();
         let mut state = self.state.lock().expect("riscv core lock");
         let mut restored_branch_predictor = state.branch_predictor.clone();
         restored_branch_predictor.restore(&snapshot)?;
@@ -1002,17 +1014,26 @@ impl RiscvCore {
         restored_branch_target_buffer
             .restore(&branch_target_buffer)
             .map_err(|error| BranchPredictorError::InvalidBranchTargetBufferCheckpoint { error })?;
+        let mut restored_return_address_stack = state.return_address_stack.clone();
+        restored_return_address_stack
+            .restore(&return_address_stack)
+            .map_err(|error| BranchPredictorError::InvalidReturnAddressStackCheckpoint { error })?;
         state
             .rollback_all_selected_branch_speculations()
             .expect("selected branch speculation rollback is internally consistent");
         state.branch_predictor = restored_branch_predictor;
         state.branch_target_buffer = restored_branch_target_buffer;
+        state.return_address_stack = restored_return_address_stack;
         state.branch_speculations.clear();
         state.branch_speculations.extend(active_speculations);
         state.branch_target_predictions.clear();
         state
             .branch_target_predictions
             .extend(active_branch_target_predictions);
+        state.return_address_stack_operations.clear();
+        state
+            .return_address_stack_operations
+            .extend(active_return_address_stack_operations);
         Ok(())
     }
 
@@ -1026,7 +1047,11 @@ impl RiscvCore {
         let mut branch_target_buffer = state.branch_target_buffer.clone();
         branch_target_buffer
             .restore(payload.branch_target_buffer_snapshot())
-            .map_err(|error| BranchPredictorError::InvalidBranchTargetBufferCheckpoint { error })
+            .map_err(|error| BranchPredictorError::InvalidBranchTargetBufferCheckpoint { error })?;
+        let mut return_address_stack = state.return_address_stack.clone();
+        return_address_stack
+            .restore(payload.return_address_stack_snapshot())
+            .map_err(|error| BranchPredictorError::InvalidReturnAddressStackCheckpoint { error })
     }
 
     pub fn gshare_branch_predictor_snapshot(&self) -> GShareBranchPredictorSnapshot {
@@ -1178,7 +1203,9 @@ struct RiscvCoreState {
     checker: Option<riscv_checker::RiscvCheckerCpu>,
     branch_predictor: BranchPredictor,
     branch_target_buffer: BranchTargetBuffer,
+    return_address_stack: ReturnAddressStack,
     branch_speculations: BTreeMap<u64, BranchSpeculationId>,
+    return_address_stack_operations: BTreeMap<u64, ReturnAddressStackOperationId>,
     selected_branch_speculations: BTreeMap<u64, RiscvSelectedBranchSpeculation>,
     selected_tage_sc_l_branch_predictor_rollbacks: u64,
     selected_multiperspective_perceptron_rollbacks: u64,
@@ -1232,7 +1259,12 @@ impl RiscvCoreState {
                 )
                 .expect("default RISC-V branch target buffer config is valid"),
             ),
+            return_address_stack: ReturnAddressStack::new(
+                ReturnAddressStackConfig::new(DEFAULT_RISCV_RETURN_ADDRESS_STACK_ENTRIES)
+                    .expect("default RISC-V return-address stack config is valid"),
+            ),
             branch_speculations: BTreeMap::new(),
+            return_address_stack_operations: BTreeMap::new(),
             selected_branch_speculations: BTreeMap::new(),
             selected_tage_sc_l_branch_predictor_rollbacks: 0,
             selected_multiperspective_perceptron_rollbacks: 0,
@@ -1282,9 +1314,74 @@ impl RiscvCoreState {
     fn discard_branch_speculations(&mut self) {
         self.rollback_all_selected_branch_speculations()
             .expect("selected branch speculation rollback is internally consistent");
+        self.discard_return_address_stack_speculations();
         self.branch_predictor.discard_all_speculations();
         self.branch_speculations.clear();
         self.branch_target_predictions.clear();
+    }
+
+    fn discard_return_address_stack_speculations(&mut self) {
+        while let Some(operation_id) = self
+            .return_address_stack
+            .pending_operations()
+            .first()
+            .map(|operation| operation.id())
+        {
+            self.return_address_stack
+                .squash_from(operation_id)
+                .expect("pending RAS operation is known");
+        }
+        self.return_address_stack_operations.clear();
+    }
+
+    fn commit_return_address_stack_speculation(
+        &mut self,
+        sequence: u64,
+    ) -> Result<(), RiscvCpuError> {
+        let Some(operation_id) = self.return_address_stack_operations.remove(&sequence) else {
+            return Ok(());
+        };
+        self.return_address_stack
+            .commit_operation(operation_id)
+            .map_err(RiscvCpuError::ReturnAddressStack)?;
+        Ok(())
+    }
+
+    fn squash_return_address_stack_speculation(
+        &mut self,
+        sequence: u64,
+    ) -> Result<(), RiscvCpuError> {
+        let Some(operation_id) = self.return_address_stack_operations.remove(&sequence) else {
+            return Ok(());
+        };
+        let repair = self
+            .return_address_stack
+            .squash_from(operation_id)
+            .map_err(RiscvCpuError::ReturnAddressStack)?;
+        let removed = repair
+            .removed_youngers()
+            .iter()
+            .map(|operation| operation.id())
+            .collect::<BTreeSet<_>>();
+        self.return_address_stack_operations
+            .retain(|_, operation| !removed.contains(operation));
+        Ok(())
+    }
+
+    fn squash_inactive_return_address_stack_speculations(
+        &mut self,
+        active_sequences: &BTreeSet<u64>,
+    ) -> Result<(), RiscvCpuError> {
+        let inactive = self
+            .return_address_stack_operations
+            .keys()
+            .filter(|sequence| !active_sequences.contains(sequence))
+            .copied()
+            .collect::<Vec<_>>();
+        for sequence in inactive {
+            self.squash_return_address_stack_speculation(sequence)?;
+        }
+        Ok(())
     }
 }
 

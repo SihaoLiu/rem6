@@ -20,6 +20,39 @@ fn btb(entries: usize, associativity: usize) -> BranchTargetBuffer {
     BranchTargetBuffer::new(BranchTargetBufferConfig::new(entries, associativity).unwrap())
 }
 
+fn single_pending_ras_checkpoint_payload() -> (Vec<u8>, ReturnAddressStackOperationId, usize) {
+    const HEADER_BYTES: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4 * 2;
+    const CHECKPOINT_TARGET_BYTES: usize = 1 + 8;
+    const PENDING_SPECULATION_BYTES: usize = 49;
+    const BTB_HEADER_BYTES: usize = 4 * 2 + 8 * 6;
+    const BTB_ENTRY_BYTES: usize = 1 + 8 + 8 + 1 + 8;
+    const RAS_HEADER_BYTES: usize = 4 * 3 + 8;
+
+    let mut predictor = predictor(8);
+    let speculation = predictor.predict_speculative(Address::new(0x1000));
+    let mut return_address_stack = ras(4);
+    let operation = return_address_stack.push_speculative(Address::new(0x1004));
+    let payload = BranchPredictorCheckpointPayload::from_snapshots_with_branch_target_predictions_and_return_address_stack(
+        predictor.snapshot(),
+        btb(8, 2).snapshot(),
+        [(21, speculation.id())],
+        std::iter::empty::<(u64, BranchTargetPrediction)>(),
+        return_address_stack.snapshot(),
+        [(21, operation.id())],
+    )
+    .unwrap()
+    .encode();
+    let operation_start = HEADER_BYTES
+        + 8
+        + 8 * CHECKPOINT_TARGET_BYTES
+        + PENDING_SPECULATION_BYTES
+        + BTB_HEADER_BYTES
+        + 8 * BTB_ENTRY_BYTES
+        + RAS_HEADER_BYTES
+        + 8;
+    (payload, operation.id(), operation_start)
+}
+
 #[test]
 fn two_bit_predictor_learns_taken_target() {
     let mut predictor = predictor(8);
@@ -385,8 +418,12 @@ fn checkpoint_payload_round_trips_snapshot_and_active_mapping() {
     );
     branch_target_buffer.lookup(taken_pc, BranchTargetKind::DirectConditional);
     let branch_target_buffer_snapshot = branch_target_buffer.snapshot();
+    let mut return_address_stack = ras(4);
+    let call_operation = return_address_stack.push_speculative(Address::new(0x1004));
+    let return_operation = return_address_stack.pop_speculative();
+    let return_address_stack_snapshot = return_address_stack.snapshot();
 
-    let payload = BranchPredictorCheckpointPayload::from_snapshots_with_branch_target_predictions(
+    let payload = BranchPredictorCheckpointPayload::from_snapshots_with_branch_target_predictions_and_return_address_stack(
         snapshot.clone(),
         branch_target_buffer_snapshot.clone(),
         [(22, second.id()), (21, first.id())],
@@ -396,6 +433,11 @@ fn checkpoint_payload_round_trips_snapshot_and_active_mapping() {
                 21,
                 BranchTargetPrediction::new(true, Some(Address::new(0x1080))),
             ),
+        ],
+        return_address_stack_snapshot.clone(),
+        [
+            (22, return_operation.id()),
+            (21, call_operation.id()),
         ],
     )
     .unwrap();
@@ -414,6 +456,10 @@ fn checkpoint_payload_round_trips_snapshot_and_active_mapping() {
             (22, BranchTargetPrediction::new(false, None)),
         ]
     );
+    assert_eq!(
+        payload.active_return_address_stack_operations(),
+        &[(21, call_operation.id()), (22, return_operation.id()),]
+    );
 
     let decoded = BranchPredictorCheckpointPayload::decode(&payload.encode()).unwrap();
 
@@ -427,13 +473,67 @@ fn checkpoint_payload_round_trips_snapshot_and_active_mapping() {
         decoded.active_branch_target_predictions(),
         payload.active_branch_target_predictions()
     );
+    assert_eq!(
+        decoded.return_address_stack_snapshot(),
+        &return_address_stack_snapshot
+    );
+    assert_eq!(
+        decoded.active_return_address_stack_operations(),
+        payload.active_return_address_stack_operations()
+    );
+}
+
+#[test]
+fn checkpoint_payload_round_trips_return_address_stack_operation_id_gaps_after_squash() {
+    let mut predictor =
+        BranchPredictor::new(BranchPredictorConfig::with_history_bits(8, 3).unwrap());
+    let first = predictor.predict_speculative(Address::new(0x1000));
+    let second = predictor.predict_speculative(Address::new(0x1004));
+    let mut return_address_stack = ras(4);
+    let first_ras = return_address_stack.push_speculative(Address::new(0x1004));
+    let squashed = return_address_stack.push_speculative(Address::new(0x2004));
+    let _removed_younger = return_address_stack.push_speculative(Address::new(0x3004));
+    return_address_stack.squash_from(squashed.id()).unwrap();
+    let second_ras = return_address_stack.push_speculative(Address::new(0x4004));
+    assert_eq!(first_ras.id(), ReturnAddressStackOperationId::new(0));
+    assert_eq!(second_ras.id(), ReturnAddressStackOperationId::new(3));
+
+    let payload = BranchPredictorCheckpointPayload::from_snapshots_with_branch_target_predictions_and_return_address_stack(
+        predictor.snapshot(),
+        btb(8, 2).snapshot(),
+        [(21, first.id()), (22, second.id())],
+        std::iter::empty::<(u64, BranchTargetPrediction)>(),
+        return_address_stack.snapshot(),
+        [(21, first_ras.id()), (22, second_ras.id())],
+    )
+    .unwrap();
+
+    let decoded = BranchPredictorCheckpointPayload::decode(&payload.encode()).unwrap();
+
+    assert_eq!(
+        decoded
+            .return_address_stack_snapshot()
+            .pending_operations()
+            .iter()
+            .map(|operation| operation.id())
+            .collect::<Vec<_>>(),
+        vec![
+            ReturnAddressStackOperationId::new(0),
+            ReturnAddressStackOperationId::new(3)
+        ]
+    );
+    assert_eq!(
+        decoded.active_return_address_stack_operations(),
+        &[(21, first_ras.id()), (22, second_ras.id())]
+    );
 }
 
 #[test]
 fn checkpoint_payload_decodes_v2_active_mapping_without_branch_target_predictions() {
     const VERSION_OFFSET: usize = 4;
+    const RAS_HEADER_BYTES: usize = 4 * 3 + 8;
     const ACTIVE_SPECULATION_V2_BYTES: usize = 16;
-    const ACTIVE_SPECULATION_V3_BYTES: usize = 27;
+    const ACTIVE_SPECULATION_V4_BYTES: usize = 36;
     let mut predictor =
         BranchPredictor::new(BranchPredictorConfig::with_history_bits(8, 3).unwrap());
     let first = predictor.predict_speculative(Address::new(0x1000));
@@ -444,11 +544,11 @@ fn checkpoint_payload_decodes_v2_active_mapping_without_branch_target_prediction
     )
     .unwrap();
     let encoded = payload.encode();
-    let active_start = encoded.len() - ACTIVE_SPECULATION_V3_BYTES * 2;
-    let mut v2_encoded = encoded[..active_start].to_vec();
+    let active_start = encoded.len() - ACTIVE_SPECULATION_V4_BYTES * 2;
+    let mut v2_encoded = encoded[..active_start - RAS_HEADER_BYTES].to_vec();
     v2_encoded[VERSION_OFFSET] = 2;
     for active_index in 0..2 {
-        let entry_start = active_start + active_index * ACTIVE_SPECULATION_V3_BYTES;
+        let entry_start = active_start + active_index * ACTIVE_SPECULATION_V4_BYTES;
         v2_encoded
             .extend_from_slice(&encoded[entry_start..entry_start + ACTIVE_SPECULATION_V2_BYTES]);
     }
@@ -457,6 +557,53 @@ fn checkpoint_payload_decodes_v2_active_mapping_without_branch_target_prediction
 
     assert_eq!(decoded.active_speculations(), payload.active_speculations());
     assert_eq!(decoded.active_branch_target_predictions(), &[]);
+}
+
+#[test]
+fn checkpoint_payload_decodes_v3_active_mapping_with_branch_target_predictions_without_ras() {
+    const VERSION_OFFSET: usize = 4;
+    const RAS_HEADER_BYTES: usize = 4 * 3 + 8;
+    const ACTIVE_SPECULATION_V3_BYTES: usize = 27;
+    const ACTIVE_SPECULATION_V4_BYTES: usize = 36;
+    let mut predictor =
+        BranchPredictor::new(BranchPredictorConfig::with_history_bits(8, 3).unwrap());
+    let first = predictor.predict_speculative(Address::new(0x1000));
+    let second = predictor.predict_speculative(Address::new(0x1004));
+    let payload = BranchPredictorCheckpointPayload::from_snapshots_with_branch_target_predictions(
+        predictor.snapshot(),
+        btb(8, 2).snapshot(),
+        [(21, first.id()), (22, second.id())],
+        [
+            (
+                21,
+                BranchTargetPrediction::new(true, Some(Address::new(0x1080))),
+            ),
+            (22, BranchTargetPrediction::new(false, None)),
+        ],
+    )
+    .unwrap();
+    let encoded = payload.encode();
+    let active_start = encoded.len() - ACTIVE_SPECULATION_V4_BYTES * 2;
+    let mut v3_encoded = encoded[..active_start - RAS_HEADER_BYTES].to_vec();
+    v3_encoded[VERSION_OFFSET] = 3;
+    for active_index in 0..2 {
+        let entry_start = active_start + active_index * ACTIVE_SPECULATION_V4_BYTES;
+        v3_encoded
+            .extend_from_slice(&encoded[entry_start..entry_start + ACTIVE_SPECULATION_V3_BYTES]);
+    }
+
+    let decoded = BranchPredictorCheckpointPayload::decode(&v3_encoded).unwrap();
+
+    assert_eq!(decoded.active_speculations(), payload.active_speculations());
+    assert_eq!(
+        decoded.active_branch_target_predictions(),
+        payload.active_branch_target_predictions()
+    );
+    assert_eq!(decoded.active_return_address_stack_operations(), &[]);
+    assert!(decoded
+        .return_address_stack_snapshot()
+        .pending_operations()
+        .is_empty());
 }
 
 #[test]
@@ -577,7 +724,7 @@ fn checkpoint_payload_rejects_duplicate_btb_entry_pc() {
 }
 
 #[test]
-fn checkpoint_payload_rejects_v3_pending_count_before_allocation() {
+fn checkpoint_payload_rejects_v4_pending_count_before_allocation() {
     const HEADER_BYTES: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4 * 2;
     const PENDING_COUNT_OFFSET: usize = 4 + 1 + 4 + 1 + 8 * 4;
     const COUNTER_BYTES: usize = 8;
@@ -609,9 +756,9 @@ fn checkpoint_payload_rejects_v3_pending_count_before_allocation() {
 }
 
 #[test]
-fn checkpoint_payload_rejects_v3_active_count_before_allocation() {
+fn checkpoint_payload_rejects_v4_active_count_before_allocation() {
     const ACTIVE_COUNT_OFFSET: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4;
-    const ACTIVE_SPECULATION_BYTES: usize = 27;
+    const ACTIVE_SPECULATION_BYTES: usize = 36;
     let payload = BranchPredictorCheckpointPayload::from_snapshot(
         predictor(8).snapshot(),
         std::iter::empty::<(u64, BranchSpeculationId)>(),
@@ -666,7 +813,7 @@ fn checkpoint_payload_rejects_unmapped_pending_speculation() {
 
 #[test]
 fn checkpoint_payload_rejects_active_mapping_order_that_cannot_commit() {
-    const ACTIVE_SPECULATION_BYTES: usize = 27;
+    const ACTIVE_SPECULATION_BYTES: usize = 36;
     const ACTIVE_SPECULATION_ID_OFFSET: usize = 8;
     let mut predictor = predictor(8);
     let first = predictor.predict_speculative(Address::new(0x1000));
@@ -692,6 +839,64 @@ fn checkpoint_payload_rejects_active_mapping_order_that_cannot_commit() {
             id: second.id(),
             expected: first.id(),
         })
+    );
+}
+
+#[test]
+fn checkpoint_payload_rejects_return_address_stack_mapping_order_that_cannot_commit() {
+    let mut predictor = predictor(8);
+    let first = predictor.predict_speculative(Address::new(0x1000));
+    let second = predictor.predict_speculative(Address::new(0x1004));
+    let mut return_address_stack = ras(4);
+    let first_ras = return_address_stack.push_speculative(Address::new(0x1004));
+    let second_ras = return_address_stack.push_speculative(Address::new(0x2004));
+
+    assert_eq!(
+        BranchPredictorCheckpointPayload::from_snapshots_with_branch_target_predictions_and_return_address_stack(
+            predictor.snapshot(),
+            btb(8, 2).snapshot(),
+            [(21, first.id()), (22, second.id())],
+            std::iter::empty::<(u64, BranchTargetPrediction)>(),
+            return_address_stack.snapshot(),
+            [(21, second_ras.id()), (22, first_ras.id())],
+        ),
+        Err(
+            BranchPredictorError::InvalidCheckpointReturnAddressStackOperationOrder {
+                id: second_ras.id(),
+                expected: first_ras.id(),
+            }
+        )
+    );
+}
+
+#[test]
+fn checkpoint_payload_rejects_push_ras_operation_without_pushed_address() {
+    let (mut encoded, operation_id, operation_start) = single_pending_ras_checkpoint_payload();
+    const OPERATION_ID_BYTES: usize = 8;
+    const OPERATION_KIND_BYTES: usize = 1;
+    let pushed_address_flag = operation_start + OPERATION_ID_BYTES + OPERATION_KIND_BYTES;
+    encoded[pushed_address_flag] = 0;
+
+    assert_eq!(
+        BranchPredictorCheckpointPayload::decode(&encoded),
+        Err(
+            BranchPredictorError::InvalidCheckpointReturnAddressStackOperation { id: operation_id }
+        )
+    );
+}
+
+#[test]
+fn checkpoint_payload_rejects_ras_operation_final_stack_mismatch() {
+    let (mut encoded, operation_id, operation_start) = single_pending_ras_checkpoint_payload();
+    const OPERATION_FIXED_BYTES: usize = 8 + 1 + (1 + 8) * 2 + 4 * 2;
+    let stack_after_start = operation_start + OPERATION_FIXED_BYTES;
+    encoded[stack_after_start..stack_after_start + 8].copy_from_slice(&0x2004_u64.to_le_bytes());
+
+    assert_eq!(
+        BranchPredictorCheckpointPayload::decode(&encoded),
+        Err(
+            BranchPredictorError::InvalidCheckpointReturnAddressStackOperation { id: operation_id }
+        )
     );
 }
 
@@ -776,6 +981,27 @@ fn return_address_stack_squash_restores_selected_and_younger_operations() {
     assert_eq!(repair.restored_stack(), &[call_return]);
     assert_eq!(ras.stack_entries(), &[call_return]);
     assert_eq!(ras.pending_operations(), &[call]);
+}
+
+#[test]
+fn return_address_stack_pop_then_push_predicts_old_top_and_leaves_new_return() {
+    let mut ras = ras(4);
+    let old_return = Address::new(0x1004);
+    let new_return = Address::new(0x2004);
+    let seed = ras.push_speculative(old_return);
+    ras.commit_operation(seed.id()).unwrap();
+
+    let operation = ras.pop_then_push_speculative(new_return);
+
+    assert_eq!(
+        operation.kind(),
+        ReturnAddressStackOperationKind::PopThenPush
+    );
+    assert_eq!(operation.predicted_return(), Some(old_return));
+    assert_eq!(operation.pushed_address(), Some(new_return));
+    assert_eq!(operation.stack_before(), &[old_return]);
+    assert_eq!(operation.stack_after(), &[new_return]);
+    assert_eq!(ras.stack_entries(), &[new_return]);
 }
 
 #[test]

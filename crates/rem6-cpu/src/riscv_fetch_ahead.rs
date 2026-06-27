@@ -4,10 +4,11 @@ use rem6_isa_riscv::{RiscvHartState, RiscvInstruction, RiscvPrivilegeMode};
 use rem6_memory::Address;
 
 use crate::{
-    riscv_branch_kind::riscv_branch_target_kind, BiModeBranchPredictor, BranchPredictor,
-    BranchSpeculationId, BranchTargetKind, BranchTargetPrediction, BranchTargetProvider,
-    CpuFetchEvent, CpuFetchEventKind, GShareBranchPredictor, MultiperspectivePerceptron,
-    MultiperspectivePerceptronThreadSnapshot, RiscvBranchPredictorKind, RiscvCore, RiscvCoreState,
+    riscv_branch_kind::{is_riscv_link_register, riscv_branch_target_kind},
+    BiModeBranchPredictor, BranchPredictor, BranchSpeculationId, BranchTargetKind,
+    BranchTargetPrediction, BranchTargetProvider, CpuFetchEvent, CpuFetchEventKind,
+    GShareBranchPredictor, MultiperspectivePerceptron, MultiperspectivePerceptronThreadSnapshot,
+    ReturnAddressStackOperationId, RiscvBranchPredictorKind, RiscvCore, RiscvCoreState,
     RiscvCpuError, RiscvSelectedBranchSpeculation, StatisticalCorrectorBranchKind,
     TageScLBranchPredictor, TournamentBranchPredictor, RISCV_LOCAL_BIMODE_THREAD,
     RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
@@ -158,6 +159,11 @@ impl PreparedRiscvFetchAheadSpeculation {
             state
                 .branch_target_predictions
                 .insert(speculation.sequence, branch_target_prediction);
+        }
+        if let Some(operation_id) = record_return_address_stack_speculation(state, &speculation) {
+            state
+                .return_address_stack_operations
+                .insert(speculation.sequence, operation_id);
         }
         let pending = state.branch_speculations.len() as u64;
         state.branch_speculation_summary.record_prediction(
@@ -594,6 +600,7 @@ impl RiscvFetchAheadDecision {
         target: Option<Address>,
         selected_speculation: Option<RiscvSelectedBranchSpeculation>,
         branch_target_prediction: Option<BranchTargetPrediction>,
+        return_address_stack_action: Option<ReturnAddressStackAction>,
         target_provider: BranchTargetProvider,
     ) -> Self {
         Self {
@@ -606,6 +613,7 @@ impl RiscvFetchAheadDecision {
                 target,
                 selected_speculation,
                 branch_target_prediction,
+                return_address_stack_action,
                 target_provider,
             }),
         }
@@ -629,7 +637,36 @@ pub(crate) struct RiscvFetchAheadSpeculation {
     target: Option<Address>,
     selected_speculation: Option<RiscvSelectedBranchSpeculation>,
     branch_target_prediction: Option<BranchTargetPrediction>,
+    return_address_stack_action: Option<ReturnAddressStackAction>,
     target_provider: BranchTargetProvider,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ReturnAddressStackAction {
+    Push(Address),
+    Pop,
+    PopThenPush(Address),
+}
+
+fn record_return_address_stack_speculation(
+    state: &mut RiscvCoreState,
+    speculation: &RiscvFetchAheadSpeculation,
+) -> Option<ReturnAddressStackOperationId> {
+    match speculation.return_address_stack_action? {
+        ReturnAddressStackAction::Push(return_address) => Some(
+            state
+                .return_address_stack
+                .push_speculative(return_address)
+                .id(),
+        ),
+        ReturnAddressStackAction::Pop => Some(state.return_address_stack.pop_speculative().id()),
+        ReturnAddressStackAction::PopThenPush(return_address) => Some(
+            state
+                .return_address_stack
+                .pop_then_push_speculative(return_address)
+                .id(),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -815,6 +852,7 @@ fn discard_branch_speculation_mapping(
         return Ok(());
     };
     state.branch_target_predictions.remove(&sequence);
+    state.squash_return_address_stack_speculation(sequence)?;
     let discard = state
         .branch_predictor
         .discard_speculation(speculation)
@@ -833,6 +871,7 @@ fn discard_branch_speculation_mapping(
     state
         .branch_target_predictions
         .retain(|sequence, _| active_sequences.contains(sequence));
+    state.squash_inactive_return_address_stack_speculations(&active_sequences)?;
     state.rollback_inactive_selected_branch_speculations(&active_sequences)?;
     Ok(())
 }
@@ -883,6 +922,7 @@ fn fetch_ahead_decision(
             Some(target),
             selected_speculation,
             Some(branch_target_prediction),
+            return_address_stack_action(instruction, sequential_pc),
             target_provider,
         ));
     }
@@ -906,6 +946,7 @@ fn fetch_ahead_decision(
         prediction.target,
         prediction.selected_speculation,
         prediction.branch_target_prediction,
+        None,
         prediction.target_provider,
     ))
 }
@@ -1476,22 +1517,47 @@ fn direct_jump_fetch_ahead_target(
     let target_lookup = state.branch_target_buffer.lookup(fetch_pc, kind);
     let branch_target_prediction =
         BranchTargetPrediction::new(target_lookup.hit(), target_lookup.target());
+    let ras_target = (kind == BranchTargetKind::Return)
+        .then(|| state.return_address_stack.top())
+        .flatten();
     let target = match instruction {
         RiscvInstruction::Jal { offset, .. } => {
             checked_add_signed(fetch_pc.get(), offset.value()).map(Address::new)
         }
-        RiscvInstruction::Jalr { rs1, offset, .. } => {
+        RiscvInstruction::Jalr { rs1, offset, .. } => ras_target.or_else(|| {
             checked_add_signed(state.hart.read(rs1), offset.value())
                 .map(|target| Address::new(target & !1))
-        }
+        }),
         _ => None,
     }?;
-    Some((
-        target,
-        kind,
-        branch_target_prediction,
-        BranchTargetProvider::NoTarget,
-    ))
+    let target_provider = if ras_target.is_some() {
+        BranchTargetProvider::RAS
+    } else {
+        BranchTargetProvider::NoTarget
+    };
+    Some((target, kind, branch_target_prediction, target_provider))
+}
+
+fn return_address_stack_action(
+    instruction: RiscvInstruction,
+    sequential_pc: Address,
+) -> Option<ReturnAddressStackAction> {
+    match instruction {
+        RiscvInstruction::Jal { rd, .. } if is_riscv_link_register(rd) => {
+            Some(ReturnAddressStackAction::Push(sequential_pc))
+        }
+        RiscvInstruction::Jalr { rd, rs1, .. } => {
+            let rd_link = is_riscv_link_register(rd);
+            let rs1_link = is_riscv_link_register(rs1);
+            match (rd_link, rs1_link, rd.index() == rs1.index()) {
+                (true, true, false) => Some(ReturnAddressStackAction::PopThenPush(sequential_pc)),
+                (true, _, _) => Some(ReturnAddressStackAction::Push(sequential_pc)),
+                (false, true, _) => Some(ReturnAddressStackAction::Pop),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 fn checked_add_signed(value: u64, offset: i64) -> Option<u64> {

@@ -32,6 +32,6 @@ pub(crate) const fn riscv_branch_target_kind(instruction: RiscvInstruction) -> B
     }
 }
 
-const fn is_riscv_link_register(register: Register) -> bool {
+pub(crate) const fn is_riscv_link_register(register: Register) -> bool {
     matches!(register.index(), 1 | 5)
 }

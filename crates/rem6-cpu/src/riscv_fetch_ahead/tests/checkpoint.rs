@@ -77,6 +77,63 @@ fn checkpoint_payload_restores_live_fetch_ahead_branch_speculation() {
 }
 
 #[test]
+fn checkpoint_payload_restores_live_return_address_stack_speculation() {
+    let call = j_type(12, 1).to_le_bytes().to_vec();
+    let core = core_with_completed_fetch(call);
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+
+    assert_eq!(decision.pc(), Address::new(0x800c));
+    assert_eq!(
+        decision
+            .branch_speculation()
+            .map(|speculation| { (speculation.sequence(), speculation.pc()) }),
+        Some((0, Address::new(0x8000)))
+    );
+
+    record_fetch_ahead_speculation(&core, &decision).unwrap();
+    let captured = core.branch_predictor_checkpoint_payload();
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        assert_eq!(
+            state.return_address_stack.stack_entries(),
+            &[Address::new(0x8004)]
+        );
+        assert_eq!(state.return_address_stack.pending_operation_count(), 1);
+        assert_eq!(state.return_address_stack_operations.len(), 1);
+        state.discard_branch_speculations();
+        assert!(state.return_address_stack.stack_entries().is_empty());
+        assert_eq!(state.return_address_stack.pending_operation_count(), 0);
+        assert!(state.return_address_stack_operations.is_empty());
+    }
+
+    core.restore_branch_predictor_checkpoint_payload(captured)
+        .unwrap();
+    {
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(
+            state.return_address_stack.stack_entries(),
+            &[Address::new(0x8004)]
+        );
+        assert_eq!(state.return_address_stack.pending_operation_count(), 1);
+        assert_eq!(state.return_address_stack_operations.len(), 1);
+    }
+
+    assert!(core
+        .can_retire_completed_fetch_while_fetch_pending()
+        .unwrap());
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    let state = core.state.lock().expect("riscv core lock");
+    assert!(state.branch_speculations.is_empty());
+    assert!(state.branch_target_predictions.is_empty());
+    assert_eq!(
+        state.return_address_stack.stack_entries(),
+        &[Address::new(0x8004)]
+    );
+    assert_eq!(state.return_address_stack.pending_operation_count(), 0);
+    assert!(state.return_address_stack_operations.is_empty());
+}
+
+#[test]
 fn checkpoint_restored_basic_predictor_target_steers_with_cold_btb() {
     let branch = b_type(8, 0, 0, 0).to_le_bytes().to_vec();
     let core = core_with_completed_fetch(branch);

@@ -397,6 +397,93 @@ fn target_provider_counts_no_target_when_direct_jump_uses_static_target() {
 }
 
 #[test]
+fn target_provider_counts_ras_when_indirect_call_pushes_return_address() {
+    let indirect_call = i_type(0, 6, 0x0, 1, 0x67).to_le_bytes().to_vec();
+    let return_jump = i_type(0, 1, 0x0, 0, 0x67).to_le_bytes().to_vec();
+    let core = core_with_completed_fetch(indirect_call);
+    core.write_register(Register::new(6).unwrap(), 0x8008);
+
+    let call_decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(call_decision.pc(), Address::new(0x8008));
+    record_fetch_ahead_speculation(&core, &call_decision).unwrap();
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    {
+        let state = core.state.lock().expect("riscv core lock");
+        assert_eq!(
+            state.return_address_stack.stack_entries(),
+            &[Address::new(0x8004)]
+        );
+        assert_eq!(state.return_address_stack.pending_operation_count(), 0);
+    }
+    {
+        let mut core_state = core.core.state.lock().expect("cpu core lock");
+        core_state.events.push(crate::CpuFetchEvent::completed(
+            CpuFetchRecord::new(
+                4,
+                PartitionId::new(0),
+                MemoryRouteId::new(0),
+                endpoint("cpu0.ifetch"),
+                request(1),
+                Address::new(0x8008),
+                AccessSize::new(4).unwrap(),
+            ),
+            return_jump,
+        ));
+    }
+
+    let return_decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(return_decision.pc(), Address::new(0x8004));
+    record_fetch_ahead_speculation(&core, &return_decision).unwrap();
+
+    let summary = core.branch_speculation_summary();
+    assert_eq!(
+        summary.target_provider().value(BranchTargetProvider::RAS),
+        1
+    );
+    assert_eq!(summary.target_provider().total(), 2);
+
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    let state = core.state.lock().expect("riscv core lock");
+    assert!(state.return_address_stack.stack_entries().is_empty());
+    assert_eq!(state.return_address_stack.pending_operation_count(), 0);
+}
+
+#[test]
+fn target_provider_counts_ras_when_coroutine_jalr_pops_then_pushes() {
+    let coroutine_jump = i_type(0, 1, 0x0, 5, 0x67).to_le_bytes().to_vec();
+    let core = core_with_completed_fetch(coroutine_jump);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        let seed = state
+            .return_address_stack
+            .push_speculative(Address::new(0x800c));
+        state
+            .return_address_stack
+            .commit_operation(seed.id())
+            .unwrap();
+    }
+    core.write_register(Register::new(1).unwrap(), 0x800c);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(decision.pc(), Address::new(0x800c));
+    record_fetch_ahead_speculation(&core, &decision).unwrap();
+
+    let summary = core.branch_speculation_summary();
+    assert_eq!(
+        summary.target_provider().value(BranchTargetProvider::RAS),
+        1
+    );
+
+    core.execute_next_completed_fetch().unwrap().unwrap();
+    let state = core.state.lock().expect("riscv core lock");
+    assert_eq!(
+        state.return_address_stack.stack_entries(),
+        &[Address::new(0x8004)]
+    );
+    assert_eq!(state.return_address_stack.pending_operation_count(), 0);
+}
+
+#[test]
 fn btb_update_classifies_direct_link_jump_as_call_direct() {
     let jump = j_type(12, 1).to_le_bytes().to_vec();
     let core = core_with_completed_fetch(jump);
@@ -512,6 +599,12 @@ fn btb_mispredict_due_to_btb_miss_counts_indirect_call_target_change() {
         btb_entry_kind(&core, 0x8000),
         Some(BranchTargetKind::CallIndirect)
     );
+    let state = core.state.lock().expect("riscv core lock");
+    assert_eq!(
+        state.return_address_stack.stack_entries(),
+        &[Address::new(0x8004)]
+    );
+    assert_eq!(state.return_address_stack.pending_operation_count(), 0);
 }
 
 #[test]
@@ -551,4 +644,38 @@ fn btb_mispredict_due_to_btb_miss_counts_return_target_change() {
         btb_entry_kind(&core, 0x8000),
         Some(BranchTargetKind::Return)
     );
+}
+
+#[test]
+fn wrong_target_ras_return_pops_committed_return_address() {
+    let jalr = i_type(0, 1, 0x0, 0, 0x67).to_le_bytes().to_vec();
+    let core = core_with_completed_fetch(jalr);
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        let operation = state
+            .return_address_stack
+            .push_speculative(Address::new(0x800c));
+        state
+            .return_address_stack
+            .commit_operation(operation.id())
+            .unwrap();
+    }
+    core.write_register(Register::new(1).unwrap(), 0x8010);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(decision.pc(), Address::new(0x800c));
+    record_fetch_ahead_speculation(&core, &decision).unwrap();
+
+    let event = core.execute_next_completed_fetch().unwrap().unwrap();
+    let cycle = event.in_order_pipeline_cycle().unwrap();
+    let prediction = cycle.branch_predictions().first().unwrap();
+    assert_eq!(prediction.predicted_target_pc(), Some(0x800c));
+    assert_eq!(prediction.resolved_target_pc(), Some(0x8010));
+    assert!(prediction.mispredicted());
+    assert_eq!(prediction.repair_target_pc(), Some(0x8010));
+
+    let state = core.state.lock().expect("riscv core lock");
+    assert!(state.return_address_stack.stack_entries().is_empty());
+    assert_eq!(state.return_address_stack.pending_operation_count(), 0);
+    assert!(state.return_address_stack_operations.is_empty());
 }

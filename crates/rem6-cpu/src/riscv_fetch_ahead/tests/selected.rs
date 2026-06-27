@@ -344,6 +344,7 @@ fn selected_gshare_direct_speculation_after_restore_uses_pending_generic_history
         Some(Address::new(0x8010)),
         Some(selected),
         None,
+        None,
         BranchTargetProvider::NoTarget,
     );
 
@@ -417,6 +418,7 @@ fn selected_tage_sc_l_direct_speculation_after_restore_uses_pending_generic_hist
         Some(Address::new(0x8010)),
         Some(selected),
         None,
+        None,
         BranchTargetProvider::NoTarget,
     );
 
@@ -489,6 +491,7 @@ fn selected_tournament_direct_replay_after_restore_keeps_local_history_unchanged
         true,
         Some(Address::new(0x8010)),
         Some(selected),
+        None,
         None,
         BranchTargetProvider::NoTarget,
     );
@@ -583,6 +586,7 @@ fn selected_tournament_replay_uses_completed_event_after_issued_event() {
         Some(Address::new(0x8010)),
         Some(selected),
         None,
+        None,
         BranchTargetProvider::NoTarget,
     );
 
@@ -633,6 +637,7 @@ fn selected_tournament_replay_requires_completed_instruction_metadata() {
         true,
         Some(Address::new(0x8010)),
         Some(selected),
+        None,
         None,
         BranchTargetProvider::NoTarget,
     );
@@ -695,6 +700,7 @@ fn selected_tournament_replay_failure_discards_partial_recording() {
         true,
         Some(Address::new(0x8018)),
         Some(selected),
+        None,
         None,
         BranchTargetProvider::NoTarget,
     );
