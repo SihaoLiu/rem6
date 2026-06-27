@@ -107,6 +107,7 @@ fn rem6_run_exec_debug_flag_emits_real_instruction_trace() {
         exec_bytes,
         "monotonic",
     );
+    assert_exec_trace_hierarchy_stats(&stdout, trace);
 }
 
 #[test]
@@ -1667,6 +1668,77 @@ fn debug_trace_max(trace: &[Value], kind: &str, field: &str) -> u64 {
         })
         .max()
         .unwrap_or(0)
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ExecTraceStats {
+    records: u64,
+    retired: u64,
+    bytes: u64,
+}
+
+impl ExecTraceStats {
+    fn add_record(&mut self, record: &Value) {
+        self.records = self.records.saturating_add(1);
+        if record
+            .get("retired")
+            .and_then(Value::as_bool)
+            .expect("exec retired")
+        {
+            self.retired = self.retired.saturating_add(1);
+        }
+        self.bytes = self.bytes.saturating_add(
+            record
+                .get("bytes")
+                .and_then(Value::as_str)
+                .expect("exec bytes")
+                .len() as u64
+                / 2,
+        );
+    }
+
+    fn assert_stats(&self, stdout: &str, prefix: &str) {
+        for (suffix, unit, value) in [
+            ("records", "Count", self.records),
+            ("retired", "Count", self.retired),
+            ("bytes", "Byte", self.bytes),
+        ] {
+            assert_stat(
+                stdout,
+                &format!("{prefix}.{suffix}"),
+                unit,
+                value,
+                "monotonic",
+            );
+        }
+    }
+}
+
+fn assert_exec_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
+    let mut cpus = BTreeMap::<u64, ExecTraceStats>::new();
+    let mut retirement = BTreeMap::<&'static str, ExecTraceStats>::new();
+    for record in trace {
+        let cpu = json_record_u64(record, "cpu");
+        let retired = match record
+            .get("retired")
+            .and_then(Value::as_bool)
+            .expect("exec retired")
+        {
+            true => "retired",
+            false => "not_retired",
+        };
+        cpus.entry(cpu).or_default().add_record(record);
+        retirement.entry(retired).or_default().add_record(record);
+    }
+    for (cpu, stats) in cpus {
+        stats.assert_stats(stdout, &format!("sim.debug.exec_trace.cpu.cpu{cpu}"));
+    }
+    for (retirement, stats) in retirement {
+        stats.assert_stats(
+            stdout,
+            &format!("sim.debug.exec_trace.retirement.{retirement}"),
+        );
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

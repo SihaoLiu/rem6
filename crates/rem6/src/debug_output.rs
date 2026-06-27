@@ -44,6 +44,20 @@ struct Rem6ExecTraceRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6ExecTraceStat {
+    path: String,
+    unit: &'static str,
+    value: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ExecTraceStatSummary {
+    records: u64,
+    retired: u64,
+    bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct Rem6FetchTraceRecord {
     cpu: u32,
     tick: u64,
@@ -299,6 +313,10 @@ impl Rem6DebugSummary {
         self.exec_trace.iter().fold(0u64, |acc, record| {
             acc.saturating_add(record.bytes.len() as u64)
         })
+    }
+
+    pub(crate) fn exec_trace_stats(&self) -> Vec<Rem6ExecTraceStat> {
+        exec_trace_stats(&self.exec_trace)
     }
 
     pub(crate) fn fetch_trace_count(&self) -> u64 {
@@ -984,6 +1002,72 @@ impl Rem6ExecTraceRecord {
             bytes_to_hex(&self.bytes),
             self.retired,
         )
+    }
+}
+
+impl Rem6ExecTraceStat {
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub(crate) const fn unit(&self) -> &'static str {
+        self.unit
+    }
+
+    pub(crate) const fn value(&self) -> u64 {
+        self.value
+    }
+}
+
+impl ExecTraceStatSummary {
+    fn add_record(&mut self, record: &Rem6ExecTraceRecord) {
+        self.records = self.records.saturating_add(1);
+        if record.retired {
+            self.retired = self.retired.saturating_add(1);
+        }
+        self.bytes = self.bytes.saturating_add(record.bytes.len() as u64);
+    }
+
+    fn push_stats(&self, stats: &mut Vec<Rem6ExecTraceStat>, prefix: &str) {
+        for (suffix, unit, value) in [
+            ("records", "Count", self.records),
+            ("retired", "Count", self.retired),
+            ("bytes", "Byte", self.bytes),
+        ] {
+            stats.push(Rem6ExecTraceStat {
+                path: format!("{prefix}.{suffix}"),
+                unit,
+                value,
+            });
+        }
+    }
+}
+
+fn exec_trace_stats(records: &[Rem6ExecTraceRecord]) -> Vec<Rem6ExecTraceStat> {
+    let mut cpus = BTreeMap::<u32, ExecTraceStatSummary>::new();
+    let mut retirement = BTreeMap::<&str, ExecTraceStatSummary>::new();
+    for record in records {
+        cpus.entry(record.cpu).or_default().add_record(record);
+        retirement
+            .entry(exec_retirement_path(record.retired))
+            .or_default()
+            .add_record(record);
+    }
+
+    let mut stats = Vec::new();
+    for (cpu, summary) in cpus {
+        summary.push_stats(&mut stats, &format!("cpu.cpu{cpu}"));
+    }
+    for (retirement, summary) in retirement {
+        summary.push_stats(&mut stats, &format!("retirement.{retirement}"));
+    }
+    stats
+}
+
+const fn exec_retirement_path(retired: bool) -> &'static str {
+    match retired {
+        true => "retired",
+        false => "not_retired",
     }
 }
 

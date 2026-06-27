@@ -204,6 +204,15 @@ pub(super) fn emit_debug_stats(
     ] {
         increment_stat(stats, path, "Count", StatResetPolicy::Monotonic, value)?;
     }
+    for stat in debug.exec_trace_stats() {
+        increment_stat(
+            stats,
+            &format!("sim.debug.exec_trace.{}", stat.path()),
+            stat.unit(),
+            StatResetPolicy::Monotonic,
+            stat.value(),
+        )?;
+    }
     for stat in debug.cache_trace_stats() {
         increment_stat(
             stats,
