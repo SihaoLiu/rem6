@@ -568,6 +568,8 @@ fn emit_dram_bank_stats(
 ) -> Result<(), Rem6CliError> {
     let prefix = format!("{prefix}.bank{}", bank.bank);
     emit_dram_counter(stats, &prefix, "accesses", "Count", bank.accesses)?;
+    emit_dram_counter(stats, &prefix, "reads", "Count", bank.reads)?;
+    emit_dram_counter(stats, &prefix, "writes", "Count", bank.writes)?;
     emit_dram_counter(stats, &prefix, "read_bytes", "Byte", bank.read_bytes)?;
     emit_dram_counter(stats, &prefix, "write_bytes", "Byte", bank.write_bytes)?;
     emit_dram_counter(stats, &prefix, "row_hits", "Count", bank.row_hits)?;

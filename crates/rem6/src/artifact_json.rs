@@ -1710,9 +1710,11 @@ fn dram_banks_json(banks: &[super::Rem6DramBankSummary]) -> String {
 
 fn dram_bank_json(summary: &super::Rem6DramBankSummary) -> String {
     format!(
-        "{{\"bank\":{},\"accesses\":{},\"read_bytes\":{},\"write_bytes\":{},\"row_hits\":{},\"read_row_hits\":{},\"write_row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"low_power\":{}}}",
+        "{{\"bank\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"read_bytes\":{},\"write_bytes\":{},\"row_hits\":{},\"read_row_hits\":{},\"write_row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"low_power\":{}}}",
         summary.bank,
         summary.accesses,
+        summary.reads,
+        summary.writes,
         summary.read_bytes,
         summary.write_bytes,
         summary.row_hits,
