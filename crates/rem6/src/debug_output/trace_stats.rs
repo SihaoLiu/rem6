@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use super::{
-    Rem6BranchTraceRecord, Rem6DataTraceRecord, Rem6ExecTraceRecord, Rem6FetchTraceRecord,
+    branch::Rem6BranchTraceRecord, pipeline::Rem6PipelineTraceRecord, Rem6DataTraceRecord,
+    Rem6ExecTraceRecord, Rem6FetchTraceRecord,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -27,6 +28,13 @@ pub(crate) struct Rem6DataTraceStat {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Rem6BranchTraceStat {
+    path: String,
+    unit: &'static str,
+    value: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6PipelineTraceStat {
     path: String,
     unit: &'static str,
     value: u64,
@@ -67,6 +75,24 @@ struct BranchTraceStatSummary {
     mispredictions: u64,
     repairs: u64,
     flushed: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PipelineTraceStatSummary {
+    records: u64,
+    stall_cycles: u64,
+    state_changed: u64,
+    advanced: u64,
+    retired: u64,
+    flushed: u64,
+    resource_blocked: u64,
+    ordering_blocked: u64,
+    branch_predictions: u64,
+    branch_mispredictions: u64,
+    branch_prediction_flushed: u64,
+    redirects: u64,
+    before_in_flight: u64,
+    after_in_flight: u64,
 }
 
 impl Rem6ExecTraceStat {
@@ -112,6 +138,20 @@ impl Rem6DataTraceStat {
 }
 
 impl Rem6BranchTraceStat {
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub(crate) const fn unit(&self) -> &'static str {
+        self.unit
+    }
+
+    pub(crate) const fn value(&self) -> u64 {
+        self.value
+    }
+}
+
+impl Rem6PipelineTraceStat {
     pub(crate) fn path(&self) -> &str {
         &self.path
     }
@@ -255,6 +295,74 @@ impl BranchTraceStatSummary {
     }
 }
 
+impl PipelineTraceStatSummary {
+    fn add_record(&mut self, record: &Rem6PipelineTraceRecord) {
+        self.records = self.records.saturating_add(1);
+        self.stall_cycles = self.stall_cycles.saturating_add(record.stall_cycles);
+        if record.state_changed {
+            self.state_changed = self.state_changed.saturating_add(1);
+        }
+        self.advanced = self.advanced.saturating_add(record.advanced.len() as u64);
+        self.retired = self.retired.saturating_add(
+            record
+                .advanced
+                .iter()
+                .filter(|advance| advance.retires)
+                .count() as u64,
+        );
+        self.flushed = self.flushed.saturating_add(record.flushed.len() as u64);
+        self.resource_blocked = self
+            .resource_blocked
+            .saturating_add(record.resource_blocked.len() as u64);
+        self.ordering_blocked = self
+            .ordering_blocked
+            .saturating_add(record.ordering_blocked.len() as u64);
+        self.branch_predictions = self
+            .branch_predictions
+            .saturating_add(record.branch_predictions);
+        self.branch_mispredictions = self
+            .branch_mispredictions
+            .saturating_add(record.branch_mispredictions);
+        self.branch_prediction_flushed = self
+            .branch_prediction_flushed
+            .saturating_add(record.branch_prediction_flushed);
+        if record.redirect_target_pc.is_some() {
+            self.redirects = self.redirects.saturating_add(1);
+        }
+        self.before_in_flight = self
+            .before_in_flight
+            .saturating_add(record.before_in_flight.len() as u64);
+        self.after_in_flight = self
+            .after_in_flight
+            .saturating_add(record.after_in_flight.len() as u64);
+    }
+
+    fn push_stats(&self, stats: &mut Vec<Rem6PipelineTraceStat>, prefix: &str) {
+        for (suffix, value) in [
+            ("records", self.records),
+            ("stall_cycles", self.stall_cycles),
+            ("state_changed", self.state_changed),
+            ("advanced", self.advanced),
+            ("retired", self.retired),
+            ("flushed", self.flushed),
+            ("resource_blocked", self.resource_blocked),
+            ("ordering_blocked", self.ordering_blocked),
+            ("branch_predictions", self.branch_predictions),
+            ("branch_mispredictions", self.branch_mispredictions),
+            ("branch_prediction_flushed", self.branch_prediction_flushed),
+            ("redirects", self.redirects),
+            ("before_in_flight", self.before_in_flight),
+            ("after_in_flight", self.after_in_flight),
+        ] {
+            stats.push(Rem6PipelineTraceStat {
+                path: format!("{prefix}.{suffix}"),
+                unit: "Count",
+                value,
+            });
+        }
+    }
+}
+
 pub(super) fn exec_trace_stats(records: &[Rem6ExecTraceRecord]) -> Vec<Rem6ExecTraceStat> {
     let mut cpus = BTreeMap::<u32, ExecTraceStatSummary>::new();
     let mut retirement = BTreeMap::<&str, ExecTraceStatSummary>::new();
@@ -356,6 +464,30 @@ pub(super) fn branch_trace_stats(
     stats
 }
 
+pub(super) fn pipeline_trace_stats(
+    records: &[Rem6PipelineTraceRecord],
+    stat_path_segment: impl Fn(&str) -> String,
+) -> Vec<Rem6PipelineTraceStat> {
+    let mut cpus = BTreeMap::<u32, PipelineTraceStatSummary>::new();
+    let mut states = BTreeMap::<&str, PipelineTraceStatSummary>::new();
+    for record in records {
+        cpus.entry(record.cpu).or_default().add_record(record);
+        states
+            .entry(pipeline_state_path(record.state_changed))
+            .or_default()
+            .add_record(record);
+    }
+
+    let mut stats = Vec::new();
+    for (cpu, summary) in cpus {
+        summary.push_stats(&mut stats, &format!("cpu.cpu{cpu}"));
+    }
+    for (state, summary) in states {
+        summary.push_stats(&mut stats, &format!("state.{}", stat_path_segment(state)));
+    }
+    stats
+}
+
 const fn exec_retirement_path(retired: bool) -> &'static str {
     match retired {
         true => "retired",
@@ -367,5 +499,12 @@ const fn branch_outcome_path(mispredicted: bool) -> &'static str {
     match mispredicted {
         true => "mispredicted",
         false => "correct",
+    }
+}
+
+const fn pipeline_state_path(state_changed: bool) -> &'static str {
+    match state_changed {
+        true => "changed",
+        false => "unchanged",
     }
 }

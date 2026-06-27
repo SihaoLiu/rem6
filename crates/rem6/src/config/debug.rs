@@ -10,6 +10,7 @@ pub enum CliDebugFlag {
     Fabric,
     Fetch,
     Memory,
+    Pipeline,
     Power,
     Syscall,
 }
@@ -28,6 +29,7 @@ impl CliDebugFlag {
             "Fabric" => Ok(Self::Fabric),
             "Fetch" => Ok(Self::Fetch),
             "Memory" => Ok(Self::Memory),
+            "Pipeline" => Ok(Self::Pipeline),
             "Power" => Ok(Self::Power),
             "Syscall" => Ok(Self::Syscall),
             _ => Err(Rem6CliError::UnsupportedDebugFlag {
@@ -46,6 +48,7 @@ impl CliDebugFlag {
             Self::Fabric => "Fabric",
             Self::Fetch => "Fetch",
             Self::Memory => "Memory",
+            Self::Pipeline => "Pipeline",
             Self::Power => "Power",
             Self::Syscall => "Syscall",
         }

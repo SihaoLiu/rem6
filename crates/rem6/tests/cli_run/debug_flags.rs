@@ -386,6 +386,115 @@ fn rem6_run_branch_debug_flag_emits_real_in_order_branch_trace() {
 }
 
 #[test]
+fn rem6_run_pipeline_debug_flag_emits_real_in_order_cycle_trace() {
+    let program = riscv64_program(&[
+        i_type(1, 0, 0x0, 5, 0x13), // addi x5, x0, 1
+        b_type(8, 5, 5, 0x0),       // beq x5, x5, target
+        i_type(9, 0, 0x0, 6, 0x13), // addi x6, x0, 9
+        0x0000_0073,                // target: ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-pipeline", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--riscv-branch-lookahead",
+            "2",
+            "--debug-flags",
+            "Pipeline",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![Value::String("Pipeline".to_string())])
+    );
+    let trace = json
+        .pointer("/debug/pipeline_trace")
+        .and_then(Value::as_array)
+        .expect("debug pipeline trace array");
+    assert!(!trace.is_empty(), "pipeline trace should not be empty");
+    let redirect_cycle = trace
+        .iter()
+        .find(|record| record.get("redirect_target").and_then(Value::as_str) == Some("0x8000000c"))
+        .unwrap_or_else(|| panic!("missing redirect cycle in pipeline trace: {trace:?}"));
+    assert_eq!(redirect_cycle.get("cpu").and_then(Value::as_u64), Some(0));
+    assert_eq!(
+        redirect_cycle.get("state_changed").and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(json_record_u64(redirect_cycle, "branch_predictions") > 0);
+    assert!(json_record_u64(redirect_cycle, "branch_mispredictions") > 0);
+    assert!(json_record_u64(redirect_cycle, "branch_prediction_flushed") > 0);
+    assert!(!redirect_cycle
+        .get("advanced")
+        .and_then(Value::as_array)
+        .expect("advanced pipeline entries")
+        .is_empty());
+    assert!(!redirect_cycle
+        .get("flushed")
+        .and_then(Value::as_array)
+        .expect("flushed pipeline entries")
+        .is_empty());
+    assert!(redirect_cycle
+        .get("before_in_flight")
+        .and_then(Value::as_array)
+        .is_some());
+    assert!(redirect_cycle
+        .get("after_in_flight")
+        .and_then(Value::as_array)
+        .is_some());
+
+    let mut aggregate = PipelineTraceStats::default();
+    for record in trace {
+        aggregate.add_record(record);
+    }
+    aggregate.assert_stats(&stdout, "sim.debug.pipeline_trace");
+    assert_stat(
+        &stdout,
+        "sim.debug.trace.records",
+        "Count",
+        trace.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.trace.categories",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.trace.active_flags",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_pipeline_trace_hierarchy_stats(&stdout, trace);
+}
+
+#[test]
 fn rem6_run_fetch_debug_flag_keeps_fetches_across_riscv_se_stream_reset() {
     let program = riscv64_program(&[
         i_type(172, 0, 0x0, 17, 0x13), // addi a7, x0, getpid
@@ -2022,6 +2131,128 @@ fn assert_branch_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct PipelineTraceStats {
+    records: u64,
+    stall_cycles: u64,
+    state_changed: u64,
+    advanced: u64,
+    retired: u64,
+    flushed: u64,
+    resource_blocked: u64,
+    ordering_blocked: u64,
+    branch_predictions: u64,
+    branch_mispredictions: u64,
+    branch_prediction_flushed: u64,
+    redirects: u64,
+    before_in_flight: u64,
+    after_in_flight: u64,
+}
+
+impl PipelineTraceStats {
+    fn add_record(&mut self, record: &Value) {
+        self.records = self.records.saturating_add(1);
+        self.stall_cycles = self
+            .stall_cycles
+            .saturating_add(json_record_u64(record, "stall_cycles"));
+        if json_record_bool(record, "state_changed") {
+            self.state_changed = self.state_changed.saturating_add(1);
+        }
+        let advanced = record_array(record, "advanced");
+        self.advanced = self.advanced.saturating_add(advanced.len() as u64);
+        self.retired = self.retired.saturating_add(
+            advanced
+                .iter()
+                .filter(|entry| json_record_bool(entry, "retires"))
+                .count() as u64,
+        );
+        self.flushed = self
+            .flushed
+            .saturating_add(record_array(record, "flushed").len() as u64);
+        self.resource_blocked = self
+            .resource_blocked
+            .saturating_add(record_array(record, "resource_blocked").len() as u64);
+        self.ordering_blocked = self
+            .ordering_blocked
+            .saturating_add(record_array(record, "ordering_blocked").len() as u64);
+        self.branch_predictions = self
+            .branch_predictions
+            .saturating_add(json_record_u64(record, "branch_predictions"));
+        self.branch_mispredictions = self
+            .branch_mispredictions
+            .saturating_add(json_record_u64(record, "branch_mispredictions"));
+        self.branch_prediction_flushed = self
+            .branch_prediction_flushed
+            .saturating_add(json_record_u64(record, "branch_prediction_flushed"));
+        if record
+            .get("redirect_target")
+            .and_then(Value::as_str)
+            .is_some()
+        {
+            self.redirects = self.redirects.saturating_add(1);
+        }
+        self.before_in_flight = self
+            .before_in_flight
+            .saturating_add(record_array(record, "before_in_flight").len() as u64);
+        self.after_in_flight = self
+            .after_in_flight
+            .saturating_add(record_array(record, "after_in_flight").len() as u64);
+    }
+
+    fn assert_stats(&self, stdout: &str, prefix: &str) {
+        for (suffix, value) in [
+            ("records", self.records),
+            ("stall_cycles", self.stall_cycles),
+            ("state_changed", self.state_changed),
+            ("advanced", self.advanced),
+            ("retired", self.retired),
+            ("flushed", self.flushed),
+            ("resource_blocked", self.resource_blocked),
+            ("ordering_blocked", self.ordering_blocked),
+            ("branch_predictions", self.branch_predictions),
+            ("branch_mispredictions", self.branch_mispredictions),
+            ("branch_prediction_flushed", self.branch_prediction_flushed),
+            ("redirects", self.redirects),
+            ("before_in_flight", self.before_in_flight),
+            ("after_in_flight", self.after_in_flight),
+        ] {
+            assert_stat(
+                stdout,
+                &format!("{prefix}.{suffix}"),
+                "Count",
+                value,
+                "monotonic",
+            );
+        }
+    }
+}
+
+fn assert_pipeline_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
+    let mut cpus = BTreeMap::<u64, PipelineTraceStats>::new();
+    let mut states = BTreeMap::<&'static str, PipelineTraceStats>::new();
+    for record in trace {
+        let cpu = json_record_u64(record, "cpu");
+        let state = match json_record_bool(record, "state_changed") {
+            true => "changed",
+            false => "unchanged",
+        };
+        cpus.entry(cpu).or_default().add_record(record);
+        states.entry(state).or_default().add_record(record);
+    }
+    for (cpu, stats) in cpus {
+        stats.assert_stats(stdout, &format!("sim.debug.pipeline_trace.cpu.cpu{cpu}"));
+    }
+    for (state, stats) in states {
+        stats.assert_stats(
+            stdout,
+            &format!(
+                "sim.debug.pipeline_trace.state.{}",
+                stat_path_segment(state)
+            ),
+        );
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 struct DataTraceStats {
     records: u64,
     loads: u64,
@@ -2338,6 +2569,14 @@ fn json_record_bool(record: &Value, field: &str) -> bool {
         .get(field)
         .and_then(Value::as_bool)
         .unwrap_or_else(|| panic!("missing JSON bool field {field}: {record:?}"))
+}
+
+fn record_array<'a>(record: &'a Value, field: &str) -> &'a [Value] {
+    record
+        .get(field)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_else(|| panic!("missing JSON array field {field}: {record:?}"))
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

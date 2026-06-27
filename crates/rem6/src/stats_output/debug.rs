@@ -47,6 +47,62 @@ pub(super) fn emit_debug_stats(
             "sim.debug.branch_trace.flushed",
             debug.branch_flushed_trace_count(),
         ),
+        (
+            "sim.debug.pipeline_trace.records",
+            debug.pipeline_trace_count(),
+        ),
+        (
+            "sim.debug.pipeline_trace.stall_cycles",
+            debug.pipeline_stall_cycle_trace_count(),
+        ),
+        (
+            "sim.debug.pipeline_trace.state_changed",
+            debug.pipeline_state_changed_trace_count(),
+        ),
+        (
+            "sim.debug.pipeline_trace.advanced",
+            debug.pipeline_advanced_trace_count(),
+        ),
+        (
+            "sim.debug.pipeline_trace.retired",
+            debug.pipeline_retired_trace_count(),
+        ),
+        (
+            "sim.debug.pipeline_trace.flushed",
+            debug.pipeline_flushed_trace_count(),
+        ),
+        (
+            "sim.debug.pipeline_trace.resource_blocked",
+            debug.pipeline_resource_blocked_trace_count(),
+        ),
+        (
+            "sim.debug.pipeline_trace.ordering_blocked",
+            debug.pipeline_ordering_blocked_trace_count(),
+        ),
+        (
+            "sim.debug.pipeline_trace.branch_predictions",
+            debug.pipeline_branch_prediction_trace_count(),
+        ),
+        (
+            "sim.debug.pipeline_trace.branch_mispredictions",
+            debug.pipeline_branch_misprediction_trace_count(),
+        ),
+        (
+            "sim.debug.pipeline_trace.branch_prediction_flushed",
+            debug.pipeline_branch_prediction_flushed_trace_count(),
+        ),
+        (
+            "sim.debug.pipeline_trace.redirects",
+            debug.pipeline_redirect_trace_count(),
+        ),
+        (
+            "sim.debug.pipeline_trace.before_in_flight",
+            debug.pipeline_before_in_flight_trace_count(),
+        ),
+        (
+            "sim.debug.pipeline_trace.after_in_flight",
+            debug.pipeline_after_in_flight_trace_count(),
+        ),
         ("sim.debug.exec_trace.records", debug.exec_trace_count()),
         (
             "sim.debug.exec_trace.retired",
@@ -246,6 +302,15 @@ pub(super) fn emit_debug_stats(
         increment_stat(
             stats,
             &format!("sim.debug.branch_trace.{}", stat.path()),
+            stat.unit(),
+            StatResetPolicy::Monotonic,
+            stat.value(),
+        )?;
+    }
+    for stat in debug.pipeline_trace_stats(stat_path_segment) {
+        increment_stat(
+            stats,
+            &format!("sim.debug.pipeline_trace.{}", stat.path()),
             stat.unit(),
             StatResetPolicy::Monotonic,
             stat.value(),
