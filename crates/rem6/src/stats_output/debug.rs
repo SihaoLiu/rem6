@@ -227,6 +227,15 @@ pub(super) fn emit_debug_stats(
             )?;
         }
     }
+    for stat in debug.dram_trace_stats() {
+        increment_stat(
+            stats,
+            &format!("sim.debug.dram_trace.{}", stat.path()),
+            stat.unit(),
+            StatResetPolicy::Monotonic,
+            stat.value(),
+        )?;
+    }
     increment_stat(
         stats,
         "sim.debug.trace.payload_bytes",

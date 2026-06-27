@@ -1420,6 +1420,9 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
         bank_write_bytes,
         "monotonic",
     );
+    for record in trace {
+        assert_dram_trace_hierarchy_stats(&stdout, record);
+    }
 }
 
 #[test]
@@ -1656,6 +1659,114 @@ fn debug_trace_max(trace: &[Value], kind: &str, field: &str) -> u64 {
         })
         .max()
         .unwrap_or(0)
+}
+
+fn assert_dram_trace_hierarchy_stats(stdout: &str, record: &Value) {
+    let kind = record
+        .get("kind")
+        .and_then(Value::as_str)
+        .expect("DRAM trace kind");
+    let target = record
+        .get("target")
+        .and_then(Value::as_u64)
+        .expect("DRAM trace target");
+    match kind {
+        "target" => {
+            let prefix = format!("sim.debug.dram_trace.target{target}");
+            assert_dram_trace_record_stats(
+                stdout,
+                &prefix,
+                record,
+                &[
+                    ("accesses", "Count"),
+                    ("reads", "Count"),
+                    ("writes", "Count"),
+                    ("row_hits", "Count"),
+                    ("row_misses", "Count"),
+                    ("refreshes", "Count"),
+                    ("refresh_ticks", "Tick"),
+                    ("commands", "Count"),
+                    ("turnarounds", "Count"),
+                    ("total_ready_latency_ticks", "Tick"),
+                    ("max_ready_latency_ticks", "Tick"),
+                ],
+            );
+        }
+        "port" => {
+            let port = record
+                .get("port")
+                .and_then(Value::as_u64)
+                .expect("DRAM trace port");
+            let prefix = format!("sim.debug.dram_trace.target{target}.port{port}");
+            assert_dram_trace_record_stats(
+                stdout,
+                &prefix,
+                record,
+                &[
+                    ("accesses", "Count"),
+                    ("reads", "Count"),
+                    ("writes", "Count"),
+                    ("row_hits", "Count"),
+                    ("row_misses", "Count"),
+                    ("refreshes", "Count"),
+                    ("refresh_ticks", "Tick"),
+                    ("commands", "Count"),
+                    ("turnarounds", "Count"),
+                    ("total_ready_latency_ticks", "Tick"),
+                    ("max_ready_latency_ticks", "Tick"),
+                ],
+            );
+        }
+        "bank" => {
+            let port = record
+                .get("port")
+                .and_then(Value::as_u64)
+                .expect("DRAM trace port");
+            let bank = record
+                .get("bank")
+                .and_then(Value::as_u64)
+                .expect("DRAM trace bank");
+            let prefix = format!("sim.debug.dram_trace.target{target}.port{port}.bank{bank}");
+            assert_dram_trace_record_stats(
+                stdout,
+                &prefix,
+                record,
+                &[
+                    ("accesses", "Count"),
+                    ("read_bytes", "Byte"),
+                    ("write_bytes", "Byte"),
+                    ("row_hits", "Count"),
+                    ("row_misses", "Count"),
+                    ("refreshes", "Count"),
+                    ("refresh_ticks", "Tick"),
+                    ("commands", "Count"),
+                    ("total_ready_latency_ticks", "Tick"),
+                    ("max_ready_latency_ticks", "Tick"),
+                ],
+            );
+        }
+        other => panic!("unexpected DRAM trace kind {other}: {record:?}"),
+    }
+}
+
+fn assert_dram_trace_record_stats(
+    stdout: &str,
+    prefix: &str,
+    record: &Value,
+    fields: &[(&str, &str)],
+) {
+    for (field, unit) in fields {
+        assert_stat(
+            stdout,
+            &format!("{prefix}.{field}"),
+            unit,
+            record
+                .get(field)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("DRAM trace {prefix}.{field}: {record:?}")),
+            "monotonic",
+        );
+    }
 }
 
 const CACHE_TRACE_COUNT_FIELDS: &[(&str, &str)] = &[

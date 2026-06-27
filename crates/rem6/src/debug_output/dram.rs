@@ -1,0 +1,397 @@
+use crate::{Rem6DramPortSummary, Rem6DramSummary};
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum Rem6DramTraceRecord {
+    Target {
+        target: u32,
+        accesses: u64,
+        reads: u64,
+        writes: u64,
+        row_hits: u64,
+        row_misses: u64,
+        refreshes: u64,
+        refresh_ticks: u64,
+        commands: u64,
+        turnarounds: u64,
+        total_ready_latency_ticks: u64,
+        max_ready_latency_ticks: u64,
+    },
+    Port {
+        target: u32,
+        port: u32,
+        accesses: u64,
+        reads: u64,
+        writes: u64,
+        row_hits: u64,
+        row_misses: u64,
+        refreshes: u64,
+        refresh_ticks: u64,
+        commands: u64,
+        turnarounds: u64,
+        total_ready_latency_ticks: u64,
+        max_ready_latency_ticks: u64,
+    },
+    Bank {
+        target: u32,
+        port: u32,
+        bank: u32,
+        accesses: u64,
+        read_bytes: u64,
+        write_bytes: u64,
+        row_hits: u64,
+        row_misses: u64,
+        refreshes: u64,
+        refresh_ticks: u64,
+        commands: u64,
+        total_ready_latency_ticks: u64,
+        max_ready_latency_ticks: u64,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6DramTraceStat {
+    path: String,
+    unit: &'static str,
+    value: u64,
+}
+
+impl Rem6DramTraceStat {
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub(crate) const fn unit(&self) -> &'static str {
+        self.unit
+    }
+
+    pub(crate) const fn value(&self) -> u64 {
+        self.value
+    }
+}
+
+impl Rem6DramTraceRecord {
+    pub(crate) fn to_json(&self) -> String {
+        match self {
+            Self::Target {
+                target,
+                accesses,
+                reads,
+                writes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                turnarounds,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+            } => format!(
+                "{{\"kind\":\"target\",\"target\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{}}}",
+                target,
+                accesses,
+                reads,
+                writes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                turnarounds,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+            ),
+            Self::Port {
+                target,
+                port,
+                accesses,
+                reads,
+                writes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                turnarounds,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+            } => format!(
+                "{{\"kind\":\"port\",\"target\":{},\"port\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{}}}",
+                target,
+                port,
+                accesses,
+                reads,
+                writes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                turnarounds,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+            ),
+            Self::Bank {
+                target,
+                port,
+                bank,
+                accesses,
+                read_bytes,
+                write_bytes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+            } => format!(
+                "{{\"kind\":\"bank\",\"target\":{},\"port\":{},\"bank\":{},\"accesses\":{},\"read_bytes\":{},\"write_bytes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{}}}",
+                target,
+                port,
+                bank,
+                accesses,
+                read_bytes,
+                write_bytes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+            ),
+        }
+    }
+
+    pub(crate) const fn kind(&self) -> &'static str {
+        match self {
+            Self::Target { .. } => "target",
+            Self::Port { .. } => "port",
+            Self::Bank { .. } => "bank",
+        }
+    }
+
+    pub(crate) fn stats(&self) -> Vec<Rem6DramTraceStat> {
+        let mut stats = Vec::new();
+        match self {
+            Self::Target {
+                target,
+                accesses,
+                reads,
+                writes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                turnarounds,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+            } => {
+                let prefix = format!("target{target}");
+                for (suffix, unit, value) in [
+                    ("accesses", "Count", *accesses),
+                    ("reads", "Count", *reads),
+                    ("writes", "Count", *writes),
+                    ("row_hits", "Count", *row_hits),
+                    ("row_misses", "Count", *row_misses),
+                    ("refreshes", "Count", *refreshes),
+                    ("refresh_ticks", "Tick", *refresh_ticks),
+                    ("commands", "Count", *commands),
+                    ("turnarounds", "Count", *turnarounds),
+                    (
+                        "total_ready_latency_ticks",
+                        "Tick",
+                        *total_ready_latency_ticks,
+                    ),
+                    ("max_ready_latency_ticks", "Tick", *max_ready_latency_ticks),
+                ] {
+                    push_dram_trace_stat(&mut stats, &prefix, suffix, unit, value);
+                }
+            }
+            Self::Port {
+                target,
+                port,
+                accesses,
+                reads,
+                writes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                turnarounds,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+            } => {
+                let prefix = format!("target{target}.port{port}");
+                for (suffix, unit, value) in [
+                    ("accesses", "Count", *accesses),
+                    ("reads", "Count", *reads),
+                    ("writes", "Count", *writes),
+                    ("row_hits", "Count", *row_hits),
+                    ("row_misses", "Count", *row_misses),
+                    ("refreshes", "Count", *refreshes),
+                    ("refresh_ticks", "Tick", *refresh_ticks),
+                    ("commands", "Count", *commands),
+                    ("turnarounds", "Count", *turnarounds),
+                    (
+                        "total_ready_latency_ticks",
+                        "Tick",
+                        *total_ready_latency_ticks,
+                    ),
+                    ("max_ready_latency_ticks", "Tick", *max_ready_latency_ticks),
+                ] {
+                    push_dram_trace_stat(&mut stats, &prefix, suffix, unit, value);
+                }
+            }
+            Self::Bank {
+                target,
+                port,
+                bank,
+                accesses,
+                read_bytes,
+                write_bytes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+            } => {
+                let prefix = format!("target{target}.port{port}.bank{bank}");
+                for (suffix, unit, value) in [
+                    ("accesses", "Count", *accesses),
+                    ("read_bytes", "Byte", *read_bytes),
+                    ("write_bytes", "Byte", *write_bytes),
+                    ("row_hits", "Count", *row_hits),
+                    ("row_misses", "Count", *row_misses),
+                    ("refreshes", "Count", *refreshes),
+                    ("refresh_ticks", "Tick", *refresh_ticks),
+                    ("commands", "Count", *commands),
+                    (
+                        "total_ready_latency_ticks",
+                        "Tick",
+                        *total_ready_latency_ticks,
+                    ),
+                    ("max_ready_latency_ticks", "Tick", *max_ready_latency_ticks),
+                ] {
+                    push_dram_trace_stat(&mut stats, &prefix, suffix, unit, value);
+                }
+            }
+        }
+        stats
+    }
+
+    const fn sort_key(&self) -> (u32, u8, u32, u32) {
+        match self {
+            Self::Target { target, .. } => (*target, 0, u32::MAX, u32::MAX),
+            Self::Port { target, port, .. } => (*target, 1, *port, u32::MAX),
+            Self::Bank {
+                target, port, bank, ..
+            } => (*target, 2, *port, *bank),
+        }
+    }
+}
+
+pub(crate) fn dram_trace_records(dram: &Rem6DramSummary) -> Vec<Rem6DramTraceRecord> {
+    let mut records = Vec::new();
+    for target in &dram.targets {
+        records.push(Rem6DramTraceRecord::Target {
+            target: target.target,
+            accesses: target.accesses,
+            reads: target.reads,
+            writes: target.writes,
+            row_hits: target.row_hits,
+            row_misses: target.row_misses,
+            refreshes: target.refreshes,
+            refresh_ticks: target.refresh_ticks,
+            commands: target.commands,
+            turnarounds: target.turnarounds,
+            total_ready_latency_ticks: target.total_ready_latency_ticks,
+            max_ready_latency_ticks: target.max_ready_latency_ticks,
+        });
+        for port in &target.ports {
+            records.push(Rem6DramTraceRecord::Port {
+                target: target.target,
+                port: port.port,
+                accesses: port.accesses,
+                reads: port.reads,
+                writes: port.writes,
+                row_hits: dram_port_row_hits(port),
+                row_misses: dram_port_row_misses(port),
+                refreshes: dram_port_refreshes(port),
+                refresh_ticks: dram_port_refresh_ticks(port),
+                commands: port.commands,
+                turnarounds: port.turnarounds,
+                total_ready_latency_ticks: dram_port_total_ready_latency_ticks(port),
+                max_ready_latency_ticks: dram_port_max_ready_latency_ticks(port),
+            });
+            for bank in &port.banks {
+                records.push(Rem6DramTraceRecord::Bank {
+                    target: target.target,
+                    port: port.port,
+                    bank: bank.bank,
+                    accesses: bank.accesses,
+                    read_bytes: bank.read_bytes,
+                    write_bytes: bank.write_bytes,
+                    row_hits: bank.row_hits,
+                    row_misses: bank.row_misses,
+                    refreshes: bank.refreshes,
+                    refresh_ticks: bank.refresh_ticks,
+                    commands: bank.commands,
+                    total_ready_latency_ticks: bank.total_ready_latency_ticks,
+                    max_ready_latency_ticks: bank.max_ready_latency_ticks,
+                });
+            }
+        }
+    }
+    records.sort_by_key(Rem6DramTraceRecord::sort_key);
+    records
+}
+
+fn push_dram_trace_stat(
+    stats: &mut Vec<Rem6DramTraceStat>,
+    prefix: &str,
+    suffix: &'static str,
+    unit: &'static str,
+    value: u64,
+) {
+    stats.push(Rem6DramTraceStat {
+        path: format!("{prefix}.{suffix}"),
+        unit,
+        value,
+    });
+}
+
+fn dram_port_row_hits(port: &Rem6DramPortSummary) -> u64 {
+    port.banks.iter().map(|bank| bank.row_hits).sum()
+}
+
+fn dram_port_row_misses(port: &Rem6DramPortSummary) -> u64 {
+    port.banks.iter().map(|bank| bank.row_misses).sum()
+}
+
+fn dram_port_refreshes(port: &Rem6DramPortSummary) -> u64 {
+    port.banks.iter().map(|bank| bank.refreshes).sum()
+}
+
+fn dram_port_refresh_ticks(port: &Rem6DramPortSummary) -> u64 {
+    port.banks.iter().map(|bank| bank.refresh_ticks).sum()
+}
+
+fn dram_port_total_ready_latency_ticks(port: &Rem6DramPortSummary) -> u64 {
+    port.banks
+        .iter()
+        .map(|bank| bank.total_ready_latency_ticks)
+        .sum()
+}
+
+fn dram_port_max_ready_latency_ticks(port: &Rem6DramPortSummary) -> u64 {
+    port.banks
+        .iter()
+        .map(|bank| bank.max_ready_latency_ticks)
+        .max()
+        .unwrap_or(0)
+}
