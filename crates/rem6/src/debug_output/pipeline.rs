@@ -7,6 +7,7 @@ pub(super) struct Rem6PipelineTraceRecord {
     pub(super) cpu: u32,
     pub(super) cycle: u64,
     pub(super) stall_cycles: u64,
+    pub(super) stall_cause: Option<&'static str>,
     pub(super) state_changed: bool,
     pub(super) before_in_flight: Vec<Rem6PipelineTraceInstruction>,
     pub(super) after_in_flight: Vec<Rem6PipelineTraceInstruction>,
@@ -53,6 +54,7 @@ pub(super) fn pipeline_trace_records(
                         cpu: cpu.get(),
                         cycle: cycle.cycle(),
                         stall_cycles: cycle.stall_cycle_count(),
+                        stall_cause: cycle.stall_cause().map(|cause| cause.as_str()),
                         state_changed: summary.state_changed(),
                         before_in_flight: cycle
                             .before()
@@ -111,10 +113,11 @@ pub(super) fn pipeline_trace_records(
 impl Rem6PipelineTraceRecord {
     pub(super) fn to_json(&self) -> String {
         format!(
-            "{{\"cpu\":{},\"cycle\":{},\"stall_cycles\":{},\"state_changed\":{},\"before_in_flight\":[{}],\"after_in_flight\":[{}],\"advanced\":[{}],\"resource_blocked\":[{}],\"ordering_blocked\":[{}],\"flushed\":[{}],\"branch_predictions\":{},\"branch_mispredictions\":{},\"branch_prediction_flushed\":{},\"redirect_target\":{}}}",
+            "{{\"cpu\":{},\"cycle\":{},\"stall_cycles\":{},\"stall_cause\":{},\"state_changed\":{},\"before_in_flight\":[{}],\"after_in_flight\":[{}],\"advanced\":[{}],\"resource_blocked\":[{}],\"ordering_blocked\":[{}],\"flushed\":[{}],\"branch_predictions\":{},\"branch_mispredictions\":{},\"branch_prediction_flushed\":{},\"redirect_target\":{}}}",
             self.cpu,
             self.cycle,
             self.stall_cycles,
+            optional_str_json(self.stall_cause),
             self.state_changed,
             pipeline_trace_instructions_json(&self.before_in_flight),
             pipeline_trace_instructions_json(&self.after_in_flight),
@@ -193,6 +196,12 @@ fn pipeline_trace_advances_json(records: &[Rem6PipelineTraceAdvance]) -> String 
 fn optional_hex_json(value: Option<u64>) -> String {
     value
         .map(|value| format!("\"0x{value:x}\""))
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn optional_str_json(value: Option<&str>) -> String {
+    value
+        .map(|value| format!("\"{value}\""))
         .unwrap_or_else(|| "null".to_string())
 }
 

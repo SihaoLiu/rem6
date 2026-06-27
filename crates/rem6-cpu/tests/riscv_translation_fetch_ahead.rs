@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use rem6_boot::BootImage;
 use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, CpuTranslationFrontend,
-    RiscvCore, RiscvCoreDriveAction,
+    InOrderPipelineStallCause, RiscvCore, RiscvCoreDriveAction,
 };
 use rem6_isa_riscv::Register;
 use rem6_kernel::{PartitionId, PartitionedScheduler};
@@ -50,6 +50,16 @@ fn riscv_core_translated_driver_retires_completed_fetch_while_fetch_ahead_is_pen
         drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
         Some(RiscvCoreDriveAction::FetchIssued { .. })
     ));
+    assert_eq!(
+        drive_one_translated_action(&core, store.clone(), &mut scheduler, &transport, &page_map),
+        None
+    );
+    assert_eq!(
+        core.in_order_pipeline_cycle_records()
+            .last()
+            .and_then(|record| record.stall_cause()),
+        Some(InOrderPipelineStallCause::FetchWait)
+    );
     scheduler.run_until_idle_conservative();
 
     assert!(matches!(

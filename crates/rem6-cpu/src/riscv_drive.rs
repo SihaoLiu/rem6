@@ -30,7 +30,7 @@ impl RiscvCore {
         self.sync_in_order_fetch_state()?;
         if self.core.has_pending_fetch() {
             if !self.can_retire_completed_fetch_while_fetch_pending()? {
-                self.record_in_order_resource_stall_cycle()?;
+                self.record_in_order_fetch_wait_stall_cycle()?;
                 return Ok(None);
             }
             if let Some(event) = self.execute_next_completed_fetch()? {
@@ -38,7 +38,7 @@ impl RiscvCore {
                     event,
                 ))));
             }
-            self.record_in_order_resource_stall_cycle()?;
+            self.record_in_order_fetch_wait_stall_cycle()?;
             return Ok(None);
         }
 

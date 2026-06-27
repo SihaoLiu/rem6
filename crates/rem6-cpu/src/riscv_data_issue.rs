@@ -16,9 +16,9 @@ use rem6_transport::{
 };
 
 use crate::{
-    riscv_checker, riscv_data_access, riscv_execute, CpuId, RiscvCore, RiscvCoreState,
-    RiscvCpuError, RiscvDataAccessEvent, RiscvDataAccessRecord, RiscvDataAccessTarget,
-    RiscvLoadReservation,
+    riscv_checker, riscv_data_access, riscv_execute, CpuId, InOrderPipelineStallCause, RiscvCore,
+    RiscvCoreState, RiscvCpuError, RiscvDataAccessEvent, RiscvDataAccessRecord,
+    RiscvDataAccessTarget, RiscvLoadReservation,
 };
 
 impl RiscvCore {
@@ -572,11 +572,12 @@ fn record_data_retire_cycle(
         return;
     }
     let wait_cycles = completion_tick.saturating_sub(access.tick);
-    let cycle = riscv_execute::record_retired_in_order_pipeline_cycle_after_wait(
+    let cycle = riscv_execute::record_retired_in_order_pipeline_cycle_after_wait_with_cause(
         state,
         access.fetch_request.sequence(),
         None,
         wait_cycles,
+        InOrderPipelineStallCause::DataWait,
     )
     .expect("completed data access records one in-order retire cycle");
     state.events[index].set_in_order_pipeline_cycle(cycle);

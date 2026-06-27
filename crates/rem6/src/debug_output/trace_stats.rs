@@ -470,12 +470,16 @@ pub(super) fn pipeline_trace_stats(
 ) -> Vec<Rem6PipelineTraceStat> {
     let mut cpus = BTreeMap::<u32, PipelineTraceStatSummary>::new();
     let mut states = BTreeMap::<&str, PipelineTraceStatSummary>::new();
+    let mut stall_causes = BTreeMap::<&str, PipelineTraceStatSummary>::new();
     for record in records {
         cpus.entry(record.cpu).or_default().add_record(record);
         states
             .entry(pipeline_state_path(record.state_changed))
             .or_default()
             .add_record(record);
+        if let Some(cause) = record.stall_cause {
+            stall_causes.entry(cause).or_default().add_record(record);
+        }
     }
 
     let mut stats = Vec::new();
@@ -484,6 +488,12 @@ pub(super) fn pipeline_trace_stats(
     }
     for (state, summary) in states {
         summary.push_stats(&mut stats, &format!("state.{}", stat_path_segment(state)));
+    }
+    for (cause, summary) in stall_causes {
+        summary.push_stats(
+            &mut stats,
+            &format!("stall_cause.{}", stat_path_segment(cause)),
+        );
     }
     stats
 }

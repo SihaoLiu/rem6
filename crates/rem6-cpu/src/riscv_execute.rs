@@ -10,10 +10,11 @@ use crate::{
     riscv_branch_kind::riscv_branch_target_kind, riscv_execution_event::RiscvRetiredBranchUpdates,
     BranchTargetKind, CpuFetchEvent, CpuFetchEventKind, CpuFetchRecord, InOrderBranchPrediction,
     InOrderBranchRedirect, InOrderPipelineCycleRecord, InOrderPipelineInstruction,
-    InOrderPipelineStage, RiscvBiModeBranchUpdate, RiscvCore, RiscvCoreState, RiscvCpuError,
-    RiscvCpuExecutionEvent, RiscvGShareBranchUpdate, RiscvMultiperspectivePerceptronBranchUpdate,
-    RiscvSelectedBranchSpeculation, RiscvTageScLBranchUpdate, RiscvTournamentBranchUpdate,
-    StatisticalCorrectorBranchKind, RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+    InOrderPipelineStage, InOrderPipelineStallCause, RiscvBiModeBranchUpdate, RiscvCore,
+    RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent, RiscvGShareBranchUpdate,
+    RiscvMultiperspectivePerceptronBranchUpdate, RiscvSelectedBranchSpeculation,
+    RiscvTageScLBranchUpdate, RiscvTournamentBranchUpdate, StatisticalCorrectorBranchKind,
+    RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
     RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TAGE_SC_L_THREAD,
     RISCV_LOCAL_TOURNAMENT_THREAD,
 };
@@ -248,6 +249,7 @@ impl RiscvCore {
                     pipeline_branch_prediction,
                     pipeline_redirect,
                     execute_wait_cycles,
+                    InOrderPipelineStallCause::ExecuteWait,
                 )?,
             )
         } else {
@@ -358,11 +360,12 @@ fn stale_fetch_requests_after_retire(
         .collect()
 }
 
-pub(crate) fn record_retired_in_order_pipeline_cycle_after_wait(
+pub(crate) fn record_retired_in_order_pipeline_cycle_after_wait_with_cause(
     state: &mut RiscvCoreState,
     sequence: u64,
     branch_prediction: Option<InOrderBranchPrediction>,
     wait_cycles: u64,
+    stall_cause: InOrderPipelineStallCause,
 ) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
     record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
         state,
@@ -370,6 +373,7 @@ pub(crate) fn record_retired_in_order_pipeline_cycle_after_wait(
         branch_prediction,
         None,
         wait_cycles,
+        stall_cause,
     )
 }
 
@@ -379,6 +383,7 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
     branch_prediction: Option<InOrderBranchPrediction>,
     redirect: Option<InOrderBranchRedirect>,
     wait_cycles: u64,
+    stall_cause: InOrderPipelineStallCause,
 ) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
     if !state.in_order_pipeline.contains_sequence(sequence) {
         state
@@ -396,7 +401,7 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
         InOrderPipelineStage::ALL.len() + state.in_order_pipeline.in_flight().len();
     for _ in 0..max_retire_cycles {
         if !wait_recorded && in_order_pipeline_sequence_is_in_execute(state, sequence) {
-            record_in_order_resource_wait_cycles(state, wait_cycles)?;
+            record_in_order_resource_wait_cycles(state, wait_cycles, stall_cause)?;
             wait_recorded = true;
         }
         let snapshot = state.in_order_pipeline.snapshot();
@@ -428,7 +433,7 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
                     && instruction.stage() == InOrderPipelineStage::Execute
             })
         {
-            record_in_order_resource_wait_cycles(state, wait_cycles)?;
+            record_in_order_resource_wait_cycles(state, wait_cycles, stall_cause)?;
             wait_recorded = true;
         }
         if retires_sequence {
@@ -470,11 +475,12 @@ fn in_order_pipeline_sequence_is_in_execute(state: &RiscvCoreState, sequence: u6
 fn record_in_order_resource_wait_cycles(
     state: &mut RiscvCoreState,
     wait_cycles: u64,
+    stall_cause: InOrderPipelineStallCause,
 ) -> Result<(), RiscvCpuError> {
     for _ in 0..wait_cycles {
         let stall_record = state
             .in_order_pipeline
-            .try_record_resource_stall_cycle()
+            .try_record_resource_stall_cycle_with_cause(stall_cause)
             .map_err(RiscvCpuError::InOrderPipeline)?;
         state.in_order_pipeline_cycle_records.push(stall_record);
     }
@@ -1469,8 +1475,14 @@ mod tests {
             ])
             .unwrap();
 
-        let record =
-            record_retired_in_order_pipeline_cycle_after_wait(&mut state, 1, None, 0).unwrap();
+        let record = record_retired_in_order_pipeline_cycle_after_wait_with_cause(
+            &mut state,
+            1,
+            None,
+            0,
+            InOrderPipelineStallCause::ExecuteWait,
+        )
+        .unwrap();
 
         assert!(record
             .plan()

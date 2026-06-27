@@ -46,7 +46,7 @@ fn record_pending_fetch_resource_stall(
     cpu: CpuId,
     core: &RiscvCore,
 ) -> Result<(), RiscvClusterError> {
-    core.record_in_order_resource_stall_cycle()
+    core.record_in_order_fetch_wait_stall_cycle()
         .map(|_| ())
         .map_err(|error| RiscvClusterError::Core { cpu, error })
 }

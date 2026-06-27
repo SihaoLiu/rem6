@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
+    path::Path,
     process::Command,
 };
 
@@ -492,6 +493,49 @@ fn rem6_run_pipeline_debug_flag_emits_real_in_order_cycle_trace() {
         "monotonic",
     );
     assert_pipeline_trace_hierarchy_stats(&stdout, trace);
+}
+
+#[test]
+fn rem6_run_pipeline_debug_flag_classifies_real_wait_stall_causes() {
+    let fetch_program = riscv64_program(&[
+        0x0070_0293, // addi x5, x0, 7
+        0x0000_0073, // ecall
+    ]);
+    let fetch_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &fetch_program);
+    let fetch_path = temp_binary("debug-flags-pipeline-fetch-wait-cause", &fetch_elf);
+    let fetch_stdout = run_pipeline_debug_wait_program(
+        &fetch_path,
+        &["--min-remote-delay", "2", "--memory-route-delay", "5"],
+    );
+    assert_pipeline_wait_cause(&fetch_stdout, "fetch_wait");
+
+    let mut data_program = riscv64_program(&[
+        u_type(0, 2, 0x17),          // auipc x2, 0
+        i_type(24, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),  // ld x5, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),  // addi x6, x5, 1
+        s_type(8, 6, 2, 0x3),        // sd x6, 8(x2)
+        0x0000_0073,                 // ecall
+    ]);
+    data_program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    data_program.extend_from_slice(&0u64.to_le_bytes());
+    data_program.extend_from_slice(&[0; 16]);
+    let data_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &data_program);
+    let data_path = temp_binary("debug-flags-pipeline-data-wait-cause", &data_elf);
+    let data_stdout = run_pipeline_debug_wait_program(&data_path, &[]);
+    assert_pipeline_wait_cause(&data_stdout, "data_wait");
+
+    let execute_program = riscv64_program(&[
+        0x0060_0093, // addi x1, x0, 6
+        0x0070_0113, // addi x2, x0, 7
+        0x0220_81b3, // mul x3, x1, x2
+        0x0000_0073, // ecall
+    ]);
+    let execute_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &execute_program);
+    let execute_path = temp_binary("debug-flags-pipeline-execute-wait-cause", &execute_elf);
+    let execute_stdout =
+        run_pipeline_debug_wait_program(&execute_path, &["--memory-system", "direct"]);
+    assert_pipeline_wait_cause(&execute_stdout, "execute_wait");
 }
 
 #[test]
@@ -2250,6 +2294,74 @@ fn assert_pipeline_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
             ),
         );
     }
+}
+
+fn run_pipeline_debug_wait_program(path: &Path, extra_args: &[&str]) -> String {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
+    command.args([
+        "run",
+        "--isa",
+        "riscv",
+        "--binary",
+        path.to_str().unwrap(),
+        "--max-tick",
+        "240",
+        "--stats-format",
+        "json",
+        "--execute",
+        "--debug-flags",
+        "Pipeline",
+    ]);
+    command.args(extra_args);
+    let output = command.output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+fn assert_pipeline_wait_cause(stdout: &str, cause: &str) {
+    let json: Value = serde_json::from_str(stdout).unwrap();
+    let trace = json
+        .pointer("/debug/pipeline_trace")
+        .and_then(Value::as_array)
+        .expect("debug pipeline trace array");
+    let wait_records = trace
+        .iter()
+        .filter(|record| record.get("stall_cause").and_then(Value::as_str) == Some(cause))
+        .collect::<Vec<_>>();
+    assert!(
+        !wait_records.is_empty(),
+        "missing pipeline stall cause {cause}: {trace:?}"
+    );
+    let stall_cycles = wait_records
+        .iter()
+        .map(|record| json_record_u64(record, "stall_cycles"))
+        .sum::<u64>();
+    assert!(stall_cycles > 0, "stall cause {cause}: {trace:?}");
+    assert!(
+        wait_records
+            .iter()
+            .all(|record| !record_array(record, "resource_blocked").is_empty()),
+        "stall cause {cause} should preserve blocked in-flight instructions: {trace:?}"
+    );
+    assert_stat(
+        stdout,
+        &format!("sim.debug.pipeline_trace.stall_cause.{cause}.records"),
+        "Count",
+        wait_records.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("sim.debug.pipeline_trace.stall_cause.{cause}.stall_cycles"),
+        "Count",
+        stall_cycles,
+        "monotonic",
+    );
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

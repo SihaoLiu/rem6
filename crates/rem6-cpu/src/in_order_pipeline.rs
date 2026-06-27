@@ -132,6 +132,23 @@ impl InOrderPipelineInstruction {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum InOrderPipelineStallCause {
+    FetchWait,
+    DataWait,
+    ExecuteWait,
+}
+
+impl InOrderPipelineStallCause {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FetchWait => "fetch_wait",
+            Self::DataWait => "data_wait",
+            Self::ExecuteWait => "execute_wait",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InOrderBranchRedirect {
     sequence: u64,
@@ -576,6 +593,7 @@ pub struct InOrderPipelineState {
 pub struct InOrderPipelineCycleRecord {
     cycle: u64,
     stall_cycle_count: u64,
+    stall_cause: Option<InOrderPipelineStallCause>,
     before: InOrderPipelineSnapshot,
     plan: InOrderPipelinePlan,
     branch_predictions: Vec<InOrderBranchPredictionRecord>,
@@ -993,6 +1011,10 @@ impl InOrderPipelineCycleRecord {
         self.stall_cycle_count
     }
 
+    pub const fn stall_cause(&self) -> Option<InOrderPipelineStallCause> {
+        self.stall_cause
+    }
+
     pub const fn plan(&self) -> &InOrderPipelinePlan {
         &self.plan
     }
@@ -1160,6 +1182,20 @@ impl InOrderPipelineState {
     pub fn try_record_resource_stall_cycle(
         &mut self,
     ) -> Result<InOrderPipelineCycleRecord, InOrderPipelineError> {
+        self.try_record_resource_stall_cycle_with_optional_cause(None)
+    }
+
+    pub fn try_record_resource_stall_cycle_with_cause(
+        &mut self,
+        cause: InOrderPipelineStallCause,
+    ) -> Result<InOrderPipelineCycleRecord, InOrderPipelineError> {
+        self.try_record_resource_stall_cycle_with_optional_cause(Some(cause))
+    }
+
+    fn try_record_resource_stall_cycle_with_optional_cause(
+        &mut self,
+        stall_cause: Option<InOrderPipelineStallCause>,
+    ) -> Result<InOrderPipelineCycleRecord, InOrderPipelineError> {
         let before = self.snapshot();
         let plan = InOrderPipelinePlan::resource_stall(self.in_flight.iter().copied())?;
         self.cycle = next_cycle(self.cycle)?;
@@ -1168,6 +1204,7 @@ impl InOrderPipelineState {
         Ok(InOrderPipelineCycleRecord {
             cycle: before.cycle(),
             stall_cycle_count: 1,
+            stall_cause,
             before,
             plan,
             branch_predictions: Vec::new(),
@@ -1186,6 +1223,7 @@ impl InOrderPipelineState {
         Ok(InOrderPipelineCycleRecord {
             cycle: before.cycle(),
             stall_cycle_count: 0,
+            stall_cause: None,
             before,
             plan,
             branch_predictions: Vec::new(),
@@ -1213,6 +1251,7 @@ impl InOrderPipelineState {
         Ok(InOrderPipelineCycleRecord {
             cycle: before.cycle(),
             stall_cycle_count: 0,
+            stall_cause: None,
             before,
             plan,
             branch_predictions,
@@ -1244,6 +1283,7 @@ impl InOrderPipelineState {
         Ok(InOrderPipelineCycleRecord {
             cycle: before.cycle(),
             stall_cycle_count: 0,
+            stall_cause: None,
             before,
             plan,
             branch_predictions,

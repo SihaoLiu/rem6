@@ -38,6 +38,13 @@ use crate::{
     RiscvDataAccessTarget, RiscvHartRunState,
 };
 
+mod csr;
+
+use csr::{
+    read_counter_enable_csr, read_environment_config_csr, read_machine_trap_csr,
+    write_counter_enable_csr, write_environment_config_csr, write_machine_trap_csr,
+};
+
 const RISCV_SV39_PTE_ACCESS_BYTES: u64 = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -975,9 +982,11 @@ impl RiscvCore {
             return Ok(None);
         }
         if self.core.has_pending_fetch() {
-            if self.has_pending_data_access()
-                || !self.can_retire_completed_fetch_while_fetch_pending()?
-            {
+            if self.has_pending_data_access() {
+                return Ok(None);
+            }
+            if !self.can_retire_completed_fetch_while_fetch_pending()? {
+                self.record_in_order_fetch_wait_stall_cycle()?;
                 return Ok(None);
             }
             if let Some(event) = self.execute_next_completed_fetch()? {
@@ -985,6 +994,7 @@ impl RiscvCore {
                     event,
                 ))));
             }
+            self.record_in_order_fetch_wait_stall_cycle()?;
             return Ok(None);
         }
 
@@ -1508,74 +1518,6 @@ impl RiscvCore {
             physical_address: translated.physical_address,
             line_layout: Some(line_layout),
         })
-    }
-}
-
-fn read_machine_trap_csr(hart: &rem6_isa_riscv::RiscvHartState, csr: RiscvMachineTrapCsr) -> u64 {
-    match csr {
-        RiscvMachineTrapCsr::Medeleg => hart.machine_exception_delegation(),
-        RiscvMachineTrapCsr::Mideleg => hart.machine_interrupt_delegation(),
-        RiscvMachineTrapCsr::Mtvec => hart.machine_trap_vector(),
-        RiscvMachineTrapCsr::Mscratch => hart.machine_scratch(),
-        RiscvMachineTrapCsr::Mepc => hart.machine_exception_pc(),
-        RiscvMachineTrapCsr::Mcause => hart.machine_trap_cause(),
-        RiscvMachineTrapCsr::Mtval => hart.machine_trap_value(),
-    }
-}
-
-fn write_machine_trap_csr(
-    hart: &mut rem6_isa_riscv::RiscvHartState,
-    csr: RiscvMachineTrapCsr,
-    value: u64,
-) {
-    match csr {
-        RiscvMachineTrapCsr::Medeleg => hart.set_machine_exception_delegation(value),
-        RiscvMachineTrapCsr::Mideleg => hart.set_machine_interrupt_delegation(value),
-        RiscvMachineTrapCsr::Mtvec => hart.set_machine_trap_vector(value),
-        RiscvMachineTrapCsr::Mscratch => hart.set_machine_scratch(value),
-        RiscvMachineTrapCsr::Mepc => hart.set_machine_exception_pc(value),
-        RiscvMachineTrapCsr::Mcause => hart.set_machine_trap_cause(value),
-        RiscvMachineTrapCsr::Mtval => hart.set_machine_trap_value(value),
-    }
-}
-
-fn read_environment_config_csr(
-    hart: &rem6_isa_riscv::RiscvHartState,
-    csr: RiscvEnvironmentConfigCsr,
-) -> u64 {
-    match csr {
-        RiscvEnvironmentConfigCsr::Senvcfg => hart.supervisor_environment_config(),
-    }
-}
-
-fn write_environment_config_csr(
-    hart: &mut rem6_isa_riscv::RiscvHartState,
-    csr: RiscvEnvironmentConfigCsr,
-    value: u64,
-) {
-    match csr {
-        RiscvEnvironmentConfigCsr::Senvcfg => hart.set_supervisor_environment_config(value),
-    }
-}
-
-fn read_counter_enable_csr(
-    hart: &rem6_isa_riscv::RiscvHartState,
-    csr: RiscvCounterEnableCsr,
-) -> u64 {
-    match csr {
-        RiscvCounterEnableCsr::Scounteren => hart.supervisor_counter_enable(),
-        RiscvCounterEnableCsr::Mcounteren => hart.machine_counter_enable(),
-    }
-}
-
-fn write_counter_enable_csr(
-    hart: &mut rem6_isa_riscv::RiscvHartState,
-    csr: RiscvCounterEnableCsr,
-    value: u64,
-) {
-    match csr {
-        RiscvCounterEnableCsr::Scounteren => hart.set_supervisor_counter_enable(value),
-        RiscvCounterEnableCsr::Mcounteren => hart.set_machine_counter_enable(value),
     }
 }
 
