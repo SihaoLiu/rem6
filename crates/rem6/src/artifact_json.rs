@@ -19,6 +19,7 @@ use gups::gups_response_stats_json;
 
 use self::fabric::{
     fabric_hop_activities_json, fabric_lane_activities_json, fabric_link_activities_json,
+    fabric_wait_for_json_fields,
 };
 
 mod fabric;
@@ -453,6 +454,7 @@ fn traffic_trace_summary_json(
         "\"fabric_hop_activities\":[{}]",
         fabric_hop_activities_json(parallel_summary)
     ));
+    fields.extend(fabric_wait_for_json_fields(parallel_summary));
     push_json_usize(
         &mut fields,
         "trace_data_cache_response_count",

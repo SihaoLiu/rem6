@@ -1,8 +1,9 @@
 use super::json_escape;
 
-pub(super) fn fabric_link_activities_json(
-    summary: &rem6_workload::WorkloadParallelExecutionSummary,
-) -> String {
+use rem6_kernel::WaitForEdgeKind;
+use rem6_workload::WorkloadParallelExecutionSummary;
+
+pub(super) fn fabric_link_activities_json(summary: &WorkloadParallelExecutionSummary) -> String {
     summary
         .fabric_link_activities()
         .iter()
@@ -28,9 +29,7 @@ pub(super) fn fabric_link_activities_json(
         .join(",")
 }
 
-pub(super) fn fabric_lane_activities_json(
-    summary: &rem6_workload::WorkloadParallelExecutionSummary,
-) -> String {
+pub(super) fn fabric_lane_activities_json(summary: &WorkloadParallelExecutionSummary) -> String {
     summary
         .fabric_lane_activities()
         .iter()
@@ -55,9 +54,7 @@ pub(super) fn fabric_lane_activities_json(
         .join(",")
 }
 
-pub(super) fn fabric_hop_activities_json(
-    summary: &rem6_workload::WorkloadParallelExecutionSummary,
-) -> String {
+pub(super) fn fabric_hop_activities_json(summary: &WorkloadParallelExecutionSummary) -> String {
     summary
         .fabric_hop_activities()
         .iter()
@@ -81,4 +78,90 @@ pub(super) fn fabric_hop_activities_json(
         })
         .collect::<Vec<_>>()
         .join(",")
+}
+
+pub(super) fn fabric_wait_for_json_fields(
+    summary: &WorkloadParallelExecutionSummary,
+) -> Vec<String> {
+    vec![
+        format!(
+            "\"fabric_wait_for_edge_count\":{}",
+            summary.fabric_wait_for_edge_count()
+        ),
+        format!(
+            "\"fabric_wait_for_edge_kind_windows\":[{}]",
+            fabric_wait_for_edge_kind_windows_json(summary)
+        ),
+        format!(
+            "\"fabric_wait_for_blocked_node_windows\":[{}]",
+            fabric_wait_for_blocked_node_windows_json(summary)
+        ),
+        format!(
+            "\"fabric_wait_for_target_node_windows\":[{}]",
+            fabric_wait_for_target_node_windows_json(summary)
+        ),
+    ]
+}
+
+fn fabric_wait_for_edge_kind_windows_json(summary: &WorkloadParallelExecutionSummary) -> String {
+    summary
+        .fabric_wait_for_edge_kind_windows()
+        .iter()
+        .map(|window| {
+            format!(
+                "{{\"kind\":\"{}\",\"edge_count\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                wait_for_edge_kind_json(window.kind()),
+                window.edge_count(),
+                window.first_tick(),
+                window.last_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn fabric_wait_for_blocked_node_windows_json(summary: &WorkloadParallelExecutionSummary) -> String {
+    summary
+        .fabric_wait_for_blocked_node_windows()
+        .iter()
+        .map(|window| {
+            format!(
+                "{{\"node\":\"{}\",\"edge_count\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                json_escape(&window.node().to_string()),
+                window.edge_count(),
+                window.first_tick(),
+                window.last_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn fabric_wait_for_target_node_windows_json(summary: &WorkloadParallelExecutionSummary) -> String {
+    summary
+        .fabric_wait_for_target_node_windows()
+        .iter()
+        .map(|window| {
+            format!(
+                "{{\"node\":\"{}\",\"edge_count\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                json_escape(&window.node().to_string()),
+                window.edge_count(),
+                window.first_tick(),
+                window.last_tick(),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn wait_for_edge_kind_json(kind: WaitForEdgeKind) -> &'static str {
+    match kind {
+        WaitForEdgeKind::Resource => "resource",
+        WaitForEdgeKind::Message => "message",
+        WaitForEdgeKind::Protocol => "protocol",
+        WaitForEdgeKind::Queue => "queue",
+        WaitForEdgeKind::Credit => "credit",
+        WaitForEdgeKind::HostAction => "host_action",
+        WaitForEdgeKind::Barrier => "barrier",
+    }
 }

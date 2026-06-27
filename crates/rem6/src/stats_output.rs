@@ -13,6 +13,7 @@ mod resource_acquire;
 mod riscv;
 mod text;
 mod trace_replay;
+mod wait_for;
 
 use super::formatting::json_escape;
 use crate::gpu_cli::{Rem6GpuFabricSummary, Rem6GpuRunExecutionSummary};

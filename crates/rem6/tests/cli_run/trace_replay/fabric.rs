@@ -499,6 +499,189 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
     }
 }
 
+#[test]
+fn rem6_trace_replay_fabric_route_emits_wait_for_windows() {
+    let trace = temp_trace(
+        "trace-replay-fabric-wait-for",
+        &packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 1,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1010),
+                    size: Some(8),
+                    packet_id: Some(11),
+                },
+                PacketFields {
+                    tick: 40,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 50,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1010),
+                    size: Some(8),
+                    packet_id: Some(11),
+                },
+            ],
+        ),
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "trace-replay",
+            "--trace",
+            trace.to_str().unwrap(),
+            "--route",
+            "cpu0.fetch",
+            "--memory-start",
+            "0x1000",
+            "--memory-size",
+            "0x1000",
+            "--max-tick",
+            "128",
+            "--tick-frequency",
+            "1000",
+            "--line-bytes",
+            "64",
+            "--agent",
+            "7",
+            "--control-partition",
+            "2",
+            "--fabric-link",
+            "cpu_mem",
+            "--fabric-bandwidth-bytes-per-tick",
+            "4",
+            "--fabric-request-virtual-network",
+            "1",
+            "--fabric-response-virtual-network",
+            "1",
+            "--fabric-credit-depth",
+            "1",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
+    let summary = artifact.pointer("/summary").expect("trace replay summary");
+
+    let wait_for_edge_count = summary
+        .get("fabric_wait_for_edge_count")
+        .and_then(Value::as_u64)
+        .expect("fabric wait-for edge count");
+    assert_eq!(wait_for_edge_count, 2);
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.fabric.wait_for.edges",
+        "Count",
+        wait_for_edge_count,
+        "monotonic",
+    );
+
+    let kind_windows = summary
+        .get("fabric_wait_for_edge_kind_windows")
+        .and_then(Value::as_array)
+        .expect("fabric wait-for edge kind windows");
+    assert_wait_for_kind_window(kind_windows, "queue", 1, 1, 1);
+    assert_wait_for_kind_window(kind_windows, "credit", 1, 2, 2);
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.fabric.wait_for.kind.queue.edges",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.fabric.wait_for.kind.queue.first_tick",
+        "Tick",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.fabric.wait_for.kind.queue.last_tick",
+        "Tick",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.fabric.wait_for.kind.credit.edges",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.fabric.wait_for.kind.credit.first_tick",
+        "Tick",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.fabric.wait_for.kind.credit.last_tick",
+        "Tick",
+        2,
+        "monotonic",
+    );
+
+    let target_windows = summary
+        .get("fabric_wait_for_target_node_windows")
+        .and_then(Value::as_array)
+        .expect("fabric wait-for target node windows");
+    assert_wait_for_node_window(target_windows, "resource:fabric.cpu_mem.vn.1.lane", 1, 1, 1);
+    assert_wait_for_node_window(
+        target_windows,
+        "resource:fabric.cpu_mem.vn.1.credit",
+        1,
+        2,
+        2,
+    );
+
+    let blocked_windows = summary
+        .get("fabric_wait_for_blocked_node_windows")
+        .and_then(Value::as_array)
+        .expect("fabric wait-for blocked node windows");
+    assert_eq!(blocked_windows.len(), 1);
+    let blocked_window = &blocked_windows[0];
+    assert!(blocked_window
+        .get("node")
+        .and_then(Value::as_str)
+        .is_some_and(|node| node.starts_with("transaction:fabric.packet.")));
+    assert_eq!(
+        blocked_window.get("edge_count").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        blocked_window.get("first_tick").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        blocked_window.get("last_tick").and_then(Value::as_u64),
+        Some(2)
+    );
+}
+
 fn assert_fabric_virtual_network_stats(stdout: &str, expected: ExpectedFabricVirtualNetworkStats) {
     let prefix = format!("sim.trace_replay.fabric.vn{}", expected.virtual_network);
     assert_stat(
@@ -570,6 +753,56 @@ fn assert_fabric_virtual_network_stats(stdout: &str, expected: ExpectedFabricVir
         "Count",
         expected.contended_lanes,
         "monotonic",
+    );
+}
+
+fn assert_wait_for_kind_window(
+    windows: &[Value],
+    kind: &str,
+    edge_count: u64,
+    first_tick: u64,
+    last_tick: u64,
+) {
+    let window = windows
+        .iter()
+        .find(|window| window.get("kind").and_then(Value::as_str) == Some(kind))
+        .unwrap_or_else(|| panic!("missing {kind} wait-for kind window"));
+    assert_eq!(
+        window.get("edge_count").and_then(Value::as_u64),
+        Some(edge_count)
+    );
+    assert_eq!(
+        window.get("first_tick").and_then(Value::as_u64),
+        Some(first_tick)
+    );
+    assert_eq!(
+        window.get("last_tick").and_then(Value::as_u64),
+        Some(last_tick)
+    );
+}
+
+fn assert_wait_for_node_window(
+    windows: &[Value],
+    node: &str,
+    edge_count: u64,
+    first_tick: u64,
+    last_tick: u64,
+) {
+    let window = windows
+        .iter()
+        .find(|window| window.get("node").and_then(Value::as_str) == Some(node))
+        .unwrap_or_else(|| panic!("missing {node} wait-for node window"));
+    assert_eq!(
+        window.get("edge_count").and_then(Value::as_u64),
+        Some(edge_count)
+    );
+    assert_eq!(
+        window.get("first_tick").and_then(Value::as_u64),
+        Some(first_tick)
+    );
+    assert_eq!(
+        window.get("last_tick").and_then(Value::as_u64),
+        Some(last_tick)
     );
 }
 
