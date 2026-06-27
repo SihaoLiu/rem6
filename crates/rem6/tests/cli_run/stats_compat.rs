@@ -1,6 +1,7 @@
 use std::{env, process::Command};
 
 use crate::support::*;
+use serde_json::Value;
 
 #[test]
 fn rem6_run_text_stats_emit_gem5_final_tick_aliases() {
@@ -5850,6 +5851,237 @@ fn rem6_run_stats_emit_ras_target_provider_from_real_call_return_fetch() {
 }
 
 #[test]
+fn rem6_run_stats_emit_multicore_ras_target_provider_from_real_call_return_fetch() {
+    let program = riscv64_program(&[
+        j_type(12, 1),              // jal x1, function
+        i_type(7, 0, 0x0, 5, 0x13), // addi x5, x0, 7
+        j_type(0, 0),               // done: jal x0, done
+        i_type(1, 0, 0x0, 6, 0x13), // function: addi x6, x0, 1
+        i_type(0, 1, 0x0, 0, 0x67), // jalr x0, 0(x1)
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-multicore-branch-ras-provider", &elf);
+
+    let run = |stats_format: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "160",
+                "--memory-route-delay",
+                "1",
+                "--riscv-branch-lookahead",
+                "2",
+                "--stats-format",
+                stats_format,
+                "--execute",
+                "--cores",
+                "2",
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+
+    let stdout = run("json");
+    for cpu in [0, 1] {
+        let ras_provider = stat_value(
+            &stdout,
+            &format!("sim.cpu{cpu}.branch_predictor.target_provider.ras"),
+        );
+        assert!(ras_provider > 0, "{stdout}");
+        assert_eq!(
+            stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.target_provider.total")
+            ),
+            stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.target_provider.no_target")
+            ) + stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.target_provider.btb")
+            ) + ras_provider
+                + stat_value(
+                    &stdout,
+                    &format!("sim.cpu{cpu}.branch_predictor.target_provider.indirect")
+                )
+        );
+    }
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
+    for cpu in [0, 1] {
+        assert_eq!(
+            json_core_register(&artifact, cpu, "x5"),
+            Some("0x7"),
+            "core {cpu} did not execute the return path:\n{stdout}"
+        );
+        assert_eq!(
+            json_core_register(&artifact, cpu, "x6"),
+            Some("0x1"),
+            "core {cpu} did not execute the function body:\n{stdout}"
+        );
+    }
+
+    let stdout = run("text");
+    for cpu in [0, 1] {
+        let ras_provider = text_stat_value(
+            &stdout,
+            &format!("sim.cpu{cpu}.branch_predictor.target_provider.ras"),
+        );
+        assert!(ras_provider > 0, "{stdout}");
+        assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.targetProvider_0::RAS")
+            ),
+            ras_provider
+        );
+        assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.targetProvider_0::total")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.target_provider.total")
+            )
+        );
+        assert!(
+            text_stat_line(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.targetProvider_0::RAS")
+            )
+            .contains("unit=Count"),
+            "{stdout}"
+        );
+    }
+    assert!(!has_text_stat(
+        &stdout,
+        "system.cpu.branchPred.targetProvider_0::RAS"
+    ));
+}
+
+#[test]
+fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
+    let program = riscv64_program(&[
+        i_type(0, 10, 0x0, 0, 0x67), // jalr x0, 0(x10)
+        i_type(1, 0, 0x0, 5, 0x13),  // skipped: addi x5, x0, 1
+        i_type(9, 0, 0x0, 5, 0x13),  // target: addi x5, x0, 9
+        0x0000_0073,                 // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-branch-indirect-provider", &elf);
+
+    for cores in [1, 2] {
+        let run = |stats_format: &str| {
+            let cores_arg = cores.to_string();
+            let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+                .args([
+                    "run",
+                    "--isa",
+                    "riscv",
+                    "--binary",
+                    path.to_str().unwrap(),
+                    "--max-tick",
+                    "120",
+                    "--memory-route-delay",
+                    "1",
+                    "--riscv-branch-lookahead",
+                    "2",
+                    "--riscv-boot-a0",
+                    "0x80000008",
+                    "--stats-format",
+                    stats_format,
+                    "--execute",
+                    "--cores",
+                    &cores_arg,
+                ])
+                .output()
+                .unwrap();
+
+            assert!(
+                output.status.success(),
+                "stderr: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap()
+        };
+
+        let stdout = run("json");
+        for cpu in 0..cores {
+            let indirect_provider = stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.target_provider.indirect"),
+            );
+            assert!(indirect_provider > 0, "{stdout}");
+            assert_eq!(
+                stat_value(
+                    &stdout,
+                    &format!("sim.cpu{cpu}.branch_predictor.target_provider.total")
+                ),
+                stat_value(
+                    &stdout,
+                    &format!("sim.cpu{cpu}.branch_predictor.target_provider.no_target")
+                ) + stat_value(
+                    &stdout,
+                    &format!("sim.cpu{cpu}.branch_predictor.target_provider.btb")
+                ) + stat_value(
+                    &stdout,
+                    &format!("sim.cpu{cpu}.branch_predictor.target_provider.ras")
+                ) + indirect_provider
+            );
+        }
+        let artifact: Value = serde_json::from_str(&stdout).unwrap();
+        for cpu in 0..cores {
+            assert_eq!(
+                json_core_register(&artifact, cpu, "x5"),
+                Some("0x9"),
+                "core {cpu} did not execute the indirect jalr target path:\n{stdout}"
+            );
+        }
+
+        let stdout = run("text");
+        for cpu in 0..cores {
+            let alias_prefix = if cores == 1 {
+                "system.cpu".to_string()
+            } else {
+                format!("system.cpu{cpu}")
+            };
+            let indirect_provider = text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.target_provider.indirect"),
+            );
+            assert!(indirect_provider > 0, "{stdout}");
+            assert_eq!(
+                text_stat_value(
+                    &stdout,
+                    &format!("{alias_prefix}.branchPred.targetProvider_0::Indirect")
+                ),
+                indirect_provider
+            );
+            assert!(
+                text_stat_line(
+                    &stdout,
+                    &format!("{alias_prefix}.branchPred.targetProvider_0::Indirect")
+                )
+                .contains("unit=Count"),
+                "{stdout}"
+            );
+        }
+    }
+}
+
+#[test]
 fn rem6_run_text_stats_do_not_count_unconditional_jumps_as_cond_branch_predictions() {
     let program = riscv64_program(&[
         0x0070_0293,  // addi x5, x0, 7
@@ -6597,6 +6829,12 @@ fn json_stage_summary(stdout: &str, marker: &str) -> [u64; 5] {
         json_u64_field(object, "\"execute\":"),
         json_u64_field(object, "\"commit\":"),
     ]
+}
+
+fn json_core_register<'a>(artifact: &'a Value, cpu: i32, register: &str) -> Option<&'a str> {
+    artifact
+        .pointer(&format!("/cores/{cpu}/registers/{register}"))
+        .and_then(Value::as_str)
 }
 
 fn text_stat_decimal(stdout: &str, path: &str) -> String {

@@ -397,6 +397,38 @@ fn target_provider_counts_no_target_when_direct_jump_uses_static_target() {
 }
 
 #[test]
+fn target_provider_counts_indirect_when_jalr_uses_register_target() {
+    let jalr = i_type(0, 6, 0x0, 0, 0x67).to_le_bytes().to_vec();
+    let core = core_with_completed_fetch(jalr);
+    core.write_register(Register::new(6).unwrap(), 0x800c);
+
+    let decision = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(decision.pc(), Address::new(0x800c));
+    record_fetch_ahead_speculation(&core, &decision).unwrap();
+
+    let summary = core.branch_speculation_summary();
+    assert_eq!(
+        summary
+            .target_provider()
+            .value(BranchTargetProvider::Indirect),
+        1
+    );
+    assert_eq!(
+        summary
+            .target_provider()
+            .value(BranchTargetProvider::NoTarget),
+        0
+    );
+    assert_eq!(summary.target_provider().total(), 1);
+    assert_eq!(
+        summary
+            .lookup_branch_kinds()
+            .value(BranchTargetKind::IndirectUnconditional),
+        1
+    );
+}
+
+#[test]
 fn target_provider_counts_ras_when_indirect_call_pushes_return_address() {
     let indirect_call = i_type(0, 6, 0x0, 1, 0x67).to_le_bytes().to_vec();
     let return_jump = i_type(0, 1, 0x0, 0, 0x67).to_le_bytes().to_vec();
@@ -439,6 +471,18 @@ fn target_provider_counts_ras_when_indirect_call_pushes_return_address() {
     assert_eq!(
         summary.target_provider().value(BranchTargetProvider::RAS),
         1
+    );
+    assert_eq!(
+        summary
+            .target_provider()
+            .value(BranchTargetProvider::Indirect),
+        1
+    );
+    assert_eq!(
+        summary
+            .target_provider()
+            .value(BranchTargetProvider::NoTarget),
+        0
     );
     assert_eq!(summary.target_provider().total(), 2);
 
@@ -584,6 +628,17 @@ fn btb_mispredict_due_to_btb_miss_counts_indirect_call_target_change() {
     assert_eq!(summary.repairs(), 1);
     assert_eq!(
         summary
+            .target_provider()
+            .value(BranchTargetProvider::Indirect),
+        1
+    );
+    assert_eq!(
+        summary.target_provider().value(BranchTargetProvider::RAS),
+        0
+    );
+    assert_eq!(summary.target_provider().total(), 1);
+    assert_eq!(
+        summary
             .btb_mispredict_due_to_btb_miss()
             .value(BranchTargetKind::CallIndirect),
         1
@@ -627,6 +682,23 @@ fn btb_mispredict_due_to_btb_miss_counts_return_target_change() {
 
     let summary = core.branch_speculation_summary();
     assert_eq!(summary.repairs(), 1);
+    assert_eq!(
+        summary
+            .target_provider()
+            .value(BranchTargetProvider::Indirect),
+        1
+    );
+    assert_eq!(
+        summary.target_provider().value(BranchTargetProvider::RAS),
+        0
+    );
+    assert_eq!(
+        summary
+            .target_provider()
+            .value(BranchTargetProvider::NoTarget),
+        0
+    );
+    assert_eq!(summary.target_provider().total(), 1);
     assert_eq!(
         summary
             .btb_mispredict_due_to_btb_miss()

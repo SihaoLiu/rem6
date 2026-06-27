@@ -1530,10 +1530,10 @@ fn direct_jump_fetch_ahead_target(
         }),
         _ => None,
     }?;
-    let target_provider = if ras_target.is_some() {
-        BranchTargetProvider::RAS
-    } else {
-        BranchTargetProvider::NoTarget
+    let target_provider = match (instruction, ras_target.is_some()) {
+        (_, true) => BranchTargetProvider::RAS,
+        (RiscvInstruction::Jalr { .. }, false) => BranchTargetProvider::Indirect,
+        _ => BranchTargetProvider::NoTarget,
     };
     Some((target, kind, branch_target_prediction, target_provider))
 }
