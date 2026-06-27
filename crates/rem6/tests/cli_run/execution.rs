@@ -1593,6 +1593,10 @@ fn rem6_run_dram_memory_resources_expose_byte_row_hit_and_read_latency_counters(
     let dram_port0_read_row_hits = json_u64(&json, "/dram/targets/0/ports/0/read_row_hits");
     let dram_port0_write_row_hits = json_u64(&json, "/dram/targets/0/ports/0/write_row_hits");
     let dram_port0_row_misses = json_u64(&json, "/dram/targets/0/ports/0/row_misses");
+    let dram_port0_total_ready_latency_ticks =
+        json_u64(&json, "/dram/targets/0/ports/0/total_ready_latency_ticks");
+    let dram_port0_max_ready_latency_ticks =
+        json_u64(&json, "/dram/targets/0/ports/0/max_ready_latency_ticks");
     let dram_bank0_reads = json_u64(&json, "/dram/targets/0/ports/0/banks/0/reads");
     let dram_bank0_writes = json_u64(&json, "/dram/targets/0/ports/0/banks/0/writes");
     let dram_read_ready_latency_ticks = stat_value(&stdout, "system.mem_ctrl.dram.totMemAccLat");
@@ -1618,6 +1622,14 @@ fn rem6_run_dram_memory_resources_expose_byte_row_hit_and_read_latency_counters(
         dram_port0_read_row_hits + dram_port0_write_row_hits
     );
     assert_eq!(dram_port0_row_misses, json_u64(&json, "/dram/row_misses"));
+    assert_eq!(
+        dram_port0_total_ready_latency_ticks,
+        json_u64(&json, "/dram/total_ready_latency_ticks")
+    );
+    assert_eq!(
+        dram_port0_max_ready_latency_ticks,
+        json_u64(&json, "/dram/max_ready_latency_ticks")
+    );
     assert!(dram_bank0_reads > 0);
     assert!(dram_bank0_writes > 0);
     assert!(dram_read_ready_latency_ticks > 0);
@@ -1680,6 +1692,17 @@ fn rem6_run_dram_memory_resources_expose_byte_row_hit_and_read_latency_counters(
     assert_eq!(
         json_u64(resources, "/dram/targets/0/ports/0/row_misses"),
         dram_port0_row_misses
+    );
+    assert_eq!(
+        json_u64(
+            resources,
+            "/dram/targets/0/ports/0/total_ready_latency_ticks"
+        ),
+        dram_port0_total_ready_latency_ticks
+    );
+    assert_eq!(
+        json_u64(resources, "/dram/targets/0/ports/0/max_ready_latency_ticks"),
+        dram_port0_max_ready_latency_ticks
     );
     assert_eq!(
         json_u64(resources, "/dram/targets/0/ports/0/banks/0/reads"),
@@ -1844,6 +1867,34 @@ fn rem6_run_dram_memory_resources_expose_byte_row_hit_and_read_latency_counters(
     assert_eq!(
         stat_value(&stdout, "sim.memory.dram.target0.port0.row_misses"),
         dram_port0_row_misses
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.target0.port0.total_ready_latency_ticks",
+        "Tick",
+        dram_port0_total_ready_latency_ticks,
+        "monotonic",
+    );
+    assert_eq!(
+        stat_value(
+            &stdout,
+            "sim.memory.dram.target0.port0.total_ready_latency_ticks"
+        ),
+        dram_port0_total_ready_latency_ticks
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.target0.port0.max_ready_latency_ticks",
+        "Tick",
+        dram_port0_max_ready_latency_ticks,
+        "monotonic",
+    );
+    assert_eq!(
+        stat_value(
+            &stdout,
+            "sim.memory.dram.target0.port0.max_ready_latency_ticks"
+        ),
+        dram_port0_max_ready_latency_ticks
     );
     assert_stat(
         &stdout,
@@ -2024,6 +2075,34 @@ fn rem6_run_dram_memory_resources_expose_byte_row_hit_and_read_latency_counters(
             "sim.memory.resources.dram.target0.port0.row_misses"
         ),
         dram_port0_row_misses
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.port0.total_ready_latency_ticks",
+        "Tick",
+        dram_port0_total_ready_latency_ticks,
+        "monotonic",
+    );
+    assert_eq!(
+        stat_value(
+            &stdout,
+            "sim.memory.resources.dram.target0.port0.total_ready_latency_ticks"
+        ),
+        dram_port0_total_ready_latency_ticks
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.port0.max_ready_latency_ticks",
+        "Tick",
+        dram_port0_max_ready_latency_ticks,
+        "monotonic",
+    );
+    assert_eq!(
+        stat_value(
+            &stdout,
+            "sim.memory.resources.dram.target0.port0.max_ready_latency_ticks"
+        ),
+        dram_port0_max_ready_latency_ticks
     );
 }
 

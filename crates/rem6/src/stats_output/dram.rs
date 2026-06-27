@@ -614,6 +614,20 @@ fn emit_dram_port_stats(
     )?;
     emit_dram_counter(stats, &prefix, "turnarounds", "Count", port.turnarounds)?;
     emit_dram_counter(stats, &prefix, "commands", "Count", port.commands)?;
+    emit_dram_counter(
+        stats,
+        &prefix,
+        "total_ready_latency_ticks",
+        "Tick",
+        dram_port_total_ready_latency_ticks(port),
+    )?;
+    emit_dram_counter(
+        stats,
+        &prefix,
+        "max_ready_latency_ticks",
+        "Tick",
+        dram_port_max_ready_latency_ticks(port),
+    )?;
     emit_dram_low_power_stats(
         stats,
         &prefix,
@@ -654,6 +668,21 @@ fn dram_port_write_row_hits(port: &Rem6DramPortSummary) -> u64 {
 
 fn dram_port_row_misses(port: &Rem6DramPortSummary) -> u64 {
     port.banks.iter().map(|bank| bank.row_misses).sum()
+}
+
+fn dram_port_total_ready_latency_ticks(port: &Rem6DramPortSummary) -> u64 {
+    port.banks
+        .iter()
+        .map(|bank| bank.total_ready_latency_ticks)
+        .sum()
+}
+
+fn dram_port_max_ready_latency_ticks(port: &Rem6DramPortSummary) -> u64 {
+    port.banks
+        .iter()
+        .map(|bank| bank.max_ready_latency_ticks)
+        .max()
+        .unwrap_or(0)
 }
 
 fn emit_dram_bank_stats(
