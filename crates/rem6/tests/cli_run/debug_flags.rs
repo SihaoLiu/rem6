@@ -671,13 +671,13 @@ fn rem6_run_cache_debug_flag_emits_real_cache_hierarchy_trace() {
         u_type(0, 2, 0x17),                          // auipc x2, 0
         i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
         i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
-        i_type(1, 5, 0x0, 6, 0x13),                  // addi x6, x5, 1
-        s_type(8, 6, 2, 0x3),                        // sd x6, 8(x2)
+        i_type(16, 2, 0x3, 6, 0x03),                 // ld x6, 16(x2)
         0x0000_0073,                                 // ecall
     ]);
-    program.resize(DATA_OFFSET, 0);
-    program.extend_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
-    program.extend_from_slice(&0u64.to_le_bytes());
+    program.resize(DATA_OFFSET + 48, 0);
+    program[DATA_OFFSET..DATA_OFFSET + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program[DATA_OFFSET + 16..DATA_OFFSET + 24]
+        .copy_from_slice(&0x99aa_bbcc_ddee_ff00u64.to_le_bytes());
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     let path = temp_binary("debug-flags-cache", &elf);
 
@@ -707,6 +707,8 @@ fn rem6_run_cache_debug_flag_emits_real_cache_hierarchy_trace() {
             "msi",
             "--data-cache-l3-protocol",
             "msi",
+            "--data-cache-prefetcher",
+            "tagged-next-line",
             "--debug-flags",
             "Cache",
         ])
@@ -778,20 +780,22 @@ fn rem6_run_cache_debug_flag_emits_real_cache_hierarchy_trace() {
     let cpu_responses = cache_trace_sum(trace, "cpu_responses");
     let directory_decisions = cache_trace_sum(trace, "directory_decisions");
     let dram_accesses = cache_trace_sum(trace, "dram_accesses");
-    let bank_accepted = cache_trace_sum(trace, "bank_accepted");
-    let bank_immediate_hits = cache_trace_sum(trace, "bank_immediate_hits");
-    let bank_scheduled_misses = cache_trace_sum(trace, "bank_scheduled_misses");
-    let bank_coalesced_misses = cache_trace_sum(trace, "bank_coalesced_misses");
-    let prefetch_identified = cache_trace_sum(trace, "prefetch_identified");
-    let prefetch_issued = cache_trace_sum(trace, "prefetch_issued");
-    let prefetch_translation_queue_enqueued =
-        cache_trace_sum(trace, "prefetch_translation_queue_enqueued");
     assert!(active_scopes > 0, "trace: {trace:?}");
     assert!(activity > 0, "trace: {trace:?}");
     assert!(cpu_responses > 0, "trace: {trace:?}");
     assert!(directory_decisions > 0, "trace: {trace:?}");
     assert!(dram_accesses > 0, "trace: {trace:?}");
-    assert!(bank_accepted > 0, "trace: {trace:?}");
+    assert!(
+        json_path_u64(
+            &json,
+            "/memory_resources/cache/data/l1/prefetch_queue_issued"
+        ) > 0,
+        "trace: {trace:?}"
+    );
+    assert!(
+        json_path_u64(&json, "/memory_resources/cache/data/l1/prefetch_useful") > 0,
+        "trace: {trace:?}"
+    );
     assert_eq!(
         active_scopes,
         json_path_u64(&json, "/memory_resources/cache/active")
@@ -854,55 +858,34 @@ fn rem6_run_cache_debug_flag_emits_real_cache_hierarchy_trace() {
         dram_accesses,
         "monotonic",
     );
-    assert_stat(
-        &stdout,
-        "sim.debug.cache_trace.bank.accepted",
-        "Count",
-        bank_accepted,
-        "monotonic",
-    );
-    assert_stat(
-        &stdout,
-        "sim.debug.cache_trace.bank.immediate_hits",
-        "Count",
-        bank_immediate_hits,
-        "monotonic",
-    );
-    assert_stat(
-        &stdout,
-        "sim.debug.cache_trace.bank.scheduled_misses",
-        "Count",
-        bank_scheduled_misses,
-        "monotonic",
-    );
-    assert_stat(
-        &stdout,
-        "sim.debug.cache_trace.bank.coalesced_misses",
-        "Count",
-        bank_coalesced_misses,
-        "monotonic",
-    );
-    assert_stat(
-        &stdout,
-        "sim.debug.cache_trace.prefetch.identified",
-        "Count",
-        prefetch_identified,
-        "monotonic",
-    );
-    assert_stat(
-        &stdout,
-        "sim.debug.cache_trace.prefetch.issued",
-        "Count",
-        prefetch_issued,
-        "monotonic",
-    );
-    assert_stat(
-        &stdout,
-        "sim.debug.cache_trace.prefetch.translation_queue.enqueued",
-        "Count",
-        prefetch_translation_queue_enqueued,
-        "monotonic",
-    );
+    for (field, stat_suffix) in CACHE_TRACE_COUNT_FIELDS {
+        let value = cache_trace_sum(trace, field);
+        assert_eq!(
+            value,
+            json_path_u64(&json, &format!("/memory_resources/cache/{field}")),
+            "cache trace aggregate {field}: {trace:?}"
+        );
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.cache_trace.{stat_suffix}"),
+            "Count",
+            value,
+            "monotonic",
+        );
+    }
+    for (field, stat_suffix) in [
+        ("prefetch_accuracy_ppm", "prefetch.accuracy_ppm"),
+        ("prefetch_coverage_ppm", "prefetch.coverage_ppm"),
+    ] {
+        let value = json_path_u64(&json, &format!("/memory_resources/cache/{field}"));
+        assert_stat(
+            &stdout,
+            &format!("sim.debug.cache_trace.{stat_suffix}"),
+            "Ppm",
+            value,
+            "monotonic",
+        );
+    }
 }
 
 #[test]
@@ -1672,6 +1655,48 @@ fn debug_trace_max(trace: &[Value], kind: &str, field: &str) -> u64 {
         .unwrap_or(0)
 }
 
+const CACHE_TRACE_COUNT_FIELDS: &[(&str, &str)] = &[
+    ("bank_accepted", "bank.accepted"),
+    ("bank_immediate_hits", "bank.immediate_hits"),
+    ("bank_scheduled_misses", "bank.scheduled_misses"),
+    ("bank_coalesced_misses", "bank.coalesced_misses"),
+    ("prefetch_identified", "prefetch.identified"),
+    ("prefetch_issued", "prefetch.issued"),
+    ("prefetch_useful", "prefetch.useful"),
+    ("prefetch_useful_but_miss", "prefetch.useful_but_miss"),
+    ("prefetch_unused", "prefetch.unused"),
+    ("prefetch_demand_mshr_misses", "prefetch.demand_mshr_misses"),
+    ("prefetch_hit_in_cache", "prefetch.hit_in_cache"),
+    ("prefetch_hit_in_mshr", "prefetch.hit_in_mshr"),
+    (
+        "prefetch_hit_in_write_buffer",
+        "prefetch.hit_in_write_buffer",
+    ),
+    ("prefetch_late", "prefetch.late"),
+    ("prefetch_span_page", "prefetch.span_page"),
+    ("prefetch_useful_span_page", "prefetch.useful_span_page"),
+    ("prefetch_in_cache", "prefetch.in_cache"),
+    ("prefetch_queue_enqueued", "prefetch.queue.enqueued"),
+    ("prefetch_queue_issued", "prefetch.queue.issued"),
+    ("prefetch_queue_dropped", "prefetch.queue.dropped"),
+    (
+        "prefetch_translation_queue_enqueued",
+        "prefetch.translation_queue.enqueued",
+    ),
+    (
+        "prefetch_translation_queue_issued",
+        "prefetch.translation_queue.issued",
+    ),
+    (
+        "prefetch_translation_queue_translated",
+        "prefetch.translation_queue.translated",
+    ),
+    (
+        "prefetch_translation_queue_dropped",
+        "prefetch.translation_queue.dropped",
+    ),
+];
+
 fn assert_cache_trace_record(
     trace: &[Value],
     hierarchy: &str,
@@ -1692,17 +1717,24 @@ fn assert_cache_trace_record(
         "cpu_responses",
         "directory_decisions",
         "dram_accesses",
-        "bank_accepted",
-        "bank_immediate_hits",
-        "bank_scheduled_misses",
-        "bank_coalesced_misses",
-        "prefetch_identified",
-        "prefetch_issued",
-        "prefetch_translation_queue_enqueued",
     ] {
         assert_eq!(
-            record.get(field).and_then(Value::as_u64),
-            Some(json_path_u64(json, &format!("{resource_path}/{field}"))),
+            record.get(field),
+            json.pointer(&format!("{resource_path}/{field}")),
+            "cache trace {hierarchy}.{level}.{field}: {record:?}"
+        );
+    }
+    for (field, _) in CACHE_TRACE_COUNT_FIELDS {
+        assert_eq!(
+            record.get(field),
+            json.pointer(&format!("{resource_path}/{field}")),
+            "cache trace {hierarchy}.{level}.{field}: {record:?}"
+        );
+    }
+    for field in ["prefetch_accuracy_ppm", "prefetch_coverage_ppm"] {
+        assert_eq!(
+            record.get(field),
+            json.pointer(&format!("{resource_path}/{field}")),
             "cache trace {hierarchy}.{level}.{field}: {record:?}"
         );
     }

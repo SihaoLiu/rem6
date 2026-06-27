@@ -13,9 +13,7 @@ use crate::{
     CliDebugFlag, Rem6DramPortSummary, Rem6DramSummary, Rem6MemoryResourceSummary, Rem6RunConfig,
     Rem6RunFabricSummary,
 };
-use cache::{
-    cache_trace_active_scope_count, cache_trace_records, cache_trace_sum, Rem6CacheTraceRecord,
-};
+use cache::{cache_trace_records, cache_trace_stats, Rem6CacheTraceRecord, Rem6CacheTraceStat};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Rem6DebugSummary {
@@ -365,61 +363,8 @@ impl Rem6DebugSummary {
         self.cache_trace.len() as u64
     }
 
-    pub(crate) fn cache_active_scope_trace_count(&self) -> u64 {
-        cache_trace_active_scope_count(&self.cache_trace)
-    }
-
-    pub(crate) fn cache_activity_trace_count(&self) -> u64 {
-        cache_trace_sum(&self.cache_trace, Rem6CacheTraceRecord::activity)
-    }
-
-    pub(crate) fn cache_cpu_response_trace_count(&self) -> u64 {
-        cache_trace_sum(&self.cache_trace, Rem6CacheTraceRecord::cpu_responses)
-    }
-
-    pub(crate) fn cache_directory_decision_trace_count(&self) -> u64 {
-        cache_trace_sum(&self.cache_trace, Rem6CacheTraceRecord::directory_decisions)
-    }
-
-    pub(crate) fn cache_dram_access_trace_count(&self) -> u64 {
-        cache_trace_sum(&self.cache_trace, Rem6CacheTraceRecord::dram_accesses)
-    }
-
-    pub(crate) fn cache_bank_accepted_trace_count(&self) -> u64 {
-        cache_trace_sum(&self.cache_trace, Rem6CacheTraceRecord::bank_accepted)
-    }
-
-    pub(crate) fn cache_bank_immediate_hit_trace_count(&self) -> u64 {
-        cache_trace_sum(&self.cache_trace, Rem6CacheTraceRecord::bank_immediate_hits)
-    }
-
-    pub(crate) fn cache_bank_scheduled_miss_trace_count(&self) -> u64 {
-        cache_trace_sum(
-            &self.cache_trace,
-            Rem6CacheTraceRecord::bank_scheduled_misses,
-        )
-    }
-
-    pub(crate) fn cache_bank_coalesced_miss_trace_count(&self) -> u64 {
-        cache_trace_sum(
-            &self.cache_trace,
-            Rem6CacheTraceRecord::bank_coalesced_misses,
-        )
-    }
-
-    pub(crate) fn cache_prefetch_identified_trace_count(&self) -> u64 {
-        cache_trace_sum(&self.cache_trace, Rem6CacheTraceRecord::prefetch_identified)
-    }
-
-    pub(crate) fn cache_prefetch_issued_trace_count(&self) -> u64 {
-        cache_trace_sum(&self.cache_trace, Rem6CacheTraceRecord::prefetch_issued)
-    }
-
-    pub(crate) fn cache_prefetch_translation_queue_enqueued_trace_count(&self) -> u64 {
-        cache_trace_sum(
-            &self.cache_trace,
-            Rem6CacheTraceRecord::prefetch_translation_queue_enqueued,
-        )
+    pub(crate) fn cache_trace_stats(&self) -> Vec<Rem6CacheTraceStat> {
+        cache_trace_stats(&self.cache_trace)
     }
 
     pub(crate) fn dram_trace_count(&self) -> u64 {
