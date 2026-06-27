@@ -76,6 +76,23 @@ struct Rem6MemoryTraceRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6MemoryTraceStat {
+    path: String,
+    unit: &'static str,
+    value: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct MemoryTraceStatSummary {
+    records: u64,
+    requests: BTreeSet<(u32, u64)>,
+    routes: BTreeSet<u64>,
+    request_agents: BTreeSet<u32>,
+    events: BTreeMap<&'static str, u64>,
+    response_status: BTreeMap<&'static str, u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct Rem6PowerTraceRecord {
     target: String,
     state: &'static str,
@@ -551,6 +568,13 @@ impl Rem6DebugSummary {
         self.memory_response_status_trace_count("store_conditional_failed")
     }
 
+    pub(crate) fn memory_trace_stats(
+        &self,
+        stat_path_segment: impl Fn(&str) -> String,
+    ) -> Vec<Rem6MemoryTraceStat> {
+        memory_trace_stats(&self.memory_trace, stat_path_segment)
+    }
+
     pub(crate) fn power_trace_count(&self) -> u64 {
         self.power_trace.len() as u64
     }
@@ -955,6 +979,126 @@ impl Rem6MemoryTraceRecord {
             self.request,
             response_status,
         )
+    }
+}
+
+impl Rem6MemoryTraceStat {
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub(crate) const fn unit(&self) -> &'static str {
+        self.unit
+    }
+
+    pub(crate) const fn value(&self) -> u64 {
+        self.value
+    }
+}
+
+impl MemoryTraceStatSummary {
+    fn add_record(&mut self, record: &Rem6MemoryTraceRecord) {
+        self.records = self.records.saturating_add(1);
+        self.requests.insert((record.request_agent, record.request));
+        self.routes.insert(record.route);
+        self.request_agents.insert(record.request_agent);
+        self.events
+            .entry(record.kind)
+            .and_modify(|count| *count = count.saturating_add(1))
+            .or_insert(1);
+        if let Some(status) = record.response_status {
+            self.response_status
+                .entry(status)
+                .and_modify(|count| *count = count.saturating_add(1))
+                .or_insert(1);
+        }
+    }
+
+    fn push_stats(&self, stats: &mut Vec<Rem6MemoryTraceStat>, prefix: &str) {
+        push_memory_trace_stats(
+            stats,
+            prefix,
+            &[
+                ("records", self.records),
+                ("requests", self.requests.len() as u64),
+                ("routes", self.routes.len() as u64),
+                ("request_agents", self.request_agents.len() as u64),
+            ],
+        );
+        for (kind, value) in &self.events {
+            stats.push(Rem6MemoryTraceStat {
+                path: format!("{prefix}.events.{kind}"),
+                unit: "Count",
+                value: *value,
+            });
+        }
+        for (status, value) in &self.response_status {
+            stats.push(Rem6MemoryTraceStat {
+                path: format!("{prefix}.response_status.{status}"),
+                unit: "Count",
+                value: *value,
+            });
+        }
+    }
+}
+
+fn memory_trace_stats(
+    records: &[Rem6MemoryTraceRecord],
+    stat_path_segment: impl Fn(&str) -> String,
+) -> Vec<Rem6MemoryTraceStat> {
+    let mut channels = BTreeMap::<String, MemoryTraceStatSummary>::new();
+    let mut routes = BTreeMap::<(String, u64, String), MemoryTraceStatSummary>::new();
+    let mut request_agents = BTreeMap::<(String, u32), MemoryTraceStatSummary>::new();
+    for record in records {
+        let channel = record.channel.to_string();
+        channels
+            .entry(channel.clone())
+            .or_default()
+            .add_record(record);
+        routes
+            .entry((channel.clone(), record.route, record.endpoint.clone()))
+            .or_default()
+            .add_record(record);
+        request_agents
+            .entry((channel, record.request_agent))
+            .or_default()
+            .add_record(record);
+    }
+
+    let mut stats = Vec::new();
+    for (channel, summary) in channels {
+        let prefix = format!("channel.{}", stat_path_segment(&channel));
+        summary.push_stats(&mut stats, &prefix);
+    }
+    for ((channel, route, endpoint), summary) in routes {
+        let prefix = format!(
+            "channel.{}.route{route}.endpoint.{}",
+            stat_path_segment(&channel),
+            stat_path_segment(&endpoint)
+        );
+        summary.push_stats(&mut stats, &prefix);
+    }
+    for ((channel, request_agent), summary) in request_agents {
+        let prefix = format!(
+            "channel.{}.request_agent.agent{request_agent}",
+            stat_path_segment(&channel)
+        );
+        summary.push_stats(&mut stats, &prefix);
+    }
+    stats
+}
+
+fn push_memory_trace_stats(
+    stats: &mut Vec<Rem6MemoryTraceStat>,
+    prefix: &str,
+    entries: &[(&'static str, u64)],
+) {
+    for (suffix, value) in entries {
+        stats.push(Rem6MemoryTraceStat {
+            path: format!("{prefix}.{suffix}"),
+            unit: "Count",
+            value: *value,
+        });
     }
 }
 

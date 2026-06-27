@@ -659,6 +659,7 @@ fn rem6_run_memory_debug_flag_emits_real_transport_trace() {
         request_agents,
         "monotonic",
     );
+    assert_memory_trace_hierarchy_stats(&stdout, trace);
     for record in trace {
         assert!(record.get("tick").and_then(Value::as_u64).is_some());
         assert!(record.get("route").and_then(Value::as_u64).is_some());
@@ -1900,6 +1901,127 @@ fn json_record_u64(record: &Value, field: &str) -> u64 {
         .get(field)
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("missing JSON u64 field {field}: {record:?}"))
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct MemoryTraceStats {
+    records: u64,
+    requests: BTreeSet<(u64, u64)>,
+    routes: BTreeSet<u64>,
+    request_agents: BTreeSet<u64>,
+    events: BTreeMap<String, u64>,
+    response_status: BTreeMap<String, u64>,
+}
+
+impl MemoryTraceStats {
+    fn add_record(&mut self, record: &Value) {
+        self.records = self.records.saturating_add(1);
+        let request_agent = json_record_u64(record, "request_agent");
+        let request = json_record_u64(record, "request");
+        let route = json_record_u64(record, "route");
+        let kind = json_record_str(record, "kind").to_string();
+        self.requests.insert((request_agent, request));
+        self.routes.insert(route);
+        self.request_agents.insert(request_agent);
+        self.events
+            .entry(kind)
+            .and_modify(|count| *count = count.saturating_add(1))
+            .or_insert(1);
+        if let Some(status) = record.get("response_status").and_then(Value::as_str) {
+            self.response_status
+                .entry(status.to_string())
+                .and_modify(|count| *count = count.saturating_add(1))
+                .or_insert(1);
+        }
+    }
+
+    fn assert_stats(&self, stdout: &str, prefix: &str) {
+        for (suffix, value) in [
+            ("records", self.records),
+            ("requests", self.requests.len() as u64),
+            ("routes", self.routes.len() as u64),
+            ("request_agents", self.request_agents.len() as u64),
+        ] {
+            assert_stat(
+                stdout,
+                &format!("{prefix}.{suffix}"),
+                "Count",
+                value,
+                "monotonic",
+            );
+        }
+        for (kind, value) in &self.events {
+            assert_stat(
+                stdout,
+                &format!("{prefix}.events.{kind}"),
+                "Count",
+                *value,
+                "monotonic",
+            );
+        }
+        for (status, value) in &self.response_status {
+            assert_stat(
+                stdout,
+                &format!("{prefix}.response_status.{status}"),
+                "Count",
+                *value,
+                "monotonic",
+            );
+        }
+    }
+}
+
+fn assert_memory_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
+    let mut channels = BTreeMap::<String, MemoryTraceStats>::new();
+    let mut routes = BTreeMap::<(String, u64, String), MemoryTraceStats>::new();
+    let mut request_agents = BTreeMap::<(String, u64), MemoryTraceStats>::new();
+    for record in trace {
+        let channel = json_record_str(record, "channel").to_string();
+        let route = json_record_u64(record, "route");
+        let endpoint = json_record_str(record, "endpoint").to_string();
+        let request_agent = json_record_u64(record, "request_agent");
+        channels
+            .entry(channel.clone())
+            .or_default()
+            .add_record(record);
+        routes
+            .entry((channel.clone(), route, endpoint))
+            .or_default()
+            .add_record(record);
+        request_agents
+            .entry((channel, request_agent))
+            .or_default()
+            .add_record(record);
+    }
+    for (channel, stats) in channels {
+        let prefix = format!(
+            "sim.debug.memory_trace.channel.{}",
+            stat_path_segment(&channel)
+        );
+        stats.assert_stats(stdout, &prefix);
+    }
+    for ((channel, route, endpoint), stats) in routes {
+        let prefix = format!(
+            "sim.debug.memory_trace.channel.{}.route{route}.endpoint.{}",
+            stat_path_segment(&channel),
+            stat_path_segment(&endpoint)
+        );
+        stats.assert_stats(stdout, &prefix);
+    }
+    for ((channel, request_agent), stats) in request_agents {
+        let prefix = format!(
+            "sim.debug.memory_trace.channel.{}.request_agent.agent{request_agent}",
+            stat_path_segment(&channel)
+        );
+        stats.assert_stats(stdout, &prefix);
+    }
+}
+
+fn json_record_str<'a>(record: &'a Value, field: &str) -> &'a str {
+    record
+        .get(field)
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("missing JSON string field {field}: {record:?}"))
 }
 
 const CACHE_TRACE_COUNT_FIELDS: &[(&str, &str)] = &[

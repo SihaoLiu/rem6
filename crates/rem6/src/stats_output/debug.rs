@@ -245,6 +245,15 @@ pub(super) fn emit_debug_stats(
             stat.value(),
         )?;
     }
+    for stat in debug.memory_trace_stats(stat_path_segment) {
+        increment_stat(
+            stats,
+            &format!("sim.debug.memory_trace.{}", stat.path()),
+            stat.unit(),
+            StatResetPolicy::Monotonic,
+            stat.value(),
+        )?;
+    }
     increment_stat(
         stats,
         "sim.debug.trace.payload_bytes",
