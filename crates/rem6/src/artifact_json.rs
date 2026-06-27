@@ -1681,8 +1681,9 @@ fn dram_ports_json(ports: &[super::Rem6DramPortSummary]) -> String {
 
 fn dram_port_json(summary: &super::Rem6DramPortSummary) -> String {
     format!(
-        "{{\"port\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"read_bytes\":{},\"write_bytes\":{},\"turnarounds\":{},\"commands\":{},\"low_power\":{},\"banks\":[{}]}}",
+        "{{\"port\":{},\"active_banks\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"read_bytes\":{},\"write_bytes\":{},\"turnarounds\":{},\"commands\":{},\"low_power\":{},\"banks\":[{}]}}",
         summary.port,
+        summary.banks.len(),
         summary.accesses,
         summary.reads,
         summary.writes,

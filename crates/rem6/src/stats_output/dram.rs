@@ -560,6 +560,13 @@ fn emit_dram_port_stats(
     port: &Rem6DramPortSummary,
 ) -> Result<(), Rem6CliError> {
     let prefix = format!("{prefix}.port{}", port.port);
+    emit_dram_counter(
+        stats,
+        &prefix,
+        "active_banks",
+        "Count",
+        port.banks.len() as u64,
+    )?;
     emit_dram_counter(stats, &prefix, "accesses", "Count", port.accesses)?;
     emit_dram_counter(stats, &prefix, "reads", "Count", port.reads)?;
     emit_dram_counter(stats, &prefix, "writes", "Count", port.writes)?;

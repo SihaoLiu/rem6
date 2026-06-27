@@ -1581,6 +1581,12 @@ fn rem6_run_dram_memory_resources_expose_byte_row_hit_and_read_latency_counters(
     let dram_write_bytes = sum_dram_bank_field(&json, "write_bytes");
     let dram_target0_read_bytes = json_u64(&json, "/dram/targets/0/read_bytes");
     let dram_target0_write_bytes = json_u64(&json, "/dram/targets/0/write_bytes");
+    let dram_port0_bank_count = json
+        .pointer("/dram/targets/0/ports/0/banks")
+        .and_then(Value::as_array)
+        .expect("DRAM port bank array")
+        .len() as u64;
+    let dram_port0_active_banks = json_u64(&json, "/dram/targets/0/ports/0/active_banks");
     let dram_port0_read_bytes = json_u64(&json, "/dram/targets/0/ports/0/read_bytes");
     let dram_port0_write_bytes = json_u64(&json, "/dram/targets/0/ports/0/write_bytes");
     let dram_bank0_reads = json_u64(&json, "/dram/targets/0/ports/0/banks/0/reads");
@@ -1597,6 +1603,7 @@ fn rem6_run_dram_memory_resources_expose_byte_row_hit_and_read_latency_counters(
     assert!(dram_write_bytes > 0);
     assert_eq!(dram_target0_read_bytes, dram_read_bytes);
     assert_eq!(dram_target0_write_bytes, dram_write_bytes);
+    assert_eq!(dram_port0_active_banks, dram_port0_bank_count);
     assert_eq!(dram_port0_read_bytes, dram_read_bytes);
     assert_eq!(dram_port0_write_bytes, dram_write_bytes);
     assert!(dram_bank0_reads > 0);
@@ -1641,6 +1648,10 @@ fn rem6_run_dram_memory_resources_expose_byte_row_hit_and_read_latency_counters(
     assert_eq!(
         json_u64(resources, "/dram/targets/0/ports/0/write_bytes"),
         dram_port0_write_bytes
+    );
+    assert_eq!(
+        json_u64(resources, "/dram/targets/0/ports/0/active_banks"),
+        dram_port0_active_banks
     );
     assert_eq!(
         json_u64(resources, "/dram/targets/0/ports/0/banks/0/reads"),
@@ -1728,6 +1739,17 @@ fn rem6_run_dram_memory_resources_expose_byte_row_hit_and_read_latency_counters(
     assert_eq!(
         stat_value(&stdout, "sim.memory.dram.target0.write_bytes"),
         dram_target0_write_bytes
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.target0.port0.active_banks",
+        "Count",
+        dram_port0_active_banks,
+        "monotonic",
+    );
+    assert_eq!(
+        stat_value(&stdout, "sim.memory.dram.target0.port0.active_banks"),
+        dram_port0_active_banks
     );
     assert_stat(
         &stdout,
@@ -1835,6 +1857,20 @@ fn rem6_run_dram_memory_resources_expose_byte_row_hit_and_read_latency_counters(
     assert_eq!(
         stat_value(&stdout, "sim.memory.resources.dram.target0.write_bytes"),
         dram_target0_write_bytes
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.target0.port0.active_banks",
+        "Count",
+        dram_port0_active_banks,
+        "monotonic",
+    );
+    assert_eq!(
+        stat_value(
+            &stdout,
+            "sim.memory.resources.dram.target0.port0.active_banks"
+        ),
+        dram_port0_active_banks
     );
     assert_stat(
         &stdout,
