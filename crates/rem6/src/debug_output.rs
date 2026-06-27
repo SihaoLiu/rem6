@@ -7,7 +7,9 @@ use rem6_system::{RiscvSyscallTraceOutcome, RiscvSyscallTraceRecord, RiscvSystem
 use rem6_transport::{MemoryTrace, MemoryTraceEvent, MemoryTraceKind};
 
 use crate::formatting::{bytes_to_hex, json_escape};
-use crate::{CliDebugFlag, Rem6DramSummary, Rem6RunConfig, Rem6RunFabricSummary};
+use crate::{
+    CliDebugFlag, Rem6DramPortSummary, Rem6DramSummary, Rem6RunConfig, Rem6RunFabricSummary,
+};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Rem6DebugSummary {
@@ -73,8 +75,14 @@ enum Rem6DramTraceRecord {
         accesses: u64,
         reads: u64,
         writes: u64,
+        row_hits: u64,
+        row_misses: u64,
+        refreshes: u64,
+        refresh_ticks: u64,
         commands: u64,
         turnarounds: u64,
+        total_ready_latency_ticks: u64,
+        max_ready_latency_ticks: u64,
     },
     Bank {
         target: u32,
@@ -364,6 +372,54 @@ impl Rem6DebugSummary {
     pub(crate) fn dram_port_command_count(&self) -> u64 {
         self.dram_trace_sum(|record| match record {
             Rem6DramTraceRecord::Port { commands, .. } => Some(*commands),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_port_row_hit_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Port { row_hits, .. } => Some(*row_hits),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_port_row_miss_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Port { row_misses, .. } => Some(*row_misses),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_port_refresh_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Port { refreshes, .. } => Some(*refreshes),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_port_refresh_tick_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Port { refresh_ticks, .. } => Some(*refresh_ticks),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_port_total_ready_latency_tick_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Port {
+                total_ready_latency_ticks,
+                ..
+            } => Some(*total_ready_latency_ticks),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_port_max_ready_latency_tick_count(&self) -> u64 {
+        self.dram_trace_max(|record| match record {
+            Rem6DramTraceRecord::Port {
+                max_ready_latency_ticks,
+                ..
+            } => Some(*max_ready_latency_ticks),
             _ => None,
         })
     }
@@ -765,6 +821,13 @@ impl Rem6DebugSummary {
             .fold(0u64, |acc, value| acc.saturating_add(value))
     }
 
+    fn dram_trace_max<F>(&self, value: F) -> u64
+    where
+        F: Fn(&Rem6DramTraceRecord) -> Option<u64>,
+    {
+        self.dram_trace.iter().filter_map(value).max().unwrap_or(0)
+    }
+
     fn syscall_outcome_trace_count(
         &self,
         matches_outcome: impl Fn(RiscvSyscallTraceOutcome) -> bool,
@@ -876,11 +939,29 @@ impl Rem6DramTraceRecord {
                 accesses,
                 reads,
                 writes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
                 commands,
                 turnarounds,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
             } => format!(
-                "{{\"kind\":\"port\",\"target\":{},\"port\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"commands\":{},\"turnarounds\":{}}}",
-                target, port, accesses, reads, writes, commands, turnarounds,
+                "{{\"kind\":\"port\",\"target\":{},\"port\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{}}}",
+                target,
+                port,
+                accesses,
+                reads,
+                writes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                turnarounds,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
             ),
             Self::Bank {
                 target,
@@ -1245,8 +1326,14 @@ fn dram_trace_records(dram: &Rem6DramSummary) -> Vec<Rem6DramTraceRecord> {
                 accesses: port.accesses,
                 reads: port.reads,
                 writes: port.writes,
+                row_hits: dram_port_row_hits(port),
+                row_misses: dram_port_row_misses(port),
+                refreshes: dram_port_refreshes(port),
+                refresh_ticks: dram_port_refresh_ticks(port),
                 commands: port.commands,
                 turnarounds: port.turnarounds,
+                total_ready_latency_ticks: dram_port_total_ready_latency_ticks(port),
+                max_ready_latency_ticks: dram_port_max_ready_latency_ticks(port),
             });
             for bank in &port.banks {
                 records.push(Rem6DramTraceRecord::Bank {
@@ -1269,6 +1356,37 @@ fn dram_trace_records(dram: &Rem6DramSummary) -> Vec<Rem6DramTraceRecord> {
     }
     records.sort_by_key(Rem6DramTraceRecord::sort_key);
     records
+}
+
+fn dram_port_row_hits(port: &Rem6DramPortSummary) -> u64 {
+    port.banks.iter().map(|bank| bank.row_hits).sum()
+}
+
+fn dram_port_row_misses(port: &Rem6DramPortSummary) -> u64 {
+    port.banks.iter().map(|bank| bank.row_misses).sum()
+}
+
+fn dram_port_refreshes(port: &Rem6DramPortSummary) -> u64 {
+    port.banks.iter().map(|bank| bank.refreshes).sum()
+}
+
+fn dram_port_refresh_ticks(port: &Rem6DramPortSummary) -> u64 {
+    port.banks.iter().map(|bank| bank.refresh_ticks).sum()
+}
+
+fn dram_port_total_ready_latency_ticks(port: &Rem6DramPortSummary) -> u64 {
+    port.banks
+        .iter()
+        .map(|bank| bank.total_ready_latency_ticks)
+        .sum()
+}
+
+fn dram_port_max_ready_latency_ticks(port: &Rem6DramPortSummary) -> u64 {
+    port.banks
+        .iter()
+        .map(|bank| bank.max_ready_latency_ticks)
+        .max()
+        .unwrap_or(0)
 }
 
 fn fabric_trace_records(fabric: &Rem6RunFabricSummary) -> Vec<Rem6FabricTraceRecord> {

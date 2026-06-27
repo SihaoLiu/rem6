@@ -967,8 +967,48 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
                     .is_some_and(|commands| commands > 0)
         })
         .unwrap_or_else(|| panic!("missing port DRAM record: {trace:?}"));
-    assert!(port_record.get("row_hits").is_none());
-    assert!(port_record.get("refreshes").is_none());
+    assert!(
+        port_record
+            .get("row_hits")
+            .and_then(Value::as_u64)
+            .is_some(),
+        "port DRAM record should expose row hits: {port_record:?}"
+    );
+    assert!(
+        port_record
+            .get("row_misses")
+            .and_then(Value::as_u64)
+            .is_some(),
+        "port DRAM record should expose row misses: {port_record:?}"
+    );
+    assert!(
+        port_record
+            .get("refreshes")
+            .and_then(Value::as_u64)
+            .is_some(),
+        "port DRAM record should expose refreshes: {port_record:?}"
+    );
+    assert!(
+        port_record
+            .get("refresh_ticks")
+            .and_then(Value::as_u64)
+            .is_some(),
+        "port DRAM record should expose refresh ticks: {port_record:?}"
+    );
+    assert!(
+        port_record
+            .get("total_ready_latency_ticks")
+            .and_then(Value::as_u64)
+            .is_some(),
+        "port DRAM record should expose total ready latency: {port_record:?}"
+    );
+    assert!(
+        port_record
+            .get("max_ready_latency_ticks")
+            .and_then(Value::as_u64)
+            .is_some(),
+        "port DRAM record should expose max ready latency: {port_record:?}"
+    );
 
     let bank_record = trace
         .iter()
@@ -1006,8 +1046,22 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
     let target_reads = debug_trace_sum(trace, "target", "reads");
     let target_writes = debug_trace_sum(trace, "target", "writes");
     let port_commands = debug_trace_sum(trace, "port", "commands");
+    let port_row_hits = debug_trace_sum(trace, "port", "row_hits");
+    let port_row_misses = debug_trace_sum(trace, "port", "row_misses");
+    let port_refreshes = debug_trace_sum(trace, "port", "refreshes");
+    let port_refresh_ticks = debug_trace_sum(trace, "port", "refresh_ticks");
+    let port_total_ready_latency_ticks =
+        debug_trace_sum(trace, "port", "total_ready_latency_ticks");
+    let port_max_ready_latency_ticks = debug_trace_max(trace, "port", "max_ready_latency_ticks");
     let bank_read_bytes = debug_trace_sum(trace, "bank", "read_bytes");
     let bank_write_bytes = debug_trace_sum(trace, "bank", "write_bytes");
+    let bank_row_hits = debug_trace_sum(trace, "bank", "row_hits");
+    let bank_row_misses = debug_trace_sum(trace, "bank", "row_misses");
+    let bank_refreshes = debug_trace_sum(trace, "bank", "refreshes");
+    let bank_refresh_ticks = debug_trace_sum(trace, "bank", "refresh_ticks");
+    let bank_total_ready_latency_ticks =
+        debug_trace_sum(trace, "bank", "total_ready_latency_ticks");
+    let bank_max_ready_latency_ticks = debug_trace_max(trace, "bank", "max_ready_latency_ticks");
     assert!(target_records >= 1, "trace: {trace:?}");
     assert!(port_records >= 1, "trace: {trace:?}");
     assert!(bank_records >= 1, "trace: {trace:?}");
@@ -1017,6 +1071,15 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
     assert!(port_commands > 0, "trace: {trace:?}");
     assert!(bank_read_bytes > 0, "trace: {trace:?}");
     assert!(bank_write_bytes > 0, "trace: {trace:?}");
+    assert_eq!(port_row_hits, bank_row_hits);
+    assert_eq!(port_row_misses, bank_row_misses);
+    assert_eq!(port_refreshes, bank_refreshes);
+    assert_eq!(port_refresh_ticks, bank_refresh_ticks);
+    assert_eq!(
+        port_total_ready_latency_ticks,
+        bank_total_ready_latency_ticks
+    );
+    assert_eq!(port_max_ready_latency_ticks, bank_max_ready_latency_ticks);
     assert_stat(
         &stdout,
         "sim.debug.dram_trace.records",
@@ -1071,6 +1134,48 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
         "sim.debug.dram_trace.port.commands",
         "Count",
         port_commands,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.port.row_hits",
+        "Count",
+        port_row_hits,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.port.row_misses",
+        "Count",
+        port_row_misses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.port.refreshes",
+        "Count",
+        port_refreshes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.port.refresh_ticks",
+        "Tick",
+        port_refresh_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.port.total_ready_latency_ticks",
+        "Tick",
+        port_total_ready_latency_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.port.max_ready_latency_ticks",
+        "Tick",
+        port_max_ready_latency_ticks,
         "monotonic",
     );
     assert_stat(
@@ -1309,6 +1414,20 @@ fn debug_trace_sum(trace: &[Value], kind: &str, field: &str) -> u64 {
                 .unwrap_or_else(|| panic!("{kind} {field}"))
         })
         .sum()
+}
+
+fn debug_trace_max(trace: &[Value], kind: &str, field: &str) -> u64 {
+    trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some(kind))
+        .map(|record| {
+            record
+                .get(field)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("{kind} {field}"))
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 #[test]
