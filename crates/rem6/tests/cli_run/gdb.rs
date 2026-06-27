@@ -609,6 +609,178 @@ fn rem6_run_gdb_listen_writes_sie_before_execution() {
 }
 
 #[test]
+fn rem6_run_gdb_listen_machine_interrupt_csrs_vector_before_first_instruction() {
+    let program = riscv64_program(&[
+        i_type(7, 0, 0x0, 5, 0x13),  // addi x5, x0, 7
+        0x0000_0073,                 // ecall
+        i_type(42, 0, 0x0, 5, 0x13), // addi x5, x0, 42
+        csr_read(0x341, 6),          // csrr x6, mepc
+        csr_read(0x342, 7),          // csrr x7, mcause
+        0x0000_0073,                 // ecall
+    ]);
+    let (child, mut stream) = start_riscv_gdb_run("gdb-listen-machine-interrupt-csrs", program, 80);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    let mut csr_description = String::new();
+    for payload in [
+        b"qXfer:features:read:riscv-64bit-csr.xml:0,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:a0,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:140,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:1e0,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:280,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:320,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:3c0,a0".as_slice(),
+    ] {
+        csr_description.push_str(&String::from_utf8_lossy(&send_gdb_packet(
+            &mut stream,
+            payload,
+        )));
+    }
+    for register in ["mstatus", "mie", "mtvec", "mip"] {
+        assert!(
+            csr_description.contains(register),
+            "missing {register} in {csr_description}"
+        );
+    }
+
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P4d=0800000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P51=0810000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P50=0200000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P56=0200000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p50"),
+        gdb_response(b"0200000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p56"),
+        gdb_response(b"0200000000000000")
+    );
+
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"trap\":\"environment_call\""));
+    assert!(stdout.contains("\"trap_pc\":\"0x1014\""));
+    assert!(stdout.contains("\"x5\":\"0x2a\""), "stdout: {stdout}");
+    assert!(stdout.contains("\"x6\":\"0x1000\""), "stdout: {stdout}");
+    assert!(
+        stdout.contains("\"x7\":\"0x8000000000000001\""),
+        "stdout: {stdout}"
+    );
+}
+
+#[test]
+fn rem6_run_gdb_listen_delegated_interrupt_csrs_vector_after_mret() {
+    let program = riscv64_program(&[
+        0x3020_0073,                 // mret
+        i_type(7, 0, 0x0, 5, 0x13),  // addi x5, x0, 7
+        0x0000_0073,                 // ecall
+        i_type(42, 0, 0x0, 5, 0x13), // addi x5, x0, 42
+        csr_read(0x141, 6),          // csrr x6, sepc
+        csr_read(0x142, 7),          // csrr x7, scause
+        0x0000_0073,                 // ecall
+    ]);
+    let (child, mut stream) =
+        start_riscv_gdb_run("gdb-listen-delegated-interrupt-csrs", program, 100);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    let mut csr_description = String::new();
+    for payload in [
+        b"qXfer:features:read:riscv-64bit-csr.xml:0,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:a0,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:140,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:1e0,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:280,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:320,a0".as_slice(),
+        b"qXfer:features:read:riscv-64bit-csr.xml:3c0,a0".as_slice(),
+    ] {
+        csr_description.push_str(&String::from_utf8_lossy(&send_gdb_packet(
+            &mut stream,
+            payload,
+        )));
+    }
+    for register in ["stvec", "sepc", "scause", "mepc", "mideleg", "sie", "sip"] {
+        assert!(
+            csr_description.contains(register),
+            "missing {register} in {csr_description}"
+        );
+    }
+
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P53=0410000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P47=0c10000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P4f=0200000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P7a=0200000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"P7b=0200000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p7a"),
+        gdb_response(b"0200000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p7b"),
+        gdb_response(b"0200000000000000")
+    );
+
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"trap\":\"environment_call\""));
+    assert!(stdout.contains("\"trap_pc\":\"0x1018\""));
+    assert!(stdout.contains("\"x5\":\"0x2a\""), "stdout: {stdout}");
+    assert!(stdout.contains("\"x6\":\"0x1004\""), "stdout: {stdout}");
+    assert!(
+        stdout.contains("\"x7\":\"0x8000000000000001\""),
+        "stdout: {stdout}"
+    );
+}
+
+#[test]
 fn rem6_run_gdb_listen_writes_counter_enable_csrs_before_execution() {
     let program = riscv64_program(&[
         csr_read(0x106, 5), // csrr x5, scounteren
