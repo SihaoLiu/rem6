@@ -34,14 +34,18 @@ pub(super) fn fabric_lane_activities_json(summary: &WorkloadParallelExecutionSum
         .fabric_lane_activities()
         .iter()
         .map(|activity| {
+            let backpressure_ticks = activity.queue_delay_ticks();
+            let max_backpressure_ticks = activity.max_queue_delay_ticks();
             format!(
-                "{{\"link\":\"{}\",\"virtual_network\":{},\"transfer_count\":{},\"byte_count\":{},\"flit_count\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"first_tick\":{},\"last_tick\":{}}}",
+                "{{\"link\":\"{}\",\"virtual_network\":{},\"transfer_count\":{},\"byte_count\":{},\"flit_count\":{},\"occupied_ticks\":{},\"backpressure_ticks\":{},\"max_backpressure_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"first_tick\":{},\"last_tick\":{}}}",
                 json_escape(activity.link().as_str()),
                 activity.virtual_network().get(),
                 activity.transfer_count(),
                 activity.byte_count(),
                 activity.flit_count(),
                 activity.occupied_ticks(),
+                backpressure_ticks,
+                max_backpressure_ticks,
                 activity.queue_delay_ticks(),
                 activity.max_queue_delay_ticks(),
                 activity.credit_delay_ticks(),

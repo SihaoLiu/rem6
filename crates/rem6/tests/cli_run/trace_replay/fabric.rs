@@ -307,6 +307,8 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
             byte_count: 8,
             flit_count: 2,
             occupied_ticks: 2,
+            backpressure_ticks: 0,
+            max_backpressure_ticks: 0,
             queue_delay_ticks: 0,
             max_queue_delay_ticks: 0,
             credit_delay_ticks: 0,
@@ -322,6 +324,8 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
             byte_count: 8,
             flit_count: 2,
             occupied_ticks: 2,
+            backpressure_ticks: 0,
+            max_backpressure_ticks: 0,
             queue_delay_ticks: 0,
             max_queue_delay_ticks: 0,
             credit_delay_ticks: 0,
@@ -369,6 +373,8 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
             byte_count: 8,
             flit_count: 2,
             occupied_ticks: 2,
+            backpressure_ticks: 0,
+            max_backpressure_ticks: 0,
             queue_delay_ticks: 0,
             max_queue_delay_ticks: 0,
             credit_delay_ticks: 0,
@@ -384,6 +390,8 @@ fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
             byte_count: 8,
             flit_count: 2,
             occupied_ticks: 2,
+            backpressure_ticks: 0,
+            max_backpressure_ticks: 0,
             queue_delay_ticks: 0,
             max_queue_delay_ticks: 0,
             credit_delay_ticks: 0,
@@ -680,6 +688,46 @@ fn rem6_trace_replay_fabric_route_emits_wait_for_windows() {
         blocked_window.get("last_tick").and_then(Value::as_u64),
         Some(2)
     );
+
+    let lane_activities = summary
+        .get("fabric_lane_activities")
+        .and_then(Value::as_array)
+        .expect("fabric lane activity details");
+    assert_eq!(lane_activities.len(), 1);
+    assert_fabric_lane_activity(
+        lane_activities,
+        ExpectedFabricLaneActivity {
+            link: "cpu_mem",
+            virtual_network: 1,
+            transfer_count: 4,
+            byte_count: 32,
+            flit_count: 8,
+            occupied_ticks: 8,
+            backpressure_ticks: 2,
+            max_backpressure_ticks: 2,
+            queue_delay_ticks: 2,
+            max_queue_delay_ticks: 2,
+            credit_delay_ticks: 1,
+            max_credit_delay_ticks: 1,
+        },
+    );
+    assert_fabric_lane_stats(
+        &stdout,
+        ExpectedFabricLaneStats {
+            link: "cpu_mem",
+            virtual_network: 1,
+            transfer_count: 4,
+            byte_count: 32,
+            flit_count: 8,
+            occupied_ticks: 8,
+            backpressure_ticks: 2,
+            max_backpressure_ticks: 2,
+            queue_delay_ticks: 2,
+            max_queue_delay_ticks: 2,
+            credit_delay_ticks: 1,
+            max_credit_delay_ticks: 1,
+        },
+    );
 }
 
 fn assert_fabric_virtual_network_stats(stdout: &str, expected: ExpectedFabricVirtualNetworkStats) {
@@ -838,6 +886,20 @@ fn assert_fabric_lane_stats(stdout: &str, expected: ExpectedFabricLaneStats<'_>)
         &format!("{prefix}.occupied_ticks"),
         "Tick",
         expected.occupied_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.backpressure_ticks"),
+        "Tick",
+        expected.backpressure_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("{prefix}.max_backpressure_ticks"),
+        "Tick",
+        expected.max_backpressure_ticks,
         "monotonic",
     );
     assert_stat(
@@ -1023,6 +1085,14 @@ fn assert_fabric_lane_activity(lanes: &[Value], expected: ExpectedFabricLaneActi
         Some(expected.occupied_ticks)
     );
     assert_eq!(
+        lane.get("backpressure_ticks").and_then(Value::as_u64),
+        Some(expected.backpressure_ticks)
+    );
+    assert_eq!(
+        lane.get("max_backpressure_ticks").and_then(Value::as_u64),
+        Some(expected.max_backpressure_ticks)
+    );
+    assert_eq!(
         lane.get("queue_delay_ticks").and_then(Value::as_u64),
         Some(expected.queue_delay_ticks)
     );
@@ -1063,6 +1133,8 @@ struct ExpectedFabricLaneStats<'a> {
     byte_count: u64,
     flit_count: u64,
     occupied_ticks: u64,
+    backpressure_ticks: u64,
+    max_backpressure_ticks: u64,
     queue_delay_ticks: u64,
     max_queue_delay_ticks: u64,
     credit_delay_ticks: u64,
@@ -1090,6 +1162,8 @@ struct ExpectedFabricLaneActivity<'a> {
     byte_count: u64,
     flit_count: u64,
     occupied_ticks: u64,
+    backpressure_ticks: u64,
+    max_backpressure_ticks: u64,
     queue_delay_ticks: u64,
     max_queue_delay_ticks: u64,
     credit_delay_ticks: u64,

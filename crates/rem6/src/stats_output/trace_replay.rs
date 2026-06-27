@@ -10,7 +10,8 @@ use super::fabric::{
 };
 use super::wait_for::emit_wait_for_edge_kind_window_stats;
 use super::{
-    increment_stat, CliDataCacheSummary, Rem6CliError, Rem6TraceReplayExternalAdapterSummary,
+    increment_stat, stat_path_segment, CliDataCacheSummary, Rem6CliError,
+    Rem6TraceReplayExternalAdapterSummary,
 };
 
 pub(super) fn emit_trace_replay_summary_stats(
@@ -569,6 +570,7 @@ pub(super) fn emit_trace_replay_fabric_stats(
         "sim.trace_replay.fabric",
         summary.fabric_lane_activities(),
     )?;
+    emit_trace_replay_fabric_lane_pressure_stats(stats, summary)?;
     emit_fabric_hop_stats(
         stats,
         "sim.trace_replay.fabric",
@@ -580,6 +582,34 @@ pub(super) fn emit_trace_replay_fabric_stats(
         summary.fabric_wait_for_edge_count() as u64,
         summary.fabric_wait_for_edge_kind_windows(),
     )
+}
+
+fn emit_trace_replay_fabric_lane_pressure_stats(
+    stats: &mut StatsRegistry,
+    summary: &WorkloadParallelExecutionSummary,
+) -> Result<(), Rem6CliError> {
+    for activity in summary.fabric_lane_activities() {
+        let prefix = format!(
+            "sim.trace_replay.fabric.link.{}.vn{}",
+            stat_path_segment(activity.link().as_str()),
+            activity.virtual_network().get()
+        );
+        increment_stat(
+            stats,
+            &format!("{prefix}.backpressure_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            activity.queue_delay_ticks(),
+        )?;
+        increment_stat(
+            stats,
+            &format!("{prefix}.max_backpressure_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            activity.max_queue_delay_ticks(),
+        )?;
+    }
+    Ok(())
 }
 
 pub(super) fn emit_trace_replay_dram_stats(
