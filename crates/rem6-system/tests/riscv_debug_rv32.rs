@@ -28,7 +28,7 @@ fn riscv_gdb_remote_session_reports_rv32_hart_csr_snapshot_and_writes() {
             .handle_packet(&GdbRemotePacket::new(b"g".to_vec()).unwrap())
             .unwrap(),
     );
-    assert_eq!(registers.len(), rv32_register_hex_offset(142));
+    assert_eq!(registers.len(), rv32_register_hex_offset(143));
     assert_eq!(&registers[0..8], b"00000000");
     assert_eq!(&registers[2 * 8..3 * 8], b"efcdab89");
     assert_eq!(&registers[32 * 8..33 * 8], b"11223344");
@@ -49,6 +49,7 @@ fn riscv_gdb_remote_session_reports_rv32_hart_csr_snapshot_and_writes() {
     assert_eq!(&registers[rv32_register_hex_range(139)], b"00000000");
     assert_eq!(&registers[rv32_register_hex_range(140)], b"00000000");
     assert_eq!(&registers[rv32_register_hex_range(141)], b"00000000");
+    assert_eq!(&registers[rv32_register_hex_range(142)], b"00000000");
 
     assert_eq!(
         packet_payload(
@@ -339,7 +340,7 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_rv32d_float_registers_and_cs
         )
         .unwrap(),
     );
-    assert_eq!(registers.len(), rv32_register_hex_offset(142));
+    assert_eq!(registers.len(), rv32_register_hex_offset(143));
     assert_eq!(&registers[rv32_register_hex_range(33)], b"8877665544332211");
     assert_eq!(&registers[rv32_register_hex_range(64)], b"1032547698badcfe");
     assert_eq!(&registers[rv32_register_hex_range(67)], b"03000000");
@@ -356,6 +357,7 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_rv32d_float_registers_and_cs
     assert_eq!(&registers[rv32_register_hex_range(138)], b"00000000");
     assert_eq!(&registers[rv32_register_hex_range(139)], b"00000000");
     assert_eq!(&registers[rv32_register_hex_range(141)], b"00000000");
+    assert_eq!(&registers[rv32_register_hex_range(142)], b"00000000");
 }
 
 #[test]
@@ -459,7 +461,7 @@ fn rv32_register_hex_offset(number: u64) -> usize {
         66..=69 => (33 * 4) + (32 * 8) + ((number - 66) * 4),
         70..=89 => (33 * 4) + (32 * 8) + (4 * 4) + ((number - 70) * 4),
         90..=121 => (33 * 4) + (32 * 8) + (4 * 4) + (20 * 4) + ((number - 90) * 16),
-        122..=142 => (33 * 4) + (32 * 8) + (4 * 4) + (20 * 4) + (32 * 16) + ((number - 122) * 4),
+        122..=143 => (33 * 4) + (32 * 8) + (4 * 4) + (20 * 4) + (32 * 16) + ((number - 122) * 4),
         _ => panic!("unsupported RV32 GDB register number"),
     };
     byte_offset as usize * 2
@@ -501,6 +503,7 @@ fn rv32_register_set_write_bytes() -> Vec<u8> {
     bytes.extend_from_slice(&0xc8_u32.to_le_bytes());
     bytes.extend_from_slice(&0x10_u32.to_le_bytes());
     bytes.extend_from_slice(&0x33_u32.to_le_bytes());
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
     bytes.extend_from_slice(&0_u32.to_le_bytes());
     bytes.extend_from_slice(&0_u32.to_le_bytes());
     bytes.extend_from_slice(&0_u32.to_le_bytes());

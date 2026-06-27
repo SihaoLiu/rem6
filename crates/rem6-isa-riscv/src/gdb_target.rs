@@ -378,4 +378,5 @@ const RV64_CSR_REGISTERS: &[CsrRegister] = &[
     CsrRegister::new("minstret", Some(139)),
     CsrRegister::new("pmpaddr1", Some(140)),
     CsrRegister::new("pmpaddr2", Some(141)),
+    CsrRegister::new("pmpaddr3", Some(142)),
 ];

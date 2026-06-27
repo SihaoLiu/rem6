@@ -88,6 +88,7 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "  <reg name=\"minstret\" bitsize=\"64\" regnum=\"139\"/>\n",
             "  <reg name=\"pmpaddr1\" bitsize=\"64\" regnum=\"140\"/>\n",
             "  <reg name=\"pmpaddr2\" bitsize=\"64\" regnum=\"141\"/>\n",
+            "  <reg name=\"pmpaddr3\" bitsize=\"64\" regnum=\"142\"/>\n",
             "</feature>\n",
         ),
     );
@@ -134,9 +135,10 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "minstret",
             "pmpaddr1",
             "pmpaddr2",
+            "pmpaddr3",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 40);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 41);
 }
 
 #[test]
@@ -381,6 +383,7 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "  <reg name=\"minstret\" bitsize=\"32\" regnum=\"139\"/>\n",
             "  <reg name=\"pmpaddr1\" bitsize=\"32\" regnum=\"140\"/>\n",
             "  <reg name=\"pmpaddr2\" bitsize=\"32\" regnum=\"141\"/>\n",
+            "  <reg name=\"pmpaddr3\" bitsize=\"32\" regnum=\"142\"/>\n",
             "</feature>\n",
         ),
     );
@@ -427,9 +430,10 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "minstret",
             "pmpaddr1",
             "pmpaddr2",
+            "pmpaddr3",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"32\"").count(), 40);
+    assert_eq!(csr.matches("bitsize=\"32\"").count(), 41);
 }
 
 #[test]
