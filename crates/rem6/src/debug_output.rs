@@ -128,6 +128,26 @@ struct Rem6SyscallTraceRecord {
     outcome: RiscvSyscallTraceOutcome,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6SyscallTraceStat {
+    path: String,
+    unit: &'static str,
+    value: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct SyscallTraceStatSummary {
+    records: u64,
+    syscall_numbers: BTreeSet<u64>,
+    call_sites: BTreeSet<u64>,
+    cpus: BTreeSet<u32>,
+    returns: u64,
+    exits: u64,
+    blocked: u64,
+    argument_words: u64,
+    nonzero_arguments: u64,
+}
+
 impl Rem6DebugSummary {
     pub(crate) fn from_run(
         config: &Rem6RunConfig,
@@ -733,6 +753,13 @@ impl Rem6DebugSummary {
             .count() as u64
     }
 
+    pub(crate) fn syscall_trace_stats(
+        &self,
+        stat_path_segment: impl Fn(&str) -> String,
+    ) -> Vec<Rem6SyscallTraceStat> {
+        syscall_trace_stats(&self.syscall_trace, stat_path_segment)
+    }
+
     pub(crate) fn to_json(&self) -> String {
         let flags = self
             .flags
@@ -1195,6 +1222,111 @@ impl Rem6SyscallTraceRecord {
     }
 }
 
+impl Rem6SyscallTraceStat {
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub(crate) const fn unit(&self) -> &'static str {
+        self.unit
+    }
+
+    pub(crate) const fn value(&self) -> u64 {
+        self.value
+    }
+}
+
+impl SyscallTraceStatSummary {
+    fn add_record(&mut self, record: &Rem6SyscallTraceRecord) {
+        self.records = self.records.saturating_add(1);
+        self.syscall_numbers.insert(record.number);
+        self.call_sites.insert(record.pc);
+        self.cpus.insert(record.cpu);
+        self.argument_words = self
+            .argument_words
+            .saturating_add(record.arguments.len() as u64);
+        self.nonzero_arguments = self.nonzero_arguments.saturating_add(
+            record
+                .arguments
+                .iter()
+                .filter(|argument| **argument != 0)
+                .count() as u64,
+        );
+        match record.outcome {
+            RiscvSyscallTraceOutcome::Return { .. } => {
+                self.returns = self.returns.saturating_add(1);
+            }
+            RiscvSyscallTraceOutcome::Exit { .. } => {
+                self.exits = self.exits.saturating_add(1);
+            }
+            RiscvSyscallTraceOutcome::Blocked => {
+                self.blocked = self.blocked.saturating_add(1);
+            }
+        }
+    }
+
+    fn push_stats(&self, stats: &mut Vec<Rem6SyscallTraceStat>, prefix: &str) {
+        for (suffix, value) in [
+            ("records", self.records),
+            ("returns", self.returns),
+            ("exits", self.exits),
+            ("blocked", self.blocked),
+            ("syscall_numbers", self.syscall_numbers.len() as u64),
+            ("call_sites", self.call_sites.len() as u64),
+            ("cpus", self.cpus.len() as u64),
+            ("argument_words", self.argument_words),
+            ("nonzero_arguments", self.nonzero_arguments),
+        ] {
+            stats.push(Rem6SyscallTraceStat {
+                path: format!("{prefix}.{suffix}"),
+                unit: "Count",
+                value,
+            });
+        }
+    }
+}
+
+fn syscall_trace_stats(
+    records: &[Rem6SyscallTraceRecord],
+    stat_path_segment: impl Fn(&str) -> String,
+) -> Vec<Rem6SyscallTraceStat> {
+    let mut cpus = BTreeMap::<u32, SyscallTraceStatSummary>::new();
+    let mut numbers = BTreeMap::<u64, SyscallTraceStatSummary>::new();
+    let mut call_sites = BTreeMap::<u64, SyscallTraceStatSummary>::new();
+    let mut outcomes = BTreeMap::<&'static str, SyscallTraceStatSummary>::new();
+    for record in records {
+        cpus.entry(record.cpu).or_default().add_record(record);
+        numbers.entry(record.number).or_default().add_record(record);
+        call_sites.entry(record.pc).or_default().add_record(record);
+        outcomes
+            .entry(syscall_outcome_kind(record.outcome))
+            .or_default()
+            .add_record(record);
+    }
+
+    let mut stats = Vec::new();
+    for (cpu, summary) in cpus {
+        summary.push_stats(&mut stats, &format!("cpu.cpu{cpu}"));
+    }
+    for (number, summary) in numbers {
+        summary.push_stats(&mut stats, &format!("number.syscall{number}"));
+    }
+    for (pc, summary) in call_sites {
+        let call_site = format!("0x{pc:x}");
+        summary.push_stats(
+            &mut stats,
+            &format!("call_site.{}", stat_path_segment(&call_site)),
+        );
+    }
+    for (outcome, summary) in outcomes {
+        summary.push_stats(
+            &mut stats,
+            &format!("outcome.{}", stat_path_segment(outcome)),
+        );
+    }
+    stats
+}
+
 fn power_trace_records(records: &[PowerAnalysisRecord]) -> Vec<Rem6PowerTraceRecord> {
     records
         .iter()
@@ -1291,6 +1423,14 @@ fn syscall_outcome_json(outcome: RiscvSyscallTraceOutcome) -> String {
         RiscvSyscallTraceOutcome::Return { value } => {
             format!("{{\"kind\":\"return\",\"value\":{value}}}")
         }
+    }
+}
+
+const fn syscall_outcome_kind(outcome: RiscvSyscallTraceOutcome) -> &'static str {
+    match outcome {
+        RiscvSyscallTraceOutcome::Blocked => "blocked",
+        RiscvSyscallTraceOutcome::Exit { .. } => "exit",
+        RiscvSyscallTraceOutcome::Return { .. } => "return",
     }
 }
 

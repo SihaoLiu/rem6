@@ -1638,6 +1638,7 @@ fn rem6_run_syscall_debug_flag_emits_real_riscv_se_syscall_trace() {
         nonzero_arguments,
         "monotonic",
     );
+    assert_syscall_trace_hierarchy_stats(&stdout, trace);
 }
 
 fn debug_trace_sum(trace: &[Value], kind: &str, field: &str) -> u64 {
@@ -2791,7 +2792,13 @@ fn syscall_trace_argument_words(trace: &[Value]) -> u64 {
 fn syscall_trace_nonzero_arguments(trace: &[Value]) -> u64 {
     trace
         .iter()
-        .flat_map(syscall_trace_arguments)
+        .map(syscall_trace_record_nonzero_arguments)
+        .sum()
+}
+
+fn syscall_trace_record_nonzero_arguments(record: &Value) -> u64 {
+    syscall_trace_arguments(record)
+        .iter()
         .filter(|argument| argument.as_u64().is_some_and(|value| value != 0))
         .count() as u64
 }
@@ -2802,6 +2809,115 @@ fn syscall_trace_arguments(record: &Value) -> &[Value] {
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .expect("syscall trace arguments")
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct SyscallTraceStats {
+    records: u64,
+    syscall_numbers: BTreeSet<u64>,
+    call_sites: BTreeSet<String>,
+    cpus: BTreeSet<u64>,
+    returns: u64,
+    exits: u64,
+    blocked: u64,
+    argument_words: u64,
+    nonzero_arguments: u64,
+}
+
+impl SyscallTraceStats {
+    fn add_record(&mut self, record: &Value) {
+        self.records = self.records.saturating_add(1);
+        self.syscall_numbers
+            .insert(json_record_u64(record, "number"));
+        self.call_sites
+            .insert(json_record_str(record, "pc").to_string());
+        self.cpus.insert(json_record_u64(record, "cpu"));
+        self.argument_words = self
+            .argument_words
+            .saturating_add(syscall_trace_arguments(record).len() as u64);
+        self.nonzero_arguments = self
+            .nonzero_arguments
+            .saturating_add(syscall_trace_record_nonzero_arguments(record));
+        match syscall_trace_outcome_kind(record) {
+            "return" => self.returns = self.returns.saturating_add(1),
+            "exit" => self.exits = self.exits.saturating_add(1),
+            "blocked" => self.blocked = self.blocked.saturating_add(1),
+            other => panic!("unexpected syscall outcome {other}: {record:?}"),
+        }
+    }
+
+    fn assert_stats(&self, stdout: &str, prefix: &str) {
+        for (suffix, value) in [
+            ("records", self.records),
+            ("returns", self.returns),
+            ("exits", self.exits),
+            ("blocked", self.blocked),
+            ("syscall_numbers", self.syscall_numbers.len() as u64),
+            ("call_sites", self.call_sites.len() as u64),
+            ("cpus", self.cpus.len() as u64),
+            ("argument_words", self.argument_words),
+            ("nonzero_arguments", self.nonzero_arguments),
+        ] {
+            assert_stat(
+                stdout,
+                &format!("{prefix}.{suffix}"),
+                "Count",
+                value,
+                "monotonic",
+            );
+        }
+    }
+}
+
+fn assert_syscall_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
+    let mut cpus = BTreeMap::<u64, SyscallTraceStats>::new();
+    let mut numbers = BTreeMap::<u64, SyscallTraceStats>::new();
+    let mut call_sites = BTreeMap::<String, SyscallTraceStats>::new();
+    let mut outcomes = BTreeMap::<String, SyscallTraceStats>::new();
+    for record in trace {
+        let cpu = json_record_u64(record, "cpu");
+        let number = json_record_u64(record, "number");
+        let call_site = json_record_str(record, "pc").to_string();
+        let outcome = syscall_trace_outcome_kind(record).to_string();
+        cpus.entry(cpu).or_default().add_record(record);
+        numbers.entry(number).or_default().add_record(record);
+        call_sites.entry(call_site).or_default().add_record(record);
+        outcomes.entry(outcome).or_default().add_record(record);
+    }
+    for (cpu, stats) in cpus {
+        stats.assert_stats(stdout, &format!("sim.debug.syscall_trace.cpu.cpu{cpu}"));
+    }
+    for (number, stats) in numbers {
+        stats.assert_stats(
+            stdout,
+            &format!("sim.debug.syscall_trace.number.syscall{number}"),
+        );
+    }
+    for (call_site, stats) in call_sites {
+        stats.assert_stats(
+            stdout,
+            &format!(
+                "sim.debug.syscall_trace.call_site.{}",
+                stat_path_segment(&call_site)
+            ),
+        );
+    }
+    for (outcome, stats) in outcomes {
+        stats.assert_stats(
+            stdout,
+            &format!(
+                "sim.debug.syscall_trace.outcome.{}",
+                stat_path_segment(&outcome)
+            ),
+        );
+    }
+}
+
+fn syscall_trace_outcome_kind(record: &Value) -> &str {
+    record
+        .pointer("/outcome/kind")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("syscall trace outcome kind: {record:?}"))
 }
 
 fn power_trace_unique_strings(trace: &[Value], field: &str) -> u64 {
