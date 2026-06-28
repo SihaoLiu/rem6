@@ -60,6 +60,30 @@ fn workload_replay_data_cache_backend_lives_in_focused_module() {
 }
 
 #[test]
+fn workload_replay_planned_data_cache_sync_lives_in_focused_module() {
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let replay_rs = fs::read_to_string(crate_dir.join("src/workload_replay.rs")).unwrap();
+    let sync_rs = crate_dir.join("src/workload_replay/planned_data_cache_sync.rs");
+
+    assert!(
+        sync_rs.exists(),
+        "planned host data-cache sync belongs in src/workload_replay/planned_data_cache_sync.rs"
+    );
+    for anchor in [
+        "struct PlannedDataCacheTraceOverlap",
+        "fn planned_data_cache_trace_overlap(",
+        "fn planned_host_data_cache_sync_handler(",
+        "fn sync_data_cache_lines_to_memory(",
+        "fn sync_data_cache_lines_from_memory(",
+    ] {
+        assert!(
+            !replay_rs.contains(anchor),
+            "src/workload_replay.rs should delegate {anchor} to a focused module"
+        );
+    }
+}
+
+#[test]
 fn workload_replay_summary_tests_live_in_focused_module() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let summary_rs = fs::read_to_string(crate_dir.join("src/workload_replay/summary.rs")).unwrap();
