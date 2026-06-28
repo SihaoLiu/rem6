@@ -1,7 +1,11 @@
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::support::assert_stat;
+use serde_json::Value;
+
+use crate::support::{assert_stat, temp_workspace};
 
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -9,6 +13,21 @@ fn workspace_root() -> PathBuf {
         .and_then(Path::parent)
         .expect("rem6 crate lives under workspace crates directory")
         .to_path_buf()
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_dir_recursive(&source_path, &destination_path)?;
+        } else {
+            fs::copy(&source_path, &destination_path)?;
+        }
+    }
+    Ok(())
 }
 
 #[test]
@@ -105,6 +124,89 @@ fn repository_accelerator_run_example_config_runs_without_recompilation() {
     assert_stat(
         &stdout,
         "sim.accelerator_run.completions",
+        "Count",
+        2,
+        "monotonic",
+    );
+}
+
+#[test]
+fn repository_multi_run_example_suite_writes_aggregate_and_child_artifacts() {
+    let example = workspace_root().join("examples/multi-run");
+    assert!(
+        example.join("basic.toml").is_file(),
+        "missing {}",
+        example.join("basic.toml").display()
+    );
+
+    let workspace = temp_workspace("repository-multi-run-example");
+    copy_dir_recursive(&example, &workspace).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "multi-run",
+            "--config",
+            workspace.join("basic.toml").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"schema\":\"rem6.cli.output.v1\""));
+    assert!(stdout.contains("artifacts/multi-run.json"));
+    assert!(stdout.contains("artifacts/multi-run-stats.json"));
+
+    let artifact_path = workspace.join("artifacts/multi-run.json");
+    let stats_path = workspace.join("artifacts/multi-run-stats.json");
+    let artifact = fs::read_to_string(&artifact_path).unwrap();
+    let stats = fs::read_to_string(&stats_path).unwrap();
+    let json: Value = serde_json::from_str(&artifact).unwrap();
+    assert_eq!(
+        json.get("schema").and_then(Value::as_str),
+        Some("rem6.cli.multi-run.v1")
+    );
+    assert_eq!(
+        json.get("suite_id").and_then(Value::as_str),
+        Some("repository-basic-suite")
+    );
+    assert_eq!(json.get("runs").and_then(Value::as_u64), Some(3));
+    assert_eq!(json.get("succeeded").and_then(Value::as_u64), Some(3));
+    assert_eq!(json.get("failed").and_then(Value::as_u64), Some(0));
+    assert_eq!(
+        json.get("total_accelerator_commands")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        json.get("total_accelerator_completions")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert!(artifact.contains("\"id\":\"traffic\""));
+    assert!(artifact.contains("\"id\":\"gpu\""));
+    assert!(artifact.contains("\"id\":\"accelerator\""));
+    assert!(artifact.contains("gpu-power.csv"));
+    assert!(artifact.contains("gpu-nomali.json"));
+
+    assert!(workspace.join("artifacts/gups.json").is_file());
+    assert!(workspace.join("artifacts/gups-stats.json").is_file());
+    assert!(workspace.join("artifacts/gpu.json").is_file());
+    assert!(workspace.join("artifacts/gpu-stats.json").is_file());
+    assert!(workspace.join("artifacts/gpu-power.csv").is_file());
+    assert!(workspace.join("artifacts/gpu-nomali.json").is_file());
+    assert!(workspace.join("artifacts/accelerator.json").is_file());
+    assert!(workspace.join("artifacts/accelerator-stats.json").is_file());
+    assert_stat(&stats, "sim.multi_run.runs", "Count", 3, "constant");
+    assert_stat(&stats, "sim.multi_run.succeeded", "Count", 3, "monotonic");
+    assert_stat(&stats, "sim.multi_run.failed", "Count", 0, "monotonic");
+    assert_stat(
+        &stats,
+        "sim.multi_run.accelerator.commands",
         "Count",
         2,
         "monotonic",

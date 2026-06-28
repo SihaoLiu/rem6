@@ -1,0 +1,20 @@
+[multi_run]
+suite_id = "repository-basic-suite"
+stats_format = "json"
+output = "artifacts/multi-run.json"
+stats_output = "artifacts/multi-run-stats.json"
+
+[[multi_run.runs]]
+id = "traffic"
+command = "gups"
+config = "children/gups.toml"
+
+[[multi_run.runs]]
+id = "gpu"
+command = "gpu-run"
+config = "children/gpu.toml"
+
+[[multi_run.runs]]
+id = "accelerator"
+command = "accelerator-run"
+config = "children/accelerator.toml"
