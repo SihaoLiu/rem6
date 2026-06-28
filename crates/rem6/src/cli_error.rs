@@ -1032,7 +1032,7 @@ impl fmt::Display for Rem6CliError {
                 )
             }
             Self::PowerAnalysis { error } => {
-                write!(formatter, "failed to build power analysis export: {error}")
+                write!(formatter, "failed to process power analysis artifact: {error}")
             }
             Self::WriteOutput { path, error } => {
                 write!(formatter, "failed to write {}: {error}", path.display())

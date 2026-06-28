@@ -34,6 +34,8 @@ mod m5_host_actions;
 mod multi_run;
 #[path = "cli_run/pc_count_probes.rs"]
 mod pc_count_probes;
+#[path = "cli_run/power_import.rs"]
+mod power_import;
 #[path = "cli_run/readfile_resource.rs"]
 mod readfile_resource;
 #[path = "cli_run/resource_acquire.rs"]

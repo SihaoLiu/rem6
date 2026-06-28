@@ -48,6 +48,7 @@ mod memory_resource_summary;
 mod multi_run_cli;
 mod parallel_stats;
 mod pipeline_stats;
+mod power_import_cli;
 mod power_output;
 mod readfile_runtime;
 mod resource_acquire_cli;
@@ -473,6 +474,7 @@ where
         "accelerator-run" => accelerator_cli::run_accelerator_run_cli(args),
         "gpu-run" => gpu_cli::run_gpu_run_cli(args),
         "gups" => gups_cli::run_gups_cli(args),
+        "power-import" => power_import_cli::run_power_import_cli(args),
         "trace-replay" => trace_replay_cli::run_trace_replay_cli(args),
         "resource-acquire" => resource_acquire_cli::run_resource_acquire_cli(args),
         _ => Err(Rem6CliError::UnsupportedCommand {
