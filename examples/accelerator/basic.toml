@@ -1,0 +1,7 @@
+[accelerator_run]
+engine = 7
+lanes = 2
+command_delay = 1
+stats_format = "json"
+npu_inferences = ["10:4:3"]
+gpu_kernels = ["11:2:5"]
