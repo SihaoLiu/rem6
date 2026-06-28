@@ -27,6 +27,7 @@ use rem6_transport::{
     MemoryRoute, MemoryRouteHop, MemoryRouteId, MemoryTrace, MemoryTransport, TransportEndpointId,
 };
 
+mod accelerator_cli;
 mod artifact_json;
 mod branch_predictor_summary;
 mod cli_error;
@@ -68,6 +69,10 @@ mod transport_summary;
 #[cfg(test)]
 mod transport_summary_tests;
 
+pub use accelerator_cli::{
+    run_accelerator_run_config, Rem6AcceleratorRunArtifact, Rem6AcceleratorRunConfig,
+    Rem6AcceleratorRunExecutionSummary,
+};
 pub(crate) use branch_predictor_summary::{
     Rem6BranchPredictorCounterSummary, Rem6MultiperspectivePerceptronCounterSummary,
     Rem6TageScLBranchPredictorCounterSummary,
@@ -465,6 +470,7 @@ where
     match command.as_str() {
         "run" => run_run_cli(args),
         "multi-run" => multi_run_cli::run_multi_run_cli(args),
+        "accelerator-run" => accelerator_cli::run_accelerator_run_cli(args),
         "gpu-run" => gpu_cli::run_gpu_run_cli(args),
         "gups" => gups_cli::run_gups_cli(args),
         "trace-replay" => trace_replay_cli::run_trace_replay_cli(args),

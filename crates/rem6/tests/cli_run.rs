@@ -1,3 +1,5 @@
+#[path = "cli_run/accelerator.rs"]
+mod accelerator;
 #[path = "cli_run/cache_prefetch.rs"]
 mod cache_prefetch;
 #[path = "cli_run/checker_cpu.rs"]

@@ -1,5 +1,6 @@
 use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
 
+mod accelerator_run;
 mod cpu;
 mod data_cache;
 mod debug;
@@ -19,13 +20,14 @@ use super::formatting::json_escape;
 use crate::gpu_cli::{Rem6GpuFabricSummary, Rem6GpuRunExecutionSummary};
 
 use super::{
-    parallel_stats, stats_error, CliDataCacheSummary, Rem6CliError, Rem6DramSummary,
-    Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GpuRunConfig, Rem6GupsConfig,
-    Rem6GupsExecutionSummary, Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
-    Rem6MemoryTransportSummary, Rem6ReadfileSummary, Rem6ResourceAcquireArtifact, Rem6RunConfig,
-    Rem6TraceReplayConfig, Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary,
-    RequestedIsa,
+    parallel_stats, stats_error, CliDataCacheSummary, Rem6AcceleratorRunConfig,
+    Rem6AcceleratorRunExecutionSummary, Rem6CliError, Rem6DramSummary, Rem6ExecutionStop,
+    Rem6ExecutionSummary, Rem6GpuRunConfig, Rem6GupsConfig, Rem6GupsExecutionSummary,
+    Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters, Rem6MemoryTransportSummary,
+    Rem6ReadfileSummary, Rem6ResourceAcquireArtifact, Rem6RunConfig, Rem6TraceReplayConfig,
+    Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary, RequestedIsa,
 };
+pub(super) use accelerator_run::accelerator_run_stats_output;
 use cpu::emit_cpu_run_stats;
 use data_cache::{
     emit_data_cache_prefetch_summary_stats, emit_data_cache_summary_stats,
@@ -91,6 +93,11 @@ pub(super) struct Rem6TraceReplayStatsInputs<'a> {
 
 pub(super) struct Rem6ResourceAcquireStatsInputs<'a> {
     pub(super) artifact: &'a Rem6ResourceAcquireArtifact,
+}
+
+pub(super) struct Rem6AcceleratorRunStatsInputs<'a> {
+    pub(super) config: &'a Rem6AcceleratorRunConfig,
+    pub(super) execution: &'a Rem6AcceleratorRunExecutionSummary,
 }
 
 pub(super) struct Rem6MultiRunStatsInputs {
