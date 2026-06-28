@@ -49,6 +49,7 @@ const POWER_CHANGED_SINGLE: u32 = 1 << 9;
 const POWER_CHANGED_ALL: u32 = 1 << 10;
 const GPU_COMMAND_SOFT_RESET: u32 = 0x01;
 const GPU_COMMAND_HARD_RESET: u32 = 0x02;
+const GPU_COMMAND_UNSUPPORTED_PROBE: u32 = 0xdead_dead;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct NoMaliRegister {
@@ -427,6 +428,8 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
         .join(",");
     let mut pio = NoMaliT760RegisterFile::new();
     pio.reset();
+    pio.write_reg(GPU_COMMAND, GPU_COMMAND_HARD_RESET);
+    pio.write_reg(GPU_COMMAND, GPU_COMMAND_UNSUPPORTED_PROBE);
     pio.write_reg(GPU_COMMAND, GPU_COMMAND_SOFT_RESET);
     pio.write_reg(GPU_IRQ_MASK, RESET_COMPLETED);
     pio.record_irq_snapshot("after_soft_reset_masked");
