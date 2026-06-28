@@ -87,6 +87,42 @@ pub(crate) fn riscv64_elf_extended_phnum(entry: u64, physical: u64, payload: &[u
     bytes
 }
 
+pub(crate) fn riscv64_elf_extended_section_note_os(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut bytes = riscv64_elf(entry, physical, payload);
+    let mut note = vec![0; 32];
+    write_u32(&mut note, 0, 4);
+    write_u32(&mut note, 4, 16);
+    write_u32(&mut note, 8, 1);
+    note[12..16].copy_from_slice(b"GNU\0");
+    let note_offset = bytes.len();
+    bytes.extend_from_slice(&note);
+    let names = b"\0.note.ABI-tag\0.shstrtab\0";
+    let shstr_offset = bytes.len();
+    bytes.extend_from_slice(names);
+
+    let section_table_offset = bytes.len();
+    write_u64(&mut bytes, 40, section_table_offset as u64);
+    write_u16(&mut bytes, 58, 64);
+    write_u16(&mut bytes, 60, 0);
+    write_u16(&mut bytes, 62, 0xffff);
+    bytes.resize(section_table_offset + 3 * 64, 0);
+    write_u64(&mut bytes, section_table_offset + 32, 3);
+    write_u32(&mut bytes, section_table_offset + 40, 2);
+    write_u32(&mut bytes, section_table_offset + 64, 1);
+    write_u32(&mut bytes, section_table_offset + 68, 7);
+    write_u64(&mut bytes, section_table_offset + 88, note_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 96, note.len() as u64);
+    write_u32(&mut bytes, section_table_offset + 128, 15);
+    write_u32(&mut bytes, section_table_offset + 132, 3);
+    write_u64(&mut bytes, section_table_offset + 152, shstr_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 160, names.len() as u64);
+    bytes
+}
+
 pub(crate) fn riscv32_elf(entry: u32, physical: u32, payload: &[u8]) -> Vec<u8> {
     let payload_offset = 128usize;
     let mut bytes = vec![0; payload_offset + payload.len()];

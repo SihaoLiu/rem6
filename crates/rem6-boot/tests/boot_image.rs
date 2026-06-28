@@ -618,6 +618,36 @@ fn boot_image_rejects_extended_program_header_count_with_bad_section_header_size
 }
 
 #[test]
+fn boot_image_rejects_extended_section_count_before_reading_section_zero() {
+    let mut elf = elf64_image(
+        0x8000_0080,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000_0000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0, 0, 0])],
+    );
+    write_u64(&mut elf, 40, u64::MAX - 7);
+    write_u16(&mut elf, 58, 64);
+    write_u16(&mut elf, 60, 0);
+    write_u16(&mut elf, 62, 0xffff);
+
+    assert_eq!(
+        BootImage::from_elf64_le(&elf).unwrap_err(),
+        BootError::InvalidElf {
+            reason: BootElfError::SectionHeaderTableOutOfBounds {
+                offset: u64::MAX - 7,
+                size: 64,
+                image_size: elf.len() as u64,
+            },
+        },
+    );
+}
+
+#[test]
 fn boot_image_maps_arm_thumb_from_elf32_entry_bit() {
     let mut arm = elf32_image(
         0x8000,
