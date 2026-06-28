@@ -8,9 +8,10 @@ use rem6_kernel::{
 };
 
 use crate::{
-    GuestEvent, GuestEventChannel, GuestEventId, GuestEventKind, GuestSourceId, GuestTrap,
-    GuestTrapKind, HostEventPolicy, RiscvSbiFirmware, RiscvSbiOutcome, RiscvSyscallEmulation,
-    RiscvSyscallOutcome, SystemError, SystemHostController, SystemRunController,
+    GuestEvent, GuestEventChannel, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId,
+    GuestTrap, GuestTrapKind, HostEventPolicy, RiscvSbiFirmware, RiscvSbiOutcome,
+    RiscvSyscallEmulation, RiscvSyscallOutcome, SystemError, SystemHostController,
+    SystemRunController,
 };
 
 const GEM5_M5_CHECKPOINT_LABEL: &str = "gem5-m5-checkpoint";
@@ -138,6 +139,132 @@ impl SystemHostEventPort {
                 .handle_delivery(delivery);
         })
     }
+
+    fn emit_with_period(
+        &self,
+        context: &mut SchedulerContext<'_>,
+        event: GuestEvent,
+        period: Tick,
+    ) -> Result<PartitionEventId, SystemError> {
+        if period == 0 {
+            return self.emit(context, event);
+        }
+
+        let controller = Arc::clone(&self.controller);
+        let channel = self.channel;
+        let source_partition = context.partition();
+        let host_partition = channel.host_partition();
+        context
+            .schedule_remote_after(host_partition, channel.host_latency(), move |context| {
+                handle_periodic_host_delivery(
+                    context,
+                    source_partition,
+                    host_partition,
+                    event,
+                    period,
+                    controller,
+                );
+            })
+            .map_err(SystemError::Scheduler)
+    }
+
+    fn emit_with_period_parallel(
+        &self,
+        context: &mut ParallelSchedulerContext<'_>,
+        event: GuestEvent,
+        period: Tick,
+    ) -> Result<PartitionEventId, SystemError> {
+        if period == 0 {
+            return self.emit_parallel(context, event);
+        }
+
+        let controller = Arc::clone(&self.controller);
+        let channel = self.channel;
+        let source_partition = context.partition();
+        let host_partition = channel.host_partition();
+        context
+            .schedule_remote_after(host_partition, channel.host_latency(), move |context| {
+                handle_periodic_host_delivery_parallel(
+                    context,
+                    source_partition,
+                    host_partition,
+                    event,
+                    period,
+                    controller,
+                );
+            })
+            .map_err(SystemError::Scheduler)
+    }
+}
+
+fn handle_periodic_host_delivery(
+    context: &mut SchedulerContext<'_>,
+    source_partition: PartitionId,
+    host_partition: PartitionId,
+    event: GuestEvent,
+    period: Tick,
+    controller: Arc<Mutex<SystemHostController>>,
+) {
+    controller
+        .lock()
+        .expect("system host controller lock")
+        .handle_delivery(GuestEventDelivery::new(
+            context.now(),
+            source_partition,
+            host_partition,
+            event.clone(),
+        ));
+
+    if context.now().checked_add(period).is_none() {
+        return;
+    }
+
+    let next_controller = Arc::clone(&controller);
+    let _ = context.schedule_local_after(period, move |context| {
+        handle_periodic_host_delivery(
+            context,
+            source_partition,
+            host_partition,
+            event,
+            period,
+            next_controller,
+        );
+    });
+}
+
+fn handle_periodic_host_delivery_parallel(
+    context: &mut ParallelSchedulerContext<'_>,
+    source_partition: PartitionId,
+    host_partition: PartitionId,
+    event: GuestEvent,
+    period: Tick,
+    controller: Arc<Mutex<SystemHostController>>,
+) {
+    controller
+        .lock()
+        .expect("system host controller lock")
+        .handle_delivery(GuestEventDelivery::new(
+            context.now(),
+            source_partition,
+            host_partition,
+            event.clone(),
+        ));
+
+    if context.now().checked_add(period).is_none() {
+        return;
+    }
+
+    let next_controller = Arc::clone(&controller);
+    let _ = context.schedule_local_after(period, move |context| {
+        handle_periodic_host_delivery_parallel(
+            context,
+            source_partition,
+            host_partition,
+            event,
+            period,
+            next_controller,
+        );
+    });
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -242,24 +369,29 @@ impl RiscvTrapEventPort {
         )
     }
 
-    fn emit_guest_event_kind(
+    fn emit_guest_event_kind_with_period(
         &self,
         context: &mut SchedulerContext<'_>,
         event: GuestEventId,
         kind: GuestEventKind,
+        period: Tick,
     ) -> Result<PartitionEventId, SystemError> {
         self.host
-            .emit(context, GuestEvent::new(event, self.source, kind))
+            .emit_with_period(context, GuestEvent::new(event, self.source, kind), period)
     }
 
-    fn emit_guest_event_kind_parallel(
+    fn emit_guest_event_kind_with_period_parallel(
         &self,
         context: &mut ParallelSchedulerContext<'_>,
         event: GuestEventId,
         kind: GuestEventKind,
+        period: Tick,
     ) -> Result<PartitionEventId, SystemError> {
-        self.host
-            .emit_parallel(context, GuestEvent::new(event, self.source, kind))
+        self.host.emit_with_period_parallel(
+            context,
+            GuestEvent::new(event, self.source, kind),
+            period,
+        )
     }
 
     pub fn emit_pending_core_trap(
@@ -570,6 +702,7 @@ impl RiscvTrapEventPort {
                 source,
                 source_tick,
                 kind: system_event.kind,
+                period: system_event.period,
             });
         }
 
@@ -582,6 +715,7 @@ impl RiscvTrapEventPort {
                     pending.source,
                     pending.source_tick,
                     pending.kind,
+                    pending.period,
                 )?
             } else {
                 self.schedule_prevalidated_system_event(
@@ -590,6 +724,7 @@ impl RiscvTrapEventPort {
                     pending.source,
                     pending.source_tick,
                     pending.kind,
+                    pending.period,
                 )?
             };
             scheduled.push(event);
@@ -682,6 +817,7 @@ impl RiscvTrapEventPort {
                                     reset_reason,
                                     code,
                                 },
+                                period: 0,
                             });
                         }
                     }
@@ -708,6 +844,7 @@ impl RiscvTrapEventPort {
                         source,
                         source_tick,
                         kind: GuestEventKind::Terminate { code },
+                        period: 0,
                     });
                 }
                 Some(RiscvSyscallOutcome::Return { value }) => {
@@ -742,6 +879,7 @@ impl RiscvTrapEventPort {
                     pending.source,
                     pending.source_tick,
                     pending.kind,
+                    pending.period,
                 )?;
             } else {
                 self.schedule_prevalidated_system_event(
@@ -750,6 +888,7 @@ impl RiscvTrapEventPort {
                     pending.source,
                     pending.source_tick,
                     pending.kind,
+                    pending.period,
                 )?;
             }
         }
@@ -825,11 +964,12 @@ impl RiscvTrapEventPort {
         source: PartitionId,
         source_tick: Tick,
         kind: GuestEventKind,
+        period: Tick,
     ) -> Result<PartitionEventId, SystemError> {
         let port = self.clone();
         scheduler
             .schedule_at(source, source_tick, move |context| {
-                port.emit_guest_event_kind(context, event, kind)
+                port.emit_guest_event_kind_with_period(context, event, kind, period)
                     .expect("validated RISC-V system event scheduling");
             })
             .map_err(SystemError::Scheduler)
@@ -842,11 +982,12 @@ impl RiscvTrapEventPort {
         source: PartitionId,
         source_tick: Tick,
         kind: GuestEventKind,
+        period: Tick,
     ) -> Result<PartitionEventId, SystemError> {
         let port = self.clone();
         scheduler
             .schedule_parallel_at(source, source_tick, move |context| {
-                port.emit_guest_event_kind_parallel(context, event, kind)
+                port.emit_guest_event_kind_with_period_parallel(context, event, kind, period)
                     .expect("validated parallel RISC-V system event scheduling");
             })
             .map_err(SystemError::Scheduler)
@@ -936,11 +1077,13 @@ struct PendingRiscvSystemEventSchedule {
     source: PartitionId,
     source_tick: Tick,
     kind: GuestEventKind,
+    period: Tick,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RiscvGuestEventSchedule {
     delay: Tick,
+    period: Tick,
     kind: GuestEventKind,
 }
 
@@ -950,34 +1093,47 @@ fn guest_event_from_riscv_system_event(
     match event {
         Some(RiscvSystemEvent::Gem5Exit { delay, .. }) => Some(RiscvGuestEventSchedule {
             delay: *delay,
+            period: 0,
             kind: GuestEventKind::Terminate { code: 0 },
         }),
         Some(RiscvSystemEvent::Gem5Fail { delay, code, .. }) => Some(RiscvGuestEventSchedule {
             delay: *delay,
+            period: 0,
             kind: GuestEventKind::Terminate {
                 code: gem5_fail_stop_code(*code),
             },
         }),
-        Some(RiscvSystemEvent::Gem5ResetStats { delay, .. }) => Some(RiscvGuestEventSchedule {
-            delay: *delay,
-            kind: GuestEventKind::StatsReset,
-        }),
-        Some(RiscvSystemEvent::Gem5DumpStats { delay, .. }) => Some(RiscvGuestEventSchedule {
-            delay: *delay,
-            kind: GuestEventKind::StatsDump,
-        }),
-        Some(RiscvSystemEvent::Gem5DumpResetStats { delay, .. }) => Some(RiscvGuestEventSchedule {
-            delay: *delay,
-            kind: GuestEventKind::StatsDumpReset,
-        }),
+        Some(RiscvSystemEvent::Gem5ResetStats { delay, period, .. }) => {
+            Some(RiscvGuestEventSchedule {
+                delay: *delay,
+                period: *period,
+                kind: GuestEventKind::StatsReset,
+            })
+        }
+        Some(RiscvSystemEvent::Gem5DumpStats { delay, period, .. }) => {
+            Some(RiscvGuestEventSchedule {
+                delay: *delay,
+                period: *period,
+                kind: GuestEventKind::StatsDump,
+            })
+        }
+        Some(RiscvSystemEvent::Gem5DumpResetStats { delay, period, .. }) => {
+            Some(RiscvGuestEventSchedule {
+                delay: *delay,
+                period: *period,
+                kind: GuestEventKind::StatsDumpReset,
+            })
+        }
         Some(RiscvSystemEvent::Gem5Checkpoint { delay, .. }) => Some(RiscvGuestEventSchedule {
             delay: *delay,
+            period: 0,
             kind: GuestEventKind::Checkpoint {
                 label: GEM5_M5_CHECKPOINT_LABEL.to_string(),
             },
         }),
         Some(RiscvSystemEvent::Gem5SwitchCpu { .. }) => Some(RiscvGuestEventSchedule {
             delay: 0,
+            period: 0,
             kind: GuestEventKind::SimulationLoopExit {
                 cause: GEM5_M5_SWITCH_CPU_COMMAND.to_string(),
                 code: 0,
@@ -985,6 +1141,7 @@ fn guest_event_from_riscv_system_event(
         }),
         Some(RiscvSystemEvent::Gem5Hypercall { selector, .. }) => Some(RiscvGuestEventSchedule {
             delay: 0,
+            period: 0,
             kind: GuestEventKind::GuestHostCall {
                 selector: *selector,
                 arguments: Vec::new(),
@@ -995,6 +1152,7 @@ fn guest_event_from_riscv_system_event(
             work_id, thread_id, ..
         }) => Some(RiscvGuestEventSchedule {
             delay: 0,
+            period: 0,
             kind: GuestEventKind::WorkBegin {
                 work_id: *work_id,
                 thread_id: *thread_id,
@@ -1004,6 +1162,7 @@ fn guest_event_from_riscv_system_event(
             work_id, thread_id, ..
         }) => Some(RiscvGuestEventSchedule {
             delay: 0,
+            period: 0,
             kind: GuestEventKind::WorkEnd {
                 work_id: *work_id,
                 thread_id: *thread_id,

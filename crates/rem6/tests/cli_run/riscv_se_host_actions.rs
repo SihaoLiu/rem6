@@ -16,6 +16,7 @@ fn rem6_run_riscv_se_exposes_m5_roi_and_stat_hooks_as_run_stats() {
         i_type(21, 0, 0x0, 10, 0x13),
         i_type(3, 0, 0x0, 11, 0x13),
         m5op(M5_WORK_BEGIN),
+        i_type(0, 0, 0x0, 11, 0x13),
         m5op(M5_RESET_STATS),
         i_type(1, 0, 0x0, 5, 0x13),
         i_type(2, 5, 0x0, 5, 0x13),

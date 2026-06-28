@@ -1223,6 +1223,78 @@ fn riscv_system_run_driver_routes_gem5_stats_pseudo_ops_to_host() {
 }
 
 #[test]
+fn riscv_system_run_driver_drops_periodic_gem5_stats_repeat_on_tick_overflow() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(41);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let fetch_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core = riscv_core(0, 0, 7, "cpu0.ifetch", fetch_route, 0x8000);
+    core.write_register(reg(10), 0);
+    core.write_register(reg(11), u64::MAX);
+    let cluster = RiscvCluster::new([core]).unwrap();
+    let store = loaded_program_store(&[(0x8000, gem5_m5op_type(0x42)), (0x8004, 0x0000_0073)]);
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let trap_port = RiscvTrapEventPort::new(
+        SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap(),
+        source,
+    );
+    let driver = RiscvSystemRunDriver::new(trap_port);
+    let mut next_event_id = 135_u64;
+
+    let run = driver
+        .drive_until_host_stop(
+            &cluster,
+            &mut scheduler,
+            &transport,
+            MemoryTrace::new(),
+            MemoryTrace::new(),
+            |_cpu| responder(Arc::clone(&store)),
+            |_cpu| responder(Arc::clone(&store)),
+            40,
+            |_cpu| {
+                let event = GuestEventId::new(next_event_id);
+                next_event_id += 1;
+                event
+            },
+        )
+        .unwrap();
+
+    assert!(run.host_stop().is_some());
+
+    let controller = controller.lock().unwrap();
+    let stats_actions = controller
+        .run()
+        .action_outcomes()
+        .iter()
+        .filter_map(|outcome| match outcome {
+            SystemActionOutcome::StatsReset(record) => Some(("reset", record.tick())),
+            SystemActionOutcome::StatsDump(record) => Some(("dump", record.tick())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(stats_actions.len(), 2);
+    assert_eq!(stats_actions[0].0, "dump");
+    assert_eq!(stats_actions[1].0, "reset");
+    assert_eq!(stats_actions[0].1, stats_actions[1].1);
+}
+
+#[test]
 fn riscv_system_run_driver_routes_gem5_checkpoint_pseudo_op_to_host() {
     let host = PartitionId::new(3);
     let source = GuestSourceId::new(40);

@@ -425,6 +425,76 @@ fn rem6_run_emits_m5_stats_host_action_details_from_real_riscv_execution() {
 }
 
 #[test]
+fn rem6_run_repeats_m5_stats_host_actions_when_period_is_set_from_real_riscv_execution() {
+    let mut words = vec![
+        i_type(0, 0, 0x0, 10, 0x13),
+        i_type(4, 0, 0x0, 11, 0x13),
+        m5op(M5_DUMP_RESET_STATS),
+        i_type(18, 0, 0x0, 10, 0x13),
+        m5op(M5_EXIT),
+    ];
+    words.extend(std::iter::repeat_n(i_type(0, 0, 0x0, 0, 0x13), 16));
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("m5-periodic-stats-host-actions", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/stats_reset_count")
+            .and_then(Value::as_u64),
+        Some(6)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/stats_dump_count")
+            .and_then(Value::as_u64),
+        Some(6)
+    );
+    assert_eq!(
+        host_actions.pointer("/stop_count").and_then(Value::as_u64),
+        Some(1)
+    );
+
+    let reset_ticks = action_ticks(host_actions, "stats_resets");
+    let dump_ticks = action_ticks(host_actions, "stats_dumps");
+    assert_eq!(reset_ticks, vec![7, 11, 15, 19, 23, 27]);
+    assert_eq!(dump_ticks, reset_ticks);
+}
+
+#[test]
 fn rem6_run_emits_m5_checkpoint_host_action_detail_from_real_riscv_execution() {
     let program = riscv64_program(&[m5op(M5_CHECKPOINT), m5op(M5_EXIT)]);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
@@ -715,6 +785,21 @@ fn assert_stats_reset(host_actions: &Value, index: usize, id: u64, tick: u64, ep
         action.pointer("/epoch").and_then(Value::as_u64),
         Some(epoch)
     );
+}
+
+fn action_ticks(host_actions: &Value, field: &str) -> Vec<u64> {
+    host_actions
+        .pointer(&format!("/{field}"))
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing host action list {field}"))
+        .iter()
+        .map(|action| {
+            action
+                .pointer("/tick")
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("missing host action tick in {field}: {action}"))
+        })
+        .collect()
 }
 
 fn assert_stats_dump(
