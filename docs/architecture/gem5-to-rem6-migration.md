@@ -1112,11 +1112,9 @@ boundary, but no external SST simulator runtime executes through it.
 
 ### Power and Physical-Design Export Adapters - 59% single-axis
 
-**Score calculation:** 5 of 7 items have executable evidence, or 71% raw. The
-bucket cap is single-axis because McPAT-shaped, DSENT-shaped, and
-NoMali-compatible artifacts can be written from a top-level run, but
-external-tool ingestion, full schema parity, calibrated activity, and the
-complete NoMali PIO device model remain absent.
+**Score calculation:** 5 of 7 items have executable evidence, or 71% raw. The bucket cap is single-axis because top-level
+McPAT/DSENT/NoMali artifacts and rem6-shaped McPAT/DSENT typed ingestion
+round-trips exist, but full external-tool ingestion, schema parity, calibrated activity, and complete NoMali PIO remain absent.
 
 - [x] rem6-power can export typed power-analysis records.
 - [x] McPAT-shaped XML export serializes power, thermal, and residency records.
@@ -1126,41 +1124,32 @@ complete NoMali PIO device model remain absent.
 - [ ] DSENT-compatible ingestion/export parity is complete.
 - [x] NoMali-compatible GPU adapter evidence exists.
 
-**Migrated:** Typed power-analysis export records and deterministic library-level
-custom XML smoke coverage for totals, components, and residency entries, plus
-deterministic library-level McPAT-shaped XML and DSENT-shaped CSV exports.
-Top-level `rem6 run --power-output` emits an activity-derived McPAT-shaped or
-DSENT-shaped artifact from executed CPU, instruction-cache, data-cache, shared
-L2/L3 cache, fabric/NoC, and memory-transport/DRAM summaries. Top-level `rem6 run --debug-flags Power`
-emits the same executed-run activity-derived CPU, cache, fabric/NoC, memory-transport, and
-DRAM power records in deterministic run JSON. Top-level `rem6 trace-replay --power-output` emits activity-derived trace replay data-cache, fabric/NoC, and DRAM power records from executed packet replay summaries and explicit-fabric route activity. Top-level `rem6 gpu-run --power-output` emits activity-derived GPU compute-unit, GPU
-fabric/NoC, data-cache, and DRAM power records, with the artifact path reported in the run
-JSON or CLI output envelope.
+**Migrated:** Typed power-analysis export records, deterministic custom XML smoke coverage, McPAT-shaped XML, DSENT-shaped CSV, and
+typed McPAT/DSENT adapter ingestion round-trips. Top-level `rem6 run --power-output` emits an activity-derived McPAT-shaped or
+DSENT-shaped artifact from executed CPU, instruction-cache, data-cache, shared L2/L3 cache, fabric/NoC, and memory-transport/DRAM
+summaries, and executed McPAT/DSENT run artifacts parse back into typed power-analysis records. Top-level `rem6 run --debug-flags Power`
+emits the same executed-run activity-derived CPU, cache, fabric/NoC, memory-transport, and DRAM power records in deterministic run JSON.
+Top-level `rem6 trace-replay --power-output` emits activity-derived trace replay data-cache, fabric/NoC, and DRAM power records from executed packet replay summaries and explicit-fabric route activity. Top-level `rem6 gpu-run --power-output` emits activity-derived GPU compute-unit, GPU
+fabric/NoC, data-cache, and DRAM power records, with the artifact path reported in the run JSON or CLI output envelope.
 Top-level `rem6 gpu-run --nomali-output` emits a deterministic
 NoMali-compatible T760 adapter artifact from executed GPU run summaries,
 including register-file checkpoint evidence, soft-reset and IRQ-clear state,
 shader power-state IRQ evidence, callback identifiers, and observed workgroup
 plus memory activity; TOML and flag-driven runs both report the artifact path.
 
-**Not migrated:** Complete `ext/nomali`, `ext/mcpat`, and `ext/dsent` parity,
-the full NoMali PIO command surface beyond the soft-reset and shader-power
-slices, register fault behavior, real interrupt delivery, external-tool
-ingestion, full external schema parity, and broader calibrated power/thermal activity.
+**Not migrated:** Complete `ext/nomali`, `ext/mcpat`, and `ext/dsent` parity, NoMali PIO command breadth beyond soft-reset and
+shader-power slices, register fault behavior, real interrupt delivery, external-tool ingestion beyond rem6-shaped adapter artifacts,
+full external schema parity, and broader calibrated power/thermal activity.
 
-**Evidence:** rem6-power power-analysis export self-tests including custom XML,
-McPAT-shaped XML, and DSENT-shaped CSV output; `rem6 run` CLI tests for
-`--power-output`, executed instruction-cache, data-cache, shared L2/L3 cache,
-fabric/NoC, memory-transport, and DRAM activity records, `rem6 trace-replay --power-output` data-cache, explicit-fabric, and
-DRAM activity records, `rem6 gpu-run --power-output` compute-unit plus explicit-fabric activity records, `--debug-flags Power` run-JSON records,
-envelope reporting, and load-only rejection;
-`rem6 gpu-run` CLI and TOML tests
-for McPAT-shaped and DSENT-shaped activity-derived output; CLI and TOML tests
-for `rem6 gpu-run --nomali-output` NoMali-compatible adapter artifacts with
-T760 register-file, soft-reset, IRQ-clear, shader power, multi-artifact
-envelope, and output-path conflict evidence.
+**Evidence:** rem6-power export self-tests for custom XML, McPAT XML, DSENT CSV, and McPAT/DSENT import round-trips; `rem6 run` CLI
+tests for `--power-output`, executed McPAT/DSENT artifact ingestion, instruction-cache, data-cache, shared L2/L3 cache, fabric/NoC,
+memory-transport, and DRAM activity records, `rem6 trace-replay --power-output` data-cache, explicit-fabric, and DRAM activity records,
+`rem6 gpu-run --power-output` compute-unit plus explicit-fabric activity records, `--debug-flags Power` run-JSON records, envelope reporting,
+and load-only rejection; `rem6 gpu-run` CLI/TOML McPAT/DSENT output plus `--nomali-output` T760 register-file, soft-reset, IRQ-clear,
+shader power, multi-artifact envelope, and output-path conflict evidence.
 
-**Next evidence:** Adapter ingestion, broader NoMali PIO command/register
-behavior, calibrated activity models, and stricter external schema parity tests.
+**Next evidence:** External McPAT/DSENT tool ingestion, broader NoMali PIO command/register behavior, calibrated activity models, and
+stricter external schema parity tests.
 
 ### Native Loader and Math Replacement - 50% single-axis
 

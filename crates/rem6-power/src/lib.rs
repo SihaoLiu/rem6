@@ -955,6 +955,10 @@ pub enum PowerError {
     PowerAnalysisUndefinedResidencyState {
         target: String,
     },
+    InvalidPowerAnalysisArtifact {
+        kind: ExternalPowerAnalysisKind,
+        message: String,
+    },
 }
 
 impl fmt::Display for PowerError {
@@ -1152,6 +1156,9 @@ impl fmt::Display for PowerError {
                     formatter,
                     "external power analysis target {target} has undefined residency evidence"
                 )
+            }
+            Self::InvalidPowerAnalysisArtifact { kind, message } => {
+                write!(formatter, "invalid {kind:?} power analysis artifact: {message}")
             }
         }
     }

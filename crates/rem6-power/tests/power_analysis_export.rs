@@ -176,6 +176,200 @@ fn mcpat_compatible_xml_export_serializes_adapter_records() {
 }
 
 #[test]
+fn mcpat_compatible_xml_import_round_trips_adapter_records() {
+    let export = PowerAnalysisExport::new(
+        ExternalPowerAnalysisKind::McPat,
+        42,
+        vec![PowerAnalysisRecord::new(
+            "system.cpu&cluster",
+            PowerStateKind::On,
+            PowerResidency::new(vec![
+                (PowerStateKind::On, 30),
+                (PowerStateKind::ClockGated, 12),
+            ]),
+            41.25,
+            PowerEstimate::new(3.5, 1.25),
+        )
+        .unwrap()],
+    )
+    .unwrap();
+
+    let imported =
+        PowerAnalysisExport::from_mcpat_compatible_xml(&export.to_mcpat_compatible_xml().unwrap())
+            .unwrap();
+
+    assert_eq!(imported.kind(), ExternalPowerAnalysisKind::McPat);
+    assert_eq!(imported.tick(), 42);
+    assert_eq!(imported.records().len(), 1);
+    let record = &imported.records()[0];
+    assert_eq!(record.target(), "system.cpu&cluster");
+    assert_eq!(record.current_state(), PowerStateKind::On);
+    assert_eq!(record.residency_ticks(PowerStateKind::On), 30);
+    assert_eq!(record.residency_ticks(PowerStateKind::ClockGated), 12);
+    assert_close(record.temperature_c(), 41.25);
+    assert_close(record.dynamic_watts(), 3.5);
+    assert_close(record.static_watts(), 1.25);
+    assert_close(imported.total_dynamic_watts(), 3.5);
+    assert_close(imported.total_static_watts(), 1.25);
+}
+
+#[test]
+fn mcpat_compatible_xml_import_rejects_missing_totals() {
+    let xml = concat!(
+        "<mcpat_power tick=\"42\">\n",
+        "  <component id=\"system.cpu\" name=\"system.cpu\" state=\"On\">\n",
+        "    <power dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+        "    <thermal temperature_c=\"41.250000\"/>\n",
+        "    <residency state=\"On\" ticks=\"42\" ratio=\"1.000000\"/>\n",
+        "  </component>\n",
+        "</mcpat_power>\n",
+    );
+
+    assert_eq!(
+        PowerAnalysisExport::from_mcpat_compatible_xml(xml).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::McPat,
+            message: "missing totals tag".to_string(),
+        },
+    );
+}
+
+#[test]
+fn mcpat_compatible_xml_import_does_not_treat_prefixed_tag_as_totals() {
+    let xml = concat!(
+        "<mcpat_power tick=\"42\">\n",
+        "  <component id=\"system.cpu\" name=\"system.cpu\" state=\"On\">\n",
+        "    <power dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+        "    <thermal temperature_c=\"41.250000\"/>\n",
+        "    <residency state=\"On\" ticks=\"42\" ratio=\"1.000000\"/>\n",
+        "  </component>\n",
+        "  <totals_backup dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+        "</mcpat_power>\n",
+    );
+
+    assert_eq!(
+        PowerAnalysisExport::from_mcpat_compatible_xml(xml).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::McPat,
+            message: "missing totals tag".to_string(),
+        },
+    );
+}
+
+#[test]
+fn mcpat_compatible_xml_import_rejects_mismatched_totals() {
+    let export = PowerAnalysisExport::new(
+        ExternalPowerAnalysisKind::McPat,
+        42,
+        vec![PowerAnalysisRecord::new(
+            "system.cpu",
+            PowerStateKind::On,
+            PowerResidency::new(vec![(PowerStateKind::On, 42)]),
+            41.25,
+            PowerEstimate::new(3.5, 1.25),
+        )
+        .unwrap()],
+    )
+    .unwrap();
+    let xml = export.to_mcpat_compatible_xml().unwrap().replace(
+        "  <totals dynamic_watts=\"3.500000\"",
+        "  <totals dynamic_watts=\"9.500000\"",
+    );
+
+    assert_eq!(
+        PowerAnalysisExport::from_mcpat_compatible_xml(&xml).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::McPat,
+            message: "total dynamic watts does not match component records".to_string(),
+        },
+    );
+}
+
+#[test]
+fn mcpat_compatible_xml_import_rejects_duplicate_totals() {
+    let export = PowerAnalysisExport::new(
+        ExternalPowerAnalysisKind::McPat,
+        42,
+        vec![PowerAnalysisRecord::new(
+            "system.cpu",
+            PowerStateKind::On,
+            PowerResidency::new(vec![(PowerStateKind::On, 42)]),
+            41.25,
+            PowerEstimate::new(3.5, 1.25),
+        )
+        .unwrap()],
+    )
+    .unwrap();
+    let mut xml = export.to_mcpat_compatible_xml().unwrap();
+    xml.insert_str(
+        xml.find("</mcpat_power>").unwrap(),
+        "  <totals dynamic_watts=\"9.500000\" leakage_watts=\"1.250000\" total_watts=\"10.750000\"/>\n",
+    );
+
+    assert_eq!(
+        PowerAnalysisExport::from_mcpat_compatible_xml(&xml).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::McPat,
+            message: "duplicate totals tag".to_string(),
+        },
+    );
+}
+
+#[test]
+fn mcpat_compatible_xml_import_accepts_independently_rounded_totals() {
+    let records = (0..10)
+        .map(|index| {
+            PowerAnalysisRecord::new(
+                format!("system.cpu{index}"),
+                PowerStateKind::On,
+                PowerResidency::new(vec![(PowerStateKind::On, 1)]),
+                35.0,
+                PowerEstimate::new(0.000_000_4, 0.000_000_4),
+            )
+            .unwrap()
+        })
+        .collect();
+    let export = PowerAnalysisExport::new(ExternalPowerAnalysisKind::McPat, 1, records).unwrap();
+
+    let imported =
+        PowerAnalysisExport::from_mcpat_compatible_xml(&export.to_mcpat_compatible_xml().unwrap())
+            .unwrap();
+
+    assert_eq!(imported.records().len(), 10);
+    assert_close(imported.total_dynamic_watts(), 0.0);
+    assert_close(imported.total_static_watts(), 0.0);
+}
+
+#[test]
+fn mcpat_compatible_xml_import_rejects_mismatched_component_total() {
+    let export = PowerAnalysisExport::new(
+        ExternalPowerAnalysisKind::McPat,
+        42,
+        vec![PowerAnalysisRecord::new(
+            "system.cpu",
+            PowerStateKind::On,
+            PowerResidency::new(vec![(PowerStateKind::On, 42)]),
+            41.25,
+            PowerEstimate::new(3.5, 1.25),
+        )
+        .unwrap()],
+    )
+    .unwrap();
+    let xml = export
+        .to_mcpat_compatible_xml()
+        .unwrap()
+        .replace("total_watts=\"4.750000\"/>", "total_watts=\"9.750000\"/>");
+
+    assert_eq!(
+        PowerAnalysisExport::from_mcpat_compatible_xml(&xml).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::McPat,
+            message: "power total watts does not match dynamic plus static watts".to_string(),
+        },
+    );
+}
+
+#[test]
 fn mcpat_compatible_xml_export_rejects_non_mcpat_kind() {
     let export = PowerAnalysisExport::new(
         ExternalPowerAnalysisKind::Dsent,
@@ -227,6 +421,176 @@ fn dsent_compatible_csv_export_serializes_adapter_records() {
             "component,42,system.mesh.link0,ClockGated,41.250000,0.750000,0.125000,0.875000,ClockGated,30,0.714286\n",
             "total,42,__total__,All,,0.750000,0.125000,0.875000,,42,1.000000\n",
         ),
+    );
+}
+
+#[test]
+fn dsent_compatible_csv_import_round_trips_adapter_records() {
+    let export = PowerAnalysisExport::new(
+        ExternalPowerAnalysisKind::Dsent,
+        42,
+        vec![PowerAnalysisRecord::new(
+            "system.mesh,link0",
+            PowerStateKind::ClockGated,
+            PowerResidency::new(vec![
+                (PowerStateKind::On, 12),
+                (PowerStateKind::ClockGated, 30),
+            ]),
+            41.25,
+            PowerEstimate::new(0.75, 0.125),
+        )
+        .unwrap()],
+    )
+    .unwrap();
+
+    let imported =
+        PowerAnalysisExport::from_dsent_compatible_csv(&export.to_dsent_compatible_csv().unwrap())
+            .unwrap();
+
+    assert_eq!(imported.kind(), ExternalPowerAnalysisKind::Dsent);
+    assert_eq!(imported.tick(), 42);
+    assert_eq!(imported.records().len(), 1);
+    let record = &imported.records()[0];
+    assert_eq!(record.target(), "system.mesh,link0");
+    assert_eq!(record.current_state(), PowerStateKind::ClockGated);
+    assert_eq!(record.residency_ticks(PowerStateKind::On), 12);
+    assert_eq!(record.residency_ticks(PowerStateKind::ClockGated), 30);
+    assert_close(record.temperature_c(), 41.25);
+    assert_close(record.dynamic_watts(), 0.75);
+    assert_close(record.static_watts(), 0.125);
+    assert_close(imported.total_watts(), 0.875);
+}
+
+#[test]
+fn dsent_compatible_csv_import_round_trips_multiline_quoted_fields() {
+    let export = PowerAnalysisExport::new(
+        ExternalPowerAnalysisKind::Dsent,
+        42,
+        vec![PowerAnalysisRecord::new(
+            "system.mesh\nlink0",
+            PowerStateKind::On,
+            PowerResidency::new(vec![(PowerStateKind::On, 42)]),
+            41.25,
+            PowerEstimate::new(0.75, 0.125),
+        )
+        .unwrap()],
+    )
+    .unwrap();
+
+    let imported =
+        PowerAnalysisExport::from_dsent_compatible_csv(&export.to_dsent_compatible_csv().unwrap())
+            .unwrap();
+
+    assert_eq!(imported.records().len(), 1);
+    assert_eq!(imported.records()[0].target(), "system.mesh\nlink0");
+    assert_close(imported.records()[0].dynamic_watts(), 0.75);
+}
+
+#[test]
+fn dsent_compatible_csv_import_accepts_independently_rounded_totals() {
+    let records = (0..10)
+        .map(|index| {
+            PowerAnalysisRecord::new(
+                format!("system.mesh.link{index}"),
+                PowerStateKind::On,
+                PowerResidency::new(vec![(PowerStateKind::On, 1)]),
+                35.0,
+                PowerEstimate::new(0.000_000_4, 0.000_000_4),
+            )
+            .unwrap()
+        })
+        .collect();
+    let export = PowerAnalysisExport::new(ExternalPowerAnalysisKind::Dsent, 1, records).unwrap();
+
+    let imported =
+        PowerAnalysisExport::from_dsent_compatible_csv(&export.to_dsent_compatible_csv().unwrap())
+            .unwrap();
+
+    assert_eq!(imported.records().len(), 10);
+    assert_close(imported.total_dynamic_watts(), 0.0);
+    assert_close(imported.total_static_watts(), 0.0);
+}
+
+#[test]
+fn dsent_compatible_csv_import_rejects_missing_total_row() {
+    let csv = concat!(
+        "record_type,tick,target,state,temperature_c,dynamic_watts,static_watts,total_watts,residency_state,residency_ticks,residency_ratio\n",
+        "component,10,system.mesh.link0,On,35.000000,0.500000,0.125000,0.625000,On,10,1.000000\n",
+    );
+
+    assert_eq!(
+        PowerAnalysisExport::from_dsent_compatible_csv(csv).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::Dsent,
+            message: "missing total row".to_string(),
+        },
+    );
+}
+
+#[test]
+fn dsent_compatible_csv_import_rejects_duplicate_total_rows() {
+    let csv = concat!(
+        "record_type,tick,target,state,temperature_c,dynamic_watts,static_watts,total_watts,residency_state,residency_ticks,residency_ratio\n",
+        "component,10,system.mesh.link0,On,35.000000,0.500000,0.125000,0.625000,On,10,1.000000\n",
+        "total,10,__total__,All,,0.500000,0.125000,0.625000,,10,1.000000\n",
+        "total,10,__total__,All,,0.500000,0.125000,0.625000,,10,1.000000\n",
+    );
+
+    assert_eq!(
+        PowerAnalysisExport::from_dsent_compatible_csv(csv).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::Dsent,
+            message: "duplicate total row".to_string(),
+        },
+    );
+}
+
+#[test]
+fn dsent_compatible_csv_import_rejects_mismatched_component_total() {
+    let csv = concat!(
+        "record_type,tick,target,state,temperature_c,dynamic_watts,static_watts,total_watts,residency_state,residency_ticks,residency_ratio\n",
+        "component,10,system.mesh.link0,On,35.000000,0.500000,0.125000,9.625000,On,10,1.000000\n",
+        "total,10,__total__,All,,0.500000,0.125000,0.625000,,10,1.000000\n",
+    );
+
+    assert_eq!(
+        PowerAnalysisExport::from_dsent_compatible_csv(csv).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::Dsent,
+            message: "component total watts does not match dynamic plus static watts".to_string(),
+        },
+    );
+}
+
+#[test]
+fn dsent_compatible_csv_import_rejects_duplicate_residency_rows() {
+    let csv = concat!(
+        "record_type,tick,target,state,temperature_c,dynamic_watts,static_watts,total_watts,residency_state,residency_ticks,residency_ratio\n",
+        "component,10,system.mesh.link0,On,35.000000,0.500000,0.125000,0.625000,On,4,0.400000\n",
+        "component,10,system.mesh.link0,On,35.000000,0.500000,0.125000,0.625000,On,6,0.600000\n",
+        "total,10,__total__,All,,0.500000,0.125000,0.625000,,10,1.000000\n",
+    );
+
+    assert_eq!(
+        PowerAnalysisExport::from_dsent_compatible_csv(csv).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::Dsent,
+            message: "component system.mesh.link0 repeats residency state On".to_string(),
+        },
+    );
+}
+
+#[test]
+fn dsent_compatible_csv_import_rejects_invalid_total_power() {
+    let csv = concat!(
+        "record_type,tick,target,state,temperature_c,dynamic_watts,static_watts,total_watts,residency_state,residency_ticks,residency_ratio\n",
+        "component,10,system.mesh.link0,On,35.000000,0.500000,0.125000,0.625000,On,10,1.000000\n",
+        "total,10,__total__,All,,NaN,0.125000,0.625000,,10,1.000000\n",
+    );
+
+    assert_eq!(
+        PowerAnalysisExport::from_dsent_compatible_csv(csv).unwrap_err(),
+        PowerError::InvalidPowerValue,
     );
 }
 

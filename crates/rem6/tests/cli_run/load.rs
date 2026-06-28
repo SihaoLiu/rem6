@@ -1,6 +1,8 @@
 use std::fs;
 use std::process::Command;
 
+use rem6_power::PowerAnalysisExport;
+
 use crate::support::*;
 
 fn riscv64_load_store_program() -> Vec<u8> {
@@ -779,6 +781,11 @@ fn rem6_run_writes_power_analysis_output() {
     assert!(power.contains("<component id=\"cpu0.core\""));
     assert!(power.contains("dynamic_watts="));
     assert!(power.contains("<totals dynamic_watts="));
+    let imported = PowerAnalysisExport::from_mcpat_compatible_xml(&power).unwrap();
+    assert!(imported
+        .records()
+        .iter()
+        .any(|record| { record.target() == "cpu0.core" && record.dynamic_watts() > 0.0 }));
 }
 
 #[test]
@@ -836,6 +843,11 @@ fn rem6_run_reports_power_analysis_path_in_output_envelope() {
     assert!(power.starts_with("record_type,tick,target,state,temperature_c"));
     assert!(power.contains("component,"));
     assert!(power.contains("cpu0.core"));
+    let imported = PowerAnalysisExport::from_dsent_compatible_csv(&power).unwrap();
+    assert!(imported
+        .records()
+        .iter()
+        .any(|record| { record.target() == "cpu0.core" && record.dynamic_watts() > 0.0 }));
 }
 
 #[test]
