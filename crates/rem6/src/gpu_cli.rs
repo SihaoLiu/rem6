@@ -1281,6 +1281,7 @@ pub fn run_gpu_run_config(config: Rem6GpuRunConfig) -> Result<Rem6GpuRunArtifact
                 &execution,
                 &data_cache_summary,
                 &dram,
+                &fabric,
             )
         })
         .transpose()?;

@@ -8,7 +8,9 @@ use rem6_power::{
 use rem6_workload::WorkloadParallelExecutionSummary;
 
 use crate::data_cache_runtime::CliDataCacheSummary;
-use crate::gpu_cli::{Rem6GpuComputeUnitActivity, Rem6GpuRunExecutionSummary};
+use crate::gpu_cli::{
+    Rem6GpuComputeUnitActivity, Rem6GpuFabricSummary, Rem6GpuRunExecutionSummary,
+};
 use crate::{
     PowerAnalysisFormat, Rem6CacheResourceSummary, Rem6CliError, Rem6CoreSummary, Rem6DramSummary,
     Rem6FabricResourceSummary, Rem6MemoryResourceSummary, Rem6TraceReplayExecutionSummary,
@@ -58,12 +60,13 @@ pub(crate) fn gpu_run_power_analysis_artifact(
     execution: &Rem6GpuRunExecutionSummary,
     data_cache: &CliDataCacheSummary,
     dram: &Rem6DramSummary,
+    fabric: &Rem6GpuFabricSummary,
 ) -> Result<Rem6PowerAnalysisArtifact, Rem6CliError> {
     build_power_analysis_artifact(
         format,
         output,
         execution.final_tick(),
-        records_for_gpu_run(execution, data_cache, dram),
+        records_for_gpu_run(execution, data_cache, dram, fabric),
     )
 }
 
@@ -165,6 +168,7 @@ fn records_for_gpu_run(
     execution: &Rem6GpuRunExecutionSummary,
     data_cache: &CliDataCacheSummary,
     dram: &Rem6DramSummary,
+    fabric: &Rem6GpuFabricSummary,
 ) -> Vec<PowerAnalysisRecord> {
     let mut records = execution
         .compute_unit_activity()
@@ -173,6 +177,9 @@ fn records_for_gpu_run(
         .map(gpu_compute_unit_power_record)
         .collect::<Vec<_>>();
     if let Some(record) = gpu_data_cache_power_record(data_cache, execution.final_tick()) {
+        records.push(record);
+    }
+    if let Some(record) = gpu_fabric_power_record(fabric, execution.final_tick()) {
         records.push(record);
     }
     if let Some(record) = dram_power_record(dram, execution.final_tick()) {
@@ -399,41 +406,22 @@ fn fabric_power_record(
     fabric: &Rem6FabricResourceSummary,
     final_tick: u64,
 ) -> Option<PowerAnalysisRecord> {
-    if !fabric_resource_summary_is_active(fabric) {
-        return None;
-    }
-    let operations = fabric
-        .active
-        .saturating_add(fabric.active_virtual_networks)
-        .saturating_add(fabric.active_links)
-        .saturating_add(fabric.active_hops)
-        .saturating_add(fabric.flits)
-        .saturating_add(fabric.contended_lanes);
-    let dynamic_watts = watts_from_activity(
-        fabric.activity,
-        operations,
-        fabric.bytes,
-        0.000_004,
-        0.000_006,
-        0.000_000_25,
-    );
-    Some(
-        PowerAnalysisRecord::new(
-            "memory.fabric",
-            PowerStateKind::On,
-            PowerResidency::new(vec![(
-                PowerStateKind::On,
-                final_tick
-                    .max(fabric.occupied_ticks)
-                    .max(fabric.queue_delay_ticks)
-                    .max(fabric.credit_delay_ticks)
-                    .max(fabric.activity)
-                    .max(1),
-            )]),
-            37.5 + dynamic_watts.min(4.0),
-            PowerEstimate::new(dynamic_watts, 0.008),
-        )
-        .expect("fabric power records use valid residency and finite watts"),
+    fabric_activity_power_record(
+        "memory.fabric",
+        final_tick,
+        FabricPowerActivity {
+            activity: fabric.activity,
+            active_lanes: fabric.active,
+            active_virtual_networks: fabric.active_virtual_networks,
+            active_links: fabric.active_links,
+            active_hops: fabric.active_hops,
+            bytes: fabric.bytes,
+            flits: fabric.flits,
+            occupied_ticks: fabric.occupied_ticks,
+            queue_delay_ticks: fabric.queue_delay_ticks,
+            credit_delay_ticks: fabric.credit_delay_ticks,
+            contended_lanes: fabric.contended_lanes,
+        },
     )
 }
 
@@ -441,41 +429,23 @@ fn trace_replay_fabric_power_record(
     summary: &WorkloadParallelExecutionSummary,
     final_tick: u64,
 ) -> Option<PowerAnalysisRecord> {
-    if !summary.has_fabric_activity() {
-        return None;
-    }
     let transfers = summary.fabric_transfer_count() as u64;
-    let operations = (summary.active_fabric_lane_count() as u64)
-        .saturating_add(summary.active_fabric_virtual_network_count() as u64)
-        .saturating_add(summary.active_fabric_link_count() as u64)
-        .saturating_add(trace_replay_active_fabric_hop_count(summary))
-        .saturating_add(summary.fabric_flit_count())
-        .saturating_add(summary.contended_fabric_lane_count() as u64);
-    let dynamic_watts = watts_from_activity(
-        transfers,
-        operations,
-        summary.fabric_byte_count(),
-        0.000_004,
-        0.000_006,
-        0.000_000_25,
-    );
-    Some(
-        PowerAnalysisRecord::new(
-            "trace_replay.fabric",
-            PowerStateKind::On,
-            PowerResidency::new(vec![(
-                PowerStateKind::On,
-                final_tick
-                    .max(summary.fabric_occupied_ticks())
-                    .max(summary.fabric_queue_delay_ticks())
-                    .max(summary.fabric_credit_delay_ticks())
-                    .max(transfers)
-                    .max(1),
-            )]),
-            37.5 + dynamic_watts.min(4.0),
-            PowerEstimate::new(dynamic_watts, 0.008),
-        )
-        .expect("trace replay fabric power records use valid residency and finite watts"),
+    fabric_activity_power_record(
+        "trace_replay.fabric",
+        final_tick,
+        FabricPowerActivity {
+            activity: transfers,
+            active_lanes: summary.active_fabric_lane_count() as u64,
+            active_virtual_networks: summary.active_fabric_virtual_network_count() as u64,
+            active_links: summary.active_fabric_link_count() as u64,
+            active_hops: trace_replay_active_fabric_hop_count(summary),
+            bytes: summary.fabric_byte_count(),
+            flits: summary.fabric_flit_count(),
+            occupied_ticks: summary.fabric_occupied_ticks(),
+            queue_delay_ticks: summary.fabric_queue_delay_ticks(),
+            credit_delay_ticks: summary.fabric_credit_delay_ticks(),
+            contended_lanes: summary.contended_fabric_lane_count() as u64,
+        },
     )
 }
 
@@ -494,17 +464,123 @@ fn trace_replay_active_fabric_hop_count(summary: &WorkloadParallelExecutionSumma
         .len() as u64
 }
 
-fn fabric_resource_summary_is_active(fabric: &Rem6FabricResourceSummary) -> bool {
-    fabric.activity != 0
-        || fabric.active != 0
-        || fabric.active_virtual_networks != 0
-        || fabric.active_links != 0
-        || fabric.active_hops != 0
-        || fabric.bytes != 0
-        || fabric.flits != 0
-        || fabric.occupied_ticks != 0
-        || fabric.queue_delay_ticks != 0
-        || fabric.credit_delay_ticks != 0
+fn gpu_fabric_power_record(
+    summary: &Rem6GpuFabricSummary,
+    final_tick: u64,
+) -> Option<PowerAnalysisRecord> {
+    let transfers = summary.transfer_count() as u64;
+    fabric_activity_power_record(
+        "gpu.fabric",
+        final_tick,
+        FabricPowerActivity {
+            activity: transfers,
+            active_lanes: summary.active_lane_count() as u64,
+            active_virtual_networks: summary.active_virtual_network_count() as u64,
+            active_links: summary.link_activities().len() as u64,
+            active_hops: gpu_active_fabric_hop_count(summary),
+            bytes: summary.byte_count(),
+            flits: summary.flit_count(),
+            occupied_ticks: summary.occupied_ticks(),
+            queue_delay_ticks: summary.queue_delay_ticks(),
+            credit_delay_ticks: summary.credit_delay_ticks(),
+            contended_lanes: summary.contended_lane_count() as u64,
+        },
+    )
+}
+
+fn gpu_active_fabric_hop_count(summary: &Rem6GpuFabricSummary) -> u64 {
+    summary
+        .hop_activities()
+        .iter()
+        .map(|activity| {
+            (
+                activity.link().clone(),
+                activity.virtual_network(),
+                activity.hop_index(),
+            )
+        })
+        .collect::<BTreeSet<_>>()
+        .len() as u64
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct FabricPowerActivity {
+    activity: u64,
+    active_lanes: u64,
+    active_virtual_networks: u64,
+    active_links: u64,
+    active_hops: u64,
+    bytes: u64,
+    flits: u64,
+    occupied_ticks: u64,
+    queue_delay_ticks: u64,
+    credit_delay_ticks: u64,
+    contended_lanes: u64,
+}
+
+impl FabricPowerActivity {
+    const fn is_active(self) -> bool {
+        self.activity != 0
+            || self.active_lanes != 0
+            || self.active_virtual_networks != 0
+            || self.active_links != 0
+            || self.active_hops != 0
+            || self.bytes != 0
+            || self.flits != 0
+            || self.occupied_ticks != 0
+            || self.queue_delay_ticks != 0
+            || self.credit_delay_ticks != 0
+            || self.contended_lanes != 0
+    }
+
+    fn operation_count(self) -> u64 {
+        self.active_lanes
+            .saturating_add(self.active_virtual_networks)
+            .saturating_add(self.active_links)
+            .saturating_add(self.active_hops)
+            .saturating_add(self.flits)
+            .saturating_add(self.contended_lanes)
+    }
+
+    fn residency_ticks(self, final_tick: u64) -> u64 {
+        final_tick
+            .max(self.occupied_ticks)
+            .max(self.queue_delay_ticks)
+            .max(self.credit_delay_ticks)
+            .max(self.activity)
+            .max(1)
+    }
+}
+
+fn fabric_activity_power_record(
+    target: &'static str,
+    final_tick: u64,
+    activity: FabricPowerActivity,
+) -> Option<PowerAnalysisRecord> {
+    if !activity.is_active() {
+        return None;
+    }
+    let dynamic_watts = watts_from_activity(
+        activity.activity,
+        activity.operation_count(),
+        activity.bytes,
+        0.000_004,
+        0.000_006,
+        0.000_000_25,
+    );
+    Some(
+        PowerAnalysisRecord::new(
+            target,
+            PowerStateKind::On,
+            PowerResidency::new(vec![(
+                PowerStateKind::On,
+                activity.residency_ticks(final_tick),
+            )]),
+            37.5 + dynamic_watts.min(4.0),
+            PowerEstimate::new(dynamic_watts, 0.008),
+        )
+        .expect("fabric power records use valid residency and finite watts"),
+    )
 }
 
 fn memory_transport_power_record(

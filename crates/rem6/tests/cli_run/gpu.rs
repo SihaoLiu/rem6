@@ -17,6 +17,32 @@ fn unique_gpu_temp_dir(prefix: &str) -> PathBuf {
     ))
 }
 
+fn assert_power_component_dynamic_watts_positive(power: &str, component: &str) {
+    let marker = format!("<component id=\"{component}\"");
+    let component_start = power
+        .find(&marker)
+        .unwrap_or_else(|| panic!("missing power component {component}:\n{power}"));
+    let component_body = &power[component_start..];
+    let component_end = component_body
+        .find("</component>")
+        .unwrap_or_else(|| panic!("unterminated power component {component}:\n{power}"));
+    let component_body = &component_body[..component_end];
+    let dynamic_marker = "dynamic_watts=\"";
+    let dynamic_start = component_body
+        .find(dynamic_marker)
+        .map(|start| start + dynamic_marker.len())
+        .unwrap_or_else(|| panic!("missing dynamic watts for {component}:\n{power}"));
+    let dynamic_value = &component_body[dynamic_start..];
+    let dynamic_end = dynamic_value
+        .find('"')
+        .unwrap_or_else(|| panic!("unterminated dynamic watts for {component}:\n{power}"));
+    let dynamic_watts = dynamic_value[..dynamic_end].parse::<f64>().unwrap();
+    assert!(
+        dynamic_watts > 0.0,
+        "expected positive dynamic watts for {component}: {component_body}"
+    );
+}
+
 fn assert_gpu_fabric_lane(
     lanes: &[Value],
     link: &str,
@@ -778,6 +804,57 @@ fn rem6_gpu_run_writes_power_analysis_output() {
     assert!(power.contains("gpu.compute_unit1"));
     assert!(power.contains("gpu.data_cache"));
     assert!(power.contains("memory.dram"));
+}
+
+#[test]
+fn rem6_gpu_run_power_output_includes_fabric_activity() {
+    let temp_dir = unique_gpu_temp_dir("fabric-power-output");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let power_path = temp_dir.join("gpu-fabric-power.xml");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "gpu-run",
+            "--workgroups",
+            "1",
+            "--compute-units",
+            "1",
+            "--global-load",
+            "0x2e00:4:4:4",
+            "--memory-start",
+            "0x2e00",
+            "--memory-size",
+            "64",
+            "--memory-route-delay",
+            "4",
+            "--fabric-link",
+            "gpu_mem",
+            "--fabric-bandwidth-bytes-per-tick",
+            "32",
+            "--fabric-request-virtual-network",
+            "7",
+            "--fabric-response-virtual-network",
+            "8",
+            "--fabric-credit-depth",
+            "2",
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--power-output",
+            power_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let power = std::fs::read_to_string(&power_path).unwrap();
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+    assert_power_component_dynamic_watts_positive(&power, "gpu.fabric");
 }
 
 #[test]
