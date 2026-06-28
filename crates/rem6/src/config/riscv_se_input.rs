@@ -74,6 +74,14 @@ impl RiscvSeInputSource {
         Some(Self::Path(PathBuf::from(value)))
     }
 
+    pub fn source_name(&self) -> String {
+        match self {
+            Self::Path(path) => path.display().to_string(),
+            Self::Resource(resource) => format!("resource:{resource}"),
+            Self::SuiteResource(selector) => selector.source_name(),
+        }
+    }
+
     pub(super) fn resolve_path(&mut self, base: &Path) {
         let Self::Path(path) = self else {
             return;

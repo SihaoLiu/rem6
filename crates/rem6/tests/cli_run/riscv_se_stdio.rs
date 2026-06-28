@@ -3,6 +3,8 @@ use std::{
     process::{Command, Stdio},
 };
 
+use serde_json::Value;
+
 use crate::support::*;
 
 #[test]
@@ -1343,6 +1345,127 @@ artifact_digest = "sha256:riscv-se-stdin-input"
 }
 
 #[test]
+fn rem6_run_riscv_se_reads_stdin_from_selected_suite_input_resource() {
+    let program = riscv64_program(&[
+        i_type(0, 0, 0x0, 10, 0x13),  // addi a0, x0, 0
+        i_type(-8, 2, 0x0, 11, 0x13), // addi a1, sp, -8
+        i_type(1, 0, 0x0, 12, 0x13),  // addi a2, x0, 1
+        i_type(63, 0, 0x0, 17, 0x13), // addi a7, x0, 63
+        0x0000_0073,                  // ecall
+        i_type(0, 11, 0x4, 10, 0x03), // lbu a0, 0(a1)
+        i_type(93, 0, 0x0, 17, 0x13), // addi a7, x0, 93
+        0x0000_0073,                  // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let workspace = temp_workspace("riscv-se-suite-stdin-resource");
+    fs::write(workspace.join("guest-a.elf"), &elf).unwrap();
+    fs::write(workspace.join("guest-b.elf"), &elf).unwrap();
+    fs::write(workspace.join("stdin-a.bin"), b"A-suite stdin\n").unwrap();
+    fs::write(workspace.join("stdin-b.bin"), b"B-suite stdin\n").unwrap();
+    fs::write(
+        workspace.join("resource-acquire-suite.toml"),
+        r#"[resource_acquire]
+suite_id = "riscv-se-suite-stdin-resource"
+stats_format = "json"
+
+[[resource_acquire.manifests]]
+workload_id = "stdin-a-workload"
+boot_entry = 2147483648
+
+[[resource_acquire.manifests.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:riscv-se-suite-stdin-kernel-a"
+locator = "resources/kernel-a.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel-a"
+artifact = "guest-a.elf"
+artifact_digest = "sha256:riscv-se-suite-stdin-kernel-a"
+
+[[resource_acquire.manifests.resources]]
+id = "stdin"
+kind = "input"
+digest = "sha256:riscv-se-suite-stdin-a"
+locator = "resources/stdin-a.bin"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://stdin-a"
+artifact = "stdin-a.bin"
+artifact_digest = "sha256:riscv-se-suite-stdin-a"
+
+[[resource_acquire.manifests]]
+workload_id = "stdin-b-workload"
+boot_entry = 2147483648
+
+[[resource_acquire.manifests.resources]]
+id = "kernel"
+kind = "kernel"
+digest = "sha256:riscv-se-suite-stdin-kernel-b"
+locator = "resources/kernel-b.elf"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://kernel-b"
+artifact = "guest-b.elf"
+artifact_digest = "sha256:riscv-se-suite-stdin-kernel-b"
+
+[[resource_acquire.manifests.resources]]
+id = "stdin"
+kind = "input"
+digest = "sha256:riscv-se-suite-stdin-b"
+locator = "resources/stdin-b.bin"
+required = true
+acquisition_kind = "local-file"
+acquisition_locator = "catalog://stdin-b"
+artifact = "stdin-b.bin"
+artifact_digest = "sha256:riscv-se-suite-stdin-b"
+"#,
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("run.toml"),
+        "[run]\nisa = \"riscv\"\nresource_config = \"resource-acquire-suite.toml\"\nkernel_resource = \"suite-resource:stdin-b-workload/kernel\"\nmax_tick = 120\nstats_format = \"json\"\nexecute = true\nriscv_se = true\nriscv_se_stdin = \"suite-resource:stdin-b-workload/stdin\"\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .current_dir(std::env::temp_dir())
+        .args([
+            "run",
+            "--config",
+            workspace.join("run.toml").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.get("kernel_resource").and_then(Value::as_str),
+        Some("suite-resource:stdin-b-workload/kernel")
+    );
+    assert_eq!(
+        json.pointer("/riscv_se_inputs/stdin/source")
+            .and_then(Value::as_str),
+        Some("suite-resource:stdin-b-workload/stdin")
+    );
+    assert_eq!(
+        json.pointer("/riscv_se_inputs/files")
+            .and_then(Value::as_array)
+            .map(Vec::len),
+        Some(0)
+    );
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":66"));
+    assert!(!stdout.contains("riscv_unknown_syscalls\":[{"));
+}
+
+#[test]
 fn rem6_run_riscv_se_opens_guest_file_from_suite_input_resource() {
     let program = registered_guest_file_program();
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
@@ -1405,6 +1528,17 @@ artifact_digest = "sha256:riscv-se-suite-input"
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/riscv_se_inputs/files/0/guest_path")
+            .and_then(Value::as_str),
+        Some("guest.txt")
+    );
+    assert_eq!(
+        json.pointer("/riscv_se_inputs/files/0/source")
+            .and_then(Value::as_str),
+        Some("suite-resource:boot-workload/input")
+    );
     assert!(stdout.contains("\"status\":\"stopped_by_host\""));
     assert!(stdout.contains("\"stop_code\":18"));
     assert!(stdout.contains("\"text\":\"file-backed input\\n\""));

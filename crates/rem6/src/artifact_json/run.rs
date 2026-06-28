@@ -149,11 +149,12 @@ impl Rem6RunArtifact {
             .join(",");
         let riscv_boot = if self.config.isa() == RequestedIsa::Riscv {
             format!(
-                ",\"riscv_boot\":{{\"a0\":\"0x{:x}\",\"a1\":\"0x{:x}\",\"sbi\":{},\"se\":{}}}",
+                ",\"riscv_boot\":{{\"a0\":\"0x{:x}\",\"a1\":\"0x{:x}\",\"sbi\":{},\"se\":{}}},\"riscv_se_inputs\":{}",
                 self.config.riscv_boot_a0(),
                 self.config.riscv_boot_a1(),
                 self.config.riscv_sbi(),
-                self.config.riscv_se()
+                self.config.riscv_se(),
+                riscv_se_inputs_json(&self.config)
             )
         } else {
             String::new()
@@ -379,6 +380,30 @@ impl Rem6ReadfileSummary {
             json_escape(self.path())
         )
     }
+}
+
+fn riscv_se_inputs_json(config: &crate::Rem6RunConfig) -> String {
+    let stdin = config
+        .riscv_se_stdin()
+        .map(riscv_se_input_source_json)
+        .unwrap_or_else(|| "null".to_string());
+    let files = config
+        .riscv_se_files()
+        .iter()
+        .map(|file| {
+            format!(
+                "{{\"guest_path\":\"{}\",\"source\":\"{}\"}}",
+                json_escape(file.guest_path()),
+                json_escape(&file.source().source_name())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("{{\"stdin\":{},\"files\":[{}]}}", stdin, files)
+}
+
+fn riscv_se_input_source_json(source: &crate::config::RiscvSeInputSource) -> String {
+    format!("{{\"source\":\"{}\"}}", json_escape(&source.source_name()))
 }
 
 fn optional_riscv_cache_protocol_json(value: Option<RiscvDataCacheProtocol>) -> String {
