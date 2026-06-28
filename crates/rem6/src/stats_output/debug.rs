@@ -127,54 +127,6 @@ pub(super) fn emit_debug_stats(
         ),
         ("sim.debug.dram_trace.ports", debug.dram_port_trace_count()),
         ("sim.debug.dram_trace.banks", debug.dram_bank_trace_count()),
-        (
-            "sim.debug.dram_trace.target.accesses",
-            debug.dram_target_access_count(),
-        ),
-        (
-            "sim.debug.dram_trace.target.reads",
-            debug.dram_target_read_count(),
-        ),
-        (
-            "sim.debug.dram_trace.target.writes",
-            debug.dram_target_write_count(),
-        ),
-        (
-            "sim.debug.dram_trace.port.commands",
-            debug.dram_port_command_count(),
-        ),
-        (
-            "sim.debug.dram_trace.port.row_hits",
-            debug.dram_port_row_hit_count(),
-        ),
-        (
-            "sim.debug.dram_trace.port.row_misses",
-            debug.dram_port_row_miss_count(),
-        ),
-        (
-            "sim.debug.dram_trace.port.refreshes",
-            debug.dram_port_refresh_count(),
-        ),
-        (
-            "sim.debug.dram_trace.bank.accesses",
-            debug.dram_bank_access_count(),
-        ),
-        (
-            "sim.debug.dram_trace.bank.row_hits",
-            debug.dram_bank_row_hit_count(),
-        ),
-        (
-            "sim.debug.dram_trace.bank.row_misses",
-            debug.dram_bank_row_miss_count(),
-        ),
-        (
-            "sim.debug.dram_trace.bank.refreshes",
-            debug.dram_bank_refresh_count(),
-        ),
-        (
-            "sim.debug.dram_trace.bank.commands",
-            debug.dram_bank_command_count(),
-        ),
         ("sim.debug.fabric_trace.records", debug.fabric_trace_count()),
         (
             "sim.debug.fabric_trace.lanes",
@@ -386,6 +338,15 @@ pub(super) fn emit_debug_stats(
             stat.value(),
         )?;
     }
+    for stat in debug.dram_trace_kind_stats() {
+        increment_stat(
+            stats,
+            &format!("sim.debug.dram_trace.{}", stat.path()),
+            stat.unit(),
+            StatResetPolicy::Monotonic,
+            stat.value(),
+        )?;
+    }
     for stat in debug.dram_trace_low_power_kind_stats() {
         increment_stat(
             stats,
@@ -491,62 +452,6 @@ pub(super) fn emit_debug_stats(
         "Byte",
         StatResetPolicy::Monotonic,
         debug.fabric_hop_byte_count(),
-    )?;
-    increment_stat(
-        stats,
-        "sim.debug.dram_trace.bank.read_bytes",
-        "Byte",
-        StatResetPolicy::Monotonic,
-        debug.dram_bank_read_byte_count(),
-    )?;
-    increment_stat(
-        stats,
-        "sim.debug.dram_trace.bank.write_bytes",
-        "Byte",
-        StatResetPolicy::Monotonic,
-        debug.dram_bank_write_byte_count(),
-    )?;
-    increment_stat(
-        stats,
-        "sim.debug.dram_trace.bank.refresh_ticks",
-        "Tick",
-        StatResetPolicy::Monotonic,
-        debug.dram_bank_refresh_tick_count(),
-    )?;
-    increment_stat(
-        stats,
-        "sim.debug.dram_trace.bank.total_ready_latency_ticks",
-        "Tick",
-        StatResetPolicy::Monotonic,
-        debug.dram_bank_total_ready_latency_tick_count(),
-    )?;
-    increment_stat(
-        stats,
-        "sim.debug.dram_trace.bank.max_ready_latency_ticks",
-        "Tick",
-        StatResetPolicy::Monotonic,
-        debug.dram_bank_max_ready_latency_tick_count(),
-    )?;
-    increment_stat(
-        stats,
-        "sim.debug.dram_trace.port.refresh_ticks",
-        "Tick",
-        StatResetPolicy::Monotonic,
-        debug.dram_port_refresh_tick_count(),
-    )?;
-    increment_stat(
-        stats,
-        "sim.debug.dram_trace.port.total_ready_latency_ticks",
-        "Tick",
-        StatResetPolicy::Monotonic,
-        debug.dram_port_total_ready_latency_tick_count(),
-    )?;
-    increment_stat(
-        stats,
-        "sim.debug.dram_trace.port.max_ready_latency_ticks",
-        "Tick",
-        StatResetPolicy::Monotonic,
-        debug.dram_port_max_ready_latency_tick_count(),
     )?;
     increment_stat(
         stats,

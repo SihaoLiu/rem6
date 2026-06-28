@@ -416,6 +416,116 @@ pub(crate) fn dram_trace_records(dram: &Rem6DramSummary) -> Vec<Rem6DramTraceRec
     records
 }
 
+pub(crate) fn dram_trace_kind_stats(records: &[Rem6DramTraceRecord]) -> Vec<Rem6DramTraceStat> {
+    let mut target = Rem6DramTraceKindAggregate::default();
+    let mut port = Rem6DramTraceKindAggregate::default();
+    let mut bank = Rem6DramTraceKindAggregate::default();
+
+    for record in records {
+        match record {
+            Rem6DramTraceRecord::Target {
+                accesses,
+                reads,
+                writes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                turnarounds,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+                ..
+            } => {
+                target.add_common(
+                    *accesses,
+                    *row_hits,
+                    *row_misses,
+                    *refreshes,
+                    *refresh_ticks,
+                    *commands,
+                    *total_ready_latency_ticks,
+                    *max_ready_latency_ticks,
+                );
+                target.reads = target.reads.saturating_add(*reads);
+                target.writes = target.writes.saturating_add(*writes);
+                target.turnarounds = target.turnarounds.saturating_add(*turnarounds);
+            }
+            Rem6DramTraceRecord::Port {
+                accesses,
+                reads,
+                writes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                turnarounds,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+                ..
+            } => {
+                port.add_common(
+                    *accesses,
+                    *row_hits,
+                    *row_misses,
+                    *refreshes,
+                    *refresh_ticks,
+                    *commands,
+                    *total_ready_latency_ticks,
+                    *max_ready_latency_ticks,
+                );
+                port.reads = port.reads.saturating_add(*reads);
+                port.writes = port.writes.saturating_add(*writes);
+                port.turnarounds = port.turnarounds.saturating_add(*turnarounds);
+            }
+            Rem6DramTraceRecord::Bank {
+                accesses,
+                read_bytes,
+                write_bytes,
+                row_hits,
+                row_misses,
+                refreshes,
+                refresh_ticks,
+                commands,
+                total_ready_latency_ticks,
+                max_ready_latency_ticks,
+                ..
+            } => {
+                bank.add_common(
+                    *accesses,
+                    *row_hits,
+                    *row_misses,
+                    *refreshes,
+                    *refresh_ticks,
+                    *commands,
+                    *total_ready_latency_ticks,
+                    *max_ready_latency_ticks,
+                );
+                bank.read_bytes = bank.read_bytes.saturating_add(*read_bytes);
+                bank.write_bytes = bank.write_bytes.saturating_add(*write_bytes);
+            }
+        }
+    }
+
+    let mut stats = Vec::new();
+    target.push_target_or_port_stats(&mut stats, "target");
+    port.push_target_or_port_stats(&mut stats, "port");
+    bank.push_bank_stats(&mut stats);
+    stats
+}
+
+pub(crate) fn dram_trace_payload_byte_count(records: &[Rem6DramTraceRecord]) -> u64 {
+    records.iter().fold(0u64, |acc, record| match record {
+        Rem6DramTraceRecord::Bank {
+            read_bytes,
+            write_bytes,
+            ..
+        } => acc.saturating_add(*read_bytes).saturating_add(*write_bytes),
+        Rem6DramTraceRecord::Target { .. } | Rem6DramTraceRecord::Port { .. } => acc,
+    })
+}
+
 pub(crate) fn dram_trace_low_power_kind_stats(
     records: &[Rem6DramTraceRecord],
 ) -> Vec<Rem6DramTraceStat> {
@@ -430,6 +540,99 @@ pub(crate) fn dram_trace_low_power_kind_stats(
         low_power.push_stats(&mut stats, &format!("{kind}.low_power"));
     }
     stats
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct Rem6DramTraceKindAggregate {
+    accesses: u64,
+    reads: u64,
+    writes: u64,
+    read_bytes: u64,
+    write_bytes: u64,
+    row_hits: u64,
+    row_misses: u64,
+    refreshes: u64,
+    refresh_ticks: u64,
+    commands: u64,
+    turnarounds: u64,
+    total_ready_latency_ticks: u64,
+    max_ready_latency_ticks: u64,
+}
+
+impl Rem6DramTraceKindAggregate {
+    fn add_common(
+        &mut self,
+        accesses: u64,
+        row_hits: u64,
+        row_misses: u64,
+        refreshes: u64,
+        refresh_ticks: u64,
+        commands: u64,
+        total_ready_latency_ticks: u64,
+        max_ready_latency_ticks: u64,
+    ) {
+        self.accesses = self.accesses.saturating_add(accesses);
+        self.row_hits = self.row_hits.saturating_add(row_hits);
+        self.row_misses = self.row_misses.saturating_add(row_misses);
+        self.refreshes = self.refreshes.saturating_add(refreshes);
+        self.refresh_ticks = self.refresh_ticks.saturating_add(refresh_ticks);
+        self.commands = self.commands.saturating_add(commands);
+        self.total_ready_latency_ticks = self
+            .total_ready_latency_ticks
+            .saturating_add(total_ready_latency_ticks);
+        self.max_ready_latency_ticks = self.max_ready_latency_ticks.max(max_ready_latency_ticks);
+    }
+
+    fn push_target_or_port_stats(self, stats: &mut Vec<Rem6DramTraceStat>, prefix: &'static str) {
+        for (suffix, unit, value) in [
+            ("accesses", "Count", self.accesses),
+            ("reads", "Count", self.reads),
+            ("writes", "Count", self.writes),
+            ("row_hits", "Count", self.row_hits),
+            ("row_misses", "Count", self.row_misses),
+            ("refreshes", "Count", self.refreshes),
+            ("refresh_ticks", "Tick", self.refresh_ticks),
+            ("commands", "Count", self.commands),
+            ("turnarounds", "Count", self.turnarounds),
+            (
+                "total_ready_latency_ticks",
+                "Tick",
+                self.total_ready_latency_ticks,
+            ),
+            (
+                "max_ready_latency_ticks",
+                "Tick",
+                self.max_ready_latency_ticks,
+            ),
+        ] {
+            push_dram_trace_stat(stats, prefix, suffix, unit, value);
+        }
+    }
+
+    fn push_bank_stats(self, stats: &mut Vec<Rem6DramTraceStat>) {
+        for (suffix, unit, value) in [
+            ("accesses", "Count", self.accesses),
+            ("read_bytes", "Byte", self.read_bytes),
+            ("write_bytes", "Byte", self.write_bytes),
+            ("row_hits", "Count", self.row_hits),
+            ("row_misses", "Count", self.row_misses),
+            ("refreshes", "Count", self.refreshes),
+            ("refresh_ticks", "Tick", self.refresh_ticks),
+            ("commands", "Count", self.commands),
+            (
+                "total_ready_latency_ticks",
+                "Tick",
+                self.total_ready_latency_ticks,
+            ),
+            (
+                "max_ready_latency_ticks",
+                "Tick",
+                self.max_ready_latency_ticks,
+            ),
+        ] {
+            push_dram_trace_stat(stats, "bank", suffix, unit, value);
+        }
+    }
 }
 
 impl Rem6DramTraceLowPower {

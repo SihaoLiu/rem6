@@ -1669,11 +1669,25 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
     let target_accesses = debug_trace_sum(trace, "target", "accesses");
     let target_reads = debug_trace_sum(trace, "target", "reads");
     let target_writes = debug_trace_sum(trace, "target", "writes");
+    let target_row_hits = debug_trace_sum(trace, "target", "row_hits");
+    let target_row_misses = debug_trace_sum(trace, "target", "row_misses");
+    let target_refreshes = debug_trace_sum(trace, "target", "refreshes");
+    let target_refresh_ticks = debug_trace_sum(trace, "target", "refresh_ticks");
+    let target_commands = debug_trace_sum(trace, "target", "commands");
+    let target_turnarounds = debug_trace_sum(trace, "target", "turnarounds");
+    let target_total_ready_latency_ticks =
+        debug_trace_sum(trace, "target", "total_ready_latency_ticks");
+    let target_max_ready_latency_ticks =
+        debug_trace_max(trace, "target", "max_ready_latency_ticks");
+    let port_accesses = debug_trace_sum(trace, "port", "accesses");
+    let port_reads = debug_trace_sum(trace, "port", "reads");
+    let port_writes = debug_trace_sum(trace, "port", "writes");
     let port_commands = debug_trace_sum(trace, "port", "commands");
     let port_row_hits = debug_trace_sum(trace, "port", "row_hits");
     let port_row_misses = debug_trace_sum(trace, "port", "row_misses");
     let port_refreshes = debug_trace_sum(trace, "port", "refreshes");
     let port_refresh_ticks = debug_trace_sum(trace, "port", "refresh_ticks");
+    let port_turnarounds = debug_trace_sum(trace, "port", "turnarounds");
     let port_total_ready_latency_ticks =
         debug_trace_sum(trace, "port", "total_ready_latency_ticks");
     let port_max_ready_latency_ticks = debug_trace_max(trace, "port", "max_ready_latency_ticks");
@@ -1694,6 +1708,9 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
     assert!(target_accesses > 0, "trace: {trace:?}");
     assert!(target_reads > 0, "trace: {trace:?}");
     assert!(target_writes > 0, "trace: {trace:?}");
+    assert!(port_accesses > 0, "trace: {trace:?}");
+    assert!(port_reads > 0, "trace: {trace:?}");
+    assert!(port_writes > 0, "trace: {trace:?}");
     assert!(port_commands > 0, "trace: {trace:?}");
     assert!(bank_accesses > 0, "trace: {trace:?}");
     assert!(bank_read_bytes > 0, "trace: {trace:?}");
@@ -1758,6 +1775,83 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
     );
     assert_stat(
         &stdout,
+        "sim.debug.dram_trace.target.row_hits",
+        "Count",
+        target_row_hits,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.target.row_misses",
+        "Count",
+        target_row_misses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.target.refreshes",
+        "Count",
+        target_refreshes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.target.refresh_ticks",
+        "Tick",
+        target_refresh_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.target.commands",
+        "Count",
+        target_commands,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.target.turnarounds",
+        "Count",
+        target_turnarounds,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.target.total_ready_latency_ticks",
+        "Tick",
+        target_total_ready_latency_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.target.max_ready_latency_ticks",
+        "Tick",
+        target_max_ready_latency_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.port.accesses",
+        "Count",
+        port_accesses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.port.reads",
+        "Count",
+        port_reads,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.port.writes",
+        "Count",
+        port_writes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
         "sim.debug.dram_trace.port.commands",
         "Count",
         port_commands,
@@ -1789,6 +1883,13 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
         "sim.debug.dram_trace.port.refresh_ticks",
         "Tick",
         port_refresh_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.port.turnarounds",
+        "Count",
+        port_turnarounds,
         "monotonic",
     );
     assert_stat(

@@ -21,7 +21,8 @@ use crate::{
 use branch::{branch_trace_records, Rem6BranchTraceRecord};
 use cache::{cache_trace_records, cache_trace_stats, Rem6CacheTraceRecord, Rem6CacheTraceStat};
 use dram::{
-    dram_trace_low_power_kind_stats, dram_trace_records, Rem6DramTraceRecord, Rem6DramTraceStat,
+    dram_trace_kind_stats, dram_trace_low_power_kind_stats, dram_trace_payload_byte_count,
+    dram_trace_records, Rem6DramTraceRecord, Rem6DramTraceStat,
 };
 use fabric::{
     fabric_trace_records, fabric_trace_stats, Rem6FabricTraceRecord, Rem6FabricTraceStat,
@@ -260,8 +261,7 @@ impl Rem6DebugSummary {
             self.data_load_trace_byte_count(),
             self.data_store_trace_byte_count(),
             self.data_atomic_trace_byte_count(),
-            self.dram_bank_read_byte_count(),
-            self.dram_bank_write_byte_count(),
+            dram_trace_payload_byte_count(&self.dram_trace),
             self.fabric_lane_byte_count(),
             self.fabric_hop_byte_count(),
         ]
@@ -521,6 +521,10 @@ impl Rem6DebugSummary {
             .collect()
     }
 
+    pub(crate) fn dram_trace_kind_stats(&self) -> Vec<Rem6DramTraceStat> {
+        dram_trace_kind_stats(&self.dram_trace)
+    }
+
     pub(crate) fn dram_trace_low_power_kind_stats(&self) -> Vec<Rem6DramTraceStat> {
         dram_trace_low_power_kind_stats(&self.dram_trace)
     }
@@ -535,158 +539,6 @@ impl Rem6DebugSummary {
 
     pub(crate) fn dram_bank_trace_count(&self) -> u64 {
         self.dram_kind_trace_count("bank")
-    }
-
-    pub(crate) fn dram_target_access_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Target { accesses, .. } => Some(*accesses),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_target_read_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Target { reads, .. } => Some(*reads),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_target_write_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Target { writes, .. } => Some(*writes),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_port_command_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Port { commands, .. } => Some(*commands),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_port_row_hit_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Port { row_hits, .. } => Some(*row_hits),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_port_row_miss_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Port { row_misses, .. } => Some(*row_misses),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_port_refresh_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Port { refreshes, .. } => Some(*refreshes),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_port_refresh_tick_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Port { refresh_ticks, .. } => Some(*refresh_ticks),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_port_total_ready_latency_tick_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Port {
-                total_ready_latency_ticks,
-                ..
-            } => Some(*total_ready_latency_ticks),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_port_max_ready_latency_tick_count(&self) -> u64 {
-        self.dram_trace_max(|record| match record {
-            Rem6DramTraceRecord::Port {
-                max_ready_latency_ticks,
-                ..
-            } => Some(*max_ready_latency_ticks),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_bank_read_byte_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Bank { read_bytes, .. } => Some(*read_bytes),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_bank_write_byte_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Bank { write_bytes, .. } => Some(*write_bytes),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_bank_access_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Bank { accesses, .. } => Some(*accesses),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_bank_row_hit_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Bank { row_hits, .. } => Some(*row_hits),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_bank_row_miss_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Bank { row_misses, .. } => Some(*row_misses),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_bank_refresh_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Bank { refreshes, .. } => Some(*refreshes),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_bank_refresh_tick_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Bank { refresh_ticks, .. } => Some(*refresh_ticks),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_bank_command_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Bank { commands, .. } => Some(*commands),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_bank_total_ready_latency_tick_count(&self) -> u64 {
-        self.dram_trace_sum(|record| match record {
-            Rem6DramTraceRecord::Bank {
-                total_ready_latency_ticks,
-                ..
-            } => Some(*total_ready_latency_ticks),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn dram_bank_max_ready_latency_tick_count(&self) -> u64 {
-        self.dram_trace_max(|record| match record {
-            Rem6DramTraceRecord::Bank {
-                max_ready_latency_ticks,
-                ..
-            } => Some(*max_ready_latency_ticks),
-            _ => None,
-        })
     }
 
     pub(crate) fn fabric_trace_count(&self) -> u64 {
@@ -1160,23 +1012,6 @@ impl Rem6DebugSummary {
             .iter()
             .filter(|record| record.kind() == kind)
             .count() as u64
-    }
-
-    fn dram_trace_sum<F>(&self, value: F) -> u64
-    where
-        F: Fn(&Rem6DramTraceRecord) -> Option<u64>,
-    {
-        self.dram_trace
-            .iter()
-            .filter_map(value)
-            .fold(0u64, |acc, value| acc.saturating_add(value))
-    }
-
-    fn dram_trace_max<F>(&self, value: F) -> u64
-    where
-        F: Fn(&Rem6DramTraceRecord) -> Option<u64>,
-    {
-        self.dram_trace.iter().filter_map(value).max().unwrap_or(0)
     }
 
     fn syscall_outcome_trace_count(
