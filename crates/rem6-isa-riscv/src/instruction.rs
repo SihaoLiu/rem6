@@ -727,6 +727,7 @@ pub enum RiscvInstruction {
         offset: Immediate,
         width: MemoryWidth,
     },
+    VectorMemory(crate::vector::RiscvVectorMemoryInstruction),
     Store {
         rs1: Register,
         rs2: Register,

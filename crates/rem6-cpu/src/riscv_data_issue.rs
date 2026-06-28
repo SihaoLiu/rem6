@@ -220,7 +220,7 @@ impl RiscvCore {
             });
         }
 
-        let size = memory_width_size(access_width(&access))?;
+        let size = access_size(&access)?;
         let address = Address::new(access_address(&access));
         self.check_pmp_data_access(fetch_request, &access, size, address)?;
         self.check_pma_data_access(fetch_request, &access, size, address)?;
@@ -265,7 +265,7 @@ impl RiscvCore {
         let Some((fetch_request, access)) = self.next_unissued_data_access() else {
             return Ok(None);
         };
-        let size = memory_width_size(access_width(&access))?;
+        let size = access_size(&access)?;
         let address = Address::new(access_address(&access));
         self.check_pmp_data_access(fetch_request, &access, size, address)?;
         self.check_pma_data_access(fetch_request, &access, size, address)?;
@@ -571,17 +571,25 @@ fn record_data_retire_cycle(
     {
         return;
     }
-    let wait_cycles = completion_tick.saturating_sub(access.tick);
-    let cycle = riscv_execute::record_retired_in_order_pipeline_cycle_after_wait_with_cause(
+    let data_wait_cycles = completion_tick.saturating_sub(access.tick);
+    let execute_wait_cycles =
+        riscv_execute::in_order_execute_wait_cycles(state.events[index].instruction());
+    let mut waits = Vec::with_capacity(2);
+    if execute_wait_cycles > 0 {
+        waits.push((execute_wait_cycles, InOrderPipelineStallCause::ExecuteWait));
+    }
+    if data_wait_cycles > 0 {
+        waits.push((data_wait_cycles, InOrderPipelineStallCause::DataWait));
+    }
+    let cycle = riscv_execute::record_retired_in_order_pipeline_cycle_after_waits_with_causes(
         state,
         access.fetch_request.sequence(),
         None,
-        wait_cycles,
-        InOrderPipelineStallCause::DataWait,
+        &waits,
     )
     .expect("completed data access records one in-order retire cycle");
     state.events[index].set_in_order_pipeline_cycle(cycle);
-    state.events[index].set_in_order_pipeline_data_wait_cycles(wait_cycles);
+    state.events[index].set_in_order_pipeline_data_wait_cycles(data_wait_cycles);
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -608,15 +616,15 @@ impl OutstandingDataAccess {
     pub(crate) fn memory_request(&self) -> Result<MemoryRequest, RiscvCpuError> {
         let line_layout = self.line_layout.expect("memory data access line layout");
         let request = match &self.access {
-            MemoryAccessKind::Load { .. } | MemoryAccessKind::FloatLoad { .. } => {
-                MemoryRequest::read_shared(
-                    self.request_id,
-                    self.physical_address,
-                    self.size,
-                    line_layout,
-                )
-                .map_err(RiscvCpuError::Memory)
-            }
+            MemoryAccessKind::Load { .. }
+            | MemoryAccessKind::FloatLoad { .. }
+            | MemoryAccessKind::VectorLoadUnitStride { .. } => MemoryRequest::read_shared(
+                self.request_id,
+                self.physical_address,
+                self.size,
+                line_layout,
+            )
+            .map_err(RiscvCpuError::Memory),
             MemoryAccessKind::LoadReserved { .. } => MemoryRequest::load_locked(
                 self.request_id,
                 self.physical_address,
@@ -635,6 +643,15 @@ impl OutstandingDataAccess {
                 )
                 .map_err(RiscvCpuError::Memory)
             }
+            MemoryAccessKind::VectorStoreUnitStride { data, .. } => MemoryRequest::write(
+                self.request_id,
+                self.physical_address,
+                self.size,
+                data.clone(),
+                ByteMask::full(self.size).map_err(RiscvCpuError::Memory)?,
+                line_layout,
+            )
+            .map_err(RiscvCpuError::Memory),
             MemoryAccessKind::StoreConditional { value, .. } => MemoryRequest::store_conditional(
                 self.request_id,
                 self.physical_address,
@@ -777,7 +794,16 @@ fn record_load_completion(
             state.reservation = None;
             state.sc_progress.record_success(cpu);
         }
-        MemoryAccessKind::Store { .. } | MemoryAccessKind::FloatStore { .. } => {}
+        MemoryAccessKind::VectorLoadUnitStride { vd, byte_len, .. } => {
+            let data = data.expect(missing_data);
+            assert_eq!(*byte_len, data.len(), "vector load response payload width");
+            let mut destination = state.hart.read_vector(*vd);
+            destination[..*byte_len].copy_from_slice(data);
+            state.hart.write_vector(*vd, destination);
+        }
+        MemoryAccessKind::Store { .. }
+        | MemoryAccessKind::FloatStore { .. }
+        | MemoryAccessKind::VectorStoreUnitStride { .. } => {}
     }
 }
 
@@ -785,11 +811,25 @@ pub(crate) fn access_width(access: &MemoryAccessKind) -> MemoryWidth {
     match access {
         MemoryAccessKind::Load { width, .. }
         | MemoryAccessKind::FloatLoad { width, .. }
+        | MemoryAccessKind::VectorLoadUnitStride { width, .. }
         | MemoryAccessKind::LoadReserved { width, .. }
         | MemoryAccessKind::StoreConditional { width, .. }
         | MemoryAccessKind::AtomicMemory { width, .. }
         | MemoryAccessKind::Store { width, .. }
-        | MemoryAccessKind::FloatStore { width, .. } => *width,
+        | MemoryAccessKind::FloatStore { width, .. }
+        | MemoryAccessKind::VectorStoreUnitStride { width, .. } => *width,
+    }
+}
+
+pub(crate) fn access_size(access: &MemoryAccessKind) -> Result<AccessSize, RiscvCpuError> {
+    match access {
+        MemoryAccessKind::VectorLoadUnitStride { byte_len, .. } => {
+            AccessSize::new(*byte_len as u64).map_err(RiscvCpuError::Memory)
+        }
+        MemoryAccessKind::VectorStoreUnitStride { data, .. } => {
+            AccessSize::new(data.len() as u64).map_err(RiscvCpuError::Memory)
+        }
+        _ => memory_width_size(access_width(access)),
     }
 }
 
@@ -797,9 +837,11 @@ fn pmp_access_kind(access: &MemoryAccessKind) -> RiscvPmpAccessKind {
     match access {
         MemoryAccessKind::Load { .. }
         | MemoryAccessKind::FloatLoad { .. }
+        | MemoryAccessKind::VectorLoadUnitStride { .. }
         | MemoryAccessKind::LoadReserved { .. } => RiscvPmpAccessKind::Read,
         MemoryAccessKind::Store { .. }
         | MemoryAccessKind::FloatStore { .. }
+        | MemoryAccessKind::VectorStoreUnitStride { .. }
         | MemoryAccessKind::StoreConditional { .. }
         | MemoryAccessKind::AtomicMemory { .. } => RiscvPmpAccessKind::Write,
     }
@@ -809,9 +851,11 @@ fn pma_access_kind(access: &MemoryAccessKind) -> RiscvPmaAccessKind {
     match access {
         MemoryAccessKind::Load { .. }
         | MemoryAccessKind::FloatLoad { .. }
+        | MemoryAccessKind::VectorLoadUnitStride { .. }
         | MemoryAccessKind::LoadReserved { .. } => RiscvPmaAccessKind::Read,
         MemoryAccessKind::Store { .. }
         | MemoryAccessKind::FloatStore { .. }
+        | MemoryAccessKind::VectorStoreUnitStride { .. }
         | MemoryAccessKind::StoreConditional { .. }
         | MemoryAccessKind::AtomicMemory { .. } => RiscvPmaAccessKind::Write,
     }
@@ -821,11 +865,13 @@ fn access_address(access: &MemoryAccessKind) -> u64 {
     match access {
         MemoryAccessKind::Load { address, .. }
         | MemoryAccessKind::FloatLoad { address, .. }
+        | MemoryAccessKind::VectorLoadUnitStride { address, .. }
         | MemoryAccessKind::LoadReserved { address, .. }
         | MemoryAccessKind::StoreConditional { address, .. }
         | MemoryAccessKind::AtomicMemory { address, .. }
         | MemoryAccessKind::Store { address, .. }
-        | MemoryAccessKind::FloatStore { address, .. } => *address,
+        | MemoryAccessKind::FloatStore { address, .. }
+        | MemoryAccessKind::VectorStoreUnitStride { address, .. } => *address,
     }
 }
 
@@ -846,6 +892,7 @@ pub(crate) fn mmio_request(
     match access {
         MemoryAccessKind::Load { .. }
         | MemoryAccessKind::FloatLoad { .. }
+        | MemoryAccessKind::VectorLoadUnitStride { .. }
         | MemoryAccessKind::LoadReserved { .. } => {
             MmioRequest::read(mmio_request_id(request), address, size).map_err(RiscvCpuError::Mmio)
         }
@@ -858,6 +905,13 @@ pub(crate) fn mmio_request(
             mmio_request_id(request),
             address,
             store_bytes(*value, size),
+            ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
+        )
+        .map_err(RiscvCpuError::Mmio),
+        MemoryAccessKind::VectorStoreUnitStride { data, .. } => MmioRequest::write(
+            mmio_request_id(request),
+            address,
+            data.clone(),
             ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
         )
         .map_err(RiscvCpuError::Mmio),

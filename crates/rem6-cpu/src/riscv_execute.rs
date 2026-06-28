@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use rem6_isa_riscv::{
-    RiscvInstruction, RiscvVectorFloatInstruction, RiscvVectorSaturatingInstruction,
-    RiscvVectorWideningIntegerInstruction,
+    RiscvInstruction, RiscvVectorFloatInstruction, RiscvVectorMemoryInstruction,
+    RiscvVectorSaturatingInstruction, RiscvVectorWideningIntegerInstruction,
 };
 use rem6_memory::{AccessSize, Address, MemoryRequestId};
 
@@ -28,6 +28,8 @@ const RISCV_VECTOR_INTEGER_DIV_EXTRA_EXECUTE_CYCLES: u64 =
 const RISCV_VECTOR_INTEGER_SHIFT_EXTRA_EXECUTE_CYCLES: u64 = 1;
 const RISCV_VECTOR_INTEGER_REDUCTION_EXTRA_EXECUTE_CYCLES: u64 =
     RISCV_VECTOR_INTEGER_MUL_EXTRA_EXECUTE_CYCLES;
+const RISCV_VECTOR_LOAD_EXTRA_EXECUTE_CYCLES: u64 = 2;
+const RISCV_VECTOR_STORE_EXTRA_EXECUTE_CYCLES: u64 = 1;
 const RISCV_SCALAR_FLOAT_ADD_EXTRA_EXECUTE_CYCLES: u64 = 1;
 const RISCV_SCALAR_FLOAT_CMP_EXTRA_EXECUTE_CYCLES: u64 = 1;
 const RISCV_SCALAR_FLOAT_CVT_EXTRA_EXECUTE_CYCLES: u64 = 1;
@@ -360,6 +362,7 @@ fn stale_fetch_requests_after_retire(
         .collect()
 }
 
+#[cfg(test)]
 pub(crate) fn record_retired_in_order_pipeline_cycle_after_wait_with_cause(
     state: &mut RiscvCoreState,
     sequence: u64,
@@ -367,13 +370,26 @@ pub(crate) fn record_retired_in_order_pipeline_cycle_after_wait_with_cause(
     wait_cycles: u64,
     stall_cause: InOrderPipelineStallCause,
 ) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
-    record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
+    record_retired_in_order_pipeline_cycle_after_waits_with_causes(
+        state,
+        sequence,
+        branch_prediction,
+        &[(wait_cycles, stall_cause)],
+    )
+}
+
+pub(crate) fn record_retired_in_order_pipeline_cycle_after_waits_with_causes(
+    state: &mut RiscvCoreState,
+    sequence: u64,
+    branch_prediction: Option<InOrderBranchPrediction>,
+    waits: &[(u64, InOrderPipelineStallCause)],
+) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
+    record_retired_in_order_pipeline_cycle_with_redirect_after_waits(
         state,
         sequence,
         branch_prediction,
         None,
-        wait_cycles,
-        stall_cause,
+        waits,
     )
 }
 
@@ -384,6 +400,22 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
     redirect: Option<InOrderBranchRedirect>,
     wait_cycles: u64,
     stall_cause: InOrderPipelineStallCause,
+) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
+    record_retired_in_order_pipeline_cycle_with_redirect_after_waits(
+        state,
+        sequence,
+        branch_prediction,
+        redirect,
+        &[(wait_cycles, stall_cause)],
+    )
+}
+
+fn record_retired_in_order_pipeline_cycle_with_redirect_after_waits(
+    state: &mut RiscvCoreState,
+    sequence: u64,
+    branch_prediction: Option<InOrderBranchPrediction>,
+    redirect: Option<InOrderBranchRedirect>,
+    waits: &[(u64, InOrderPipelineStallCause)],
 ) -> Result<InOrderPipelineCycleRecord, RiscvCpuError> {
     if !state.in_order_pipeline.contains_sequence(sequence) {
         state
@@ -396,12 +428,17 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
     } else {
         discard_stale_in_order_pipeline_before_retire(state, sequence)?;
     }
-    let mut wait_recorded = wait_cycles == 0;
+    let waits = waits
+        .iter()
+        .copied()
+        .filter(|(cycles, _)| *cycles > 0)
+        .collect::<Vec<_>>();
+    let mut wait_recorded = waits.is_empty();
     let max_retire_cycles =
         InOrderPipelineStage::ALL.len() + state.in_order_pipeline.in_flight().len();
     for _ in 0..max_retire_cycles {
         if !wait_recorded && in_order_pipeline_sequence_is_in_execute(state, sequence) {
-            record_in_order_resource_wait_cycles(state, wait_cycles, stall_cause)?;
+            record_in_order_resource_waits(state, &waits)?;
             wait_recorded = true;
         }
         let snapshot = state.in_order_pipeline.snapshot();
@@ -433,7 +470,11 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_wait(
                     && instruction.stage() == InOrderPipelineStage::Execute
             })
         {
-            record_in_order_resource_wait_cycles(state, wait_cycles, stall_cause)?;
+            record_in_order_resource_waits(state, &waits)?;
+            wait_recorded = true;
+        }
+        if !wait_recorded && retires_sequence {
+            record_in_order_resource_waits(state, &waits)?;
             wait_recorded = true;
         }
         if retires_sequence {
@@ -487,7 +528,17 @@ fn record_in_order_resource_wait_cycles(
     Ok(())
 }
 
-fn in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64 {
+fn record_in_order_resource_waits(
+    state: &mut RiscvCoreState,
+    waits: &[(u64, InOrderPipelineStallCause)],
+) -> Result<(), RiscvCpuError> {
+    for (wait_cycles, stall_cause) in waits {
+        record_in_order_resource_wait_cycles(state, *wait_cycles, *stall_cause)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64 {
     match instruction {
         RiscvInstruction::Mul { .. }
         | RiscvInstruction::Mulh { .. }
@@ -550,6 +601,12 @@ fn in_order_execute_wait_cycles(instruction: RiscvInstruction) -> u64 {
         RiscvInstruction::VectorReduction(..) => {
             RISCV_VECTOR_INTEGER_REDUCTION_EXTRA_EXECUTE_CYCLES
         }
+        RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::LoadUnitStride { .. }) => {
+            RISCV_VECTOR_LOAD_EXTRA_EXECUTE_CYCLES
+        }
+        RiscvInstruction::VectorMemory(RiscvVectorMemoryInstruction::StoreUnitStride {
+            ..
+        }) => RISCV_VECTOR_STORE_EXTRA_EXECUTE_CYCLES,
         RiscvInstruction::FloatAddS { .. }
         | RiscvInstruction::FloatAddD { .. }
         | RiscvInstruction::FloatSubS { .. }

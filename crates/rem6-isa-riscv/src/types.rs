@@ -268,6 +268,12 @@ pub enum MemoryAccessKind {
         address: u64,
         width: MemoryWidth,
     },
+    VectorLoadUnitStride {
+        vd: VectorRegister,
+        address: u64,
+        width: MemoryWidth,
+        byte_len: usize,
+    },
     LoadReserved {
         rd: Register,
         address: u64,
@@ -302,6 +308,11 @@ pub enum MemoryAccessKind {
         width: MemoryWidth,
         value: u64,
     },
+    VectorStoreUnitStride {
+        address: u64,
+        width: MemoryWidth,
+        data: Vec<u8>,
+    },
 }
 
 impl MemoryAccessKind {
@@ -318,8 +329,10 @@ impl MemoryAccessKind {
             } => aq_rl_ordering(*acquire, *release),
             Self::Load { .. }
             | Self::FloatLoad { .. }
+            | Self::VectorLoadUnitStride { .. }
             | Self::Store { .. }
-            | Self::FloatStore { .. } => RiscvMemoryOrdering::none(),
+            | Self::FloatStore { .. }
+            | Self::VectorStoreUnitStride { .. } => RiscvMemoryOrdering::none(),
         }
     }
 
@@ -354,7 +367,11 @@ impl MemoryAccessKind {
                 *width,
                 *width == MemoryWidth::Word,
             )),
-            Self::StoreConditional { .. } | Self::Store { .. } | Self::FloatStore { .. } => None,
+            Self::StoreConditional { .. }
+            | Self::Store { .. }
+            | Self::FloatStore { .. }
+            | Self::VectorLoadUnitStride { .. }
+            | Self::VectorStoreUnitStride { .. } => None,
         }
     }
 }

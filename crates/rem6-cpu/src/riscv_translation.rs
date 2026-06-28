@@ -27,8 +27,7 @@ use crate::riscv_translation_state::DataTranslationCompletion;
 pub(crate) use crate::riscv_translation_state::{PendingDataTranslation, TranslatedDataAccess};
 
 use crate::riscv_data_issue::{
-    access_width, memory_width_size, mmio_request, store_bytes, OutstandingDataAccess,
-    PreparedDataParallelAccess,
+    access_size, mmio_request, store_bytes, OutstandingDataAccess, PreparedDataParallelAccess,
 };
 use crate::{
     riscv_checker, riscv_data_access, CpuDataConfig, CpuTranslatedMemoryOperation,
@@ -1239,7 +1238,7 @@ impl RiscvCore {
         let Some((fetch_request, access)) = self.next_unissued_data_access() else {
             return Ok(false);
         };
-        let size = memory_width_size(access_width(&access))?;
+        let size = access_size(&access)?;
         let (data, address_space, access_context) = {
             let state = self.state.lock().expect("riscv core lock");
             (
@@ -1542,7 +1541,8 @@ fn cpu_translation_request(
 ) -> Result<CpuTranslationRequest, RiscvCpuError> {
     match access {
         rem6_isa_riscv::MemoryAccessKind::Load { address, .. }
-        | rem6_isa_riscv::MemoryAccessKind::FloatLoad { address, .. } => {
+        | rem6_isa_riscv::MemoryAccessKind::FloatLoad { address, .. }
+        | rem6_isa_riscv::MemoryAccessKind::VectorLoadUnitStride { address, .. } => {
             CpuTranslationRequest::load(
                 translation_id,
                 memory_request_id,
@@ -1575,6 +1575,20 @@ fn cpu_translation_request(
                 ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
             )
         }
+        rem6_isa_riscv::MemoryAccessKind::VectorStoreUnitStride {
+            address,
+            data: bytes,
+            ..
+        } => CpuTranslationRequest::store(
+            translation_id,
+            memory_request_id,
+            data.route(),
+            data.endpoint().clone(),
+            Address::new(*address),
+            size,
+            bytes.clone(),
+            ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
+        ),
         rem6_isa_riscv::MemoryAccessKind::StoreConditional { address, value, .. } => {
             CpuTranslationRequest::store_conditional(
                 translation_id,

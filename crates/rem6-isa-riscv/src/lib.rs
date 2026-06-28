@@ -44,6 +44,7 @@ mod vector_mask_index_execute;
 mod vector_mask_mode;
 mod vector_mask_prefix_execute;
 mod vector_mask_reduction_execute;
+mod vector_memory;
 mod vector_narrow_execute;
 mod vector_reduction;
 mod vector_saturating;
@@ -105,10 +106,11 @@ pub use vector::{
     RiscvVectorError, RiscvVectorExtensionFactor, RiscvVectorFixedPointState,
     RiscvVectorFixedRoundingMode, RiscvVectorFloatInstruction, RiscvVectorFloatMulAddMode,
     RiscvVectorGatherInstruction, RiscvVectorMaskIndexInstruction,
-    RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction, RiscvVectorMicroOp,
-    RiscvVectorMicroOpExpansion, RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult,
-    RiscvVectorNarrowInstruction, RiscvVectorNarrowOperation, RiscvVectorScalarMoveInstruction,
-    RiscvVectorSlideInstruction, RiscvVectorTailPolicy, RiscvVectorWholeMoveInstruction,
+    RiscvVectorMaskPrefixInstruction, RiscvVectorMaskReductionInstruction,
+    RiscvVectorMemoryInstruction, RiscvVectorMicroOp, RiscvVectorMicroOpExpansion,
+    RiscvVectorNarrowClipPlan, RiscvVectorNarrowClipResult, RiscvVectorNarrowInstruction,
+    RiscvVectorNarrowOperation, RiscvVectorScalarMoveInstruction, RiscvVectorSlideInstruction,
+    RiscvVectorTailPolicy, RiscvVectorWholeMoveInstruction,
 };
 pub use vector_averaging::RiscvVectorAveragingInstruction;
 pub use vector_fixed_point_shift::RiscvVectorFixedPointShiftInstruction;
@@ -138,6 +140,9 @@ impl RiscvInstruction {
         let opcode = raw & 0x7f;
         let instruction = match opcode {
             0x03 => load_store::decode_integer_load(raw),
+            0x07 if load_store::opcode_uses_vector_memory(raw) => {
+                load_store::decode_vector_load(raw)
+            }
             0x07 => float::decode_float_load(raw),
             0x0f => decode::decode_fence(raw),
             0x13 => decode::decode_op_imm(raw),
@@ -147,6 +152,9 @@ impl RiscvInstruction {
             }),
             0x1b => decode::decode_op_imm_32(raw),
             0x23 => load_store::decode_integer_store(raw),
+            0x27 if load_store::opcode_uses_vector_memory(raw) => {
+                load_store::decode_vector_store(raw)
+            }
             0x27 => float::decode_float_store(raw),
             0x2f => atomic::decode_atomic(raw),
             0x33 => decode::decode_op(raw),
@@ -686,6 +694,18 @@ impl RiscvHartState {
             } => {
                 let address = add_signed(self.read(rs1), offset.value())?;
                 memory_access = Some(MemoryAccessKind::FloatLoad { rd, address, width });
+            }
+            RiscvInstruction::VectorMemory(vector_instruction) => {
+                let Ok(access) = vector_memory::memory_access(self, vector_instruction) else {
+                    return Ok(enter_synchronous_trap(
+                        self,
+                        instruction,
+                        instruction_bytes_u8,
+                        pc,
+                        RiscvTrapKind::IllegalInstruction,
+                    ));
+                };
+                memory_access = access;
             }
             RiscvInstruction::FloatStore {
                 rs1,

@@ -4260,6 +4260,120 @@ fn rem6_run_in_order_pipeline_models_vector_fp_execute_latency() {
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_vector_unit_stride_load_store_latency() {
+    const EXPECTED_VECTOR_LOAD_EXTRA_EXECUTE_CYCLES: u64 = 2;
+    const EXPECTED_VECTOR_STORE_EXTRA_EXECUTE_CYCLES: u64 = 1;
+    const EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES: u64 =
+        EXPECTED_VECTOR_LOAD_EXTRA_EXECUTE_CYCLES + EXPECTED_VECTOR_STORE_EXTRA_EXECUTE_CYCLES;
+
+    let scalar_stats = in_order_pipeline_payload_stats(
+        "in-order-scalar-ld-sd-vector-memory-baseline",
+        &unit_stride_memory_program(false),
+    );
+    let vector_stats = in_order_pipeline_payload_stats(
+        "in-order-vector-unit-stride-load-store-latency",
+        &unit_stride_memory_program(true),
+    );
+
+    for (name, stats) in [("scalar", &scalar_stats), ("vector", &vector_stats)] {
+        assert_eq!(
+            stat_value(stats, "sim.cpu0.instructions.committed"),
+            14,
+            "{name} program should retire through the success ecall\n{name} stats:\n{stats}"
+        );
+    }
+
+    let scalar_data_wait = stat_value(&scalar_stats, "sim.cpu0.pipeline.in_order.data_wait_cycles");
+    let vector_data_wait = stat_value(&vector_stats, "sim.cpu0.pipeline.in_order.data_wait_cycles");
+    assert_eq!(
+        vector_data_wait, scalar_data_wait,
+        "vector unit-stride load/store should reuse the same direct-memory data wait as ld/sd"
+    );
+
+    let scalar_execute_wait = stat_value(
+        &scalar_stats,
+        "sim.cpu0.pipeline.in_order.execute_wait_cycles",
+    );
+    let vector_execute_wait = stat_value(
+        &vector_stats,
+        "sim.cpu0.pipeline.in_order.execute_wait_cycles",
+    );
+    assert_eq!(
+        vector_execute_wait - scalar_execute_wait,
+        EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES,
+        "vector unit-stride load/store should add fixed LSU execute latency"
+    );
+
+    let scalar_cycles = stat_value(&scalar_stats, "sim.cpu0.pipeline.in_order.cycles");
+    let vector_cycles = stat_value(&vector_stats, "sim.cpu0.pipeline.in_order.cycles");
+    assert_eq!(
+        vector_cycles - scalar_cycles,
+        EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES,
+        "vector unit-stride load/store should add fixed pipeline cycles"
+    );
+
+    let scalar_stall = stat_value(&scalar_stats, "sim.cpu0.pipeline.in_order.stall_cycles");
+    let vector_stall = stat_value(&vector_stats, "sim.cpu0.pipeline.in_order.stall_cycles");
+    assert_eq!(
+        vector_stall - scalar_stall,
+        EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES,
+        "vector unit-stride load/store should add fixed execute-stage stall cycles"
+    );
+}
+
+#[test]
+fn rem6_run_in_order_pipeline_models_zero_vl_vector_memory_as_no_data_access() {
+    let stats = in_order_pipeline_payload_stats(
+        "in-order-vector-unit-stride-zero-vl-no-data-access",
+        &riscv64_program(&[
+            i_type(64, 0, 0b000, 10, 0x13), // addi x10, x0, data
+            i_type(0, 0, 0b000, 11, 0x13),  // addi x11, x0, 0
+            vsetvli_type(0xd0, 11, 5),      // vsetvli x5, x11, e32, m1, ta, ma
+            0x0205_6087,                    // vle32.v v1, (x10)
+            0x0205_60a7,                    // vse32.v v1, (x10)
+            0x0000_0073,                    // ecall
+        ]),
+    );
+
+    assert_eq!(
+        stat_value(&stats, "sim.cpu0.instructions.committed"),
+        6,
+        "zero-vl vector memory should retire through the success ecall\nstats:\n{stats}"
+    );
+    assert_eq!(
+        stat_value(&stats, "sim.cpu0.pipeline.in_order.data_wait_cycles"),
+        0,
+        "zero-vl vector memory should not issue a data access\nstats:\n{stats}"
+    );
+    assert_eq!(
+        stat_value(&stats, "sim.cpu0.pipeline.in_order.execute_wait_cycles"),
+        3,
+        "zero-vl vector memory still pays the fixed vector LSU execute latency\nstats:\n{stats}"
+    );
+}
+
+#[test]
+fn rem6_run_rejects_vector_memory_outside_e32_m1_slice() {
+    for (name, vtype, instruction) in [
+        (
+            "in-order-vector-memory-rejects-e16-m1",
+            0xc8,
+            0x0205_5087, // vle16.v v1, (x10)
+        ),
+        (
+            "in-order-vector-memory-rejects-e32-mf2",
+            0xd7,
+            0x0205_6087, // vle32.v v1, (x10)
+        ),
+    ] {
+        assert_in_order_pipeline_payload_rejected(
+            name,
+            &vector_memory_single_access_program(vtype, instruction),
+        );
+    }
+}
+
+#[test]
 fn rem6_run_stats_emit_checker_cpu_counts_from_execution() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
@@ -4310,6 +4424,10 @@ fn rem6_run_stats_emit_checker_cpu_counts_from_execution() {
 
 fn in_order_pipeline_latency_stats(name: &str, words: &[u32]) -> String {
     let program = riscv64_program(words);
+    in_order_pipeline_payload_stats(name, &program)
+}
+
+fn in_order_pipeline_payload_stats(name: &str, program: &[u8]) -> String {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     let path = temp_binary(name, &elf);
 
@@ -4337,6 +4455,95 @@ fn in_order_pipeline_latency_stats(name: &str, words: &[u32]) -> String {
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).unwrap()
+}
+
+fn assert_in_order_pipeline_payload_rejected(name: &str, program: &[u8]) {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary(name, &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    if !output.status.success() {
+        return;
+    }
+
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: Value = serde_json::from_str(&stdout).unwrap();
+    let trap = payload
+        .pointer("/simulation/trap")
+        .and_then(Value::as_str)
+        .unwrap_or("<missing>");
+    assert_eq!(
+        trap, "illegal_instruction",
+        "{name} should be rejected outside the supported e32/m1 vector memory slice"
+    );
+}
+
+fn unit_stride_memory_program(use_vector_memory: bool) -> Vec<u8> {
+    let memory_move = if use_vector_memory {
+        [
+            0x0205_6087, // vle32.v v1, (x10)
+            0x0208_60a7, // vse32.v v1, (x16)
+        ]
+    } else {
+        [
+            i_type(0, 10, 0b011, 6, 0x03), // ld x6, 0(x10)
+            s_type(0, 6, 16, 0b011),       // sd x6, 0(x16)
+        ]
+    };
+    let mut program = riscv64_program(&[
+        u_type(0, 10, 0x17),             // auipc x10, 0
+        i_type(64, 10, 0b000, 10, 0x13), // addi x10, x10, data
+        i_type(8, 10, 0b000, 16, 0x13),  // addi x16, x10, 8
+        i_type(2, 0, 0b000, 11, 0x13),   // addi x11, x0, 2
+        vsetvli_type(0xd0, 11, 5),       // vsetvli x5, x11, e32, m1, ta, ma
+        memory_move[0],
+        memory_move[1],
+        i_type(0, 16, 0b010, 12, 0x03), // lw x12, 0(x16)
+        i_type(4, 16, 0b010, 13, 0x03), // lw x13, 4(x16)
+        i_type(0, 10, 0b010, 14, 0x03), // lw x14, 0(x10)
+        i_type(4, 10, 0b010, 15, 0x03), // lw x15, 4(x10)
+        b_type(12, 14, 12, 0b001),      // bne x12, x14, fail
+        b_type(8, 15, 13, 0b001),       // bne x13, x15, fail
+        0x0000_0073,                    // ecall
+        0x0000_0000,                    // fail: invalid instruction
+        0x0000_0000,                    // padding to keep data doubleword-aligned
+    ]);
+    program.extend_from_slice(&[
+        0x44, 0x33, 0x22, 0x11, 0x88, 0x77, 0x66, 0x55, 0, 0, 0, 0, 0, 0, 0, 0,
+    ]);
+    program
+}
+
+fn vector_memory_single_access_program(vtype: u32, instruction: u32) -> Vec<u8> {
+    let mut program = riscv64_program(&[
+        u_type(0, 10, 0x17),             // auipc x10, 0
+        i_type(32, 10, 0b000, 10, 0x13), // addi x10, x10, data
+        i_type(2, 0, 0b000, 11, 0x13),   // addi x11, x0, 2
+        vsetvli_type(vtype, 11, 5),
+        instruction,
+        0x0000_0073, // ecall
+        0x0000_0000, // padding to keep data doubleword-aligned
+        0x0000_0000, // padding
+    ]);
+    program.extend_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd, 0x11, 0x22, 0x33, 0x44]);
+    program
 }
 
 fn fp_r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8) -> u32 {

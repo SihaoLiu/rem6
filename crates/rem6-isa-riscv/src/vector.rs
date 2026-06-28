@@ -279,6 +279,20 @@ impl RiscvVectorWholeMoveInstruction {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RiscvVectorMemoryInstruction {
+    LoadUnitStride {
+        vd: VectorRegister,
+        rs1: Register,
+        width: MemoryWidth,
+    },
+    StoreUnitStride {
+        vs3: VectorRegister,
+        rs1: Register,
+        width: MemoryWidth,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RiscvVectorFloatInstruction {
     AddVv {
         vd: VectorRegister,
