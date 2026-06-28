@@ -40,15 +40,32 @@ const TILER_PRESENT_LO: u32 = 0x110;
 const TILER_PRESENT_HI: u32 = 0x114;
 const L2_PRESENT_LO: u32 = 0x120;
 const L2_PRESENT_HI: u32 = 0x124;
+const L3_PRESENT_LO: u32 = 0x130;
+const L3_PRESENT_HI: u32 = 0x134;
 const SHADER_READY_LO: u32 = 0x140;
+const SHADER_READY_HI: u32 = 0x144;
 const TILER_READY_LO: u32 = 0x150;
+const TILER_READY_HI: u32 = 0x154;
 const L2_READY_LO: u32 = 0x160;
+const L2_READY_HI: u32 = 0x164;
+const L3_READY_LO: u32 = 0x170;
+const L3_READY_HI: u32 = 0x174;
 const SHADER_PWRON_LO: u32 = 0x180;
+const SHADER_PWRON_HI: u32 = 0x184;
 const TILER_PWRON_LO: u32 = 0x190;
+const TILER_PWRON_HI: u32 = 0x194;
 const L2_PWRON_LO: u32 = 0x1a0;
+const L2_PWRON_HI: u32 = 0x1a4;
+const L3_PWRON_LO: u32 = 0x1b0;
+const L3_PWRON_HI: u32 = 0x1b4;
 const SHADER_PWROFF_LO: u32 = 0x1c0;
+const SHADER_PWROFF_HI: u32 = 0x1c4;
 const TILER_PWROFF_LO: u32 = 0x1d0;
+const TILER_PWROFF_HI: u32 = 0x1d4;
 const L2_PWROFF_LO: u32 = 0x1e0;
+const L2_PWROFF_HI: u32 = 0x1e4;
+const L3_PWROFF_LO: u32 = 0x1f0;
+const L3_PWROFF_HI: u32 = 0x1f4;
 const JOB_IRQ_RAWSTAT: u32 = 0x1000;
 const JOB_IRQ_CLEAR: u32 = 0x1004;
 const JOB_IRQ_MASK: u32 = 0x1008;
@@ -350,6 +367,16 @@ const SHADER_POWER_DOMAIN: NoMaliPowerDomain = NoMaliPowerDomain {
     pwroff_offset: SHADER_PWROFF_LO,
 };
 
+const SHADER_POWER_DOMAIN_HI: NoMaliPowerDomain = NoMaliPowerDomain {
+    pwron_name: "shader_pwron_hi",
+    pwroff_name: "shader_pwroff_hi",
+    ready_register: "shader_ready_hi",
+    present_offset: SHADER_PRESENT_HI,
+    ready_offset: SHADER_READY_HI,
+    pwron_offset: SHADER_PWRON_HI,
+    pwroff_offset: SHADER_PWROFF_HI,
+};
+
 const TILER_POWER_DOMAIN: NoMaliPowerDomain = NoMaliPowerDomain {
     pwron_name: "tiler_pwron_lo",
     pwroff_name: "tiler_pwroff_lo",
@@ -360,6 +387,16 @@ const TILER_POWER_DOMAIN: NoMaliPowerDomain = NoMaliPowerDomain {
     pwroff_offset: TILER_PWROFF_LO,
 };
 
+const TILER_POWER_DOMAIN_HI: NoMaliPowerDomain = NoMaliPowerDomain {
+    pwron_name: "tiler_pwron_hi",
+    pwroff_name: "tiler_pwroff_hi",
+    ready_register: "tiler_ready_hi",
+    present_offset: TILER_PRESENT_HI,
+    ready_offset: TILER_READY_HI,
+    pwron_offset: TILER_PWRON_HI,
+    pwroff_offset: TILER_PWROFF_HI,
+};
+
 const L2_POWER_DOMAIN: NoMaliPowerDomain = NoMaliPowerDomain {
     pwron_name: "l2_pwron_lo",
     pwroff_name: "l2_pwroff_lo",
@@ -368,6 +405,36 @@ const L2_POWER_DOMAIN: NoMaliPowerDomain = NoMaliPowerDomain {
     ready_offset: L2_READY_LO,
     pwron_offset: L2_PWRON_LO,
     pwroff_offset: L2_PWROFF_LO,
+};
+
+const L2_POWER_DOMAIN_HI: NoMaliPowerDomain = NoMaliPowerDomain {
+    pwron_name: "l2_pwron_hi",
+    pwroff_name: "l2_pwroff_hi",
+    ready_register: "l2_ready_hi",
+    present_offset: L2_PRESENT_HI,
+    ready_offset: L2_READY_HI,
+    pwron_offset: L2_PWRON_HI,
+    pwroff_offset: L2_PWROFF_HI,
+};
+
+const L3_POWER_DOMAIN: NoMaliPowerDomain = NoMaliPowerDomain {
+    pwron_name: "l3_pwron_lo",
+    pwroff_name: "l3_pwroff_lo",
+    ready_register: "l3_ready_lo",
+    present_offset: L3_PRESENT_LO,
+    ready_offset: L3_READY_LO,
+    pwron_offset: L3_PWRON_LO,
+    pwroff_offset: L3_PWROFF_LO,
+};
+
+const L3_POWER_DOMAIN_HI: NoMaliPowerDomain = NoMaliPowerDomain {
+    pwron_name: "l3_pwron_hi",
+    pwroff_name: "l3_pwroff_hi",
+    ready_register: "l3_ready_hi",
+    present_offset: L3_PRESENT_HI,
+    ready_offset: L3_READY_HI,
+    pwron_offset: L3_PWRON_HI,
+    pwroff_offset: L3_PWROFF_HI,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -557,11 +624,21 @@ impl NoMaliT760RegisterFile {
             MMU_IRQ_STATUS => {}
             GPU_COMMAND => self.gpu_command(value),
             SHADER_PWRON_LO => self.power_on(&SHADER_POWER_DOMAIN, value),
+            SHADER_PWRON_HI => self.power_on(&SHADER_POWER_DOMAIN_HI, value),
             TILER_PWRON_LO => self.power_on(&TILER_POWER_DOMAIN, value),
+            TILER_PWRON_HI => self.power_on(&TILER_POWER_DOMAIN_HI, value),
             L2_PWRON_LO => self.power_on(&L2_POWER_DOMAIN, value),
+            L2_PWRON_HI => self.power_on(&L2_POWER_DOMAIN_HI, value),
+            L3_PWRON_LO => self.power_on(&L3_POWER_DOMAIN, value),
+            L3_PWRON_HI => self.power_on(&L3_POWER_DOMAIN_HI, value),
             SHADER_PWROFF_LO => self.power_off(&SHADER_POWER_DOMAIN, value),
+            SHADER_PWROFF_HI => self.power_off(&SHADER_POWER_DOMAIN_HI, value),
             TILER_PWROFF_LO => self.power_off(&TILER_POWER_DOMAIN, value),
+            TILER_PWROFF_HI => self.power_off(&TILER_POWER_DOMAIN_HI, value),
             L2_PWROFF_LO => self.power_off(&L2_POWER_DOMAIN, value),
+            L2_PWROFF_HI => self.power_off(&L2_POWER_DOMAIN_HI, value),
+            L3_PWROFF_LO => self.power_off(&L3_POWER_DOMAIN, value),
+            L3_PWROFF_HI => self.power_off(&L3_POWER_DOMAIN_HI, value),
             _ => self.write_raw(offset, value),
         }
     }
@@ -1045,6 +1122,16 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
     pio.write_reg(TILER_PWROFF_LO, pio.read_raw(TILER_PRESENT_LO));
     pio.write_reg(L2_PWRON_LO, pio.read_raw(L2_PRESENT_LO));
     pio.write_reg(L2_PWROFF_LO, pio.read_raw(L2_PRESENT_LO));
+    pio.write_reg(SHADER_PWRON_HI, u32::MAX);
+    pio.write_reg(SHADER_PWROFF_HI, u32::MAX);
+    pio.write_reg(TILER_PWRON_HI, u32::MAX);
+    pio.write_reg(TILER_PWROFF_HI, u32::MAX);
+    pio.write_reg(L2_PWRON_HI, u32::MAX);
+    pio.write_reg(L2_PWROFF_HI, u32::MAX);
+    pio.write_reg(L3_PWRON_LO, 0x0000_0001);
+    pio.write_reg(L3_PWROFF_LO, 0x0000_0001);
+    pio.write_reg(L3_PWRON_HI, u32::MAX);
+    pio.write_reg(L3_PWROFF_HI, u32::MAX);
     pio.write_reg(JOB_SLOT0_BASE + JS_HEAD_NEXT_LO, 0x0000_3400);
     pio.write_reg(JOB_SLOT0_BASE + JS_HEAD_NEXT_HI, 0x0000_0000);
     pio.write_reg(JOB_SLOT0_BASE + JS_AFFINITY_NEXT_LO, 0x0000_000f);
