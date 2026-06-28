@@ -1013,6 +1013,88 @@ global_loads = ["0x1000:4:4:4"]
 }
 
 #[test]
+fn rem6_multi_run_orchestrates_accelerator_run_config() {
+    let workspace = temp_workspace("multi-run-accelerator-run");
+    fs::write(
+        workspace.join("accelerator.toml"),
+        r#"[accelerator_run]
+engine = 7
+lanes = 2
+command_delay = 1
+stats_format = "json"
+output = "artifacts/accelerator.json"
+stats_output = "artifacts/accelerator-stats.json"
+npu_inferences = ["10:4:3"]
+gpu_kernels = ["11:2:5"]
+"#,
+    )
+    .unwrap();
+    fs::write(
+        workspace.join("multi-run.toml"),
+        r#"[multi_run]
+suite_id = "accelerator-suite"
+stats_format = "json"
+
+[[multi_run.runs]]
+id = "accelerator"
+command = "accelerator-run"
+config = "accelerator.toml"
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "multi-run",
+            "--config",
+            workspace.join("multi-run.toml").to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"schema\":\"rem6.cli.multi-run.v1\""));
+    assert!(stdout.contains("\"suite_id\":\"accelerator-suite\""));
+    assert!(stdout.contains("\"runs\":1"));
+    assert!(stdout.contains("\"succeeded\":1"));
+    assert!(stdout.contains("\"total_scheduled_requests\":2"));
+    assert!(stdout.contains("\"id\":\"accelerator\""));
+    assert!(stdout.contains("\"command\":\"accelerator-run\""));
+    assert!(stdout.contains("\"child_schema\":\"rem6.cli.accelerator_run.v1\""));
+    assert!(stdout.contains("\"status\":\"completed\""));
+    assert!(stdout.contains("\"scheduled_requests\":2"));
+    assert!(stdout.contains("artifacts/accelerator.json"));
+    assert!(stdout.contains("artifacts/accelerator-stats.json"));
+    assert_stat(
+        &stdout,
+        "sim.multi_run.scheduled_requests",
+        "Count",
+        2,
+        "monotonic",
+    );
+
+    let child_artifact = fs::read_to_string(workspace.join("artifacts/accelerator.json")).unwrap();
+    assert!(child_artifact.contains("\"schema\":\"rem6.cli.accelerator_run.v1\""));
+    assert!(child_artifact.contains("\"command_count\":2"));
+    assert!(child_artifact.contains("\"completion_count\":2"));
+
+    let child_stats =
+        fs::read_to_string(workspace.join("artifacts/accelerator-stats.json")).unwrap();
+    assert_stat(
+        &child_stats,
+        "sim.accelerator_run.commands",
+        "Count",
+        2,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_multi_run_continue_on_failure_records_failed_child_and_runs_remaining_entries() {
     let workspace = temp_workspace("multi-run-continue-on-failure");
     fs::write(

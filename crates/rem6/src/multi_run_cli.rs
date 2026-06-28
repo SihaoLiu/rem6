@@ -8,9 +8,9 @@ use crate::config::StatsFormat;
 use crate::formatting::json_escape;
 use crate::stats_output::{multi_run_stats_output, Rem6MultiRunStatsInputs};
 use crate::{
-    run_config, run_gpu_run_config, run_gups_config, run_trace_replay_config, Rem6CliError,
-    Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GpuRunConfig, Rem6GupsConfig, Rem6RunConfig,
-    Rem6TraceReplayConfig,
+    run_accelerator_run_config, run_config, run_gpu_run_config, run_gups_config,
+    run_trace_replay_config, Rem6AcceleratorRunConfig, Rem6CliError, Rem6ExecutionStop,
+    Rem6ExecutionSummary, Rem6GpuRunConfig, Rem6GupsConfig, Rem6RunConfig, Rem6TraceReplayConfig,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -34,6 +34,7 @@ struct Rem6MultiRunEntry {
 enum Rem6MultiRunCommand {
     #[default]
     Run,
+    AcceleratorRun,
     Gups,
     GpuRun,
     TraceReplay,
@@ -335,6 +336,18 @@ fn run_child(run: &Rem6MultiRunEntry) -> Result<Rem6MultiRunSummary, Rem6CliErro
             artifact.emit_configured_output()?;
             Ok(Rem6MultiRunSummary::from_run_artifact(run, &artifact))
         }
+        Rem6MultiRunCommand::AcceleratorRun => {
+            let child_config = Rem6AcceleratorRunConfig::parse_args([
+                "accelerator-run".to_string(),
+                "--config".to_string(),
+                path_arg(&run.config),
+            ])?;
+            let artifact = run_accelerator_run_config(child_config)?;
+            artifact.emit_configured_output()?;
+            Ok(Rem6MultiRunSummary::from_accelerator_run_artifact(
+                run, &artifact,
+            ))
+        }
         Rem6MultiRunCommand::Gups => {
             let child_config = Rem6GupsConfig::parse_args([
                 "gups".to_string(),
@@ -374,6 +387,7 @@ impl Rem6MultiRunCommand {
     fn parse(value: &str) -> Result<Self, Rem6CliError> {
         match value {
             "run" => Ok(Self::Run),
+            "accelerator-run" => Ok(Self::AcceleratorRun),
             "gups" => Ok(Self::Gups),
             "gpu-run" => Ok(Self::GpuRun),
             "trace-replay" => Ok(Self::TraceReplay),
@@ -386,6 +400,7 @@ impl Rem6MultiRunCommand {
     const fn as_str(self) -> &'static str {
         match self {
             Self::Run => "run",
+            Self::AcceleratorRun => "accelerator-run",
             Self::Gups => "gups",
             Self::GpuRun => "gpu-run",
             Self::TraceReplay => "trace-replay",
@@ -452,6 +467,30 @@ impl Rem6MultiRunSummary {
             checkpoint_restored_count: 0,
             artifact: artifact.config.output().map(Path::to_path_buf),
             stats_artifact: artifact.config.stats_output().map(Path::to_path_buf),
+            extra_artifacts: Vec::new(),
+            error: None,
+        }
+    }
+
+    fn from_accelerator_run_artifact(
+        run: &Rem6MultiRunEntry,
+        artifact: &crate::Rem6AcceleratorRunArtifact,
+    ) -> Self {
+        let execution = artifact.execution();
+        Self {
+            id: run.id.clone(),
+            command: run.command,
+            config: run.config.clone(),
+            child_schema: artifact.schema(),
+            status: "completed",
+            executed: true,
+            final_tick: execution.final_tick(),
+            committed_instructions: 0,
+            scheduled_requests: execution.command_count(),
+            checkpoint_count: 0,
+            checkpoint_restored_count: 0,
+            artifact: artifact.configured_output().map(Path::to_path_buf),
+            stats_artifact: artifact.configured_stats_output().map(Path::to_path_buf),
             extra_artifacts: Vec::new(),
             error: None,
         }

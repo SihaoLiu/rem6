@@ -5,6 +5,7 @@ use rem6_accelerator::{
     AcceleratorEngineConfig, AcceleratorEngineId,
 };
 use rem6_kernel::{PartitionId, PartitionedScheduler};
+use serde::Deserialize;
 
 use crate::cli_output;
 use crate::config::StatsFormat;
@@ -61,6 +62,27 @@ struct Rem6AcceleratorRunCommand {
 enum Rem6AcceleratorRunCommandKind {
     GpuKernel { workgroups: u32 },
     NpuInference { tiles: u32 },
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rem6AcceleratorRunFileRoot {
+    accelerator_run: Option<Rem6AcceleratorRunFileConfig>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Rem6AcceleratorRunFileConfig {
+    engine: Option<u32>,
+    lanes: Option<u32>,
+    command_delay: Option<u64>,
+    stats_format: Option<String>,
+    output: Option<PathBuf>,
+    stats_output: Option<PathBuf>,
+    npu_inferences: Option<Vec<String>>,
+    gpu_kernels: Option<Vec<String>>,
+    #[serde(skip)]
+    config_dir: Option<PathBuf>,
 }
 
 pub(crate) fn run_accelerator_run_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
@@ -167,17 +189,48 @@ impl Rem6AcceleratorRunConfig {
         if command != "accelerator-run" {
             return Err(Rem6CliError::UnsupportedCommand { command });
         }
+        let remaining_args = args.collect::<Vec<_>>();
+        let file_config = accelerator_run_file_config_from_args(&remaining_args)?
+            .map(|path| load_accelerator_run_file_config(&path))
+            .transpose()?
+            .unwrap_or_default();
 
-        let mut engine = None;
-        let mut lanes = None;
-        let mut command_delay = 2;
-        let mut commands = Vec::new();
-        let mut stats_format = StatsFormat::Json;
-        let mut output = None;
-        let mut stats_output = None;
+        let mut engine = file_config
+            .engine
+            .map(|value| parse_positive_u32("--engine", value.to_string()))
+            .transpose()?;
+        let mut lanes = file_config
+            .lanes
+            .map(|value| parse_positive_u32("--lanes", value.to_string()))
+            .transpose()?;
+        let mut command_delay = file_config
+            .command_delay
+            .map(|value| parse_positive_u64("--command-delay", value.to_string()))
+            .transpose()?
+            .unwrap_or(2);
+        let mut commands = file_config.commands()?;
+        let mut stats_format = file_config
+            .stats_format
+            .as_deref()
+            .map(StatsFormat::parse)
+            .transpose()?
+            .unwrap_or(StatsFormat::Json);
+        let mut output = file_config
+            .output
+            .as_deref()
+            .map(|path| file_config.resolve_path(path));
+        let mut stats_output = file_config
+            .stats_output
+            .as_deref()
+            .map(|path| file_config.resolve_path(path));
+        let mut commands_from_cli = false;
 
+        let mut args = remaining_args.into_iter();
         while let Some(flag) = args.next() {
             match flag.as_str() {
+                "--config" => {
+                    let _ = required_value(&flag, args.next())?;
+                }
                 "--engine" => {
                     engine = Some(parse_positive_u32(
                         &flag,
@@ -194,11 +247,19 @@ impl Rem6AcceleratorRunConfig {
                     command_delay = parse_positive_u64(&flag, required_value(&flag, args.next())?)?;
                 }
                 "--npu-inference" => {
+                    if !commands_from_cli {
+                        commands.clear();
+                        commands_from_cli = true;
+                    }
                     commands.push(Rem6AcceleratorRunCommand::parse_npu_inference(
                         &required_value(&flag, args.next())?,
                     )?);
                 }
                 "--gpu-kernel" => {
+                    if !commands_from_cli {
+                        commands.clear();
+                        commands_from_cli = true;
+                    }
                     commands.push(Rem6AcceleratorRunCommand::parse_gpu_kernel(
                         &required_value(&flag, args.next())?,
                     )?);
@@ -290,6 +351,36 @@ impl Rem6AcceleratorRunConfig {
 }
 
 impl Rem6AcceleratorRunArtifact {
+    pub(crate) const fn schema(&self) -> &'static str {
+        self.schema
+    }
+
+    pub(crate) const fn execution(&self) -> &Rem6AcceleratorRunExecutionSummary {
+        &self.execution
+    }
+
+    pub(crate) fn configured_output(&self) -> Option<&Path> {
+        self.config.output()
+    }
+
+    pub(crate) fn configured_stats_output(&self) -> Option<&Path> {
+        self.config.stats_output()
+    }
+
+    pub(crate) fn emit_configured_output(&self) -> Result<(), Rem6CliError> {
+        let stats_format = self.config.stats_format();
+        cli_output::emit_configured_artifact_output(
+            || self.to_json(),
+            &self.stats_json,
+            &self.stats_text,
+            self.config.output(),
+            self.config.stats_output(),
+            stats_format,
+            &[],
+        )
+        .map(|_| ())
+    }
+
     pub fn to_json(&self) -> String {
         format!(
             "{{\"schema\":\"{}\",\"engine\":{},\"lanes\":{},\"command_delay\":{},\"command_count\":{},\"gpu_kernel_command_count\":{},\"npu_inference_command_count\":{},\"completion_count\":{},\"gpu_kernel_completion_count\":{},\"npu_inference_completion_count\":{},\"final_tick\":{},\"trace_event_count\":{},\"scheduler_epoch_count\":{},\"scheduler_dispatch_count\":{},\"scheduler_active_partition_count\":{},\"stats\":{}}}\n",
@@ -359,6 +450,30 @@ impl Rem6AcceleratorRunExecutionSummary {
     }
 }
 
+impl Rem6AcceleratorRunFileConfig {
+    fn resolve_path(&self, path: &Path) -> PathBuf {
+        if path.is_relative() {
+            self.config_dir
+                .as_deref()
+                .map(|dir| dir.join(path))
+                .unwrap_or_else(|| path.to_path_buf())
+        } else {
+            path.to_path_buf()
+        }
+    }
+
+    fn commands(&self) -> Result<Vec<Rem6AcceleratorRunCommand>, Rem6CliError> {
+        let mut commands = Vec::new();
+        for value in self.npu_inferences.as_deref().unwrap_or_default() {
+            commands.push(Rem6AcceleratorRunCommand::parse_npu_inference(value)?);
+        }
+        for value in self.gpu_kernels.as_deref().unwrap_or_default() {
+            commands.push(Rem6AcceleratorRunCommand::parse_gpu_kernel(value)?);
+        }
+        Ok(commands)
+    }
+}
+
 impl Rem6AcceleratorRunCommand {
     fn parse_gpu_kernel(value: &str) -> Result<Self, Rem6CliError> {
         let [id, workgroups, latency] = parse_command_fields("--gpu-kernel", value)?;
@@ -419,6 +534,45 @@ fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliEr
     value.ok_or_else(|| Rem6CliError::MissingFlagValue {
         flag: flag.to_string(),
     })
+}
+
+fn accelerator_run_file_config_from_args(args: &[String]) -> Result<Option<PathBuf>, Rem6CliError> {
+    let mut path = None;
+    let mut index = 0;
+    while let Some(flag) = args.get(index) {
+        match flag.as_str() {
+            "--config" => {
+                path = Some(PathBuf::from(args.get(index + 1).cloned().ok_or_else(
+                    || Rem6CliError::MissingFlagValue { flag: flag.clone() },
+                )?));
+                index += 2;
+            }
+            "--engine" | "--lanes" | "--command-delay" | "--npu-inference" | "--gpu-kernel"
+            | "--stats-format" | "--output" | "--stats-output" => {
+                index += 2;
+            }
+            _ => index += 1,
+        }
+    }
+    Ok(path)
+}
+
+fn load_accelerator_run_file_config(
+    path: &Path,
+) -> Result<Rem6AcceleratorRunFileConfig, Rem6CliError> {
+    let text = std::fs::read_to_string(path).map_err(|error| Rem6CliError::ReadConfig {
+        path: path.to_path_buf(),
+        error: error.to_string(),
+    })?;
+    let mut config = toml::from_str::<Rem6AcceleratorRunFileRoot>(&text)
+        .map_err(|error| Rem6CliError::ParseConfig {
+            path: path.to_path_buf(),
+            error: error.to_string(),
+        })?
+        .accelerator_run
+        .unwrap_or_default();
+    config.config_dir = path.parent().map(Path::to_path_buf);
+    Ok(config)
 }
 
 fn parse_positive_u32(name: &str, value: String) -> Result<u32, Rem6CliError> {
