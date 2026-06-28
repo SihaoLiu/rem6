@@ -78,6 +78,12 @@ const MMU_IRQ_STATUS: u32 = 0x200c;
 const MMU_AS0_BASE: u32 = 0x2400;
 const MMU_ADDRESS_SPACE_STRIDE: u32 = 0x40;
 const MMU_ADDRESS_SPACE_COUNT: u32 = 16;
+const AS_TRANSTAB_LO: u32 = 0x00;
+const AS_TRANSTAB_HI: u32 = 0x04;
+const AS_MEMATTR_LO: u32 = 0x08;
+const AS_MEMATTR_HI: u32 = 0x0c;
+const AS_LOCKADDR_LO: u32 = 0x10;
+const AS_LOCKADDR_HI: u32 = 0x14;
 const AS_COMMAND: u32 = 0x18;
 
 const RESET_COMPLETED: u32 = 1 << 8;
@@ -275,6 +281,16 @@ struct NoMaliAddressSpaceCommandWrite {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct NoMaliAddressSpaceWrite {
+    space: u8,
+    name: &'static str,
+    offset: u32,
+    value: u32,
+    register: &'static str,
+    effect: &'static str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct NoMaliJobSlotCommandWrite {
     slot: u8,
     name: &'static str,
@@ -386,6 +402,18 @@ struct NoMaliJobSlotSnapshot {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct NoMaliAddressSpaceSnapshot {
+    space: u8,
+    name: &'static str,
+    transtab_lo: u32,
+    transtab_hi: u32,
+    memattr_lo: u32,
+    memattr_hi: u32,
+    lockaddr_lo: u32,
+    lockaddr_hi: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct NoMaliRegisterFault {
     operation: &'static str,
     offset: u32,
@@ -400,11 +428,13 @@ struct NoMaliT760RegisterFile {
     reset_count: u64,
     command_writes: Vec<NoMaliCommandWrite>,
     address_space_command_writes: Vec<NoMaliAddressSpaceCommandWrite>,
+    address_space_writes: Vec<NoMaliAddressSpaceWrite>,
     job_slot_command_writes: Vec<NoMaliJobSlotCommandWrite>,
     irq_writes: Vec<NoMaliIrqWrite>,
     power_writes: Vec<NoMaliPowerWrite>,
     irq_snapshots: Vec<NoMaliIrqSnapshot>,
     interrupt_block_snapshots: Vec<NoMaliInterruptBlockSnapshot>,
+    address_space_snapshots: Vec<NoMaliAddressSpaceSnapshot>,
     job_slot_snapshots: Vec<NoMaliJobSlotSnapshot>,
     register_faults: Vec<NoMaliRegisterFault>,
 }
@@ -416,11 +446,13 @@ impl NoMaliT760RegisterFile {
             reset_count: 0,
             command_writes: Vec::new(),
             address_space_command_writes: Vec::new(),
+            address_space_writes: Vec::new(),
             job_slot_command_writes: Vec::new(),
             irq_writes: Vec::new(),
             power_writes: Vec::new(),
             irq_snapshots: Vec::new(),
             interrupt_block_snapshots: Vec::new(),
+            address_space_snapshots: Vec::new(),
             job_slot_snapshots: Vec::new(),
             register_faults: Vec::new(),
         }
@@ -464,6 +496,10 @@ impl NoMaliT760RegisterFile {
         }
         if let Some(space) = mmu_address_space_command_space(offset) {
             self.mmu_address_space_command(space, offset, value);
+            return;
+        }
+        if let Some((space, name, register)) = mmu_address_space_rw_register(offset) {
+            self.mmu_address_space_write(space, offset, value, name, register);
             return;
         }
         match offset {
@@ -752,6 +788,25 @@ impl NoMaliT760RegisterFile {
             });
     }
 
+    fn mmu_address_space_write(
+        &mut self,
+        space: u8,
+        offset: u32,
+        value: u32,
+        name: &'static str,
+        register: &'static str,
+    ) {
+        self.write_raw(offset, value);
+        self.address_space_writes.push(NoMaliAddressSpaceWrite {
+            space,
+            name,
+            offset,
+            value,
+            register,
+            effect: "stored",
+        });
+    }
+
     fn power_on(&mut self, domain: &NoMaliPowerDomain, value: u32) {
         let ready =
             self.read_raw(domain.ready_offset) | (value & self.read_raw(domain.present_offset));
@@ -845,6 +900,21 @@ impl NoMaliT760RegisterFile {
                 mask,
                 status,
                 asserted: status != 0,
+            });
+    }
+
+    fn record_address_space_snapshot(&mut self, name: &'static str, space: u8) {
+        let base = mmu_address_space_base(space);
+        self.address_space_snapshots
+            .push(NoMaliAddressSpaceSnapshot {
+                space,
+                name,
+                transtab_lo: self.read_raw(base + AS_TRANSTAB_LO),
+                transtab_hi: self.read_raw(base + AS_TRANSTAB_HI),
+                memattr_lo: self.read_raw(base + AS_MEMATTR_LO),
+                memattr_hi: self.read_raw(base + AS_MEMATTR_HI),
+                lockaddr_lo: self.read_raw(base + AS_LOCKADDR_LO),
+                lockaddr_hi: self.read_raw(base + AS_LOCKADDR_HI),
             });
     }
 
@@ -1028,6 +1098,14 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
     pio.write_reg(GPU_COMMAND, GPU_COMMAND_PRFCNT_CLEAR);
     pio.write_reg(GPU_COMMAND, GPU_COMMAND_CYCLE_COUNT_START);
     pio.write_reg(GPU_COMMAND, GPU_COMMAND_CYCLE_COUNT_STOP);
+    let as0_base = MMU_AS0_BASE;
+    pio.write_reg(as0_base + AS_TRANSTAB_LO, 0x0000_5007);
+    pio.write_reg(as0_base + AS_TRANSTAB_HI, 0x0000_0001);
+    pio.write_reg(as0_base + AS_MEMATTR_LO, 0xff00_ff00);
+    pio.write_reg(as0_base + AS_MEMATTR_HI, 0x00ff_00ff);
+    pio.write_reg(as0_base + AS_LOCKADDR_LO, 0x0000_6000);
+    pio.write_reg(as0_base + AS_LOCKADDR_HI, 0x0000_0000);
+    pio.record_address_space_snapshot("after_mmu_as0_register_writes", 0);
     let as0_command = MMU_AS0_BASE + AS_COMMAND;
     for command in [
         AS_COMMAND_NOP,
@@ -1135,6 +1213,22 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         })
         .collect::<Vec<_>>()
         .join(",");
+    let address_space_writes = pio
+        .address_space_writes
+        .iter()
+        .map(|write| {
+            format!(
+                "{{\"space\":{},\"name\":\"{}\",\"offset\":\"0x{:04x}\",\"value\":\"{}\",\"register\":\"{}\",\"effect\":\"{}\"}}",
+                write.space,
+                write.name,
+                write.offset,
+                register_hex(write.value),
+                write.register,
+                write.effect,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     let job_slot_command_writes = pio
         .job_slot_command_writes
         .iter()
@@ -1217,6 +1311,24 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         })
         .collect::<Vec<_>>()
         .join(",");
+    let address_space_snapshots = pio
+        .address_space_snapshots
+        .iter()
+        .map(|snapshot| {
+            format!(
+                "{{\"space\":{},\"name\":\"{}\",\"transtab_lo\":\"{}\",\"transtab_hi\":\"{}\",\"memattr_lo\":\"{}\",\"memattr_hi\":\"{}\",\"lockaddr_lo\":\"{}\",\"lockaddr_hi\":\"{}\"}}",
+                snapshot.space,
+                snapshot.name,
+                register_hex(snapshot.transtab_lo),
+                register_hex(snapshot.transtab_hi),
+                register_hex(snapshot.memattr_lo),
+                register_hex(snapshot.memattr_hi),
+                register_hex(snapshot.lockaddr_lo),
+                register_hex(snapshot.lockaddr_hi),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     let job_slot_snapshots = pio
         .job_slot_snapshots
         .iter()
@@ -1273,17 +1385,19 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"register_window_bytes\":{},\"reset_count\":{},\"register_fault_count\":{},\"command_writes\":[{}],\"address_space_command_writes\":[{}],\"job_slot_command_writes\":[{}],\"irq_writes\":[{}],\"power_writes\":[{}],\"irq_snapshots\":[{}],\"interrupt_block_snapshots\":[{}],\"job_slot_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}],\"register_faults\":[{}]}}",
+        "{{\"register_window_bytes\":{},\"reset_count\":{},\"register_fault_count\":{},\"command_writes\":[{}],\"address_space_command_writes\":[{}],\"address_space_writes\":[{}],\"job_slot_command_writes\":[{}],\"irq_writes\":[{}],\"power_writes\":[{}],\"irq_snapshots\":[{}],\"interrupt_block_snapshots\":[{}],\"address_space_snapshots\":[{}],\"job_slot_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}],\"register_faults\":[{}]}}",
         NOMALI_REGISTER_WINDOW_BYTES,
         pio.reset_count,
         pio.register_faults.len(),
         command_writes,
         address_space_command_writes,
+        address_space_writes,
         job_slot_command_writes,
         irq_writes,
         power_writes,
         irq_snapshots,
         interrupt_block_snapshots,
+        address_space_snapshots,
         job_slot_snapshots,
         register_hex(pio.read_raw(GPU_IRQ_RAWSTAT)),
         register_hex(pio.read_raw(GPU_IRQ_MASK)),
@@ -1321,6 +1435,28 @@ fn job_slot_reg_slot(offset: u32, register: u32) -> Option<u8> {
         Some((relative / JOB_SLOT_STRIDE) as u8)
     } else {
         None
+    }
+}
+
+fn mmu_address_space_base(space: u8) -> u32 {
+    MMU_AS0_BASE + u32::from(space) * MMU_ADDRESS_SPACE_STRIDE
+}
+
+fn mmu_address_space_rw_register(offset: u32) -> Option<(u8, &'static str, &'static str)> {
+    let address_space_span = MMU_ADDRESS_SPACE_STRIDE * MMU_ADDRESS_SPACE_COUNT;
+    if !(MMU_AS0_BASE..MMU_AS0_BASE + address_space_span).contains(&offset) {
+        return None;
+    }
+    let relative = offset - MMU_AS0_BASE;
+    let space = (relative / MMU_ADDRESS_SPACE_STRIDE) as u8;
+    match relative % MMU_ADDRESS_SPACE_STRIDE {
+        AS_TRANSTAB_LO => Some((space, "mmu_as_transtab_lo", "transtab_lo")),
+        AS_TRANSTAB_HI => Some((space, "mmu_as_transtab_hi", "transtab_hi")),
+        AS_MEMATTR_LO => Some((space, "mmu_as_memattr_lo", "memattr_lo")),
+        AS_MEMATTR_HI => Some((space, "mmu_as_memattr_hi", "memattr_hi")),
+        AS_LOCKADDR_LO => Some((space, "mmu_as_lockaddr_lo", "lockaddr_lo")),
+        AS_LOCKADDR_HI => Some((space, "mmu_as_lockaddr_hi", "lockaddr_hi")),
+        _ => None,
     }
 }
 
