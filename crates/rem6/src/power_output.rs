@@ -1,9 +1,11 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use rem6_power::{
     ExternalPowerAnalysisKind, PowerAnalysisExport, PowerAnalysisRecord, PowerEstimate,
     PowerResidency, PowerStateKind,
 };
+use rem6_workload::WorkloadParallelExecutionSummary;
 
 use crate::data_cache_runtime::CliDataCacheSummary;
 use crate::gpu_cli::{Rem6GpuComputeUnitActivity, Rem6GpuRunExecutionSummary};
@@ -190,6 +192,11 @@ fn records_for_trace_replay(
         39.0,
         0.012,
     ) {
+        records.push(record);
+    }
+    if let Some(record) =
+        trace_replay_fabric_power_record(execution.parallel_summary(), execution.final_tick())
+    {
         records.push(record);
     }
     if let Some(record) = dram_power_record(
@@ -428,6 +435,63 @@ fn fabric_power_record(
         )
         .expect("fabric power records use valid residency and finite watts"),
     )
+}
+
+fn trace_replay_fabric_power_record(
+    summary: &WorkloadParallelExecutionSummary,
+    final_tick: u64,
+) -> Option<PowerAnalysisRecord> {
+    if !summary.has_fabric_activity() {
+        return None;
+    }
+    let transfers = summary.fabric_transfer_count() as u64;
+    let operations = (summary.active_fabric_lane_count() as u64)
+        .saturating_add(summary.active_fabric_virtual_network_count() as u64)
+        .saturating_add(summary.active_fabric_link_count() as u64)
+        .saturating_add(trace_replay_active_fabric_hop_count(summary))
+        .saturating_add(summary.fabric_flit_count())
+        .saturating_add(summary.contended_fabric_lane_count() as u64);
+    let dynamic_watts = watts_from_activity(
+        transfers,
+        operations,
+        summary.fabric_byte_count(),
+        0.000_004,
+        0.000_006,
+        0.000_000_25,
+    );
+    Some(
+        PowerAnalysisRecord::new(
+            "trace_replay.fabric",
+            PowerStateKind::On,
+            PowerResidency::new(vec![(
+                PowerStateKind::On,
+                final_tick
+                    .max(summary.fabric_occupied_ticks())
+                    .max(summary.fabric_queue_delay_ticks())
+                    .max(summary.fabric_credit_delay_ticks())
+                    .max(transfers)
+                    .max(1),
+            )]),
+            37.5 + dynamic_watts.min(4.0),
+            PowerEstimate::new(dynamic_watts, 0.008),
+        )
+        .expect("trace replay fabric power records use valid residency and finite watts"),
+    )
+}
+
+fn trace_replay_active_fabric_hop_count(summary: &WorkloadParallelExecutionSummary) -> u64 {
+    summary
+        .fabric_hop_activities()
+        .iter()
+        .map(|activity| {
+            (
+                activity.link().clone(),
+                activity.virtual_network(),
+                activity.hop_index(),
+            )
+        })
+        .collect::<BTreeSet<_>>()
+        .len() as u64
 }
 
 fn fabric_resource_summary_is_active(fabric: &Rem6FabricResourceSummary) -> bool {

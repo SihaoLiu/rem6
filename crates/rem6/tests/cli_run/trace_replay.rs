@@ -15,6 +15,32 @@ mod external_adapter;
 #[path = "trace_replay/fabric.rs"]
 mod fabric;
 
+fn assert_power_component_dynamic_watts_positive(power: &str, component: &str) {
+    let marker = format!("<component id=\"{component}\"");
+    let component_start = power
+        .find(&marker)
+        .unwrap_or_else(|| panic!("missing power component {component}:\n{power}"));
+    let component_body = &power[component_start..];
+    let component_end = component_body
+        .find("</component>")
+        .unwrap_or_else(|| panic!("unterminated power component {component}:\n{power}"));
+    let component_body = &component_body[..component_end];
+    let dynamic_marker = "dynamic_watts=\"";
+    let dynamic_start = component_body
+        .find(dynamic_marker)
+        .map(|start| start + dynamic_marker.len())
+        .unwrap_or_else(|| panic!("missing dynamic watts for {component}:\n{power}"));
+    let dynamic_value = &component_body[dynamic_start..];
+    let dynamic_end = dynamic_value
+        .find('"')
+        .unwrap_or_else(|| panic!("unterminated dynamic watts for {component}:\n{power}"));
+    let dynamic_watts = dynamic_value[..dynamic_end].parse::<f64>().unwrap();
+    assert!(
+        dynamic_watts > 0.0,
+        "expected positive dynamic watts for {component}: {component_body}"
+    );
+}
+
 #[test]
 fn rem6_trace_replay_executes_packet_trace_and_emits_summary_stats() {
     let trace = temp_trace(
@@ -2215,6 +2241,75 @@ fn rem6_trace_replay_power_output_exports_activity_records() {
     assert!(power.contains("<mcpat_power tick=\""));
     assert!(power.contains("<component id=\"trace_replay.data_cache\""));
     assert!(power.contains("<component id=\"memory.dram\""));
+}
+
+#[test]
+fn rem6_trace_replay_power_output_includes_fabric_activity() {
+    let workspace = temp_workspace("trace-replay-fabric-power-output");
+    let trace = workspace.join("trace.pb");
+    std::fs::write(
+        &trace,
+        packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 3,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+            ],
+        ),
+    )
+    .unwrap();
+    let power_path = workspace.join("trace-fabric-power.xml");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "trace-replay",
+            "--trace",
+            trace.to_str().unwrap(),
+            "--route",
+            "cpu0.power.fabric",
+            "--memory-start",
+            "0x1000",
+            "--memory-size",
+            "0x1000",
+            "--max-tick",
+            "64",
+            "--tick-frequency",
+            "1000",
+            "--line-bytes",
+            "64",
+            "--agent",
+            "7",
+            "--control-partition",
+            "2",
+            "--fabric-link",
+            "cpu_mem",
+            "--fabric-bandwidth-bytes-per-tick",
+            "4",
+            "--power-output",
+            power_path.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let power = std::fs::read_to_string(power_path).unwrap();
+    assert_power_component_dynamic_watts_positive(&power, "trace_replay.fabric");
 }
 
 fn trace_replay_output(trace: &std::path::Path, max_tick: &str) -> std::process::Output {
