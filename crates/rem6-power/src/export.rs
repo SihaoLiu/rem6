@@ -22,7 +22,7 @@ const DSENT_CSV_HEADER: [&str; 11] = [
     "residency_ratio",
 ];
 const POWER_ANALYSIS_SERIALIZED_DECIMAL_EPSILON: f64 = 0.000_001;
-const MCPAT_REPORT_DEFAULT_TEMPERATURE_C: f64 = 0.0;
+const EXTERNAL_REPORT_DEFAULT_TEMPERATURE_C: f64 = 0.0;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ExternalPowerAnalysisKind {
@@ -652,6 +652,27 @@ impl PowerAnalysisExport {
         Ok(export)
     }
 
+    pub fn from_dsent_report_text(input: &str, tick: Tick) -> Result<Self, PowerError> {
+        if tick == 0 {
+            return Err(power_analysis_artifact_error(
+                ExternalPowerAnalysisKind::Dsent,
+                "DSENT report tick must be greater than zero",
+            ));
+        }
+        let records = input
+            .lines()
+            .filter_map(dsent_report_power_line)
+            .map(|(target, tuple)| dsent_report_record(&target, tuple, tick))
+            .collect::<Result<Vec<_>, _>>()?;
+        if records.is_empty() {
+            return Err(power_analysis_artifact_error(
+                ExternalPowerAnalysisKind::Dsent,
+                "no DSENT report power records found",
+            ));
+        }
+        Self::new(ExternalPowerAnalysisKind::Dsent, tick, records)
+    }
+
     pub fn to_power_analysis_smoke_xml(&self) -> String {
         let mut output = String::new();
         writeln!(
@@ -1163,7 +1184,7 @@ impl McpatReportBlock {
             self.target.clone(),
             PowerStateKind::On,
             PowerResidency::new(vec![(PowerStateKind::On, tick)]),
-            MCPAT_REPORT_DEFAULT_TEMPERATURE_C,
+            EXTERNAL_REPORT_DEFAULT_TEMPERATURE_C,
             PowerEstimate::new(
                 dynamic_watts,
                 subthreshold_leakage_watts + gate_leakage_watts,
@@ -1237,6 +1258,212 @@ fn required_mcpat_report_power_metric(
             format!("component {target} is missing {label}"),
         )
     })
+}
+
+fn dsent_report_power_line(line: &str) -> Option<(String, &str)> {
+    let (target, tuple) = line.split_once(" Power:")?;
+    let target = target.trim();
+    if target.is_empty() {
+        return None;
+    }
+    Some((target.to_string(), tuple.trim()))
+}
+
+fn dsent_report_record(
+    target: &str,
+    tuple: &str,
+    tick: Tick,
+) -> Result<PowerAnalysisRecord, PowerError> {
+    let values = dsent_report_tuple_values(target, tuple)?;
+    let dynamic_watts = dsent_report_power_sum(
+        target,
+        &values,
+        Some("total_dynamic"),
+        dsent_report_is_dynamic_power_key,
+        "dynamic",
+    )?;
+    let static_watts = dsent_report_static_power_sum(target, &values)?;
+    PowerAnalysisRecord::new(
+        target.to_string(),
+        PowerStateKind::On,
+        PowerResidency::new(vec![(PowerStateKind::On, tick)]),
+        EXTERNAL_REPORT_DEFAULT_TEMPERATURE_C,
+        PowerEstimate::new(dynamic_watts, static_watts),
+    )
+}
+
+fn dsent_report_tuple_values(
+    target: &str,
+    tuple: &str,
+) -> Result<BTreeMap<String, f64>, PowerError> {
+    let tuple = tuple.trim();
+    let tuple = tuple
+        .strip_prefix('(')
+        .and_then(|tuple| tuple.strip_suffix(')'))
+        .ok_or_else(|| {
+            power_analysis_artifact_error(
+                ExternalPowerAnalysisKind::Dsent,
+                format!("DSENT report target {target} tuple is not closed"),
+            )
+        })?;
+    let mut values = BTreeMap::new();
+    let mut remaining = tuple.trim();
+    while !remaining.is_empty() {
+        let entry = remaining.strip_prefix('(').ok_or_else(|| {
+            power_analysis_artifact_error(
+                ExternalPowerAnalysisKind::Dsent,
+                format!("DSENT report target {target} tuple entry is missing '('"),
+            )
+        })?;
+        let quote = entry
+            .chars()
+            .next()
+            .filter(|quote| *quote == '\'' || *quote == '"')
+            .ok_or_else(|| {
+                power_analysis_artifact_error(
+                    ExternalPowerAnalysisKind::Dsent,
+                    format!("DSENT report target {target} tuple key is not quoted"),
+                )
+            })?;
+        let after_key_start = &entry[quote.len_utf8()..];
+        let key_end = after_key_start.find(quote).ok_or_else(|| {
+            power_analysis_artifact_error(
+                ExternalPowerAnalysisKind::Dsent,
+                format!("DSENT report target {target} has unterminated tuple key"),
+            )
+        })?;
+        let key = &after_key_start[..key_end];
+        let after_key = after_key_start[key_end + quote.len_utf8()..].trim_start();
+        let after_comma = after_key.strip_prefix(',').ok_or_else(|| {
+            power_analysis_artifact_error(
+                ExternalPowerAnalysisKind::Dsent,
+                format!("DSENT report target {target} tuple entry is missing comma"),
+            )
+        })?;
+        let value_text = after_comma.trim_start();
+        let value_end = value_text
+            .find(|character: char| {
+                character == ')' || character == ',' || character.is_whitespace()
+            })
+            .unwrap_or(value_text.len());
+        let value = value_text[..value_end].parse::<f64>().map_err(|_| {
+            power_analysis_artifact_error(
+                ExternalPowerAnalysisKind::Dsent,
+                format!("DSENT report target {target} key {key} is not a valid number"),
+            )
+        })?;
+        validate_power_value(value)?;
+        if values.insert(key.to_string(), value).is_some() {
+            return Err(power_analysis_artifact_error(
+                ExternalPowerAnalysisKind::Dsent,
+                format!("DSENT report target {target} repeats key {key}"),
+            ));
+        }
+        let after_value = value_text[value_end..].trim_start();
+        let after_entry = after_value.strip_prefix(')').ok_or_else(|| {
+            power_analysis_artifact_error(
+                ExternalPowerAnalysisKind::Dsent,
+                format!("DSENT report target {target} tuple entry is missing closing ')'"),
+            )
+        })?;
+        let after_entry = after_entry.trim_start();
+        remaining = if after_entry.is_empty() {
+            after_entry
+        } else {
+            after_entry
+                .strip_prefix(',')
+                .map(str::trim_start)
+                .ok_or_else(|| {
+                    power_analysis_artifact_error(
+                        ExternalPowerAnalysisKind::Dsent,
+                        format!(
+                            "DSENT report target {target} tuple entries are not comma-separated"
+                        ),
+                    )
+                })?
+        };
+    }
+    if values.is_empty() {
+        return Err(power_analysis_artifact_error(
+            ExternalPowerAnalysisKind::Dsent,
+            format!("DSENT report target {target} has no tuple entries"),
+        ));
+    }
+    Ok(values)
+}
+
+fn dsent_report_power_sum(
+    target: &str,
+    values: &BTreeMap<String, f64>,
+    preferred_key: Option<&str>,
+    include: impl Fn(&str) -> bool,
+    field: &str,
+) -> Result<f64, PowerError> {
+    if let Some(preferred_key) = preferred_key {
+        if let Some(value) = values.get(preferred_key) {
+            return Ok(*value);
+        }
+    }
+    let mut found = false;
+    let mut sum = 0.0;
+    for (name, value) in values {
+        if include(name.as_str()) {
+            found = true;
+            sum += *value;
+        }
+    }
+    if !found {
+        return Err(power_analysis_artifact_error(
+            ExternalPowerAnalysisKind::Dsent,
+            format!("DSENT report target {target} is missing {field} power"),
+        ));
+    }
+    validate_power_value(sum)?;
+    Ok(sum)
+}
+
+fn dsent_report_static_power_sum(
+    target: &str,
+    values: &BTreeMap<String, f64>,
+) -> Result<f64, PowerError> {
+    if let Some(value) = values.get("total_leakage") {
+        return Ok(*value);
+    }
+    if let Some(value) = values.get("total_static") {
+        return Ok(*value);
+    }
+    dsent_report_power_sum(
+        target,
+        values,
+        None,
+        dsent_report_is_static_power_key,
+        "static",
+    )
+}
+
+fn dsent_report_is_dynamic_power_key(name: &str) -> bool {
+    let trimmed = name.trim();
+    dsent_report_label_name(trimmed) == "dynamic power"
+        || trimmed == "dynamic"
+        || trimmed.ends_with("_dynamic")
+}
+
+fn dsent_report_is_static_power_key(name: &str) -> bool {
+    let trimmed = name.trim();
+    matches!(
+        dsent_report_label_name(trimmed).as_str(),
+        "leakage power" | "static power"
+    ) || trimmed == "leakage"
+        || trimmed == "static"
+        || trimmed.ends_with("_leakage")
+        || trimmed.ends_with("_static")
+}
+
+fn dsent_report_label_name(name: &str) -> String {
+    name.trim()
+        .trim_end_matches(':')
+        .trim()
+        .to_ascii_lowercase()
 }
 
 #[derive(Clone, Debug)]

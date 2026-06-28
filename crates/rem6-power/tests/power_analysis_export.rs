@@ -520,6 +520,46 @@ fn dsent_compatible_csv_import_round_trips_adapter_records() {
 }
 
 #[test]
+fn dsent_report_import_reads_gem5_python_power_tuples() {
+    let report = concat!(
+        "router0 Power:  (('Total:', 0), ('    Dynamic power: ', 0.500000), ('    Leakage power: ', 0.030000), ('    Buffer:           ', 1.250000))\n",
+        "link0.nls0 Power:  (('Link:', 0), ('    Dynamic power: ', 0.125000), ('    Leakage power: ', 0.015000))\n",
+    );
+
+    let imported = PowerAnalysisExport::from_dsent_report_text(report, 64).unwrap();
+
+    assert_eq!(imported.kind(), ExternalPowerAnalysisKind::Dsent);
+    assert_eq!(imported.tick(), 64);
+    assert_eq!(imported.records().len(), 2);
+    assert_eq!(imported.records()[0].target(), "link0.nls0");
+    assert_eq!(imported.records()[0].current_state(), PowerStateKind::On);
+    assert_eq!(
+        imported.records()[0].residency_ticks(PowerStateKind::On),
+        64
+    );
+    assert_close(imported.records()[0].dynamic_watts(), 0.125);
+    assert_close(imported.records()[0].static_watts(), 0.015);
+    assert_eq!(imported.records()[1].target(), "router0");
+    assert_close(imported.records()[1].dynamic_watts(), 0.5);
+    assert_close(imported.records()[1].static_watts(), 0.03);
+    assert_close(imported.total_dynamic_watts(), 0.625);
+    assert_close(imported.total_static_watts(), 0.045);
+}
+
+#[test]
+fn dsent_report_import_rejects_truncated_python_tuple() {
+    let report = "router0 Power:  (('total_dynamic', 1.0), ('total_leakage', 0.1\n";
+
+    assert_eq!(
+        PowerAnalysisExport::from_dsent_report_text(report, 64).unwrap_err(),
+        PowerError::InvalidPowerAnalysisArtifact {
+            kind: ExternalPowerAnalysisKind::Dsent,
+            message: "DSENT report target router0 tuple is not closed".to_string(),
+        },
+    );
+}
+
+#[test]
 fn dsent_compatible_csv_import_round_trips_multiline_quoted_fields() {
     let export = PowerAnalysisExport::new(
         ExternalPowerAnalysisKind::Dsent,

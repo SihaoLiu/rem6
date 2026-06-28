@@ -1131,7 +1131,7 @@ summaries, and executed McPAT/DSENT run artifacts parse back into typed power-an
 emits the same executed-run activity-derived CPU, cache, fabric/NoC, memory-transport, and DRAM power records in deterministic run JSON.
 Top-level `rem6 trace-replay --power-output` emits activity-derived trace replay data-cache, fabric/NoC, and DRAM power records from executed packet replay summaries and explicit-fabric route activity. Top-level `rem6 gpu-run --power-output` emits activity-derived GPU compute-unit, GPU
 fabric/NoC, data-cache, and DRAM power records, with the artifact path reported in the run JSON or CLI output envelope.
-Top-level `rem6 power-import` ingests McPAT-shaped XML, McPAT text reports, and DSENT-shaped CSV artifacts into deterministic typed JSON summaries and optional output artifacts; McPAT report import maps printed runtime/leakage power while deriving residency and temperature because the report omits them.
+Top-level `rem6 power-import` ingests McPAT-shaped XML, McPAT text reports, DSENT-shaped CSV, and gem5 DSENT Python-tuple reports into deterministic typed JSON summaries and optional output artifacts; report imports map printed power while deriving residency and temperature because those reports omit them.
 Top-level `rem6 gpu-run --nomali-output` emits a deterministic
 NoMali-compatible T760 adapter artifact from executed GPU run summaries,
 including register-file checkpoint evidence, simple GPU command-table evidence for reset, no-effect, perf-sample, clean-cache, and clean-invalidate commands, MMU address-space no-effect and ignored-command evidence, ignored
@@ -1139,13 +1139,13 @@ unsupported-command, MMU AS0 `TRANSTAB`/`MEMATTR`/`LOCKADDR` storage evidence, j
 plus memory activity; TOML and flag-driven runs both report the artifact path.
 
 **Not migrated:** Complete `ext/nomali`, `ext/mcpat`, and `ext/dsent` parity, NoMali PIO command/register breadth beyond the existing reset,
-simple GPU/MMU/job-slot command-table, MMU AS0 config-register, job-slot next-register, ignored-command, IRQ-clear, shader/tiler/L2 low/high-word and L3 zero-present power, deterministic fault-record, job/MMU interrupt-block, and callback-transition slices, broader command/power/register fault behavior, real interrupt delivery into a simulated interrupt controller, broader/full external-tool ingestion beyond current McPAT report and rem6-shaped adapter artifacts,
+simple GPU/MMU/job-slot command-table, MMU AS0 config-register, job-slot next-register, ignored-command, IRQ-clear, shader/tiler/L2 low/high-word and L3 zero-present power, deterministic fault-record, job/MMU interrupt-block, and callback-transition slices, broader command/power/register fault behavior, real interrupt delivery into a simulated interrupt controller, broader/full external-tool ingestion beyond current McPAT/DSENT report and rem6-shaped adapter artifacts,
 full external schema parity, and broader calibrated power/thermal activity.
 
 **Evidence:** rem6-power export self-tests for custom XML, McPAT XML, DSENT CSV, and McPAT/DSENT import round-trips; `rem6 run` CLI
 tests for `--power-output`, executed McPAT/DSENT artifact ingestion, instruction-cache, data-cache, shared L2/L3 cache, fabric/NoC,
 memory-transport, and DRAM activity records, `rem6 trace-replay --power-output` data-cache, explicit-fabric, and DRAM activity records,
-`rem6 gpu-run --power-output` compute-unit plus explicit-fabric activity records, `rem6 power-import` McPAT XML, McPAT report, and DSENT CSV ingestion summaries plus output artifacts, `--debug-flags Power` run-JSON records, envelope reporting,
+`rem6 gpu-run --power-output` compute-unit plus explicit-fabric activity records, `rem6 power-import` McPAT XML, McPAT report, DSENT CSV, and DSENT tuple-report ingestion summaries plus output artifacts, `--debug-flags Power` run-JSON records, envelope reporting,
 and load-only rejection; `rem6 gpu-run` CLI/TOML McPAT/DSENT output plus `--nomali-output` T760 register-file, hard-reset, soft-reset,
 no-effect commands, perf-sample, clean-cache, clean-invalidate, MMU address-space config registers and command table, job-slot next-register/start-next and command table, ignored-command, IRQ-clear, shader/tiler/L2 low/high and L3 zero-present power, register-fault, job/MMU interrupt-block, IRQ status-register reads, GPU/job/MMU interrupt-callback-transition, multi-artifact envelope, and output-path conflict evidence.
 

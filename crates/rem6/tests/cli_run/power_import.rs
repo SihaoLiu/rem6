@@ -136,6 +136,64 @@ fn rem6_power_import_summarizes_dsent_csv() {
 }
 
 #[test]
+fn rem6_power_import_ingests_dsent_tuple_report() {
+    let temp_dir = unique_power_import_temp_dir("dsent-report");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let input = temp_dir.join("dsent-report.txt");
+    std::fs::write(
+        &input,
+        concat!(
+            "router0 Power:  (('Total:', 0), ('    Dynamic power: ', 0.500000), ('    Leakage power: ', 0.030000), ('    Buffer:           ', 1.250000))\n",
+            "link0.nls0 Power:  (('Link:', 0), ('    Dynamic power: ', 0.125000), ('    Leakage power: ', 0.015000))\n",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "power-import",
+            "--format",
+            "dsent-report",
+            "--input",
+            input.to_str().unwrap(),
+            "--tick",
+            "64",
+        ])
+        .output()
+        .unwrap();
+
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        json.pointer("/format").and_then(Value::as_str),
+        Some("dsent-report")
+    );
+    assert_eq!(json.pointer("/tick").and_then(Value::as_u64), Some(64));
+    assert_eq!(
+        json.pointer("/record_count").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        json.pointer("/records/0/target").and_then(Value::as_str),
+        Some("link0.nls0")
+    );
+    assert_eq!(
+        json.pointer("/records/1/static_watts")
+            .and_then(Value::as_f64),
+        Some(0.03)
+    );
+    assert_eq!(
+        json.pointer("/totals/total_watts").and_then(Value::as_f64),
+        Some(0.67)
+    );
+}
+
+#[test]
 fn rem6_power_import_writes_summary_output_artifact() {
     let temp_dir = unique_power_import_temp_dir("output");
     std::fs::create_dir_all(&temp_dir).unwrap();
@@ -313,5 +371,5 @@ fn rem6_power_import_rejects_tick_for_embedded_tick_formats() {
     std::fs::remove_dir_all(&temp_dir).unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr)
-        .contains("--tick only applies to --format mcpat-report"));
+        .contains("--tick only applies to report import formats"));
 }

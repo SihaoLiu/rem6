@@ -10,6 +10,7 @@ enum PowerImportFormat {
     McpatXml,
     McpatReport,
     DsentCsv,
+    DsentReport,
 }
 
 impl PowerImportFormat {
@@ -18,6 +19,7 @@ impl PowerImportFormat {
             "mcpat-xml" => Ok(Self::McpatXml),
             "mcpat-report" => Ok(Self::McpatReport),
             "dsent-csv" => Ok(Self::DsentCsv),
+            "dsent-report" => Ok(Self::DsentReport),
             _ => Err(Rem6CliError::UnsupportedPowerAnalysisFormat {
                 format: value.to_string(),
             }),
@@ -29,7 +31,12 @@ impl PowerImportFormat {
             Self::McpatXml => "mcpat-xml",
             Self::McpatReport => "mcpat-report",
             Self::DsentCsv => "dsent-csv",
+            Self::DsentReport => "dsent-report",
         }
+    }
+
+    const fn requires_tick(self) -> bool {
+        matches!(self, Self::McpatReport | Self::DsentReport)
     }
 }
 
@@ -56,17 +63,17 @@ pub(crate) fn run_power_import_cli(args: Vec<String>) -> Result<String, Rem6CliE
     }
     let format = format.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--format" })?;
     let input = input.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--input" })?;
-    let tick = match (format, tick) {
-        (PowerImportFormat::McpatReport, Some(tick)) => Some(tick),
-        (PowerImportFormat::McpatReport, None) => {
+    let tick = match (format.requires_tick(), tick) {
+        (true, Some(tick)) => Some(tick),
+        (true, None) => {
             return Err(Rem6CliError::MissingRequiredFlag { flag: "--tick" });
         }
-        (_, Some(_)) => {
+        (false, Some(_)) => {
             return Err(Rem6CliError::PowerAnalysis {
-                error: "--tick only applies to --format mcpat-report".to_string(),
+                error: "--tick only applies to report import formats".to_string(),
             });
         }
-        (_, None) => None,
+        (false, None) => None,
     };
     let contents =
         std::fs::read_to_string(&input).map_err(|error| Rem6CliError::PowerAnalysis {
@@ -78,6 +85,9 @@ pub(crate) fn run_power_import_cli(args: Vec<String>) -> Result<String, Rem6CliE
             PowerAnalysisExport::from_mcpat_report_text(&contents, tick.expect("tick is required"))
         }
         PowerImportFormat::DsentCsv => PowerAnalysisExport::from_dsent_compatible_csv(&contents),
+        PowerImportFormat::DsentReport => {
+            PowerAnalysisExport::from_dsent_report_text(&contents, tick.expect("tick is required"))
+        }
     }
     .map_err(power_error)?;
     let json = power_import_json(format, &input, &export);
