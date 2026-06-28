@@ -471,6 +471,7 @@ pub(super) fn pipeline_trace_stats(
     let mut cpus = BTreeMap::<u32, PipelineTraceStatSummary>::new();
     let mut states = BTreeMap::<&str, PipelineTraceStatSummary>::new();
     let mut stall_causes = BTreeMap::<&str, PipelineTraceStatSummary>::new();
+    let mut flush_causes = BTreeMap::<&str, PipelineTraceStatSummary>::new();
     for record in records {
         cpus.entry(record.cpu).or_default().add_record(record);
         states
@@ -479,6 +480,9 @@ pub(super) fn pipeline_trace_stats(
             .add_record(record);
         if let Some(cause) = record.stall_cause {
             stall_causes.entry(cause).or_default().add_record(record);
+        }
+        if let Some(cause) = record.flush_cause {
+            flush_causes.entry(cause).or_default().add_record(record);
         }
     }
 
@@ -493,6 +497,12 @@ pub(super) fn pipeline_trace_stats(
         summary.push_stats(
             &mut stats,
             &format!("stall_cause.{}", stat_path_segment(cause)),
+        );
+    }
+    for (cause, summary) in flush_causes {
+        summary.push_stats(
+            &mut stats,
+            &format!("flush_cause.{}", stat_path_segment(cause)),
         );
     }
     stats

@@ -435,6 +435,7 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "sim.debug.branch_trace.cpu.cpu0.records",
         "sim.debug.pipeline_trace.records",
         "sim.debug.pipeline_trace.branch_prediction_flushed",
+        "sim.debug.pipeline_trace.flush_cause.branch_prediction.records",
         "sim.debug.pipeline_trace.stall_cause.fetch_wait.records",
         "sim.debug.pipeline_trace.stall_cause.data_wait.stall_cycles",
         "sim.debug.pipeline_trace.stall_cause.execute_wait.records",

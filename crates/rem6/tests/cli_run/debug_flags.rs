@@ -447,6 +447,10 @@ fn rem6_run_pipeline_debug_flag_emits_real_in_order_cycle_trace() {
     assert!(json_record_u64(redirect_cycle, "branch_predictions") > 0);
     assert!(json_record_u64(redirect_cycle, "branch_mispredictions") > 0);
     assert!(json_record_u64(redirect_cycle, "branch_prediction_flushed") > 0);
+    assert_eq!(
+        redirect_cycle.get("flush_cause").and_then(Value::as_str),
+        Some("branch_prediction")
+    );
     assert!(!redirect_cycle
         .get("advanced")
         .and_then(Value::as_array)
@@ -493,6 +497,7 @@ fn rem6_run_pipeline_debug_flag_emits_real_in_order_cycle_trace() {
         "monotonic",
     );
     assert_pipeline_trace_hierarchy_stats(&stdout, trace);
+    assert_pipeline_flush_cause(&stdout, trace, "branch_prediction");
 }
 
 #[test]
@@ -2294,6 +2299,51 @@ fn assert_pipeline_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
             ),
         );
     }
+}
+
+fn assert_pipeline_flush_cause(stdout: &str, trace: &[Value], cause: &str) {
+    let flush_records = trace
+        .iter()
+        .filter(|record| record.get("flush_cause").and_then(Value::as_str) == Some(cause))
+        .collect::<Vec<_>>();
+    assert!(
+        !flush_records.is_empty(),
+        "missing pipeline flush cause {cause}: {trace:?}"
+    );
+    let flushed = flush_records
+        .iter()
+        .map(|record| record_array(record, "flushed").len() as u64)
+        .sum::<u64>();
+    let branch_prediction_flushed = flush_records
+        .iter()
+        .map(|record| json_record_u64(record, "branch_prediction_flushed"))
+        .sum::<u64>();
+    assert!(flushed > 0, "flush cause {cause}: {trace:?}");
+    assert!(
+        branch_prediction_flushed > 0,
+        "flush cause {cause}: {trace:?}"
+    );
+    assert_stat(
+        stdout,
+        &format!("sim.debug.pipeline_trace.flush_cause.{cause}.records"),
+        "Count",
+        flush_records.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("sim.debug.pipeline_trace.flush_cause.{cause}.flushed"),
+        "Count",
+        flushed,
+        "monotonic",
+    );
+    assert_stat(
+        stdout,
+        &format!("sim.debug.pipeline_trace.flush_cause.{cause}.branch_prediction_flushed"),
+        "Count",
+        branch_prediction_flushed,
+        "monotonic",
+    );
 }
 
 fn run_pipeline_debug_wait_program(path: &Path, extra_args: &[&str]) -> String {

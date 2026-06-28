@@ -8,6 +8,7 @@ pub(super) struct Rem6PipelineTraceRecord {
     pub(super) cycle: u64,
     pub(super) stall_cycles: u64,
     pub(super) stall_cause: Option<&'static str>,
+    pub(super) flush_cause: Option<&'static str>,
     pub(super) state_changed: bool,
     pub(super) before_in_flight: Vec<Rem6PipelineTraceInstruction>,
     pub(super) after_in_flight: Vec<Rem6PipelineTraceInstruction>,
@@ -50,11 +51,14 @@ pub(super) fn pipeline_trace_records(
                 .into_iter()
                 .map(|cycle| {
                     let summary = cycle.summary();
+                    let branch_prediction_flushed =
+                        summary.branch_prediction_flushed_count() as u64;
                     Rem6PipelineTraceRecord {
                         cpu: cpu.get(),
                         cycle: cycle.cycle(),
                         stall_cycles: cycle.stall_cycle_count(),
                         stall_cause: cycle.stall_cause().map(|cause| cause.as_str()),
+                        flush_cause: pipeline_flush_cause(branch_prediction_flushed),
                         state_changed: summary.state_changed(),
                         before_in_flight: cycle
                             .before()
@@ -100,7 +104,7 @@ pub(super) fn pipeline_trace_records(
                             .collect(),
                         branch_predictions: summary.branch_prediction_count() as u64,
                         branch_mispredictions: summary.branch_misprediction_count() as u64,
-                        branch_prediction_flushed: summary.branch_prediction_flushed_count() as u64,
+                        branch_prediction_flushed,
                         redirect_target_pc: summary.redirect_target_pc(),
                     }
                 }),
@@ -113,11 +117,12 @@ pub(super) fn pipeline_trace_records(
 impl Rem6PipelineTraceRecord {
     pub(super) fn to_json(&self) -> String {
         format!(
-            "{{\"cpu\":{},\"cycle\":{},\"stall_cycles\":{},\"stall_cause\":{},\"state_changed\":{},\"before_in_flight\":[{}],\"after_in_flight\":[{}],\"advanced\":[{}],\"resource_blocked\":[{}],\"ordering_blocked\":[{}],\"flushed\":[{}],\"branch_predictions\":{},\"branch_mispredictions\":{},\"branch_prediction_flushed\":{},\"redirect_target\":{}}}",
+            "{{\"cpu\":{},\"cycle\":{},\"stall_cycles\":{},\"stall_cause\":{},\"flush_cause\":{},\"state_changed\":{},\"before_in_flight\":[{}],\"after_in_flight\":[{}],\"advanced\":[{}],\"resource_blocked\":[{}],\"ordering_blocked\":[{}],\"flushed\":[{}],\"branch_predictions\":{},\"branch_mispredictions\":{},\"branch_prediction_flushed\":{},\"redirect_target\":{}}}",
             self.cpu,
             self.cycle,
             self.stall_cycles,
             optional_str_json(self.stall_cause),
+            optional_str_json(self.flush_cause),
             self.state_changed,
             pipeline_trace_instructions_json(&self.before_in_flight),
             pipeline_trace_instructions_json(&self.after_in_flight),
@@ -130,6 +135,13 @@ impl Rem6PipelineTraceRecord {
             self.branch_prediction_flushed,
             optional_hex_json(self.redirect_target_pc),
         )
+    }
+}
+
+const fn pipeline_flush_cause(branch_prediction_flushed: u64) -> Option<&'static str> {
+    match branch_prediction_flushed {
+        0 => None,
+        _ => Some("branch_prediction"),
     }
 }
 
