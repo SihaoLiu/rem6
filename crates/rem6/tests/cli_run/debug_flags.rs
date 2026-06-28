@@ -827,10 +827,14 @@ fn rem6_run_memory_debug_flag_emits_real_transport_trace() {
     let fetch_routes = memory_trace_unique_routes(trace, Some("fetch"));
     let data_routes = memory_trace_unique_routes(trace, Some("data"));
     let request_agents = memory_trace_unique_request_agents(trace);
+    let response_latency_ticks = memory_trace_response_latency_sum(trace);
+    let max_response_latency_ticks = memory_trace_response_latency_max(trace);
     assert!(request_sent_records > 0, "trace: {trace:?}");
     assert!(request_arrived_records > 0, "trace: {trace:?}");
     assert!(response_arrived_records > 0, "trace: {trace:?}");
     assert!(completed_responses > 0, "trace: {trace:?}");
+    assert!(response_latency_ticks > 0, "trace: {trace:?}");
+    assert!(max_response_latency_ticks > 0, "trace: {trace:?}");
     assert!(requests > 0, "trace: {trace:?}");
     assert!(fetch_requests > 0, "trace: {trace:?}");
     assert!(data_requests > 0, "trace: {trace:?}");
@@ -950,7 +954,22 @@ fn rem6_run_memory_debug_flag_emits_real_transport_trace() {
         request_agents,
         "monotonic",
     );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.response_latency_ticks",
+        "Tick",
+        response_latency_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.memory_trace.max_response_latency_ticks",
+        "Tick",
+        max_response_latency_ticks,
+        "monotonic",
+    );
     assert_memory_trace_hierarchy_stats(&stdout, trace);
+    assert_memory_trace_response_latencies(trace);
     for record in trace {
         assert!(record.get("tick").and_then(Value::as_u64).is_some());
         assert!(record.get("route").and_then(Value::as_u64).is_some());
@@ -3018,6 +3037,8 @@ struct MemoryTraceStats {
     request_agents: BTreeSet<u64>,
     events: BTreeMap<String, u64>,
     response_status: BTreeMap<String, u64>,
+    response_latency_ticks: u64,
+    max_response_latency_ticks: u64,
 }
 
 impl MemoryTraceStats {
@@ -3039,6 +3060,10 @@ impl MemoryTraceStats {
                 .entry(status.to_string())
                 .and_modify(|count| *count = count.saturating_add(1))
                 .or_insert(1);
+        }
+        if let Some(latency_ticks) = record.get("response_latency_ticks").and_then(Value::as_u64) {
+            self.response_latency_ticks = self.response_latency_ticks.saturating_add(latency_ticks);
+            self.max_response_latency_ticks = self.max_response_latency_ticks.max(latency_ticks);
         }
     }
 
@@ -3075,6 +3100,20 @@ impl MemoryTraceStats {
                 "monotonic",
             );
         }
+        assert_stat(
+            stdout,
+            &format!("{prefix}.response_latency_ticks"),
+            "Tick",
+            self.response_latency_ticks,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.max_response_latency_ticks"),
+            "Tick",
+            self.max_response_latency_ticks,
+            "monotonic",
+        );
     }
 }
 
@@ -3122,6 +3161,52 @@ fn assert_memory_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
         );
         stats.assert_stats(stdout, &prefix);
     }
+}
+
+fn assert_memory_trace_response_latencies(trace: &[Value]) {
+    let mut request_sent_ticks = BTreeMap::<(String, u64, u64, u64), u64>::new();
+    for record in trace {
+        let kind = json_record_str(record, "kind");
+        let key = (
+            json_record_str(record, "channel").to_string(),
+            json_record_u64(record, "route"),
+            json_record_u64(record, "request_agent"),
+            json_record_u64(record, "request"),
+        );
+        match kind {
+            "request_sent" => {
+                request_sent_ticks.insert(key, json_record_u64(record, "tick"));
+            }
+            "response_arrived" => {
+                let sent_tick = request_sent_ticks
+                    .get(&key)
+                    .unwrap_or_else(|| panic!("missing request_sent record: {record:?}"));
+                assert_eq!(
+                    json_record_u64(record, "response_latency_ticks"),
+                    json_record_u64(record, "tick").saturating_sub(*sent_tick),
+                    "record: {record:?}"
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+fn memory_trace_response_latency_sum(trace: &[Value]) -> u64 {
+    trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some("response_arrived"))
+        .map(|record| json_record_u64(record, "response_latency_ticks"))
+        .sum()
+}
+
+fn memory_trace_response_latency_max(trace: &[Value]) -> u64 {
+    trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some("response_arrived"))
+        .map(|record| json_record_u64(record, "response_latency_ticks"))
+        .max()
+        .unwrap_or(0)
 }
 
 fn json_record_str<'a>(record: &'a Value, field: &str) -> &'a str {

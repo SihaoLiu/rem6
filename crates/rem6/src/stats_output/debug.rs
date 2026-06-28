@@ -393,6 +393,20 @@ pub(super) fn emit_debug_stats(
             stat.value(),
         )?;
     }
+    increment_stat(
+        stats,
+        "sim.debug.memory_trace.response_latency_ticks",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        debug.memory_response_latency_tick_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.memory_trace.max_response_latency_ticks",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        debug.memory_max_response_latency_tick_count(),
+    )?;
     for stat in debug.syscall_trace_stats(stat_path_segment) {
         increment_stat(
             stats,

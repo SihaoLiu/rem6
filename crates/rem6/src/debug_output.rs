@@ -1,15 +1,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rem6_cpu::{CpuFetchEventKind, RiscvCluster, RiscvCoreDriveAction, RiscvDataAccessEventKind};
-use rem6_memory::{MemoryOperation, ResponseStatus};
+use rem6_memory::MemoryOperation;
 use rem6_power::{PowerAnalysisRecord, PowerStateKind};
 use rem6_system::{RiscvSyscallTraceOutcome, RiscvSyscallTraceRecord, RiscvSystemRun};
-use rem6_transport::{MemoryTrace, MemoryTraceEvent, MemoryTraceKind};
+use rem6_transport::MemoryTrace;
 
 mod branch;
 mod cache;
 mod dram;
 mod fabric;
+mod memory;
 mod pipeline;
 mod trace_stats;
 
@@ -24,6 +25,10 @@ use dram::{
 };
 use fabric::{
     fabric_trace_records, fabric_trace_stats, Rem6FabricTraceRecord, Rem6FabricTraceStat,
+};
+use memory::{
+    memory_trace_channel_matches, memory_trace_records, memory_trace_stats, Rem6MemoryTraceRecord,
+    Rem6MemoryTraceStat,
 };
 use pipeline::{pipeline_trace_records, Rem6PipelineTraceRecord};
 use trace_stats::{
@@ -77,35 +82,6 @@ struct Rem6DataTraceRecord {
     kind: &'static str,
     address: u64,
     size: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct Rem6MemoryTraceRecord {
-    channel: &'static str,
-    tick: u64,
-    kind: &'static str,
-    route: u64,
-    endpoint: String,
-    request_agent: u32,
-    request: u64,
-    response_status: Option<&'static str>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Rem6MemoryTraceStat {
-    path: String,
-    unit: &'static str,
-    value: u64,
-}
-
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-struct MemoryTraceStatSummary {
-    records: u64,
-    requests: BTreeSet<(u32, u64)>,
-    routes: BTreeSet<u64>,
-    request_agents: BTreeSet<u32>,
-    events: BTreeMap<&'static str, u64>,
-    response_status: BTreeMap<&'static str, u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -794,6 +770,20 @@ impl Rem6DebugSummary {
         self.memory_response_status_trace_count("store_conditional_failed")
     }
 
+    pub(crate) fn memory_response_latency_tick_count(&self) -> u64 {
+        self.memory_trace.iter().fold(0u64, |acc, record| {
+            acc.saturating_add(record.response_latency_ticks.unwrap_or(0))
+        })
+    }
+
+    pub(crate) fn memory_max_response_latency_tick_count(&self) -> u64 {
+        self.memory_trace
+            .iter()
+            .filter_map(|record| record.response_latency_ticks)
+            .max()
+            .unwrap_or(0)
+    }
+
     pub(crate) fn memory_trace_stats(
         &self,
         stat_path_segment: impl Fn(&str) -> String,
@@ -1207,150 +1197,6 @@ impl Rem6DataTraceRecord {
     }
 }
 
-fn memory_trace_channel_matches(record: &Rem6MemoryTraceRecord, channel: Option<&str>) -> bool {
-    channel.map_or(true, |expected| record.channel == expected)
-}
-
-impl Rem6MemoryTraceRecord {
-    fn to_json(&self) -> String {
-        let response_status = self
-            .response_status
-            .map(|status| format!("\"{status}\""))
-            .unwrap_or_else(|| "null".to_string());
-        format!(
-            "{{\"channel\":\"{}\",\"tick\":{},\"kind\":\"{}\",\"route\":{},\"endpoint\":\"{}\",\"request_agent\":{},\"request\":{},\"response_status\":{}}}",
-            self.channel,
-            self.tick,
-            self.kind,
-            self.route,
-            json_escape(&self.endpoint),
-            self.request_agent,
-            self.request,
-            response_status,
-        )
-    }
-}
-
-impl Rem6MemoryTraceStat {
-    pub(crate) fn path(&self) -> &str {
-        &self.path
-    }
-
-    pub(crate) const fn unit(&self) -> &'static str {
-        self.unit
-    }
-
-    pub(crate) const fn value(&self) -> u64 {
-        self.value
-    }
-}
-
-impl MemoryTraceStatSummary {
-    fn add_record(&mut self, record: &Rem6MemoryTraceRecord) {
-        self.records = self.records.saturating_add(1);
-        self.requests.insert((record.request_agent, record.request));
-        self.routes.insert(record.route);
-        self.request_agents.insert(record.request_agent);
-        self.events
-            .entry(record.kind)
-            .and_modify(|count| *count = count.saturating_add(1))
-            .or_insert(1);
-        if let Some(status) = record.response_status {
-            self.response_status
-                .entry(status)
-                .and_modify(|count| *count = count.saturating_add(1))
-                .or_insert(1);
-        }
-    }
-
-    fn push_stats(&self, stats: &mut Vec<Rem6MemoryTraceStat>, prefix: &str) {
-        push_memory_trace_stats(
-            stats,
-            prefix,
-            &[
-                ("records", self.records),
-                ("requests", self.requests.len() as u64),
-                ("routes", self.routes.len() as u64),
-                ("request_agents", self.request_agents.len() as u64),
-            ],
-        );
-        for (kind, value) in &self.events {
-            stats.push(Rem6MemoryTraceStat {
-                path: format!("{prefix}.events.{kind}"),
-                unit: "Count",
-                value: *value,
-            });
-        }
-        for (status, value) in &self.response_status {
-            stats.push(Rem6MemoryTraceStat {
-                path: format!("{prefix}.response_status.{status}"),
-                unit: "Count",
-                value: *value,
-            });
-        }
-    }
-}
-
-fn memory_trace_stats(
-    records: &[Rem6MemoryTraceRecord],
-    stat_path_segment: impl Fn(&str) -> String,
-) -> Vec<Rem6MemoryTraceStat> {
-    let mut channels = BTreeMap::<String, MemoryTraceStatSummary>::new();
-    let mut routes = BTreeMap::<(String, u64, String), MemoryTraceStatSummary>::new();
-    let mut request_agents = BTreeMap::<(String, u32), MemoryTraceStatSummary>::new();
-    for record in records {
-        let channel = record.channel.to_string();
-        channels
-            .entry(channel.clone())
-            .or_default()
-            .add_record(record);
-        routes
-            .entry((channel.clone(), record.route, record.endpoint.clone()))
-            .or_default()
-            .add_record(record);
-        request_agents
-            .entry((channel, record.request_agent))
-            .or_default()
-            .add_record(record);
-    }
-
-    let mut stats = Vec::new();
-    for (channel, summary) in channels {
-        let prefix = format!("channel.{}", stat_path_segment(&channel));
-        summary.push_stats(&mut stats, &prefix);
-    }
-    for ((channel, route, endpoint), summary) in routes {
-        let prefix = format!(
-            "channel.{}.route{route}.endpoint.{}",
-            stat_path_segment(&channel),
-            stat_path_segment(&endpoint)
-        );
-        summary.push_stats(&mut stats, &prefix);
-    }
-    for ((channel, request_agent), summary) in request_agents {
-        let prefix = format!(
-            "channel.{}.request_agent.agent{request_agent}",
-            stat_path_segment(&channel)
-        );
-        summary.push_stats(&mut stats, &prefix);
-    }
-    stats
-}
-
-fn push_memory_trace_stats(
-    stats: &mut Vec<Rem6MemoryTraceStat>,
-    prefix: &str,
-    entries: &[(&'static str, u64)],
-) {
-    for (suffix, value) in entries {
-        stats.push(Rem6MemoryTraceStat {
-            path: format!("{prefix}.{suffix}"),
-            unit: "Count",
-            value: *value,
-        });
-    }
-}
-
 impl Rem6PowerTraceRecord {
     fn to_json(&self) -> String {
         format!(
@@ -1706,67 +1552,6 @@ fn data_trace_kind(operation: MemoryOperation) -> Option<&'static str> {
         | MemoryOperation::CleanEvict
         | MemoryOperation::Invalidate
         | MemoryOperation::InvalidateWritable => None,
-    }
-}
-
-fn memory_trace_records(
-    fetch_memory_trace: &MemoryTrace,
-    data_memory_trace: &MemoryTrace,
-) -> Vec<Rem6MemoryTraceRecord> {
-    let mut records = Vec::new();
-    records.extend(memory_trace_channel_records("fetch", fetch_memory_trace));
-    records.extend(memory_trace_channel_records("data", data_memory_trace));
-    records.sort_by_key(|record| {
-        (
-            record.tick,
-            record.channel,
-            record.route,
-            record.request_agent,
-            record.request,
-            record.kind,
-        )
-    });
-    records
-}
-
-fn memory_trace_channel_records(
-    channel: &'static str,
-    trace: &MemoryTrace,
-) -> Vec<Rem6MemoryTraceRecord> {
-    trace
-        .snapshot()
-        .into_iter()
-        .map(|event| memory_trace_record(channel, event))
-        .collect()
-}
-
-fn memory_trace_record(channel: &'static str, event: MemoryTraceEvent) -> Rem6MemoryTraceRecord {
-    let request = event.request_id();
-    Rem6MemoryTraceRecord {
-        channel,
-        tick: event.tick(),
-        kind: memory_trace_kind(event.kind()),
-        route: event.route().get(),
-        endpoint: event.endpoint().as_str().to_string(),
-        request_agent: request.agent().get(),
-        request: request.sequence(),
-        response_status: event.response_status().map(response_status_name),
-    }
-}
-
-const fn memory_trace_kind(kind: MemoryTraceKind) -> &'static str {
-    match kind {
-        MemoryTraceKind::RequestSent => "request_sent",
-        MemoryTraceKind::RequestArrived => "request_arrived",
-        MemoryTraceKind::ResponseArrived => "response_arrived",
-    }
-}
-
-const fn response_status_name(status: ResponseStatus) -> &'static str {
-    match status {
-        ResponseStatus::Completed => "completed",
-        ResponseStatus::Retry => "retry",
-        ResponseStatus::StoreConditionalFailed => "store_conditional_failed",
     }
 }
 
