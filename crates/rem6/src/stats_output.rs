@@ -107,6 +107,8 @@ pub(super) struct Rem6MultiRunStatsInputs {
     pub(super) total_final_tick: u64,
     pub(super) total_committed_instructions: u64,
     pub(super) total_scheduled_requests: u64,
+    pub(super) total_accelerator_commands: u64,
+    pub(super) total_accelerator_completions: u64,
     pub(super) total_checkpoints: u64,
     pub(super) total_checkpoint_restores: u64,
 }

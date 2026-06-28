@@ -1063,16 +1063,34 @@ config = "accelerator.toml"
     assert!(stdout.contains("\"runs\":1"));
     assert!(stdout.contains("\"succeeded\":1"));
     assert!(stdout.contains("\"total_scheduled_requests\":2"));
+    assert!(stdout.contains("\"total_accelerator_commands\":2"));
+    assert!(stdout.contains("\"total_accelerator_completions\":2"));
     assert!(stdout.contains("\"id\":\"accelerator\""));
     assert!(stdout.contains("\"command\":\"accelerator-run\""));
     assert!(stdout.contains("\"child_schema\":\"rem6.cli.accelerator_run.v1\""));
     assert!(stdout.contains("\"status\":\"completed\""));
     assert!(stdout.contains("\"scheduled_requests\":2"));
+    assert!(stdout.contains("\"accelerator_commands\":2"));
+    assert!(stdout.contains("\"accelerator_completions\":2"));
     assert!(stdout.contains("artifacts/accelerator.json"));
     assert!(stdout.contains("artifacts/accelerator-stats.json"));
     assert_stat(
         &stdout,
         "sim.multi_run.scheduled_requests",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.accelerator.commands",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.accelerator.completions",
         "Count",
         2,
         "monotonic",

@@ -97,6 +97,20 @@ pub(crate) fn multi_run_stats_output(
     )?;
     increment_stat(
         &mut stats,
+        "sim.multi_run.accelerator.commands",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.total_accelerator_commands,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.multi_run.accelerator.completions",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.total_accelerator_completions,
+    )?;
+    increment_stat(
+        &mut stats,
         "sim.multi_run.checkpoints",
         "Count",
         StatResetPolicy::Monotonic,
