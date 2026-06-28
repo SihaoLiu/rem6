@@ -41,7 +41,6 @@ pub(crate) fn memory_access(
 fn unit_stride_access_bytes(hart: &RiscvHartState, width: MemoryWidth) -> Option<usize> {
     let config = hart.vector_config();
     if config.vill()
-        || width != MemoryWidth::Word
         || config.vtype() & 0x7 != 0
         || config.element_width_bytes()? != width.bytes()
         || config.register_group_registers()? != 1

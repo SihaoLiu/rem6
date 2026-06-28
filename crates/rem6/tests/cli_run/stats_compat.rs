@@ -4322,6 +4322,69 @@ fn rem6_run_in_order_pipeline_models_vector_unit_stride_load_store_latency() {
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_vector_unit_stride_load_store_element_widths() {
+    const EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES: u64 = 3;
+
+    let scalar_stats = in_order_pipeline_payload_stats(
+        "in-order-scalar-ld-sd-vector-memory-width-baseline",
+        &unit_stride_memory_program(false),
+    );
+    let scalar_data_wait = stat_value(&scalar_stats, "sim.cpu0.pipeline.in_order.data_wait_cycles");
+    let scalar_execute_wait = stat_value(
+        &scalar_stats,
+        "sim.cpu0.pipeline.in_order.execute_wait_cycles",
+    );
+
+    for (name, vtype, avl, load, store) in [
+        (
+            "e8",
+            0xc0,
+            8,
+            0x0205_0087, // vle8.v v1, (x10)
+            0x0208_00a7, // vse8.v v1, (x16)
+        ),
+        (
+            "e16",
+            0xc8,
+            4,
+            0x0205_5087, // vle16.v v1, (x10)
+            0x0208_50a7, // vse16.v v1, (x16)
+        ),
+        (
+            "e64",
+            0xd8,
+            1,
+            0x0205_7087, // vle64.v v1, (x10)
+            0x0208_70a7, // vse64.v v1, (x16)
+        ),
+    ] {
+        let vector_stats = in_order_pipeline_payload_stats(
+            &format!("in-order-vector-unit-stride-load-store-{name}"),
+            &unit_stride_vector_memory_program(vtype, avl, load, store),
+        );
+
+        assert_eq!(
+            stat_value(&vector_stats, "sim.cpu0.instructions.committed"),
+            14,
+            "{name} unit-stride vector memory should retire through the success ecall\nstats:\n{vector_stats}"
+        );
+        assert_eq!(
+            stat_value(&vector_stats, "sim.cpu0.pipeline.in_order.data_wait_cycles"),
+            scalar_data_wait,
+            "{name} unit-stride vector memory should issue the same 8-byte data footprint as ld/sd"
+        );
+        assert_eq!(
+            stat_value(
+                &vector_stats,
+                "sim.cpu0.pipeline.in_order.execute_wait_cycles"
+            ) - scalar_execute_wait,
+            EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES,
+            "{name} unit-stride vector memory should add fixed vector LSU execute latency"
+        );
+    }
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_zero_vl_vector_memory_as_no_data_access() {
     let stats = in_order_pipeline_payload_stats(
         "in-order-vector-unit-stride-zero-vl-no-data-access",
@@ -4353,19 +4416,12 @@ fn rem6_run_in_order_pipeline_models_zero_vl_vector_memory_as_no_data_access() {
 }
 
 #[test]
-fn rem6_run_rejects_vector_memory_outside_e32_m1_slice() {
-    for (name, vtype, instruction) in [
-        (
-            "in-order-vector-memory-rejects-e16-m1",
-            0xc8,
-            0x0205_5087, // vle16.v v1, (x10)
-        ),
-        (
-            "in-order-vector-memory-rejects-e32-mf2",
-            0xd7,
-            0x0205_6087, // vle32.v v1, (x10)
-        ),
-    ] {
+fn rem6_run_rejects_vector_memory_outside_unit_stride_m1_slice() {
+    for (name, vtype, instruction) in [(
+        "in-order-vector-memory-rejects-e32-mf2",
+        0xd7,
+        0x0205_6087, // vle32.v v1, (x10)
+    )] {
         assert_in_order_pipeline_payload_rejected(
             name,
             &vector_memory_single_access_program(vtype, instruction),
@@ -4491,7 +4547,7 @@ fn assert_in_order_pipeline_payload_rejected(name: &str, program: &[u8]) {
         .unwrap_or("<missing>");
     assert_eq!(
         trap, "illegal_instruction",
-        "{name} should be rejected outside the supported e32/m1 vector memory slice"
+        "{name} should be rejected outside the supported m1 unit-stride vector memory slice"
     );
 }
 
@@ -4507,12 +4563,20 @@ fn unit_stride_memory_program(use_vector_memory: bool) -> Vec<u8> {
             s_type(0, 6, 16, 0b011),       // sd x6, 0(x16)
         ]
     };
+    unit_stride_memory_program_with_move(0xd0, 2, memory_move)
+}
+
+fn unit_stride_vector_memory_program(vtype: u32, avl: i32, load: u32, store: u32) -> Vec<u8> {
+    unit_stride_memory_program_with_move(vtype, avl, [load, store])
+}
+
+fn unit_stride_memory_program_with_move(vtype: u32, avl: i32, memory_move: [u32; 2]) -> Vec<u8> {
     let mut program = riscv64_program(&[
         u_type(0, 10, 0x17),             // auipc x10, 0
         i_type(64, 10, 0b000, 10, 0x13), // addi x10, x10, data
         i_type(8, 10, 0b000, 16, 0x13),  // addi x16, x10, 8
-        i_type(2, 0, 0b000, 11, 0x13),   // addi x11, x0, 2
-        vsetvli_type(0xd0, 11, 5),       // vsetvli x5, x11, e32, m1, ta, ma
+        i_type(avl, 0, 0b000, 11, 0x13), // addi x11, x0, avl
+        vsetvli_type(vtype, 11, 5),      // vsetvli x5, x11, e*, m1, ta, ma
         memory_move[0],
         memory_move[1],
         i_type(0, 16, 0b010, 12, 0x03), // lw x12, 0(x16)

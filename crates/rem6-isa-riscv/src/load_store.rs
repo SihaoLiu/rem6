@@ -86,7 +86,10 @@ fn is_unmasked_unit_stride_vector_memory(raw: u32) -> bool {
 
 fn vector_memory_width(raw: u32) -> Option<MemoryWidth> {
     match funct3(raw) {
+        0b000 => Some(MemoryWidth::Byte),
+        0b101 => Some(MemoryWidth::Halfword),
         0b110 => Some(MemoryWidth::Word),
+        0b111 => Some(MemoryWidth::Doubleword),
         _ => None,
     }
 }
