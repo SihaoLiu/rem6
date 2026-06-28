@@ -22,6 +22,7 @@ const DSENT_CSV_HEADER: [&str; 11] = [
     "residency_ratio",
 ];
 const POWER_ANALYSIS_SERIALIZED_DECIMAL_EPSILON: f64 = 0.000_001;
+const MCPAT_REPORT_DEFAULT_TEMPERATURE_C: f64 = 0.0;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum ExternalPowerAnalysisKind {
@@ -400,6 +401,63 @@ impl PowerAnalysisExport {
             "watts",
         )?;
         Ok(export)
+    }
+
+    pub fn from_mcpat_report_text(input: &str, tick: Tick) -> Result<Self, PowerError> {
+        if tick == 0 {
+            return Err(power_analysis_artifact_error(
+                ExternalPowerAnalysisKind::McPat,
+                "McPAT report tick must be greater than zero",
+            ));
+        }
+
+        let mut blocks = Vec::new();
+        let mut ancestry: Vec<McpatReportAncestor> = Vec::new();
+        let mut current = None;
+        for line in input.lines() {
+            if let Some((indent, name)) = mcpat_report_component_header(line) {
+                if let Some(block) = current.take() {
+                    blocks.push(block);
+                }
+                while ancestry
+                    .last()
+                    .map_or(false, |ancestor| ancestor.indent >= indent)
+                {
+                    ancestry.pop();
+                }
+                let target = ancestry
+                    .last()
+                    .map(|ancestor| format!("{}.{}", ancestor.target, name))
+                    .unwrap_or_else(|| name.clone());
+                current = Some(McpatReportBlock::new(indent, target.clone()));
+                ancestry.push(McpatReportAncestor { indent, target });
+            } else if let Some((label, value, unit)) = mcpat_report_metric(line) {
+                if let Some(block) = current.as_mut() {
+                    block.set_metric(label, value, unit)?;
+                }
+            }
+        }
+        if let Some(block) = current {
+            blocks.push(block);
+        }
+        if blocks.is_empty() {
+            return Err(power_analysis_artifact_error(
+                ExternalPowerAnalysisKind::McPat,
+                "no McPAT report components found",
+            ));
+        }
+
+        let records = blocks
+            .iter()
+            .enumerate()
+            .filter(|(index, block)| {
+                blocks
+                    .get(index + 1)
+                    .map_or(true, |next| next.indent <= block.indent)
+            })
+            .map(|(_, block)| block.to_record(tick))
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::new(ExternalPowerAnalysisKind::McPat, tick, records)
     }
 
     pub fn to_dsent_compatible_csv(&self) -> Result<String, PowerError> {
@@ -1023,6 +1081,162 @@ fn parse_power_state_kind(value: &str) -> Result<PowerStateKind, ()> {
         "Off" => Ok(PowerStateKind::Off),
         _ => Err(()),
     }
+}
+
+#[derive(Clone, Debug)]
+struct McpatReportAncestor {
+    indent: usize,
+    target: String,
+}
+
+#[derive(Clone, Debug)]
+struct McpatReportBlock {
+    indent: usize,
+    target: String,
+    runtime_dynamic_watts: Option<f64>,
+    subthreshold_leakage_watts: Option<f64>,
+    gate_leakage_watts: Option<f64>,
+}
+
+impl McpatReportBlock {
+    fn new(indent: usize, target: String) -> Self {
+        Self {
+            indent,
+            target,
+            runtime_dynamic_watts: None,
+            subthreshold_leakage_watts: None,
+            gate_leakage_watts: None,
+        }
+    }
+
+    fn set_metric(&mut self, label: &str, value: &str, unit: &str) -> Result<(), PowerError> {
+        match label {
+            "Runtime Dynamic Power" => {
+                set_mcpat_report_power_metric(
+                    &self.target,
+                    label,
+                    &mut self.runtime_dynamic_watts,
+                    value,
+                    unit,
+                )?;
+            }
+            "Subthreshold Leakage Power" => {
+                set_mcpat_report_power_metric(
+                    &self.target,
+                    label,
+                    &mut self.subthreshold_leakage_watts,
+                    value,
+                    unit,
+                )?;
+            }
+            "Gate Leakage Power" => {
+                set_mcpat_report_power_metric(
+                    &self.target,
+                    label,
+                    &mut self.gate_leakage_watts,
+                    value,
+                    unit,
+                )?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn to_record(&self, tick: Tick) -> Result<PowerAnalysisRecord, PowerError> {
+        let dynamic_watts = required_mcpat_report_power_metric(
+            &self.target,
+            "Runtime Dynamic Power",
+            self.runtime_dynamic_watts,
+        )?;
+        let subthreshold_leakage_watts = required_mcpat_report_power_metric(
+            &self.target,
+            "Subthreshold Leakage Power",
+            self.subthreshold_leakage_watts,
+        )?;
+        let gate_leakage_watts = required_mcpat_report_power_metric(
+            &self.target,
+            "Gate Leakage Power",
+            self.gate_leakage_watts,
+        )?;
+        PowerAnalysisRecord::new(
+            self.target.clone(),
+            PowerStateKind::On,
+            PowerResidency::new(vec![(PowerStateKind::On, tick)]),
+            MCPAT_REPORT_DEFAULT_TEMPERATURE_C,
+            PowerEstimate::new(
+                dynamic_watts,
+                subthreshold_leakage_watts + gate_leakage_watts,
+            ),
+        )
+    }
+}
+
+fn mcpat_report_component_header(line: &str) -> Option<(usize, String)> {
+    let trimmed = line.trim();
+    if !trimmed.ends_with(':') || trimmed.contains('=') {
+        return None;
+    }
+    let name = trimmed.strip_suffix(':')?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    let indent = line
+        .chars()
+        .take_while(|character| character.is_whitespace())
+        .count();
+    Some((indent, name.to_string()))
+}
+
+fn mcpat_report_metric(line: &str) -> Option<(&str, &str, &str)> {
+    let (label, value) = line.trim().split_once('=')?;
+    let mut fields = value.split_whitespace();
+    let value = fields.next()?;
+    let unit = fields.next().unwrap_or_default();
+    Some((label.trim(), value, unit))
+}
+
+fn set_mcpat_report_power_metric(
+    target: &str,
+    label: &str,
+    slot: &mut Option<f64>,
+    value: &str,
+    unit: &str,
+) -> Result<(), PowerError> {
+    if slot.is_some() {
+        return Err(power_analysis_artifact_error(
+            ExternalPowerAnalysisKind::McPat,
+            format!("component {target} repeats {label}"),
+        ));
+    }
+    if unit != "W" {
+        return Err(power_analysis_artifact_error(
+            ExternalPowerAnalysisKind::McPat,
+            format!("component {target} {label} must use W"),
+        ));
+    }
+    let value = value.parse::<f64>().map_err(|_| {
+        power_analysis_artifact_error(
+            ExternalPowerAnalysisKind::McPat,
+            format!("component {target} {label} is not a valid number"),
+        )
+    })?;
+    validate_power_value(value)?;
+    *slot = Some(value);
+    Ok(())
+}
+
+fn required_mcpat_report_power_metric(
+    target: &str,
+    label: &str,
+    value: Option<f64>,
+) -> Result<f64, PowerError> {
+    value.ok_or_else(|| {
+        power_analysis_artifact_error(
+            ExternalPowerAnalysisKind::McPat,
+            format!("component {target} is missing {label}"),
+        )
+    })
 }
 
 #[derive(Clone, Debug)]

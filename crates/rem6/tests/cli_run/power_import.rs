@@ -193,3 +193,125 @@ fn rem6_power_import_writes_summary_output_artifact() {
         Some(1.75)
     );
 }
+
+#[test]
+fn rem6_power_import_ingests_mcpat_text_report() {
+    let temp_dir = unique_power_import_temp_dir("mcpat-report");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let input = temp_dir.join("mcpat-report.txt");
+    std::fs::write(
+        &input,
+        concat!(
+            "Processor:\n",
+            "  Area = 12.000 mm^2\n",
+            "  Peak Dynamic Power = 9.000 W\n",
+            "  Subthreshold Leakage Power = 0.145 W\n",
+            "  Gate Leakage Power = 0.030 W\n",
+            "  Runtime Dynamic Power = 1.000 W\n",
+            "  Runtime Dynamic Energy = 0.001 J\n",
+            "  Total Runtime Energy = 0.001175 J\n",
+            "\n",
+            "    core0:\n",
+            "      Area = 4.000 mm^2\n",
+            "      Peak Dynamic Power = 5.000 W\n",
+            "      Subthreshold Leakage Power = 0.125 W\n",
+            "      Gate Leakage Power = 0.025 W\n",
+            "      Runtime Dynamic Power = 0.750 W\n",
+            "      Runtime Dynamic Energy = 0.00075 J\n",
+            "      Total Runtime Energy = 0.00090 J\n",
+            "\n",
+            "    noc0:\n",
+            "      Area = 1.000 mm^2\n",
+            "      Peak Dynamic Power = 1.500 W\n",
+            "      Subthreshold Leakage Power = 0.020 W\n",
+            "      Gate Leakage Power = 0.005 W\n",
+            "      Runtime Dynamic Power = 0.250 W\n",
+            "      Runtime Dynamic Energy = 0.00025 J\n",
+            "      Total Runtime Energy = 0.000275 J\n",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "power-import",
+            "--format",
+            "mcpat-report",
+            "--input",
+            input.to_str().unwrap(),
+            "--tick",
+            "128",
+        ])
+        .output()
+        .unwrap();
+
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        json.pointer("/format").and_then(Value::as_str),
+        Some("mcpat-report")
+    );
+    assert_eq!(json.pointer("/tick").and_then(Value::as_u64), Some(128));
+    assert_eq!(
+        json.pointer("/record_count").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        json.pointer("/records/0/target").and_then(Value::as_str),
+        Some("Processor.core0")
+    );
+    assert_eq!(
+        json.pointer("/records/0/static_watts")
+            .and_then(Value::as_f64),
+        Some(0.15)
+    );
+    assert_eq!(
+        json.pointer("/totals/dynamic_watts")
+            .and_then(Value::as_f64),
+        Some(1.0)
+    );
+}
+
+#[test]
+fn rem6_power_import_rejects_tick_for_embedded_tick_formats() {
+    let temp_dir = unique_power_import_temp_dir("tick-reject");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let input = temp_dir.join("mcpat.xml");
+    std::fs::write(
+        &input,
+        concat!(
+            "<mcpat_power tick=\"42\">\n",
+            "  <component id=\"system.cpu0\" name=\"system.cpu0\" state=\"On\">\n",
+            "    <power dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+            "    <thermal temperature_c=\"41.250000\"/>\n",
+            "    <residency state=\"On\" ticks=\"42\" ratio=\"1.000000\"/>\n",
+            "  </component>\n",
+            "  <totals dynamic_watts=\"3.500000\" leakage_watts=\"1.250000\" total_watts=\"4.750000\"/>\n",
+            "</mcpat_power>\n",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "power-import",
+            "--format",
+            "mcpat-xml",
+            "--input",
+            input.to_str().unwrap(),
+            "--tick",
+            "9",
+        ])
+        .output()
+        .unwrap();
+
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("--tick only applies to --format mcpat-report"));
+}

@@ -3,36 +3,81 @@ use std::path::{Path, PathBuf};
 use rem6_power::{PowerAnalysisExport, PowerAnalysisRecord, PowerStateKind};
 
 use crate::formatting::json_escape;
-use crate::{cli_output, PowerAnalysisFormat, Rem6CliError, StatsFormat};
+use crate::{cli_output, Rem6CliError, StatsFormat};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PowerImportFormat {
+    McpatXml,
+    McpatReport,
+    DsentCsv,
+}
+
+impl PowerImportFormat {
+    fn parse(value: &str) -> Result<Self, Rem6CliError> {
+        match value {
+            "mcpat-xml" => Ok(Self::McpatXml),
+            "mcpat-report" => Ok(Self::McpatReport),
+            "dsent-csv" => Ok(Self::DsentCsv),
+            _ => Err(Rem6CliError::UnsupportedPowerAnalysisFormat {
+                format: value.to_string(),
+            }),
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::McpatXml => "mcpat-xml",
+            Self::McpatReport => "mcpat-report",
+            Self::DsentCsv => "dsent-csv",
+        }
+    }
+}
 
 pub(crate) fn run_power_import_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
     let mut format = None;
     let mut input = None;
     let mut output = None;
+    let mut tick = None;
     let mut args = args.into_iter();
     let _command = args.next();
     while let Some(flag) = args.next() {
         match flag.as_str() {
             "--format" => {
-                format = Some(PowerAnalysisFormat::parse(&required_value(
+                format = Some(PowerImportFormat::parse(&required_value(
                     &flag,
                     args.next(),
                 )?)?)
             }
             "--input" => input = Some(PathBuf::from(required_value(&flag, args.next())?)),
             "--output" => output = Some(PathBuf::from(required_value(&flag, args.next())?)),
+            "--tick" => tick = Some(parse_tick(&flag, required_value(&flag, args.next())?)?),
             _ => return Err(Rem6CliError::UnknownFlag { flag }),
         }
     }
     let format = format.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--format" })?;
     let input = input.ok_or(Rem6CliError::MissingRequiredFlag { flag: "--input" })?;
+    let tick = match (format, tick) {
+        (PowerImportFormat::McpatReport, Some(tick)) => Some(tick),
+        (PowerImportFormat::McpatReport, None) => {
+            return Err(Rem6CliError::MissingRequiredFlag { flag: "--tick" });
+        }
+        (_, Some(_)) => {
+            return Err(Rem6CliError::PowerAnalysis {
+                error: "--tick only applies to --format mcpat-report".to_string(),
+            });
+        }
+        (_, None) => None,
+    };
     let contents =
         std::fs::read_to_string(&input).map_err(|error| Rem6CliError::PowerAnalysis {
             error: format!("failed to read {}: {error}", input.display()),
         })?;
     let export = match format {
-        PowerAnalysisFormat::McpatXml => PowerAnalysisExport::from_mcpat_compatible_xml(&contents),
-        PowerAnalysisFormat::DsentCsv => PowerAnalysisExport::from_dsent_compatible_csv(&contents),
+        PowerImportFormat::McpatXml => PowerAnalysisExport::from_mcpat_compatible_xml(&contents),
+        PowerImportFormat::McpatReport => {
+            PowerAnalysisExport::from_mcpat_report_text(&contents, tick.expect("tick is required"))
+        }
+        PowerImportFormat::DsentCsv => PowerAnalysisExport::from_dsent_compatible_csv(&contents),
     }
     .map_err(power_error)?;
     let json = power_import_json(format, &input, &export);
@@ -53,8 +98,16 @@ fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliEr
     })
 }
 
+fn parse_tick(flag: &str, value: String) -> Result<u64, Rem6CliError> {
+    value
+        .parse::<u64>()
+        .map_err(|_| Rem6CliError::PowerAnalysis {
+            error: format!("{flag} must be a valid tick"),
+        })
+}
+
 fn power_import_json(
-    format: PowerAnalysisFormat,
+    format: PowerImportFormat,
     input: &Path,
     export: &PowerAnalysisExport,
 ) -> String {

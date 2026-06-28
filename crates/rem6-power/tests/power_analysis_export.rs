@@ -214,6 +214,64 @@ fn mcpat_compatible_xml_import_round_trips_adapter_records() {
 }
 
 #[test]
+fn mcpat_report_import_reads_leaf_component_power_without_double_counting_parent() {
+    let report = concat!(
+        "Processor:\n",
+        "  Area = 12.000 mm^2\n",
+        "  Peak Dynamic Power = 9.000 W\n",
+        "  Subthreshold Leakage Power = 0.145 W\n",
+        "  Gate Leakage Power = 0.030 W\n",
+        "  Runtime Dynamic Power = 1.000 W\n",
+        "  Runtime Dynamic Energy = 0.001 J\n",
+        "  Total Runtime Energy = 0.001175 J\n",
+        "\n",
+        "    core0:\n",
+        "      Area = 4.000 mm^2\n",
+        "      Peak Dynamic Power = 5.000 W\n",
+        "      Subthreshold Leakage Power = 0.125 W\n",
+        "      Gate Leakage Power = 0.025 W\n",
+        "      Runtime Dynamic Power = 0.750 W\n",
+        "      Runtime Dynamic Energy = 0.00075 J\n",
+        "      Total Runtime Energy = 0.00090 J\n",
+        "\n",
+        "        int_unit:\n",
+        "          Area = 2.000 mm^2\n",
+        "          Peak Dynamic Power = 3.000 W\n",
+        "          Subthreshold Leakage Power = 0.125 W\n",
+        "          Gate Leakage Power = 0.025 W\n",
+        "          Runtime Dynamic Power = 0.750 W\n",
+        "          Runtime Dynamic Energy = 0.00075 J\n",
+        "          Total Runtime Energy = 0.00090 J\n",
+        "\n",
+        "    noc0:\n",
+        "      Area = 1.000 mm^2\n",
+        "      Peak Dynamic Power = 1.500 W\n",
+        "      Subthreshold Leakage Power = 0.020 W\n",
+        "      Gate Leakage Power = 0.005 W\n",
+        "      Runtime Dynamic Power = 0.250 W\n",
+        "      Runtime Dynamic Energy = 0.00025 J\n",
+        "      Total Runtime Energy = 0.000275 J\n",
+    );
+
+    let imported = PowerAnalysisExport::from_mcpat_report_text(report, 128).unwrap();
+
+    assert_eq!(imported.kind(), ExternalPowerAnalysisKind::McPat);
+    assert_eq!(imported.tick(), 128);
+    assert_eq!(imported.records().len(), 2);
+    assert_eq!(imported.records()[0].target(), "Processor.core0.int_unit");
+    assert_eq!(imported.records()[0].current_state(), PowerStateKind::On);
+    assert_eq!(
+        imported.records()[0].residency_ticks(PowerStateKind::On),
+        128
+    );
+    assert_close(imported.records()[0].dynamic_watts(), 0.75);
+    assert_close(imported.records()[0].static_watts(), 0.15);
+    assert_eq!(imported.records()[1].target(), "Processor.noc0");
+    assert_close(imported.total_dynamic_watts(), 1.0);
+    assert_close(imported.total_static_watts(), 0.175);
+}
+
+#[test]
 fn mcpat_compatible_xml_import_rejects_missing_totals() {
     let xml = concat!(
         "<mcpat_power tick=\"42\">\n",
