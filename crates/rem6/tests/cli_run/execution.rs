@@ -3900,6 +3900,16 @@ fn rem6_run_riscv_se_reports_loaded_program_headers_in_auxv() {
     assert!(stdout.contains("\"stop_reason\":\"host_stop\""));
     assert!(stdout.contains("\"stop_code\":8"));
     assert!(stdout.contains("\"x10\":\"0x8\""));
+    assert!(stdout.contains(
+        "\"program_header_table\":{\"file_offset\":64,\"entry_size\":56,\"entry_count\":1,\"memory_address\":\"0x80000040\"}"
+    ));
+    assert_stat(
+        &stdout,
+        "sim.elf.program_header.memory_address",
+        "Address",
+        0x8000_0040,
+        "constant",
+    );
 }
 
 #[test]

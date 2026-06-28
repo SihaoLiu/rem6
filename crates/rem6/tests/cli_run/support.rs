@@ -151,6 +151,19 @@ pub(crate) fn riscv32_elf(entry: u32, physical: u32, payload: &[u8]) -> Vec<u8> 
     bytes
 }
 
+pub(crate) fn riscv32_elf_extended_phnum(entry: u32, physical: u32, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = riscv32_elf(entry, physical, payload);
+    let section_table_offset = bytes.len();
+    write_u32(&mut bytes, 32, section_table_offset as u32);
+    write_u16(&mut bytes, 44, 0xffff);
+    write_u16(&mut bytes, 46, 40);
+    write_u16(&mut bytes, 48, 1);
+    write_u16(&mut bytes, 50, 0);
+    bytes.resize(section_table_offset + 40, 0);
+    write_u32(&mut bytes, section_table_offset + 28, 1);
+    bytes
+}
+
 pub(crate) fn x86_64_elf(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
     let mut bytes = riscv64_elf(entry, physical, payload);
     write_u16(&mut bytes, 18, 62);

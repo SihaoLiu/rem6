@@ -601,6 +601,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
     let stats = run_stats_output(Rem6StatsInputs {
         binary_bytes: bytes.len() as u64,
         load_segments: image.segments().len() as u64,
+        metadata,
         load_blobs: &load_blob_summaries,
         readfiles: &readfile_summaries,
         start_address,

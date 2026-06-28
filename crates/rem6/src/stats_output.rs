@@ -1,3 +1,4 @@
+use rem6_boot::BootElfMetadata;
 use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
 
 mod accelerator_run;
@@ -62,6 +63,7 @@ pub(super) struct Rem6StatsOutput {
 pub(super) struct Rem6StatsInputs<'a> {
     pub(super) binary_bytes: u64,
     pub(super) load_segments: u64,
+    pub(super) metadata: BootElfMetadata,
     pub(super) load_blobs: &'a [Rem6LoadBlobSummary],
     pub(super) readfiles: &'a [Rem6ReadfileSummary],
     pub(super) start_address: u64,
@@ -132,6 +134,51 @@ pub(super) fn run_stats_output(
         StatResetPolicy::Constant,
         inputs.load_segments,
     )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.machine",
+        "Value",
+        StatResetPolicy::Constant,
+        u64::from(inputs.metadata.machine()),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.flags",
+        "Value",
+        StatResetPolicy::Constant,
+        u64::from(inputs.metadata.flags()),
+    )?;
+    let program_header_table = inputs.metadata.program_header_table();
+    increment_stat(
+        &mut stats,
+        "sim.elf.program_header.file_offset",
+        "Byte",
+        StatResetPolicy::Constant,
+        program_header_table.file_offset(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.program_header.entry_size",
+        "Byte",
+        StatResetPolicy::Constant,
+        u64::from(program_header_table.entry_size()),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.program_header.entry_count",
+        "Count",
+        StatResetPolicy::Constant,
+        program_header_table.entry_count(),
+    )?;
+    if let Some(memory_address) = program_header_table.memory_address() {
+        increment_stat(
+            &mut stats,
+            "sim.elf.program_header.memory_address",
+            "Address",
+            StatResetPolicy::Constant,
+            memory_address.get(),
+        )?;
+    }
     increment_stat(
         &mut stats,
         "sim.load_blobs",
