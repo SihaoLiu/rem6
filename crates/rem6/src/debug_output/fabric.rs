@@ -63,6 +63,7 @@ struct FabricHopStatSummary {
     queue_delay_ticks: u64,
     max_queue_delay_ticks: u64,
     credit_delay_ticks: u64,
+    max_credit_delay_ticks: u64,
 }
 
 impl Rem6FabricTraceStat {
@@ -292,6 +293,8 @@ pub(crate) fn fabric_trace_stats(
                 summary.credit_delay_ticks = summary
                     .credit_delay_ticks
                     .saturating_add(*credit_delay_ticks);
+                summary.max_credit_delay_ticks =
+                    summary.max_credit_delay_ticks.max(*credit_delay_ticks);
                 hop_totals.occupied_ticks =
                     hop_totals.occupied_ticks.saturating_add(*occupied_ticks);
                 hop_totals.queue_delay_ticks = hop_totals
@@ -302,6 +305,8 @@ pub(crate) fn fabric_trace_stats(
                 hop_totals.credit_delay_ticks = hop_totals
                     .credit_delay_ticks
                     .saturating_add(*credit_delay_ticks);
+                hop_totals.max_credit_delay_ticks =
+                    hop_totals.max_credit_delay_ticks.max(*credit_delay_ticks);
             }
         }
     }
@@ -352,6 +357,11 @@ pub(crate) fn fabric_trace_stats(
                     summary.max_queue_delay_ticks,
                 ),
                 ("credit_delay_ticks", "Tick", summary.credit_delay_ticks),
+                (
+                    "max_credit_delay_ticks",
+                    "Tick",
+                    summary.max_credit_delay_ticks,
+                ),
             ],
         );
     }
@@ -386,6 +396,11 @@ pub(crate) fn fabric_trace_stats(
                 hop_totals.max_queue_delay_ticks,
             ),
             ("credit_delay_ticks", "Tick", hop_totals.credit_delay_ticks),
+            (
+                "max_credit_delay_ticks",
+                "Tick",
+                hop_totals.max_credit_delay_ticks,
+            ),
         ],
     );
     stats

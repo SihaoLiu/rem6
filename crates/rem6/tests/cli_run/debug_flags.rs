@@ -1370,6 +1370,7 @@ fn rem6_run_fabric_debug_flag_emits_real_fabric_activity_trace() {
     let hop_queue_delay_ticks = fabric_trace_sum(trace, "hop", "queue_delay_ticks");
     let hop_max_queue_delay_ticks = fabric_trace_max(trace, "hop", "queue_delay_ticks");
     let hop_credit_delay_ticks = fabric_trace_sum(trace, "hop", "credit_delay_ticks");
+    let hop_max_credit_delay_ticks = fabric_trace_max(trace, "hop", "credit_delay_ticks");
     assert!(lane_records >= 2, "trace: {trace:?}");
     assert!(hop_records >= 2, "trace: {trace:?}");
     assert!(lane_transfers > 0, "trace: {trace:?}");
@@ -1494,6 +1495,13 @@ fn rem6_run_fabric_debug_flag_emits_real_fabric_activity_trace() {
         "sim.debug.fabric_trace.hop.credit_delay_ticks",
         "Tick",
         hop_credit_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.fabric_trace.hop.max_credit_delay_ticks",
+        "Tick",
+        hop_max_credit_delay_ticks,
         "monotonic",
     );
     assert_fabric_trace_hierarchy_stats(&stdout, trace);
@@ -2878,6 +2886,7 @@ struct FabricHopStats {
     queue_delay_ticks: u64,
     max_queue_delay_ticks: u64,
     credit_delay_ticks: u64,
+    max_credit_delay_ticks: u64,
 }
 
 fn assert_fabric_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
@@ -2924,6 +2933,9 @@ fn assert_fabric_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
                 summary.credit_delay_ticks = summary
                     .credit_delay_ticks
                     .saturating_add(json_record_u64(record, "credit_delay_ticks"));
+                summary.max_credit_delay_ticks = summary
+                    .max_credit_delay_ticks
+                    .max(json_record_u64(record, "credit_delay_ticks"));
             }
             other => panic!("unexpected fabric trace kind {other}: {record:?}"),
         }
@@ -2945,6 +2957,11 @@ fn assert_fabric_trace_hierarchy_stats(stdout: &str, trace: &[Value]) {
                 summary.max_queue_delay_ticks,
             ),
             ("credit_delay_ticks", "Tick", summary.credit_delay_ticks),
+            (
+                "max_credit_delay_ticks",
+                "Tick",
+                summary.max_credit_delay_ticks,
+            ),
         ] {
             assert_stat(
                 stdout,
