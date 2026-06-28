@@ -8,8 +8,8 @@ use rem6_power::{
 use crate::data_cache_runtime::CliDataCacheSummary;
 use crate::gpu_cli::{Rem6GpuComputeUnitActivity, Rem6GpuRunExecutionSummary};
 use crate::{
-    PowerAnalysisFormat, Rem6CliError, Rem6CoreSummary, Rem6DramSummary, Rem6MemoryResourceSummary,
-    Rem6TraceReplayExecutionSummary,
+    PowerAnalysisFormat, Rem6CacheResourceSummary, Rem6CliError, Rem6CoreSummary, Rem6DramSummary,
+    Rem6MemoryResourceSummary, Rem6TraceReplayExecutionSummary,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -134,6 +134,16 @@ pub(crate) fn run_power_analysis_records_from_parts(
         records.push(record);
     }
     if let Some(record) = cpu_data_cache_power_record(data_cache, final_tick) {
+        records.push(record);
+    }
+    if let Some(record) =
+        shared_cache_power_record("memory.cache.l2", &memory_resources.cache_l2, final_tick)
+    {
+        records.push(record);
+    }
+    if let Some(record) =
+        shared_cache_power_record("memory.cache.l3", &memory_resources.cache_l3, final_tick)
+    {
         records.push(record);
     }
     if let Some(record) = memory_transport_power_record(memory_resources, final_tick) {
@@ -322,6 +332,53 @@ fn cache_power_record(
 
 fn cache_power_summary_is_active(cache: &CliDataCacheSummary) -> bool {
     cache.runs != 0
+        || cache.directory_decisions != 0
+        || cache.dram_accesses != 0
+        || cache.bank_accepted != 0
+        || cache.prefetch_issued != 0
+}
+
+fn shared_cache_power_record(
+    component: &str,
+    cache: &Rem6CacheResourceSummary,
+    final_tick: u64,
+) -> Option<PowerAnalysisRecord> {
+    if !cache_resource_summary_is_active(cache) {
+        return None;
+    }
+    let operations = cache
+        .cpu_responses
+        .saturating_add(cache.directory_decisions)
+        .saturating_add(cache.bank_accepted)
+        .saturating_add(cache.bank_scheduled_misses)
+        .saturating_add(cache.bank_coalesced_misses)
+        .saturating_add(cache.prefetch_issued);
+    let dynamic_watts = watts_from_activity(
+        cache.activity,
+        operations,
+        cache.dram_accesses.saturating_mul(64),
+        0.000_005,
+        0.000_003,
+        0.000_000_5,
+    );
+    Some(
+        PowerAnalysisRecord::new(
+            component,
+            PowerStateKind::On,
+            PowerResidency::new(vec![(
+                PowerStateKind::On,
+                final_tick.max(cache.activity).max(1),
+            )]),
+            38.5 + dynamic_watts.min(5.0),
+            PowerEstimate::new(dynamic_watts, 0.016),
+        )
+        .expect("shared-cache power records use valid residency and finite watts"),
+    )
+}
+
+fn cache_resource_summary_is_active(cache: &Rem6CacheResourceSummary) -> bool {
+    cache.activity != 0
+        || cache.cpu_responses != 0
         || cache.directory_decisions != 0
         || cache.dram_accesses != 0
         || cache.bank_accepted != 0
