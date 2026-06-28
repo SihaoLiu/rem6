@@ -1163,15 +1163,17 @@ complete.
 - [ ] libelf replacement breadth covers the needed gem5 loader matrix.
 - [ ] softfloat replacement breadth covers all FP rounding and exception paths.
 
-**Migrated:** Native Rust loader and DTB handoff slices plus RV64F/RV64D
-scalar load/store, arithmetic, comparison, conversion, NaN-boxing, and accrued
-flag slices.
+**Migrated:** Native Rust loader and DTB handoff slices, top-level ELF64
+extended program-header-count (`PN_XNUM`) loading, plus RV64F/RV64D scalar
+load/store, arithmetic, comparison, conversion, NaN-boxing, and accrued flag slices.
 
 **Not migrated:** Complete `ext/libelf`, `ext/libfdt`, and `ext/softfloat` parity.
 
-**Evidence:** CLI static RISC-V smoke tests, RISC-V DTB handoff tests, and RV64F/RV64D tests.
+**Evidence:** CLI static RISC-V smoke tests including ELF64 extended
+program-header counts, RISC-V DTB handoff tests, and RV64F/RV64D tests.
 
-**Next evidence:** Expand loader breadth and soft-float parity.
+**Next evidence:** Expand loader breadth beyond ELF64 extended program-header
+counts and soft-float parity.
 
 ## Open Migration Gaps
 

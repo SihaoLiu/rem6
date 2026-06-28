@@ -586,6 +586,38 @@ fn boot_image_records_loaded_program_header_table_metadata() {
 }
 
 #[test]
+fn boot_image_rejects_extended_program_header_count_with_bad_section_header_size() {
+    let mut elf = elf64_image(
+        0x8000_0080,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000_0000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0, 0, 0])],
+    );
+    let section_table_offset = elf.len() as u64;
+    write_u64(&mut elf, 40, section_table_offset);
+    write_u16(&mut elf, 56, 0xffff);
+    write_u16(&mut elf, 58, 63);
+    write_u16(&mut elf, 60, 1);
+    elf.resize(elf.len() + 64, 0);
+    write_u32(&mut elf, section_table_offset as usize + 44, 1);
+
+    assert_eq!(
+        BootImage::from_elf64_le(&elf).unwrap_err(),
+        BootError::InvalidElf {
+            reason: BootElfError::UnsupportedSectionHeaderSize {
+                expected: 64,
+                actual: 63,
+            },
+        },
+    );
+}
+
+#[test]
 fn boot_image_maps_arm_thumb_from_elf32_entry_bit() {
     let mut arm = elf32_image(
         0x8000,

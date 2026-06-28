@@ -85,7 +85,7 @@ impl RiscvSeStartupConfig {
             ));
             self.auxv.push(RiscvSeAuxvEntry::new(
                 RISCV_LINUX_AT_PHNUM,
-                u64::from(table.entry_count()),
+                table.entry_count(),
             ));
         }
         self

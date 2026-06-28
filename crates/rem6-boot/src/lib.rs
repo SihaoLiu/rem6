@@ -1,4 +1,5 @@
 mod elf;
+mod elf_counts;
 mod error;
 mod image;
 mod metadata;

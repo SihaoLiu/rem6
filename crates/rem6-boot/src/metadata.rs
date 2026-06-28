@@ -6,12 +6,12 @@ use crate::elf::{BootElfArchitecture, BootElfClass, BootElfEndian, BootElfOperat
 pub struct BootElfProgramHeaderTable {
     file_offset: u64,
     entry_size: u16,
-    entry_count: u16,
+    entry_count: u64,
     memory_address: Option<Address>,
 }
 
 impl BootElfProgramHeaderTable {
-    pub const fn new(file_offset: u64, entry_size: u16, entry_count: u16) -> Self {
+    pub const fn new(file_offset: u64, entry_size: u16, entry_count: u64) -> Self {
         Self {
             file_offset,
             entry_size,
@@ -33,7 +33,7 @@ impl BootElfProgramHeaderTable {
         self.entry_size
     }
 
-    pub const fn entry_count(self) -> u16 {
+    pub const fn entry_count(self) -> u64 {
         self.entry_count
     }
 

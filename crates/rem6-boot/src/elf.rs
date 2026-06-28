@@ -1,5 +1,6 @@
 use rem6_memory::{AccessSize, Address, AddressRange};
 
+use crate::elf_counts::{program_header_table_size, resolve_program_header_count};
 use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::image::BootImage;
 use crate::metadata::{BootElfMetadata, BootElfProgramHeaderTable};
@@ -208,29 +209,25 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         detect_elf_operating_system(bytes, BootElfClass::Class64, endian, machine, os_abi, flags)?;
     let entry = Address::new(read_u64(bytes, 24, endian)?);
     let program_header_offset = read_u64(bytes, 32, endian)?;
-    let program_header_count = read_u16(bytes, 56, endian)?;
-    let table_size = (program_header_size as u64)
-        .checked_mul(program_header_count as u64)
-        .ok_or_else(|| {
-            invalid_elf(BootElfError::ProgramHeaderTableOutOfBounds {
-                offset: program_header_offset,
-                size: u64::MAX,
-                image_size: bytes.len() as u64,
-            })
-        })?;
-    checked_file_range(bytes, program_header_offset, table_size).map_err(|_| {
-        invalid_elf(BootElfError::ProgramHeaderTableOutOfBounds {
-            offset: program_header_offset,
-            size: table_size,
-            image_size: bytes.len() as u64,
-        })
-    })?;
+    let program_header_count = resolve_program_header_count(
+        bytes,
+        BootElfClass::Class64,
+        endian,
+        read_u16(bytes, 56, endian)?,
+    )?;
+    let table_size = program_header_table_size(
+        bytes,
+        program_header_offset,
+        program_header_size,
+        program_header_count,
+    )?;
 
     let mut image = BootImage::new(entry);
     let mut program_header_memory_address = None;
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
-        let header_offset = program_header_offset + index as u64 * program_header_size as u64;
+        let segment = segment_index(index);
+        let header_offset = program_header_offset + index * program_header_size as u64;
         let kind = read_u32_at_u64(bytes, header_offset, endian)?;
         if kind != PT_LOAD {
             continue;
@@ -246,7 +243,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         if file_size > memory_size {
             return Err(invalid_elf(
                 BootElfError::SegmentFileSizeExceedsMemorySize {
-                    segment: index,
+                    segment,
                     file_size,
                     memory_size,
                 },
@@ -255,7 +252,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
 
         let file_range = checked_file_range(bytes, file_offset, file_size).map_err(|_| {
             invalid_elf(BootElfError::SegmentFileRangeOutOfBounds {
-                segment: index,
+                segment,
                 offset: file_offset,
                 size: file_size,
                 image_size: bytes.len() as u64,
@@ -263,14 +260,14 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         })?;
         let memory_access_size = AccessSize::new(memory_size).map_err(|_| {
             invalid_elf(BootElfError::SegmentMemoryRangeOverflow {
-                segment: index,
+                segment,
                 physical,
                 memory_size,
             })
         })?;
         AddressRange::new(Address::new(physical), memory_access_size).map_err(|_| {
             invalid_elf(BootElfError::SegmentMemoryRangeOverflow {
-                segment: index,
+                segment,
                 physical,
                 memory_size,
             })
@@ -284,7 +281,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                 physical,
             );
         }
-        let data = zeroed_segment_data(index, memory_size, file_range)?;
+        let data = zeroed_segment_data(segment, memory_size, file_range)?;
         image = image.add_segment(Address::new(physical), data)?;
         loaded_segments += 1;
     }
@@ -343,29 +340,25 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         detect_elf_operating_system(bytes, BootElfClass::Class32, endian, machine, os_abi, flags)?;
     let entry = Address::new(u64::from(read_u32(bytes, 24, endian)?));
     let program_header_offset = u64::from(read_u32(bytes, 28, endian)?);
-    let program_header_count = read_u16(bytes, 44, endian)?;
-    let table_size = (program_header_size as u64)
-        .checked_mul(program_header_count as u64)
-        .ok_or_else(|| {
-            invalid_elf(BootElfError::ProgramHeaderTableOutOfBounds {
-                offset: program_header_offset,
-                size: u64::MAX,
-                image_size: bytes.len() as u64,
-            })
-        })?;
-    checked_file_range(bytes, program_header_offset, table_size).map_err(|_| {
-        invalid_elf(BootElfError::ProgramHeaderTableOutOfBounds {
-            offset: program_header_offset,
-            size: table_size,
-            image_size: bytes.len() as u64,
-        })
-    })?;
+    let program_header_count = resolve_program_header_count(
+        bytes,
+        BootElfClass::Class32,
+        endian,
+        read_u16(bytes, 44, endian)?,
+    )?;
+    let table_size = program_header_table_size(
+        bytes,
+        program_header_offset,
+        program_header_size,
+        program_header_count,
+    )?;
 
     let mut image = BootImage::new(entry);
     let mut program_header_memory_address = None;
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
-        let header_offset = program_header_offset + index as u64 * program_header_size as u64;
+        let segment = segment_index(index);
+        let header_offset = program_header_offset + index * program_header_size as u64;
         let kind = read_u32_at_u64(bytes, header_offset, endian)?;
         if kind != PT_LOAD {
             continue;
@@ -381,7 +374,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         if file_size > memory_size {
             return Err(invalid_elf(
                 BootElfError::SegmentFileSizeExceedsMemorySize {
-                    segment: index,
+                    segment,
                     file_size,
                     memory_size,
                 },
@@ -390,7 +383,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
 
         let file_range = checked_file_range(bytes, file_offset, file_size).map_err(|_| {
             invalid_elf(BootElfError::SegmentFileRangeOutOfBounds {
-                segment: index,
+                segment,
                 offset: file_offset,
                 size: file_size,
                 image_size: bytes.len() as u64,
@@ -398,28 +391,28 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         })?;
         let memory_end = physical.checked_add(memory_size).ok_or_else(|| {
             invalid_elf(BootElfError::SegmentMemoryRangeOverflow {
-                segment: index,
+                segment,
                 physical,
                 memory_size,
             })
         })?;
         if memory_end > u64::from(u32::MAX) + 1 {
             return Err(invalid_elf(BootElfError::SegmentMemoryRangeOverflow {
-                segment: index,
+                segment,
                 physical,
                 memory_size,
             }));
         }
         let memory_access_size = AccessSize::new(memory_size).map_err(|_| {
             invalid_elf(BootElfError::SegmentMemoryRangeOverflow {
-                segment: index,
+                segment,
                 physical,
                 memory_size,
             })
         })?;
         AddressRange::new(Address::new(physical), memory_access_size).map_err(|_| {
             invalid_elf(BootElfError::SegmentMemoryRangeOverflow {
-                segment: index,
+                segment,
                 physical,
                 memory_size,
             })
@@ -433,7 +426,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                 physical,
             );
         }
-        let data = zeroed_segment_data(index, memory_size, file_range)?;
+        let data = zeroed_segment_data(segment, memory_size, file_range)?;
         image = image.add_segment(Address::new(physical), data)?;
         loaded_segments += 1;
     }
@@ -461,6 +454,10 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
             .with_memory_address(program_header_memory_address),
         ),
     ))
+}
+
+fn segment_index(index: u64) -> u16 {
+    u16::try_from(index).unwrap_or(u16::MAX)
 }
 
 fn loaded_file_address(

@@ -80,6 +80,10 @@ pub enum BootElfError {
         expected: u16,
         actual: u16,
     },
+    UnsupportedSectionHeaderSize {
+        expected: u16,
+        actual: u16,
+    },
     UnsupportedVersion {
         version: u8,
     },
@@ -190,6 +194,10 @@ impl fmt::Display for BootElfError {
             Self::UnsupportedProgramHeaderSize { expected, actual } => write!(
                 formatter,
                 "unsupported ELF program header size {actual}, expected {expected}"
+            ),
+            Self::UnsupportedSectionHeaderSize { expected, actual } => write!(
+                formatter,
+                "unsupported ELF section header size {actual}, expected {expected}"
             ),
             Self::UnsupportedVersion { version } => {
                 write!(formatter, "unsupported ELF version {version}")
