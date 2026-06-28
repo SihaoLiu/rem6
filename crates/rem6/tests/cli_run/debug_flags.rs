@@ -1723,6 +1723,87 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
 }
 
 #[test]
+fn rem6_run_dram_debug_flag_exposes_lpddr_low_power_hierarchy_trace() {
+    const DATA_OFFSET: usize = 64;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                          // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                  // ld x5, 0(x2)
+        i_type(1, 5, 0x0, 6, 0x13),                  // addi x6, x5, 1
+        s_type(128, 6, 2, 0x3),                      // sd x6, 128(x2)
+        0x0000_0073,                                 // ecall
+    ]);
+    program.resize(DATA_OFFSET + 192, 0);
+    program[DATA_OFFSET..DATA_OFFSET + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-dram-low-power", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "180",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--dram-memory-profile",
+            "lpddr",
+            "--dram-low-power-precharge-powerdown-entry-delay",
+            "2",
+            "--dram-low-power-self-refresh-entry-delay",
+            "5",
+            "--dram-low-power-exit-latency",
+            "1",
+            "--dram-low-power-self-refresh-exit-latency",
+            "3",
+            "--debug-flags",
+            "Dram",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let trace = json
+        .pointer("/debug/dram_trace")
+        .and_then(Value::as_array)
+        .expect("debug DRAM trace array");
+    let target_self_refresh_entries =
+        debug_low_power_trace_sum(trace, "target", "/self_refresh/entries");
+    let port_self_refresh_entries =
+        debug_low_power_trace_sum(trace, "port", "/self_refresh/entries");
+    let bank_self_refresh_entries =
+        debug_low_power_trace_sum(trace, "bank", "/self_refresh/entries");
+    let bank_self_refresh_ticks = debug_low_power_trace_sum(trace, "bank", "/self_refresh/ticks");
+    let bank_exit_latency_ticks = debug_low_power_trace_sum(trace, "bank", "/exit_latency_ticks");
+
+    assert!(target_self_refresh_entries > 0, "trace: {trace:?}");
+    assert_eq!(target_self_refresh_entries, port_self_refresh_entries);
+    assert_eq!(port_self_refresh_entries, bank_self_refresh_entries);
+    assert!(bank_self_refresh_ticks > 0, "trace: {trace:?}");
+    assert!(bank_exit_latency_ticks > 0, "trace: {trace:?}");
+    for kind in ["target", "port", "bank"] {
+        assert_dram_low_power_kind_stats(&stdout, trace, kind);
+    }
+    for record in trace {
+        assert_dram_low_power_trace_stats(&stdout, record);
+    }
+}
+
+#[test]
 fn rem6_run_dram_debug_flag_participates_in_sorted_deduped_flag_lists() {
     let program = riscv64_program(&[
         0x0070_0293, // addi x5, x0, 7
@@ -1957,6 +2038,20 @@ fn debug_trace_max(trace: &[Value], kind: &str, field: &str) -> u64 {
         })
         .max()
         .unwrap_or(0)
+}
+
+fn debug_low_power_trace_sum(trace: &[Value], kind: &str, pointer: &str) -> u64 {
+    trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some(kind))
+        .map(|record| {
+            record
+                .get("low_power")
+                .and_then(|low_power| low_power.pointer(pointer))
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("{kind} low_power{pointer}: {record:?}"))
+        })
+        .sum()
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -2576,6 +2671,91 @@ fn assert_dram_trace_hierarchy_stats(stdout: &str, record: &Value) {
         }
         other => panic!("unexpected DRAM trace kind {other}: {record:?}"),
     }
+}
+
+fn assert_dram_low_power_trace_stats(stdout: &str, record: &Value) {
+    let kind = record
+        .get("kind")
+        .and_then(Value::as_str)
+        .expect("DRAM trace kind");
+    let target = record
+        .get("target")
+        .and_then(Value::as_u64)
+        .expect("DRAM trace target");
+    let prefix = match kind {
+        "target" => format!("sim.debug.dram_trace.target{target}.low_power"),
+        "port" => {
+            let port = record
+                .get("port")
+                .and_then(Value::as_u64)
+                .expect("DRAM trace port");
+            format!("sim.debug.dram_trace.target{target}.port{port}.low_power")
+        }
+        "bank" => {
+            let port = record
+                .get("port")
+                .and_then(Value::as_u64)
+                .expect("DRAM trace port");
+            let bank = record
+                .get("bank")
+                .and_then(Value::as_u64)
+                .expect("DRAM trace bank");
+            format!("sim.debug.dram_trace.target{target}.port{port}.bank{bank}.low_power")
+        }
+        other => panic!("unexpected DRAM trace kind {other}: {record:?}"),
+    };
+    let low_power = record
+        .get("low_power")
+        .unwrap_or_else(|| panic!("DRAM trace low_power: {record:?}"));
+    for (path, pointer, unit) in dram_low_power_stat_fields() {
+        assert_stat(
+            stdout,
+            &format!("{prefix}.{path}"),
+            unit,
+            low_power
+                .pointer(pointer)
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("DRAM trace low_power{pointer}: {record:?}")),
+            "monotonic",
+        );
+    }
+}
+
+fn assert_dram_low_power_kind_stats(stdout: &str, trace: &[Value], kind: &str) {
+    for (path, pointer, unit) in dram_low_power_stat_fields() {
+        assert_stat(
+            stdout,
+            &format!("sim.debug.dram_trace.{kind}.low_power.{path}"),
+            unit,
+            debug_low_power_trace_sum(trace, kind, pointer),
+            "monotonic",
+        );
+    }
+}
+
+fn dram_low_power_stat_fields() -> [(&'static str, &'static str, &'static str); 8] {
+    [
+        (
+            "active_powerdown.entries",
+            "/active_powerdown/entries",
+            "Count",
+        ),
+        ("active_powerdown.ticks", "/active_powerdown/ticks", "Tick"),
+        (
+            "precharge_powerdown.entries",
+            "/precharge_powerdown/entries",
+            "Count",
+        ),
+        (
+            "precharge_powerdown.ticks",
+            "/precharge_powerdown/ticks",
+            "Tick",
+        ),
+        ("self_refresh.entries", "/self_refresh/entries", "Count"),
+        ("self_refresh.ticks", "/self_refresh/ticks", "Tick"),
+        ("exits", "/exits", "Count"),
+        ("exit_latency_ticks", "/exit_latency_ticks", "Tick"),
+    ]
 }
 
 fn assert_dram_trace_record_stats(

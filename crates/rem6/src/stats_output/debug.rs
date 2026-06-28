@@ -366,6 +366,15 @@ pub(super) fn emit_debug_stats(
             stat.value(),
         )?;
     }
+    for stat in debug.dram_trace_low_power_kind_stats() {
+        increment_stat(
+            stats,
+            &format!("sim.debug.dram_trace.{}", stat.path()),
+            stat.unit(),
+            StatResetPolicy::Monotonic,
+            stat.value(),
+        )?;
+    }
     for stat in debug.fabric_trace_stats(stat_path_segment) {
         increment_stat(
             stats,

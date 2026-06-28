@@ -19,7 +19,9 @@ use crate::{
 };
 use branch::{branch_trace_records, Rem6BranchTraceRecord};
 use cache::{cache_trace_records, cache_trace_stats, Rem6CacheTraceRecord, Rem6CacheTraceStat};
-use dram::{dram_trace_records, Rem6DramTraceRecord, Rem6DramTraceStat};
+use dram::{
+    dram_trace_low_power_kind_stats, dram_trace_records, Rem6DramTraceRecord, Rem6DramTraceStat,
+};
 use fabric::{
     fabric_trace_records, fabric_trace_stats, Rem6FabricTraceRecord, Rem6FabricTraceStat,
 };
@@ -541,6 +543,10 @@ impl Rem6DebugSummary {
             .iter()
             .flat_map(Rem6DramTraceRecord::stats)
             .collect()
+    }
+
+    pub(crate) fn dram_trace_low_power_kind_stats(&self) -> Vec<Rem6DramTraceStat> {
+        dram_trace_low_power_kind_stats(&self.dram_trace)
     }
 
     pub(crate) fn dram_target_trace_count(&self) -> u64 {

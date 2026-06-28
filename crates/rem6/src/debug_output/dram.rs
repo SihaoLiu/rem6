@@ -15,6 +15,7 @@ pub(crate) enum Rem6DramTraceRecord {
         turnarounds: u64,
         total_ready_latency_ticks: u64,
         max_ready_latency_ticks: u64,
+        low_power: Rem6DramTraceLowPower,
     },
     Port {
         target: u32,
@@ -30,6 +31,7 @@ pub(crate) enum Rem6DramTraceRecord {
         turnarounds: u64,
         total_ready_latency_ticks: u64,
         max_ready_latency_ticks: u64,
+        low_power: Rem6DramTraceLowPower,
     },
     Bank {
         target: u32,
@@ -45,7 +47,20 @@ pub(crate) enum Rem6DramTraceRecord {
         commands: u64,
         total_ready_latency_ticks: u64,
         max_ready_latency_ticks: u64,
+        low_power: Rem6DramTraceLowPower,
     },
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct Rem6DramTraceLowPower {
+    active_powerdown_entries: u64,
+    active_powerdown_ticks: u64,
+    precharge_powerdown_entries: u64,
+    precharge_powerdown_ticks: u64,
+    self_refresh_entries: u64,
+    self_refresh_ticks: u64,
+    exits: u64,
+    exit_latency_ticks: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -85,8 +100,9 @@ impl Rem6DramTraceRecord {
                 turnarounds,
                 total_ready_latency_ticks,
                 max_ready_latency_ticks,
+                low_power,
             } => format!(
-                "{{\"kind\":\"target\",\"target\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{}}}",
+                "{{\"kind\":\"target\",\"target\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"low_power\":{}}}",
                 target,
                 accesses,
                 reads,
@@ -99,6 +115,7 @@ impl Rem6DramTraceRecord {
                 turnarounds,
                 total_ready_latency_ticks,
                 max_ready_latency_ticks,
+                low_power.to_json(),
             ),
             Self::Port {
                 target,
@@ -114,8 +131,9 @@ impl Rem6DramTraceRecord {
                 turnarounds,
                 total_ready_latency_ticks,
                 max_ready_latency_ticks,
+                low_power,
             } => format!(
-                "{{\"kind\":\"port\",\"target\":{},\"port\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{}}}",
+                "{{\"kind\":\"port\",\"target\":{},\"port\":{},\"accesses\":{},\"reads\":{},\"writes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"turnarounds\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"low_power\":{}}}",
                 target,
                 port,
                 accesses,
@@ -129,6 +147,7 @@ impl Rem6DramTraceRecord {
                 turnarounds,
                 total_ready_latency_ticks,
                 max_ready_latency_ticks,
+                low_power.to_json(),
             ),
             Self::Bank {
                 target,
@@ -144,8 +163,9 @@ impl Rem6DramTraceRecord {
                 commands,
                 total_ready_latency_ticks,
                 max_ready_latency_ticks,
+                low_power,
             } => format!(
-                "{{\"kind\":\"bank\",\"target\":{},\"port\":{},\"bank\":{},\"accesses\":{},\"read_bytes\":{},\"write_bytes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{}}}",
+                "{{\"kind\":\"bank\",\"target\":{},\"port\":{},\"bank\":{},\"accesses\":{},\"read_bytes\":{},\"write_bytes\":{},\"row_hits\":{},\"row_misses\":{},\"refreshes\":{},\"refresh_ticks\":{},\"commands\":{},\"total_ready_latency_ticks\":{},\"max_ready_latency_ticks\":{},\"low_power\":{}}}",
                 target,
                 port,
                 bank,
@@ -159,6 +179,7 @@ impl Rem6DramTraceRecord {
                 commands,
                 total_ready_latency_ticks,
                 max_ready_latency_ticks,
+                low_power.to_json(),
             ),
         }
     }
@@ -168,6 +189,14 @@ impl Rem6DramTraceRecord {
             Self::Target { .. } => "target",
             Self::Port { .. } => "port",
             Self::Bank { .. } => "bank",
+        }
+    }
+
+    const fn low_power(&self) -> Rem6DramTraceLowPower {
+        match self {
+            Self::Target { low_power, .. }
+            | Self::Port { low_power, .. }
+            | Self::Bank { low_power, .. } => *low_power,
         }
     }
 
@@ -187,6 +216,7 @@ impl Rem6DramTraceRecord {
                 turnarounds,
                 total_ready_latency_ticks,
                 max_ready_latency_ticks,
+                low_power,
             } => {
                 let prefix = format!("target{target}");
                 for (suffix, unit, value) in [
@@ -208,6 +238,7 @@ impl Rem6DramTraceRecord {
                 ] {
                     push_dram_trace_stat(&mut stats, &prefix, suffix, unit, value);
                 }
+                low_power.push_stats(&mut stats, &format!("{prefix}.low_power"));
             }
             Self::Port {
                 target,
@@ -223,6 +254,7 @@ impl Rem6DramTraceRecord {
                 turnarounds,
                 total_ready_latency_ticks,
                 max_ready_latency_ticks,
+                low_power,
             } => {
                 let prefix = format!("target{target}.port{port}");
                 for (suffix, unit, value) in [
@@ -244,6 +276,7 @@ impl Rem6DramTraceRecord {
                 ] {
                     push_dram_trace_stat(&mut stats, &prefix, suffix, unit, value);
                 }
+                low_power.push_stats(&mut stats, &format!("{prefix}.low_power"));
             }
             Self::Bank {
                 target,
@@ -259,6 +292,7 @@ impl Rem6DramTraceRecord {
                 commands,
                 total_ready_latency_ticks,
                 max_ready_latency_ticks,
+                low_power,
             } => {
                 let prefix = format!("target{target}.port{port}.bank{bank}");
                 for (suffix, unit, value) in [
@@ -279,6 +313,7 @@ impl Rem6DramTraceRecord {
                 ] {
                     push_dram_trace_stat(&mut stats, &prefix, suffix, unit, value);
                 }
+                low_power.push_stats(&mut stats, &format!("{prefix}.low_power"));
             }
         }
         stats
@@ -311,6 +346,16 @@ pub(crate) fn dram_trace_records(dram: &Rem6DramSummary) -> Vec<Rem6DramTraceRec
             turnarounds: target.turnarounds,
             total_ready_latency_ticks: target.total_ready_latency_ticks,
             max_ready_latency_ticks: target.max_ready_latency_ticks,
+            low_power: Rem6DramTraceLowPower {
+                active_powerdown_entries: target.low_power_active_powerdown_entries,
+                active_powerdown_ticks: target.low_power_active_powerdown_ticks,
+                precharge_powerdown_entries: target.low_power_precharge_powerdown_entries,
+                precharge_powerdown_ticks: target.low_power_precharge_powerdown_ticks,
+                self_refresh_entries: target.low_power_self_refresh_entries,
+                self_refresh_ticks: target.low_power_self_refresh_ticks,
+                exits: target.low_power_exits,
+                exit_latency_ticks: target.low_power_exit_latency_ticks,
+            },
         });
         for port in &target.ports {
             records.push(Rem6DramTraceRecord::Port {
@@ -327,6 +372,16 @@ pub(crate) fn dram_trace_records(dram: &Rem6DramSummary) -> Vec<Rem6DramTraceRec
                 turnarounds: port.turnarounds,
                 total_ready_latency_ticks: dram_port_total_ready_latency_ticks(port),
                 max_ready_latency_ticks: dram_port_max_ready_latency_ticks(port),
+                low_power: Rem6DramTraceLowPower {
+                    active_powerdown_entries: port.low_power_active_powerdown_entries,
+                    active_powerdown_ticks: port.low_power_active_powerdown_ticks,
+                    precharge_powerdown_entries: port.low_power_precharge_powerdown_entries,
+                    precharge_powerdown_ticks: port.low_power_precharge_powerdown_ticks,
+                    self_refresh_entries: port.low_power_self_refresh_entries,
+                    self_refresh_ticks: port.low_power_self_refresh_ticks,
+                    exits: port.low_power_exits,
+                    exit_latency_ticks: port.low_power_exit_latency_ticks,
+                },
             });
             for bank in &port.banks {
                 records.push(Rem6DramTraceRecord::Bank {
@@ -343,12 +398,112 @@ pub(crate) fn dram_trace_records(dram: &Rem6DramSummary) -> Vec<Rem6DramTraceRec
                     commands: bank.commands,
                     total_ready_latency_ticks: bank.total_ready_latency_ticks,
                     max_ready_latency_ticks: bank.max_ready_latency_ticks,
+                    low_power: Rem6DramTraceLowPower {
+                        active_powerdown_entries: bank.low_power_active_powerdown_entries,
+                        active_powerdown_ticks: bank.low_power_active_powerdown_ticks,
+                        precharge_powerdown_entries: bank.low_power_precharge_powerdown_entries,
+                        precharge_powerdown_ticks: bank.low_power_precharge_powerdown_ticks,
+                        self_refresh_entries: bank.low_power_self_refresh_entries,
+                        self_refresh_ticks: bank.low_power_self_refresh_ticks,
+                        exits: bank.low_power_exits,
+                        exit_latency_ticks: bank.low_power_exit_latency_ticks,
+                    },
                 });
             }
         }
     }
     records.sort_by_key(Rem6DramTraceRecord::sort_key);
     records
+}
+
+pub(crate) fn dram_trace_low_power_kind_stats(
+    records: &[Rem6DramTraceRecord],
+) -> Vec<Rem6DramTraceStat> {
+    let mut stats = Vec::new();
+    for kind in ["target", "port", "bank"] {
+        let low_power = records
+            .iter()
+            .filter(|record| record.kind() == kind)
+            .fold(Rem6DramTraceLowPower::default(), |acc, record| {
+                acc.saturating_add(record.low_power())
+            });
+        low_power.push_stats(&mut stats, &format!("{kind}.low_power"));
+    }
+    stats
+}
+
+impl Rem6DramTraceLowPower {
+    const fn saturating_add(self, other: Self) -> Self {
+        Self {
+            active_powerdown_entries: self
+                .active_powerdown_entries
+                .saturating_add(other.active_powerdown_entries),
+            active_powerdown_ticks: self
+                .active_powerdown_ticks
+                .saturating_add(other.active_powerdown_ticks),
+            precharge_powerdown_entries: self
+                .precharge_powerdown_entries
+                .saturating_add(other.precharge_powerdown_entries),
+            precharge_powerdown_ticks: self
+                .precharge_powerdown_ticks
+                .saturating_add(other.precharge_powerdown_ticks),
+            self_refresh_entries: self
+                .self_refresh_entries
+                .saturating_add(other.self_refresh_entries),
+            self_refresh_ticks: self
+                .self_refresh_ticks
+                .saturating_add(other.self_refresh_ticks),
+            exits: self.exits.saturating_add(other.exits),
+            exit_latency_ticks: self
+                .exit_latency_ticks
+                .saturating_add(other.exit_latency_ticks),
+        }
+    }
+
+    fn to_json(self) -> String {
+        format!(
+            "{{\"active_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"precharge_powerdown\":{{\"entries\":{},\"ticks\":{}}},\"self_refresh\":{{\"entries\":{},\"ticks\":{}}},\"exits\":{},\"exit_latency_ticks\":{}}}",
+            self.active_powerdown_entries,
+            self.active_powerdown_ticks,
+            self.precharge_powerdown_entries,
+            self.precharge_powerdown_ticks,
+            self.self_refresh_entries,
+            self.self_refresh_ticks,
+            self.exits,
+            self.exit_latency_ticks,
+        )
+    }
+
+    fn push_stats(self, stats: &mut Vec<Rem6DramTraceStat>, prefix: &str) {
+        for (suffix, unit, value) in [
+            (
+                "active_powerdown.entries",
+                "Count",
+                self.active_powerdown_entries,
+            ),
+            (
+                "active_powerdown.ticks",
+                "Tick",
+                self.active_powerdown_ticks,
+            ),
+            (
+                "precharge_powerdown.entries",
+                "Count",
+                self.precharge_powerdown_entries,
+            ),
+            (
+                "precharge_powerdown.ticks",
+                "Tick",
+                self.precharge_powerdown_ticks,
+            ),
+            ("self_refresh.entries", "Count", self.self_refresh_entries),
+            ("self_refresh.ticks", "Tick", self.self_refresh_ticks),
+            ("exits", "Count", self.exits),
+            ("exit_latency_ticks", "Tick", self.exit_latency_ticks),
+        ] {
+            push_dram_trace_stat(stats, prefix, suffix, unit, value);
+        }
+    }
 }
 
 fn push_dram_trace_stat(
