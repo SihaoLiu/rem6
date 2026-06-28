@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const MAX_FACADE_LINES: usize = 1300;
+const MAX_FACADE_LINES: usize = 1250;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_ARCHITECTURE_OVERVIEW_LINES: usize = 600;
 const MAX_MIGRATION_LEDGER_LINES: usize = 1200;

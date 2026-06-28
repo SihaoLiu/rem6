@@ -6,9 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use rem6_boot::{BootElfArchitecture, BootImage};
 use rem6_cpu::{
-    BranchTargetKindCounts, BranchTargetProviderCounts, CpuCore, CpuDataConfig, CpuFetchConfig,
-    CpuId, CpuResetState, InOrderPipelineConfig, InOrderPipelineStage, InOrderPipelineStageWidth,
-    RiscvCluster, RiscvCore,
+    CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineConfig,
+    InOrderPipelineStage, InOrderPipelineStageWidth, RiscvCluster, RiscvCore,
 };
 use rem6_fabric::{FabricLinkId, FabricPath, FabricPathHop, VirtualNetworkId};
 use rem6_isa_riscv::{Register, RiscvGdbXlen, RiscvPrivilegeMode};
@@ -33,6 +32,7 @@ mod branch_predictor_summary;
 mod cli_error;
 mod cli_output;
 mod config;
+mod core_summary;
 mod core_summary_json;
 mod data_access_counts;
 mod data_cache_runtime;
@@ -81,6 +81,7 @@ pub use config::{
     RunFabricConfig, RunMemorySystem, StatsFormat, SuiteResourceSelector,
     TraceReplayExternalAdapterKind,
 };
+pub use core_summary::{Rem6CheckerSummary, Rem6CoreSummary};
 use data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io, CliCacheHierarchy,
     CliDataCacheSummary,
@@ -105,7 +106,6 @@ pub(crate) use memory_resource_summary::{
     Rem6TransportResourceSummary,
 };
 pub use multi_run_cli::{run_multi_run_config, Rem6MultiRunArtifact, Rem6MultiRunConfig};
-use pipeline_stats::Rem6InOrderPipelineStageSummary;
 use power_output::{run_power_analysis_artifact, Rem6PowerAnalysisArtifact};
 use readfile_runtime::{read_readfiles, readfile_mmio_bus, LoadedReadfile, Rem6ReadfileSummary};
 pub use resource_acquire_cli::{
@@ -445,85 +445,6 @@ pub struct Rem6ParallelFrontierSummary {
 pub struct Rem6ParallelReadyPartitionSummary {
     partition: u32,
     next_tick: u64,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Rem6CoreSummary {
-    cpu: u32,
-    pc: u64,
-    committed_instructions: u64,
-    in_order_pipeline_cycles: u64,
-    in_order_pipeline_in_flight: u64,
-    in_order_pipeline_stage_widths: Rem6InOrderPipelineStageSummary,
-    in_order_pipeline_stage_in_flight: Rem6InOrderPipelineStageSummary,
-    in_order_pipeline_stage_max_in_flight: Rem6InOrderPipelineStageSummary,
-    in_order_pipeline_stage_occupied_cycles: Rem6InOrderPipelineStageSummary,
-    in_order_pipeline_stage_resource_blocked: Rem6InOrderPipelineStageSummary,
-    in_order_pipeline_stage_resource_blocked_cycles: Rem6InOrderPipelineStageSummary,
-    in_order_pipeline_stage_ordering_blocked: Rem6InOrderPipelineStageSummary,
-    in_order_pipeline_stage_ordering_blocked_cycles: Rem6InOrderPipelineStageSummary,
-    in_order_pipeline_stage_flushed: Rem6InOrderPipelineStageSummary,
-    in_order_pipeline_stage_flushed_cycles: Rem6InOrderPipelineStageSummary,
-    in_order_pipeline_stage_branch_prediction_flushed: Rem6InOrderPipelineStageSummary,
-    in_order_pipeline_stage_branch_prediction_flushed_cycles: Rem6InOrderPipelineStageSummary,
-    in_order_pipeline_retired: u64,
-    in_order_pipeline_advanced: u64,
-    in_order_pipeline_flushed: u64,
-    in_order_pipeline_flush_cycles: u64,
-    in_order_pipeline_resource_blocked: u64,
-    in_order_pipeline_ordering_blocked: u64,
-    in_order_pipeline_stall_cycles: u64,
-    in_order_pipeline_fetch_wait_cycles: u64,
-    in_order_pipeline_data_wait_cycles: u64,
-    in_order_pipeline_execute_wait_cycles: u64,
-    in_order_pipeline_branch_predictions: u64,
-    in_order_pipeline_branch_mispredictions: u64,
-    in_order_pipeline_conditional_branch_predictions: u64,
-    in_order_pipeline_conditional_branch_predicted_taken: u64,
-    in_order_pipeline_conditional_branch_mispredictions: u64,
-    in_order_pipeline_branch_prediction_flushes: u64,
-    in_order_pipeline_branch_prediction_flush_cycles: u64,
-    in_order_pipeline_redirects: u64,
-    in_order_pipeline_branch_speculation_predictions: u64,
-    in_order_pipeline_branch_speculation_repairs: u64,
-    in_order_pipeline_branch_speculation_removed_youngers: u64,
-    in_order_pipeline_branch_speculation_max_pending: u64,
-    branch_target_buffer_lookups: u64,
-    branch_target_buffer_hits: u64,
-    branch_target_buffer_misses: u64,
-    branch_target_buffer_updates: u64,
-    branch_target_buffer_evictions: u64,
-    branch_target_buffer_mispredictions: u64,
-    branch_target_buffer_predicted_taken_misses: u64,
-    branch_target_buffer_mispredict_due_to_btb_miss: BranchTargetKindCounts,
-    branch_predictor_lookups: BranchTargetKindCounts,
-    branch_predictor_target_provider: BranchTargetProviderCounts,
-    branch_predictor_committed: BranchTargetKindCounts,
-    branch_predictor_mispredicted: BranchTargetKindCounts,
-    branch_predictor_corrected: BranchTargetKindCounts,
-    branch_predictor_target_wrong: BranchTargetKindCounts,
-    branch_predictor_mispredict_due_to_predictor: BranchTargetKindCounts,
-    branch_predictor_gshare: Rem6BranchPredictorCounterSummary,
-    branch_predictor_bimode: Rem6BranchPredictorCounterSummary,
-    branch_predictor_tournament: Rem6BranchPredictorCounterSummary,
-    branch_predictor_tage_sc_l: Rem6TageScLBranchPredictorCounterSummary,
-    branch_predictor_multiperspective_perceptron: Rem6MultiperspectivePerceptronCounterSummary,
-    tournament_local_predictions: u64,
-    tournament_global_predictions: u64,
-    data_loads: u64,
-    data_stores: u64,
-    data_atomics: u64,
-    data_load_bytes: u64,
-    data_store_bytes: u64,
-    data_atomic_bytes: u64,
-    checker: Option<Rem6CheckerSummary>,
-    registers: Vec<(u8, u64)>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Rem6CheckerSummary {
-    checked_instructions: u64,
-    mismatches: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

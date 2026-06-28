@@ -2,7 +2,7 @@ use rem6_cpu::{
     BranchTargetKind, BranchTargetKindCounts, BranchTargetProvider, BranchTargetProviderCounts,
 };
 
-use super::{Rem6CoreSummary, Rem6InOrderPipelineStageSummary};
+use crate::{pipeline_stats::Rem6InOrderPipelineStageSummary, Rem6CoreSummary};
 
 fn branch_target_kind_counts_json(counts: BranchTargetKindCounts) -> String {
     let mut fields = BranchTargetKind::ALL
