@@ -66,10 +66,15 @@ const CLEAN_CACHES_COMPLETED: u32 = 1 << 17;
 const JOB_SLOT0_COMPLETED: u32 = 1 << 0;
 const MMU_PAGE_FAULT_AS0: u32 = 1 << 0;
 const MMU_BUS_ERROR_AS0: u32 = 1 << 16;
+const GPU_COMMAND_NOP: u32 = 0x00;
 const GPU_COMMAND_SOFT_RESET: u32 = 0x01;
 const GPU_COMMAND_HARD_RESET: u32 = 0x02;
+const GPU_COMMAND_PRFCNT_CLEAR: u32 = 0x03;
 const GPU_COMMAND_PRFCNT_SAMPLE: u32 = 0x04;
+const GPU_COMMAND_CYCLE_COUNT_START: u32 = 0x05;
+const GPU_COMMAND_CYCLE_COUNT_STOP: u32 = 0x06;
 const GPU_COMMAND_CLEAN_CACHES: u32 = 0x07;
+const GPU_COMMAND_CLEAN_INV_CACHES: u32 = 0x08;
 const GPU_COMMAND_UNSUPPORTED_PROBE: u32 = 0xdead_dead;
 const NOMALI_REGISTER_FAULT_MISALIGNED_READ_OFFSET: u32 = 0x003;
 const NOMALI_REGISTER_FAULT_OUT_OF_RANGE_WRITE_OFFSET: u32 = NOMALI_REGISTER_WINDOW_BYTES as u32;
@@ -448,6 +453,7 @@ impl NoMaliT760RegisterFile {
 
     fn gpu_command(&mut self, value: u32) {
         match value {
+            GPU_COMMAND_NOP => self.gpu_command_no_effect(value, "nop"),
             GPU_COMMAND_SOFT_RESET => {
                 self.command_writes.push(NoMaliCommandWrite {
                     name: "gpu_command",
@@ -490,6 +496,23 @@ impl NoMaliT760RegisterFile {
                 });
                 self.raise_interrupt(CLEAN_CACHES_COMPLETED);
             }
+            GPU_COMMAND_CLEAN_INV_CACHES => {
+                self.command_writes.push(NoMaliCommandWrite {
+                    name: "gpu_command",
+                    offset: GPU_COMMAND,
+                    value,
+                    command: "clean_invalidate_caches",
+                    effect: "clean_invalidate_caches_completed_interrupt",
+                });
+                self.raise_interrupt(CLEAN_CACHES_COMPLETED);
+            }
+            GPU_COMMAND_PRFCNT_CLEAR => self.gpu_command_no_effect(value, "perf_counter_clear"),
+            GPU_COMMAND_CYCLE_COUNT_START => {
+                self.gpu_command_no_effect(value, "cycle_count_start");
+            }
+            GPU_COMMAND_CYCLE_COUNT_STOP => {
+                self.gpu_command_no_effect(value, "cycle_count_stop");
+            }
             _ => {
                 self.command_writes.push(NoMaliCommandWrite {
                     name: "gpu_command",
@@ -500,6 +523,16 @@ impl NoMaliT760RegisterFile {
                 });
             }
         }
+    }
+
+    fn gpu_command_no_effect(&mut self, value: u32, command: &'static str) {
+        self.command_writes.push(NoMaliCommandWrite {
+            name: "gpu_command",
+            offset: GPU_COMMAND,
+            value,
+            command,
+            effect: "no_effect",
+        });
     }
 
     fn power_on(&mut self, domain: &NoMaliPowerDomain, value: u32) {
@@ -725,10 +758,18 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
         PRFCNT_SAMPLE_COMPLETED | CLEAN_CACHES_COMPLETED,
     );
     pio.record_irq_snapshot("after_command_irq_clear");
+    pio.write_reg(GPU_COMMAND, GPU_COMMAND_CLEAN_INV_CACHES);
+    pio.record_irq_snapshot("after_clean_invalidate_caches_command");
+    pio.write_reg(GPU_IRQ_CLEAR, CLEAN_CACHES_COMPLETED);
+    pio.record_irq_snapshot("after_clean_invalidate_irq_clear");
     pio.write_reg(
         GPU_IRQ_MASK,
         RESET_COMPLETED | POWER_CHANGED_SINGLE | POWER_CHANGED_ALL,
     );
+    pio.write_reg(GPU_COMMAND, GPU_COMMAND_NOP);
+    pio.write_reg(GPU_COMMAND, GPU_COMMAND_PRFCNT_CLEAR);
+    pio.write_reg(GPU_COMMAND, GPU_COMMAND_CYCLE_COUNT_START);
+    pio.write_reg(GPU_COMMAND, GPU_COMMAND_CYCLE_COUNT_STOP);
     pio.probe_register_faults();
     let contents = format!(
         "{{\"schema\":\"rem6.nomali.gpu-adapter.v1\",\"source_schema\":\"rem6.cli.gpu-run.v1\",\"scope\":\"gpu-run-execution-summary-adapter\",\"gpu\":{},\"interface\":{},\"pio\":{},\"execution\":{{\"status\":\"completed\",\"final_tick\":{},\"compute_units\":{},\"workgroup_completions\":{},\"coalesced_memory_accesses\":{},\"global_memory_reads\":{},\"global_memory_writes\":{},\"memory_read_callback_observations\":{},\"memory_write_callback_observations\":{},\"job_event_observations\":{},\"compute_unit_activity\":[{}]}}}}\n",
