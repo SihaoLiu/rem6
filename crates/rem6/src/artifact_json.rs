@@ -1385,12 +1385,19 @@ impl Rem6HostInjectedCommandSummary {
 
 impl Rem6GuestHostCallSummary {
     fn to_json(&self) -> String {
+        let arguments = self
+            .arguments
+            .iter()
+            .map(u64::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
-            "{{\"tick\":{},\"event\":{},\"source\":{},\"selector\":{},\"argument_count\":{},\"payload_bytes\":{},\"response_status\":{},\"response_return_count\":{},\"response_payload_bytes\":{}}}",
+            "{{\"tick\":{},\"event\":{},\"source\":{},\"selector\":{},\"arguments\":[{}],\"argument_count\":{},\"payload_bytes\":{},\"response_status\":{},\"response_return_count\":{},\"response_payload_bytes\":{}}}",
             self.tick,
             self.event,
             self.source,
             self.selector,
+            arguments,
             self.argument_count,
             self.payload_bytes,
             self.response_status,

@@ -48,6 +48,10 @@ pub(crate) fn execute_gem5_pseudo_op(
 ) -> Option<RiscvSystemEvent> {
     let a0 = hart.read(Register::from_field(10));
     let a1 = hart.read(Register::from_field(11));
+    let a2 = hart.read(Register::from_field(12));
+    let a3 = hart.read(Register::from_field(13));
+    let a4 = hart.read(Register::from_field(14));
+    let a5 = hart.read(Register::from_field(15));
     let event = match op {
         RiscvPseudoOp::Exit => Some(RiscvSystemEvent::Gem5Exit { pc, delay: a0 }),
         RiscvPseudoOp::Fail => Some(RiscvSystemEvent::Gem5Fail {
@@ -83,7 +87,11 @@ pub(crate) fn execute_gem5_pseudo_op(
             period: a1,
         }),
         RiscvPseudoOp::SwitchCpu => Some(RiscvSystemEvent::Gem5SwitchCpu { pc }),
-        RiscvPseudoOp::Hypercall => Some(RiscvSystemEvent::Gem5Hypercall { pc, selector: a0 }),
+        RiscvPseudoOp::Hypercall => Some(RiscvSystemEvent::Gem5Hypercall {
+            pc,
+            selector: a0,
+            arguments: [a1, a2, a3, a4, a5],
+        }),
         RiscvPseudoOp::WorkBegin => Some(RiscvSystemEvent::Gem5WorkBegin {
             pc,
             work_id: a0,

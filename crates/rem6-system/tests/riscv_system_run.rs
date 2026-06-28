@@ -1015,7 +1015,7 @@ fn riscv_system_run_driver_routes_gem5_work_marker_pseudo_ops_to_host() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            30,
+            60,
             |_cpu| {
                 let event = GuestEventId::new(next_event_id);
                 next_event_id += 1;
@@ -1415,8 +1415,13 @@ fn riscv_system_run_driver_routes_gem5_hypercall_pseudo_op_to_host() {
     let cluster = RiscvCluster::new([core]).unwrap();
     let store = loaded_program_store(&[
         (0x8000, i_type(0x321, 0, 0x0, 10, 0x13)),
-        (0x8004, gem5_m5op_type(0x71)),
-        (0x8008, 0x0000_0073),
+        (0x8004, i_type(11, 0, 0x0, 11, 0x13)),
+        (0x8008, i_type(12, 0, 0x0, 12, 0x13)),
+        (0x800c, i_type(13, 0, 0x0, 13, 0x13)),
+        (0x8010, i_type(14, 0, 0x0, 14, 0x13)),
+        (0x8014, i_type(15, 0, 0x0, 15, 0x13)),
+        (0x8018, gem5_m5op_type(0x71)),
+        (0x801c, 0x0000_0073),
     ]);
     let controller = Arc::new(Mutex::new(SystemHostController::new(
         HostEventPolicy,
@@ -1438,7 +1443,7 @@ fn riscv_system_run_driver_routes_gem5_hypercall_pseudo_op_to_host() {
             MemoryTrace::new(),
             |_cpu| responder(Arc::clone(&store)),
             |_cpu| responder(Arc::clone(&store)),
-            30,
+            60,
             |_cpu| {
                 let event = GuestEventId::new(next_event_id);
                 next_event_id += 1;
@@ -1462,11 +1467,11 @@ fn riscv_system_run_driver_routes_gem5_hypercall_pseudo_op_to_host() {
         controller.run().action_outcomes(),
         &[
             SystemActionOutcome::GuestHostCall {
-                tick: 14,
+                tick: 44,
                 event: GuestEventId::new(150),
                 source,
                 selector: 0x321,
-                arguments: Vec::new(),
+                arguments: vec![11, 12, 13, 14, 15],
                 payload: Vec::new(),
                 response: GuestHostCallResponse::unhandled(),
             },

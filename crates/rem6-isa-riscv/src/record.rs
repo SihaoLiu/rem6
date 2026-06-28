@@ -76,6 +76,7 @@ pub enum RiscvSystemEvent {
     Gem5Hypercall {
         pc: u64,
         selector: u64,
+        arguments: [u64; 5],
     },
     Gem5WorkBegin {
         pc: u64,

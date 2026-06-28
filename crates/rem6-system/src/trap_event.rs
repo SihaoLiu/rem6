@@ -1141,12 +1141,16 @@ fn guest_event_from_riscv_system_event(
                 code: 0,
             },
         }),
-        Some(RiscvSystemEvent::Gem5Hypercall { selector, .. }) => Some(RiscvGuestEventSchedule {
+        Some(RiscvSystemEvent::Gem5Hypercall {
+            selector,
+            arguments,
+            ..
+        }) => Some(RiscvGuestEventSchedule {
             delay: 0,
             period: 0,
             kind: GuestEventKind::GuestHostCall {
                 selector: *selector,
-                arguments: Vec::new(),
+                arguments: arguments.to_vec(),
                 payload: Vec::new(),
             },
         }),

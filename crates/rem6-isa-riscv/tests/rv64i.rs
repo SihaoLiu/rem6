@@ -3183,6 +3183,10 @@ fn hart_decodes_and_records_gem5_hypercall_pseudo_op() {
     let mut hart = RiscvHartState::new(0x7600);
     hart.write(reg(10), 0x7101);
     hart.write(reg(11), 0x22);
+    hart.write(reg(12), 0x33);
+    hart.write(reg(13), 0x44);
+    hart.write(reg(14), 0x55);
+    hart.write(reg(15), 0x66);
     let record = hart.execute(hypercall).unwrap();
 
     assert_eq!(record.pc(), 0x7600);
@@ -3193,6 +3197,7 @@ fn hart_decodes_and_records_gem5_hypercall_pseudo_op() {
         Some(&RiscvSystemEvent::Gem5Hypercall {
             pc: 0x7600,
             selector: 0x7101,
+            arguments: [0x22, 0x33, 0x44, 0x55, 0x66],
         })
     );
     assert_eq!(record.register_writes(), &[RegisterWrite::new(reg(10), 0)]);

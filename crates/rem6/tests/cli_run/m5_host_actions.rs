@@ -123,6 +123,11 @@ fn rem6_run_emits_m5_work_marker_host_actions_from_real_riscv_execution() {
 fn rem6_run_emits_m5_hypercall_host_action_detail_from_real_riscv_execution() {
     let program = riscv64_program(&[
         i_type(0x321, 0, 0x0, 10, 0x13),
+        i_type(11, 0, 0x0, 11, 0x13),
+        i_type(12, 0, 0x0, 12, 0x13),
+        i_type(13, 0, 0x0, 13, 0x13),
+        i_type(14, 0, 0x0, 14, 0x13),
+        i_type(15, 0, 0x0, 15, 0x13),
         m5op(M5_HYPERCALL),
         m5op(M5_EXIT),
     ]);
@@ -187,7 +192,19 @@ fn rem6_run_emits_m5_hypercall_host_action_detail_from_real_riscv_execution() {
     );
     assert_eq!(
         call.pointer("/argument_count").and_then(Value::as_u64),
-        Some(0)
+        Some(5)
+    );
+    assert_eq!(
+        call.pointer("/arguments")
+            .and_then(Value::as_array)
+            .cloned(),
+        Some(vec![
+            Value::from(11),
+            Value::from(12),
+            Value::from(13),
+            Value::from(14),
+            Value::from(15),
+        ])
     );
     assert_eq!(
         call.pointer("/payload_bytes").and_then(Value::as_u64),
