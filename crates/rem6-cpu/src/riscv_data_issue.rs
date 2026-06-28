@@ -1,6 +1,7 @@
 use rem6_isa_riscv::{
-    AtomicMemoryOp, MemoryAccessKind, MemoryResponseWritebackTarget, MemoryWidth,
-    RiscvPmaAccessKind, RiscvPmpAccessKind, RiscvPrivilegeMode,
+    AtomicMemoryOp, MemoryAccessKind, MemoryResponseWritebackTarget, MemoryWidth, RiscvHartState,
+    RiscvPmaAccessKind, RiscvPmpAccessKind, RiscvPrivilegeMode, VectorRegister,
+    RISCV_VECTOR_REGISTER_BYTES,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionId, PartitionedScheduler, Tick,
@@ -794,17 +795,61 @@ fn record_load_completion(
             state.reservation = None;
             state.sc_progress.record_success(cpu);
         }
-        MemoryAccessKind::VectorLoadUnitStride { vd, byte_len, .. } => {
+        MemoryAccessKind::VectorLoadUnitStride {
+            vd,
+            byte_len,
+            group_registers,
+            ..
+        } => {
             let data = data.expect(missing_data);
             assert_eq!(*byte_len, data.len(), "vector load response payload width");
-            let mut destination = state.hart.read_vector(*vd);
+            let mut destination = read_vector_register_group(&state.hart, *vd, *group_registers);
             destination[..*byte_len].copy_from_slice(data);
-            state.hart.write_vector(*vd, destination);
+            write_vector_register_group(&mut state.hart, *vd, *group_registers, &destination);
         }
         MemoryAccessKind::Store { .. }
         | MemoryAccessKind::FloatStore { .. }
         | MemoryAccessKind::VectorStoreUnitStride { .. } => {}
     }
+}
+
+fn read_vector_register_group(
+    hart: &RiscvHartState,
+    register: VectorRegister,
+    group_registers: usize,
+) -> Vec<u8> {
+    let group_bytes = group_registers * RISCV_VECTOR_REGISTER_BYTES;
+    let mut bytes = vec![0; group_bytes];
+    for group_index in 0..group_registers {
+        let vector = hart.read_vector(vector_register_at(register, group_index));
+        let offset = group_index * RISCV_VECTOR_REGISTER_BYTES;
+        bytes[offset..offset + RISCV_VECTOR_REGISTER_BYTES].copy_from_slice(&vector);
+    }
+    bytes
+}
+
+fn write_vector_register_group(
+    hart: &mut RiscvHartState,
+    register: VectorRegister,
+    group_registers: usize,
+    bytes: &[u8],
+) {
+    assert_eq!(
+        bytes.len(),
+        group_registers * RISCV_VECTOR_REGISTER_BYTES,
+        "vector register group payload width"
+    );
+    for group_index in 0..group_registers {
+        let offset = group_index * RISCV_VECTOR_REGISTER_BYTES;
+        let mut vector = [0; RISCV_VECTOR_REGISTER_BYTES];
+        vector.copy_from_slice(&bytes[offset..offset + RISCV_VECTOR_REGISTER_BYTES]);
+        hart.write_vector(vector_register_at(register, group_index), vector);
+    }
+}
+
+fn vector_register_at(register: VectorRegister, group_index: usize) -> VectorRegister {
+    let index = usize::from(register.index()) + group_index;
+    VectorRegister::new(index as u8).expect("validated vector register group")
 }
 
 pub(crate) fn access_width(access: &MemoryAccessKind) -> MemoryWidth {

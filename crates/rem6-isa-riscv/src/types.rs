@@ -273,6 +273,7 @@ pub enum MemoryAccessKind {
         address: u64,
         width: MemoryWidth,
         byte_len: usize,
+        group_registers: usize,
     },
     LoadReserved {
         rd: Register,

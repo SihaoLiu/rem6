@@ -1,4 +1,5 @@
 use crate::{
+    vector_group::{read_register_group, valid_register_group, MAX_VECTOR_GROUP_BYTES},
     MemoryAccessKind, MemoryWidth, RiscvHartState, RiscvVectorMemoryInstruction, VectorRegister,
     RISCV_VECTOR_REGISTER_BYTES,
 };
@@ -9,8 +10,8 @@ pub(crate) fn memory_access(
 ) -> Result<Option<MemoryAccessKind>, ()> {
     match instruction {
         RiscvVectorMemoryInstruction::LoadUnitStride { vd, rs1, width } => {
-            let byte_len = unit_stride_access_bytes(hart, width).ok_or(())?;
-            if byte_len == 0 {
+            let plan = unit_stride_access_plan(hart, vd, width).ok_or(())?;
+            if plan.byte_len == 0 {
                 return Ok(None);
             }
 
@@ -18,7 +19,8 @@ pub(crate) fn memory_access(
                 vd,
                 address: hart.read(rs1),
                 width,
-                byte_len,
+                byte_len: plan.byte_len,
+                group_registers: plan.group_registers,
             }))
         }
         RiscvVectorMemoryInstruction::StoreUnitStride { vs3, rs1, width } => {
@@ -38,18 +40,35 @@ pub(crate) fn memory_access(
     }
 }
 
-fn unit_stride_access_bytes(hart: &RiscvHartState, width: MemoryWidth) -> Option<usize> {
+struct UnitStrideAccessPlan {
+    byte_len: usize,
+    group_registers: usize,
+}
+
+fn unit_stride_access_plan(
+    hart: &RiscvHartState,
+    register: VectorRegister,
+    width: MemoryWidth,
+) -> Option<UnitStrideAccessPlan> {
     let config = hart.vector_config();
-    if config.vill()
-        || config.vtype() & 0x7 != 0
-        || config.element_width_bytes()? != width.bytes()
-        || config.register_group_registers()? != 1
-    {
+    let vlmul = config.vtype() & 0x7;
+    if config.vill() || !matches!(vlmul, 0..=3) || config.element_width_bytes()? != width.bytes() {
         return None;
     }
 
-    let byte_len = config.vl() as usize * width.bytes();
-    (byte_len <= RISCV_VECTOR_REGISTER_BYTES).then_some(byte_len)
+    let group_registers = config.register_group_registers()?;
+    if !valid_register_group(register, group_registers) {
+        return None;
+    }
+
+    let byte_len = (config.vl() as usize).checked_mul(width.bytes())?;
+    let group_bytes = group_registers.checked_mul(RISCV_VECTOR_REGISTER_BYTES)?;
+    (byte_len <= group_bytes && byte_len <= MAX_VECTOR_GROUP_BYTES).then_some(
+        UnitStrideAccessPlan {
+            byte_len,
+            group_registers,
+        },
+    )
 }
 
 fn unit_stride_store_data(
@@ -57,7 +76,7 @@ fn unit_stride_store_data(
     source: VectorRegister,
     width: MemoryWidth,
 ) -> Option<Vec<u8>> {
-    let byte_len = unit_stride_access_bytes(hart, width)?;
-    let register = hart.read_vector(source);
-    Some(register[..byte_len].to_vec())
+    let plan = unit_stride_access_plan(hart, source, width)?;
+    let group = read_register_group(hart, source, plan.group_registers);
+    Some(group[..plan.byte_len].to_vec())
 }

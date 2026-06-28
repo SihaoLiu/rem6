@@ -4385,6 +4385,37 @@ fn rem6_run_in_order_pipeline_models_vector_unit_stride_load_store_element_width
 }
 
 #[test]
+fn rem6_run_in_order_pipeline_models_vector_unit_stride_lmul2_register_group_memory() {
+    const EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES: u64 = 3;
+
+    let scalar_stats = in_order_pipeline_payload_stats(
+        "in-order-scalar-ld-sd-vector-lmul2-memory-baseline",
+        &unit_stride_memory_program(false),
+    );
+    let vector_stats = in_order_pipeline_payload_stats(
+        "in-order-vector-unit-stride-lmul2-load-store",
+        &unit_stride_lmul2_vector_memory_program(),
+    );
+
+    assert_eq!(
+        stat_value(&vector_stats, "sim.cpu0.instructions.committed"),
+        20,
+        "LMUL2 unit-stride vector memory should retire through the success ecall\nstats:\n{vector_stats}"
+    );
+    assert_eq!(
+        stat_value(
+            &vector_stats,
+            "sim.cpu0.pipeline.in_order.execute_wait_cycles"
+        ) - stat_value(
+            &scalar_stats,
+            "sim.cpu0.pipeline.in_order.execute_wait_cycles"
+        ),
+        EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES,
+        "LMUL2 vector memory should reuse fixed vector LSU execute latency\nstats:\n{vector_stats}"
+    );
+}
+
+#[test]
 fn rem6_run_in_order_pipeline_models_zero_vl_vector_memory_as_no_data_access() {
     let stats = in_order_pipeline_payload_stats(
         "in-order-vector-unit-stride-zero-vl-no-data-access",
@@ -4416,12 +4447,19 @@ fn rem6_run_in_order_pipeline_models_zero_vl_vector_memory_as_no_data_access() {
 }
 
 #[test]
-fn rem6_run_rejects_vector_memory_outside_unit_stride_m1_slice() {
-    for (name, vtype, instruction) in [(
-        "in-order-vector-memory-rejects-e32-mf2",
-        0xd7,
-        0x0205_6087, // vle32.v v1, (x10)
-    )] {
+fn rem6_run_rejects_unsupported_vector_memory_slice() {
+    for (name, vtype, instruction) in [
+        (
+            "in-order-vector-memory-rejects-e32-mf2",
+            0xd7,
+            0x0205_6087, // vle32.v v1, (x10)
+        ),
+        (
+            "in-order-vector-memory-rejects-misaligned-e32-m2",
+            0xd1,
+            0x0205_6087, // vle32.v v1, (x10)
+        ),
+    ] {
         assert_in_order_pipeline_payload_rejected(
             name,
             &vector_memory_single_access_program(vtype, instruction),
@@ -4547,7 +4585,7 @@ fn assert_in_order_pipeline_payload_rejected(name: &str, program: &[u8]) {
         .unwrap_or("<missing>");
     assert_eq!(
         trap, "illegal_instruction",
-        "{name} should be rejected outside the supported m1 unit-stride vector memory slice"
+        "{name} should be rejected outside the supported unit-stride vector memory slice"
     );
 }
 
@@ -4607,6 +4645,45 @@ fn vector_memory_single_access_program(vtype: u32, instruction: u32) -> Vec<u8> 
         0x0000_0000, // padding
     ]);
     program.extend_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd, 0x11, 0x22, 0x33, 0x44]);
+    program
+}
+
+fn unit_stride_lmul2_vector_memory_program() -> Vec<u8> {
+    const DATA_OFFSET_BYTES: i32 = 192;
+    const DATA_WORDS: usize = 4;
+    let fail_instruction_index = 7 + DATA_WORDS as i32 * 3 + 1;
+
+    let mut words = vec![
+        u_type(0, 10, 0x17),                            // auipc x10, 0
+        i_type(DATA_OFFSET_BYTES, 10, 0b000, 10, 0x13), // addi x10, x10, data
+        i_type(16, 10, 0b000, 16, 0x13),                // addi x16, x10, dest
+        i_type(4, 0, 0b000, 11, 0x13),                  // addi x11, x0, 4
+        vsetvli_type(0xd1, 11, 5),                      // vsetvli x5, x11, e32, m2, ta, ma
+        0x0205_6107,                                    // vle32.v v2, (x10)
+        0x0208_6127,                                    // vse32.v v2, (x16)
+    ];
+
+    for word_index in 0..DATA_WORDS {
+        let offset = (word_index * 4) as i32;
+        words.push(i_type(offset, 16, 0b010, 12, 0x03)); // lw x12, dest+i
+        words.push(i_type(offset, 10, 0b010, 13, 0x03)); // lw x13, source+i
+        let branch_index = words.len() as i32;
+        let fail_offset = (fail_instruction_index - branch_index) * 4;
+        words.push(b_type(fail_offset, 13, 12, 0b001)); // bne x12, x13, fail
+    }
+
+    words.push(0x0000_0073); // ecall
+    words.push(0x0000_0000); // fail: invalid instruction
+    while words.len() * 4 < DATA_OFFSET_BYTES as usize {
+        words.push(0);
+    }
+
+    let mut program = riscv64_program(&words);
+    program.extend_from_slice(&[
+        0x04, 0x03, 0x02, 0x01, 0x14, 0x13, 0x12, 0x11, 0x24, 0x23, 0x22, 0x21, 0x34, 0x33, 0x32,
+        0x31,
+    ]);
+    program.extend_from_slice(&[0; 16]);
     program
 }
 
