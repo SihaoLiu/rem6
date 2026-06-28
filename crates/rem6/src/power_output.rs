@@ -9,7 +9,7 @@ use crate::data_cache_runtime::CliDataCacheSummary;
 use crate::gpu_cli::{Rem6GpuComputeUnitActivity, Rem6GpuRunExecutionSummary};
 use crate::{
     PowerAnalysisFormat, Rem6CacheResourceSummary, Rem6CliError, Rem6CoreSummary, Rem6DramSummary,
-    Rem6MemoryResourceSummary, Rem6TraceReplayExecutionSummary,
+    Rem6FabricResourceSummary, Rem6MemoryResourceSummary, Rem6TraceReplayExecutionSummary,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -144,6 +144,9 @@ pub(crate) fn run_power_analysis_records_from_parts(
     if let Some(record) =
         shared_cache_power_record("memory.cache.l3", &memory_resources.cache_l3, final_tick)
     {
+        records.push(record);
+    }
+    if let Some(record) = fabric_power_record(&memory_resources.fabric, final_tick) {
         records.push(record);
     }
     if let Some(record) = memory_transport_power_record(memory_resources, final_tick) {
@@ -383,6 +386,61 @@ fn cache_resource_summary_is_active(cache: &Rem6CacheResourceSummary) -> bool {
         || cache.dram_accesses != 0
         || cache.bank_accepted != 0
         || cache.prefetch_issued != 0
+}
+
+fn fabric_power_record(
+    fabric: &Rem6FabricResourceSummary,
+    final_tick: u64,
+) -> Option<PowerAnalysisRecord> {
+    if !fabric_resource_summary_is_active(fabric) {
+        return None;
+    }
+    let operations = fabric
+        .active
+        .saturating_add(fabric.active_virtual_networks)
+        .saturating_add(fabric.active_links)
+        .saturating_add(fabric.active_hops)
+        .saturating_add(fabric.flits)
+        .saturating_add(fabric.contended_lanes);
+    let dynamic_watts = watts_from_activity(
+        fabric.activity,
+        operations,
+        fabric.bytes,
+        0.000_004,
+        0.000_006,
+        0.000_000_25,
+    );
+    Some(
+        PowerAnalysisRecord::new(
+            "memory.fabric",
+            PowerStateKind::On,
+            PowerResidency::new(vec![(
+                PowerStateKind::On,
+                final_tick
+                    .max(fabric.occupied_ticks)
+                    .max(fabric.queue_delay_ticks)
+                    .max(fabric.credit_delay_ticks)
+                    .max(fabric.activity)
+                    .max(1),
+            )]),
+            37.5 + dynamic_watts.min(4.0),
+            PowerEstimate::new(dynamic_watts, 0.008),
+        )
+        .expect("fabric power records use valid residency and finite watts"),
+    )
+}
+
+fn fabric_resource_summary_is_active(fabric: &Rem6FabricResourceSummary) -> bool {
+    fabric.activity != 0
+        || fabric.active != 0
+        || fabric.active_virtual_networks != 0
+        || fabric.active_links != 0
+        || fabric.active_hops != 0
+        || fabric.bytes != 0
+        || fabric.flits != 0
+        || fabric.occupied_ticks != 0
+        || fabric.queue_delay_ticks != 0
+        || fabric.credit_delay_ticks != 0
 }
 
 fn memory_transport_power_record(

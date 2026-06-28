@@ -821,7 +821,7 @@ emitted from real top-level fabric lane and hop activity with lane-transfer
 plus hierarchy-scoped lane/hop byte, flit, and timing stats, memory-transport trace
 JSON emitted from real fetch/data `MemoryTrace` events with top-level debug trace
 record-count, channel-scoped route/endpoint/request-agent, event-kind, and response-status stats, plus data-trace load/store/atomic classification stats,
-RISC-V SE syscall-trace JSON/outcome plus hierarchy-scoped syscall-number, call-site, CPU, and argument stats emitted from real syscall trap handling, and power-trace JSON plus target-hierarchy/state/residency/temperature/microwatt/microwatt-tick stats emitted from executed-run activity including shared L2/L3 cache power records derived from memory-resource cache summaries,
+RISC-V SE syscall-trace JSON/outcome plus hierarchy-scoped syscall-number, call-site, CPU, and argument stats emitted from real syscall trap handling, and power-trace JSON plus target-hierarchy/state/residency/temperature/microwatt/microwatt-tick stats emitted from executed-run activity including shared L2/L3 cache and fabric/NoC power records derived from memory-resource summaries,
 top-level debug trace record/category/active-flag/payload-byte roll-up stats emitted from the same debug summary,
 target-description-aligned register-cache seeding, top-level trace-replay
 fabric-route activity and flit counters, top-level run fabric resource roll-up, top-level trace-replay aggregate resource
@@ -832,7 +832,7 @@ top-level `rem6 run` retired-instruction probe summaries and CLI-configured
 retired-PC target counter summaries,
 RISC-V core checkpoint capture/restore of O3 runtime payloads covering
 ROB entries, LSQ entries, rename maps, pending scopes, and deferred writeback completions, and custom plus library-level and
-`rem6 run --power-output`, `rem6 trace-replay --power-output`, and `rem6 gpu-run --power-output` McPAT-shaped and DSENT-shaped power-analysis exports, including shared L2/L3 cache power records from executed cache hierarchy activity.
+`rem6 run --power-output`, `rem6 trace-replay --power-output`, and `rem6 gpu-run --power-output` McPAT-shaped and DSENT-shaped power-analysis exports, including shared L2/L3 cache and fabric/NoC power records from executed hierarchy activity.
 
 **Not migrated:** Complete gem5 text-stat parity, full debug execution control,
 remaining broad CSR GDB register-cache coverage, broader debug-run stat parity beyond current trace, classification, and selected aggregate counters, runtime resource counters,
@@ -1131,8 +1131,8 @@ custom XML smoke coverage for totals, components, and residency entries, plus
 deterministic library-level McPAT-shaped XML and DSENT-shaped CSV exports.
 Top-level `rem6 run --power-output` emits an activity-derived McPAT-shaped or
 DSENT-shaped artifact from executed CPU, instruction-cache, data-cache, shared
-L2/L3 cache, and memory-transport/DRAM summaries. Top-level `rem6 run --debug-flags Power`
-emits the same executed-run activity-derived CPU, cache, memory-transport, and
+L2/L3 cache, fabric/NoC, and memory-transport/DRAM summaries. Top-level `rem6 run --debug-flags Power`
+emits the same executed-run activity-derived CPU, cache, fabric/NoC, memory-transport, and
 DRAM power records in deterministic run JSON. Top-level `rem6 trace-replay --power-output` emits activity-derived trace replay data-cache and DRAM power records from executed packet replay summaries. Top-level `rem6 gpu-run --power-output` emits activity-derived GPU compute-unit, GPU
 data-cache, and DRAM power records, with the artifact path reported in the run
 JSON or CLI output envelope.
@@ -1150,7 +1150,7 @@ ingestion, full external schema parity, and broader calibrated power/thermal act
 **Evidence:** rem6-power power-analysis export self-tests including custom XML,
 McPAT-shaped XML, and DSENT-shaped CSV output; `rem6 run` CLI tests for
 `--power-output`, executed instruction-cache, data-cache, shared L2/L3 cache,
-memory-transport, and DRAM activity records, `rem6 trace-replay --power-output` data-cache plus
+fabric/NoC, memory-transport, and DRAM activity records, `rem6 trace-replay --power-output` data-cache plus
 DRAM activity records, `--debug-flags Power` run-JSON records,
 envelope reporting, and load-only rejection;
 `rem6 gpu-run` CLI and TOML tests
