@@ -30,6 +30,8 @@ mod load;
 mod load_blob_resource;
 #[path = "cli_run/m5_host_actions.rs"]
 mod m5_host_actions;
+#[path = "cli_run/m5_periodic_checkpoint.rs"]
+mod m5_periodic_checkpoint;
 #[path = "cli_run/multi_run.rs"]
 mod multi_run;
 #[path = "cli_run/pc_count_probes.rs"]

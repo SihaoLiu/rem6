@@ -1124,13 +1124,15 @@ fn guest_event_from_riscv_system_event(
                 kind: GuestEventKind::StatsDumpReset,
             })
         }
-        Some(RiscvSystemEvent::Gem5Checkpoint { delay, .. }) => Some(RiscvGuestEventSchedule {
-            delay: *delay,
-            period: 0,
-            kind: GuestEventKind::Checkpoint {
-                label: GEM5_M5_CHECKPOINT_LABEL.to_string(),
-            },
-        }),
+        Some(RiscvSystemEvent::Gem5Checkpoint { delay, period, .. }) => {
+            Some(RiscvGuestEventSchedule {
+                delay: *delay,
+                period: *period,
+                kind: GuestEventKind::Checkpoint {
+                    label: GEM5_M5_CHECKPOINT_LABEL.to_string(),
+                },
+            })
+        }
         Some(RiscvSystemEvent::Gem5SwitchCpu { .. }) => Some(RiscvGuestEventSchedule {
             delay: 0,
             period: 0,
