@@ -21,9 +21,11 @@ mod pma;
 mod pmp;
 mod pseudo;
 mod record;
+mod status_csr;
 mod sv39;
 mod translation_csr;
 mod trap;
+mod trap_csr;
 mod types;
 mod vector;
 mod vector_averaging;
@@ -251,6 +253,17 @@ impl RiscvHartState {
         }
         if let RiscvInstruction::ReadCounterCsr { csr, .. } = instruction {
             if !counter_csr_read_allowed(self, csr) {
+                return Ok(enter_synchronous_trap(
+                    self,
+                    instruction,
+                    instruction_bytes_u8,
+                    pc,
+                    RiscvTrapKind::IllegalInstruction,
+                ));
+            }
+        }
+        if let Some(csr) = status_csr::instruction_csr(instruction) {
+            if !status_csr::allowed(self, csr) {
                 return Ok(enter_synchronous_trap(
                     self,
                     instruction,
@@ -1024,29 +1037,29 @@ impl RiscvHartState {
                 counter_enable_csr::execute(self, &mut register_writes, instruction);
             }
             RiscvInstruction::ReadStatusCsr { rd, csr } => {
-                write_register(self, &mut register_writes, rd, read_status_csr(self, csr));
+                write_register(self, &mut register_writes, rd, status_csr::read(self, csr));
             }
             RiscvInstruction::WriteStatusCsr { rd, csr, rs1 } => {
-                write_status_csr(self, &mut register_writes, rd, csr, self.read(rs1));
+                status_csr::write(self, &mut register_writes, rd, csr, self.read(rs1));
             }
             RiscvInstruction::SetStatusCsr { rd, csr, rs1 } => {
-                let value = read_status_csr(self, csr) | self.read(rs1);
-                write_status_csr(self, &mut register_writes, rd, csr, value);
+                let value = status_csr::read(self, csr) | self.read(rs1);
+                status_csr::write(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::ClearStatusCsr { rd, csr, rs1 } => {
-                let value = read_status_csr(self, csr) & !self.read(rs1);
-                write_status_csr(self, &mut register_writes, rd, csr, value);
+                let value = status_csr::read(self, csr) & !self.read(rs1);
+                status_csr::write(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::WriteStatusCsrImmediate { rd, csr, zimm } => {
-                write_status_csr(self, &mut register_writes, rd, csr, u64::from(zimm));
+                status_csr::write(self, &mut register_writes, rd, csr, u64::from(zimm));
             }
             RiscvInstruction::SetStatusCsrImmediate { rd, csr, zimm } => {
-                let value = read_status_csr(self, csr) | u64::from(zimm);
-                write_status_csr(self, &mut register_writes, rd, csr, value);
+                let value = status_csr::read(self, csr) | u64::from(zimm);
+                status_csr::write(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::ClearStatusCsrImmediate { rd, csr, zimm } => {
-                let value = read_status_csr(self, csr) & !u64::from(zimm);
-                write_status_csr(self, &mut register_writes, rd, csr, value);
+                let value = status_csr::read(self, csr) & !u64::from(zimm);
+                status_csr::write(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::ReadInterruptCsr { rd, csr } => {
                 write_register(self, &mut register_writes, rd, self.read_interrupt_csr(csr));
@@ -1078,60 +1091,60 @@ impl RiscvHartState {
                     self,
                     &mut register_writes,
                     rd,
-                    read_machine_trap_csr(self, csr),
+                    trap_csr::read_machine(self, csr),
                 );
             }
             RiscvInstruction::WriteMachineTrapCsr { rd, csr, rs1 } => {
-                write_machine_trap_csr(self, &mut register_writes, rd, csr, self.read(rs1));
+                trap_csr::write_machine(self, &mut register_writes, rd, csr, self.read(rs1));
             }
             RiscvInstruction::SetMachineTrapCsr { rd, csr, rs1 } => {
-                let value = read_machine_trap_csr(self, csr) | self.read(rs1);
-                write_machine_trap_csr(self, &mut register_writes, rd, csr, value);
+                let value = trap_csr::read_machine(self, csr) | self.read(rs1);
+                trap_csr::write_machine(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::ClearMachineTrapCsr { rd, csr, rs1 } => {
-                let value = read_machine_trap_csr(self, csr) & !self.read(rs1);
-                write_machine_trap_csr(self, &mut register_writes, rd, csr, value);
+                let value = trap_csr::read_machine(self, csr) & !self.read(rs1);
+                trap_csr::write_machine(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::WriteMachineTrapCsrImmediate { rd, csr, zimm } => {
-                write_machine_trap_csr(self, &mut register_writes, rd, csr, u64::from(zimm));
+                trap_csr::write_machine(self, &mut register_writes, rd, csr, u64::from(zimm));
             }
             RiscvInstruction::SetMachineTrapCsrImmediate { rd, csr, zimm } => {
-                let value = read_machine_trap_csr(self, csr) | u64::from(zimm);
-                write_machine_trap_csr(self, &mut register_writes, rd, csr, value);
+                let value = trap_csr::read_machine(self, csr) | u64::from(zimm);
+                trap_csr::write_machine(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::ClearMachineTrapCsrImmediate { rd, csr, zimm } => {
-                let value = read_machine_trap_csr(self, csr) & !u64::from(zimm);
-                write_machine_trap_csr(self, &mut register_writes, rd, csr, value);
+                let value = trap_csr::read_machine(self, csr) & !u64::from(zimm);
+                trap_csr::write_machine(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::ReadSupervisorTrapCsr { rd, csr } => {
                 write_register(
                     self,
                     &mut register_writes,
                     rd,
-                    read_supervisor_trap_csr(self, csr),
+                    trap_csr::read_supervisor(self, csr),
                 );
             }
             RiscvInstruction::WriteSupervisorTrapCsr { rd, csr, rs1 } => {
-                write_supervisor_trap_csr(self, &mut register_writes, rd, csr, self.read(rs1));
+                trap_csr::write_supervisor(self, &mut register_writes, rd, csr, self.read(rs1));
             }
             RiscvInstruction::SetSupervisorTrapCsr { rd, csr, rs1 } => {
-                let value = read_supervisor_trap_csr(self, csr) | self.read(rs1);
-                write_supervisor_trap_csr(self, &mut register_writes, rd, csr, value);
+                let value = trap_csr::read_supervisor(self, csr) | self.read(rs1);
+                trap_csr::write_supervisor(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::ClearSupervisorTrapCsr { rd, csr, rs1 } => {
-                let value = read_supervisor_trap_csr(self, csr) & !self.read(rs1);
-                write_supervisor_trap_csr(self, &mut register_writes, rd, csr, value);
+                let value = trap_csr::read_supervisor(self, csr) & !self.read(rs1);
+                trap_csr::write_supervisor(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::WriteSupervisorTrapCsrImmediate { rd, csr, zimm } => {
-                write_supervisor_trap_csr(self, &mut register_writes, rd, csr, u64::from(zimm));
+                trap_csr::write_supervisor(self, &mut register_writes, rd, csr, u64::from(zimm));
             }
             RiscvInstruction::SetSupervisorTrapCsrImmediate { rd, csr, zimm } => {
-                let value = read_supervisor_trap_csr(self, csr) | u64::from(zimm);
-                write_supervisor_trap_csr(self, &mut register_writes, rd, csr, value);
+                let value = trap_csr::read_supervisor(self, csr) | u64::from(zimm);
+                trap_csr::write_supervisor(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::ClearSupervisorTrapCsrImmediate { rd, csr, zimm } => {
-                let value = read_supervisor_trap_csr(self, csr) & !u64::from(zimm);
-                write_supervisor_trap_csr(self, &mut register_writes, rd, csr, value);
+                let value = trap_csr::read_supervisor(self, csr) & !u64::from(zimm);
+                trap_csr::write_supervisor(self, &mut register_writes, rd, csr, value);
             }
             RiscvInstruction::TranslationCsr(instruction) => {
                 translation_csr::execute(self, &mut register_writes, instruction);
@@ -1238,21 +1251,6 @@ fn write_float_csr(
     write_register(hart, writes, register, old_value);
     hart.set_float_status(csr.write(hart.float_status(), value));
 }
-fn read_status_csr(hart: &RiscvHartState, csr: RiscvStatusCsr) -> u64 {
-    csr.read(hart.status())
-}
-fn write_status_csr(
-    hart: &mut RiscvHartState,
-    writes: &mut Vec<RegisterWrite>,
-    register: Register,
-    csr: RiscvStatusCsr,
-    value: u64,
-) {
-    let old_value = read_status_csr(hart, csr);
-    write_register(hart, writes, register, old_value);
-    hart.set_status(csr.write(hart.status(), value));
-}
-
 fn write_interrupt_csr(
     hart: &mut RiscvHartState,
     writes: &mut Vec<RegisterWrite>,
@@ -1263,60 +1261,4 @@ fn write_interrupt_csr(
     let old_value = hart.read_interrupt_csr(csr);
     write_register(hart, writes, register, old_value);
     hart.write_interrupt_csr(csr, value);
-}
-fn read_machine_trap_csr(hart: &RiscvHartState, csr: RiscvMachineTrapCsr) -> u64 {
-    match csr {
-        RiscvMachineTrapCsr::Medeleg => hart.machine_exception_delegation(),
-        RiscvMachineTrapCsr::Mideleg => hart.machine_interrupt_delegation(),
-        RiscvMachineTrapCsr::Mtvec => hart.machine_trap_vector(),
-        RiscvMachineTrapCsr::Mscratch => hart.machine_scratch(),
-        RiscvMachineTrapCsr::Mepc => hart.machine_exception_pc(),
-        RiscvMachineTrapCsr::Mcause => hart.machine_trap_cause(),
-        RiscvMachineTrapCsr::Mtval => hart.machine_trap_value(),
-    }
-}
-fn write_machine_trap_csr(
-    hart: &mut RiscvHartState,
-    writes: &mut Vec<RegisterWrite>,
-    register: Register,
-    csr: RiscvMachineTrapCsr,
-    value: u64,
-) {
-    let old_value = read_machine_trap_csr(hart, csr);
-    write_register(hart, writes, register, old_value);
-    match csr {
-        RiscvMachineTrapCsr::Medeleg => hart.set_machine_exception_delegation(value),
-        RiscvMachineTrapCsr::Mideleg => hart.set_machine_interrupt_delegation(value),
-        RiscvMachineTrapCsr::Mtvec => hart.set_machine_trap_vector(value),
-        RiscvMachineTrapCsr::Mscratch => hart.set_machine_scratch(value),
-        RiscvMachineTrapCsr::Mepc => hart.set_machine_exception_pc(value),
-        RiscvMachineTrapCsr::Mcause => hart.set_machine_trap_cause(value),
-        RiscvMachineTrapCsr::Mtval => hart.set_machine_trap_value(value),
-    }
-}
-fn read_supervisor_trap_csr(hart: &RiscvHartState, csr: RiscvSupervisorTrapCsr) -> u64 {
-    match csr {
-        RiscvSupervisorTrapCsr::Stvec => hart.supervisor_trap_vector(),
-        RiscvSupervisorTrapCsr::Sscratch => hart.supervisor_scratch(),
-        RiscvSupervisorTrapCsr::Sepc => hart.supervisor_exception_pc(),
-        RiscvSupervisorTrapCsr::Scause => hart.supervisor_trap_cause(),
-        RiscvSupervisorTrapCsr::Stval => hart.supervisor_trap_value(),
-    }
-}
-fn write_supervisor_trap_csr(
-    hart: &mut RiscvHartState,
-    writes: &mut Vec<RegisterWrite>,
-    register: Register,
-    csr: RiscvSupervisorTrapCsr,
-    value: u64,
-) {
-    let old_value = read_supervisor_trap_csr(hart, csr);
-    write_register(hart, writes, register, old_value);
-    match csr {
-        RiscvSupervisorTrapCsr::Stvec => hart.set_supervisor_trap_vector(value),
-        RiscvSupervisorTrapCsr::Sscratch => hart.set_supervisor_scratch(value),
-        RiscvSupervisorTrapCsr::Sepc => hart.set_supervisor_exception_pc(value),
-        RiscvSupervisorTrapCsr::Scause => hart.set_supervisor_trap_cause(value),
-        RiscvSupervisorTrapCsr::Stval => hart.set_supervisor_trap_value(value),
-    }
 }

@@ -3,11 +3,12 @@ use rem6_isa_riscv::{
     RegisterWrite, RiscvCounterBank, RiscvCounterCsr, RiscvCounterEnableCsr,
     RiscvCounterEnableCsrInstruction, RiscvCounterSnapshot, RiscvCsrError, RiscvCsrOp,
     RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction, RiscvError,
-    RiscvExecutionRecord, RiscvFenceSet, RiscvHartState, RiscvInstruction, RiscvMachineIdentityCsr,
-    RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction, RiscvMachineIsaCsr,
-    RiscvMachineTrapCsr, RiscvMemoryOrdering, RiscvPrivilegeMode, RiscvPseudoOp, RiscvStatusCsr,
-    RiscvStatusWord, RiscvSupervisorTrapCsr, RiscvSv39AccessContext, RiscvSystemEvent,
-    RiscvTranslationCsr, RiscvTranslationCsrInstruction, RiscvTrap, RiscvTrapKind,
+    RiscvExecutionRecord, RiscvFenceSet, RiscvGdbXlen, RiscvHartState, RiscvInstruction,
+    RiscvMachineIdentityCsr, RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction,
+    RiscvMachineIsaCsr, RiscvMachineTrapCsr, RiscvMemoryOrdering, RiscvPrivilegeMode,
+    RiscvPseudoOp, RiscvStatusCsr, RiscvStatusWord, RiscvSupervisorTrapCsr, RiscvSv39AccessContext,
+    RiscvSystemEvent, RiscvTranslationCsr, RiscvTranslationCsrInstruction, RiscvTrap,
+    RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -543,6 +544,31 @@ fn hart_reads_and_ignores_writes_to_machine_isa_csr() {
 }
 
 #[test]
+fn rv32_hart_reads_and_ignores_writes_to_machine_isa_csr() {
+    let read = RiscvInstruction::decode(csr_read_type(0x301, 5)).unwrap();
+    let write = RiscvInstruction::decode(csr_type(0x301, 2, 0x1, 6)).unwrap();
+
+    let mut hart = RiscvHartState::new(0x2320);
+    hart.set_xlen(RiscvGdbXlen::Rv32);
+    hart.write(reg(2), 0);
+
+    let read_record = hart.execute(read).unwrap();
+    let write_record = hart.execute(write).unwrap();
+
+    assert_eq!(
+        read_record.register_writes(),
+        &[RegisterWrite::new(reg(5), RiscvMachineIsaCsr::RV32_MISA)]
+    );
+    assert_eq!(
+        write_record.register_writes(),
+        &[RegisterWrite::new(reg(6), RiscvMachineIsaCsr::RV32_MISA)]
+    );
+    assert_eq!(hart.read(reg(5)), RiscvMachineIsaCsr::RV32_MISA);
+    assert_eq!(hart.read(reg(6)), RiscvMachineIsaCsr::RV32_MISA);
+    assert_eq!(hart.pc(), 0x2328);
+}
+
+#[test]
 fn hart_reads_cycle_and_instret_counter_csrs() {
     let addi = RiscvInstruction::decode(i_type(9, 0, 0x0, 7, 0x13)).unwrap();
     let cycle = RiscvInstruction::decode(csr_read_type(0xc00, 5)).unwrap();
@@ -1007,6 +1033,81 @@ fn hart_executes_status_csr_read_modify_write_operations() {
     hart.execute(clear_sstatus).unwrap();
     assert_eq!(hart.read(reg(8)), 0x2 | (1 << 18) | (1 << 19));
     assert_eq!(hart.status().bits(), 0x2 | (1 << 19));
+}
+
+#[test]
+fn rv64_hart_traps_mstatush_status_csr_access() {
+    let mut hart = RiscvHartState::new(0x3340);
+    hart.set_machine_trap_vector(0x9000);
+    hart.set_status(RiscvStatusWord::new(0x1234_5678_000c_0122));
+    hart.write(reg(4), 0x89ab_cdef);
+
+    let read_mstatush = RiscvInstruction::decode(csr_read_type(0x310, 9)).unwrap();
+    let write_mstatush = RiscvInstruction::decode(csr_type(0x310, 4, 0x1, 10)).unwrap();
+    assert_eq!(
+        read_mstatush,
+        RiscvInstruction::ReadStatusCsr {
+            rd: reg(9),
+            csr: RiscvStatusCsr::Mstatush,
+        }
+    );
+
+    let read_record = hart.execute(read_mstatush).unwrap();
+    assert_eq!(read_record.pc(), 0x3340);
+    assert_eq!(read_record.next_pc(), 0x9000);
+    assert_eq!(
+        read_record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x3340))
+    );
+    assert_eq!(read_record.register_writes(), &[]);
+    assert_eq!(hart.read(reg(9)), 0);
+    assert_eq!(hart.status().bits() >> 32, 0x1234_5678);
+
+    hart.set_machine_trap_vector(0x9040);
+    let write_record = hart.execute(write_mstatush).unwrap();
+    assert_eq!(write_record.pc(), 0x9000);
+    assert_eq!(write_record.next_pc(), 0x9040);
+    assert_eq!(
+        write_record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x9000))
+    );
+    assert_eq!(write_record.register_writes(), &[]);
+    assert_eq!(hart.read(reg(10)), 0);
+    assert_eq!(hart.status().bits() >> 32, 0x1234_5678);
+}
+
+#[test]
+fn rv32_hart_executes_mstatush_high_half_status_csr() {
+    let mut hart = RiscvHartState::new(0x3380);
+    hart.set_xlen(RiscvGdbXlen::Rv32);
+    hart.set_status(RiscvStatusWord::new(0x2 | (1 << 18)));
+    hart.write(reg(4), 0x89ab_cdef);
+
+    let read_mstatush = RiscvInstruction::decode(csr_read_type(0x310, 9)).unwrap();
+    let write_mstatush = RiscvInstruction::decode(csr_type(0x310, 4, 0x1, 10)).unwrap();
+    let read_mstatus = RiscvInstruction::decode(csr_read_type(0x300, 11)).unwrap();
+    let write_mstatus = RiscvInstruction::decode(csr_type(0x300, 5, 0x1, 12)).unwrap();
+
+    hart.execute(read_mstatush).unwrap();
+    assert_eq!(hart.read(reg(9)), 0);
+
+    hart.execute(write_mstatush).unwrap();
+    assert_eq!(hart.read(reg(10)), 0);
+    assert_eq!(hart.status().bits(), 0x89ab_cdef_0004_0002);
+
+    hart.execute(read_mstatush).unwrap();
+    assert_eq!(hart.read(reg(9)), 0x89ab_cdef);
+
+    hart.execute(read_mstatus).unwrap();
+    assert_eq!(hart.read(reg(11)), 0x0004_0002);
+
+    hart.write(reg(5), 0x7654_3210);
+    hart.execute(write_mstatus).unwrap();
+    assert_eq!(hart.read(reg(12)), 0x0004_0002);
+    assert_eq!(hart.status().bits(), 0x89ab_cdef_7654_3210);
+
+    hart.execute(read_mstatush).unwrap();
+    assert_eq!(hart.read(reg(9)), 0x89ab_cdef);
 }
 
 #[test]

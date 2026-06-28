@@ -1,6 +1,6 @@
 use crate::{
     FloatRegister, Register, RiscvControlFlowSnapshot, RiscvControlFlowUpdate, RiscvCounterBank,
-    RiscvCounterEnableCsr, RiscvCounterSnapshot, RiscvFloatStatus, RiscvInterruptCsr,
+    RiscvCounterEnableCsr, RiscvCounterSnapshot, RiscvFloatStatus, RiscvGdbXlen, RiscvInterruptCsr,
     RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext, RiscvVectorConfig,
     RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, VectorRegister,
     RISCV_VECTOR_REGISTER_BYTES,
@@ -10,6 +10,7 @@ use crate::{
 pub struct RiscvHartState {
     pub(crate) pc: u64,
     pub(crate) hart_id: u64,
+    pub(crate) xlen: RiscvGdbXlen,
     pub(crate) counters: RiscvCounterBank,
     pub(crate) supervisor_trap_vector: u64,
     pub(crate) supervisor_scratch: u64,
@@ -48,6 +49,7 @@ impl RiscvHartState {
         Self {
             pc,
             hart_id,
+            xlen: RiscvGdbXlen::Rv64,
             counters: RiscvCounterBank::new(),
             supervisor_trap_vector: 0,
             supervisor_scratch: 0,
@@ -86,6 +88,14 @@ impl RiscvHartState {
 
     pub const fn hart_id(&self) -> u64 {
         self.hart_id
+    }
+
+    pub const fn xlen(&self) -> RiscvGdbXlen {
+        self.xlen
+    }
+
+    pub fn set_xlen(&mut self, xlen: RiscvGdbXlen) {
+        self.xlen = xlen;
     }
 
     pub const fn counter_snapshot(&self) -> RiscvCounterSnapshot {

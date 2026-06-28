@@ -1159,10 +1159,8 @@ pub enum RiscvInstruction {
         zimm: u8,
     },
     VectorFixedPointCsr(crate::csr::RiscvVectorFixedPointCsrInstruction),
-    ReadStatusCsr {
-        rd: Register,
-        csr: RiscvStatusCsr,
-    },
+    #[rustfmt::skip]
+    ReadStatusCsr { rd: Register, csr: RiscvStatusCsr },
     WriteStatusCsr {
         rd: Register,
         csr: RiscvStatusCsr,

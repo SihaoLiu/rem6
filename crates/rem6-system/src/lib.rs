@@ -46,6 +46,7 @@ mod readfile_checkpoint;
 mod riscv_checkpoint;
 mod riscv_data_access_stats;
 mod riscv_debug;
+mod riscv_debug_layout;
 mod riscv_debug_pmp;
 mod riscv_instruction_stats;
 mod riscv_run_activity;

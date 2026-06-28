@@ -1,4 +1,6 @@
-use crate::{Register, RiscvCsrError, RiscvPrivilegeMode, RiscvVectorFixedPointState};
+use crate::{
+    Register, RiscvCsrError, RiscvGdbXlen, RiscvPrivilegeMode, RiscvVectorFixedPointState,
+};
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RiscvFloatCsr {
@@ -903,15 +905,18 @@ impl RiscvSupervisorTrapCsr {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RiscvStatusCsr {
     Mstatus,
+    Mstatush,
     Sstatus,
 }
 
 impl RiscvStatusCsr {
+    const LOW_32_MASK: u64 = 0xffff_ffff;
     const S_MODE_MASK: u64 = (1 << 1) | (1 << 5) | (1 << 8) | (1 << 18) | (1 << 19);
 
     pub const fn address(self) -> u16 {
         match self {
             Self::Mstatus => 0x300,
+            Self::Mstatush => 0x310,
             Self::Sstatus => 0x100,
         }
     }
@@ -919,6 +924,7 @@ impl RiscvStatusCsr {
     pub const fn from_address(address: u16) -> Option<Self> {
         match address {
             0x300 => Some(Self::Mstatus),
+            0x310 => Some(Self::Mstatush),
             0x100 => Some(Self::Sstatus),
             _ => None,
         }
@@ -927,16 +933,41 @@ impl RiscvStatusCsr {
     pub const fn read(self, status: RiscvStatusWord) -> u64 {
         match self {
             Self::Mstatus => status.bits(),
+            Self::Mstatush => status.bits() >> 32,
             Self::Sstatus => status.bits() & Self::S_MODE_MASK,
+        }
+    }
+
+    pub const fn read_for_xlen(self, xlen: RiscvGdbXlen, status: RiscvStatusWord) -> u64 {
+        match (self, xlen) {
+            (Self::Mstatus, RiscvGdbXlen::Rv32) => status.bits() & Self::LOW_32_MASK,
+            _ => self.read(status),
         }
     }
 
     pub const fn write(self, status: RiscvStatusWord, value: u64) -> RiscvStatusWord {
         match self {
             Self::Mstatus => RiscvStatusWord::new(value),
+            Self::Mstatush => RiscvStatusWord::new(
+                (status.bits() & Self::LOW_32_MASK) | ((value & Self::LOW_32_MASK) << 32),
+            ),
             Self::Sstatus => RiscvStatusWord::new(
                 (status.bits() & !Self::S_MODE_MASK) | (value & Self::S_MODE_MASK),
             ),
+        }
+    }
+
+    pub const fn write_for_xlen(
+        self,
+        xlen: RiscvGdbXlen,
+        status: RiscvStatusWord,
+        value: u64,
+    ) -> RiscvStatusWord {
+        match (self, xlen) {
+            (Self::Mstatus, RiscvGdbXlen::Rv32) => RiscvStatusWord::new(
+                (status.bits() & !Self::LOW_32_MASK) | (value & Self::LOW_32_MASK),
+            ),
+            _ => self.write(status, value),
         }
     }
 }

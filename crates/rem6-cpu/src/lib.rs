@@ -83,6 +83,7 @@ mod riscv_tournament_checkpoint;
 mod riscv_translation;
 mod riscv_translation_state;
 mod riscv_trap_completion;
+mod riscv_xlen;
 mod statistical_corrector;
 mod tage_predictor;
 mod tage_sc_l_predictor;

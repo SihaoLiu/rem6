@@ -336,6 +336,70 @@ fn rem6_run_gdb_listen_writes_rv32_counter_enable_csrs_before_execution() {
 }
 
 #[test]
+fn rem6_run_gdb_listen_writes_rv32_mstatush_before_execution() {
+    let program = riscv64_program(&[
+        csr_read(0x310, 5), // csrr x5, mstatush
+        0x0000_0073,        // ecall
+    ]);
+    let (child, mut stream) = start_riscv32_gdb_run("gdb-listen-rv32-mstatush", program, 60);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    let mut csr_description = String::new();
+    for payload in [
+        b"qXfer:features:read:riscv-32bit-csr.xml:0,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:a0,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:140,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:1e0,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:280,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:320,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:3c0,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:460,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:500,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:5a0,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:640,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:6e0,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:780,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:820,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:8c0,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:960,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:a00,a0".as_slice(),
+        b"qXfer:features:read:riscv-32bit-csr.xml:aa0,a0".as_slice(),
+    ] {
+        csr_description.push_str(&String::from_utf8_lossy(&send_gdb_packet(
+            &mut stream,
+            payload,
+        )));
+    }
+    assert!(
+        csr_description.contains("mstatush"),
+        "missing mstatush in {csr_description}"
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"Pa0=78563412"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"pa0"),
+        gdb_response(b"78563412")
+    );
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"architecture\":\"riscv32\""));
+    assert!(stdout.contains("\"x5\":\"0x12345678\""), "stdout: {stdout}");
+}
+
+#[test]
 fn rem6_run_gdb_listen_writes_sscratch_before_execution() {
     let program = riscv64_program(&[
         0x1400_22f3, // csrr x5, sscratch

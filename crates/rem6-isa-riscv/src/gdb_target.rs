@@ -412,4 +412,5 @@ const RV32_CSR_REGISTERS: &[CsrRegister] = &[
     CsrRegister::new("pmpcfg3", Some(157)),
     CsrRegister::new("scounteren", Some(158)),
     CsrRegister::new("mcounteren", Some(159)),
+    CsrRegister::new("mstatush", Some(160)),
 ];

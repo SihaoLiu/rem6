@@ -296,7 +296,7 @@ fn riscv_gdb_remote_register_write_reports_invalid_requests() {
             &GdbRemoteCommand::WriteRegisters { bytes: vec![0; 8] },
         ),
         Err(RiscvGdbRegisterWriteError::InvalidRegisterSetBytes {
-            expected: 33 * 4 + 32 * 8 + 4 * 4 + 20 * 4 + 32 * 16 + 38 * 4,
+            expected: 33 * 4 + 32 * 8 + 4 * 4 + 20 * 4 + 32 * 16 + 39 * 4,
             actual: 8,
         }),
     );
@@ -1802,6 +1802,31 @@ fn riscv_gdb_remote_cluster_packet_handler_uses_selected_thread_core_registers()
             .read_register(Register::new(1).unwrap()),
         0x0102_0304_0506_0708,
     );
+}
+
+#[test]
+fn riscv_gdb_remote_cluster_packet_handler_aligns_all_rv32_core_xlen_on_thread_selection() {
+    let core0 = riscv_core_with_id(0, 0x8000);
+    let core2 = riscv_core_with_id(2, 0x9000);
+    let cluster = RiscvCluster::new([core2.clone(), core0.clone()]).unwrap();
+    let mut session = riscv_gdb_remote_session(RiscvGdbXlen::Rv32);
+
+    assert_eq!(core0.xlen(), RiscvGdbXlen::Rv64);
+    assert_eq!(core2.xlen(), RiscvGdbXlen::Rv64);
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_cluster_packet(
+                RiscvGdbXlen::Rv32,
+                &mut session,
+                &cluster,
+                &GdbRemotePacket::new(b"Hg3".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(core0.xlen(), RiscvGdbXlen::Rv32);
+    assert_eq!(core2.xlen(), RiscvGdbXlen::Rv32);
 }
 
 #[test]

@@ -23,7 +23,7 @@ pub(crate) fn execute(
         hart,
         register_writes,
         instruction.rd(),
-        csr.read_rv64(hart.hart_id()),
+        csr.read_for_xlen_bits(hart.hart_id(), hart.xlen().bits() as u8),
     );
     MachineInformationCsrOutcome::Complete
 }

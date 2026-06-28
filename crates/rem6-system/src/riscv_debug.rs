@@ -21,49 +21,12 @@ use rem6_memory::{
 use std::error::Error;
 use std::fmt::{self, Write as _};
 
+use crate::riscv_debug_layout::*;
 use crate::riscv_debug_pmp::{
     read_core_pmp_addr_csr, read_core_pmp_config_csr, write_core_pmp_config_csr,
     write_pmp_config_csr,
 };
 
-const RISCV_GDB_INTEGER_REGISTER_COUNT: u8 = 32;
-const RISCV_GDB_PC_REGISTER: u64 = 32;
-const RISCV_GDB_FLOAT_REGISTER_BASE: u64 = 33;
-const RISCV_GDB_FLOAT_REGISTER_COUNT: u8 = 32;
-const RISCV_GDB_FLOAT_CSR_REGISTER_BASE: u64 = 66;
-const RISCV_GDB_FLOAT_CSR_REGISTER_COUNT: u8 = 3;
-const RISCV_GDB_FLOAT_PLACEHOLDER_REGISTER: u64 = 69;
-const RISCV_GDB_RV32_CSR_REGISTER_BASE: u64 = 70;
-const RISCV_GDB_RV64_CSR_REGISTER_BASE: u64 = 70;
-const RISCV_GDB_CSR_REGISTER_COUNT: u8 = 20;
-const RISCV_GDB_VECTOR_REGISTER_BASE: u64 = 90;
-const RISCV_GDB_VECTOR_REGISTER_COUNT: u8 = 32;
-const RISCV_GDB_SUPERVISOR_INTERRUPT_ENABLE_REGISTER: u64 = 122;
-const RISCV_GDB_SUPERVISOR_INTERRUPT_PENDING_REGISTER: u64 = 123;
-const RISCV_GDB_COUNTER_CYCLE_REGISTER: u64 = 124;
-const RISCV_GDB_COUNTER_INSTRET_REGISTER: u64 = 125;
-const RISCV_GDB_COUNTER_TIME_REGISTER: u64 = 126;
-const RISCV_GDB_MACHINE_HART_ID_REGISTER: u64 = 127;
-const RISCV_GDB_MACHINE_VENDOR_ID_REGISTER: u64 = 128;
-const RISCV_GDB_MACHINE_ARCHITECTURE_ID_REGISTER: u64 = 129;
-const RISCV_GDB_MACHINE_IMPLEMENTATION_ID_REGISTER: u64 = 130;
-const RISCV_GDB_MACHINE_ISA_REGISTER: u64 = 131;
-const RISCV_GDB_VECTOR_LENGTH_REGISTER: u64 = 132;
-const RISCV_GDB_VECTOR_TYPE_REGISTER: u64 = 133;
-const RISCV_GDB_VECTOR_LENGTH_BYTES_REGISTER: u64 = 134;
-const RISCV_GDB_SUPERVISOR_ENVIRONMENT_CONFIG_REGISTER: u64 = 135;
-const RISCV_GDB_PMP_CONFIG0_REGISTER: u64 = 136;
-const RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER: u64 = 138;
-const RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER: u64 = 139;
-const RISCV_GDB_PMP_CONFIG2_REGISTER: u64 = 147;
-const RISCV_GDB_PMP_ADDR_REGISTERS: [u64; 16] = [
-    137, 140, 141, 142, 143, 144, 145, 146, 148, 149, 150, 151, 152, 153, 154, 155,
-];
-const RISCV_GDB_RV64_SUPERVISOR_COUNTER_ENABLE_REGISTER: u64 = 156;
-const RISCV_GDB_RV64_MACHINE_COUNTER_ENABLE_REGISTER: u64 = 157;
-const RISCV_GDB_RV32_SUPERVISOR_COUNTER_ENABLE_REGISTER: u64 = 158;
-const RISCV_GDB_RV32_MACHINE_COUNTER_ENABLE_REGISTER: u64 = 159;
-const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 36;
 const RISCV_GDB_MEMORY_AGENT: AgentId = AgentId::new(u32::MAX - 1);
 const RISCV_GDB_RV32_VTYPE_PAYLOAD_MASK: u64 = 0x7fff_ffff;
 const RISCV_GDB_RV32_VTYPE_VILL_BIT: u64 = 1_u64 << 31;
@@ -177,6 +140,7 @@ pub fn riscv_gdb_remote_session_from_cluster(
     xlen: RiscvGdbXlen,
     cluster: &RiscvCluster,
 ) -> Option<GdbRemoteSession> {
+    set_riscv_gdb_cluster_xlen(xlen, cluster);
     let first_cpu = cluster.core_ids().into_iter().next()?;
     let first_core = cluster.core(first_cpu).ok()?;
     let mut session = riscv_gdb_remote_session_from_core(xlen, &first_core);
@@ -289,6 +253,9 @@ pub fn apply_riscv_gdb_remote_register_write(
     command: &GdbRemoteCommand,
 ) -> Result<bool, RiscvGdbRegisterWriteError> {
     let applies = validate_riscv_gdb_remote_register_write(xlen, command)?;
+    if applies {
+        hart.set_xlen(xlen);
+    }
     match command {
         GdbRemoteCommand::WriteRegister { number, bytes } => {
             apply_single_register_write(xlen, hart, *number, bytes)?;
@@ -311,6 +278,7 @@ pub fn handle_riscv_gdb_remote_packet(
         return Ok(session.handle_packet(packet)?);
     }
 
+    hart.set_xlen(xlen);
     let command = GdbRemoteCommand::parse(packet);
     if reads_riscv_gdb_remote_registers(&command) {
         sync_riscv_gdb_remote_session_from_hart(xlen, session, hart);
@@ -333,6 +301,9 @@ pub fn apply_riscv_gdb_remote_core_register_write(
     command: &GdbRemoteCommand,
 ) -> Result<bool, RiscvGdbRegisterWriteError> {
     let applies = validate_riscv_gdb_remote_core_register_write(xlen, core, command)?;
+    if applies {
+        core.set_xlen(xlen);
+    }
     match command {
         GdbRemoteCommand::WriteRegister { number, bytes } => {
             write_core_register_bytes(xlen, core, *number, bytes)?;
@@ -381,6 +352,7 @@ pub fn handle_riscv_gdb_remote_core_packet(
         return Ok(session.handle_packet(packet)?);
     }
 
+    core.set_xlen(xlen);
     let command = GdbRemoteCommand::parse(packet);
     if reads_riscv_gdb_remote_registers(&command) {
         sync_riscv_gdb_remote_session_from_core(xlen, session, core);
@@ -404,6 +376,7 @@ pub fn handle_riscv_gdb_remote_cluster_packet(
         return Ok(session.handle_packet(packet)?);
     }
 
+    set_riscv_gdb_cluster_xlen(xlen, cluster);
     sync_riscv_gdb_remote_threads_from_cluster(session, cluster);
 
     let command = GdbRemoteCommand::parse(packet);
@@ -435,6 +408,7 @@ pub fn handle_riscv_gdb_remote_cluster_packet(
     };
 
     if let Some(core) = selected_core.as_ref() {
+        core.set_xlen(xlen);
         apply_riscv_gdb_remote_core_register_write(xlen, core, &command)?;
     }
 
@@ -561,6 +535,9 @@ pub fn handle_riscv_gdb_remote_system_packet(
     memory: &mut PartitionedMemoryStore,
     packet: &GdbRemotePacket,
 ) -> Result<Vec<GdbRemoteFrame>, RiscvGdbRemotePacketError> {
+    if !session.is_disconnected() {
+        set_riscv_gdb_cluster_xlen(xlen, cluster);
+    }
     let command = GdbRemoteCommand::parse(packet);
     match &command {
         GdbRemoteCommand::ReadMemory { .. } | GdbRemoteCommand::WriteMemory { .. } => {
@@ -612,12 +589,21 @@ fn sync_riscv_gdb_remote_session_from_core(
     session: &mut GdbRemoteSession,
     core: &RiscvCore,
 ) {
+    core.set_xlen(xlen);
     let hart = riscv_gdb_hart_snapshot_from_core(core);
     session.set_register_bytes(GdbRemoteRegisterBytes::new(
         riscv_gdb_register_bytes_from_core(xlen, &hart, core),
     ));
     for (number, bytes) in riscv_gdb_single_register_bytes_from_core(xlen, &hart, core) {
         session.set_register_value(number, GdbRemoteRegisterBytes::new(bytes));
+    }
+}
+
+fn set_riscv_gdb_cluster_xlen(xlen: RiscvGdbXlen, cluster: &RiscvCluster) {
+    for cpu in cluster.core_ids() {
+        if let Ok(core) = cluster.core(cpu) {
+            core.set_xlen(xlen);
+        }
     }
 }
 
@@ -1186,7 +1172,7 @@ fn write_core_float_csr_register_value(core: &RiscvCore, number: u64, value: u64
 
 fn read_hart_csr_register_value(xlen: RiscvGdbXlen, hart: &RiscvHartState, number: u64) -> u64 {
     match riscv_gdb_csr_register(xlen, number) {
-        RiscvGdbCsrRegister::Status(csr) => csr.read(hart.status()),
+        RiscvGdbCsrRegister::Status(csr) => csr.read_for_xlen(xlen, hart.status()),
         RiscvGdbCsrRegister::Interrupt(csr) => read_hart_interrupt_csr(hart, csr),
         RiscvGdbCsrRegister::MachineTrap(csr) => read_hart_machine_trap_csr(hart, csr),
         RiscvGdbCsrRegister::SupervisorTrap(csr) => read_hart_supervisor_trap_csr(hart, csr),
@@ -1212,7 +1198,7 @@ fn write_hart_csr_register_value(
 ) {
     match riscv_gdb_csr_register(xlen, number) {
         RiscvGdbCsrRegister::Status(csr) => {
-            hart.set_status(csr.write(hart.status(), value));
+            hart.set_status(csr.write_for_xlen(xlen, hart.status(), value));
         }
         RiscvGdbCsrRegister::Interrupt(csr) => {
             write_hart_interrupt_csr(hart, csr, value);
@@ -1256,7 +1242,7 @@ fn write_core_csr_register_value(
 ) -> Result<(), RiscvGdbRegisterWriteError> {
     match riscv_gdb_csr_register(xlen, number) {
         RiscvGdbCsrRegister::Status(csr) => {
-            core.set_status(csr.write(core.status(), value));
+            core.set_status(csr.write_for_xlen(xlen, core.status(), value));
         }
         RiscvGdbCsrRegister::Interrupt(csr) => {
             write_core_interrupt_csr(core, csr, value);
@@ -1348,14 +1334,24 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     if number == riscv_gdb_machine_counter_enable_register(xlen) {
         return RiscvGdbCsrRegister::CounterEnable(RiscvCounterEnableCsr::Mcounteren);
     }
+    if xlen == RiscvGdbXlen::Rv32 && number == RISCV_GDB_RV32_STATUS_HIGH_REGISTER {
+        return RiscvGdbCsrRegister::Status(RiscvStatusCsr::Mstatush);
+    }
     if number == RISCV_GDB_PMP_CONFIG0_REGISTER {
         return RiscvGdbCsrRegister::PmpConfig(0);
     }
     if number == RISCV_GDB_PMP_CONFIG2_REGISTER {
         return RiscvGdbCsrRegister::PmpConfig(8);
     }
-    if xlen == RiscvGdbXlen::Rv32 && (number == 156 || number == 157) {
-        return RiscvGdbCsrRegister::PmpConfig(if number == 156 { 4 } else { 12 });
+    if xlen == RiscvGdbXlen::Rv32
+        && (number == RISCV_GDB_RV32_PMP_CONFIG1_REGISTER
+            || number == RISCV_GDB_RV32_PMP_CONFIG3_REGISTER)
+    {
+        return RiscvGdbCsrRegister::PmpConfig(if number == RISCV_GDB_RV32_PMP_CONFIG1_REGISTER {
+            4
+        } else {
+            12
+        });
     }
     if let Some(index) = RISCV_GDB_PMP_ADDR_REGISTERS
         .iter()
@@ -1661,193 +1657,5 @@ fn write_hart_translation_csr(hart: &mut RiscvHartState, csr: RiscvTranslationCs
 fn write_core_translation_csr(core: &RiscvCore, csr: RiscvTranslationCsr, value: u64) {
     match csr {
         RiscvTranslationCsr::Satp => core.set_translation_satp(value),
-    }
-}
-
-fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
-    let float_count = u64::from(RISCV_GDB_FLOAT_REGISTER_COUNT);
-    let float_csr_count = u64::from(RISCV_GDB_FLOAT_CSR_REGISTER_COUNT);
-    let csr_count = u64::from(RISCV_GDB_CSR_REGISTER_COUNT);
-    (0..RISCV_GDB_INTEGER_REGISTER_COUNT)
-        .map(u64::from)
-        .chain(std::iter::once(RISCV_GDB_PC_REGISTER))
-        .chain(RISCV_GDB_FLOAT_REGISTER_BASE..RISCV_GDB_FLOAT_REGISTER_BASE + float_count)
-        .chain(
-            RISCV_GDB_FLOAT_CSR_REGISTER_BASE..RISCV_GDB_FLOAT_CSR_REGISTER_BASE + float_csr_count,
-        )
-        .chain(std::iter::once(RISCV_GDB_FLOAT_PLACEHOLDER_REGISTER))
-        .chain(riscv_gdb_csr_register_base(xlen)..riscv_gdb_csr_register_base(xlen) + csr_count)
-        .chain(
-            RISCV_GDB_VECTOR_REGISTER_BASE
-                ..RISCV_GDB_VECTOR_REGISTER_BASE + u64::from(RISCV_GDB_VECTOR_REGISTER_COUNT),
-        )
-        .chain([
-            RISCV_GDB_SUPERVISOR_INTERRUPT_ENABLE_REGISTER,
-            RISCV_GDB_SUPERVISOR_INTERRUPT_PENDING_REGISTER,
-            RISCV_GDB_COUNTER_CYCLE_REGISTER,
-            RISCV_GDB_COUNTER_INSTRET_REGISTER,
-            RISCV_GDB_COUNTER_TIME_REGISTER,
-            RISCV_GDB_MACHINE_HART_ID_REGISTER,
-            RISCV_GDB_MACHINE_VENDOR_ID_REGISTER,
-            RISCV_GDB_MACHINE_ARCHITECTURE_ID_REGISTER,
-            RISCV_GDB_MACHINE_IMPLEMENTATION_ID_REGISTER,
-            RISCV_GDB_MACHINE_ISA_REGISTER,
-            RISCV_GDB_VECTOR_LENGTH_REGISTER,
-            RISCV_GDB_VECTOR_TYPE_REGISTER,
-            RISCV_GDB_VECTOR_LENGTH_BYTES_REGISTER,
-            RISCV_GDB_SUPERVISOR_ENVIRONMENT_CONFIG_REGISTER,
-            RISCV_GDB_PMP_CONFIG0_REGISTER,
-            RISCV_GDB_PMP_ADDR_REGISTERS[0],
-            RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER,
-            RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER,
-        ])
-        .chain(RISCV_GDB_PMP_ADDR_REGISTERS[1..8].iter().copied())
-        .chain(std::iter::once(RISCV_GDB_PMP_CONFIG2_REGISTER))
-        .chain(RISCV_GDB_PMP_ADDR_REGISTERS[8..].iter().copied())
-        .chain((xlen == RiscvGdbXlen::Rv32).then_some(156))
-        .chain((xlen == RiscvGdbXlen::Rv32).then_some(157))
-        .chain(std::iter::once(
-            riscv_gdb_supervisor_counter_enable_register(xlen),
-        ))
-        .chain(std::iter::once(riscv_gdb_machine_counter_enable_register(
-            xlen,
-        )))
-}
-
-fn register_count(xlen: RiscvGdbXlen) -> usize {
-    RISCV_GDB_INTEGER_REGISTER_COUNT as usize
-        + 1
-        + RISCV_GDB_FLOAT_REGISTER_COUNT as usize
-        + RISCV_GDB_FLOAT_CSR_REGISTER_COUNT as usize
-        + 1
-        + RISCV_GDB_CSR_REGISTER_COUNT as usize
-        + RISCV_GDB_VECTOR_REGISTER_COUNT as usize
-        + RISCV_GDB_SPARSE_CSR_REGISTER_COUNT
-        + if xlen == RiscvGdbXlen::Rv32 { 2 } else { 0 }
-}
-
-fn register_set_byte_len(xlen: RiscvGdbXlen) -> usize {
-    riscv_gdb_register_numbers(xlen)
-        .map(|number| register_byte_len(xlen, number))
-        .sum()
-}
-
-fn riscv_gdb_register_number_is_supported(xlen: RiscvGdbXlen, number: u64) -> bool {
-    number <= RISCV_GDB_PC_REGISTER
-        || is_riscv_gdb_float_register(number)
-        || is_riscv_gdb_float_csr_register(number)
-        || is_riscv_gdb_float_placeholder_register(number)
-        || is_riscv_gdb_csr_register(xlen, number)
-        || is_riscv_gdb_vector_register(number)
-}
-
-const fn is_riscv_gdb_float_register(number: u64) -> bool {
-    number >= RISCV_GDB_FLOAT_REGISTER_BASE
-        && number < RISCV_GDB_FLOAT_REGISTER_BASE + RISCV_GDB_FLOAT_REGISTER_COUNT as u64
-}
-
-const fn is_riscv_gdb_float_csr_register(number: u64) -> bool {
-    number >= RISCV_GDB_FLOAT_CSR_REGISTER_BASE
-        && number < RISCV_GDB_FLOAT_CSR_REGISTER_BASE + RISCV_GDB_FLOAT_CSR_REGISTER_COUNT as u64
-}
-
-const fn is_riscv_gdb_float_placeholder_register(number: u64) -> bool {
-    number == RISCV_GDB_FLOAT_PLACEHOLDER_REGISTER
-}
-
-const fn is_riscv_gdb_vector_register(number: u64) -> bool {
-    number >= RISCV_GDB_VECTOR_REGISTER_BASE
-        && number < RISCV_GDB_VECTOR_REGISTER_BASE + RISCV_GDB_VECTOR_REGISTER_COUNT as u64
-}
-
-const fn riscv_gdb_csr_register_base(xlen: RiscvGdbXlen) -> u64 {
-    match xlen {
-        RiscvGdbXlen::Rv32 => RISCV_GDB_RV32_CSR_REGISTER_BASE,
-        RiscvGdbXlen::Rv64 => RISCV_GDB_RV64_CSR_REGISTER_BASE,
-    }
-}
-
-fn riscv_gdb_supervisor_counter_enable_register(xlen: RiscvGdbXlen) -> u64 {
-    match xlen {
-        RiscvGdbXlen::Rv32 => RISCV_GDB_RV32_SUPERVISOR_COUNTER_ENABLE_REGISTER,
-        RiscvGdbXlen::Rv64 => RISCV_GDB_RV64_SUPERVISOR_COUNTER_ENABLE_REGISTER,
-    }
-}
-
-fn riscv_gdb_machine_counter_enable_register(xlen: RiscvGdbXlen) -> u64 {
-    match xlen {
-        RiscvGdbXlen::Rv32 => RISCV_GDB_RV32_MACHINE_COUNTER_ENABLE_REGISTER,
-        RiscvGdbXlen::Rv64 => RISCV_GDB_RV64_MACHINE_COUNTER_ENABLE_REGISTER,
-    }
-}
-
-fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool {
-    (number >= riscv_gdb_csr_register_base(xlen)
-        && number < riscv_gdb_csr_register_base(xlen) + RISCV_GDB_CSR_REGISTER_COUNT as u64)
-        || number == RISCV_GDB_SUPERVISOR_INTERRUPT_ENABLE_REGISTER
-        || number == RISCV_GDB_SUPERVISOR_INTERRUPT_PENDING_REGISTER
-        || number == RISCV_GDB_COUNTER_CYCLE_REGISTER
-        || number == RISCV_GDB_COUNTER_INSTRET_REGISTER
-        || number == RISCV_GDB_COUNTER_TIME_REGISTER
-        || number == RISCV_GDB_MACHINE_HART_ID_REGISTER
-        || number == RISCV_GDB_MACHINE_VENDOR_ID_REGISTER
-        || number == RISCV_GDB_MACHINE_ARCHITECTURE_ID_REGISTER
-        || number == RISCV_GDB_MACHINE_IMPLEMENTATION_ID_REGISTER
-        || number == RISCV_GDB_MACHINE_ISA_REGISTER
-        || number == RISCV_GDB_VECTOR_LENGTH_REGISTER
-        || number == RISCV_GDB_VECTOR_TYPE_REGISTER
-        || number == RISCV_GDB_VECTOR_LENGTH_BYTES_REGISTER
-        || number == RISCV_GDB_SUPERVISOR_ENVIRONMENT_CONFIG_REGISTER
-        || number == RISCV_GDB_PMP_CONFIG0_REGISTER
-        || number == RISCV_GDB_PMP_ADDR_REGISTERS[0]
-        || (number >= RISCV_GDB_PMP_ADDR_REGISTERS[1] && number <= RISCV_GDB_PMP_ADDR_REGISTERS[7])
-        || number == RISCV_GDB_PMP_CONFIG2_REGISTER
-        || (number >= RISCV_GDB_PMP_ADDR_REGISTERS[8] && number <= RISCV_GDB_PMP_ADDR_REGISTERS[15])
-        || (xlen == RiscvGdbXlen::Rv32 && (number == 156 || number == 157))
-        || number == riscv_gdb_supervisor_counter_enable_register(xlen)
-        || number == riscv_gdb_machine_counter_enable_register(xlen)
-        || number == RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER
-        || number == RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER
-}
-
-fn encode_register_value(xlen: RiscvGdbXlen, number: u64, value: u64) -> Vec<u8> {
-    if register_byte_len(xlen, number) == 4 {
-        (value as u32).to_le_bytes().to_vec()
-    } else {
-        value.to_le_bytes().to_vec()
-    }
-}
-
-fn decode_register_value(bytes: &[u8]) -> u64 {
-    let mut raw = [0; 8];
-    raw[..bytes.len()].copy_from_slice(bytes);
-    u64::from_le_bytes(raw)
-}
-
-const fn byte_len(xlen: RiscvGdbXlen) -> usize {
-    match xlen {
-        RiscvGdbXlen::Rv32 => 4,
-        RiscvGdbXlen::Rv64 => 8,
-    }
-}
-
-const fn riscv_gdb_xlen_bits(xlen: RiscvGdbXlen) -> u8 {
-    match xlen {
-        RiscvGdbXlen::Rv32 => 32,
-        RiscvGdbXlen::Rv64 => 64,
-    }
-}
-
-const fn register_byte_len(xlen: RiscvGdbXlen, number: u64) -> usize {
-    if is_riscv_gdb_float_register(number) {
-        8
-    } else if is_riscv_gdb_vector_register(number) {
-        RISCV_VECTOR_REGISTER_BYTES
-    } else if is_riscv_gdb_float_csr_register(number)
-        || is_riscv_gdb_float_placeholder_register(number)
-    {
-        4
-    } else {
-        byte_len(xlen)
     }
 }

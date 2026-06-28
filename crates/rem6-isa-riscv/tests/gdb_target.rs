@@ -431,6 +431,7 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "  <reg name=\"pmpcfg3\" bitsize=\"32\" regnum=\"157\"/>\n",
             "  <reg name=\"scounteren\" bitsize=\"32\" regnum=\"158\"/>\n",
             "  <reg name=\"mcounteren\" bitsize=\"32\" regnum=\"159\"/>\n",
+            "  <reg name=\"mstatush\" bitsize=\"32\" regnum=\"160\"/>\n",
             "</feature>\n",
         ),
     );
@@ -495,9 +496,10 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "pmpcfg3",
             "scounteren",
             "mcounteren",
+            "mstatush",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"32\"").count(), 58);
+    assert_eq!(csr.matches("bitsize=\"32\"").count(), 59);
 }
 
 #[test]

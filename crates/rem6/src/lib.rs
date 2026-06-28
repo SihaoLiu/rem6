@@ -724,6 +724,10 @@ fn execute_riscv(
         memory_partition,
         config.memory_route_delay(),
     )?;
+    let gdb_xlen = match image.elf_metadata().map(|metadata| metadata.architecture()) {
+        Some(BootElfArchitecture::Riscv32) => RiscvGdbXlen::Rv32,
+        _ => RiscvGdbXlen::Rv64,
+    };
     let riscv_se_startup = if config.riscv_se() {
         let mut startup_config = RiscvSeStartupConfig::new(Address::new(RISCV64_SE_STACK_TOP));
         if config.riscv_se_args().is_empty() {
@@ -801,6 +805,7 @@ fn execute_riscv(
                 line_layout,
             ),
         );
+        core.set_xlen(gdb_xlen);
         core.write_register(
             Register::new(RISCV_BOOT_A0_REGISTER).map_err(execute_error)?,
             config.riscv_boot_a0(),
@@ -920,10 +925,6 @@ fn execute_riscv(
     }
     let fetch_trace = MemoryTrace::new();
     let data_trace = MemoryTrace::new();
-    let gdb_xlen = match image.elf_metadata().map(|metadata| metadata.architecture()) {
-        Some(BootElfArchitecture::Riscv32) => RiscvGdbXlen::Rv32,
-        _ => RiscvGdbXlen::Rv64,
-    };
     let mut gdb_outcome = if let Some(listen) = config.gdb_listen() {
         serve_riscv_gdb_with_run_control(
             gdb_xlen,
