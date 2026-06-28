@@ -3524,9 +3524,14 @@ fn rem6_run_in_order_pipeline_models_integer_mul_execute_latency() {
         stat_value(&add_stats, "sim.cpu0.pipeline.in_order.data_wait_cycles"),
         0
     );
+    assert_eq!(
+        stat_value(&add_stats, "sim.cpu0.pipeline.in_order.execute_wait_cycles"),
+        0
+    );
 
     let add_cycles = stat_value(&add_stats, "sim.cpu0.pipeline.in_order.cycles");
     let add_stall = stat_value(&add_stats, "sim.cpu0.pipeline.in_order.stall_cycles");
+    let add_execute_wait = stat_value(&add_stats, "sim.cpu0.pipeline.in_order.execute_wait_cycles");
     for (name, word) in [
         ("mul", 0x0220_81b3),
         ("mulh", 0x0220_91b3),
@@ -3548,6 +3553,14 @@ fn rem6_run_in_order_pipeline_models_integer_mul_execute_latency() {
         assert_eq!(
             stat_value(&mul_stats, "sim.cpu0.pipeline.in_order.data_wait_cycles"),
             0
+        );
+
+        let mul_execute_wait =
+            stat_value(&mul_stats, "sim.cpu0.pipeline.in_order.execute_wait_cycles");
+        assert_eq!(
+            mul_execute_wait - add_execute_wait,
+            EXPECTED_MUL_EXTRA_EXECUTE_CYCLES,
+            "{name} should expose fixed execute-wait cycles: add={add_execute_wait}, {name}={mul_execute_wait}\nadd stats:\n{add_stats}\n{name} stats:\n{mul_stats}"
         );
 
         let mul_cycles = stat_value(&mul_stats, "sim.cpu0.pipeline.in_order.cycles");
@@ -4881,6 +4894,10 @@ fn rem6_run_text_stats_emit_in_order_resource_stall_aliases_from_pending_paralle
         text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.fetch_wait_cycles")
     );
     assert_eq!(
+        text_stat_value(&stdout, "system.cpu.pipeline.inOrder.executeWaitCycles"),
+        text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.execute_wait_cycles")
+    );
+    assert_eq!(
         text_stat_value(&stdout, "system.cpu.pipeline.inOrder.resourceBlocked"),
         text_stat_value(&stdout, "sim.cpu0.pipeline.in_order.resource_blocked")
     );
@@ -4916,6 +4933,11 @@ fn rem6_run_text_stats_emit_in_order_resource_stall_aliases_from_pending_paralle
     }
     assert!(
         text_stat_line(&stdout, "system.cpu.pipeline.inOrder.stallCycles").contains("unit=Cycle"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.pipeline.inOrder.executeWaitCycles")
+            .contains("unit=Cycle"),
         "{stdout}"
     );
     assert!(

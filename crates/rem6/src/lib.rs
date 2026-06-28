@@ -475,6 +475,7 @@ pub struct Rem6CoreSummary {
     in_order_pipeline_stall_cycles: u64,
     in_order_pipeline_fetch_wait_cycles: u64,
     in_order_pipeline_data_wait_cycles: u64,
+    in_order_pipeline_execute_wait_cycles: u64,
     in_order_pipeline_branch_predictions: u64,
     in_order_pipeline_branch_mispredictions: u64,
     in_order_pipeline_conditional_branch_predictions: u64,

@@ -236,6 +236,13 @@ pub(super) fn emit_cpu_run_stats(
         )?;
         increment_stat(
             stats,
+            &format!("sim.cpu{}.pipeline.in_order.execute_wait_cycles", core.cpu),
+            "Cycle",
+            StatResetPolicy::Monotonic,
+            core.in_order_pipeline_execute_wait_cycles,
+        )?;
+        increment_stat(
+            stats,
             &format!("sim.cpu{}.pipeline.in_order.branch_predictions", core.cpu),
             "Count",
             StatResetPolicy::Monotonic,

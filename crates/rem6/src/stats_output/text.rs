@@ -401,6 +401,7 @@ fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &Sta
             ("stall_cycles", "stallCycles", "Cycle"),
             ("fetch_wait_cycles", "fetchWaitCycles", "Cycle"),
             ("data_wait_cycles", "dataWaitCycles", "Cycle"),
+            ("execute_wait_cycles", "executeWaitCycles", "Cycle"),
             (
                 "branch_prediction_flushes",
                 "branchPredictionFlushes",

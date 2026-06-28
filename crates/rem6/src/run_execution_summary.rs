@@ -13,8 +13,9 @@ use crate::parallel_stats::{
     parallel_worker_lane_summaries, parallel_worker_slot_summaries,
 };
 use crate::pipeline_stats::{
-    in_order_pipeline_data_wait_cycles, in_order_pipeline_fetch_wait_cycles,
-    in_order_pipeline_run_summary, in_order_pipeline_stage_branch_prediction_flushed,
+    in_order_pipeline_data_wait_cycles, in_order_pipeline_execute_wait_cycles,
+    in_order_pipeline_fetch_wait_cycles, in_order_pipeline_run_summary,
+    in_order_pipeline_stage_branch_prediction_flushed,
     in_order_pipeline_stage_branch_prediction_flushed_cycles, in_order_pipeline_stage_flushed,
     in_order_pipeline_stage_flushed_cycles, in_order_pipeline_stage_in_flight,
     in_order_pipeline_stage_max_in_flight, in_order_pipeline_stage_occupied_cycles,
@@ -210,6 +211,7 @@ pub(super) fn execution_summary(
             in_order_pipeline_stall_cycles: pipeline_summary.stall_cycle_count(),
             in_order_pipeline_fetch_wait_cycles: in_order_pipeline_fetch_wait_cycles(&core),
             in_order_pipeline_data_wait_cycles: in_order_pipeline_data_wait_cycles(&core),
+            in_order_pipeline_execute_wait_cycles: in_order_pipeline_execute_wait_cycles(&core),
             in_order_pipeline_branch_predictions: pipeline_summary.branch_prediction_count() as u64,
             in_order_pipeline_branch_mispredictions: pipeline_summary.branch_misprediction_count()
                 as u64,

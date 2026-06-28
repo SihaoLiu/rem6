@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use rem6_cpu::{
     CpuFetchEventKind, InOrderPipelineInstruction, InOrderPipelineRunSummary,
-    InOrderPipelineSnapshot, InOrderPipelineStage, RiscvCore,
+    InOrderPipelineSnapshot, InOrderPipelineStage, InOrderPipelineStallCause, RiscvCore,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -280,6 +280,14 @@ pub(super) fn in_order_pipeline_data_wait_cycles(core: &RiscvCore) -> u64 {
     core.execution_events()
         .iter()
         .map(|event| event.in_order_pipeline_data_wait_cycles())
+        .sum()
+}
+
+pub(super) fn in_order_pipeline_execute_wait_cycles(core: &RiscvCore) -> u64 {
+    core.in_order_pipeline_cycle_records()
+        .into_iter()
+        .filter(|record| record.stall_cause() == Some(InOrderPipelineStallCause::ExecuteWait))
+        .map(|record| record.stall_cycle_count())
         .sum()
 }
 
