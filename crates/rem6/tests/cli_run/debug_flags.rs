@@ -1677,12 +1677,14 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
     let port_total_ready_latency_ticks =
         debug_trace_sum(trace, "port", "total_ready_latency_ticks");
     let port_max_ready_latency_ticks = debug_trace_max(trace, "port", "max_ready_latency_ticks");
+    let bank_accesses = debug_trace_sum(trace, "bank", "accesses");
     let bank_read_bytes = debug_trace_sum(trace, "bank", "read_bytes");
     let bank_write_bytes = debug_trace_sum(trace, "bank", "write_bytes");
     let bank_row_hits = debug_trace_sum(trace, "bank", "row_hits");
     let bank_row_misses = debug_trace_sum(trace, "bank", "row_misses");
     let bank_refreshes = debug_trace_sum(trace, "bank", "refreshes");
     let bank_refresh_ticks = debug_trace_sum(trace, "bank", "refresh_ticks");
+    let bank_commands = debug_trace_sum(trace, "bank", "commands");
     let bank_total_ready_latency_ticks =
         debug_trace_sum(trace, "bank", "total_ready_latency_ticks");
     let bank_max_ready_latency_ticks = debug_trace_max(trace, "bank", "max_ready_latency_ticks");
@@ -1693,6 +1695,7 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
     assert!(target_reads > 0, "trace: {trace:?}");
     assert!(target_writes > 0, "trace: {trace:?}");
     assert!(port_commands > 0, "trace: {trace:?}");
+    assert!(bank_accesses > 0, "trace: {trace:?}");
     assert!(bank_read_bytes > 0, "trace: {trace:?}");
     assert!(bank_write_bytes > 0, "trace: {trace:?}");
     assert_eq!(port_row_hits, bank_row_hits);
@@ -1804,6 +1807,13 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
     );
     assert_stat(
         &stdout,
+        "sim.debug.dram_trace.bank.accesses",
+        "Count",
+        bank_accesses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
         "sim.debug.dram_trace.bank.read_bytes",
         "Byte",
         bank_read_bytes,
@@ -1814,6 +1824,55 @@ fn rem6_run_dram_debug_flag_emits_real_dram_hierarchy_trace() {
         "sim.debug.dram_trace.bank.write_bytes",
         "Byte",
         bank_write_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.bank.row_hits",
+        "Count",
+        bank_row_hits,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.bank.row_misses",
+        "Count",
+        bank_row_misses,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.bank.refreshes",
+        "Count",
+        bank_refreshes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.bank.refresh_ticks",
+        "Tick",
+        bank_refresh_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.bank.commands",
+        "Count",
+        bank_commands,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.bank.total_ready_latency_ticks",
+        "Tick",
+        bank_total_ready_latency_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.dram_trace.bank.max_ready_latency_ticks",
+        "Tick",
+        bank_max_ready_latency_ticks,
         "monotonic",
     );
     for record in trace {

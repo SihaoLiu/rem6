@@ -155,6 +155,26 @@ pub(super) fn emit_debug_stats(
             "sim.debug.dram_trace.port.refreshes",
             debug.dram_port_refresh_count(),
         ),
+        (
+            "sim.debug.dram_trace.bank.accesses",
+            debug.dram_bank_access_count(),
+        ),
+        (
+            "sim.debug.dram_trace.bank.row_hits",
+            debug.dram_bank_row_hit_count(),
+        ),
+        (
+            "sim.debug.dram_trace.bank.row_misses",
+            debug.dram_bank_row_miss_count(),
+        ),
+        (
+            "sim.debug.dram_trace.bank.refreshes",
+            debug.dram_bank_refresh_count(),
+        ),
+        (
+            "sim.debug.dram_trace.bank.commands",
+            debug.dram_bank_command_count(),
+        ),
         ("sim.debug.fabric_trace.records", debug.fabric_trace_count()),
         (
             "sim.debug.fabric_trace.lanes",
@@ -485,6 +505,27 @@ pub(super) fn emit_debug_stats(
         "Byte",
         StatResetPolicy::Monotonic,
         debug.dram_bank_write_byte_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.dram_trace.bank.refresh_ticks",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        debug.dram_bank_refresh_tick_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.dram_trace.bank.total_ready_latency_ticks",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        debug.dram_bank_total_ready_latency_tick_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.dram_trace.bank.max_ready_latency_ticks",
+        "Tick",
+        StatResetPolicy::Monotonic,
+        debug.dram_bank_max_ready_latency_tick_count(),
     )?;
     increment_stat(
         stats,

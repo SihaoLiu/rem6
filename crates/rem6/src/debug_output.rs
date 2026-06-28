@@ -627,6 +627,68 @@ impl Rem6DebugSummary {
         })
     }
 
+    pub(crate) fn dram_bank_access_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Bank { accesses, .. } => Some(*accesses),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_bank_row_hit_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Bank { row_hits, .. } => Some(*row_hits),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_bank_row_miss_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Bank { row_misses, .. } => Some(*row_misses),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_bank_refresh_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Bank { refreshes, .. } => Some(*refreshes),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_bank_refresh_tick_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Bank { refresh_ticks, .. } => Some(*refresh_ticks),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_bank_command_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Bank { commands, .. } => Some(*commands),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_bank_total_ready_latency_tick_count(&self) -> u64 {
+        self.dram_trace_sum(|record| match record {
+            Rem6DramTraceRecord::Bank {
+                total_ready_latency_ticks,
+                ..
+            } => Some(*total_ready_latency_ticks),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn dram_bank_max_ready_latency_tick_count(&self) -> u64 {
+        self.dram_trace_max(|record| match record {
+            Rem6DramTraceRecord::Bank {
+                max_ready_latency_ticks,
+                ..
+            } => Some(*max_ready_latency_ticks),
+            _ => None,
+        })
+    }
+
     pub(crate) fn fabric_trace_count(&self) -> u64 {
         self.fabric_trace.len() as u64
     }
