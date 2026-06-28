@@ -53,6 +53,24 @@ const JOB_IRQ_RAWSTAT: u32 = 0x1000;
 const JOB_IRQ_CLEAR: u32 = 0x1004;
 const JOB_IRQ_MASK: u32 = 0x1008;
 const JOB_IRQ_STATUS: u32 = 0x100c;
+const JOB_SLOT0_BASE: u32 = 0x1800;
+const JOB_SLOT_STRIDE: u32 = 0x80;
+const JOB_SLOT_COUNT: u32 = 16;
+const JS_HEAD_LO: u32 = 0x00;
+const JS_HEAD_HI: u32 = 0x04;
+const JS_TAIL_LO: u32 = 0x08;
+const JS_TAIL_HI: u32 = 0x0c;
+const JS_AFFINITY_LO: u32 = 0x10;
+const JS_AFFINITY_HI: u32 = 0x14;
+const JS_CONFIG: u32 = 0x18;
+const JS_COMMAND: u32 = 0x20;
+const JS_STATUS: u32 = 0x24;
+const JS_HEAD_NEXT_LO: u32 = 0x40;
+const JS_HEAD_NEXT_HI: u32 = 0x44;
+const JS_AFFINITY_NEXT_LO: u32 = 0x50;
+const JS_AFFINITY_NEXT_HI: u32 = 0x54;
+const JS_CONFIG_NEXT: u32 = 0x58;
+const JS_COMMAND_NEXT: u32 = 0x60;
 const MMU_IRQ_RAWSTAT: u32 = 0x2000;
 const MMU_IRQ_CLEAR: u32 = 0x2004;
 const MMU_IRQ_MASK: u32 = 0x2008;
@@ -87,6 +105,18 @@ const AS_COMMAND_UNLOCK: u32 = 0x03;
 const AS_COMMAND_FLUSH_PT: u32 = 0x04;
 const AS_COMMAND_FLUSH_MEM: u32 = 0x05;
 const AS_COMMAND_UNSUPPORTED_PROBE: u32 = 0xdead_0006;
+const JS_COMMAND_NOP: u32 = 0x00;
+const JS_COMMAND_START: u32 = 0x01;
+const JS_COMMAND_SOFT_STOP: u32 = 0x02;
+const JS_COMMAND_HARD_STOP: u32 = 0x03;
+const JS_COMMAND_SOFT_STOP_0: u32 = 0x04;
+const JS_COMMAND_HARD_STOP_0: u32 = 0x05;
+const JS_COMMAND_SOFT_STOP_1: u32 = 0x06;
+const JS_COMMAND_HARD_STOP_1: u32 = 0x07;
+const JS_COMMAND_UNSUPPORTED_PROBE: u32 = 0xdead_0008;
+const JS_STATUS_DONE: u32 = 0x01;
+const JS_CONFIG_START_MMU: u32 = 1 << 10;
+const JS_CONFIG_JOB_CHAIN_FLAG: u32 = 1 << 11;
 const NOMALI_REGISTER_FAULT_MISALIGNED_READ_OFFSET: u32 = 0x003;
 const NOMALI_REGISTER_FAULT_OUT_OF_RANGE_WRITE_OFFSET: u32 = NOMALI_REGISTER_WINDOW_BYTES as u32;
 const NOMALI_REGISTER_FAULT_WRITE_VALUE: u32 = 0x1234_5678;
@@ -245,6 +275,16 @@ struct NoMaliAddressSpaceCommandWrite {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct NoMaliJobSlotCommandWrite {
+    slot: u8,
+    name: &'static str,
+    offset: u32,
+    value: u32,
+    command: &'static str,
+    effect: &'static str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct NoMaliIrqWrite {
     name: &'static str,
     offset: u32,
@@ -328,6 +368,24 @@ struct NoMaliInterruptBlockSnapshot {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct NoMaliJobSlotSnapshot {
+    slot: u8,
+    name: &'static str,
+    head_lo: u32,
+    head_hi: u32,
+    tail_lo: u32,
+    tail_hi: u32,
+    affinity_lo: u32,
+    affinity_hi: u32,
+    config: u32,
+    status: u32,
+    head_next_lo: u32,
+    head_next_hi: u32,
+    command_next: u32,
+    job_irq_rawstat: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct NoMaliRegisterFault {
     operation: &'static str,
     offset: u32,
@@ -342,10 +400,12 @@ struct NoMaliT760RegisterFile {
     reset_count: u64,
     command_writes: Vec<NoMaliCommandWrite>,
     address_space_command_writes: Vec<NoMaliAddressSpaceCommandWrite>,
+    job_slot_command_writes: Vec<NoMaliJobSlotCommandWrite>,
     irq_writes: Vec<NoMaliIrqWrite>,
     power_writes: Vec<NoMaliPowerWrite>,
     irq_snapshots: Vec<NoMaliIrqSnapshot>,
     interrupt_block_snapshots: Vec<NoMaliInterruptBlockSnapshot>,
+    job_slot_snapshots: Vec<NoMaliJobSlotSnapshot>,
     register_faults: Vec<NoMaliRegisterFault>,
 }
 
@@ -356,10 +416,12 @@ impl NoMaliT760RegisterFile {
             reset_count: 0,
             command_writes: Vec::new(),
             address_space_command_writes: Vec::new(),
+            job_slot_command_writes: Vec::new(),
             irq_writes: Vec::new(),
             power_writes: Vec::new(),
             irq_snapshots: Vec::new(),
             interrupt_block_snapshots: Vec::new(),
+            job_slot_snapshots: Vec::new(),
             register_faults: Vec::new(),
         }
     }
@@ -390,6 +452,14 @@ impl NoMaliT760RegisterFile {
             .checked_register_index("write", offset, Some(value))
             .is_none()
         {
+            return;
+        }
+        if let Some(slot) = job_slot_command_next_slot(offset) {
+            self.job_slot_command_next(slot, offset, value);
+            return;
+        }
+        if let Some(slot) = job_slot_command_slot(offset) {
+            self.job_slot_command(slot, offset, value);
             return;
         }
         if let Some(space) = mmu_address_space_command_space(offset) {
@@ -562,6 +632,105 @@ impl NoMaliT760RegisterFile {
         });
     }
 
+    fn job_slot_command_next(&mut self, slot: u8, offset: u32, value: u32) {
+        self.write_raw(offset, value);
+        let (command, effect) = if value == JS_COMMAND_START {
+            self.start_next_job(slot);
+            ("start", "job_completed_interrupt")
+        } else {
+            ("pending_command", "pending_command_recorded")
+        };
+        self.job_slot_command_writes
+            .push(NoMaliJobSlotCommandWrite {
+                slot,
+                name: "job_slot_command_next",
+                offset,
+                value,
+                command,
+                effect,
+            });
+    }
+
+    fn start_next_job(&mut self, slot: u8) {
+        let base = job_slot_base(slot);
+        if self.read_raw(base + JS_COMMAND_NEXT) != JS_COMMAND_START {
+            return;
+        }
+        let head_lo = self.read_raw(base + JS_HEAD_NEXT_LO);
+        let head_hi = self.read_raw(base + JS_HEAD_NEXT_HI);
+        self.write_raw(base + JS_HEAD_LO, head_lo);
+        self.write_raw(base + JS_HEAD_HI, head_hi);
+        self.write_raw(base + JS_TAIL_LO, head_lo);
+        self.write_raw(base + JS_TAIL_HI, head_hi);
+        self.write_raw(
+            base + JS_AFFINITY_LO,
+            self.read_raw(base + JS_AFFINITY_NEXT_LO),
+        );
+        self.write_raw(
+            base + JS_AFFINITY_HI,
+            self.read_raw(base + JS_AFFINITY_NEXT_HI),
+        );
+        self.write_raw(base + JS_CONFIG, self.read_raw(base + JS_CONFIG_NEXT));
+        self.write_raw(base + JS_HEAD_NEXT_LO, 0);
+        self.write_raw(base + JS_HEAD_NEXT_HI, 0);
+        self.write_raw(base + JS_COMMAND_NEXT, 0);
+        self.write_raw(base + JS_STATUS, JS_STATUS_DONE);
+        self.raise_interrupt_at(JOB_IRQ_RAWSTAT, 1 << slot);
+    }
+
+    fn job_slot_command(&mut self, slot: u8, offset: u32, value: u32) {
+        let base = job_slot_base(slot);
+        let chain_flag_set = self.read_raw(base + JS_CONFIG) & JS_CONFIG_JOB_CHAIN_FLAG != 0;
+        let (command, effect) = match value {
+            JS_COMMAND_NOP => ("nop", "no_effect"),
+            JS_COMMAND_START => ("start", "invalid_command_register"),
+            JS_COMMAND_SOFT_STOP => ("soft_stop", "no_effect"),
+            JS_COMMAND_HARD_STOP => ("hard_stop", "no_effect"),
+            JS_COMMAND_SOFT_STOP_0 => (
+                "soft_stop_if_chain_flag_clear",
+                if chain_flag_set {
+                    "condition_not_met"
+                } else {
+                    "no_effect"
+                },
+            ),
+            JS_COMMAND_HARD_STOP_0 => (
+                "hard_stop_if_chain_flag_clear",
+                if chain_flag_set {
+                    "condition_not_met"
+                } else {
+                    "no_effect"
+                },
+            ),
+            JS_COMMAND_SOFT_STOP_1 => (
+                "soft_stop_if_chain_flag_set",
+                if chain_flag_set {
+                    "no_effect"
+                } else {
+                    "condition_not_met"
+                },
+            ),
+            JS_COMMAND_HARD_STOP_1 => (
+                "hard_stop_if_chain_flag_set",
+                if chain_flag_set {
+                    "no_effect"
+                } else {
+                    "condition_not_met"
+                },
+            ),
+            _ => ("unsupported", "ignored"),
+        };
+        self.job_slot_command_writes
+            .push(NoMaliJobSlotCommandWrite {
+                slot,
+                name: "job_slot_command",
+                offset,
+                value,
+                command,
+                effect,
+            });
+    }
+
     fn mmu_address_space_command(&mut self, space: u8, offset: u32, value: u32) {
         let (command, effect) = match value {
             AS_COMMAND_NOP => ("nop", "no_effect"),
@@ -679,6 +848,26 @@ impl NoMaliT760RegisterFile {
             });
     }
 
+    fn record_job_slot_snapshot(&mut self, name: &'static str, slot: u8) {
+        let base = job_slot_base(slot);
+        self.job_slot_snapshots.push(NoMaliJobSlotSnapshot {
+            slot,
+            name,
+            head_lo: self.read_raw(base + JS_HEAD_LO),
+            head_hi: self.read_raw(base + JS_HEAD_HI),
+            tail_lo: self.read_raw(base + JS_TAIL_LO),
+            tail_hi: self.read_raw(base + JS_TAIL_HI),
+            affinity_lo: self.read_raw(base + JS_AFFINITY_LO),
+            affinity_hi: self.read_raw(base + JS_AFFINITY_HI),
+            config: self.read_raw(base + JS_CONFIG),
+            status: self.read_raw(base + JS_STATUS),
+            head_next_lo: self.read_raw(base + JS_HEAD_NEXT_LO),
+            head_next_hi: self.read_raw(base + JS_HEAD_NEXT_HI),
+            command_next: self.read_raw(base + JS_COMMAND_NEXT),
+            job_irq_rawstat: self.read_raw(JOB_IRQ_RAWSTAT),
+        });
+    }
+
     fn checkpoint_word_count(&self) -> usize {
         self.registers.len()
     }
@@ -751,7 +940,16 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
     pio.write_reg(TILER_PWROFF_LO, pio.read_raw(TILER_PRESENT_LO));
     pio.write_reg(L2_PWRON_LO, pio.read_raw(L2_PRESENT_LO));
     pio.write_reg(L2_PWROFF_LO, pio.read_raw(L2_PRESENT_LO));
-    pio.write_reg(JOB_IRQ_RAWSTAT, JOB_SLOT0_COMPLETED);
+    pio.write_reg(JOB_SLOT0_BASE + JS_HEAD_NEXT_LO, 0x0000_3400);
+    pio.write_reg(JOB_SLOT0_BASE + JS_HEAD_NEXT_HI, 0x0000_0000);
+    pio.write_reg(JOB_SLOT0_BASE + JS_AFFINITY_NEXT_LO, 0x0000_000f);
+    pio.write_reg(JOB_SLOT0_BASE + JS_AFFINITY_NEXT_HI, 0x0000_0000);
+    pio.write_reg(
+        JOB_SLOT0_BASE + JS_CONFIG_NEXT,
+        JS_CONFIG_START_MMU | JS_CONFIG_JOB_CHAIN_FLAG,
+    );
+    pio.write_reg(JOB_SLOT0_BASE + JS_COMMAND_NEXT, JS_COMMAND_START);
+    pio.record_job_slot_snapshot("after_job_slot0_start_next", 0);
     pio.write_reg(JOB_IRQ_MASK, JOB_SLOT0_COMPLETED);
     pio.record_interrupt_block_snapshot(
         "job",
@@ -770,6 +968,18 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
         JOB_IRQ_MASK,
         JOB_IRQ_STATUS,
     );
+    for command in [
+        JS_COMMAND_NOP,
+        JS_COMMAND_SOFT_STOP,
+        JS_COMMAND_HARD_STOP,
+        JS_COMMAND_SOFT_STOP_0,
+        JS_COMMAND_HARD_STOP_0,
+        JS_COMMAND_SOFT_STOP_1,
+        JS_COMMAND_HARD_STOP_1,
+        JS_COMMAND_UNSUPPORTED_PROBE,
+    ] {
+        pio.write_reg(JOB_SLOT0_BASE + JS_COMMAND, command);
+    }
     pio.write_reg(MMU_IRQ_RAWSTAT, MMU_PAGE_FAULT_AS0 | MMU_BUS_ERROR_AS0);
     pio.write_reg(MMU_IRQ_MASK, MMU_BUS_ERROR_AS0);
     pio.record_interrupt_block_snapshot(
@@ -925,6 +1135,22 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         })
         .collect::<Vec<_>>()
         .join(",");
+    let job_slot_command_writes = pio
+        .job_slot_command_writes
+        .iter()
+        .map(|write| {
+            format!(
+                "{{\"slot\":{},\"name\":\"{}\",\"offset\":\"0x{:04x}\",\"value\":\"{}\",\"command\":\"{}\",\"effect\":\"{}\"}}",
+                write.slot,
+                write.name,
+                write.offset,
+                register_hex(write.value),
+                write.command,
+                write.effect,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     let irq_writes = pio
         .irq_writes
         .iter()
@@ -991,6 +1217,30 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         })
         .collect::<Vec<_>>()
         .join(",");
+    let job_slot_snapshots = pio
+        .job_slot_snapshots
+        .iter()
+        .map(|snapshot| {
+            format!(
+                "{{\"slot\":{},\"name\":\"{}\",\"head_lo\":\"{}\",\"head_hi\":\"{}\",\"tail_lo\":\"{}\",\"tail_hi\":\"{}\",\"affinity_lo\":\"{}\",\"affinity_hi\":\"{}\",\"config\":\"{}\",\"status\":\"{}\",\"head_next_lo\":\"{}\",\"head_next_hi\":\"{}\",\"command_next\":\"{}\",\"job_irq_rawstat\":\"{}\"}}",
+                snapshot.slot,
+                snapshot.name,
+                register_hex(snapshot.head_lo),
+                register_hex(snapshot.head_hi),
+                register_hex(snapshot.tail_lo),
+                register_hex(snapshot.tail_hi),
+                register_hex(snapshot.affinity_lo),
+                register_hex(snapshot.affinity_hi),
+                register_hex(snapshot.config),
+                register_hex(snapshot.status),
+                register_hex(snapshot.head_next_lo),
+                register_hex(snapshot.head_next_hi),
+                register_hex(snapshot.command_next),
+                register_hex(snapshot.job_irq_rawstat),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     let register_reads = NOMALI_OBSERVED_PIO_READS
         .iter()
         .map(|(name, offset)| {
@@ -1023,16 +1273,18 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"register_window_bytes\":{},\"reset_count\":{},\"register_fault_count\":{},\"command_writes\":[{}],\"address_space_command_writes\":[{}],\"irq_writes\":[{}],\"power_writes\":[{}],\"irq_snapshots\":[{}],\"interrupt_block_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}],\"register_faults\":[{}]}}",
+        "{{\"register_window_bytes\":{},\"reset_count\":{},\"register_fault_count\":{},\"command_writes\":[{}],\"address_space_command_writes\":[{}],\"job_slot_command_writes\":[{}],\"irq_writes\":[{}],\"power_writes\":[{}],\"irq_snapshots\":[{}],\"interrupt_block_snapshots\":[{}],\"job_slot_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}],\"register_faults\":[{}]}}",
         NOMALI_REGISTER_WINDOW_BYTES,
         pio.reset_count,
         pio.register_faults.len(),
         command_writes,
         address_space_command_writes,
+        job_slot_command_writes,
         irq_writes,
         power_writes,
         irq_snapshots,
         interrupt_block_snapshots,
+        job_slot_snapshots,
         register_hex(pio.read_raw(GPU_IRQ_RAWSTAT)),
         register_hex(pio.read_raw(GPU_IRQ_MASK)),
         register_hex(pio.irq_status()),
@@ -1045,6 +1297,31 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
 
 fn register_hex(value: u32) -> String {
     format!("0x{value:08x}")
+}
+
+fn job_slot_base(slot: u8) -> u32 {
+    JOB_SLOT0_BASE + u32::from(slot) * JOB_SLOT_STRIDE
+}
+
+fn job_slot_command_slot(offset: u32) -> Option<u8> {
+    job_slot_reg_slot(offset, JS_COMMAND)
+}
+
+fn job_slot_command_next_slot(offset: u32) -> Option<u8> {
+    job_slot_reg_slot(offset, JS_COMMAND_NEXT)
+}
+
+fn job_slot_reg_slot(offset: u32, register: u32) -> Option<u8> {
+    let job_slot_span = JOB_SLOT_STRIDE * JOB_SLOT_COUNT;
+    if !(JOB_SLOT0_BASE..JOB_SLOT0_BASE + job_slot_span).contains(&offset) {
+        return None;
+    }
+    let relative = offset - JOB_SLOT0_BASE;
+    if relative % JOB_SLOT_STRIDE == register {
+        Some((relative / JOB_SLOT_STRIDE) as u8)
+    } else {
+        None
+    }
 }
 
 fn mmu_address_space_command_space(offset: u32) -> Option<u8> {
