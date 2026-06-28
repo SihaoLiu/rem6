@@ -50,6 +50,9 @@ const POWER_CHANGED_ALL: u32 = 1 << 10;
 const GPU_COMMAND_SOFT_RESET: u32 = 0x01;
 const GPU_COMMAND_HARD_RESET: u32 = 0x02;
 const GPU_COMMAND_UNSUPPORTED_PROBE: u32 = 0xdead_dead;
+const NOMALI_REGISTER_FAULT_MISALIGNED_READ_OFFSET: u32 = 0x003;
+const NOMALI_REGISTER_FAULT_OUT_OF_RANGE_WRITE_OFFSET: u32 = NOMALI_REGISTER_WINDOW_BYTES as u32;
+const NOMALI_REGISTER_FAULT_WRITE_VALUE: u32 = 0x1234_5678;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct NoMaliRegister {
@@ -223,6 +226,15 @@ struct NoMaliIrqSnapshot {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct NoMaliRegisterFault {
+    operation: &'static str,
+    offset: u32,
+    value: Option<u32>,
+    reason: &'static str,
+    effect: &'static str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct NoMaliT760RegisterFile {
     registers: Vec<u32>,
     reset_count: u64,
@@ -230,6 +242,7 @@ struct NoMaliT760RegisterFile {
     irq_writes: Vec<NoMaliIrqWrite>,
     power_writes: Vec<NoMaliPowerWrite>,
     irq_snapshots: Vec<NoMaliIrqSnapshot>,
+    register_faults: Vec<NoMaliRegisterFault>,
 }
 
 impl NoMaliT760RegisterFile {
@@ -241,6 +254,7 @@ impl NoMaliT760RegisterFile {
             irq_writes: Vec::new(),
             power_writes: Vec::new(),
             irq_snapshots: Vec::new(),
+            register_faults: Vec::new(),
         }
     }
 
@@ -256,11 +270,22 @@ impl NoMaliT760RegisterFile {
         self.registers[(offset / 4) as usize]
     }
 
+    fn read_reg(&mut self, offset: u32) -> Option<u32> {
+        let index = self.checked_register_index("read", offset, None)?;
+        Some(self.registers[index])
+    }
+
     fn write_raw(&mut self, offset: u32, value: u32) {
         self.registers[(offset / 4) as usize] = value;
     }
 
     fn write_reg(&mut self, offset: u32, value: u32) {
+        if self
+            .checked_register_index("write", offset, Some(value))
+            .is_none()
+        {
+            return;
+        }
         match offset {
             GPU_IRQ_RAWSTAT => self.raise_interrupt(value),
             GPU_IRQ_CLEAR => {
@@ -279,6 +304,40 @@ impl NoMaliT760RegisterFile {
             SHADER_PWROFF_LO => self.shader_power_off(value),
             _ => self.write_raw(offset, value),
         }
+    }
+
+    fn checked_register_index(
+        &mut self,
+        operation: &'static str,
+        offset: u32,
+        value: Option<u32>,
+    ) -> Option<usize> {
+        let reason = if offset % 4 != 0 {
+            Some("misaligned_offset")
+        } else if u64::from(offset) >= NOMALI_REGISTER_WINDOW_BYTES {
+            Some("offset_out_of_range")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            self.register_faults.push(NoMaliRegisterFault {
+                operation,
+                offset,
+                value,
+                reason,
+                effect: "fault_recorded",
+            });
+            return None;
+        }
+        Some((offset / 4) as usize)
+    }
+
+    fn probe_register_faults(&mut self) {
+        let _ = self.read_reg(NOMALI_REGISTER_FAULT_MISALIGNED_READ_OFFSET);
+        self.write_reg(
+            NOMALI_REGISTER_FAULT_OUT_OF_RANGE_WRITE_OFFSET,
+            NOMALI_REGISTER_FAULT_WRITE_VALUE,
+        );
     }
 
     fn gpu_command(&mut self, value: u32) {
@@ -445,6 +504,7 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
     pio.record_irq_snapshot("after_power_irq_clear");
     pio.write_reg(SHADER_PWROFF_LO, 0x0000_0003);
     pio.record_irq_snapshot("after_shader_power_off");
+    pio.probe_register_faults();
     let contents = format!(
         "{{\"schema\":\"rem6.nomali.gpu-adapter.v1\",\"source_schema\":\"rem6.cli.gpu-run.v1\",\"scope\":\"gpu-run-execution-summary-adapter\",\"gpu\":{},\"interface\":{},\"pio\":{},\"execution\":{{\"status\":\"completed\",\"final_tick\":{},\"compute_units\":{},\"workgroup_completions\":{},\"coalesced_memory_accesses\":{},\"global_memory_reads\":{},\"global_memory_writes\":{},\"memory_read_callback_observations\":{},\"memory_write_callback_observations\":{},\"job_event_observations\":{},\"compute_unit_activity\":[{}]}}}}\n",
         nomali_gpu_json(&pio),
@@ -581,10 +641,30 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         })
         .collect::<Vec<_>>()
         .join(",");
+    let register_faults = pio
+        .register_faults
+        .iter()
+        .map(|fault| {
+            let value = fault
+                .value
+                .map(|value| format!("\"{}\"", register_hex(value)))
+                .unwrap_or_else(|| "null".to_string());
+            format!(
+                "{{\"operation\":\"{}\",\"offset\":\"0x{:03x}\",\"value\":{},\"reason\":\"{}\",\"effect\":\"{}\"}}",
+                fault.operation,
+                fault.offset,
+                value,
+                fault.reason,
+                fault.effect,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     format!(
-        "{{\"register_window_bytes\":{},\"reset_count\":{},\"command_writes\":[{}],\"irq_writes\":[{}],\"power_writes\":[{}],\"irq_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}]}}",
+        "{{\"register_window_bytes\":{},\"reset_count\":{},\"register_fault_count\":{},\"command_writes\":[{}],\"irq_writes\":[{}],\"power_writes\":[{}],\"irq_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}],\"register_faults\":[{}]}}",
         NOMALI_REGISTER_WINDOW_BYTES,
         pio.reset_count,
+        pio.register_faults.len(),
         command_writes,
         irq_writes,
         power_writes,
@@ -595,6 +675,7 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         pio.irq_asserted(),
         pio.checkpoint_word_count(),
         register_reads,
+        register_faults,
     )
 }
 

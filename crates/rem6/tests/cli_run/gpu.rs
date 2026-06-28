@@ -973,6 +973,15 @@ fn rem6_gpu_run_writes_nomali_adapter_output() {
         ("/pio/register_reads/3/value", "0x0a040400"),
         ("/pio/register_reads/5/name", "shader_present_hi"),
         ("/pio/register_reads/5/value", "0x00000000"),
+        ("/pio/register_faults/0/operation", "read"),
+        ("/pio/register_faults/0/offset", "0x003"),
+        ("/pio/register_faults/0/reason", "misaligned_offset"),
+        ("/pio/register_faults/0/effect", "fault_recorded"),
+        ("/pio/register_faults/1/operation", "write"),
+        ("/pio/register_faults/1/offset", "0x4000"),
+        ("/pio/register_faults/1/value", "0x12345678"),
+        ("/pio/register_faults/1/reason", "offset_out_of_range"),
+        ("/pio/register_faults/1/effect", "fault_recorded"),
     ];
     for (pointer, expected) in string_fields {
         assert_eq!(
@@ -980,10 +989,17 @@ fn rem6_gpu_run_writes_nomali_adapter_output() {
             Some(expected)
         );
     }
+    assert_eq!(
+        adapter
+            .pointer("/pio/register_faults/0/value")
+            .map(Value::is_null),
+        Some(true)
+    );
     let numeric_fields = [
         ("/gpu/api_version", 0),
         ("/gpu/register_window_bytes", 0x4000),
         ("/pio/reset_count", 3),
+        ("/pio/register_fault_count", 2),
         ("/pio/checkpoint/word_count", 4096),
         ("/interface/interrupts/job/nomali_int", 1),
         ("/execution/workgroup_completions", 2),

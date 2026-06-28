@@ -1134,11 +1134,11 @@ fabric/NoC, data-cache, and DRAM power records, with the artifact path reported 
 Top-level `rem6 gpu-run --nomali-output` emits a deterministic
 NoMali-compatible T760 adapter artifact from executed GPU run summaries,
 including register-file checkpoint evidence, hard-reset, soft-reset, ignored
-unsupported-command, IRQ-clear state, shader power-state IRQ evidence, callback identifiers, and observed workgroup
+unsupported-command, IRQ-clear state, shader power-state IRQ evidence, misaligned/out-of-range register fault records, callback identifiers, and observed workgroup
 plus memory activity; TOML and flag-driven runs both report the artifact path.
 
 **Not migrated:** Complete `ext/nomali`, `ext/mcpat`, and `ext/dsent` parity, NoMali PIO command/register breadth beyond reset,
-ignored-command, IRQ-clear, and shader-power slices, register fault behavior, real interrupt delivery, external-tool ingestion beyond rem6-shaped adapter artifacts,
+ignored-command, IRQ-clear, shader-power, and deterministic fault-record slices, broader register fault behavior, real interrupt delivery, external-tool ingestion beyond rem6-shaped adapter artifacts,
 full external schema parity, and broader calibrated power/thermal activity.
 
 **Evidence:** rem6-power export self-tests for custom XML, McPAT XML, DSENT CSV, and McPAT/DSENT import round-trips; `rem6 run` CLI
@@ -1146,9 +1146,9 @@ tests for `--power-output`, executed McPAT/DSENT artifact ingestion, instruction
 memory-transport, and DRAM activity records, `rem6 trace-replay --power-output` data-cache, explicit-fabric, and DRAM activity records,
 `rem6 gpu-run --power-output` compute-unit plus explicit-fabric activity records, `--debug-flags Power` run-JSON records, envelope reporting,
 and load-only rejection; `rem6 gpu-run` CLI/TOML McPAT/DSENT output plus `--nomali-output` T760 register-file, hard-reset, soft-reset,
-ignored-command, IRQ-clear, shader power, multi-artifact envelope, and output-path conflict evidence.
+ignored-command, IRQ-clear, shader power, register-fault, multi-artifact envelope, and output-path conflict evidence.
 
-**Next evidence:** External McPAT/DSENT tool ingestion, broader NoMali PIO command/register behavior, calibrated activity models, and
+**Next evidence:** External McPAT/DSENT tool ingestion, broader NoMali PIO command/register/fault behavior, calibrated activity models, and
 stricter external schema parity tests.
 
 ### Native Loader and Math Replacement - 50% single-axis
