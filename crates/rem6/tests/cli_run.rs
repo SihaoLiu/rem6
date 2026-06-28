@@ -60,6 +60,8 @@ mod riscv_se_fd;
 mod riscv_se_files;
 #[path = "cli_run/riscv_se_getdents.rs"]
 mod riscv_se_getdents;
+#[path = "cli_run/riscv_se_host_actions.rs"]
+mod riscv_se_host_actions;
 #[path = "cli_run/riscv_se_identity.rs"]
 mod riscv_se_identity;
 #[path = "cli_run/riscv_se_inotify.rs"]

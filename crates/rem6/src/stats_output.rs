@@ -23,9 +23,10 @@ use super::{
     parallel_stats, stats_error, CliDataCacheSummary, Rem6AcceleratorRunConfig,
     Rem6AcceleratorRunExecutionSummary, Rem6CliError, Rem6DramSummary, Rem6ExecutionStop,
     Rem6ExecutionSummary, Rem6GpuRunConfig, Rem6GupsConfig, Rem6GupsExecutionSummary,
-    Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters, Rem6MemoryTransportSummary,
-    Rem6ReadfileSummary, Rem6ResourceAcquireArtifact, Rem6RunConfig, Rem6TraceReplayConfig,
-    Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary, RequestedIsa,
+    Rem6HostActionSummary, Rem6LoadBlobSummary, Rem6MemoryDump, Rem6MemoryTransportCounters,
+    Rem6MemoryTransportSummary, Rem6ReadfileSummary, Rem6ResourceAcquireArtifact, Rem6RunConfig,
+    Rem6TraceReplayConfig, Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary,
+    RequestedIsa,
 };
 pub(super) use accelerator_run::accelerator_run_stats_output;
 use cpu::emit_cpu_run_stats;
@@ -613,6 +614,7 @@ pub(super) fn run_stats_output(
         emit_memory_resource_stats(&mut stats, execution)?;
         emit_cpu_run_stats(&mut stats, &execution.cores)?;
         emit_debug_stats(&mut stats, execution)?;
+        emit_run_host_action_stats(&mut stats, &execution.host_actions)?;
     }
 
     let snapshot = stats.snapshot(0);
@@ -762,6 +764,38 @@ fn stats_snapshot_json(snapshot: &StatSnapshot) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!("[{samples}]")
+}
+
+fn emit_run_host_action_stats(
+    stats: &mut StatsRegistry,
+    summary: &Rem6HostActionSummary,
+) -> Result<(), Rem6CliError> {
+    let samples = [
+        ("total", summary.total_action_count),
+        ("injected_commands", summary.injected_command_count),
+        ("guest_host_calls", summary.guest_host_calls.len() as u64),
+        ("roi_begin", summary.roi_begin.len() as u64),
+        ("roi_end", summary.roi_end.len() as u64),
+        ("stats_resets", summary.stats_resets.len() as u64),
+        ("stats_dumps", summary.stats_dumps.len() as u64),
+        ("checkpoints", summary.checkpoints.len() as u64),
+        ("checkpoint_restores", summary.checkpoint_restored_count),
+        (
+            "execution_mode_switches",
+            summary.execution_mode_switch_count,
+        ),
+        ("stops", summary.stops.len() as u64),
+    ];
+    for (name, value) in samples {
+        increment_stat(
+            stats,
+            &format!("sim.host_actions.{name}"),
+            "Count",
+            StatResetPolicy::Monotonic,
+            value,
+        )?;
+    }
+    Ok(())
 }
 
 pub(super) fn increment_stat(
