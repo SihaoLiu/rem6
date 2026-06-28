@@ -543,15 +543,6 @@ fn trace_replay_manifest(
     trace_digest: &str,
     duration: u64,
 ) -> Result<WorkloadManifest, Rem6CliError> {
-    if config.data_cache_protocol().is_some()
-        && (!config.host_checkpoints().is_empty() || !config.host_checkpoint_restores().is_empty())
-    {
-        return Err(Rem6CliError::Execute {
-            error: "trace-replay host checkpoint events currently require direct memory; data cache checkpoint capture is not wired"
-                .to_string(),
-        });
-    }
-
     let memory_range = AddressRange::new(
         Address::new(config.memory_start()),
         AccessSize::new(config.memory_size()).map_err(execute_error)?,

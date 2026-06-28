@@ -931,7 +931,7 @@ fn trace_data_cache_consumer(
     )
 }
 
-fn trace_route_uses_data_cache(
+pub(super) fn trace_route_uses_data_cache(
     route: &WorkloadRouteId,
     topology: &WorkloadTopology,
     data_cache_routes: &BTreeSet<WorkloadRouteId>,

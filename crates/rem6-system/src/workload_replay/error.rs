@@ -8,7 +8,7 @@ use rem6_cpu::CpuError;
 use rem6_dram::DramMemoryError;
 use rem6_gpu::{GpuDeviceId, GpuError};
 use rem6_kernel::SchedulerError;
-use rem6_memory::{MemoryError, MemoryRequestId, TranslationError};
+use rem6_memory::{Address, MemoryError, MemoryRequestId, TranslationError};
 use rem6_transport::TransportError;
 use rem6_workload::{WorkloadError, WorkloadRouteId};
 
@@ -40,6 +40,12 @@ pub enum RiscvWorkloadReplayError {
     },
     MissingRoute {
         route: WorkloadRouteId,
+    },
+    PlannedDataCacheTraceReplayOverlap {
+        action: &'static str,
+        tick: u64,
+        route: WorkloadRouteId,
+        line: Address,
     },
     MissingFinalTick,
     Workload(WorkloadError),
@@ -124,6 +130,17 @@ impl fmt::Display for RiscvWorkloadReplayError {
                     route.as_str()
                 )
             }
+            Self::PlannedDataCacheTraceReplayOverlap {
+                action,
+                tick,
+                route,
+                line,
+            } => write!(
+                formatter,
+                "planned host {action} at tick {tick} overlaps data-cache trace packet on route {} line {:#x}",
+                route.as_str(),
+                line.get()
+            ),
             Self::MissingFinalTick => write!(formatter, "RISC-V run did not report a final tick"),
             Self::Workload(error) => write!(formatter, "{error}"),
             Self::Boot(error) => write!(formatter, "{error}"),
@@ -210,6 +227,7 @@ impl Error for RiscvWorkloadReplayError {
             | Self::AcceleratorDmaRequestSequenceOverflow { .. }
             | Self::MissingAcceleratorDmaWrite { .. }
             | Self::MissingRoute { .. }
+            | Self::PlannedDataCacheTraceReplayOverlap { .. }
             | Self::MissingFinalTick
             | Self::DataTranslationPageSizeMismatch { .. }
             | Self::TrafficTraceReplayCallback { .. } => None,

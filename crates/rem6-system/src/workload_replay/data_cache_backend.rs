@@ -1237,6 +1237,13 @@ impl WorkloadDataCacheBackend {
             .collect()
     }
 
+    pub(super) fn line_locations(&self) -> Vec<(MemoryTargetId, Address)> {
+        self.lines
+            .values()
+            .map(|line| (line.target(), line.line()))
+            .collect()
+    }
+
     pub(super) fn functional_line_data(
         &self,
         target: MemoryTargetId,

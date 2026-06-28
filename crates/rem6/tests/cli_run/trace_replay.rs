@@ -494,7 +494,7 @@ fn rem6_trace_replay_fails_on_missing_host_checkpoint_restore_label() {
 }
 
 #[test]
-fn rem6_trace_replay_rejects_host_checkpoint_with_data_cache_protocol() {
+fn rem6_trace_replay_checkpoints_and_restores_with_data_cache_protocol() {
     let trace = temp_trace(
         "trace-replay-data-cache-host-checkpoint",
         &packet_trace_bytes(
@@ -543,14 +543,55 @@ fn rem6_trace_replay_rejects_host_checkpoint_with_data_cache_protocol() {
             "msi",
             "--host-checkpoint",
             "1:cache-cp",
+            "--host-restore-checkpoint",
+            "2:cache-cp",
+            "--stats-format",
+            "json",
         ])
         .output()
         .unwrap();
 
-    assert!(!output.status.success());
-    let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("host checkpoint"), "stderr: {stderr}");
-    assert!(stderr.contains("data cache"), "stderr: {stderr}");
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/simulation/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        json.pointer("/simulation/checkpoint_restored_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_nonzero_json_u64(&json, "/simulation/checkpoint_payload_bytes");
+    assert_nonzero_json_u64(&json, "/simulation/checkpoint_restored_payload_bytes");
+    assert!(stdout.contains("\"data_cache_protocol\":\"msi\""));
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.host_actions.checkpoints",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.host_actions.checkpoint_restores",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.trace_replay.data_cache.runs",
+        "Count",
+        1,
+        "monotonic",
+    );
 }
 
 fn assert_nonzero_json_u64(json: &Value, path: &str) {

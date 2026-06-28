@@ -11,9 +11,9 @@ use rem6_memory::{
 use rem6_system::{
     RiscvDataCacheControllerError, RiscvDataCacheProtocol, RiscvTraceDiagnosticKind,
     RiscvTraceHtmAccessKind, RiscvWorkloadReplay, RiscvWorkloadReplayError,
-    RiscvWorkloadTraceSyncOutcome, RiscvWorkloadTrafficTraceReplay, TrafficTraceReplayControlError,
-    TrafficTraceReplayControllerControlError, TrafficTraceReplayControllerTargetError,
-    TrafficTraceReplayTargetError,
+    RiscvWorkloadTraceSyncOutcome, RiscvWorkloadTrafficTraceReplay, SystemActionOutcome,
+    TrafficTraceReplayControlError, TrafficTraceReplayControllerControlError,
+    TrafficTraceReplayControllerTargetError, TrafficTraceReplayTargetError,
 };
 use rem6_traffic::{
     TrafficTraceCacheKind, TrafficTraceErrorKind, TrafficTraceResponseKind, TrafficTraceSyncKind,
@@ -2991,6 +2991,380 @@ fn workload_replay_records_trace_printreq_data_cache_diagnostic() {
     let summary = &outcome.result().traffic_trace_replay_summaries()[0];
     assert_eq!(summary.diagnostic_print_event_count(), 1);
     assert_eq!(summary.trace_diagnostic_count(), 1);
+}
+
+#[test]
+fn workload_replay_restores_planned_checkpoint_over_data_cache_lines() {
+    let manifest = WorkloadManifest::builder(
+        workload_id("riscv-replay-data-cache-checkpoint-restore"),
+        boot_image_with_delayed_data_cache_line(),
+    )
+    .with_topology(replay_topology_with_data_cache_protocol(
+        WorkloadDataCacheProtocol::Msi,
+    ))
+    .with_expected_stop_reason("host-stop")
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Checkpoint {
+            label: "cache-cp".to_string(),
+        },
+    ))
+    .add_host_event(WorkloadHostEvent::new(
+        7,
+        HostEventIntent::RestoreCheckpoint {
+            label: "cache-cp".to_string(),
+        },
+    ))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packet_records(&[
+        PacketRecord {
+            tick: 1,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(976),
+            pc: None,
+        },
+        PacketRecord {
+            tick: 4,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(976),
+            pc: None,
+        },
+        PacketRecord {
+            tick: 5,
+            command: GEM5_WRITE_COMPLETE_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            flags: Some(GEM5_FLAG_PHYSICAL),
+            packet_id: Some(976),
+            pc: Some(0x1800),
+        },
+        PacketRecord {
+            tick: 8,
+            command: GEM5_PRINT_REQ,
+            address: Some(0x9008),
+            size: Some(1),
+            flags: None,
+            packet_id: Some(978),
+            pc: None,
+        },
+        PacketRecord {
+            tick: 9,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(979),
+            pc: None,
+        },
+        PacketRecord {
+            tick: 12,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(979),
+            pc: None,
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(128)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let diagnostics = outcome.run().trace_diagnostic_records();
+    assert_eq!(diagnostics.len(), 1);
+    let diagnostic = &diagnostics[0];
+    assert_eq!(diagnostic.tick(), 8);
+    assert_eq!(diagnostic.line(), Address::new(0x9000));
+    assert_eq!(diagnostic.cached_copy_count(), 0);
+    assert!(!diagnostic.has_cached_copy());
+    assert!(diagnostic.has_backing_line());
+    let line = outcome.memory_snapshot();
+    let line = snapshot_line_data(line, MemoryTargetId::new(0), Address::new(0x9000));
+    assert_eq!(&line[8..16], &0xfedc_ba98_7654_3210_u64.to_le_bytes());
+    assert_eq!(outcome.result().checkpoint_manifest_summaries().len(), 1);
+    assert_eq!(
+        outcome
+            .result()
+            .restored_checkpoint_manifest_summaries()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn workload_replay_captures_dirty_data_cache_line_in_planned_checkpoint_payload() {
+    let manifest = WorkloadManifest::builder(
+        workload_id("riscv-replay-data-cache-dirty-checkpoint"),
+        boot_image_with_delayed_data_cache_line(),
+    )
+    .with_topology(replay_topology_with_data_cache_protocol(
+        WorkloadDataCacheProtocol::Msi,
+    ))
+    .with_expected_stop_reason("host-stop")
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        7,
+        HostEventIntent::Checkpoint {
+            label: "cache-cp".to_string(),
+        },
+    ))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packet_records(&[
+        PacketRecord {
+            tick: 1,
+            command: GEM5_WRITE_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(976),
+            pc: None,
+        },
+        PacketRecord {
+            tick: 4,
+            command: GEM5_WRITE_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(976),
+            pc: None,
+        },
+        PacketRecord {
+            tick: 5,
+            command: GEM5_WRITE_COMPLETE_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            flags: Some(GEM5_FLAG_PHYSICAL),
+            packet_id: Some(976),
+            pc: Some(0x1800),
+        },
+    ]);
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(128)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap();
+
+    let manifest = outcome
+        .host_action_outcomes()
+        .iter()
+        .find_map(|outcome| match outcome {
+            SystemActionOutcome::Checkpoint { manifest, .. } => Some(manifest),
+            _ => None,
+        })
+        .unwrap();
+    let store_payload = manifest
+        .states()
+        .iter()
+        .flat_map(|state| state.chunks())
+        .find(|chunk| chunk.name() == "store")
+        .unwrap()
+        .payload();
+    assert!(store_payload.windows(8).any(|window| window == [7; 8]));
+}
+
+#[test]
+fn workload_replay_rejects_same_tick_checkpoint_and_data_cache_trace_line() {
+    let manifest = WorkloadManifest::builder(
+        workload_id("riscv-replay-data-cache-checkpoint-trace-overlap"),
+        boot_image_with_delayed_data_cache_line(),
+    )
+    .with_topology(replay_topology_with_data_cache_protocol(
+        WorkloadDataCacheProtocol::Msi,
+    ))
+    .with_expected_stop_reason("host-stop")
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        4,
+        HostEventIntent::Checkpoint {
+            label: "cache-cp".to_string(),
+        },
+    ))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 1,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(976),
+        },
+        PacketFields {
+            tick: 4,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(976),
+        },
+    ]);
+
+    let error = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(128)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap_err();
+
+    let message = error.to_string();
+    assert!(message.contains("planned host checkpoint"));
+    assert!(message.contains("tick 4"));
+    assert!(message.contains("data-cache trace packet"));
+    assert!(message.contains("0x9000"));
+}
+
+#[test]
+fn workload_replay_rejects_same_tick_checkpoint_and_addressless_data_cache_trace_response() {
+    let manifest = WorkloadManifest::builder(
+        workload_id("riscv-replay-data-cache-checkpoint-addressless-response"),
+        boot_image_with_delayed_data_cache_line(),
+    )
+    .with_topology(replay_topology_with_data_cache_protocol(
+        WorkloadDataCacheProtocol::Msi,
+    ))
+    .with_expected_stop_reason("host-stop")
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        4,
+        HostEventIntent::Checkpoint {
+            label: "cache-cp".to_string(),
+        },
+    ))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packet_records(&[
+        PacketRecord {
+            tick: 1,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            flags: None,
+            packet_id: Some(976),
+            pc: None,
+        },
+        PacketRecord {
+            tick: 4,
+            command: GEM5_READ_RESP,
+            address: None,
+            size: Some(8),
+            flags: None,
+            packet_id: Some(976),
+            pc: None,
+        },
+    ]);
+
+    let error = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(128)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap_err();
+
+    let message = error.to_string();
+    assert!(message.contains("planned host checkpoint"));
+    assert!(message.contains("tick 4"));
+    assert!(message.contains("data-cache trace packet"));
+    assert!(message.contains("0x9000"));
+}
+
+#[test]
+fn workload_replay_rejects_same_tick_restore_and_data_cache_trace_line() {
+    let manifest = WorkloadManifest::builder(
+        workload_id("riscv-replay-data-cache-restore-trace-overlap"),
+        boot_image_with_delayed_data_cache_line(),
+    )
+    .with_topology(replay_topology_with_data_cache_protocol(
+        WorkloadDataCacheProtocol::Msi,
+    ))
+    .with_expected_stop_reason("host-stop")
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Checkpoint {
+            label: "cache-cp".to_string(),
+        },
+    ))
+    .add_host_event(WorkloadHostEvent::new(
+        4,
+        HostEventIntent::RestoreCheckpoint {
+            label: "cache-cp".to_string(),
+        },
+    ))
+    .build()
+    .unwrap();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+    let controller = controller_for_packets(&[
+        PacketFields {
+            tick: 1,
+            command: GEM5_READ_REQ,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(976),
+        },
+        PacketFields {
+            tick: 4,
+            command: GEM5_READ_RESP,
+            address: Some(0x9008),
+            size: Some(8),
+            packet_id: Some(976),
+        },
+    ]);
+
+    let error = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(128)
+        .with_traffic_trace_replay(RiscvWorkloadTrafficTraceReplay::new(
+            controller,
+            route_id("cpu0.data"),
+            PartitionId::new(2),
+        ))
+        .run_parallel()
+        .unwrap_err();
+
+    let message = error.to_string();
+    assert!(message.contains("planned host restore checkpoint"));
+    assert!(message.contains("tick 4"));
+    assert!(message.contains("data-cache trace packet"));
+    assert!(message.contains("0x9000"));
 }
 
 #[test]

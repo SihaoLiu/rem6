@@ -14,13 +14,21 @@ use crate::{
 
 const PLANNED_HOST_EVENT_ID_BASE: u64 = 10_000;
 
-pub(crate) fn schedule_planned_host_events(
+pub(crate) fn schedule_planned_host_events_with_handler<H>(
     plan: &WorkloadReplayPlan,
     scheduler: &mut PartitionedScheduler,
     controller: &Arc<Mutex<SystemHostController>>,
     host_partition: PartitionId,
     host_source: GuestSourceId,
-) -> Result<(), RiscvWorkloadReplayError> {
+    handle_delivery: H,
+) -> Result<(), RiscvWorkloadReplayError>
+where
+    H: Fn(&WorkloadHostEvent, GuestEventDelivery, &Arc<Mutex<SystemHostController>>)
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+{
     register_planned_guest_host_call_responses(plan, controller);
 
     for (index, event) in plan.host_events().iter().enumerate() {
@@ -28,6 +36,8 @@ pub(crate) fn schedule_planned_host_events(
             continue;
         };
         let controller = Arc::clone(controller);
+        let event = event.clone();
+        let handle_delivery = handle_delivery.clone();
         scheduler
             .schedule_parallel_at(host_partition, event.tick(), move |context| {
                 let delivery = GuestEventDelivery::new(
@@ -36,10 +46,7 @@ pub(crate) fn schedule_planned_host_events(
                     host_partition,
                     guest_event,
                 );
-                controller
-                    .lock()
-                    .expect("system host controller lock")
-                    .handle_delivery(delivery);
+                handle_delivery(&event, delivery, &controller);
             })
             .map_err(RiscvWorkloadReplayError::Scheduler)?;
     }
