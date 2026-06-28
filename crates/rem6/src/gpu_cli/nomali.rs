@@ -301,6 +301,16 @@ struct NoMaliJobSlotCommandWrite {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct NoMaliJobSlotWrite {
+    slot: u8,
+    name: &'static str,
+    offset: u32,
+    value: u32,
+    register: &'static str,
+    effect: &'static str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct NoMaliIrqWrite {
     name: &'static str,
     offset: u32,
@@ -430,6 +440,7 @@ struct NoMaliT760RegisterFile {
     address_space_command_writes: Vec<NoMaliAddressSpaceCommandWrite>,
     address_space_writes: Vec<NoMaliAddressSpaceWrite>,
     job_slot_command_writes: Vec<NoMaliJobSlotCommandWrite>,
+    job_slot_writes: Vec<NoMaliJobSlotWrite>,
     irq_writes: Vec<NoMaliIrqWrite>,
     power_writes: Vec<NoMaliPowerWrite>,
     irq_snapshots: Vec<NoMaliIrqSnapshot>,
@@ -448,6 +459,7 @@ impl NoMaliT760RegisterFile {
             address_space_command_writes: Vec::new(),
             address_space_writes: Vec::new(),
             job_slot_command_writes: Vec::new(),
+            job_slot_writes: Vec::new(),
             irq_writes: Vec::new(),
             power_writes: Vec::new(),
             irq_snapshots: Vec::new(),
@@ -492,6 +504,10 @@ impl NoMaliT760RegisterFile {
         }
         if let Some(slot) = job_slot_command_slot(offset) {
             self.job_slot_command(slot, offset, value);
+            return;
+        }
+        if let Some((slot, name, register)) = job_slot_rw_register(offset) {
+            self.job_slot_write(slot, offset, value, name, register);
             return;
         }
         if let Some(space) = mmu_address_space_command_space(offset) {
@@ -767,6 +783,25 @@ impl NoMaliT760RegisterFile {
             });
     }
 
+    fn job_slot_write(
+        &mut self,
+        slot: u8,
+        offset: u32,
+        value: u32,
+        name: &'static str,
+        register: &'static str,
+    ) {
+        self.write_raw(offset, value);
+        self.job_slot_writes.push(NoMaliJobSlotWrite {
+            slot,
+            name,
+            offset,
+            value,
+            register,
+            effect: "stored",
+        });
+    }
+
     fn mmu_address_space_command(&mut self, space: u8, offset: u32, value: u32) {
         let (command, effect) = match value {
             AS_COMMAND_NOP => ("nop", "no_effect"),
@@ -1018,6 +1053,7 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
         JOB_SLOT0_BASE + JS_CONFIG_NEXT,
         JS_CONFIG_START_MMU | JS_CONFIG_JOB_CHAIN_FLAG,
     );
+    pio.record_job_slot_snapshot("after_job_slot0_next_register_writes", 0);
     pio.write_reg(JOB_SLOT0_BASE + JS_COMMAND_NEXT, JS_COMMAND_START);
     pio.record_job_slot_snapshot("after_job_slot0_start_next", 0);
     pio.write_reg(JOB_IRQ_MASK, JOB_SLOT0_COMPLETED);
@@ -1245,6 +1281,22 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         })
         .collect::<Vec<_>>()
         .join(",");
+    let job_slot_writes = pio
+        .job_slot_writes
+        .iter()
+        .map(|write| {
+            format!(
+                "{{\"slot\":{},\"name\":\"{}\",\"offset\":\"0x{:04x}\",\"value\":\"{}\",\"register\":\"{}\",\"effect\":\"{}\"}}",
+                write.slot,
+                write.name,
+                write.offset,
+                register_hex(write.value),
+                write.register,
+                write.effect,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     let irq_writes = pio
         .irq_writes
         .iter()
@@ -1385,7 +1437,7 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"register_window_bytes\":{},\"reset_count\":{},\"register_fault_count\":{},\"command_writes\":[{}],\"address_space_command_writes\":[{}],\"address_space_writes\":[{}],\"job_slot_command_writes\":[{}],\"irq_writes\":[{}],\"power_writes\":[{}],\"irq_snapshots\":[{}],\"interrupt_block_snapshots\":[{}],\"address_space_snapshots\":[{}],\"job_slot_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}],\"register_faults\":[{}]}}",
+        "{{\"register_window_bytes\":{},\"reset_count\":{},\"register_fault_count\":{},\"command_writes\":[{}],\"address_space_command_writes\":[{}],\"address_space_writes\":[{}],\"job_slot_command_writes\":[{}],\"job_slot_writes\":[{}],\"irq_writes\":[{}],\"power_writes\":[{}],\"irq_snapshots\":[{}],\"interrupt_block_snapshots\":[{}],\"address_space_snapshots\":[{}],\"job_slot_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}],\"register_faults\":[{}]}}",
         NOMALI_REGISTER_WINDOW_BYTES,
         pio.reset_count,
         pio.register_faults.len(),
@@ -1393,6 +1445,7 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         address_space_command_writes,
         address_space_writes,
         job_slot_command_writes,
+        job_slot_writes,
         irq_writes,
         power_writes,
         irq_snapshots,
@@ -1423,6 +1476,23 @@ fn job_slot_command_slot(offset: u32) -> Option<u8> {
 
 fn job_slot_command_next_slot(offset: u32) -> Option<u8> {
     job_slot_reg_slot(offset, JS_COMMAND_NEXT)
+}
+
+fn job_slot_rw_register(offset: u32) -> Option<(u8, &'static str, &'static str)> {
+    let job_slot_span = JOB_SLOT_STRIDE * JOB_SLOT_COUNT;
+    if !(JOB_SLOT0_BASE..JOB_SLOT0_BASE + job_slot_span).contains(&offset) {
+        return None;
+    }
+    let relative = offset - JOB_SLOT0_BASE;
+    let slot = (relative / JOB_SLOT_STRIDE) as u8;
+    match relative % JOB_SLOT_STRIDE {
+        JS_HEAD_NEXT_LO => Some((slot, "job_slot_head_next_lo", "head_next_lo")),
+        JS_HEAD_NEXT_HI => Some((slot, "job_slot_head_next_hi", "head_next_hi")),
+        JS_AFFINITY_NEXT_LO => Some((slot, "job_slot_affinity_next_lo", "affinity_next_lo")),
+        JS_AFFINITY_NEXT_HI => Some((slot, "job_slot_affinity_next_hi", "affinity_next_hi")),
+        JS_CONFIG_NEXT => Some((slot, "job_slot_config_next", "config_next")),
+        _ => None,
+    }
 }
 
 fn job_slot_reg_slot(offset: u32, register: u32) -> Option<u8> {
