@@ -253,6 +253,9 @@ pub(crate) fn fabric_trace_stats(
                     .saturating_add(*credit_delay_ticks);
                 summary.max_credit_delay_ticks =
                     summary.max_credit_delay_ticks.max(*max_credit_delay_ticks);
+                lane_totals.transfers = lane_totals.transfers.saturating_add(*transfer_count);
+                lane_totals.bytes = lane_totals.bytes.saturating_add(*byte_count);
+                lane_totals.flits = lane_totals.flits.saturating_add(*flit_count);
                 lane_totals.occupied_ticks =
                     lane_totals.occupied_ticks.saturating_add(*occupied_ticks);
                 lane_totals.queue_delay_ticks = lane_totals
@@ -295,6 +298,9 @@ pub(crate) fn fabric_trace_stats(
                     .saturating_add(*credit_delay_ticks);
                 summary.max_credit_delay_ticks =
                     summary.max_credit_delay_ticks.max(*credit_delay_ticks);
+                hop_totals.transfers = hop_totals.transfers.saturating_add(1);
+                hop_totals.bytes = hop_totals.bytes.saturating_add(*bytes);
+                hop_totals.flits = hop_totals.flits.saturating_add(*flits);
                 hop_totals.occupied_ticks =
                     hop_totals.occupied_ticks.saturating_add(*occupied_ticks);
                 hop_totals.queue_delay_ticks = hop_totals
@@ -369,6 +375,9 @@ pub(crate) fn fabric_trace_stats(
         &mut stats,
         "lane",
         &[
+            ("transfers", "Count", lane_totals.transfers),
+            ("bytes", "Byte", lane_totals.bytes),
+            ("flits", "Count", lane_totals.flits),
             ("occupied_ticks", "Tick", lane_totals.occupied_ticks),
             ("queue_delay_ticks", "Tick", lane_totals.queue_delay_ticks),
             (
@@ -388,6 +397,9 @@ pub(crate) fn fabric_trace_stats(
         &mut stats,
         "hop",
         &[
+            ("transfers", "Count", hop_totals.transfers),
+            ("bytes", "Byte", hop_totals.bytes),
+            ("flits", "Count", hop_totals.flits),
             ("occupied_ticks", "Tick", hop_totals.occupied_ticks),
             ("queue_delay_ticks", "Tick", hop_totals.queue_delay_ticks),
             (
@@ -404,6 +416,13 @@ pub(crate) fn fabric_trace_stats(
         ],
     );
     stats
+}
+
+pub(crate) fn fabric_trace_payload_byte_count(records: &[Rem6FabricTraceRecord]) -> u64 {
+    records.iter().fold(0u64, |acc, record| match record {
+        Rem6FabricTraceRecord::Lane { byte_count, .. } => acc.saturating_add(*byte_count),
+        Rem6FabricTraceRecord::Hop { bytes, .. } => acc.saturating_add(*bytes),
+    })
 }
 
 fn push_fabric_trace_stats(

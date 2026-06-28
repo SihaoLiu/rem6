@@ -1341,6 +1341,7 @@ fn rem6_run_fabric_debug_flag_emits_real_fabric_activity_trace() {
                 .expect("lane flit_count")
         })
         .sum::<u64>();
+    let hop_transfers = hop_records;
     let hop_bytes = trace
         .iter()
         .filter(|record| record.get("kind").and_then(Value::as_str) == Some("hop"))
@@ -1401,6 +1402,13 @@ fn rem6_run_fabric_debug_flag_emits_real_fabric_activity_trace() {
     );
     assert_stat(
         &stdout,
+        "sim.debug.trace.payload_bytes",
+        "Byte",
+        lane_bytes + hop_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
         "sim.debug.fabric_trace.lane.transfers",
         "Count",
         lane_transfers,
@@ -1453,6 +1461,13 @@ fn rem6_run_fabric_debug_flag_emits_real_fabric_activity_trace() {
         "sim.debug.fabric_trace.lane.max_credit_delay_ticks",
         "Tick",
         lane_max_credit_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.fabric_trace.hop.transfers",
+        "Count",
+        hop_transfers,
         "monotonic",
     );
     assert_stat(

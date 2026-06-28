@@ -136,18 +136,6 @@ pub(super) fn emit_debug_stats(
             "sim.debug.fabric_trace.hops",
             debug.fabric_hop_trace_count(),
         ),
-        (
-            "sim.debug.fabric_trace.lane.transfers",
-            debug.fabric_lane_transfer_count(),
-        ),
-        (
-            "sim.debug.fabric_trace.lane.flits",
-            debug.fabric_lane_flit_count(),
-        ),
-        (
-            "sim.debug.fabric_trace.hop.flits",
-            debug.fabric_hop_flit_count(),
-        ),
         ("sim.debug.memory_trace.records", debug.memory_trace_count()),
         (
             "sim.debug.memory_trace.fetch.records",
@@ -438,20 +426,6 @@ pub(super) fn emit_debug_stats(
         "Byte",
         StatResetPolicy::Monotonic,
         debug.data_atomic_trace_byte_count(),
-    )?;
-    increment_stat(
-        stats,
-        "sim.debug.fabric_trace.lane.bytes",
-        "Byte",
-        StatResetPolicy::Monotonic,
-        debug.fabric_lane_byte_count(),
-    )?;
-    increment_stat(
-        stats,
-        "sim.debug.fabric_trace.hop.bytes",
-        "Byte",
-        StatResetPolicy::Monotonic,
-        debug.fabric_hop_byte_count(),
     )?;
     increment_stat(
         stats,

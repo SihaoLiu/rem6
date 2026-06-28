@@ -25,7 +25,8 @@ use dram::{
     dram_trace_records, Rem6DramTraceRecord, Rem6DramTraceStat,
 };
 use fabric::{
-    fabric_trace_records, fabric_trace_stats, Rem6FabricTraceRecord, Rem6FabricTraceStat,
+    fabric_trace_payload_byte_count, fabric_trace_records, fabric_trace_stats,
+    Rem6FabricTraceRecord, Rem6FabricTraceStat,
 };
 use memory::{
     memory_trace_channel_matches, memory_trace_records, memory_trace_stats, Rem6MemoryTraceRecord,
@@ -262,8 +263,7 @@ impl Rem6DebugSummary {
             self.data_store_trace_byte_count(),
             self.data_atomic_trace_byte_count(),
             dram_trace_payload_byte_count(&self.dram_trace),
-            self.fabric_lane_byte_count(),
-            self.fabric_hop_byte_count(),
+            fabric_trace_payload_byte_count(&self.fabric_trace),
         ]
         .into_iter()
         .fold(0u64, |acc, value| acc.saturating_add(value))
@@ -564,56 +564,6 @@ impl Rem6DebugSummary {
             .iter()
             .filter(|record| matches!(record, Rem6FabricTraceRecord::Hop { .. }))
             .count() as u64
-    }
-
-    pub(crate) fn fabric_lane_transfer_count(&self) -> u64 {
-        self.fabric_trace.iter().fold(0u64, |acc, record| {
-            if let Rem6FabricTraceRecord::Lane { transfer_count, .. } = record {
-                acc.saturating_add(*transfer_count)
-            } else {
-                acc
-            }
-        })
-    }
-
-    pub(crate) fn fabric_lane_byte_count(&self) -> u64 {
-        self.fabric_trace.iter().fold(0u64, |acc, record| {
-            if let Rem6FabricTraceRecord::Lane { byte_count, .. } = record {
-                acc.saturating_add(*byte_count)
-            } else {
-                acc
-            }
-        })
-    }
-
-    pub(crate) fn fabric_lane_flit_count(&self) -> u64 {
-        self.fabric_trace.iter().fold(0u64, |acc, record| {
-            if let Rem6FabricTraceRecord::Lane { flit_count, .. } = record {
-                acc.saturating_add(*flit_count)
-            } else {
-                acc
-            }
-        })
-    }
-
-    pub(crate) fn fabric_hop_byte_count(&self) -> u64 {
-        self.fabric_trace.iter().fold(0u64, |acc, record| {
-            if let Rem6FabricTraceRecord::Hop { bytes, .. } = record {
-                acc.saturating_add(*bytes)
-            } else {
-                acc
-            }
-        })
-    }
-
-    pub(crate) fn fabric_hop_flit_count(&self) -> u64 {
-        self.fabric_trace.iter().fold(0u64, |acc, record| {
-            if let Rem6FabricTraceRecord::Hop { flits, .. } = record {
-                acc.saturating_add(*flits)
-            } else {
-                acc
-            }
-        })
     }
 
     pub(crate) fn memory_trace_count(&self) -> u64 {
