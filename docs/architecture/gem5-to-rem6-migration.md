@@ -1133,12 +1133,12 @@ Top-level `rem6 trace-replay --power-output` emits activity-derived trace replay
 fabric/NoC, data-cache, and DRAM power records, with the artifact path reported in the run JSON or CLI output envelope.
 Top-level `rem6 gpu-run --nomali-output` emits a deterministic
 NoMali-compatible T760 adapter artifact from executed GPU run summaries,
-including register-file checkpoint evidence, simple GPU command-table evidence for reset, no-effect, perf-sample, clean-cache, and clean-invalidate commands, ignored
+including register-file checkpoint evidence, simple GPU command-table evidence for reset, no-effect, perf-sample, clean-cache, and clean-invalidate commands, MMU address-space no-effect and ignored-command evidence, ignored
 unsupported-command, IRQ-clear state, shader/tiler/L2 low-word power-state IRQ evidence, misaligned/out-of-range register fault records, job/MMU interrupt-block raw/mask/status evidence, callback identifiers, and observed workgroup
 plus memory activity; TOML and flag-driven runs both report the artifact path.
 
 **Not migrated:** Complete `ext/nomali`, `ext/mcpat`, and `ext/dsent` parity, NoMali PIO command/register breadth beyond reset,
-simple GPU command-table, ignored-command, IRQ-clear, shader/tiler/L2 low-word power, deterministic fault-record, and job/MMU interrupt-block slices, broader command/power/register fault behavior, real interrupt delivery, external-tool ingestion beyond rem6-shaped adapter artifacts,
+simple GPU/MMU command-table, ignored-command, IRQ-clear, shader/tiler/L2 low-word power, deterministic fault-record, and job/MMU interrupt-block slices, broader command/power/register fault behavior, real interrupt delivery, external-tool ingestion beyond rem6-shaped adapter artifacts,
 full external schema parity, and broader calibrated power/thermal activity.
 
 **Evidence:** rem6-power export self-tests for custom XML, McPAT XML, DSENT CSV, and McPAT/DSENT import round-trips; `rem6 run` CLI
@@ -1146,7 +1146,7 @@ tests for `--power-output`, executed McPAT/DSENT artifact ingestion, instruction
 memory-transport, and DRAM activity records, `rem6 trace-replay --power-output` data-cache, explicit-fabric, and DRAM activity records,
 `rem6 gpu-run --power-output` compute-unit plus explicit-fabric activity records, `--debug-flags Power` run-JSON records, envelope reporting,
 and load-only rejection; `rem6 gpu-run` CLI/TOML McPAT/DSENT output plus `--nomali-output` T760 register-file, hard-reset, soft-reset,
-no-effect commands, perf-sample, clean-cache, clean-invalidate, ignored-command, IRQ-clear, shader/tiler/L2 power, register-fault, job/MMU interrupt-block, multi-artifact envelope, and output-path conflict evidence.
+no-effect commands, perf-sample, clean-cache, clean-invalidate, MMU address-space command table, ignored-command, IRQ-clear, shader/tiler/L2 power, register-fault, job/MMU interrupt-block, multi-artifact envelope, and output-path conflict evidence.
 
 **Next evidence:** External McPAT/DSENT tool ingestion, broader NoMali PIO command/register/power/fault/interrupt behavior, calibrated activity models, and
 stricter external schema parity tests.

@@ -57,6 +57,10 @@ const MMU_IRQ_RAWSTAT: u32 = 0x2000;
 const MMU_IRQ_CLEAR: u32 = 0x2004;
 const MMU_IRQ_MASK: u32 = 0x2008;
 const MMU_IRQ_STATUS: u32 = 0x200c;
+const MMU_AS0_BASE: u32 = 0x2400;
+const MMU_ADDRESS_SPACE_STRIDE: u32 = 0x40;
+const MMU_ADDRESS_SPACE_COUNT: u32 = 16;
+const AS_COMMAND: u32 = 0x18;
 
 const RESET_COMPLETED: u32 = 1 << 8;
 const POWER_CHANGED_SINGLE: u32 = 1 << 9;
@@ -76,6 +80,13 @@ const GPU_COMMAND_CYCLE_COUNT_STOP: u32 = 0x06;
 const GPU_COMMAND_CLEAN_CACHES: u32 = 0x07;
 const GPU_COMMAND_CLEAN_INV_CACHES: u32 = 0x08;
 const GPU_COMMAND_UNSUPPORTED_PROBE: u32 = 0xdead_dead;
+const AS_COMMAND_NOP: u32 = 0x00;
+const AS_COMMAND_UPDATE: u32 = 0x01;
+const AS_COMMAND_LOCK: u32 = 0x02;
+const AS_COMMAND_UNLOCK: u32 = 0x03;
+const AS_COMMAND_FLUSH_PT: u32 = 0x04;
+const AS_COMMAND_FLUSH_MEM: u32 = 0x05;
+const AS_COMMAND_UNSUPPORTED_PROBE: u32 = 0xdead_0006;
 const NOMALI_REGISTER_FAULT_MISALIGNED_READ_OFFSET: u32 = 0x003;
 const NOMALI_REGISTER_FAULT_OUT_OF_RANGE_WRITE_OFFSET: u32 = NOMALI_REGISTER_WINDOW_BYTES as u32;
 const NOMALI_REGISTER_FAULT_WRITE_VALUE: u32 = 0x1234_5678;
@@ -224,6 +235,16 @@ struct NoMaliCommandWrite {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct NoMaliAddressSpaceCommandWrite {
+    space: u8,
+    name: &'static str,
+    offset: u32,
+    value: u32,
+    command: &'static str,
+    effect: &'static str,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct NoMaliIrqWrite {
     name: &'static str,
     offset: u32,
@@ -320,6 +341,7 @@ struct NoMaliT760RegisterFile {
     registers: Vec<u32>,
     reset_count: u64,
     command_writes: Vec<NoMaliCommandWrite>,
+    address_space_command_writes: Vec<NoMaliAddressSpaceCommandWrite>,
     irq_writes: Vec<NoMaliIrqWrite>,
     power_writes: Vec<NoMaliPowerWrite>,
     irq_snapshots: Vec<NoMaliIrqSnapshot>,
@@ -333,6 +355,7 @@ impl NoMaliT760RegisterFile {
             registers: vec![0; NOMALI_REGISTER_WINDOW_WORDS],
             reset_count: 0,
             command_writes: Vec::new(),
+            address_space_command_writes: Vec::new(),
             irq_writes: Vec::new(),
             power_writes: Vec::new(),
             irq_snapshots: Vec::new(),
@@ -367,6 +390,10 @@ impl NoMaliT760RegisterFile {
             .checked_register_index("write", offset, Some(value))
             .is_none()
         {
+            return;
+        }
+        if let Some(space) = mmu_address_space_command_space(offset) {
+            self.mmu_address_space_command(space, offset, value);
             return;
         }
         match offset {
@@ -533,6 +560,27 @@ impl NoMaliT760RegisterFile {
             command,
             effect: "no_effect",
         });
+    }
+
+    fn mmu_address_space_command(&mut self, space: u8, offset: u32, value: u32) {
+        let (command, effect) = match value {
+            AS_COMMAND_NOP => ("nop", "no_effect"),
+            AS_COMMAND_UPDATE => ("update", "no_effect"),
+            AS_COMMAND_LOCK => ("lock", "no_effect"),
+            AS_COMMAND_UNLOCK => ("unlock", "no_effect"),
+            AS_COMMAND_FLUSH_PT => ("flush_page_table", "no_effect"),
+            AS_COMMAND_FLUSH_MEM => ("flush_memory", "no_effect"),
+            _ => ("unsupported", "ignored"),
+        };
+        self.address_space_command_writes
+            .push(NoMaliAddressSpaceCommandWrite {
+                space,
+                name: "mmu_as_command",
+                offset,
+                value,
+                command,
+                effect,
+            });
     }
 
     fn power_on(&mut self, domain: &NoMaliPowerDomain, value: u32) {
@@ -770,6 +818,18 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
     pio.write_reg(GPU_COMMAND, GPU_COMMAND_PRFCNT_CLEAR);
     pio.write_reg(GPU_COMMAND, GPU_COMMAND_CYCLE_COUNT_START);
     pio.write_reg(GPU_COMMAND, GPU_COMMAND_CYCLE_COUNT_STOP);
+    let as0_command = MMU_AS0_BASE + AS_COMMAND;
+    for command in [
+        AS_COMMAND_NOP,
+        AS_COMMAND_UPDATE,
+        AS_COMMAND_LOCK,
+        AS_COMMAND_UNLOCK,
+        AS_COMMAND_FLUSH_PT,
+        AS_COMMAND_FLUSH_MEM,
+        AS_COMMAND_UNSUPPORTED_PROBE,
+    ] {
+        pio.write_reg(as0_command, command);
+    }
     pio.probe_register_faults();
     let contents = format!(
         "{{\"schema\":\"rem6.nomali.gpu-adapter.v1\",\"source_schema\":\"rem6.cli.gpu-run.v1\",\"scope\":\"gpu-run-execution-summary-adapter\",\"gpu\":{},\"interface\":{},\"pio\":{},\"execution\":{{\"status\":\"completed\",\"final_tick\":{},\"compute_units\":{},\"workgroup_completions\":{},\"coalesced_memory_accesses\":{},\"global_memory_reads\":{},\"global_memory_writes\":{},\"memory_read_callback_observations\":{},\"memory_write_callback_observations\":{},\"job_event_observations\":{},\"compute_unit_activity\":[{}]}}}}\n",
@@ -840,6 +900,22 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         .map(|write| {
             format!(
                 "{{\"name\":\"{}\",\"offset\":\"0x{:03x}\",\"value\":\"{}\",\"command\":\"{}\",\"effect\":\"{}\"}}",
+                write.name,
+                write.offset,
+                register_hex(write.value),
+                write.command,
+                write.effect,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let address_space_command_writes = pio
+        .address_space_command_writes
+        .iter()
+        .map(|write| {
+            format!(
+                "{{\"space\":{},\"name\":\"{}\",\"offset\":\"0x{:04x}\",\"value\":\"{}\",\"command\":\"{}\",\"effect\":\"{}\"}}",
+                write.space,
                 write.name,
                 write.offset,
                 register_hex(write.value),
@@ -947,11 +1023,12 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"register_window_bytes\":{},\"reset_count\":{},\"register_fault_count\":{},\"command_writes\":[{}],\"irq_writes\":[{}],\"power_writes\":[{}],\"irq_snapshots\":[{}],\"interrupt_block_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}],\"register_faults\":[{}]}}",
+        "{{\"register_window_bytes\":{},\"reset_count\":{},\"register_fault_count\":{},\"command_writes\":[{}],\"address_space_command_writes\":[{}],\"irq_writes\":[{}],\"power_writes\":[{}],\"irq_snapshots\":[{}],\"interrupt_block_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}],\"register_faults\":[{}]}}",
         NOMALI_REGISTER_WINDOW_BYTES,
         pio.reset_count,
         pio.register_faults.len(),
         command_writes,
+        address_space_command_writes,
         irq_writes,
         power_writes,
         irq_snapshots,
@@ -968,6 +1045,19 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
 
 fn register_hex(value: u32) -> String {
     format!("0x{value:08x}")
+}
+
+fn mmu_address_space_command_space(offset: u32) -> Option<u8> {
+    let address_space_span = MMU_ADDRESS_SPACE_STRIDE * MMU_ADDRESS_SPACE_COUNT;
+    if !(MMU_AS0_BASE..MMU_AS0_BASE + address_space_span).contains(&offset) {
+        return None;
+    }
+    let relative = offset - MMU_AS0_BASE;
+    if relative % MMU_ADDRESS_SPACE_STRIDE == AS_COMMAND {
+        Some((relative / MMU_ADDRESS_SPACE_STRIDE) as u8)
+    } else {
+        None
+    }
 }
 
 fn irq_clear_effect(value: u32) -> &'static str {
