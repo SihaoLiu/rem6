@@ -41,8 +41,14 @@ const TILER_PRESENT_HI: u32 = 0x114;
 const L2_PRESENT_LO: u32 = 0x120;
 const L2_PRESENT_HI: u32 = 0x124;
 const SHADER_READY_LO: u32 = 0x140;
+const TILER_READY_LO: u32 = 0x150;
+const L2_READY_LO: u32 = 0x160;
 const SHADER_PWRON_LO: u32 = 0x180;
+const TILER_PWRON_LO: u32 = 0x190;
+const L2_PWRON_LO: u32 = 0x1a0;
 const SHADER_PWROFF_LO: u32 = 0x1c0;
+const TILER_PWROFF_LO: u32 = 0x1d0;
+const L2_PWROFF_LO: u32 = 0x1e0;
 const JOB_IRQ_RAWSTAT: u32 = 0x1000;
 const JOB_IRQ_CLEAR: u32 = 0x1004;
 const JOB_IRQ_MASK: u32 = 0x1008;
@@ -227,6 +233,47 @@ struct NoMaliPowerWrite {
     effect: &'static str,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NoMaliPowerDomain {
+    pwron_name: &'static str,
+    pwroff_name: &'static str,
+    ready_register: &'static str,
+    present_offset: u32,
+    ready_offset: u32,
+    pwron_offset: u32,
+    pwroff_offset: u32,
+}
+
+const SHADER_POWER_DOMAIN: NoMaliPowerDomain = NoMaliPowerDomain {
+    pwron_name: "shader_pwron_lo",
+    pwroff_name: "shader_pwroff_lo",
+    ready_register: "shader_ready_lo",
+    present_offset: SHADER_PRESENT_LO,
+    ready_offset: SHADER_READY_LO,
+    pwron_offset: SHADER_PWRON_LO,
+    pwroff_offset: SHADER_PWROFF_LO,
+};
+
+const TILER_POWER_DOMAIN: NoMaliPowerDomain = NoMaliPowerDomain {
+    pwron_name: "tiler_pwron_lo",
+    pwroff_name: "tiler_pwroff_lo",
+    ready_register: "tiler_ready_lo",
+    present_offset: TILER_PRESENT_LO,
+    ready_offset: TILER_READY_LO,
+    pwron_offset: TILER_PWRON_LO,
+    pwroff_offset: TILER_PWROFF_LO,
+};
+
+const L2_POWER_DOMAIN: NoMaliPowerDomain = NoMaliPowerDomain {
+    pwron_name: "l2_pwron_lo",
+    pwroff_name: "l2_pwroff_lo",
+    ready_register: "l2_ready_lo",
+    present_offset: L2_PRESENT_LO,
+    ready_offset: L2_READY_LO,
+    pwron_offset: L2_PWRON_LO,
+    pwroff_offset: L2_PWROFF_LO,
+};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct NoMaliIrqSnapshot {
     name: &'static str,
@@ -351,8 +398,12 @@ impl NoMaliT760RegisterFile {
             MMU_IRQ_MASK => self.write_raw(offset, value),
             MMU_IRQ_STATUS => {}
             GPU_COMMAND => self.gpu_command(value),
-            SHADER_PWRON_LO => self.shader_power_on(value),
-            SHADER_PWROFF_LO => self.shader_power_off(value),
+            SHADER_PWRON_LO => self.power_on(&SHADER_POWER_DOMAIN, value),
+            TILER_PWRON_LO => self.power_on(&TILER_POWER_DOMAIN, value),
+            L2_PWRON_LO => self.power_on(&L2_POWER_DOMAIN, value),
+            SHADER_PWROFF_LO => self.power_off(&SHADER_POWER_DOMAIN, value),
+            TILER_PWROFF_LO => self.power_off(&TILER_POWER_DOMAIN, value),
+            L2_PWROFF_LO => self.power_off(&L2_POWER_DOMAIN, value),
             _ => self.write_raw(offset, value),
         }
     }
@@ -427,31 +478,32 @@ impl NoMaliT760RegisterFile {
         }
     }
 
-    fn shader_power_on(&mut self, value: u32) {
-        let ready = self.read_raw(SHADER_READY_LO) | (value & self.read_raw(SHADER_PRESENT_LO));
-        self.write_raw(SHADER_READY_LO, ready);
+    fn power_on(&mut self, domain: &NoMaliPowerDomain, value: u32) {
+        let ready =
+            self.read_raw(domain.ready_offset) | (value & self.read_raw(domain.present_offset));
+        self.write_raw(domain.ready_offset, ready);
         self.raise_power_changed_interrupt();
         self.power_writes.push(NoMaliPowerWrite {
-            name: "shader_pwron_lo",
-            offset: SHADER_PWRON_LO,
+            name: domain.pwron_name,
+            offset: domain.pwron_offset,
             value,
-            ready_register: "shader_ready_lo",
-            ready_offset: SHADER_READY_LO,
+            ready_register: domain.ready_register,
+            ready_offset: domain.ready_offset,
             ready_value: ready,
             effect: "power_changed_interrupt",
         });
     }
 
-    fn shader_power_off(&mut self, value: u32) {
-        let ready = self.read_raw(SHADER_READY_LO) & !value;
-        self.write_raw(SHADER_READY_LO, ready);
+    fn power_off(&mut self, domain: &NoMaliPowerDomain, value: u32) {
+        let ready = self.read_raw(domain.ready_offset) & !value;
+        self.write_raw(domain.ready_offset, ready);
         self.raise_power_changed_interrupt();
         self.power_writes.push(NoMaliPowerWrite {
-            name: "shader_pwroff_lo",
-            offset: SHADER_PWROFF_LO,
+            name: domain.pwroff_name,
+            offset: domain.pwroff_offset,
             value,
-            ready_register: "shader_ready_lo",
-            ready_offset: SHADER_READY_LO,
+            ready_register: domain.ready_register,
+            ready_offset: domain.ready_offset,
             ready_value: ready,
             effect: "power_changed_interrupt",
         });
@@ -590,6 +642,10 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
     pio.record_irq_snapshot("after_power_irq_clear");
     pio.write_reg(SHADER_PWROFF_LO, 0x0000_0003);
     pio.record_irq_snapshot("after_shader_power_off");
+    pio.write_reg(TILER_PWRON_LO, pio.read_raw(TILER_PRESENT_LO));
+    pio.write_reg(TILER_PWROFF_LO, pio.read_raw(TILER_PRESENT_LO));
+    pio.write_reg(L2_PWRON_LO, pio.read_raw(L2_PRESENT_LO));
+    pio.write_reg(L2_PWROFF_LO, pio.read_raw(L2_PRESENT_LO));
     pio.write_reg(JOB_IRQ_RAWSTAT, JOB_SLOT0_COMPLETED);
     pio.write_reg(JOB_IRQ_MASK, JOB_SLOT0_COMPLETED);
     pio.record_interrupt_block_snapshot(
