@@ -43,10 +43,21 @@ const L2_PRESENT_HI: u32 = 0x124;
 const SHADER_READY_LO: u32 = 0x140;
 const SHADER_PWRON_LO: u32 = 0x180;
 const SHADER_PWROFF_LO: u32 = 0x1c0;
+const JOB_IRQ_RAWSTAT: u32 = 0x1000;
+const JOB_IRQ_CLEAR: u32 = 0x1004;
+const JOB_IRQ_MASK: u32 = 0x1008;
+const JOB_IRQ_STATUS: u32 = 0x100c;
+const MMU_IRQ_RAWSTAT: u32 = 0x2000;
+const MMU_IRQ_CLEAR: u32 = 0x2004;
+const MMU_IRQ_MASK: u32 = 0x2008;
+const MMU_IRQ_STATUS: u32 = 0x200c;
 
 const RESET_COMPLETED: u32 = 1 << 8;
 const POWER_CHANGED_SINGLE: u32 = 1 << 9;
 const POWER_CHANGED_ALL: u32 = 1 << 10;
+const JOB_SLOT0_COMPLETED: u32 = 1 << 0;
+const MMU_PAGE_FAULT_AS0: u32 = 1 << 0;
+const MMU_BUS_ERROR_AS0: u32 = 1 << 16;
 const GPU_COMMAND_SOFT_RESET: u32 = 0x01;
 const GPU_COMMAND_HARD_RESET: u32 = 0x02;
 const GPU_COMMAND_UNSUPPORTED_PROBE: u32 = 0xdead_dead;
@@ -226,6 +237,20 @@ struct NoMaliIrqSnapshot {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct NoMaliInterruptBlockSnapshot {
+    block: &'static str,
+    nomali_int: u32,
+    name: &'static str,
+    rawstat_offset: u32,
+    mask_offset: u32,
+    status_offset: u32,
+    rawstat: u32,
+    mask: u32,
+    status: u32,
+    asserted: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct NoMaliRegisterFault {
     operation: &'static str,
     offset: u32,
@@ -242,6 +267,7 @@ struct NoMaliT760RegisterFile {
     irq_writes: Vec<NoMaliIrqWrite>,
     power_writes: Vec<NoMaliPowerWrite>,
     irq_snapshots: Vec<NoMaliIrqSnapshot>,
+    interrupt_block_snapshots: Vec<NoMaliInterruptBlockSnapshot>,
     register_faults: Vec<NoMaliRegisterFault>,
 }
 
@@ -254,6 +280,7 @@ impl NoMaliT760RegisterFile {
             irq_writes: Vec::new(),
             power_writes: Vec::new(),
             irq_snapshots: Vec::new(),
+            interrupt_block_snapshots: Vec::new(),
             register_faults: Vec::new(),
         }
     }
@@ -299,6 +326,30 @@ impl NoMaliT760RegisterFile {
             }
             GPU_IRQ_MASK => self.write_raw(offset, value),
             GPU_IRQ_STATUS => {}
+            JOB_IRQ_RAWSTAT => self.raise_interrupt_at(JOB_IRQ_RAWSTAT, value),
+            JOB_IRQ_CLEAR => {
+                self.irq_writes.push(NoMaliIrqWrite {
+                    name: "job_irq_clear",
+                    offset,
+                    value,
+                    effect: job_irq_clear_effect(value),
+                });
+                self.clear_interrupt_at(JOB_IRQ_RAWSTAT, value);
+            }
+            JOB_IRQ_MASK => self.write_raw(offset, value),
+            JOB_IRQ_STATUS => {}
+            MMU_IRQ_RAWSTAT => self.raise_interrupt_at(MMU_IRQ_RAWSTAT, value),
+            MMU_IRQ_CLEAR => {
+                self.irq_writes.push(NoMaliIrqWrite {
+                    name: "mmu_irq_clear",
+                    offset,
+                    value,
+                    effect: mmu_irq_clear_effect(value),
+                });
+                self.clear_interrupt_at(MMU_IRQ_RAWSTAT, value);
+            }
+            MMU_IRQ_MASK => self.write_raw(offset, value),
+            MMU_IRQ_STATUS => {}
             GPU_COMMAND => self.gpu_command(value),
             SHADER_PWRON_LO => self.shader_power_on(value),
             SHADER_PWROFF_LO => self.shader_power_off(value),
@@ -411,11 +462,19 @@ impl NoMaliT760RegisterFile {
     }
 
     fn raise_interrupt(&mut self, flags: u32) {
-        self.write_raw(GPU_IRQ_RAWSTAT, self.read_raw(GPU_IRQ_RAWSTAT) | flags);
+        self.raise_interrupt_at(GPU_IRQ_RAWSTAT, flags);
     }
 
     fn clear_interrupt(&mut self, flags: u32) {
-        self.write_raw(GPU_IRQ_RAWSTAT, self.read_raw(GPU_IRQ_RAWSTAT) & !flags);
+        self.clear_interrupt_at(GPU_IRQ_RAWSTAT, flags);
+    }
+
+    fn raise_interrupt_at(&mut self, rawstat_offset: u32, flags: u32) {
+        self.write_raw(rawstat_offset, self.read_raw(rawstat_offset) | flags);
+    }
+
+    fn clear_interrupt_at(&mut self, rawstat_offset: u32, flags: u32) {
+        self.write_raw(rawstat_offset, self.read_raw(rawstat_offset) & !flags);
     }
 
     fn irq_status(&self) -> u32 {
@@ -434,6 +493,33 @@ impl NoMaliT760RegisterFile {
             status: self.irq_status(),
             asserted: self.irq_asserted(),
         });
+    }
+
+    fn record_interrupt_block_snapshot(
+        &mut self,
+        block: &'static str,
+        nomali_int: u32,
+        name: &'static str,
+        rawstat_offset: u32,
+        mask_offset: u32,
+        status_offset: u32,
+    ) {
+        let rawstat = self.read_raw(rawstat_offset);
+        let mask = self.read_raw(mask_offset);
+        let status = rawstat & mask;
+        self.interrupt_block_snapshots
+            .push(NoMaliInterruptBlockSnapshot {
+                block,
+                nomali_int,
+                name,
+                rawstat_offset,
+                mask_offset,
+                status_offset,
+                rawstat,
+                mask,
+                status,
+                asserted: status != 0,
+            });
     }
 
     fn checkpoint_word_count(&self) -> usize {
@@ -504,6 +590,44 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
     pio.record_irq_snapshot("after_power_irq_clear");
     pio.write_reg(SHADER_PWROFF_LO, 0x0000_0003);
     pio.record_irq_snapshot("after_shader_power_off");
+    pio.write_reg(JOB_IRQ_RAWSTAT, JOB_SLOT0_COMPLETED);
+    pio.write_reg(JOB_IRQ_MASK, JOB_SLOT0_COMPLETED);
+    pio.record_interrupt_block_snapshot(
+        "job",
+        NOMALI_JOB_INT,
+        "after_job_slot0_masked",
+        JOB_IRQ_RAWSTAT,
+        JOB_IRQ_MASK,
+        JOB_IRQ_STATUS,
+    );
+    pio.write_reg(JOB_IRQ_CLEAR, JOB_SLOT0_COMPLETED);
+    pio.record_interrupt_block_snapshot(
+        "job",
+        NOMALI_JOB_INT,
+        "after_job_slot0_clear",
+        JOB_IRQ_RAWSTAT,
+        JOB_IRQ_MASK,
+        JOB_IRQ_STATUS,
+    );
+    pio.write_reg(MMU_IRQ_RAWSTAT, MMU_PAGE_FAULT_AS0 | MMU_BUS_ERROR_AS0);
+    pio.write_reg(MMU_IRQ_MASK, MMU_BUS_ERROR_AS0);
+    pio.record_interrupt_block_snapshot(
+        "mmu",
+        NOMALI_MMU_INT,
+        "after_mmu_bus_error_masked",
+        MMU_IRQ_RAWSTAT,
+        MMU_IRQ_MASK,
+        MMU_IRQ_STATUS,
+    );
+    pio.write_reg(MMU_IRQ_CLEAR, MMU_BUS_ERROR_AS0);
+    pio.record_interrupt_block_snapshot(
+        "mmu",
+        NOMALI_MMU_INT,
+        "after_mmu_bus_error_clear",
+        MMU_IRQ_RAWSTAT,
+        MMU_IRQ_MASK,
+        MMU_IRQ_STATUS,
+    );
     pio.probe_register_faults();
     let contents = format!(
         "{{\"schema\":\"rem6.nomali.gpu-adapter.v1\",\"source_schema\":\"rem6.cli.gpu-run.v1\",\"scope\":\"gpu-run-execution-summary-adapter\",\"gpu\":{},\"interface\":{},\"pio\":{},\"execution\":{{\"status\":\"completed\",\"final_tick\":{},\"compute_units\":{},\"workgroup_completions\":{},\"coalesced_memory_accesses\":{},\"global_memory_reads\":{},\"global_memory_writes\":{},\"memory_read_callback_observations\":{},\"memory_write_callback_observations\":{},\"job_event_observations\":{},\"compute_unit_activity\":[{}]}}}}\n",
@@ -629,6 +753,26 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         })
         .collect::<Vec<_>>()
         .join(",");
+    let interrupt_block_snapshots = pio
+        .interrupt_block_snapshots
+        .iter()
+        .map(|snapshot| {
+            format!(
+                "{{\"block\":\"{}\",\"nomali_int\":{},\"name\":\"{}\",\"rawstat_offset\":\"0x{:04x}\",\"mask_offset\":\"0x{:04x}\",\"status_offset\":\"0x{:04x}\",\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}}",
+                snapshot.block,
+                snapshot.nomali_int,
+                snapshot.name,
+                snapshot.rawstat_offset,
+                snapshot.mask_offset,
+                snapshot.status_offset,
+                register_hex(snapshot.rawstat),
+                register_hex(snapshot.mask),
+                register_hex(snapshot.status),
+                snapshot.asserted,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     let register_reads = NOMALI_OBSERVED_PIO_READS
         .iter()
         .map(|(name, offset)| {
@@ -661,7 +805,7 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"register_window_bytes\":{},\"reset_count\":{},\"register_fault_count\":{},\"command_writes\":[{}],\"irq_writes\":[{}],\"power_writes\":[{}],\"irq_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}],\"register_faults\":[{}]}}",
+        "{{\"register_window_bytes\":{},\"reset_count\":{},\"register_fault_count\":{},\"command_writes\":[{}],\"irq_writes\":[{}],\"power_writes\":[{}],\"irq_snapshots\":[{}],\"interrupt_block_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}],\"register_faults\":[{}]}}",
         NOMALI_REGISTER_WINDOW_BYTES,
         pio.reset_count,
         pio.register_faults.len(),
@@ -669,6 +813,7 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
         irq_writes,
         power_writes,
         irq_snapshots,
+        interrupt_block_snapshots,
         register_hex(pio.read_raw(GPU_IRQ_RAWSTAT)),
         register_hex(pio.read_raw(GPU_IRQ_MASK)),
         register_hex(pio.irq_status()),
@@ -690,6 +835,24 @@ fn irq_clear_effect(value: u32) -> &'static str {
         "clear_power_changed"
     } else {
         "clear_irq_bits"
+    }
+}
+
+fn job_irq_clear_effect(value: u32) -> &'static str {
+    if value & JOB_SLOT0_COMPLETED != 0 {
+        "clear_job_slot_0"
+    } else {
+        "clear_job_interrupt_bits"
+    }
+}
+
+fn mmu_irq_clear_effect(value: u32) -> &'static str {
+    if value & MMU_BUS_ERROR_AS0 != 0 {
+        "clear_mmu_bus_error_as0"
+    } else if value & MMU_PAGE_FAULT_AS0 != 0 {
+        "clear_mmu_page_fault_as0"
+    } else {
+        "clear_mmu_interrupt_bits"
     }
 }
 

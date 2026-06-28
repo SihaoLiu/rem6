@@ -930,6 +930,14 @@ fn rem6_gpu_run_writes_nomali_adapter_output() {
         ("/pio/irq_writes/1/offset", "0x024"),
         ("/pio/irq_writes/1/value", "0x00000600"),
         ("/pio/irq_writes/1/effect", "clear_power_changed"),
+        ("/pio/irq_writes/2/name", "job_irq_clear"),
+        ("/pio/irq_writes/2/offset", "0x1004"),
+        ("/pio/irq_writes/2/value", "0x00000001"),
+        ("/pio/irq_writes/2/effect", "clear_job_slot_0"),
+        ("/pio/irq_writes/3/name", "mmu_irq_clear"),
+        ("/pio/irq_writes/3/offset", "0x2004"),
+        ("/pio/irq_writes/3/value", "0x00010000"),
+        ("/pio/irq_writes/3/effect", "clear_mmu_bus_error_as0"),
         ("/pio/irq_snapshots/0/name", "after_soft_reset_masked"),
         ("/pio/irq_snapshots/0/rawstat", "0x00000100"),
         ("/pio/irq_snapshots/0/mask", "0x00000100"),
@@ -950,6 +958,44 @@ fn rem6_gpu_run_writes_nomali_adapter_output() {
         ("/pio/irq_snapshots/4/rawstat", "0x00000600"),
         ("/pio/irq_snapshots/4/mask", "0x00000700"),
         ("/pio/irq_snapshots/4/status", "0x00000600"),
+        ("/pio/interrupt_block_snapshots/0/block", "job"),
+        (
+            "/pio/interrupt_block_snapshots/0/name",
+            "after_job_slot0_masked",
+        ),
+        ("/pio/interrupt_block_snapshots/0/rawstat_offset", "0x1000"),
+        ("/pio/interrupt_block_snapshots/0/mask_offset", "0x1008"),
+        ("/pio/interrupt_block_snapshots/0/status_offset", "0x100c"),
+        ("/pio/interrupt_block_snapshots/0/rawstat", "0x00000001"),
+        ("/pio/interrupt_block_snapshots/0/mask", "0x00000001"),
+        ("/pio/interrupt_block_snapshots/0/status", "0x00000001"),
+        ("/pio/interrupt_block_snapshots/1/block", "job"),
+        (
+            "/pio/interrupt_block_snapshots/1/name",
+            "after_job_slot0_clear",
+        ),
+        ("/pio/interrupt_block_snapshots/1/rawstat", "0x00000000"),
+        ("/pio/interrupt_block_snapshots/1/mask", "0x00000001"),
+        ("/pio/interrupt_block_snapshots/1/status", "0x00000000"),
+        ("/pio/interrupt_block_snapshots/2/block", "mmu"),
+        (
+            "/pio/interrupt_block_snapshots/2/name",
+            "after_mmu_bus_error_masked",
+        ),
+        ("/pio/interrupt_block_snapshots/2/rawstat_offset", "0x2000"),
+        ("/pio/interrupt_block_snapshots/2/mask_offset", "0x2008"),
+        ("/pio/interrupt_block_snapshots/2/status_offset", "0x200c"),
+        ("/pio/interrupt_block_snapshots/2/rawstat", "0x00010001"),
+        ("/pio/interrupt_block_snapshots/2/mask", "0x00010000"),
+        ("/pio/interrupt_block_snapshots/2/status", "0x00010000"),
+        ("/pio/interrupt_block_snapshots/3/block", "mmu"),
+        (
+            "/pio/interrupt_block_snapshots/3/name",
+            "after_mmu_bus_error_clear",
+        ),
+        ("/pio/interrupt_block_snapshots/3/rawstat", "0x00000001"),
+        ("/pio/interrupt_block_snapshots/3/mask", "0x00010000"),
+        ("/pio/interrupt_block_snapshots/3/status", "0x00000000"),
         ("/pio/power_writes/0/name", "shader_pwron_lo"),
         ("/pio/power_writes/0/offset", "0x180"),
         ("/pio/power_writes/0/value", "0x0000000f"),
@@ -995,11 +1041,33 @@ fn rem6_gpu_run_writes_nomali_adapter_output() {
             .map(Value::is_null),
         Some(true)
     );
+    let array_lengths = [
+        ("/pio/command_writes", 3),
+        ("/pio/irq_writes", 4),
+        ("/pio/power_writes", 2),
+        ("/pio/irq_snapshots", 5),
+        ("/pio/interrupt_block_snapshots", 4),
+        ("/pio/register_reads", 6),
+        ("/pio/register_faults", 2),
+    ];
+    for (pointer, expected) in array_lengths {
+        assert_eq!(
+            adapter
+                .pointer(pointer)
+                .and_then(Value::as_array)
+                .map(|array| array.len()),
+            Some(expected)
+        );
+    }
     let numeric_fields = [
         ("/gpu/api_version", 0),
         ("/gpu/register_window_bytes", 0x4000),
         ("/pio/reset_count", 3),
         ("/pio/register_fault_count", 2),
+        ("/pio/interrupt_block_snapshots/0/nomali_int", 1),
+        ("/pio/interrupt_block_snapshots/1/nomali_int", 1),
+        ("/pio/interrupt_block_snapshots/2/nomali_int", 2),
+        ("/pio/interrupt_block_snapshots/3/nomali_int", 2),
         ("/pio/checkpoint/word_count", 4096),
         ("/interface/interrupts/job/nomali_int", 1),
         ("/execution/workgroup_completions", 2),
@@ -1019,6 +1087,10 @@ fn rem6_gpu_run_writes_nomali_adapter_output() {
         ("/pio/irq_snapshots/2/asserted", true),
         ("/pio/irq_snapshots/3/asserted", false),
         ("/pio/irq_snapshots/4/asserted", true),
+        ("/pio/interrupt_block_snapshots/0/asserted", true),
+        ("/pio/interrupt_block_snapshots/1/asserted", false),
+        ("/pio/interrupt_block_snapshots/2/asserted", true),
+        ("/pio/interrupt_block_snapshots/3/asserted", false),
     ];
     for (pointer, expected) in bool_fields {
         assert_eq!(
