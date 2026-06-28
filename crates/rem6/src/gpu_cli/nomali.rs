@@ -140,7 +140,6 @@ const JS_COMMAND_UNSUPPORTED_PROBE: u32 = 0xdead_0008;
 const JS_STATUS_DONE: u32 = 0x01;
 const JS_CONFIG_START_MMU: u32 = 1 << 10;
 const JS_CONFIG_JOB_CHAIN_FLAG: u32 = 1 << 11;
-const NOMALI_REGISTER_FAULT_MISALIGNED_READ_OFFSET: u32 = 0x003;
 const NOMALI_REGISTER_FAULT_OUT_OF_RANGE_WRITE_OFFSET: u32 = NOMALI_REGISTER_WINDOW_BYTES as u32;
 const NOMALI_REGISTER_FAULT_WRITE_VALUE: u32 = 0x1234_5678;
 
@@ -276,6 +275,9 @@ const NOMALI_OBSERVED_PIO_READS: &[(&str, u32)] = &[
     ("thread_features", THREAD_FEATURES),
     ("shader_present_lo", SHADER_PRESENT_LO),
     ("shader_present_hi", SHADER_PRESENT_HI),
+    ("gpu_irq_status", GPU_IRQ_STATUS),
+    ("job_irq_status", JOB_IRQ_STATUS),
+    ("mmu_irq_status", MMU_IRQ_STATUS),
 ];
 
 type NoMaliInterruptBlock = (&'static str, u32, u32, u32);
@@ -573,9 +575,13 @@ impl NoMaliT760RegisterFile {
         self.registers[(offset / 4) as usize]
     }
 
-    fn read_reg(&mut self, offset: u32) -> Option<u32> {
-        let index = self.checked_register_index("read", offset, None)?;
-        Some(self.registers[index])
+    fn read_reg_value(&self, offset: u32) -> u32 {
+        match offset {
+            GPU_IRQ_STATUS => self.interrupt_status_at(GPU_INTERRUPT_BLOCK),
+            JOB_IRQ_STATUS => self.interrupt_status_at(JOB_INTERRUPT_BLOCK),
+            MMU_IRQ_STATUS => self.interrupt_status_at(MMU_INTERRUPT_BLOCK),
+            _ => self.read_raw(offset),
+        }
     }
 
     fn write_raw(&mut self, offset: u32, value: u32) {
@@ -694,7 +700,7 @@ impl NoMaliT760RegisterFile {
     }
 
     fn probe_register_faults(&mut self) {
-        let _ = self.read_reg(NOMALI_REGISTER_FAULT_MISALIGNED_READ_OFFSET);
+        let _ = self.checked_register_index("read", 0x003, None);
         self.write_reg(
             NOMALI_REGISTER_FAULT_OUT_OF_RANGE_WRITE_OFFSET,
             NOMALI_REGISTER_FAULT_WRITE_VALUE,
@@ -1232,6 +1238,7 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
         JOB_IRQ_MASK,
         JOB_IRQ_STATUS,
     );
+    let job_irq_status_read = pio.read_reg_value(JOB_IRQ_STATUS);
     pio.write_reg(JOB_IRQ_CLEAR, JOB_SLOT0_COMPLETED);
     pio.record_interrupt_block_snapshot(
         "job",
@@ -1263,6 +1270,7 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
         MMU_IRQ_MASK,
         MMU_IRQ_STATUS,
     );
+    let irq_status_reads = (job_irq_status_read, pio.read_reg_value(MMU_IRQ_STATUS));
     pio.write_reg(MMU_IRQ_CLEAR, MMU_BUS_ERROR_AS0);
     pio.record_interrupt_block_snapshot(
         "mmu",
@@ -1326,7 +1334,7 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
         "{{\"schema\":\"rem6.nomali.gpu-adapter.v1\",\"source_schema\":\"rem6.cli.gpu-run.v1\",\"scope\":\"gpu-run-execution-summary-adapter\",\"gpu\":{},\"interface\":{},\"pio\":{},\"execution\":{{\"status\":\"completed\",\"final_tick\":{},\"compute_units\":{},\"workgroup_completions\":{},\"coalesced_memory_accesses\":{},\"global_memory_reads\":{},\"global_memory_writes\":{},\"memory_read_callback_observations\":{},\"memory_write_callback_observations\":{},\"job_event_observations\":{},\"compute_unit_activity\":[{}]}}}}\n",
         nomali_gpu_json(&pio),
         nomali_interface_json(),
-        nomali_pio_json(&pio),
+        nomali_pio_json(&pio, irq_status_reads),
         execution.final_tick(),
         compute_units,
         execution.workgroup_completions(),
@@ -1393,7 +1401,7 @@ fn nomali_t760_config_registers_json(pio: &NoMaliT760RegisterFile) -> String {
     )
 }
 
-fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
+fn nomali_pio_json(pio: &NoMaliT760RegisterFile, irq_status_reads: (u32, u32)) -> String {
     let command_writes = pio
         .command_writes
         .iter()
@@ -1603,11 +1611,14 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile) -> String {
     let register_reads = NOMALI_OBSERVED_PIO_READS
         .iter()
         .map(|(name, offset)| {
+            let value = match *offset {
+                JOB_IRQ_STATUS => irq_status_reads.0,
+                MMU_IRQ_STATUS => irq_status_reads.1,
+                _ => pio.read_reg_value(*offset),
+            };
             format!(
                 "{{\"name\":\"{}\",\"offset\":\"0x{:03x}\",\"value\":\"0x{:08x}\"}}",
-                name,
-                offset,
-                pio.read_raw(*offset),
+                name, offset, value,
             )
         })
         .collect::<Vec<_>>()
