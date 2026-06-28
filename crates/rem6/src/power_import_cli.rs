@@ -3,11 +3,12 @@ use std::path::{Path, PathBuf};
 use rem6_power::{PowerAnalysisExport, PowerAnalysisRecord, PowerStateKind};
 
 use crate::formatting::json_escape;
-use crate::{PowerAnalysisFormat, Rem6CliError};
+use crate::{cli_output, PowerAnalysisFormat, Rem6CliError, StatsFormat};
 
 pub(crate) fn run_power_import_cli(args: Vec<String>) -> Result<String, Rem6CliError> {
     let mut format = None;
     let mut input = None;
+    let mut output = None;
     let mut args = args.into_iter();
     let _command = args.next();
     while let Some(flag) = args.next() {
@@ -19,6 +20,7 @@ pub(crate) fn run_power_import_cli(args: Vec<String>) -> Result<String, Rem6CliE
                 )?)?)
             }
             "--input" => input = Some(PathBuf::from(required_value(&flag, args.next())?)),
+            "--output" => output = Some(PathBuf::from(required_value(&flag, args.next())?)),
             _ => return Err(Rem6CliError::UnknownFlag { flag }),
         }
     }
@@ -33,7 +35,16 @@ pub(crate) fn run_power_import_cli(args: Vec<String>) -> Result<String, Rem6CliE
         PowerAnalysisFormat::DsentCsv => PowerAnalysisExport::from_dsent_compatible_csv(&contents),
     }
     .map_err(power_error)?;
-    Ok(power_import_json(format, &input, &export))
+    let json = power_import_json(format, &input, &export);
+    cli_output::emit_cli_output(
+        json,
+        "{}",
+        "",
+        output.as_deref(),
+        None,
+        StatsFormat::Json,
+        &[],
+    )
 }
 
 fn required_value(flag: &str, value: Option<String>) -> Result<String, Rem6CliError> {

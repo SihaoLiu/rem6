@@ -134,3 +134,62 @@ fn rem6_power_import_summarizes_dsent_csv() {
         Some(0.5)
     );
 }
+
+#[test]
+fn rem6_power_import_writes_summary_output_artifact() {
+    let temp_dir = unique_power_import_temp_dir("output");
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let input = temp_dir.join("mcpat.xml");
+    let artifact = temp_dir.join("summary/power-import.json");
+    std::fs::write(
+        &input,
+        concat!(
+            "<mcpat_power tick=\"7\">\n",
+            "  <component id=\"memory.dram\" name=\"memory.dram\" state=\"On\">\n",
+            "    <power dynamic_watts=\"1.500000\" leakage_watts=\"0.250000\" total_watts=\"1.750000\"/>\n",
+            "    <thermal temperature_c=\"39.000000\"/>\n",
+            "    <residency state=\"On\" ticks=\"7\" ratio=\"1.000000\"/>\n",
+            "  </component>\n",
+            "  <totals dynamic_watts=\"1.500000\" leakage_watts=\"0.250000\" total_watts=\"1.750000\"/>\n",
+            "</mcpat_power>\n",
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "power-import",
+            "--format",
+            "mcpat-xml",
+            "--input",
+            input.to_str().unwrap(),
+            "--output",
+            artifact.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        stdout,
+        format!(
+            "{{\"schema\":\"rem6.cli.output.v1\",\"format\":\"json\",\"artifact\":\"{}\"}}\n",
+            artifact.display()
+        )
+    );
+    let json: Value = serde_json::from_str(&std::fs::read_to_string(&artifact).unwrap()).unwrap();
+    std::fs::remove_dir_all(&temp_dir).unwrap();
+    assert_eq!(
+        json.pointer("/records/0/target").and_then(Value::as_str),
+        Some("memory.dram")
+    );
+    assert_eq!(
+        json.pointer("/totals/total_watts").and_then(Value::as_f64),
+        Some(1.75)
+    );
+}
