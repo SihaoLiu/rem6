@@ -61,11 +61,15 @@ const MMU_IRQ_STATUS: u32 = 0x200c;
 const RESET_COMPLETED: u32 = 1 << 8;
 const POWER_CHANGED_SINGLE: u32 = 1 << 9;
 const POWER_CHANGED_ALL: u32 = 1 << 10;
+const PRFCNT_SAMPLE_COMPLETED: u32 = 1 << 16;
+const CLEAN_CACHES_COMPLETED: u32 = 1 << 17;
 const JOB_SLOT0_COMPLETED: u32 = 1 << 0;
 const MMU_PAGE_FAULT_AS0: u32 = 1 << 0;
 const MMU_BUS_ERROR_AS0: u32 = 1 << 16;
 const GPU_COMMAND_SOFT_RESET: u32 = 0x01;
 const GPU_COMMAND_HARD_RESET: u32 = 0x02;
+const GPU_COMMAND_PRFCNT_SAMPLE: u32 = 0x04;
+const GPU_COMMAND_CLEAN_CACHES: u32 = 0x07;
 const GPU_COMMAND_UNSUPPORTED_PROBE: u32 = 0xdead_dead;
 const NOMALI_REGISTER_FAULT_MISALIGNED_READ_OFFSET: u32 = 0x003;
 const NOMALI_REGISTER_FAULT_OUT_OF_RANGE_WRITE_OFFSET: u32 = NOMALI_REGISTER_WINDOW_BYTES as u32;
@@ -466,6 +470,26 @@ impl NoMaliT760RegisterFile {
                 self.reset();
                 self.raise_interrupt(RESET_COMPLETED);
             }
+            GPU_COMMAND_PRFCNT_SAMPLE => {
+                self.command_writes.push(NoMaliCommandWrite {
+                    name: "gpu_command",
+                    offset: GPU_COMMAND,
+                    value,
+                    command: "perf_counter_sample",
+                    effect: "perf_counter_sample_completed_interrupt",
+                });
+                self.raise_interrupt(PRFCNT_SAMPLE_COMPLETED);
+            }
+            GPU_COMMAND_CLEAN_CACHES => {
+                self.command_writes.push(NoMaliCommandWrite {
+                    name: "gpu_command",
+                    offset: GPU_COMMAND,
+                    value,
+                    command: "clean_caches",
+                    effect: "clean_caches_completed_interrupt",
+                });
+                self.raise_interrupt(CLEAN_CACHES_COMPLETED);
+            }
             _ => {
                 self.command_writes.push(NoMaliCommandWrite {
                     name: "gpu_command",
@@ -684,6 +708,27 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
         MMU_IRQ_MASK,
         MMU_IRQ_STATUS,
     );
+    pio.write_reg(
+        GPU_IRQ_MASK,
+        RESET_COMPLETED
+            | POWER_CHANGED_SINGLE
+            | POWER_CHANGED_ALL
+            | PRFCNT_SAMPLE_COMPLETED
+            | CLEAN_CACHES_COMPLETED,
+    );
+    pio.write_reg(GPU_COMMAND, GPU_COMMAND_PRFCNT_SAMPLE);
+    pio.record_irq_snapshot("after_perf_sample_command");
+    pio.write_reg(GPU_COMMAND, GPU_COMMAND_CLEAN_CACHES);
+    pio.record_irq_snapshot("after_clean_caches_command");
+    pio.write_reg(
+        GPU_IRQ_CLEAR,
+        PRFCNT_SAMPLE_COMPLETED | CLEAN_CACHES_COMPLETED,
+    );
+    pio.record_irq_snapshot("after_command_irq_clear");
+    pio.write_reg(
+        GPU_IRQ_MASK,
+        RESET_COMPLETED | POWER_CHANGED_SINGLE | POWER_CHANGED_ALL,
+    );
     pio.probe_register_faults();
     let contents = format!(
         "{{\"schema\":\"rem6.nomali.gpu-adapter.v1\",\"source_schema\":\"rem6.cli.gpu-run.v1\",\"scope\":\"gpu-run-execution-summary-adapter\",\"gpu\":{},\"interface\":{},\"pio\":{},\"execution\":{{\"status\":\"completed\",\"final_tick\":{},\"compute_units\":{},\"workgroup_completions\":{},\"coalesced_memory_accesses\":{},\"global_memory_reads\":{},\"global_memory_writes\":{},\"memory_read_callback_observations\":{},\"memory_write_callback_observations\":{},\"job_event_observations\":{},\"compute_unit_activity\":[{}]}}}}\n",
@@ -889,6 +934,8 @@ fn irq_clear_effect(value: u32) -> &'static str {
         "clear_reset_completed"
     } else if value & (POWER_CHANGED_SINGLE | POWER_CHANGED_ALL) != 0 {
         "clear_power_changed"
+    } else if value & (PRFCNT_SAMPLE_COMPLETED | CLEAN_CACHES_COMPLETED) != 0 {
+        "clear_command_completed"
     } else {
         "clear_irq_bits"
     }
