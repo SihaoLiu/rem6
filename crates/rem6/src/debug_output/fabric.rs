@@ -221,6 +221,8 @@ pub(crate) fn fabric_trace_stats(
 ) -> Vec<Rem6FabricTraceStat> {
     let mut lanes = BTreeMap::<(String, u64), FabricLaneStatSummary>::new();
     let mut hops = BTreeMap::<(String, u64, u64), FabricHopStatSummary>::new();
+    let mut lane_totals = FabricLaneStatSummary::default();
+    let mut hop_totals = FabricHopStatSummary::default();
     for record in records {
         match record {
             Rem6FabricTraceRecord::Lane {
@@ -250,6 +252,20 @@ pub(crate) fn fabric_trace_stats(
                     .saturating_add(*credit_delay_ticks);
                 summary.max_credit_delay_ticks =
                     summary.max_credit_delay_ticks.max(*max_credit_delay_ticks);
+                lane_totals.occupied_ticks =
+                    lane_totals.occupied_ticks.saturating_add(*occupied_ticks);
+                lane_totals.queue_delay_ticks = lane_totals
+                    .queue_delay_ticks
+                    .saturating_add(*queue_delay_ticks);
+                lane_totals.max_queue_delay_ticks = lane_totals
+                    .max_queue_delay_ticks
+                    .max(*max_queue_delay_ticks);
+                lane_totals.credit_delay_ticks = lane_totals
+                    .credit_delay_ticks
+                    .saturating_add(*credit_delay_ticks);
+                lane_totals.max_credit_delay_ticks = lane_totals
+                    .max_credit_delay_ticks
+                    .max(*max_credit_delay_ticks);
             }
             Rem6FabricTraceRecord::Hop {
                 link,
@@ -274,6 +290,16 @@ pub(crate) fn fabric_trace_stats(
                 summary.max_queue_delay_ticks =
                     summary.max_queue_delay_ticks.max(*queue_delay_ticks);
                 summary.credit_delay_ticks = summary
+                    .credit_delay_ticks
+                    .saturating_add(*credit_delay_ticks);
+                hop_totals.occupied_ticks =
+                    hop_totals.occupied_ticks.saturating_add(*occupied_ticks);
+                hop_totals.queue_delay_ticks = hop_totals
+                    .queue_delay_ticks
+                    .saturating_add(*queue_delay_ticks);
+                hop_totals.max_queue_delay_ticks =
+                    hop_totals.max_queue_delay_ticks.max(*queue_delay_ticks);
+                hop_totals.credit_delay_ticks = hop_totals
                     .credit_delay_ticks
                     .saturating_add(*credit_delay_ticks);
             }
@@ -329,6 +355,39 @@ pub(crate) fn fabric_trace_stats(
             ],
         );
     }
+    push_fabric_trace_stats(
+        &mut stats,
+        "lane",
+        &[
+            ("occupied_ticks", "Tick", lane_totals.occupied_ticks),
+            ("queue_delay_ticks", "Tick", lane_totals.queue_delay_ticks),
+            (
+                "max_queue_delay_ticks",
+                "Tick",
+                lane_totals.max_queue_delay_ticks,
+            ),
+            ("credit_delay_ticks", "Tick", lane_totals.credit_delay_ticks),
+            (
+                "max_credit_delay_ticks",
+                "Tick",
+                lane_totals.max_credit_delay_ticks,
+            ),
+        ],
+    );
+    push_fabric_trace_stats(
+        &mut stats,
+        "hop",
+        &[
+            ("occupied_ticks", "Tick", hop_totals.occupied_ticks),
+            ("queue_delay_ticks", "Tick", hop_totals.queue_delay_ticks),
+            (
+                "max_queue_delay_ticks",
+                "Tick",
+                hop_totals.max_queue_delay_ticks,
+            ),
+            ("credit_delay_ticks", "Tick", hop_totals.credit_delay_ticks),
+        ],
+    );
     stats
 }
 

@@ -1342,6 +1342,15 @@ fn rem6_run_fabric_debug_flag_emits_real_fabric_activity_trace() {
                 .expect("hop flits")
         })
         .sum::<u64>();
+    let lane_occupied_ticks = fabric_trace_sum(trace, "lane", "occupied_ticks");
+    let lane_queue_delay_ticks = fabric_trace_sum(trace, "lane", "queue_delay_ticks");
+    let lane_max_queue_delay_ticks = fabric_trace_max(trace, "lane", "max_queue_delay_ticks");
+    let lane_credit_delay_ticks = fabric_trace_sum(trace, "lane", "credit_delay_ticks");
+    let lane_max_credit_delay_ticks = fabric_trace_max(trace, "lane", "max_credit_delay_ticks");
+    let hop_occupied_ticks = fabric_trace_sum(trace, "hop", "occupied_ticks");
+    let hop_queue_delay_ticks = fabric_trace_sum(trace, "hop", "queue_delay_ticks");
+    let hop_max_queue_delay_ticks = fabric_trace_max(trace, "hop", "queue_delay_ticks");
+    let hop_credit_delay_ticks = fabric_trace_sum(trace, "hop", "credit_delay_ticks");
     assert!(lane_records >= 2, "trace: {trace:?}");
     assert!(hop_records >= 2, "trace: {trace:?}");
     assert!(lane_transfers > 0, "trace: {trace:?}");
@@ -1393,6 +1402,41 @@ fn rem6_run_fabric_debug_flag_emits_real_fabric_activity_trace() {
     );
     assert_stat(
         &stdout,
+        "sim.debug.fabric_trace.lane.occupied_ticks",
+        "Tick",
+        lane_occupied_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.fabric_trace.lane.queue_delay_ticks",
+        "Tick",
+        lane_queue_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.fabric_trace.lane.max_queue_delay_ticks",
+        "Tick",
+        lane_max_queue_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.fabric_trace.lane.credit_delay_ticks",
+        "Tick",
+        lane_credit_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.fabric_trace.lane.max_credit_delay_ticks",
+        "Tick",
+        lane_max_credit_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
         "sim.debug.fabric_trace.hop.bytes",
         "Byte",
         hop_bytes,
@@ -1403,6 +1447,34 @@ fn rem6_run_fabric_debug_flag_emits_real_fabric_activity_trace() {
         "sim.debug.fabric_trace.hop.flits",
         "Count",
         hop_flits,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.fabric_trace.hop.occupied_ticks",
+        "Tick",
+        hop_occupied_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.fabric_trace.hop.queue_delay_ticks",
+        "Tick",
+        hop_queue_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.fabric_trace.hop.max_queue_delay_ticks",
+        "Tick",
+        hop_max_queue_delay_ticks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.fabric_trace.hop.credit_delay_ticks",
+        "Tick",
+        hop_credit_delay_ticks,
         "monotonic",
     );
     assert_fabric_trace_hierarchy_stats(&stdout, trace);
@@ -2897,6 +2969,23 @@ fn assert_fabric_lane_trace_stats(stdout: &str, record: &Value) {
             "monotonic",
         );
     }
+}
+
+fn fabric_trace_sum(trace: &[Value], kind: &str, field: &str) -> u64 {
+    trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some(kind))
+        .map(|record| json_record_u64(record, field))
+        .sum()
+}
+
+fn fabric_trace_max(trace: &[Value], kind: &str, field: &str) -> u64 {
+    trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some(kind))
+        .map(|record| json_record_u64(record, field))
+        .max()
+        .unwrap_or(0)
 }
 
 fn json_record_u64(record: &Value, field: &str) -> u64 {
