@@ -81,6 +81,22 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                     hash_str(hash, "elf.dynamic.runpath");
                     hash_str(hash, runpath);
                 }
+                if let Some(address) = dynamic.string_table_virtual_address() {
+                    hash_str(hash, "elf.dynamic.strtab");
+                    hash_u64(hash, address.get());
+                }
+                if let Some(size) = dynamic.string_table_size() {
+                    hash_str(hash, "elf.dynamic.strsz");
+                    hash_u64(hash, size);
+                }
+                if let Some(address) = dynamic.symbol_table_virtual_address() {
+                    hash_str(hash, "elf.dynamic.symtab");
+                    hash_u64(hash, address.get());
+                }
+                if let Some(size) = dynamic.symbol_table_entry_size() {
+                    hash_str(hash, "elf.dynamic.syment");
+                    hash_u64(hash, size);
+                }
                 if let Some(address) = dynamic.init_virtual_address() {
                     hash_str(hash, "elf.dynamic.init");
                     hash_u64(hash, address.get());

@@ -125,6 +125,10 @@ pub(crate) struct BootElfDynamicSegment {
     pub(crate) soname: Option<String>,
     pub(crate) rpath: Vec<String>,
     pub(crate) runpath: Vec<String>,
+    pub(crate) string_table_virtual_address: Option<Address>,
+    pub(crate) string_table_size: Option<u64>,
+    pub(crate) symbol_table_virtual_address: Option<Address>,
+    pub(crate) symbol_table_entry_size: Option<u64>,
     pub(crate) init_virtual_address: Option<Address>,
     pub(crate) fini_virtual_address: Option<Address>,
     pub(crate) flags: Option<u64>,
@@ -149,6 +153,10 @@ pub struct BootElfDynamicTable {
     soname: Option<String>,
     rpath: Vec<String>,
     runpath: Vec<String>,
+    string_table_virtual_address: Option<Address>,
+    string_table_size: Option<u64>,
+    symbol_table_virtual_address: Option<Address>,
+    symbol_table_entry_size: Option<u64>,
     init_virtual_address: Option<Address>,
     fini_virtual_address: Option<Address>,
     flags: Option<u64>,
@@ -174,6 +182,10 @@ impl BootElfDynamicTable {
             soname: None,
             rpath: Vec::new(),
             runpath: Vec::new(),
+            string_table_virtual_address: None,
+            string_table_size: None,
+            symbol_table_virtual_address: None,
+            symbol_table_entry_size: None,
             init_virtual_address: None,
             fini_virtual_address: None,
             flags: None,
@@ -199,6 +211,10 @@ impl BootElfDynamicTable {
             self.soname = segment.soname;
             self.rpath = segment.rpath;
             self.runpath = segment.runpath;
+            self.string_table_virtual_address = segment.string_table_virtual_address;
+            self.string_table_size = segment.string_table_size;
+            self.symbol_table_virtual_address = segment.symbol_table_virtual_address;
+            self.symbol_table_entry_size = segment.symbol_table_entry_size;
             self.init_virtual_address = segment.init_virtual_address;
             self.fini_virtual_address = segment.fini_virtual_address;
             self.flags = segment.flags;
@@ -270,6 +286,22 @@ impl BootElfDynamicTable {
 
     pub fn runpath_name_bytes(&self) -> u64 {
         self.runpath.iter().map(|path| path.len() as u64).sum()
+    }
+
+    pub const fn string_table_virtual_address(&self) -> Option<Address> {
+        self.string_table_virtual_address
+    }
+
+    pub const fn string_table_size(&self) -> Option<u64> {
+        self.string_table_size
+    }
+
+    pub const fn symbol_table_virtual_address(&self) -> Option<Address> {
+        self.symbol_table_virtual_address
+    }
+
+    pub const fn symbol_table_entry_size(&self) -> Option<u64> {
+        self.symbol_table_entry_size
     }
 
     pub const fn init_virtual_address(&self) -> Option<Address> {

@@ -330,12 +330,13 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
         .unwrap_or_else(|| "null".to_string());
     let rpath = json_string_array(table.rpath());
     let runpath = json_string_array(table.runpath());
+    let tables = elf_dynamic_tables_json(table);
     let lifecycle = elf_dynamic_lifecycle_json(table);
     let flags = elf_dynamic_flags_json(table);
     let hash = elf_dynamic_hash_json(table);
     let relocations = elf_dynamic_relocations_json(table);
     format!(
-        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":{},\"soname\":{},\"rpath\":{},\"runpath\":{},\"lifecycle\":{},\"flags\":{},\"hash\":{},\"relocations\":{}}}",
+        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":{},\"soname\":{},\"rpath\":{},\"runpath\":{},\"tables\":{},\"lifecycle\":{},\"flags\":{},\"hash\":{},\"relocations\":{}}}",
         table.segment_count(),
         file_offset,
         virtual_address,
@@ -346,10 +347,21 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
         soname,
         rpath,
         runpath,
+        tables,
         lifecycle,
         flags,
         hash,
         relocations
+    )
+}
+
+fn elf_dynamic_tables_json(table: &BootElfDynamicTable) -> String {
+    format!(
+        "{{\"string\":{{\"virtual_address\":{},\"bytes\":{}}},\"symbol\":{{\"virtual_address\":{},\"entry_size\":{}}}}}",
+        address_json(table.string_table_virtual_address()),
+        optional_value_json(table.string_table_size()),
+        address_json(table.symbol_table_virtual_address()),
+        optional_value_json(table.symbol_table_entry_size())
     )
 }
 

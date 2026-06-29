@@ -6,11 +6,13 @@ const DT_NULL: u64 = 0;
 const DT_NEEDED: u64 = 1;
 const DT_PLTRELSZ: u64 = 2;
 const DT_HASH: u64 = 4;
+const DT_STRTAB: u64 = 5;
+const DT_SYMTAB: u64 = 6;
 const DT_RELA: u64 = 7;
 const DT_RELASZ: u64 = 8;
 const DT_RELAENT: u64 = 9;
-const DT_STRTAB: u64 = 5;
 const DT_STRSZ: u64 = 10;
+const DT_SYMENT: u64 = 11;
 const DT_INIT: u64 = 12;
 const DT_FINI: u64 = 13;
 const DT_SONAME: u64 = 14;
@@ -39,6 +41,10 @@ pub(crate) struct ElfDynamicTableSummary {
     pub(crate) soname: Option<String>,
     pub(crate) rpath: Vec<String>,
     pub(crate) runpath: Vec<String>,
+    pub(crate) string_table_virtual_address: Option<u64>,
+    pub(crate) string_table_size: Option<u64>,
+    pub(crate) symbol_table_virtual_address: Option<u64>,
+    pub(crate) symbol_table_entry_size: Option<u64>,
     pub(crate) init_virtual_address: Option<u64>,
     pub(crate) fini_virtual_address: Option<u64>,
     pub(crate) flags: Option<u64>,
@@ -161,6 +167,8 @@ pub(crate) fn dynamic_table_counts(
     let mut flags_1 = None;
     let mut sysv_hash_virtual_address = None;
     let mut gnu_hash_virtual_address = None;
+    let mut symbol_table_virtual_address = None;
+    let mut symbol_table_entry_size = None;
     let mut rela_relocations = ElfDynamicRelocationSummary::default();
     let mut rel_relocations = ElfDynamicRelocationSummary::default();
     let mut plt_relocations = ElfDynamicRelocationSummary::default();
@@ -197,6 +205,10 @@ pub(crate) fn dynamic_table_counts(
                 soname: strings.soname,
                 rpath: strings.rpath,
                 runpath: strings.runpath,
+                string_table_virtual_address: string_table,
+                string_table_size,
+                symbol_table_virtual_address,
+                symbol_table_entry_size,
                 init_virtual_address,
                 fini_virtual_address,
                 flags,
@@ -217,6 +229,10 @@ pub(crate) fn dynamic_table_counts(
             string_table = Some(value);
         } else if tag == DT_STRSZ {
             string_table_size = Some(value);
+        } else if tag == DT_SYMTAB {
+            symbol_table_virtual_address = Some(value);
+        } else if tag == DT_SYMENT {
+            symbol_table_entry_size = Some(value);
         } else if tag == DT_GNU_HASH {
             gnu_hash_virtual_address = Some(value);
         } else if tag == DT_SONAME {

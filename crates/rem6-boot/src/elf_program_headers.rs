@@ -116,6 +116,14 @@ pub(crate) fn summarize_elf64_program_header(
                     soname: summary.soname,
                     rpath: summary.rpath,
                     runpath: summary.runpath,
+                    string_table_virtual_address: summary
+                        .string_table_virtual_address
+                        .map(Address::new),
+                    string_table_size: summary.string_table_size,
+                    symbol_table_virtual_address: summary
+                        .symbol_table_virtual_address
+                        .map(Address::new),
+                    symbol_table_entry_size: summary.symbol_table_entry_size,
                     init_virtual_address: summary.init_virtual_address.map(Address::new),
                     fini_virtual_address: summary.fini_virtual_address.map(Address::new),
                     flags: summary.flags,
@@ -246,6 +254,14 @@ pub(crate) fn summarize_elf32_program_header(
                     soname: summary.soname,
                     rpath: summary.rpath,
                     runpath: summary.runpath,
+                    string_table_virtual_address: summary
+                        .string_table_virtual_address
+                        .map(Address::new),
+                    string_table_size: summary.string_table_size,
+                    symbol_table_virtual_address: summary
+                        .symbol_table_virtual_address
+                        .map(Address::new),
+                    symbol_table_entry_size: summary.symbol_table_entry_size,
                     init_virtual_address: summary.init_virtual_address.map(Address::new),
                     fini_virtual_address: summary.fini_virtual_address.map(Address::new),
                     flags: summary.flags,

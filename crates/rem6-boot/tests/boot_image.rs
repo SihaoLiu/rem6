@@ -22,6 +22,10 @@ const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
+const DT_STRTAB: u64 = 5;
+const DT_SYMTAB: u64 = 6;
+const DT_STRSZ: u64 = 10;
+const DT_SYMENT: u64 = 11;
 const DT_INIT: u64 = 12;
 const DT_FINI: u64 = 13;
 const DT_FLAGS: u64 = 30;
@@ -1074,6 +1078,114 @@ fn boot_image_records_elf64_dynamic_table_metadata() {
     assert_eq!(dynamic.entry_size(), 16);
     assert_eq!(dynamic.entry_count(), 5);
     assert_eq!(dynamic.needed_count(), 2);
+}
+
+#[test]
+fn boot_image_records_elf64_dynamic_symbol_string_table_metadata() {
+    let dynamic = [
+        DT_STRTAB.to_le_bytes(),
+        0x8000_0240u64.to_le_bytes(),
+        DT_STRSZ.to_le_bytes(),
+        0x30u64.to_le_bytes(),
+        DT_SYMTAB.to_le_bytes(),
+        0x8000_0280u64.to_le_bytes(),
+        DT_SYMENT.to_le_bytes(),
+        24u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf64_image(
+        0x8000_0200,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[(0x180, &dynamic), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(
+        dynamic.string_table_virtual_address(),
+        Some(Address::new(0x8000_0240)),
+    );
+    assert_eq!(dynamic.string_table_size(), Some(0x30));
+    assert_eq!(
+        dynamic.symbol_table_virtual_address(),
+        Some(Address::new(0x8000_0280)),
+    );
+    assert_eq!(dynamic.symbol_table_entry_size(), Some(24));
+}
+
+#[test]
+fn boot_image_records_elf32_dynamic_symbol_string_table_metadata() {
+    let dynamic = [
+        (DT_STRTAB as u32).to_le_bytes(),
+        0x8000_0240u32.to_le_bytes(),
+        (DT_STRSZ as u32).to_le_bytes(),
+        0x30u32.to_le_bytes(),
+        (DT_SYMTAB as u32).to_le_bytes(),
+        0x8000_0280u32.to_le_bytes(),
+        (DT_SYMENT as u32).to_le_bytes(),
+        16u32.to_le_bytes(),
+        0u32.to_le_bytes(),
+        0u32.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf32_image(
+        0x8000_0200,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[(0x180, &dynamic), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    let metadata = BootImage::from_elf32_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(
+        dynamic.string_table_virtual_address(),
+        Some(Address::new(0x8000_0240)),
+    );
+    assert_eq!(dynamic.string_table_size(), Some(0x30));
+    assert_eq!(
+        dynamic.symbol_table_virtual_address(),
+        Some(Address::new(0x8000_0280)),
+    );
+    assert_eq!(dynamic.symbol_table_entry_size(), Some(16));
 }
 
 #[test]
