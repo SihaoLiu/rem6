@@ -1050,6 +1050,66 @@ fn boot_image_derives_solaris_from_section_names() {
 }
 
 #[test]
+fn boot_image_records_tls_from_tbss_section_even_with_header_os() {
+    let mut elf = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    elf[7] = 3;
+    add_elf64_sections(
+        &mut elf,
+        &[ElfSectionSpec {
+            name: ".tbss",
+            kind: 8,
+            data: &[],
+        }],
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+
+    assert_eq!(metadata.operating_system(), BootElfOperatingSystem::Linux);
+    assert!(metadata.has_tls());
+}
+
+#[test]
+fn boot_image_loads_header_os_elf_with_bad_section_table() {
+    let mut elf = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    elf[7] = 3;
+    write_u64(&mut elf, 40, u64::MAX - 7);
+    write_u16(&mut elf, 58, 64);
+    write_u16(&mut elf, 60, 0);
+    write_u16(&mut elf, 62, 0xffff);
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+
+    assert_eq!(metadata.operating_system(), BootElfOperatingSystem::Linux);
+    assert!(!metadata.has_tls());
+}
+
+#[test]
 fn boot_image_rejects_elf64_segment_memory_overflow_with_segment_context() {
     let elf = elf64_image(
         0x8000,

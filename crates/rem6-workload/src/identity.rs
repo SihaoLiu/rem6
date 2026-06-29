@@ -1227,6 +1227,9 @@ fn hash_elf_metadata(hash: &mut u64, metadata: Option<BootElfMetadata>) {
             hash_u64(hash, u64::from(metadata.flags()));
             hash_elf_architecture(hash, metadata.architecture());
             hash_elf_operating_system(hash, metadata.operating_system());
+            if metadata.has_tls() {
+                hash_str(hash, "elf.tls");
+            }
         }
         None => hash_u64(hash, 0),
     }

@@ -122,6 +122,30 @@ pub(crate) fn riscv64_elf_with_interpreter(
     bytes
 }
 
+pub(crate) fn riscv64_elf_with_tbss(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = riscv64_elf(entry, physical, payload);
+    let names = b"\0.tbss\0.shstrtab\0";
+    let shstr_offset = bytes.len();
+    bytes.extend_from_slice(names);
+
+    let section_table_offset = bytes.len();
+    write_u64(&mut bytes, 40, section_table_offset as u64);
+    write_u16(&mut bytes, 58, 64);
+    write_u16(&mut bytes, 60, 3);
+    write_u16(&mut bytes, 62, 2);
+    bytes.resize(section_table_offset + 3 * 64, 0);
+
+    write_u32(&mut bytes, section_table_offset + 64, 1);
+    write_u32(&mut bytes, section_table_offset + 68, 8);
+    write_u64(&mut bytes, section_table_offset + 96, 16);
+
+    write_u32(&mut bytes, section_table_offset + 128, 7);
+    write_u32(&mut bytes, section_table_offset + 132, 3);
+    write_u64(&mut bytes, section_table_offset + 152, shstr_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 160, names.len() as u64);
+    bytes
+}
+
 pub(crate) fn riscv64_elf_extended_phnum(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
     let mut bytes = riscv64_elf(entry, physical, payload);
     let section_table_offset = bytes.len();

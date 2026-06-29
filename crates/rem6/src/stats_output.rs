@@ -149,6 +149,13 @@ pub(super) fn run_stats_output(
         StatResetPolicy::Constant,
         u64::from(inputs.metadata.flags()),
     )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.tls",
+        "Count",
+        StatResetPolicy::Constant,
+        u64::from(inputs.metadata.has_tls()),
+    )?;
     let program_header_table = inputs.metadata.program_header_table();
     increment_stat(
         &mut stats,

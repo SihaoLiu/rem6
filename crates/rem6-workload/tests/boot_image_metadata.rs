@@ -94,6 +94,30 @@ fn elf64_image_with_interpreter(machine: u16, interpreter: &str) -> Vec<u8> {
     bytes
 }
 
+fn elf64_image_with_tbss(machine: u16) -> Vec<u8> {
+    let mut bytes = elf64_image(machine);
+    let names = b"\0.tbss\0.shstrtab\0";
+    let shstr_offset = bytes.len();
+    bytes.extend_from_slice(names);
+
+    let section_table_offset = bytes.len();
+    write_u64(&mut bytes, 40, section_table_offset as u64);
+    write_u16(&mut bytes, 58, 64);
+    write_u16(&mut bytes, 60, 3);
+    write_u16(&mut bytes, 62, 2);
+    bytes.resize(section_table_offset + 3 * 64, 0);
+
+    write_u32(&mut bytes, section_table_offset + 64, 1);
+    write_u32(&mut bytes, section_table_offset + 68, 8);
+    write_u64(&mut bytes, section_table_offset + 96, 16);
+
+    write_u32(&mut bytes, section_table_offset + 128, 7);
+    write_u32(&mut bytes, section_table_offset + 132, 3);
+    write_u64(&mut bytes, section_table_offset + 152, shstr_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 160, names.len() as u64);
+    bytes
+}
+
 fn elf64_be_image(machine: u16) -> Vec<u8> {
     let mut bytes = vec![0; 0x104];
     bytes[0..4].copy_from_slice(b"\x7fELF");
@@ -168,6 +192,17 @@ fn workload_boot_image_preserves_elf_interpreter_round_trip() {
 }
 
 #[test]
+fn workload_boot_image_preserves_elf_tls_metadata_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_tbss(243)).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+
+    assert!(workload_image.elf_metadata().unwrap().has_tls());
+    let round_trip_image = workload_image.to_boot_image().unwrap();
+    assert!(round_trip_image.elf_metadata().unwrap().has_tls());
+}
+
+#[test]
 fn workload_manifest_identity_includes_elf_metadata() {
     let riscv = BootImage::from_elf64_le(&elf64_image(243)).unwrap();
     let x86 = BootImage::from_elf64_le(&elf64_image(62)).unwrap();
@@ -183,6 +218,24 @@ fn workload_manifest_identity_includes_elf_metadata() {
     let x86_manifest = WorkloadManifest::builder(id("same"), x86).build().unwrap();
 
     assert_ne!(riscv_manifest.identity(), x86_manifest.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_tls_metadata() {
+    let plain = BootImage::from_elf64_le(&elf64_image(243)).unwrap();
+    let tls = BootImage::from_elf64_le(&elf64_image_with_tbss(243)).unwrap();
+
+    assert_eq!(plain.entry(), tls.entry());
+    assert_eq!(plain.segments(), tls.segments());
+    assert!(!plain.elf_metadata().unwrap().has_tls());
+    assert!(tls.elf_metadata().unwrap().has_tls());
+
+    let plain_manifest = WorkloadManifest::builder(id("same"), plain)
+        .build()
+        .unwrap();
+    let tls_manifest = WorkloadManifest::builder(id("same"), tls).build().unwrap();
+
+    assert_ne!(plain_manifest.identity(), tls_manifest.identity());
 }
 
 #[test]

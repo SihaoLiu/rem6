@@ -1,6 +1,7 @@
 mod elf;
 mod elf_counts;
 mod elf_interpreter;
+mod elf_sections;
 mod error;
 mod image;
 mod metadata;

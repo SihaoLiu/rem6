@@ -80,6 +80,7 @@ pub struct BootElfMetadata {
     flags: u32,
     architecture: BootElfArchitecture,
     operating_system: BootElfOperatingSystem,
+    has_tls: bool,
     program_header_table: BootElfProgramHeaderTable,
 }
 
@@ -101,6 +102,7 @@ impl BootElfMetadata {
             flags,
             architecture,
             operating_system,
+            has_tls: false,
             program_header_table: BootElfProgramHeaderTable::new(0, 0, 0),
         }
     }
@@ -110,6 +112,11 @@ impl BootElfMetadata {
         table: BootElfProgramHeaderTable,
     ) -> Self {
         self.program_header_table = table;
+        self
+    }
+
+    pub(crate) const fn with_tls(mut self, has_tls: bool) -> Self {
+        self.has_tls = has_tls;
         self
     }
 
@@ -139,6 +146,10 @@ impl BootElfMetadata {
 
     pub const fn operating_system(&self) -> BootElfOperatingSystem {
         self.operating_system
+    }
+
+    pub const fn has_tls(&self) -> bool {
+        self.has_tls
     }
 
     pub const fn program_header_table(&self) -> BootElfProgramHeaderTable {
