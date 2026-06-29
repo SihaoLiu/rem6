@@ -22,8 +22,14 @@ const DT_RELSZ: u64 = 18;
 const DT_RELENT: u64 = 19;
 const DT_PLTREL: u64 = 20;
 const DT_JMPREL: u64 = 23;
+const DT_INIT_ARRAY: u64 = 25;
+const DT_FINI_ARRAY: u64 = 26;
+const DT_INIT_ARRAYSZ: u64 = 27;
+const DT_FINI_ARRAYSZ: u64 = 28;
 const DT_RUNPATH: u64 = 29;
 const DT_FLAGS: u64 = 30;
+const DT_PREINIT_ARRAY: u64 = 32;
+const DT_PREINIT_ARRAYSZ: u64 = 33;
 const DT_GNU_HASH: u64 = 0x6fff_fef5;
 const DT_FLAGS_1: u64 = 0x6fff_fffb;
 
@@ -47,6 +53,12 @@ pub(crate) struct ElfDynamicTableSummary {
     pub(crate) symbol_table_entry_size: Option<u64>,
     pub(crate) init_virtual_address: Option<u64>,
     pub(crate) fini_virtual_address: Option<u64>,
+    pub(crate) init_array_virtual_address: Option<u64>,
+    pub(crate) init_array_size: Option<u64>,
+    pub(crate) fini_array_virtual_address: Option<u64>,
+    pub(crate) fini_array_size: Option<u64>,
+    pub(crate) preinit_array_virtual_address: Option<u64>,
+    pub(crate) preinit_array_size: Option<u64>,
     pub(crate) flags: Option<u64>,
     pub(crate) flags_1: Option<u64>,
     pub(crate) sysv_hash_virtual_address: Option<u64>,
@@ -163,6 +175,12 @@ pub(crate) fn dynamic_table_counts(
     let mut runpath_offsets = Vec::new();
     let mut init_virtual_address = None;
     let mut fini_virtual_address = None;
+    let mut init_array_virtual_address = None;
+    let mut init_array_size = None;
+    let mut fini_array_virtual_address = None;
+    let mut fini_array_size = None;
+    let mut preinit_array_virtual_address = None;
+    let mut preinit_array_size = None;
     let mut flags = None;
     let mut flags_1 = None;
     let mut sysv_hash_virtual_address = None;
@@ -211,6 +229,12 @@ pub(crate) fn dynamic_table_counts(
                 symbol_table_entry_size,
                 init_virtual_address,
                 fini_virtual_address,
+                init_array_virtual_address,
+                init_array_size,
+                fini_array_virtual_address,
+                fini_array_size,
+                preinit_array_virtual_address,
+                preinit_array_size,
                 flags,
                 flags_1,
                 sysv_hash_virtual_address,
@@ -245,6 +269,18 @@ pub(crate) fn dynamic_table_counts(
             init_virtual_address = Some(value);
         } else if tag == DT_FINI {
             fini_virtual_address = Some(value);
+        } else if tag == DT_INIT_ARRAY {
+            init_array_virtual_address = Some(value);
+        } else if tag == DT_INIT_ARRAYSZ {
+            init_array_size = Some(value);
+        } else if tag == DT_FINI_ARRAY {
+            fini_array_virtual_address = Some(value);
+        } else if tag == DT_FINI_ARRAYSZ {
+            fini_array_size = Some(value);
+        } else if tag == DT_PREINIT_ARRAY {
+            preinit_array_virtual_address = Some(value);
+        } else if tag == DT_PREINIT_ARRAYSZ {
+            preinit_array_size = Some(value);
         } else if tag == DT_FLAGS {
             flags = Some(value);
         } else if tag == DT_FLAGS_1 {

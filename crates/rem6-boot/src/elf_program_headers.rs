@@ -126,6 +126,18 @@ pub(crate) fn summarize_elf64_program_header(
                     symbol_table_entry_size: summary.symbol_table_entry_size,
                     init_virtual_address: summary.init_virtual_address.map(Address::new),
                     fini_virtual_address: summary.fini_virtual_address.map(Address::new),
+                    init_array_virtual_address: summary
+                        .init_array_virtual_address
+                        .map(Address::new),
+                    init_array_size: summary.init_array_size,
+                    fini_array_virtual_address: summary
+                        .fini_array_virtual_address
+                        .map(Address::new),
+                    fini_array_size: summary.fini_array_size,
+                    preinit_array_virtual_address: summary
+                        .preinit_array_virtual_address
+                        .map(Address::new),
+                    preinit_array_size: summary.preinit_array_size,
                     flags: summary.flags,
                     flags_1: summary.flags_1,
                     sysv_hash_virtual_address: summary.sysv_hash_virtual_address.map(Address::new),
@@ -264,6 +276,18 @@ pub(crate) fn summarize_elf32_program_header(
                     symbol_table_entry_size: summary.symbol_table_entry_size,
                     init_virtual_address: summary.init_virtual_address.map(Address::new),
                     fini_virtual_address: summary.fini_virtual_address.map(Address::new),
+                    init_array_virtual_address: summary
+                        .init_array_virtual_address
+                        .map(Address::new),
+                    init_array_size: summary.init_array_size,
+                    fini_array_virtual_address: summary
+                        .fini_array_virtual_address
+                        .map(Address::new),
+                    fini_array_size: summary.fini_array_size,
+                    preinit_array_virtual_address: summary
+                        .preinit_array_virtual_address
+                        .map(Address::new),
+                    preinit_array_size: summary.preinit_array_size,
                     flags: summary.flags,
                     flags_1: summary.flags_1,
                     sysv_hash_virtual_address: summary.sysv_hash_virtual_address.map(Address::new),

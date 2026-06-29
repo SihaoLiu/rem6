@@ -367,9 +367,23 @@ fn elf_dynamic_tables_json(table: &BootElfDynamicTable) -> String {
 
 fn elf_dynamic_lifecycle_json(table: &BootElfDynamicTable) -> String {
     format!(
-        "{{\"init\":{},\"fini\":{}}}",
+        "{{\"init\":{},\"fini\":{},\"init_array\":{},\"fini_array\":{},\"preinit_array\":{}}}",
         address_json(table.init_virtual_address()),
-        address_json(table.fini_virtual_address())
+        address_json(table.fini_virtual_address()),
+        elf_dynamic_array_json(table.init_array_virtual_address(), table.init_array_size()),
+        elf_dynamic_array_json(table.fini_array_virtual_address(), table.fini_array_size()),
+        elf_dynamic_array_json(
+            table.preinit_array_virtual_address(),
+            table.preinit_array_size()
+        )
+    )
+}
+
+fn elf_dynamic_array_json(virtual_address: Option<Address>, size: Option<u64>) -> String {
+    format!(
+        "{{\"virtual_address\":{},\"bytes\":{}}}",
+        address_json(virtual_address),
+        optional_value_json(size)
     )
 }
 

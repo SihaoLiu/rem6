@@ -228,6 +228,24 @@ fn emit_elf_dynamic_stats(
         "sim.elf.dynamic.fini",
         dynamic_table.fini_virtual_address(),
     )?;
+    increment_optional_address_bytes_stats(
+        stats,
+        "sim.elf.dynamic.init_array",
+        dynamic_table.init_array_virtual_address(),
+        dynamic_table.init_array_size(),
+    )?;
+    increment_optional_address_bytes_stats(
+        stats,
+        "sim.elf.dynamic.fini_array",
+        dynamic_table.fini_array_virtual_address(),
+        dynamic_table.fini_array_size(),
+    )?;
+    increment_optional_address_bytes_stats(
+        stats,
+        "sim.elf.dynamic.preinit_array",
+        dynamic_table.preinit_array_virtual_address(),
+        dynamic_table.preinit_array_size(),
+    )?;
     increment_optional_address_stat(
         stats,
         "sim.elf.dynamic.hash.sysv",

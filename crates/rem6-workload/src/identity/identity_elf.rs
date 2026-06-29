@@ -105,6 +105,30 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                     hash_str(hash, "elf.dynamic.fini");
                     hash_u64(hash, address.get());
                 }
+                if let Some(address) = dynamic.init_array_virtual_address() {
+                    hash_str(hash, "elf.dynamic.init_array");
+                    hash_u64(hash, address.get());
+                }
+                if let Some(size) = dynamic.init_array_size() {
+                    hash_str(hash, "elf.dynamic.init_arraysz");
+                    hash_u64(hash, size);
+                }
+                if let Some(address) = dynamic.fini_array_virtual_address() {
+                    hash_str(hash, "elf.dynamic.fini_array");
+                    hash_u64(hash, address.get());
+                }
+                if let Some(size) = dynamic.fini_array_size() {
+                    hash_str(hash, "elf.dynamic.fini_arraysz");
+                    hash_u64(hash, size);
+                }
+                if let Some(address) = dynamic.preinit_array_virtual_address() {
+                    hash_str(hash, "elf.dynamic.preinit_array");
+                    hash_u64(hash, address.get());
+                }
+                if let Some(size) = dynamic.preinit_array_size() {
+                    hash_str(hash, "elf.dynamic.preinit_arraysz");
+                    hash_u64(hash, size);
+                }
                 if let Some(flags) = dynamic.flags() {
                     hash_str(hash, "elf.dynamic.dt_flags");
                     hash_u64(hash, flags);

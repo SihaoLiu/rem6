@@ -28,7 +28,13 @@ const DT_STRSZ: u64 = 10;
 const DT_SYMENT: u64 = 11;
 const DT_INIT: u64 = 12;
 const DT_FINI: u64 = 13;
+const DT_INIT_ARRAY: u64 = 25;
+const DT_FINI_ARRAY: u64 = 26;
+const DT_INIT_ARRAYSZ: u64 = 27;
+const DT_FINI_ARRAYSZ: u64 = 28;
 const DT_FLAGS: u64 = 30;
+const DT_PREINIT_ARRAY: u64 = 32;
+const DT_PREINIT_ARRAYSZ: u64 = 33;
 const DT_FLAGS_1: u64 = 0x6fff_fffb;
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
@@ -1417,6 +1423,69 @@ fn boot_image_records_elf64_dynamic_lifecycle_metadata() {
 }
 
 #[test]
+fn boot_image_records_elf64_dynamic_lifecycle_array_metadata() {
+    let dynamic = [
+        DT_INIT_ARRAY.to_le_bytes(),
+        0x8000_0260u64.to_le_bytes(),
+        DT_INIT_ARRAYSZ.to_le_bytes(),
+        24u64.to_le_bytes(),
+        DT_FINI_ARRAY.to_le_bytes(),
+        0x8000_0280u64.to_le_bytes(),
+        DT_FINI_ARRAYSZ.to_le_bytes(),
+        16u64.to_le_bytes(),
+        DT_PREINIT_ARRAY.to_le_bytes(),
+        0x8000_02a0u64.to_le_bytes(),
+        DT_PREINIT_ARRAYSZ.to_le_bytes(),
+        8u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf64_image(
+        0x8000_0200,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[(0x180, &dynamic), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(
+        dynamic.init_array_virtual_address(),
+        Some(Address::new(0x8000_0260)),
+    );
+    assert_eq!(dynamic.init_array_size(), Some(24));
+    assert_eq!(
+        dynamic.fini_array_virtual_address(),
+        Some(Address::new(0x8000_0280)),
+    );
+    assert_eq!(dynamic.fini_array_size(), Some(16));
+    assert_eq!(
+        dynamic.preinit_array_virtual_address(),
+        Some(Address::new(0x8000_02a0)),
+    );
+    assert_eq!(dynamic.preinit_array_size(), Some(8));
+}
+
+#[test]
 fn boot_image_records_elf32_dynamic_lifecycle_metadata() {
     let dynamic = [
         (DT_INIT as u32).to_le_bytes(),
@@ -1462,6 +1531,69 @@ fn boot_image_records_elf32_dynamic_lifecycle_metadata() {
         dynamic.fini_virtual_address(),
         Some(Address::new(0x8000_0240)),
     );
+}
+
+#[test]
+fn boot_image_records_elf32_dynamic_lifecycle_array_metadata() {
+    let dynamic = [
+        (DT_INIT_ARRAY as u32).to_le_bytes(),
+        0x8000_0260u32.to_le_bytes(),
+        (DT_INIT_ARRAYSZ as u32).to_le_bytes(),
+        24u32.to_le_bytes(),
+        (DT_FINI_ARRAY as u32).to_le_bytes(),
+        0x8000_0280u32.to_le_bytes(),
+        (DT_FINI_ARRAYSZ as u32).to_le_bytes(),
+        16u32.to_le_bytes(),
+        (DT_PREINIT_ARRAY as u32).to_le_bytes(),
+        0x8000_02a0u32.to_le_bytes(),
+        (DT_PREINIT_ARRAYSZ as u32).to_le_bytes(),
+        8u32.to_le_bytes(),
+        0u32.to_le_bytes(),
+        0u32.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf32_image(
+        0x8000_0200,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[(0x180, &dynamic), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    let metadata = BootImage::from_elf32_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(
+        dynamic.init_array_virtual_address(),
+        Some(Address::new(0x8000_0260)),
+    );
+    assert_eq!(dynamic.init_array_size(), Some(24));
+    assert_eq!(
+        dynamic.fini_array_virtual_address(),
+        Some(Address::new(0x8000_0280)),
+    );
+    assert_eq!(dynamic.fini_array_size(), Some(16));
+    assert_eq!(
+        dynamic.preinit_array_virtual_address(),
+        Some(Address::new(0x8000_02a0)),
+    );
+    assert_eq!(dynamic.preinit_array_size(), Some(8));
 }
 
 #[test]

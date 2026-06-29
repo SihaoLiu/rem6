@@ -565,7 +565,7 @@ fn rem6_run_reports_elf_dynamic_table_summary() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"status\":\"loaded\""));
     assert!(stdout.contains(
-        "\"dynamic\":{\"segments\":1,\"file_offset\":384,\"virtual_address\":\"0x80000180\",\"entry_size\":16,\"entry_count\":17,\"needed\":2,\"needed_libraries\":[\"libc.so.6\",\"libm.so.6\"],\"soname\":\"librem6.so\",\"rpath\":[\"/opt/rem6/lib\"],\"runpath\":[\"$ORIGIN/lib\"],\"tables\":{\"string\":{\"virtual_address\":\"0x80000380\",\"bytes\":58},\"symbol\":{\"virtual_address\":null,\"entry_size\":null}},\"lifecycle\":{\"init\":null,\"fini\":null},\"flags\":{\"dt_flags\":null,\"dt_flags_1\":null},\"hash\":{\"sysv\":null,\"gnu\":null},\"relocations\":{\"rela\":{\"virtual_address\":\"0x80000300\",\"bytes\":48,\"entry_size\":24,\"entries\":2},\"rel\":{\"virtual_address\":\"0x80000340\",\"bytes\":16,\"entry_size\":16,\"entries\":1},\"plt\":{\"kind\":\"rela\",\"virtual_address\":\"0x80000360\",\"bytes\":24,\"entry_size\":24,\"entries\":1}}}"
+        "\"dynamic\":{\"segments\":1,\"file_offset\":384,\"virtual_address\":\"0x80000180\",\"entry_size\":16,\"entry_count\":17,\"needed\":2,\"needed_libraries\":[\"libc.so.6\",\"libm.so.6\"],\"soname\":\"librem6.so\",\"rpath\":[\"/opt/rem6/lib\"],\"runpath\":[\"$ORIGIN/lib\"],\"tables\":{\"string\":{\"virtual_address\":\"0x80000380\",\"bytes\":58},\"symbol\":{\"virtual_address\":null,\"entry_size\":null}},\"lifecycle\":{\"init\":null,\"fini\":null,\"init_array\":{\"virtual_address\":null,\"bytes\":null},\"fini_array\":{\"virtual_address\":null,\"bytes\":null},\"preinit_array\":{\"virtual_address\":null,\"bytes\":null}},\"flags\":{\"dt_flags\":null,\"dt_flags_1\":null},\"hash\":{\"sysv\":null,\"gnu\":null},\"relocations\":{\"rela\":{\"virtual_address\":\"0x80000300\",\"bytes\":48,\"entry_size\":24,\"entries\":2},\"rel\":{\"virtual_address\":\"0x80000340\",\"bytes\":16,\"entry_size\":16,\"entries\":1},\"plt\":{\"kind\":\"rela\",\"virtual_address\":\"0x80000360\",\"bytes\":24,\"entry_size\":24,\"entries\":1}}}"
     ));
     assert_stat(&stdout, "sim.elf.dynamic.segments", "Count", 1, "constant");
     assert_stat(
@@ -677,6 +677,27 @@ fn rem6_run_reports_elf_dynamic_table_summary() {
     );
     assert_stat(
         &stdout,
+        "sim.elf.dynamic.init_array.present",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.fini_array.present",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.preinit_array.present",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
         "sim.elf.dynamic.rela.entries",
         "Count",
         2,
@@ -694,6 +715,101 @@ fn rem6_run_reports_elf_dynamic_table_summary() {
         "sim.elf.dynamic.plt_relocations.entries",
         "Count",
         1,
+        "constant",
+    );
+}
+
+#[test]
+fn rem6_run_reports_elf_dynamic_lifecycle_arrays() {
+    let elf = riscv64_elf_with_dynamic_lifecycle_arrays(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("riscv-run-dynamic-lifecycle-arrays", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"loaded\""));
+    assert!(stdout.contains(
+        "\"lifecycle\":{\"init\":null,\"fini\":null,\"init_array\":{\"virtual_address\":\"0x800003a0\",\"bytes\":24},\"fini_array\":{\"virtual_address\":\"0x800003c0\",\"bytes\":16},\"preinit_array\":{\"virtual_address\":\"0x800003e0\",\"bytes\":8}}"
+    ));
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.init_array.present",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.init_array.virtual_address",
+        "Address",
+        0x8000_03a0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.init_array.bytes",
+        "Byte",
+        24,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.fini_array.present",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.fini_array.virtual_address",
+        "Address",
+        0x8000_03c0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.fini_array.bytes",
+        "Byte",
+        16,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.preinit_array.present",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.preinit_array.virtual_address",
+        "Address",
+        0x8000_03e0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.preinit_array.bytes",
+        "Byte",
+        8,
         "constant",
     );
 }
@@ -909,7 +1025,9 @@ fn rem6_run_reports_elf_dynamic_lifecycle_metadata() {
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"status\":\"loaded\""));
-    assert!(stdout.contains("\"lifecycle\":{\"init\":\"0x800003a0\",\"fini\":\"0x800003b0\"}"));
+    assert!(stdout.contains(
+        "\"lifecycle\":{\"init\":\"0x800003a0\",\"fini\":\"0x800003b0\",\"init_array\":{\"virtual_address\":null,\"bytes\":null},\"fini_array\":{\"virtual_address\":null,\"bytes\":null},\"preinit_array\":{\"virtual_address\":null,\"bytes\":null}}"
+    ));
     assert_stat(
         &stdout,
         "sim.elf.dynamic.init.present",

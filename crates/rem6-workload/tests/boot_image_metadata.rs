@@ -16,7 +16,13 @@ const DT_STRSZ: u64 = 10;
 const DT_SYMENT: u64 = 11;
 const DT_INIT: u64 = 12;
 const DT_FINI: u64 = 13;
+const DT_INIT_ARRAY: u64 = 25;
+const DT_FINI_ARRAY: u64 = 26;
+const DT_INIT_ARRAYSZ: u64 = 27;
+const DT_FINI_ARRAYSZ: u64 = 28;
 const DT_FLAGS: u64 = 30;
+const DT_PREINIT_ARRAY: u64 = 32;
+const DT_PREINIT_ARRAYSZ: u64 = 33;
 const DT_FLAGS_1: u64 = 0x6fff_fffb;
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
@@ -401,6 +407,35 @@ fn elf64_image_with_dynamic_lifecycle(machine: u16, init: u64, fini: u64) -> Vec
     write_u64(&mut bytes, 0x198, fini);
     write_u64(&mut bytes, 0x1a0, 0);
     write_u64(&mut bytes, 0x1a8, 0);
+    bytes
+}
+
+fn elf64_image_with_dynamic_lifecycle_arrays(
+    machine: u16,
+    init_array: u64,
+    init_array_size: u64,
+    fini_array: u64,
+    fini_array_size: u64,
+    preinit_array: u64,
+    preinit_array_size: u64,
+) -> Vec<u8> {
+    let mut bytes = elf64_image_with_dynamic_table(machine, 0);
+    write_u64(&mut bytes, 152, 7 * 16);
+    write_u64(&mut bytes, 160, 7 * 16);
+    write_u64(&mut bytes, 0x180, DT_INIT_ARRAY);
+    write_u64(&mut bytes, 0x188, init_array);
+    write_u64(&mut bytes, 0x190, DT_INIT_ARRAYSZ);
+    write_u64(&mut bytes, 0x198, init_array_size);
+    write_u64(&mut bytes, 0x1a0, DT_FINI_ARRAY);
+    write_u64(&mut bytes, 0x1a8, fini_array);
+    write_u64(&mut bytes, 0x1b0, DT_FINI_ARRAYSZ);
+    write_u64(&mut bytes, 0x1b8, fini_array_size);
+    write_u64(&mut bytes, 0x1c0, DT_PREINIT_ARRAY);
+    write_u64(&mut bytes, 0x1c8, preinit_array);
+    write_u64(&mut bytes, 0x1d0, DT_PREINIT_ARRAYSZ);
+    write_u64(&mut bytes, 0x1d8, preinit_array_size);
+    write_u64(&mut bytes, 0x1e0, 0);
+    write_u64(&mut bytes, 0x1e8, 0);
     bytes
 }
 
@@ -894,6 +929,38 @@ fn workload_boot_image_preserves_elf_dynamic_lifecycle_metadata_round_trip() {
 
     assert_eq!(dynamic.init_virtual_address(), Some(Address::new(0x8220)));
     assert_eq!(dynamic.fini_virtual_address(), Some(Address::new(0x8240)));
+}
+
+#[test]
+fn workload_boot_image_preserves_elf_dynamic_lifecycle_array_metadata_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_dynamic_lifecycle_arrays(
+        243, 0x8220, 24, 0x8260, 16, 0x82a0, 8,
+    ))
+    .unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = round_trip_metadata.dynamic_table();
+
+    assert_eq!(
+        dynamic.init_array_virtual_address(),
+        Some(Address::new(0x8220)),
+    );
+    assert_eq!(dynamic.init_array_size(), Some(24));
+    assert_eq!(
+        dynamic.fini_array_virtual_address(),
+        Some(Address::new(0x8260)),
+    );
+    assert_eq!(dynamic.fini_array_size(), Some(16));
+    assert_eq!(
+        dynamic.preinit_array_virtual_address(),
+        Some(Address::new(0x82a0)),
+    );
+    assert_eq!(dynamic.preinit_array_size(), Some(8));
 }
 
 #[test]
@@ -1405,6 +1472,90 @@ fn workload_manifest_identity_includes_elf_dynamic_lifecycle_metadata() {
 
     assert_ne!(baseline_manifest.identity(), init_manifest.identity());
     assert_ne!(baseline_manifest.identity(), fini_manifest.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_dynamic_lifecycle_arrays() {
+    let baseline_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_lifecycle_arrays(
+        243, 0x8220, 24, 0x8260, 16, 0x82a0, 8,
+    ))
+    .unwrap();
+    let init_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_lifecycle_arrays(
+        243, 0x8230, 24, 0x8260, 16, 0x82a0, 8,
+    ))
+    .unwrap();
+    let init_size_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_lifecycle_arrays(
+        243, 0x8220, 32, 0x8260, 16, 0x82a0, 8,
+    ))
+    .unwrap();
+    let fini_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_lifecycle_arrays(
+        243, 0x8220, 24, 0x8270, 16, 0x82a0, 8,
+    ))
+    .unwrap();
+    let fini_size_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_lifecycle_arrays(
+        243, 0x8220, 24, 0x8260, 24, 0x82a0, 8,
+    ))
+    .unwrap();
+    let preinit_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_lifecycle_arrays(
+        243, 0x8220, 24, 0x8260, 16, 0x82b0, 8,
+    ))
+    .unwrap();
+    let preinit_size_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_lifecycle_arrays(
+        243, 0x8220, 24, 0x8260, 16, 0x82a0, 16,
+    ))
+    .unwrap();
+
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .preinit_array_size(),
+        Some(8),
+    );
+    let baseline = boot_image_with_metadata(baseline_source.elf_metadata().unwrap());
+    let init = boot_image_with_metadata(init_source.elf_metadata().unwrap());
+    let init_size = boot_image_with_metadata(init_size_source.elf_metadata().unwrap());
+    let fini = boot_image_with_metadata(fini_source.elf_metadata().unwrap());
+    let fini_size = boot_image_with_metadata(fini_size_source.elf_metadata().unwrap());
+    let preinit = boot_image_with_metadata(preinit_source.elf_metadata().unwrap());
+    let preinit_size = boot_image_with_metadata(preinit_size_source.elf_metadata().unwrap());
+
+    assert_eq!(baseline.entry(), init.entry());
+    assert_eq!(baseline.segments(), init.segments());
+    assert_eq!(baseline.segments(), init_size.segments());
+    assert_eq!(baseline.segments(), fini.segments());
+    assert_eq!(baseline.segments(), fini_size.segments());
+    assert_eq!(baseline.segments(), preinit.segments());
+    assert_eq!(baseline.segments(), preinit_size.segments());
+
+    let baseline_manifest = WorkloadManifest::builder(id("same"), baseline)
+        .build()
+        .unwrap();
+    let init_manifest = WorkloadManifest::builder(id("same"), init).build().unwrap();
+    let init_size_manifest = WorkloadManifest::builder(id("same"), init_size)
+        .build()
+        .unwrap();
+    let fini_manifest = WorkloadManifest::builder(id("same"), fini).build().unwrap();
+    let fini_size_manifest = WorkloadManifest::builder(id("same"), fini_size)
+        .build()
+        .unwrap();
+    let preinit_manifest = WorkloadManifest::builder(id("same"), preinit)
+        .build()
+        .unwrap();
+    let preinit_size_manifest = WorkloadManifest::builder(id("same"), preinit_size)
+        .build()
+        .unwrap();
+
+    assert_ne!(baseline_manifest.identity(), init_manifest.identity());
+    assert_ne!(baseline_manifest.identity(), init_size_manifest.identity());
+    assert_ne!(baseline_manifest.identity(), fini_manifest.identity());
+    assert_ne!(baseline_manifest.identity(), fini_size_manifest.identity());
+    assert_ne!(baseline_manifest.identity(), preinit_manifest.identity());
+    assert_ne!(
+        baseline_manifest.identity(),
+        preinit_size_manifest.identity()
+    );
 }
 
 #[test]

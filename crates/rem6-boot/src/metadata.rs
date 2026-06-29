@@ -131,6 +131,12 @@ pub(crate) struct BootElfDynamicSegment {
     pub(crate) symbol_table_entry_size: Option<u64>,
     pub(crate) init_virtual_address: Option<Address>,
     pub(crate) fini_virtual_address: Option<Address>,
+    pub(crate) init_array_virtual_address: Option<Address>,
+    pub(crate) init_array_size: Option<u64>,
+    pub(crate) fini_array_virtual_address: Option<Address>,
+    pub(crate) fini_array_size: Option<u64>,
+    pub(crate) preinit_array_virtual_address: Option<Address>,
+    pub(crate) preinit_array_size: Option<u64>,
     pub(crate) flags: Option<u64>,
     pub(crate) flags_1: Option<u64>,
     pub(crate) sysv_hash_virtual_address: Option<Address>,
@@ -159,6 +165,12 @@ pub struct BootElfDynamicTable {
     symbol_table_entry_size: Option<u64>,
     init_virtual_address: Option<Address>,
     fini_virtual_address: Option<Address>,
+    init_array_virtual_address: Option<Address>,
+    init_array_size: Option<u64>,
+    fini_array_virtual_address: Option<Address>,
+    fini_array_size: Option<u64>,
+    preinit_array_virtual_address: Option<Address>,
+    preinit_array_size: Option<u64>,
     flags: Option<u64>,
     flags_1: Option<u64>,
     sysv_hash_virtual_address: Option<Address>,
@@ -188,6 +200,12 @@ impl BootElfDynamicTable {
             symbol_table_entry_size: None,
             init_virtual_address: None,
             fini_virtual_address: None,
+            init_array_virtual_address: None,
+            init_array_size: None,
+            fini_array_virtual_address: None,
+            fini_array_size: None,
+            preinit_array_virtual_address: None,
+            preinit_array_size: None,
             flags: None,
             flags_1: None,
             sysv_hash_virtual_address: None,
@@ -217,6 +235,12 @@ impl BootElfDynamicTable {
             self.symbol_table_entry_size = segment.symbol_table_entry_size;
             self.init_virtual_address = segment.init_virtual_address;
             self.fini_virtual_address = segment.fini_virtual_address;
+            self.init_array_virtual_address = segment.init_array_virtual_address;
+            self.init_array_size = segment.init_array_size;
+            self.fini_array_virtual_address = segment.fini_array_virtual_address;
+            self.fini_array_size = segment.fini_array_size;
+            self.preinit_array_virtual_address = segment.preinit_array_virtual_address;
+            self.preinit_array_size = segment.preinit_array_size;
             self.flags = segment.flags;
             self.flags_1 = segment.flags_1;
             self.sysv_hash_virtual_address = segment.sysv_hash_virtual_address;
@@ -310,6 +334,30 @@ impl BootElfDynamicTable {
 
     pub const fn fini_virtual_address(&self) -> Option<Address> {
         self.fini_virtual_address
+    }
+
+    pub const fn init_array_virtual_address(&self) -> Option<Address> {
+        self.init_array_virtual_address
+    }
+
+    pub const fn init_array_size(&self) -> Option<u64> {
+        self.init_array_size
+    }
+
+    pub const fn fini_array_virtual_address(&self) -> Option<Address> {
+        self.fini_array_virtual_address
+    }
+
+    pub const fn fini_array_size(&self) -> Option<u64> {
+        self.fini_array_size
+    }
+
+    pub const fn preinit_array_virtual_address(&self) -> Option<Address> {
+        self.preinit_array_virtual_address
+    }
+
+    pub const fn preinit_array_size(&self) -> Option<u64> {
+        self.preinit_array_size
     }
 
     pub const fn flags(&self) -> Option<u64> {
