@@ -44,6 +44,18 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 for library in dynamic.needed_libraries() {
                     hash_str(hash, library);
                 }
+                if let Some(soname) = dynamic.soname() {
+                    hash_str(hash, "elf.dynamic.soname");
+                    hash_str(hash, soname);
+                }
+                for rpath in dynamic.rpath() {
+                    hash_str(hash, "elf.dynamic.rpath");
+                    hash_str(hash, rpath);
+                }
+                for runpath in dynamic.runpath() {
+                    hash_str(hash, "elf.dynamic.runpath");
+                    hash_str(hash, runpath);
+                }
             }
         }
         None => hash_u64(hash, 0),

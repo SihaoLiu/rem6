@@ -80,6 +80,9 @@ pub struct BootElfDynamicTable {
     entry_count: u64,
     needed_count: u64,
     needed_libraries: Vec<String>,
+    soname: Option<String>,
+    rpath: Vec<String>,
+    runpath: Vec<String>,
 }
 
 impl BootElfDynamicTable {
@@ -92,6 +95,9 @@ impl BootElfDynamicTable {
             entry_count: 0,
             needed_count: 0,
             needed_libraries: Vec::new(),
+            soname: None,
+            rpath: Vec::new(),
+            runpath: Vec::new(),
         }
     }
 
@@ -103,6 +109,9 @@ impl BootElfDynamicTable {
         entry_count: u64,
         needed_count: u64,
         needed_libraries: Vec<String>,
+        soname: Option<String>,
+        rpath: Vec<String>,
+        runpath: Vec<String>,
     ) -> Self {
         self.segment_count += 1;
         if self.file_offset.is_none() {
@@ -112,6 +121,9 @@ impl BootElfDynamicTable {
             self.entry_count = entry_count;
             self.needed_count = needed_count;
             self.needed_libraries = needed_libraries;
+            self.soname = soname;
+            self.rpath = rpath;
+            self.runpath = runpath;
         }
         self
     }
@@ -149,6 +161,30 @@ impl BootElfDynamicTable {
             .iter()
             .map(|library| library.len() as u64)
             .sum()
+    }
+
+    pub fn soname(&self) -> Option<&str> {
+        self.soname.as_deref()
+    }
+
+    pub fn rpath(&self) -> &[String] {
+        &self.rpath
+    }
+
+    pub fn runpath(&self) -> &[String] {
+        &self.runpath
+    }
+
+    pub fn soname_name_bytes(&self) -> u64 {
+        self.soname.as_ref().map_or(0, |name| name.len() as u64)
+    }
+
+    pub fn rpath_name_bytes(&self) -> u64 {
+        self.rpath.iter().map(|path| path.len() as u64).sum()
+    }
+
+    pub fn runpath_name_bytes(&self) -> u64 {
+        self.runpath.iter().map(|path| path.len() as u64).sum()
     }
 }
 

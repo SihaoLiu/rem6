@@ -1177,14 +1177,14 @@ complete.
 **Migrated:** Native Rust loader and DTB handoff slices, top-level ELF32/ELF64
 extended program-header-count (`PN_XNUM`) loading, program-header table and
 `PT_INTERP` interpreter metadata reporting and malformed-path rejection, `.tbss`
-TLS metadata, symbol-table count and dynamic needed-library metadata, extended section count/string-index
+TLS metadata, symbol-table count and dynamic needed/path metadata, extended section count/string-index
 ABI-note OS detection, plus RV64F/RV64D scalar load/store, arithmetic, comparison, conversion, NaN-boxing, and accrued flag slices.
 
 **Not migrated:** Complete `ext/libelf`, `ext/libfdt`, and `ext/softfloat` parity.
 
 **Evidence:** CLI static RISC-V smoke tests including ELF64 extended
 program-header counts, `PT_INTERP` interpreter JSON/stats and malformed-path
-rejection, `.tbss` TLS plus symbol-count and dynamic needed-library JSON/stats, ELF32 extended
+rejection, `.tbss` TLS plus symbol-count and dynamic needed/path JSON/stats, ELF32 extended
 program-header-count metadata and stats, extended section ABI-note OS detection, RISC-V DTB handoff tests, and RV64F/RV64D tests.
 
 **Next evidence:** Expand loader breadth beyond current extended-numbering

@@ -759,7 +759,7 @@ fn boot_image_records_elf64_dynamic_table_metadata() {
 
 #[test]
 fn boot_image_resolves_elf64_dynamic_needed_libraries() {
-    let strtab = b"\0libc.so.6\0libm.so.6\0";
+    let strtab = b"\0libc.so.6\0libm.so.6\0librem6.so\0/opt/rem6/lib\0$ORIGIN/lib\0";
     let strtab_offset = 0x220usize;
     let load_file_size = (strtab_offset + strtab.len()) as u64;
     let dynamic = [
@@ -767,6 +767,12 @@ fn boot_image_resolves_elf64_dynamic_needed_libraries() {
         1u64.to_le_bytes(),
         1u64.to_le_bytes(),
         11u64.to_le_bytes(),
+        14u64.to_le_bytes(),
+        21u64.to_le_bytes(),
+        15u64.to_le_bytes(),
+        32u64.to_le_bytes(),
+        29u64.to_le_bytes(),
+        46u64.to_le_bytes(),
         5u64.to_le_bytes(),
         0x8000_0220u64.to_le_bytes(),
         10u64.to_le_bytes(),
@@ -812,6 +818,12 @@ fn boot_image_resolves_elf64_dynamic_needed_libraries() {
         &["libc.so.6".to_string(), "libm.so.6".to_string()],
     );
     assert_eq!(dynamic.needed_name_bytes(), 18);
+    assert_eq!(dynamic.soname(), Some("librem6.so"));
+    assert_eq!(dynamic.rpath(), &["/opt/rem6/lib".to_string()]);
+    assert_eq!(dynamic.runpath(), &["$ORIGIN/lib".to_string()]);
+    assert_eq!(dynamic.soname_name_bytes(), 10);
+    assert_eq!(dynamic.rpath_name_bytes(), 13);
+    assert_eq!(dynamic.runpath_name_bytes(), 11);
 }
 
 #[test]

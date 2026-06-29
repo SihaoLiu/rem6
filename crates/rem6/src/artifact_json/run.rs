@@ -276,21 +276,36 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
         .virtual_address()
         .map(|address| format!("\"0x{:x}\"", address.get()))
         .unwrap_or_else(|| "null".to_string());
-    let needed_libraries = table
-        .needed_libraries()
-        .iter()
-        .map(|library| format!("\"{}\"", json_escape(library)))
-        .collect::<Vec<_>>()
-        .join(",");
+    let needed_libraries = json_string_array(table.needed_libraries());
+    let soname = table
+        .soname()
+        .map(|name| format!("\"{}\"", json_escape(name)))
+        .unwrap_or_else(|| "null".to_string());
+    let rpath = json_string_array(table.rpath());
+    let runpath = json_string_array(table.runpath());
     format!(
-        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":[{}]}}",
+        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":{},\"soname\":{},\"rpath\":{},\"runpath\":{}}}",
         table.segment_count(),
         file_offset,
         virtual_address,
         table.entry_size(),
         table.entry_count(),
         table.needed_count(),
-        needed_libraries
+        needed_libraries,
+        soname,
+        rpath,
+        runpath
+    )
+}
+
+fn json_string_array(values: &[String]) -> String {
+    format!(
+        "[{}]",
+        values
+            .iter()
+            .map(|value| format!("\"{}\"", json_escape(value)))
+            .collect::<Vec<_>>()
+            .join(",")
     )
 }
 

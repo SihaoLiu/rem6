@@ -245,7 +245,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         if kind == PT_DYNAMIC {
             let file_offset = read_u64_at_u64(bytes, header_offset + 8, endian)?;
             let file_size = read_u64_at_u64(bytes, header_offset + 32, endian)?;
-            let (entry_count, needed_count, needed_libraries) = dynamic_table_counts(
+            let summary = dynamic_table_counts(
                 bytes,
                 segment,
                 file_offset,
@@ -258,9 +258,12 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                 file_offset,
                 Address::new(read_u64_at_u64(bytes, header_offset + 16, endian)?),
                 16,
-                entry_count,
-                needed_count,
-                needed_libraries,
+                summary.entry_count,
+                summary.needed_libraries.len() as u64,
+                summary.needed_libraries,
+                summary.soname,
+                summary.rpath,
+                summary.runpath,
             );
             continue;
         }
@@ -431,7 +434,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         if kind == PT_DYNAMIC {
             let file_offset = u64::from(read_u32_at_u64(bytes, header_offset + 4, endian)?);
             let file_size = u64::from(read_u32_at_u64(bytes, header_offset + 16, endian)?);
-            let (entry_count, needed_count, needed_libraries) = dynamic_table_counts(
+            let summary = dynamic_table_counts(
                 bytes,
                 segment,
                 file_offset,
@@ -448,9 +451,12 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                     endian,
                 )?)),
                 8,
-                entry_count,
-                needed_count,
-                needed_libraries,
+                summary.entry_count,
+                summary.needed_libraries.len() as u64,
+                summary.needed_libraries,
+                summary.soname,
+                summary.rpath,
+                summary.runpath,
             );
             continue;
         }

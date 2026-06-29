@@ -6,12 +6,43 @@ const DT_NULL: u64 = 0;
 const DT_NEEDED: u64 = 1;
 const DT_STRTAB: u64 = 5;
 const DT_STRSZ: u64 = 10;
+const DT_SONAME: u64 = 14;
+const DT_RPATH: u64 = 15;
+const DT_RUNPATH: u64 = 29;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ElfLoadMapping {
     file_offset: u64,
     virtual_address: u64,
     file_size: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ElfDynamicTableSummary {
+    pub(crate) entry_count: u64,
+    pub(crate) needed_libraries: Vec<String>,
+    pub(crate) soname: Option<String>,
+    pub(crate) rpath: Vec<String>,
+    pub(crate) runpath: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DynamicStringKind {
+    Needed,
+    Soname,
+    Rpath,
+    Runpath,
+}
+
+impl DynamicStringKind {
+    const fn tag(self) -> u64 {
+        match self {
+            Self::Needed => DT_NEEDED,
+            Self::Soname => DT_SONAME,
+            Self::Rpath => DT_RPATH,
+            Self::Runpath => DT_RUNPATH,
+        }
+    }
 }
 
 pub(crate) fn elf64_load_mappings(
@@ -64,7 +95,7 @@ pub(crate) fn dynamic_table_counts(
     entry_size: u16,
     endian: BootElfEndian,
     load_mappings: &[ElfLoadMapping],
-) -> Result<(u64, u64, Vec<String>), BootError> {
+) -> Result<ElfDynamicTableSummary, BootError> {
     if file_size % u64::from(entry_size) != 0 {
         return Err(invalid_elf(BootElfError::DynamicTableSizeMisaligned {
             segment,
@@ -83,6 +114,9 @@ pub(crate) fn dynamic_table_counts(
 
     let mut entries = 0;
     let mut needed_offsets = Vec::new();
+    let mut soname_offset = None;
+    let mut rpath_offsets = Vec::new();
+    let mut runpath_offsets = Vec::new();
     let mut string_table = None;
     let mut string_table_size = None;
     for index in 0..(file_size / u64::from(entry_size)) {
@@ -91,15 +125,24 @@ pub(crate) fn dynamic_table_counts(
         let value = read_dynamic_value(bytes, offset, entry_size, endian)?;
         entries += 1;
         if tag == DT_NULL {
-            let needed_libraries = dynamic_needed_libraries(
+            let strings = dynamic_strings(
                 bytes,
                 segment,
                 load_mappings,
                 string_table,
                 string_table_size,
                 &needed_offsets,
+                soname_offset,
+                &rpath_offsets,
+                &runpath_offsets,
             )?;
-            return Ok((entries, needed_offsets.len() as u64, needed_libraries));
+            return Ok(ElfDynamicTableSummary {
+                entry_count: entries,
+                needed_libraries: strings.needed_libraries,
+                soname: strings.soname,
+                rpath: strings.rpath,
+                runpath: strings.runpath,
+            });
         }
         if tag == DT_NEEDED {
             needed_offsets.push(value);
@@ -107,6 +150,12 @@ pub(crate) fn dynamic_table_counts(
             string_table = Some(value);
         } else if tag == DT_STRSZ {
             string_table_size = Some(value);
+        } else if tag == DT_SONAME {
+            soname_offset = Some(value);
+        } else if tag == DT_RPATH {
+            rpath_offsets.push(value);
+        } else if tag == DT_RUNPATH {
+            runpath_offsets.push(value);
         }
     }
     Err(invalid_elf(BootElfError::UnterminatedDynamicTable {
@@ -140,16 +189,36 @@ fn read_dynamic_value(
     )
 }
 
-fn dynamic_needed_libraries(
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DynamicStrings {
+    needed_libraries: Vec<String>,
+    soname: Option<String>,
+    rpath: Vec<String>,
+    runpath: Vec<String>,
+}
+
+fn dynamic_strings(
     bytes: &[u8],
     segment: u16,
     load_mappings: &[ElfLoadMapping],
     string_table: Option<u64>,
     string_table_size: Option<u64>,
     needed_offsets: &[u64],
-) -> Result<Vec<String>, BootError> {
-    if needed_offsets.is_empty() {
-        return Ok(Vec::new());
+    soname_offset: Option<u64>,
+    rpath_offsets: &[u64],
+    runpath_offsets: &[u64],
+) -> Result<DynamicStrings, BootError> {
+    if needed_offsets.is_empty()
+        && soname_offset.is_none()
+        && rpath_offsets.is_empty()
+        && runpath_offsets.is_empty()
+    {
+        return Ok(DynamicStrings {
+            needed_libraries: Vec::new(),
+            soname: None,
+            rpath: Vec::new(),
+            runpath: Vec::new(),
+        });
     }
     let Some(virtual_address) = string_table else {
         return Err(invalid_elf(BootElfError::DynamicStringTableMissing {
@@ -162,10 +231,26 @@ fn dynamic_needed_libraries(
         }));
     };
     let strings = dynamic_string_table(bytes, segment, load_mappings, virtual_address, size)?;
-    needed_offsets
+    let needed_libraries = needed_offsets
         .iter()
-        .map(|offset| dynamic_needed_library(segment, strings, *offset))
-        .collect()
+        .map(|offset| dynamic_string_value(segment, DynamicStringKind::Needed, strings, *offset))
+        .collect::<Result<Vec<_>, _>>()?;
+    let soname = soname_offset
+        .map(|offset| dynamic_string_value(segment, DynamicStringKind::Soname, strings, offset))
+        .transpose()?;
+    let rpath = dynamic_string_values(segment, DynamicStringKind::Rpath, strings, rpath_offsets)?;
+    let runpath = dynamic_string_values(
+        segment,
+        DynamicStringKind::Runpath,
+        strings,
+        runpath_offsets,
+    )?;
+    Ok(DynamicStrings {
+        needed_libraries,
+        soname,
+        rpath,
+        runpath,
+    })
 }
 
 fn dynamic_string_table<'a>(
@@ -200,38 +285,102 @@ fn dynamic_string_table<'a>(
     ))
 }
 
-fn dynamic_needed_library(
+fn dynamic_string_values(
     segment: u16,
+    kind: DynamicStringKind,
+    string_table: &[u8],
+    offsets: &[u64],
+) -> Result<Vec<String>, BootError> {
+    offsets
+        .iter()
+        .map(|offset| dynamic_string_value(segment, kind, string_table, *offset))
+        .collect()
+}
+
+fn dynamic_string_value(
+    segment: u16,
+    kind: DynamicStringKind,
     string_table: &[u8],
     offset: u64,
 ) -> Result<String, BootError> {
     let Ok(start) = usize::try_from(offset) else {
-        return Err(invalid_elf(BootElfError::DynamicNeededStringOutOfBounds {
+        return Err(invalid_elf(dynamic_string_out_of_bounds_error(
             segment,
+            kind,
             offset,
-            string_table_size: string_table.len() as u64,
-        }));
+            string_table.len() as u64,
+        )));
     };
     let Some(rest) = string_table.get(start..) else {
-        return Err(invalid_elf(BootElfError::DynamicNeededStringOutOfBounds {
+        return Err(invalid_elf(dynamic_string_out_of_bounds_error(
             segment,
+            kind,
             offset,
-            string_table_size: string_table.len() as u64,
-        }));
+            string_table.len() as u64,
+        )));
     };
     let Some(end) = rest.iter().position(|byte| *byte == 0) else {
-        return Err(invalid_elf(BootElfError::UnterminatedDynamicNeededString {
-            segment,
-            offset,
-        }));
+        return Err(invalid_elf(dynamic_string_unterminated_error(
+            segment, kind, offset,
+        )));
     };
     let name = std::str::from_utf8(&rest[..end])
-        .map_err(|_| invalid_elf(BootElfError::InvalidDynamicNeededString { segment, offset }))?;
+        .map_err(|_| invalid_elf(dynamic_string_invalid_error(segment, kind, offset)))?;
     if name.is_empty() {
-        return Err(invalid_elf(BootElfError::InvalidDynamicNeededString {
-            segment,
-            offset,
-        }));
+        return Err(invalid_elf(dynamic_string_invalid_error(
+            segment, kind, offset,
+        )));
     }
     Ok(name.to_string())
+}
+
+fn dynamic_string_out_of_bounds_error(
+    segment: u16,
+    kind: DynamicStringKind,
+    offset: u64,
+    string_table_size: u64,
+) -> BootElfError {
+    if kind == DynamicStringKind::Needed {
+        return BootElfError::DynamicNeededStringOutOfBounds {
+            segment,
+            offset,
+            string_table_size,
+        };
+    }
+    BootElfError::DynamicStringOutOfBounds {
+        segment,
+        tag: kind.tag(),
+        offset,
+        string_table_size,
+    }
+}
+
+fn dynamic_string_unterminated_error(
+    segment: u16,
+    kind: DynamicStringKind,
+    offset: u64,
+) -> BootElfError {
+    if kind == DynamicStringKind::Needed {
+        return BootElfError::UnterminatedDynamicNeededString { segment, offset };
+    }
+    BootElfError::UnterminatedDynamicString {
+        segment,
+        tag: kind.tag(),
+        offset,
+    }
+}
+
+fn dynamic_string_invalid_error(
+    segment: u16,
+    kind: DynamicStringKind,
+    offset: u64,
+) -> BootElfError {
+    if kind == DynamicStringKind::Needed {
+        return BootElfError::InvalidDynamicNeededString { segment, offset };
+    }
+    BootElfError::InvalidDynamicString {
+        segment,
+        tag: kind.tag(),
+        offset,
+    }
 }

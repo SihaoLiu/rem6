@@ -1,6 +1,8 @@
 use rem6_boot::{
-    BootElfArchitecture, BootElfClass, BootElfEndian, BootElfOperatingSystem, BootImage,
+    BootElfArchitecture, BootElfClass, BootElfEndian, BootElfMetadata, BootElfOperatingSystem,
+    BootImage,
 };
+use rem6_memory::Address;
 use rem6_workload::{WorkloadBootImage, WorkloadId, WorkloadManifest};
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
@@ -238,6 +240,22 @@ fn elf64_image_with_dynamic_table(machine: u16, needed_count: usize) -> Vec<u8> 
 }
 
 fn elf64_image_with_dynamic_libraries(machine: u16, libraries: &[&str]) -> Vec<u8> {
+    elf64_image_with_dynamic_strings(
+        machine,
+        libraries,
+        "librem6.so",
+        "/opt/rem6/lib",
+        "$ORIGIN/lib",
+    )
+}
+
+fn elf64_image_with_dynamic_strings(
+    machine: u16,
+    libraries: &[&str],
+    soname: &str,
+    rpath: &str,
+    runpath: &str,
+) -> Vec<u8> {
     let mut bytes = elf64_image_with_dynamic_table(machine, libraries.len());
     let mut strtab = vec![0];
     let mut offsets = Vec::new();
@@ -246,6 +264,15 @@ fn elf64_image_with_dynamic_libraries(machine: u16, libraries: &[&str]) -> Vec<u
         strtab.extend_from_slice(library.as_bytes());
         strtab.push(0);
     }
+    let soname_offset = strtab.len() as u64;
+    strtab.extend_from_slice(soname.as_bytes());
+    strtab.push(0);
+    let rpath_offset = strtab.len() as u64;
+    strtab.extend_from_slice(rpath.as_bytes());
+    strtab.push(0);
+    let runpath_offset = strtab.len() as u64;
+    strtab.extend_from_slice(runpath.as_bytes());
+    strtab.push(0);
     let strtab_offset = 0x260usize;
     bytes.resize(strtab_offset + strtab.len(), 0);
     let file_size = (strtab_offset + strtab.len() - 0x200) as u64;
@@ -254,15 +281,22 @@ fn elf64_image_with_dynamic_libraries(machine: u16, libraries: &[&str]) -> Vec<u
     for (index, offset) in offsets.iter().enumerate() {
         write_u64(&mut bytes, 0x180 + index * 16 + 8, *offset);
     }
-    let strtab_entry = 0x180 + libraries.len() * 16;
+    let soname_entry = 0x180 + libraries.len() * 16;
+    write_u64(&mut bytes, soname_entry, 14);
+    write_u64(&mut bytes, soname_entry + 8, soname_offset);
+    write_u64(&mut bytes, soname_entry + 16, 15);
+    write_u64(&mut bytes, soname_entry + 24, rpath_offset);
+    write_u64(&mut bytes, soname_entry + 32, 29);
+    write_u64(&mut bytes, soname_entry + 40, runpath_offset);
+    let strtab_entry = soname_entry + 48;
     write_u64(&mut bytes, strtab_entry, 5);
     write_u64(&mut bytes, strtab_entry + 8, 0x8060);
     write_u64(&mut bytes, strtab_entry + 16, 10);
     write_u64(&mut bytes, strtab_entry + 24, strtab.len() as u64);
     write_u64(&mut bytes, strtab_entry + 32, 0);
     write_u64(&mut bytes, strtab_entry + 40, 0);
-    write_u64(&mut bytes, 152, ((libraries.len() + 3) * 16) as u64);
-    write_u64(&mut bytes, 160, ((libraries.len() + 3) * 16) as u64);
+    write_u64(&mut bytes, 152, ((libraries.len() + 6) * 16) as u64);
+    write_u64(&mut bytes, 160, ((libraries.len() + 6) * 16) as u64);
     bytes[strtab_offset..strtab_offset + strtab.len()].copy_from_slice(&strtab);
     bytes
 }
@@ -296,6 +330,13 @@ fn elf64_be_image(machine: u16) -> Vec<u8> {
 
 fn id(value: &str) -> WorkloadId {
     WorkloadId::new(value).unwrap()
+}
+
+fn boot_image_with_metadata(metadata: BootElfMetadata) -> BootImage {
+    BootImage::new(Address::new(0x9000))
+        .add_segment(Address::new(0x9000), vec![0x13, 0, 0, 0])
+        .unwrap()
+        .with_elf_metadata(metadata)
 }
 
 #[test]
@@ -411,6 +452,27 @@ fn workload_boot_image_preserves_elf_dynamic_needed_names_round_trip() {
 }
 
 #[test]
+fn workload_boot_image_preserves_elf_dynamic_string_metadata_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_dynamic_libraries(
+        243,
+        &["libc.so.6", "libm.so.6"],
+    ))
+    .unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = round_trip_metadata.dynamic_table();
+
+    assert_eq!(dynamic.soname(), Some("librem6.so"));
+    assert_eq!(dynamic.rpath(), &["/opt/rem6/lib".to_string()]);
+    assert_eq!(dynamic.runpath(), &["$ORIGIN/lib".to_string()]);
+}
+
+#[test]
 fn workload_manifest_identity_includes_elf_metadata() {
     let riscv = BootImage::from_elf64_le(&elf64_image(243)).unwrap();
     let x86 = BootImage::from_elf64_le(&elf64_image(62)).unwrap();
@@ -498,6 +560,81 @@ fn workload_manifest_identity_includes_elf_dynamic_table_summary() {
         .unwrap();
 
     assert_ne!(one_manifest.identity(), two_manifest.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_dynamic_string_metadata() {
+    let baseline_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_strings(
+        243,
+        &["libc.so.6", "libm.so.6"],
+        "librem6.so",
+        "/opt/rem6/lib",
+        "$ORIGIN/lib",
+    ))
+    .unwrap();
+    let soname_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_strings(
+        243,
+        &["libc.so.6", "libm.so.6"],
+        "libalt6.so",
+        "/opt/rem6/lib",
+        "$ORIGIN/lib",
+    ))
+    .unwrap();
+    let rpath_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_strings(
+        243,
+        &["libc.so.6", "libm.so.6"],
+        "librem6.so",
+        "/tmp/rem6/lib",
+        "$ORIGIN/lib",
+    ))
+    .unwrap();
+    let runpath_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_strings(
+        243,
+        &["libc.so.6", "libm.so.6"],
+        "librem6.so",
+        "/opt/rem6/lib",
+        "$ORIGIN/alt",
+    ))
+    .unwrap();
+
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .needed_libraries(),
+        soname_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .needed_libraries(),
+    );
+    let baseline = boot_image_with_metadata(baseline_source.elf_metadata().unwrap());
+    let soname = boot_image_with_metadata(soname_source.elf_metadata().unwrap());
+    let rpath = boot_image_with_metadata(rpath_source.elf_metadata().unwrap());
+    let runpath = boot_image_with_metadata(runpath_source.elf_metadata().unwrap());
+
+    assert_eq!(baseline.entry(), soname.entry());
+    assert_eq!(baseline.segments(), soname.segments());
+    assert_eq!(baseline.segments(), rpath.segments());
+    assert_eq!(baseline.segments(), runpath.segments());
+
+    let baseline_manifest = WorkloadManifest::builder(id("same"), baseline)
+        .build()
+        .unwrap();
+    let soname_manifest = WorkloadManifest::builder(id("same"), soname)
+        .build()
+        .unwrap();
+    let rpath_manifest = WorkloadManifest::builder(id("same"), rpath)
+        .build()
+        .unwrap();
+    let runpath_manifest = WorkloadManifest::builder(id("same"), runpath)
+        .build()
+        .unwrap();
+
+    assert_ne!(baseline_manifest.identity(), soname_manifest.identity());
+    assert_ne!(baseline_manifest.identity(), rpath_manifest.identity());
+    assert_ne!(baseline_manifest.identity(), runpath_manifest.identity());
 }
 
 #[test]

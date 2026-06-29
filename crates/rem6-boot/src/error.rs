@@ -93,6 +93,22 @@ pub enum BootElfError {
         segment: u16,
         offset: u64,
     },
+    DynamicStringOutOfBounds {
+        segment: u16,
+        tag: u64,
+        offset: u64,
+        string_table_size: u64,
+    },
+    UnterminatedDynamicString {
+        segment: u16,
+        tag: u64,
+        offset: u64,
+    },
+    InvalidDynamicString {
+        segment: u16,
+        tag: u64,
+        offset: u64,
+    },
     ProgramHeaderTableOutOfBounds {
         offset: u64,
         size: u64,
@@ -235,7 +251,7 @@ impl fmt::Display for BootElfError {
             ),
             Self::DynamicStringTableMissing { segment } => write!(
                 formatter,
-                "ELF dynamic segment {segment} has DT_NEEDED entries without a string table"
+                "ELF dynamic segment {segment} has string entries without a string table"
             ),
             Self::DynamicStringTableAddressOutOfBounds {
                 segment,
@@ -260,6 +276,31 @@ impl fmt::Display for BootElfError {
             Self::InvalidDynamicNeededString { segment, offset } => write!(
                 formatter,
                 "ELF dynamic segment {segment} needed-string offset {offset:#x} is not valid UTF-8"
+            ),
+            Self::DynamicStringOutOfBounds {
+                segment,
+                tag,
+                offset,
+                string_table_size,
+            } => write!(
+                formatter,
+                "ELF dynamic segment {segment} string tag {tag:#x} offset {offset:#x} exceeds string table size {string_table_size:#x}"
+            ),
+            Self::UnterminatedDynamicString {
+                segment,
+                tag,
+                offset,
+            } => write!(
+                formatter,
+                "ELF dynamic segment {segment} string tag {tag:#x} offset {offset:#x} is not null-terminated"
+            ),
+            Self::InvalidDynamicString {
+                segment,
+                tag,
+                offset,
+            } => write!(
+                formatter,
+                "ELF dynamic segment {segment} string tag {tag:#x} offset {offset:#x} is not valid UTF-8"
             ),
             Self::ProgramHeaderTableOutOfBounds {
                 offset,
