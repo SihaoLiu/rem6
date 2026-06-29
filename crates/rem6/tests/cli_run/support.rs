@@ -4,6 +4,7 @@ use std::{
 };
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
+const PT_GNU_STACK: u32 = 0x6474_e551;
 
 pub(crate) const GEM5_READ_REQ: u32 = 1;
 pub(crate) const GEM5_READ_RESP: u32 = 2;
@@ -147,6 +148,33 @@ pub(crate) fn riscv64_elf_with_tbss(entry: u64, physical: u64, payload: &[u8]) -
 }
 
 pub(crate) fn riscv64_elf_with_pt_tls(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
+    riscv64_elf_with_extra_program_header(entry, physical, payload, 7, 4, 16)
+}
+
+pub(crate) fn riscv64_elf_with_gnu_stack(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+    executable: bool,
+) -> Vec<u8> {
+    riscv64_elf_with_extra_program_header(
+        entry,
+        physical,
+        payload,
+        PT_GNU_STACK,
+        if executable { 5 } else { 6 },
+        0,
+    )
+}
+
+fn riscv64_elf_with_extra_program_header(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+    extra_kind: u32,
+    extra_flags: u32,
+    extra_memory_size: u64,
+) -> Vec<u8> {
     let payload_offset = 0x100usize;
     let mut bytes = vec![0; payload_offset + payload.len()];
     bytes[0..4].copy_from_slice(b"\x7fELF");
@@ -171,13 +199,13 @@ pub(crate) fn riscv64_elf_with_pt_tls(entry: u64, physical: u64, payload: &[u8])
     write_u64(&mut bytes, 104, payload.len() as u64);
     write_u64(&mut bytes, 112, 0x1000);
 
-    write_u32(&mut bytes, 120, 7);
-    write_u32(&mut bytes, 124, 4);
+    write_u32(&mut bytes, 120, extra_kind);
+    write_u32(&mut bytes, 124, extra_flags);
     write_u64(&mut bytes, 128, 0);
     write_u64(&mut bytes, 136, physical + 0x1000);
     write_u64(&mut bytes, 144, physical + 0x1000);
     write_u64(&mut bytes, 152, 0);
-    write_u64(&mut bytes, 160, 16);
+    write_u64(&mut bytes, 160, extra_memory_size);
     write_u64(&mut bytes, 168, 8);
     bytes[payload_offset..payload_offset + payload.len()].copy_from_slice(payload);
     bytes

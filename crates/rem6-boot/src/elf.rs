@@ -32,6 +32,8 @@ const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
 const PT_INTERP: u32 = 3;
 const PT_TLS: u32 = 7;
+const PT_GNU_STACK: u32 = 0x6474_e551;
+const PF_X: u32 = 0x1;
 const EM_SPARC: u16 = 2;
 const EM_386: u16 = 3;
 const EM_MIPS: u16 = 8;
@@ -245,6 +247,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
     let mut dynamic_table = BootElfDynamicTable::new();
     let mut program_header_memory_address = None;
     let mut has_tls = section_summary.has_tls();
+    let mut gnu_stack_executable = None;
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let segment = segment_index(index);
@@ -292,6 +295,11 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         }
         if kind == PT_TLS {
             has_tls = true;
+            continue;
+        }
+        if kind == PT_GNU_STACK {
+            let executable = read_u32_at_u64(bytes, header_offset + 4, endian)? & PF_X != 0;
+            gnu_stack_executable = Some(gnu_stack_executable.unwrap_or(false) || executable);
             continue;
         }
         if kind != PT_LOAD {
@@ -366,6 +374,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
             operating_system,
         )
         .with_tls(has_tls)
+        .with_gnu_stack_executable(gnu_stack_executable)
         .with_symbol_summary(
             section_summary.symbol_count(),
             section_summary.function_symbol_count(),
@@ -443,6 +452,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
     let mut dynamic_table = BootElfDynamicTable::new();
     let mut program_header_memory_address = None;
     let mut has_tls = section_summary.has_tls();
+    let mut gnu_stack_executable = None;
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let segment = segment_index(index);
@@ -494,6 +504,11 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         }
         if kind == PT_TLS {
             has_tls = true;
+            continue;
+        }
+        if kind == PT_GNU_STACK {
+            let executable = read_u32_at_u64(bytes, header_offset + 24, endian)? & PF_X != 0;
+            gnu_stack_executable = Some(gnu_stack_executable.unwrap_or(false) || executable);
             continue;
         }
         if kind != PT_LOAD {
@@ -582,6 +597,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
             operating_system,
         )
         .with_tls(has_tls)
+        .with_gnu_stack_executable(gnu_stack_executable)
         .with_symbol_summary(
             section_summary.symbol_count(),
             section_summary.function_symbol_count(),

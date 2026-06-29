@@ -1175,17 +1175,17 @@ complete.
 - [ ] softfloat replacement breadth covers all FP rounding and exception paths.
 
 **Migrated:** Native Rust loader and DTB handoff slices, top-level ELF32/ELF64
-extended program-header-count (`PN_XNUM`) loading, program-header table and
-`PT_INTERP` interpreter metadata reporting and malformed-path rejection, `.tbss`/`PT_TLS`
-TLS metadata, symbol/dynamic-symbol-table count and dynamic needed/path/relocation metadata, extended section count/string-index
-ABI-note OS detection, plus RV64F/RV64D scalar load/store, arithmetic, comparison, conversion, NaN-boxing, and accrued flag slices.
+extended program-header-count (`PN_XNUM`) loading, program-header-table metadata,
+`PT_INTERP` interpreter reporting/rejection, `.tbss`/`PT_TLS` TLS metadata,
+`PT_GNU_STACK` stack-exec metadata, symbol/dynamic-symbol counts, dynamic
+needed/path/relocation and ABI-note OS metadata, plus RV64F/RV64D scalar FP slices.
 
 **Not migrated:** Complete `ext/libelf`, `ext/libfdt`, and `ext/softfloat` parity.
 
-**Evidence:** CLI static RISC-V smoke tests including ELF64 extended
-program-header counts, `PT_INTERP` interpreter JSON/stats and malformed-path
-rejection, `.tbss`/`PT_TLS` TLS plus symbol/dynamic-symbol-count and dynamic needed/path/relocation JSON/stats, ELF32 extended
-program-header-count metadata and stats, extended section ABI-note OS detection, RISC-V DTB handoff tests, and RV64F/RV64D tests.
+**Evidence:** CLI static RISC-V smoke tests cover ELF64 extended program-header
+counts, `PT_INTERP` JSON/stats and malformed-path rejection, `.tbss`/`PT_TLS`
+TLS metadata, `PT_GNU_STACK` stack metadata, symbol/dynamic-symbol counts,
+dynamic needed/path/relocation JSON/stats, ELF32 extended counts, ABI-note OS, DTB, and RV64F/RV64D tests.
 
 **Next evidence:** Expand loader breadth beyond current extended-numbering
 slices and soft-float parity.

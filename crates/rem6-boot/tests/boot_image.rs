@@ -16,6 +16,7 @@ fn line(fill: u8) -> Vec<u8> {
 }
 
 const OVERSIZED_VECTOR_LENGTH: u64 = isize::MAX as u64 + 1;
+const PT_GNU_STACK: u32 = 0x6474_e551;
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
@@ -419,6 +420,93 @@ fn add_elf32_dynamic_symbol_table(bytes: &mut Vec<u8>) {
     write_u32(bytes, shstrtab_base + 4, 3);
     write_u32(bytes, shstrtab_base + 16, section_names_offset);
     write_u32(bytes, shstrtab_base + 20, section_names.len() as u32);
+}
+
+fn elf64_image_with_gnu_stack(executable: bool) -> Vec<u8> {
+    let mut bytes = elf64_image(
+        0x8004,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x100,
+                physical: 0x8000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: PT_GNU_STACK,
+                offset: 0,
+                physical: 0,
+                file_size: 0,
+                memory_size: 0,
+            },
+        ],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    write_u32(&mut bytes, 64 + 56 + 4, if executable { 5 } else { 6 });
+    bytes
+}
+
+fn elf64_image_with_repeated_gnu_stack(second_executable: bool) -> Vec<u8> {
+    let mut bytes = elf64_image(
+        0x8004,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x100,
+                physical: 0x8000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: PT_GNU_STACK,
+                offset: 0,
+                physical: 0,
+                file_size: 0,
+                memory_size: 0,
+            },
+            ElfProgramHeaderSpec {
+                kind: PT_GNU_STACK,
+                offset: 0,
+                physical: 0,
+                file_size: 0,
+                memory_size: 0,
+            },
+        ],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    write_u32(&mut bytes, 64 + 56 + 4, 6);
+    write_u32(
+        &mut bytes,
+        64 + 2 * 56 + 4,
+        if second_executable { 5 } else { 6 },
+    );
+    bytes
+}
+
+fn elf32_image_with_gnu_stack(executable: bool) -> Vec<u8> {
+    let mut bytes = elf32_image(
+        0x8004,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x100,
+                physical: 0x8000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: PT_GNU_STACK,
+                offset: 0,
+                physical: 0,
+                file_size: 0,
+                memory_size: 0,
+            },
+        ],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    write_u32(&mut bytes, 52 + 32 + 24, if executable { 5 } else { 6 });
+    bytes
 }
 
 fn abi_note(os: u32) -> [u8; 20] {
@@ -1665,6 +1753,75 @@ fn boot_image_records_tls_from_elf32_program_header() {
     let metadata = BootImage::from_elf(&elf).unwrap().elf_metadata().unwrap();
 
     assert!(metadata.has_tls());
+}
+
+#[test]
+fn boot_image_records_elf64_gnu_stack_metadata() {
+    let non_executable = elf64_image_with_gnu_stack(false);
+    let executable = elf64_image_with_gnu_stack(true);
+
+    assert_eq!(
+        BootImage::from_elf64_le(&non_executable)
+            .unwrap()
+            .elf_metadata()
+            .unwrap()
+            .gnu_stack_executable(),
+        Some(false),
+    );
+    assert_eq!(
+        BootImage::from_elf64_le(&executable)
+            .unwrap()
+            .elf_metadata()
+            .unwrap()
+            .gnu_stack_executable(),
+        Some(true),
+    );
+}
+
+#[test]
+fn boot_image_ors_repeated_elf64_gnu_stack_metadata() {
+    let non_executable = elf64_image_with_repeated_gnu_stack(false);
+    let executable = elf64_image_with_repeated_gnu_stack(true);
+
+    assert_eq!(
+        BootImage::from_elf64_le(&non_executable)
+            .unwrap()
+            .elf_metadata()
+            .unwrap()
+            .gnu_stack_executable(),
+        Some(false),
+    );
+    assert_eq!(
+        BootImage::from_elf64_le(&executable)
+            .unwrap()
+            .elf_metadata()
+            .unwrap()
+            .gnu_stack_executable(),
+        Some(true),
+    );
+}
+
+#[test]
+fn boot_image_records_elf32_gnu_stack_metadata() {
+    let non_executable = elf32_image_with_gnu_stack(false);
+    let executable = elf32_image_with_gnu_stack(true);
+
+    assert_eq!(
+        BootImage::from_elf(&non_executable)
+            .unwrap()
+            .elf_metadata()
+            .unwrap()
+            .gnu_stack_executable(),
+        Some(false),
+    );
+    assert_eq!(
+        BootImage::from_elf(&executable)
+            .unwrap()
+            .elf_metadata()
+            .unwrap()
+            .gnu_stack_executable(),
+        Some(true),
+    );
 }
 
 #[test]

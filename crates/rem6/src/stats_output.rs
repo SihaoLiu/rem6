@@ -158,6 +158,20 @@ pub(super) fn run_stats_output(
     )?;
     increment_stat(
         &mut stats,
+        "sim.elf.gnu_stack.present",
+        "Count",
+        StatResetPolicy::Constant,
+        u64::from(inputs.metadata.gnu_stack_executable().is_some()),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.gnu_stack.executable",
+        "Count",
+        StatResetPolicy::Constant,
+        u64::from(inputs.metadata.gnu_stack_executable().unwrap_or(false)),
+    )?;
+    increment_stat(
+        &mut stats,
         "sim.elf.symbols",
         "Count",
         StatResetPolicy::Constant,

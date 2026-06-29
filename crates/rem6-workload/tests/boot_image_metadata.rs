@@ -5,6 +5,8 @@ use rem6_boot::{
 use rem6_memory::Address;
 use rem6_workload::{WorkloadBootImage, WorkloadId, WorkloadManifest};
 
+const PT_GNU_STACK: u32 = 0x6474_e551;
+
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
 }
@@ -131,6 +133,14 @@ fn elf64_image_with_pt_tls(machine: u16) -> Vec<u8> {
     write_u64(&mut bytes, 152, 0);
     write_u64(&mut bytes, 160, 16);
     write_u64(&mut bytes, 168, 8);
+    bytes
+}
+
+fn elf64_image_with_gnu_stack(machine: u16, executable: bool) -> Vec<u8> {
+    let mut bytes = elf64_image(machine);
+    write_u16(&mut bytes, 56, 2);
+    write_u32(&mut bytes, 120, PT_GNU_STACK);
+    write_u32(&mut bytes, 124, if executable { 5 } else { 6 });
     bytes
 }
 
@@ -519,6 +529,25 @@ fn workload_boot_image_preserves_elf_program_header_tls_round_trip() {
 }
 
 #[test]
+fn workload_boot_image_preserves_elf_gnu_stack_metadata_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_gnu_stack(243, false)).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let metadata = workload_image.elf_metadata().unwrap();
+
+    assert_eq!(metadata.gnu_stack_executable(), Some(false));
+    assert_eq!(
+        workload_image
+            .to_boot_image()
+            .unwrap()
+            .elf_metadata()
+            .unwrap()
+            .gnu_stack_executable(),
+        Some(false),
+    );
+}
+
+#[test]
 fn workload_boot_image_preserves_elf_symbol_summary_round_trip() {
     let image = BootImage::from_elf64_le(&elf64_image_with_symbols(243)).unwrap();
 
@@ -669,6 +698,48 @@ fn workload_manifest_identity_includes_elf_tls_metadata() {
     let tls_manifest = WorkloadManifest::builder(id("same"), tls).build().unwrap();
 
     assert_ne!(plain_manifest.identity(), tls_manifest.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_gnu_stack_metadata() {
+    let plain = BootImage::from_elf64_le(&elf64_image(243)).unwrap();
+    let non_executable = BootImage::from_elf64_le(&elf64_image_with_gnu_stack(243, false)).unwrap();
+    let executable = BootImage::from_elf64_le(&elf64_image_with_gnu_stack(243, true)).unwrap();
+
+    assert_eq!(plain.entry(), non_executable.entry());
+    assert_eq!(plain.segments(), non_executable.segments());
+    assert_eq!(plain.segments(), executable.segments());
+    assert_eq!(plain.elf_metadata().unwrap().gnu_stack_executable(), None);
+    assert_eq!(
+        non_executable
+            .elf_metadata()
+            .unwrap()
+            .gnu_stack_executable(),
+        Some(false)
+    );
+    assert_eq!(
+        executable.elf_metadata().unwrap().gnu_stack_executable(),
+        Some(true)
+    );
+
+    let plain_manifest = WorkloadManifest::builder(id("same"), plain)
+        .build()
+        .unwrap();
+    let non_executable_manifest = WorkloadManifest::builder(id("same"), non_executable)
+        .build()
+        .unwrap();
+    let executable_manifest = WorkloadManifest::builder(id("same"), executable)
+        .build()
+        .unwrap();
+
+    assert_ne!(
+        plain_manifest.identity(),
+        non_executable_manifest.identity()
+    );
+    assert_ne!(
+        non_executable_manifest.identity(),
+        executable_manifest.identity()
+    );
 }
 
 #[test]

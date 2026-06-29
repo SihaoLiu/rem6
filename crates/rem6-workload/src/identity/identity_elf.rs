@@ -19,6 +19,10 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
             if metadata.has_tls() {
                 hash_str(hash, "elf.tls");
             }
+            if let Some(executable) = metadata.gnu_stack_executable() {
+                hash_str(hash, "elf.gnu_stack");
+                hash_u64(hash, u64::from(executable));
+            }
             let symbols = [
                 metadata.symbol_count(),
                 metadata.function_symbol_count(),
