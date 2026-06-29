@@ -1164,17 +1164,28 @@ fn boot_image_records_elf_section_flags_summary() {
         section_table_offset + 192 + 8,
         SHF_ALLOC | SHF_WRITE,
     );
+    write_u64(&mut elf, section_table_offset + 192 + 32, 16);
 
-    let flags = BootImage::from_elf64_le(&elf)
+    let metadata = BootImage::from_elf64_le(&elf)
         .unwrap()
         .elf_metadata()
-        .unwrap()
-        .section_flags();
+        .unwrap();
+    let flags = metadata.section_flags();
 
     assert_eq!(flags.allocated_count(), 3);
     assert_eq!(flags.writable_count(), 2);
     assert_eq!(flags.executable_count(), 1);
     assert_eq!(flags.nobits_count(), 1);
+
+    let storage = metadata.section_storage();
+    assert_eq!(
+        storage.file_backed_bytes(),
+        4 + 2 + metadata.section_name_table().byte_size()
+    );
+    assert_eq!(storage.allocated_bytes(), 4 + 2 + 16);
+    assert_eq!(storage.writable_bytes(), 2 + 16);
+    assert_eq!(storage.executable_bytes(), 4);
+    assert_eq!(storage.nobits_bytes(), 16);
 }
 
 #[test]
@@ -1216,17 +1227,28 @@ fn boot_image_records_elf32_section_flags_summary() {
         section_table_offset + 80 + 8,
         (SHF_ALLOC | SHF_WRITE) as u32,
     );
+    write_u32(&mut elf, section_table_offset + 80 + 20, 12);
 
-    let flags = BootImage::from_elf32_le(&elf)
+    let metadata = BootImage::from_elf32_le(&elf)
         .unwrap()
         .elf_metadata()
-        .unwrap()
-        .section_flags();
+        .unwrap();
+    let flags = metadata.section_flags();
 
     assert_eq!(flags.allocated_count(), 2);
     assert_eq!(flags.writable_count(), 1);
     assert_eq!(flags.executable_count(), 1);
     assert_eq!(flags.nobits_count(), 1);
+
+    let storage = metadata.section_storage();
+    assert_eq!(
+        storage.file_backed_bytes(),
+        4 + metadata.section_name_table().byte_size()
+    );
+    assert_eq!(storage.allocated_bytes(), 4 + 12);
+    assert_eq!(storage.writable_bytes(), 12);
+    assert_eq!(storage.executable_bytes(), 4);
+    assert_eq!(storage.nobits_bytes(), 12);
 }
 
 #[test]

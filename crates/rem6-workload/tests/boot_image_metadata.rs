@@ -233,6 +233,13 @@ fn set_elf64_section_kind_flags(bytes: &mut [u8], index: usize, kind: u32, flags
     write_u64(bytes, section_base + 8, flags);
 }
 
+fn set_elf64_section_size(bytes: &mut [u8], index: usize, size: u64) {
+    let section_table_offset = read_u64(bytes, 40) as usize;
+    let section_header_size = usize::from(read_u16(bytes, 58));
+    let section_base = section_table_offset + index * section_header_size;
+    write_u64(bytes, section_base + 32, size);
+}
+
 fn elf64_image_with_pt_tls(machine: u16) -> Vec<u8> {
     let mut bytes = elf64_image(machine);
     write_u16(&mut bytes, 56, 2);
@@ -1139,6 +1146,9 @@ fn workload_boot_image_preserves_elf_section_flags_round_trip() {
     set_elf64_section_kind_flags(&mut elf, 1, 1, SHF_ALLOC | SHF_EXECINSTR);
     set_elf64_section_kind_flags(&mut elf, 2, 1, SHF_ALLOC | SHF_WRITE);
     set_elf64_section_kind_flags(&mut elf, 3, SHT_NOBITS, SHF_ALLOC | SHF_WRITE);
+    set_elf64_section_size(&mut elf, 1, 4);
+    set_elf64_section_size(&mut elf, 2, 8);
+    set_elf64_section_size(&mut elf, 3, 16);
     let image = BootImage::from_elf64_le(&elf).unwrap();
 
     let workload_image = WorkloadBootImage::from_boot_image(&image);
@@ -1153,6 +1163,16 @@ fn workload_boot_image_preserves_elf_section_flags_round_trip() {
     assert_eq!(flags.writable_count(), 2);
     assert_eq!(flags.executable_count(), 1);
     assert_eq!(flags.nobits_count(), 1);
+
+    let storage = round_trip_metadata.section_storage();
+    assert_eq!(
+        storage.file_backed_bytes(),
+        4 + 8 + round_trip_metadata.section_name_table().byte_size()
+    );
+    assert_eq!(storage.allocated_bytes(), 4 + 8 + 16);
+    assert_eq!(storage.writable_bytes(), 8 + 16);
+    assert_eq!(storage.executable_bytes(), 4);
+    assert_eq!(storage.nobits_bytes(), 16);
 }
 
 #[test]
@@ -1832,6 +1852,50 @@ fn workload_manifest_identity_includes_elf_section_flags() {
         .unwrap();
 
     assert_ne!(baseline.identity(), executable.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_section_storage() {
+    let mut small_elf = elf64_image_with_named_sections(243, &[".data"]);
+    set_elf64_section_kind_flags(&mut small_elf, 1, 1, SHF_ALLOC | SHF_WRITE);
+    set_elf64_section_size(&mut small_elf, 1, 4);
+    let mut large_elf = elf64_image_with_named_sections(243, &[".data"]);
+    set_elf64_section_kind_flags(&mut large_elf, 1, 1, SHF_ALLOC | SHF_WRITE);
+    set_elf64_section_size(&mut large_elf, 1, 8);
+    let small_source = BootImage::from_elf64_le(&small_elf).unwrap();
+    let large_source = BootImage::from_elf64_le(&large_elf).unwrap();
+
+    assert_eq!(small_source.entry(), large_source.entry());
+    assert_eq!(small_source.segments(), large_source.segments());
+    assert_eq!(
+        small_source.elf_metadata().unwrap().section_header_table(),
+        large_source.elf_metadata().unwrap().section_header_table(),
+    );
+    assert_eq!(
+        small_source.elf_metadata().unwrap().section_flags(),
+        large_source.elf_metadata().unwrap().section_flags(),
+    );
+    assert_ne!(
+        small_source
+            .elf_metadata()
+            .unwrap()
+            .section_storage()
+            .allocated_bytes(),
+        large_source
+            .elf_metadata()
+            .unwrap()
+            .section_storage()
+            .allocated_bytes(),
+    );
+
+    let small = WorkloadManifest::builder(id("same"), small_source)
+        .build()
+        .unwrap();
+    let large = WorkloadManifest::builder(id("same"), large_source)
+        .build()
+        .unwrap();
+
+    assert_ne!(small.identity(), large.identity());
 }
 
 #[test]

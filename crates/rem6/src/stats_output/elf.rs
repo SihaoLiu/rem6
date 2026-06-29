@@ -118,6 +118,7 @@ pub(super) fn emit_elf_run_stats(
     emit_elf_section_header_stats(stats, metadata)?;
     emit_elf_section_name_stats(stats, metadata)?;
     emit_elf_section_flags_stats(stats, metadata)?;
+    emit_elf_section_storage_stats(stats, metadata)?;
     emit_elf_interpreter_stats(stats, interpreter)
 }
 
@@ -527,6 +528,38 @@ fn emit_elf_section_flags_stats(
         ("sim.elf.section_flags.nobits", section_flags.nobits_count()),
     ] {
         increment_stat(stats, path, "Count", StatResetPolicy::Constant, value)?;
+    }
+    Ok(())
+}
+
+fn emit_elf_section_storage_stats(
+    stats: &mut StatsRegistry,
+    metadata: &BootElfMetadata,
+) -> Result<(), Rem6CliError> {
+    let section_storage = metadata.section_storage();
+    for (path, value) in [
+        (
+            "sim.elf.section_storage.file_bytes",
+            section_storage.file_backed_bytes(),
+        ),
+        (
+            "sim.elf.section_storage.allocated_bytes",
+            section_storage.allocated_bytes(),
+        ),
+        (
+            "sim.elf.section_storage.writable_bytes",
+            section_storage.writable_bytes(),
+        ),
+        (
+            "sim.elf.section_storage.executable_bytes",
+            section_storage.executable_bytes(),
+        ),
+        (
+            "sim.elf.section_storage.nobits_bytes",
+            section_storage.nobits_bytes(),
+        ),
+    ] {
+        increment_stat(stats, path, "Byte", StatResetPolicy::Constant, value)?;
     }
     Ok(())
 }

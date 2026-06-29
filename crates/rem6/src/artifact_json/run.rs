@@ -1,7 +1,7 @@
 use rem6_boot::{
     BootElfDynamicPltRelocationKind, BootElfDynamicRelocationTable, BootElfDynamicTable,
     BootElfInterpreter, BootElfProgramHeaderTable, BootElfSectionFlags, BootElfSectionHeaderTable,
-    BootElfSectionNameTable,
+    BootElfSectionNameTable, BootElfSectionStorage,
 };
 use rem6_fabric::FabricHopActivity;
 use rem6_memory::Address;
@@ -210,7 +210,7 @@ impl Rem6RunArtifact {
             self.metadata.note_file_size(),
         );
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"notes\":{},\"gnu_stack\":{},\"gnu_relro\":{},\"gnu_eh_frame\":{},\"gnu_property\":{},\"symbols\":{{\"total\":{},\"functions\":{},\"objects\":{}}},\"dynamic\":{},\"program_header_table\":{},\"section_header_table\":{},\"section_name_table\":{},\"section_flags\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"notes\":{},\"gnu_stack\":{},\"gnu_relro\":{},\"gnu_eh_frame\":{},\"gnu_property\":{},\"symbols\":{{\"total\":{},\"functions\":{},\"objects\":{}}},\"dynamic\":{},\"program_header_table\":{},\"section_header_table\":{},\"section_name_table\":{},\"section_flags\":{},\"section_storage\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -248,6 +248,7 @@ impl Rem6RunArtifact {
             elf_section_header_table_json(self.metadata.section_header_table()),
             elf_section_name_table_json(self.metadata.section_name_table()),
             elf_section_flags_json(self.metadata.section_flags()),
+            elf_section_storage_json(self.metadata.section_storage()),
             interpreter,
             simulation,
             parallel,
@@ -548,6 +549,17 @@ fn elf_section_flags_json(flags: BootElfSectionFlags) -> String {
         flags.writable_count(),
         flags.executable_count(),
         flags.nobits_count(),
+    )
+}
+
+fn elf_section_storage_json(storage: BootElfSectionStorage) -> String {
+    format!(
+        "{{\"file_bytes\":{},\"allocated_bytes\":{},\"writable_bytes\":{},\"executable_bytes\":{},\"nobits_bytes\":{}}}",
+        storage.file_backed_bytes(),
+        storage.allocated_bytes(),
+        storage.writable_bytes(),
+        storage.executable_bytes(),
+        storage.nobits_bytes(),
     )
 }
 

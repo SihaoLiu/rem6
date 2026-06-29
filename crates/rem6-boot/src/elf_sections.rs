@@ -2,7 +2,7 @@ use crate::elf::{BootElfClass, BootElfEndian, BootElfOperatingSystem};
 use crate::elf_counts::section_table_layout;
 use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::metadata_tables::{
-    BootElfSectionFlags, BootElfSectionHeaderTable, BootElfSectionNameTable,
+    BootElfSectionFlags, BootElfSectionHeaderTable, BootElfSectionNameTable, BootElfSectionStorage,
 };
 
 const SHT_NOTE: u32 = 7;
@@ -29,6 +29,11 @@ pub(crate) struct ElfSectionSummary {
     writable_section_count: u64,
     executable_section_count: u64,
     nobits_section_count: u64,
+    file_backed_section_bytes: u64,
+    allocated_section_bytes: u64,
+    writable_section_bytes: u64,
+    executable_section_bytes: u64,
+    nobits_section_bytes: u64,
     section_header_table: BootElfSectionHeaderTable,
     section_name_table: BootElfSectionNameTable,
 }
@@ -68,6 +73,16 @@ impl ElfSectionSummary {
             self.writable_section_count,
             self.executable_section_count,
             self.nobits_section_count,
+        )
+    }
+
+    pub(crate) const fn section_storage(self) -> BootElfSectionStorage {
+        BootElfSectionStorage::new(
+            self.file_backed_section_bytes,
+            self.allocated_section_bytes,
+            self.writable_section_bytes,
+            self.executable_section_bytes,
+            self.nobits_section_bytes,
         )
     }
 }
@@ -300,17 +315,30 @@ fn summarize_common_section(
     if section_name_matches(string_table, section.name, b".tbss") {
         summary.has_tls = true;
     }
+    if section.kind != SHT_NOBITS {
+        summary.file_backed_section_bytes = summary
+            .file_backed_section_bytes
+            .saturating_add(section.size);
+    }
     if section.flags & SHF_ALLOC != 0 {
         summary.allocated_section_count += 1;
+        summary.allocated_section_bytes =
+            summary.allocated_section_bytes.saturating_add(section.size);
     }
     if section.flags & SHF_WRITE != 0 {
         summary.writable_section_count += 1;
+        summary.writable_section_bytes =
+            summary.writable_section_bytes.saturating_add(section.size);
     }
     if section.flags & SHF_EXECINSTR != 0 {
         summary.executable_section_count += 1;
+        summary.executable_section_bytes = summary
+            .executable_section_bytes
+            .saturating_add(section.size);
     }
     if section.kind == SHT_NOBITS {
         summary.nobits_section_count += 1;
+        summary.nobits_section_bytes = summary.nobits_section_bytes.saturating_add(section.size);
     }
 
     if detect_operating_system && summary.operating_system.is_none() {

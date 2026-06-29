@@ -142,3 +142,50 @@ impl BootElfSectionFlags {
         self.nobits_count
     }
 }
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BootElfSectionStorage {
+    file_backed_bytes: u64,
+    allocated_bytes: u64,
+    writable_bytes: u64,
+    executable_bytes: u64,
+    nobits_bytes: u64,
+}
+
+impl BootElfSectionStorage {
+    pub const fn new(
+        file_backed_bytes: u64,
+        allocated_bytes: u64,
+        writable_bytes: u64,
+        executable_bytes: u64,
+        nobits_bytes: u64,
+    ) -> Self {
+        Self {
+            file_backed_bytes,
+            allocated_bytes,
+            writable_bytes,
+            executable_bytes,
+            nobits_bytes,
+        }
+    }
+
+    pub const fn file_backed_bytes(self) -> u64 {
+        self.file_backed_bytes
+    }
+
+    pub const fn allocated_bytes(self) -> u64 {
+        self.allocated_bytes
+    }
+
+    pub const fn writable_bytes(self) -> u64 {
+        self.writable_bytes
+    }
+
+    pub const fn executable_bytes(self) -> u64 {
+        self.executable_bytes
+    }
+
+    pub const fn nobits_bytes(self) -> u64 {
+        self.nobits_bytes
+    }
+}

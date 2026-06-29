@@ -1470,6 +1470,9 @@ fn rem6_run_reports_elf_section_header_table_metadata() {
     assert!(stdout.contains(
         "\"section_flags\":{\"allocated\":2,\"writable\":1,\"executable\":1,\"nobits\":0}"
     ));
+    assert!(stdout.contains(
+        "\"section_storage\":{\"file_bytes\":27,\"allocated_bytes\":4,\"writable_bytes\":0,\"executable_bytes\":4,\"nobits_bytes\":0}"
+    ));
     assert_stat(
         &stdout,
         "sim.elf.section_header.file_offset",
@@ -1537,6 +1540,41 @@ fn rem6_run_reports_elf_section_header_table_metadata() {
         &stdout,
         "sim.elf.section_flags.nobits",
         "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_storage.file_bytes",
+        "Byte",
+        27,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_storage.allocated_bytes",
+        "Byte",
+        4,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_storage.writable_bytes",
+        "Byte",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_storage.executable_bytes",
+        "Byte",
+        4,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_storage.nobits_bytes",
+        "Byte",
         0,
         "constant",
     );
