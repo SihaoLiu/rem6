@@ -63,6 +63,7 @@ pub(super) fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBu
             "--fabric-router-output-port",
             "--fabric-router-virtual-channel",
             "--fabric-router-latency",
+            "--fabric-qos-queue-policy",
             "--debug-flags",
             "--cores",
             "--parallel-workers",

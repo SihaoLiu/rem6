@@ -260,6 +260,7 @@ struct Rem6RunFileConfig {
     fabric_router_output_port: Option<u32>,
     fabric_router_virtual_channel: Option<u16>,
     fabric_router_latency: Option<u64>,
+    fabric_qos_queue_policy: Option<String>,
     debug_flags: Option<Vec<String>>,
     cores: Option<usize>,
     parallel_workers: Option<usize>,
@@ -653,6 +654,7 @@ impl Rem6RunConfig {
             file_config.fabric_router_output_port,
             file_config.fabric_router_virtual_channel,
             file_config.fabric_router_latency,
+            file_config.fabric_qos_queue_policy.clone(),
         )?;
         let mut gdb_listen = None;
         let mut debug_flags =
@@ -1018,6 +1020,9 @@ impl Rem6RunConfig {
                 }
                 "--fabric-router-latency" => {
                     fabric_parts.set_router_latency(&required_value(&flag, args.next())?)?;
+                }
+                "--fabric-qos-queue-policy" => {
+                    fabric_parts.set_qos_queue_policy(&required_value(&flag, args.next())?)?;
                 }
                 "--gdb-listen" => {
                     gdb_listen = Some(required_value(&flag, args.next())?);

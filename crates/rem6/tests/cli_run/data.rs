@@ -2900,7 +2900,7 @@ fn rem6_run_toml_memory_system_preset_routes_cpu_through_cache_fabric_and_dram()
     let config = temp_config(
         "toml-run-memory-system-preset",
         &format!(
-            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 240\nstats_format = \"json\"\nexecute = true\nmemory_system = \"cache-fabric-dram\"\nfabric_router = \"router0\"\nfabric_router_input_port = 1\nfabric_router_output_port = 2\nfabric_router_virtual_channel = 3\nfabric_router_latency = 5\nmemory_dumps = [\"0x80000048:8\"]\n",
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 240\nstats_format = \"json\"\nexecute = true\nmemory_system = \"cache-fabric-dram\"\nfabric_router = \"router0\"\nfabric_router_input_port = 1\nfabric_router_output_port = 2\nfabric_router_virtual_channel = 3\nfabric_router_latency = 5\nfabric_qos_queue_policy = \"lifo\"\nmemory_dumps = [\"0x80000048:8\"]\n",
             binary.display()
         ),
     );
@@ -2937,6 +2937,11 @@ fn rem6_run_toml_memory_system_preset_routes_cpu_through_cache_fabric_and_dram()
         json.pointer("/fabric/router_stage/router")
             .and_then(Value::as_str),
         Some("router0")
+    );
+    assert_eq!(
+        json.pointer("/fabric/qos_queue_policy")
+            .and_then(Value::as_str),
+        Some("lifo")
     );
     assert_stat_greater_than(
         &stdout,

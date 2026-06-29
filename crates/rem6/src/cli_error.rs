@@ -249,6 +249,9 @@ pub enum Rem6CliError {
     InvalidRunFabricRouterLatency {
         value: String,
     },
+    InvalidRunFabricQosQueuePolicy {
+        value: String,
+    },
     MemoryRouteDelayBelowMinRemoteDelay {
         memory_route_delay: u64,
         min_remote_delay: u64,
@@ -726,6 +729,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidRunFabricRouterLatency { value } => {
                 write!(formatter, "invalid run fabric router latency {value}")
+            }
+            Self::InvalidRunFabricQosQueuePolicy { value } => {
+                write!(formatter, "invalid run fabric QoS queue policy {value}")
             }
             Self::MemoryRouteDelayBelowMinRemoteDelay {
                 memory_route_delay,

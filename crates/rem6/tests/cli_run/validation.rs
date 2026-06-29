@@ -1556,6 +1556,30 @@ fn rem6_run_config_scan_treats_fabric_router_flags_as_value_taking() {
 }
 
 #[test]
+fn rem6_run_config_scan_treats_fabric_qos_queue_policy_as_value_taking() {
+    let bogus_config = temp_output("run-fabric-qos-policy-prescan-bogus-config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--fabric-qos-queue-policy",
+            "--config",
+            bogus_config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("invalid run fabric QoS queue policy --config"),
+        "stderr: {stderr}"
+    );
+    assert!(!stderr.contains(&format!("failed to read config {}", bogus_config.display())));
+}
+
+#[test]
 fn rem6_trace_replay_config_scan_treats_fabric_router_flags_as_value_taking() {
     for (flag, expected) in [
         ("--fabric-router", "unknown flag"),

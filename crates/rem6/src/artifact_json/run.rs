@@ -288,14 +288,19 @@ fn run_fabric_json(config: Option<&RunFabricConfig>, summary: &Rem6RunFabricSumm
             )
         })
         .unwrap_or_else(|| "null".to_string());
+    let qos_queue_policy = config
+        .qos_queue_policy()
+        .map(|policy| format!("\"{}\"", policy.as_str()))
+        .unwrap_or_else(|| "null".to_string());
     format!(
-        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"router_stage\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
+        "{{\"link\":\"{}\",\"bandwidth_bytes_per_tick\":{},\"request_virtual_network\":{},\"response_virtual_network\":{},\"credit_depth\":{},\"router_stage\":{},\"qos_queue_policy\":{},\"active_lanes\":{},\"active_virtual_networks\":{},\"transfers\":{},\"bytes\":{},\"flits\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"max_queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"max_credit_delay_ticks\":{},\"contended_lanes\":{},\"link_activities\":[{}],\"lane_activities\":[{}],\"hop_activities\":[{}]}}",
         json_escape(config.link()),
         config.bandwidth_bytes_per_tick(),
         config.request_virtual_network(),
         config.response_virtual_network(),
         credit_depth,
         router_stage,
+        qos_queue_policy,
         summary.active_lanes(),
         summary.active_virtual_networks(),
         summary.transfers(),

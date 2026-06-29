@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use rem6_fabric::{
     FabricActivityProfile, FabricHopActivity, FabricLaneActivity, FabricLinkActivity, FabricLinkId,
     FabricModel, FabricPath, FabricPathHop, FabricRouterId, FabricRouterStage,
-    FabricVirtualNetworkActivity, VirtualNetworkId,
+    FabricVirtualNetworkActivity, QosQueueArbiter, VirtualNetworkId,
 };
 use rem6_transport::MemoryTransport;
 
@@ -126,7 +126,13 @@ impl Rem6RunFabricSummary {
 
 pub(crate) fn run_memory_transport(config: Option<&RunFabricConfig>) -> MemoryTransport {
     match config {
-        Some(_) => MemoryTransport::with_fabric(FabricModel::new()),
+        Some(fabric) => match fabric.qos_queue_policy() {
+            Some(policy) => MemoryTransport::with_fabric_qos(
+                FabricModel::new(),
+                QosQueueArbiter::new(policy.to_qos_queue_policy_kind()),
+            ),
+            None => MemoryTransport::with_fabric(FabricModel::new()),
+        },
         None => MemoryTransport::new(),
     }
 }

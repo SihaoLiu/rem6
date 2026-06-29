@@ -1,6 +1,8 @@
 use super::parse::{parse_number, parse_positive_u64};
 use crate::Rem6CliError;
 
+use rem6_fabric::QosQueuePolicyKind;
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(super) struct RunFabricConfigParts {
     link: Option<String>,
@@ -13,6 +15,7 @@ pub(super) struct RunFabricConfigParts {
     router_output_port: Option<u32>,
     router_virtual_channel: Option<u16>,
     router_latency: Option<u64>,
+    qos_queue_policy: Option<RunFabricQosQueuePolicy>,
 }
 
 impl RunFabricConfigParts {
@@ -28,6 +31,7 @@ impl RunFabricConfigParts {
         router_output_port: Option<u32>,
         router_virtual_channel: Option<u16>,
         router_latency: Option<u64>,
+        qos_queue_policy: Option<String>,
     ) -> Result<Self, Rem6CliError> {
         if bandwidth_bytes_per_tick == Some(0) {
             return Err(Rem6CliError::InvalidRunFabricBandwidth {
@@ -60,6 +64,10 @@ impl RunFabricConfigParts {
             router_output_port,
             router_virtual_channel,
             router_latency,
+            qos_queue_policy: qos_queue_policy
+                .as_deref()
+                .map(parse_run_fabric_qos_queue_policy)
+                .transpose()?,
         })
     }
 
@@ -74,6 +82,7 @@ impl RunFabricConfigParts {
             || self.router_output_port.is_some()
             || self.router_virtual_channel.is_some()
             || self.router_latency.is_some()
+            || self.qos_queue_policy.is_some()
     }
 
     pub(super) fn set_link(&mut self, link: String) {
@@ -122,6 +131,11 @@ impl RunFabricConfigParts {
 
     pub(super) fn set_router_latency(&mut self, value: &str) -> Result<(), Rem6CliError> {
         self.router_latency = Some(parse_run_fabric_router_latency(value)?);
+        Ok(())
+    }
+
+    pub(super) fn set_qos_queue_policy(&mut self, value: &str) -> Result<(), Rem6CliError> {
+        self.qos_queue_policy = Some(parse_run_fabric_qos_queue_policy(value)?);
         Ok(())
     }
 
@@ -189,6 +203,7 @@ pub struct RunFabricConfig {
     response_virtual_network: u16,
     credit_depth: Option<u32>,
     router_stage: Option<RunFabricRouterStageConfig>,
+    qos_queue_policy: Option<RunFabricQosQueuePolicy>,
 }
 
 impl RunFabricConfig {
@@ -199,6 +214,7 @@ impl RunFabricConfig {
         response_virtual_network: u16,
         credit_depth: Option<u32>,
         router_stage: Option<RunFabricRouterStageConfig>,
+        qos_queue_policy: Option<RunFabricQosQueuePolicy>,
     ) -> Self {
         Self {
             link,
@@ -207,6 +223,7 @@ impl RunFabricConfig {
             response_virtual_network,
             credit_depth,
             router_stage,
+            qos_queue_policy,
         }
     }
 
@@ -232,6 +249,35 @@ impl RunFabricConfig {
 
     pub fn router_stage(&self) -> Option<&RunFabricRouterStageConfig> {
         self.router_stage.as_ref()
+    }
+
+    pub const fn qos_queue_policy(&self) -> Option<RunFabricQosQueuePolicy> {
+        self.qos_queue_policy
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RunFabricQosQueuePolicy {
+    Fifo,
+    Lifo,
+    LeastRecentlyGranted,
+}
+
+impl RunFabricQosQueuePolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fifo => "fifo",
+            Self::Lifo => "lifo",
+            Self::LeastRecentlyGranted => "least-recently-granted",
+        }
+    }
+
+    pub const fn to_qos_queue_policy_kind(self) -> QosQueuePolicyKind {
+        match self {
+            Self::Fifo => QosQueuePolicyKind::Fifo,
+            Self::Lifo => QosQueuePolicyKind::Lifo,
+            Self::LeastRecentlyGranted => QosQueuePolicyKind::LeastRecentlyGranted,
+        }
     }
 }
 
@@ -268,6 +314,7 @@ pub(super) fn run_fabric_config_from_parts(
         parts.response_virtual_network.unwrap_or(0),
         parts.credit_depth,
         router_stage,
+        parts.qos_queue_policy,
     )))
 }
 
@@ -326,6 +373,17 @@ fn parse_run_fabric_router_latency(value: &str) -> Result<u64, Rem6CliError> {
     })
 }
 
+fn parse_run_fabric_qos_queue_policy(value: &str) -> Result<RunFabricQosQueuePolicy, Rem6CliError> {
+    match value {
+        "fifo" => Ok(RunFabricQosQueuePolicy::Fifo),
+        "lifo" => Ok(RunFabricQosQueuePolicy::Lifo),
+        "least-recently-granted" | "lrg" => Ok(RunFabricQosQueuePolicy::LeastRecentlyGranted),
+        _ => Err(Rem6CliError::InvalidRunFabricQosQueuePolicy {
+            value: value.to_string(),
+        }),
+    }
+}
+
 fn run_fabric_router_stage_config(
     router: Option<String>,
     input_port: Option<u32>,
@@ -378,6 +436,7 @@ mod tests {
                 Some(2),
                 Some(3),
                 Some(5),
+                Some("least-recently-granted".to_string()),
             )
             .unwrap(),
         )
@@ -395,6 +454,10 @@ mod tests {
         assert_eq!(router_stage.output_port(), 2);
         assert_eq!(router_stage.virtual_channel(), 3);
         assert_eq!(router_stage.latency(), 5);
+        assert_eq!(
+            config.qos_queue_policy(),
+            Some(RunFabricQosQueuePolicy::LeastRecentlyGranted)
+        );
     }
 
     #[test]
@@ -411,6 +474,7 @@ mod tests {
                 None,
                 Some(3),
                 Some(5),
+                None,
             )
             .unwrap(),
         )
@@ -420,6 +484,31 @@ mod tests {
             error,
             Rem6CliError::MissingRequiredFlag {
                 flag: "--fabric-router-output-port"
+            }
+        );
+    }
+
+    #[test]
+    fn run_fabric_config_parts_reject_invalid_qos_queue_policy() {
+        let error = RunFabricConfigParts::new(
+            Some("cpu_mem".to_string()),
+            Some(8),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("random".to_string()),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            Rem6CliError::InvalidRunFabricQosQueuePolicy {
+                value: "random".to_string()
             }
         );
     }
