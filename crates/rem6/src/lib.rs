@@ -1022,17 +1022,23 @@ fn execute_riscv(
         instruction_cache: CliDataCacheSummary::from_records(
             &instruction_cache_hierarchy.records(0),
         )
-        .with_prefetch_summary(instruction_cache_hierarchy.top_prefetch_summary()),
+        .with_prefetch_summary(instruction_cache_hierarchy.top_prefetch_summary())
+        .with_prefetch_fills(instruction_cache_hierarchy.prefetch_fills(0)),
         instruction_cache_l2: CliDataCacheSummary::from_records(
             &instruction_cache_hierarchy.records(1),
-        ),
+        )
+        .with_prefetch_fills(instruction_cache_hierarchy.prefetch_fills(1)),
         instruction_cache_l3: CliDataCacheSummary::from_records(
             &instruction_cache_hierarchy.records(2),
-        ),
+        )
+        .with_prefetch_fills(instruction_cache_hierarchy.prefetch_fills(2)),
         data_cache: CliDataCacheSummary::from_run(&run)
-            .with_prefetch_summary(data_cache_hierarchy.top_prefetch_summary()),
-        data_cache_l2: CliDataCacheSummary::from_records(&data_cache_hierarchy.records(1)),
-        data_cache_l3: CliDataCacheSummary::from_records(&data_cache_hierarchy.records(2)),
+            .with_prefetch_summary(data_cache_hierarchy.top_prefetch_summary())
+            .with_prefetch_fills(data_cache_hierarchy.prefetch_fills(0)),
+        data_cache_l2: CliDataCacheSummary::from_records(&data_cache_hierarchy.records(1))
+            .with_prefetch_fills(data_cache_hierarchy.prefetch_fills(1)),
+        data_cache_l3: CliDataCacheSummary::from_records(&data_cache_hierarchy.records(2))
+            .with_prefetch_fills(data_cache_hierarchy.prefetch_fills(2)),
         fetch_trace: &fetch_trace,
         data_trace: &data_trace,
         fabric: Rem6RunFabricSummary::from_transport(config.fabric(), &transport),

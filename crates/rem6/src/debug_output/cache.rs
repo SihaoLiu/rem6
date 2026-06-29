@@ -30,6 +30,7 @@ pub(crate) struct Rem6CacheTraceRecord {
     prefetch_span_page: u64,
     prefetch_useful_span_page: u64,
     prefetch_in_cache: u64,
+    prefetch_fills: u64,
     prefetch_queue_enqueued: u64,
     prefetch_queue_issued: u64,
     prefetch_queue_dropped: u64,
@@ -100,6 +101,7 @@ impl Rem6CacheTraceRecord {
             ("prefetch.span_page", self.prefetch_span_page),
             ("prefetch.useful_span_page", self.prefetch_useful_span_page),
             ("prefetch.in_cache", self.prefetch_in_cache),
+            ("prefetch.fills", self.prefetch_fills),
             ("prefetch.queue.enqueued", self.prefetch_queue_enqueued),
             ("prefetch.queue.issued", self.prefetch_queue_issued),
             ("prefetch.queue.dropped", self.prefetch_queue_dropped),
@@ -133,7 +135,7 @@ impl Rem6CacheTraceRecord {
 
     pub(crate) fn to_json(self) -> String {
         format!(
-            "{{\"hierarchy\":\"{}\",\"level\":\"{}\",\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{},\"prefetch_identified\":{},\"prefetch_issued\":{},\"prefetch_useful\":{},\"prefetch_useful_but_miss\":{},\"prefetch_unused\":{},\"prefetch_demand_mshr_misses\":{},\"prefetch_hit_in_cache\":{},\"prefetch_hit_in_mshr\":{},\"prefetch_hit_in_write_buffer\":{},\"prefetch_late\":{},\"prefetch_accuracy_ppm\":{},\"prefetch_coverage_ppm\":{},\"prefetch_span_page\":{},\"prefetch_useful_span_page\":{},\"prefetch_in_cache\":{},\"prefetch_queue_enqueued\":{},\"prefetch_queue_issued\":{},\"prefetch_queue_dropped\":{},\"prefetch_translation_queue_enqueued\":{},\"prefetch_translation_queue_issued\":{},\"prefetch_translation_queue_translated\":{},\"prefetch_translation_queue_dropped\":{}}}",
+            "{{\"hierarchy\":\"{}\",\"level\":\"{}\",\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{},\"prefetch_identified\":{},\"prefetch_issued\":{},\"prefetch_useful\":{},\"prefetch_useful_but_miss\":{},\"prefetch_unused\":{},\"prefetch_demand_mshr_misses\":{},\"prefetch_hit_in_cache\":{},\"prefetch_hit_in_mshr\":{},\"prefetch_hit_in_write_buffer\":{},\"prefetch_late\":{},\"prefetch_accuracy_ppm\":{},\"prefetch_coverage_ppm\":{},\"prefetch_span_page\":{},\"prefetch_useful_span_page\":{},\"prefetch_in_cache\":{},\"prefetch_fills\":{},\"prefetch_queue_enqueued\":{},\"prefetch_queue_issued\":{},\"prefetch_queue_dropped\":{},\"prefetch_translation_queue_enqueued\":{},\"prefetch_translation_queue_issued\":{},\"prefetch_translation_queue_translated\":{},\"prefetch_translation_queue_dropped\":{}}}",
             self.hierarchy,
             self.level,
             self.activity,
@@ -160,6 +162,7 @@ impl Rem6CacheTraceRecord {
             self.prefetch_span_page,
             self.prefetch_useful_span_page,
             self.prefetch_in_cache,
+            self.prefetch_fills,
             self.prefetch_queue_enqueued,
             self.prefetch_queue_issued,
             self.prefetch_queue_dropped,
@@ -193,6 +196,7 @@ impl Rem6CacheTraceRecord {
             || self.prefetch_span_page != 0
             || self.prefetch_useful_span_page != 0
             || self.prefetch_in_cache != 0
+            || self.prefetch_fills != 0
             || self.prefetch_queue_enqueued != 0
             || self.prefetch_queue_issued != 0
             || self.prefetch_queue_dropped != 0
@@ -261,6 +265,7 @@ fn cache_trace_record(
         prefetch_span_page: summary.prefetch_span_page,
         prefetch_useful_span_page: summary.prefetch_useful_span_page,
         prefetch_in_cache: summary.prefetch_in_cache,
+        prefetch_fills: summary.prefetch_fills,
         prefetch_queue_enqueued: summary.prefetch_queue_enqueued,
         prefetch_queue_issued: summary.prefetch_queue_issued,
         prefetch_queue_dropped: summary.prefetch_queue_dropped,
@@ -377,6 +382,10 @@ pub(crate) fn cache_trace_stats(records: &[Rem6CacheTraceRecord]) -> Vec<Rem6Cac
         (
             "prefetch.in_cache",
             cache_trace_sum(records, |record| record.prefetch_in_cache),
+        ),
+        (
+            "prefetch.fills",
+            cache_trace_sum(records, |record| record.prefetch_fills),
         ),
         (
             "prefetch.queue.enqueued",

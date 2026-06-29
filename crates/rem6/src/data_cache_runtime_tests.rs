@@ -170,6 +170,25 @@ fn prefetch_useful_but_miss_records_upgrade_miss_on_prefetched_line() {
 }
 
 #[test]
+fn lower_fill_request_preserves_prefetch_read_for_hierarchy_consumers() {
+    let layout = CacheLineLayout::new(32).unwrap();
+    let prefetch = MemoryRequest::prefetch_read(
+        MemoryRequestId::new(AgentId::new(0), 9),
+        Address::new(0x1040),
+        AccessSize::new(32).unwrap(),
+        layout,
+    )
+    .unwrap();
+    let prefetch =
+        MemoryRequest::from_snapshot(&prefetch.snapshot().with_response_required()).unwrap();
+
+    let fill = lower_fill_request(&prefetch, Address::new(0x1040), layout).unwrap();
+
+    assert_eq!(fill.operation(), MemoryOperation::PrefetchRead);
+    assert!(fill.requires_response());
+}
+
+#[test]
 fn l1_write_invalidates_lower_cache_fill() {
     let layout = CacheLineLayout::new(32).unwrap();
     let memory = memory_with_line(layout);

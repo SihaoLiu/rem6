@@ -39,6 +39,7 @@ pub(super) struct CliDataCacheRuntime {
     layout: CacheLineLayout,
     harness: Arc<Mutex<CliDataCacheHarness>>,
     prefetch: Option<Arc<Mutex<CliDataCachePrefetchRuntime>>>,
+    prefetch_fills: Arc<Mutex<u64>>,
     records: Arc<Mutex<Vec<RiscvDataCacheRunRecord>>>,
     error: Arc<Mutex<Option<String>>>,
 }
@@ -162,6 +163,7 @@ pub(crate) struct CliDataCacheSummary {
     pub(crate) prefetch_span_page: u64,
     pub(crate) prefetch_useful_span_page: u64,
     pub(crate) prefetch_in_cache: u64,
+    pub(crate) prefetch_fills: u64,
     pub(crate) prefetch_queue_enqueued: u64,
     pub(crate) prefetch_queue_issued: u64,
     pub(crate) prefetch_queue_dropped: u64,
@@ -238,6 +240,7 @@ impl CliDataCacheSummary {
             prefetch_span_page: 0,
             prefetch_useful_span_page: 0,
             prefetch_in_cache: 0,
+            prefetch_fills: 0,
             prefetch_queue_enqueued: 0,
             prefetch_queue_issued: 0,
             prefetch_queue_dropped: 0,
@@ -274,6 +277,11 @@ impl CliDataCacheSummary {
         self.prefetch_translation_queue_issued = summary.translation_queue_issued;
         self.prefetch_translation_queue_translated = summary.translation_queue_translated;
         self.prefetch_translation_queue_dropped = summary.translation_queue_dropped;
+        self
+    }
+
+    pub(crate) const fn with_prefetch_fills(mut self, prefetch_fills: u64) -> Self {
+        self.prefetch_fills = prefetch_fills;
         self
     }
 }
@@ -442,6 +450,13 @@ impl CliCacheHierarchy {
             .unwrap_or_default()
     }
 
+    pub(super) fn prefetch_fills(&self, level: usize) -> u64 {
+        self.levels
+            .get(level)
+            .map(CliDataCacheRuntime::prefetch_fills)
+            .unwrap_or_default()
+    }
+
     pub(super) fn top_prefetch_summary(&self) -> CliDataCachePrefetchSummary {
         self.levels
             .first()
@@ -475,6 +490,7 @@ impl CliDataCacheRuntime {
                 MsiBankDirectoryHarness::new(layout, agents).map_err(execute_error)?,
             ))),
             prefetch: cli_prefetch_runtime(layout, prefetcher)?,
+            prefetch_fills: Arc::new(Mutex::new(0)),
             records: Arc::new(Mutex::new(Vec::new())),
             error: Arc::new(Mutex::new(None)),
         })
@@ -503,6 +519,7 @@ impl CliDataCacheRuntime {
                 },
             ))),
             prefetch: cli_prefetch_runtime(layout, prefetcher)?,
+            prefetch_fills: Arc::new(Mutex::new(0)),
             records: Arc::new(Mutex::new(Vec::new())),
             error: Arc::new(Mutex::new(None)),
         })
@@ -531,6 +548,7 @@ impl CliDataCacheRuntime {
                 },
             ))),
             prefetch: cli_prefetch_runtime(layout, prefetcher)?,
+            prefetch_fills: Arc::new(Mutex::new(0)),
             records: Arc::new(Mutex::new(Vec::new())),
             error: Arc::new(Mutex::new(None)),
         })
@@ -557,6 +575,7 @@ impl CliDataCacheRuntime {
                 lines: BTreeMap::new(),
             }))),
             prefetch: cli_prefetch_runtime(layout, prefetcher)?,
+            prefetch_fills: Arc::new(Mutex::new(0)),
             records: Arc::new(Mutex::new(Vec::new())),
             error: Arc::new(Mutex::new(None)),
         })
@@ -652,6 +671,13 @@ impl CliDataCacheRuntime {
                     .summary()
             })
             .unwrap_or_default()
+    }
+
+    pub(super) fn prefetch_fills(&self) -> u64 {
+        *self
+            .prefetch_fills
+            .lock()
+            .expect("CLI data cache prefetch fill lock")
     }
 
     pub(super) fn take_error(&self) -> Option<Rem6CliError> {
@@ -787,6 +813,7 @@ impl CliDataCacheRuntime {
         upper_request: &MemoryRequest,
     ) -> Option<Vec<u8>> {
         let line = self.layout.line_address(upper_request.line_address());
+        let is_prefetch_fill = upper_request.operation() == MemoryOperation::PrefetchRead;
         let request = match lower_fill_request(upper_request, line, self.layout) {
             Ok(request) => request,
             Err(error) => {
@@ -809,6 +836,9 @@ impl CliDataCacheRuntime {
         }) {
             self.record_error(error);
             return None;
+        }
+        if is_prefetch_fill {
+            self.record_prefetch_fill();
         }
         self.cached_line_data(line, request.id().agent())
     }
@@ -1214,6 +1244,7 @@ impl CliDataCacheRuntime {
                     backing_dram_access_count,
                     response_mode: CliDataCacheResponseMode::Internal,
                 })?;
+                self.record_prefetch_fill();
                 if let Some(prefetch) = self.prefetch.as_ref() {
                     prefetch
                         .lock()
@@ -1250,6 +1281,14 @@ impl CliDataCacheRuntime {
         if slot.is_none() {
             *slot = Some(error.to_string());
         }
+    }
+
+    fn record_prefetch_fill(&self) {
+        let mut fills = self
+            .prefetch_fills
+            .lock()
+            .expect("CLI data cache prefetch fill lock");
+        *fills = fills.saturating_add(1);
     }
 }
 
@@ -1490,13 +1529,15 @@ fn lower_fill_request(
 ) -> Result<MemoryRequest, Rem6CliError> {
     let sequence = LOWER_FILL_REQUEST_SEQUENCE_BASE
         | (upper_request.id().sequence() & (LOWER_FILL_REQUEST_SEQUENCE_BASE - 1));
-    MemoryRequest::read_shared(
-        MemoryRequestId::new(upper_request.id().agent(), sequence),
-        line,
-        rem6_memory::AccessSize::new(layout.bytes()).map_err(execute_error)?,
-        layout,
-    )
-    .map_err(execute_error)
+    let id = MemoryRequestId::new(upper_request.id().agent(), sequence);
+    let size = rem6_memory::AccessSize::new(layout.bytes()).map_err(execute_error)?;
+    let request = if upper_request.operation() == MemoryOperation::PrefetchRead {
+        MemoryRequest::prefetch_read(id, line, size, layout).map_err(execute_error)?
+    } else {
+        MemoryRequest::read_shared(id, line, size, layout).map_err(execute_error)?
+    };
+    let snapshot = request.snapshot().with_response_required();
+    MemoryRequest::from_snapshot(&snapshot).map_err(execute_error)
 }
 
 trait CliDataCacheResponseRecord: Clone {

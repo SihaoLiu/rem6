@@ -91,6 +91,13 @@ pub(super) fn emit_data_cache_summary_stats(
         StatResetPolicy::Monotonic,
         summary.bank_coalesced_misses,
     )?;
+    increment_stat(
+        stats,
+        &format!("{prefix}.prefetch.fills"),
+        "Count",
+        StatResetPolicy::Monotonic,
+        summary.prefetch_fills,
+    )?;
     Ok(())
 }
 

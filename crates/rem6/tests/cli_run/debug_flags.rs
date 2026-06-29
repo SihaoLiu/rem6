@@ -3429,6 +3429,7 @@ const CACHE_TRACE_COUNT_FIELDS: &[(&str, &str)] = &[
     ("prefetch_span_page", "prefetch.span_page"),
     ("prefetch_useful_span_page", "prefetch.useful_span_page"),
     ("prefetch_in_cache", "prefetch.in_cache"),
+    ("prefetch_fills", "prefetch.fills"),
     ("prefetch_queue_enqueued", "prefetch.queue.enqueued"),
     ("prefetch_queue_issued", "prefetch.queue.issued"),
     ("prefetch_queue_dropped", "prefetch.queue.dropped"),
