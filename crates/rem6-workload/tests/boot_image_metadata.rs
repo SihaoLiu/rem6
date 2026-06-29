@@ -121,6 +121,19 @@ fn elf64_image_with_tbss(machine: u16) -> Vec<u8> {
 }
 
 fn elf64_image_with_symbols(machine: u16) -> Vec<u8> {
+    elf64_image_with_symbol_section(machine, ".symtab", 2, ".strtab")
+}
+
+fn elf64_image_with_dynamic_symbols(machine: u16) -> Vec<u8> {
+    elf64_image_with_symbol_section(machine, ".dynsym", 11, ".dynstr")
+}
+
+fn elf64_image_with_symbol_section(
+    machine: u16,
+    symbol_section_name: &str,
+    symbol_section_kind: u32,
+    string_section_name: &str,
+) -> Vec<u8> {
     let mut bytes = elf64_image(machine);
     let symbol_names = b"\0entry_func\0data_obj\0";
     let symbol_names_offset = bytes.len();
@@ -141,9 +154,13 @@ fn elf64_image_with_symbols(machine: u16) -> Vec<u8> {
     write_u64(&mut bytes, object_base + 8, 0x9000);
     write_u64(&mut bytes, object_base + 16, 8);
 
-    let section_names = b"\0.symtab\0.strtab\0.shstrtab\0";
+    let symbol_section_name_offset = 1;
+    let string_section_name_offset =
+        symbol_section_name_offset + symbol_section_name.len() as u32 + 1;
+    let shstrtab_name_offset = string_section_name_offset + string_section_name.len() as u32 + 1;
+    let section_names = format!("\0{symbol_section_name}\0{string_section_name}\0.shstrtab\0");
     let section_names_offset = bytes.len();
-    bytes.extend_from_slice(section_names);
+    bytes.extend_from_slice(section_names.as_bytes());
 
     let section_table_offset = bytes.len();
     write_u64(&mut bytes, 40, section_table_offset as u64);
@@ -153,21 +170,21 @@ fn elf64_image_with_symbols(machine: u16) -> Vec<u8> {
     bytes.resize(section_table_offset + 4 * 64, 0);
 
     let symtab_base = section_table_offset + 64;
-    write_u32(&mut bytes, symtab_base, 1);
-    write_u32(&mut bytes, symtab_base + 4, 2);
+    write_u32(&mut bytes, symtab_base, symbol_section_name_offset);
+    write_u32(&mut bytes, symtab_base + 4, symbol_section_kind);
     write_u64(&mut bytes, symtab_base + 24, symbol_table_offset as u64);
     write_u64(&mut bytes, symtab_base + 32, 3 * 24);
     write_u32(&mut bytes, symtab_base + 40, 2);
     write_u64(&mut bytes, symtab_base + 56, 24);
 
     let strtab_base = section_table_offset + 128;
-    write_u32(&mut bytes, strtab_base, 9);
+    write_u32(&mut bytes, strtab_base, string_section_name_offset);
     write_u32(&mut bytes, strtab_base + 4, 3);
     write_u64(&mut bytes, strtab_base + 24, symbol_names_offset as u64);
     write_u64(&mut bytes, strtab_base + 32, symbol_names.len() as u64);
 
     let shstrtab_base = section_table_offset + 192;
-    write_u32(&mut bytes, shstrtab_base, 17);
+    write_u32(&mut bytes, shstrtab_base, shstrtab_name_offset);
     write_u32(&mut bytes, shstrtab_base + 4, 3);
     write_u64(&mut bytes, shstrtab_base + 24, section_names_offset as u64);
     write_u64(&mut bytes, shstrtab_base + 32, section_names.len() as u64);
@@ -493,6 +510,22 @@ fn workload_boot_image_preserves_elf_symbol_summary_round_trip() {
 }
 
 #[test]
+fn workload_boot_image_preserves_elf_dynamic_symbol_summary_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_dynamic_symbols(243)).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+
+    assert_eq!(round_trip_metadata.symbol_count(), 2);
+    assert_eq!(round_trip_metadata.function_symbol_count(), 1);
+    assert_eq!(round_trip_metadata.object_symbol_count(), 1);
+}
+
+#[test]
 fn workload_boot_image_preserves_elf_dynamic_table_round_trip() {
     let image = BootImage::from_elf64_le(&elf64_image_with_dynamic_table(243, 2)).unwrap();
 
@@ -617,11 +650,17 @@ fn workload_manifest_identity_includes_elf_tls_metadata() {
 fn workload_manifest_identity_includes_elf_symbol_summary() {
     let plain = BootImage::from_elf64_le(&elf64_image(243)).unwrap();
     let symbols = BootImage::from_elf64_le(&elf64_image_with_symbols(243)).unwrap();
+    let dynamic_symbols = BootImage::from_elf64_le(&elf64_image_with_dynamic_symbols(243)).unwrap();
 
     assert_eq!(plain.entry(), symbols.entry());
     assert_eq!(plain.segments(), symbols.segments());
+    assert_eq!(plain.segments(), dynamic_symbols.segments());
     assert_eq!(plain.elf_metadata().unwrap().symbol_count(), 0);
     assert_eq!(symbols.elf_metadata().unwrap().symbol_count(), 2);
+    assert_eq!(
+        dynamic_symbols.elf_metadata().unwrap().symbol_count(),
+        symbols.elf_metadata().unwrap().symbol_count()
+    );
 
     let plain_manifest = WorkloadManifest::builder(id("same"), plain)
         .build()
@@ -629,8 +668,15 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
     let symbol_manifest = WorkloadManifest::builder(id("same"), symbols)
         .build()
         .unwrap();
+    let dynamic_symbol_manifest = WorkloadManifest::builder(id("same"), dynamic_symbols)
+        .build()
+        .unwrap();
 
     assert_ne!(plain_manifest.identity(), symbol_manifest.identity());
+    assert_ne!(
+        plain_manifest.identity(),
+        dynamic_symbol_manifest.identity()
+    );
 }
 
 #[test]

@@ -4,6 +4,7 @@ use crate::error::{invalid_elf, BootElfError, BootError};
 
 const SHT_NOTE: u32 = 7;
 const SHT_SYMTAB: u32 = 2;
+const SHT_DYNSYM: u32 = 11;
 const STB_LOCAL: u8 = 0;
 const STB_GLOBAL: u8 = 1;
 const STB_WEAK: u8 = 2;
@@ -326,7 +327,7 @@ fn summarize_elf64_symbol_table(
     endian: BootElfEndian,
     summary: &mut ElfSectionSummary,
 ) {
-    if section.kind != SHT_SYMTAB
+    if !matches!(section.kind, SHT_SYMTAB | SHT_DYNSYM)
         || section.entry_size < 24
         || u64::from(section.link) >= section_count
     {
@@ -371,7 +372,7 @@ fn summarize_elf32_symbol_table(
     endian: BootElfEndian,
     summary: &mut ElfSectionSummary,
 ) {
-    if section.kind != SHT_SYMTAB
+    if !matches!(section.kind, SHT_SYMTAB | SHT_DYNSYM)
         || section.entry_size < 16
         || u64::from(section.link) >= section_count
     {

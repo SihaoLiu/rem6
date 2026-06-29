@@ -147,6 +147,25 @@ pub(crate) fn riscv64_elf_with_tbss(entry: u64, physical: u64, payload: &[u8]) -
 }
 
 pub(crate) fn riscv64_elf_with_symbols(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
+    riscv64_elf_with_symbol_section(entry, physical, payload, ".symtab", 2, ".strtab")
+}
+
+pub(crate) fn riscv64_elf_with_dynamic_symbols(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+) -> Vec<u8> {
+    riscv64_elf_with_symbol_section(entry, physical, payload, ".dynsym", 11, ".dynstr")
+}
+
+fn riscv64_elf_with_symbol_section(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+    symbol_section_name: &str,
+    symbol_section_kind: u32,
+    string_section_name: &str,
+) -> Vec<u8> {
     let mut bytes = riscv64_elf(entry, physical, payload);
     let symbol_names = b"\0entry_func\0data_obj\0";
     let symbol_names_offset = bytes.len();
@@ -167,9 +186,13 @@ pub(crate) fn riscv64_elf_with_symbols(entry: u64, physical: u64, payload: &[u8]
     write_u64(&mut bytes, object_base + 8, physical + 0x1000);
     write_u64(&mut bytes, object_base + 16, 8);
 
-    let section_names = b"\0.symtab\0.strtab\0.shstrtab\0";
+    let symbol_section_name_offset = 1;
+    let string_section_name_offset =
+        symbol_section_name_offset + symbol_section_name.len() as u32 + 1;
+    let shstrtab_name_offset = string_section_name_offset + string_section_name.len() as u32 + 1;
+    let section_names = format!("\0{symbol_section_name}\0{string_section_name}\0.shstrtab\0");
     let section_names_offset = bytes.len();
-    bytes.extend_from_slice(section_names);
+    bytes.extend_from_slice(section_names.as_bytes());
 
     let section_table_offset = bytes.len();
     write_u64(&mut bytes, 40, section_table_offset as u64);
@@ -179,21 +202,21 @@ pub(crate) fn riscv64_elf_with_symbols(entry: u64, physical: u64, payload: &[u8]
     bytes.resize(section_table_offset + 4 * 64, 0);
 
     let symtab_base = section_table_offset + 64;
-    write_u32(&mut bytes, symtab_base, 1);
-    write_u32(&mut bytes, symtab_base + 4, 2);
+    write_u32(&mut bytes, symtab_base, symbol_section_name_offset);
+    write_u32(&mut bytes, symtab_base + 4, symbol_section_kind);
     write_u64(&mut bytes, symtab_base + 24, symbol_table_offset as u64);
     write_u64(&mut bytes, symtab_base + 32, 3 * 24);
     write_u32(&mut bytes, symtab_base + 40, 2);
     write_u64(&mut bytes, symtab_base + 56, 24);
 
     let strtab_base = section_table_offset + 128;
-    write_u32(&mut bytes, strtab_base, 9);
+    write_u32(&mut bytes, strtab_base, string_section_name_offset);
     write_u32(&mut bytes, strtab_base + 4, 3);
     write_u64(&mut bytes, strtab_base + 24, symbol_names_offset as u64);
     write_u64(&mut bytes, strtab_base + 32, symbol_names.len() as u64);
 
     let shstrtab_base = section_table_offset + 192;
-    write_u32(&mut bytes, shstrtab_base, 17);
+    write_u32(&mut bytes, shstrtab_base, shstrtab_name_offset);
     write_u32(&mut bytes, shstrtab_base + 4, 3);
     write_u64(&mut bytes, shstrtab_base + 24, section_names_offset as u64);
     write_u64(&mut bytes, shstrtab_base + 32, section_names.len() as u64);
