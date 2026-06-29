@@ -297,6 +297,51 @@ fn dram_bank_low_power_self_refresh_entries(json: &Value) -> Vec<(u64, u64, u64)
         .collect()
 }
 
+fn dram_bank_low_power_exits(json: &Value) -> Vec<(u64, u64, u64, u64, u64)> {
+    json.pointer("/dram/targets")
+        .and_then(Value::as_array)
+        .expect("DRAM targets")
+        .iter()
+        .flat_map(|target| {
+            let target_id = target
+                .get("target")
+                .and_then(Value::as_u64)
+                .expect("DRAM target id");
+            target
+                .get("ports")
+                .and_then(Value::as_array)
+                .expect("DRAM target ports")
+                .iter()
+                .flat_map(move |port| {
+                    let port_id = port
+                        .get("port")
+                        .and_then(Value::as_u64)
+                        .expect("DRAM port id");
+                    port.get("banks")
+                        .and_then(Value::as_array)
+                        .expect("DRAM port banks")
+                        .iter()
+                        .map(move |bank| {
+                            let bank_id = bank
+                                .get("bank")
+                                .and_then(Value::as_u64)
+                                .expect("DRAM bank id");
+                            let exits = bank
+                                .pointer("/low_power/exits")
+                                .and_then(Value::as_u64)
+                                .expect("DRAM bank low-power exits");
+                            let exit_latency_ticks = bank
+                                .pointer("/low_power/exit_latency_ticks")
+                                .and_then(Value::as_u64)
+                                .expect("DRAM bank low-power exit latency");
+                            (target_id, port_id, bank_id, exits, exit_latency_ticks)
+                        })
+                })
+        })
+        .filter(|(_, _, _, exits, _)| *exits > 0)
+        .collect()
+}
+
 #[test]
 fn rem6_run_exposes_hbm2_jedec_terminal_refresh_across_scheduler_banks() {
     let program = riscv64_program(&[
@@ -463,6 +508,164 @@ fn rem6_run_exposes_hbm2_jedec_terminal_refresh_across_scheduler_banks() {
                 "monotonic",
             );
         }
+    }
+}
+
+#[test]
+fn rem6_run_exposes_lpddr_low_power_exits_across_multiple_dram_banks() {
+    const DATA_A_OFFSET: usize = 512;
+    const DATA_B_OFFSET: usize = 576;
+    const DATA_B_DELTA: i32 = (DATA_B_OFFSET - DATA_A_OFFSET) as i32;
+
+    let mut words = vec![
+        u_type(0, 2, 0x17),                            // auipc x2, 0
+        i_type(DATA_A_OFFSET as i32, 2, 0x0, 2, 0x13), // addi x2, x2, data A
+        i_type(0, 2, 0x3, 5, 0x03),                    // ld x5, 0(x2)
+        i_type(DATA_B_DELTA, 2, 0x0, 3, 0x13),         // addi x3, x2, data B
+        i_type(0, 3, 0x3, 6, 0x03),                    // ld x6, 0(x3)
+    ];
+    words.extend(std::iter::repeat_n(i_type(0, 0, 0x0, 0, 0x13), 48));
+    words.extend([
+        i_type(0, 2, 0x3, 7, 0x03), // ld x7, 0(x2)
+        i_type(0, 3, 0x3, 8, 0x03), // ld x8, 0(x3)
+        0x0000_0073,                // ecall
+    ]);
+    let mut program = riscv64_program(&words);
+    program.resize(DATA_B_OFFSET + 8, 0);
+    program[DATA_A_OFFSET..DATA_A_OFFSET + 8]
+        .copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program[DATA_B_OFFSET..DATA_B_OFFSET + 8]
+        .copy_from_slice(&0x8877_6655_4433_2211u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("lpddr-multi-bank-low-power-exits", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "900",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--dram-memory-profile",
+            "lpddr",
+            "--dram-low-power-precharge-powerdown-entry-delay",
+            "2",
+            "--dram-low-power-self-refresh-entry-delay",
+            "5",
+            "--dram-low-power-exit-latency",
+            "1",
+            "--dram-low-power-self-refresh-exit-latency",
+            "3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x5\":\"0x1122334455667788\""));
+    assert!(stdout.contains("\"x6\":\"0x8877665544332211\""));
+    assert!(stdout.contains("\"x7\":\"0x1122334455667788\""));
+    assert!(stdout.contains("\"x8\":\"0x8877665544332211\""));
+    assert_eq!(
+        json.pointer("/dram/profile/technology")
+            .and_then(Value::as_str),
+        Some("lpddr")
+    );
+
+    let banks_with_exits = dram_bank_low_power_exits(&json);
+    assert!(
+        banks_with_exits.len() >= 2,
+        "expected at least two LPDDR scheduler banks with low-power exits: {banks_with_exits:?}\n{stdout}"
+    );
+    let aggregate_exits = json_u64(&json, "/dram/low_power/exits");
+    let aggregate_exit_latency = json_u64(&json, "/dram/low_power/exit_latency_ticks");
+    assert!(aggregate_exits >= 2);
+    assert!(aggregate_exit_latency >= 2);
+    assert_eq!(
+        json_u64(&json, "/memory_resources/dram/low_power/exits"),
+        aggregate_exits
+    );
+    assert_eq!(
+        json_u64(&json, "/memory_resources/dram/low_power/exit_latency_ticks"),
+        aggregate_exit_latency
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.low_power.exits",
+        "Count",
+        aggregate_exits,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.low_power.exit_latency_ticks",
+        "Tick",
+        aggregate_exit_latency,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.low_power.exits",
+        "Count",
+        aggregate_exits,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.low_power.exit_latency_ticks",
+        "Tick",
+        aggregate_exit_latency,
+        "monotonic",
+    );
+
+    for (target, port, bank, exits, exit_latency_ticks) in banks_with_exits {
+        assert!(exit_latency_ticks >= exits);
+        assert_stat(
+            &stdout,
+            &format!("sim.memory.dram.target{target}.port{port}.bank{bank}.low_power.exits"),
+            "Count",
+            exits,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!(
+                "sim.memory.dram.target{target}.port{port}.bank{bank}.low_power.exit_latency_ticks"
+            ),
+            "Tick",
+            exit_latency_ticks,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!(
+                "sim.memory.resources.dram.target{target}.port{port}.bank{bank}.low_power.exits"
+            ),
+            "Count",
+            exits,
+            "monotonic",
+        );
+        assert_stat(
+            &stdout,
+            &format!("sim.memory.resources.dram.target{target}.port{port}.bank{bank}.low_power.exit_latency_ticks"),
+            "Tick",
+            exit_latency_ticks,
+            "monotonic",
+        );
     }
 }
 
