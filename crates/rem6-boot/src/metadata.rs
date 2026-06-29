@@ -81,6 +81,9 @@ pub struct BootElfMetadata {
     architecture: BootElfArchitecture,
     operating_system: BootElfOperatingSystem,
     has_tls: bool,
+    symbol_count: u64,
+    function_symbol_count: u64,
+    object_symbol_count: u64,
     program_header_table: BootElfProgramHeaderTable,
 }
 
@@ -103,6 +106,9 @@ impl BootElfMetadata {
             architecture,
             operating_system,
             has_tls: false,
+            symbol_count: 0,
+            function_symbol_count: 0,
+            object_symbol_count: 0,
             program_header_table: BootElfProgramHeaderTable::new(0, 0, 0),
         }
     }
@@ -117,6 +123,18 @@ impl BootElfMetadata {
 
     pub(crate) const fn with_tls(mut self, has_tls: bool) -> Self {
         self.has_tls = has_tls;
+        self
+    }
+
+    pub(crate) const fn with_symbol_summary(
+        mut self,
+        symbol_count: u64,
+        function_symbol_count: u64,
+        object_symbol_count: u64,
+    ) -> Self {
+        self.symbol_count = symbol_count;
+        self.function_symbol_count = function_symbol_count;
+        self.object_symbol_count = object_symbol_count;
         self
     }
 
@@ -150,6 +168,18 @@ impl BootElfMetadata {
 
     pub const fn has_tls(&self) -> bool {
         self.has_tls
+    }
+
+    pub const fn symbol_count(&self) -> u64 {
+        self.symbol_count
+    }
+
+    pub const fn function_symbol_count(&self) -> u64 {
+        self.function_symbol_count
+    }
+
+    pub const fn object_symbol_count(&self) -> u64 {
+        self.object_symbol_count
     }
 
     pub const fn program_header_table(&self) -> BootElfProgramHeaderTable {

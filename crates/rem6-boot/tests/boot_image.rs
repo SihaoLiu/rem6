@@ -256,6 +256,58 @@ fn add_elf64_sections(bytes: &mut Vec<u8>, sections: &[ElfSectionSpec<'_>]) {
     write_u64(bytes, shstr_base + 32, name_data.len() as u64);
 }
 
+fn add_elf64_symbol_table(bytes: &mut Vec<u8>) {
+    let symbol_names = b"\0entry_func\0data_obj\0";
+    let symbol_names_offset = bytes.len() as u64;
+    bytes.extend_from_slice(symbol_names);
+
+    let symbol_table_offset = bytes.len() as u64;
+    bytes.resize(bytes.len() + 3 * 24, 0);
+    let function_base = symbol_table_offset as usize + 24;
+    write_u32(bytes, function_base, 1);
+    bytes[function_base + 4] = 0x12;
+    write_u16(bytes, function_base + 6, 1);
+    write_u64(bytes, function_base + 8, 0x8004);
+    write_u64(bytes, function_base + 16, 4);
+    let object_base = symbol_table_offset as usize + 48;
+    write_u32(bytes, object_base, 12);
+    bytes[object_base + 4] = 0x11;
+    write_u16(bytes, object_base + 6, 1);
+    write_u64(bytes, object_base + 8, 0x9000);
+    write_u64(bytes, object_base + 16, 8);
+
+    let section_names = b"\0.symtab\0.strtab\0.shstrtab\0";
+    let section_names_offset = bytes.len() as u64;
+    bytes.extend_from_slice(section_names);
+
+    let section_table_offset = bytes.len() as u64;
+    write_u64(bytes, 40, section_table_offset);
+    write_u16(bytes, 58, 64);
+    write_u16(bytes, 60, 4);
+    write_u16(bytes, 62, 3);
+    bytes.resize(bytes.len() + 4 * 64, 0);
+
+    let symtab_base = section_table_offset as usize + 64;
+    write_u32(bytes, symtab_base, 1);
+    write_u32(bytes, symtab_base + 4, 2);
+    write_u64(bytes, symtab_base + 24, symbol_table_offset);
+    write_u64(bytes, symtab_base + 32, 3 * 24);
+    write_u32(bytes, symtab_base + 40, 2);
+    write_u64(bytes, symtab_base + 56, 24);
+
+    let strtab_base = section_table_offset as usize + 128;
+    write_u32(bytes, strtab_base, 9);
+    write_u32(bytes, strtab_base + 4, 3);
+    write_u64(bytes, strtab_base + 24, symbol_names_offset);
+    write_u64(bytes, strtab_base + 32, symbol_names.len() as u64);
+
+    let shstrtab_base = section_table_offset as usize + 192;
+    write_u32(bytes, shstrtab_base, 17);
+    write_u32(bytes, shstrtab_base + 4, 3);
+    write_u64(bytes, shstrtab_base + 24, section_names_offset);
+    write_u64(bytes, shstrtab_base + 32, section_names.len() as u64);
+}
+
 fn add_elf32_sections(bytes: &mut Vec<u8>, sections: &[ElfSectionSpec<'_>]) {
     let mut name_data = vec![0];
     let mut name_offsets = Vec::new();
@@ -1079,6 +1131,58 @@ fn boot_image_records_tls_from_tbss_section_even_with_header_os() {
 
     assert_eq!(metadata.operating_system(), BootElfOperatingSystem::Linux);
     assert!(metadata.has_tls());
+}
+
+#[test]
+fn boot_image_records_symbol_table_summary() {
+    let mut elf = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_symbol_table(&mut elf);
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+
+    assert_eq!(metadata.symbol_count(), 2);
+    assert_eq!(metadata.function_symbol_count(), 1);
+    assert_eq!(metadata.object_symbol_count(), 1);
+}
+
+#[test]
+fn boot_image_ignores_bad_symbol_table_contents() {
+    let mut elf = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    elf[7] = 3;
+    add_elf64_symbol_table(&mut elf);
+    let section_table_offset = u64::from_le_bytes(elf[40..48].try_into().unwrap()) as usize;
+    write_u64(&mut elf, section_table_offset + 64 + 24, u64::MAX - 7);
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+
+    assert_eq!(metadata.operating_system(), BootElfOperatingSystem::Linux);
+    assert_eq!(metadata.symbol_count(), 0);
 }
 
 #[test]

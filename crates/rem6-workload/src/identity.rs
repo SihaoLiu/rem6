@@ -1230,6 +1230,15 @@ fn hash_elf_metadata(hash: &mut u64, metadata: Option<BootElfMetadata>) {
             if metadata.has_tls() {
                 hash_str(hash, "elf.tls");
             }
+            if metadata.symbol_count() != 0
+                || metadata.function_symbol_count() != 0
+                || metadata.object_symbol_count() != 0
+            {
+                hash_str(hash, "elf.symbols");
+                hash_u64(hash, metadata.symbol_count());
+                hash_u64(hash, metadata.function_symbol_count());
+                hash_u64(hash, metadata.object_symbol_count());
+            }
         }
         None => hash_u64(hash, 0),
     }

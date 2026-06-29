@@ -156,6 +156,27 @@ pub(super) fn run_stats_output(
         StatResetPolicy::Constant,
         u64::from(inputs.metadata.has_tls()),
     )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.symbols",
+        "Count",
+        StatResetPolicy::Constant,
+        inputs.metadata.symbol_count(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.function_symbols",
+        "Count",
+        StatResetPolicy::Constant,
+        inputs.metadata.function_symbol_count(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.object_symbols",
+        "Count",
+        StatResetPolicy::Constant,
+        inputs.metadata.object_symbol_count(),
+    )?;
     let program_header_table = inputs.metadata.program_header_table();
     increment_stat(
         &mut stats,

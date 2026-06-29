@@ -315,6 +315,11 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
             operating_system,
         )
         .with_tls(section_summary.has_tls())
+        .with_symbol_summary(
+            section_summary.symbol_count(),
+            section_summary.function_symbol_count(),
+            section_summary.object_symbol_count(),
+        )
         .with_program_header_table(
             BootElfProgramHeaderTable::new(
                 program_header_offset,
@@ -479,6 +484,11 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
             operating_system,
         )
         .with_tls(section_summary.has_tls())
+        .with_symbol_summary(
+            section_summary.symbol_count(),
+            section_summary.function_symbol_count(),
+            section_summary.object_symbol_count(),
+        )
         .with_program_header_table(
             BootElfProgramHeaderTable::new(
                 program_header_offset,
