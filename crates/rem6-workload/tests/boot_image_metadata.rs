@@ -280,6 +280,17 @@ fn elf64_image_with_dynamic_table(machine: u16, needed_count: usize) -> Vec<u8> 
     bytes
 }
 
+fn elf64_image_with_dynamic_hashes(machine: u16, sysv_hash: u64, gnu_hash: u64) -> Vec<u8> {
+    let mut bytes = elf64_image_with_dynamic_table(machine, 0);
+    write_u64(&mut bytes, 0x180, 4);
+    write_u64(&mut bytes, 0x188, sysv_hash);
+    write_u64(&mut bytes, 0x190, 0x6fff_fef5);
+    write_u64(&mut bytes, 0x198, gnu_hash);
+    write_u64(&mut bytes, 0x1a0, 0);
+    write_u64(&mut bytes, 0x1a8, 0);
+    bytes
+}
+
 fn elf64_image_with_dynamic_libraries(machine: u16, libraries: &[&str]) -> Vec<u8> {
     elf64_image_with_dynamic_strings(
         machine,
@@ -600,6 +611,29 @@ fn workload_boot_image_preserves_elf_dynamic_table_round_trip() {
 }
 
 #[test]
+fn workload_boot_image_preserves_elf_dynamic_hash_metadata_round_trip() {
+    let image =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_hashes(243, 0x8240, 0x8260)).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = round_trip_metadata.dynamic_table();
+
+    assert_eq!(
+        dynamic.sysv_hash_virtual_address(),
+        Some(Address::new(0x8240)),
+    );
+    assert_eq!(
+        dynamic.gnu_hash_virtual_address(),
+        Some(Address::new(0x8260)),
+    );
+}
+
+#[test]
 fn workload_boot_image_preserves_elf_dynamic_needed_names_round_trip() {
     let image = BootImage::from_elf64_le(&elf64_image_with_dynamic_libraries(
         243,
@@ -807,6 +841,49 @@ fn workload_manifest_identity_includes_elf_dynamic_table_summary() {
         .unwrap();
 
     assert_ne!(one_manifest.identity(), two_manifest.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_dynamic_hash_metadata() {
+    let baseline_source =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_hashes(243, 0x8240, 0x8260)).unwrap();
+    let sysv_source =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_hashes(243, 0x8250, 0x8260)).unwrap();
+    let gnu_source =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_hashes(243, 0x8240, 0x8270)).unwrap();
+
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .sysv_hash_virtual_address(),
+        Some(Address::new(0x8240)),
+    );
+    assert_eq!(
+        gnu_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .gnu_hash_virtual_address(),
+        Some(Address::new(0x8270)),
+    );
+    let baseline = boot_image_with_metadata(baseline_source.elf_metadata().unwrap());
+    let sysv = boot_image_with_metadata(sysv_source.elf_metadata().unwrap());
+    let gnu = boot_image_with_metadata(gnu_source.elf_metadata().unwrap());
+
+    assert_eq!(baseline.entry(), sysv.entry());
+    assert_eq!(baseline.segments(), sysv.segments());
+    assert_eq!(baseline.segments(), gnu.segments());
+
+    let baseline_manifest = WorkloadManifest::builder(id("same"), baseline)
+        .build()
+        .unwrap();
+    let sysv_manifest = WorkloadManifest::builder(id("same"), sysv).build().unwrap();
+    let gnu_manifest = WorkloadManifest::builder(id("same"), gnu).build().unwrap();
+
+    assert_ne!(baseline_manifest.identity(), sysv_manifest.identity());
+    assert_ne!(baseline_manifest.identity(), gnu_manifest.identity());
 }
 
 #[test]

@@ -294,9 +294,10 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
         .unwrap_or_else(|| "null".to_string());
     let rpath = json_string_array(table.rpath());
     let runpath = json_string_array(table.runpath());
+    let hash = elf_dynamic_hash_json(table);
     let relocations = elf_dynamic_relocations_json(table);
     format!(
-        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":{},\"soname\":{},\"rpath\":{},\"runpath\":{},\"relocations\":{}}}",
+        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":{},\"soname\":{},\"rpath\":{},\"runpath\":{},\"hash\":{},\"relocations\":{}}}",
         table.segment_count(),
         file_offset,
         virtual_address,
@@ -307,7 +308,16 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
         soname,
         rpath,
         runpath,
+        hash,
         relocations
+    )
+}
+
+fn elf_dynamic_hash_json(table: &BootElfDynamicTable) -> String {
+    format!(
+        "{{\"sysv\":{},\"gnu\":{}}}",
+        address_json(table.sysv_hash_virtual_address()),
+        address_json(table.gnu_hash_virtual_address())
     )
 }
 

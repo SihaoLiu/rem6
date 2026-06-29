@@ -1178,14 +1178,14 @@ complete.
 extended program-header-count (`PN_XNUM`) loading, program-header-table metadata,
 `PT_INTERP` interpreter reporting/rejection, `.tbss`/`PT_TLS` TLS metadata,
 `PT_GNU_STACK` stack-exec metadata, symbol/dynamic-symbol counts, dynamic
-needed/path/relocation and ABI-note OS metadata, plus RV64F/RV64D scalar FP slices.
+needed/path/relocation/hash and ABI-note OS metadata, plus RV64F/RV64D scalar FP slices.
 
 **Not migrated:** Complete `ext/libelf`, `ext/libfdt`, and `ext/softfloat` parity.
 
 **Evidence:** CLI static RISC-V smoke tests cover ELF64 extended program-header
 counts, `PT_INTERP` JSON/stats and malformed-path rejection, `.tbss`/`PT_TLS`
 TLS metadata, `PT_GNU_STACK` stack metadata, symbol/dynamic-symbol counts,
-dynamic needed/path/relocation JSON/stats, ELF32 extended counts, ABI-note OS, DTB, and RV64F/RV64D tests.
+dynamic needed/path/relocation/hash JSON/stats, ELF32 extended counts, ABI-note OS, DTB, and RV64F/RV64D tests.
 
 **Next evidence:** Expand loader breadth beyond current extended-numbering
 slices and soft-float parity.

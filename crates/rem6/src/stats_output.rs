@@ -268,6 +268,38 @@ pub(super) fn run_stats_output(
     )?;
     increment_stat(
         &mut stats,
+        "sim.elf.dynamic.hash.sysv.present",
+        "Count",
+        StatResetPolicy::Constant,
+        u64::from(dynamic_table.sysv_hash_virtual_address().is_some()),
+    )?;
+    if let Some(address) = dynamic_table.sysv_hash_virtual_address() {
+        increment_stat(
+            &mut stats,
+            "sim.elf.dynamic.hash.sysv.virtual_address",
+            "Address",
+            StatResetPolicy::Constant,
+            address.get(),
+        )?;
+    }
+    increment_stat(
+        &mut stats,
+        "sim.elf.dynamic.hash.gnu.present",
+        "Count",
+        StatResetPolicy::Constant,
+        u64::from(dynamic_table.gnu_hash_virtual_address().is_some()),
+    )?;
+    if let Some(address) = dynamic_table.gnu_hash_virtual_address() {
+        increment_stat(
+            &mut stats,
+            "sim.elf.dynamic.hash.gnu.virtual_address",
+            "Address",
+            StatResetPolicy::Constant,
+            address.get(),
+        )?;
+    }
+    increment_stat(
+        &mut stats,
         "sim.elf.dynamic.rela.entries",
         "Count",
         StatResetPolicy::Constant,

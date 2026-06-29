@@ -378,6 +378,25 @@ pub(crate) fn riscv64_elf_with_dynamic_table(entry: u64, physical: u64, payload:
     bytes
 }
 
+pub(crate) fn riscv64_elf_with_dynamic_hashes(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut bytes = riscv64_elf_with_dynamic_table(entry, physical, payload);
+    let dynamic_offset = 0x180usize;
+    let hash_entry = dynamic_offset + 16 * 16;
+    write_u64(&mut bytes, 152, 19 * 16);
+    write_u64(&mut bytes, 160, 19 * 16);
+    write_u64(&mut bytes, hash_entry, 4);
+    write_u64(&mut bytes, hash_entry + 8, physical + 0x3c0);
+    write_u64(&mut bytes, hash_entry + 16, 0x6fff_fef5);
+    write_u64(&mut bytes, hash_entry + 24, physical + 0x3e0);
+    write_u64(&mut bytes, hash_entry + 32, 0);
+    write_u64(&mut bytes, hash_entry + 40, 0);
+    bytes
+}
+
 pub(crate) fn riscv64_elf_extended_phnum(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
     let mut bytes = riscv64_elf(entry, physical, payload);
     let section_table_offset = bytes.len();

@@ -126,6 +126,8 @@ pub struct BootElfDynamicTable {
     soname: Option<String>,
     rpath: Vec<String>,
     runpath: Vec<String>,
+    sysv_hash_virtual_address: Option<Address>,
+    gnu_hash_virtual_address: Option<Address>,
     rela_relocations: BootElfDynamicRelocationTable,
     rel_relocations: BootElfDynamicRelocationTable,
     plt_relocations: BootElfDynamicRelocationTable,
@@ -145,6 +147,8 @@ impl BootElfDynamicTable {
             soname: None,
             rpath: Vec::new(),
             runpath: Vec::new(),
+            sysv_hash_virtual_address: None,
+            gnu_hash_virtual_address: None,
             rela_relocations: BootElfDynamicRelocationTable::default(),
             rel_relocations: BootElfDynamicRelocationTable::default(),
             plt_relocations: BootElfDynamicRelocationTable::default(),
@@ -163,6 +167,8 @@ impl BootElfDynamicTable {
         soname: Option<String>,
         rpath: Vec<String>,
         runpath: Vec<String>,
+        sysv_hash_virtual_address: Option<Address>,
+        gnu_hash_virtual_address: Option<Address>,
         rela_relocations: BootElfDynamicRelocationTable,
         rel_relocations: BootElfDynamicRelocationTable,
         plt_relocations: BootElfDynamicRelocationTable,
@@ -179,6 +185,8 @@ impl BootElfDynamicTable {
             self.soname = soname;
             self.rpath = rpath;
             self.runpath = runpath;
+            self.sysv_hash_virtual_address = sysv_hash_virtual_address;
+            self.gnu_hash_virtual_address = gnu_hash_virtual_address;
             self.rela_relocations = rela_relocations;
             self.rel_relocations = rel_relocations;
             self.plt_relocations = plt_relocations;
@@ -244,6 +252,14 @@ impl BootElfDynamicTable {
 
     pub fn runpath_name_bytes(&self) -> u64 {
         self.runpath.iter().map(|path| path.len() as u64).sum()
+    }
+
+    pub const fn sysv_hash_virtual_address(&self) -> Option<Address> {
+        self.sysv_hash_virtual_address
+    }
+
+    pub const fn gnu_hash_virtual_address(&self) -> Option<Address> {
+        self.gnu_hash_virtual_address
     }
 
     pub const fn rela_relocations(&self) -> BootElfDynamicRelocationTable {

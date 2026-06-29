@@ -5,6 +5,7 @@ const PT_LOAD: u32 = 1;
 const DT_NULL: u64 = 0;
 const DT_NEEDED: u64 = 1;
 const DT_PLTRELSZ: u64 = 2;
+const DT_HASH: u64 = 4;
 const DT_RELA: u64 = 7;
 const DT_RELASZ: u64 = 8;
 const DT_RELAENT: u64 = 9;
@@ -18,6 +19,7 @@ const DT_RELENT: u64 = 19;
 const DT_PLTREL: u64 = 20;
 const DT_JMPREL: u64 = 23;
 const DT_RUNPATH: u64 = 29;
+const DT_GNU_HASH: u64 = 0x6fff_fef5;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ElfLoadMapping {
@@ -33,6 +35,8 @@ pub(crate) struct ElfDynamicTableSummary {
     pub(crate) soname: Option<String>,
     pub(crate) rpath: Vec<String>,
     pub(crate) runpath: Vec<String>,
+    pub(crate) sysv_hash_virtual_address: Option<u64>,
+    pub(crate) gnu_hash_virtual_address: Option<u64>,
     pub(crate) rela_relocations: ElfDynamicRelocationSummary,
     pub(crate) rel_relocations: ElfDynamicRelocationSummary,
     pub(crate) plt_relocations: ElfDynamicRelocationSummary,
@@ -143,6 +147,8 @@ pub(crate) fn dynamic_table_counts(
     let mut soname_offset = None;
     let mut rpath_offsets = Vec::new();
     let mut runpath_offsets = Vec::new();
+    let mut sysv_hash_virtual_address = None;
+    let mut gnu_hash_virtual_address = None;
     let mut rela_relocations = ElfDynamicRelocationSummary::default();
     let mut rel_relocations = ElfDynamicRelocationSummary::default();
     let mut plt_relocations = ElfDynamicRelocationSummary::default();
@@ -179,6 +185,8 @@ pub(crate) fn dynamic_table_counts(
                 soname: strings.soname,
                 rpath: strings.rpath,
                 runpath: strings.runpath,
+                sysv_hash_virtual_address,
+                gnu_hash_virtual_address,
                 rela_relocations,
                 rel_relocations,
                 plt_relocations,
@@ -187,10 +195,14 @@ pub(crate) fn dynamic_table_counts(
         }
         if tag == DT_NEEDED {
             needed_offsets.push(value);
+        } else if tag == DT_HASH {
+            sysv_hash_virtual_address = Some(value);
         } else if tag == DT_STRTAB {
             string_table = Some(value);
         } else if tag == DT_STRSZ {
             string_table_size = Some(value);
+        } else if tag == DT_GNU_HASH {
+            gnu_hash_virtual_address = Some(value);
         } else if tag == DT_SONAME {
             soname_offset = Some(value);
         } else if tag == DT_RPATH {

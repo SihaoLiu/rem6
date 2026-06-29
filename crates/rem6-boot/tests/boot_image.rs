@@ -918,6 +918,102 @@ fn boot_image_records_elf64_dynamic_table_metadata() {
 }
 
 #[test]
+fn boot_image_records_elf64_dynamic_hash_metadata() {
+    let dynamic = [
+        4u64.to_le_bytes(),
+        0x8000_0240u64.to_le_bytes(),
+        0x6fff_fef5u64.to_le_bytes(),
+        0x8000_0260u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf64_image(
+        0x8000_0200,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[(0x180, &dynamic), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(
+        dynamic.sysv_hash_virtual_address(),
+        Some(Address::new(0x8000_0240)),
+    );
+    assert_eq!(
+        dynamic.gnu_hash_virtual_address(),
+        Some(Address::new(0x8000_0260)),
+    );
+}
+
+#[test]
+fn boot_image_records_elf32_dynamic_hash_metadata() {
+    let dynamic = [
+        4u32.to_le_bytes(),
+        0x8000_0240u32.to_le_bytes(),
+        0x6fff_fef5u32.to_le_bytes(),
+        0x8000_0260u32.to_le_bytes(),
+        0u32.to_le_bytes(),
+        0u32.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf32_image(
+        0x8000_0200,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[(0x180, &dynamic), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    let metadata = BootImage::from_elf32_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(
+        dynamic.sysv_hash_virtual_address(),
+        Some(Address::new(0x8000_0240)),
+    );
+    assert_eq!(
+        dynamic.gnu_hash_virtual_address(),
+        Some(Address::new(0x8000_0260)),
+    );
+}
+
+#[test]
 fn boot_image_resolves_elf64_dynamic_needed_libraries() {
     let strtab = b"\0libc.so.6\0libm.so.6\0librem6.so\0/opt/rem6/lib\0$ORIGIN/lib\0";
     let payload_offset = 0x2c0usize;
