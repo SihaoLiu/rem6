@@ -7,8 +7,8 @@ use crate::elf_dynamic::{
 use crate::elf_interpreter::read_interpreter;
 use crate::error::BootError;
 use crate::metadata::{
-    BootElfDynamicPltRelocationKind, BootElfDynamicRelocationTable, BootElfDynamicTable,
-    BootElfInterpreter,
+    BootElfDynamicPltRelocationKind, BootElfDynamicRelocationTable, BootElfDynamicSegment,
+    BootElfDynamicTable, BootElfInterpreter,
 };
 
 const PT_DYNAMIC: u32 = 2;
@@ -101,25 +101,32 @@ pub(crate) fn summarize_elf64_program_header(
                 endian,
                 load_mappings,
             )?;
-            metadata.dynamic_table = std::mem::take(&mut metadata.dynamic_table).with_segment(
-                file_offset,
-                Address::new(read_u64_at_u64(bytes, header_offset + 16, endian)?),
-                16,
-                summary.entry_count,
-                summary.needed_libraries.len() as u64,
-                summary.needed_libraries,
-                summary.soname,
-                summary.rpath,
-                summary.runpath,
-                summary.flags,
-                summary.flags_1,
-                summary.sysv_hash_virtual_address.map(Address::new),
-                summary.gnu_hash_virtual_address.map(Address::new),
-                relocation_table(summary.rela_relocations),
-                relocation_table(summary.rel_relocations),
-                relocation_table(summary.plt_relocations),
-                plt_relocation_kind(summary.plt_relocation_kind),
-            );
+            metadata.dynamic_table =
+                std::mem::take(&mut metadata.dynamic_table).with_segment(BootElfDynamicSegment {
+                    file_offset,
+                    virtual_address: Address::new(read_u64_at_u64(
+                        bytes,
+                        header_offset + 16,
+                        endian,
+                    )?),
+                    entry_size: 16,
+                    entry_count: summary.entry_count,
+                    needed_count: summary.needed_libraries.len() as u64,
+                    needed_libraries: summary.needed_libraries,
+                    soname: summary.soname,
+                    rpath: summary.rpath,
+                    runpath: summary.runpath,
+                    init_virtual_address: summary.init_virtual_address.map(Address::new),
+                    fini_virtual_address: summary.fini_virtual_address.map(Address::new),
+                    flags: summary.flags,
+                    flags_1: summary.flags_1,
+                    sysv_hash_virtual_address: summary.sysv_hash_virtual_address.map(Address::new),
+                    gnu_hash_virtual_address: summary.gnu_hash_virtual_address.map(Address::new),
+                    rela_relocations: relocation_table(summary.rela_relocations),
+                    rel_relocations: relocation_table(summary.rel_relocations),
+                    plt_relocations: relocation_table(summary.plt_relocations),
+                    plt_relocation_kind: plt_relocation_kind(summary.plt_relocation_kind),
+                });
             Ok(ElfProgramHeaderAction::Skip)
         }
         PT_INTERP => {
@@ -224,29 +231,32 @@ pub(crate) fn summarize_elf32_program_header(
                 endian,
                 load_mappings,
             )?;
-            metadata.dynamic_table = std::mem::take(&mut metadata.dynamic_table).with_segment(
-                file_offset,
-                Address::new(u64::from(read_u32_at_u64(
-                    bytes,
-                    header_offset + 8,
-                    endian,
-                )?)),
-                8,
-                summary.entry_count,
-                summary.needed_libraries.len() as u64,
-                summary.needed_libraries,
-                summary.soname,
-                summary.rpath,
-                summary.runpath,
-                summary.flags,
-                summary.flags_1,
-                summary.sysv_hash_virtual_address.map(Address::new),
-                summary.gnu_hash_virtual_address.map(Address::new),
-                relocation_table(summary.rela_relocations),
-                relocation_table(summary.rel_relocations),
-                relocation_table(summary.plt_relocations),
-                plt_relocation_kind(summary.plt_relocation_kind),
-            );
+            metadata.dynamic_table =
+                std::mem::take(&mut metadata.dynamic_table).with_segment(BootElfDynamicSegment {
+                    file_offset,
+                    virtual_address: Address::new(u64::from(read_u32_at_u64(
+                        bytes,
+                        header_offset + 8,
+                        endian,
+                    )?)),
+                    entry_size: 8,
+                    entry_count: summary.entry_count,
+                    needed_count: summary.needed_libraries.len() as u64,
+                    needed_libraries: summary.needed_libraries,
+                    soname: summary.soname,
+                    rpath: summary.rpath,
+                    runpath: summary.runpath,
+                    init_virtual_address: summary.init_virtual_address.map(Address::new),
+                    fini_virtual_address: summary.fini_virtual_address.map(Address::new),
+                    flags: summary.flags,
+                    flags_1: summary.flags_1,
+                    sysv_hash_virtual_address: summary.sysv_hash_virtual_address.map(Address::new),
+                    gnu_hash_virtual_address: summary.gnu_hash_virtual_address.map(Address::new),
+                    rela_relocations: relocation_table(summary.rela_relocations),
+                    rel_relocations: relocation_table(summary.rel_relocations),
+                    plt_relocations: relocation_table(summary.plt_relocations),
+                    plt_relocation_kind: plt_relocation_kind(summary.plt_relocation_kind),
+                });
             Ok(ElfProgramHeaderAction::Skip)
         }
         PT_INTERP => {

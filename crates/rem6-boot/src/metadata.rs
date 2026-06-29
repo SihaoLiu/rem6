@@ -114,6 +114,29 @@ pub enum BootElfDynamicPltRelocationKind {
     Rela,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BootElfDynamicSegment {
+    pub(crate) file_offset: u64,
+    pub(crate) virtual_address: Address,
+    pub(crate) entry_size: u16,
+    pub(crate) entry_count: u64,
+    pub(crate) needed_count: u64,
+    pub(crate) needed_libraries: Vec<String>,
+    pub(crate) soname: Option<String>,
+    pub(crate) rpath: Vec<String>,
+    pub(crate) runpath: Vec<String>,
+    pub(crate) init_virtual_address: Option<Address>,
+    pub(crate) fini_virtual_address: Option<Address>,
+    pub(crate) flags: Option<u64>,
+    pub(crate) flags_1: Option<u64>,
+    pub(crate) sysv_hash_virtual_address: Option<Address>,
+    pub(crate) gnu_hash_virtual_address: Option<Address>,
+    pub(crate) rela_relocations: BootElfDynamicRelocationTable,
+    pub(crate) rel_relocations: BootElfDynamicRelocationTable,
+    pub(crate) plt_relocations: BootElfDynamicRelocationTable,
+    pub(crate) plt_relocation_kind: Option<BootElfDynamicPltRelocationKind>,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BootElfDynamicTable {
     segment_count: u64,
@@ -126,6 +149,8 @@ pub struct BootElfDynamicTable {
     soname: Option<String>,
     rpath: Vec<String>,
     runpath: Vec<String>,
+    init_virtual_address: Option<Address>,
+    fini_virtual_address: Option<Address>,
     flags: Option<u64>,
     flags_1: Option<u64>,
     sysv_hash_virtual_address: Option<Address>,
@@ -149,6 +174,8 @@ impl BootElfDynamicTable {
             soname: None,
             rpath: Vec::new(),
             runpath: Vec::new(),
+            init_virtual_address: None,
+            fini_virtual_address: None,
             flags: None,
             flags_1: None,
             sysv_hash_virtual_address: None,
@@ -160,45 +187,28 @@ impl BootElfDynamicTable {
         }
     }
 
-    pub fn with_segment(
-        mut self,
-        file_offset: u64,
-        virtual_address: Address,
-        entry_size: u16,
-        entry_count: u64,
-        needed_count: u64,
-        needed_libraries: Vec<String>,
-        soname: Option<String>,
-        rpath: Vec<String>,
-        runpath: Vec<String>,
-        flags: Option<u64>,
-        flags_1: Option<u64>,
-        sysv_hash_virtual_address: Option<Address>,
-        gnu_hash_virtual_address: Option<Address>,
-        rela_relocations: BootElfDynamicRelocationTable,
-        rel_relocations: BootElfDynamicRelocationTable,
-        plt_relocations: BootElfDynamicRelocationTable,
-        plt_relocation_kind: Option<BootElfDynamicPltRelocationKind>,
-    ) -> Self {
+    pub(crate) fn with_segment(mut self, segment: BootElfDynamicSegment) -> Self {
         self.segment_count += 1;
         if self.file_offset.is_none() {
-            self.file_offset = Some(file_offset);
-            self.virtual_address = Some(virtual_address);
-            self.entry_size = entry_size;
-            self.entry_count = entry_count;
-            self.needed_count = needed_count;
-            self.needed_libraries = needed_libraries;
-            self.soname = soname;
-            self.rpath = rpath;
-            self.runpath = runpath;
-            self.flags = flags;
-            self.flags_1 = flags_1;
-            self.sysv_hash_virtual_address = sysv_hash_virtual_address;
-            self.gnu_hash_virtual_address = gnu_hash_virtual_address;
-            self.rela_relocations = rela_relocations;
-            self.rel_relocations = rel_relocations;
-            self.plt_relocations = plt_relocations;
-            self.plt_relocation_kind = plt_relocation_kind;
+            self.file_offset = Some(segment.file_offset);
+            self.virtual_address = Some(segment.virtual_address);
+            self.entry_size = segment.entry_size;
+            self.entry_count = segment.entry_count;
+            self.needed_count = segment.needed_count;
+            self.needed_libraries = segment.needed_libraries;
+            self.soname = segment.soname;
+            self.rpath = segment.rpath;
+            self.runpath = segment.runpath;
+            self.init_virtual_address = segment.init_virtual_address;
+            self.fini_virtual_address = segment.fini_virtual_address;
+            self.flags = segment.flags;
+            self.flags_1 = segment.flags_1;
+            self.sysv_hash_virtual_address = segment.sysv_hash_virtual_address;
+            self.gnu_hash_virtual_address = segment.gnu_hash_virtual_address;
+            self.rela_relocations = segment.rela_relocations;
+            self.rel_relocations = segment.rel_relocations;
+            self.plt_relocations = segment.plt_relocations;
+            self.plt_relocation_kind = segment.plt_relocation_kind;
         }
         self
     }
@@ -260,6 +270,14 @@ impl BootElfDynamicTable {
 
     pub fn runpath_name_bytes(&self) -> u64 {
         self.runpath.iter().map(|path| path.len() as u64).sum()
+    }
+
+    pub const fn init_virtual_address(&self) -> Option<Address> {
+        self.init_virtual_address
+    }
+
+    pub const fn fini_virtual_address(&self) -> Option<Address> {
+        self.fini_virtual_address
     }
 
     pub const fn flags(&self) -> Option<u64> {

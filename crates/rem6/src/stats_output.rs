@@ -315,6 +315,16 @@ pub(super) fn run_stats_output(
     )?;
     increment_optional_address_stat(
         &mut stats,
+        "sim.elf.dynamic.init",
+        dynamic_table.init_virtual_address(),
+    )?;
+    increment_optional_address_stat(
+        &mut stats,
+        "sim.elf.dynamic.fini",
+        dynamic_table.fini_virtual_address(),
+    )?;
+    increment_optional_address_stat(
+        &mut stats,
         "sim.elf.dynamic.hash.sysv",
         dynamic_table.sysv_hash_virtual_address(),
     )?;

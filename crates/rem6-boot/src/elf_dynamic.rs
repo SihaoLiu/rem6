@@ -11,6 +11,8 @@ const DT_RELASZ: u64 = 8;
 const DT_RELAENT: u64 = 9;
 const DT_STRTAB: u64 = 5;
 const DT_STRSZ: u64 = 10;
+const DT_INIT: u64 = 12;
+const DT_FINI: u64 = 13;
 const DT_SONAME: u64 = 14;
 const DT_RPATH: u64 = 15;
 const DT_REL: u64 = 17;
@@ -37,6 +39,8 @@ pub(crate) struct ElfDynamicTableSummary {
     pub(crate) soname: Option<String>,
     pub(crate) rpath: Vec<String>,
     pub(crate) runpath: Vec<String>,
+    pub(crate) init_virtual_address: Option<u64>,
+    pub(crate) fini_virtual_address: Option<u64>,
     pub(crate) flags: Option<u64>,
     pub(crate) flags_1: Option<u64>,
     pub(crate) sysv_hash_virtual_address: Option<u64>,
@@ -151,6 +155,8 @@ pub(crate) fn dynamic_table_counts(
     let mut soname_offset = None;
     let mut rpath_offsets = Vec::new();
     let mut runpath_offsets = Vec::new();
+    let mut init_virtual_address = None;
+    let mut fini_virtual_address = None;
     let mut flags = None;
     let mut flags_1 = None;
     let mut sysv_hash_virtual_address = None;
@@ -191,6 +197,8 @@ pub(crate) fn dynamic_table_counts(
                 soname: strings.soname,
                 rpath: strings.rpath,
                 runpath: strings.runpath,
+                init_virtual_address,
+                fini_virtual_address,
                 flags,
                 flags_1,
                 sysv_hash_virtual_address,
@@ -217,6 +225,10 @@ pub(crate) fn dynamic_table_counts(
             rpath_offsets.push(value);
         } else if tag == DT_RUNPATH {
             runpath_offsets.push(value);
+        } else if tag == DT_INIT {
+            init_virtual_address = Some(value);
+        } else if tag == DT_FINI {
+            fini_virtual_address = Some(value);
         } else if tag == DT_FLAGS {
             flags = Some(value);
         } else if tag == DT_FLAGS_1 {
