@@ -18,7 +18,7 @@ pub(crate) fn read_interpreter(
     let path_end = file_range
         .iter()
         .position(|byte| *byte == 0)
-        .unwrap_or(file_range.len());
+        .ok_or_else(|| invalid_elf(BootElfError::UnterminatedInterpreterPath { segment }))?;
     let path = std::str::from_utf8(&file_range[..path_end])
         .map_err(|_| invalid_elf(BootElfError::InvalidInterpreterPath { segment }))?;
     if path.is_empty() {

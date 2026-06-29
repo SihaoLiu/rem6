@@ -199,6 +199,38 @@ fn rem6_run_reports_elf_interpreter_metadata() {
 }
 
 #[test]
+fn rem6_run_rejects_elf_interpreter_without_nul_terminator() {
+    let interpreter = "/lib/ld-linux-riscv64-lp64d.so.1";
+    let mut elf =
+        riscv64_elf_with_interpreter(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0], interpreter);
+    elf[0x180 + interpreter.len()] = b'!';
+    let path = temp_binary("riscv-run-unterminated-interpreter", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("invalid ELF image: ELF interpreter segment 1 path is not null-terminated"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
 fn rem6_run_loads_riscv32_elf_with_extended_program_header_count_metadata() {
     let elf = riscv32_elf_extended_phnum(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("riscv32-run-extended-phnum", &elf);

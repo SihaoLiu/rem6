@@ -55,6 +55,9 @@ pub enum BootElfError {
     InvalidInterpreterPath {
         segment: u16,
     },
+    UnterminatedInterpreterPath {
+        segment: u16,
+    },
     ProgramHeaderTableOutOfBounds {
         offset: u64,
         size: u64,
@@ -170,6 +173,10 @@ impl fmt::Display for BootElfError {
             Self::InvalidInterpreterPath { segment } => {
                 write!(formatter, "ELF interpreter segment {segment} has an invalid path")
             }
+            Self::UnterminatedInterpreterPath { segment } => write!(
+                formatter,
+                "ELF interpreter segment {segment} path is not null-terminated"
+            ),
             Self::ProgramHeaderTableOutOfBounds {
                 offset,
                 size,

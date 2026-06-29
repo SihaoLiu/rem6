@@ -650,6 +650,38 @@ fn boot_image_records_elf32_interpreter_metadata() {
 }
 
 #[test]
+fn boot_image_rejects_elf64_interpreter_without_nul_terminator() {
+    let interpreter = b"/lib/ld-linux-riscv64-lp64d.so.1";
+    let elf = elf64_image(
+        0x8000_0000,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 3,
+                offset: 0x180,
+                physical: 0,
+                file_size: interpreter.len() as u64,
+                memory_size: interpreter.len() as u64,
+            },
+        ],
+        &[(0x180, interpreter), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    assert_eq!(
+        BootImage::from_elf64_le(&elf).unwrap_err(),
+        BootError::InvalidElf {
+            reason: BootElfError::UnterminatedInterpreterPath { segment: 1 },
+        },
+    );
+}
+
+#[test]
 fn boot_image_rejects_extended_program_header_count_with_bad_section_header_size() {
     let mut elf = elf64_image(
         0x8000_0080,
