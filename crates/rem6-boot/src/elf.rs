@@ -31,6 +31,7 @@ const ELF_OSABI_ARM: u8 = 97;
 const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
 const PT_INTERP: u32 = 3;
+const PT_TLS: u32 = 7;
 const EM_SPARC: u16 = 2;
 const EM_386: u16 = 3;
 const EM_MIPS: u16 = 8;
@@ -243,6 +244,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
     let mut interpreter = None;
     let mut dynamic_table = BootElfDynamicTable::new();
     let mut program_header_memory_address = None;
+    let mut has_tls = section_summary.has_tls();
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let segment = segment_index(index);
@@ -286,6 +288,10 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                     read_u64_at_u64(bytes, header_offset + 32, endian)?,
                 )?);
             }
+            continue;
+        }
+        if kind == PT_TLS {
+            has_tls = true;
             continue;
         }
         if kind != PT_LOAD {
@@ -359,7 +365,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
             BootElfArchitecture::from_machine(BootElfClass::Class64, machine, entry),
             operating_system,
         )
-        .with_tls(section_summary.has_tls())
+        .with_tls(has_tls)
         .with_symbol_summary(
             section_summary.symbol_count(),
             section_summary.function_symbol_count(),
@@ -436,6 +442,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
     let mut interpreter = None;
     let mut dynamic_table = BootElfDynamicTable::new();
     let mut program_header_memory_address = None;
+    let mut has_tls = section_summary.has_tls();
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let segment = segment_index(index);
@@ -483,6 +490,10 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                     u64::from(read_u32_at_u64(bytes, header_offset + 16, endian)?),
                 )?);
             }
+            continue;
+        }
+        if kind == PT_TLS {
+            has_tls = true;
             continue;
         }
         if kind != PT_LOAD {
@@ -570,7 +581,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
             BootElfArchitecture::from_machine(BootElfClass::Class32, machine, entry),
             operating_system,
         )
-        .with_tls(section_summary.has_tls())
+        .with_tls(has_tls)
         .with_symbol_summary(
             section_summary.symbol_count(),
             section_summary.function_symbol_count(),

@@ -120,6 +120,20 @@ fn elf64_image_with_tbss(machine: u16) -> Vec<u8> {
     bytes
 }
 
+fn elf64_image_with_pt_tls(machine: u16) -> Vec<u8> {
+    let mut bytes = elf64_image(machine);
+    write_u16(&mut bytes, 56, 2);
+    write_u32(&mut bytes, 120, 7);
+    write_u32(&mut bytes, 124, 4);
+    write_u64(&mut bytes, 128, 0);
+    write_u64(&mut bytes, 136, 0x9000);
+    write_u64(&mut bytes, 144, 0x9000);
+    write_u64(&mut bytes, 152, 0);
+    write_u64(&mut bytes, 160, 16);
+    write_u64(&mut bytes, 168, 8);
+    bytes
+}
+
 fn elf64_image_with_symbols(machine: u16) -> Vec<u8> {
     elf64_image_with_symbol_section(machine, ".symtab", 2, ".strtab")
 }
@@ -485,6 +499,17 @@ fn workload_boot_image_preserves_elf_interpreter_round_trip() {
 #[test]
 fn workload_boot_image_preserves_elf_tls_metadata_round_trip() {
     let image = BootImage::from_elf64_le(&elf64_image_with_tbss(243)).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+
+    assert!(workload_image.elf_metadata().unwrap().has_tls());
+    let round_trip_image = workload_image.to_boot_image().unwrap();
+    assert!(round_trip_image.elf_metadata().unwrap().has_tls());
+}
+
+#[test]
+fn workload_boot_image_preserves_elf_program_header_tls_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_pt_tls(243)).unwrap();
 
     let workload_image = WorkloadBootImage::from_boot_image(&image);
 

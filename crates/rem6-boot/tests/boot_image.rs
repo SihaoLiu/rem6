@@ -1609,6 +1609,65 @@ fn boot_image_records_tls_from_tbss_section_even_with_header_os() {
 }
 
 #[test]
+fn boot_image_records_tls_from_elf64_program_header() {
+    let elf = elf64_image(
+        0x8004,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x100,
+                physical: 0x8000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 7,
+                offset: 0,
+                physical: 0x9000,
+                file_size: 0,
+                memory_size: 16,
+            },
+        ],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+
+    assert!(metadata.has_tls());
+}
+
+#[test]
+fn boot_image_records_tls_from_elf32_program_header() {
+    let elf = elf32_image(
+        0x8004,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x100,
+                physical: 0x8000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 7,
+                offset: 0,
+                physical: 0x9000,
+                file_size: 0,
+                memory_size: 16,
+            },
+        ],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+
+    let metadata = BootImage::from_elf(&elf).unwrap().elf_metadata().unwrap();
+
+    assert!(metadata.has_tls());
+}
+
+#[test]
 fn boot_image_records_symbol_table_summary() {
     let mut elf = elf64_image(
         0x8004,

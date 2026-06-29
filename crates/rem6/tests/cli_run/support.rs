@@ -146,6 +146,43 @@ pub(crate) fn riscv64_elf_with_tbss(entry: u64, physical: u64, payload: &[u8]) -
     bytes
 }
 
+pub(crate) fn riscv64_elf_with_pt_tls(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
+    let payload_offset = 0x100usize;
+    let mut bytes = vec![0; payload_offset + payload.len()];
+    bytes[0..4].copy_from_slice(b"\x7fELF");
+    bytes[4] = 2;
+    bytes[5] = 1;
+    bytes[6] = 1;
+    write_u16(&mut bytes, 16, 2);
+    write_u16(&mut bytes, 18, 243);
+    write_u32(&mut bytes, 20, 1);
+    write_u64(&mut bytes, 24, entry);
+    write_u64(&mut bytes, 32, 64);
+    write_u16(&mut bytes, 52, 64);
+    write_u16(&mut bytes, 54, 56);
+    write_u16(&mut bytes, 56, 2);
+
+    write_u32(&mut bytes, 64, 1);
+    write_u32(&mut bytes, 68, 5);
+    write_u64(&mut bytes, 72, payload_offset as u64);
+    write_u64(&mut bytes, 80, physical);
+    write_u64(&mut bytes, 88, physical);
+    write_u64(&mut bytes, 96, payload.len() as u64);
+    write_u64(&mut bytes, 104, payload.len() as u64);
+    write_u64(&mut bytes, 112, 0x1000);
+
+    write_u32(&mut bytes, 120, 7);
+    write_u32(&mut bytes, 124, 4);
+    write_u64(&mut bytes, 128, 0);
+    write_u64(&mut bytes, 136, physical + 0x1000);
+    write_u64(&mut bytes, 144, physical + 0x1000);
+    write_u64(&mut bytes, 152, 0);
+    write_u64(&mut bytes, 160, 16);
+    write_u64(&mut bytes, 168, 8);
+    bytes[payload_offset..payload_offset + payload.len()].copy_from_slice(payload);
+    bytes
+}
+
 pub(crate) fn riscv64_elf_with_symbols(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
     riscv64_elf_with_symbol_section(entry, physical, payload, ".symtab", 2, ".strtab")
 }

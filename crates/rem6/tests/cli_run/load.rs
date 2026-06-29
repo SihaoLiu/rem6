@@ -230,6 +230,37 @@ fn rem6_run_reports_elf_tls_metadata() {
 }
 
 #[test]
+fn rem6_run_reports_elf_program_header_tls_metadata() {
+    let elf = riscv64_elf_with_pt_tls(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("riscv-run-pt-tls", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"loaded\""));
+    assert!(stdout.contains("\"tls\":true"));
+    assert_stat(&stdout, "sim.elf.tls", "Count", 1, "constant");
+}
+
+#[test]
 fn rem6_run_reports_elf_symbol_summary() {
     let elf = riscv64_elf_with_symbols(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let path = temp_binary("riscv-run-symbols", &elf);
