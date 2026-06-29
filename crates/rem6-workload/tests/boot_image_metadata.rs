@@ -5,6 +5,7 @@ use rem6_boot::{
 use rem6_memory::Address;
 use rem6_workload::{WorkloadBootImage, WorkloadId, WorkloadManifest};
 
+const PT_NOTE: u32 = 4;
 const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
@@ -181,6 +182,28 @@ fn elf64_image_with_gnu_eh_frame(
     write_u64(&mut bytes, 152, 0);
     write_u64(&mut bytes, 160, memory_size);
     write_u64(&mut bytes, 168, 8);
+    bytes
+}
+
+fn elf64_image_with_note_segments(machine: u16, first_size: u64, second_size: u64) -> Vec<u8> {
+    let mut bytes = elf64_image(machine);
+    write_u16(&mut bytes, 56, 3);
+    write_u32(&mut bytes, 120, PT_NOTE);
+    write_u32(&mut bytes, 124, 4);
+    write_u64(&mut bytes, 128, 0x180);
+    write_u64(&mut bytes, 136, 0x9100);
+    write_u64(&mut bytes, 144, 0x9100);
+    write_u64(&mut bytes, 152, first_size);
+    write_u64(&mut bytes, 160, first_size);
+    write_u64(&mut bytes, 168, 8);
+    write_u32(&mut bytes, 176, PT_NOTE);
+    write_u32(&mut bytes, 180, 4);
+    write_u64(&mut bytes, 184, 0x1a0);
+    write_u64(&mut bytes, 192, 0x9200);
+    write_u64(&mut bytes, 200, 0x9200);
+    write_u64(&mut bytes, 208, second_size);
+    write_u64(&mut bytes, 216, second_size);
+    write_u64(&mut bytes, 224, 8);
     bytes
 }
 
@@ -649,6 +672,24 @@ fn workload_boot_image_preserves_elf_gnu_eh_frame_metadata_round_trip() {
 }
 
 #[test]
+fn workload_boot_image_preserves_elf_note_segment_metadata_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_note_segments(243, 12, 20)).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let metadata = workload_image.elf_metadata().unwrap();
+
+    assert_eq!(metadata.note_segment_count(), 2);
+    assert_eq!(metadata.note_file_size(), 32);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    assert_eq!(round_trip_metadata.note_segment_count(), 2);
+    assert_eq!(round_trip_metadata.note_file_size(), 32);
+}
+
+#[test]
 fn workload_boot_image_preserves_elf_symbol_summary_round_trip() {
     let image = BootImage::from_elf64_le(&elf64_image_with_symbols(243)).unwrap();
 
@@ -938,6 +979,33 @@ fn workload_manifest_identity_includes_elf_gnu_eh_frame_metadata() {
         eh_frame_manifest.identity(),
         eh_frame_alt_manifest.identity()
     );
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_note_segment_metadata() {
+    let plain = BootImage::from_elf64_le(&elf64_image(243)).unwrap();
+    let notes = BootImage::from_elf64_le(&elf64_image_with_note_segments(243, 12, 20)).unwrap();
+    let notes_alt = BootImage::from_elf64_le(&elf64_image_with_note_segments(243, 12, 28)).unwrap();
+
+    assert_eq!(plain.entry(), notes.entry());
+    assert_eq!(plain.segments(), notes.segments());
+    assert_eq!(notes.segments(), notes_alt.segments());
+    assert_eq!(plain.elf_metadata().unwrap().note_segment_count(), 0);
+    assert_eq!(notes.elf_metadata().unwrap().note_segment_count(), 2);
+    assert_eq!(notes.elf_metadata().unwrap().note_file_size(), 32);
+
+    let plain_manifest = WorkloadManifest::builder(id("same"), plain)
+        .build()
+        .unwrap();
+    let notes_manifest = WorkloadManifest::builder(id("same"), notes)
+        .build()
+        .unwrap();
+    let notes_alt_manifest = WorkloadManifest::builder(id("same"), notes_alt)
+        .build()
+        .unwrap();
+
+    assert_ne!(plain_manifest.identity(), notes_manifest.identity());
+    assert_ne!(notes_manifest.identity(), notes_alt_manifest.identity());
 }
 
 #[test]

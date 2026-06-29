@@ -19,6 +19,11 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
             if metadata.has_tls() {
                 hash_str(hash, "elf.tls");
             }
+            if metadata.note_segment_count() != 0 {
+                hash_str(hash, "elf.notes");
+                hash_u64(hash, metadata.note_segment_count());
+                hash_u64(hash, metadata.note_file_size());
+            }
             if let Some(executable) = metadata.gnu_stack_executable() {
                 hash_str(hash, "elf.gnu_stack");
                 hash_u64(hash, u64::from(executable));

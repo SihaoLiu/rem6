@@ -16,6 +16,7 @@ fn line(fill: u8) -> Vec<u8> {
 }
 
 const OVERSIZED_VECTOR_LENGTH: u64 = isize::MAX as u64 + 1;
+const PT_NOTE: u32 = 4;
 const PT_PHDR: u32 = 6;
 const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
@@ -2018,6 +2019,84 @@ fn boot_image_records_elf32_pt_phdr_program_header_table_address() {
         .program_header_table();
 
     assert_eq!(table.memory_address(), Some(Address::new(0x9100)));
+}
+
+#[test]
+fn boot_image_records_elf64_note_segment_metadata() {
+    let elf = elf64_image(
+        0x8004,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x100,
+                physical: 0x8000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: PT_NOTE,
+                offset: 0x180,
+                physical: 0x9100,
+                file_size: 12,
+                memory_size: 12,
+            },
+            ElfProgramHeaderSpec {
+                kind: PT_NOTE,
+                offset: 0x1a0,
+                physical: 0x9200,
+                file_size: 20,
+                memory_size: 20,
+            },
+        ],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+
+    assert_eq!(metadata.note_segment_count(), 2);
+    assert_eq!(metadata.note_file_size(), 32);
+}
+
+#[test]
+fn boot_image_records_elf32_note_segment_metadata() {
+    let elf = elf32_image(
+        0x8004,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x100,
+                physical: 0x8000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: PT_NOTE,
+                offset: 0x180,
+                physical: 0x9100,
+                file_size: 12,
+                memory_size: 12,
+            },
+            ElfProgramHeaderSpec {
+                kind: PT_NOTE,
+                offset: 0x1a0,
+                physical: 0x9200,
+                file_size: 20,
+                memory_size: 20,
+            },
+        ],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+
+    let metadata = BootImage::from_elf32_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+
+    assert_eq!(metadata.note_segment_count(), 2);
+    assert_eq!(metadata.note_file_size(), 32);
 }
 
 #[test]

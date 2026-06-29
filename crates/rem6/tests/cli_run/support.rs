@@ -4,6 +4,7 @@ use std::{
 };
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
+const PT_NOTE: u32 = 4;
 const PT_PHDR: u32 = 6;
 const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
@@ -184,6 +185,45 @@ pub(crate) fn riscv64_elf_with_pt_phdr(entry: u64, physical: u64, payload: &[u8]
     write_u64(&mut bytes, 128, 64);
     write_u64(&mut bytes, 136, physical + 0x1000);
     write_u64(&mut bytes, 144, physical + 0x2000);
+    bytes
+}
+
+pub(crate) fn riscv64_elf_with_note_segment(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
+    let payload_offset = 0x100usize;
+    let note_offset = 0x180usize;
+    let note_size = 24usize;
+    let mut bytes = vec![0; note_offset + note_size];
+    bytes[0..4].copy_from_slice(b"\x7fELF");
+    bytes[4] = 2;
+    bytes[5] = 1;
+    bytes[6] = 1;
+    write_u16(&mut bytes, 16, 2);
+    write_u16(&mut bytes, 18, 243);
+    write_u32(&mut bytes, 20, 1);
+    write_u64(&mut bytes, 24, entry);
+    write_u64(&mut bytes, 32, 64);
+    write_u16(&mut bytes, 52, 64);
+    write_u16(&mut bytes, 54, 56);
+    write_u16(&mut bytes, 56, 2);
+
+    write_u32(&mut bytes, 64, 1);
+    write_u32(&mut bytes, 68, 5);
+    write_u64(&mut bytes, 72, payload_offset as u64);
+    write_u64(&mut bytes, 80, physical);
+    write_u64(&mut bytes, 88, physical);
+    write_u64(&mut bytes, 96, payload.len() as u64);
+    write_u64(&mut bytes, 104, payload.len() as u64);
+    write_u64(&mut bytes, 112, 0x1000);
+
+    write_u32(&mut bytes, 120, PT_NOTE);
+    write_u32(&mut bytes, 124, 4);
+    write_u64(&mut bytes, 128, note_offset as u64);
+    write_u64(&mut bytes, 136, physical + 0x1000);
+    write_u64(&mut bytes, 144, physical + 0x1000);
+    write_u64(&mut bytes, 152, note_size as u64);
+    write_u64(&mut bytes, 160, note_size as u64);
+    write_u64(&mut bytes, 168, 8);
+    bytes[payload_offset..payload_offset + payload.len()].copy_from_slice(payload);
     bytes
 }
 

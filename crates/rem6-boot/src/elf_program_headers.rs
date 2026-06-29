@@ -13,6 +13,7 @@ use crate::metadata::{
 
 const PT_DYNAMIC: u32 = 2;
 const PT_INTERP: u32 = 3;
+const PT_NOTE: u32 = 4;
 const PT_PHDR: u32 = 6;
 const PT_TLS: u32 = 7;
 const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
@@ -30,6 +31,8 @@ pub(crate) struct ElfProgramHeaderMetadata {
     pub(crate) interpreter: Option<BootElfInterpreter>,
     pub(crate) dynamic_table: BootElfDynamicTable,
     pub(crate) has_tls: bool,
+    pub(crate) note_segment_count: u64,
+    pub(crate) note_file_size: u64,
     pub(crate) gnu_stack_executable: Option<bool>,
     pub(crate) gnu_relro_virtual_address: Option<Address>,
     pub(crate) gnu_relro_memory_size: Option<u64>,
@@ -45,6 +48,8 @@ impl ElfProgramHeaderMetadata {
             interpreter: None,
             dynamic_table: BootElfDynamicTable::new(),
             has_tls,
+            note_segment_count: 0,
+            note_file_size: 0,
             gnu_stack_executable: None,
             gnu_relro_virtual_address: None,
             gnu_relro_memory_size: None,
@@ -119,6 +124,15 @@ pub(crate) fn summarize_elf64_program_header(
                     read_u64_at_u64(bytes, header_offset + 32, endian)?,
                 )?);
             }
+            Ok(ElfProgramHeaderAction::Skip)
+        }
+        PT_NOTE => {
+            metadata.note_segment_count = metadata.note_segment_count.saturating_add(1);
+            metadata.note_file_size = metadata.note_file_size.saturating_add(read_u64_at_u64(
+                bytes,
+                header_offset + 32,
+                endian,
+            )?);
             Ok(ElfProgramHeaderAction::Skip)
         }
         PT_PHDR => {
@@ -223,6 +237,18 @@ pub(crate) fn summarize_elf32_program_header(
                     u64::from(read_u32_at_u64(bytes, header_offset + 16, endian)?),
                 )?);
             }
+            Ok(ElfProgramHeaderAction::Skip)
+        }
+        PT_NOTE => {
+            metadata.note_segment_count = metadata.note_segment_count.saturating_add(1);
+            metadata.note_file_size =
+                metadata
+                    .note_file_size
+                    .saturating_add(u64::from(read_u32_at_u64(
+                        bytes,
+                        header_offset + 16,
+                        endian,
+                    )?));
             Ok(ElfProgramHeaderAction::Skip)
         }
         PT_PHDR => {

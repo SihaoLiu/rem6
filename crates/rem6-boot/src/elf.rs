@@ -314,6 +314,8 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
 
     let program_header_memory_address = header_metadata.program_header_memory_address();
     let has_tls = header_metadata.has_tls;
+    let note_segment_count = header_metadata.note_segment_count;
+    let note_file_size = header_metadata.note_file_size;
     let gnu_stack_executable = header_metadata.gnu_stack_executable;
     let gnu_relro_virtual_address = header_metadata.gnu_relro_virtual_address;
     let gnu_relro_memory_size = header_metadata.gnu_relro_memory_size;
@@ -333,6 +335,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
             operating_system,
         )
         .with_tls(has_tls)
+        .with_note_segments(note_segment_count, note_file_size)
         .with_gnu_stack_executable(gnu_stack_executable)
         .with_gnu_relro(gnu_relro_virtual_address, gnu_relro_memory_size)
         .with_gnu_eh_frame(gnu_eh_frame_virtual_address, gnu_eh_frame_memory_size)
@@ -501,6 +504,8 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
 
     let program_header_memory_address = header_metadata.program_header_memory_address();
     let has_tls = header_metadata.has_tls;
+    let note_segment_count = header_metadata.note_segment_count;
+    let note_file_size = header_metadata.note_file_size;
     let gnu_stack_executable = header_metadata.gnu_stack_executable;
     let gnu_relro_virtual_address = header_metadata.gnu_relro_virtual_address;
     let gnu_relro_memory_size = header_metadata.gnu_relro_memory_size;
@@ -520,6 +525,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
             operating_system,
         )
         .with_tls(has_tls)
+        .with_note_segments(note_segment_count, note_file_size)
         .with_gnu_stack_executable(gnu_stack_executable)
         .with_gnu_relro(gnu_relro_virtual_address, gnu_relro_memory_size)
         .with_gnu_eh_frame(gnu_eh_frame_virtual_address, gnu_eh_frame_memory_size)

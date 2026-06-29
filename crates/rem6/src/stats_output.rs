@@ -160,6 +160,20 @@ pub(super) fn run_stats_output(
     )?;
     increment_stat(
         &mut stats,
+        "sim.elf.notes.segments",
+        "Count",
+        StatResetPolicy::Constant,
+        inputs.metadata.note_segment_count(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.notes.bytes",
+        "Byte",
+        StatResetPolicy::Constant,
+        inputs.metadata.note_file_size(),
+    )?;
+    increment_stat(
+        &mut stats,
         "sim.elf.gnu_stack.present",
         "Count",
         StatResetPolicy::Constant,
