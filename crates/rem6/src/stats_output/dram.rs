@@ -222,6 +222,15 @@ pub(super) fn emit_dram_stats(
         "Tick",
         summary.profile_timing_refresh_recovery,
     )?;
+    for (policy, stat) in [("per-bank", "per_bank"), ("all-bank", "all_bank")] {
+        emit_dram_constant(
+            stats,
+            prefix,
+            &format!("profile.timing.refresh_policy.{stat}"),
+            "Count",
+            u64::from(summary.profile_timing_refresh_policy == Some(policy)),
+        )?;
+    }
     emit_dram_constant(
         stats,
         prefix,

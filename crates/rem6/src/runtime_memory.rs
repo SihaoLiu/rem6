@@ -1142,6 +1142,11 @@ impl Rem6DramSummary {
                 .and_then(|timing| timing.refresh_timing())
                 .map(|refresh| refresh.recovery())
                 .unwrap_or(0),
+            profile_timing_refresh_policy: timing.and_then(|timing| {
+                timing
+                    .refresh_timing()
+                    .map(|_| timing.refresh_policy().as_str())
+            }),
             profile_timing_command_window_cycles: timing
                 .and_then(|timing| timing.command_window())
                 .map(|window| window.window_cycles())

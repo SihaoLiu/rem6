@@ -103,6 +103,7 @@ impl DramLowPowerTiming {
 pub struct DramLowPowerEvent {
     state: DramLowPowerState,
     parallel_port: u32,
+    bank: Option<u32>,
     entry_cycle: u64,
     exit_cycle: u64,
 }
@@ -117,9 +118,15 @@ impl DramLowPowerEvent {
         Self {
             state,
             parallel_port,
+            bank: None,
             entry_cycle,
             exit_cycle,
         }
+    }
+
+    pub(crate) const fn with_bank(mut self, bank: u32) -> Self {
+        self.bank = Some(bank);
+        self
     }
 
     pub const fn state(self) -> DramLowPowerState {
@@ -128,6 +135,18 @@ impl DramLowPowerEvent {
 
     pub const fn parallel_port(self) -> u32 {
         self.parallel_port
+    }
+
+    pub const fn bank(self) -> Option<u32> {
+        self.bank
+    }
+
+    pub const fn applies_to_bank(self, parallel_port: u32, bank: u32) -> bool {
+        self.parallel_port == parallel_port
+            && match self.bank {
+                Some(event_bank) => event_bank == bank,
+                None => true,
+            }
     }
 
     pub const fn entry_cycle(self) -> u64 {
@@ -176,6 +195,19 @@ impl DramLowPowerActivity {
     pub(crate) fn record_events(&mut self, events: &[DramLowPowerEvent]) {
         for event in events {
             self.record_event(*event);
+        }
+    }
+
+    pub(crate) fn record_events_for_bank(
+        &mut self,
+        events: &[DramLowPowerEvent],
+        parallel_port: u32,
+        bank: u32,
+    ) {
+        for event in events {
+            if event.applies_to_bank(parallel_port, bank) {
+                self.record_event(*event);
+            }
         }
     }
 

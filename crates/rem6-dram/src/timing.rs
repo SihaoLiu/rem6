@@ -17,6 +17,21 @@ pub enum DramRefreshTimingField {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DramRefreshPolicy {
+    PerBank,
+    AllBank,
+}
+
+impl DramRefreshPolicy {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PerBank => "per-bank",
+            Self::AllBank => "all-bank",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DramRefreshTiming {
     interval: u64,
     recovery: u64,
@@ -66,6 +81,7 @@ pub struct DramTiming {
     command_window: Option<DramCommandWindow>,
     low_power_timing: Option<DramLowPowerTiming>,
     refresh_timing: Option<DramRefreshTiming>,
+    refresh_policy: DramRefreshPolicy,
 }
 
 impl DramTiming {
@@ -108,6 +124,7 @@ impl DramTiming {
             command_window: None,
             low_power_timing: None,
             refresh_timing: None,
+            refresh_policy: DramRefreshPolicy::PerBank,
         })
     }
 
@@ -156,6 +173,14 @@ impl DramTiming {
             }
         }
         self.refresh_timing = Some(refresh_timing);
+        Ok(self)
+    }
+
+    pub const fn with_refresh_policy(
+        mut self,
+        refresh_policy: DramRefreshPolicy,
+    ) -> Result<Self, DramError> {
+        self.refresh_policy = refresh_policy;
         Ok(self)
     }
 
@@ -208,6 +233,10 @@ impl DramTiming {
 
     pub const fn refresh_timing(self) -> Option<DramRefreshTiming> {
         self.refresh_timing
+    }
+
+    pub const fn refresh_policy(self) -> DramRefreshPolicy {
+        self.refresh_policy
     }
 
     pub(crate) fn data_latency(self, kind: DramAccessKind) -> u64 {

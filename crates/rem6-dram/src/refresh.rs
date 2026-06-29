@@ -125,6 +125,63 @@ pub(crate) fn record_due_refresh_events(
     events
 }
 
+pub(crate) fn record_due_all_bank_refresh_events(
+    refresh_timing: DramRefreshTiming,
+    banks: &mut [DramBankState],
+    window: DramRefreshWindow,
+    waits: &mut Vec<DramWaitRecord>,
+) -> Vec<DramRefreshEvent> {
+    for bank in banks.iter_mut() {
+        if bank.next_refresh_cycle == 0 {
+            bank.next_refresh_cycle =
+                next_refresh_cycle_at_or_after(bank.available_cycle, refresh_timing.interval());
+        }
+    }
+
+    let mut events = Vec::new();
+    while let Some(due_cycle) = next_all_bank_refresh_cycle(banks) {
+        if due_cycle > window.due_through_cycle {
+            break;
+        }
+        let start_cycle = banks
+            .iter()
+            .fold(due_cycle, |cycle, bank| cycle.max(bank.available_cycle));
+        let end_cycle = start_cycle.saturating_add(refresh_timing.recovery());
+        if end_cycle > window.wait_cycle {
+            if let Some(request) = window.request {
+                waits.push(DramWaitRecord::bank_queue(
+                    request,
+                    window.parallel_port,
+                    window.local_bank,
+                    window.wait_cycle.max(start_cycle),
+                    end_cycle - 1,
+                ));
+            }
+        }
+
+        for (local_bank, bank) in banks.iter_mut().enumerate() {
+            events.push(DramRefreshEvent::new(
+                window.parallel_port,
+                local_bank as u32,
+                start_cycle,
+                end_cycle,
+            ));
+            bank.open_row = None;
+            bank.available_cycle = bank.available_cycle.max(end_cycle);
+            bank.next_refresh_cycle = due_cycle.saturating_add(refresh_timing.interval());
+        }
+        let next_refresh_cycle = due_cycle.saturating_add(refresh_timing.interval());
+        if next_refresh_cycle == due_cycle {
+            break;
+        }
+    }
+    events
+}
+
+fn next_all_bank_refresh_cycle(banks: &[DramBankState]) -> Option<u64> {
+    banks.iter().map(|bank| bank.next_refresh_cycle).min()
+}
+
 fn next_refresh_cycle_at_or_after(available_cycle: u64, interval: u64) -> u64 {
     if available_cycle == 0 {
         return interval;

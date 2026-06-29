@@ -3714,6 +3714,12 @@ fn rem6_run_executes_riscv_elf_load_store_through_nvm_profile_and_emits_nvm_stat
     assert!(stdout.contains("\"persistent_write_bytes\":8"));
     assert!(stdout.contains("\"max_pending_reads\":1,\"max_pending_persistent_writes\":1"));
     assert!(stdout.contains("\"max_pending_persistent_writes\":1"));
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/dram/profile/timing/refresh_policy")
+            .and_then(Value::as_str),
+        None
+    );
     assert_stat(
         &stdout,
         "sim.memory.dram.profile.technology.nvm",
@@ -3831,6 +3837,20 @@ fn rem6_run_executes_riscv_elf_load_store_through_nvm_profile_and_emits_nvm_stat
         "sim.memory.dram.profile.timing.command_window.max_commands",
         "Count",
         2,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.refresh_policy.per_bank",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.refresh_policy.all_bank",
+        "Count",
+        0,
         "constant",
     );
     assert_stat(

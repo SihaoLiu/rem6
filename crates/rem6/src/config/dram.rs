@@ -1,3 +1,5 @@
+use rem6_dram::DramRefreshPolicy;
+
 use super::parse::required_value;
 use crate::Rem6CliError;
 
@@ -106,6 +108,7 @@ pub struct CliDramTiming {
     burst_spacing: u64,
     same_bank_group_burst_spacing: Option<u64>,
     command_window: Option<CliDramCommandWindow>,
+    refresh_policy: DramRefreshPolicy,
 }
 
 impl CliDramTiming {
@@ -119,6 +122,7 @@ impl CliDramTiming {
         same_bank_group_burst_spacing: Option<u64>,
         command_window_cycles: Option<u64>,
         command_window_max_commands: Option<u32>,
+        refresh_policy: Option<DramRefreshPolicy>,
     ) -> Result<Self, Rem6CliError> {
         let command_window = match (command_window_cycles, command_window_max_commands) {
             (None, None) => None,
@@ -146,6 +150,7 @@ impl CliDramTiming {
                 .map(validate_positive_dram_timing_value)
                 .transpose()?,
             command_window,
+            refresh_policy: refresh_policy.unwrap_or(DramRefreshPolicy::PerBank),
         })
     }
 
@@ -180,6 +185,10 @@ impl CliDramTiming {
     pub const fn command_window(self) -> Option<CliDramCommandWindow> {
         self.command_window
     }
+
+    pub const fn refresh_policy(self) -> DramRefreshPolicy {
+        self.refresh_policy
+    }
 }
 
 impl Default for CliDramTiming {
@@ -193,6 +202,7 @@ impl Default for CliDramTiming {
             burst_spacing: DEFAULT_DRAM_BURST_SPACING,
             same_bank_group_burst_spacing: None,
             command_window: None,
+            refresh_policy: DramRefreshPolicy::PerBank,
         }
     }
 }
@@ -208,10 +218,11 @@ pub(super) struct CliDramTimingOptions {
     same_bank_group_burst_spacing: Option<u64>,
     command_window_cycles: Option<u64>,
     command_window_max_commands: Option<u32>,
+    refresh_policy: Option<DramRefreshPolicy>,
 }
 
 impl CliDramTimingOptions {
-    pub(super) const fn new(
+    pub(super) fn new(
         activate_latency: Option<u64>,
         read_latency: Option<u64>,
         write_latency: Option<u64>,
@@ -221,8 +232,9 @@ impl CliDramTimingOptions {
         same_bank_group_burst_spacing: Option<u64>,
         command_window_cycles: Option<u64>,
         command_window_max_commands: Option<u32>,
-    ) -> Self {
-        Self {
+        refresh_policy: Option<&str>,
+    ) -> Result<Self, Rem6CliError> {
+        Ok(Self {
             activate_latency,
             read_latency,
             write_latency,
@@ -232,7 +244,16 @@ impl CliDramTimingOptions {
             same_bank_group_burst_spacing,
             command_window_cycles,
             command_window_max_commands,
-        }
+            refresh_policy: refresh_policy
+                .map(|policy| {
+                    parse_dram_refresh_policy(policy).ok_or_else(|| {
+                        Rem6CliError::InvalidDramTiming {
+                            value: policy.to_string(),
+                        }
+                    })
+                })
+                .transpose()?,
+        })
     }
 
     pub(super) const fn was_set(self) -> bool {
@@ -245,6 +266,11 @@ impl CliDramTimingOptions {
             || self.same_bank_group_burst_spacing.is_some()
             || self.command_window_cycles.is_some()
             || self.command_window_max_commands.is_some()
+            || self.refresh_policy.is_some()
+    }
+
+    pub(super) const fn refresh_policy_was_set(self) -> bool {
+        self.refresh_policy.is_some()
     }
 
     pub(super) fn set_activate_latency(&mut self, value: &str) -> Result<(), Rem6CliError> {
@@ -306,6 +332,15 @@ impl CliDramTimingOptions {
         Ok(())
     }
 
+    pub(super) fn set_refresh_policy(&mut self, value: &str) -> Result<(), Rem6CliError> {
+        self.refresh_policy = Some(parse_dram_refresh_policy(value).ok_or_else(|| {
+            Rem6CliError::InvalidDramTiming {
+                value: value.to_string(),
+            }
+        })?);
+        Ok(())
+    }
+
     pub(super) fn timing(self) -> Result<CliDramTiming, Rem6CliError> {
         CliDramTiming::from_options(
             self.activate_latency,
@@ -317,7 +352,16 @@ impl CliDramTimingOptions {
             self.same_bank_group_burst_spacing,
             self.command_window_cycles,
             self.command_window_max_commands,
+            self.refresh_policy,
         )
+    }
+}
+
+fn parse_dram_refresh_policy(value: &str) -> Option<DramRefreshPolicy> {
+    match value {
+        "per-bank" => Some(DramRefreshPolicy::PerBank),
+        "all-bank" => Some(DramRefreshPolicy::AllBank),
+        _ => None,
     }
 }
 
@@ -644,6 +688,10 @@ pub(super) fn apply_dram_option_flag(
             let value = required_value(flag, args.next())?;
             refresh.set_recovery(&value)?;
         }
+        "--dram-refresh-policy" => {
+            let value = required_value(flag, args.next())?;
+            timing.set_refresh_policy(&value)?;
+        }
         _ => return Ok(false),
     }
     Ok(true)
@@ -667,6 +715,7 @@ pub(super) fn validate_dram_timing_options(
     ),
     Rem6CliError,
 > {
+    let refresh_policy_was_set = timing_options.refresh_policy_was_set();
     if profile_was_set && !dram_memory {
         return Err(Rem6CliError::DramMemoryProfileRequiresDramMemory);
     }
@@ -685,6 +734,11 @@ pub(super) fn validate_dram_timing_options(
         return Err(Rem6CliError::DramRefreshTimingRequiresDramMemory);
     }
     if refresh_was_set && !profile.supports_refresh_timing() {
+        return Err(Rem6CliError::DramRefreshTimingRequiresRefreshProfile {
+            profile: profile.as_str().to_string(),
+        });
+    }
+    if refresh_policy_was_set && !profile.supports_refresh_timing() {
         return Err(Rem6CliError::DramRefreshTimingRequiresRefreshProfile {
             profile: profile.as_str().to_string(),
         });

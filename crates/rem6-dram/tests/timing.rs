@@ -1,7 +1,8 @@
 use rem6_dram::{
     DramAccessKind, DramBankState, DramCommandKind, DramController, DramControllerSnapshot,
     DramError, DramGeometry, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy,
-    DramRefreshTiming, DramRefreshTimingField, DramTargetActivity, DramTiming, NvmMediaTiming,
+    DramRefreshPolicy, DramRefreshTiming, DramRefreshTimingField, DramTargetActivity, DramTiming,
+    NvmMediaTiming,
 };
 use rem6_fabric::{
     QosPriority, QosProportionalFairPolicy, QosQueueArbiter, QosQueuePolicyKind, QosRequestorId,
@@ -23,6 +24,12 @@ fn timing() -> DramTiming {
 fn timing_with_refresh() -> DramTiming {
     timing()
         .with_refresh_timing(DramRefreshTiming::new(20, 5).unwrap())
+        .unwrap()
+}
+
+fn timing_with_all_bank_refresh() -> DramTiming {
+    timing_with_refresh()
+        .with_refresh_policy(DramRefreshPolicy::AllBank)
         .unwrap()
 }
 
@@ -804,6 +811,43 @@ fn dram_controller_applies_due_refresh_before_bank_access() {
     let profile = controller.activity_profile();
     assert_eq!(profile.refresh_count(), 1);
     assert_eq!(profile.refresh_cycle_count(), 5);
+}
+
+#[test]
+fn dram_controller_all_bank_refresh_updates_sibling_banks() {
+    let mut controller = DramController::new(geometry(), timing_with_all_bank_refresh());
+
+    let first = controller.schedule(0, &read(0x0000, 8, 170)).unwrap();
+    assert_eq!(first.ready_cycle(), 8);
+    assert!(first.refresh_events().is_empty());
+
+    let second = controller.schedule(21, &read(0x0008, 8, 171)).unwrap();
+
+    assert_eq!(second.refresh_events().len(), 4);
+    for bank in 0..4 {
+        let refresh = second
+            .refresh_events()
+            .iter()
+            .find(|event| event.bank() == bank)
+            .unwrap_or_else(|| panic!("missing all-bank refresh event for bank {bank}"));
+        assert_eq!(refresh.parallel_port(), 0);
+        assert_eq!(refresh.start_cycle(), 20);
+        assert_eq!(refresh.end_cycle(), 25);
+        assert_eq!(refresh.cycle_count(), 5);
+        let activity = controller.bank_activity(0, bank).unwrap();
+        assert_eq!(activity.refresh_count(), 1, "bank {bank}");
+        assert_eq!(activity.refresh_cycle_count(), 5, "bank {bank}");
+        assert_eq!(
+            controller.bank_state(bank).unwrap().next_refresh_cycle(),
+            40,
+            "bank {bank}"
+        );
+    }
+    assert_eq!(second.command_cycle(), 28);
+    assert_eq!(second.ready_cycle(), 33);
+    let profile = controller.activity_profile();
+    assert_eq!(profile.refresh_count(), 4);
+    assert_eq!(profile.refresh_cycle_count(), 20);
 }
 
 #[test]

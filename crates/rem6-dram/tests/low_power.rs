@@ -1,6 +1,6 @@
 use rem6_dram::{
-    DramController, DramGeometry, DramLowPowerState, DramLowPowerTiming, DramRefreshTiming,
-    DramTiming,
+    DramController, DramGeometry, DramLowPowerState, DramLowPowerTiming, DramRefreshPolicy,
+    DramRefreshTiming, DramTiming,
 };
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryRequest, MemoryRequestId};
 
@@ -32,6 +32,12 @@ fn timing_with_split_exit_latency() -> DramTiming {
 fn timing_with_refresh_and_low_power() -> DramTiming {
     timing()
         .with_refresh_timing(DramRefreshTiming::new(40, 5).unwrap())
+        .unwrap()
+}
+
+fn timing_with_all_bank_refresh_and_low_power() -> DramTiming {
+    timing_with_refresh_and_low_power()
+        .with_refresh_policy(DramRefreshPolicy::AllBank)
         .unwrap()
 }
 
@@ -195,6 +201,65 @@ fn activity_profile_until_splits_terminal_low_power_around_refresh() {
     assert_eq!(
         profile.low_power_entry_count(DramLowPowerState::SelfRefresh),
         0
+    );
+}
+
+#[test]
+fn activity_profile_until_splits_terminal_low_power_around_all_bank_refresh() {
+    let mut dram = DramController::new(geometry(), timing_with_all_bank_refresh_and_low_power());
+
+    dram.schedule(0, &read(0x0000, 33)).unwrap();
+    let profile = dram.activity_profile_until(100);
+
+    assert_eq!(profile.refresh_count(), 32);
+    assert_eq!(profile.refresh_cycle_count(), 160);
+    assert_eq!(
+        profile.low_power_entry_count(DramLowPowerState::ActivePowerdown),
+        1
+    );
+    assert_eq!(
+        profile.low_power_cycle_count(DramLowPowerState::ActivePowerdown),
+        8
+    );
+    assert_eq!(
+        profile.low_power_entry_count(DramLowPowerState::PrechargePowerdown),
+        31
+    );
+    assert_eq!(
+        profile.low_power_cycle_count(DramLowPowerState::PrechargePowerdown),
+        480
+    );
+    assert_eq!(
+        profile.low_power_entry_count(DramLowPowerState::SelfRefresh),
+        0
+    );
+}
+
+#[test]
+fn activity_profile_until_counts_future_all_bank_low_power_on_sibling_banks() {
+    let mut dram = DramController::new(geometry(), timing_with_all_bank_refresh_and_low_power());
+
+    dram.schedule(0, &read(0x0000, 34)).unwrap();
+    dram.schedule(60, &read(0x0008, 35)).unwrap();
+    let profile = dram.activity_profile_until(45);
+
+    assert_eq!(profile.refresh_count(), 16);
+    assert_eq!(profile.refresh_cycle_count(), 80);
+    assert_eq!(
+        profile.low_power_entry_count(DramLowPowerState::ActivePowerdown),
+        1
+    );
+    assert_eq!(
+        profile.low_power_cycle_count(DramLowPowerState::ActivePowerdown),
+        8
+    );
+    assert_eq!(
+        profile.low_power_entry_count(DramLowPowerState::PrechargePowerdown),
+        15
+    );
+    assert_eq!(
+        profile.low_power_cycle_count(DramLowPowerState::PrechargePowerdown),
+        240
     );
 }
 

@@ -2806,6 +2806,71 @@ fn rem6_run_accepts_custom_dram_refresh_timing() {
 }
 
 #[test]
+fn rem6_run_accepts_all_bank_dram_refresh_policy() {
+    let program = riscv64_program(&[
+        b_type(0, 0, 0, 0x0), // beq x0, x0, self
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("dram-memory-all-bank-refresh-policy", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--dram-memory-profile",
+            "ddr",
+            "--dram-refresh-interval",
+            "20",
+            "--dram-refresh-recovery",
+            "4",
+            "--dram-refresh-policy",
+            "all-bank",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_at_tick_limit\""));
+    assert_eq!(
+        json.pointer("/dram/profile/timing/refresh_policy")
+            .and_then(Value::as_str),
+        Some("all-bank")
+    );
+    assert!(json_u64(&json, "/dram/refreshes") >= 4);
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.refresh_policy.all_bank",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.refresh_policy.per_bank",
+        "Count",
+        0,
+        "constant",
+    );
+}
+
+#[test]
 fn rem6_run_accepts_custom_hbm_dram_timing_table() {
     let mut words = vec![i_type(0, 0, 0x0, 5, 0x13); 64];
     words.push(0x0000_0073); // ecall

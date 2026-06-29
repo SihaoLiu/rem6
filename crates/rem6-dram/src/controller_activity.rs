@@ -4,10 +4,13 @@ use crate::activity::{
     collect_dram_bank_activity, collect_dram_bank_activity_until, collect_dram_port_activity,
     collect_dram_port_activity_until, record_future_terminal_memory_activity,
 };
-use crate::refresh::{record_due_refresh_events, DramRefreshWindow};
+use crate::refresh::{
+    record_due_all_bank_refresh_events, record_due_refresh_events, DramRefreshWindow,
+};
 use crate::{
-    low_power, record_low_power_before_refreshes, DramAccess, DramActivityMarker,
-    DramActivityProfile, DramBankActivity, DramController, DramPortActivity,
+    low_power, record_low_power_before_refreshes, refresh_events_for_bank, DramAccess,
+    DramActivityMarker, DramActivityProfile, DramBankActivity, DramController, DramPortActivity,
+    DramRefreshPolicy,
 };
 
 impl DramController {
@@ -137,6 +140,13 @@ impl DramController {
                 all_bank_activities.keys().copied().collect::<Vec<_>>()
             };
         for (parallel_port, local_bank) in terminal_banks {
+            let low_power_enabled = self.timing.low_power_timing().is_some();
+            if self.timing.refresh_policy() == DramRefreshPolicy::AllBank
+                && local_bank != 0
+                && !low_power_enabled
+            {
+                continue;
+            }
             let bank_index = parallel_port as usize * bank_count + local_bank as usize;
             let Some(bank) = self.banks.get(bank_index) else {
                 continue;
@@ -149,27 +159,44 @@ impl DramController {
             let has_open_row = bank.open_row().is_some();
             let mut waits = Vec::new();
             let refresh_events = if let Some(refresh_timing) = self.timing.refresh_timing() {
-                record_due_refresh_events(
-                    refresh_timing,
-                    &mut bank,
-                    DramRefreshWindow::maintenance(
-                        parallel_port,
-                        local_bank,
-                        end_cycle.saturating_sub(1),
-                    ),
-                    &mut waits,
-                )
+                let window = DramRefreshWindow::maintenance(
+                    parallel_port,
+                    local_bank,
+                    end_cycle.saturating_sub(1),
+                );
+                match self.timing.refresh_policy() {
+                    DramRefreshPolicy::PerBank => {
+                        record_due_refresh_events(refresh_timing, &mut bank, window, &mut waits)
+                    }
+                    DramRefreshPolicy::AllBank => {
+                        let port_start = parallel_port as usize * bank_count;
+                        let port_end = port_start + bank_count;
+                        let mut banks = self.banks[port_start..port_end].to_vec();
+                        let events = record_due_all_bank_refresh_events(
+                            refresh_timing,
+                            &mut banks,
+                            window,
+                            &mut waits,
+                        );
+                        if let Some(updated_bank) = banks.get(local_bank as usize) {
+                            bank = *updated_bank;
+                        }
+                        events
+                    }
+                }
             } else {
                 Vec::new()
             };
             let mut low_power_events = Vec::new();
             if let Some(low_power_timing) = self.timing.low_power_timing() {
+                let low_power_refresh_events =
+                    refresh_events_for_bank(&refresh_events, parallel_port, local_bank);
                 record_low_power_before_refreshes(
                     low_power_timing,
                     parallel_port,
                     idle_start_cycle,
                     has_open_row,
-                    &refresh_events,
+                    &low_power_refresh_events,
                     &mut low_power_events,
                 );
                 low_power_events.extend(low_power::events_for_idle_window(
@@ -181,11 +208,31 @@ impl DramController {
                 ));
             }
             if !refresh_events.is_empty() || !low_power_events.is_empty() {
-                let activity = bank_activities
-                    .entry((parallel_port, local_bank))
-                    .or_default();
-                activity.record_terminal_refresh_events(&refresh_events, end_cycle);
-                activity.record_terminal_low_power_events(&low_power_events);
+                if self.timing.refresh_policy() == DramRefreshPolicy::AllBank {
+                    if local_bank == 0 {
+                        for refresh in &refresh_events {
+                            let activity = bank_activities
+                                .entry((parallel_port, refresh.bank()))
+                                .or_default();
+                            activity.record_terminal_refresh_events(
+                                std::slice::from_ref(refresh),
+                                end_cycle,
+                            );
+                        }
+                    }
+                    if !low_power_events.is_empty() {
+                        let activity = bank_activities
+                            .entry((parallel_port, local_bank))
+                            .or_default();
+                        activity.record_terminal_low_power_events(&low_power_events);
+                    }
+                } else {
+                    let activity = bank_activities
+                        .entry((parallel_port, local_bank))
+                        .or_default();
+                    activity.record_terminal_refresh_events(&refresh_events, end_cycle);
+                    activity.record_terminal_low_power_events(&low_power_events);
+                }
             }
         }
     }

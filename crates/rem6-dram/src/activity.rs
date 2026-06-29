@@ -84,10 +84,19 @@ impl DramBankActivity {
         } else {
             self.row_miss_count += 1;
         }
-        self.refresh_count += access.refresh_events().len();
+        self.refresh_count += access
+            .refresh_events()
+            .iter()
+            .filter(|event| {
+                event.parallel_port() == access.parallel_port() && event.bank() == access.bank()
+            })
+            .count();
         self.refresh_cycle_count += access
             .refresh_events()
             .iter()
+            .filter(|event| {
+                event.parallel_port() == access.parallel_port() && event.bank() == access.bank()
+            })
             .map(|event| event.cycle_count())
             .sum::<u64>();
         self.command_count += access.commands().len();
@@ -121,7 +130,11 @@ impl DramBankActivity {
                 .entry(qos.requestor())
                 .or_default() += qos.bytes();
         }
-        self.low_power.record_events(access.low_power_events());
+        self.low_power.record_events_for_bank(
+            access.low_power_events(),
+            access.parallel_port(),
+            access.bank(),
+        );
         if access.low_power_exit_latency_cycles() != 0 {
             self.low_power
                 .record_exit(access.low_power_exit_latency_cycles());
@@ -1437,6 +1450,25 @@ where
             .entry((access.parallel_port(), access.bank()))
             .or_default()
             .record(access);
+        for refresh in access.refresh_events().iter().filter(|event| {
+            event.parallel_port() != access.parallel_port() || event.bank() != access.bank()
+        }) {
+            activities
+                .entry((refresh.parallel_port(), refresh.bank()))
+                .or_default()
+                .record_terminal_refresh_events(std::slice::from_ref(refresh), u64::MAX);
+        }
+        for low_power in access.low_power_events().iter().filter(|event| {
+            event.bank().is_some_and(|bank| {
+                bank != access.bank() || event.parallel_port() != access.parallel_port()
+            })
+        }) {
+            let bank = low_power.bank().unwrap_or(access.bank());
+            activities
+                .entry((low_power.parallel_port(), bank))
+                .or_default()
+                .record_terminal_low_power_events(std::slice::from_ref(low_power));
+        }
     }
     activities
 }
@@ -1497,10 +1529,27 @@ pub(crate) fn record_future_terminal_memory_activity(
         if refresh_events.is_empty() && !has_low_power {
             continue;
         }
-        let activity = bank_activities
-            .entry((access.parallel_port(), access.bank()))
-            .or_default();
-        activity.record_terminal_refresh_events(&refresh_events, end_cycle);
-        activity.record_terminal_low_power_events_until(access.low_power_events(), end_cycle);
+        for refresh in &refresh_events {
+            let activity = bank_activities
+                .entry((refresh.parallel_port(), refresh.bank()))
+                .or_default();
+            activity.record_terminal_refresh_events(std::slice::from_ref(refresh), end_cycle);
+        }
+        if has_low_power {
+            for low_power in access
+                .low_power_events()
+                .iter()
+                .filter(|event| event.entry_cycle() < end_cycle)
+            {
+                let bank = low_power.bank().unwrap_or(access.bank());
+                let activity = bank_activities
+                    .entry((low_power.parallel_port(), bank))
+                    .or_default();
+                activity.record_terminal_low_power_events_until(
+                    std::slice::from_ref(low_power),
+                    end_cycle,
+                );
+            }
+        }
     }
 }

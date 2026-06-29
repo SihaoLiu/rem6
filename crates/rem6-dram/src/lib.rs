@@ -36,10 +36,10 @@ pub use profile::{
 pub use profile_snapshot::DramProfileSnapshotMismatch;
 pub use qos::{DramQosAccess, DramQosRequest, DramQosSchedulingPolicy, DramQosTurnaroundPolicy};
 pub use refresh::DramRefreshEvent;
-use refresh::{record_due_refresh_events, DramRefreshWindow};
+use refresh::{record_due_all_bank_refresh_events, record_due_refresh_events, DramRefreshWindow};
 pub use timing::{
-    DramCommandWindow, DramGeometry, DramRefreshTiming, DramRefreshTimingField, DramTiming,
-    DramTimingField,
+    DramCommandWindow, DramGeometry, DramRefreshPolicy, DramRefreshTiming, DramRefreshTimingField,
+    DramTiming, DramTimingField,
 };
 pub use wait_for::DramWaitForMarker;
 use wait_for::{merge_wait_for_graph, record_dram_wait_interval, DramWaitRecord};
@@ -261,6 +261,25 @@ fn record_low_power_before_refreshes(
         idle_start_cycle = refresh.end_cycle();
         has_open_row = false;
     }
+}
+
+fn refresh_events_for_bank(
+    refresh_events: &[DramRefreshEvent],
+    parallel_port: u32,
+    bank: u32,
+) -> Vec<DramRefreshEvent> {
+    refresh_events
+        .iter()
+        .filter(|event| event.parallel_port() == parallel_port && event.bank() == bank)
+        .cloned()
+        .collect()
+}
+
+fn tag_low_power_events(events: Vec<DramLowPowerEvent>, bank: u32) -> Vec<DramLowPowerEvent> {
+    events
+        .into_iter()
+        .map(|event| event.with_bank(bank))
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -608,6 +627,45 @@ impl DramController {
         self.schedule_with_qos(arrival_cycle, request, None)
     }
 
+    fn record_due_refresh_events(
+        &mut self,
+        refresh_timing: DramRefreshTiming,
+        bank_index: usize,
+        request: MemoryRequestId,
+        parallel_port: u32,
+        local_bank: u32,
+        wait_cycle: u64,
+        due_through_cycle: u64,
+        waits: &mut Vec<DramWaitRecord>,
+    ) -> Vec<DramRefreshEvent> {
+        let window = DramRefreshWindow::new(
+            request,
+            parallel_port,
+            local_bank,
+            wait_cycle,
+            due_through_cycle,
+        );
+        match self.timing.refresh_policy() {
+            DramRefreshPolicy::PerBank => record_due_refresh_events(
+                refresh_timing,
+                &mut self.banks[bank_index],
+                window,
+                waits,
+            ),
+            DramRefreshPolicy::AllBank => {
+                let bank_count = self.geometry.bank_count() as usize;
+                let port_start = parallel_port as usize * bank_count;
+                let port_end = port_start + bank_count;
+                record_due_all_bank_refresh_events(
+                    refresh_timing,
+                    &mut self.banks[port_start..port_end],
+                    window,
+                    waits,
+                )
+            }
+        }
+    }
+
     pub(crate) fn schedule_with_qos(
         &mut self,
         arrival_cycle: u64,
@@ -621,61 +679,122 @@ impl DramController {
         let port_index = decoded.parallel_port as usize;
         let mut port = self.ports[port_index].clone();
         let bank_index = port_index * self.geometry.bank_count() as usize + decoded.bank as usize;
-        let bank = &mut self.banks[bank_index];
         let bus_ready_cycle = port.ready_cycle(kind, self.timing, decoded.bank_group);
         let mut commands = Vec::new();
         let mut waits = Vec::new();
         let mut low_power_events = Vec::new();
-        if bank.available_cycle > arrival_cycle {
+        if self.banks[bank_index].available_cycle > arrival_cycle {
             waits.push(DramWaitRecord::bank_queue(
                 request.id(),
                 decoded.parallel_port,
                 decoded.bank,
                 arrival_cycle,
-                bank.available_cycle - 1,
+                self.banks[bank_index].available_cycle - 1,
             ));
         }
         let mut refresh_events = Vec::new();
         if let Some(refresh_timing) = self.timing.refresh_timing() {
-            let idle_start_cycle = port.bus_available_cycle().max(bank.available_cycle());
-            let has_open_row = bank.open_row.is_some();
-            let due_refresh_events = record_due_refresh_events(
+            let port_bus_available_cycle = port.bus_available_cycle();
+            let target_idle_start_cycle =
+                port_bus_available_cycle.max(self.banks[bank_index].available_cycle());
+            let target_has_open_row = self.banks[bank_index].open_row.is_some();
+            let all_bank_low_power_states = if self.timing.refresh_policy()
+                == DramRefreshPolicy::AllBank
+                && self.timing.low_power_timing().is_some()
+            {
+                let bank_count = self.geometry.bank_count() as usize;
+                let port_start = decoded.parallel_port as usize * bank_count;
+                let port_end = port_start + bank_count;
+                Some(self.banks[port_start..port_end].to_vec())
+            } else {
+                None
+            };
+            let due_refresh_events = self.record_due_refresh_events(
                 refresh_timing,
-                bank,
-                DramRefreshWindow::new(
-                    request.id(),
-                    decoded.parallel_port,
-                    decoded.bank,
-                    arrival_cycle,
-                    arrival_cycle,
-                ),
+                bank_index,
+                request.id(),
+                decoded.parallel_port,
+                decoded.bank,
+                arrival_cycle,
+                arrival_cycle,
                 &mut waits,
             );
             if let Some(low_power_timing) = self.timing.low_power_timing() {
-                record_low_power_before_refreshes(
-                    low_power_timing,
-                    decoded.parallel_port,
-                    idle_start_cycle,
-                    has_open_row,
-                    &due_refresh_events,
-                    &mut low_power_events,
-                );
+                if let Some(bank_states) = all_bank_low_power_states {
+                    for (local_bank, bank_state) in bank_states.into_iter().enumerate() {
+                        let mut bank_low_power_events = Vec::new();
+                        let low_power_refresh_events = refresh_events_for_bank(
+                            &due_refresh_events,
+                            decoded.parallel_port,
+                            local_bank as u32,
+                        );
+                        record_low_power_before_refreshes(
+                            low_power_timing,
+                            decoded.parallel_port,
+                            port_bus_available_cycle.max(bank_state.available_cycle()),
+                            bank_state.open_row().is_some(),
+                            &low_power_refresh_events,
+                            &mut bank_low_power_events,
+                        );
+                        low_power_events.extend(tag_low_power_events(
+                            bank_low_power_events,
+                            local_bank as u32,
+                        ));
+                    }
+                } else {
+                    let low_power_refresh_events = refresh_events_for_bank(
+                        &due_refresh_events,
+                        decoded.parallel_port,
+                        decoded.bank,
+                    );
+                    record_low_power_before_refreshes(
+                        low_power_timing,
+                        decoded.parallel_port,
+                        target_idle_start_cycle,
+                        target_has_open_row,
+                        &low_power_refresh_events,
+                        &mut low_power_events,
+                    );
+                }
             }
             refresh_events.extend(due_refresh_events);
         }
         let final_low_power_events = if let Some(low_power_timing) = self.timing.low_power_timing()
         {
-            low_power::events_for_idle_window(
-                low_power_timing,
-                decoded.parallel_port,
-                port.bus_available_cycle().max(bank.available_cycle()),
-                arrival_cycle,
-                bank.open_row.is_some(),
-            )
+            if self.timing.refresh_policy() == DramRefreshPolicy::AllBank {
+                let bank_count = self.geometry.bank_count() as usize;
+                let port_start = decoded.parallel_port as usize * bank_count;
+                let port_end = port_start + bank_count;
+                let mut events = Vec::new();
+                for (local_bank, bank) in self.banks[port_start..port_end].iter().enumerate() {
+                    events.extend(tag_low_power_events(
+                        low_power::events_for_idle_window(
+                            low_power_timing,
+                            decoded.parallel_port,
+                            port.bus_available_cycle().max(bank.available_cycle()),
+                            arrival_cycle,
+                            bank.open_row().is_some(),
+                        ),
+                        local_bank as u32,
+                    ));
+                }
+                events
+            } else {
+                low_power::events_for_idle_window(
+                    low_power_timing,
+                    decoded.parallel_port,
+                    port.bus_available_cycle()
+                        .max(self.banks[bank_index].available_cycle()),
+                    arrival_cycle,
+                    self.banks[bank_index].open_row.is_some(),
+                )
+            }
         } else {
             Vec::new()
         };
         let low_power_exit_latency_cycles = final_low_power_events
+            .iter()
+            .filter(|event| event.applies_to_bank(decoded.parallel_port, decoded.bank))
             .last()
             .and_then(|event| {
                 self.timing
@@ -687,6 +806,7 @@ impl DramController {
         let effective_arrival_cycle = arrival_cycle.saturating_add(low_power_exit_latency_cycles);
         if let Some(refresh_timing) = self.timing.refresh_timing() {
             loop {
+                let bank = &self.banks[bank_index];
                 let due_through_cycle = DramCommandProjection {
                     timing: self.timing,
                     port: &port,
@@ -700,16 +820,14 @@ impl DramController {
                     nvm_pending_write_completions: &self.nvm_pending_write_completions,
                 }
                 .command_cycle();
-                let projected_refresh_events = record_due_refresh_events(
+                let projected_refresh_events = self.record_due_refresh_events(
                     refresh_timing,
-                    bank,
-                    DramRefreshWindow::new(
-                        request.id(),
-                        decoded.parallel_port,
-                        decoded.bank,
-                        effective_arrival_cycle,
-                        due_through_cycle,
-                    ),
+                    bank_index,
+                    request.id(),
+                    decoded.parallel_port,
+                    decoded.bank,
+                    effective_arrival_cycle,
+                    due_through_cycle,
                     &mut waits,
                 );
                 if projected_refresh_events.is_empty() {
@@ -718,6 +836,7 @@ impl DramController {
                 refresh_events.extend(projected_refresh_events);
             }
         }
+        let bank = &mut self.banks[bank_index];
         let mut next_cycle = effective_arrival_cycle.max(bank.available_cycle);
         let row_hit = bank.open_row == Some(decoded.row);
 

@@ -236,6 +236,7 @@ struct Rem6RunFileConfig {
     dram_same_bank_group_burst_spacing: Option<u64>,
     dram_command_window_cycles: Option<u64>,
     dram_command_window_max_commands: Option<u32>,
+    dram_refresh_policy: Option<String>,
     dram_low_power_precharge_powerdown_entry_delay: Option<u64>,
     dram_low_power_self_refresh_entry_delay: Option<u64>,
     dram_low_power_exit_latency: Option<u64>,
@@ -544,7 +545,8 @@ impl Rem6RunConfig {
             file_config.dram_same_bank_group_burst_spacing,
             file_config.dram_command_window_cycles,
             file_config.dram_command_window_max_commands,
-        );
+            file_config.dram_refresh_policy.as_deref(),
+        )?;
         let mut dram_low_power_timing_options = CliDramLowPowerTimingOptions::new(
             file_config.dram_low_power_precharge_powerdown_entry_delay,
             file_config.dram_low_power_self_refresh_entry_delay,

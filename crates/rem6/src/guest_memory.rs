@@ -329,6 +329,9 @@ fn cli_dram_timing(timing: CliDramTiming) -> Result<DramTiming, Rem6CliError> {
     .map_err(execute_error)?
     .with_burst_spacing(timing.burst_spacing())
     .map_err(execute_error)?;
+    dram_timing = dram_timing
+        .with_refresh_policy(timing.refresh_policy())
+        .map_err(execute_error)?;
     if let Some(burst_spacing) = timing.same_bank_group_burst_spacing() {
         dram_timing = dram_timing
             .with_same_bank_group_burst_spacing(burst_spacing)
