@@ -10,6 +10,8 @@ const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
+const DT_FLAGS: u64 = 30;
+const DT_FLAGS_1: u64 = 0x6fff_fffb;
 
 pub(crate) const GEM5_READ_REQ: u32 = 1;
 pub(crate) const GEM5_READ_RESP: u32 = 2;
@@ -459,6 +461,21 @@ pub(crate) fn riscv64_elf_with_dynamic_hashes(
     write_u64(&mut bytes, hash_entry + 24, physical + 0x3e0);
     write_u64(&mut bytes, hash_entry + 32, 0);
     write_u64(&mut bytes, hash_entry + 40, 0);
+    bytes
+}
+
+pub(crate) fn riscv64_elf_with_dynamic_flags(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = riscv64_elf_with_dynamic_table(entry, physical, payload);
+    let dynamic_offset = 0x180usize;
+    let flags_entry = dynamic_offset + 16 * 16;
+    write_u64(&mut bytes, 152, 19 * 16);
+    write_u64(&mut bytes, 160, 19 * 16);
+    write_u64(&mut bytes, flags_entry, DT_FLAGS);
+    write_u64(&mut bytes, flags_entry + 8, 0x15);
+    write_u64(&mut bytes, flags_entry + 16, DT_FLAGS_1);
+    write_u64(&mut bytes, flags_entry + 24, 0x8000_0001);
+    write_u64(&mut bytes, flags_entry + 32, 0);
+    write_u64(&mut bytes, flags_entry + 40, 0);
     bytes
 }
 

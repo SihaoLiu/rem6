@@ -38,7 +38,10 @@ use data_cache::{
 };
 use debug::emit_debug_stats;
 use dram::{emit_dram_stats, emit_gem5_mem_ctrl_dram_alias_stats};
-use elf::increment_optional_address_bytes_stats;
+use elf::{
+    increment_optional_address_bytes_stats, increment_optional_address_stat,
+    increment_optional_value_stat,
+};
 use fabric::emit_run_fabric_stats;
 pub(super) use gpu_run::gpu_run_stats_output;
 pub(super) use gups::gups_stats_output;
@@ -300,38 +303,26 @@ pub(super) fn run_stats_output(
         StatResetPolicy::Constant,
         dynamic_table.runpath_name_bytes(),
     )?;
-    increment_stat(
+    increment_optional_value_stat(
         &mut stats,
-        "sim.elf.dynamic.hash.sysv.present",
-        "Count",
-        StatResetPolicy::Constant,
-        u64::from(dynamic_table.sysv_hash_virtual_address().is_some()),
+        "sim.elf.dynamic.dt_flags",
+        dynamic_table.flags(),
     )?;
-    if let Some(address) = dynamic_table.sysv_hash_virtual_address() {
-        increment_stat(
-            &mut stats,
-            "sim.elf.dynamic.hash.sysv.virtual_address",
-            "Address",
-            StatResetPolicy::Constant,
-            address.get(),
-        )?;
-    }
-    increment_stat(
+    increment_optional_value_stat(
         &mut stats,
-        "sim.elf.dynamic.hash.gnu.present",
-        "Count",
-        StatResetPolicy::Constant,
-        u64::from(dynamic_table.gnu_hash_virtual_address().is_some()),
+        "sim.elf.dynamic.dt_flags_1",
+        dynamic_table.flags_1(),
     )?;
-    if let Some(address) = dynamic_table.gnu_hash_virtual_address() {
-        increment_stat(
-            &mut stats,
-            "sim.elf.dynamic.hash.gnu.virtual_address",
-            "Address",
-            StatResetPolicy::Constant,
-            address.get(),
-        )?;
-    }
+    increment_optional_address_stat(
+        &mut stats,
+        "sim.elf.dynamic.hash.sysv",
+        dynamic_table.sysv_hash_virtual_address(),
+    )?;
+    increment_optional_address_stat(
+        &mut stats,
+        "sim.elf.dynamic.hash.gnu",
+        dynamic_table.gnu_hash_virtual_address(),
+    )?;
     increment_stat(
         &mut stats,
         "sim.elf.dynamic.rela.entries",

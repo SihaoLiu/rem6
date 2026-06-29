@@ -126,6 +126,8 @@ pub struct BootElfDynamicTable {
     soname: Option<String>,
     rpath: Vec<String>,
     runpath: Vec<String>,
+    flags: Option<u64>,
+    flags_1: Option<u64>,
     sysv_hash_virtual_address: Option<Address>,
     gnu_hash_virtual_address: Option<Address>,
     rela_relocations: BootElfDynamicRelocationTable,
@@ -147,6 +149,8 @@ impl BootElfDynamicTable {
             soname: None,
             rpath: Vec::new(),
             runpath: Vec::new(),
+            flags: None,
+            flags_1: None,
             sysv_hash_virtual_address: None,
             gnu_hash_virtual_address: None,
             rela_relocations: BootElfDynamicRelocationTable::default(),
@@ -167,6 +171,8 @@ impl BootElfDynamicTable {
         soname: Option<String>,
         rpath: Vec<String>,
         runpath: Vec<String>,
+        flags: Option<u64>,
+        flags_1: Option<u64>,
         sysv_hash_virtual_address: Option<Address>,
         gnu_hash_virtual_address: Option<Address>,
         rela_relocations: BootElfDynamicRelocationTable,
@@ -185,6 +191,8 @@ impl BootElfDynamicTable {
             self.soname = soname;
             self.rpath = rpath;
             self.runpath = runpath;
+            self.flags = flags;
+            self.flags_1 = flags_1;
             self.sysv_hash_virtual_address = sysv_hash_virtual_address;
             self.gnu_hash_virtual_address = gnu_hash_virtual_address;
             self.rela_relocations = rela_relocations;
@@ -252,6 +260,14 @@ impl BootElfDynamicTable {
 
     pub fn runpath_name_bytes(&self) -> u64 {
         self.runpath.iter().map(|path| path.len() as u64).sum()
+    }
+
+    pub const fn flags(&self) -> Option<u64> {
+        self.flags
+    }
+
+    pub const fn flags_1(&self) -> Option<u64> {
+        self.flags_1
     }
 
     pub const fn sysv_hash_virtual_address(&self) -> Option<Address> {

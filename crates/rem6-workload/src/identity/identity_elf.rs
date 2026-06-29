@@ -81,6 +81,14 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                     hash_str(hash, "elf.dynamic.runpath");
                     hash_str(hash, runpath);
                 }
+                if let Some(flags) = dynamic.flags() {
+                    hash_str(hash, "elf.dynamic.dt_flags");
+                    hash_u64(hash, flags);
+                }
+                if let Some(flags_1) = dynamic.flags_1() {
+                    hash_str(hash, "elf.dynamic.dt_flags_1");
+                    hash_u64(hash, flags_1);
+                }
                 for (label, address) in [
                     ("elf.dynamic.hash.sysv", dynamic.sysv_hash_virtual_address()),
                     ("elf.dynamic.hash.gnu", dynamic.gnu_hash_virtual_address()),

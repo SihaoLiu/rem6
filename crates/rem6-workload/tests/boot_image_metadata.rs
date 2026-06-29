@@ -10,6 +10,8 @@ const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
+const DT_FLAGS: u64 = 30;
+const DT_FLAGS_1: u64 = 0x6fff_fffb;
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
@@ -369,6 +371,17 @@ fn elf64_image_with_dynamic_hashes(machine: u16, sysv_hash: u64, gnu_hash: u64) 
     write_u64(&mut bytes, 0x188, sysv_hash);
     write_u64(&mut bytes, 0x190, 0x6fff_fef5);
     write_u64(&mut bytes, 0x198, gnu_hash);
+    write_u64(&mut bytes, 0x1a0, 0);
+    write_u64(&mut bytes, 0x1a8, 0);
+    bytes
+}
+
+fn elf64_image_with_dynamic_flags(machine: u16, flags: u64, flags_1: u64) -> Vec<u8> {
+    let mut bytes = elf64_image_with_dynamic_table(machine, 0);
+    write_u64(&mut bytes, 0x180, DT_FLAGS);
+    write_u64(&mut bytes, 0x188, flags);
+    write_u64(&mut bytes, 0x190, DT_FLAGS_1);
+    write_u64(&mut bytes, 0x198, flags_1);
     write_u64(&mut bytes, 0x1a0, 0);
     write_u64(&mut bytes, 0x1a8, 0);
     bytes
@@ -810,6 +823,23 @@ fn workload_boot_image_preserves_elf_dynamic_hash_metadata_round_trip() {
 }
 
 #[test]
+fn workload_boot_image_preserves_elf_dynamic_flag_metadata_round_trip() {
+    let image =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_flags(243, 0x15, 0x8000_0001)).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = round_trip_metadata.dynamic_table();
+
+    assert_eq!(dynamic.flags(), Some(0x15));
+    assert_eq!(dynamic.flags_1(), Some(0x8000_0001));
+}
+
+#[test]
 fn workload_boot_image_preserves_elf_dynamic_needed_names_round_trip() {
     let image = BootImage::from_elf64_le(&elf64_image_with_dynamic_libraries(
         243,
@@ -1201,6 +1231,53 @@ fn workload_manifest_identity_includes_elf_dynamic_hash_metadata() {
 
     assert_ne!(baseline_manifest.identity(), sysv_manifest.identity());
     assert_ne!(baseline_manifest.identity(), gnu_manifest.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_dynamic_flag_metadata() {
+    let baseline_source =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_flags(243, 0x15, 0x8000_0001)).unwrap();
+    let flags_source =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_flags(243, 0x16, 0x8000_0001)).unwrap();
+    let flags_1_source =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_flags(243, 0x15, 0x8000_0002)).unwrap();
+
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .flags(),
+        Some(0x15),
+    );
+    assert_eq!(
+        flags_1_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .flags_1(),
+        Some(0x8000_0002),
+    );
+    let baseline = boot_image_with_metadata(baseline_source.elf_metadata().unwrap());
+    let flags = boot_image_with_metadata(flags_source.elf_metadata().unwrap());
+    let flags_1 = boot_image_with_metadata(flags_1_source.elf_metadata().unwrap());
+
+    assert_eq!(baseline.entry(), flags.entry());
+    assert_eq!(baseline.segments(), flags.segments());
+    assert_eq!(baseline.segments(), flags_1.segments());
+
+    let baseline_manifest = WorkloadManifest::builder(id("same"), baseline)
+        .build()
+        .unwrap();
+    let flags_manifest = WorkloadManifest::builder(id("same"), flags)
+        .build()
+        .unwrap();
+    let flags_1_manifest = WorkloadManifest::builder(id("same"), flags_1)
+        .build()
+        .unwrap();
+
+    assert_ne!(baseline_manifest.identity(), flags_manifest.identity());
+    assert_ne!(baseline_manifest.identity(), flags_1_manifest.identity());
 }
 
 #[test]

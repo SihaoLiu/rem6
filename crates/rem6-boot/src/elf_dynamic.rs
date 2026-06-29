@@ -19,7 +19,9 @@ const DT_RELENT: u64 = 19;
 const DT_PLTREL: u64 = 20;
 const DT_JMPREL: u64 = 23;
 const DT_RUNPATH: u64 = 29;
+const DT_FLAGS: u64 = 30;
 const DT_GNU_HASH: u64 = 0x6fff_fef5;
+const DT_FLAGS_1: u64 = 0x6fff_fffb;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ElfLoadMapping {
@@ -35,6 +37,8 @@ pub(crate) struct ElfDynamicTableSummary {
     pub(crate) soname: Option<String>,
     pub(crate) rpath: Vec<String>,
     pub(crate) runpath: Vec<String>,
+    pub(crate) flags: Option<u64>,
+    pub(crate) flags_1: Option<u64>,
     pub(crate) sysv_hash_virtual_address: Option<u64>,
     pub(crate) gnu_hash_virtual_address: Option<u64>,
     pub(crate) rela_relocations: ElfDynamicRelocationSummary,
@@ -147,6 +151,8 @@ pub(crate) fn dynamic_table_counts(
     let mut soname_offset = None;
     let mut rpath_offsets = Vec::new();
     let mut runpath_offsets = Vec::new();
+    let mut flags = None;
+    let mut flags_1 = None;
     let mut sysv_hash_virtual_address = None;
     let mut gnu_hash_virtual_address = None;
     let mut rela_relocations = ElfDynamicRelocationSummary::default();
@@ -185,6 +191,8 @@ pub(crate) fn dynamic_table_counts(
                 soname: strings.soname,
                 rpath: strings.rpath,
                 runpath: strings.runpath,
+                flags,
+                flags_1,
                 sysv_hash_virtual_address,
                 gnu_hash_virtual_address,
                 rela_relocations,
@@ -209,6 +217,10 @@ pub(crate) fn dynamic_table_counts(
             rpath_offsets.push(value);
         } else if tag == DT_RUNPATH {
             runpath_offsets.push(value);
+        } else if tag == DT_FLAGS {
+            flags = Some(value);
+        } else if tag == DT_FLAGS_1 {
+            flags_1 = Some(value);
         } else if tag == DT_RELA {
             rela_relocations.virtual_address = Some(value);
         } else if tag == DT_RELASZ {

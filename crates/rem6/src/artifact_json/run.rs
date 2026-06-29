@@ -330,10 +330,11 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
         .unwrap_or_else(|| "null".to_string());
     let rpath = json_string_array(table.rpath());
     let runpath = json_string_array(table.runpath());
+    let flags = elf_dynamic_flags_json(table);
     let hash = elf_dynamic_hash_json(table);
     let relocations = elf_dynamic_relocations_json(table);
     format!(
-        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":{},\"soname\":{},\"rpath\":{},\"runpath\":{},\"hash\":{},\"relocations\":{}}}",
+        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":{},\"soname\":{},\"rpath\":{},\"runpath\":{},\"flags\":{},\"hash\":{},\"relocations\":{}}}",
         table.segment_count(),
         file_offset,
         virtual_address,
@@ -344,8 +345,17 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
         soname,
         rpath,
         runpath,
+        flags,
         hash,
         relocations
+    )
+}
+
+fn elf_dynamic_flags_json(table: &BootElfDynamicTable) -> String {
+    format!(
+        "{{\"dt_flags\":{},\"dt_flags_1\":{}}}",
+        optional_value_json(table.flags()),
+        optional_value_json(table.flags_1())
     )
 }
 
@@ -391,6 +401,12 @@ fn elf_dynamic_relocation_table_json(table: BootElfDynamicRelocationTable) -> St
 fn address_json(address: Option<Address>) -> String {
     address
         .map(|address| format!("\"0x{:x}\"", address.get()))
+        .unwrap_or_else(|| "null".to_string())
+}
+
+fn optional_value_json(value: Option<u64>) -> String {
+    value
+        .map(|value| value.to_string())
         .unwrap_or_else(|| "null".to_string())
 }
 

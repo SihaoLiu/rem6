@@ -22,6 +22,8 @@ const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
+const DT_FLAGS: u64 = 30;
+const DT_FLAGS_1: u64 = 0x6fff_fffb;
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
@@ -1166,6 +1168,90 @@ fn boot_image_records_elf32_dynamic_hash_metadata() {
         dynamic.gnu_hash_virtual_address(),
         Some(Address::new(0x8000_0260)),
     );
+}
+
+#[test]
+fn boot_image_records_elf64_dynamic_flag_metadata() {
+    let dynamic = [
+        DT_FLAGS.to_le_bytes(),
+        0x15u64.to_le_bytes(),
+        DT_FLAGS_1.to_le_bytes(),
+        0x8000_0001u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf64_image(
+        0x8000_0200,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[(0x180, &dynamic), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(dynamic.flags(), Some(0x15));
+    assert_eq!(dynamic.flags_1(), Some(0x8000_0001));
+}
+
+#[test]
+fn boot_image_records_elf32_dynamic_flag_metadata() {
+    let dynamic = [
+        (DT_FLAGS as u32).to_le_bytes(),
+        0x15u32.to_le_bytes(),
+        (DT_FLAGS_1 as u32).to_le_bytes(),
+        0x8000_0001u32.to_le_bytes(),
+        0u32.to_le_bytes(),
+        0u32.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf32_image(
+        0x8000_0200,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[(0x180, &dynamic), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    let metadata = BootImage::from_elf32_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(dynamic.flags(), Some(0x15));
+    assert_eq!(dynamic.flags_1(), Some(0x8000_0001));
 }
 
 #[test]

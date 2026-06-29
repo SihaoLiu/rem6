@@ -36,3 +36,45 @@ pub(super) fn increment_optional_address_bytes_stats(
     }
     Ok(())
 }
+
+pub(super) fn increment_optional_address_stat(
+    stats: &mut StatsRegistry,
+    path: &str,
+    address: Option<Address>,
+) -> Result<(), Rem6CliError> {
+    increment_stat(
+        stats,
+        &format!("{path}.present"),
+        "Count",
+        StatResetPolicy::Constant,
+        u64::from(address.is_some()),
+    )?;
+    if let Some(address) = address {
+        increment_stat(
+            stats,
+            &format!("{path}.virtual_address"),
+            "Address",
+            StatResetPolicy::Constant,
+            address.get(),
+        )?;
+    }
+    Ok(())
+}
+
+pub(super) fn increment_optional_value_stat(
+    stats: &mut StatsRegistry,
+    path: &str,
+    value: Option<u64>,
+) -> Result<(), Rem6CliError> {
+    increment_stat(
+        stats,
+        &format!("{path}.present"),
+        "Count",
+        StatResetPolicy::Constant,
+        u64::from(value.is_some()),
+    )?;
+    if let Some(value) = value {
+        increment_stat(stats, path, "Value", StatResetPolicy::Constant, value)?;
+    }
+    Ok(())
+}
