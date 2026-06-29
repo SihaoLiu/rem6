@@ -172,6 +172,53 @@ fn elf64_image_with_symbols(machine: u16) -> Vec<u8> {
     bytes
 }
 
+fn elf64_image_with_dynamic_table(machine: u16, needed_count: usize) -> Vec<u8> {
+    let mut bytes = vec![0; 0x204];
+    bytes[0..4].copy_from_slice(b"\x7fELF");
+    bytes[4] = 2;
+    bytes[5] = 1;
+    bytes[6] = 1;
+    write_u16(&mut bytes, 16, 2);
+    write_u16(&mut bytes, 18, machine);
+    write_u32(&mut bytes, 20, 1);
+    write_u64(&mut bytes, 24, 0x8004);
+    write_u64(&mut bytes, 32, 64);
+    write_u16(&mut bytes, 52, 64);
+    write_u16(&mut bytes, 54, 56);
+    write_u16(&mut bytes, 56, 2);
+
+    write_u32(&mut bytes, 64, 1);
+    write_u32(&mut bytes, 68, 5);
+    write_u64(&mut bytes, 72, 0x200);
+    write_u64(&mut bytes, 80, 0x8000);
+    write_u64(&mut bytes, 88, 0x8000);
+    write_u64(&mut bytes, 96, 4);
+    write_u64(&mut bytes, 104, 4);
+    write_u64(&mut bytes, 112, 0x1000);
+
+    let dynamic_offset = 0x180usize;
+    let dynamic_size = (needed_count + 1) * 16;
+    write_u32(&mut bytes, 120, 2);
+    write_u32(&mut bytes, 124, 4);
+    write_u64(&mut bytes, 128, dynamic_offset as u64);
+    write_u64(&mut bytes, 136, 0x8180);
+    write_u64(&mut bytes, 144, 0x8180);
+    write_u64(&mut bytes, 152, dynamic_size as u64);
+    write_u64(&mut bytes, 160, dynamic_size as u64);
+    write_u64(&mut bytes, 168, 8);
+
+    for index in 0..needed_count {
+        let entry = dynamic_offset + index * 16;
+        write_u64(&mut bytes, entry, 1);
+        write_u64(&mut bytes, entry + 8, (index * 8) as u64);
+    }
+    let null_entry = dynamic_offset + needed_count * 16;
+    write_u64(&mut bytes, null_entry, 0);
+    write_u64(&mut bytes, null_entry + 8, 0);
+    bytes[0x200..0x204].copy_from_slice(&[0x13, 0x05, 0x00, 0x00]);
+    bytes
+}
+
 fn elf64_be_image(machine: u16) -> Vec<u8> {
     let mut bytes = vec![0; 0x104];
     bytes[0..4].copy_from_slice(b"\x7fELF");
@@ -273,6 +320,26 @@ fn workload_boot_image_preserves_elf_symbol_summary_round_trip() {
 }
 
 #[test]
+fn workload_boot_image_preserves_elf_dynamic_table_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_dynamic_table(243, 2)).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = round_trip_metadata.dynamic_table();
+
+    assert_eq!(dynamic.segment_count(), 1);
+    assert_eq!(dynamic.file_offset(), Some(0x180));
+    assert_eq!(dynamic.virtual_address().unwrap().get(), 0x8180);
+    assert_eq!(dynamic.entry_size(), 16);
+    assert_eq!(dynamic.entry_count(), 3);
+    assert_eq!(dynamic.needed_count(), 2);
+}
+
+#[test]
 fn workload_manifest_identity_includes_elf_metadata() {
     let riscv = BootImage::from_elf64_le(&elf64_image(243)).unwrap();
     let x86 = BootImage::from_elf64_le(&elf64_image(62)).unwrap();
@@ -326,6 +393,40 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
         .unwrap();
 
     assert_ne!(plain_manifest.identity(), symbol_manifest.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_dynamic_table_summary() {
+    let one_needed = BootImage::from_elf64_le(&elf64_image_with_dynamic_table(243, 1)).unwrap();
+    let two_needed = BootImage::from_elf64_le(&elf64_image_with_dynamic_table(243, 2)).unwrap();
+
+    assert_eq!(one_needed.entry(), two_needed.entry());
+    assert_eq!(one_needed.segments(), two_needed.segments());
+    assert_eq!(
+        one_needed
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .needed_count(),
+        1,
+    );
+    assert_eq!(
+        two_needed
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .needed_count(),
+        2,
+    );
+
+    let one_manifest = WorkloadManifest::builder(id("same"), one_needed)
+        .build()
+        .unwrap();
+    let two_manifest = WorkloadManifest::builder(id("same"), two_needed)
+        .build()
+        .unwrap();
+
+    assert_ne!(one_manifest.identity(), two_manifest.identity());
 }
 
 #[test]

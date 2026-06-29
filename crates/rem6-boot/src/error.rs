@@ -58,6 +58,20 @@ pub enum BootElfError {
     UnterminatedInterpreterPath {
         segment: u16,
     },
+    DynamicTableFileRangeOutOfBounds {
+        segment: u16,
+        offset: u64,
+        size: u64,
+        image_size: u64,
+    },
+    DynamicTableSizeMisaligned {
+        segment: u16,
+        size: u64,
+        entry_size: u16,
+    },
+    UnterminatedDynamicTable {
+        segment: u16,
+    },
     ProgramHeaderTableOutOfBounds {
         offset: u64,
         size: u64,
@@ -176,6 +190,27 @@ impl fmt::Display for BootElfError {
             Self::UnterminatedInterpreterPath { segment } => write!(
                 formatter,
                 "ELF interpreter segment {segment} path is not null-terminated"
+            ),
+            Self::DynamicTableFileRangeOutOfBounds {
+                segment,
+                offset,
+                size,
+                image_size,
+            } => write!(
+                formatter,
+                "ELF dynamic segment {segment} file range {offset:#x}+{size:#x} exceeds image size {image_size:#x}"
+            ),
+            Self::DynamicTableSizeMisaligned {
+                segment,
+                size,
+                entry_size,
+            } => write!(
+                formatter,
+                "ELF dynamic segment {segment} size {size:#x} is not aligned to entry size {entry_size:#x}"
+            ),
+            Self::UnterminatedDynamicTable { segment } => write!(
+                formatter,
+                "ELF dynamic segment {segment} is not null-terminated"
             ),
             Self::ProgramHeaderTableOutOfBounds {
                 offset,

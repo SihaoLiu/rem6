@@ -200,6 +200,52 @@ pub(crate) fn riscv64_elf_with_symbols(entry: u64, physical: u64, payload: &[u8]
     bytes
 }
 
+pub(crate) fn riscv64_elf_with_dynamic_table(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
+    let payload_offset = 0x200usize;
+    let dynamic_offset = 0x180usize;
+    let dynamic_size = 3 * 16usize;
+    let mut bytes = vec![0; payload_offset + payload.len()];
+    bytes[0..4].copy_from_slice(b"\x7fELF");
+    bytes[4] = 2;
+    bytes[5] = 1;
+    bytes[6] = 1;
+    write_u16(&mut bytes, 16, 2);
+    write_u16(&mut bytes, 18, 243);
+    write_u32(&mut bytes, 20, 1);
+    write_u64(&mut bytes, 24, entry);
+    write_u64(&mut bytes, 32, 64);
+    write_u16(&mut bytes, 52, 64);
+    write_u16(&mut bytes, 54, 56);
+    write_u16(&mut bytes, 56, 2);
+
+    write_u32(&mut bytes, 64, 1);
+    write_u32(&mut bytes, 68, 5);
+    write_u64(&mut bytes, 72, payload_offset as u64);
+    write_u64(&mut bytes, 80, physical);
+    write_u64(&mut bytes, 88, physical);
+    write_u64(&mut bytes, 96, payload.len() as u64);
+    write_u64(&mut bytes, 104, payload.len() as u64);
+    write_u64(&mut bytes, 112, 0x1000);
+
+    write_u32(&mut bytes, 120, 2);
+    write_u32(&mut bytes, 124, 4);
+    write_u64(&mut bytes, 128, dynamic_offset as u64);
+    write_u64(&mut bytes, 136, physical + dynamic_offset as u64);
+    write_u64(&mut bytes, 144, physical + dynamic_offset as u64);
+    write_u64(&mut bytes, 152, dynamic_size as u64);
+    write_u64(&mut bytes, 160, dynamic_size as u64);
+    write_u64(&mut bytes, 168, 8);
+
+    write_u64(&mut bytes, dynamic_offset, 1);
+    write_u64(&mut bytes, dynamic_offset + 8, 0x20);
+    write_u64(&mut bytes, dynamic_offset + 16, 1);
+    write_u64(&mut bytes, dynamic_offset + 24, 0x30);
+    write_u64(&mut bytes, dynamic_offset + 32, 0);
+    write_u64(&mut bytes, dynamic_offset + 40, 0);
+    bytes[payload_offset..].copy_from_slice(payload);
+    bytes
+}
+
 pub(crate) fn riscv64_elf_extended_phnum(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
     let mut bytes = riscv64_elf(entry, physical, payload);
     let section_table_offset = bytes.len();

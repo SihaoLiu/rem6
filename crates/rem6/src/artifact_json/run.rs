@@ -1,4 +1,4 @@
-use rem6_boot::{BootElfInterpreter, BootElfProgramHeaderTable};
+use rem6_boot::{BootElfDynamicTable, BootElfInterpreter, BootElfProgramHeaderTable};
 use rem6_fabric::FabricHopActivity;
 use rem6_system::RiscvDataCacheProtocol;
 
@@ -189,7 +189,7 @@ impl Rem6RunArtifact {
             .map(|artifact| format!(",\"power_analysis\":{}", artifact.to_json()))
             .unwrap_or_default();
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"symbols\":{{\"total\":{},\"functions\":{},\"objects\":{}}},\"program_header_table\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"symbols\":{{\"total\":{},\"functions\":{},\"objects\":{}}},\"dynamic\":{},\"program_header_table\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -217,6 +217,7 @@ impl Rem6RunArtifact {
             self.metadata.symbol_count(),
             self.metadata.function_symbol_count(),
             self.metadata.object_symbol_count(),
+            elf_dynamic_table_json(self.metadata.dynamic_table()),
             elf_program_header_table_json(self.metadata.program_header_table()),
             interpreter,
             simulation,
@@ -264,6 +265,26 @@ fn elf_interpreter_json(interpreter: Option<&BootElfInterpreter>) -> String {
             )
         })
         .unwrap_or_else(|| "null".to_string())
+}
+
+fn elf_dynamic_table_json(table: BootElfDynamicTable) -> String {
+    let file_offset = table
+        .file_offset()
+        .map(|offset| offset.to_string())
+        .unwrap_or_else(|| "null".to_string());
+    let virtual_address = table
+        .virtual_address()
+        .map(|address| format!("\"0x{:x}\"", address.get()))
+        .unwrap_or_else(|| "null".to_string());
+    format!(
+        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{}}}",
+        table.segment_count(),
+        file_offset,
+        virtual_address,
+        table.entry_size(),
+        table.entry_count(),
+        table.needed_count()
+    )
 }
 
 fn elf_program_header_table_json(table: BootElfProgramHeaderTable) -> String {

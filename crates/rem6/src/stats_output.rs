@@ -177,6 +177,53 @@ pub(super) fn run_stats_output(
         StatResetPolicy::Constant,
         inputs.metadata.object_symbol_count(),
     )?;
+    let dynamic_table = inputs.metadata.dynamic_table();
+    increment_stat(
+        &mut stats,
+        "sim.elf.dynamic.segments",
+        "Count",
+        StatResetPolicy::Constant,
+        dynamic_table.segment_count(),
+    )?;
+    if let Some(file_offset) = dynamic_table.file_offset() {
+        increment_stat(
+            &mut stats,
+            "sim.elf.dynamic.file_offset",
+            "Byte",
+            StatResetPolicy::Constant,
+            file_offset,
+        )?;
+    }
+    if let Some(virtual_address) = dynamic_table.virtual_address() {
+        increment_stat(
+            &mut stats,
+            "sim.elf.dynamic.virtual_address",
+            "Address",
+            StatResetPolicy::Constant,
+            virtual_address.get(),
+        )?;
+    }
+    increment_stat(
+        &mut stats,
+        "sim.elf.dynamic.entry_size",
+        "Byte",
+        StatResetPolicy::Constant,
+        u64::from(dynamic_table.entry_size()),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.dynamic.entries",
+        "Count",
+        StatResetPolicy::Constant,
+        dynamic_table.entry_count(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.dynamic.needed",
+        "Count",
+        StatResetPolicy::Constant,
+        dynamic_table.needed_count(),
+    )?;
     let program_header_table = inputs.metadata.program_header_table();
     increment_stat(
         &mut stats,

@@ -71,6 +71,72 @@ impl BootElfProgramHeaderTable {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BootElfDynamicTable {
+    segment_count: u64,
+    file_offset: Option<u64>,
+    virtual_address: Option<Address>,
+    entry_size: u16,
+    entry_count: u64,
+    needed_count: u64,
+}
+
+impl BootElfDynamicTable {
+    pub const fn new() -> Self {
+        Self {
+            segment_count: 0,
+            file_offset: None,
+            virtual_address: None,
+            entry_size: 0,
+            entry_count: 0,
+            needed_count: 0,
+        }
+    }
+
+    pub const fn with_segment(
+        mut self,
+        file_offset: u64,
+        virtual_address: Address,
+        entry_size: u16,
+        entry_count: u64,
+        needed_count: u64,
+    ) -> Self {
+        self.segment_count += 1;
+        if self.file_offset.is_none() {
+            self.file_offset = Some(file_offset);
+            self.virtual_address = Some(virtual_address);
+            self.entry_size = entry_size;
+            self.entry_count = entry_count;
+            self.needed_count = needed_count;
+        }
+        self
+    }
+
+    pub const fn segment_count(self) -> u64 {
+        self.segment_count
+    }
+
+    pub const fn file_offset(self) -> Option<u64> {
+        self.file_offset
+    }
+
+    pub const fn virtual_address(self) -> Option<Address> {
+        self.virtual_address
+    }
+
+    pub const fn entry_size(self) -> u16 {
+        self.entry_size
+    }
+
+    pub const fn entry_count(self) -> u64 {
+        self.entry_count
+    }
+
+    pub const fn needed_count(self) -> u64 {
+        self.needed_count
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BootElfMetadata {
     class: BootElfClass,
@@ -84,6 +150,7 @@ pub struct BootElfMetadata {
     symbol_count: u64,
     function_symbol_count: u64,
     object_symbol_count: u64,
+    dynamic_table: BootElfDynamicTable,
     program_header_table: BootElfProgramHeaderTable,
 }
 
@@ -109,6 +176,7 @@ impl BootElfMetadata {
             symbol_count: 0,
             function_symbol_count: 0,
             object_symbol_count: 0,
+            dynamic_table: BootElfDynamicTable::new(),
             program_header_table: BootElfProgramHeaderTable::new(0, 0, 0),
         }
     }
@@ -118,6 +186,11 @@ impl BootElfMetadata {
         table: BootElfProgramHeaderTable,
     ) -> Self {
         self.program_header_table = table;
+        self
+    }
+
+    pub(crate) const fn with_dynamic_table(mut self, dynamic_table: BootElfDynamicTable) -> Self {
+        self.dynamic_table = dynamic_table;
         self
     }
 
@@ -180,6 +253,10 @@ impl BootElfMetadata {
 
     pub const fn object_symbol_count(&self) -> u64 {
         self.object_symbol_count
+    }
+
+    pub const fn dynamic_table(&self) -> BootElfDynamicTable {
+        self.dynamic_table
     }
 
     pub const fn program_header_table(&self) -> BootElfProgramHeaderTable {

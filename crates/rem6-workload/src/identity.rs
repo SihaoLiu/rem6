@@ -1,11 +1,9 @@
 mod gups;
+mod identity_elf;
 mod traffic_trace_replay;
 mod traffic_trace_run;
 
-use rem6_boot::{
-    BootElfArchitecture, BootElfClass, BootElfEndian, BootElfInterpreter, BootElfMetadata,
-    BootElfOperatingSystem,
-};
+use rem6_boot::BootElfInterpreter;
 use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopology};
 use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
 
@@ -44,6 +42,7 @@ use crate::{
 };
 
 use gups::{hash_expected_gups_run_summary, hash_gups_run};
+use identity_elf::hash_elf_metadata;
 use traffic_trace_replay::hash_expected_traffic_trace_replay_summary;
 use traffic_trace_run::hash_traffic_trace_replay_run;
 
@@ -1216,94 +1215,12 @@ fn hash_linux_boot_handoff(hash: &mut u64, handoff: Option<&WorkloadLinuxBootHan
     }
 }
 
-fn hash_elf_metadata(hash: &mut u64, metadata: Option<BootElfMetadata>) {
-    match metadata {
-        Some(metadata) => {
-            hash_u64(hash, 1);
-            hash_elf_class(hash, metadata.class());
-            hash_elf_endian(hash, metadata.endian());
-            hash_u64(hash, u64::from(metadata.machine()));
-            hash_u64(hash, u64::from(metadata.os_abi()));
-            hash_u64(hash, u64::from(metadata.flags()));
-            hash_elf_architecture(hash, metadata.architecture());
-            hash_elf_operating_system(hash, metadata.operating_system());
-            if metadata.has_tls() {
-                hash_str(hash, "elf.tls");
-            }
-            if metadata.symbol_count() != 0
-                || metadata.function_symbol_count() != 0
-                || metadata.object_symbol_count() != 0
-            {
-                hash_str(hash, "elf.symbols");
-                hash_u64(hash, metadata.symbol_count());
-                hash_u64(hash, metadata.function_symbol_count());
-                hash_u64(hash, metadata.object_symbol_count());
-            }
-        }
-        None => hash_u64(hash, 0),
-    }
-}
-
 fn hash_elf_interpreter(hash: &mut u64, interpreter: Option<&BootElfInterpreter>) {
     if let Some(interpreter) = interpreter {
         hash_str(hash, "elf.interpreter.some");
         hash_str(hash, interpreter.path());
         hash_u64(hash, interpreter.file_offset());
         hash_u64(hash, interpreter.file_size());
-    }
-}
-
-fn hash_elf_class(hash: &mut u64, class: BootElfClass) {
-    let value = match class {
-        BootElfClass::Class32 => 1,
-        BootElfClass::Class64 => 2,
-    };
-    hash_u64(hash, value);
-}
-
-fn hash_elf_endian(hash: &mut u64, endian: BootElfEndian) {
-    let value = match endian {
-        BootElfEndian::Little => 1,
-        BootElfEndian::Big => 2,
-    };
-    hash_u64(hash, value);
-}
-
-fn hash_elf_architecture(hash: &mut u64, architecture: BootElfArchitecture) {
-    match architecture {
-        BootElfArchitecture::Sparc32 => hash_u64(hash, 1),
-        BootElfArchitecture::Sparc64 => hash_u64(hash, 2),
-        BootElfArchitecture::Mips => hash_u64(hash, 3),
-        BootElfArchitecture::I386 => hash_u64(hash, 4),
-        BootElfArchitecture::X8664 => hash_u64(hash, 5),
-        BootElfArchitecture::Arm => hash_u64(hash, 6),
-        BootElfArchitecture::Thumb => hash_u64(hash, 7),
-        BootElfArchitecture::Arm64 => hash_u64(hash, 8),
-        BootElfArchitecture::Riscv32 => hash_u64(hash, 9),
-        BootElfArchitecture::Riscv64 => hash_u64(hash, 10),
-        BootElfArchitecture::Power => hash_u64(hash, 11),
-        BootElfArchitecture::Power64 => hash_u64(hash, 12),
-        BootElfArchitecture::Unknown { machine, class } => {
-            hash_u64(hash, 13);
-            hash_u64(hash, u64::from(machine));
-            hash_elf_class(hash, class);
-        }
-    }
-}
-
-fn hash_elf_operating_system(hash: &mut u64, operating_system: BootElfOperatingSystem) {
-    match operating_system {
-        BootElfOperatingSystem::Linux => hash_u64(hash, 1),
-        BootElfOperatingSystem::Solaris => hash_u64(hash, 2),
-        BootElfOperatingSystem::Tru64 => hash_u64(hash, 3),
-        BootElfOperatingSystem::LinuxArmOabi => hash_u64(hash, 4),
-        BootElfOperatingSystem::LinuxPower64AbiV1 => hash_u64(hash, 5),
-        BootElfOperatingSystem::LinuxPower64AbiV2 => hash_u64(hash, 6),
-        BootElfOperatingSystem::FreeBsd => hash_u64(hash, 7),
-        BootElfOperatingSystem::Unknown { os_abi } => {
-            hash_u64(hash, 8);
-            hash_u64(hash, u64::from(os_abi));
-        }
     }
 }
 

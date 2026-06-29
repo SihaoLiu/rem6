@@ -9,4 +9,6 @@ mod metadata;
 pub use elf::{BootElfArchitecture, BootElfClass, BootElfEndian, BootElfOperatingSystem};
 pub use error::{BootElfError, BootError};
 pub use image::{BootImage, BootLineWrite, BootLoadReport, BootSegment};
-pub use metadata::{BootElfInterpreter, BootElfMetadata, BootElfProgramHeaderTable};
+pub use metadata::{
+    BootElfDynamicTable, BootElfInterpreter, BootElfMetadata, BootElfProgramHeaderTable,
+};
