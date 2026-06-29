@@ -326,6 +326,8 @@ pub struct BootElfMetadata {
     gnu_stack_executable: Option<bool>,
     gnu_relro_virtual_address: Option<Address>,
     gnu_relro_memory_size: Option<u64>,
+    gnu_eh_frame_virtual_address: Option<Address>,
+    gnu_eh_frame_memory_size: Option<u64>,
     symbol_count: u64,
     function_symbol_count: u64,
     object_symbol_count: u64,
@@ -355,6 +357,8 @@ impl BootElfMetadata {
             gnu_stack_executable: None,
             gnu_relro_virtual_address: None,
             gnu_relro_memory_size: None,
+            gnu_eh_frame_virtual_address: None,
+            gnu_eh_frame_memory_size: None,
             symbol_count: 0,
             function_symbol_count: 0,
             object_symbol_count: 0,
@@ -390,6 +394,16 @@ impl BootElfMetadata {
     ) -> Self {
         self.gnu_relro_virtual_address = virtual_address;
         self.gnu_relro_memory_size = memory_size;
+        self
+    }
+
+    pub(crate) const fn with_gnu_eh_frame(
+        mut self,
+        virtual_address: Option<Address>,
+        memory_size: Option<u64>,
+    ) -> Self {
+        self.gnu_eh_frame_virtual_address = virtual_address;
+        self.gnu_eh_frame_memory_size = memory_size;
         self
     }
 
@@ -447,6 +461,14 @@ impl BootElfMetadata {
 
     pub const fn gnu_relro_memory_size(&self) -> Option<u64> {
         self.gnu_relro_memory_size
+    }
+
+    pub const fn gnu_eh_frame_virtual_address(&self) -> Option<Address> {
+        self.gnu_eh_frame_virtual_address
+    }
+
+    pub const fn gnu_eh_frame_memory_size(&self) -> Option<u64> {
+        self.gnu_eh_frame_memory_size
     }
 
     pub const fn symbol_count(&self) -> u64 {

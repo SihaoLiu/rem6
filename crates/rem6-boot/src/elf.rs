@@ -32,6 +32,7 @@ const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
 const PT_INTERP: u32 = 3;
 const PT_TLS: u32 = 7;
+const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PF_X: u32 = 0x1;
@@ -251,6 +252,8 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
     let mut gnu_stack_executable = None;
     let mut gnu_relro_virtual_address = None;
     let mut gnu_relro_memory_size = None;
+    let mut gnu_eh_frame_virtual_address = None;
+    let mut gnu_eh_frame_memory_size = None;
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let segment = segment_index(index);
@@ -315,6 +318,18 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                     endian,
                 )?));
                 gnu_relro_memory_size = Some(read_u64_at_u64(bytes, header_offset + 40, endian)?);
+            }
+            continue;
+        }
+        if kind == PT_GNU_EH_FRAME {
+            if gnu_eh_frame_virtual_address.is_none() {
+                gnu_eh_frame_virtual_address = Some(Address::new(read_u64_at_u64(
+                    bytes,
+                    header_offset + 16,
+                    endian,
+                )?));
+                gnu_eh_frame_memory_size =
+                    Some(read_u64_at_u64(bytes, header_offset + 40, endian)?);
             }
             continue;
         }
@@ -392,6 +407,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         .with_tls(has_tls)
         .with_gnu_stack_executable(gnu_stack_executable)
         .with_gnu_relro(gnu_relro_virtual_address, gnu_relro_memory_size)
+        .with_gnu_eh_frame(gnu_eh_frame_virtual_address, gnu_eh_frame_memory_size)
         .with_symbol_summary(
             section_summary.symbol_count(),
             section_summary.function_symbol_count(),
@@ -472,6 +488,8 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
     let mut gnu_stack_executable = None;
     let mut gnu_relro_virtual_address = None;
     let mut gnu_relro_memory_size = None;
+    let mut gnu_eh_frame_virtual_address = None;
+    let mut gnu_eh_frame_memory_size = None;
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let segment = segment_index(index);
@@ -540,6 +558,21 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                     endian,
                 )?)));
                 gnu_relro_memory_size = Some(u64::from(read_u32_at_u64(
+                    bytes,
+                    header_offset + 20,
+                    endian,
+                )?));
+            }
+            continue;
+        }
+        if kind == PT_GNU_EH_FRAME {
+            if gnu_eh_frame_virtual_address.is_none() {
+                gnu_eh_frame_virtual_address = Some(Address::new(u64::from(read_u32_at_u64(
+                    bytes,
+                    header_offset + 8,
+                    endian,
+                )?)));
+                gnu_eh_frame_memory_size = Some(u64::from(read_u32_at_u64(
                     bytes,
                     header_offset + 20,
                     endian,
@@ -635,6 +668,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         .with_tls(has_tls)
         .with_gnu_stack_executable(gnu_stack_executable)
         .with_gnu_relro(gnu_relro_virtual_address, gnu_relro_memory_size)
+        .with_gnu_eh_frame(gnu_eh_frame_virtual_address, gnu_eh_frame_memory_size)
         .with_symbol_summary(
             section_summary.symbol_count(),
             section_summary.function_symbol_count(),

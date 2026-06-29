@@ -16,6 +16,7 @@ fn line(fill: u8) -> Vec<u8> {
 }
 
 const OVERSIZED_VECTOR_LENGTH: u64 = isize::MAX as u64 + 1;
+const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 
@@ -473,6 +474,31 @@ fn elf64_image_with_gnu_relro() -> Vec<u8> {
     bytes
 }
 
+fn elf64_image_with_gnu_eh_frame() -> Vec<u8> {
+    let mut bytes = elf64_image(
+        0x8004,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x100,
+                physical: 0x8000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: PT_GNU_EH_FRAME,
+                offset: 0x180,
+                physical: 0x9100,
+                file_size: 24,
+                memory_size: 40,
+            },
+        ],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    write_u64(&mut bytes, 64 + 56 + 24, 0xa100);
+    bytes
+}
+
 fn elf64_image_with_repeated_gnu_stack(second_executable: bool) -> Vec<u8> {
     let mut bytes = elf64_image(
         0x8004,
@@ -557,6 +583,31 @@ fn elf32_image_with_gnu_relro() -> Vec<u8> {
         &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
     );
     write_u32(&mut bytes, 52 + 32 + 12, 0xa000);
+    bytes
+}
+
+fn elf32_image_with_gnu_eh_frame() -> Vec<u8> {
+    let mut bytes = elf32_image(
+        0x8004,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x100,
+                physical: 0x8000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: PT_GNU_EH_FRAME,
+                offset: 0x180,
+                physical: 0x9100,
+                file_size: 24,
+                memory_size: 40,
+            },
+        ],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    write_u32(&mut bytes, 52 + 32 + 12, 0xa100);
     bytes
 }
 
@@ -1999,6 +2050,36 @@ fn boot_image_records_elf32_gnu_relro_metadata() {
         Some(Address::new(0x9000)),
     );
     assert_eq!(metadata.gnu_relro_memory_size(), Some(32));
+}
+
+#[test]
+fn boot_image_records_elf64_gnu_eh_frame_metadata() {
+    let elf = elf64_image_with_gnu_eh_frame();
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+
+    assert_eq!(
+        metadata.gnu_eh_frame_virtual_address(),
+        Some(Address::new(0x9100)),
+    );
+    assert_eq!(metadata.gnu_eh_frame_memory_size(), Some(40));
+}
+
+#[test]
+fn boot_image_records_elf32_gnu_eh_frame_metadata() {
+    let elf = elf32_image_with_gnu_eh_frame();
+    let metadata = BootImage::from_elf32_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+
+    assert_eq!(
+        metadata.gnu_eh_frame_virtual_address(),
+        Some(Address::new(0x9100)),
+    );
+    assert_eq!(metadata.gnu_eh_frame_memory_size(), Some(40));
 }
 
 #[test]

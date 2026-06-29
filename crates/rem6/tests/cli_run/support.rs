@@ -4,6 +4,7 @@ use std::{
 };
 
 const GEM5_MAGIC: [u8; 4] = [0x67, 0x65, 0x6d, 0x35];
+const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 
@@ -170,6 +171,10 @@ pub(crate) fn riscv64_elf_with_gnu_stack(
 
 pub(crate) fn riscv64_elf_with_gnu_relro(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
     riscv64_elf_with_extra_program_header(entry, physical, payload, PT_GNU_RELRO, 4, 32)
+}
+
+pub(crate) fn riscv64_elf_with_gnu_eh_frame(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
+    riscv64_elf_with_extra_program_header(entry, physical, payload, PT_GNU_EH_FRAME, 4, 40)
 }
 
 fn riscv64_elf_with_extra_program_header(

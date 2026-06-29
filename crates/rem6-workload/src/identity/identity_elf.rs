@@ -28,6 +28,11 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 hash_u64(hash, address.get());
                 hash_u64(hash, metadata.gnu_relro_memory_size().unwrap_or(0));
             }
+            if let Some(address) = metadata.gnu_eh_frame_virtual_address() {
+                hash_str(hash, "elf.gnu_eh_frame");
+                hash_u64(hash, address.get());
+                hash_u64(hash, metadata.gnu_eh_frame_memory_size().unwrap_or(0));
+            }
             let symbols = [
                 metadata.symbol_count(),
                 metadata.function_symbol_count(),

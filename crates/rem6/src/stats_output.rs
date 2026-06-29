@@ -6,6 +6,7 @@ mod cpu;
 mod data_cache;
 mod debug;
 mod dram;
+mod elf;
 mod fabric;
 mod gpu_run;
 mod gups;
@@ -37,6 +38,7 @@ use data_cache::{
 };
 use debug::emit_debug_stats;
 use dram::{emit_dram_stats, emit_gem5_mem_ctrl_dram_alias_stats};
+use elf::increment_optional_address_bytes_stats;
 use fabric::emit_run_fabric_stats;
 pub(super) use gpu_run::gpu_run_stats_output;
 pub(super) use gups::gups_stats_output;
@@ -170,31 +172,18 @@ pub(super) fn run_stats_output(
         StatResetPolicy::Constant,
         u64::from(inputs.metadata.gnu_stack_executable().unwrap_or(false)),
     )?;
-    increment_stat(
+    increment_optional_address_bytes_stats(
         &mut stats,
-        "sim.elf.gnu_relro.present",
-        "Count",
-        StatResetPolicy::Constant,
-        u64::from(inputs.metadata.gnu_relro_virtual_address().is_some()),
+        "sim.elf.gnu_relro",
+        inputs.metadata.gnu_relro_virtual_address(),
+        inputs.metadata.gnu_relro_memory_size(),
     )?;
-    if let Some(address) = inputs.metadata.gnu_relro_virtual_address() {
-        increment_stat(
-            &mut stats,
-            "sim.elf.gnu_relro.virtual_address",
-            "Address",
-            StatResetPolicy::Constant,
-            address.get(),
-        )?;
-    }
-    if let Some(bytes) = inputs.metadata.gnu_relro_memory_size() {
-        increment_stat(
-            &mut stats,
-            "sim.elf.gnu_relro.bytes",
-            "Byte",
-            StatResetPolicy::Constant,
-            bytes,
-        )?;
-    }
+    increment_optional_address_bytes_stats(
+        &mut stats,
+        "sim.elf.gnu_eh_frame",
+        inputs.metadata.gnu_eh_frame_virtual_address(),
+        inputs.metadata.gnu_eh_frame_memory_size(),
+    )?;
     increment_stat(
         &mut stats,
         "sim.elf.symbols",
