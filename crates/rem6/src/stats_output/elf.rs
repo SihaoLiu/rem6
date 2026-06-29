@@ -256,6 +256,39 @@ fn emit_elf_dynamic_stats(
         "sim.elf.dynamic.hash.gnu",
         dynamic_table.gnu_hash_virtual_address(),
     )?;
+    increment_optional_address_stat(
+        stats,
+        "sim.elf.dynamic.version.symbols",
+        dynamic_table.version_symbol_table_virtual_address(),
+    )?;
+    increment_optional_address_stat(
+        stats,
+        "sim.elf.dynamic.version.definitions",
+        dynamic_table.version_definition_table_virtual_address(),
+    )?;
+    if let Some(count) = dynamic_table.version_definition_count() {
+        increment_stat(
+            stats,
+            "sim.elf.dynamic.version.definitions.entries",
+            "Count",
+            StatResetPolicy::Constant,
+            count,
+        )?;
+    }
+    increment_optional_address_stat(
+        stats,
+        "sim.elf.dynamic.version.needed",
+        dynamic_table.version_needed_table_virtual_address(),
+    )?;
+    if let Some(count) = dynamic_table.version_needed_count() {
+        increment_stat(
+            stats,
+            "sim.elf.dynamic.version.needed.entries",
+            "Count",
+            StatResetPolicy::Constant,
+            count,
+        )?;
+    }
     increment_stat(
         stats,
         "sim.elf.dynamic.rela.entries",

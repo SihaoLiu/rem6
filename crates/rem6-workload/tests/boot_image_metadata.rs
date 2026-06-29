@@ -23,6 +23,11 @@ const DT_FINI_ARRAYSZ: u64 = 28;
 const DT_FLAGS: u64 = 30;
 const DT_PREINIT_ARRAY: u64 = 32;
 const DT_PREINIT_ARRAYSZ: u64 = 33;
+const DT_VERSYM: u64 = 0x6fff_fff0;
+const DT_VERDEF: u64 = 0x6fff_fffc;
+const DT_VERDEFNUM: u64 = 0x6fff_fffd;
+const DT_VERNEED: u64 = 0x6fff_fffe;
+const DT_VERNEEDNUM: u64 = 0x6fff_ffff;
 const DT_FLAGS_1: u64 = 0x6fff_fffb;
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
@@ -459,6 +464,32 @@ fn elf64_image_with_dynamic_symbol_string_tables(
     write_u64(&mut bytes, 0x1b8, symbol_entry_size);
     write_u64(&mut bytes, 0x1c0, 0);
     write_u64(&mut bytes, 0x1c8, 0);
+    bytes
+}
+
+fn elf64_image_with_dynamic_versioning(
+    machine: u16,
+    versym: u64,
+    verdef: u64,
+    verdef_count: u64,
+    verneed: u64,
+    verneed_count: u64,
+) -> Vec<u8> {
+    let mut bytes = elf64_image_with_dynamic_table(machine, 0);
+    write_u64(&mut bytes, 152, 6 * 16);
+    write_u64(&mut bytes, 160, 6 * 16);
+    write_u64(&mut bytes, 0x180, DT_VERSYM);
+    write_u64(&mut bytes, 0x188, versym);
+    write_u64(&mut bytes, 0x190, DT_VERDEF);
+    write_u64(&mut bytes, 0x198, verdef);
+    write_u64(&mut bytes, 0x1a0, DT_VERDEFNUM);
+    write_u64(&mut bytes, 0x1a8, verdef_count);
+    write_u64(&mut bytes, 0x1b0, DT_VERNEED);
+    write_u64(&mut bytes, 0x1b8, verneed);
+    write_u64(&mut bytes, 0x1c0, DT_VERNEEDNUM);
+    write_u64(&mut bytes, 0x1c8, verneed_count);
+    write_u64(&mut bytes, 0x1d0, 0);
+    write_u64(&mut bytes, 0x1d8, 0);
     bytes
 }
 
@@ -988,6 +1019,37 @@ fn workload_boot_image_preserves_elf_dynamic_symbol_string_tables_round_trip() {
         Some(Address::new(0x8260)),
     );
     assert_eq!(dynamic.symbol_table_entry_size(), Some(24));
+}
+
+#[test]
+fn workload_boot_image_preserves_elf_dynamic_versioning_metadata_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_dynamic_versioning(
+        243, 0x8220, 0x8260, 2, 0x82a0, 3,
+    ))
+    .unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = round_trip_metadata.dynamic_table();
+
+    assert_eq!(
+        dynamic.version_symbol_table_virtual_address(),
+        Some(Address::new(0x8220)),
+    );
+    assert_eq!(
+        dynamic.version_definition_table_virtual_address(),
+        Some(Address::new(0x8260)),
+    );
+    assert_eq!(dynamic.version_definition_count(), Some(2));
+    assert_eq!(
+        dynamic.version_needed_table_virtual_address(),
+        Some(Address::new(0x82a0)),
+    );
+    assert_eq!(dynamic.version_needed_count(), Some(3));
 }
 
 #[test]
@@ -1633,6 +1695,87 @@ fn workload_manifest_identity_includes_elf_dynamic_symbol_string_tables() {
     assert_ne!(
         baseline_manifest.identity(),
         symbol_entry_size_manifest.identity()
+    );
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_dynamic_versioning_metadata() {
+    let baseline_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_versioning(
+        243, 0x8220, 0x8260, 2, 0x82a0, 3,
+    ))
+    .unwrap();
+    let versym_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_versioning(
+        243, 0x8230, 0x8260, 2, 0x82a0, 3,
+    ))
+    .unwrap();
+    let verdef_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_versioning(
+        243, 0x8220, 0x8270, 2, 0x82a0, 3,
+    ))
+    .unwrap();
+    let verdef_count_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_versioning(
+        243, 0x8220, 0x8260, 4, 0x82a0, 3,
+    ))
+    .unwrap();
+    let verneed_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_versioning(
+        243, 0x8220, 0x8260, 2, 0x82b0, 3,
+    ))
+    .unwrap();
+    let verneed_count_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_versioning(
+        243, 0x8220, 0x8260, 2, 0x82a0, 5,
+    ))
+    .unwrap();
+
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .version_needed_count(),
+        Some(3),
+    );
+    let baseline = boot_image_with_metadata(baseline_source.elf_metadata().unwrap());
+    let versym = boot_image_with_metadata(versym_source.elf_metadata().unwrap());
+    let verdef = boot_image_with_metadata(verdef_source.elf_metadata().unwrap());
+    let verdef_count = boot_image_with_metadata(verdef_count_source.elf_metadata().unwrap());
+    let verneed = boot_image_with_metadata(verneed_source.elf_metadata().unwrap());
+    let verneed_count = boot_image_with_metadata(verneed_count_source.elf_metadata().unwrap());
+
+    assert_eq!(baseline.entry(), versym.entry());
+    assert_eq!(baseline.segments(), versym.segments());
+    assert_eq!(baseline.segments(), verdef.segments());
+    assert_eq!(baseline.segments(), verdef_count.segments());
+    assert_eq!(baseline.segments(), verneed.segments());
+    assert_eq!(baseline.segments(), verneed_count.segments());
+
+    let baseline_manifest = WorkloadManifest::builder(id("same"), baseline)
+        .build()
+        .unwrap();
+    let versym_manifest = WorkloadManifest::builder(id("same"), versym)
+        .build()
+        .unwrap();
+    let verdef_manifest = WorkloadManifest::builder(id("same"), verdef)
+        .build()
+        .unwrap();
+    let verdef_count_manifest = WorkloadManifest::builder(id("same"), verdef_count)
+        .build()
+        .unwrap();
+    let verneed_manifest = WorkloadManifest::builder(id("same"), verneed)
+        .build()
+        .unwrap();
+    let verneed_count_manifest = WorkloadManifest::builder(id("same"), verneed_count)
+        .build()
+        .unwrap();
+
+    assert_ne!(baseline_manifest.identity(), versym_manifest.identity());
+    assert_ne!(baseline_manifest.identity(), verdef_manifest.identity());
+    assert_ne!(
+        baseline_manifest.identity(),
+        verdef_count_manifest.identity()
+    );
+    assert_ne!(baseline_manifest.identity(), verneed_manifest.identity());
+    assert_ne!(
+        baseline_manifest.identity(),
+        verneed_count_manifest.identity()
     );
 }
 

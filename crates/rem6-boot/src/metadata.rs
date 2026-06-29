@@ -141,6 +141,11 @@ pub(crate) struct BootElfDynamicSegment {
     pub(crate) flags_1: Option<u64>,
     pub(crate) sysv_hash_virtual_address: Option<Address>,
     pub(crate) gnu_hash_virtual_address: Option<Address>,
+    pub(crate) version_symbol_table_virtual_address: Option<Address>,
+    pub(crate) version_definition_table_virtual_address: Option<Address>,
+    pub(crate) version_definition_count: Option<u64>,
+    pub(crate) version_needed_table_virtual_address: Option<Address>,
+    pub(crate) version_needed_count: Option<u64>,
     pub(crate) rela_relocations: BootElfDynamicRelocationTable,
     pub(crate) rel_relocations: BootElfDynamicRelocationTable,
     pub(crate) plt_relocations: BootElfDynamicRelocationTable,
@@ -175,6 +180,11 @@ pub struct BootElfDynamicTable {
     flags_1: Option<u64>,
     sysv_hash_virtual_address: Option<Address>,
     gnu_hash_virtual_address: Option<Address>,
+    version_symbol_table_virtual_address: Option<Address>,
+    version_definition_table_virtual_address: Option<Address>,
+    version_definition_count: Option<u64>,
+    version_needed_table_virtual_address: Option<Address>,
+    version_needed_count: Option<u64>,
     rela_relocations: BootElfDynamicRelocationTable,
     rel_relocations: BootElfDynamicRelocationTable,
     plt_relocations: BootElfDynamicRelocationTable,
@@ -210,6 +220,11 @@ impl BootElfDynamicTable {
             flags_1: None,
             sysv_hash_virtual_address: None,
             gnu_hash_virtual_address: None,
+            version_symbol_table_virtual_address: None,
+            version_definition_table_virtual_address: None,
+            version_definition_count: None,
+            version_needed_table_virtual_address: None,
+            version_needed_count: None,
             rela_relocations: BootElfDynamicRelocationTable::default(),
             rel_relocations: BootElfDynamicRelocationTable::default(),
             plt_relocations: BootElfDynamicRelocationTable::default(),
@@ -245,6 +260,14 @@ impl BootElfDynamicTable {
             self.flags_1 = segment.flags_1;
             self.sysv_hash_virtual_address = segment.sysv_hash_virtual_address;
             self.gnu_hash_virtual_address = segment.gnu_hash_virtual_address;
+            self.version_symbol_table_virtual_address =
+                segment.version_symbol_table_virtual_address;
+            self.version_definition_table_virtual_address =
+                segment.version_definition_table_virtual_address;
+            self.version_definition_count = segment.version_definition_count;
+            self.version_needed_table_virtual_address =
+                segment.version_needed_table_virtual_address;
+            self.version_needed_count = segment.version_needed_count;
             self.rela_relocations = segment.rela_relocations;
             self.rel_relocations = segment.rel_relocations;
             self.plt_relocations = segment.plt_relocations;
@@ -374,6 +397,26 @@ impl BootElfDynamicTable {
 
     pub const fn gnu_hash_virtual_address(&self) -> Option<Address> {
         self.gnu_hash_virtual_address
+    }
+
+    pub const fn version_symbol_table_virtual_address(&self) -> Option<Address> {
+        self.version_symbol_table_virtual_address
+    }
+
+    pub const fn version_definition_table_virtual_address(&self) -> Option<Address> {
+        self.version_definition_table_virtual_address
+    }
+
+    pub const fn version_definition_count(&self) -> Option<u64> {
+        self.version_definition_count
+    }
+
+    pub const fn version_needed_table_virtual_address(&self) -> Option<Address> {
+        self.version_needed_table_virtual_address
+    }
+
+    pub const fn version_needed_count(&self) -> Option<u64> {
+        self.version_needed_count
     }
 
     pub const fn rela_relocations(&self) -> BootElfDynamicRelocationTable {

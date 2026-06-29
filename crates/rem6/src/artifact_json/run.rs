@@ -334,9 +334,10 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
     let lifecycle = elf_dynamic_lifecycle_json(table);
     let flags = elf_dynamic_flags_json(table);
     let hash = elf_dynamic_hash_json(table);
+    let versioning = elf_dynamic_versioning_json(table);
     let relocations = elf_dynamic_relocations_json(table);
     format!(
-        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":{},\"soname\":{},\"rpath\":{},\"runpath\":{},\"tables\":{},\"lifecycle\":{},\"flags\":{},\"hash\":{},\"relocations\":{}}}",
+        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":{},\"soname\":{},\"rpath\":{},\"runpath\":{},\"tables\":{},\"lifecycle\":{},\"flags\":{},\"hash\":{},\"versioning\":{},\"relocations\":{}}}",
         table.segment_count(),
         file_offset,
         virtual_address,
@@ -351,6 +352,7 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
         lifecycle,
         flags,
         hash,
+        versioning,
         relocations
     )
 }
@@ -400,6 +402,29 @@ fn elf_dynamic_hash_json(table: &BootElfDynamicTable) -> String {
         "{{\"sysv\":{},\"gnu\":{}}}",
         address_json(table.sysv_hash_virtual_address()),
         address_json(table.gnu_hash_virtual_address())
+    )
+}
+
+fn elf_dynamic_versioning_json(table: &BootElfDynamicTable) -> String {
+    format!(
+        "{{\"symbols\":{},\"definitions\":{},\"needed\":{}}}",
+        address_json(table.version_symbol_table_virtual_address()),
+        elf_dynamic_version_table_json(
+            table.version_definition_table_virtual_address(),
+            table.version_definition_count()
+        ),
+        elf_dynamic_version_table_json(
+            table.version_needed_table_virtual_address(),
+            table.version_needed_count()
+        )
+    )
+}
+
+fn elf_dynamic_version_table_json(virtual_address: Option<Address>, count: Option<u64>) -> String {
+    format!(
+        "{{\"virtual_address\":{},\"entries\":{}}}",
+        address_json(virtual_address),
+        optional_value_json(count)
     )
 }
 

@@ -140,10 +140,37 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 for (label, address) in [
                     ("elf.dynamic.hash.sysv", dynamic.sysv_hash_virtual_address()),
                     ("elf.dynamic.hash.gnu", dynamic.gnu_hash_virtual_address()),
+                    (
+                        "elf.dynamic.version.symbols",
+                        dynamic.version_symbol_table_virtual_address(),
+                    ),
+                    (
+                        "elf.dynamic.version.definitions",
+                        dynamic.version_definition_table_virtual_address(),
+                    ),
+                    (
+                        "elf.dynamic.version.needed",
+                        dynamic.version_needed_table_virtual_address(),
+                    ),
                 ] {
                     if let Some(address) = address {
                         hash_str(hash, label);
                         hash_u64(hash, address.get());
+                    }
+                }
+                for (label, count) in [
+                    (
+                        "elf.dynamic.version.definitions.count",
+                        dynamic.version_definition_count(),
+                    ),
+                    (
+                        "elf.dynamic.version.needed.count",
+                        dynamic.version_needed_count(),
+                    ),
+                ] {
+                    if let Some(count) = count {
+                        hash_str(hash, label);
+                        hash_u64(hash, count);
                     }
                 }
                 for (label, table) in [

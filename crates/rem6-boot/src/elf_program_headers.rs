@@ -142,6 +142,17 @@ pub(crate) fn summarize_elf64_program_header(
                     flags_1: summary.flags_1,
                     sysv_hash_virtual_address: summary.sysv_hash_virtual_address.map(Address::new),
                     gnu_hash_virtual_address: summary.gnu_hash_virtual_address.map(Address::new),
+                    version_symbol_table_virtual_address: summary
+                        .version_symbol_table_virtual_address
+                        .map(Address::new),
+                    version_definition_table_virtual_address: summary
+                        .version_definition_table_virtual_address
+                        .map(Address::new),
+                    version_definition_count: summary.version_definition_count,
+                    version_needed_table_virtual_address: summary
+                        .version_needed_table_virtual_address
+                        .map(Address::new),
+                    version_needed_count: summary.version_needed_count,
                     rela_relocations: relocation_table(summary.rela_relocations),
                     rel_relocations: relocation_table(summary.rel_relocations),
                     plt_relocations: relocation_table(summary.plt_relocations),
@@ -292,6 +303,17 @@ pub(crate) fn summarize_elf32_program_header(
                     flags_1: summary.flags_1,
                     sysv_hash_virtual_address: summary.sysv_hash_virtual_address.map(Address::new),
                     gnu_hash_virtual_address: summary.gnu_hash_virtual_address.map(Address::new),
+                    version_symbol_table_virtual_address: summary
+                        .version_symbol_table_virtual_address
+                        .map(Address::new),
+                    version_definition_table_virtual_address: summary
+                        .version_definition_table_virtual_address
+                        .map(Address::new),
+                    version_definition_count: summary.version_definition_count,
+                    version_needed_table_virtual_address: summary
+                        .version_needed_table_virtual_address
+                        .map(Address::new),
+                    version_needed_count: summary.version_needed_count,
                     rela_relocations: relocation_table(summary.rela_relocations),
                     rel_relocations: relocation_table(summary.rel_relocations),
                     plt_relocations: relocation_table(summary.plt_relocations),

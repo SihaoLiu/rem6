@@ -35,6 +35,11 @@ const DT_FINI_ARRAYSZ: u64 = 28;
 const DT_FLAGS: u64 = 30;
 const DT_PREINIT_ARRAY: u64 = 32;
 const DT_PREINIT_ARRAYSZ: u64 = 33;
+const DT_VERSYM: u64 = 0x6fff_fff0;
+const DT_VERDEF: u64 = 0x6fff_fffc;
+const DT_VERDEFNUM: u64 = 0x6fff_fffd;
+const DT_VERNEED: u64 = 0x6fff_fffe;
+const DT_VERNEEDNUM: u64 = 0x6fff_ffff;
 const DT_FLAGS_1: u64 = 0x6fff_fffb;
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
@@ -1192,6 +1197,126 @@ fn boot_image_records_elf32_dynamic_symbol_string_table_metadata() {
         Some(Address::new(0x8000_0280)),
     );
     assert_eq!(dynamic.symbol_table_entry_size(), Some(16));
+}
+
+#[test]
+fn boot_image_records_elf64_dynamic_versioning_metadata() {
+    let dynamic = [
+        DT_VERSYM.to_le_bytes(),
+        0x8000_0240u64.to_le_bytes(),
+        DT_VERDEF.to_le_bytes(),
+        0x8000_0280u64.to_le_bytes(),
+        DT_VERDEFNUM.to_le_bytes(),
+        2u64.to_le_bytes(),
+        DT_VERNEED.to_le_bytes(),
+        0x8000_02c0u64.to_le_bytes(),
+        DT_VERNEEDNUM.to_le_bytes(),
+        3u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf64_image(
+        0x8000_0200,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[(0x180, &dynamic), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(
+        dynamic.version_symbol_table_virtual_address(),
+        Some(Address::new(0x8000_0240)),
+    );
+    assert_eq!(
+        dynamic.version_definition_table_virtual_address(),
+        Some(Address::new(0x8000_0280)),
+    );
+    assert_eq!(dynamic.version_definition_count(), Some(2));
+    assert_eq!(
+        dynamic.version_needed_table_virtual_address(),
+        Some(Address::new(0x8000_02c0)),
+    );
+    assert_eq!(dynamic.version_needed_count(), Some(3));
+}
+
+#[test]
+fn boot_image_records_elf32_dynamic_versioning_metadata() {
+    let dynamic = [
+        (DT_VERSYM as u32).to_le_bytes(),
+        0x8000_0240u32.to_le_bytes(),
+        (DT_VERDEF as u32).to_le_bytes(),
+        0x8000_0280u32.to_le_bytes(),
+        (DT_VERDEFNUM as u32).to_le_bytes(),
+        2u32.to_le_bytes(),
+        (DT_VERNEED as u32).to_le_bytes(),
+        0x8000_02c0u32.to_le_bytes(),
+        (DT_VERNEEDNUM as u32).to_le_bytes(),
+        3u32.to_le_bytes(),
+        0u32.to_le_bytes(),
+        0u32.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf32_image(
+        0x8000_0200,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[(0x180, &dynamic), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    let metadata = BootImage::from_elf32_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(
+        dynamic.version_symbol_table_virtual_address(),
+        Some(Address::new(0x8000_0240)),
+    );
+    assert_eq!(
+        dynamic.version_definition_table_virtual_address(),
+        Some(Address::new(0x8000_0280)),
+    );
+    assert_eq!(dynamic.version_definition_count(), Some(2));
+    assert_eq!(
+        dynamic.version_needed_table_virtual_address(),
+        Some(Address::new(0x8000_02c0)),
+    );
+    assert_eq!(dynamic.version_needed_count(), Some(3));
 }
 
 #[test]

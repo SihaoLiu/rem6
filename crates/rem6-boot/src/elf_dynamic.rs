@@ -31,7 +31,12 @@ const DT_FLAGS: u64 = 30;
 const DT_PREINIT_ARRAY: u64 = 32;
 const DT_PREINIT_ARRAYSZ: u64 = 33;
 const DT_GNU_HASH: u64 = 0x6fff_fef5;
+const DT_VERSYM: u64 = 0x6fff_fff0;
 const DT_FLAGS_1: u64 = 0x6fff_fffb;
+const DT_VERDEF: u64 = 0x6fff_fffc;
+const DT_VERDEFNUM: u64 = 0x6fff_fffd;
+const DT_VERNEED: u64 = 0x6fff_fffe;
+const DT_VERNEEDNUM: u64 = 0x6fff_ffff;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ElfLoadMapping {
@@ -63,6 +68,11 @@ pub(crate) struct ElfDynamicTableSummary {
     pub(crate) flags_1: Option<u64>,
     pub(crate) sysv_hash_virtual_address: Option<u64>,
     pub(crate) gnu_hash_virtual_address: Option<u64>,
+    pub(crate) version_symbol_table_virtual_address: Option<u64>,
+    pub(crate) version_definition_table_virtual_address: Option<u64>,
+    pub(crate) version_definition_count: Option<u64>,
+    pub(crate) version_needed_table_virtual_address: Option<u64>,
+    pub(crate) version_needed_count: Option<u64>,
     pub(crate) rela_relocations: ElfDynamicRelocationSummary,
     pub(crate) rel_relocations: ElfDynamicRelocationSummary,
     pub(crate) plt_relocations: ElfDynamicRelocationSummary,
@@ -185,6 +195,11 @@ pub(crate) fn dynamic_table_counts(
     let mut flags_1 = None;
     let mut sysv_hash_virtual_address = None;
     let mut gnu_hash_virtual_address = None;
+    let mut version_symbol_table_virtual_address = None;
+    let mut version_definition_table_virtual_address = None;
+    let mut version_definition_count = None;
+    let mut version_needed_table_virtual_address = None;
+    let mut version_needed_count = None;
     let mut symbol_table_virtual_address = None;
     let mut symbol_table_entry_size = None;
     let mut rela_relocations = ElfDynamicRelocationSummary::default();
@@ -239,6 +254,11 @@ pub(crate) fn dynamic_table_counts(
                 flags_1,
                 sysv_hash_virtual_address,
                 gnu_hash_virtual_address,
+                version_symbol_table_virtual_address,
+                version_definition_table_virtual_address,
+                version_definition_count,
+                version_needed_table_virtual_address,
+                version_needed_count,
                 rela_relocations,
                 rel_relocations,
                 plt_relocations,
@@ -259,6 +279,8 @@ pub(crate) fn dynamic_table_counts(
             symbol_table_entry_size = Some(value);
         } else if tag == DT_GNU_HASH {
             gnu_hash_virtual_address = Some(value);
+        } else if tag == DT_VERSYM {
+            version_symbol_table_virtual_address = Some(value);
         } else if tag == DT_SONAME {
             soname_offset = Some(value);
         } else if tag == DT_RPATH {
@@ -285,6 +307,14 @@ pub(crate) fn dynamic_table_counts(
             flags = Some(value);
         } else if tag == DT_FLAGS_1 {
             flags_1 = Some(value);
+        } else if tag == DT_VERDEF {
+            version_definition_table_virtual_address = Some(value);
+        } else if tag == DT_VERDEFNUM {
+            version_definition_count = Some(value);
+        } else if tag == DT_VERNEED {
+            version_needed_table_virtual_address = Some(value);
+        } else if tag == DT_VERNEEDNUM {
+            version_needed_count = Some(value);
         } else if tag == DT_RELA {
             rela_relocations.virtual_address = Some(value);
         } else if tag == DT_RELASZ {

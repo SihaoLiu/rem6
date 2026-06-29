@@ -21,7 +21,12 @@ const DT_FINI_ARRAYSZ: u64 = 28;
 const DT_FLAGS: u64 = 30;
 const DT_PREINIT_ARRAY: u64 = 32;
 const DT_PREINIT_ARRAYSZ: u64 = 33;
+const DT_VERSYM: u64 = 0x6fff_fff0;
 const DT_FLAGS_1: u64 = 0x6fff_fffb;
+const DT_VERDEF: u64 = 0x6fff_fffc;
+const DT_VERDEFNUM: u64 = 0x6fff_fffd;
+const DT_VERNEED: u64 = 0x6fff_fffe;
+const DT_VERNEEDNUM: u64 = 0x6fff_ffff;
 
 pub(crate) const GEM5_READ_REQ: u32 = 1;
 pub(crate) const GEM5_READ_RESP: u32 = 2;
@@ -551,6 +556,31 @@ pub(crate) fn riscv64_elf_with_dynamic_symbol_table(
     write_u64(&mut bytes, symbol_entry + 24, 24);
     write_u64(&mut bytes, symbol_entry + 32, 0);
     write_u64(&mut bytes, symbol_entry + 40, 0);
+    bytes
+}
+
+pub(crate) fn riscv64_elf_with_dynamic_versioning(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut bytes = riscv64_elf_with_dynamic_table(entry, physical, payload);
+    let dynamic_offset = 0x180usize;
+    let version_entry = dynamic_offset + 16 * 16;
+    write_u64(&mut bytes, 152, 22 * 16);
+    write_u64(&mut bytes, 160, 22 * 16);
+    write_u64(&mut bytes, version_entry, DT_VERSYM);
+    write_u64(&mut bytes, version_entry + 8, physical + 0x3a0);
+    write_u64(&mut bytes, version_entry + 16, DT_VERDEF);
+    write_u64(&mut bytes, version_entry + 24, physical + 0x3c0);
+    write_u64(&mut bytes, version_entry + 32, DT_VERDEFNUM);
+    write_u64(&mut bytes, version_entry + 40, 2);
+    write_u64(&mut bytes, version_entry + 48, DT_VERNEED);
+    write_u64(&mut bytes, version_entry + 56, physical + 0x3e0);
+    write_u64(&mut bytes, version_entry + 64, DT_VERNEEDNUM);
+    write_u64(&mut bytes, version_entry + 72, 3);
+    write_u64(&mut bytes, version_entry + 80, 0);
+    write_u64(&mut bytes, version_entry + 88, 0);
     bytes
 }
 
