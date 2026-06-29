@@ -1154,16 +1154,19 @@ fn boot_image_records_elf_section_flags_summary() {
         section_table_offset + 64 + 8,
         SHF_ALLOC | SHF_EXECINSTR,
     );
+    write_u64(&mut elf, section_table_offset + 64 + 16, 0x8000_1000);
     write_u64(
         &mut elf,
         section_table_offset + 128 + 8,
         SHF_ALLOC | SHF_WRITE,
     );
+    write_u64(&mut elf, section_table_offset + 128 + 16, 0x8000_2000);
     write_u64(
         &mut elf,
         section_table_offset + 192 + 8,
         SHF_ALLOC | SHF_WRITE,
     );
+    write_u64(&mut elf, section_table_offset + 192 + 16, 0x8000_3000);
     write_u64(&mut elf, section_table_offset + 192 + 32, 16);
 
     let metadata = BootImage::from_elf64_le(&elf)
@@ -1186,6 +1189,10 @@ fn boot_image_records_elf_section_flags_summary() {
     assert_eq!(storage.writable_bytes(), 2 + 16);
     assert_eq!(storage.executable_bytes(), 4);
     assert_eq!(storage.nobits_bytes(), 16);
+
+    let range = metadata.section_address_range();
+    assert_eq!(range.start_address(), Some(Address::new(0x8000_1000)));
+    assert_eq!(range.end_address(), Some(Address::new(0x8000_3010)));
 }
 
 #[test]
@@ -1222,11 +1229,13 @@ fn boot_image_records_elf32_section_flags_summary() {
         section_table_offset + 40 + 8,
         (SHF_ALLOC | SHF_EXECINSTR) as u32,
     );
+    write_u32(&mut elf, section_table_offset + 40 + 12, 0x8000_1000);
     write_u32(
         &mut elf,
         section_table_offset + 80 + 8,
         (SHF_ALLOC | SHF_WRITE) as u32,
     );
+    write_u32(&mut elf, section_table_offset + 80 + 12, 0x8000_2000);
     write_u32(&mut elf, section_table_offset + 80 + 20, 12);
 
     let metadata = BootImage::from_elf32_le(&elf)
@@ -1249,6 +1258,10 @@ fn boot_image_records_elf32_section_flags_summary() {
     assert_eq!(storage.writable_bytes(), 12);
     assert_eq!(storage.executable_bytes(), 4);
     assert_eq!(storage.nobits_bytes(), 12);
+
+    let range = metadata.section_address_range();
+    assert_eq!(range.start_address(), Some(Address::new(0x8000_1000)));
+    assert_eq!(range.end_address(), Some(Address::new(0x8000_200c)));
 }
 
 #[test]

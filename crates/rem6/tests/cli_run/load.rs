@@ -1473,6 +1473,8 @@ fn rem6_run_reports_elf_section_header_table_metadata() {
     assert!(stdout.contains(
         "\"section_storage\":{\"file_bytes\":27,\"allocated_bytes\":4,\"writable_bytes\":0,\"executable_bytes\":4,\"nobits_bytes\":0}"
     ));
+    assert!(stdout
+        .contains("\"section_address_range\":{\"start\":\"0x80000000\",\"end\":\"0x80000004\"}"));
     assert_stat(
         &stdout,
         "sim.elf.section_header.file_offset",
@@ -1576,6 +1578,20 @@ fn rem6_run_reports_elf_section_header_table_metadata() {
         "sim.elf.section_storage.nobits_bytes",
         "Byte",
         0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_address.start",
+        "Address",
+        0x8000_0000,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_address.end",
+        "Address",
+        0x8000_0004,
         "constant",
     );
 }

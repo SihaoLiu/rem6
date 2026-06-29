@@ -119,6 +119,7 @@ pub(super) fn emit_elf_run_stats(
     emit_elf_section_name_stats(stats, metadata)?;
     emit_elf_section_flags_stats(stats, metadata)?;
     emit_elf_section_storage_stats(stats, metadata)?;
+    emit_elf_section_address_stats(stats, metadata)?;
     emit_elf_interpreter_stats(stats, interpreter)
 }
 
@@ -560,6 +561,32 @@ fn emit_elf_section_storage_stats(
         ),
     ] {
         increment_stat(stats, path, "Byte", StatResetPolicy::Constant, value)?;
+    }
+    Ok(())
+}
+
+fn emit_elf_section_address_stats(
+    stats: &mut StatsRegistry,
+    metadata: &BootElfMetadata,
+) -> Result<(), Rem6CliError> {
+    let range = metadata.section_address_range();
+    if let Some(start_address) = range.start_address() {
+        increment_stat(
+            stats,
+            "sim.elf.section_address.start",
+            "Address",
+            StatResetPolicy::Constant,
+            start_address.get(),
+        )?;
+    }
+    if let Some(end_address) = range.end_address() {
+        increment_stat(
+            stats,
+            "sim.elf.section_address.end",
+            "Address",
+            StatResetPolicy::Constant,
+            end_address.get(),
+        )?;
     }
     Ok(())
 }

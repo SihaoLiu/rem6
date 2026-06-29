@@ -709,6 +709,7 @@ pub(crate) fn riscv64_elf_with_section_header_table(
         section_table_offset + 72,
         SHF_ALLOC | SHF_EXECINSTR,
     );
+    write_u64(&mut bytes, section_table_offset + 80, physical);
     write_u64(&mut bytes, section_table_offset + 88, 128);
     write_u64(&mut bytes, section_table_offset + 96, payload.len() as u64);
 
@@ -719,6 +720,7 @@ pub(crate) fn riscv64_elf_with_section_header_table(
         section_table_offset + 136,
         SHF_ALLOC | SHF_WRITE,
     );
+    write_u64(&mut bytes, section_table_offset + 144, physical + 0x40);
 
     write_u32(&mut bytes, section_table_offset + 192, 13);
     write_u32(&mut bytes, section_table_offset + 196, 3);

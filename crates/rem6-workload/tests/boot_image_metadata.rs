@@ -233,6 +233,13 @@ fn set_elf64_section_kind_flags(bytes: &mut [u8], index: usize, kind: u32, flags
     write_u64(bytes, section_base + 8, flags);
 }
 
+fn set_elf64_section_address(bytes: &mut [u8], index: usize, address: u64) {
+    let section_table_offset = read_u64(bytes, 40) as usize;
+    let section_header_size = usize::from(read_u16(bytes, 58));
+    let section_base = section_table_offset + index * section_header_size;
+    write_u64(bytes, section_base + 16, address);
+}
+
 fn set_elf64_section_size(bytes: &mut [u8], index: usize, size: u64) {
     let section_table_offset = read_u64(bytes, 40) as usize;
     let section_header_size = usize::from(read_u16(bytes, 58));
@@ -1146,6 +1153,9 @@ fn workload_boot_image_preserves_elf_section_flags_round_trip() {
     set_elf64_section_kind_flags(&mut elf, 1, 1, SHF_ALLOC | SHF_EXECINSTR);
     set_elf64_section_kind_flags(&mut elf, 2, 1, SHF_ALLOC | SHF_WRITE);
     set_elf64_section_kind_flags(&mut elf, 3, SHT_NOBITS, SHF_ALLOC | SHF_WRITE);
+    set_elf64_section_address(&mut elf, 1, 0x8000_1000);
+    set_elf64_section_address(&mut elf, 2, 0x8000_2000);
+    set_elf64_section_address(&mut elf, 3, 0x8000_3000);
     set_elf64_section_size(&mut elf, 1, 4);
     set_elf64_section_size(&mut elf, 2, 8);
     set_elf64_section_size(&mut elf, 3, 16);
@@ -1173,6 +1183,10 @@ fn workload_boot_image_preserves_elf_section_flags_round_trip() {
     assert_eq!(storage.writable_bytes(), 8 + 16);
     assert_eq!(storage.executable_bytes(), 4);
     assert_eq!(storage.nobits_bytes(), 16);
+
+    let range = round_trip_metadata.section_address_range();
+    assert_eq!(range.start_address(), Some(Address::new(0x8000_1000)));
+    assert_eq!(range.end_address(), Some(Address::new(0x8000_3010)));
 }
 
 #[test]
@@ -1896,6 +1910,52 @@ fn workload_manifest_identity_includes_elf_section_storage() {
         .unwrap();
 
     assert_ne!(small.identity(), large.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_section_address_range() {
+    let mut low_elf = elf64_image_with_named_sections(243, &[".data"]);
+    set_elf64_section_kind_flags(&mut low_elf, 1, 1, SHF_ALLOC | SHF_WRITE);
+    set_elf64_section_address(&mut low_elf, 1, 0x8000_1000);
+    set_elf64_section_size(&mut low_elf, 1, 4);
+    let mut high_elf = elf64_image_with_named_sections(243, &[".data"]);
+    set_elf64_section_kind_flags(&mut high_elf, 1, 1, SHF_ALLOC | SHF_WRITE);
+    set_elf64_section_address(&mut high_elf, 1, 0x8000_2000);
+    set_elf64_section_size(&mut high_elf, 1, 4);
+    let low_source = BootImage::from_elf64_le(&low_elf).unwrap();
+    let high_source = BootImage::from_elf64_le(&high_elf).unwrap();
+
+    assert_eq!(low_source.entry(), high_source.entry());
+    assert_eq!(low_source.segments(), high_source.segments());
+    assert_eq!(
+        low_source.elf_metadata().unwrap().section_flags(),
+        high_source.elf_metadata().unwrap().section_flags(),
+    );
+    assert_eq!(
+        low_source.elf_metadata().unwrap().section_storage(),
+        high_source.elf_metadata().unwrap().section_storage(),
+    );
+    assert_ne!(
+        low_source
+            .elf_metadata()
+            .unwrap()
+            .section_address_range()
+            .start_address(),
+        high_source
+            .elf_metadata()
+            .unwrap()
+            .section_address_range()
+            .start_address(),
+    );
+
+    let low = WorkloadManifest::builder(id("same"), low_source)
+        .build()
+        .unwrap();
+    let high = WorkloadManifest::builder(id("same"), high_source)
+        .build()
+        .unwrap();
+
+    assert_ne!(low.identity(), high.identity());
 }
 
 #[test]

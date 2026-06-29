@@ -189,3 +189,26 @@ impl BootElfSectionStorage {
         self.nobits_bytes
     }
 }
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BootElfSectionAddressRange {
+    start_address: Option<Address>,
+    end_address: Option<Address>,
+}
+
+impl BootElfSectionAddressRange {
+    pub const fn new(start_address: Option<Address>, end_address: Option<Address>) -> Self {
+        Self {
+            start_address,
+            end_address,
+        }
+    }
+
+    pub const fn start_address(self) -> Option<Address> {
+        self.start_address
+    }
+
+    pub const fn end_address(self) -> Option<Address> {
+        self.end_address
+    }
+}

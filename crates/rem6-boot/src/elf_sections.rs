@@ -1,8 +1,11 @@
+use rem6_memory::Address;
+
 use crate::elf::{BootElfClass, BootElfEndian, BootElfOperatingSystem};
 use crate::elf_counts::section_table_layout;
 use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::metadata_tables::{
-    BootElfSectionFlags, BootElfSectionHeaderTable, BootElfSectionNameTable, BootElfSectionStorage,
+    BootElfSectionAddressRange, BootElfSectionFlags, BootElfSectionHeaderTable,
+    BootElfSectionNameTable, BootElfSectionStorage,
 };
 
 const SHT_NOTE: u32 = 7;
@@ -34,6 +37,8 @@ pub(crate) struct ElfSectionSummary {
     writable_section_bytes: u64,
     executable_section_bytes: u64,
     nobits_section_bytes: u64,
+    section_address_start: Option<u64>,
+    section_address_end: Option<u64>,
     section_header_table: BootElfSectionHeaderTable,
     section_name_table: BootElfSectionNameTable,
 }
@@ -85,6 +90,13 @@ impl ElfSectionSummary {
             self.nobits_section_bytes,
         )
     }
+
+    pub(crate) fn section_address_range(self) -> BootElfSectionAddressRange {
+        BootElfSectionAddressRange::new(
+            self.section_address_start.map(Address::new),
+            self.section_address_end.map(Address::new),
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -92,6 +104,7 @@ struct ElfSectionHeader {
     name: u32,
     kind: u32,
     flags: u64,
+    address: u64,
     offset: u64,
     size: u64,
     link: u32,
@@ -324,6 +337,19 @@ fn summarize_common_section(
         summary.allocated_section_count += 1;
         summary.allocated_section_bytes =
             summary.allocated_section_bytes.saturating_add(section.size);
+        if section.size != 0 {
+            let end = section.address.saturating_add(section.size);
+            summary.section_address_start = Some(
+                summary
+                    .section_address_start
+                    .map_or(section.address, |start| start.min(section.address)),
+            );
+            summary.section_address_end = Some(
+                summary
+                    .section_address_end
+                    .map_or(end, |current_end| current_end.max(end)),
+            );
+        }
     }
     if section.flags & SHF_WRITE != 0 {
         summary.writable_section_count += 1;
@@ -383,6 +409,7 @@ fn read_elf64_section_header(
         name: read_u32(bytes, base, endian)?,
         kind: read_u32(bytes, base + 4, endian)?,
         flags: read_u64(bytes, base + 8, endian)?,
+        address: read_u64(bytes, base + 16, endian)?,
         offset: read_u64(bytes, base + 24, endian)?,
         size: read_u64(bytes, base + 32, endian)?,
         link: read_u32(bytes, base + 40, endian)?,
@@ -402,6 +429,7 @@ fn read_elf32_section_header(
         name: read_u32(bytes, base, endian)?,
         kind: read_u32(bytes, base + 4, endian)?,
         flags: u64::from(read_u32(bytes, base + 8, endian)?),
+        address: u64::from(read_u32(bytes, base + 12, endian)?),
         offset: u64::from(read_u32(bytes, base + 16, endian)?),
         size: u64::from(read_u32(bytes, base + 20, endian)?),
         link: read_u32(bytes, base + 24, endian)?,

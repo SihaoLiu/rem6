@@ -92,6 +92,24 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 hash_u64(hash, section_storage.executable_bytes());
                 hash_u64(hash, section_storage.nobits_bytes());
             }
+            let section_address_range = metadata.section_address_range();
+            if section_address_range.start_address().is_some()
+                || section_address_range.end_address().is_some()
+            {
+                hash_str(hash, "elf.section_address_range");
+                hash_u64(
+                    hash,
+                    section_address_range
+                        .start_address()
+                        .map_or(u64::MAX, |address| address.get()),
+                );
+                hash_u64(
+                    hash,
+                    section_address_range
+                        .end_address()
+                        .map_or(u64::MAX, |address| address.get()),
+                );
+            }
             let dynamic = metadata.dynamic_table();
             if dynamic.segment_count() != 0 {
                 let address = dynamic.virtual_address().map_or(u64::MAX, |a| a.get());
