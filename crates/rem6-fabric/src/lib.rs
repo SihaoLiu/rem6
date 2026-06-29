@@ -918,13 +918,14 @@ impl FabricLaneActivityRecord {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum FabricWaitKind {
     Queue,
+    Link,
     Credit,
 }
 
 impl FabricWaitKind {
     const fn edge_kind(self) -> WaitForEdgeKind {
         match self {
-            Self::Queue => WaitForEdgeKind::Queue,
+            Self::Queue | Self::Link => WaitForEdgeKind::Queue,
             Self::Credit => WaitForEdgeKind::Credit,
         }
     }
@@ -932,8 +933,13 @@ impl FabricWaitKind {
     const fn resource_suffix(self) -> &'static str {
         match self {
             Self::Queue => "lane",
+            Self::Link => "link",
             Self::Credit => "credit",
         }
+    }
+
+    const fn is_virtual_network_scoped(self) -> bool {
+        !matches!(self, Self::Link)
     }
 }
 
@@ -993,9 +999,13 @@ impl FabricLaneState {
         serialization_ticks: Tick,
         link_latency: Tick,
         credit_depth: Option<u32>,
+        link_next_available: Tick,
     ) -> Result<FabricLaneReservation, FabricError> {
-        let mut start_tick = arrival_tick.max(self.next_available);
-        let mut wait_kind = (start_tick > arrival_tick).then_some(FabricWaitKind::Queue);
+        let mut start_tick = arrival_tick
+            .max(self.next_available)
+            .max(link_next_available);
+        let queue_wait_kind =
+            queue_wait_kind(arrival_tick, self.next_available, link_next_available);
         let mut credit_delay_ticks: Tick = 0;
         if let Some(credit_depth) = credit_depth {
             loop {
@@ -1009,9 +1019,10 @@ impl FabricLaneState {
                 if credit_ready_tick <= start_tick {
                     break;
                 }
-                wait_kind = Some(FabricWaitKind::Credit);
                 let previous_start_tick = start_tick;
-                start_tick = credit_ready_tick.max(self.next_available);
+                start_tick = credit_ready_tick
+                    .max(self.next_available)
+                    .max(link_next_available);
                 let credit_delay = start_tick
                     .checked_sub(previous_start_tick)
                     .ok_or(FabricError::TickOverflow)?;
@@ -1040,9 +1051,27 @@ impl FabricLaneState {
             start_tick,
             depart_tick,
             arrival_tick: next_arrival_tick,
-            wait_kind,
+            queue_wait_kind,
             credit_delay_ticks,
         })
+    }
+}
+
+fn queue_wait_kind(
+    arrival_tick: Tick,
+    lane_next_available: Tick,
+    link_next_available: Tick,
+) -> Option<FabricWaitKind> {
+    let start_tick = arrival_tick
+        .max(lane_next_available)
+        .max(link_next_available);
+    if start_tick == arrival_tick {
+        return None;
+    }
+    if link_next_available > lane_next_available && link_next_available > arrival_tick {
+        Some(FabricWaitKind::Link)
+    } else {
+        Some(FabricWaitKind::Queue)
     }
 }
 
@@ -1052,12 +1081,18 @@ struct FabricLaneReservation {
     start_tick: Tick,
     depart_tick: Tick,
     arrival_tick: Tick,
-    wait_kind: Option<FabricWaitKind>,
+    queue_wait_kind: Option<FabricWaitKind>,
     credit_delay_ticks: Tick,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct FabricLinkState {
+    next_available: Tick,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct FabricModel {
+    links: BTreeMap<FabricLinkId, FabricLinkState>,
     lanes: BTreeMap<FabricLaneKey, FabricLaneState>,
     activity_log: Vec<FabricLaneActivityRecord>,
     wait_log: Vec<FabricWaitRecord>,
@@ -1157,6 +1192,7 @@ impl FabricModel {
         I: IntoIterator<Item = FabricLaneSnapshot>,
     {
         let mut lanes = BTreeMap::new();
+        let mut links = BTreeMap::<FabricLinkId, FabricLinkState>::new();
         for snapshot in snapshots {
             let key = FabricLaneKey::new(snapshot.link.clone(), snapshot.virtual_network);
             if lanes.contains_key(&key) {
@@ -1165,10 +1201,19 @@ impl FabricModel {
                     virtual_network: snapshot.virtual_network,
                 });
             }
+            links
+                .entry(snapshot.link.clone())
+                .and_modify(|state| {
+                    state.next_available = state.next_available.max(snapshot.next_available_tick);
+                })
+                .or_insert(FabricLinkState {
+                    next_available: snapshot.next_available_tick,
+                });
             lanes.insert(key, FabricLaneState::from_snapshot(&snapshot));
         }
 
         self.lanes = lanes;
+        self.links = links;
         Ok(())
     }
 
@@ -1316,12 +1361,21 @@ impl FabricModel {
             let lane = FabricLaneKey::new(hop.link().clone(), virtual_network);
             let serialization_ticks = hop.serialization_ticks(packet.bytes())?;
             let flits = hop.flit_count(packet.bytes())?;
+            let link_next_available = self
+                .links
+                .get(hop.link())
+                .map_or(0, |state| state.next_available);
             let reservation = self.lanes.entry(lane).or_default().reserve(
                 ready_tick,
                 serialization_ticks,
                 hop.latency(),
                 hop.credit_depth(),
+                link_next_available,
             )?;
+            self.links
+                .entry(hop.link().clone())
+                .or_default()
+                .next_available = reservation.depart_tick;
             let queue_delay_ticks = reservation
                 .start_tick
                 .checked_sub(ready_tick)
@@ -1329,7 +1383,7 @@ impl FabricModel {
             let credit_delay_ticks = reservation.credit_delay_ticks;
             if queue_delay_ticks != 0 {
                 if credit_delay_ticks == 0 {
-                    let wait_kind = reservation.wait_kind.unwrap_or(FabricWaitKind::Queue);
+                    let wait_kind = reservation.queue_wait_kind.unwrap_or(FabricWaitKind::Queue);
                     self.wait_log.push(FabricWaitRecord::new(
                         packet.id(),
                         hop.link().clone(),
@@ -1344,11 +1398,13 @@ impl FabricModel {
                         .checked_sub(credit_delay_ticks)
                         .ok_or(FabricError::TickOverflow)?;
                     if credit_wait_start_tick > ready_tick {
+                        let wait_kind =
+                            reservation.queue_wait_kind.unwrap_or(FabricWaitKind::Queue);
                         self.wait_log.push(FabricWaitRecord::new(
                             packet.id(),
                             hop.link().clone(),
                             virtual_network,
-                            FabricWaitKind::Queue,
+                            wait_kind,
                             ready_tick,
                             credit_wait_start_tick,
                         ));
@@ -1434,15 +1490,20 @@ fn fabric_packet_node(packet: FabricPacketId) -> WaitForNode {
 fn fabric_resource_node(
     link: &FabricLinkId,
     virtual_network: VirtualNetworkId,
-    suffix: &str,
+    wait_kind: FabricWaitKind,
 ) -> WaitForNode {
-    WaitForNode::resource(format!(
-        "fabric.{}.vn.{}.{}",
-        wait_for_label_segment(link.as_str()),
-        virtual_network.get(),
-        suffix
-    ))
-    .expect("fabric resource wait-for label is sanitized")
+    let link = wait_for_label_segment(link.as_str());
+    let label = if wait_kind.is_virtual_network_scoped() {
+        format!(
+            "fabric.{}.vn.{}.{}",
+            link,
+            virtual_network.get(),
+            wait_kind.resource_suffix()
+        )
+    } else {
+        format!("fabric.{}.{}", link, wait_kind.resource_suffix())
+    };
+    WaitForNode::resource(label).expect("fabric resource wait-for label is sanitized")
 }
 
 fn record_wait_interval(
@@ -1452,11 +1513,7 @@ fn record_wait_interval(
     last_tick: Tick,
 ) {
     let source = fabric_packet_node(wait.packet);
-    let target = fabric_resource_node(
-        &wait.link,
-        wait.virtual_network,
-        wait.kind.resource_suffix(),
-    );
+    let target = fabric_resource_node(&wait.link, wait.virtual_network, wait.kind);
     graph
         .record_wait(
             source.clone(),

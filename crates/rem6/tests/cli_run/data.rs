@@ -3690,7 +3690,7 @@ fn rem6_run_exposes_distinct_riscv_hart_ids_to_parallel_cores() {
     assert!(stdout.contains("\"hex\":\"00000000000000000100000000000000\""));
     assert!(stdout.contains("\"path\":\"sim.cpu0.data.stores\""));
     assert!(stdout.contains("\"path\":\"sim.cpu1.data.stores\""));
-    assert_transport_stats(&stdout, "sim.memory.data.route1.source.cpu0.dmem", 1, 4, 4);
+    assert_transport_stats(&stdout, "sim.memory.data.route1.source.cpu0.dmem", 1, 5, 5);
     assert_transport_stats(&stdout, "sim.memory.data.route3.source.cpu1.dmem", 1, 4, 4);
 }
 

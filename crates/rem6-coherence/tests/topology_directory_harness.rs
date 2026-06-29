@@ -538,19 +538,19 @@ fn topology_directory_harness_uses_declared_fabric_virtual_networks() {
         .unwrap();
 
     let run = harness.run_until_idle();
-    assert_eq!(run.final_tick(), 126);
+    assert_eq!(run.final_tick(), 130);
     assert_eq!(
         harness.cpu_responses(),
         vec![
             CpuResponseRecord::new(
-                94,
+                98,
                 CacheControllerResultKind::Fill,
                 request_id(1, 20),
                 ResponseStatus::Completed,
                 Some(vec![4, 5, 6, 7]),
             ),
             CpuResponseRecord::new(
-                126,
+                130,
                 CacheControllerResultKind::Fill,
                 request_id(2, 21),
                 ResponseStatus::Completed,
@@ -665,19 +665,19 @@ fn topology_directory_harness_uses_virtual_networks_after_fixed_hops() {
         .unwrap();
 
     let run = harness.run_until_idle();
-    assert_eq!(run.final_tick(), 128);
+    assert_eq!(run.final_tick(), 132);
     assert_eq!(
         harness.cpu_responses(),
         vec![
             CpuResponseRecord::new(
-                96,
+                100,
                 CacheControllerResultKind::Fill,
                 request_id(1, 30),
                 ResponseStatus::Completed,
                 Some(vec![4, 5, 6, 7]),
             ),
             CpuResponseRecord::new(
-                128,
+                132,
                 CacheControllerResultKind::Fill,
                 request_id(2, 31),
                 ResponseStatus::Completed,

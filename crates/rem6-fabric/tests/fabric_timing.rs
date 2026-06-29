@@ -251,7 +251,7 @@ fn fabric_aggregate_activity_equality_uses_public_summary_values() {
 }
 
 #[test]
-fn fabric_keeps_virtual_network_lanes_independent() {
+fn fabric_arbitrates_virtual_networks_on_shared_link() {
     let mut fabric = FabricModel::new();
     let shared = link("mesh_x0");
     let route = path([FabricPathHop::new(shared, 2, 8).unwrap()]);
@@ -268,8 +268,14 @@ fn fabric_keeps_virtual_network_lanes_independent() {
 
     assert_eq!(transfers[0].arrival_tick(), 4);
     assert_eq!(transfers[0].hops()[0].start_tick(), 0);
-    assert_eq!(transfers[1].arrival_tick(), 4);
-    assert_eq!(transfers[1].hops()[0].start_tick(), 0);
+    assert_eq!(transfers[1].arrival_tick(), 6);
+    assert_eq!(transfers[1].hops()[0].start_tick(), 2);
+
+    let shared_link_wait = fabric.wait_for_graph_at(1).snapshot();
+    let packet = WaitForNode::transaction("fabric.packet.2").unwrap();
+    let link = WaitForNode::resource("fabric.mesh_x0.link").unwrap();
+    assert_eq!(shared_link_wait.edge_count(), 1);
+    assert!(shared_link_wait.contains_edge(&packet, &link, WaitForEdgeKind::Queue));
 }
 
 #[test]
@@ -382,7 +388,10 @@ fn fabric_summarizes_activity_by_virtual_network() {
     assert!(activities[0].has_contention());
     assert_eq!(activities[1].virtual_network(), VirtualNetworkId::new(2));
     assert_eq!(activities[1].transfer_count(), 1);
-    assert_eq!(activities[1].queue_delay_ticks(), 0);
+    assert_eq!(activities[1].queue_delay_ticks(), 1);
+    assert_eq!(activities[1].max_queue_delay_ticks(), 1);
+    assert_eq!(activities[1].contended_lane_count(), 1);
+    assert!(activities[1].has_contention());
     assert_eq!(
         fabric
             .virtual_network_activity(VirtualNetworkId::new(1))
@@ -419,9 +428,9 @@ fn fabric_summarizes_activity_by_link_across_virtual_networks() {
     assert_eq!(activities[0].transfer_count(), 3);
     assert_eq!(activities[0].byte_count(), 24);
     assert_eq!(activities[0].occupied_ticks(), 3);
-    assert_eq!(activities[0].queue_delay_ticks(), 3);
+    assert_eq!(activities[0].queue_delay_ticks(), 4);
     assert_eq!(activities[0].max_queue_delay_ticks(), 3);
-    assert_eq!(activities[0].contended_virtual_network_count(), 1);
+    assert_eq!(activities[0].contended_virtual_network_count(), 2);
     assert_eq!(activities[0].first_tick(), 0);
     assert_eq!(activities[0].last_tick(), 6);
     assert!(activities[0].has_contention());
@@ -491,8 +500,15 @@ fn fabric_credit_depth_is_scoped_by_virtual_network() {
 
     assert_eq!(transfers[0].hops()[0].start_tick(), 0);
     assert_eq!(transfers[0].arrival_tick(), 11);
-    assert_eq!(transfers[1].hops()[0].start_tick(), 0);
-    assert_eq!(transfers[1].arrival_tick(), 11);
+    assert_eq!(transfers[1].hops()[0].start_tick(), 1);
+    assert_eq!(transfers[1].arrival_tick(), 12);
+    assert_eq!(
+        fabric
+            .lane_activity(&link("mesh_credit_vn"), VirtualNetworkId::new(2))
+            .unwrap()
+            .credit_delay_ticks(),
+        0
+    );
 }
 
 #[test]
@@ -535,6 +551,10 @@ fn fabric_restore_reinstates_lane_reservations() {
         .unwrap()
         .with_credit_depth(2)
         .unwrap()]);
+    let alternate_vn_route = path([FabricPathHop::new(link("mesh_restore"), 10, 8)
+        .unwrap()
+        .with_credit_depth(2)
+        .unwrap()]);
 
     fabric
         .transmit_batch(
@@ -550,12 +570,25 @@ fn fabric_restore_reinstates_lane_reservations() {
     let expected_transfer = expected
         .transmit(1, packet(3, 8, 1), route.clone())
         .unwrap();
+    let mut expected_cross_vn = fabric.clone();
+    let expected_cross_vn_transfer = expected_cross_vn
+        .transmit(1, packet(4, 8, 2), alternate_vn_route.clone())
+        .unwrap();
+    assert_eq!(expected_cross_vn_transfer.hops()[0].start_tick(), 2);
 
     fabric.transmit(20, packet(9, 8, 1), route.clone()).unwrap();
     assert_ne!(fabric.lane_snapshots(), snapshot);
 
     fabric.restore_lane_snapshots(snapshot.clone()).unwrap();
 
+    assert_eq!(fabric.lane_snapshots(), snapshot);
+    let cross_vn_replayed = fabric
+        .transmit(1, packet(4, 8, 2), alternate_vn_route)
+        .unwrap();
+    assert_eq!(cross_vn_replayed, expected_cross_vn_transfer);
+    assert_eq!(fabric.lane_snapshots(), expected_cross_vn.lane_snapshots());
+
+    fabric.restore_lane_snapshots(snapshot.clone()).unwrap();
     assert_eq!(fabric.lane_snapshots(), snapshot);
     let replayed = fabric.transmit(1, packet(3, 8, 1), route).unwrap();
     assert_eq!(replayed, expected_transfer);

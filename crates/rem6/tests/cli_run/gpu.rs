@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -47,6 +48,7 @@ fn assert_gpu_fabric_lane(
     lanes: &[Value],
     link: &str,
     virtual_network: u64,
+    transfer_count: u64,
     byte_count: u64,
     flit_count: u64,
 ) {
@@ -57,7 +59,10 @@ fn assert_gpu_fabric_lane(
                 && lane.get("virtual_network").and_then(Value::as_u64) == Some(virtual_network)
         })
         .expect("fabric lane activity");
-    assert_eq!(lane.get("transfer_count").and_then(Value::as_u64), Some(1));
+    assert_eq!(
+        lane.get("transfer_count").and_then(Value::as_u64),
+        Some(transfer_count)
+    );
     assert_eq!(
         lane.get("byte_count").and_then(Value::as_u64),
         Some(byte_count)
@@ -176,7 +181,12 @@ fn assert_gpu_fabric_virtual_network_stats(
         stdout,
         &format!("{prefix}.contended_lanes"),
         "Count",
-        0,
+        u64::from(
+            lane.get("queue_delay_ticks")
+                .and_then(Value::as_u64)
+                .expect("fabric virtual network queue delay ticks")
+                != 0,
+        ),
         "monotonic",
     );
 }
@@ -289,7 +299,7 @@ fn assert_gpu_fabric_link_stats(stdout: &str, fabric: &Value, link: &str) {
         link_activity
             .get("contended_virtual_networks")
             .and_then(Value::as_u64),
-        Some(0)
+        fabric.get("contended_lanes").and_then(Value::as_u64)
     );
     assert_eq!(
         link_activity.get("transfer_count").and_then(Value::as_u64),
@@ -358,24 +368,74 @@ fn assert_gpu_fabric_link_stats(stdout: &str, fabric: &Value, link: &str) {
         stdout,
         &format!("{prefix}.contended_virtual_networks"),
         "Count",
-        0,
+        fabric
+            .get("contended_lanes")
+            .and_then(Value::as_u64)
+            .expect("fabric contended lanes"),
         "monotonic",
     );
 }
 
-fn assert_gpu_fabric_hop_stats(stdout: &str, hop: &Value) {
-    let link = hop
-        .get("link")
-        .and_then(Value::as_str)
-        .expect("fabric hop link");
-    let virtual_network = hop
-        .get("virtual_network")
+#[derive(Clone, Copy, Debug, Default)]
+struct GpuFabricHopStatSummary {
+    transfers: u64,
+    bytes: u64,
+    flits: u64,
+    occupied_ticks: u64,
+    queue_delay_ticks: u64,
+    max_queue_delay_ticks: u64,
+    credit_delay_ticks: u64,
+}
+
+impl GpuFabricHopStatSummary {
+    fn record(&mut self, hop: &Value) {
+        let queue_delay_ticks = gpu_fabric_hop_u64(hop, "queue_delay_ticks");
+        self.transfers += 1;
+        self.bytes += gpu_fabric_hop_u64(hop, "bytes");
+        self.flits += gpu_fabric_hop_u64(hop, "flits");
+        self.occupied_ticks += gpu_fabric_hop_u64(hop, "occupied_ticks");
+        self.queue_delay_ticks += queue_delay_ticks;
+        self.max_queue_delay_ticks = self.max_queue_delay_ticks.max(queue_delay_ticks);
+        self.credit_delay_ticks += gpu_fabric_hop_u64(hop, "credit_delay_ticks");
+    }
+}
+
+fn gpu_fabric_hop_u64(hop: &Value, field: &str) -> u64 {
+    hop.get(field)
         .and_then(Value::as_u64)
-        .expect("fabric hop virtual network");
-    let hop_index = hop
-        .get("hop_index")
-        .and_then(Value::as_u64)
-        .expect("fabric hop index");
+        .unwrap_or_else(|| panic!("fabric hop {field}"))
+}
+
+fn gpu_fabric_hop_stat_summaries(
+    hops: &[Value],
+) -> BTreeMap<(String, u64, u64), GpuFabricHopStatSummary> {
+    let mut summaries = BTreeMap::<(String, u64, u64), GpuFabricHopStatSummary>::new();
+    for hop in hops {
+        let link = hop
+            .get("link")
+            .and_then(Value::as_str)
+            .expect("fabric hop link")
+            .to_owned();
+        let virtual_network = gpu_fabric_hop_u64(hop, "virtual_network");
+        let hop_index = gpu_fabric_hop_u64(hop, "hop_index");
+        summaries
+            .entry((link, virtual_network, hop_index))
+            .or_default()
+            .record(hop);
+    }
+    summaries
+}
+
+fn assert_gpu_fabric_hop_stats(
+    stdout: &str,
+    summaries: &BTreeMap<(String, u64, u64), GpuFabricHopStatSummary>,
+    link: &str,
+    virtual_network: u64,
+    hop_index: u64,
+) {
+    let summary = summaries
+        .get(&(link.to_owned(), virtual_network, hop_index))
+        .expect("fabric hop stat summary");
     let prefix = format!(
         "sim.gpu_run.fabric.link.{}.vn{virtual_network}.hop{hop_index}",
         stat_path_segment(link)
@@ -385,61 +445,49 @@ fn assert_gpu_fabric_hop_stats(stdout: &str, hop: &Value) {
         stdout,
         &format!("{prefix}.transfers"),
         "Count",
-        1,
+        summary.transfers,
         "monotonic",
     );
     assert_stat(
         stdout,
         &format!("{prefix}.bytes"),
         "Byte",
-        hop.get("bytes")
-            .and_then(Value::as_u64)
-            .expect("fabric hop bytes"),
+        summary.bytes,
         "monotonic",
     );
     assert_stat(
         stdout,
         &format!("{prefix}.flits"),
         "Count",
-        hop.get("flits")
-            .and_then(Value::as_u64)
-            .expect("fabric hop flits"),
+        summary.flits,
         "monotonic",
     );
     assert_stat(
         stdout,
         &format!("{prefix}.occupied_ticks"),
         "Tick",
-        hop.get("occupied_ticks")
-            .and_then(Value::as_u64)
-            .expect("fabric hop occupied ticks"),
+        summary.occupied_ticks,
         "monotonic",
     );
-    let queue_delay_ticks = hop
-        .get("queue_delay_ticks")
-        .and_then(Value::as_u64)
-        .expect("fabric hop queue delay ticks");
     assert_stat(
         stdout,
         &format!("{prefix}.queue_delay_ticks"),
         "Tick",
-        queue_delay_ticks,
+        summary.queue_delay_ticks,
         "monotonic",
     );
     assert_stat(
         stdout,
         &format!("{prefix}.max_queue_delay_ticks"),
         "Tick",
-        queue_delay_ticks,
+        summary.max_queue_delay_ticks,
         "monotonic",
     );
     assert_stat(
         stdout,
         &format!("{prefix}.credit_delay_ticks"),
         "Tick",
-        hop.get("credit_delay_ticks")
-            .and_then(Value::as_u64)
-            .expect("fabric hop credit delay ticks"),
+        summary.credit_delay_ticks,
         "monotonic",
     );
 }
@@ -2002,9 +2050,9 @@ fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
         .args([
             "gpu-run",
             "--workgroups",
-            "1",
+            "2",
             "--compute-units",
-            "1",
+            "2",
             "--global-load",
             "0x2e00:4:4:4",
             "--memory-start",
@@ -2016,7 +2064,7 @@ fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
             "--fabric-link",
             "gpu_mem",
             "--fabric-bandwidth-bytes-per-tick",
-            "32",
+            "1",
             "--fabric-request-virtual-network",
             "7",
             "--fabric-response-virtual-network",
@@ -2024,7 +2072,7 @@ fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
             "--fabric-credit-depth",
             "2",
             "--max-tick",
-            "80",
+            "200",
             "--stats-format",
             "json",
         ])
@@ -2044,7 +2092,7 @@ fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
         fabric
             .get("bandwidth_bytes_per_tick")
             .and_then(Value::as_u64),
-        Some(32)
+        Some(1)
     );
     assert_eq!(
         fabric
@@ -2066,9 +2114,21 @@ fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
             .and_then(Value::as_u64),
         Some(2)
     );
-    assert_eq!(fabric.get("transfers").and_then(Value::as_u64), Some(2));
-    assert_eq!(fabric.get("bytes").and_then(Value::as_u64), Some(32));
-    assert_eq!(fabric.get("flits").and_then(Value::as_u64), Some(2));
+    assert_eq!(fabric.get("transfers").and_then(Value::as_u64), Some(4));
+    assert_eq!(fabric.get("bytes").and_then(Value::as_u64), Some(64));
+    assert_eq!(fabric.get("flits").and_then(Value::as_u64), Some(64));
+    assert_eq!(
+        fabric.get("queue_delay_ticks").and_then(Value::as_u64),
+        Some(40)
+    );
+    assert_eq!(
+        fabric.get("max_queue_delay_ticks").and_then(Value::as_u64),
+        Some(16)
+    );
+    assert_eq!(
+        fabric.get("contended_lanes").and_then(Value::as_u64),
+        Some(2)
+    );
     let credit_delay_ticks = fabric
         .get("credit_delay_ticks")
         .and_then(Value::as_u64)
@@ -2082,8 +2142,8 @@ fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
         .and_then(Value::as_array)
         .unwrap();
     assert_eq!(lanes.len(), 2);
-    assert_gpu_fabric_lane(lanes, "gpu_mem", 7, 16, 1);
-    assert_gpu_fabric_lane(lanes, "gpu_mem", 8, 16, 1);
+    assert_gpu_fabric_lane(lanes, "gpu_mem", 7, 2, 32, 32);
+    assert_gpu_fabric_lane(lanes, "gpu_mem", 8, 2, 32, 32);
     assert_gpu_fabric_virtual_network_stats(&stdout, lanes, "gpu_mem", 7);
     assert_gpu_fabric_virtual_network_stats(&stdout, lanes, "gpu_mem", 8);
     assert_gpu_fabric_link_stats(&stdout, fabric, "gpu_mem");
@@ -2094,11 +2154,13 @@ fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
         .get("hop_activities")
         .and_then(Value::as_array)
         .unwrap();
-    assert_eq!(hops.len(), 2);
+    assert_eq!(hops.len(), 4);
+    let hop_summaries = gpu_fabric_hop_stat_summaries(hops);
     assert!(hops.iter().any(|hop| {
         hop.get("link").and_then(Value::as_str) == Some("gpu_mem")
             && hop.get("virtual_network").and_then(Value::as_u64) == Some(7)
-            && hop.get("flits").and_then(Value::as_u64) == Some(1)
+            && hop.get("flits").and_then(Value::as_u64) == Some(16)
+            && hop.get("queue_delay_ticks").and_then(Value::as_u64) == Some(16)
             && hop
                 .get("credit_delay_ticks")
                 .and_then(Value::as_u64)
@@ -2107,15 +2169,15 @@ fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
     assert!(hops.iter().any(|hop| {
         hop.get("link").and_then(Value::as_str) == Some("gpu_mem")
             && hop.get("virtual_network").and_then(Value::as_u64) == Some(8)
-            && hop.get("flits").and_then(Value::as_u64) == Some(1)
+            && hop.get("flits").and_then(Value::as_u64) == Some(16)
+            && hop.get("queue_delay_ticks").and_then(Value::as_u64) == Some(12)
             && hop
                 .get("credit_delay_ticks")
                 .and_then(Value::as_u64)
                 .is_some()
     }));
-    for hop in hops {
-        assert_gpu_fabric_hop_stats(&stdout, hop);
-    }
+    assert_gpu_fabric_hop_stats(&stdout, &hop_summaries, "gpu_mem", 7, 0);
+    assert_gpu_fabric_hop_stats(&stdout, &hop_summaries, "gpu_mem", 8, 0);
     assert_stat(
         &stdout,
         "sim.gpu_run.fabric.active_virtual_networks",
@@ -2127,10 +2189,30 @@ fn rem6_gpu_run_routes_global_memory_through_configured_fabric() {
         &stdout,
         "sim.gpu_run.fabric.transfers",
         "Count",
+        4,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.fabric.flits",
+        "Count",
+        64,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.fabric.queue_delay_ticks",
+        "Tick",
+        40,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.gpu_run.fabric.contended_lanes",
+        "Count",
         2,
         "monotonic",
     );
-    assert_stat(&stdout, "sim.gpu_run.fabric.flits", "Count", 2, "monotonic");
     assert_stat(
         &stdout,
         "sim.gpu_run.fabric.credit_delay_ticks",
