@@ -256,6 +256,154 @@ fn sum_dram_bank_field(json: &Value, field: &str) -> u64 {
         .sum()
 }
 
+fn dram_bank_low_power_self_refresh_entries(json: &Value) -> Vec<(u64, u64, u64)> {
+    json.pointer("/dram/targets")
+        .and_then(Value::as_array)
+        .expect("DRAM targets")
+        .iter()
+        .flat_map(|target| {
+            let target_id = target
+                .get("target")
+                .and_then(Value::as_u64)
+                .expect("DRAM target id");
+            target
+                .get("ports")
+                .and_then(Value::as_array)
+                .expect("DRAM target ports")
+                .iter()
+                .flat_map(move |port| {
+                    let port_id = port
+                        .get("port")
+                        .and_then(Value::as_u64)
+                        .expect("DRAM port id");
+                    port.get("banks")
+                        .and_then(Value::as_array)
+                        .expect("DRAM port banks")
+                        .iter()
+                        .map(move |bank| {
+                            let bank_id = bank
+                                .get("bank")
+                                .and_then(Value::as_u64)
+                                .expect("DRAM bank id");
+                            let entries = bank
+                                .pointer("/low_power/self_refresh/entries")
+                                .and_then(Value::as_u64)
+                                .expect("DRAM bank self-refresh entries");
+                            (target_id, port_id, bank_id, entries)
+                        })
+                })
+        })
+        .filter_map(|(target, port, bank, entries)| (entries > 0).then_some((target, port, bank)))
+        .collect()
+}
+
+#[test]
+fn rem6_run_exposes_lpddr_low_power_residency_across_multiple_dram_banks() {
+    const DATA_OFFSET: usize = 64;
+    const SECOND_LINE_OFFSET: usize = 128;
+
+    let mut program = riscv64_program(&[
+        u_type(0, 2, 0x17),                                 // auipc x2, 0
+        i_type(DATA_OFFSET as i32, 2, 0x0, 2, 0x13),        // addi x2, x2, data offset
+        i_type(0, 2, 0x3, 5, 0x03),                         // ld x5, 0(x2)
+        i_type(SECOND_LINE_OFFSET as i32, 2, 0x0, 3, 0x13), // addi x3, x2, second line
+        i_type(0, 3, 0x3, 6, 0x03),                         // ld x6, 0(x3)
+        0x0000_0073,                                        // ecall
+    ]);
+    program.resize(DATA_OFFSET + SECOND_LINE_OFFSET + 8, 0);
+    program[DATA_OFFSET..DATA_OFFSET + 8].copy_from_slice(&0x1122_3344_5566_7788u64.to_le_bytes());
+    program[DATA_OFFSET + SECOND_LINE_OFFSET..DATA_OFFSET + SECOND_LINE_OFFSET + 8]
+        .copy_from_slice(&0x8877_6655_4433_2211u64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("lpddr-multi-bank-low-power", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "220",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--dram-memory-profile",
+            "lpddr",
+            "--dram-low-power-precharge-powerdown-entry-delay",
+            "2",
+            "--dram-low-power-self-refresh-entry-delay",
+            "5",
+            "--dram-low-power-exit-latency",
+            "1",
+            "--dram-low-power-self-refresh-exit-latency",
+            "3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert_eq!(
+        json.pointer("/dram/profile/technology")
+            .and_then(Value::as_str),
+        Some("lpddr")
+    );
+    assert_eq!(json_u64(&json, "/dram/profile/parallel_ports"), 2);
+
+    let banks_with_self_refresh = dram_bank_low_power_self_refresh_entries(&json);
+    assert_eq!(
+        banks_with_self_refresh.len(),
+        8,
+        "expected every profiled LPDDR scheduler bank to expose terminal self-refresh residency: {banks_with_self_refresh:?}\n{stdout}"
+    );
+    for port in 0..2 {
+        for bank in 0..4 {
+            assert!(banks_with_self_refresh.contains(&(0, port, bank)));
+            assert_stat_greater_than(
+                &stdout,
+                &format!(
+                    "sim.memory.dram.target0.port{port}.bank{bank}.low_power.self_refresh.entries"
+                ),
+                "Count",
+                0,
+                "monotonic",
+            );
+            assert_stat_greater_than(
+                &stdout,
+                &format!("sim.memory.resources.dram.target0.port{port}.bank{bank}.low_power.self_refresh.entries"),
+                "Count",
+                0,
+                "monotonic",
+            );
+        }
+    }
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.dram.low_power.self_refresh.entries",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.resources.dram.low_power.self_refresh.entries",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
 #[test]
 fn rem6_run_executes_riscv_elf_fetches_through_msi_instruction_cache() {
     let mut program = riscv64_program(&[

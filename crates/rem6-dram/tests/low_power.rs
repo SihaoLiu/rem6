@@ -174,8 +174,8 @@ fn activity_profile_until_splits_terminal_low_power_around_refresh() {
     dram.schedule(0, &read(0x0000, 32)).unwrap();
     let profile = dram.activity_profile_until(100);
 
-    assert_eq!(profile.refresh_count(), 2);
-    assert_eq!(profile.refresh_cycle_count(), 10);
+    assert_eq!(profile.refresh_count(), 32);
+    assert_eq!(profile.refresh_cycle_count(), 160);
     assert_eq!(
         profile.low_power_entry_count(DramLowPowerState::ActivePowerdown),
         1
@@ -186,11 +186,15 @@ fn activity_profile_until_splits_terminal_low_power_around_refresh() {
     );
     assert_eq!(
         profile.low_power_entry_count(DramLowPowerState::PrechargePowerdown),
-        1
+        31
     );
     assert_eq!(
         profile.low_power_cycle_count(DramLowPowerState::PrechargePowerdown),
-        15
+        480
+    );
+    assert_eq!(
+        profile.low_power_entry_count(DramLowPowerState::SelfRefresh),
+        0
     );
 }
 
@@ -231,13 +235,21 @@ fn activity_profile_until_records_terminal_open_row_idle_window() {
     );
     assert_eq!(
         profile.low_power_entry_count(DramLowPowerState::PrechargePowerdown),
-        0
+        15
+    );
+    assert_eq!(
+        profile.low_power_cycle_count(DramLowPowerState::PrechargePowerdown),
+        900
     );
     assert_eq!(
         profile.low_power_entry_count(DramLowPowerState::SelfRefresh),
-        0
+        15
     );
-    assert_eq!(profile.active_bank_count(), 1);
+    assert_eq!(
+        profile.low_power_cycle_count(DramLowPowerState::SelfRefresh),
+        540
+    );
+    assert_eq!(profile.active_bank_count(), 16);
     assert_eq!(profile.low_power_exit_count(), 0);
     assert_eq!(profile.low_power_exit_latency_cycles(), 0);
 }

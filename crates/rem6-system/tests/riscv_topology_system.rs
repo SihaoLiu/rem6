@@ -1629,7 +1629,11 @@ fn topology_system_with_dram_memory_delays_fetch_response_by_dram_timing() {
     );
     assert_eq!(
         run.dram_low_power_entry_count(DramLowPowerState::PrechargePowerdown),
-        0
+        1
+    );
+    assert_eq!(
+        run.dram_low_power_cycle_count(DramLowPowerState::PrechargePowerdown),
+        8
     );
     assert_eq!(run.dram_low_power_exit_count(), 0);
 }
