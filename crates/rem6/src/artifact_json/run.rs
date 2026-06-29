@@ -192,8 +192,12 @@ impl Rem6RunArtifact {
             .as_ref()
             .map(|artifact| format!(",\"power_analysis\":{}", artifact.to_json()))
             .unwrap_or_default();
+        let gnu_relro = elf_gnu_relro_json(
+            self.metadata.gnu_relro_virtual_address(),
+            self.metadata.gnu_relro_memory_size(),
+        );
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"gnu_stack\":{},\"symbols\":{{\"total\":{},\"functions\":{},\"objects\":{}}},\"dynamic\":{},\"program_header_table\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"gnu_stack\":{},\"gnu_relro\":{},\"symbols\":{{\"total\":{},\"functions\":{},\"objects\":{}}},\"dynamic\":{},\"program_header_table\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -219,6 +223,7 @@ impl Rem6RunArtifact {
             self.metadata.flags(),
             self.metadata.has_tls(),
             elf_gnu_stack_json(self.metadata.gnu_stack_executable()),
+            gnu_relro,
             self.metadata.symbol_count(),
             self.metadata.function_symbol_count(),
             self.metadata.object_symbol_count(),
@@ -263,6 +268,18 @@ fn elf_gnu_stack_json(executable: Option<bool>) -> String {
     executable
         .map(|executable| format!("{{\"executable\":{executable}}}"))
         .unwrap_or_else(|| "null".to_string())
+}
+
+fn elf_gnu_relro_json(virtual_address: Option<Address>, memory_size: Option<u64>) -> String {
+    match (virtual_address, memory_size) {
+        (Some(address), Some(bytes)) => {
+            format!(
+                "{{\"virtual_address\":\"0x{:x}\",\"bytes\":{bytes}}}",
+                address.get()
+            )
+        }
+        _ => "null".to_string(),
+    }
 }
 
 fn elf_interpreter_json(interpreter: Option<&BootElfInterpreter>) -> String {

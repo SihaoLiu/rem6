@@ -324,6 +324,8 @@ pub struct BootElfMetadata {
     operating_system: BootElfOperatingSystem,
     has_tls: bool,
     gnu_stack_executable: Option<bool>,
+    gnu_relro_virtual_address: Option<Address>,
+    gnu_relro_memory_size: Option<u64>,
     symbol_count: u64,
     function_symbol_count: u64,
     object_symbol_count: u64,
@@ -351,6 +353,8 @@ impl BootElfMetadata {
             operating_system,
             has_tls: false,
             gnu_stack_executable: None,
+            gnu_relro_virtual_address: None,
+            gnu_relro_memory_size: None,
             symbol_count: 0,
             function_symbol_count: 0,
             object_symbol_count: 0,
@@ -376,6 +380,16 @@ impl BootElfMetadata {
 
     pub(crate) const fn with_gnu_stack_executable(mut self, executable: Option<bool>) -> Self {
         self.gnu_stack_executable = executable;
+        self
+    }
+
+    pub(crate) const fn with_gnu_relro(
+        mut self,
+        virtual_address: Option<Address>,
+        memory_size: Option<u64>,
+    ) -> Self {
+        self.gnu_relro_virtual_address = virtual_address;
+        self.gnu_relro_memory_size = memory_size;
         self
     }
 
@@ -425,6 +439,14 @@ impl BootElfMetadata {
 
     pub const fn gnu_stack_executable(&self) -> Option<bool> {
         self.gnu_stack_executable
+    }
+
+    pub const fn gnu_relro_virtual_address(&self) -> Option<Address> {
+        self.gnu_relro_virtual_address
+    }
+
+    pub const fn gnu_relro_memory_size(&self) -> Option<u64> {
+        self.gnu_relro_memory_size
     }
 
     pub const fn symbol_count(&self) -> u64 {

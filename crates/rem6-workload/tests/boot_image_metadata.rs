@@ -6,6 +6,7 @@ use rem6_memory::Address;
 use rem6_workload::{WorkloadBootImage, WorkloadId, WorkloadManifest};
 
 const PT_GNU_STACK: u32 = 0x6474_e551;
+const PT_GNU_RELRO: u32 = 0x6474_e552;
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
@@ -141,6 +142,25 @@ fn elf64_image_with_gnu_stack(machine: u16, executable: bool) -> Vec<u8> {
     write_u16(&mut bytes, 56, 2);
     write_u32(&mut bytes, 120, PT_GNU_STACK);
     write_u32(&mut bytes, 124, if executable { 5 } else { 6 });
+    bytes
+}
+
+fn elf64_image_with_gnu_relro(
+    machine: u16,
+    virtual_address: u64,
+    physical_address: u64,
+    memory_size: u64,
+) -> Vec<u8> {
+    let mut bytes = elf64_image(machine);
+    write_u16(&mut bytes, 56, 2);
+    write_u32(&mut bytes, 120, PT_GNU_RELRO);
+    write_u32(&mut bytes, 124, 4);
+    write_u64(&mut bytes, 128, 0);
+    write_u64(&mut bytes, 136, virtual_address);
+    write_u64(&mut bytes, 144, physical_address);
+    write_u64(&mut bytes, 152, 0);
+    write_u64(&mut bytes, 160, memory_size);
+    write_u64(&mut bytes, 168, 8);
     bytes
 }
 
@@ -559,6 +579,31 @@ fn workload_boot_image_preserves_elf_gnu_stack_metadata_round_trip() {
 }
 
 #[test]
+fn workload_boot_image_preserves_elf_gnu_relro_metadata_round_trip() {
+    let image =
+        BootImage::from_elf64_le(&elf64_image_with_gnu_relro(243, 0x9000, 0xa000, 32)).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let metadata = workload_image.elf_metadata().unwrap();
+
+    assert_eq!(
+        metadata.gnu_relro_virtual_address(),
+        Some(Address::new(0x9000)),
+    );
+    assert_eq!(metadata.gnu_relro_memory_size(), Some(32));
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    assert_eq!(
+        round_trip_metadata.gnu_relro_virtual_address(),
+        Some(Address::new(0x9000)),
+    );
+    assert_eq!(round_trip_metadata.gnu_relro_memory_size(), Some(32));
+}
+
+#[test]
 fn workload_boot_image_preserves_elf_symbol_summary_round_trip() {
     let image = BootImage::from_elf64_le(&elf64_image_with_symbols(243)).unwrap();
 
@@ -774,6 +819,40 @@ fn workload_manifest_identity_includes_elf_gnu_stack_metadata() {
         non_executable_manifest.identity(),
         executable_manifest.identity()
     );
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_gnu_relro_metadata() {
+    let plain = BootImage::from_elf64_le(&elf64_image(243)).unwrap();
+    let relro =
+        BootImage::from_elf64_le(&elf64_image_with_gnu_relro(243, 0x9000, 0xa000, 32)).unwrap();
+    let relro_alt =
+        BootImage::from_elf64_le(&elf64_image_with_gnu_relro(243, 0xb000, 0xc000, 64)).unwrap();
+
+    assert_eq!(plain.entry(), relro.entry());
+    assert_eq!(plain.segments(), relro.segments());
+    assert_eq!(relro.segments(), relro_alt.segments());
+    assert_eq!(
+        plain.elf_metadata().unwrap().gnu_relro_virtual_address(),
+        None
+    );
+    assert_eq!(
+        relro.elf_metadata().unwrap().gnu_relro_virtual_address(),
+        Some(Address::new(0x9000)),
+    );
+
+    let plain_manifest = WorkloadManifest::builder(id("same"), plain)
+        .build()
+        .unwrap();
+    let relro_manifest = WorkloadManifest::builder(id("same"), relro)
+        .build()
+        .unwrap();
+    let relro_alt_manifest = WorkloadManifest::builder(id("same"), relro_alt)
+        .build()
+        .unwrap();
+
+    assert_ne!(plain_manifest.identity(), relro_manifest.identity());
+    assert_ne!(relro_manifest.identity(), relro_alt_manifest.identity());
 }
 
 #[test]

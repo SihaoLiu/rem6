@@ -172,6 +172,31 @@ pub(super) fn run_stats_output(
     )?;
     increment_stat(
         &mut stats,
+        "sim.elf.gnu_relro.present",
+        "Count",
+        StatResetPolicy::Constant,
+        u64::from(inputs.metadata.gnu_relro_virtual_address().is_some()),
+    )?;
+    if let Some(address) = inputs.metadata.gnu_relro_virtual_address() {
+        increment_stat(
+            &mut stats,
+            "sim.elf.gnu_relro.virtual_address",
+            "Address",
+            StatResetPolicy::Constant,
+            address.get(),
+        )?;
+    }
+    if let Some(bytes) = inputs.metadata.gnu_relro_memory_size() {
+        increment_stat(
+            &mut stats,
+            "sim.elf.gnu_relro.bytes",
+            "Byte",
+            StatResetPolicy::Constant,
+            bytes,
+        )?;
+    }
+    increment_stat(
+        &mut stats,
         "sim.elf.symbols",
         "Count",
         StatResetPolicy::Constant,
