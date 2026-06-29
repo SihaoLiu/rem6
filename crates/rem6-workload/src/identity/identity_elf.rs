@@ -52,6 +52,15 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 hash_str(hash, "elf.symbols");
                 symbols.iter().for_each(|value| hash_u64(hash, *value));
             }
+            let load_segments = metadata.load_segments();
+            if load_segments.count() != 0 {
+                hash_str(hash, "elf.load_segments");
+                hash_u64(hash, load_segments.count());
+                hash_u64(hash, load_segments.file_bytes());
+                hash_u64(hash, load_segments.memory_bytes());
+                hash_u64(hash, load_segments.writable_count());
+                hash_u64(hash, load_segments.executable_count());
+            }
             let section_header_table = metadata.section_header_table();
             if section_header_table.file_offset() != 0 || section_header_table.entry_count() != 0 {
                 hash_str(hash, "elf.section_header_table");

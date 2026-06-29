@@ -951,6 +951,17 @@ fn workload_boot_image_preserves_elf_metadata_round_trip() {
             .architecture(),
         BootElfArchitecture::Riscv64,
     );
+    let load_segments = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap()
+        .load_segments();
+    assert_eq!(load_segments.count(), 1);
+    assert_eq!(load_segments.file_bytes(), 4);
+    assert_eq!(load_segments.memory_bytes(), 4);
+    assert_eq!(load_segments.writable_count(), 0);
+    assert_eq!(load_segments.executable_count(), 1);
 }
 
 #[test]
@@ -1523,6 +1534,30 @@ fn workload_manifest_identity_includes_elf_metadata() {
     let x86_manifest = WorkloadManifest::builder(id("same"), x86).build().unwrap();
 
     assert_ne!(riscv_manifest.identity(), x86_manifest.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_load_segment_summary() {
+    let executable_source = BootImage::from_elf64_le(&elf64_image(243)).unwrap();
+    let mut writable_elf = elf64_image(243);
+    write_u32(&mut writable_elf, 68, 6);
+    let writable_source = BootImage::from_elf64_le(&writable_elf).unwrap();
+
+    assert_eq!(executable_source.entry(), writable_source.entry());
+    assert_eq!(executable_source.segments(), writable_source.segments());
+    assert_ne!(
+        executable_source.elf_metadata().unwrap().load_segments(),
+        writable_source.elf_metadata().unwrap().load_segments(),
+    );
+
+    let executable = WorkloadManifest::builder(id("same"), executable_source)
+        .build()
+        .unwrap();
+    let writable = WorkloadManifest::builder(id("same"), writable_source)
+        .build()
+        .unwrap();
+
+    assert_ne!(executable.identity(), writable.identity());
 }
 
 #[test]

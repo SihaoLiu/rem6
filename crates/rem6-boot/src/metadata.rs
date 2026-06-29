@@ -2,8 +2,9 @@ use rem6_memory::Address;
 
 use crate::elf::{BootElfArchitecture, BootElfClass, BootElfEndian, BootElfOperatingSystem};
 use crate::metadata_tables::{
-    BootElfProgramHeaderTable, BootElfSectionAddressRange, BootElfSectionAlignment,
-    BootElfSectionFlags, BootElfSectionHeaderTable, BootElfSectionNameTable, BootElfSectionStorage,
+    BootElfLoadSegments, BootElfProgramHeaderTable, BootElfSectionAddressRange,
+    BootElfSectionAlignment, BootElfSectionFlags, BootElfSectionHeaderTable,
+    BootElfSectionNameTable, BootElfSectionStorage,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -573,6 +574,7 @@ pub struct BootElfMetadata {
     function_symbol_count: u64,
     object_symbol_count: u64,
     dynamic_table: BootElfDynamicTable,
+    load_segments: BootElfLoadSegments,
     program_header_table: BootElfProgramHeaderTable,
     section_header_table: BootElfSectionHeaderTable,
     section_name_table: BootElfSectionNameTable,
@@ -614,6 +616,7 @@ impl BootElfMetadata {
             function_symbol_count: 0,
             object_symbol_count: 0,
             dynamic_table: BootElfDynamicTable::new(),
+            load_segments: BootElfLoadSegments::new(0, 0, 0, 0, 0),
             program_header_table: BootElfProgramHeaderTable::new(0, 0, 0),
             section_header_table: BootElfSectionHeaderTable::new(0, 0, 0, 0),
             section_name_table: BootElfSectionNameTable::new(0, 0),
@@ -626,6 +629,11 @@ impl BootElfMetadata {
 
     pub(crate) fn with_program_header_table(mut self, table: BootElfProgramHeaderTable) -> Self {
         self.program_header_table = table;
+        self
+    }
+
+    pub(crate) const fn with_load_segments(mut self, load_segments: BootElfLoadSegments) -> Self {
+        self.load_segments = load_segments;
         self
     }
 
@@ -816,6 +824,10 @@ impl BootElfMetadata {
 
     pub const fn dynamic_table(&self) -> &BootElfDynamicTable {
         &self.dynamic_table
+    }
+
+    pub const fn load_segments(&self) -> BootElfLoadSegments {
+        self.load_segments
     }
 
     pub const fn program_header_table(&self) -> BootElfProgramHeaderTable {

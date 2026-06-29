@@ -77,6 +77,9 @@ fn rem6_run_loads_riscv_elf_and_emits_json_stats_artifact() {
     assert!(stdout.contains("\"architecture\":\"riscv64\""));
     assert!(stdout.contains("\"entry\":\"0x80000000\""));
     assert!(stdout.contains("\"start_address\":\"0x80000000\""));
+    assert!(stdout.contains(
+        "\"load_segments\":{\"count\":1,\"file_bytes\":4,\"memory_bytes\":4,\"writable\":0,\"executable\":1}"
+    ));
     assert!(stdout
         .contains("\"riscv_boot\":{\"a0\":\"0x0\",\"a1\":\"0x0\",\"sbi\":false,\"se\":false}"));
     assert!(stdout.contains("\"status\":\"loaded\""));
@@ -96,6 +99,35 @@ fn rem6_run_loads_riscv_elf_and_emits_json_stats_artifact() {
         "constant",
     );
     assert!(stdout.contains("\"path\":\"sim.elf.load_segments\""));
+    assert_stat(&stdout, "sim.elf.load_segments", "Count", 1, "constant");
+    assert_stat(
+        &stdout,
+        "sim.elf.load_segment.file_bytes",
+        "Byte",
+        4,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.load_segment.memory_bytes",
+        "Byte",
+        4,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.load_segment.writable",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.load_segment.executable",
+        "Count",
+        1,
+        "constant",
+    );
     assert!(stdout.contains("\"path\":\"sim.max_tick\""));
     assert_stat(
         &stdout,

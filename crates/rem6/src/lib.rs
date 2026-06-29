@@ -601,9 +601,9 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
     } else {
         None
     };
+    let load_segment_count = metadata.load_segments().count();
     let stats = run_stats_output(Rem6StatsInputs {
         binary_bytes: bytes.len() as u64,
-        load_segments: image.segments().len() as u64,
         metadata: metadata.clone(),
         interpreter: interpreter.as_ref(),
         load_blobs: &load_blob_summaries,
@@ -625,7 +625,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         binary_bytes: bytes.len() as u64,
         entry: image.entry().get(),
         start_address,
-        load_segments: image.segments().len() as u64,
+        load_segments: load_segment_count,
         metadata,
         interpreter,
         load_blobs: load_blob_summaries,

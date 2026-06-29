@@ -733,7 +733,7 @@ fn abi_note(os: u32) -> [u8; 20] {
 
 #[test]
 fn boot_image_loads_elf64_loadable_segments_with_zero_fill() {
-    let elf = elf64_image(
+    let mut elf = elf64_image(
         0x8004,
         &[
             ElfProgramHeaderSpec {
@@ -764,6 +764,8 @@ fn boot_image_loads_elf64_loadable_segments_with_zero_fill() {
             (0x110, &[0xa0, 0xa1, 0xa2]),
         ],
     );
+    write_u32(&mut elf, 64 + 4, 6);
+    write_u32(&mut elf, 64 + 2 * 56 + 4, 5);
 
     let image = BootImage::from_elf64_le(&elf).unwrap();
 
@@ -776,11 +778,18 @@ fn boot_image_loads_elf64_loadable_segments_with_zero_fill() {
     );
     assert_eq!(image.segments()[1].range().start(), Address::new(0x9002));
     assert_eq!(image.segments()[1].data(), &[0xa0, 0xa1, 0xa2]);
+
+    let load_segments = image.elf_metadata().unwrap().load_segments();
+    assert_eq!(load_segments.count(), 2);
+    assert_eq!(load_segments.file_bytes(), 7);
+    assert_eq!(load_segments.memory_bytes(), 11);
+    assert_eq!(load_segments.writable_count(), 1);
+    assert_eq!(load_segments.executable_count(), 1);
 }
 
 #[test]
 fn boot_image_loads_elf32_loadable_segments_with_zero_fill() {
-    let elf = elf32_image(
+    let mut elf = elf32_image(
         0x8040,
         &[
             ElfProgramHeaderSpec {
@@ -811,6 +820,8 @@ fn boot_image_loads_elf32_loadable_segments_with_zero_fill() {
             (0x110, &[0xb0, 0xb1, 0xb2]),
         ],
     );
+    write_u32(&mut elf, 52 + 24, 6);
+    write_u32(&mut elf, 52 + 2 * 32 + 24, 5);
 
     let image = BootImage::from_elf32_le(&elf).unwrap();
 
@@ -823,6 +834,13 @@ fn boot_image_loads_elf32_loadable_segments_with_zero_fill() {
     );
     assert_eq!(image.segments()[1].range().start(), Address::new(0xa002));
     assert_eq!(image.segments()[1].data(), &[0xb0, 0xb1, 0xb2]);
+
+    let load_segments = image.elf_metadata().unwrap().load_segments();
+    assert_eq!(load_segments.count(), 2);
+    assert_eq!(load_segments.file_bytes(), 7);
+    assert_eq!(load_segments.memory_bytes(), 11);
+    assert_eq!(load_segments.writable_count(), 1);
+    assert_eq!(load_segments.executable_count(), 1);
 }
 
 #[test]

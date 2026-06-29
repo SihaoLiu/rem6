@@ -41,6 +41,53 @@ impl BootElfProgramHeaderTable {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BootElfLoadSegments {
+    count: u64,
+    file_bytes: u64,
+    memory_bytes: u64,
+    writable_count: u64,
+    executable_count: u64,
+}
+
+impl BootElfLoadSegments {
+    pub const fn new(
+        count: u64,
+        file_bytes: u64,
+        memory_bytes: u64,
+        writable_count: u64,
+        executable_count: u64,
+    ) -> Self {
+        Self {
+            count,
+            file_bytes,
+            memory_bytes,
+            writable_count,
+            executable_count,
+        }
+    }
+
+    pub const fn count(self) -> u64 {
+        self.count
+    }
+
+    pub const fn file_bytes(self) -> u64 {
+        self.file_bytes
+    }
+
+    pub const fn memory_bytes(self) -> u64 {
+        self.memory_bytes
+    }
+
+    pub const fn writable_count(self) -> u64 {
+        self.writable_count
+    }
+
+    pub const fn executable_count(self) -> u64 {
+        self.executable_count
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BootElfSectionHeaderTable {
     file_offset: u64,
     entry_size: u16,

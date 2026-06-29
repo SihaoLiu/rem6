@@ -64,7 +64,6 @@ pub(super) struct Rem6StatsOutput {
 
 pub(super) struct Rem6StatsInputs<'a> {
     pub(super) binary_bytes: u64,
-    pub(super) load_segments: u64,
     pub(super) metadata: BootElfMetadata,
     pub(super) interpreter: Option<&'a BootElfInterpreter>,
     pub(super) load_blobs: &'a [Rem6LoadBlobSummary],
@@ -126,7 +125,6 @@ pub(super) fn run_stats_output(
     emit_elf_run_stats(
         &mut stats,
         inputs.binary_bytes,
-        inputs.load_segments,
         &inputs.metadata,
         inputs.interpreter,
     )?;

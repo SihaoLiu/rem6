@@ -1,6 +1,6 @@
 use rem6_boot::{
     BootElfDynamicPltRelocationKind, BootElfDynamicRelocationTable, BootElfDynamicTable,
-    BootElfInterpreter, BootElfProgramHeaderTable, BootElfSectionAddressRange,
+    BootElfInterpreter, BootElfLoadSegments, BootElfProgramHeaderTable, BootElfSectionAddressRange,
     BootElfSectionAlignment, BootElfSectionFlags, BootElfSectionHeaderTable,
     BootElfSectionNameTable, BootElfSectionStorage,
 };
@@ -211,7 +211,7 @@ impl Rem6RunArtifact {
             self.metadata.note_file_size(),
         );
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"notes\":{},\"gnu_stack\":{},\"gnu_relro\":{},\"gnu_eh_frame\":{},\"gnu_property\":{},\"symbols\":{{\"total\":{},\"functions\":{},\"objects\":{}}},\"dynamic\":{},\"program_header_table\":{},\"section_header_table\":{},\"section_name_table\":{},\"section_flags\":{},\"section_storage\":{},\"section_address_range\":{},\"section_alignment\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"load_segments\":{},\"notes\":{},\"gnu_stack\":{},\"gnu_relro\":{},\"gnu_eh_frame\":{},\"gnu_property\":{},\"symbols\":{{\"total\":{},\"functions\":{},\"objects\":{}}},\"dynamic\":{},\"program_header_table\":{},\"section_header_table\":{},\"section_name_table\":{},\"section_flags\":{},\"section_storage\":{},\"section_address_range\":{},\"section_alignment\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -236,6 +236,7 @@ impl Rem6RunArtifact {
             self.metadata.machine(),
             self.metadata.flags(),
             self.metadata.has_tls(),
+            elf_load_segments_json(self.metadata.load_segments()),
             notes,
             elf_gnu_stack_json(self.metadata.gnu_stack_executable()),
             gnu_relro,
@@ -295,6 +296,17 @@ fn elf_gnu_stack_json(executable: Option<bool>) -> String {
 
 fn elf_notes_json(segment_count: u64, file_size: u64) -> String {
     format!("{{\"segments\":{segment_count},\"bytes\":{file_size}}}")
+}
+
+fn elf_load_segments_json(load_segments: BootElfLoadSegments) -> String {
+    format!(
+        "{{\"count\":{},\"file_bytes\":{},\"memory_bytes\":{},\"writable\":{},\"executable\":{}}}",
+        load_segments.count(),
+        load_segments.file_bytes(),
+        load_segments.memory_bytes(),
+        load_segments.writable_count(),
+        load_segments.executable_count(),
+    )
 }
 
 fn elf_address_size_json(virtual_address: Option<Address>, memory_size: Option<u64>) -> String {

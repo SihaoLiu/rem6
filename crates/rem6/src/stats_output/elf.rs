@@ -7,10 +7,10 @@ use super::{increment_stat, Rem6CliError};
 pub(super) fn emit_elf_run_stats(
     stats: &mut StatsRegistry,
     binary_bytes: u64,
-    load_segments: u64,
     metadata: &BootElfMetadata,
     interpreter: Option<&BootElfInterpreter>,
 ) -> Result<(), Rem6CliError> {
+    let load_segments = metadata.load_segments();
     increment_stat(
         stats,
         "sim.binary.bytes",
@@ -23,8 +23,9 @@ pub(super) fn emit_elf_run_stats(
         "sim.elf.load_segments",
         "Count",
         StatResetPolicy::Constant,
-        load_segments,
+        load_segments.count(),
     )?;
+    emit_elf_load_segment_stats(stats, metadata)?;
     increment_stat(
         stats,
         "sim.elf.machine",
@@ -122,6 +123,38 @@ pub(super) fn emit_elf_run_stats(
     emit_elf_section_address_stats(stats, metadata)?;
     emit_elf_section_alignment_stats(stats, metadata)?;
     emit_elf_interpreter_stats(stats, interpreter)
+}
+
+fn emit_elf_load_segment_stats(
+    stats: &mut StatsRegistry,
+    metadata: &BootElfMetadata,
+) -> Result<(), Rem6CliError> {
+    let load_segments = metadata.load_segments();
+    for (name, unit, value) in [
+        (
+            "sim.elf.load_segment.file_bytes",
+            "Byte",
+            load_segments.file_bytes(),
+        ),
+        (
+            "sim.elf.load_segment.memory_bytes",
+            "Byte",
+            load_segments.memory_bytes(),
+        ),
+        (
+            "sim.elf.load_segment.writable",
+            "Count",
+            load_segments.writable_count(),
+        ),
+        (
+            "sim.elf.load_segment.executable",
+            "Count",
+            load_segments.executable_count(),
+        ),
+    ] {
+        increment_stat(stats, name, unit, StatResetPolicy::Constant, value)?;
+    }
+    Ok(())
 }
 
 fn emit_elf_dynamic_stats(
