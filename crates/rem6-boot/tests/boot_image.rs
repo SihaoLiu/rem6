@@ -1155,12 +1155,14 @@ fn boot_image_records_elf_section_flags_summary() {
         SHF_ALLOC | SHF_EXECINSTR,
     );
     write_u64(&mut elf, section_table_offset + 64 + 16, 0x8000_1000);
+    write_u64(&mut elf, section_table_offset + 64 + 48, 0x1000);
     write_u64(
         &mut elf,
         section_table_offset + 128 + 8,
         SHF_ALLOC | SHF_WRITE,
     );
-    write_u64(&mut elf, section_table_offset + 128 + 16, 0x8000_2000);
+    write_u64(&mut elf, section_table_offset + 128 + 16, 0x8000_2002);
+    write_u64(&mut elf, section_table_offset + 128 + 48, 4);
     write_u64(
         &mut elf,
         section_table_offset + 192 + 8,
@@ -1168,6 +1170,7 @@ fn boot_image_records_elf_section_flags_summary() {
     );
     write_u64(&mut elf, section_table_offset + 192 + 16, 0x8000_3000);
     write_u64(&mut elf, section_table_offset + 192 + 32, 16);
+    write_u64(&mut elf, section_table_offset + 192 + 48, 16);
 
     let metadata = BootImage::from_elf64_le(&elf)
         .unwrap()
@@ -1193,6 +1196,11 @@ fn boot_image_records_elf_section_flags_summary() {
     let range = metadata.section_address_range();
     assert_eq!(range.start_address(), Some(Address::new(0x8000_1000)));
     assert_eq!(range.end_address(), Some(Address::new(0x8000_3010)));
+
+    let alignment = metadata.section_alignment();
+    assert_eq!(alignment.max_alignment(), 0x1000);
+    assert_eq!(alignment.allocated_max_alignment(), 0x1000);
+    assert_eq!(alignment.misaligned_allocated_count(), 1);
 }
 
 #[test]
@@ -1230,6 +1238,7 @@ fn boot_image_records_elf32_section_flags_summary() {
         (SHF_ALLOC | SHF_EXECINSTR) as u32,
     );
     write_u32(&mut elf, section_table_offset + 40 + 12, 0x8000_1000);
+    write_u32(&mut elf, section_table_offset + 40 + 32, 16);
     write_u32(
         &mut elf,
         section_table_offset + 80 + 8,
@@ -1237,6 +1246,7 @@ fn boot_image_records_elf32_section_flags_summary() {
     );
     write_u32(&mut elf, section_table_offset + 80 + 12, 0x8000_2000);
     write_u32(&mut elf, section_table_offset + 80 + 20, 12);
+    write_u32(&mut elf, section_table_offset + 80 + 32, 8);
 
     let metadata = BootImage::from_elf32_le(&elf)
         .unwrap()
@@ -1262,6 +1272,11 @@ fn boot_image_records_elf32_section_flags_summary() {
     let range = metadata.section_address_range();
     assert_eq!(range.start_address(), Some(Address::new(0x8000_1000)));
     assert_eq!(range.end_address(), Some(Address::new(0x8000_200c)));
+
+    let alignment = metadata.section_alignment();
+    assert_eq!(alignment.max_alignment(), 16);
+    assert_eq!(alignment.allocated_max_alignment(), 16);
+    assert_eq!(alignment.misaligned_allocated_count(), 0);
 }
 
 #[test]

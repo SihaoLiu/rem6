@@ -1475,6 +1475,9 @@ fn rem6_run_reports_elf_section_header_table_metadata() {
     ));
     assert!(stdout
         .contains("\"section_address_range\":{\"start\":\"0x80000000\",\"end\":\"0x80000004\"}"));
+    assert!(stdout.contains(
+        "\"section_alignment\":{\"max\":4096,\"allocated_max\":4096,\"misaligned_allocated\":0}"
+    ));
     assert_stat(
         &stdout,
         "sim.elf.section_header.file_offset",
@@ -1592,6 +1595,27 @@ fn rem6_run_reports_elf_section_header_table_metadata() {
         "sim.elf.section_address.end",
         "Address",
         0x8000_0004,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_alignment.max",
+        "Byte",
+        4096,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_alignment.allocated_max",
+        "Byte",
+        4096,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_alignment.misaligned_allocated",
+        "Count",
+        0,
         "constant",
     );
 }

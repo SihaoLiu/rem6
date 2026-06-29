@@ -1,7 +1,8 @@
 use rem6_boot::{
     BootElfDynamicPltRelocationKind, BootElfDynamicRelocationTable, BootElfDynamicTable,
-    BootElfInterpreter, BootElfProgramHeaderTable, BootElfSectionAddressRange, BootElfSectionFlags,
-    BootElfSectionHeaderTable, BootElfSectionNameTable, BootElfSectionStorage,
+    BootElfInterpreter, BootElfProgramHeaderTable, BootElfSectionAddressRange,
+    BootElfSectionAlignment, BootElfSectionFlags, BootElfSectionHeaderTable,
+    BootElfSectionNameTable, BootElfSectionStorage,
 };
 use rem6_fabric::FabricHopActivity;
 use rem6_memory::Address;
@@ -210,7 +211,7 @@ impl Rem6RunArtifact {
             self.metadata.note_file_size(),
         );
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"notes\":{},\"gnu_stack\":{},\"gnu_relro\":{},\"gnu_eh_frame\":{},\"gnu_property\":{},\"symbols\":{{\"total\":{},\"functions\":{},\"objects\":{}}},\"dynamic\":{},\"program_header_table\":{},\"section_header_table\":{},\"section_name_table\":{},\"section_flags\":{},\"section_storage\":{},\"section_address_range\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"notes\":{},\"gnu_stack\":{},\"gnu_relro\":{},\"gnu_eh_frame\":{},\"gnu_property\":{},\"symbols\":{{\"total\":{},\"functions\":{},\"objects\":{}}},\"dynamic\":{},\"program_header_table\":{},\"section_header_table\":{},\"section_name_table\":{},\"section_flags\":{},\"section_storage\":{},\"section_address_range\":{},\"section_alignment\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -250,6 +251,7 @@ impl Rem6RunArtifact {
             elf_section_flags_json(self.metadata.section_flags()),
             elf_section_storage_json(self.metadata.section_storage()),
             elf_section_address_range_json(self.metadata.section_address_range()),
+            elf_section_alignment_json(self.metadata.section_alignment()),
             interpreter,
             simulation,
             parallel,
@@ -569,6 +571,15 @@ fn elf_section_address_range_json(range: BootElfSectionAddressRange) -> String {
         "{{\"start\":{},\"end\":{}}}",
         address_json(range.start_address()),
         address_json(range.end_address()),
+    )
+}
+
+fn elf_section_alignment_json(alignment: BootElfSectionAlignment) -> String {
+    format!(
+        "{{\"max\":{},\"allocated_max\":{},\"misaligned_allocated\":{}}}",
+        alignment.max_alignment(),
+        alignment.allocated_max_alignment(),
+        alignment.misaligned_allocated_count(),
     )
 }
 

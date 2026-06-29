@@ -4,8 +4,8 @@ use crate::elf::{BootElfClass, BootElfEndian, BootElfOperatingSystem};
 use crate::elf_counts::section_table_layout;
 use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::metadata_tables::{
-    BootElfSectionAddressRange, BootElfSectionFlags, BootElfSectionHeaderTable,
-    BootElfSectionNameTable, BootElfSectionStorage,
+    BootElfSectionAddressRange, BootElfSectionAlignment, BootElfSectionFlags,
+    BootElfSectionHeaderTable, BootElfSectionNameTable, BootElfSectionStorage,
 };
 
 const SHT_NOTE: u32 = 7;
@@ -39,6 +39,9 @@ pub(crate) struct ElfSectionSummary {
     nobits_section_bytes: u64,
     section_address_start: Option<u64>,
     section_address_end: Option<u64>,
+    max_section_alignment: u64,
+    allocated_max_section_alignment: u64,
+    misaligned_allocated_section_count: u64,
     section_header_table: BootElfSectionHeaderTable,
     section_name_table: BootElfSectionNameTable,
 }
@@ -97,6 +100,14 @@ impl ElfSectionSummary {
             self.section_address_end.map(Address::new),
         )
     }
+
+    pub(crate) const fn section_alignment(self) -> BootElfSectionAlignment {
+        BootElfSectionAlignment::new(
+            self.max_section_alignment,
+            self.allocated_max_section_alignment,
+            self.misaligned_allocated_section_count,
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -107,6 +118,7 @@ struct ElfSectionHeader {
     address: u64,
     offset: u64,
     size: u64,
+    alignment: u64,
     link: u32,
     entry_size: u64,
 }
@@ -333,10 +345,14 @@ fn summarize_common_section(
             .file_backed_section_bytes
             .saturating_add(section.size);
     }
+    summary.max_section_alignment = summary.max_section_alignment.max(section.alignment);
     if section.flags & SHF_ALLOC != 0 {
         summary.allocated_section_count += 1;
         summary.allocated_section_bytes =
             summary.allocated_section_bytes.saturating_add(section.size);
+        summary.allocated_max_section_alignment = summary
+            .allocated_max_section_alignment
+            .max(section.alignment);
         if section.size != 0 {
             let end = section.address.saturating_add(section.size);
             summary.section_address_start = Some(
@@ -349,6 +365,9 @@ fn summarize_common_section(
                     .section_address_end
                     .map_or(end, |current_end| current_end.max(end)),
             );
+            if section.alignment > 1 && section.address % section.alignment != 0 {
+                summary.misaligned_allocated_section_count += 1;
+            }
         }
     }
     if section.flags & SHF_WRITE != 0 {
@@ -412,6 +431,7 @@ fn read_elf64_section_header(
         address: read_u64(bytes, base + 16, endian)?,
         offset: read_u64(bytes, base + 24, endian)?,
         size: read_u64(bytes, base + 32, endian)?,
+        alignment: read_u64(bytes, base + 48, endian)?,
         link: read_u32(bytes, base + 40, endian)?,
         entry_size: read_u64(bytes, base + 56, endian)?,
     })
@@ -432,6 +452,7 @@ fn read_elf32_section_header(
         address: u64::from(read_u32(bytes, base + 12, endian)?),
         offset: u64::from(read_u32(bytes, base + 16, endian)?),
         size: u64::from(read_u32(bytes, base + 20, endian)?),
+        alignment: u64::from(read_u32(bytes, base + 32, endian)?),
         link: read_u32(bytes, base + 24, endian)?,
         entry_size: u64::from(read_u32(bytes, base + 36, endian)?),
     })

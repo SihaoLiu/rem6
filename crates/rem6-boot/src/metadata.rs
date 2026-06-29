@@ -2,8 +2,8 @@ use rem6_memory::Address;
 
 use crate::elf::{BootElfArchitecture, BootElfClass, BootElfEndian, BootElfOperatingSystem};
 use crate::metadata_tables::{
-    BootElfProgramHeaderTable, BootElfSectionAddressRange, BootElfSectionFlags,
-    BootElfSectionHeaderTable, BootElfSectionNameTable, BootElfSectionStorage,
+    BootElfProgramHeaderTable, BootElfSectionAddressRange, BootElfSectionAlignment,
+    BootElfSectionFlags, BootElfSectionHeaderTable, BootElfSectionNameTable, BootElfSectionStorage,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -579,6 +579,7 @@ pub struct BootElfMetadata {
     section_flags: BootElfSectionFlags,
     section_storage: BootElfSectionStorage,
     section_address_range: BootElfSectionAddressRange,
+    section_alignment: BootElfSectionAlignment,
 }
 
 impl BootElfMetadata {
@@ -619,6 +620,7 @@ impl BootElfMetadata {
             section_flags: BootElfSectionFlags::new(0, 0, 0, 0),
             section_storage: BootElfSectionStorage::new(0, 0, 0, 0, 0),
             section_address_range: BootElfSectionAddressRange::new(None, None),
+            section_alignment: BootElfSectionAlignment::new(0, 0, 0),
         }
     }
 
@@ -658,6 +660,14 @@ impl BootElfMetadata {
         section_address_range: BootElfSectionAddressRange,
     ) -> Self {
         self.section_address_range = section_address_range;
+        self
+    }
+
+    pub(crate) const fn with_section_alignment(
+        mut self,
+        section_alignment: BootElfSectionAlignment,
+    ) -> Self {
+        self.section_alignment = section_alignment;
         self
     }
 
@@ -830,5 +840,9 @@ impl BootElfMetadata {
 
     pub const fn section_address_range(&self) -> BootElfSectionAddressRange {
         self.section_address_range
+    }
+
+    pub const fn section_alignment(&self) -> BootElfSectionAlignment {
+        self.section_alignment
     }
 }

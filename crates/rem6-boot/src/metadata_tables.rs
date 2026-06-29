@@ -212,3 +212,36 @@ impl BootElfSectionAddressRange {
         self.end_address
     }
 }
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BootElfSectionAlignment {
+    max_alignment: u64,
+    allocated_max_alignment: u64,
+    misaligned_allocated_count: u64,
+}
+
+impl BootElfSectionAlignment {
+    pub const fn new(
+        max_alignment: u64,
+        allocated_max_alignment: u64,
+        misaligned_allocated_count: u64,
+    ) -> Self {
+        Self {
+            max_alignment,
+            allocated_max_alignment,
+            misaligned_allocated_count,
+        }
+    }
+
+    pub const fn max_alignment(self) -> u64 {
+        self.max_alignment
+    }
+
+    pub const fn allocated_max_alignment(self) -> u64 {
+        self.allocated_max_alignment
+    }
+
+    pub const fn misaligned_allocated_count(self) -> u64 {
+        self.misaligned_allocated_count
+    }
+}

@@ -120,6 +120,7 @@ pub(super) fn emit_elf_run_stats(
     emit_elf_section_flags_stats(stats, metadata)?;
     emit_elf_section_storage_stats(stats, metadata)?;
     emit_elf_section_address_stats(stats, metadata)?;
+    emit_elf_section_alignment_stats(stats, metadata)?;
     emit_elf_interpreter_stats(stats, interpreter)
 }
 
@@ -587,6 +588,33 @@ fn emit_elf_section_address_stats(
             StatResetPolicy::Constant,
             end_address.get(),
         )?;
+    }
+    Ok(())
+}
+
+fn emit_elf_section_alignment_stats(
+    stats: &mut StatsRegistry,
+    metadata: &BootElfMetadata,
+) -> Result<(), Rem6CliError> {
+    let alignment = metadata.section_alignment();
+    for (name, unit, value) in [
+        (
+            "sim.elf.section_alignment.max",
+            "Byte",
+            alignment.max_alignment(),
+        ),
+        (
+            "sim.elf.section_alignment.allocated_max",
+            "Byte",
+            alignment.allocated_max_alignment(),
+        ),
+        (
+            "sim.elf.section_alignment.misaligned_allocated",
+            "Count",
+            alignment.misaligned_allocated_count(),
+        ),
+    ] {
+        increment_stat(stats, name, unit, StatResetPolicy::Constant, value)?;
     }
     Ok(())
 }

@@ -110,6 +110,16 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                         .map_or(u64::MAX, |address| address.get()),
                 );
             }
+            let section_alignment = metadata.section_alignment();
+            if section_alignment.max_alignment() != 0
+                || section_alignment.allocated_max_alignment() != 0
+                || section_alignment.misaligned_allocated_count() != 0
+            {
+                hash_str(hash, "elf.section_alignment");
+                hash_u64(hash, section_alignment.max_alignment());
+                hash_u64(hash, section_alignment.allocated_max_alignment());
+                hash_u64(hash, section_alignment.misaligned_allocated_count());
+            }
             let dynamic = metadata.dynamic_table();
             if dynamic.segment_count() != 0 {
                 let address = dynamic.virtual_address().map_or(u64::MAX, |a| a.get());
