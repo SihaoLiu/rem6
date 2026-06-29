@@ -22,6 +22,10 @@ const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
+const SHT_NOBITS: u32 = 8;
+const SHF_WRITE: u64 = 1;
+const SHF_ALLOC: u64 = 2;
+const SHF_EXECINSTR: u64 = 4;
 const DT_PLTGOT: u64 = 3;
 const DT_STRTAB: u64 = 5;
 const DT_SYMTAB: u64 = 6;
@@ -1109,6 +1113,120 @@ fn boot_image_records_elf32_section_header_table_metadata() {
         name_table.byte_size(),
         u64::from(read_u32(&elf, shstr_header + 20))
     );
+}
+
+#[test]
+fn boot_image_records_elf_section_flags_summary() {
+    let mut elf = elf64_image(
+        0x8000_0100,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000_0000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_sections(
+        &mut elf,
+        &[
+            ElfSectionSpec {
+                name: ".text",
+                kind: 1,
+                data: &[0x13, 0x05, 0x00, 0x00],
+            },
+            ElfSectionSpec {
+                name: ".data",
+                kind: 1,
+                data: &[0xaa, 0xbb],
+            },
+            ElfSectionSpec {
+                name: ".bss",
+                kind: SHT_NOBITS,
+                data: &[],
+            },
+        ],
+    );
+    let section_table_offset = read_u64(&elf, 40) as usize;
+    write_u64(
+        &mut elf,
+        section_table_offset + 64 + 8,
+        SHF_ALLOC | SHF_EXECINSTR,
+    );
+    write_u64(
+        &mut elf,
+        section_table_offset + 128 + 8,
+        SHF_ALLOC | SHF_WRITE,
+    );
+    write_u64(
+        &mut elf,
+        section_table_offset + 192 + 8,
+        SHF_ALLOC | SHF_WRITE,
+    );
+
+    let flags = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap()
+        .section_flags();
+
+    assert_eq!(flags.allocated_count(), 3);
+    assert_eq!(flags.writable_count(), 2);
+    assert_eq!(flags.executable_count(), 1);
+    assert_eq!(flags.nobits_count(), 1);
+}
+
+#[test]
+fn boot_image_records_elf32_section_flags_summary() {
+    let mut elf = elf32_image(
+        0x8000_0100,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000_0000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf32_sections(
+        &mut elf,
+        &[
+            ElfSectionSpec {
+                name: ".text",
+                kind: 1,
+                data: &[0x13, 0x05, 0x00, 0x00],
+            },
+            ElfSectionSpec {
+                name: ".bss",
+                kind: SHT_NOBITS,
+                data: &[],
+            },
+        ],
+    );
+    let section_table_offset = read_u32(&elf, 32) as usize;
+    write_u32(
+        &mut elf,
+        section_table_offset + 40 + 8,
+        (SHF_ALLOC | SHF_EXECINSTR) as u32,
+    );
+    write_u32(
+        &mut elf,
+        section_table_offset + 80 + 8,
+        (SHF_ALLOC | SHF_WRITE) as u32,
+    );
+
+    let flags = BootImage::from_elf32_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap()
+        .section_flags();
+
+    assert_eq!(flags.allocated_count(), 2);
+    assert_eq!(flags.writable_count(), 1);
+    assert_eq!(flags.executable_count(), 1);
+    assert_eq!(flags.nobits_count(), 1);
 }
 
 #[test]

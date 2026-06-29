@@ -7,12 +7,16 @@ mod elf_sections;
 mod error;
 mod image;
 mod metadata;
+mod metadata_tables;
 
 pub use elf::{BootElfArchitecture, BootElfClass, BootElfEndian, BootElfOperatingSystem};
 pub use error::{BootElfError, BootError};
 pub use image::{BootImage, BootLineWrite, BootLoadReport, BootSegment};
 pub use metadata::{
     BootElfDynamicPltRelocationKind, BootElfDynamicRelocationTable, BootElfDynamicTable,
-    BootElfInterpreter, BootElfMetadata, BootElfProgramHeaderTable, BootElfSectionHeaderTable,
+    BootElfInterpreter, BootElfMetadata,
+};
+pub use metadata_tables::{
+    BootElfProgramHeaderTable, BootElfSectionFlags, BootElfSectionHeaderTable,
     BootElfSectionNameTable,
 };

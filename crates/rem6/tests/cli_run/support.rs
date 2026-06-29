@@ -10,6 +10,9 @@ const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
+const SHF_WRITE: u64 = 1;
+const SHF_ALLOC: u64 = 2;
+const SHF_EXECINSTR: u64 = 4;
 const DT_PLTGOT: u64 = 3;
 const DT_SYMTAB: u64 = 6;
 const DT_SYMENT: u64 = 11;
@@ -701,11 +704,21 @@ pub(crate) fn riscv64_elf_with_section_header_table(
 
     write_u32(&mut bytes, section_table_offset + 64, 1);
     write_u32(&mut bytes, section_table_offset + 68, 1);
+    write_u64(
+        &mut bytes,
+        section_table_offset + 72,
+        SHF_ALLOC | SHF_EXECINSTR,
+    );
     write_u64(&mut bytes, section_table_offset + 88, 128);
     write_u64(&mut bytes, section_table_offset + 96, payload.len() as u64);
 
     write_u32(&mut bytes, section_table_offset + 128, 7);
     write_u32(&mut bytes, section_table_offset + 132, 1);
+    write_u64(
+        &mut bytes,
+        section_table_offset + 136,
+        SHF_ALLOC | SHF_WRITE,
+    );
 
     write_u32(&mut bytes, section_table_offset + 192, 13);
     write_u32(&mut bytes, section_table_offset + 196, 3);

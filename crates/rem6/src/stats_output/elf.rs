@@ -117,6 +117,7 @@ pub(super) fn emit_elf_run_stats(
     emit_elf_program_header_stats(stats, metadata)?;
     emit_elf_section_header_stats(stats, metadata)?;
     emit_elf_section_name_stats(stats, metadata)?;
+    emit_elf_section_flags_stats(stats, metadata)?;
     emit_elf_interpreter_stats(stats, interpreter)
 }
 
@@ -503,6 +504,31 @@ fn emit_elf_section_name_stats(
         StatResetPolicy::Constant,
         section_name_table.byte_size(),
     )
+}
+
+fn emit_elf_section_flags_stats(
+    stats: &mut StatsRegistry,
+    metadata: &BootElfMetadata,
+) -> Result<(), Rem6CliError> {
+    let section_flags = metadata.section_flags();
+    for (path, value) in [
+        (
+            "sim.elf.section_flags.allocated",
+            section_flags.allocated_count(),
+        ),
+        (
+            "sim.elf.section_flags.writable",
+            section_flags.writable_count(),
+        ),
+        (
+            "sim.elf.section_flags.executable",
+            section_flags.executable_count(),
+        ),
+        ("sim.elf.section_flags.nobits", section_flags.nobits_count()),
+    ] {
+        increment_stat(stats, path, "Count", StatResetPolicy::Constant, value)?;
+    }
+    Ok(())
 }
 
 fn emit_elf_interpreter_stats(

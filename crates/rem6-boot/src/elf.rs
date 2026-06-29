@@ -9,7 +9,8 @@ use crate::elf_program_headers::{
 use crate::elf_sections::{elf_section_summary, ElfSectionSummary};
 use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::image::BootImage;
-use crate::metadata::{BootElfMetadata, BootElfProgramHeaderTable};
+use crate::metadata::BootElfMetadata;
+use crate::metadata_tables::BootElfProgramHeaderTable;
 
 const ELF64_HEADER_SIZE: usize = 64;
 const ELF64_PROGRAM_HEADER_SIZE: u16 = 56;
@@ -350,6 +351,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         .with_dynamic_table(dynamic_table)
         .with_section_header_table(section_summary.section_header_table())
         .with_section_name_table(section_summary.section_name_table())
+        .with_section_flags(section_summary.section_flags())
         .with_program_header_table(
             BootElfProgramHeaderTable::new(
                 program_header_offset,
@@ -545,6 +547,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         .with_dynamic_table(dynamic_table)
         .with_section_header_table(section_summary.section_header_table())
         .with_section_name_table(section_summary.section_name_table())
+        .with_section_flags(section_summary.section_flags())
         .with_program_header_table(
             BootElfProgramHeaderTable::new(
                 program_header_offset,

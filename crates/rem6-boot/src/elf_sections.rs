@@ -1,11 +1,17 @@
 use crate::elf::{BootElfClass, BootElfEndian, BootElfOperatingSystem};
 use crate::elf_counts::section_table_layout;
 use crate::error::{invalid_elf, BootElfError, BootError};
-use crate::metadata::{BootElfSectionHeaderTable, BootElfSectionNameTable};
+use crate::metadata_tables::{
+    BootElfSectionFlags, BootElfSectionHeaderTable, BootElfSectionNameTable,
+};
 
 const SHT_NOTE: u32 = 7;
+const SHT_NOBITS: u32 = 8;
 const SHT_SYMTAB: u32 = 2;
 const SHT_DYNSYM: u32 = 11;
+const SHF_WRITE: u64 = 1;
+const SHF_ALLOC: u64 = 2;
+const SHF_EXECINSTR: u64 = 4;
 const STB_LOCAL: u8 = 0;
 const STB_GLOBAL: u8 = 1;
 const STB_WEAK: u8 = 2;
@@ -19,6 +25,10 @@ pub(crate) struct ElfSectionSummary {
     symbol_count: u64,
     function_symbol_count: u64,
     object_symbol_count: u64,
+    allocated_section_count: u64,
+    writable_section_count: u64,
+    executable_section_count: u64,
+    nobits_section_count: u64,
     section_header_table: BootElfSectionHeaderTable,
     section_name_table: BootElfSectionNameTable,
 }
@@ -51,12 +61,22 @@ impl ElfSectionSummary {
     pub(crate) const fn section_name_table(self) -> BootElfSectionNameTable {
         self.section_name_table
     }
+
+    pub(crate) const fn section_flags(self) -> BootElfSectionFlags {
+        BootElfSectionFlags::new(
+            self.allocated_section_count,
+            self.writable_section_count,
+            self.executable_section_count,
+            self.nobits_section_count,
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ElfSectionHeader {
     name: u32,
     kind: u32,
+    flags: u64,
     offset: u64,
     size: u64,
     link: u32,
@@ -280,6 +300,18 @@ fn summarize_common_section(
     if section_name_matches(string_table, section.name, b".tbss") {
         summary.has_tls = true;
     }
+    if section.flags & SHF_ALLOC != 0 {
+        summary.allocated_section_count += 1;
+    }
+    if section.flags & SHF_WRITE != 0 {
+        summary.writable_section_count += 1;
+    }
+    if section.flags & SHF_EXECINSTR != 0 {
+        summary.executable_section_count += 1;
+    }
+    if section.kind == SHT_NOBITS {
+        summary.nobits_section_count += 1;
+    }
 
     if detect_operating_system && summary.operating_system.is_none() {
         summary.operating_system =
@@ -322,6 +354,7 @@ fn read_elf64_section_header(
     Ok(ElfSectionHeader {
         name: read_u32(bytes, base, endian)?,
         kind: read_u32(bytes, base + 4, endian)?,
+        flags: read_u64(bytes, base + 8, endian)?,
         offset: read_u64(bytes, base + 24, endian)?,
         size: read_u64(bytes, base + 32, endian)?,
         link: read_u32(bytes, base + 40, endian)?,
@@ -340,6 +373,7 @@ fn read_elf32_section_header(
     Ok(ElfSectionHeader {
         name: read_u32(bytes, base, endian)?,
         kind: read_u32(bytes, base + 4, endian)?,
+        flags: u64::from(read_u32(bytes, base + 8, endian)?),
         offset: u64::from(read_u32(bytes, base + 16, endian)?),
         size: u64::from(read_u32(bytes, base + 20, endian)?),
         link: read_u32(bytes, base + 24, endian)?,

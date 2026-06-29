@@ -66,6 +66,18 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 hash_u64(hash, section_name_table.file_offset());
                 hash_u64(hash, section_name_table.byte_size());
             }
+            let section_flags = metadata.section_flags();
+            if section_flags.allocated_count() != 0
+                || section_flags.writable_count() != 0
+                || section_flags.executable_count() != 0
+                || section_flags.nobits_count() != 0
+            {
+                hash_str(hash, "elf.section_flags");
+                hash_u64(hash, section_flags.allocated_count());
+                hash_u64(hash, section_flags.writable_count());
+                hash_u64(hash, section_flags.executable_count());
+                hash_u64(hash, section_flags.nobits_count());
+            }
             let dynamic = metadata.dynamic_table();
             if dynamic.segment_count() != 0 {
                 let address = dynamic.virtual_address().map_or(u64::MAX, |a| a.get());
