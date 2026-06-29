@@ -35,12 +35,16 @@ const DT_FINI_ARRAYSZ: u64 = 28;
 const DT_FLAGS: u64 = 30;
 const DT_PREINIT_ARRAY: u64 = 32;
 const DT_PREINIT_ARRAYSZ: u64 = 33;
+const DT_DEPAUDIT: u64 = 0x6fff_fefb;
+const DT_AUDIT: u64 = 0x6fff_fefc;
 const DT_VERSYM: u64 = 0x6fff_fff0;
 const DT_VERDEF: u64 = 0x6fff_fffc;
 const DT_VERDEFNUM: u64 = 0x6fff_fffd;
 const DT_VERNEED: u64 = 0x6fff_fffe;
 const DT_VERNEEDNUM: u64 = 0x6fff_ffff;
 const DT_FLAGS_1: u64 = 0x6fff_fffb;
+const DT_AUXILIARY: u64 = 0x7fff_fffd;
+const DT_FILTER: u64 = 0x7fff_ffff;
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
@@ -64,6 +68,17 @@ fn write_u32_be(bytes: &mut [u8], offset: usize, value: u32) {
 
 fn write_u64_be(bytes: &mut [u8], offset: usize, value: u64) {
     bytes[offset..offset + 8].copy_from_slice(&value.to_be_bytes());
+}
+
+fn dynamic_string_table(values: &[&str]) -> (Vec<u8>, Vec<u64>) {
+    let mut strings = vec![0];
+    let mut offsets = Vec::new();
+    for value in values {
+        offsets.push(strings.len() as u64);
+        strings.extend_from_slice(value.as_bytes());
+        strings.push(0);
+    }
+    (strings, offsets)
 }
 
 #[derive(Clone, Copy)]
@@ -1317,6 +1332,142 @@ fn boot_image_records_elf32_dynamic_versioning_metadata() {
         Some(Address::new(0x8000_02c0)),
     );
     assert_eq!(dynamic.version_needed_count(), Some(3));
+}
+
+#[test]
+fn boot_image_resolves_elf64_dynamic_loader_strings() {
+    let (strtab, offsets) =
+        dynamic_string_table(&["libbefore.so", "libfilter.so", "audit.so", "depaudit.so"]);
+    let strtab_offset = 0x300usize;
+    let payload_offset = 0x2c0usize;
+    let load_file_size = (strtab_offset + strtab.len()) as u64;
+    let dynamic = [
+        DT_AUXILIARY.to_le_bytes(),
+        offsets[0].to_le_bytes(),
+        DT_FILTER.to_le_bytes(),
+        offsets[1].to_le_bytes(),
+        DT_AUDIT.to_le_bytes(),
+        offsets[2].to_le_bytes(),
+        DT_DEPAUDIT.to_le_bytes(),
+        offsets[3].to_le_bytes(),
+        DT_STRTAB.to_le_bytes(),
+        0x8000_0300u64.to_le_bytes(),
+        DT_STRSZ.to_le_bytes(),
+        (strtab.len() as u64).to_le_bytes(),
+        0u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf64_image(
+        0x8000_02c0,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0,
+                physical: 0x8000_0000,
+                file_size: load_file_size,
+                memory_size: load_file_size,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[
+            (0x180, &dynamic),
+            (payload_offset, &[0x13, 0, 0, 0]),
+            (strtab_offset, &strtab),
+        ],
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(dynamic.auxiliary_libraries(), &["libbefore.so".to_string()]);
+    assert_eq!(dynamic.filter_libraries(), &["libfilter.so".to_string()]);
+    assert_eq!(dynamic.audit_libraries(), &["audit.so".to_string()]);
+    assert_eq!(
+        dynamic.dependency_audit_libraries(),
+        &["depaudit.so".to_string()],
+    );
+    assert_eq!(dynamic.auxiliary_name_bytes(), 12);
+    assert_eq!(dynamic.filter_name_bytes(), 12);
+    assert_eq!(dynamic.audit_name_bytes(), 8);
+    assert_eq!(dynamic.dependency_audit_name_bytes(), 11);
+}
+
+#[test]
+fn boot_image_resolves_elf32_dynamic_loader_strings() {
+    let (strtab, offsets) =
+        dynamic_string_table(&["libbefore.so", "libfilter.so", "audit.so", "depaudit.so"]);
+    let strtab_offset = 0x300usize;
+    let payload_offset = 0x2c0usize;
+    let load_file_size = (strtab_offset + strtab.len()) as u64;
+    let dynamic = [
+        (DT_AUXILIARY as u32).to_le_bytes(),
+        (offsets[0] as u32).to_le_bytes(),
+        (DT_FILTER as u32).to_le_bytes(),
+        (offsets[1] as u32).to_le_bytes(),
+        (DT_AUDIT as u32).to_le_bytes(),
+        (offsets[2] as u32).to_le_bytes(),
+        (DT_DEPAUDIT as u32).to_le_bytes(),
+        (offsets[3] as u32).to_le_bytes(),
+        (DT_STRTAB as u32).to_le_bytes(),
+        0x8000_0300u32.to_le_bytes(),
+        (DT_STRSZ as u32).to_le_bytes(),
+        (strtab.len() as u32).to_le_bytes(),
+        0u32.to_le_bytes(),
+        0u32.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf32_image(
+        0x8000_02c0,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0,
+                physical: 0x8000_0000,
+                file_size: load_file_size,
+                memory_size: load_file_size,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[
+            (0x180, &dynamic),
+            (payload_offset, &[0x13, 0, 0, 0]),
+            (strtab_offset, &strtab),
+        ],
+    );
+
+    let metadata = BootImage::from_elf32_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(dynamic.auxiliary_libraries(), &["libbefore.so".to_string()]);
+    assert_eq!(dynamic.filter_libraries(), &["libfilter.so".to_string()]);
+    assert_eq!(dynamic.audit_libraries(), &["audit.so".to_string()]);
+    assert_eq!(
+        dynamic.dependency_audit_libraries(),
+        &["depaudit.so".to_string()],
+    );
+    assert_eq!(dynamic.auxiliary_name_bytes(), 12);
+    assert_eq!(dynamic.filter_name_bytes(), 12);
+    assert_eq!(dynamic.audit_name_bytes(), 8);
+    assert_eq!(dynamic.dependency_audit_name_bytes(), 11);
 }
 
 #[test]

@@ -125,6 +125,10 @@ pub(crate) struct BootElfDynamicSegment {
     pub(crate) soname: Option<String>,
     pub(crate) rpath: Vec<String>,
     pub(crate) runpath: Vec<String>,
+    pub(crate) auxiliary_libraries: Vec<String>,
+    pub(crate) filter_libraries: Vec<String>,
+    pub(crate) audit_libraries: Vec<String>,
+    pub(crate) dependency_audit_libraries: Vec<String>,
     pub(crate) string_table_virtual_address: Option<Address>,
     pub(crate) string_table_size: Option<u64>,
     pub(crate) symbol_table_virtual_address: Option<Address>,
@@ -164,6 +168,10 @@ pub struct BootElfDynamicTable {
     soname: Option<String>,
     rpath: Vec<String>,
     runpath: Vec<String>,
+    auxiliary_libraries: Vec<String>,
+    filter_libraries: Vec<String>,
+    audit_libraries: Vec<String>,
+    dependency_audit_libraries: Vec<String>,
     string_table_virtual_address: Option<Address>,
     string_table_size: Option<u64>,
     symbol_table_virtual_address: Option<Address>,
@@ -204,6 +212,10 @@ impl BootElfDynamicTable {
             soname: None,
             rpath: Vec::new(),
             runpath: Vec::new(),
+            auxiliary_libraries: Vec::new(),
+            filter_libraries: Vec::new(),
+            audit_libraries: Vec::new(),
+            dependency_audit_libraries: Vec::new(),
             string_table_virtual_address: None,
             string_table_size: None,
             symbol_table_virtual_address: None,
@@ -244,6 +256,10 @@ impl BootElfDynamicTable {
             self.soname = segment.soname;
             self.rpath = segment.rpath;
             self.runpath = segment.runpath;
+            self.auxiliary_libraries = segment.auxiliary_libraries;
+            self.filter_libraries = segment.filter_libraries;
+            self.audit_libraries = segment.audit_libraries;
+            self.dependency_audit_libraries = segment.dependency_audit_libraries;
             self.string_table_virtual_address = segment.string_table_virtual_address;
             self.string_table_size = segment.string_table_size;
             self.symbol_table_virtual_address = segment.symbol_table_virtual_address;
@@ -323,6 +339,22 @@ impl BootElfDynamicTable {
         &self.runpath
     }
 
+    pub fn auxiliary_libraries(&self) -> &[String] {
+        &self.auxiliary_libraries
+    }
+
+    pub fn filter_libraries(&self) -> &[String] {
+        &self.filter_libraries
+    }
+
+    pub fn audit_libraries(&self) -> &[String] {
+        &self.audit_libraries
+    }
+
+    pub fn dependency_audit_libraries(&self) -> &[String] {
+        &self.dependency_audit_libraries
+    }
+
     pub fn soname_name_bytes(&self) -> u64 {
         self.soname.as_ref().map_or(0, |name| name.len() as u64)
     }
@@ -333,6 +365,34 @@ impl BootElfDynamicTable {
 
     pub fn runpath_name_bytes(&self) -> u64 {
         self.runpath.iter().map(|path| path.len() as u64).sum()
+    }
+
+    pub fn auxiliary_name_bytes(&self) -> u64 {
+        self.auxiliary_libraries
+            .iter()
+            .map(|library| library.len() as u64)
+            .sum()
+    }
+
+    pub fn filter_name_bytes(&self) -> u64 {
+        self.filter_libraries
+            .iter()
+            .map(|library| library.len() as u64)
+            .sum()
+    }
+
+    pub fn audit_name_bytes(&self) -> u64 {
+        self.audit_libraries
+            .iter()
+            .map(|library| library.len() as u64)
+            .sum()
+    }
+
+    pub fn dependency_audit_name_bytes(&self) -> u64 {
+        self.dependency_audit_libraries
+            .iter()
+            .map(|library| library.len() as u64)
+            .sum()
     }
 
     pub const fn string_table_virtual_address(&self) -> Option<Address> {

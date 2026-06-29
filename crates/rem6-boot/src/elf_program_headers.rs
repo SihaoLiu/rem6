@@ -116,6 +116,10 @@ pub(crate) fn summarize_elf64_program_header(
                     soname: summary.soname,
                     rpath: summary.rpath,
                     runpath: summary.runpath,
+                    auxiliary_libraries: summary.auxiliary_libraries,
+                    filter_libraries: summary.filter_libraries,
+                    audit_libraries: summary.audit_libraries,
+                    dependency_audit_libraries: summary.dependency_audit_libraries,
                     string_table_virtual_address: summary
                         .string_table_virtual_address
                         .map(Address::new),
@@ -277,6 +281,10 @@ pub(crate) fn summarize_elf32_program_header(
                     soname: summary.soname,
                     rpath: summary.rpath,
                     runpath: summary.runpath,
+                    auxiliary_libraries: summary.auxiliary_libraries,
+                    filter_libraries: summary.filter_libraries,
+                    audit_libraries: summary.audit_libraries,
+                    dependency_audit_libraries: summary.dependency_audit_libraries,
                     string_table_virtual_address: summary
                         .string_table_virtual_address
                         .map(Address::new),

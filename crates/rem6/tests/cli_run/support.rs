@@ -21,12 +21,16 @@ const DT_FINI_ARRAYSZ: u64 = 28;
 const DT_FLAGS: u64 = 30;
 const DT_PREINIT_ARRAY: u64 = 32;
 const DT_PREINIT_ARRAYSZ: u64 = 33;
+const DT_DEPAUDIT: u64 = 0x6fff_fefb;
+const DT_AUDIT: u64 = 0x6fff_fefc;
 const DT_VERSYM: u64 = 0x6fff_fff0;
 const DT_FLAGS_1: u64 = 0x6fff_fffb;
 const DT_VERDEF: u64 = 0x6fff_fffc;
 const DT_VERDEFNUM: u64 = 0x6fff_fffd;
 const DT_VERNEED: u64 = 0x6fff_fffe;
 const DT_VERNEEDNUM: u64 = 0x6fff_ffff;
+const DT_AUXILIARY: u64 = 0x7fff_fffd;
+const DT_FILTER: u64 = 0x7fff_ffff;
 
 pub(crate) const GEM5_READ_REQ: u32 = 1;
 pub(crate) const GEM5_READ_RESP: u32 = 2;
@@ -67,6 +71,13 @@ fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
 
 fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
     bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn push_dynamic_string(strings: &mut Vec<u8>, value: &str) -> u64 {
+    let offset = strings.len() as u64;
+    strings.extend_from_slice(value.as_bytes());
+    strings.push(0);
+    offset
 }
 
 pub(crate) fn riscv64_elf(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
@@ -581,6 +592,41 @@ pub(crate) fn riscv64_elf_with_dynamic_versioning(
     write_u64(&mut bytes, version_entry + 72, 3);
     write_u64(&mut bytes, version_entry + 80, 0);
     write_u64(&mut bytes, version_entry + 88, 0);
+    bytes
+}
+
+pub(crate) fn riscv64_elf_with_dynamic_loader_strings(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut bytes = riscv64_elf_with_dynamic_table(entry, physical, payload);
+    let dynamic_offset = 0x180usize;
+    let strtab_offset = 0x380usize;
+    let loader_entry = dynamic_offset + 16 * 16;
+    let mut strtab = b"\0libc.so.6\0libm.so.6\0librem6.so\0/opt/rem6/lib\0$ORIGIN/lib\0".to_vec();
+    let auxiliary_offset = push_dynamic_string(&mut strtab, "libbefore.so");
+    let filter_offset = push_dynamic_string(&mut strtab, "libfilter.so");
+    let audit_offset = push_dynamic_string(&mut strtab, "audit.so");
+    let dependency_audit_offset = push_dynamic_string(&mut strtab, "depaudit.so");
+
+    bytes.resize(bytes.len().max(strtab_offset + strtab.len()), 0);
+    write_u64(&mut bytes, 208, strtab.len() as u64);
+    write_u64(&mut bytes, 216, strtab.len() as u64);
+    write_u64(&mut bytes, 152, 21 * 16);
+    write_u64(&mut bytes, 160, 21 * 16);
+    write_u64(&mut bytes, dynamic_offset + 248, strtab.len() as u64);
+    write_u64(&mut bytes, loader_entry, DT_AUXILIARY);
+    write_u64(&mut bytes, loader_entry + 8, auxiliary_offset);
+    write_u64(&mut bytes, loader_entry + 16, DT_FILTER);
+    write_u64(&mut bytes, loader_entry + 24, filter_offset);
+    write_u64(&mut bytes, loader_entry + 32, DT_AUDIT);
+    write_u64(&mut bytes, loader_entry + 40, audit_offset);
+    write_u64(&mut bytes, loader_entry + 48, DT_DEPAUDIT);
+    write_u64(&mut bytes, loader_entry + 56, dependency_audit_offset);
+    write_u64(&mut bytes, loader_entry + 64, 0);
+    write_u64(&mut bytes, loader_entry + 72, 0);
+    bytes[strtab_offset..strtab_offset + strtab.len()].copy_from_slice(&strtab);
     bytes
 }
 

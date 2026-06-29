@@ -81,6 +81,22 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                     hash_str(hash, "elf.dynamic.runpath");
                     hash_str(hash, runpath);
                 }
+                for auxiliary in dynamic.auxiliary_libraries() {
+                    hash_str(hash, "elf.dynamic.auxiliary");
+                    hash_str(hash, auxiliary);
+                }
+                for filter in dynamic.filter_libraries() {
+                    hash_str(hash, "elf.dynamic.filter");
+                    hash_str(hash, filter);
+                }
+                for audit in dynamic.audit_libraries() {
+                    hash_str(hash, "elf.dynamic.audit");
+                    hash_str(hash, audit);
+                }
+                for dependency_audit in dynamic.dependency_audit_libraries() {
+                    hash_str(hash, "elf.dynamic.dependency_audit");
+                    hash_str(hash, dependency_audit);
+                }
                 if let Some(address) = dynamic.string_table_virtual_address() {
                     hash_str(hash, "elf.dynamic.strtab");
                     hash_u64(hash, address.get());

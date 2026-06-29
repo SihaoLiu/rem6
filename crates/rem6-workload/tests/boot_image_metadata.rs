@@ -23,12 +23,16 @@ const DT_FINI_ARRAYSZ: u64 = 28;
 const DT_FLAGS: u64 = 30;
 const DT_PREINIT_ARRAY: u64 = 32;
 const DT_PREINIT_ARRAYSZ: u64 = 33;
+const DT_DEPAUDIT: u64 = 0x6fff_fefb;
+const DT_AUDIT: u64 = 0x6fff_fefc;
 const DT_VERSYM: u64 = 0x6fff_fff0;
 const DT_VERDEF: u64 = 0x6fff_fffc;
 const DT_VERDEFNUM: u64 = 0x6fff_fffd;
 const DT_VERNEED: u64 = 0x6fff_fffe;
 const DT_VERNEEDNUM: u64 = 0x6fff_ffff;
 const DT_FLAGS_1: u64 = 0x6fff_fffb;
+const DT_AUXILIARY: u64 = 0x7fff_fffd;
+const DT_FILTER: u64 = 0x7fff_ffff;
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
@@ -52,6 +56,17 @@ fn write_u32_be(bytes: &mut [u8], offset: usize, value: u32) {
 
 fn write_u64_be(bytes: &mut [u8], offset: usize, value: u64) {
     bytes[offset..offset + 8].copy_from_slice(&value.to_be_bytes());
+}
+
+fn dynamic_string_table(values: &[&str]) -> (Vec<u8>, Vec<u64>) {
+    let mut strings = vec![0];
+    let mut offsets = Vec::new();
+    for value in values {
+        offsets.push(strings.len() as u64);
+        strings.extend_from_slice(value.as_bytes());
+        strings.push(0);
+    }
+    (strings, offsets)
 }
 
 fn elf64_image(machine: u16) -> Vec<u8> {
@@ -567,6 +582,77 @@ fn elf64_image_with_dynamic_strings(
     )
 }
 
+fn elf64_image_with_dynamic_loader_strings(
+    machine: u16,
+    auxiliary: &str,
+    filter: &str,
+    audit: &str,
+    dependency_audit: &str,
+) -> Vec<u8> {
+    let (strtab, offsets) = dynamic_string_table(&[auxiliary, filter, audit, dependency_audit]);
+    let strtab_offset = 0x300usize;
+    let dynamic_offset = 0x180usize;
+    let payload_offset = 0x200usize;
+    let dynamic_size = 7 * 16usize;
+    let mut bytes = vec![0; strtab_offset + strtab.len()];
+    bytes[0..4].copy_from_slice(b"\x7fELF");
+    bytes[4] = 2;
+    bytes[5] = 1;
+    bytes[6] = 1;
+    write_u16(&mut bytes, 16, 2);
+    write_u16(&mut bytes, 18, machine);
+    write_u32(&mut bytes, 20, 1);
+    write_u64(&mut bytes, 24, 0x8004);
+    write_u64(&mut bytes, 32, 64);
+    write_u16(&mut bytes, 52, 64);
+    write_u16(&mut bytes, 54, 56);
+    write_u16(&mut bytes, 56, 2);
+
+    write_u32(&mut bytes, 64, 1);
+    write_u32(&mut bytes, 68, 5);
+    write_u64(&mut bytes, 72, payload_offset as u64);
+    write_u64(&mut bytes, 80, 0x8000);
+    write_u64(&mut bytes, 88, 0x8000);
+    write_u64(
+        &mut bytes,
+        96,
+        (strtab_offset + strtab.len() - payload_offset) as u64,
+    );
+    write_u64(
+        &mut bytes,
+        104,
+        (strtab_offset + strtab.len() - payload_offset) as u64,
+    );
+    write_u64(&mut bytes, 112, 0x1000);
+
+    write_u32(&mut bytes, 120, 2);
+    write_u32(&mut bytes, 124, 4);
+    write_u64(&mut bytes, 128, dynamic_offset as u64);
+    write_u64(&mut bytes, 136, 0x8180);
+    write_u64(&mut bytes, 144, 0x8180);
+    write_u64(&mut bytes, 152, dynamic_size as u64);
+    write_u64(&mut bytes, 160, dynamic_size as u64);
+    write_u64(&mut bytes, 168, 8);
+
+    write_u64(&mut bytes, dynamic_offset, DT_AUXILIARY);
+    write_u64(&mut bytes, dynamic_offset + 8, offsets[0]);
+    write_u64(&mut bytes, dynamic_offset + 16, DT_FILTER);
+    write_u64(&mut bytes, dynamic_offset + 24, offsets[1]);
+    write_u64(&mut bytes, dynamic_offset + 32, DT_AUDIT);
+    write_u64(&mut bytes, dynamic_offset + 40, offsets[2]);
+    write_u64(&mut bytes, dynamic_offset + 48, DT_DEPAUDIT);
+    write_u64(&mut bytes, dynamic_offset + 56, offsets[3]);
+    write_u64(&mut bytes, dynamic_offset + 64, DT_STRTAB);
+    write_u64(&mut bytes, dynamic_offset + 72, 0x8100);
+    write_u64(&mut bytes, dynamic_offset + 80, DT_STRSZ);
+    write_u64(&mut bytes, dynamic_offset + 88, strtab.len() as u64);
+    write_u64(&mut bytes, dynamic_offset + 96, 0);
+    write_u64(&mut bytes, dynamic_offset + 104, 0);
+    bytes[payload_offset..payload_offset + 4].copy_from_slice(&[0x13, 0x05, 0x00, 0x00]);
+    bytes[strtab_offset..strtab_offset + strtab.len()].copy_from_slice(&strtab);
+    bytes
+}
+
 fn elf64_image_with_dynamic_strings_and_relocations(
     machine: u16,
     libraries: &[&str],
@@ -1050,6 +1136,34 @@ fn workload_boot_image_preserves_elf_dynamic_versioning_metadata_round_trip() {
         Some(Address::new(0x82a0)),
     );
     assert_eq!(dynamic.version_needed_count(), Some(3));
+}
+
+#[test]
+fn workload_boot_image_preserves_elf_dynamic_loader_strings_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_dynamic_loader_strings(
+        243,
+        "libbefore.so",
+        "libfilter.so",
+        "audit.so",
+        "depaudit.so",
+    ))
+    .unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = round_trip_metadata.dynamic_table();
+
+    assert_eq!(dynamic.auxiliary_libraries(), &["libbefore.so".to_string()]);
+    assert_eq!(dynamic.filter_libraries(), &["libfilter.so".to_string()]);
+    assert_eq!(dynamic.audit_libraries(), &["audit.so".to_string()]);
+    assert_eq!(
+        dynamic.dependency_audit_libraries(),
+        &["depaudit.so".to_string()],
+    );
 }
 
 #[test]
@@ -1852,6 +1966,96 @@ fn workload_manifest_identity_includes_elf_dynamic_string_metadata() {
     assert_ne!(baseline_manifest.identity(), soname_manifest.identity());
     assert_ne!(baseline_manifest.identity(), rpath_manifest.identity());
     assert_ne!(baseline_manifest.identity(), runpath_manifest.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_dynamic_loader_strings() {
+    let baseline_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_loader_strings(
+        243,
+        "libbefore.so",
+        "libfilter.so",
+        "audit.so",
+        "depaudit.so",
+    ))
+    .unwrap();
+    let auxiliary_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_loader_strings(
+        243,
+        "libbefore-alt.so",
+        "libfilter.so",
+        "audit.so",
+        "depaudit.so",
+    ))
+    .unwrap();
+    let filter_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_loader_strings(
+        243,
+        "libbefore.so",
+        "libfilter-alt.so",
+        "audit.so",
+        "depaudit.so",
+    ))
+    .unwrap();
+    let audit_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_loader_strings(
+        243,
+        "libbefore.so",
+        "libfilter.so",
+        "audit-alt.so",
+        "depaudit.so",
+    ))
+    .unwrap();
+    let dependency_audit_source =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_loader_strings(
+            243,
+            "libbefore.so",
+            "libfilter.so",
+            "audit.so",
+            "depaudit-alt.so",
+        ))
+        .unwrap();
+
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .auxiliary_libraries(),
+        &["libbefore.so".to_string()],
+    );
+    let baseline = boot_image_with_metadata(baseline_source.elf_metadata().unwrap());
+    let auxiliary = boot_image_with_metadata(auxiliary_source.elf_metadata().unwrap());
+    let filter = boot_image_with_metadata(filter_source.elf_metadata().unwrap());
+    let audit = boot_image_with_metadata(audit_source.elf_metadata().unwrap());
+    let dependency_audit =
+        boot_image_with_metadata(dependency_audit_source.elf_metadata().unwrap());
+
+    assert_eq!(baseline.entry(), auxiliary.entry());
+    assert_eq!(baseline.segments(), auxiliary.segments());
+    assert_eq!(baseline.segments(), filter.segments());
+    assert_eq!(baseline.segments(), audit.segments());
+    assert_eq!(baseline.segments(), dependency_audit.segments());
+
+    let baseline_manifest = WorkloadManifest::builder(id("same"), baseline)
+        .build()
+        .unwrap();
+    let auxiliary_manifest = WorkloadManifest::builder(id("same"), auxiliary)
+        .build()
+        .unwrap();
+    let filter_manifest = WorkloadManifest::builder(id("same"), filter)
+        .build()
+        .unwrap();
+    let audit_manifest = WorkloadManifest::builder(id("same"), audit)
+        .build()
+        .unwrap();
+    let dependency_audit_manifest = WorkloadManifest::builder(id("same"), dependency_audit)
+        .build()
+        .unwrap();
+
+    assert_ne!(baseline_manifest.identity(), auxiliary_manifest.identity());
+    assert_ne!(baseline_manifest.identity(), filter_manifest.identity());
+    assert_ne!(baseline_manifest.identity(), audit_manifest.identity());
+    assert_ne!(
+        baseline_manifest.identity(),
+        dependency_audit_manifest.identity()
+    );
 }
 
 #[test]

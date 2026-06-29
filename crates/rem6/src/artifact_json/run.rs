@@ -330,6 +330,10 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
         .unwrap_or_else(|| "null".to_string());
     let rpath = json_string_array(table.rpath());
     let runpath = json_string_array(table.runpath());
+    let auxiliary = json_string_array(table.auxiliary_libraries());
+    let filter = json_string_array(table.filter_libraries());
+    let audit = json_string_array(table.audit_libraries());
+    let dependency_audit = json_string_array(table.dependency_audit_libraries());
     let tables = elf_dynamic_tables_json(table);
     let lifecycle = elf_dynamic_lifecycle_json(table);
     let flags = elf_dynamic_flags_json(table);
@@ -337,7 +341,7 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
     let versioning = elf_dynamic_versioning_json(table);
     let relocations = elf_dynamic_relocations_json(table);
     format!(
-        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":{},\"soname\":{},\"rpath\":{},\"runpath\":{},\"tables\":{},\"lifecycle\":{},\"flags\":{},\"hash\":{},\"versioning\":{},\"relocations\":{}}}",
+        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":{},\"soname\":{},\"rpath\":{},\"runpath\":{},\"auxiliary\":{},\"filter\":{},\"audit\":{},\"dependency_audit\":{},\"tables\":{},\"lifecycle\":{},\"flags\":{},\"hash\":{},\"versioning\":{},\"relocations\":{}}}",
         table.segment_count(),
         file_offset,
         virtual_address,
@@ -348,6 +352,10 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
         soname,
         rpath,
         runpath,
+        auxiliary,
+        filter,
+        audit,
+        dependency_audit,
         tables,
         lifecycle,
         flags,

@@ -30,6 +30,8 @@ const DT_RUNPATH: u64 = 29;
 const DT_FLAGS: u64 = 30;
 const DT_PREINIT_ARRAY: u64 = 32;
 const DT_PREINIT_ARRAYSZ: u64 = 33;
+const DT_DEPAUDIT: u64 = 0x6fff_fefb;
+const DT_AUDIT: u64 = 0x6fff_fefc;
 const DT_GNU_HASH: u64 = 0x6fff_fef5;
 const DT_VERSYM: u64 = 0x6fff_fff0;
 const DT_FLAGS_1: u64 = 0x6fff_fffb;
@@ -37,6 +39,8 @@ const DT_VERDEF: u64 = 0x6fff_fffc;
 const DT_VERDEFNUM: u64 = 0x6fff_fffd;
 const DT_VERNEED: u64 = 0x6fff_fffe;
 const DT_VERNEEDNUM: u64 = 0x6fff_ffff;
+const DT_AUXILIARY: u64 = 0x7fff_fffd;
+const DT_FILTER: u64 = 0x7fff_ffff;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ElfLoadMapping {
@@ -52,6 +56,10 @@ pub(crate) struct ElfDynamicTableSummary {
     pub(crate) soname: Option<String>,
     pub(crate) rpath: Vec<String>,
     pub(crate) runpath: Vec<String>,
+    pub(crate) auxiliary_libraries: Vec<String>,
+    pub(crate) filter_libraries: Vec<String>,
+    pub(crate) audit_libraries: Vec<String>,
+    pub(crate) dependency_audit_libraries: Vec<String>,
     pub(crate) string_table_virtual_address: Option<u64>,
     pub(crate) string_table_size: Option<u64>,
     pub(crate) symbol_table_virtual_address: Option<u64>,
@@ -98,6 +106,10 @@ enum DynamicStringKind {
     Soname,
     Rpath,
     Runpath,
+    Auxiliary,
+    Filter,
+    Audit,
+    DependencyAudit,
 }
 
 impl DynamicStringKind {
@@ -107,6 +119,10 @@ impl DynamicStringKind {
             Self::Soname => DT_SONAME,
             Self::Rpath => DT_RPATH,
             Self::Runpath => DT_RUNPATH,
+            Self::Auxiliary => DT_AUXILIARY,
+            Self::Filter => DT_FILTER,
+            Self::Audit => DT_AUDIT,
+            Self::DependencyAudit => DT_DEPAUDIT,
         }
     }
 }
@@ -183,6 +199,10 @@ pub(crate) fn dynamic_table_counts(
     let mut soname_offset = None;
     let mut rpath_offsets = Vec::new();
     let mut runpath_offsets = Vec::new();
+    let mut auxiliary_offsets = Vec::new();
+    let mut filter_offsets = Vec::new();
+    let mut audit_offsets = Vec::new();
+    let mut dependency_audit_offsets = Vec::new();
     let mut init_virtual_address = None;
     let mut fini_virtual_address = None;
     let mut init_array_virtual_address = None;
@@ -231,6 +251,10 @@ pub(crate) fn dynamic_table_counts(
                 soname_offset,
                 &rpath_offsets,
                 &runpath_offsets,
+                &auxiliary_offsets,
+                &filter_offsets,
+                &audit_offsets,
+                &dependency_audit_offsets,
             )?;
             return Ok(ElfDynamicTableSummary {
                 entry_count: entries,
@@ -238,6 +262,10 @@ pub(crate) fn dynamic_table_counts(
                 soname: strings.soname,
                 rpath: strings.rpath,
                 runpath: strings.runpath,
+                auxiliary_libraries: strings.auxiliary_libraries,
+                filter_libraries: strings.filter_libraries,
+                audit_libraries: strings.audit_libraries,
+                dependency_audit_libraries: strings.dependency_audit_libraries,
                 string_table_virtual_address: string_table,
                 string_table_size,
                 symbol_table_virtual_address,
@@ -287,6 +315,14 @@ pub(crate) fn dynamic_table_counts(
             rpath_offsets.push(value);
         } else if tag == DT_RUNPATH {
             runpath_offsets.push(value);
+        } else if tag == DT_AUXILIARY {
+            auxiliary_offsets.push(value);
+        } else if tag == DT_FILTER {
+            filter_offsets.push(value);
+        } else if tag == DT_AUDIT {
+            audit_offsets.push(value);
+        } else if tag == DT_DEPAUDIT {
+            dependency_audit_offsets.push(value);
         } else if tag == DT_INIT {
             init_virtual_address = Some(value);
         } else if tag == DT_FINI {
@@ -376,6 +412,10 @@ struct DynamicStrings {
     soname: Option<String>,
     rpath: Vec<String>,
     runpath: Vec<String>,
+    auxiliary_libraries: Vec<String>,
+    filter_libraries: Vec<String>,
+    audit_libraries: Vec<String>,
+    dependency_audit_libraries: Vec<String>,
 }
 
 fn dynamic_strings(
@@ -388,17 +428,29 @@ fn dynamic_strings(
     soname_offset: Option<u64>,
     rpath_offsets: &[u64],
     runpath_offsets: &[u64],
+    auxiliary_offsets: &[u64],
+    filter_offsets: &[u64],
+    audit_offsets: &[u64],
+    dependency_audit_offsets: &[u64],
 ) -> Result<DynamicStrings, BootError> {
     if needed_offsets.is_empty()
         && soname_offset.is_none()
         && rpath_offsets.is_empty()
         && runpath_offsets.is_empty()
+        && auxiliary_offsets.is_empty()
+        && filter_offsets.is_empty()
+        && audit_offsets.is_empty()
+        && dependency_audit_offsets.is_empty()
     {
         return Ok(DynamicStrings {
             needed_libraries: Vec::new(),
             soname: None,
             rpath: Vec::new(),
             runpath: Vec::new(),
+            auxiliary_libraries: Vec::new(),
+            filter_libraries: Vec::new(),
+            audit_libraries: Vec::new(),
+            dependency_audit_libraries: Vec::new(),
         });
     }
     let Some(virtual_address) = string_table else {
@@ -426,11 +478,31 @@ fn dynamic_strings(
         strings,
         runpath_offsets,
     )?;
+    let auxiliary_libraries = dynamic_string_values(
+        segment,
+        DynamicStringKind::Auxiliary,
+        strings,
+        auxiliary_offsets,
+    )?;
+    let filter_libraries =
+        dynamic_string_values(segment, DynamicStringKind::Filter, strings, filter_offsets)?;
+    let audit_libraries =
+        dynamic_string_values(segment, DynamicStringKind::Audit, strings, audit_offsets)?;
+    let dependency_audit_libraries = dynamic_string_values(
+        segment,
+        DynamicStringKind::DependencyAudit,
+        strings,
+        dependency_audit_offsets,
+    )?;
     Ok(DynamicStrings {
         needed_libraries,
         soname,
         rpath,
         runpath,
+        auxiliary_libraries,
+        filter_libraries,
+        audit_libraries,
+        dependency_audit_libraries,
     })
 }
 

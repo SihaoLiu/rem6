@@ -196,6 +196,62 @@ fn emit_elf_dynamic_stats(
         StatResetPolicy::Constant,
         dynamic_table.runpath_name_bytes(),
     )?;
+    increment_stat(
+        stats,
+        "sim.elf.dynamic.auxiliary",
+        "Count",
+        StatResetPolicy::Constant,
+        dynamic_table.auxiliary_libraries().len() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.dynamic.auxiliary_name_bytes",
+        "Byte",
+        StatResetPolicy::Constant,
+        dynamic_table.auxiliary_name_bytes(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.dynamic.filter",
+        "Count",
+        StatResetPolicy::Constant,
+        dynamic_table.filter_libraries().len() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.dynamic.filter_name_bytes",
+        "Byte",
+        StatResetPolicy::Constant,
+        dynamic_table.filter_name_bytes(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.dynamic.audit",
+        "Count",
+        StatResetPolicy::Constant,
+        dynamic_table.audit_libraries().len() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.dynamic.audit_name_bytes",
+        "Byte",
+        StatResetPolicy::Constant,
+        dynamic_table.audit_name_bytes(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.dynamic.dependency_audit",
+        "Count",
+        StatResetPolicy::Constant,
+        dynamic_table.dependency_audit_libraries().len() as u64,
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.dynamic.dependency_audit_name_bytes",
+        "Byte",
+        StatResetPolicy::Constant,
+        dynamic_table.dependency_audit_name_bytes(),
+    )?;
     increment_optional_address_bytes_stats(
         stats,
         "sim.elf.dynamic.string_table",
