@@ -1482,6 +1482,16 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
             "4",
             "--fabric-credit-depth",
             "2",
+            "--fabric-router",
+            "router0",
+            "--fabric-router-input-port",
+            "1",
+            "--fabric-router-output-port",
+            "2",
+            "--fabric-router-virtual-channel",
+            "3",
+            "--fabric-router-latency",
+            "5",
             "--dump-memory",
             "0x80000048:8",
         ])
@@ -1517,6 +1527,29 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         Some(4)
     );
     assert_eq!(fabric.get("credit_depth").and_then(Value::as_u64), Some(2));
+    let router_stage = fabric
+        .get("router_stage")
+        .expect("fabric router stage config");
+    assert_eq!(
+        router_stage.get("router").and_then(Value::as_str),
+        Some("router0")
+    );
+    assert_eq!(
+        router_stage.get("input_port").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        router_stage.get("output_port").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        router_stage.get("virtual_channel").and_then(Value::as_u64),
+        Some(3)
+    );
+    assert_eq!(
+        router_stage.get("latency_ticks").and_then(Value::as_u64),
+        Some(5)
+    );
     assert!(
         fabric
             .get("active_lanes")
@@ -1568,6 +1601,24 @@ fn rem6_run_routes_cache_dram_traffic_through_configured_fabric() {
         })
         .collect::<BTreeSet<_>>()
         .len() as u64;
+    let router_hops = fabric
+        .get("hop_activities")
+        .and_then(Value::as_array)
+        .expect("fabric hop activities")
+        .iter()
+        .filter_map(|hop| hop.get("router"))
+        .collect::<Vec<_>>();
+    assert!(
+        !router_hops.is_empty(),
+        "missing fabric router hop activity"
+    );
+    assert!(router_hops.iter().all(|router| {
+        router.get("router").and_then(Value::as_str) == Some("router0")
+            && router.get("input_port").and_then(Value::as_u64) == Some(1)
+            && router.get("output_port").and_then(Value::as_u64) == Some(2)
+            && router.get("virtual_channel").and_then(Value::as_u64) == Some(3)
+            && router.get("latency_ticks").and_then(Value::as_u64) == Some(5)
+    }));
     let fabric_bytes = fabric
         .get("bytes")
         .and_then(Value::as_u64)
@@ -2849,7 +2900,7 @@ fn rem6_run_toml_memory_system_preset_routes_cpu_through_cache_fabric_and_dram()
     let config = temp_config(
         "toml-run-memory-system-preset",
         &format!(
-            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 240\nstats_format = \"json\"\nexecute = true\nmemory_system = \"cache-fabric-dram\"\nmemory_dumps = [\"0x80000048:8\"]\n",
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 240\nstats_format = \"json\"\nexecute = true\nmemory_system = \"cache-fabric-dram\"\nfabric_router = \"router0\"\nfabric_router_input_port = 1\nfabric_router_output_port = 2\nfabric_router_virtual_channel = 3\nfabric_router_latency = 5\nmemory_dumps = [\"0x80000048:8\"]\n",
             binary.display()
         ),
     );
@@ -2882,6 +2933,18 @@ fn rem6_run_toml_memory_system_preset_routes_cpu_through_cache_fabric_and_dram()
     );
     assert!(json_u64(&json, "/dram/accesses") > 0);
     assert!(json_u64(&json, "/fabric/transfers") > 0);
+    assert_eq!(
+        json.pointer("/fabric/router_stage/router")
+            .and_then(Value::as_str),
+        Some("router0")
+    );
+    assert_stat_greater_than(
+        &stdout,
+        "sim.memory.fabric.link.cpu_mem.vn1.hop0.router_latency_ticks",
+        "Tick",
+        0,
+        "monotonic",
+    );
     assert!(json_u64(&json, "/simulation/data_cache_l2_runs") > 0);
     assert!(json_u64(&json, "/simulation/data_cache_l3_runs") > 0);
 }
@@ -4694,6 +4757,9 @@ fn assert_run_fabric_hop_stats(stdout: &str, stat_prefix: &str, fabric: &Value) 
         queue_delay_ticks: u64,
         max_queue_delay_ticks: u64,
         credit_delay_ticks: u64,
+        router_latency_ticks: u64,
+        router_queue_delay_ticks: u64,
+        max_router_queue_delay_ticks: u64,
     }
 
     let hops = fabric
@@ -4728,6 +4794,14 @@ fn assert_run_fabric_hop_stats(stdout: &str, stat_prefix: &str, fabric: &Value) 
         summary.queue_delay_ticks += queue_delay_ticks;
         summary.max_queue_delay_ticks = summary.max_queue_delay_ticks.max(queue_delay_ticks);
         summary.credit_delay_ticks += lane_u64(hop, "credit_delay_ticks");
+        if let Some(router) = hop.get("router") {
+            summary.router_latency_ticks += lane_u64(router, "latency_ticks");
+            let router_queue_delay_ticks = lane_u64(router, "queue_delay_ticks");
+            summary.router_queue_delay_ticks += router_queue_delay_ticks;
+            summary.max_router_queue_delay_ticks = summary
+                .max_router_queue_delay_ticks
+                .max(router_queue_delay_ticks);
+        }
     }
 
     for ((link, virtual_network, hop_index), summary) in summaries {
@@ -4782,6 +4856,27 @@ fn assert_run_fabric_hop_stats(stdout: &str, stat_prefix: &str, fabric: &Value) 
             &format!("{prefix}.credit_delay_ticks"),
             "Tick",
             summary.credit_delay_ticks,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.router_latency_ticks"),
+            "Tick",
+            summary.router_latency_ticks,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.router_queue_delay_ticks"),
+            "Tick",
+            summary.router_queue_delay_ticks,
+            "monotonic",
+        );
+        assert_stat(
+            stdout,
+            &format!("{prefix}.max_router_queue_delay_ticks"),
+            "Tick",
+            summary.max_router_queue_delay_ticks,
             "monotonic",
         );
     }

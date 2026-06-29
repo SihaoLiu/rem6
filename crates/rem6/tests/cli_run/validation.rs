@@ -1511,6 +1511,101 @@ fn rem6_run_config_scan_treats_memory_system_as_value_taking() {
 }
 
 #[test]
+fn rem6_run_config_scan_treats_fabric_router_flags_as_value_taking() {
+    for (flag, expected) in [
+        ("--fabric-router", "unknown flag"),
+        (
+            "--fabric-router-input-port",
+            "invalid run fabric router port --config",
+        ),
+        (
+            "--fabric-router-output-port",
+            "invalid run fabric router port --config",
+        ),
+        (
+            "--fabric-router-virtual-channel",
+            "invalid run fabric router virtual channel --config",
+        ),
+        (
+            "--fabric-router-latency",
+            "invalid run fabric router latency --config",
+        ),
+    ] {
+        let bogus_config = temp_output(&format!(
+            "run-fabric-router-prescan-{}",
+            flag.trim_start_matches("--").replace('-', "_")
+        ));
+
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args(["run", flag, "--config", bogus_config.to_str().unwrap()])
+            .output()
+            .unwrap();
+
+        assert!(
+            !output.status.success(),
+            "flag {flag} unexpectedly succeeded"
+        );
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains(expected), "stderr for {flag}: {stderr}");
+        assert!(
+            !stderr.contains(&format!("failed to read config {}", bogus_config.display())),
+            "stderr for {flag}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn rem6_trace_replay_config_scan_treats_fabric_router_flags_as_value_taking() {
+    for (flag, expected) in [
+        ("--fabric-router", "unknown flag"),
+        (
+            "--fabric-router-input-port",
+            "invalid trace replay fabric router port --config",
+        ),
+        (
+            "--fabric-router-output-port",
+            "invalid trace replay fabric router port --config",
+        ),
+        (
+            "--fabric-router-virtual-channel",
+            "invalid trace replay fabric router virtual channel --config",
+        ),
+        (
+            "--fabric-router-latency",
+            "invalid trace replay fabric router latency --config",
+        ),
+    ] {
+        let bogus_config = temp_output(&format!(
+            "trace-replay-fabric-router-prescan-{}",
+            flag.trim_start_matches("--").replace('-', "_")
+        ));
+
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "trace-replay",
+                flag,
+                "--config",
+                bogus_config.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            !output.status.success(),
+            "flag {flag} unexpectedly succeeded"
+        );
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains(expected), "stderr for {flag}: {stderr}");
+        assert!(
+            !stderr.contains(&format!("failed to read config {}", bogus_config.display())),
+            "stderr for {flag}: {stderr}"
+        );
+    }
+}
+
+#[test]
 fn rem6_run_config_scan_treats_riscv_in_order_width_as_value_taking() {
     let bogus_config = temp_output("riscv-in-order-width-prescan-bogus-config");
 

@@ -9,7 +9,7 @@ use rem6_cpu::{
     CpuCore, CpuDataConfig, CpuFetchConfig, CpuId, CpuResetState, InOrderPipelineConfig,
     InOrderPipelineStage, InOrderPipelineStageWidth, RiscvCluster, RiscvCore,
 };
-use rem6_fabric::{FabricLinkId, FabricPath, FabricPathHop, VirtualNetworkId};
+use rem6_fabric::VirtualNetworkId;
 use rem6_isa_riscv::{Register, RiscvGdbXlen, RiscvPrivilegeMode};
 use rem6_kernel::{PartitionId, PartitionedScheduler};
 use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout};
@@ -131,8 +131,8 @@ use riscv_run_driver::drive_cli_riscv_run;
 use riscv_sbi_runtime::{attach_cli_riscv_sbi_firmware, configure_cli_riscv_sbi_core};
 use riscv_se_inputs::{read_riscv_se_file, read_riscv_se_stdin};
 use run_execution_summary::{execution_summary, ExecutionSummaryInputs};
-use run_fabric::run_memory_transport;
 pub(crate) use run_fabric::Rem6RunFabricSummary;
+use run_fabric::{run_fabric_path, run_memory_transport};
 use run_gdb::{serve_riscv_gdb_with_run_control, RiscvGdbServeOutcome};
 use run_resource_config::{run_resource_payloads_from_config, RunResourcePayloads};
 use run_validation::validate_run_config_inputs;
@@ -1131,22 +1131,6 @@ fn add_memory_route(
     };
 
     transport.add_route(route).map_err(execute_error)
-}
-
-fn run_fabric_path(
-    fabric: &RunFabricConfig,
-    latency: u64,
-    virtual_network: u16,
-) -> Result<FabricPath, Rem6CliError> {
-    let link = FabricLinkId::new(fabric.link()).map_err(execute_error)?;
-    let hop = FabricPathHop::new(link, latency, fabric.bandwidth_bytes_per_tick())
-        .map_err(execute_error)?
-        .with_virtual_network(VirtualNetworkId::new(virtual_network));
-    let hop = match fabric.credit_depth() {
-        Some(credit_depth) => hop.with_credit_depth(credit_depth).map_err(execute_error)?,
-        None => hop,
-    };
-    FabricPath::new([hop]).map_err(execute_error)
 }
 
 fn cli_in_order_pipeline_config(width: usize) -> Result<InOrderPipelineConfig, Rem6CliError> {

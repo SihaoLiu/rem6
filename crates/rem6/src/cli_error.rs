@@ -237,6 +237,18 @@ pub enum Rem6CliError {
     InvalidRunFabricCreditDepth {
         value: String,
     },
+    InvalidRunFabricRouter {
+        value: String,
+    },
+    InvalidRunFabricRouterPort {
+        value: String,
+    },
+    InvalidRunFabricRouterVirtualChannel {
+        value: String,
+    },
+    InvalidRunFabricRouterLatency {
+        value: String,
+    },
     MemoryRouteDelayBelowMinRemoteDelay {
         memory_route_delay: u64,
         min_remote_delay: u64,
@@ -699,6 +711,21 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidRunFabricCreditDepth { value } => {
                 write!(formatter, "invalid run fabric credit depth {value}")
+            }
+            Self::InvalidRunFabricRouter { value } => {
+                write!(formatter, "invalid run fabric router {value}")
+            }
+            Self::InvalidRunFabricRouterPort { value } => {
+                write!(formatter, "invalid run fabric router port {value}")
+            }
+            Self::InvalidRunFabricRouterVirtualChannel { value } => {
+                write!(
+                    formatter,
+                    "invalid run fabric router virtual channel {value}"
+                )
+            }
+            Self::InvalidRunFabricRouterLatency { value } => {
+                write!(formatter, "invalid run fabric router latency {value}")
             }
             Self::MemoryRouteDelayBelowMinRemoteDelay {
                 memory_route_delay,

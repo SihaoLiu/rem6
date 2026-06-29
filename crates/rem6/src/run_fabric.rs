@@ -1,12 +1,13 @@
 use std::collections::BTreeSet;
 
 use rem6_fabric::{
-    FabricActivityProfile, FabricHopActivity, FabricLaneActivity, FabricLinkActivity, FabricModel,
-    FabricVirtualNetworkActivity,
+    FabricActivityProfile, FabricHopActivity, FabricLaneActivity, FabricLinkActivity, FabricLinkId,
+    FabricModel, FabricPath, FabricPathHop, FabricRouterId, FabricRouterStage,
+    FabricVirtualNetworkActivity, VirtualNetworkId,
 };
 use rem6_transport::MemoryTransport;
 
-use crate::RunFabricConfig;
+use crate::{execute_error, Rem6CliError, RunFabricConfig};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Rem6RunFabricSummary {
@@ -128,4 +129,35 @@ pub(crate) fn run_memory_transport(config: Option<&RunFabricConfig>) -> MemoryTr
         Some(_) => MemoryTransport::with_fabric(FabricModel::new()),
         None => MemoryTransport::new(),
     }
+}
+
+pub(crate) fn run_fabric_path(
+    fabric: &RunFabricConfig,
+    latency: u64,
+    virtual_network: u16,
+) -> Result<FabricPath, Rem6CliError> {
+    let link = FabricLinkId::new(fabric.link()).map_err(execute_error)?;
+    let hop = FabricPathHop::new(link, latency, fabric.bandwidth_bytes_per_tick())
+        .map_err(execute_error)?
+        .with_virtual_network(VirtualNetworkId::new(virtual_network));
+    let hop = match fabric.credit_depth() {
+        Some(credit_depth) => hop.with_credit_depth(credit_depth).map_err(execute_error)?,
+        None => hop,
+    };
+    let hop = match fabric.router_stage() {
+        Some(router_stage) => {
+            let router = FabricRouterId::new(router_stage.router()).map_err(execute_error)?;
+            let router_stage = FabricRouterStage::new(
+                router,
+                router_stage.input_port(),
+                router_stage.output_port(),
+                router_stage.virtual_channel(),
+                router_stage.latency(),
+            )
+            .map_err(execute_error)?;
+            hop.with_router_stage(router_stage)
+        }
+        None => hop,
+    };
+    FabricPath::new([hop]).map_err(execute_error)
 }

@@ -37,9 +37,7 @@ use dram::{
 };
 pub use dram::{CliDramLowPowerTiming, CliDramMemoryProfile, CliDramRefreshTiming, CliDramTiming};
 pub use fabric::RunFabricConfig;
-use fabric::{
-    parse_run_fabric_credit_depth, parse_run_fabric_virtual_network, run_fabric_config_from_parts,
-};
+use fabric::{run_fabric_config_from_parts, RunFabricConfigParts};
 use file_scan::{
     gups_file_config_from_args, run_file_config_from_args, trace_replay_file_config_from_args,
 };
@@ -257,6 +255,11 @@ struct Rem6RunFileConfig {
     fabric_request_virtual_network: Option<u16>,
     fabric_response_virtual_network: Option<u16>,
     fabric_credit_depth: Option<u32>,
+    fabric_router: Option<String>,
+    fabric_router_input_port: Option<u32>,
+    fabric_router_output_port: Option<u32>,
+    fabric_router_virtual_channel: Option<u16>,
+    fabric_router_latency: Option<u64>,
     debug_flags: Option<Vec<String>>,
     cores: Option<usize>,
     parallel_workers: Option<usize>,
@@ -639,21 +642,18 @@ impl Rem6RunConfig {
             .as_deref()
             .map(CliCachePrefetcher::parse_instruction_cache)
             .transpose()?;
-        let mut fabric_link = file_config.fabric_link.clone();
-        let mut fabric_bandwidth_bytes_per_tick = file_config.fabric_bandwidth_bytes_per_tick;
-        if fabric_bandwidth_bytes_per_tick == Some(0) {
-            return Err(Rem6CliError::InvalidRunFabricBandwidth {
-                value: "0".to_string(),
-            });
-        }
-        let mut fabric_request_virtual_network = file_config.fabric_request_virtual_network;
-        let mut fabric_response_virtual_network = file_config.fabric_response_virtual_network;
-        let mut fabric_credit_depth = file_config.fabric_credit_depth;
-        if fabric_credit_depth == Some(0) {
-            return Err(Rem6CliError::InvalidRunFabricCreditDepth {
-                value: "0".to_string(),
-            });
-        }
+        let mut fabric_parts = RunFabricConfigParts::new(
+            file_config.fabric_link.clone(),
+            file_config.fabric_bandwidth_bytes_per_tick,
+            file_config.fabric_request_virtual_network,
+            file_config.fabric_response_virtual_network,
+            file_config.fabric_credit_depth,
+            file_config.fabric_router.clone(),
+            file_config.fabric_router_input_port,
+            file_config.fabric_router_output_port,
+            file_config.fabric_router_virtual_channel,
+            file_config.fabric_router_latency,
+        )?;
         let mut gdb_listen = None;
         let mut debug_flags =
             parse_debug_flags(file_config.debug_flags.as_deref().unwrap_or_default())?;
@@ -987,30 +987,37 @@ impl Rem6RunConfig {
                         )?);
                 }
                 "--fabric-link" => {
-                    fabric_link = Some(required_value(&flag, args.next())?);
+                    fabric_parts.set_link(required_value(&flag, args.next())?);
                 }
                 "--fabric-bandwidth-bytes-per-tick" => {
-                    let value = required_value(&flag, args.next())?;
-                    fabric_bandwidth_bytes_per_tick =
-                        Some(parse_positive_u64(&value).ok_or_else(|| {
-                            Rem6CliError::InvalidRunFabricBandwidth {
-                                value: value.clone(),
-                            }
-                        })?);
+                    fabric_parts.set_bandwidth(&required_value(&flag, args.next())?)?;
                 }
                 "--fabric-request-virtual-network" => {
-                    let value = required_value(&flag, args.next())?;
-                    fabric_request_virtual_network =
-                        Some(parse_run_fabric_virtual_network(&value)?);
+                    fabric_parts
+                        .set_request_virtual_network(&required_value(&flag, args.next())?)?;
                 }
                 "--fabric-response-virtual-network" => {
-                    let value = required_value(&flag, args.next())?;
-                    fabric_response_virtual_network =
-                        Some(parse_run_fabric_virtual_network(&value)?);
+                    fabric_parts
+                        .set_response_virtual_network(&required_value(&flag, args.next())?)?;
                 }
                 "--fabric-credit-depth" => {
-                    let value = required_value(&flag, args.next())?;
-                    fabric_credit_depth = Some(parse_run_fabric_credit_depth(&value)?);
+                    fabric_parts.set_credit_depth(&required_value(&flag, args.next())?)?;
+                }
+                "--fabric-router" => {
+                    fabric_parts.set_router(&required_value(&flag, args.next())?)?;
+                }
+                "--fabric-router-input-port" => {
+                    fabric_parts.set_router_input_port(&required_value(&flag, args.next())?)?;
+                }
+                "--fabric-router-output-port" => {
+                    fabric_parts.set_router_output_port(&required_value(&flag, args.next())?)?;
+                }
+                "--fabric-router-virtual-channel" => {
+                    fabric_parts
+                        .set_router_virtual_channel(&required_value(&flag, args.next())?)?;
+                }
+                "--fabric-router-latency" => {
+                    fabric_parts.set_router_latency(&required_value(&flag, args.next())?)?;
                 }
                 "--gdb-listen" => {
                     gdb_listen = Some(required_value(&flag, args.next())?);
@@ -1148,11 +1155,7 @@ impl Rem6RunConfig {
             || instruction_cache_l2_protocol.is_some()
             || instruction_cache_l3_protocol.is_some()
             || instruction_cache_prefetcher.is_some()
-            || fabric_link.is_some()
-            || fabric_bandwidth_bytes_per_tick.is_some()
-            || fabric_request_virtual_network.is_some()
-            || fabric_response_virtual_network.is_some()
-            || fabric_credit_depth.is_some();
+            || fabric_parts.is_set();
         let explicit_memory_hierarchy =
             dram_memory_disabled_by_config || explicit_enabled_memory_hierarchy;
         if execute
@@ -1181,11 +1184,7 @@ impl Rem6RunConfig {
                 &mut instruction_cache_protocol,
                 &mut instruction_cache_l2_protocol,
                 &mut instruction_cache_l3_protocol,
-                &mut fabric_link,
-                &mut fabric_bandwidth_bytes_per_tick,
-                &mut fabric_request_virtual_network,
-                &mut fabric_response_virtual_network,
-                &mut fabric_credit_depth,
+                &mut fabric_parts,
             )?;
         }
         if !riscv_se {
@@ -1232,13 +1231,7 @@ impl Rem6RunConfig {
             .ok_or(Rem6CliError::MissingRequiredFlag {
                 flag: "--binary or --resource-config",
             })?;
-        let fabric = run_fabric_config_from_parts(
-            fabric_link,
-            fabric_bandwidth_bytes_per_tick,
-            fabric_request_virtual_network,
-            fabric_response_virtual_network,
-            fabric_credit_depth,
-        )?;
+        let fabric = run_fabric_config_from_parts(fabric_parts)?;
         let (dram_timing, dram_low_power_timing, dram_refresh_timing) =
             validate_dram_timing_options(
                 dram_memory,
