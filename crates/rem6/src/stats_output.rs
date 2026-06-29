@@ -224,6 +224,13 @@ pub(super) fn run_stats_output(
         StatResetPolicy::Constant,
         dynamic_table.needed_count(),
     )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.dynamic.needed_name_bytes",
+        "Byte",
+        StatResetPolicy::Constant,
+        dynamic_table.needed_name_bytes(),
+    )?;
     let program_header_table = inputs.metadata.program_header_table();
     increment_stat(
         &mut stats,

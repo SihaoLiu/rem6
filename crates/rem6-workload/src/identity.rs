@@ -149,7 +149,7 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     hash_str(&mut hash, "rem6.workload.manifest.v2");
     hash_str(&mut hash, input.id.as_str());
     hash_u64(&mut hash, input.boot.entry().get());
-    hash_elf_metadata(&mut hash, input.boot.elf_metadata());
+    hash_elf_metadata(&mut hash, input.boot.elf_metadata_ref());
     hash_elf_interpreter(&mut hash, input.boot.elf_interpreter());
     hash_u64(&mut hash, input.boot.segments().len() as u64);
     for segment in input.boot.segments() {

@@ -4,7 +4,7 @@ use rem6_boot::{
 
 use super::{hash_str, hash_u64};
 
-pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<BootElfMetadata>) {
+pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadata>) {
     match metadata {
         Some(metadata) => {
             hash_u64(hash, 1);
@@ -40,6 +40,9 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<BootElfMetadata
                     dynamic.needed_count(),
                 ] {
                     hash_u64(hash, value);
+                }
+                for library in dynamic.needed_libraries() {
+                    hash_str(hash, library);
                 }
             }
         }

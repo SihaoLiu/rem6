@@ -72,6 +72,27 @@ pub enum BootElfError {
     UnterminatedDynamicTable {
         segment: u16,
     },
+    DynamicStringTableMissing {
+        segment: u16,
+    },
+    DynamicStringTableAddressOutOfBounds {
+        segment: u16,
+        virtual_address: u64,
+        size: u64,
+    },
+    DynamicNeededStringOutOfBounds {
+        segment: u16,
+        offset: u64,
+        string_table_size: u64,
+    },
+    UnterminatedDynamicNeededString {
+        segment: u16,
+        offset: u64,
+    },
+    InvalidDynamicNeededString {
+        segment: u16,
+        offset: u64,
+    },
     ProgramHeaderTableOutOfBounds {
         offset: u64,
         size: u64,
@@ -211,6 +232,34 @@ impl fmt::Display for BootElfError {
             Self::UnterminatedDynamicTable { segment } => write!(
                 formatter,
                 "ELF dynamic segment {segment} is not null-terminated"
+            ),
+            Self::DynamicStringTableMissing { segment } => write!(
+                formatter,
+                "ELF dynamic segment {segment} has DT_NEEDED entries without a string table"
+            ),
+            Self::DynamicStringTableAddressOutOfBounds {
+                segment,
+                virtual_address,
+                size,
+            } => write!(
+                formatter,
+                "ELF dynamic segment {segment} string table virtual range {virtual_address:#x}+{size:#x} is not file-backed by a load segment"
+            ),
+            Self::DynamicNeededStringOutOfBounds {
+                segment,
+                offset,
+                string_table_size,
+            } => write!(
+                formatter,
+                "ELF dynamic segment {segment} needed-string offset {offset:#x} exceeds string table size {string_table_size:#x}"
+            ),
+            Self::UnterminatedDynamicNeededString { segment, offset } => write!(
+                formatter,
+                "ELF dynamic segment {segment} needed-string offset {offset:#x} is not null-terminated"
+            ),
+            Self::InvalidDynamicNeededString { segment, offset } => write!(
+                formatter,
+                "ELF dynamic segment {segment} needed-string offset {offset:#x} is not valid UTF-8"
             ),
             Self::ProgramHeaderTableOutOfBounds {
                 offset,

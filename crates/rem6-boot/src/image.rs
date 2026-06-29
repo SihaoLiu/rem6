@@ -29,8 +29,12 @@ impl BootImage {
         self.entry
     }
 
-    pub const fn elf_metadata(&self) -> Option<BootElfMetadata> {
-        self.elf_metadata
+    pub fn elf_metadata(&self) -> Option<BootElfMetadata> {
+        self.elf_metadata.clone()
+    }
+
+    pub const fn elf_metadata_ref(&self) -> Option<&BootElfMetadata> {
+        self.elf_metadata.as_ref()
     }
 
     pub fn elf_interpreter(&self) -> Option<&BootElfInterpreter> {
@@ -61,7 +65,7 @@ impl BootImage {
             .unwrap_or(Address::new(0))
     }
 
-    pub const fn with_elf_metadata(mut self, metadata: BootElfMetadata) -> Self {
+    pub fn with_elf_metadata(mut self, metadata: BootElfMetadata) -> Self {
         self.elf_metadata = Some(metadata);
         self
     }

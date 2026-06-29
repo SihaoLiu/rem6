@@ -604,7 +604,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
     let stats = run_stats_output(Rem6StatsInputs {
         binary_bytes: bytes.len() as u64,
         load_segments: image.segments().len() as u64,
-        metadata,
+        metadata: metadata.clone(),
         interpreter: interpreter.as_ref(),
         load_blobs: &load_blob_summaries,
         readfiles: &readfile_summaries,
@@ -739,7 +739,10 @@ fn execute_riscv(
         memory_partition,
         config.memory_route_delay(),
     )?;
-    let gdb_xlen = match image.elf_metadata().map(|metadata| metadata.architecture()) {
+    let gdb_xlen = match image
+        .elf_metadata_ref()
+        .map(|metadata| metadata.architecture())
+    {
         Some(BootElfArchitecture::Riscv32) => RiscvGdbXlen::Rv32,
         _ => RiscvGdbXlen::Rv64,
     };
@@ -755,8 +758,8 @@ fn execute_riscv(
         for entry in config.riscv_se_env() {
             startup_config = startup_config.with_env(entry);
         }
-        if let Some(metadata) = image.elf_metadata() {
-            startup_config = startup_config.with_elf_auxv(metadata);
+        if let Some(metadata) = image.elf_metadata_ref() {
+            startup_config = startup_config.with_elf_auxv(metadata.clone());
         }
         let startup = startup_config
             .with_auxv_entry(RiscvSeAuxvEntry::new(

@@ -29,8 +29,12 @@ impl WorkloadBootImage {
         self.entry
     }
 
-    pub const fn elf_metadata(&self) -> Option<BootElfMetadata> {
-        self.elf_metadata
+    pub fn elf_metadata(&self) -> Option<BootElfMetadata> {
+        self.elf_metadata.clone()
+    }
+
+    pub const fn elf_metadata_ref(&self) -> Option<&BootElfMetadata> {
+        self.elf_metadata.as_ref()
     }
 
     pub fn elf_interpreter(&self) -> Option<&BootElfInterpreter> {
@@ -43,7 +47,7 @@ impl WorkloadBootImage {
 
     pub fn to_boot_image(&self) -> Result<BootImage, WorkloadError> {
         let mut image = BootImage::new(self.entry);
-        if let Some(metadata) = self.elf_metadata {
+        if let Some(metadata) = self.elf_metadata.clone() {
             image = image.with_elf_metadata(metadata);
         }
         if let Some(interpreter) = &self.elf_interpreter {

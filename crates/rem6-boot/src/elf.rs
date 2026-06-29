@@ -1,6 +1,7 @@
 use rem6_memory::{AccessSize, Address, AddressRange};
 
 use crate::elf_counts::{program_header_table_size, resolve_program_header_count};
+use crate::elf_dynamic::{dynamic_table_counts, elf32_load_mappings, elf64_load_mappings};
 use crate::elf_interpreter::read_interpreter;
 use crate::elf_sections::{elf_section_summary, ElfSectionSummary};
 use crate::error::{invalid_elf, BootElfError, BootError};
@@ -24,8 +25,6 @@ const ELF_OSABI_ARM: u8 = 97;
 const PT_LOAD: u32 = 1;
 const PT_DYNAMIC: u32 = 2;
 const PT_INTERP: u32 = 3;
-const DT_NULL: u64 = 0;
-const DT_NEEDED: u64 = 1;
 const EM_SPARC: u16 = 2;
 const EM_386: u16 = 3;
 const EM_MIPS: u16 = 8;
@@ -226,6 +225,13 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         program_header_size,
         program_header_count,
     )?;
+    let load_mappings = elf64_load_mappings(
+        bytes,
+        program_header_offset,
+        program_header_size,
+        program_header_count,
+        endian,
+    )?;
 
     let mut image = BootImage::new(entry);
     let mut interpreter = None;
@@ -239,14 +245,22 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         if kind == PT_DYNAMIC {
             let file_offset = read_u64_at_u64(bytes, header_offset + 8, endian)?;
             let file_size = read_u64_at_u64(bytes, header_offset + 32, endian)?;
-            let (entry_count, needed_count) =
-                dynamic_table_counts(bytes, segment, file_offset, file_size, 16, endian)?;
+            let (entry_count, needed_count, needed_libraries) = dynamic_table_counts(
+                bytes,
+                segment,
+                file_offset,
+                file_size,
+                16,
+                endian,
+                &load_mappings,
+            )?;
             dynamic_table = dynamic_table.with_segment(
                 file_offset,
                 Address::new(read_u64_at_u64(bytes, header_offset + 16, endian)?),
                 16,
                 entry_count,
                 needed_count,
+                needed_libraries,
             );
             continue;
         }
@@ -397,6 +411,13 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         program_header_size,
         program_header_count,
     )?;
+    let load_mappings = elf32_load_mappings(
+        bytes,
+        program_header_offset,
+        program_header_size,
+        program_header_count,
+        endian,
+    )?;
 
     let mut image = BootImage::new(entry);
     let mut interpreter = None;
@@ -410,8 +431,15 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         if kind == PT_DYNAMIC {
             let file_offset = u64::from(read_u32_at_u64(bytes, header_offset + 4, endian)?);
             let file_size = u64::from(read_u32_at_u64(bytes, header_offset + 16, endian)?);
-            let (entry_count, needed_count) =
-                dynamic_table_counts(bytes, segment, file_offset, file_size, 8, endian)?;
+            let (entry_count, needed_count, needed_libraries) = dynamic_table_counts(
+                bytes,
+                segment,
+                file_offset,
+                file_size,
+                8,
+                endian,
+                &load_mappings,
+            )?;
             dynamic_table = dynamic_table.with_segment(
                 file_offset,
                 Address::new(u64::from(read_u32_at_u64(
@@ -422,6 +450,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                 8,
                 entry_count,
                 needed_count,
+                needed_libraries,
             );
             continue;
         }
@@ -566,59 +595,6 @@ fn loaded_file_address(
     Some(Address::new(segment_loaded_start.checked_add(delta)?))
 }
 
-fn dynamic_table_counts(
-    bytes: &[u8],
-    segment: u16,
-    file_offset: u64,
-    file_size: u64,
-    entry_size: u16,
-    endian: BootElfEndian,
-) -> Result<(u64, u64), BootError> {
-    if file_size % u64::from(entry_size) != 0 {
-        return Err(invalid_elf(BootElfError::DynamicTableSizeMisaligned {
-            segment,
-            size: file_size,
-            entry_size,
-        }));
-    }
-    checked_file_range(bytes, file_offset, file_size).map_err(|_| {
-        invalid_elf(BootElfError::DynamicTableFileRangeOutOfBounds {
-            segment,
-            offset: file_offset,
-            size: file_size,
-            image_size: bytes.len() as u64,
-        })
-    })?;
-    let mut entries = 0;
-    let mut needed = 0;
-    for index in 0..(file_size / u64::from(entry_size)) {
-        let offset = file_offset + index * u64::from(entry_size);
-        let tag = read_dynamic_tag(bytes, offset, entry_size, endian)?;
-        entries += 1;
-        if tag == DT_NULL {
-            return Ok((entries, needed));
-        }
-        if tag == DT_NEEDED {
-            needed += 1;
-        }
-    }
-    Err(invalid_elf(BootElfError::UnterminatedDynamicTable {
-        segment,
-    }))
-}
-
-fn read_dynamic_tag(
-    bytes: &[u8],
-    offset: u64,
-    entry_size: u16,
-    endian: BootElfEndian,
-) -> Result<u64, BootError> {
-    if entry_size == 8 {
-        return read_u32_at_u64(bytes, offset, endian).map(u64::from);
-    }
-    read_u64_at_u64(bytes, offset, endian)
-}
-
 fn zeroed_segment_data(
     segment: u16,
     memory_size: u64,
@@ -728,7 +704,11 @@ fn read_u32(bytes: &[u8], offset: usize, endian: BootElfEndian) -> Result<u32, B
     Ok(endian.read_u32([data[0], data[1], data[2], data[3]]))
 }
 
-fn read_u32_at_u64(bytes: &[u8], offset: u64, endian: BootElfEndian) -> Result<u32, BootError> {
+pub(crate) fn read_u32_at_u64(
+    bytes: &[u8],
+    offset: u64,
+    endian: BootElfEndian,
+) -> Result<u32, BootError> {
     let offset = usize::try_from(offset).map_err(|_| {
         invalid_elf(BootElfError::TruncatedField {
             offset,
@@ -747,7 +727,11 @@ fn read_u64(bytes: &[u8], offset: usize, endian: BootElfEndian) -> Result<u64, B
     ]))
 }
 
-fn read_u64_at_u64(bytes: &[u8], offset: u64, endian: BootElfEndian) -> Result<u64, BootError> {
+pub(crate) fn read_u64_at_u64(
+    bytes: &[u8],
+    offset: u64,
+    endian: BootElfEndian,
+) -> Result<u64, BootError> {
     let offset = usize::try_from(offset).map_err(|_| {
         invalid_elf(BootElfError::TruncatedField {
             offset,
@@ -770,7 +754,7 @@ fn read_exact(bytes: &[u8], offset: usize, size: usize) -> Result<&[u8], BootErr
         })
 }
 
-fn checked_file_range(bytes: &[u8], offset: u64, size: u64) -> Result<&[u8], ()> {
+pub(crate) fn checked_file_range(bytes: &[u8], offset: u64, size: u64) -> Result<&[u8], ()> {
     let end = offset.checked_add(size).ok_or(())?;
     let start = usize::try_from(offset).map_err(|_| ())?;
     let end = usize::try_from(end).map_err(|_| ())?;

@@ -173,7 +173,10 @@ fn elf64_image_with_symbols(machine: u16) -> Vec<u8> {
 }
 
 fn elf64_image_with_dynamic_table(machine: u16, needed_count: usize) -> Vec<u8> {
-    let mut bytes = vec![0; 0x204];
+    assert!(needed_count <= 2);
+    let strtab = b"\0lib0.so\0lib1.so\0";
+    let strtab_offset = 0x260usize;
+    let mut bytes = vec![0; strtab_offset + strtab.len()];
     bytes[0..4].copy_from_slice(b"\x7fELF");
     bytes[4] = 2;
     bytes[5] = 1;
@@ -192,12 +195,20 @@ fn elf64_image_with_dynamic_table(machine: u16, needed_count: usize) -> Vec<u8> 
     write_u64(&mut bytes, 72, 0x200);
     write_u64(&mut bytes, 80, 0x8000);
     write_u64(&mut bytes, 88, 0x8000);
-    write_u64(&mut bytes, 96, 4);
-    write_u64(&mut bytes, 104, 4);
+    write_u64(
+        &mut bytes,
+        96,
+        (strtab_offset + strtab.len() - 0x200) as u64,
+    );
+    write_u64(
+        &mut bytes,
+        104,
+        (strtab_offset + strtab.len() - 0x200) as u64,
+    );
     write_u64(&mut bytes, 112, 0x1000);
 
     let dynamic_offset = 0x180usize;
-    let dynamic_size = (needed_count + 1) * 16;
+    let dynamic_size = (needed_count + 3) * 16;
     write_u32(&mut bytes, 120, 2);
     write_u32(&mut bytes, 124, 4);
     write_u64(&mut bytes, 128, dynamic_offset as u64);
@@ -207,15 +218,52 @@ fn elf64_image_with_dynamic_table(machine: u16, needed_count: usize) -> Vec<u8> 
     write_u64(&mut bytes, 160, dynamic_size as u64);
     write_u64(&mut bytes, 168, 8);
 
+    let needed_offsets = [1u64, 9u64];
     for index in 0..needed_count {
         let entry = dynamic_offset + index * 16;
         write_u64(&mut bytes, entry, 1);
-        write_u64(&mut bytes, entry + 8, (index * 8) as u64);
+        write_u64(&mut bytes, entry + 8, needed_offsets[index]);
     }
-    let null_entry = dynamic_offset + needed_count * 16;
+    let strtab_entry = dynamic_offset + needed_count * 16;
+    write_u64(&mut bytes, strtab_entry, 5);
+    write_u64(&mut bytes, strtab_entry + 8, 0x8060);
+    write_u64(&mut bytes, strtab_entry + 16, 10);
+    write_u64(&mut bytes, strtab_entry + 24, strtab.len() as u64);
+    let null_entry = strtab_entry + 32;
     write_u64(&mut bytes, null_entry, 0);
     write_u64(&mut bytes, null_entry + 8, 0);
     bytes[0x200..0x204].copy_from_slice(&[0x13, 0x05, 0x00, 0x00]);
+    bytes[strtab_offset..strtab_offset + strtab.len()].copy_from_slice(strtab);
+    bytes
+}
+
+fn elf64_image_with_dynamic_libraries(machine: u16, libraries: &[&str]) -> Vec<u8> {
+    let mut bytes = elf64_image_with_dynamic_table(machine, libraries.len());
+    let mut strtab = vec![0];
+    let mut offsets = Vec::new();
+    for library in libraries {
+        offsets.push(strtab.len() as u64);
+        strtab.extend_from_slice(library.as_bytes());
+        strtab.push(0);
+    }
+    let strtab_offset = 0x260usize;
+    bytes.resize(strtab_offset + strtab.len(), 0);
+    let file_size = (strtab_offset + strtab.len() - 0x200) as u64;
+    write_u64(&mut bytes, 96, file_size);
+    write_u64(&mut bytes, 104, file_size);
+    for (index, offset) in offsets.iter().enumerate() {
+        write_u64(&mut bytes, 0x180 + index * 16 + 8, *offset);
+    }
+    let strtab_entry = 0x180 + libraries.len() * 16;
+    write_u64(&mut bytes, strtab_entry, 5);
+    write_u64(&mut bytes, strtab_entry + 8, 0x8060);
+    write_u64(&mut bytes, strtab_entry + 16, 10);
+    write_u64(&mut bytes, strtab_entry + 24, strtab.len() as u64);
+    write_u64(&mut bytes, strtab_entry + 32, 0);
+    write_u64(&mut bytes, strtab_entry + 40, 0);
+    write_u64(&mut bytes, 152, ((libraries.len() + 3) * 16) as u64);
+    write_u64(&mut bytes, 160, ((libraries.len() + 3) * 16) as u64);
+    bytes[strtab_offset..strtab_offset + strtab.len()].copy_from_slice(&strtab);
     bytes
 }
 
@@ -335,8 +383,31 @@ fn workload_boot_image_preserves_elf_dynamic_table_round_trip() {
     assert_eq!(dynamic.file_offset(), Some(0x180));
     assert_eq!(dynamic.virtual_address().unwrap().get(), 0x8180);
     assert_eq!(dynamic.entry_size(), 16);
-    assert_eq!(dynamic.entry_count(), 3);
+    assert_eq!(dynamic.entry_count(), 5);
     assert_eq!(dynamic.needed_count(), 2);
+}
+
+#[test]
+fn workload_boot_image_preserves_elf_dynamic_needed_names_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_dynamic_libraries(
+        243,
+        &["libc.so.6", "libm.so.6"],
+    ))
+    .unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = round_trip_metadata.dynamic_table();
+
+    assert_eq!(dynamic.needed_count(), 2);
+    assert_eq!(
+        dynamic.needed_libraries(),
+        &["libc.so.6".to_string(), "libm.so.6".to_string()],
+    );
 }
 
 #[test]

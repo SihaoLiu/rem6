@@ -71,7 +71,7 @@ impl BootElfProgramHeaderTable {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BootElfDynamicTable {
     segment_count: u64,
     file_offset: Option<u64>,
@@ -79,10 +79,11 @@ pub struct BootElfDynamicTable {
     entry_size: u16,
     entry_count: u64,
     needed_count: u64,
+    needed_libraries: Vec<String>,
 }
 
 impl BootElfDynamicTable {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             segment_count: 0,
             file_offset: None,
@@ -90,16 +91,18 @@ impl BootElfDynamicTable {
             entry_size: 0,
             entry_count: 0,
             needed_count: 0,
+            needed_libraries: Vec::new(),
         }
     }
 
-    pub const fn with_segment(
+    pub fn with_segment(
         mut self,
         file_offset: u64,
         virtual_address: Address,
         entry_size: u16,
         entry_count: u64,
         needed_count: u64,
+        needed_libraries: Vec<String>,
     ) -> Self {
         self.segment_count += 1;
         if self.file_offset.is_none() {
@@ -108,36 +111,48 @@ impl BootElfDynamicTable {
             self.entry_size = entry_size;
             self.entry_count = entry_count;
             self.needed_count = needed_count;
+            self.needed_libraries = needed_libraries;
         }
         self
     }
 
-    pub const fn segment_count(self) -> u64 {
+    pub const fn segment_count(&self) -> u64 {
         self.segment_count
     }
 
-    pub const fn file_offset(self) -> Option<u64> {
+    pub const fn file_offset(&self) -> Option<u64> {
         self.file_offset
     }
 
-    pub const fn virtual_address(self) -> Option<Address> {
+    pub const fn virtual_address(&self) -> Option<Address> {
         self.virtual_address
     }
 
-    pub const fn entry_size(self) -> u16 {
+    pub const fn entry_size(&self) -> u16 {
         self.entry_size
     }
 
-    pub const fn entry_count(self) -> u64 {
+    pub const fn entry_count(&self) -> u64 {
         self.entry_count
     }
 
-    pub const fn needed_count(self) -> u64 {
+    pub const fn needed_count(&self) -> u64 {
         self.needed_count
+    }
+
+    pub fn needed_libraries(&self) -> &[String] {
+        &self.needed_libraries
+    }
+
+    pub fn needed_name_bytes(&self) -> u64 {
+        self.needed_libraries
+            .iter()
+            .map(|library| library.len() as u64)
+            .sum()
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BootElfMetadata {
     class: BootElfClass,
     endian: BootElfEndian,
@@ -155,7 +170,7 @@ pub struct BootElfMetadata {
 }
 
 impl BootElfMetadata {
-    pub(crate) const fn from_header(
+    pub(crate) fn from_header(
         class: BootElfClass,
         endian: BootElfEndian,
         machine: u16,
@@ -181,15 +196,12 @@ impl BootElfMetadata {
         }
     }
 
-    pub(crate) const fn with_program_header_table(
-        mut self,
-        table: BootElfProgramHeaderTable,
-    ) -> Self {
+    pub(crate) fn with_program_header_table(mut self, table: BootElfProgramHeaderTable) -> Self {
         self.program_header_table = table;
         self
     }
 
-    pub(crate) const fn with_dynamic_table(mut self, dynamic_table: BootElfDynamicTable) -> Self {
+    pub(crate) fn with_dynamic_table(mut self, dynamic_table: BootElfDynamicTable) -> Self {
         self.dynamic_table = dynamic_table;
         self
     }
@@ -255,8 +267,8 @@ impl BootElfMetadata {
         self.object_symbol_count
     }
 
-    pub const fn dynamic_table(&self) -> BootElfDynamicTable {
-        self.dynamic_table
+    pub const fn dynamic_table(&self) -> &BootElfDynamicTable {
+        &self.dynamic_table
     }
 
     pub const fn program_header_table(&self) -> BootElfProgramHeaderTable {

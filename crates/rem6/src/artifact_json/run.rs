@@ -267,7 +267,7 @@ fn elf_interpreter_json(interpreter: Option<&BootElfInterpreter>) -> String {
         .unwrap_or_else(|| "null".to_string())
 }
 
-fn elf_dynamic_table_json(table: BootElfDynamicTable) -> String {
+fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
     let file_offset = table
         .file_offset()
         .map(|offset| offset.to_string())
@@ -276,14 +276,21 @@ fn elf_dynamic_table_json(table: BootElfDynamicTable) -> String {
         .virtual_address()
         .map(|address| format!("\"0x{:x}\"", address.get()))
         .unwrap_or_else(|| "null".to_string());
+    let needed_libraries = table
+        .needed_libraries()
+        .iter()
+        .map(|library| format!("\"{}\"", json_escape(library)))
+        .collect::<Vec<_>>()
+        .join(",");
     format!(
-        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{}}}",
+        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":[{}]}}",
         table.segment_count(),
         file_offset,
         virtual_address,
         table.entry_size(),
         table.entry_count(),
-        table.needed_count()
+        table.needed_count(),
+        needed_libraries
     )
 }
 

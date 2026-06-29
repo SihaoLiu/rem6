@@ -500,7 +500,7 @@ fn cli_image_segment_backing_range(
     image: &BootImage,
     range: AddressRange,
 ) -> Result<AddressRange, Rem6CliError> {
-    if image.elf_metadata().is_none() {
+    if image.elf_metadata_ref().is_none() {
         return Ok(range);
     }
     let end = align_up_to_elf_load_page(range.end().get())?;

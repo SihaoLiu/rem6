@@ -703,11 +703,18 @@ fn boot_image_records_elf32_interpreter_metadata() {
 
 #[test]
 fn boot_image_records_elf64_dynamic_table_metadata() {
+    let strtab = b"\0libc.so.6\0libm.so.6\0";
+    let strtab_offset = 0x220usize;
+    let load_file_size = (strtab_offset + strtab.len()) as u64;
     let dynamic = [
         1u64.to_le_bytes(),
-        0x20u64.to_le_bytes(),
         1u64.to_le_bytes(),
-        0x30u64.to_le_bytes(),
+        1u64.to_le_bytes(),
+        11u64.to_le_bytes(),
+        5u64.to_le_bytes(),
+        0x8000_0220u64.to_le_bytes(),
+        10u64.to_le_bytes(),
+        (strtab.len() as u64).to_le_bytes(),
         0u64.to_le_bytes(),
         0u64.to_le_bytes(),
     ]
@@ -717,10 +724,10 @@ fn boot_image_records_elf64_dynamic_table_metadata() {
         &[
             ElfProgramHeaderSpec {
                 kind: 1,
-                offset: 0x200,
+                offset: 0,
                 physical: 0x8000_0000,
-                file_size: 4,
-                memory_size: 4,
+                file_size: load_file_size,
+                memory_size: load_file_size,
             },
             ElfProgramHeaderSpec {
                 kind: 2,
@@ -730,7 +737,11 @@ fn boot_image_records_elf64_dynamic_table_metadata() {
                 memory_size: dynamic.len() as u64,
             },
         ],
-        &[(0x180, &dynamic), (0x200, &[0x13, 0, 0, 0])],
+        &[
+            (0x180, &dynamic),
+            (0x200, &[0x13, 0, 0, 0]),
+            (strtab_offset, strtab),
+        ],
     );
 
     let metadata = BootImage::from_elf64_le(&elf)
@@ -742,30 +753,37 @@ fn boot_image_records_elf64_dynamic_table_metadata() {
     assert_eq!(dynamic.file_offset(), Some(0x180));
     assert_eq!(dynamic.virtual_address(), Some(Address::new(0x8000_0180)));
     assert_eq!(dynamic.entry_size(), 16);
-    assert_eq!(dynamic.entry_count(), 3);
+    assert_eq!(dynamic.entry_count(), 5);
     assert_eq!(dynamic.needed_count(), 2);
 }
 
 #[test]
-fn boot_image_records_elf32_dynamic_table_metadata() {
+fn boot_image_resolves_elf64_dynamic_needed_libraries() {
+    let strtab = b"\0libc.so.6\0libm.so.6\0";
+    let strtab_offset = 0x220usize;
+    let load_file_size = (strtab_offset + strtab.len()) as u64;
     let dynamic = [
-        1u32.to_le_bytes(),
-        0x20u32.to_le_bytes(),
-        1u32.to_le_bytes(),
-        0x30u32.to_le_bytes(),
-        0u32.to_le_bytes(),
-        0u32.to_le_bytes(),
+        1u64.to_le_bytes(),
+        1u64.to_le_bytes(),
+        1u64.to_le_bytes(),
+        11u64.to_le_bytes(),
+        5u64.to_le_bytes(),
+        0x8000_0220u64.to_le_bytes(),
+        10u64.to_le_bytes(),
+        (strtab.len() as u64).to_le_bytes(),
+        0u64.to_le_bytes(),
+        0u64.to_le_bytes(),
     ]
     .concat();
-    let elf = elf32_image(
-        0x8000_0000,
+    let elf = elf64_image(
+        0x8000_0200,
         &[
             ElfProgramHeaderSpec {
                 kind: 1,
-                offset: 0x200,
+                offset: 0,
                 physical: 0x8000_0000,
-                file_size: 4,
-                memory_size: 4,
+                file_size: load_file_size,
+                memory_size: load_file_size,
             },
             ElfProgramHeaderSpec {
                 kind: 2,
@@ -775,7 +793,68 @@ fn boot_image_records_elf32_dynamic_table_metadata() {
                 memory_size: dynamic.len() as u64,
             },
         ],
-        &[(0x180, &dynamic), (0x200, &[0x13, 0, 0, 0])],
+        &[
+            (0x180, &dynamic),
+            (0x200, &[0x13, 0, 0, 0]),
+            (strtab_offset, strtab),
+        ],
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(dynamic.needed_count(), 2);
+    assert_eq!(
+        dynamic.needed_libraries(),
+        &["libc.so.6".to_string(), "libm.so.6".to_string()],
+    );
+    assert_eq!(dynamic.needed_name_bytes(), 18);
+}
+
+#[test]
+fn boot_image_records_elf32_dynamic_table_metadata() {
+    let strtab = b"\0libc.so.6\0libm.so.6\0";
+    let strtab_offset = 0x220usize;
+    let load_file_size = (strtab_offset + strtab.len()) as u64;
+    let dynamic = [
+        1u32.to_le_bytes(),
+        1u32.to_le_bytes(),
+        1u32.to_le_bytes(),
+        11u32.to_le_bytes(),
+        5u32.to_le_bytes(),
+        0x8000_0220u32.to_le_bytes(),
+        10u32.to_le_bytes(),
+        (strtab.len() as u32).to_le_bytes(),
+        0u32.to_le_bytes(),
+        0u32.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf32_image(
+        0x8000_0000,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0,
+                physical: 0x8000_0000,
+                file_size: load_file_size,
+                memory_size: load_file_size,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[
+            (0x180, &dynamic),
+            (0x200, &[0x13, 0, 0, 0]),
+            (strtab_offset, strtab),
+        ],
     );
 
     let metadata = BootImage::from_elf32_le(&elf)
@@ -787,8 +866,12 @@ fn boot_image_records_elf32_dynamic_table_metadata() {
     assert_eq!(dynamic.file_offset(), Some(0x180));
     assert_eq!(dynamic.virtual_address(), Some(Address::new(0x8000_0180)));
     assert_eq!(dynamic.entry_size(), 8);
-    assert_eq!(dynamic.entry_count(), 3);
+    assert_eq!(dynamic.entry_count(), 5);
     assert_eq!(dynamic.needed_count(), 2);
+    assert_eq!(
+        dynamic.needed_libraries(),
+        &["libc.so.6".to_string(), "libm.so.6".to_string()],
+    );
 }
 
 #[test]
@@ -895,6 +978,44 @@ fn boot_image_rejects_dynamic_table_partial_entry() {
                 size: dynamic.len() as u64 - 1,
                 entry_size: 16,
             },
+        },
+    );
+}
+
+#[test]
+fn boot_image_rejects_dynamic_needed_without_string_table() {
+    let dynamic = [
+        1u64.to_le_bytes(),
+        1u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf64_image(
+        0x8000_0000,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[(0x180, &dynamic), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    assert_eq!(
+        BootImage::from_elf64_le(&elf).unwrap_err(),
+        BootError::InvalidElf {
+            reason: BootElfError::DynamicStringTableMissing { segment: 1 },
         },
     );
 }

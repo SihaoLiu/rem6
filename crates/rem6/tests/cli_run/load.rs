@@ -290,7 +290,7 @@ fn rem6_run_reports_elf_dynamic_table_summary() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"status\":\"loaded\""));
     assert!(stdout.contains(
-        "\"dynamic\":{\"segments\":1,\"file_offset\":384,\"virtual_address\":\"0x80000180\",\"entry_size\":16,\"entry_count\":3,\"needed\":2}"
+        "\"dynamic\":{\"segments\":1,\"file_offset\":384,\"virtual_address\":\"0x80000180\",\"entry_size\":16,\"entry_count\":5,\"needed\":2,\"needed_libraries\":[\"libc.so.6\",\"libm.so.6\"]}"
     ));
     assert_stat(&stdout, "sim.elf.dynamic.segments", "Count", 1, "constant");
     assert_stat(
@@ -314,8 +314,15 @@ fn rem6_run_reports_elf_dynamic_table_summary() {
         16,
         "constant",
     );
-    assert_stat(&stdout, "sim.elf.dynamic.entries", "Count", 3, "constant");
+    assert_stat(&stdout, "sim.elf.dynamic.entries", "Count", 5, "constant");
     assert_stat(&stdout, "sim.elf.dynamic.needed", "Count", 2, "constant");
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.needed_name_bytes",
+        "Byte",
+        18,
+        "constant",
+    );
 }
 
 #[test]
