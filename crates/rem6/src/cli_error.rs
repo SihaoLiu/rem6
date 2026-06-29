@@ -48,6 +48,7 @@ pub enum Rem6CliError {
         profile: String,
     },
     DramMemoryProfileRequiresDramMemory,
+    DramTimingRequiresDramMemory,
     DramLowPowerTimingRequiresDramMemory,
     DramLowPowerTimingRequiresLowPowerProfile {
         profile: String,
@@ -56,6 +57,7 @@ pub enum Rem6CliError {
     DramRefreshTimingRequiresRefreshProfile {
         profile: String,
     },
+    IncompleteDramCommandWindowTiming,
     IncompleteDramRefreshTiming,
     InvalidMaxTick {
         value: String,
@@ -70,6 +72,9 @@ pub enum Rem6CliError {
         value: String,
     },
     InvalidDramLowPowerTiming {
+        value: String,
+    },
+    InvalidDramTiming {
         value: String,
     },
     InvalidDramRefreshTiming {
@@ -452,6 +457,9 @@ impl fmt::Display for Rem6CliError {
             Self::DramMemoryProfileRequiresDramMemory => {
                 write!(formatter, "--dram-memory-profile requires --dram-memory")
             }
+            Self::DramTimingRequiresDramMemory => {
+                write!(formatter, "DRAM timing requires --dram-memory")
+            }
             Self::DramLowPowerTimingRequiresDramMemory => {
                 write!(formatter, "DRAM low-power timing requires --dram-memory")
             }
@@ -465,6 +473,10 @@ impl fmt::Display for Rem6CliError {
             Self::DramRefreshTimingRequiresRefreshProfile { profile } => write!(
                 formatter,
                 "DRAM refresh timing requires ddr, ddr4-2400-8gb, ddr5-4800-16gb, hbm, hbm2-2000-2gb, lpddr, or lpddr4-3200-16gb profile, got {profile}"
+            ),
+            Self::IncompleteDramCommandWindowTiming => write!(
+                formatter,
+                "DRAM command-window timing requires both --dram-command-window-cycles and --dram-command-window-max-commands"
             ),
             Self::IncompleteDramRefreshTiming => write!(
                 formatter,
@@ -482,6 +494,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidDramLowPowerTiming { value } => {
                 write!(formatter, "invalid DRAM low-power timing {value}")
+            }
+            Self::InvalidDramTiming { value } => {
+                write!(formatter, "invalid DRAM timing {value}")
             }
             Self::InvalidDramRefreshTiming { value } => {
                 write!(formatter, "invalid DRAM refresh timing {value}")

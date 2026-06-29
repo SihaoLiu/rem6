@@ -2806,6 +2806,210 @@ fn rem6_run_accepts_custom_dram_refresh_timing() {
 }
 
 #[test]
+fn rem6_run_accepts_custom_hbm_dram_timing_table() {
+    let mut words = vec![i_type(0, 0, 0x0, 5, 0x13); 64];
+    words.push(0x0000_0073); // ecall
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("dram-memory-custom-timing-table", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "2000",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--dram-memory-profile",
+            "hbm",
+            "--dram-activate-latency",
+            "11",
+            "--dram-read-latency",
+            "13",
+            "--dram-write-latency",
+            "17",
+            "--dram-precharge-latency",
+            "19",
+            "--dram-bus-turnaround",
+            "23",
+            "--dram-burst-spacing",
+            "5",
+            "--dram-same-bank-group-burst-spacing",
+            "7",
+            "--dram-command-window-cycles",
+            "29",
+            "--dram-command-window-max-commands",
+            "3",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"technology\":\"hbm\""));
+    assert_eq!(json_u64(&json, "/dram/profile/timing/activate_latency"), 11);
+    assert_eq!(json_u64(&json, "/dram/profile/timing/read_latency"), 13);
+    assert_eq!(json_u64(&json, "/dram/profile/timing/write_latency"), 17);
+    assert_eq!(
+        json_u64(&json, "/dram/profile/timing/precharge_latency"),
+        19
+    );
+    assert_eq!(json_u64(&json, "/dram/profile/timing/bus_turnaround"), 23);
+    assert_eq!(json_u64(&json, "/dram/profile/timing/burst_spacing"), 5);
+    assert_eq!(
+        json_u64(&json, "/dram/profile/timing/same_bank_group_burst_spacing"),
+        7
+    );
+    assert_eq!(
+        json_u64(&json, "/dram/profile/timing/command_window/window_cycles"),
+        29
+    );
+    assert_eq!(
+        json_u64(&json, "/dram/profile/timing/command_window/max_commands"),
+        3
+    );
+    assert!(json_u64(&json, "/dram/commands") > 0);
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.activate_latency",
+        "Tick",
+        11,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.read_latency",
+        "Tick",
+        13,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.write_latency",
+        "Tick",
+        17,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.precharge_latency",
+        "Tick",
+        19,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.bus_turnaround",
+        "Tick",
+        23,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.burst_spacing",
+        "Tick",
+        5,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.same_bank_group_burst_spacing",
+        "Tick",
+        7,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.command_window.window_cycles",
+        "Tick",
+        29,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.command_window.max_commands",
+        "Count",
+        3,
+        "constant",
+    );
+}
+
+#[test]
+fn rem6_run_accepts_toml_custom_dram_timing_table() {
+    let mut words = vec![i_type(0, 0, 0x0, 5, 0x13); 64];
+    words.push(0x0000_0073); // ecall
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let binary = temp_binary("toml-dram-memory-custom-timing-table-bin", &elf);
+    let config = temp_config(
+        "toml-dram-memory-custom-timing-table",
+        &format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 8000\nstats_format = \"json\"\nexecute = true\ncores = 1\ndram_memory = true\ndram_memory_profile = \"ddr\"\ndram_activate_latency = 12\ndram_read_latency = 14\ndram_write_latency = 16\ndram_precharge_latency = 18\ndram_bus_turnaround = 20\ndram_burst_spacing = 4\ndram_command_window_cycles = 15\ndram_command_window_max_commands = 2\n",
+            binary.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert_eq!(json_u64(&json, "/dram/profile/timing/activate_latency"), 12);
+    assert_eq!(json_u64(&json, "/dram/profile/timing/read_latency"), 14);
+    assert_eq!(json_u64(&json, "/dram/profile/timing/write_latency"), 16);
+    assert_eq!(
+        json_u64(&json, "/dram/profile/timing/precharge_latency"),
+        18
+    );
+    assert_eq!(json_u64(&json, "/dram/profile/timing/bus_turnaround"), 20);
+    assert_eq!(json_u64(&json, "/dram/profile/timing/burst_spacing"), 4);
+    assert_eq!(
+        json_u64(&json, "/dram/profile/timing/command_window/window_cycles"),
+        15
+    );
+    assert_eq!(
+        json_u64(&json, "/dram/profile/timing/command_window/max_commands"),
+        2
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.command_window.window_cycles",
+        "Tick",
+        15,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.profile.timing.command_window.max_commands",
+        "Count",
+        2,
+        "constant",
+    );
+}
+
+#[test]
 fn rem6_run_accepts_toml_jedec_profile_with_custom_dram_refresh_timing() {
     let mut words = vec![i_type(0, 0, 0x0, 5, 0x13); 64];
     words.push(0x0000_0073); // ecall

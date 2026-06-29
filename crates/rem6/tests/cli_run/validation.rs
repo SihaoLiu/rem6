@@ -1559,6 +1559,63 @@ fn rem6_run_config_scan_treats_dram_low_power_timing_as_value_taking() {
 }
 
 #[test]
+fn rem6_run_config_scan_treats_dram_timing_as_value_taking() {
+    let bogus_config = temp_output("dram-timing-prescan-bogus-config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--dram-activate-latency",
+            "--config",
+            bogus_config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("invalid DRAM timing --config"),
+        "stderr: {stderr}"
+    );
+    assert!(!stderr.contains(&format!("failed to read config {}", bogus_config.display())));
+}
+
+#[test]
+fn rem6_run_rejects_incomplete_dram_command_window_timing() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x73, 0, 0, 0]);
+    let binary = temp_binary("incomplete-dram-command-window", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            binary.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--dram-memory",
+            "--dram-command-window-cycles",
+            "12",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("DRAM command-window timing requires both"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
 fn rem6_run_config_scan_treats_dram_refresh_timing_as_value_taking() {
     let bogus_config = temp_output("dram-refresh-prescan-bogus-config");
 

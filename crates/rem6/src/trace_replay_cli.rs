@@ -26,7 +26,8 @@ use sha2::{Digest, Sha256};
 
 use crate::cli_output::emit_cli_output;
 use crate::config::{
-    CliDramLowPowerTiming, Rem6TraceReplayConfig, StatsFormat, TraceReplayExternalAdapterKind,
+    CliDramLowPowerTiming, CliDramTiming, Rem6TraceReplayConfig, StatsFormat,
+    TraceReplayExternalAdapterKind,
 };
 use crate::data_cache_runtime::CliDataCacheSummary;
 use crate::formatting::bytes_to_hex;
@@ -638,6 +639,7 @@ fn trace_replay_memory_target(
             .with_external_memory_profile(build_cli_dram_profile(
                 line_layout,
                 profile,
+                CliDramTiming::default(),
                 CliDramLowPowerTiming::default(),
                 None,
             )?)

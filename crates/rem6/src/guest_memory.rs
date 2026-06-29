@@ -9,8 +9,8 @@ use rem6_memory::{
 };
 
 use crate::config::{
-    CliDramLowPowerTiming, CliDramMemoryProfile, CliDramRefreshTiming, LoadBlobRequest,
-    LoadBlobSource,
+    CliDramLowPowerTiming, CliDramMemoryProfile, CliDramRefreshTiming, CliDramTiming,
+    LoadBlobRequest, LoadBlobSource,
 };
 use crate::run_resource_config::RunResourcePayloads;
 use crate::{execute_error, Rem6CliError};
@@ -162,12 +162,19 @@ pub(super) fn build_cli_dram_memory(
     load_blobs: &[LoadedBlob],
     line_layout: CacheLineLayout,
     profile: CliDramMemoryProfile,
+    dram_timing: CliDramTiming,
     low_power_timing: CliDramLowPowerTiming,
     refresh_timing: Option<CliDramRefreshTiming>,
 ) -> Result<DramMemoryController, Rem6CliError> {
     let store = build_cli_memory_store(image, load_blobs, line_layout)?;
     let snapshot = store.snapshot();
-    let profile = build_cli_dram_profile(line_layout, profile, low_power_timing, refresh_timing)?;
+    let profile = build_cli_dram_profile(
+        line_layout,
+        profile,
+        dram_timing,
+        low_power_timing,
+        refresh_timing,
+    )?;
     let mut memory = DramMemoryController::new();
     memory.add_profile(profile).map_err(execute_error)?;
     for (target, region) in snapshot.regions() {
@@ -188,11 +195,12 @@ pub(super) fn build_cli_dram_memory(
 pub(super) fn build_cli_dram_profile(
     line_layout: CacheLineLayout,
     profile: CliDramMemoryProfile,
+    dram_timing: CliDramTiming,
     low_power_timing: CliDramLowPowerTiming,
     refresh_timing: Option<CliDramRefreshTiming>,
 ) -> Result<ExternalMemoryProfile, Rem6CliError> {
     let geometry = DramGeometry::new(4, 64, line_layout.bytes()).map_err(execute_error)?;
-    let timing = DramTiming::new(3, 5, 7, 2, 4).map_err(execute_error)?;
+    let timing = cli_dram_timing(dram_timing)?;
     let volatile_timing = timing_with_refresh(
         timing,
         refresh_timing.unwrap_or(CliDramRefreshTiming::new(
@@ -247,16 +255,12 @@ pub(super) fn build_cli_dram_profile(
         },
         CliDramMemoryProfile::Hbm => {
             let geometry = geometry.with_bank_groups(2).map_err(execute_error)?;
-            let timing = volatile_timing
-                .with_same_bank_group_burst_spacing(6)
-                .map_err(execute_error)?;
+            let timing = hbm_cli_dram_timing(volatile_timing, dram_timing)?;
             ExternalMemoryProfile::hbm(CLI_MEMORY_TARGET, line_layout, 2, 2, geometry, timing)
         }
         CliDramMemoryProfile::Hbm2_2000_2Gb => {
             let geometry = geometry.with_bank_groups(2).map_err(execute_error)?;
-            let timing = timing
-                .with_same_bank_group_burst_spacing(6)
-                .map_err(execute_error)?;
+            let timing = hbm_cli_dram_timing(timing, dram_timing)?;
             match refresh_timing {
                 Some(refresh_timing) => ExternalMemoryProfile::hbm(
                     CLI_MEMORY_TARGET,
@@ -303,7 +307,7 @@ pub(super) fn build_cli_dram_profile(
             }
         }
         CliDramMemoryProfile::Nvm => {
-            let timing = timing.with_command_window(16, 2).map_err(execute_error)?;
+            let timing = nvm_cli_dram_timing(timing, dram_timing)?;
             let timing = timing.with_low_power_timing(cli_dram_low_power_timing(low_power_timing)?);
             ExternalMemoryProfile::nvm(CLI_MEMORY_TARGET, line_layout, 2, 4, geometry, timing)
                 .and_then(|profile| {
@@ -312,6 +316,55 @@ pub(super) fn build_cli_dram_profile(
         }
     }
     .map_err(execute_error)
+}
+
+fn cli_dram_timing(timing: CliDramTiming) -> Result<DramTiming, Rem6CliError> {
+    let mut dram_timing = DramTiming::new(
+        timing.activate_latency(),
+        timing.read_latency(),
+        timing.write_latency(),
+        timing.precharge_latency(),
+        timing.bus_turnaround(),
+    )
+    .map_err(execute_error)?
+    .with_burst_spacing(timing.burst_spacing())
+    .map_err(execute_error)?;
+    if let Some(burst_spacing) = timing.same_bank_group_burst_spacing() {
+        dram_timing = dram_timing
+            .with_same_bank_group_burst_spacing(burst_spacing)
+            .map_err(execute_error)?;
+    }
+    if let Some(command_window) = timing.command_window() {
+        dram_timing = dram_timing
+            .with_command_window(
+                command_window.window_cycles(),
+                command_window.max_commands(),
+            )
+            .map_err(execute_error)?;
+    }
+    Ok(dram_timing)
+}
+
+fn hbm_cli_dram_timing(
+    timing: DramTiming,
+    cli_timing: CliDramTiming,
+) -> Result<DramTiming, Rem6CliError> {
+    match cli_timing.same_bank_group_burst_spacing() {
+        Some(_) => Ok(timing),
+        None => timing
+            .with_same_bank_group_burst_spacing(6)
+            .map_err(execute_error),
+    }
+}
+
+fn nvm_cli_dram_timing(
+    timing: DramTiming,
+    cli_timing: CliDramTiming,
+) -> Result<DramTiming, Rem6CliError> {
+    match cli_timing.command_window() {
+        Some(_) => Ok(timing),
+        None => timing.with_command_window(16, 2).map_err(execute_error),
+    }
 }
 
 fn cli_dram_low_power_timing(

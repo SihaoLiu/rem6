@@ -81,7 +81,7 @@ pub(crate) use branch_predictor_summary::{
 pub use cli_error::Rem6CliError;
 pub use config::{
     CliCachePrefetcher, CliDebugFlag, CliDramLowPowerTiming, CliDramMemoryProfile,
-    CliDramRefreshTiming, KernelResourceSelector, LoadBlobRequest, LoadBlobSource,
+    CliDramRefreshTiming, CliDramTiming, KernelResourceSelector, LoadBlobRequest, LoadBlobSource,
     MemoryDumpRequest, PowerAnalysisFormat, ReadfileRequest, ReadfileSource, Rem6GupsConfig,
     Rem6RunConfig, Rem6TraceReplayConfig, RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource,
     RunFabricConfig, RunMemorySystem, StatsFormat, SuiteResourceSelector,
@@ -678,6 +678,7 @@ fn execute_riscv(
         line_layout,
         config.dram_memory(),
         config.dram_memory_profile(),
+        config.dram_timing(),
         config.dram_low_power_timing(),
         config.dram_refresh_timing(),
     )?;
