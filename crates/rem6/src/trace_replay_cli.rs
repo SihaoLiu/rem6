@@ -749,6 +749,19 @@ fn trace_replay_fabric_route(
             config.fabric_request_virtual_network(),
             config.fabric_response_virtual_network(),
         );
+    let fabric = if let Some(router_stage) = config.fabric_router_stage() {
+        fabric
+            .with_router_stage(
+                router_stage.router(),
+                router_stage.input_port(),
+                router_stage.output_port(),
+                router_stage.virtual_channel(),
+                router_stage.latency(),
+            )
+            .map_err(execute_error)?
+    } else {
+        fabric
+    };
     match config.fabric_credit_depth() {
         Some(credit_depth) => fabric
             .with_credit_depth(credit_depth)
@@ -967,5 +980,46 @@ mod tests {
         assert_eq!(fabric.request_virtual_network(), 3);
         assert_eq!(fabric.response_virtual_network(), 4);
         assert_eq!(fabric.credit_depth(), Some(2));
+    }
+
+    #[test]
+    fn trace_replay_fabric_route_preserves_router_stage() {
+        let config = Rem6TraceReplayConfig::parse_args([
+            "trace-replay",
+            "--trace",
+            "trace.pb",
+            "--route",
+            "cpu0.fetch",
+            "--memory-start",
+            "0x1000",
+            "--memory-size",
+            "0x1000",
+            "--max-tick",
+            "64",
+            "--fabric-link",
+            "cpu_mem",
+            "--fabric-bandwidth-bytes-per-tick",
+            "4",
+            "--fabric-router",
+            "router0",
+            "--fabric-router-input-port",
+            "2",
+            "--fabric-router-output-port",
+            "3",
+            "--fabric-router-virtual-channel",
+            "1",
+            "--fabric-router-latency",
+            "5",
+        ])
+        .unwrap();
+
+        let fabric = trace_replay_fabric_route(&config).unwrap().unwrap();
+        let router_stage = fabric.router_stage().unwrap();
+
+        assert_eq!(router_stage.router(), "router0");
+        assert_eq!(router_stage.input_port(), 2);
+        assert_eq!(router_stage.output_port(), 3);
+        assert_eq!(router_stage.virtual_channel(), 1);
+        assert_eq!(router_stage.latency(), 5);
     }
 }

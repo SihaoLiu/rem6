@@ -110,6 +110,20 @@ impl Rem6TraceReplayArtifact {
         );
         let fabric_credit_depth =
             optional_count_json(self.config.fabric_credit_depth().map(u64::from));
+        let fabric_router_stage = self
+            .config
+            .fabric_router_stage()
+            .map(|stage| {
+                format!(
+                    "{{\"router\":\"{}\",\"input_port\":{},\"output_port\":{},\"virtual_channel\":{},\"latency_ticks\":{}}}",
+                    json_escape(stage.router()),
+                    stage.input_port(),
+                    stage.output_port(),
+                    stage.virtual_channel(),
+                    stage.latency(),
+                )
+            })
+            .unwrap_or_else(|| "null".to_string());
         let trace_resource = self
             .config
             .trace_resource()
@@ -126,7 +140,7 @@ impl Rem6TraceReplayArtifact {
             .map(crate::power_output::Rem6PowerAnalysisArtifact::to_json)
             .unwrap_or_else(|| "null".to_string());
         format!(
-            "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_resource\":{},\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"data_cache_protocol\":{},\"data_cache_dram_memory_profile\":{},\"fabric_link\":{},\"fabric_bandwidth_bytes_per_tick\":{},\"fabric_request_virtual_network\":{},\"fabric_response_virtual_network\":{},\"fabric_credit_depth\":{},\"external_adapter\":{},\"simulation\":{},\"summary\":{},\"power_analysis\":{},\"stats\":{}}}\n",
+            "{{\"schema\":\"{}\",\"generator\":\"trace-replay\",\"trace\":\"{}\",\"trace_resource\":{},\"trace_digest\":\"{}\",\"route\":\"{}\",\"memory_start\":\"0x{:x}\",\"memory_size\":{},\"tick_frequency\":{},\"line_bytes\":{},\"agent\":{},\"control_partition\":{},\"data_cache_protocol\":{},\"data_cache_dram_memory_profile\":{},\"fabric_link\":{},\"fabric_bandwidth_bytes_per_tick\":{},\"fabric_request_virtual_network\":{},\"fabric_response_virtual_network\":{},\"fabric_credit_depth\":{},\"fabric_router_stage\":{},\"external_adapter\":{},\"simulation\":{},\"summary\":{},\"power_analysis\":{},\"stats\":{}}}\n",
             self.schema,
             json_escape(&self.config.trace_input()),
             trace_resource,
@@ -145,6 +159,7 @@ impl Rem6TraceReplayArtifact {
             fabric_request_virtual_network,
             fabric_response_virtual_network,
             fabric_credit_depth,
+            fabric_router_stage,
             external_adapter,
             self.execution.to_json(self.config.max_tick()),
             traffic_trace_summary_json(

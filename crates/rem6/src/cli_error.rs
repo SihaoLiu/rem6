@@ -146,6 +146,18 @@ pub enum Rem6CliError {
     InvalidTraceReplayFabricCreditDepth {
         value: String,
     },
+    InvalidTraceReplayFabricRouter {
+        value: String,
+    },
+    InvalidTraceReplayFabricRouterPort {
+        value: String,
+    },
+    InvalidTraceReplayFabricRouterVirtualChannel {
+        value: String,
+    },
+    InvalidTraceReplayFabricRouterLatency {
+        value: String,
+    },
     InvalidTraceReplayExternalAdapterKind {
         value: String,
     },
@@ -575,6 +587,21 @@ impl fmt::Display for Rem6CliError {
             }
             Self::InvalidTraceReplayFabricCreditDepth { value } => {
                 write!(formatter, "invalid trace replay fabric credit depth {value}")
+            }
+            Self::InvalidTraceReplayFabricRouter { value } => {
+                write!(formatter, "invalid trace replay fabric router {value}")
+            }
+            Self::InvalidTraceReplayFabricRouterPort { value } => {
+                write!(formatter, "invalid trace replay fabric router port {value}")
+            }
+            Self::InvalidTraceReplayFabricRouterVirtualChannel { value } => {
+                write!(
+                    formatter,
+                    "invalid trace replay fabric router virtual channel {value}"
+                )
+            }
+            Self::InvalidTraceReplayFabricRouterLatency { value } => {
+                write!(formatter, "invalid trace replay fabric router latency {value}")
             }
             Self::InvalidTraceReplayExternalAdapterKind { value } => {
                 write!(

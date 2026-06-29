@@ -57,7 +57,7 @@ use riscv_branch::{
 };
 use riscv_se_input::reject_conflicting_riscv_se_output_paths;
 pub use riscv_se_input::{RiscvSeFileRequest, RiscvSeInputSource};
-pub use trace_replay::TraceReplayExternalAdapterKind;
+pub use trace_replay::{TraceReplayExternalAdapterKind, TraceReplayFabricRouterStageConfig};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rem6RunConfig {
@@ -153,6 +153,7 @@ pub struct Rem6TraceReplayConfig {
     fabric_request_virtual_network: u16,
     fabric_response_virtual_network: u16,
     fabric_credit_depth: Option<u32>,
+    fabric_router_stage: Option<TraceReplayFabricRouterStageConfig>,
     external_adapter_kind: Option<TraceReplayExternalAdapterKind>,
     external_adapter_endpoint: Option<String>,
     external_adapter_checkpoint_after_events: Option<usize>,
@@ -332,6 +333,11 @@ struct Rem6TraceReplayFileConfig {
     fabric_request_virtual_network: Option<u16>,
     fabric_response_virtual_network: Option<u16>,
     fabric_credit_depth: Option<u32>,
+    fabric_router: Option<String>,
+    fabric_router_input_port: Option<u32>,
+    fabric_router_output_port: Option<u32>,
+    fabric_router_virtual_channel: Option<u16>,
+    fabric_router_latency: Option<u64>,
     external_adapter_kind: Option<String>,
     external_adapter_endpoint: Option<String>,
     external_adapter_checkpoint_after_events: Option<u64>,

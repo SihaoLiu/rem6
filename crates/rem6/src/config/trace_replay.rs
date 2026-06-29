@@ -19,6 +19,53 @@ pub enum TraceReplayExternalAdapterKind {
     Sst,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TraceReplayFabricRouterStageConfig {
+    router: String,
+    input_port: u32,
+    output_port: u32,
+    virtual_channel: u16,
+    latency: u64,
+}
+
+impl TraceReplayFabricRouterStageConfig {
+    const fn new(
+        router: String,
+        input_port: u32,
+        output_port: u32,
+        virtual_channel: u16,
+        latency: u64,
+    ) -> Self {
+        Self {
+            router,
+            input_port,
+            output_port,
+            virtual_channel,
+            latency,
+        }
+    }
+
+    pub fn router(&self) -> &str {
+        &self.router
+    }
+
+    pub const fn input_port(&self) -> u32 {
+        self.input_port
+    }
+
+    pub const fn output_port(&self) -> u32 {
+        self.output_port
+    }
+
+    pub const fn virtual_channel(&self) -> u16 {
+        self.virtual_channel
+    }
+
+    pub const fn latency(&self) -> u64 {
+        self.latency
+    }
+}
+
 impl TraceReplayExternalAdapterKind {
     pub(super) fn parse(value: &str) -> Result<Self, Rem6CliError> {
         match value {
@@ -168,6 +215,20 @@ impl Rem6TraceReplayConfig {
         let mut fabric_credit_depth = file_config.fabric_credit_depth;
         if fabric_credit_depth == Some(0) {
             return Err(Rem6CliError::InvalidTraceReplayFabricCreditDepth {
+                value: "0".to_string(),
+            });
+        }
+        let mut fabric_router = file_config
+            .fabric_router
+            .as_deref()
+            .map(parse_fabric_router)
+            .transpose()?;
+        let mut fabric_router_input_port = file_config.fabric_router_input_port;
+        let mut fabric_router_output_port = file_config.fabric_router_output_port;
+        let mut fabric_router_virtual_channel = file_config.fabric_router_virtual_channel;
+        let mut fabric_router_latency = file_config.fabric_router_latency;
+        if fabric_router_latency == Some(0) {
+            return Err(Rem6CliError::InvalidTraceReplayFabricRouterLatency {
                 value: "0".to_string(),
             });
         }
@@ -334,6 +395,27 @@ impl Rem6TraceReplayConfig {
                     let value = required_value(&flag, args.next())?;
                     fabric_credit_depth = Some(parse_fabric_credit_depth(&value)?);
                 }
+                "--fabric-router" => {
+                    fabric_router =
+                        Some(parse_fabric_router(&required_value(&flag, args.next())?)?);
+                }
+                "--fabric-router-input-port" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_router_input_port = Some(parse_fabric_router_port(&value)?);
+                }
+                "--fabric-router-output-port" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_router_output_port = Some(parse_fabric_router_port(&value)?);
+                }
+                "--fabric-router-virtual-channel" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_router_virtual_channel =
+                        Some(parse_fabric_router_virtual_channel(&value)?);
+                }
+                "--fabric-router-latency" => {
+                    let value = required_value(&flag, args.next())?;
+                    fabric_router_latency = Some(parse_fabric_router_latency(&value)?);
+                }
                 "--external-adapter-kind" => {
                     external_adapter_kind = Some(TraceReplayExternalAdapterKind::parse(
                         &required_value(&flag, args.next())?,
@@ -395,6 +477,14 @@ impl Rem6TraceReplayConfig {
                 flag: "--fabric-link",
             });
         }
+        let fabric_router_stage = trace_replay_fabric_router_stage_config(
+            fabric_link.as_ref(),
+            fabric_router,
+            fabric_router_input_port,
+            fabric_router_output_port,
+            fabric_router_virtual_channel,
+            fabric_router_latency,
+        )?;
         if external_adapter_kind.is_some() && external_adapter_endpoint.is_none() {
             return Err(Rem6CliError::MissingRequiredFlag {
                 flag: "--external-adapter-endpoint",
@@ -499,6 +589,7 @@ impl Rem6TraceReplayConfig {
             fabric_request_virtual_network: fabric_request_virtual_network.unwrap_or(0),
             fabric_response_virtual_network: fabric_response_virtual_network.unwrap_or(0),
             fabric_credit_depth,
+            fabric_router_stage,
             external_adapter_kind,
             external_adapter_endpoint,
             external_adapter_checkpoint_after_events,
@@ -607,6 +698,10 @@ impl Rem6TraceReplayConfig {
         self.fabric_credit_depth
     }
 
+    pub fn fabric_router_stage(&self) -> Option<&TraceReplayFabricRouterStageConfig> {
+        self.fabric_router_stage.as_ref()
+    }
+
     pub const fn external_adapter_kind(&self) -> Option<TraceReplayExternalAdapterKind> {
         self.external_adapter_kind
     }
@@ -670,6 +765,79 @@ fn parse_fabric_credit_depth(value: &str) -> Result<u32, Rem6CliError> {
         .ok_or_else(|| Rem6CliError::InvalidTraceReplayFabricCreditDepth {
             value: value.to_string(),
         })
+}
+
+fn parse_fabric_router(value: &str) -> Result<String, Rem6CliError> {
+    if value.is_empty() {
+        return Err(Rem6CliError::InvalidTraceReplayFabricRouter {
+            value: value.to_string(),
+        });
+    }
+    Ok(value.to_string())
+}
+
+fn parse_fabric_router_port(value: &str) -> Result<u32, Rem6CliError> {
+    parse_number(value)
+        .and_then(|port| u32::try_from(port).ok())
+        .ok_or_else(|| Rem6CliError::InvalidTraceReplayFabricRouterPort {
+            value: value.to_string(),
+        })
+}
+
+fn parse_fabric_router_virtual_channel(value: &str) -> Result<u16, Rem6CliError> {
+    parse_number(value)
+        .and_then(|channel| u16::try_from(channel).ok())
+        .ok_or_else(
+            || Rem6CliError::InvalidTraceReplayFabricRouterVirtualChannel {
+                value: value.to_string(),
+            },
+        )
+}
+
+fn parse_fabric_router_latency(value: &str) -> Result<u64, Rem6CliError> {
+    parse_positive_u64(value).ok_or_else(|| Rem6CliError::InvalidTraceReplayFabricRouterLatency {
+        value: value.to_string(),
+    })
+}
+
+fn trace_replay_fabric_router_stage_config(
+    fabric_link: Option<&String>,
+    router: Option<String>,
+    input_port: Option<u32>,
+    output_port: Option<u32>,
+    virtual_channel: Option<u16>,
+    latency: Option<u64>,
+) -> Result<Option<TraceReplayFabricRouterStageConfig>, Rem6CliError> {
+    let has_router_stage = router.is_some()
+        || input_port.is_some()
+        || output_port.is_some()
+        || virtual_channel.is_some()
+        || latency.is_some();
+    if !has_router_stage {
+        return Ok(None);
+    }
+    if fabric_link.is_none() {
+        return Err(Rem6CliError::MissingRequiredFlag {
+            flag: "--fabric-link",
+        });
+    }
+    Ok(Some(TraceReplayFabricRouterStageConfig::new(
+        router.ok_or(Rem6CliError::MissingRequiredFlag {
+            flag: "--fabric-router",
+        })?,
+        input_port.ok_or(Rem6CliError::MissingRequiredFlag {
+            flag: "--fabric-router-input-port",
+        })?,
+        output_port.ok_or(Rem6CliError::MissingRequiredFlag {
+            flag: "--fabric-router-output-port",
+        })?,
+        virtual_channel.ok_or(Rem6CliError::MissingRequiredFlag {
+            flag: "--fabric-router-virtual-channel",
+        })?,
+        latency.ok_or(Rem6CliError::MissingRequiredFlag {
+            flag: "--fabric-router-latency",
+        })?,
+    )))
 }
 
 fn parse_trace_replay_data_cache_dram_qos_priority_levels(value: &str) -> Result<u8, Rem6CliError> {
@@ -865,6 +1033,59 @@ mod tests {
             Rem6CliError::InvalidTraceReplayDataCacheDramQosDefaultPriority { value }
                 if value == "2"
         ));
+    }
+
+    #[test]
+    fn trace_replay_fabric_router_rejects_empty_router_id() {
+        let mut args = minimal_trace_replay_args().to_vec();
+        args.extend([
+            "--fabric-link",
+            "cpu_mem",
+            "--fabric-bandwidth-bytes-per-tick",
+            "4",
+            "--fabric-router",
+            "",
+            "--fabric-router-input-port",
+            "1",
+            "--fabric-router-output-port",
+            "2",
+            "--fabric-router-virtual-channel",
+            "3",
+            "--fabric-router-latency",
+            "5",
+        ]);
+        let error = Rem6TraceReplayConfig::parse_args(args).unwrap_err();
+
+        assert!(matches!(
+            error,
+            Rem6CliError::InvalidTraceReplayFabricRouter { value } if value.is_empty()
+        ));
+    }
+
+    #[test]
+    fn trace_replay_fabric_router_parses_from_toml_config() {
+        let path = std::env::temp_dir().join(format!(
+            "rem6-trace-replay-router-config-{}.toml",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            "[trace_replay]\ntrace = \"trace.pb\"\nroute = \"cpu0.data\"\nmemory_start = 4096\nmemory_size = 4096\nmax_tick = 64\nfabric_link = \"cpu_mem\"\nfabric_bandwidth_bytes_per_tick = 4\nfabric_router = \"router0\"\nfabric_router_input_port = 1\nfabric_router_output_port = 2\nfabric_router_virtual_channel = 3\nfabric_router_latency = 5\n",
+        )
+        .unwrap();
+
+        let config =
+            Rem6TraceReplayConfig::parse_args(["trace-replay", "--config", path.to_str().unwrap()])
+                .unwrap();
+        let router_stage = config.fabric_router_stage().unwrap();
+
+        assert_eq!(router_stage.router(), "router0");
+        assert_eq!(router_stage.input_port(), 1);
+        assert_eq!(router_stage.output_port(), 2);
+        assert_eq!(router_stage.virtual_channel(), 3);
+        assert_eq!(router_stage.latency(), 5);
+
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

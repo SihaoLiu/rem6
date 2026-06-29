@@ -219,6 +219,188 @@ fn rem6_trace_replay_fabric_route_uses_virtual_networks_and_credit_depth() {
 }
 
 #[test]
+fn rem6_trace_replay_fabric_route_uses_router_stage() {
+    let trace = temp_trace(
+        "trace-replay-fabric-router",
+        &packet_trace_bytes(
+            1_000,
+            &[
+                PacketFields {
+                    tick: 0,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 1,
+                    command: GEM5_READ_REQ,
+                    address: Some(0x1010),
+                    size: Some(8),
+                    packet_id: Some(11),
+                },
+                PacketFields {
+                    tick: 40,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1008),
+                    size: Some(8),
+                    packet_id: Some(10),
+                },
+                PacketFields {
+                    tick: 50,
+                    command: GEM5_READ_RESP,
+                    address: Some(0x1010),
+                    size: Some(8),
+                    packet_id: Some(11),
+                },
+            ],
+        ),
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "trace-replay",
+            "--trace",
+            trace.to_str().unwrap(),
+            "--route",
+            "cpu0.fetch",
+            "--memory-start",
+            "0x1000",
+            "--memory-size",
+            "0x1000",
+            "--max-tick",
+            "128",
+            "--tick-frequency",
+            "1000",
+            "--line-bytes",
+            "64",
+            "--agent",
+            "7",
+            "--control-partition",
+            "2",
+            "--fabric-link",
+            "cpu_mem",
+            "--fabric-bandwidth-bytes-per-tick",
+            "4",
+            "--fabric-request-virtual-network",
+            "1",
+            "--fabric-response-virtual-network",
+            "1",
+            "--fabric-router",
+            "router0",
+            "--fabric-router-input-port",
+            "2",
+            "--fabric-router-output-port",
+            "3",
+            "--fabric-router-virtual-channel",
+            "1",
+            "--fabric-router-latency",
+            "3",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
+    let config_router = artifact
+        .get("fabric_router_stage")
+        .expect("fabric router stage config");
+    assert_eq!(
+        config_router.get("router").and_then(Value::as_str),
+        Some("router0")
+    );
+    assert_eq!(
+        config_router.get("input_port").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        config_router.get("output_port").and_then(Value::as_u64),
+        Some(3)
+    );
+    assert_eq!(
+        config_router.get("virtual_channel").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        config_router.get("latency_ticks").and_then(Value::as_u64),
+        Some(3)
+    );
+    let hops = artifact
+        .pointer("/summary/fabric_hop_activities")
+        .and_then(Value::as_array)
+        .expect("fabric hop activity details");
+    assert_eq!(hops.len(), 4);
+    let router_hops = hops
+        .iter()
+        .filter_map(|hop| hop.get("router"))
+        .collect::<Vec<_>>();
+    assert_eq!(router_hops.len(), 4);
+    let first_router = router_hops[0];
+    assert_eq!(
+        first_router.get("router").and_then(Value::as_str),
+        Some("router0")
+    );
+    assert_eq!(
+        first_router.get("input_port").and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        first_router.get("output_port").and_then(Value::as_u64),
+        Some(3)
+    );
+    assert_eq!(
+        first_router.get("virtual_channel").and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        first_router.get("latency_ticks").and_then(Value::as_u64),
+        Some(3)
+    );
+    assert_eq!(
+        router_hops[1]
+            .get("queue_delay_ticks")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+
+    let prefix = "sim.trace_replay.fabric.link.cpu_mem.vn1.hop0";
+    assert_stat(
+        &stdout,
+        &format!("{prefix}.transfers"),
+        "Count",
+        4,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        &format!("{prefix}.router_latency_ticks"),
+        "Tick",
+        12,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        &format!("{prefix}.router_queue_delay_ticks"),
+        "Tick",
+        2,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        &format!("{prefix}.max_router_queue_delay_ticks"),
+        "Tick",
+        2,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_trace_replay_fabric_route_emits_lane_and_hop_activity_detail() {
     let trace = temp_trace(
         "trace-replay-fabric-activity-detail",

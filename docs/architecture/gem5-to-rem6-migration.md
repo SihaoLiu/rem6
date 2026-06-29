@@ -316,7 +316,7 @@ directory-decision, backing-DRAM access, cache-bank accepted, immediate-hit,
 scheduled-miss, and coalesced-miss counters plus L1/L2/L3 cache hierarchy
 resource breakdowns. CLI trace
 replay can route packet traces through an explicit workload fabric link and
-configure request/response virtual networks and link credit depth from CLI or
+configure request/response virtual networks, link credit depth, and router-stage timing from CLI or
 TOML config while emitting active-lane, active-virtual-network, transfer, byte, flit,
 occupancy, queue-delay, credit-delay, contention, per-virtual-network, per-link, per-link/per-VN lane pressure, and per-hop activity stats from
 the resulting workload parallel summary, plus aggregate resource-activity and
@@ -356,7 +356,7 @@ trace-replay fabric-route smoke coverage exposes nonzero active-lane,
 active-virtual-network, transfer, byte, and flit stats plus request/response virtual
 network and credit-depth config fields plus per-virtual-network, per-link, and per-link/per-VN lane pressure
 `sim.trace_replay.fabric.*` counters, per-lane flit counts, and per-hop activity JSON from the top-level replay command, including aggregate, per-VN, per-lane, and per-hop
-credit-delay fields plus per-link/per-VN/per-hop trace-replay stat families for transfer, byte, flit, occupied-tick, queue-delay, max-queue-delay, and credit-delay counters plus per-link/per-VN lane backpressure counters; CLI trace-replay fabric-route wait-for coverage exposes queue/credit edge-kind windows, blocked fabric packet windows, target lane/credit resource windows, and matching `sim.trace_replay.fabric.wait_for.*` stats from a top-level replay with fabric credit depth; CLI
+credit-delay fields, router config JSON, and per-link/per-VN/per-hop trace-replay stat families for transfer, byte, flit, occupied-tick, queue-delay, max-queue-delay, credit-delay, router-latency, and router-queue counters plus per-link/per-VN lane backpressure counters; CLI trace-replay fabric-route wait-for coverage exposes queue/credit edge-kind windows, blocked fabric packet windows, target lane/credit resource windows, and matching `sim.trace_replay.fabric.wait_for.*` stats from a top-level replay with fabric credit depth; CLI
 trace-replay data-cache protocol smoke coverage exposes data-cache run,
 protocol, scheduler, and profiled backing-DRAM resource stats from the top-level
 replay command. CLI `run` data-cache and instruction-cache prefetch smoke
