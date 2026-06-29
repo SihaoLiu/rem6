@@ -1192,18 +1192,9 @@ tests.
 **Next evidence:** Expand loader breadth beyond current extended-numbering
 slices and soft-float parity.
 
-## Open Migration Gaps
-
-1. Connect in-order and O3 CPU state to executable engines.
-2. Run more real static-libc SE programs, then expand SBI runtime coverage and real Linux boot.
-3. Route CPU instruction/data traffic through cache, coherence, NoC, and DRAM.
-4. Broaden remaining fabric/DRAM hierarchy resource counters to first-class stats.
-5. Split broad rows as evidence grows: `se_mode`, `cpu_tests`, `traffic_gen`, `stats`, and `tests/test-progs`.
-
 ## Update Rules
 
-- Update percentages only when executable rem6 evidence changes.
-- Keep the checklist beside each component so the score can be audited.
+- Update percentages only when executable rem6 evidence changes; keep the checklist beside each component so the score can be audited.
 - Do not count unknown-syscall diagnostics as implemented syscall coverage or tool-detected static smokes as broad workload parity.
 - Do not cite exact line ranges from gem5 or rem6.
 - Keep detailed proof in tests, artifacts, traces, checkpoints, or manifests.

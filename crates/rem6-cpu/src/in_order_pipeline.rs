@@ -1015,6 +1015,10 @@ impl InOrderPipelineCycleRecord {
         self.stall_cause
     }
 
+    pub(crate) fn set_stall_cause(&mut self, stall_cause: Option<InOrderPipelineStallCause>) {
+        self.stall_cause = stall_cause;
+    }
+
     pub const fn plan(&self) -> &InOrderPipelinePlan {
         &self.plan
     }

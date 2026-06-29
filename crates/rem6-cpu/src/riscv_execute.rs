@@ -437,7 +437,7 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_waits(
     let max_retire_cycles =
         InOrderPipelineStage::ALL.len() + state.in_order_pipeline.in_flight().len();
     for _ in 0..max_retire_cycles {
-        if !wait_recorded && in_order_pipeline_sequence_is_in_execute(state, sequence) {
+        if !wait_recorded && in_order_pipeline_sequence_can_record_wait(state, sequence) {
             record_in_order_resource_waits(state, &waits)?;
             wait_recorded = true;
         }
@@ -473,10 +473,7 @@ fn record_retired_in_order_pipeline_cycle_with_redirect_after_waits(
             record_in_order_resource_waits(state, &waits)?;
             wait_recorded = true;
         }
-        if !wait_recorded && retires_sequence {
-            record_in_order_resource_waits(state, &waits)?;
-            wait_recorded = true;
-        }
+        wait_recorded |= retires_sequence;
         if retires_sequence {
             return Ok(record);
         }
@@ -502,15 +499,22 @@ fn discard_stale_in_order_pipeline_before_retire(
     remove_fetch_sequences_from_pipeline(state, &stale_sequences)
 }
 
-fn in_order_pipeline_sequence_is_in_execute(state: &RiscvCoreState, sequence: u64) -> bool {
+fn in_order_pipeline_sequence_can_record_wait(state: &RiscvCoreState, sequence: u64) -> bool {
+    matches!(
+        in_order_pipeline_sequence_stage(state, sequence),
+        Some(InOrderPipelineStage::Execute | InOrderPipelineStage::Commit)
+    )
+}
+
+fn in_order_pipeline_sequence_stage(
+    state: &RiscvCoreState,
+    sequence: u64,
+) -> Option<InOrderPipelineStage> {
     state
         .in_order_pipeline
         .in_flight()
         .iter()
-        .any(|instruction| {
-            instruction.sequence() == sequence
-                && instruction.stage() == InOrderPipelineStage::Execute
-        })
+        .find_map(|instruction| (instruction.sequence() == sequence).then_some(instruction.stage()))
 }
 
 fn record_in_order_resource_wait_cycles(

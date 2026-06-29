@@ -17,9 +17,9 @@ use rem6_transport::{
 };
 
 use crate::{
-    riscv_checker, riscv_data_access, riscv_execute, CpuId, InOrderPipelineStallCause, RiscvCore,
-    RiscvCoreState, RiscvCpuError, RiscvDataAccessEvent, RiscvDataAccessRecord,
-    RiscvDataAccessTarget, RiscvLoadReservation,
+    riscv_checker, riscv_data_access, riscv_execute, CpuId, InOrderPipelineCycleRecord,
+    InOrderPipelineStage, InOrderPipelineStallCause, RiscvCore, RiscvCoreState, RiscvCpuError,
+    RiscvDataAccessEvent, RiscvDataAccessRecord, RiscvDataAccessTarget, RiscvLoadReservation,
 };
 
 impl RiscvCore {
@@ -575,14 +575,23 @@ fn record_data_retire_cycle(
         return;
     }
     let data_wait_cycles = completion_tick.saturating_sub(access.tick);
+    let attributed_data_wait_cycles = retag_existing_fetch_wait_cycles_for_data_access(
+        state,
+        access.fetch_request,
+        data_wait_cycles,
+    );
+    let remaining_data_wait_cycles = data_wait_cycles.saturating_sub(attributed_data_wait_cycles);
     let execute_wait_cycles =
         riscv_execute::in_order_execute_wait_cycles(state.events[index].instruction());
     let mut waits = Vec::with_capacity(2);
     if execute_wait_cycles > 0 {
         waits.push((execute_wait_cycles, InOrderPipelineStallCause::ExecuteWait));
     }
-    if data_wait_cycles > 0 {
-        waits.push((data_wait_cycles, InOrderPipelineStallCause::DataWait));
+    if remaining_data_wait_cycles > 0 {
+        waits.push((
+            remaining_data_wait_cycles,
+            InOrderPipelineStallCause::DataWait,
+        ));
     }
     let cycle = riscv_execute::record_retired_in_order_pipeline_cycle_after_waits_with_causes(
         state,
@@ -593,6 +602,48 @@ fn record_data_retire_cycle(
     .expect("completed data access records one in-order retire cycle");
     state.events[index].set_in_order_pipeline_cycle(cycle);
     state.events[index].set_in_order_pipeline_data_wait_cycles(data_wait_cycles);
+}
+
+fn retag_existing_fetch_wait_cycles_for_data_access(
+    state: &mut RiscvCoreState,
+    fetch_request: MemoryRequestId,
+    mut remaining_data_wait_cycles: u64,
+) -> u64 {
+    let sequence = fetch_request.sequence();
+    let mut retagged = 0u64;
+    for record in state.in_order_pipeline_cycle_records.iter_mut().rev() {
+        if remaining_data_wait_cycles == 0 {
+            break;
+        }
+        if record.stall_cause() != Some(InOrderPipelineStallCause::FetchWait)
+            || !cycle_record_blocks_memory_wait_sequence(record, sequence)
+        {
+            continue;
+        }
+        record.set_stall_cause(Some(InOrderPipelineStallCause::DataWait));
+        let cycles = record.stall_cycle_count();
+        retagged = retagged.saturating_add(cycles);
+        remaining_data_wait_cycles = remaining_data_wait_cycles.saturating_sub(cycles);
+    }
+    retagged
+}
+
+fn cycle_record_blocks_memory_wait_sequence(
+    record: &InOrderPipelineCycleRecord,
+    sequence: u64,
+) -> bool {
+    record
+        .plan()
+        .resource_blocked()
+        .iter()
+        .chain(record.plan().ordering_blocked())
+        .any(|instruction| {
+            instruction.sequence() == sequence
+                && matches!(
+                    instruction.stage(),
+                    InOrderPipelineStage::Execute | InOrderPipelineStage::Commit
+                )
+        })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
