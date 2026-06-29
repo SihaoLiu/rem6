@@ -1,4 +1,4 @@
-use rem6_boot::BootElfMetadata;
+use rem6_boot::{BootElfInterpreter, BootElfMetadata};
 use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
 
 mod accelerator_run;
@@ -64,6 +64,7 @@ pub(super) struct Rem6StatsInputs<'a> {
     pub(super) binary_bytes: u64,
     pub(super) load_segments: u64,
     pub(super) metadata: BootElfMetadata,
+    pub(super) interpreter: Option<&'a BootElfInterpreter>,
     pub(super) load_blobs: &'a [Rem6LoadBlobSummary],
     pub(super) readfiles: &'a [Rem6ReadfileSummary],
     pub(super) start_address: u64,
@@ -177,6 +178,36 @@ pub(super) fn run_stats_output(
             "Address",
             StatResetPolicy::Constant,
             memory_address.get(),
+        )?;
+    }
+    increment_stat(
+        &mut stats,
+        "sim.elf.interpreter.count",
+        "Count",
+        StatResetPolicy::Constant,
+        u64::from(inputs.interpreter.is_some()),
+    )?;
+    if let Some(interpreter) = inputs.interpreter {
+        increment_stat(
+            &mut stats,
+            "sim.elf.interpreter.file_offset",
+            "Byte",
+            StatResetPolicy::Constant,
+            interpreter.file_offset(),
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.elf.interpreter.file_size",
+            "Byte",
+            StatResetPolicy::Constant,
+            interpreter.file_size(),
+        )?;
+        increment_stat(
+            &mut stats,
+            "sim.elf.interpreter.path_bytes",
+            "Byte",
+            StatResetPolicy::Constant,
+            interpreter.path().len() as u64,
         )?;
     }
     increment_stat(

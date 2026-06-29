@@ -5,13 +5,14 @@ use rem6_memory::{
 
 use crate::elf::{parse_elf, parse_elf32_le, parse_elf64_le};
 use crate::error::BootError;
-use crate::metadata::BootElfMetadata;
+use crate::metadata::{BootElfInterpreter, BootElfMetadata};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BootImage {
     entry: Address,
     segments: Vec<BootSegment>,
     elf_metadata: Option<BootElfMetadata>,
+    elf_interpreter: Option<BootElfInterpreter>,
 }
 
 impl BootImage {
@@ -20,6 +21,7 @@ impl BootImage {
             entry,
             segments: Vec::new(),
             elf_metadata: None,
+            elf_interpreter: None,
         }
     }
 
@@ -29,6 +31,10 @@ impl BootImage {
 
     pub const fn elf_metadata(&self) -> Option<BootElfMetadata> {
         self.elf_metadata
+    }
+
+    pub fn elf_interpreter(&self) -> Option<&BootElfInterpreter> {
+        self.elf_interpreter.as_ref()
     }
 
     pub fn from_elf(bytes: &[u8]) -> Result<Self, BootError> {
@@ -57,6 +63,11 @@ impl BootImage {
 
     pub const fn with_elf_metadata(mut self, metadata: BootElfMetadata) -> Self {
         self.elf_metadata = Some(metadata);
+        self
+    }
+
+    pub fn with_elf_interpreter(mut self, interpreter: BootElfInterpreter) -> Self {
+        self.elf_interpreter = Some(interpreter);
         self
     }
 

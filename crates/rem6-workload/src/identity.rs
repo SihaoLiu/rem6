@@ -3,7 +3,8 @@ mod traffic_trace_replay;
 mod traffic_trace_run;
 
 use rem6_boot::{
-    BootElfArchitecture, BootElfClass, BootElfEndian, BootElfMetadata, BootElfOperatingSystem,
+    BootElfArchitecture, BootElfClass, BootElfEndian, BootElfInterpreter, BootElfMetadata,
+    BootElfOperatingSystem,
 };
 use rem6_dram::{DramMemoryTechnology, ExternalMemoryProfile, ExternalMemoryTopology};
 use rem6_kernel::{Tick, WaitForEdgeKind, WaitForNode};
@@ -150,6 +151,7 @@ pub(crate) fn manifest_identity(input: ManifestIdentityInput<'_>) -> WorkloadMan
     hash_str(&mut hash, input.id.as_str());
     hash_u64(&mut hash, input.boot.entry().get());
     hash_elf_metadata(&mut hash, input.boot.elf_metadata());
+    hash_elf_interpreter(&mut hash, input.boot.elf_interpreter());
     hash_u64(&mut hash, input.boot.segments().len() as u64);
     for segment in input.boot.segments() {
         hash_u64(&mut hash, segment.range().start().get());
@@ -1227,6 +1229,15 @@ fn hash_elf_metadata(hash: &mut u64, metadata: Option<BootElfMetadata>) {
             hash_elf_operating_system(hash, metadata.operating_system());
         }
         None => hash_u64(hash, 0),
+    }
+}
+
+fn hash_elf_interpreter(hash: &mut u64, interpreter: Option<&BootElfInterpreter>) {
+    if let Some(interpreter) = interpreter {
+        hash_str(hash, "elf.interpreter.some");
+        hash_str(hash, interpreter.path());
+        hash_u64(hash, interpreter.file_offset());
+        hash_u64(hash, interpreter.file_size());
     }
 }
 

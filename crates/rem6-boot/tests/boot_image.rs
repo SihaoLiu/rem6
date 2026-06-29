@@ -586,6 +586,70 @@ fn boot_image_records_loaded_program_header_table_metadata() {
 }
 
 #[test]
+fn boot_image_records_elf64_interpreter_metadata() {
+    let interpreter = b"/lib/ld-linux-riscv64-lp64d.so.1\0";
+    let elf = elf64_image(
+        0x8000_0000,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 3,
+                offset: 0x180,
+                physical: 0,
+                file_size: interpreter.len() as u64,
+                memory_size: interpreter.len() as u64,
+            },
+        ],
+        &[(0x180, interpreter), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    let image = BootImage::from_elf64_le(&elf).unwrap();
+    let metadata = image.elf_interpreter().unwrap();
+
+    assert_eq!(metadata.path(), "/lib/ld-linux-riscv64-lp64d.so.1");
+    assert_eq!(metadata.file_offset(), 0x180);
+    assert_eq!(metadata.file_size(), interpreter.len() as u64);
+}
+
+#[test]
+fn boot_image_records_elf32_interpreter_metadata() {
+    let interpreter = b"/lib/ld-linux-riscv32-ilp32d.so.1\0";
+    let elf = elf32_image(
+        0x8000_0000,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 3,
+                offset: 0x180,
+                physical: 0,
+                file_size: interpreter.len() as u64,
+                memory_size: interpreter.len() as u64,
+            },
+        ],
+        &[(0x180, interpreter), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    let image = BootImage::from_elf32_le(&elf).unwrap();
+    let metadata = image.elf_interpreter().unwrap();
+
+    assert_eq!(metadata.path(), "/lib/ld-linux-riscv32-ilp32d.so.1");
+    assert_eq!(metadata.file_offset(), 0x180);
+    assert_eq!(metadata.file_size(), interpreter.len() as u64);
+}
+
+#[test]
 fn boot_image_rejects_extended_program_header_count_with_bad_section_header_size() {
     let mut elf = elf64_image(
         0x8000_0080,

@@ -46,6 +46,15 @@ pub enum BootElfError {
         physical: u64,
         memory_size: u64,
     },
+    InterpreterFileRangeOutOfBounds {
+        segment: u16,
+        offset: u64,
+        size: u64,
+        image_size: u64,
+    },
+    InvalidInterpreterPath {
+        segment: u16,
+    },
     ProgramHeaderTableOutOfBounds {
         offset: u64,
         size: u64,
@@ -149,6 +158,18 @@ impl fmt::Display for BootElfError {
                 formatter,
                 "ELF segment {segment} memory range {physical:#x}+{memory_size:#x} overflows"
             ),
+            Self::InterpreterFileRangeOutOfBounds {
+                segment,
+                offset,
+                size,
+                image_size,
+            } => write!(
+                formatter,
+                "ELF interpreter segment {segment} file range {offset:#x}+{size:#x} exceeds image size {image_size:#x}"
+            ),
+            Self::InvalidInterpreterPath { segment } => {
+                write!(formatter, "ELF interpreter segment {segment} has an invalid path")
+            }
             Self::ProgramHeaderTableOutOfBounds {
                 offset,
                 size,

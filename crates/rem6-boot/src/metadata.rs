@@ -2,6 +2,35 @@ use rem6_memory::Address;
 
 use crate::elf::{BootElfArchitecture, BootElfClass, BootElfEndian, BootElfOperatingSystem};
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BootElfInterpreter {
+    path: String,
+    file_offset: u64,
+    file_size: u64,
+}
+
+impl BootElfInterpreter {
+    pub fn new(path: impl Into<String>, file_offset: u64, file_size: u64) -> Self {
+        Self {
+            path: path.into(),
+            file_offset,
+            file_size,
+        }
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub const fn file_offset(&self) -> u64 {
+        self.file_offset
+    }
+
+    pub const fn file_size(&self) -> u64 {
+        self.file_size
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BootElfProgramHeaderTable {
     file_offset: u64,

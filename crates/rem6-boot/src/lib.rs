@@ -1,5 +1,6 @@
 mod elf;
 mod elf_counts;
+mod elf_interpreter;
 mod error;
 mod image;
 mod metadata;
@@ -7,4 +8,4 @@ mod metadata;
 pub use elf::{BootElfArchitecture, BootElfClass, BootElfEndian, BootElfOperatingSystem};
 pub use error::{BootElfError, BootError};
 pub use image::{BootImage, BootLineWrite, BootLoadReport, BootSegment};
-pub use metadata::{BootElfMetadata, BootElfProgramHeaderTable};
+pub use metadata::{BootElfInterpreter, BootElfMetadata, BootElfProgramHeaderTable};

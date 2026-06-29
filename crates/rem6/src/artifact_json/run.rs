@@ -1,4 +1,4 @@
-use rem6_boot::BootElfProgramHeaderTable;
+use rem6_boot::{BootElfInterpreter, BootElfProgramHeaderTable};
 use rem6_fabric::FabricHopActivity;
 use rem6_system::RiscvDataCacheProtocol;
 
@@ -177,6 +177,7 @@ impl Rem6RunArtifact {
             optional_riscv_cache_protocol_json(self.config.data_cache_l3_protocol());
         let data_cache_prefetcher =
             optional_cache_prefetcher_json(self.config.data_cache_prefetcher());
+        let interpreter = elf_interpreter_json(self.interpreter.as_ref());
         let kernel_resource = self
             .config
             .kernel_resource()
@@ -188,7 +189,7 @@ impl Rem6RunArtifact {
             .map(|artifact| format!(",\"power_analysis\":{}", artifact.to_json()))
             .unwrap_or_default();
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"program_header_table\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"program_header_table\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -213,6 +214,7 @@ impl Rem6RunArtifact {
             self.metadata.machine(),
             self.metadata.flags(),
             elf_program_header_table_json(self.metadata.program_header_table()),
+            interpreter,
             simulation,
             parallel,
             cores,
@@ -245,6 +247,19 @@ impl Rem6RunArtifact {
     pub const fn load_segments(&self) -> u64 {
         self.load_segments
     }
+}
+
+fn elf_interpreter_json(interpreter: Option<&BootElfInterpreter>) -> String {
+    interpreter
+        .map(|interpreter| {
+            format!(
+                "{{\"path\":\"{}\",\"file_offset\":{},\"file_size\":{}}}",
+                json_escape(interpreter.path()),
+                interpreter.file_offset(),
+                interpreter.file_size()
+            )
+        })
+        .unwrap_or_else(|| "null".to_string())
 }
 
 fn elf_program_header_table_json(table: BootElfProgramHeaderTable) -> String {

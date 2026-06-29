@@ -169,6 +169,7 @@ pub struct Rem6RunArtifact {
     entry: u64,
     start_address: u64,
     metadata: rem6_boot::BootElfMetadata,
+    interpreter: Option<rem6_boot::BootElfInterpreter>,
     load_segments: u64,
     load_blobs: Vec<Rem6LoadBlobSummary>,
     readfiles: Vec<Rem6ReadfileSummary>,
@@ -556,6 +557,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         .ok_or_else(|| Rem6CliError::MissingElfMetadata {
             path: config.binary().to_path_buf(),
         })?;
+    let interpreter = image.elf_interpreter().cloned();
     if !config.isa().matches_architecture(metadata.architecture()) {
         return Err(Rem6CliError::IsaMismatch {
             requested: config.isa(),
@@ -603,6 +605,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         binary_bytes: bytes.len() as u64,
         load_segments: image.segments().len() as u64,
         metadata,
+        interpreter: interpreter.as_ref(),
         load_blobs: &load_blob_summaries,
         readfiles: &readfile_summaries,
         start_address,
@@ -624,6 +627,7 @@ pub fn run_config(config: Rem6RunConfig) -> Result<Rem6RunArtifact, Rem6CliError
         start_address,
         load_segments: image.segments().len() as u64,
         metadata,
+        interpreter,
         load_blobs: load_blob_summaries,
         readfiles: readfile_summaries,
         config,

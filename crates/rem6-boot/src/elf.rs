@@ -3,6 +3,7 @@ use rem6_memory::{AccessSize, Address, AddressRange};
 use crate::elf_counts::{
     program_header_table_size, resolve_program_header_count, section_table_layout,
 };
+use crate::elf_interpreter::read_interpreter;
 use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::image::BootImage;
 use crate::metadata::{BootElfMetadata, BootElfProgramHeaderTable};
@@ -22,6 +23,7 @@ const ELF_OSABI_FREEBSD: u8 = 9;
 const ELF_OSABI_TRU64: u8 = 10;
 const ELF_OSABI_ARM: u8 = 97;
 const PT_LOAD: u32 = 1;
+const PT_INTERP: u32 = 3;
 const SHT_NOTE: u32 = 7;
 const EM_SPARC: u16 = 2;
 const EM_386: u16 = 3;
@@ -223,12 +225,24 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
     )?;
 
     let mut image = BootImage::new(entry);
+    let mut interpreter = None;
     let mut program_header_memory_address = None;
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let segment = segment_index(index);
         let header_offset = program_header_offset + index * program_header_size as u64;
         let kind = read_u32_at_u64(bytes, header_offset, endian)?;
+        if kind == PT_INTERP {
+            if interpreter.is_none() {
+                interpreter = Some(read_interpreter(
+                    bytes,
+                    segment,
+                    read_u64_at_u64(bytes, header_offset + 8, endian)?,
+                    read_u64_at_u64(bytes, header_offset + 32, endian)?,
+                )?);
+            }
+            continue;
+        }
         if kind != PT_LOAD {
             continue;
         }
@@ -290,7 +304,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         return Err(invalid_elf(BootElfError::NoLoadableSegments));
     }
 
-    Ok(image.with_elf_metadata(
+    let image = image.with_elf_metadata(
         BootElfMetadata::from_header(
             BootElfClass::Class64,
             endian,
@@ -308,7 +322,11 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
             )
             .with_memory_address(program_header_memory_address),
         ),
-    ))
+    );
+    Ok(match interpreter {
+        Some(interpreter) => image.with_elf_interpreter(interpreter),
+        None => image,
+    })
 }
 
 pub(crate) fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
@@ -354,12 +372,24 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
     )?;
 
     let mut image = BootImage::new(entry);
+    let mut interpreter = None;
     let mut program_header_memory_address = None;
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let segment = segment_index(index);
         let header_offset = program_header_offset + index * program_header_size as u64;
         let kind = read_u32_at_u64(bytes, header_offset, endian)?;
+        if kind == PT_INTERP {
+            if interpreter.is_none() {
+                interpreter = Some(read_interpreter(
+                    bytes,
+                    segment,
+                    u64::from(read_u32_at_u64(bytes, header_offset + 4, endian)?),
+                    u64::from(read_u32_at_u64(bytes, header_offset + 16, endian)?),
+                )?);
+            }
+            continue;
+        }
         if kind != PT_LOAD {
             continue;
         }
@@ -435,7 +465,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         return Err(invalid_elf(BootElfError::NoLoadableSegments));
     }
 
-    Ok(image.with_elf_metadata(
+    let image = image.with_elf_metadata(
         BootElfMetadata::from_header(
             BootElfClass::Class32,
             endian,
@@ -453,7 +483,11 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
             )
             .with_memory_address(program_header_memory_address),
         ),
-    ))
+    );
+    Ok(match interpreter {
+        Some(interpreter) => image.with_elf_interpreter(interpreter),
+        None => image,
+    })
 }
 
 fn segment_index(index: u64) -> u16 {
