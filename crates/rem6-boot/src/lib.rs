@@ -2,6 +2,7 @@ mod elf;
 mod elf_counts;
 mod elf_dynamic;
 mod elf_interpreter;
+mod elf_program_headers;
 mod elf_sections;
 mod error;
 mod image;

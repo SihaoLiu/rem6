@@ -16,6 +16,7 @@ fn line(fill: u8) -> Vec<u8> {
 }
 
 const OVERSIZED_VECTOR_LENGTH: u64 = isize::MAX as u64 + 1;
+const PT_PHDR: u32 = 6;
 const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
@@ -1951,6 +1952,72 @@ fn boot_image_records_tls_from_elf32_program_header() {
     let metadata = BootImage::from_elf(&elf).unwrap().elf_metadata().unwrap();
 
     assert!(metadata.has_tls());
+}
+
+#[test]
+fn boot_image_records_elf64_pt_phdr_program_header_table_address() {
+    let mut elf = elf64_image(
+        0x8004,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x100,
+                physical: 0x8000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: PT_PHDR,
+                offset: 64,
+                physical: 0x9100,
+                file_size: 2 * 56,
+                memory_size: 2 * 56,
+            },
+        ],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    write_u64(&mut elf, 64 + 56 + 24, 0xa100);
+
+    let table = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap()
+        .program_header_table();
+
+    assert_eq!(table.memory_address(), Some(Address::new(0x9100)));
+}
+
+#[test]
+fn boot_image_records_elf32_pt_phdr_program_header_table_address() {
+    let mut elf = elf32_image(
+        0x8004,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x100,
+                physical: 0x8000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: PT_PHDR,
+                offset: 52,
+                physical: 0x9100,
+                file_size: 2 * 32,
+                memory_size: 2 * 32,
+            },
+        ],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    write_u32(&mut elf, 52 + 32 + 12, 0xa100);
+
+    let table = BootImage::from_elf32_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap()
+        .program_header_table();
+
+    assert_eq!(table.memory_address(), Some(Address::new(0x9100)));
 }
 
 #[test]

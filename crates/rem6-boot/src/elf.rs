@@ -1,18 +1,15 @@
 use rem6_memory::{AccessSize, Address, AddressRange};
 
 use crate::elf_counts::{program_header_table_size, resolve_program_header_count};
-use crate::elf_dynamic::{
-    dynamic_table_counts, elf32_load_mappings, elf64_load_mappings, ElfDynamicPltRelocationKind,
-    ElfDynamicRelocationSummary,
+use crate::elf_dynamic::{elf32_load_mappings, elf64_load_mappings};
+use crate::elf_program_headers::{
+    summarize_elf32_program_header, summarize_elf64_program_header, ElfProgramHeaderAction,
+    ElfProgramHeaderMetadata,
 };
-use crate::elf_interpreter::read_interpreter;
 use crate::elf_sections::{elf_section_summary, ElfSectionSummary};
 use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::image::BootImage;
-use crate::metadata::{
-    BootElfDynamicPltRelocationKind, BootElfDynamicRelocationTable, BootElfDynamicTable,
-    BootElfMetadata, BootElfProgramHeaderTable,
-};
+use crate::metadata::{BootElfMetadata, BootElfProgramHeaderTable};
 
 const ELF64_HEADER_SIZE: usize = 64;
 const ELF64_PROGRAM_HEADER_SIZE: u16 = 56;
@@ -29,13 +26,6 @@ const ELF_OSABI_FREEBSD: u8 = 9;
 const ELF_OSABI_TRU64: u8 = 10;
 const ELF_OSABI_ARM: u8 = 97;
 const PT_LOAD: u32 = 1;
-const PT_DYNAMIC: u32 = 2;
-const PT_INTERP: u32 = 3;
-const PT_TLS: u32 = 7;
-const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
-const PT_GNU_STACK: u32 = 0x6474_e551;
-const PT_GNU_RELRO: u32 = 0x6474_e552;
-const PF_X: u32 = 0x1;
 const EM_SPARC: u16 = 2;
 const EM_386: u16 = 3;
 const EM_MIPS: u16 = 8;
@@ -245,92 +235,22 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
     )?;
 
     let mut image = BootImage::new(entry);
-    let mut interpreter = None;
-    let mut dynamic_table = BootElfDynamicTable::new();
-    let mut program_header_memory_address = None;
-    let mut has_tls = section_summary.has_tls();
-    let mut gnu_stack_executable = None;
-    let mut gnu_relro_virtual_address = None;
-    let mut gnu_relro_memory_size = None;
-    let mut gnu_eh_frame_virtual_address = None;
-    let mut gnu_eh_frame_memory_size = None;
+    let mut header_metadata = ElfProgramHeaderMetadata::new(section_summary.has_tls());
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let segment = segment_index(index);
         let header_offset = program_header_offset + index * program_header_size as u64;
         let kind = read_u32_at_u64(bytes, header_offset, endian)?;
-        if kind == PT_DYNAMIC {
-            let file_offset = read_u64_at_u64(bytes, header_offset + 8, endian)?;
-            let file_size = read_u64_at_u64(bytes, header_offset + 32, endian)?;
-            let summary = dynamic_table_counts(
-                bytes,
-                segment,
-                file_offset,
-                file_size,
-                16,
-                endian,
-                &load_mappings,
-            )?;
-            dynamic_table = dynamic_table.with_segment(
-                file_offset,
-                Address::new(read_u64_at_u64(bytes, header_offset + 16, endian)?),
-                16,
-                summary.entry_count,
-                summary.needed_libraries.len() as u64,
-                summary.needed_libraries,
-                summary.soname,
-                summary.rpath,
-                summary.runpath,
-                summary.sysv_hash_virtual_address.map(Address::new),
-                summary.gnu_hash_virtual_address.map(Address::new),
-                relocation_table(summary.rela_relocations),
-                relocation_table(summary.rel_relocations),
-                relocation_table(summary.plt_relocations),
-                plt_relocation_kind(summary.plt_relocation_kind),
-            );
-            continue;
-        }
-        if kind == PT_INTERP {
-            if interpreter.is_none() {
-                interpreter = Some(read_interpreter(
-                    bytes,
-                    segment,
-                    read_u64_at_u64(bytes, header_offset + 8, endian)?,
-                    read_u64_at_u64(bytes, header_offset + 32, endian)?,
-                )?);
-            }
-            continue;
-        }
-        if kind == PT_TLS {
-            has_tls = true;
-            continue;
-        }
-        if kind == PT_GNU_STACK {
-            let executable = read_u32_at_u64(bytes, header_offset + 4, endian)? & PF_X != 0;
-            gnu_stack_executable = Some(gnu_stack_executable.unwrap_or(false) || executable);
-            continue;
-        }
-        if kind == PT_GNU_RELRO {
-            if gnu_relro_virtual_address.is_none() {
-                gnu_relro_virtual_address = Some(Address::new(read_u64_at_u64(
-                    bytes,
-                    header_offset + 16,
-                    endian,
-                )?));
-                gnu_relro_memory_size = Some(read_u64_at_u64(bytes, header_offset + 40, endian)?);
-            }
-            continue;
-        }
-        if kind == PT_GNU_EH_FRAME {
-            if gnu_eh_frame_virtual_address.is_none() {
-                gnu_eh_frame_virtual_address = Some(Address::new(read_u64_at_u64(
-                    bytes,
-                    header_offset + 16,
-                    endian,
-                )?));
-                gnu_eh_frame_memory_size =
-                    Some(read_u64_at_u64(bytes, header_offset + 40, endian)?);
-            }
+        if summarize_elf64_program_header(
+            bytes,
+            segment,
+            header_offset,
+            kind,
+            endian,
+            &load_mappings,
+            &mut header_metadata,
+        )? == ElfProgramHeaderAction::Skip
+        {
             continue;
         }
         if kind != PT_LOAD {
@@ -376,15 +296,13 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                 memory_size,
             })
         })?;
-        if program_header_memory_address.is_none() {
-            program_header_memory_address = loaded_file_address(
-                program_header_offset,
-                table_size,
-                file_offset,
-                file_size,
-                physical,
-            );
-        }
+        header_metadata.record_inferred_program_header_address(loaded_file_address(
+            program_header_offset,
+            table_size,
+            file_offset,
+            file_size,
+            physical,
+        ));
         let data = zeroed_segment_data(segment, memory_size, file_range)?;
         image = image.add_segment(Address::new(physical), data)?;
         loaded_segments += 1;
@@ -393,6 +311,16 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
     if loaded_segments == 0 {
         return Err(invalid_elf(BootElfError::NoLoadableSegments));
     }
+
+    let program_header_memory_address = header_metadata.program_header_memory_address();
+    let has_tls = header_metadata.has_tls;
+    let gnu_stack_executable = header_metadata.gnu_stack_executable;
+    let gnu_relro_virtual_address = header_metadata.gnu_relro_virtual_address;
+    let gnu_relro_memory_size = header_metadata.gnu_relro_memory_size;
+    let gnu_eh_frame_virtual_address = header_metadata.gnu_eh_frame_virtual_address;
+    let gnu_eh_frame_memory_size = header_metadata.gnu_eh_frame_memory_size;
+    let dynamic_table = header_metadata.dynamic_table;
+    let interpreter = header_metadata.interpreter;
 
     let image = image.with_elf_metadata(
         BootElfMetadata::from_header(
@@ -428,7 +356,6 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         None => image,
     })
 }
-
 pub(crate) fn parse_elf32_le(bytes: &[u8]) -> Result<BootImage, BootError> {
     parse_elf32(bytes, BootElfEndian::Little)
 }
@@ -481,103 +408,22 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
     )?;
 
     let mut image = BootImage::new(entry);
-    let mut interpreter = None;
-    let mut dynamic_table = BootElfDynamicTable::new();
-    let mut program_header_memory_address = None;
-    let mut has_tls = section_summary.has_tls();
-    let mut gnu_stack_executable = None;
-    let mut gnu_relro_virtual_address = None;
-    let mut gnu_relro_memory_size = None;
-    let mut gnu_eh_frame_virtual_address = None;
-    let mut gnu_eh_frame_memory_size = None;
+    let mut header_metadata = ElfProgramHeaderMetadata::new(section_summary.has_tls());
     let mut loaded_segments = 0usize;
     for index in 0..program_header_count {
         let segment = segment_index(index);
         let header_offset = program_header_offset + index * program_header_size as u64;
         let kind = read_u32_at_u64(bytes, header_offset, endian)?;
-        if kind == PT_DYNAMIC {
-            let file_offset = u64::from(read_u32_at_u64(bytes, header_offset + 4, endian)?);
-            let file_size = u64::from(read_u32_at_u64(bytes, header_offset + 16, endian)?);
-            let summary = dynamic_table_counts(
-                bytes,
-                segment,
-                file_offset,
-                file_size,
-                8,
-                endian,
-                &load_mappings,
-            )?;
-            dynamic_table = dynamic_table.with_segment(
-                file_offset,
-                Address::new(u64::from(read_u32_at_u64(
-                    bytes,
-                    header_offset + 8,
-                    endian,
-                )?)),
-                8,
-                summary.entry_count,
-                summary.needed_libraries.len() as u64,
-                summary.needed_libraries,
-                summary.soname,
-                summary.rpath,
-                summary.runpath,
-                summary.sysv_hash_virtual_address.map(Address::new),
-                summary.gnu_hash_virtual_address.map(Address::new),
-                relocation_table(summary.rela_relocations),
-                relocation_table(summary.rel_relocations),
-                relocation_table(summary.plt_relocations),
-                plt_relocation_kind(summary.plt_relocation_kind),
-            );
-            continue;
-        }
-        if kind == PT_INTERP {
-            if interpreter.is_none() {
-                interpreter = Some(read_interpreter(
-                    bytes,
-                    segment,
-                    u64::from(read_u32_at_u64(bytes, header_offset + 4, endian)?),
-                    u64::from(read_u32_at_u64(bytes, header_offset + 16, endian)?),
-                )?);
-            }
-            continue;
-        }
-        if kind == PT_TLS {
-            has_tls = true;
-            continue;
-        }
-        if kind == PT_GNU_STACK {
-            let executable = read_u32_at_u64(bytes, header_offset + 24, endian)? & PF_X != 0;
-            gnu_stack_executable = Some(gnu_stack_executable.unwrap_or(false) || executable);
-            continue;
-        }
-        if kind == PT_GNU_RELRO {
-            if gnu_relro_virtual_address.is_none() {
-                gnu_relro_virtual_address = Some(Address::new(u64::from(read_u32_at_u64(
-                    bytes,
-                    header_offset + 8,
-                    endian,
-                )?)));
-                gnu_relro_memory_size = Some(u64::from(read_u32_at_u64(
-                    bytes,
-                    header_offset + 20,
-                    endian,
-                )?));
-            }
-            continue;
-        }
-        if kind == PT_GNU_EH_FRAME {
-            if gnu_eh_frame_virtual_address.is_none() {
-                gnu_eh_frame_virtual_address = Some(Address::new(u64::from(read_u32_at_u64(
-                    bytes,
-                    header_offset + 8,
-                    endian,
-                )?)));
-                gnu_eh_frame_memory_size = Some(u64::from(read_u32_at_u64(
-                    bytes,
-                    header_offset + 20,
-                    endian,
-                )?));
-            }
+        if summarize_elf32_program_header(
+            bytes,
+            segment,
+            header_offset,
+            kind,
+            endian,
+            &load_mappings,
+            &mut header_metadata,
+        )? == ElfProgramHeaderAction::Skip
+        {
             continue;
         }
         if kind != PT_LOAD {
@@ -637,15 +483,13 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                 memory_size,
             })
         })?;
-        if program_header_memory_address.is_none() {
-            program_header_memory_address = loaded_file_address(
-                program_header_offset,
-                table_size,
-                file_offset,
-                file_size,
-                physical,
-            );
-        }
+        header_metadata.record_inferred_program_header_address(loaded_file_address(
+            program_header_offset,
+            table_size,
+            file_offset,
+            file_size,
+            physical,
+        ));
         let data = zeroed_segment_data(segment, memory_size, file_range)?;
         image = image.add_segment(Address::new(physical), data)?;
         loaded_segments += 1;
@@ -654,6 +498,16 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
     if loaded_segments == 0 {
         return Err(invalid_elf(BootElfError::NoLoadableSegments));
     }
+
+    let program_header_memory_address = header_metadata.program_header_memory_address();
+    let has_tls = header_metadata.has_tls;
+    let gnu_stack_executable = header_metadata.gnu_stack_executable;
+    let gnu_relro_virtual_address = header_metadata.gnu_relro_virtual_address;
+    let gnu_relro_memory_size = header_metadata.gnu_relro_memory_size;
+    let gnu_eh_frame_virtual_address = header_metadata.gnu_eh_frame_virtual_address;
+    let gnu_eh_frame_memory_size = header_metadata.gnu_eh_frame_memory_size;
+    let dynamic_table = header_metadata.dynamic_table;
+    let interpreter = header_metadata.interpreter;
 
     let image = image.with_elf_metadata(
         BootElfMetadata::from_header(
@@ -711,24 +565,6 @@ fn loaded_file_address(
     }
     let delta = table_offset - segment_offset;
     Some(Address::new(segment_loaded_start.checked_add(delta)?))
-}
-
-fn relocation_table(summary: ElfDynamicRelocationSummary) -> BootElfDynamicRelocationTable {
-    BootElfDynamicRelocationTable::new(
-        summary.virtual_address.map(Address::new),
-        summary.byte_size,
-        summary.entry_size,
-    )
-}
-
-fn plt_relocation_kind(
-    kind: Option<ElfDynamicPltRelocationKind>,
-) -> Option<BootElfDynamicPltRelocationKind> {
-    match kind {
-        Some(ElfDynamicPltRelocationKind::Rel) => Some(BootElfDynamicPltRelocationKind::Rel),
-        Some(ElfDynamicPltRelocationKind::Rela) => Some(BootElfDynamicPltRelocationKind::Rela),
-        None => None,
-    }
 }
 
 fn zeroed_segment_data(

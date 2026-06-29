@@ -618,6 +618,45 @@ fn rem6_run_reports_elf_dynamic_hash_metadata() {
 }
 
 #[test]
+fn rem6_run_reports_elf_pt_phdr_program_header_table_address() {
+    let elf = riscv64_elf_with_pt_phdr(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("riscv-run-pt-phdr", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"loaded\""));
+    assert!(stdout.contains(
+        "\"program_header_table\":{\"file_offset\":64,\"entry_size\":56,\"entry_count\":2,\"memory_address\":\"0x80001000\"}"
+    ));
+    assert_stat(
+        &stdout,
+        "sim.elf.program_header.memory_address",
+        "Address",
+        0x8000_1000,
+        "constant",
+    );
+}
+
+#[test]
 fn rem6_run_rejects_elf_interpreter_without_nul_terminator() {
     let interpreter = "/lib/ld-linux-riscv64-lp64d.so.1";
     let mut elf =
