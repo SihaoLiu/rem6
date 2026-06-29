@@ -298,6 +298,175 @@ fn dram_bank_low_power_self_refresh_entries(json: &Value) -> Vec<(u64, u64, u64)
 }
 
 #[test]
+fn rem6_run_exposes_hbm2_jedec_terminal_refresh_across_scheduler_banks() {
+    let program = riscv64_program(&[
+        b_type(0, 0, 0, 0x0), // beq x0, x0, self
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("hbm2-jedec-terminal-refresh", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "4300",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--cores",
+            "1",
+            "--dram-memory",
+            "--dram-memory-profile",
+            "hbm2-2000-2gb",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_at_tick_limit\""));
+    assert_eq!(
+        json.pointer("/dram/profile/technology")
+            .and_then(Value::as_str),
+        Some("hbm")
+    );
+    assert_eq!(json_u64(&json, "/dram/profile/parallel_ports"), 4);
+    assert_eq!(json_u64(&json, "/dram/profile/scheduler_banks"), 16);
+    assert_eq!(
+        json_u64(&json, "/dram/profile/timing/refresh_interval"),
+        3_900
+    );
+    assert_eq!(
+        json_u64(&json, "/dram/profile/timing/refresh_recovery"),
+        220
+    );
+    assert_eq!(json_u64(&json, "/dram/refreshes"), 16);
+    assert_eq!(json_u64(&json, "/dram/refresh_ticks"), 3_520);
+    assert_eq!(
+        json_u64(&json, "/memory_resources/dram/refreshes"),
+        json_u64(&json, "/dram/refreshes")
+    );
+    assert_eq!(
+        json_u64(&json, "/memory_resources/dram/refresh_ticks"),
+        json_u64(&json, "/dram/refresh_ticks")
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.refreshes",
+        "Count",
+        16,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.dram.refresh_ticks",
+        "Tick",
+        3_520,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.refreshes",
+        "Count",
+        16,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.memory.resources.dram.refresh_ticks",
+        "Tick",
+        3_520,
+        "monotonic",
+    );
+
+    let mut refreshed_banks = BTreeSet::new();
+    for target in json
+        .pointer("/dram/targets")
+        .and_then(Value::as_array)
+        .expect("DRAM targets")
+    {
+        let target_id = target
+            .get("target")
+            .and_then(Value::as_u64)
+            .expect("DRAM target id");
+        for port in target
+            .get("ports")
+            .and_then(Value::as_array)
+            .expect("DRAM target ports")
+        {
+            let port_id = port
+                .get("port")
+                .and_then(Value::as_u64)
+                .expect("DRAM port id");
+            for bank in port
+                .get("banks")
+                .and_then(Value::as_array)
+                .expect("DRAM port banks")
+            {
+                let bank_id = bank
+                    .get("bank")
+                    .and_then(Value::as_u64)
+                    .expect("DRAM bank id");
+                assert_eq!(
+                    bank.get("refreshes").and_then(Value::as_u64),
+                    Some(1),
+                    "bank refreshes: {bank:?}"
+                );
+                assert_eq!(
+                    bank.get("refresh_ticks").and_then(Value::as_u64),
+                    Some(220),
+                    "bank refresh ticks: {bank:?}"
+                );
+                refreshed_banks.insert((target_id, port_id, bank_id));
+            }
+        }
+    }
+    assert_eq!(refreshed_banks.len(), 16);
+    for port in 0..4 {
+        for bank in 0..4 {
+            assert!(refreshed_banks.contains(&(0, port, bank)));
+            assert_stat(
+                &stdout,
+                &format!("sim.memory.dram.target0.port{port}.bank{bank}.refreshes"),
+                "Count",
+                1,
+                "monotonic",
+            );
+            assert_stat(
+                &stdout,
+                &format!("sim.memory.dram.target0.port{port}.bank{bank}.refresh_ticks"),
+                "Tick",
+                220,
+                "monotonic",
+            );
+            assert_stat(
+                &stdout,
+                &format!("sim.memory.resources.dram.target0.port{port}.bank{bank}.refreshes"),
+                "Count",
+                1,
+                "monotonic",
+            );
+            assert_stat(
+                &stdout,
+                &format!("sim.memory.resources.dram.target0.port{port}.bank{bank}.refresh_ticks"),
+                "Tick",
+                220,
+                "monotonic",
+            );
+        }
+    }
+}
+
+#[test]
 fn rem6_run_exposes_lpddr_low_power_residency_across_multiple_dram_banks() {
     const DATA_OFFSET: usize = 64;
     const SECOND_LINE_OFFSET: usize = 128;

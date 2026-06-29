@@ -503,11 +503,30 @@ fn dram_memory_controller_since_until_keeps_terminal_refresh_only_activity() {
     let marker = controller.mark_activity();
 
     let memory_profile = controller.activity_profile_since_until(&marker, 45);
-    assert_eq!(memory_profile.refresh_count(), 2);
-    assert_eq!(memory_profile.refresh_cycle_count(), 10);
+    assert_eq!(memory_profile.refresh_count(), 8);
+    assert_eq!(memory_profile.refresh_cycle_count(), 40);
     let target_windows = controller.target_activities_since_until(&marker, 45);
     assert_eq!(target_windows.len(), 1);
     assert_eq!(target_windows[0].target(), target);
+}
+
+#[test]
+fn dram_memory_controller_until_zero_cycle_skips_terminal_refresh() {
+    let target = MemoryTargetId::new(13);
+    let mut controller = DramMemoryController::new();
+    controller
+        .add_target(DramControllerConfig::new(
+            target,
+            layout(),
+            geometry(),
+            timing_with_refresh(),
+        ))
+        .unwrap();
+
+    let memory_profile = controller.activity_profile_until(0);
+    assert_eq!(memory_profile.refresh_count(), 0);
+    assert_eq!(memory_profile.refresh_cycle_count(), 0);
+    assert!(controller.target_activities_until(0).is_empty());
 }
 
 #[test]

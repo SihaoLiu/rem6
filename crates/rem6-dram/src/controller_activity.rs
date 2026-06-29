@@ -118,20 +118,24 @@ impl DramController {
         bank_activities: &mut BTreeMap<(u32, u32), DramBankActivity>,
         end_cycle: u64,
     ) {
+        if end_cycle == 0 {
+            return;
+        }
         let bank_count = self.geometry.bank_count() as usize;
-        let terminal_banks = if self.timing.low_power_timing().is_some() {
-            (0..self.banks.len())
-                .map(|bank_index| {
-                    (
-                        (bank_index / bank_count) as u32,
-                        (bank_index % bank_count) as u32,
-                    )
-                })
-                .collect::<Vec<_>>()
-        } else {
-            let all_bank_activities = self.bank_activities();
-            all_bank_activities.keys().copied().collect::<Vec<_>>()
-        };
+        let terminal_banks =
+            if self.timing.refresh_timing().is_some() || self.timing.low_power_timing().is_some() {
+                (0..self.banks.len())
+                    .map(|bank_index| {
+                        (
+                            (bank_index / bank_count) as u32,
+                            (bank_index % bank_count) as u32,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                let all_bank_activities = self.bank_activities();
+                all_bank_activities.keys().copied().collect::<Vec<_>>()
+            };
         for (parallel_port, local_bank) in terminal_banks {
             let bank_index = parallel_port as usize * bank_count + local_bank as usize;
             let Some(bank) = self.banks.get(bank_index) else {

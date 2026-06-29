@@ -664,8 +664,8 @@ fn dram_controller_activity_until_counts_refreshes_consumed_by_later_access() {
 
     let profile = controller.activity_profile_until(45);
     assert_eq!(profile.access_count(), 1);
-    assert_eq!(profile.refresh_count(), 2);
-    assert_eq!(profile.refresh_cycle_count(), 10);
+    assert_eq!(profile.refresh_count(), 8);
+    assert_eq!(profile.refresh_cycle_count(), 40);
 
     let bank = controller
         .bank_activities_until(45)
@@ -674,6 +674,37 @@ fn dram_controller_activity_until_counts_refreshes_consumed_by_later_access() {
     assert_eq!(bank.access_count(), 1);
     assert_eq!(bank.refresh_count(), 2);
     assert_eq!(bank.refresh_cycle_count(), 10);
+}
+
+#[test]
+fn activity_profile_until_accounts_terminal_refresh_on_all_scheduler_banks() {
+    let mut controller = DramController::new(geometry(), timing_with_refresh());
+
+    controller.schedule(0, &read(0x0000, 8, 49)).unwrap();
+    let bank_activities = controller.bank_activities_until(45);
+
+    assert_eq!(bank_activities.len(), 4);
+    for bank in 0..4 {
+        let activity = bank_activities
+            .get(&(0, bank))
+            .unwrap_or_else(|| panic!("missing terminal refresh activity for bank {bank}"));
+        assert_eq!(activity.refresh_count(), 2, "bank {bank}");
+        assert_eq!(activity.refresh_cycle_count(), 10, "bank {bank}");
+    }
+    let profile = controller.activity_profile_until(45);
+    assert_eq!(profile.refresh_count(), 8);
+    assert_eq!(profile.refresh_cycle_count(), 40);
+}
+
+#[test]
+fn activity_profile_until_zero_cycle_skips_terminal_refresh() {
+    let controller = DramController::new(geometry(), timing_with_refresh());
+
+    let bank_activities = controller.bank_activities_until(0);
+    assert!(bank_activities.is_empty());
+    let profile = controller.activity_profile_until(0);
+    assert_eq!(profile.refresh_count(), 0);
+    assert_eq!(profile.refresh_cycle_count(), 0);
 }
 
 #[test]
@@ -867,8 +898,8 @@ fn activity_profile_until_accounts_due_refresh_without_later_access() {
     controller.schedule(0, &read(0x0000, 8, 78)).unwrap();
     let profile = controller.activity_profile_until(45);
 
-    assert_eq!(profile.refresh_count(), 2);
-    assert_eq!(profile.refresh_cycle_count(), 10);
+    assert_eq!(profile.refresh_count(), 8);
+    assert_eq!(profile.refresh_cycle_count(), 40);
 }
 
 #[test]
@@ -879,8 +910,8 @@ fn activity_profile_since_until_accounts_terminal_refresh_without_later_access()
     let marker = controller.mark_activity();
     let profile = controller.activity_profile_since_until(marker, 45);
 
-    assert_eq!(profile.refresh_count(), 2);
-    assert_eq!(profile.refresh_cycle_count(), 10);
+    assert_eq!(profile.refresh_count(), 8);
+    assert_eq!(profile.refresh_cycle_count(), 40);
 }
 
 #[test]
@@ -890,8 +921,8 @@ fn activity_profile_until_clips_terminal_refresh_ticks_to_end_cycle() {
     controller.schedule(0, &read(0x0000, 8, 80)).unwrap();
     let profile = controller.activity_profile_until(22);
 
-    assert_eq!(profile.refresh_count(), 1);
-    assert_eq!(profile.refresh_cycle_count(), 2);
+    assert_eq!(profile.refresh_count(), 4);
+    assert_eq!(profile.refresh_cycle_count(), 8);
 }
 
 #[test]
