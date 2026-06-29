@@ -1,12 +1,18 @@
 use rem6_memory::{AccessSize, Address, AddressRange};
 
 use crate::elf_counts::{program_header_table_size, resolve_program_header_count};
-use crate::elf_dynamic::{dynamic_table_counts, elf32_load_mappings, elf64_load_mappings};
+use crate::elf_dynamic::{
+    dynamic_table_counts, elf32_load_mappings, elf64_load_mappings, ElfDynamicPltRelocationKind,
+    ElfDynamicRelocationSummary,
+};
 use crate::elf_interpreter::read_interpreter;
 use crate::elf_sections::{elf_section_summary, ElfSectionSummary};
 use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::image::BootImage;
-use crate::metadata::{BootElfDynamicTable, BootElfMetadata, BootElfProgramHeaderTable};
+use crate::metadata::{
+    BootElfDynamicPltRelocationKind, BootElfDynamicRelocationTable, BootElfDynamicTable,
+    BootElfMetadata, BootElfProgramHeaderTable,
+};
 
 const ELF64_HEADER_SIZE: usize = 64;
 const ELF64_PROGRAM_HEADER_SIZE: u16 = 56;
@@ -264,6 +270,10 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                 summary.soname,
                 summary.rpath,
                 summary.runpath,
+                relocation_table(summary.rela_relocations),
+                relocation_table(summary.rel_relocations),
+                relocation_table(summary.plt_relocations),
+                plt_relocation_kind(summary.plt_relocation_kind),
             );
             continue;
         }
@@ -457,6 +467,10 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
                 summary.soname,
                 summary.rpath,
                 summary.runpath,
+                relocation_table(summary.rela_relocations),
+                relocation_table(summary.rel_relocations),
+                relocation_table(summary.plt_relocations),
+                plt_relocation_kind(summary.plt_relocation_kind),
             );
             continue;
         }
@@ -599,6 +613,24 @@ fn loaded_file_address(
     }
     let delta = table_offset - segment_offset;
     Some(Address::new(segment_loaded_start.checked_add(delta)?))
+}
+
+fn relocation_table(summary: ElfDynamicRelocationSummary) -> BootElfDynamicRelocationTable {
+    BootElfDynamicRelocationTable::new(
+        summary.virtual_address.map(Address::new),
+        summary.byte_size,
+        summary.entry_size,
+    )
+}
+
+fn plt_relocation_kind(
+    kind: Option<ElfDynamicPltRelocationKind>,
+) -> Option<BootElfDynamicPltRelocationKind> {
+    match kind {
+        Some(ElfDynamicPltRelocationKind::Rel) => Some(BootElfDynamicPltRelocationKind::Rel),
+        Some(ElfDynamicPltRelocationKind::Rela) => Some(BootElfDynamicPltRelocationKind::Rela),
+        None => None,
+    }
 }
 
 fn zeroed_segment_data(

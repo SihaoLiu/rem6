@@ -4,10 +4,19 @@ use crate::error::{invalid_elf, BootElfError, BootError};
 const PT_LOAD: u32 = 1;
 const DT_NULL: u64 = 0;
 const DT_NEEDED: u64 = 1;
+const DT_PLTRELSZ: u64 = 2;
+const DT_RELA: u64 = 7;
+const DT_RELASZ: u64 = 8;
+const DT_RELAENT: u64 = 9;
 const DT_STRTAB: u64 = 5;
 const DT_STRSZ: u64 = 10;
 const DT_SONAME: u64 = 14;
 const DT_RPATH: u64 = 15;
+const DT_REL: u64 = 17;
+const DT_RELSZ: u64 = 18;
+const DT_RELENT: u64 = 19;
+const DT_PLTREL: u64 = 20;
+const DT_JMPREL: u64 = 23;
 const DT_RUNPATH: u64 = 29;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,6 +33,23 @@ pub(crate) struct ElfDynamicTableSummary {
     pub(crate) soname: Option<String>,
     pub(crate) rpath: Vec<String>,
     pub(crate) runpath: Vec<String>,
+    pub(crate) rela_relocations: ElfDynamicRelocationSummary,
+    pub(crate) rel_relocations: ElfDynamicRelocationSummary,
+    pub(crate) plt_relocations: ElfDynamicRelocationSummary,
+    pub(crate) plt_relocation_kind: Option<ElfDynamicPltRelocationKind>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct ElfDynamicRelocationSummary {
+    pub(crate) virtual_address: Option<u64>,
+    pub(crate) byte_size: u64,
+    pub(crate) entry_size: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ElfDynamicPltRelocationKind {
+    Rel,
+    Rela,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -117,6 +143,10 @@ pub(crate) fn dynamic_table_counts(
     let mut soname_offset = None;
     let mut rpath_offsets = Vec::new();
     let mut runpath_offsets = Vec::new();
+    let mut rela_relocations = ElfDynamicRelocationSummary::default();
+    let mut rel_relocations = ElfDynamicRelocationSummary::default();
+    let mut plt_relocations = ElfDynamicRelocationSummary::default();
+    let mut plt_relocation_kind = None;
     let mut string_table = None;
     let mut string_table_size = None;
     for index in 0..(file_size / u64::from(entry_size)) {
@@ -125,6 +155,13 @@ pub(crate) fn dynamic_table_counts(
         let value = read_dynamic_value(bytes, offset, entry_size, endian)?;
         entries += 1;
         if tag == DT_NULL {
+            let mut plt_relocations = plt_relocations;
+            if let Some(kind) = plt_relocation_kind {
+                plt_relocations.entry_size = match kind {
+                    ElfDynamicPltRelocationKind::Rel => rel_relocations.entry_size,
+                    ElfDynamicPltRelocationKind::Rela => rela_relocations.entry_size,
+                };
+            }
             let strings = dynamic_strings(
                 bytes,
                 segment,
@@ -142,6 +179,10 @@ pub(crate) fn dynamic_table_counts(
                 soname: strings.soname,
                 rpath: strings.rpath,
                 runpath: strings.runpath,
+                rela_relocations,
+                rel_relocations,
+                plt_relocations,
+                plt_relocation_kind,
             });
         }
         if tag == DT_NEEDED {
@@ -156,6 +197,28 @@ pub(crate) fn dynamic_table_counts(
             rpath_offsets.push(value);
         } else if tag == DT_RUNPATH {
             runpath_offsets.push(value);
+        } else if tag == DT_RELA {
+            rela_relocations.virtual_address = Some(value);
+        } else if tag == DT_RELASZ {
+            rela_relocations.byte_size = value;
+        } else if tag == DT_RELAENT {
+            rela_relocations.entry_size = value;
+        } else if tag == DT_REL {
+            rel_relocations.virtual_address = Some(value);
+        } else if tag == DT_RELSZ {
+            rel_relocations.byte_size = value;
+        } else if tag == DT_RELENT {
+            rel_relocations.entry_size = value;
+        } else if tag == DT_JMPREL {
+            plt_relocations.virtual_address = Some(value);
+        } else if tag == DT_PLTRELSZ {
+            plt_relocations.byte_size = value;
+        } else if tag == DT_PLTREL {
+            if value == DT_RELA {
+                plt_relocation_kind = Some(ElfDynamicPltRelocationKind::Rela);
+            } else if value == DT_REL {
+                plt_relocation_kind = Some(ElfDynamicPltRelocationKind::Rel);
+            }
         }
     }
     Err(invalid_elf(BootElfError::UnterminatedDynamicTable {

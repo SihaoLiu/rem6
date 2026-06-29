@@ -1,5 +1,6 @@
 use rem6_boot::{
-    BootElfArchitecture, BootElfClass, BootElfEndian, BootElfMetadata, BootElfOperatingSystem,
+    BootElfArchitecture, BootElfClass, BootElfDynamicPltRelocationKind, BootElfEndian,
+    BootElfMetadata, BootElfOperatingSystem,
 };
 
 use super::{hash_str, hash_u64};
@@ -55,6 +56,26 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 for runpath in dynamic.runpath() {
                     hash_str(hash, "elf.dynamic.runpath");
                     hash_str(hash, runpath);
+                }
+                for (label, table) in [
+                    ("elf.dynamic.rela", dynamic.rela_relocations()),
+                    ("elf.dynamic.rel", dynamic.rel_relocations()),
+                    ("elf.dynamic.plt", dynamic.plt_relocations()),
+                ] {
+                    hash_str(hash, label);
+                    hash_u64(hash, table.virtual_address().map_or(u64::MAX, |a| a.get()));
+                    hash_u64(hash, table.byte_size());
+                    hash_u64(hash, table.entry_size());
+                    hash_u64(hash, table.entry_count());
+                }
+                match dynamic.plt_relocation_kind() {
+                    Some(BootElfDynamicPltRelocationKind::Rel) => {
+                        hash_str(hash, "elf.dynamic.plt.rel")
+                    }
+                    Some(BootElfDynamicPltRelocationKind::Rela) => {
+                        hash_str(hash, "elf.dynamic.plt.rela")
+                    }
+                    None => {}
                 }
             }
         }

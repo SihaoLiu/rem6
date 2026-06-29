@@ -201,11 +201,11 @@ pub(crate) fn riscv64_elf_with_symbols(entry: u64, physical: u64, payload: &[u8]
 }
 
 pub(crate) fn riscv64_elf_with_dynamic_table(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
-    let payload_offset = 0x200usize;
+    let payload_offset = 0x300usize;
     let dynamic_offset = 0x180usize;
-    let strtab_offset = 0x260usize;
+    let strtab_offset = 0x380usize;
     let strtab = b"\0libc.so.6\0libm.so.6\0librem6.so\0/opt/rem6/lib\0$ORIGIN/lib\0";
-    let dynamic_size = 8 * 16usize;
+    let dynamic_size = 17 * 16usize;
     let mut bytes = vec![0; (payload_offset + payload.len()).max(strtab_offset + strtab.len())];
     bytes[0..4].copy_from_slice(b"\x7fELF");
     bytes[4] = 2;
@@ -257,16 +257,34 @@ pub(crate) fn riscv64_elf_with_dynamic_table(entry: u64, physical: u64, payload:
     write_u64(&mut bytes, dynamic_offset + 56, 32);
     write_u64(&mut bytes, dynamic_offset + 64, 29);
     write_u64(&mut bytes, dynamic_offset + 72, 46);
-    write_u64(&mut bytes, dynamic_offset + 80, 5);
+    write_u64(&mut bytes, dynamic_offset + 80, 7);
+    write_u64(&mut bytes, dynamic_offset + 88, physical + 0x300);
+    write_u64(&mut bytes, dynamic_offset + 96, 8);
+    write_u64(&mut bytes, dynamic_offset + 104, 48);
+    write_u64(&mut bytes, dynamic_offset + 112, 9);
+    write_u64(&mut bytes, dynamic_offset + 120, 24);
+    write_u64(&mut bytes, dynamic_offset + 128, 17);
+    write_u64(&mut bytes, dynamic_offset + 136, physical + 0x340);
+    write_u64(&mut bytes, dynamic_offset + 144, 18);
+    write_u64(&mut bytes, dynamic_offset + 152, 16);
+    write_u64(&mut bytes, dynamic_offset + 160, 19);
+    write_u64(&mut bytes, dynamic_offset + 168, 16);
+    write_u64(&mut bytes, dynamic_offset + 176, 23);
+    write_u64(&mut bytes, dynamic_offset + 184, physical + 0x360);
+    write_u64(&mut bytes, dynamic_offset + 192, 2);
+    write_u64(&mut bytes, dynamic_offset + 200, 24);
+    write_u64(&mut bytes, dynamic_offset + 208, 20);
+    write_u64(&mut bytes, dynamic_offset + 216, 7);
+    write_u64(&mut bytes, dynamic_offset + 224, 5);
     write_u64(
         &mut bytes,
-        dynamic_offset + 88,
+        dynamic_offset + 232,
         physical + strtab_offset as u64,
     );
-    write_u64(&mut bytes, dynamic_offset + 96, 10);
-    write_u64(&mut bytes, dynamic_offset + 104, strtab.len() as u64);
-    write_u64(&mut bytes, dynamic_offset + 112, 0);
-    write_u64(&mut bytes, dynamic_offset + 120, 0);
+    write_u64(&mut bytes, dynamic_offset + 240, 10);
+    write_u64(&mut bytes, dynamic_offset + 248, strtab.len() as u64);
+    write_u64(&mut bytes, dynamic_offset + 256, 0);
+    write_u64(&mut bytes, dynamic_offset + 264, 0);
     bytes[payload_offset..payload_offset + payload.len()].copy_from_slice(payload);
     bytes[strtab_offset..strtab_offset + strtab.len()].copy_from_slice(strtab);
     bytes

@@ -1,5 +1,9 @@
-use rem6_boot::{BootElfDynamicTable, BootElfInterpreter, BootElfProgramHeaderTable};
+use rem6_boot::{
+    BootElfDynamicPltRelocationKind, BootElfDynamicRelocationTable, BootElfDynamicTable,
+    BootElfInterpreter, BootElfProgramHeaderTable,
+};
 use rem6_fabric::FabricHopActivity;
+use rem6_memory::Address;
 use rem6_system::RiscvDataCacheProtocol;
 
 use super::optional_count_json;
@@ -283,8 +287,9 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
         .unwrap_or_else(|| "null".to_string());
     let rpath = json_string_array(table.rpath());
     let runpath = json_string_array(table.runpath());
+    let relocations = elf_dynamic_relocations_json(table);
     format!(
-        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":{},\"soname\":{},\"rpath\":{},\"runpath\":{}}}",
+        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":{},\"soname\":{},\"rpath\":{},\"runpath\":{},\"relocations\":{}}}",
         table.segment_count(),
         file_offset,
         virtual_address,
@@ -294,8 +299,46 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
         needed_libraries,
         soname,
         rpath,
-        runpath
+        runpath,
+        relocations
     )
+}
+
+fn elf_dynamic_relocations_json(table: &BootElfDynamicTable) -> String {
+    let plt = table.plt_relocations();
+    let kind = table
+        .plt_relocation_kind()
+        .map(|kind| match kind {
+            BootElfDynamicPltRelocationKind::Rel => "\"rel\"",
+            BootElfDynamicPltRelocationKind::Rela => "\"rela\"",
+        })
+        .unwrap_or("null");
+    format!(
+        "{{\"rela\":{},\"rel\":{},\"plt\":{{\"kind\":{},\"virtual_address\":{},\"bytes\":{},\"entry_size\":{},\"entries\":{}}}}}",
+        elf_dynamic_relocation_table_json(table.rela_relocations()),
+        elf_dynamic_relocation_table_json(table.rel_relocations()),
+        kind,
+        address_json(plt.virtual_address()),
+        plt.byte_size(),
+        plt.entry_size(),
+        plt.entry_count()
+    )
+}
+
+fn elf_dynamic_relocation_table_json(table: BootElfDynamicRelocationTable) -> String {
+    format!(
+        "{{\"virtual_address\":{},\"bytes\":{},\"entry_size\":{},\"entries\":{}}}",
+        address_json(table.virtual_address()),
+        table.byte_size(),
+        table.entry_size(),
+        table.entry_count()
+    )
+}
+
+fn address_json(address: Option<Address>) -> String {
+    address
+        .map(|address| format!("\"0x{:x}\"", address.get()))
+        .unwrap_or_else(|| "null".to_string())
 }
 
 fn json_string_array(values: &[String]) -> String {

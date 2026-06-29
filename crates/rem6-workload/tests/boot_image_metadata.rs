@@ -177,7 +177,7 @@ fn elf64_image_with_symbols(machine: u16) -> Vec<u8> {
 fn elf64_image_with_dynamic_table(machine: u16, needed_count: usize) -> Vec<u8> {
     assert!(needed_count <= 2);
     let strtab = b"\0lib0.so\0lib1.so\0";
-    let strtab_offset = 0x260usize;
+    let strtab_offset = 0x300usize;
     let mut bytes = vec![0; strtab_offset + strtab.len()];
     bytes[0..4].copy_from_slice(b"\x7fELF");
     bytes[4] = 2;
@@ -228,7 +228,7 @@ fn elf64_image_with_dynamic_table(machine: u16, needed_count: usize) -> Vec<u8> 
     }
     let strtab_entry = dynamic_offset + needed_count * 16;
     write_u64(&mut bytes, strtab_entry, 5);
-    write_u64(&mut bytes, strtab_entry + 8, 0x8060);
+    write_u64(&mut bytes, strtab_entry + 8, 0x8100);
     write_u64(&mut bytes, strtab_entry + 16, 10);
     write_u64(&mut bytes, strtab_entry + 24, strtab.len() as u64);
     let null_entry = strtab_entry + 32;
@@ -249,12 +249,77 @@ fn elf64_image_with_dynamic_libraries(machine: u16, libraries: &[&str]) -> Vec<u
     )
 }
 
+#[derive(Clone, Copy)]
+struct DynamicRelocations {
+    rela_address: u64,
+    rela_size: u64,
+    rela_entry_size: u64,
+    rel_address: u64,
+    rel_size: u64,
+    rel_entry_size: u64,
+    plt_address: u64,
+    plt_size: u64,
+    plt_kind: u64,
+}
+
+impl DynamicRelocations {
+    const fn rela_size(mut self, rela_size: u64) -> Self {
+        self.rela_size = rela_size;
+        self
+    }
+
+    const fn rel_address(mut self, rel_address: u64) -> Self {
+        self.rel_address = rel_address;
+        self
+    }
+
+    const fn plt_kind(mut self, plt_kind: u64, plt_size: u64) -> Self {
+        self.plt_kind = plt_kind;
+        self.plt_size = plt_size;
+        self
+    }
+}
+
+impl Default for DynamicRelocations {
+    fn default() -> Self {
+        Self {
+            rela_address: 0x8260,
+            rela_size: 48,
+            rela_entry_size: 24,
+            rel_address: 0x82a0,
+            rel_size: 16,
+            rel_entry_size: 16,
+            plt_address: 0x82c0,
+            plt_size: 24,
+            plt_kind: 7,
+        }
+    }
+}
+
 fn elf64_image_with_dynamic_strings(
     machine: u16,
     libraries: &[&str],
     soname: &str,
     rpath: &str,
     runpath: &str,
+) -> Vec<u8> {
+    elf64_image_with_dynamic_strings_and_relocations(
+        machine,
+        libraries,
+        soname,
+        rpath,
+        runpath,
+        DynamicRelocations::default(),
+    )
+}
+
+fn elf64_image_with_dynamic_strings_and_relocations(
+    machine: u16,
+    libraries: &[&str],
+    soname: &str,
+    rpath: &str,
+    runpath: &str,
+    relocations: DynamicRelocations,
 ) -> Vec<u8> {
     let mut bytes = elf64_image_with_dynamic_table(machine, libraries.len());
     let mut strtab = vec![0];
@@ -273,7 +338,7 @@ fn elf64_image_with_dynamic_strings(
     let runpath_offset = strtab.len() as u64;
     strtab.extend_from_slice(runpath.as_bytes());
     strtab.push(0);
-    let strtab_offset = 0x260usize;
+    let strtab_offset = 0x300usize;
     bytes.resize(strtab_offset + strtab.len(), 0);
     let file_size = (strtab_offset + strtab.len() - 0x200) as u64;
     write_u64(&mut bytes, 96, file_size);
@@ -288,15 +353,34 @@ fn elf64_image_with_dynamic_strings(
     write_u64(&mut bytes, soname_entry + 24, rpath_offset);
     write_u64(&mut bytes, soname_entry + 32, 29);
     write_u64(&mut bytes, soname_entry + 40, runpath_offset);
-    let strtab_entry = soname_entry + 48;
+    let rela_entry = soname_entry + 48;
+    write_u64(&mut bytes, rela_entry, 7);
+    write_u64(&mut bytes, rela_entry + 8, relocations.rela_address);
+    write_u64(&mut bytes, rela_entry + 16, 8);
+    write_u64(&mut bytes, rela_entry + 24, relocations.rela_size);
+    write_u64(&mut bytes, rela_entry + 32, 9);
+    write_u64(&mut bytes, rela_entry + 40, relocations.rela_entry_size);
+    write_u64(&mut bytes, rela_entry + 48, 17);
+    write_u64(&mut bytes, rela_entry + 56, relocations.rel_address);
+    write_u64(&mut bytes, rela_entry + 64, 18);
+    write_u64(&mut bytes, rela_entry + 72, relocations.rel_size);
+    write_u64(&mut bytes, rela_entry + 80, 19);
+    write_u64(&mut bytes, rela_entry + 88, relocations.rel_entry_size);
+    write_u64(&mut bytes, rela_entry + 96, 23);
+    write_u64(&mut bytes, rela_entry + 104, relocations.plt_address);
+    write_u64(&mut bytes, rela_entry + 112, 2);
+    write_u64(&mut bytes, rela_entry + 120, relocations.plt_size);
+    write_u64(&mut bytes, rela_entry + 128, 20);
+    write_u64(&mut bytes, rela_entry + 136, relocations.plt_kind);
+    let strtab_entry = rela_entry + 144;
     write_u64(&mut bytes, strtab_entry, 5);
-    write_u64(&mut bytes, strtab_entry + 8, 0x8060);
+    write_u64(&mut bytes, strtab_entry + 8, 0x8100);
     write_u64(&mut bytes, strtab_entry + 16, 10);
     write_u64(&mut bytes, strtab_entry + 24, strtab.len() as u64);
     write_u64(&mut bytes, strtab_entry + 32, 0);
     write_u64(&mut bytes, strtab_entry + 40, 0);
-    write_u64(&mut bytes, 152, ((libraries.len() + 6) * 16) as u64);
-    write_u64(&mut bytes, 160, ((libraries.len() + 6) * 16) as u64);
+    write_u64(&mut bytes, 152, ((libraries.len() + 15) * 16) as u64);
+    write_u64(&mut bytes, 160, ((libraries.len() + 15) * 16) as u64);
     bytes[strtab_offset..strtab_offset + strtab.len()].copy_from_slice(&strtab);
     bytes
 }
@@ -473,6 +557,27 @@ fn workload_boot_image_preserves_elf_dynamic_string_metadata_round_trip() {
 }
 
 #[test]
+fn workload_boot_image_preserves_elf_dynamic_relocation_metadata_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_dynamic_libraries(
+        243,
+        &["libc.so.6", "libm.so.6"],
+    ))
+    .unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = round_trip_metadata.dynamic_table();
+
+    assert_eq!(dynamic.rela_entry_count(), 2);
+    assert_eq!(dynamic.rel_entry_count(), 1);
+    assert_eq!(dynamic.plt_rela_entry_count(), 1);
+}
+
+#[test]
 fn workload_manifest_identity_includes_elf_metadata() {
     let riscv = BootImage::from_elf64_le(&elf64_image(243)).unwrap();
     let x86 = BootImage::from_elf64_le(&elf64_image(62)).unwrap();
@@ -635,6 +740,115 @@ fn workload_manifest_identity_includes_elf_dynamic_string_metadata() {
     assert_ne!(baseline_manifest.identity(), soname_manifest.identity());
     assert_ne!(baseline_manifest.identity(), rpath_manifest.identity());
     assert_ne!(baseline_manifest.identity(), runpath_manifest.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_dynamic_relocation_metadata() {
+    let baseline_source =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_strings_and_relocations(
+            243,
+            &["libc.so.6", "libm.so.6"],
+            "librem6.so",
+            "/opt/rem6/lib",
+            "$ORIGIN/lib",
+            DynamicRelocations::default(),
+        ))
+        .unwrap();
+    let rela_size_source =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_strings_and_relocations(
+            243,
+            &["libc.so.6", "libm.so.6"],
+            "librem6.so",
+            "/opt/rem6/lib",
+            "$ORIGIN/lib",
+            DynamicRelocations::default().rela_size(72),
+        ))
+        .unwrap();
+    let rel_address_source =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_strings_and_relocations(
+            243,
+            &["libc.so.6", "libm.so.6"],
+            "librem6.so",
+            "/opt/rem6/lib",
+            "$ORIGIN/lib",
+            DynamicRelocations::default().rel_address(0x82b0),
+        ))
+        .unwrap();
+    let plt_rel_source =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_strings_and_relocations(
+            243,
+            &["libc.so.6", "libm.so.6"],
+            "librem6.so",
+            "/opt/rem6/lib",
+            "$ORIGIN/lib",
+            DynamicRelocations::default().plt_kind(17, 16),
+        ))
+        .unwrap();
+
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .rela_entry_count(),
+        2,
+    );
+    assert_eq!(
+        rela_size_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .rela_entry_count(),
+        3,
+    );
+    assert_eq!(
+        rel_address_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .rel_virtual_address()
+            .unwrap()
+            .get(),
+        0x82b0,
+    );
+    assert_eq!(
+        plt_rel_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .plt_rel_entry_count(),
+        1,
+    );
+
+    let baseline = boot_image_with_metadata(baseline_source.elf_metadata().unwrap());
+    let rela_size = boot_image_with_metadata(rela_size_source.elf_metadata().unwrap());
+    let rel_address = boot_image_with_metadata(rel_address_source.elf_metadata().unwrap());
+    let plt_rel = boot_image_with_metadata(plt_rel_source.elf_metadata().unwrap());
+
+    assert_eq!(baseline.entry(), rela_size.entry());
+    assert_eq!(baseline.segments(), rela_size.segments());
+    assert_eq!(baseline.segments(), rel_address.segments());
+    assert_eq!(baseline.segments(), plt_rel.segments());
+
+    let baseline_manifest = WorkloadManifest::builder(id("same"), baseline)
+        .build()
+        .unwrap();
+    let rela_size_manifest = WorkloadManifest::builder(id("same"), rela_size)
+        .build()
+        .unwrap();
+    let rel_address_manifest = WorkloadManifest::builder(id("same"), rel_address)
+        .build()
+        .unwrap();
+    let plt_rel_manifest = WorkloadManifest::builder(id("same"), plt_rel)
+        .build()
+        .unwrap();
+
+    assert_ne!(baseline_manifest.identity(), rela_size_manifest.identity());
+    assert_ne!(
+        baseline_manifest.identity(),
+        rel_address_manifest.identity()
+    );
+    assert_ne!(baseline_manifest.identity(), plt_rel_manifest.identity());
 }
 
 #[test]

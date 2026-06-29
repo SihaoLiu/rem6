@@ -290,7 +290,7 @@ fn rem6_run_reports_elf_dynamic_table_summary() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"status\":\"loaded\""));
     assert!(stdout.contains(
-        "\"dynamic\":{\"segments\":1,\"file_offset\":384,\"virtual_address\":\"0x80000180\",\"entry_size\":16,\"entry_count\":8,\"needed\":2,\"needed_libraries\":[\"libc.so.6\",\"libm.so.6\"],\"soname\":\"librem6.so\",\"rpath\":[\"/opt/rem6/lib\"],\"runpath\":[\"$ORIGIN/lib\"]}"
+        "\"dynamic\":{\"segments\":1,\"file_offset\":384,\"virtual_address\":\"0x80000180\",\"entry_size\":16,\"entry_count\":17,\"needed\":2,\"needed_libraries\":[\"libc.so.6\",\"libm.so.6\"],\"soname\":\"librem6.so\",\"rpath\":[\"/opt/rem6/lib\"],\"runpath\":[\"$ORIGIN/lib\"],\"relocations\":{\"rela\":{\"virtual_address\":\"0x80000300\",\"bytes\":48,\"entry_size\":24,\"entries\":2},\"rel\":{\"virtual_address\":\"0x80000340\",\"bytes\":16,\"entry_size\":16,\"entries\":1},\"plt\":{\"kind\":\"rela\",\"virtual_address\":\"0x80000360\",\"bytes\":24,\"entry_size\":24,\"entries\":1}}}"
     ));
     assert_stat(&stdout, "sim.elf.dynamic.segments", "Count", 1, "constant");
     assert_stat(
@@ -314,7 +314,7 @@ fn rem6_run_reports_elf_dynamic_table_summary() {
         16,
         "constant",
     );
-    assert_stat(&stdout, "sim.elf.dynamic.entries", "Count", 8, "constant");
+    assert_stat(&stdout, "sim.elf.dynamic.entries", "Count", 17, "constant");
     assert_stat(&stdout, "sim.elf.dynamic.needed", "Count", 2, "constant");
     assert_stat(
         &stdout,
@@ -342,6 +342,27 @@ fn rem6_run_reports_elf_dynamic_table_summary() {
         "sim.elf.dynamic.runpath_name_bytes",
         "Byte",
         11,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.rela.entries",
+        "Count",
+        2,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.rel.entries",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.plt_relocations.entries",
+        "Count",
+        1,
         "constant",
     );
 }

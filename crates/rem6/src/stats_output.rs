@@ -252,6 +252,27 @@ pub(super) fn run_stats_output(
         StatResetPolicy::Constant,
         dynamic_table.runpath_name_bytes(),
     )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.dynamic.rela.entries",
+        "Count",
+        StatResetPolicy::Constant,
+        dynamic_table.rela_entry_count(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.dynamic.rel.entries",
+        "Count",
+        StatResetPolicy::Constant,
+        dynamic_table.rel_entry_count(),
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.elf.dynamic.plt_relocations.entries",
+        "Count",
+        StatResetPolicy::Constant,
+        dynamic_table.plt_relocations().entry_count(),
+    )?;
     let program_header_table = inputs.metadata.program_header_table();
     increment_stat(
         &mut stats,

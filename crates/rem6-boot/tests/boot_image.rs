@@ -760,7 +760,8 @@ fn boot_image_records_elf64_dynamic_table_metadata() {
 #[test]
 fn boot_image_resolves_elf64_dynamic_needed_libraries() {
     let strtab = b"\0libc.so.6\0libm.so.6\0librem6.so\0/opt/rem6/lib\0$ORIGIN/lib\0";
-    let strtab_offset = 0x220usize;
+    let payload_offset = 0x2c0usize;
+    let strtab_offset = 0x300usize;
     let load_file_size = (strtab_offset + strtab.len()) as u64;
     let dynamic = [
         1u64.to_le_bytes(),
@@ -773,8 +774,26 @@ fn boot_image_resolves_elf64_dynamic_needed_libraries() {
         32u64.to_le_bytes(),
         29u64.to_le_bytes(),
         46u64.to_le_bytes(),
+        7u64.to_le_bytes(),
+        0x8000_0260u64.to_le_bytes(),
+        20u64.to_le_bytes(),
+        7u64.to_le_bytes(),
+        8u64.to_le_bytes(),
+        48u64.to_le_bytes(),
+        9u64.to_le_bytes(),
+        24u64.to_le_bytes(),
+        17u64.to_le_bytes(),
+        0x8000_02a0u64.to_le_bytes(),
+        18u64.to_le_bytes(),
+        16u64.to_le_bytes(),
+        19u64.to_le_bytes(),
+        16u64.to_le_bytes(),
+        23u64.to_le_bytes(),
+        0x8000_02c0u64.to_le_bytes(),
+        2u64.to_le_bytes(),
+        24u64.to_le_bytes(),
         5u64.to_le_bytes(),
-        0x8000_0220u64.to_le_bytes(),
+        0x8000_0300u64.to_le_bytes(),
         10u64.to_le_bytes(),
         (strtab.len() as u64).to_le_bytes(),
         0u64.to_le_bytes(),
@@ -782,7 +801,7 @@ fn boot_image_resolves_elf64_dynamic_needed_libraries() {
     ]
     .concat();
     let elf = elf64_image(
-        0x8000_0200,
+        0x8000_02c0,
         &[
             ElfProgramHeaderSpec {
                 kind: 1,
@@ -801,7 +820,7 @@ fn boot_image_resolves_elf64_dynamic_needed_libraries() {
         ],
         &[
             (0x180, &dynamic),
-            (0x200, &[0x13, 0, 0, 0]),
+            (payload_offset, &[0x13, 0, 0, 0]),
             (strtab_offset, strtab),
         ],
     );
@@ -824,6 +843,21 @@ fn boot_image_resolves_elf64_dynamic_needed_libraries() {
     assert_eq!(dynamic.soname_name_bytes(), 10);
     assert_eq!(dynamic.rpath_name_bytes(), 13);
     assert_eq!(dynamic.runpath_name_bytes(), 11);
+    assert_eq!(dynamic.rela_entry_count(), 2);
+    assert_eq!(
+        dynamic.rela_virtual_address(),
+        Some(Address::new(0x8000_0260))
+    );
+    assert_eq!(dynamic.rel_entry_count(), 1);
+    assert_eq!(
+        dynamic.rel_virtual_address(),
+        Some(Address::new(0x8000_02a0))
+    );
+    assert_eq!(dynamic.plt_rela_entry_count(), 1);
+    assert_eq!(
+        dynamic.plt_relocation_virtual_address(),
+        Some(Address::new(0x8000_02c0)),
+    );
 }
 
 #[test]

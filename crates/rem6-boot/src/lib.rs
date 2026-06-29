@@ -11,5 +11,6 @@ pub use elf::{BootElfArchitecture, BootElfClass, BootElfEndian, BootElfOperating
 pub use error::{BootElfError, BootError};
 pub use image::{BootImage, BootLineWrite, BootLoadReport, BootSegment};
 pub use metadata::{
-    BootElfDynamicTable, BootElfInterpreter, BootElfMetadata, BootElfProgramHeaderTable,
+    BootElfDynamicPltRelocationKind, BootElfDynamicRelocationTable, BootElfDynamicTable,
+    BootElfInterpreter, BootElfMetadata, BootElfProgramHeaderTable,
 };

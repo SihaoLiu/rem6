@@ -71,6 +71,49 @@ impl BootElfProgramHeaderTable {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BootElfDynamicRelocationTable {
+    virtual_address: Option<Address>,
+    byte_size: u64,
+    entry_size: u64,
+}
+
+impl BootElfDynamicRelocationTable {
+    pub const fn new(virtual_address: Option<Address>, byte_size: u64, entry_size: u64) -> Self {
+        Self {
+            virtual_address,
+            byte_size,
+            entry_size,
+        }
+    }
+
+    pub const fn virtual_address(self) -> Option<Address> {
+        self.virtual_address
+    }
+
+    pub const fn byte_size(self) -> u64 {
+        self.byte_size
+    }
+
+    pub const fn entry_size(self) -> u64 {
+        self.entry_size
+    }
+
+    pub const fn entry_count(self) -> u64 {
+        if self.entry_size == 0 {
+            0
+        } else {
+            self.byte_size / self.entry_size
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BootElfDynamicPltRelocationKind {
+    Rel,
+    Rela,
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct BootElfDynamicTable {
     segment_count: u64,
@@ -83,6 +126,10 @@ pub struct BootElfDynamicTable {
     soname: Option<String>,
     rpath: Vec<String>,
     runpath: Vec<String>,
+    rela_relocations: BootElfDynamicRelocationTable,
+    rel_relocations: BootElfDynamicRelocationTable,
+    plt_relocations: BootElfDynamicRelocationTable,
+    plt_relocation_kind: Option<BootElfDynamicPltRelocationKind>,
 }
 
 impl BootElfDynamicTable {
@@ -98,6 +145,10 @@ impl BootElfDynamicTable {
             soname: None,
             rpath: Vec::new(),
             runpath: Vec::new(),
+            rela_relocations: BootElfDynamicRelocationTable::default(),
+            rel_relocations: BootElfDynamicRelocationTable::default(),
+            plt_relocations: BootElfDynamicRelocationTable::default(),
+            plt_relocation_kind: None,
         }
     }
 
@@ -112,6 +163,10 @@ impl BootElfDynamicTable {
         soname: Option<String>,
         rpath: Vec<String>,
         runpath: Vec<String>,
+        rela_relocations: BootElfDynamicRelocationTable,
+        rel_relocations: BootElfDynamicRelocationTable,
+        plt_relocations: BootElfDynamicRelocationTable,
+        plt_relocation_kind: Option<BootElfDynamicPltRelocationKind>,
     ) -> Self {
         self.segment_count += 1;
         if self.file_offset.is_none() {
@@ -124,6 +179,10 @@ impl BootElfDynamicTable {
             self.soname = soname;
             self.rpath = rpath;
             self.runpath = runpath;
+            self.rela_relocations = rela_relocations;
+            self.rel_relocations = rel_relocations;
+            self.plt_relocations = plt_relocations;
+            self.plt_relocation_kind = plt_relocation_kind;
         }
         self
     }
@@ -185,6 +244,56 @@ impl BootElfDynamicTable {
 
     pub fn runpath_name_bytes(&self) -> u64 {
         self.runpath.iter().map(|path| path.len() as u64).sum()
+    }
+
+    pub const fn rela_relocations(&self) -> BootElfDynamicRelocationTable {
+        self.rela_relocations
+    }
+
+    pub const fn rel_relocations(&self) -> BootElfDynamicRelocationTable {
+        self.rel_relocations
+    }
+
+    pub const fn plt_relocations(&self) -> BootElfDynamicRelocationTable {
+        self.plt_relocations
+    }
+
+    pub const fn plt_relocation_kind(&self) -> Option<BootElfDynamicPltRelocationKind> {
+        self.plt_relocation_kind
+    }
+
+    pub const fn rela_virtual_address(&self) -> Option<Address> {
+        self.rela_relocations.virtual_address()
+    }
+
+    pub const fn rel_virtual_address(&self) -> Option<Address> {
+        self.rel_relocations.virtual_address()
+    }
+
+    pub const fn plt_relocation_virtual_address(&self) -> Option<Address> {
+        self.plt_relocations.virtual_address()
+    }
+
+    pub const fn rela_entry_count(&self) -> u64 {
+        self.rela_relocations.entry_count()
+    }
+
+    pub const fn rel_entry_count(&self) -> u64 {
+        self.rel_relocations.entry_count()
+    }
+
+    pub const fn plt_rela_entry_count(&self) -> u64 {
+        match self.plt_relocation_kind {
+            Some(BootElfDynamicPltRelocationKind::Rela) => self.plt_relocations.entry_count(),
+            _ => 0,
+        }
+    }
+
+    pub const fn plt_rel_entry_count(&self) -> u64 {
+        match self.plt_relocation_kind {
+            Some(BootElfDynamicPltRelocationKind::Rel) => self.plt_relocations.entry_count(),
+            _ => 0,
+        }
     }
 }
 
