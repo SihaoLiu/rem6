@@ -27,7 +27,8 @@ use crate::riscv_translation_state::DataTranslationCompletion;
 pub(crate) use crate::riscv_translation_state::{PendingDataTranslation, TranslatedDataAccess};
 
 use crate::riscv_data_issue::{
-    access_size, mmio_request, store_bytes, OutstandingDataAccess, PreparedDataParallelAccess,
+    access_address, access_size, mmio_request, store_bytes, supports_cross_line_data_access,
+    OutstandingDataAccess, PreparedDataParallelAccess,
 };
 use crate::{
     riscv_checker, riscv_data_access, CpuDataConfig, CpuTranslatedMemoryOperation,
@@ -1495,7 +1496,14 @@ impl RiscvCore {
             .line_layout_for_access(translated.physical_address, translated.size)
             .map_err(RiscvCpuError::Memory)?;
         let line_offset = line_layout.line_offset(translated.physical_address);
-        if line_offset + translated.size.bytes() > line_layout.bytes() {
+        if line_offset + translated.size.bytes() > line_layout.bytes()
+            && !supports_translated_cross_line_data_access(
+                &translated.access,
+                translated.physical_address,
+                translated.size,
+                line_layout,
+            )
+        {
             return Err(RiscvCpuError::DataAccessCrossesLine {
                 address: translated.physical_address,
                 size: translated.size,
@@ -1518,6 +1526,23 @@ impl RiscvCore {
             line_layout: Some(line_layout),
         })
     }
+}
+
+fn supports_translated_cross_line_data_access(
+    access: &rem6_isa_riscv::MemoryAccessKind,
+    physical_address: rem6_memory::Address,
+    size: rem6_memory::AccessSize,
+    line_layout: rem6_memory::CacheLineLayout,
+) -> bool {
+    const RISCV_BASE_PAGE_BYTES: u64 = 4096;
+
+    if !supports_cross_line_data_access(access, physical_address, size, line_layout) {
+        return false;
+    }
+    let page_offset = access_address(access) & (RISCV_BASE_PAGE_BYTES - 1);
+    page_offset
+        .checked_add(size.bytes())
+        .is_some_and(|end| end <= RISCV_BASE_PAGE_BYTES)
 }
 
 fn wake_suspended_hart_on_pending_interrupt(state: &mut RiscvCoreState, pending: u64) {
@@ -1762,3 +1787,7 @@ fn cpu_translation_outcome_from_resolution(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "riscv_translation_tests.rs"]
+mod tests;

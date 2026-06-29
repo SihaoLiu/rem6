@@ -24,7 +24,10 @@ use rem6_system::{
 use rem6_transport::{RequestDelivery, TargetOutcome};
 
 use crate::config::CliCachePrefetcher;
-use crate::runtime_memory::{cli_memory_response, CliMemoryRuntime};
+use crate::runtime_memory::{
+    cli_cross_line_memory_response_with, cli_memory_response, cli_memory_response_for_request,
+    CliMemoryRuntime,
+};
 use crate::{execute_error, Rem6CliError};
 
 const PREFETCH_REQUEST_SEQUENCE_BASE: u64 = 1 << 63;
@@ -280,6 +283,16 @@ pub(super) fn cli_data_memory_response(
     memory: &CliMemoryRuntime,
     delivery: &RequestDelivery,
 ) -> TargetOutcome {
+    if delivery.request().line_span() > 1 {
+        return cli_cross_line_memory_response_with(delivery.request(), |request| {
+            cache_hierarchy
+                .respond_for_request(memory, delivery.tick(), request)
+                .unwrap_or_else(|| {
+                    cli_memory_response_for_request(memory, delivery.tick(), request)
+                })
+        })
+        .unwrap_or_else(|| TargetOutcome::Respond(MemoryResponse::retry(delivery.request())));
+    }
     if let Some(outcome) = cache_hierarchy.respond(memory, delivery) {
         return outcome;
     }
@@ -410,6 +423,16 @@ impl CliCacheHierarchy {
     ) -> Option<TargetOutcome> {
         let (top, lower) = self.levels.split_first()?;
         top.respond_with_lower(memory, lower, delivery)
+    }
+
+    fn respond_for_request(
+        &self,
+        memory: &CliMemoryRuntime,
+        tick: u64,
+        request: &MemoryRequest,
+    ) -> Option<TargetOutcome> {
+        let (top, lower) = self.levels.split_first()?;
+        top.respond_for_request(memory, lower, tick, request)
     }
 
     pub(super) fn records(&self, level: usize) -> Vec<RiscvDataCacheRunRecord> {

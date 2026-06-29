@@ -229,7 +229,9 @@ impl RiscvCore {
             .line_layout_for_access(address, size)
             .map_err(RiscvCpuError::Memory)?;
         let line_offset = line_layout.line_offset(address);
-        if line_offset + size.bytes() > line_layout.bytes() {
+        if line_offset + size.bytes() > line_layout.bytes()
+            && !supports_cross_line_data_access(&access, address, size, line_layout)
+        {
             return Err(RiscvCpuError::DataAccessCrossesLine {
                 address,
                 size,
@@ -906,7 +908,7 @@ fn pma_access_kind(access: &MemoryAccessKind) -> RiscvPmaAccessKind {
     }
 }
 
-fn access_address(access: &MemoryAccessKind) -> u64 {
+pub(crate) fn access_address(access: &MemoryAccessKind) -> u64 {
     match access {
         MemoryAccessKind::Load { address, .. }
         | MemoryAccessKind::FloatLoad { address, .. }
@@ -917,6 +919,47 @@ fn access_address(access: &MemoryAccessKind) -> u64 {
         | MemoryAccessKind::Store { address, .. }
         | MemoryAccessKind::FloatStore { address, .. }
         | MemoryAccessKind::VectorStoreUnitStride { address, .. } => *address,
+    }
+}
+
+pub(crate) fn supports_cross_line_data_access(
+    access: &MemoryAccessKind,
+    address: Address,
+    size: AccessSize,
+    line_layout: CacheLineLayout,
+) -> bool {
+    const SUPPORTED_GROUP_REGISTERS: usize = 2;
+    const SUPPORTED_GROUP_BYTES: usize = 32;
+
+    let line_bytes = line_layout.bytes();
+    if line_layout.line_offset(address) != 0 || size.bytes() != line_bytes * 2 {
+        return false;
+    }
+
+    match access {
+        MemoryAccessKind::VectorLoadUnitStride {
+            width,
+            byte_len,
+            group_registers,
+            ..
+        } => {
+            *width == MemoryWidth::Word
+                && *byte_len == SUPPORTED_GROUP_BYTES
+                && *group_registers == SUPPORTED_GROUP_REGISTERS
+                && size.bytes() == SUPPORTED_GROUP_BYTES as u64
+        }
+        MemoryAccessKind::VectorStoreUnitStride {
+            width,
+            data,
+            group_registers,
+            ..
+        } => {
+            *width == MemoryWidth::Word
+                && data.len() == SUPPORTED_GROUP_BYTES
+                && *group_registers == SUPPORTED_GROUP_REGISTERS
+                && size.bytes() == SUPPORTED_GROUP_BYTES as u64
+        }
+        _ => false,
     }
 }
 
@@ -965,4 +1008,48 @@ pub(crate) fn mmio_request(
 
 fn mmio_request_id(request: MemoryRequestId) -> MmioRequestId {
     MmioRequestId::new(request.sequence())
+}
+
+#[cfg(test)]
+mod tests {
+    use rem6_isa_riscv::{MemoryAccessKind, MemoryWidth, VectorRegister};
+    use rem6_memory::{AccessSize, Address, CacheLineLayout};
+
+    use super::supports_cross_line_data_access;
+
+    #[test]
+    fn cross_line_vector_access_accepts_aligned_two_line_full_lmul2_group() {
+        let layout = CacheLineLayout::new(16).unwrap();
+        let size = AccessSize::new(32).unwrap();
+
+        assert!(supports_cross_line_data_access(
+            &vector_load_unit_stride(0x8000),
+            Address::new(0x8000),
+            size,
+            layout
+        ));
+    }
+
+    #[test]
+    fn cross_line_vector_access_rejects_three_line_full_lmul2_group() {
+        let layout = CacheLineLayout::new(16).unwrap();
+        let size = AccessSize::new(32).unwrap();
+
+        assert!(!supports_cross_line_data_access(
+            &vector_load_unit_stride(0x8004),
+            Address::new(0x8004),
+            size,
+            layout
+        ));
+    }
+
+    fn vector_load_unit_stride(address: u64) -> MemoryAccessKind {
+        MemoryAccessKind::VectorLoadUnitStride {
+            vd: VectorRegister::new(2).unwrap(),
+            address,
+            width: MemoryWidth::Word,
+            byte_len: 32,
+            group_registers: 2,
+        }
+    }
 }

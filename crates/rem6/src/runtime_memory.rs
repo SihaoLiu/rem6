@@ -7,7 +7,8 @@ use rem6_dram::{
 };
 use rem6_memory::{
     AccessSize, Address, AddressRange, AgentId, ByteMask, CacheLineLayout, MemoryError,
-    MemoryRequest, MemoryRequestId, PartitionedMemoryStore,
+    MemoryOperation, MemoryRequest, MemoryRequestId, MemoryResponse, PartitionedMemoryStore,
+    ResponseStatus,
 };
 use rem6_system::{RiscvGuestMemoryMapResult, RiscvSeStartupImage, RISCV_LINUX_STACK_LIMIT_BYTES};
 use rem6_transport::{RequestDelivery, TargetOutcome};
@@ -873,12 +874,26 @@ pub(super) fn cli_memory_response(
     memory: &CliMemoryRuntime,
     delivery: &RequestDelivery,
 ) -> TargetOutcome {
+    if delivery.request().line_span() > 1 {
+        return cli_cross_line_memory_response_with(delivery.request(), |request| {
+            cli_memory_response_for_request(memory, delivery.tick(), request)
+        })
+        .unwrap_or_else(|| TargetOutcome::Respond(MemoryResponse::retry(delivery.request())));
+    }
+    cli_memory_response_for_request(memory, delivery.tick(), delivery.request())
+}
+
+pub(super) fn cli_memory_response_for_request(
+    memory: &CliMemoryRuntime,
+    tick: u64,
+    request: &MemoryRequest,
+) -> TargetOutcome {
     match memory {
         CliMemoryRuntime::Store { store, .. } => {
             let outcome = store
                 .lock()
                 .expect("CLI memory store lock")
-                .respond(delivery.request())
+                .respond(request)
                 .expect("CLI memory response");
             match outcome.response().cloned() {
                 Some(response) => TargetOutcome::Respond(response),
@@ -889,14 +904,14 @@ pub(super) fn cli_memory_response(
             let outcome = memory
                 .lock()
                 .expect("CLI DRAM memory lock")
-                .accept(delivery.tick(), delivery.request())
+                .accept(tick, request)
                 .expect("CLI DRAM memory response");
             let Some(response) = outcome.response().cloned() else {
                 return TargetOutcome::NoResponse;
             };
             let delay = outcome
                 .ready_cycle()
-                .checked_sub(delivery.tick())
+                .checked_sub(tick)
                 .expect("CLI DRAM response is not ready before request arrival");
             if delay == 0 {
                 TargetOutcome::Respond(response)
@@ -904,6 +919,140 @@ pub(super) fn cli_memory_response(
                 TargetOutcome::RespondAfter { delay, response }
             }
         }
+    }
+}
+
+pub(super) fn cli_cross_line_memory_response_with<F>(
+    request: &MemoryRequest,
+    mut respond: F,
+) -> Option<TargetOutcome>
+where
+    F: FnMut(&MemoryRequest) -> TargetOutcome,
+{
+    if request.line_span() <= 1 {
+        return Some(respond(request));
+    }
+
+    let subrequests = cross_line_request_chunks(request)?
+        .into_iter()
+        .map(|chunk| cross_line_subrequest(request, chunk))
+        .collect::<Option<Vec<_>>>()?;
+    let mut read_data = Vec::with_capacity(request.size().bytes() as usize);
+    let mut response_delay = 0;
+    for subrequest in subrequests {
+        let (delay, response) = response_from_target_outcome(respond(&subrequest))?;
+        response_delay = response_delay.max(delay);
+        match response.status() {
+            ResponseStatus::Completed => {
+                if request.operation().returns_data() {
+                    read_data.extend_from_slice(response.data()?);
+                }
+            }
+            ResponseStatus::Retry | ResponseStatus::StoreConditionalFailed => {
+                let response = MemoryResponse::retry(request);
+                return Some(if response_delay == 0 {
+                    TargetOutcome::Respond(response)
+                } else {
+                    TargetOutcome::RespondAfter {
+                        delay: response_delay,
+                        response,
+                    }
+                });
+            }
+        }
+    }
+
+    let data = request.operation().returns_data().then_some(read_data);
+    let response = MemoryResponse::completed(request, data).ok()?;
+    Some(if response_delay == 0 {
+        TargetOutcome::Respond(response)
+    } else {
+        TargetOutcome::RespondAfter {
+            delay: response_delay,
+            response,
+        }
+    })
+}
+
+#[derive(Clone, Copy)]
+struct CrossLineRequestChunk {
+    address: Address,
+    size: AccessSize,
+    data_offset: usize,
+}
+
+fn cross_line_request_chunks(request: &MemoryRequest) -> Option<Vec<CrossLineRequestChunk>> {
+    let mut chunks = Vec::new();
+    let layout = request.line_layout();
+    let mut cursor = request.range().start().get();
+    let end = request.range().end().get();
+    let mut data_offset = 0usize;
+    while cursor < end {
+        let address = Address::new(cursor);
+        let line_offset = layout.line_offset(address);
+        let bytes = (layout.bytes() - line_offset).min(end - cursor);
+        let size = AccessSize::new(bytes).ok()?;
+        chunks.push(CrossLineRequestChunk {
+            address,
+            size,
+            data_offset,
+        });
+        cursor = cursor.checked_add(bytes)?;
+        data_offset = data_offset.checked_add(bytes as usize)?;
+    }
+    Some(chunks)
+}
+
+fn cross_line_subrequest(
+    request: &MemoryRequest,
+    chunk: CrossLineRequestChunk,
+) -> Option<MemoryRequest> {
+    let mut subrequest = match request.operation() {
+        MemoryOperation::ReadShared => MemoryRequest::read_shared(
+            request.id(),
+            chunk.address,
+            chunk.size,
+            request.line_layout(),
+        )
+        .ok()?,
+        MemoryOperation::Write => {
+            let data = request.data()?;
+            let end = chunk.data_offset.checked_add(chunk.size.bytes() as usize)?;
+            let mask = request.byte_mask()?;
+            if !mask.bits()[chunk.data_offset..end].iter().all(|bit| *bit) {
+                return None;
+            }
+            MemoryRequest::write(
+                request.id(),
+                chunk.address,
+                chunk.size,
+                data[chunk.data_offset..end].to_vec(),
+                ByteMask::full(chunk.size).ok()?,
+                request.line_layout(),
+            )
+            .ok()?
+        }
+        _ => return None,
+    };
+    subrequest = subrequest.with_ordering(request.ordering());
+    subrequest = subrequest.with_attributes(request.attributes()).ok()?;
+    if request.is_uncacheable() {
+        subrequest = subrequest.with_uncacheable();
+    }
+    if request.is_strict_ordered() {
+        subrequest = subrequest.with_strict_order();
+    }
+    if request.requires_response() {
+        subrequest = subrequest.with_response_required();
+    }
+    Some(subrequest)
+}
+
+fn response_from_target_outcome(outcome: TargetOutcome) -> Option<(u64, MemoryResponse)> {
+    match outcome {
+        TargetOutcome::Respond(response) => Some((0, response)),
+        TargetOutcome::RespondAfter { delay, response } => Some((delay, response)),
+        TargetOutcome::NoResponse => None,
     }
 }
 

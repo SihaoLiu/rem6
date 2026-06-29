@@ -313,6 +313,7 @@ pub enum MemoryAccessKind {
         address: u64,
         width: MemoryWidth,
         data: Vec<u8>,
+        group_registers: usize,
     },
 }
 

@@ -211,6 +211,100 @@ fn l1_write_invalidates_lower_cache_fill() {
     );
 }
 
+#[test]
+fn cross_line_cli_memory_response_merges_read_data() {
+    let layout = CacheLineLayout::new(16).unwrap();
+    let memory = memory_with_two_lines(layout);
+    let read = MemoryRequest::read_shared(
+        MemoryRequestId::new(AgentId::new(0), 1),
+        Address::new(0x1008),
+        AccessSize::new(24).unwrap(),
+        layout,
+    )
+    .unwrap();
+
+    let outcome = cli_cross_line_memory_response_with(&read, |request| {
+        cli_memory_response_for_request(&memory, 7, request)
+    })
+    .expect("cross-line read should split into line requests");
+
+    let TargetOutcome::Respond(response) = outcome else {
+        panic!("store-backed cross-line read should respond immediately");
+    };
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(
+        response.data(),
+        Some(
+            (0x1008_u64..0x1020)
+                .map(|address| address as u8)
+                .collect::<Vec<_>>()
+                .as_slice()
+        )
+    );
+}
+
+#[test]
+fn cross_line_cli_memory_response_applies_write_chunks() {
+    let layout = CacheLineLayout::new(16).unwrap();
+    let memory = memory_with_two_lines(layout);
+    let size = AccessSize::new(24).unwrap();
+    let data = (0x80_u8..0x98).collect::<Vec<_>>();
+    let write = MemoryRequest::write(
+        MemoryRequestId::new(AgentId::new(0), 2),
+        Address::new(0x1008),
+        size,
+        data.clone(),
+        ByteMask::full(size).unwrap(),
+        layout,
+    )
+    .unwrap();
+
+    let outcome = cli_cross_line_memory_response_with(&write, |request| {
+        cli_memory_response_for_request(&memory, 11, request)
+    })
+    .expect("cross-line write should split into line requests");
+
+    let TargetOutcome::Respond(response) = outcome else {
+        panic!("store-backed cross-line write should respond immediately");
+    };
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data(), None);
+    assert_eq!(
+        memory.read_guest_memory(0x1008, 24, layout),
+        Some(data),
+        "split write chunks should update both touched cache lines"
+    );
+}
+
+#[test]
+fn cross_line_cli_memory_response_prevalidates_write_mask() {
+    let layout = CacheLineLayout::new(16).unwrap();
+    let size = AccessSize::new(24).unwrap();
+    let mut mask = vec![true; 24];
+    mask[20] = false;
+    let write = MemoryRequest::write(
+        MemoryRequestId::new(AgentId::new(0), 3),
+        Address::new(0x1008),
+        size,
+        vec![0x5a; 24],
+        ByteMask::from_bits(mask).unwrap(),
+        layout,
+    )
+    .unwrap();
+
+    let mut invoked = false;
+    let outcome = cli_cross_line_memory_response_with(&write, |_| {
+        invoked = true;
+        TargetOutcome::NoResponse
+    });
+
+    assert!(outcome.is_none());
+    assert!(
+        !invoked,
+        "unsupported writes must not partially apply chunks"
+    );
+}
+
 fn memory_with_line(layout: CacheLineLayout) -> CliMemoryRuntime {
     let mut store = PartitionedMemoryStore::new();
     store.add_partition(TARGET, layout).unwrap();
@@ -267,6 +361,35 @@ fn dram_memory_with_line(layout: CacheLineLayout) -> CliMemoryRuntime {
         full_line_backing: Arc::new(Mutex::new(vec![AddressRange::new(
             Address::new(0x1000),
             AccessSize::new(layout.bytes()).unwrap(),
+        )
+        .unwrap()])),
+    }
+}
+
+fn memory_with_two_lines(layout: CacheLineLayout) -> CliMemoryRuntime {
+    let mut store = PartitionedMemoryStore::new();
+    store.add_partition(TARGET, layout).unwrap();
+    store
+        .map_region(
+            TARGET,
+            Address::new(0x1000),
+            AccessSize::new(layout.bytes() * 2).unwrap(),
+        )
+        .unwrap();
+    for line in 0..2 {
+        let address = 0x1000 + line * layout.bytes();
+        let bytes = (address..address + layout.bytes())
+            .map(|byte| byte as u8)
+            .collect();
+        store
+            .insert_line(TARGET, Address::new(address), bytes)
+            .unwrap();
+    }
+    CliMemoryRuntime::Store {
+        store: Arc::new(Mutex::new(store)),
+        full_line_backing: Arc::new(Mutex::new(vec![AddressRange::new(
+            Address::new(0x1000),
+            AccessSize::new(layout.bytes() * 2).unwrap(),
         )
         .unwrap()])),
     }

@@ -24,9 +24,9 @@ pub(crate) fn memory_access(
             }))
         }
         RiscvVectorMemoryInstruction::StoreUnitStride { vs3, rs1, width } => {
-            let Some(data) = unit_stride_store_data(hart, vs3, width) else {
-                return Err(());
-            };
+            let plan = unit_stride_access_plan(hart, vs3, width).ok_or(())?;
+            let group = read_register_group(hart, vs3, plan.group_registers);
+            let data = group[..plan.byte_len].to_vec();
             if data.is_empty() {
                 return Ok(None);
             }
@@ -35,6 +35,7 @@ pub(crate) fn memory_access(
                 address: hart.read(rs1),
                 width,
                 data,
+                group_registers: plan.group_registers,
             }))
         }
     }
@@ -69,14 +70,4 @@ fn unit_stride_access_plan(
             group_registers,
         },
     )
-}
-
-fn unit_stride_store_data(
-    hart: &RiscvHartState,
-    source: VectorRegister,
-    width: MemoryWidth,
-) -> Option<Vec<u8>> {
-    let plan = unit_stride_access_plan(hart, source, width)?;
-    let group = read_register_group(hart, source, plan.group_registers);
-    Some(group[..plan.byte_len].to_vec())
 }

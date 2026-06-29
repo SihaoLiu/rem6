@@ -4394,7 +4394,7 @@ fn rem6_run_in_order_pipeline_models_vector_unit_stride_lmul2_register_group_mem
     );
     let vector_stats = in_order_pipeline_payload_stats(
         "in-order-vector-unit-stride-lmul2-load-store",
-        &unit_stride_lmul2_vector_memory_program(),
+        &unit_stride_lmul2_vector_memory_program(4),
     );
 
     assert_eq!(
@@ -4412,6 +4412,46 @@ fn rem6_run_in_order_pipeline_models_vector_unit_stride_lmul2_register_group_mem
         ),
         EXPECTED_VECTOR_MEMORY_EXTRA_EXECUTE_CYCLES,
         "LMUL2 vector memory should reuse fixed vector LSU execute latency\nstats:\n{vector_stats}"
+    );
+}
+
+#[test]
+fn rem6_run_in_order_pipeline_models_vector_unit_stride_full_lmul2_register_group_memory() {
+    let vector_stats = in_order_pipeline_payload_stats_with_max_tick(
+        "in-order-vector-unit-stride-full-lmul2-load-store",
+        &unit_stride_lmul2_vector_memory_program(8),
+        120,
+    );
+
+    assert_eq!(
+        stat_value(&vector_stats, "sim.cpu0.instructions.committed"),
+        32,
+        "LMUL2 unit-stride vector memory should move a full 32-byte register-group payload through the top-level run path\nstats:\n{vector_stats}"
+    );
+}
+
+#[test]
+fn rem6_run_in_order_pipeline_models_cache_backed_vector_unit_stride_full_lmul2_register_group_memory(
+) {
+    let vector_stats = in_order_pipeline_payload_stats_with_default_memory_system(
+        "in-order-cache-vector-unit-stride-full-lmul2-load-store",
+        &unit_stride_lmul2_vector_memory_program(8),
+        500,
+    );
+
+    assert_eq!(
+        stat_value(&vector_stats, "sim.cpu0.instructions.committed"),
+        32,
+        "cache-backed LMUL2 unit-stride vector memory should move a full 32-byte register-group payload through the top-level run path\nstats:\n{vector_stats}"
+    );
+}
+
+#[test]
+fn rem6_run_rejects_misaligned_vector_unit_stride_full_lmul2_register_group_memory() {
+    assert_in_order_pipeline_payload_fails_with_error(
+        "in-order-vector-unit-stride-full-lmul2-misaligned-load-store",
+        &unit_stride_lmul2_vector_memory_program_with_data_offset(8, 196),
+        "RISC-V PMA denied misaligned Read access at 0x800000c4 with 32 byte(s)",
     );
 }
 
@@ -4522,26 +4562,57 @@ fn in_order_pipeline_latency_stats(name: &str, words: &[u32]) -> String {
 }
 
 fn in_order_pipeline_payload_stats(name: &str, program: &[u8]) -> String {
+    in_order_pipeline_payload_stats_with_max_tick(name, program, 80)
+}
+
+fn in_order_pipeline_payload_stats_with_max_tick(
+    name: &str,
+    program: &[u8],
+    max_tick: u64,
+) -> String {
+    in_order_pipeline_payload_stats_with_optional_memory_system(
+        name,
+        program,
+        max_tick,
+        Some("direct"),
+    )
+}
+
+fn in_order_pipeline_payload_stats_with_default_memory_system(
+    name: &str,
+    program: &[u8],
+    max_tick: u64,
+) -> String {
+    in_order_pipeline_payload_stats_with_optional_memory_system(name, program, max_tick, None)
+}
+
+fn in_order_pipeline_payload_stats_with_optional_memory_system(
+    name: &str,
+    program: &[u8],
+    max_tick: u64,
+    memory_system: Option<&str>,
+) -> String {
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
     let path = temp_binary(name, &elf);
+    let max_tick = max_tick.to_string();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
-        .args([
-            "run",
-            "--isa",
-            "riscv",
-            "--binary",
-            path.to_str().unwrap(),
-            "--max-tick",
-            "80",
-            "--stats-format",
-            "json",
-            "--execute",
-            "--memory-system",
-            "direct",
-        ])
-        .output()
-        .unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rem6"));
+    command.args([
+        "run",
+        "--isa",
+        "riscv",
+        "--binary",
+        path.to_str().unwrap(),
+        "--max-tick",
+        max_tick.as_str(),
+        "--stats-format",
+        "json",
+        "--execute",
+    ]);
+    if let Some(memory_system) = memory_system {
+        command.args(["--memory-system", memory_system]);
+    }
+    let output = command.output().unwrap();
 
     assert!(
         output.status.success(),
@@ -4573,10 +4644,11 @@ fn assert_in_order_pipeline_payload_rejected(name: &str, program: &[u8]) {
         .output()
         .unwrap();
 
-    if !output.status.success() {
-        return;
-    }
-
+    assert!(
+        output.status.success(),
+        "{name} should report an executed illegal-instruction trap, not a CLI error\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let stdout = String::from_utf8(output.stdout).unwrap();
     let payload: Value = serde_json::from_str(&stdout).unwrap();
     let trap = payload
@@ -4586,6 +4658,43 @@ fn assert_in_order_pipeline_payload_rejected(name: &str, program: &[u8]) {
     assert_eq!(
         trap, "illegal_instruction",
         "{name} should be rejected outside the supported unit-stride vector memory slice"
+    );
+}
+
+fn assert_in_order_pipeline_payload_fails_with_error(
+    name: &str,
+    program: &[u8],
+    expected_error: &str,
+) {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary(name, &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "{name} should fail with a CLI execution error"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(expected_error),
+        "{name} stderr should contain {expected_error:?}\nstderr: {stderr}"
     );
 }
 
@@ -4648,22 +4757,30 @@ fn vector_memory_single_access_program(vtype: u32, instruction: u32) -> Vec<u8> 
     program
 }
 
-fn unit_stride_lmul2_vector_memory_program() -> Vec<u8> {
-    const DATA_OFFSET_BYTES: i32 = 192;
-    const DATA_WORDS: usize = 4;
-    let fail_instruction_index = 7 + DATA_WORDS as i32 * 3 + 1;
+fn unit_stride_lmul2_vector_memory_program(data_words: usize) -> Vec<u8> {
+    unit_stride_lmul2_vector_memory_program_with_data_offset(data_words, 192)
+}
+
+fn unit_stride_lmul2_vector_memory_program_with_data_offset(
+    data_words: usize,
+    data_offset_bytes: i32,
+) -> Vec<u8> {
+    assert!((1..=8).contains(&data_words));
+    assert!(data_offset_bytes > 0 && data_offset_bytes % 4 == 0);
+    let data_bytes = data_words as i32 * 4;
+    let fail_instruction_index = 7 + data_words as i32 * 3 + 1;
 
     let mut words = vec![
         u_type(0, 10, 0x17),                            // auipc x10, 0
-        i_type(DATA_OFFSET_BYTES, 10, 0b000, 10, 0x13), // addi x10, x10, data
-        i_type(16, 10, 0b000, 16, 0x13),                // addi x16, x10, dest
-        i_type(4, 0, 0b000, 11, 0x13),                  // addi x11, x0, 4
+        i_type(data_offset_bytes, 10, 0b000, 10, 0x13), // addi x10, x10, data
+        i_type(data_bytes, 10, 0b000, 16, 0x13),        // addi x16, x10, dest
+        i_type(data_words as i32, 0, 0b000, 11, 0x13),  // addi x11, x0, vl
         vsetvli_type(0xd1, 11, 5),                      // vsetvli x5, x11, e32, m2, ta, ma
         0x0205_6107,                                    // vle32.v v2, (x10)
         0x0208_6127,                                    // vse32.v v2, (x16)
     ];
 
-    for word_index in 0..DATA_WORDS {
+    for word_index in 0..data_words {
         let offset = (word_index * 4) as i32;
         words.push(i_type(offset, 16, 0b010, 12, 0x03)); // lw x12, dest+i
         words.push(i_type(offset, 10, 0b010, 13, 0x03)); // lw x13, source+i
@@ -4674,16 +4791,16 @@ fn unit_stride_lmul2_vector_memory_program() -> Vec<u8> {
 
     words.push(0x0000_0073); // ecall
     words.push(0x0000_0000); // fail: invalid instruction
-    while words.len() * 4 < DATA_OFFSET_BYTES as usize {
+    while words.len() * 4 < data_offset_bytes as usize {
         words.push(0);
     }
 
     let mut program = riscv64_program(&words);
-    program.extend_from_slice(&[
-        0x04, 0x03, 0x02, 0x01, 0x14, 0x13, 0x12, 0x11, 0x24, 0x23, 0x22, 0x21, 0x34, 0x33, 0x32,
-        0x31,
-    ]);
-    program.extend_from_slice(&[0; 16]);
+    for word_index in 0..data_words {
+        let value = 0x0102_0304_u32.wrapping_add((word_index as u32) * 0x1010_1010);
+        program.extend_from_slice(&value.to_le_bytes());
+    }
+    program.extend(std::iter::repeat_n(0, data_words * 4));
     program
 }
 
