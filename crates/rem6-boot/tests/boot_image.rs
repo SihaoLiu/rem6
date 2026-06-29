@@ -65,6 +65,18 @@ fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
     bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
 }
 
+fn read_u16(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> u32 {
+    u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
+}
+
+fn read_u64(bytes: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
+}
+
 fn write_u16_be(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_be_bytes());
 }
@@ -991,6 +1003,94 @@ fn boot_image_records_loaded_program_header_table_metadata() {
     assert_eq!(table.entry_size(), 56);
     assert_eq!(table.entry_count(), 1);
     assert_eq!(table.memory_address(), Some(Address::new(0x8000_0040)));
+}
+
+#[test]
+fn boot_image_records_elf64_section_header_table_metadata() {
+    let mut elf = elf64_image(
+        0x8000_0100,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000_0000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_sections(
+        &mut elf,
+        &[
+            ElfSectionSpec {
+                name: ".text",
+                kind: 1,
+                data: &[0x13, 0x05, 0x00, 0x00],
+            },
+            ElfSectionSpec {
+                name: ".note.rem6",
+                kind: PT_NOTE,
+                data: &[0; 16],
+            },
+        ],
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let table = metadata.section_header_table();
+
+    assert_eq!(table.file_offset(), read_u64(&elf, 40));
+    assert_eq!(table.entry_size(), read_u16(&elf, 58));
+    assert_eq!(table.entry_count(), u64::from(read_u16(&elf, 60)));
+    assert_eq!(table.string_table_index(), u64::from(read_u16(&elf, 62)));
+    assert_eq!(table.entry_size(), 64);
+    assert_eq!(table.entry_count(), 4);
+    assert_eq!(table.string_table_index(), 3);
+}
+
+#[test]
+fn boot_image_records_elf32_section_header_table_metadata() {
+    let mut elf = elf32_image(
+        0x8000_0100,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000_0000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf32_sections(
+        &mut elf,
+        &[
+            ElfSectionSpec {
+                name: ".text",
+                kind: 1,
+                data: &[0x13, 0x05, 0x00, 0x00],
+            },
+            ElfSectionSpec {
+                name: ".note.rem6",
+                kind: PT_NOTE,
+                data: &[0; 16],
+            },
+        ],
+    );
+
+    let metadata = BootImage::from_elf32_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let table = metadata.section_header_table();
+
+    assert_eq!(table.file_offset(), u64::from(read_u32(&elf, 32)));
+    assert_eq!(table.entry_size(), read_u16(&elf, 46));
+    assert_eq!(table.entry_count(), u64::from(read_u16(&elf, 48)));
+    assert_eq!(table.string_table_index(), u64::from(read_u16(&elf, 50)));
+    assert_eq!(table.entry_size(), 40);
+    assert_eq!(table.entry_count(), 4);
+    assert_eq!(table.string_table_index(), 3);
 }
 
 #[test]

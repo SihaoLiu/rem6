@@ -52,6 +52,14 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 hash_str(hash, "elf.symbols");
                 symbols.iter().for_each(|value| hash_u64(hash, *value));
             }
+            let section_header_table = metadata.section_header_table();
+            if section_header_table.file_offset() != 0 || section_header_table.entry_count() != 0 {
+                hash_str(hash, "elf.section_header_table");
+                hash_u64(hash, section_header_table.file_offset());
+                hash_u64(hash, u64::from(section_header_table.entry_size()));
+                hash_u64(hash, section_header_table.entry_count());
+                hash_u64(hash, section_header_table.string_table_index());
+            }
             let dynamic = metadata.dynamic_table();
             if dynamic.segment_count() != 0 {
                 let address = dynamic.virtual_address().map_or(u64::MAX, |a| a.get());

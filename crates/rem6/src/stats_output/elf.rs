@@ -115,6 +115,7 @@ pub(super) fn emit_elf_run_stats(
     )?;
     emit_elf_dynamic_stats(stats, metadata.dynamic_table())?;
     emit_elf_program_header_stats(stats, metadata)?;
+    emit_elf_section_header_stats(stats, metadata)?;
     emit_elf_interpreter_stats(stats, interpreter)
 }
 
@@ -445,6 +446,41 @@ fn emit_elf_program_header_stats(
         )?;
     }
     Ok(())
+}
+
+fn emit_elf_section_header_stats(
+    stats: &mut StatsRegistry,
+    metadata: &BootElfMetadata,
+) -> Result<(), Rem6CliError> {
+    let section_header_table = metadata.section_header_table();
+    increment_stat(
+        stats,
+        "sim.elf.section_header.file_offset",
+        "Byte",
+        StatResetPolicy::Constant,
+        section_header_table.file_offset(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.section_header.entry_size",
+        "Byte",
+        StatResetPolicy::Constant,
+        u64::from(section_header_table.entry_size()),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.section_header.entry_count",
+        "Count",
+        StatResetPolicy::Constant,
+        section_header_table.entry_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.section_header.string_table_index",
+        "Count",
+        StatResetPolicy::Constant,
+        section_header_table.string_table_index(),
+    )
 }
 
 fn emit_elf_interpreter_stats(

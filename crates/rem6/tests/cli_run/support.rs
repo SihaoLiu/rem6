@@ -679,6 +679,41 @@ pub(crate) fn riscv64_elf_extended_phnum(entry: u64, physical: u64, payload: &[u
     bytes
 }
 
+pub(crate) fn riscv64_elf_with_section_header_table(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut bytes = riscv64_elf(entry, physical, payload);
+    let names = b"\0.text\0.meta\0.shstrtab\0";
+    let shstr_offset = bytes.len();
+    bytes.extend_from_slice(names);
+    while bytes.len() % 8 != 0 {
+        bytes.push(0);
+    }
+
+    let section_table_offset = bytes.len();
+    write_u64(&mut bytes, 40, section_table_offset as u64);
+    write_u16(&mut bytes, 58, 64);
+    write_u16(&mut bytes, 60, 4);
+    write_u16(&mut bytes, 62, 3);
+    bytes.resize(section_table_offset + 4 * 64, 0);
+
+    write_u32(&mut bytes, section_table_offset + 64, 1);
+    write_u32(&mut bytes, section_table_offset + 68, 1);
+    write_u64(&mut bytes, section_table_offset + 88, 128);
+    write_u64(&mut bytes, section_table_offset + 96, payload.len() as u64);
+
+    write_u32(&mut bytes, section_table_offset + 128, 7);
+    write_u32(&mut bytes, section_table_offset + 132, 1);
+
+    write_u32(&mut bytes, section_table_offset + 192, 13);
+    write_u32(&mut bytes, section_table_offset + 196, 3);
+    write_u64(&mut bytes, section_table_offset + 216, shstr_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 224, names.len() as u64);
+    bytes
+}
+
 pub(crate) fn riscv64_elf_extended_section_note_os(
     entry: u64,
     physical: u64,

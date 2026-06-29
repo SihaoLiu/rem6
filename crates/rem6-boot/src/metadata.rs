@@ -72,6 +72,46 @@ impl BootElfProgramHeaderTable {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BootElfSectionHeaderTable {
+    file_offset: u64,
+    entry_size: u16,
+    entry_count: u64,
+    string_table_index: u64,
+}
+
+impl BootElfSectionHeaderTable {
+    pub const fn new(
+        file_offset: u64,
+        entry_size: u16,
+        entry_count: u64,
+        string_table_index: u64,
+    ) -> Self {
+        Self {
+            file_offset,
+            entry_size,
+            entry_count,
+            string_table_index,
+        }
+    }
+
+    pub const fn file_offset(self) -> u64 {
+        self.file_offset
+    }
+
+    pub const fn entry_size(self) -> u16 {
+        self.entry_size
+    }
+
+    pub const fn entry_count(self) -> u64 {
+        self.entry_count
+    }
+
+    pub const fn string_table_index(self) -> u64 {
+        self.string_table_index
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BootElfDynamicRelocationTable {
     virtual_address: Option<Address>,
     byte_size: u64,
@@ -610,6 +650,7 @@ pub struct BootElfMetadata {
     object_symbol_count: u64,
     dynamic_table: BootElfDynamicTable,
     program_header_table: BootElfProgramHeaderTable,
+    section_header_table: BootElfSectionHeaderTable,
 }
 
 impl BootElfMetadata {
@@ -645,11 +686,20 @@ impl BootElfMetadata {
             object_symbol_count: 0,
             dynamic_table: BootElfDynamicTable::new(),
             program_header_table: BootElfProgramHeaderTable::new(0, 0, 0),
+            section_header_table: BootElfSectionHeaderTable::new(0, 0, 0, 0),
         }
     }
 
     pub(crate) fn with_program_header_table(mut self, table: BootElfProgramHeaderTable) -> Self {
         self.program_header_table = table;
+        self
+    }
+
+    pub(crate) const fn with_section_header_table(
+        mut self,
+        table: BootElfSectionHeaderTable,
+    ) -> Self {
+        self.section_header_table = table;
         self
     }
 
@@ -802,5 +852,9 @@ impl BootElfMetadata {
 
     pub const fn program_header_table(&self) -> BootElfProgramHeaderTable {
         self.program_header_table
+    }
+
+    pub const fn section_header_table(&self) -> BootElfSectionHeaderTable {
+        self.section_header_table
     }
 }

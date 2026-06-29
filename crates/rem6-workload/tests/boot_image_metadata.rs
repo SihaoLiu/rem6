@@ -54,6 +54,14 @@ fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
     bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
 }
 
+fn read_u16(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes(bytes[offset..offset + 2].try_into().unwrap())
+}
+
+fn read_u64(bytes: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
+}
+
 fn write_u16_be(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_be_bytes());
 }
@@ -165,6 +173,42 @@ fn elf64_image_with_tbss(machine: u16) -> Vec<u8> {
     write_u32(&mut bytes, section_table_offset + 132, 3);
     write_u64(&mut bytes, section_table_offset + 152, shstr_offset as u64);
     write_u64(&mut bytes, section_table_offset + 160, names.len() as u64);
+    bytes
+}
+
+fn elf64_image_with_named_sections(machine: u16, section_names: &[&str]) -> Vec<u8> {
+    let mut bytes = elf64_image(machine);
+    let mut name_data = vec![0];
+    let mut name_offsets = Vec::new();
+    for section_name in section_names {
+        name_offsets.push(name_data.len() as u32);
+        name_data.extend_from_slice(section_name.as_bytes());
+        name_data.push(0);
+    }
+    let shstr_name = name_data.len() as u32;
+    name_data.extend_from_slice(b".shstrtab\0");
+
+    let shstr_offset = bytes.len();
+    bytes.extend_from_slice(&name_data);
+
+    let section_table_offset = bytes.len();
+    write_u64(&mut bytes, 40, section_table_offset as u64);
+    write_u16(&mut bytes, 58, 64);
+    write_u16(&mut bytes, 60, section_names.len() as u16 + 2);
+    write_u16(&mut bytes, 62, section_names.len() as u16 + 1);
+    bytes.resize(section_table_offset + (section_names.len() + 2) * 64, 0);
+
+    for (index, name_offset) in name_offsets.iter().enumerate() {
+        let base = section_table_offset + (index + 1) * 64;
+        write_u32(&mut bytes, base, *name_offset);
+        write_u32(&mut bytes, base + 4, 1);
+    }
+
+    let shstr_base = section_table_offset + (section_names.len() + 1) * 64;
+    write_u32(&mut bytes, shstr_base, shstr_name);
+    write_u32(&mut bytes, shstr_base + 4, 3);
+    write_u64(&mut bytes, shstr_base + 24, shstr_offset as u64);
+    write_u64(&mut bytes, shstr_base + 32, name_data.len() as u64);
     bytes
 }
 
@@ -1041,6 +1085,28 @@ fn workload_boot_image_preserves_elf_symbol_summary_round_trip() {
 }
 
 #[test]
+fn workload_boot_image_preserves_elf_section_header_table_round_trip() {
+    let elf = elf64_image_with_named_sections(243, &[".meta", ".debug"]);
+    let image = BootImage::from_elf64_le(&elf).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let table = round_trip_metadata.section_header_table();
+
+    assert_eq!(table.file_offset(), read_u64(&elf, 40));
+    assert_eq!(table.entry_size(), read_u16(&elf, 58));
+    assert_eq!(table.entry_count(), u64::from(read_u16(&elf, 60)));
+    assert_eq!(table.string_table_index(), u64::from(read_u16(&elf, 62)));
+    assert_eq!(table.entry_size(), 64);
+    assert_eq!(table.entry_count(), 4);
+    assert_eq!(table.string_table_index(), 3);
+}
+
+#[test]
 fn workload_boot_image_preserves_elf_dynamic_symbol_summary_round_trip() {
     let image = BootImage::from_elf64_le(&elf64_image_with_dynamic_symbols(243)).unwrap();
 
@@ -1593,6 +1659,43 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
         plain_manifest.identity(),
         dynamic_symbol_manifest.identity()
     );
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_section_header_table() {
+    let one_section =
+        BootImage::from_elf64_le(&elf64_image_with_named_sections(243, &[".meta"])).unwrap();
+    let two_sections =
+        BootImage::from_elf64_le(&elf64_image_with_named_sections(243, &[".meta", ".debug"]))
+            .unwrap();
+
+    assert_eq!(one_section.entry(), two_sections.entry());
+    assert_eq!(one_section.segments(), two_sections.segments());
+    assert_eq!(
+        one_section
+            .elf_metadata()
+            .unwrap()
+            .section_header_table()
+            .entry_count(),
+        3,
+    );
+    assert_eq!(
+        two_sections
+            .elf_metadata()
+            .unwrap()
+            .section_header_table()
+            .entry_count(),
+        4,
+    );
+
+    let one_manifest = WorkloadManifest::builder(id("same"), one_section)
+        .build()
+        .unwrap();
+    let two_manifest = WorkloadManifest::builder(id("same"), two_sections)
+        .build()
+        .unwrap();
+
+    assert_ne!(one_manifest.identity(), two_manifest.identity());
 }
 
 #[test]

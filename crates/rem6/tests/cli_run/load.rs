@@ -1437,6 +1437,66 @@ fn rem6_run_reports_elf_pt_phdr_program_header_table_address() {
 }
 
 #[test]
+fn rem6_run_reports_elf_section_header_table_metadata() {
+    let elf = riscv64_elf_with_section_header_table(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("riscv-run-section-header-table", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"loaded\""));
+    assert!(stdout.contains(
+        "\"section_header_table\":{\"file_offset\":160,\"entry_size\":64,\"entry_count\":4,\"string_table_index\":3}"
+    ));
+    assert_stat(
+        &stdout,
+        "sim.elf.section_header.file_offset",
+        "Byte",
+        160,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_header.entry_size",
+        "Byte",
+        64,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_header.entry_count",
+        "Count",
+        4,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_header.string_table_index",
+        "Count",
+        3,
+        "constant",
+    );
+}
+
+#[test]
 fn rem6_run_rejects_elf_interpreter_without_nul_terminator() {
     let interpreter = "/lib/ld-linux-riscv64-lp64d.so.1";
     let mut elf =
@@ -1529,6 +1589,7 @@ fn rem6_run_loads_riscv32_elf_with_extended_program_header_count_metadata() {
 #[test]
 fn rem6_run_derives_elf_os_from_extended_section_abi_note() {
     let elf = riscv64_elf_extended_section_note_os(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let section_table_offset = (elf.len() - 3 * 64) as u64;
     let path = temp_binary("riscv-run-extended-section-note-os", &elf);
 
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
@@ -1554,6 +1615,30 @@ fn rem6_run_derives_elf_os_from_extended_section_abi_note() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"architecture\":\"riscv64\""));
     assert!(stdout.contains("\"os\":\"linux\""));
+    assert!(stdout.contains(&format!(
+        "\"section_header_table\":{{\"file_offset\":{section_table_offset},\"entry_size\":64,\"entry_count\":3,\"string_table_index\":2}}"
+    )));
+    assert_stat(
+        &stdout,
+        "sim.elf.section_header.file_offset",
+        "Byte",
+        section_table_offset,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_header.entry_count",
+        "Count",
+        3,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_header.string_table_index",
+        "Count",
+        2,
+        "constant",
+    );
 }
 
 #[test]
