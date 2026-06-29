@@ -47,7 +47,7 @@ mod workload_result;
 pub use boot_handoff::{WorkloadLinuxBootHandoff, WorkloadLinuxInitrd};
 pub use boot_image::{WorkloadBootImage, WorkloadBootSegment};
 pub use error::{
-    WorkloadError, WorkloadParallelPartitionActivityMergeSummary,
+    WorkloadError, WorkloadFabricRouteError, WorkloadParallelPartitionActivityMergeSummary,
     WorkloadParallelPartitionCountMergeSummary, WorkloadParallelRemoteTrafficConsistencyMismatch,
     WorkloadQosError, WorkloadSinicPciTopologyError,
 };
@@ -158,8 +158,8 @@ pub use suite::{
 pub use topology::{
     WorkloadHostPlacement, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadRiscvCore,
     WorkloadRiscvDataCache, WorkloadRiscvDataTranslation, WorkloadRouteFabric, WorkloadRouteHop,
-    WorkloadRouteId, WorkloadRouteLatency, WorkloadSinicPciDevice, WorkloadTopology,
-    WorkloadTranslationPageMapping,
+    WorkloadRouteId, WorkloadRouteLatency, WorkloadRouteRouterStage, WorkloadSinicPciDevice,
+    WorkloadTopology, WorkloadTranslationPageMapping,
 };
 pub use traffic_trace_replay::{
     WorkloadExpectedTrafficTraceReplaySummary, WorkloadTrafficTraceReplaySummary,

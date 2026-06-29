@@ -5,6 +5,26 @@ use rem6_memory::Address;
 use crate::WorkloadRouteId;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum WorkloadFabricRouteError {
+    EmptyRouter { link: String },
+    ZeroRouterLatency { link: String, router: String },
+}
+
+impl fmt::Display for WorkloadFabricRouteError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::EmptyRouter { link } => {
+                write!(formatter, "fabric link {link} router id must not be empty")
+            }
+            Self::ZeroRouterLatency { link, router } => write!(
+                formatter,
+                "fabric link {link} router {router} latency must be positive"
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkloadSinicPciTopologyError {
     DuplicateDevice {
         nic: u32,

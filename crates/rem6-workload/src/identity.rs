@@ -1632,7 +1632,7 @@ fn hash_route_fabric(hash: &mut u64, fabric: Option<&crate::WorkloadRouteFabric>
         return;
     };
 
-    hash_str(hash, "route.fabric.v1");
+    hash_str(hash, "route.fabric.v2");
     hash_str(hash, fabric.link());
     hash_u64(hash, fabric.bandwidth_bytes_per_tick());
     hash_u64(hash, u64::from(fabric.request_virtual_network()));
@@ -1643,6 +1643,17 @@ fn hash_route_fabric(hash: &mut u64, fabric: Option<&crate::WorkloadRouteFabric>
             hash_u64(hash, u64::from(credit_depth));
         }
         None => hash_str(hash, "route.fabric.no_credit"),
+    }
+    match fabric.router_stage() {
+        Some(router_stage) => {
+            hash_str(hash, "route.fabric.router");
+            hash_str(hash, router_stage.router());
+            hash_u64(hash, u64::from(router_stage.input_port()));
+            hash_u64(hash, u64::from(router_stage.output_port()));
+            hash_u64(hash, u64::from(router_stage.virtual_channel()));
+            hash_u64(hash, router_stage.latency());
+        }
+        None => hash_str(hash, "route.fabric.no_router"),
     }
 }
 

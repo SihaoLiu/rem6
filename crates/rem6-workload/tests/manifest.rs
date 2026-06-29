@@ -14,11 +14,11 @@ use rem6_workload::{
     CheckpointLineage, HostEventIntent, WorkloadAcceleratorCommand, WorkloadAcceleratorCommandKind,
     WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy, WorkloadDiskImageConstruction,
     WorkloadDiskImageConstructionStep, WorkloadError, WorkloadExecutionMode,
-    WorkloadExecutionModeSwitch, WorkloadExpectedCheckpointComponentSummary, WorkloadGpuDevice,
-    WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch, WorkloadGuestHostCallResponse,
-    WorkloadHostActionSummary, WorkloadHostEvent, WorkloadHostPlacement, WorkloadId,
-    WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget, WorkloadQosError,
-    WorkloadQosPolicy, WorkloadQosPriorityPolicyKind, WorkloadQosQueuePolicyKind,
+    WorkloadExecutionModeSwitch, WorkloadExpectedCheckpointComponentSummary,
+    WorkloadFabricRouteError, WorkloadGpuDevice, WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch,
+    WorkloadGuestHostCallResponse, WorkloadHostActionSummary, WorkloadHostEvent,
+    WorkloadHostPlacement, WorkloadId, WorkloadManifest, WorkloadMemoryRoute, WorkloadMemoryTarget,
+    WorkloadQosError, WorkloadQosPolicy, WorkloadQosPriorityPolicyKind, WorkloadQosQueuePolicyKind,
     WorkloadQosRequestorPriority, WorkloadQosRequestorScore, WorkloadQosTurnaroundPolicyKind,
     WorkloadReplayPlan, WorkloadResource, WorkloadResourceAcquisition,
     WorkloadResourceAcquisitionField, WorkloadResourceAcquisitionKind,
@@ -281,6 +281,8 @@ fn workload_memory_route_records_fabric_path_metadata() {
         .unwrap()
         .with_virtual_networks(1, 2)
         .with_credit_depth(3)
+        .unwrap()
+        .with_router_stage("router0", 4, 5, 6, 7)
         .unwrap();
     let route =
         WorkloadMemoryRoute::new(route_id("cpu0.fetch"), "cpu0.ifetch", 0, "memory", 1, 3, 5)
@@ -293,6 +295,12 @@ fn workload_memory_route_records_fabric_path_metadata() {
     assert_eq!(route.fabric().unwrap().request_virtual_network(), 1);
     assert_eq!(route.fabric().unwrap().response_virtual_network(), 2);
     assert_eq!(route.fabric().unwrap().credit_depth(), Some(3));
+    let router_stage = route.fabric().unwrap().router_stage().unwrap();
+    assert_eq!(router_stage.router(), "router0");
+    assert_eq!(router_stage.input_port(), 4);
+    assert_eq!(router_stage.output_port(), 5);
+    assert_eq!(router_stage.virtual_channel(), 6);
+    assert_eq!(router_stage.latency(), 7);
 
     assert_eq!(
         WorkloadRouteFabric::new("", 16).unwrap_err(),
@@ -312,6 +320,25 @@ fn workload_memory_route_records_fabric_path_metadata() {
         WorkloadError::ZeroFabricCreditDepth {
             link: "mesh.cpu.mem".to_string(),
         },
+    );
+    assert_eq!(
+        WorkloadRouteFabric::new("mesh.cpu.mem", 16)
+            .unwrap()
+            .with_router_stage("", 0, 1, 0, 1)
+            .unwrap_err(),
+        WorkloadError::FabricRoute(WorkloadFabricRouteError::EmptyRouter {
+            link: "mesh.cpu.mem".to_string(),
+        }),
+    );
+    assert_eq!(
+        WorkloadRouteFabric::new("mesh.cpu.mem", 16)
+            .unwrap()
+            .with_router_stage("router0", 0, 1, 0, 0)
+            .unwrap_err(),
+        WorkloadError::FabricRoute(WorkloadFabricRouteError::ZeroRouterLatency {
+            link: "mesh.cpu.mem".to_string(),
+            router: "router0".to_string(),
+        }),
     );
 }
 

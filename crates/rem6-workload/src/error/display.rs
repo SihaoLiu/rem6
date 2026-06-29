@@ -190,6 +190,7 @@ impl fmt::Display for WorkloadError {
             Self::ZeroFabricCreditDepth { link } => {
                 write!(formatter, "fabric link {link} credit depth must be positive")
             }
+            Self::FabricRoute(error) => write!(formatter, "{error}"),
             Self::ZeroTopologyPartitions => {
                 write!(formatter, "topology partition count must be positive")
             }

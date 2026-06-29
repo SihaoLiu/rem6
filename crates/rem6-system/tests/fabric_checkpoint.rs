@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use rem6_checkpoint::{CheckpointComponentId, CheckpointRegistry};
 use rem6_fabric::{
     FabricError, FabricLinkId, FabricModel, FabricPacket, FabricPacketId, FabricPath,
-    FabricPathHop, VirtualNetworkId,
+    FabricPathHop, FabricRouterId, FabricRouterStage, VirtualNetworkId,
 };
 use rem6_kernel::PartitionId;
 use rem6_stats::StatsRegistry;
@@ -27,11 +27,26 @@ fn link(name: &str) -> FabricLinkId {
     FabricLinkId::new(name).unwrap()
 }
 
+fn router(name: &str) -> FabricRouterId {
+    FabricRouterId::new(name).unwrap()
+}
+
 fn route() -> FabricPath {
     FabricPath::new([FabricPathHop::new(link("fabric_checkpoint"), 10, 8)
         .unwrap()
         .with_credit_depth(2)
         .unwrap()])
+    .unwrap()
+}
+
+fn router_route() -> FabricPath {
+    FabricPath::new([
+        FabricPathHop::new(link("fabric_checkpoint_router_out"), 2, 8)
+            .unwrap()
+            .with_router_stage(
+                FabricRouterStage::new(router("fabric_checkpoint_router"), 0, 1, 0, 3).unwrap(),
+            ),
+    ])
     .unwrap()
 }
 
@@ -168,6 +183,62 @@ fn host_checkpoint_refreshes_and_restores_fabric_state() {
         fabric.lock().unwrap().lane_snapshots(),
         expected.lane_snapshots()
     );
+}
+
+#[test]
+fn host_checkpoint_refreshes_and_restores_fabric_router_state() {
+    let component = CheckpointComponentId::new("fabric-router").unwrap();
+    let path = router_route();
+    let mut live_fabric = FabricModel::new();
+    live_fabric
+        .transmit_batch(
+            0,
+            [
+                (packet(1, 8, 1), path.clone()),
+                (packet(2, 8, 1), path.clone()),
+            ],
+        )
+        .unwrap();
+    let fabric_snapshot = live_fabric.snapshot();
+    let mut expected = live_fabric.clone();
+    let expected_transfer = expected.transmit(1, packet(3, 8, 1), path.clone()).unwrap();
+    assert_eq!(
+        expected_transfer.hops()[0]
+            .router()
+            .unwrap()
+            .queue_delay_ticks(),
+        5
+    );
+    let fabric = Arc::new(Mutex::new(live_fabric));
+    let bank = FabricCheckpointBank::new([FabricCheckpointPort::new(
+        component.clone(),
+        Arc::clone(&fabric),
+    )])
+    .unwrap();
+    let mut executor =
+        SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
+    executor.attach_fabric_checkpoint_bank(bank).unwrap();
+    let source = GuestSourceId::new(180);
+
+    let checkpoint = executor.apply(&checkpoint_record(source)).unwrap();
+    fabric
+        .lock()
+        .unwrap()
+        .transmit(20, packet(9, 8, 1), path.clone())
+        .unwrap();
+    assert_ne!(fabric.lock().unwrap().snapshot(), fabric_snapshot);
+
+    let restore = restore_record(source, &checkpoint);
+    executor.apply(&restore).unwrap();
+
+    assert_eq!(fabric.lock().unwrap().snapshot(), fabric_snapshot);
+    let replayed = fabric
+        .lock()
+        .unwrap()
+        .transmit(1, packet(3, 8, 1), path)
+        .unwrap();
+    assert_eq!(replayed, expected_transfer);
+    assert_eq!(fabric.lock().unwrap().snapshot(), expected.snapshot());
 }
 
 #[test]

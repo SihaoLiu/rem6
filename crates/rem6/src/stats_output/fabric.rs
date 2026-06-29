@@ -317,6 +317,9 @@ struct FabricHopStatSummary {
     queue_delay_ticks: u64,
     max_queue_delay_ticks: u64,
     credit_delay_ticks: u64,
+    router_latency_ticks: u64,
+    router_queue_delay_ticks: u64,
+    max_router_queue_delay_ticks: u64,
 }
 
 pub(super) fn emit_fabric_hop_stats(
@@ -348,6 +351,17 @@ pub(super) fn emit_fabric_hop_stats(
         summary.credit_delay_ticks = summary
             .credit_delay_ticks
             .saturating_add(activity.credit_delay_ticks());
+        if let Some(router) = activity.router() {
+            summary.router_latency_ticks = summary
+                .router_latency_ticks
+                .saturating_add(router.latency_ticks());
+            summary.router_queue_delay_ticks = summary
+                .router_queue_delay_ticks
+                .saturating_add(router.queue_delay_ticks());
+            summary.max_router_queue_delay_ticks = summary
+                .max_router_queue_delay_ticks
+                .max(router.queue_delay_ticks());
+        }
     }
 
     for ((link, virtual_network, hop_index), summary) in summaries {
@@ -367,6 +381,17 @@ pub(super) fn emit_fabric_hop_stats(
                 summary.max_queue_delay_ticks,
             ),
             ("credit_delay_ticks", "Tick", summary.credit_delay_ticks),
+            ("router_latency_ticks", "Tick", summary.router_latency_ticks),
+            (
+                "router_queue_delay_ticks",
+                "Tick",
+                summary.router_queue_delay_ticks,
+            ),
+            (
+                "max_router_queue_delay_ticks",
+                "Tick",
+                summary.max_router_queue_delay_ticks,
+            ),
         ] {
             increment_stat(
                 stats,

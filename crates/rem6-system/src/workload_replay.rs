@@ -11,7 +11,10 @@ use rem6_cpu::{
 use rem6_dram::{
     DramControllerConfig, DramGeometry, DramMemoryController, DramMemorySnapshot, DramTiming,
 };
-use rem6_fabric::{FabricLinkId, FabricModel, FabricPath, FabricPathHop, VirtualNetworkId};
+use rem6_fabric::{
+    FabricLinkId, FabricModel, FabricPath, FabricPathHop, FabricRouterId, FabricRouterStage,
+    VirtualNetworkId,
+};
 use rem6_gpu::{GpuDeviceId, GpuDeviceSnapshot, GpuDmaCopy, GpuDmaId};
 use rem6_kernel::{
     ParallelRemoteFlowRecord, ParallelRemoteSendRecord, PartitionFrontier, PartitionId,
@@ -1504,6 +1507,23 @@ fn workload_route_fabric_path(
         hop.with_credit_depth(credit_depth)
             .map_err(TransportError::Fabric)
             .map_err(RiscvWorkloadReplayError::Transport)?
+    } else {
+        hop
+    };
+    let hop = if let Some(router_stage) = fabric.router_stage() {
+        let router = FabricRouterId::new(router_stage.router())
+            .map_err(TransportError::Fabric)
+            .map_err(RiscvWorkloadReplayError::Transport)?;
+        let router_stage = FabricRouterStage::new(
+            router,
+            router_stage.input_port(),
+            router_stage.output_port(),
+            router_stage.virtual_channel(),
+            router_stage.latency(),
+        )
+        .map_err(TransportError::Fabric)
+        .map_err(RiscvWorkloadReplayError::Transport)?;
+        hop.with_router_stage(router_stage)
     } else {
         hop
     };

@@ -4,24 +4,34 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use rem6_checkpoint::{CheckpointComponentId, CheckpointError, CheckpointRegistry};
-use rem6_fabric::{FabricError, FabricLaneSnapshot, FabricLinkId, FabricModel, VirtualNetworkId};
+use rem6_fabric::{
+    FabricError, FabricLaneSnapshot, FabricLinkId, FabricModel, FabricRouterId,
+    FabricRouterInputVcSnapshot, FabricRouterOutputPortSnapshot, FabricSnapshot, VirtualNetworkId,
+};
 
 const FABRIC_CHUNK: &str = "fabric";
-const FORMAT_VERSION: u64 = 1;
+const LEGACY_FORMAT_VERSION: u64 = 1;
+const FORMAT_VERSION: u64 = 2;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 const FABRIC_LANE_MIN_RECORD_BYTES: usize = U64_BYTES + U32_BYTES + U64_BYTES + U64_BYTES;
 const FABRIC_CREDIT_RECORD_BYTES: usize = U64_BYTES;
+const FABRIC_ROUTER_INPUT_VC_MIN_RECORD_BYTES: usize =
+    U64_BYTES + U32_BYTES + U32_BYTES + U64_BYTES;
+const FABRIC_ROUTER_OUTPUT_PORT_MIN_RECORD_BYTES: usize = U64_BYTES + U32_BYTES + U64_BYTES;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FabricCheckpointRecord {
     component: CheckpointComponentId,
-    lanes: Vec<FabricLaneSnapshot>,
+    snapshot: FabricSnapshot,
 }
 
 impl FabricCheckpointRecord {
-    pub fn new(component: CheckpointComponentId, lanes: Vec<FabricLaneSnapshot>) -> Self {
-        Self { component, lanes }
+    pub fn new(component: CheckpointComponentId, snapshot: FabricSnapshot) -> Self {
+        Self {
+            component,
+            snapshot,
+        }
     }
 
     pub fn component(&self) -> &CheckpointComponentId {
@@ -29,7 +39,11 @@ impl FabricCheckpointRecord {
     }
 
     pub fn lanes(&self) -> &[FabricLaneSnapshot] {
-        &self.lanes
+        self.snapshot.lanes()
+    }
+
+    pub fn snapshot(&self) -> &FabricSnapshot {
+        &self.snapshot
     }
 }
 
@@ -60,15 +74,18 @@ impl FabricCheckpointPort {
         &self,
         registry: &mut CheckpointRegistry,
     ) -> Result<FabricCheckpointRecord, FabricCheckpointError> {
-        let lanes = self
+        let snapshot = self
             .fabric
             .lock()
             .expect("fabric checkpoint lock")
-            .lane_snapshots();
+            .snapshot();
         registry
-            .write_chunk(&self.component, FABRIC_CHUNK, encode_lanes(&lanes))
+            .write_chunk(&self.component, FABRIC_CHUNK, encode_snapshot(&snapshot))
             .map_err(FabricCheckpointError::Checkpoint)?;
-        Ok(FabricCheckpointRecord::new(self.component.clone(), lanes))
+        Ok(FabricCheckpointRecord::new(
+            self.component.clone(),
+            snapshot,
+        ))
     }
 
     pub fn restore_from(
@@ -76,7 +93,7 @@ impl FabricCheckpointPort {
         registry: &CheckpointRegistry,
     ) -> Result<FabricCheckpointRecord, FabricCheckpointError> {
         let record = self.decode_from(registry)?;
-        self.restore_lanes(record.lanes())?;
+        self.restore_snapshot(record.snapshot())?;
         Ok(record)
     }
 
@@ -90,25 +107,28 @@ impl FabricCheckpointPort {
                 component: self.component.clone(),
                 name: FABRIC_CHUNK.to_string(),
             })?;
-        let lanes = decode_lanes(&self.component, payload)?;
-        Ok(FabricCheckpointRecord::new(self.component.clone(), lanes))
+        let snapshot = decode_snapshot(&self.component, payload)?;
+        Ok(FabricCheckpointRecord::new(
+            self.component.clone(),
+            snapshot,
+        ))
     }
 
-    fn validate_lanes(&self, lanes: &[FabricLaneSnapshot]) -> Result<(), FabricCheckpointError> {
+    fn validate_snapshot(&self, snapshot: &FabricSnapshot) -> Result<(), FabricCheckpointError> {
         let mut fabric = self.fabric.lock().expect("fabric checkpoint lock").clone();
         fabric
-            .restore_lane_snapshots(lanes.iter().cloned())
+            .restore_snapshot(snapshot.clone())
             .map_err(|error| FabricCheckpointError::Fabric {
                 component: self.component.clone(),
                 error,
             })
     }
 
-    fn restore_lanes(&self, lanes: &[FabricLaneSnapshot]) -> Result<(), FabricCheckpointError> {
+    fn restore_snapshot(&self, snapshot: &FabricSnapshot) -> Result<(), FabricCheckpointError> {
         self.fabric
             .lock()
             .expect("fabric checkpoint lock")
-            .restore_lane_snapshots(lanes.iter().cloned())
+            .restore_snapshot(snapshot.clone())
             .map_err(|error| FabricCheckpointError::Fabric {
                 component: self.component.clone(),
                 error,
@@ -173,13 +193,13 @@ impl FabricCheckpointBank {
         let mut decoded = Vec::new();
         for port in self.ports.values() {
             let record = port.decode_from(registry)?;
-            port.validate_lanes(record.lanes())?;
+            port.validate_snapshot(record.snapshot())?;
             decoded.push((port, record));
         }
 
         let mut restored = Vec::new();
         for (port, record) in decoded {
-            port.restore_lanes(record.lanes())?;
+            port.restore_snapshot(record.snapshot())?;
             restored.push(record);
         }
         Ok(restored)
@@ -191,7 +211,7 @@ impl FabricCheckpointBank {
     ) -> Result<(), FabricCheckpointError> {
         for port in self.ports.values() {
             let record = port.decode_from(registry)?;
-            port.validate_lanes(record.lanes())?;
+            port.validate_snapshot(record.snapshot())?;
         }
         Ok(())
     }
@@ -258,11 +278,11 @@ impl Error for FabricCheckpointError {
     }
 }
 
-fn encode_lanes(lanes: &[FabricLaneSnapshot]) -> Vec<u8> {
+fn encode_snapshot(snapshot: &FabricSnapshot) -> Vec<u8> {
     let mut payload = Vec::new();
     write_u64(&mut payload, FORMAT_VERSION);
-    write_u64(&mut payload, lanes.len() as u64);
-    for lane in lanes {
+    write_u64(&mut payload, snapshot.lanes().len() as u64);
+    for lane in snapshot.lanes() {
         write_string(&mut payload, lane.link().as_str());
         write_u32(&mut payload, u32::from(lane.virtual_network().get()));
         write_u64(&mut payload, lane.next_available_tick());
@@ -271,16 +291,29 @@ fn encode_lanes(lanes: &[FabricLaneSnapshot]) -> Vec<u8> {
             write_u64(&mut payload, *tick);
         }
     }
+    write_u64(&mut payload, snapshot.router_input_vcs().len() as u64);
+    for input_vc in snapshot.router_input_vcs() {
+        write_string(&mut payload, input_vc.router().as_str());
+        write_u32(&mut payload, input_vc.input_port());
+        write_u32(&mut payload, u32::from(input_vc.virtual_channel()));
+        write_u64(&mut payload, input_vc.next_available_tick());
+    }
+    write_u64(&mut payload, snapshot.router_output_ports().len() as u64);
+    for output_port in snapshot.router_output_ports() {
+        write_string(&mut payload, output_port.router().as_str());
+        write_u32(&mut payload, output_port.output_port());
+        write_u64(&mut payload, output_port.next_available_tick());
+    }
     payload
 }
 
-fn decode_lanes(
+fn decode_snapshot(
     component: &CheckpointComponentId,
     payload: &[u8],
-) -> Result<Vec<FabricLaneSnapshot>, FabricCheckpointError> {
+) -> Result<FabricSnapshot, FabricCheckpointError> {
     let mut cursor = PayloadCursor::new(component.clone(), payload);
     let version = cursor.read_u64("fabric checkpoint version")?;
-    if version != FORMAT_VERSION {
+    if !matches!(version, LEGACY_FORMAT_VERSION | FORMAT_VERSION) {
         return Err(cursor.invalid(format!("unsupported fabric checkpoint version {version}")));
     }
 
@@ -312,8 +345,58 @@ fn decode_lanes(
             credit_return_ticks,
         ));
     }
+    if version == LEGACY_FORMAT_VERSION {
+        cursor.finish()?;
+        return Ok(FabricSnapshot::new(lanes, Vec::new(), Vec::new()));
+    }
+
+    let input_vc_count = cursor.read_bounded_count(
+        "fabric router input VC count",
+        FABRIC_ROUTER_INPUT_VC_MIN_RECORD_BYTES,
+    )?;
+    let mut router_input_vcs = Vec::with_capacity(input_vc_count);
+    for _ in 0..input_vc_count {
+        let router = FabricRouterId::new(cursor.read_string("fabric router id")?)
+            .map_err(|error| cursor.invalid(error.to_string()))?;
+        let input_port = cursor.read_u32("fabric router input port")?;
+        let raw_virtual_channel = cursor.read_u32("fabric router virtual channel")?;
+        let virtual_channel = u16::try_from(raw_virtual_channel).map_err(|_| {
+            cursor.invalid(format!(
+                "fabric router virtual channel {raw_virtual_channel} exceeds u16"
+            ))
+        })?;
+        let next_available_tick = cursor.read_u64("fabric router input VC next available tick")?;
+        router_input_vcs.push(FabricRouterInputVcSnapshot::new(
+            router,
+            input_port,
+            virtual_channel,
+            next_available_tick,
+        ));
+    }
+
+    let output_port_count = cursor.read_bounded_count(
+        "fabric router output port count",
+        FABRIC_ROUTER_OUTPUT_PORT_MIN_RECORD_BYTES,
+    )?;
+    let mut router_output_ports = Vec::with_capacity(output_port_count);
+    for _ in 0..output_port_count {
+        let router = FabricRouterId::new(cursor.read_string("fabric router id")?)
+            .map_err(|error| cursor.invalid(error.to_string()))?;
+        let output_port = cursor.read_u32("fabric router output port")?;
+        let next_available_tick =
+            cursor.read_u64("fabric router output port next available tick")?;
+        router_output_ports.push(FabricRouterOutputPortSnapshot::new(
+            router,
+            output_port,
+            next_available_tick,
+        ));
+    }
     cursor.finish()?;
-    Ok(lanes)
+    Ok(FabricSnapshot::new(
+        lanes,
+        router_input_vcs,
+        router_output_ports,
+    ))
 }
 
 fn write_u32(payload: &mut Vec<u8>, value: u32) {

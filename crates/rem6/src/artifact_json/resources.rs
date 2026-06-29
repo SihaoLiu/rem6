@@ -1,3 +1,5 @@
+use rem6_fabric::FabricHopActivity;
+
 use crate::{
     Rem6CacheResourceHierarchySummary, Rem6CacheResourceSummary, Rem6DramResourceSummary,
     Rem6FabricResourceSummary, Rem6MemoryResourceSummary, Rem6TransportResourceSummary,
@@ -188,12 +190,14 @@ fn fabric_resource_hop_activities_json(summary: &Rem6FabricResourceSummary) -> S
         .hop_activities()
         .iter()
         .map(|activity| {
+            let router = fabric_resource_hop_router_json(activity);
             format!(
-                "{{\"packet\":{},\"hop_index\":{},\"link\":\"{}\",\"virtual_network\":{},\"bytes\":{},\"flits\":{},\"ready_tick\":{},\"start_tick\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"depart_tick\":{},\"arrival_tick\":{}}}",
+                "{{\"packet\":{},\"hop_index\":{},\"link\":\"{}\",\"virtual_network\":{},\"router\":{},\"bytes\":{},\"flits\":{},\"ready_tick\":{},\"start_tick\":{},\"occupied_ticks\":{},\"queue_delay_ticks\":{},\"credit_delay_ticks\":{},\"depart_tick\":{},\"arrival_tick\":{}}}",
                 activity.packet().get(),
                 activity.hop_index(),
                 json_escape(activity.link().as_str()),
                 activity.virtual_network().get(),
+                router,
                 activity.bytes(),
                 activity.flits(),
                 activity.ready_tick(),
@@ -207,6 +211,24 @@ fn fabric_resource_hop_activities_json(summary: &Rem6FabricResourceSummary) -> S
         })
         .collect::<Vec<_>>()
         .join(",")
+}
+
+fn fabric_resource_hop_router_json(activity: &FabricHopActivity) -> String {
+    match activity.router() {
+        Some(router) => format!(
+            "{{\"router\":\"{}\",\"input_port\":{},\"output_port\":{},\"virtual_channel\":{},\"ready_tick\":{},\"start_tick\":{},\"latency_ticks\":{},\"depart_tick\":{},\"queue_delay_ticks\":{}}}",
+            json_escape(router.router().as_str()),
+            router.input_port(),
+            router.output_port(),
+            router.virtual_channel(),
+            router.ready_tick(),
+            router.start_tick(),
+            router.latency_ticks(),
+            router.depart_tick(),
+            router.queue_delay_ticks(),
+        ),
+        None => "null".to_string(),
+    }
 }
 
 fn transport_resource_json(summary: &Rem6TransportResourceSummary) -> String {

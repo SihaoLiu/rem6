@@ -46,6 +46,8 @@ fn multihop_fabric_topology() -> WorkloadTopology {
         .unwrap()
         .with_virtual_networks(1, 2)
         .with_credit_depth(2)
+        .unwrap()
+        .with_router_stage("router0", 0, 1, 0, 3)
         .unwrap();
     let router_to_memory = WorkloadRouteFabric::new("router_memory", 8)
         .unwrap()
@@ -133,4 +135,34 @@ fn workload_replay_summary_exposes_multihop_fabric_hop_activity() {
     assert!(hop_lanes.contains(&("router_memory", VirtualNetworkId::new(3))));
     assert!(hop_lanes.contains(&("router_memory", VirtualNetworkId::new(4))));
     assert!(hop_lanes.contains(&("cpu_router", VirtualNetworkId::new(2))));
+}
+
+#[test]
+fn workload_replay_summary_exposes_router_stage_fabric_hop_activity() {
+    let plan =
+        rem6_workload::WorkloadReplayPlan::from_manifest(&multihop_fabric_manifest()).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan)
+        .with_max_turns(32)
+        .run_parallel()
+        .unwrap();
+
+    let summary = outcome.result().parallel_execution_summary().unwrap();
+    let activity = summary
+        .fabric_hop_activities()
+        .iter()
+        .find(|activity| {
+            activity.link().as_str() == "cpu_router"
+                && activity.virtual_network() == VirtualNetworkId::new(1)
+                && activity.router().is_some()
+        })
+        .expect("cpu_router request hop should carry router-stage timing");
+    let router = activity.router().unwrap();
+
+    assert_eq!(router.router().as_str(), "router0");
+    assert_eq!(router.input_port(), 0);
+    assert_eq!(router.output_port(), 1);
+    assert_eq!(router.virtual_channel(), 0);
+    assert_eq!(router.latency_ticks(), 3);
+    assert!(activity.start_tick() >= router.depart_tick());
 }

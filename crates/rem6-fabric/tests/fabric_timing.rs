@@ -1,6 +1,7 @@
 use rem6_fabric::{
     FabricActivityProfile, FabricError, FabricLaneActivity, FabricLinkActivity, FabricLinkId,
-    FabricModel, FabricPacket, FabricPacketId, FabricPath, FabricPathHop,
+    FabricModel, FabricPacket, FabricPacketId, FabricPath, FabricPathHop, FabricRouterId,
+    FabricRouterInputVcSnapshot, FabricRouterOutputPortSnapshot, FabricRouterStage, FabricSnapshot,
     FabricVirtualNetworkActivity, VirtualNetworkId,
 };
 use rem6_kernel::{ClockDomain, Cycles, WaitForEdgeKind, WaitForNode};
@@ -16,6 +17,10 @@ fn packet(id: u64, bytes: u64, virtual_network: u16) -> FabricPacket {
 
 fn link(name: &str) -> FabricLinkId {
     FabricLinkId::new(name).unwrap()
+}
+
+fn router(name: &str) -> FabricRouterId {
+    FabricRouterId::new(name).unwrap()
 }
 
 fn path(hops: impl IntoIterator<Item = FabricPathHop>) -> FabricPath {
@@ -596,6 +601,62 @@ fn fabric_restore_reinstates_lane_reservations() {
 }
 
 #[test]
+fn fabric_restore_reinstates_router_stage_reservations() {
+    let mut fabric = FabricModel::new();
+    let router = router("restore_router");
+    let route = path([FabricPathHop::new(link("restore_router.out"), 2, 8)
+        .unwrap()
+        .with_router_stage(FabricRouterStage::new(router.clone(), 0, 1, 0, 3).unwrap())]);
+
+    fabric
+        .transmit_batch(
+            0,
+            [
+                (packet(1, 8, 1), route.clone()),
+                (packet(2, 8, 1), route.clone()),
+            ],
+        )
+        .unwrap();
+    let snapshot = fabric.snapshot();
+    assert_eq!(snapshot.router_input_vcs().len(), 1);
+    assert_eq!(
+        snapshot.router_input_vcs()[0].router().as_str(),
+        "restore_router"
+    );
+    assert_eq!(snapshot.router_input_vcs()[0].input_port(), 0);
+    assert_eq!(snapshot.router_input_vcs()[0].virtual_channel(), 0);
+    assert_eq!(snapshot.router_input_vcs()[0].next_available_tick(), 6);
+    assert_eq!(snapshot.router_output_ports().len(), 1);
+    assert_eq!(
+        snapshot.router_output_ports()[0].router().as_str(),
+        "restore_router"
+    );
+    assert_eq!(snapshot.router_output_ports()[0].output_port(), 1);
+    assert_eq!(snapshot.router_output_ports()[0].next_available_tick(), 6);
+    let mut expected = fabric.clone();
+    let expected_transfer = expected
+        .transmit(1, packet(3, 8, 1), route.clone())
+        .unwrap();
+    assert_eq!(
+        expected_transfer.hops()[0]
+            .router()
+            .unwrap()
+            .queue_delay_ticks(),
+        5
+    );
+
+    fabric.transmit(20, packet(9, 8, 1), route.clone()).unwrap();
+    assert_ne!(fabric.snapshot(), snapshot);
+
+    fabric.restore_snapshot(snapshot.clone()).unwrap();
+
+    assert_eq!(fabric.snapshot(), snapshot);
+    let replayed = fabric.transmit(1, packet(3, 8, 1), route).unwrap();
+    assert_eq!(replayed, expected_transfer);
+    assert_eq!(fabric.snapshot(), expected.snapshot());
+}
+
+#[test]
 fn fabric_restore_rejects_duplicate_lane_snapshots() {
     let mut fabric = FabricModel::new();
     let route = path([FabricPathHop::new(link("mesh_duplicate"), 10, 8).unwrap()]);
@@ -609,6 +670,45 @@ fn fabric_restore_rejects_duplicate_lane_snapshots() {
         FabricError::DuplicateLaneSnapshot {
             link: link("mesh_duplicate"),
             virtual_network: VirtualNetworkId::new(2),
+        }
+    );
+}
+
+#[test]
+fn fabric_restore_rejects_duplicate_router_snapshots() {
+    let mut fabric = FabricModel::new();
+    let duplicate_input = FabricRouterInputVcSnapshot::new(router("router_duplicate"), 0, 1, 7);
+    let duplicate_input_snapshot = FabricSnapshot::new(
+        Vec::new(),
+        vec![duplicate_input.clone(), duplicate_input],
+        Vec::new(),
+    );
+
+    assert_eq!(
+        fabric
+            .restore_snapshot(duplicate_input_snapshot)
+            .unwrap_err(),
+        FabricError::DuplicateRouterInputVcSnapshot {
+            router: router("router_duplicate"),
+            input_port: 0,
+            virtual_channel: 1,
+        }
+    );
+
+    let duplicate_output = FabricRouterOutputPortSnapshot::new(router("router_duplicate"), 2, 9);
+    let duplicate_output_snapshot = FabricSnapshot::new(
+        Vec::new(),
+        Vec::new(),
+        vec![duplicate_output.clone(), duplicate_output],
+    );
+
+    assert_eq!(
+        fabric
+            .restore_snapshot(duplicate_output_snapshot)
+            .unwrap_err(),
+        FabricError::DuplicateRouterOutputPortSnapshot {
+            router: router("router_duplicate"),
+            output_port: 2,
         }
     );
 }
@@ -730,8 +830,143 @@ fn fabric_path_hops_can_override_packet_virtual_network() {
 }
 
 #[test]
+fn fabric_router_stage_serializes_input_virtual_channel_before_link() {
+    let mut fabric = FabricModel::new();
+    let router = router("router0");
+    let route_a = path([FabricPathHop::new(link("router0.out0"), 2, 8)
+        .unwrap()
+        .with_router_stage(FabricRouterStage::new(router.clone(), 0, 1, 0, 3).unwrap())]);
+    let route_b = path([FabricPathHop::new(link("router0.out1"), 2, 8)
+        .unwrap()
+        .with_router_stage(FabricRouterStage::new(router.clone(), 0, 2, 0, 3).unwrap())]);
+
+    let transfers = fabric
+        .transmit_batch(
+            0,
+            [(packet(11, 16, 0), route_b), (packet(10, 16, 0), route_a)],
+        )
+        .unwrap();
+
+    assert_eq!(transfers[0].packet().id(), FabricPacketId::new(10));
+    assert_eq!(transfers[0].arrival_tick(), 7);
+    assert_eq!(transfers[0].hops()[0].start_tick(), 3);
+    assert_eq!(transfers[0].hops()[0].depart_tick(), 5);
+    let first_router = transfers[0].hops()[0].router().unwrap();
+    assert_eq!(first_router.router().as_str(), "router0");
+    assert_eq!(first_router.input_port(), 0);
+    assert_eq!(first_router.output_port(), 1);
+    assert_eq!(first_router.virtual_channel(), 0);
+    assert_eq!(first_router.ready_tick(), 0);
+    assert_eq!(first_router.start_tick(), 0);
+    assert_eq!(first_router.latency_ticks(), 3);
+    assert_eq!(first_router.depart_tick(), 3);
+    assert_eq!(first_router.queue_delay_ticks(), 0);
+
+    assert_eq!(transfers[1].packet().id(), FabricPacketId::new(11));
+    assert_eq!(transfers[1].arrival_tick(), 10);
+    assert_eq!(transfers[1].hops()[0].start_tick(), 6);
+    assert_eq!(transfers[1].hops()[0].depart_tick(), 8);
+    let second_router = transfers[1].hops()[0].router().unwrap();
+    assert_eq!(second_router.router().as_str(), "router0");
+    assert_eq!(second_router.input_port(), 0);
+    assert_eq!(second_router.output_port(), 2);
+    assert_eq!(second_router.virtual_channel(), 0);
+    assert_eq!(second_router.ready_tick(), 0);
+    assert_eq!(second_router.start_tick(), 3);
+    assert_eq!(second_router.latency_ticks(), 3);
+    assert_eq!(second_router.depart_tick(), 6);
+    assert_eq!(second_router.queue_delay_ticks(), 3);
+
+    let activities = fabric.hop_activities();
+    assert_eq!(activities.len(), 2);
+    assert_eq!(activities[0].link(), &link("router0.out0"));
+    assert_eq!(activities[0].start_tick(), 3);
+    assert_eq!(activities[0].queue_delay_ticks(), 0);
+    assert_eq!(activities[0].router().unwrap().queue_delay_ticks(), 0);
+    assert_eq!(activities[1].link(), &link("router0.out1"));
+    assert_eq!(activities[1].start_tick(), 6);
+    assert_eq!(activities[1].queue_delay_ticks(), 0);
+    assert_eq!(activities[1].router().unwrap().queue_delay_ticks(), 3);
+}
+
+#[test]
+fn fabric_router_stage_serializes_output_port_across_input_virtual_channels() {
+    let mut fabric = FabricModel::new();
+    let router = router("router1");
+    let route_a = path([FabricPathHop::new(link("router1.out0a"), 1, 8)
+        .unwrap()
+        .with_router_stage(FabricRouterStage::new(router.clone(), 0, 9, 0, 2).unwrap())]);
+    let route_b = path([FabricPathHop::new(link("router1.out0b"), 1, 8)
+        .unwrap()
+        .with_router_stage(FabricRouterStage::new(router.clone(), 1, 9, 1, 2).unwrap())]);
+
+    let transfers = fabric
+        .transmit_batch(
+            0,
+            [(packet(21, 8, 0), route_b), (packet(20, 8, 0), route_a)],
+        )
+        .unwrap();
+
+    assert_eq!(transfers[0].packet().id(), FabricPacketId::new(20));
+    assert_eq!(transfers[0].arrival_tick(), 4);
+    assert_eq!(transfers[0].hops()[0].start_tick(), 2);
+    assert_eq!(transfers[0].hops()[0].depart_tick(), 3);
+    assert_eq!(
+        transfers[0].hops()[0].router().unwrap().queue_delay_ticks(),
+        0
+    );
+    assert_eq!(transfers[1].packet().id(), FabricPacketId::new(21));
+    assert_eq!(transfers[1].arrival_tick(), 6);
+    assert_eq!(transfers[1].hops()[0].start_tick(), 4);
+    assert_eq!(transfers[1].hops()[0].depart_tick(), 5);
+    let router_timing = transfers[1].hops()[0].router().unwrap();
+    assert_eq!(router_timing.input_port(), 1);
+    assert_eq!(router_timing.output_port(), 9);
+    assert_eq!(router_timing.virtual_channel(), 1);
+    assert_eq!(router_timing.queue_delay_ticks(), 2);
+
+    let activities = fabric.hop_activities();
+    assert_eq!(activities[0].router().unwrap().queue_delay_ticks(), 0);
+    assert_eq!(activities[1].router().unwrap().queue_delay_ticks(), 2);
+    assert_eq!(activities[0].queue_delay_ticks(), 0);
+    assert_eq!(activities[1].queue_delay_ticks(), 0);
+}
+
+#[test]
+fn failed_router_stage_transfer_does_not_consume_router_resources() {
+    let mut fabric = FabricModel::new();
+    let route = path([FabricPathHop::serial_link(
+        link("router_overflow_serial"),
+        ClockDomain::new(1).unwrap(),
+        Cycles::new(1),
+        1,
+        1,
+    )
+    .unwrap()
+    .with_router_stage(FabricRouterStage::new(router("router_overflow"), 0, 1, 0, 3).unwrap())]);
+    let before = fabric.snapshot();
+
+    assert_eq!(
+        fabric
+            .transmit(0, packet(99, u64::MAX, 0), route.clone())
+            .unwrap_err(),
+        FabricError::SerialLinkPacketBitOverflow { bytes: u64::MAX }
+    );
+
+    assert_eq!(fabric.snapshot(), before);
+    let transfer = fabric.transmit(0, packet(1, 1, 0), route).unwrap();
+    let router = transfer.hops()[0].router().unwrap();
+    assert_eq!(router.start_tick(), 0);
+    assert_eq!(router.queue_delay_ticks(), 0);
+}
+
+#[test]
 fn fabric_rejects_invalid_packets_paths_and_batches() {
     assert_eq!(FabricLinkId::new("").err(), Some(FabricError::EmptyLinkId));
+    assert_eq!(
+        FabricRouterId::new("").err(),
+        Some(FabricError::EmptyRouterId)
+    );
     assert_eq!(
         FabricPacket::new(FabricPacketId::new(1), 0, VirtualNetworkId::new(0)).err(),
         Some(FabricError::ZeroPacketBytes)
@@ -750,6 +985,10 @@ fn fabric_rejects_invalid_packets_paths_and_batches() {
             .with_credit_depth(0)
             .err(),
         Some(FabricError::ZeroCreditDepth)
+    );
+    assert_eq!(
+        FabricRouterStage::new(router("router0"), 0, 1, 0, 0).err(),
+        Some(FabricError::ZeroRouterLatency)
     );
     assert_eq!(
         FabricPathHop::serial_link(

@@ -4,8 +4,8 @@ use rem6_memory::{Address, AddressRange, TranslationQueueConfig, TranslationTlbC
 
 use crate::{
     WorkloadAcceleratorCommand, WorkloadAcceleratorDevice, WorkloadAcceleratorDmaCopy,
-    WorkloadDataCacheProtocol, WorkloadError, WorkloadGpuDevice, WorkloadGpuDmaCopy,
-    WorkloadGpuKernelLaunch, WorkloadQosPolicy, WorkloadSinicPciTopologyError,
+    WorkloadDataCacheProtocol, WorkloadError, WorkloadFabricRouteError, WorkloadGpuDevice,
+    WorkloadGpuDmaCopy, WorkloadGpuKernelLaunch, WorkloadQosPolicy, WorkloadSinicPciTopologyError,
 };
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -137,12 +137,78 @@ pub enum WorkloadRouteLatency {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WorkloadRouteRouterStage {
+    router: String,
+    input_port: u32,
+    output_port: u32,
+    virtual_channel: u16,
+    latency: Tick,
+}
+
+impl WorkloadRouteRouterStage {
+    pub fn new(
+        link: &str,
+        router: impl Into<String>,
+        input_port: u32,
+        output_port: u32,
+        virtual_channel: u16,
+        latency: Tick,
+    ) -> Result<Self, WorkloadError> {
+        let router = router.into();
+        if router.is_empty() {
+            return Err(WorkloadError::FabricRoute(
+                WorkloadFabricRouteError::EmptyRouter {
+                    link: link.to_string(),
+                },
+            ));
+        }
+        if latency == 0 {
+            return Err(WorkloadError::FabricRoute(
+                WorkloadFabricRouteError::ZeroRouterLatency {
+                    link: link.to_string(),
+                    router,
+                },
+            ));
+        }
+
+        Ok(Self {
+            router,
+            input_port,
+            output_port,
+            virtual_channel,
+            latency,
+        })
+    }
+
+    pub fn router(&self) -> &str {
+        &self.router
+    }
+
+    pub const fn input_port(&self) -> u32 {
+        self.input_port
+    }
+
+    pub const fn output_port(&self) -> u32 {
+        self.output_port
+    }
+
+    pub const fn virtual_channel(&self) -> u16 {
+        self.virtual_channel
+    }
+
+    pub const fn latency(&self) -> Tick {
+        self.latency
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkloadRouteFabric {
     link: String,
     bandwidth_bytes_per_tick: u64,
     request_virtual_network: u16,
     response_virtual_network: u16,
     credit_depth: Option<u32>,
+    router_stage: Option<WorkloadRouteRouterStage>,
 }
 
 impl WorkloadRouteFabric {
@@ -164,6 +230,7 @@ impl WorkloadRouteFabric {
             request_virtual_network: 0,
             response_virtual_network: 0,
             credit_depth: None,
+            router_stage: None,
         })
     }
 
@@ -188,6 +255,25 @@ impl WorkloadRouteFabric {
         Ok(self)
     }
 
+    pub fn with_router_stage(
+        mut self,
+        router: impl Into<String>,
+        input_port: u32,
+        output_port: u32,
+        virtual_channel: u16,
+        latency: Tick,
+    ) -> Result<Self, WorkloadError> {
+        self.router_stage = Some(WorkloadRouteRouterStage::new(
+            &self.link,
+            router,
+            input_port,
+            output_port,
+            virtual_channel,
+            latency,
+        )?);
+        Ok(self)
+    }
+
     pub fn link(&self) -> &str {
         &self.link
     }
@@ -206,6 +292,10 @@ impl WorkloadRouteFabric {
 
     pub const fn credit_depth(&self) -> Option<u32> {
         self.credit_depth
+    }
+
+    pub fn router_stage(&self) -> Option<&WorkloadRouteRouterStage> {
+        self.router_stage.as_ref()
     }
 }
 

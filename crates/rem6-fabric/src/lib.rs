@@ -37,6 +37,24 @@ impl FabricLinkId {
     }
 }
 
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct FabricRouterId(String);
+
+impl FabricRouterId {
+    pub fn new(value: impl Into<String>) -> Result<Self, FabricError> {
+        let value = value.into();
+        if value.is_empty() {
+            return Err(FabricError::EmptyRouterId);
+        }
+
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FabricPacketId(u64);
 
@@ -66,10 +84,12 @@ impl VirtualNetworkId {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FabricError {
     EmptyLinkId,
+    EmptyRouterId,
     EmptyPath,
     ZeroPacketBytes,
     ZeroLinkLatency,
     ZeroLinkBandwidth,
+    ZeroRouterLatency,
     ZeroCreditDepth,
     ZeroSerialLinkLanes,
     ZeroSerialLinkLaneSpeed,
@@ -97,6 +117,15 @@ pub enum FabricError {
         link: FabricLinkId,
         virtual_network: VirtualNetworkId,
     },
+    DuplicateRouterInputVcSnapshot {
+        router: FabricRouterId,
+        input_port: u32,
+        virtual_channel: u16,
+    },
+    DuplicateRouterOutputPortSnapshot {
+        router: FabricRouterId,
+        output_port: u32,
+    },
     QosNoGrant,
     TickOverflow,
 }
@@ -105,10 +134,12 @@ impl fmt::Display for FabricError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptyLinkId => write!(formatter, "fabric link id must not be empty"),
+            Self::EmptyRouterId => write!(formatter, "fabric router id must not be empty"),
             Self::EmptyPath => write!(formatter, "fabric path must contain a hop"),
             Self::ZeroPacketBytes => write!(formatter, "fabric packet must contain bytes"),
             Self::ZeroLinkLatency => write!(formatter, "fabric link latency must be positive"),
             Self::ZeroLinkBandwidth => write!(formatter, "fabric link bandwidth must be positive"),
+            Self::ZeroRouterLatency => write!(formatter, "fabric router latency must be positive"),
             Self::ZeroCreditDepth => write!(formatter, "fabric credit depth must be positive"),
             Self::ZeroSerialLinkLanes => {
                 write!(formatter, "fabric serial link lane count must be positive")
@@ -157,6 +188,23 @@ impl fmt::Display for FabricError {
                 "fabric lane {} virtual network {} appears more than once in snapshot",
                 link.as_str(),
                 virtual_network.get()
+            ),
+            Self::DuplicateRouterInputVcSnapshot {
+                router,
+                input_port,
+                virtual_channel,
+            } => write!(
+                formatter,
+                "fabric router {} input port {input_port} virtual channel {virtual_channel} appears more than once in snapshot",
+                router.as_str()
+            ),
+            Self::DuplicateRouterOutputPortSnapshot {
+                router,
+                output_port,
+            } => write!(
+                formatter,
+                "fabric router {} output port {output_port} appears more than once in snapshot",
+                router.as_str()
             ),
             Self::QosNoGrant => write!(formatter, "QoS arbiter did not select a queued request"),
             Self::TickOverflow => write!(formatter, "fabric tick calculation overflowed"),
@@ -456,6 +504,57 @@ impl FabricSerialLinkTiming {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FabricRouterStage {
+    router: FabricRouterId,
+    input_port: u32,
+    output_port: u32,
+    virtual_channel: u16,
+    latency: Tick,
+}
+
+impl FabricRouterStage {
+    pub fn new(
+        router: FabricRouterId,
+        input_port: u32,
+        output_port: u32,
+        virtual_channel: u16,
+        latency: Tick,
+    ) -> Result<Self, FabricError> {
+        if latency == 0 {
+            return Err(FabricError::ZeroRouterLatency);
+        }
+
+        Ok(Self {
+            router,
+            input_port,
+            output_port,
+            virtual_channel,
+            latency,
+        })
+    }
+
+    pub fn router(&self) -> &FabricRouterId {
+        &self.router
+    }
+
+    pub const fn input_port(&self) -> u32 {
+        self.input_port
+    }
+
+    pub const fn output_port(&self) -> u32 {
+        self.output_port
+    }
+
+    pub const fn virtual_channel(&self) -> u16 {
+        self.virtual_channel
+    }
+
+    pub const fn latency(&self) -> Tick {
+        self.latency
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FabricPathHop {
     link: FabricLinkId,
     latency: Tick,
@@ -463,6 +562,7 @@ pub struct FabricPathHop {
     serial_link: Option<FabricSerialLinkTiming>,
     credit_depth: Option<u32>,
     virtual_network: Option<VirtualNetworkId>,
+    router_stage: Option<FabricRouterStage>,
 }
 
 impl FabricPathHop {
@@ -485,6 +585,7 @@ impl FabricPathHop {
             serial_link: None,
             credit_depth: None,
             virtual_network: None,
+            router_stage: None,
         })
     }
 
@@ -504,6 +605,7 @@ impl FabricPathHop {
             serial_link: Some(serial_link),
             credit_depth: None,
             virtual_network: None,
+            router_stage: None,
         })
     }
 
@@ -529,6 +631,7 @@ impl FabricPathHop {
             serial_link: Some(serial_link),
             credit_depth: None,
             virtual_network: None,
+            router_stage: None,
         })
     }
 
@@ -543,6 +646,11 @@ impl FabricPathHop {
 
     pub const fn with_virtual_network(mut self, virtual_network: VirtualNetworkId) -> Self {
         self.virtual_network = Some(virtual_network);
+        self
+    }
+
+    pub fn with_router_stage(mut self, router_stage: FabricRouterStage) -> Self {
+        self.router_stage = Some(router_stage);
         self
     }
 
@@ -568,6 +676,10 @@ impl FabricPathHop {
 
     pub const fn virtual_network(&self) -> Option<VirtualNetworkId> {
         self.virtual_network
+    }
+
+    pub fn router_stage(&self) -> Option<&FabricRouterStage> {
+        self.router_stage.as_ref()
     }
 
     fn serialization_ticks(&self, bytes: u64) -> Result<Tick, FabricError> {
@@ -611,9 +723,61 @@ impl FabricPath {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FabricRouterTiming {
+    router: FabricRouterId,
+    input_port: u32,
+    output_port: u32,
+    virtual_channel: u16,
+    ready_tick: Tick,
+    start_tick: Tick,
+    latency_ticks: Tick,
+    depart_tick: Tick,
+    queue_delay_ticks: Tick,
+}
+
+impl FabricRouterTiming {
+    pub fn router(&self) -> &FabricRouterId {
+        &self.router
+    }
+
+    pub const fn input_port(&self) -> u32 {
+        self.input_port
+    }
+
+    pub const fn output_port(&self) -> u32 {
+        self.output_port
+    }
+
+    pub const fn virtual_channel(&self) -> u16 {
+        self.virtual_channel
+    }
+
+    pub const fn ready_tick(&self) -> Tick {
+        self.ready_tick
+    }
+
+    pub const fn start_tick(&self) -> Tick {
+        self.start_tick
+    }
+
+    pub const fn latency_ticks(&self) -> Tick {
+        self.latency_ticks
+    }
+
+    pub const fn depart_tick(&self) -> Tick {
+        self.depart_tick
+    }
+
+    pub const fn queue_delay_ticks(&self) -> Tick {
+        self.queue_delay_ticks
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FabricHopTiming {
     link: FabricLinkId,
     virtual_network: VirtualNetworkId,
+    router: Option<FabricRouterTiming>,
     ready_tick: Tick,
     start_tick: Tick,
     serialization_ticks: Tick,
@@ -628,6 +792,10 @@ impl FabricHopTiming {
 
     pub const fn virtual_network(&self) -> VirtualNetworkId {
         self.virtual_network
+    }
+
+    pub fn router(&self) -> Option<&FabricRouterTiming> {
+        self.router.as_ref()
     }
 
     pub const fn ready_tick(&self) -> Tick {
@@ -678,11 +846,79 @@ impl FabricTransfer {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FabricRouterActivity {
+    router: FabricRouterId,
+    input_port: u32,
+    output_port: u32,
+    virtual_channel: u16,
+    ready_tick: Tick,
+    start_tick: Tick,
+    latency_ticks: Tick,
+    depart_tick: Tick,
+    queue_delay_ticks: Tick,
+}
+
+impl FabricRouterActivity {
+    pub fn router(&self) -> &FabricRouterId {
+        &self.router
+    }
+
+    pub const fn input_port(&self) -> u32 {
+        self.input_port
+    }
+
+    pub const fn output_port(&self) -> u32 {
+        self.output_port
+    }
+
+    pub const fn virtual_channel(&self) -> u16 {
+        self.virtual_channel
+    }
+
+    pub const fn ready_tick(&self) -> Tick {
+        self.ready_tick
+    }
+
+    pub const fn start_tick(&self) -> Tick {
+        self.start_tick
+    }
+
+    pub const fn latency_ticks(&self) -> Tick {
+        self.latency_ticks
+    }
+
+    pub const fn depart_tick(&self) -> Tick {
+        self.depart_tick
+    }
+
+    pub const fn queue_delay_ticks(&self) -> Tick {
+        self.queue_delay_ticks
+    }
+}
+
+impl From<&FabricRouterTiming> for FabricRouterActivity {
+    fn from(timing: &FabricRouterTiming) -> Self {
+        Self {
+            router: timing.router.clone(),
+            input_port: timing.input_port,
+            output_port: timing.output_port,
+            virtual_channel: timing.virtual_channel,
+            ready_tick: timing.ready_tick,
+            start_tick: timing.start_tick,
+            latency_ticks: timing.latency_ticks,
+            depart_tick: timing.depart_tick,
+            queue_delay_ticks: timing.queue_delay_ticks,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FabricHopActivity {
     packet: FabricPacketId,
     hop_index: usize,
     link: FabricLinkId,
     virtual_network: VirtualNetworkId,
+    router: Option<FabricRouterActivity>,
     bytes: u64,
     flits: u64,
     ready_tick: Tick,
@@ -709,6 +945,10 @@ impl FabricHopActivity {
 
     pub const fn virtual_network(&self) -> VirtualNetworkId {
         self.virtual_network
+    }
+
+    pub fn router(&self) -> Option<&FabricRouterActivity> {
+        self.router.as_ref()
     }
 
     pub const fn bytes(&self) -> u64 {
@@ -786,6 +1026,140 @@ impl FabricLaneKey {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FabricSnapshot {
+    lanes: Vec<FabricLaneSnapshot>,
+    router_input_vcs: Vec<FabricRouterInputVcSnapshot>,
+    router_output_ports: Vec<FabricRouterOutputPortSnapshot>,
+}
+
+impl FabricSnapshot {
+    pub fn new(
+        lanes: Vec<FabricLaneSnapshot>,
+        router_input_vcs: Vec<FabricRouterInputVcSnapshot>,
+        router_output_ports: Vec<FabricRouterOutputPortSnapshot>,
+    ) -> Self {
+        Self {
+            lanes,
+            router_input_vcs,
+            router_output_ports,
+        }
+    }
+
+    pub fn lanes(&self) -> &[FabricLaneSnapshot] {
+        &self.lanes
+    }
+
+    pub fn router_input_vcs(&self) -> &[FabricRouterInputVcSnapshot] {
+        &self.router_input_vcs
+    }
+
+    pub fn router_output_ports(&self) -> &[FabricRouterOutputPortSnapshot] {
+        &self.router_output_ports
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct FabricRouterInputVcKey {
+    router: FabricRouterId,
+    input_port: u32,
+    virtual_channel: u16,
+}
+
+impl FabricRouterInputVcKey {
+    fn new(router: FabricRouterId, input_port: u32, virtual_channel: u16) -> Self {
+        Self {
+            router,
+            input_port,
+            virtual_channel,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FabricRouterInputVcSnapshot {
+    router: FabricRouterId,
+    input_port: u32,
+    virtual_channel: u16,
+    next_available_tick: Tick,
+}
+
+impl FabricRouterInputVcSnapshot {
+    pub fn new(
+        router: FabricRouterId,
+        input_port: u32,
+        virtual_channel: u16,
+        next_available_tick: Tick,
+    ) -> Self {
+        Self {
+            router,
+            input_port,
+            virtual_channel,
+            next_available_tick,
+        }
+    }
+
+    pub fn router(&self) -> &FabricRouterId {
+        &self.router
+    }
+
+    pub const fn input_port(&self) -> u32 {
+        self.input_port
+    }
+
+    pub const fn virtual_channel(&self) -> u16 {
+        self.virtual_channel
+    }
+
+    pub const fn next_available_tick(&self) -> Tick {
+        self.next_available_tick
+    }
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct FabricRouterOutputPortKey {
+    router: FabricRouterId,
+    output_port: u32,
+}
+
+impl FabricRouterOutputPortKey {
+    fn new(router: FabricRouterId, output_port: u32) -> Self {
+        Self {
+            router,
+            output_port,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FabricRouterOutputPortSnapshot {
+    router: FabricRouterId,
+    output_port: u32,
+    next_available_tick: Tick,
+}
+
+impl FabricRouterOutputPortSnapshot {
+    pub fn new(router: FabricRouterId, output_port: u32, next_available_tick: Tick) -> Self {
+        Self {
+            router,
+            output_port,
+            next_available_tick,
+        }
+    }
+
+    pub fn router(&self) -> &FabricRouterId {
+        &self.router
+    }
+
+    pub const fn output_port(&self) -> u32 {
+        self.output_port
+    }
+
+    pub const fn next_available_tick(&self) -> Tick {
+        self.next_available_tick
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FabricLaneSnapshot {
     link: FabricLinkId,
     virtual_network: VirtualNetworkId,
@@ -831,12 +1205,14 @@ struct FabricLaneActivityRecord {
     hop_index: usize,
     link: FabricLinkId,
     virtual_network: VirtualNetworkId,
+    router: Option<FabricRouterActivity>,
     bytes: u64,
     flits: u64,
     occupied_ticks: Tick,
     queue_delay_ticks: Tick,
     credit_delay_ticks: Tick,
     ready_tick: Tick,
+    lane_ready_tick: Tick,
     start_tick: Tick,
     depart_tick: Tick,
     arrival_tick: Tick,
@@ -849,12 +1225,14 @@ impl FabricLaneActivityRecord {
         hop_index: usize,
         link: FabricLinkId,
         virtual_network: VirtualNetworkId,
+        router: Option<FabricRouterActivity>,
         bytes: u64,
         flits: u64,
         occupied_ticks: Tick,
         queue_delay_ticks: Tick,
         credit_delay_ticks: Tick,
         ready_tick: Tick,
+        lane_ready_tick: Tick,
         start_tick: Tick,
         depart_tick: Tick,
         arrival_tick: Tick,
@@ -864,12 +1242,14 @@ impl FabricLaneActivityRecord {
             hop_index,
             link,
             virtual_network,
+            router,
             bytes,
             flits,
             occupied_ticks,
             queue_delay_ticks,
             credit_delay_ticks,
             ready_tick,
+            lane_ready_tick,
             start_tick,
             depart_tick,
             arrival_tick,
@@ -889,7 +1269,7 @@ impl FabricLaneActivityRecord {
             self.occupied_ticks,
             self.queue_delay_ticks,
             self.queue_delay_ticks,
-            self.ready_tick,
+            self.lane_ready_tick,
             self.arrival_tick,
         )
         .with_flit_count(self.flits)
@@ -902,6 +1282,7 @@ impl FabricLaneActivityRecord {
             hop_index: self.hop_index,
             link: self.link.clone(),
             virtual_network: self.virtual_network,
+            router: self.router.clone(),
             bytes: self.bytes,
             flits: self.flits,
             ready_tick: self.ready_tick,
@@ -1057,6 +1438,41 @@ impl FabricLaneState {
     }
 }
 
+fn lane_states_from_snapshots<I>(
+    snapshots: I,
+) -> Result<
+    (
+        BTreeMap<FabricLaneKey, FabricLaneState>,
+        BTreeMap<FabricLinkId, FabricLinkState>,
+    ),
+    FabricError,
+>
+where
+    I: IntoIterator<Item = FabricLaneSnapshot>,
+{
+    let mut lanes = BTreeMap::new();
+    let mut links = BTreeMap::<FabricLinkId, FabricLinkState>::new();
+    for snapshot in snapshots {
+        let key = FabricLaneKey::new(snapshot.link.clone(), snapshot.virtual_network);
+        if lanes.contains_key(&key) {
+            return Err(FabricError::DuplicateLaneSnapshot {
+                link: snapshot.link,
+                virtual_network: snapshot.virtual_network,
+            });
+        }
+        links
+            .entry(snapshot.link.clone())
+            .and_modify(|state| {
+                state.next_available = state.next_available.max(snapshot.next_available_tick);
+            })
+            .or_insert(FabricLinkState {
+                next_available: snapshot.next_available_tick,
+            });
+        lanes.insert(key, FabricLaneState::from_snapshot(&snapshot));
+    }
+    Ok((lanes, links))
+}
+
 fn queue_wait_kind(
     arrival_tick: Tick,
     lane_next_available: Tick,
@@ -1090,10 +1506,79 @@ struct FabricLinkState {
     next_available: Tick,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct FabricRouterResourceState {
+    next_available: Tick,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FabricRouterReservation {
+    input_key: FabricRouterInputVcKey,
+    output_key: FabricRouterOutputPortKey,
+    timing: FabricRouterTiming,
+}
+
+fn router_input_vc_states_from_snapshots<I>(
+    snapshots: I,
+) -> Result<BTreeMap<FabricRouterInputVcKey, FabricRouterResourceState>, FabricError>
+where
+    I: IntoIterator<Item = FabricRouterInputVcSnapshot>,
+{
+    let mut resources = BTreeMap::new();
+    for snapshot in snapshots {
+        let key = FabricRouterInputVcKey::new(
+            snapshot.router.clone(),
+            snapshot.input_port,
+            snapshot.virtual_channel,
+        );
+        if resources.contains_key(&key) {
+            return Err(FabricError::DuplicateRouterInputVcSnapshot {
+                router: snapshot.router,
+                input_port: snapshot.input_port,
+                virtual_channel: snapshot.virtual_channel,
+            });
+        }
+        resources.insert(
+            key,
+            FabricRouterResourceState {
+                next_available: snapshot.next_available_tick,
+            },
+        );
+    }
+    Ok(resources)
+}
+
+fn router_output_port_states_from_snapshots<I>(
+    snapshots: I,
+) -> Result<BTreeMap<FabricRouterOutputPortKey, FabricRouterResourceState>, FabricError>
+where
+    I: IntoIterator<Item = FabricRouterOutputPortSnapshot>,
+{
+    let mut resources = BTreeMap::new();
+    for snapshot in snapshots {
+        let key = FabricRouterOutputPortKey::new(snapshot.router.clone(), snapshot.output_port);
+        if resources.contains_key(&key) {
+            return Err(FabricError::DuplicateRouterOutputPortSnapshot {
+                router: snapshot.router,
+                output_port: snapshot.output_port,
+            });
+        }
+        resources.insert(
+            key,
+            FabricRouterResourceState {
+                next_available: snapshot.next_available_tick,
+            },
+        );
+    }
+    Ok(resources)
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct FabricModel {
     links: BTreeMap<FabricLinkId, FabricLinkState>,
     lanes: BTreeMap<FabricLaneKey, FabricLaneState>,
+    router_input_vcs: BTreeMap<FabricRouterInputVcKey, FabricRouterResourceState>,
+    router_output_ports: BTreeMap<FabricRouterOutputPortKey, FabricRouterResourceState>,
     activity_log: Vec<FabricLaneActivityRecord>,
     wait_log: Vec<FabricWaitRecord>,
 }
@@ -1187,33 +1672,56 @@ impl FabricModel {
             .collect()
     }
 
+    pub fn snapshot(&self) -> FabricSnapshot {
+        let router_input_vcs = self
+            .router_input_vcs
+            .iter()
+            .map(|(key, state)| {
+                FabricRouterInputVcSnapshot::new(
+                    key.router.clone(),
+                    key.input_port,
+                    key.virtual_channel,
+                    state.next_available,
+                )
+            })
+            .collect();
+        let router_output_ports = self
+            .router_output_ports
+            .iter()
+            .map(|(key, state)| {
+                FabricRouterOutputPortSnapshot::new(
+                    key.router.clone(),
+                    key.output_port,
+                    state.next_available,
+                )
+            })
+            .collect();
+
+        FabricSnapshot::new(self.lane_snapshots(), router_input_vcs, router_output_ports)
+    }
+
     pub fn restore_lane_snapshots<I>(&mut self, snapshots: I) -> Result<(), FabricError>
     where
         I: IntoIterator<Item = FabricLaneSnapshot>,
     {
-        let mut lanes = BTreeMap::new();
-        let mut links = BTreeMap::<FabricLinkId, FabricLinkState>::new();
-        for snapshot in snapshots {
-            let key = FabricLaneKey::new(snapshot.link.clone(), snapshot.virtual_network);
-            if lanes.contains_key(&key) {
-                return Err(FabricError::DuplicateLaneSnapshot {
-                    link: snapshot.link,
-                    virtual_network: snapshot.virtual_network,
-                });
-            }
-            links
-                .entry(snapshot.link.clone())
-                .and_modify(|state| {
-                    state.next_available = state.next_available.max(snapshot.next_available_tick);
-                })
-                .or_insert(FabricLinkState {
-                    next_available: snapshot.next_available_tick,
-                });
-            lanes.insert(key, FabricLaneState::from_snapshot(&snapshot));
-        }
+        let (lanes, links) = lane_states_from_snapshots(snapshots)?;
+        self.lanes = lanes;
+        self.links = links;
+        self.router_input_vcs.clear();
+        self.router_output_ports.clear();
+        Ok(())
+    }
+
+    pub fn restore_snapshot(&mut self, snapshot: FabricSnapshot) -> Result<(), FabricError> {
+        let (lanes, links) = lane_states_from_snapshots(snapshot.lanes)?;
+        let router_input_vcs = router_input_vc_states_from_snapshots(snapshot.router_input_vcs)?;
+        let router_output_ports =
+            router_output_port_states_from_snapshots(snapshot.router_output_ports)?;
 
         self.lanes = lanes;
         self.links = links;
+        self.router_input_vcs = router_input_vcs;
+        self.router_output_ports = router_output_ports;
         Ok(())
     }
 
@@ -1346,6 +1854,67 @@ impl FabricModel {
         self.wait_log.clear();
     }
 
+    fn reserve_router_stage(
+        &self,
+        stage: &FabricRouterStage,
+        ready_tick: Tick,
+    ) -> Result<FabricRouterReservation, FabricError> {
+        let input_key = FabricRouterInputVcKey::new(
+            stage.router().clone(),
+            stage.input_port(),
+            stage.virtual_channel(),
+        );
+        let output_key =
+            FabricRouterOutputPortKey::new(stage.router().clone(), stage.output_port());
+        let input_ready_tick = self
+            .router_input_vcs
+            .get(&input_key)
+            .map_or(0, |state| state.next_available);
+        let output_ready_tick = self
+            .router_output_ports
+            .get(&output_key)
+            .map_or(0, |state| state.next_available);
+        let start_tick = ready_tick.max(input_ready_tick).max(output_ready_tick);
+        let depart_tick = start_tick
+            .checked_add(stage.latency())
+            .ok_or(FabricError::TickOverflow)?;
+        let queue_delay_ticks = start_tick
+            .checked_sub(ready_tick)
+            .ok_or(FabricError::TickOverflow)?;
+
+        Ok(FabricRouterReservation {
+            input_key,
+            output_key,
+            timing: FabricRouterTiming {
+                router: stage.router().clone(),
+                input_port: stage.input_port(),
+                output_port: stage.output_port(),
+                virtual_channel: stage.virtual_channel(),
+                ready_tick,
+                start_tick,
+                latency_ticks: stage.latency(),
+                depart_tick,
+                queue_delay_ticks,
+            },
+        })
+    }
+
+    fn commit_router_reservation(
+        &mut self,
+        reservation: FabricRouterReservation,
+    ) -> FabricRouterTiming {
+        let depart_tick = reservation.timing.depart_tick();
+        self.router_input_vcs
+            .entry(reservation.input_key)
+            .or_default()
+            .next_available = depart_tick;
+        self.router_output_ports
+            .entry(reservation.output_key)
+            .or_default()
+            .next_available = depart_tick;
+        reservation.timing
+    }
+
     fn reserve_transfer(
         &mut self,
         injection_tick: Tick,
@@ -1357,6 +1926,14 @@ impl FabricModel {
 
         for (hop_index, hop) in path.hops().iter().enumerate() {
             let ready_tick = arrival_tick;
+            let router_reservation = if let Some(stage) = hop.router_stage() {
+                Some(self.reserve_router_stage(stage, ready_tick)?)
+            } else {
+                None
+            };
+            let lane_ready_tick = router_reservation
+                .as_ref()
+                .map_or(ready_tick, |reservation| reservation.timing.depart_tick());
             let virtual_network = hop.virtual_network().unwrap_or(packet.virtual_network());
             let lane = FabricLaneKey::new(hop.link().clone(), virtual_network);
             let serialization_ticks = hop.serialization_ticks(packet.bytes())?;
@@ -1366,19 +1943,21 @@ impl FabricModel {
                 .get(hop.link())
                 .map_or(0, |state| state.next_available);
             let reservation = self.lanes.entry(lane).or_default().reserve(
-                ready_tick,
+                lane_ready_tick,
                 serialization_ticks,
                 hop.latency(),
                 hop.credit_depth(),
                 link_next_available,
             )?;
+            let router_timing =
+                router_reservation.map(|reservation| self.commit_router_reservation(reservation));
             self.links
                 .entry(hop.link().clone())
                 .or_default()
                 .next_available = reservation.depart_tick;
             let queue_delay_ticks = reservation
                 .start_tick
-                .checked_sub(ready_tick)
+                .checked_sub(lane_ready_tick)
                 .ok_or(FabricError::TickOverflow)?;
             let credit_delay_ticks = reservation.credit_delay_ticks;
             if queue_delay_ticks != 0 {
@@ -1389,7 +1968,7 @@ impl FabricModel {
                         hop.link().clone(),
                         virtual_network,
                         wait_kind,
-                        ready_tick,
+                        lane_ready_tick,
                         reservation.start_tick,
                     ));
                 } else {
@@ -1397,7 +1976,7 @@ impl FabricModel {
                         .start_tick
                         .checked_sub(credit_delay_ticks)
                         .ok_or(FabricError::TickOverflow)?;
-                    if credit_wait_start_tick > ready_tick {
+                    if credit_wait_start_tick > lane_ready_tick {
                         let wait_kind =
                             reservation.queue_wait_kind.unwrap_or(FabricWaitKind::Queue);
                         self.wait_log.push(FabricWaitRecord::new(
@@ -1405,7 +1984,7 @@ impl FabricModel {
                             hop.link().clone(),
                             virtual_network,
                             wait_kind,
-                            ready_tick,
+                            lane_ready_tick,
                             credit_wait_start_tick,
                         ));
                     }
@@ -1423,6 +2002,7 @@ impl FabricModel {
             timings.push(FabricHopTiming {
                 link: hop.link().clone(),
                 virtual_network,
+                router: router_timing.clone(),
                 ready_tick: reservation.ready_tick,
                 start_tick: reservation.start_tick,
                 serialization_ticks,
@@ -1434,12 +2014,14 @@ impl FabricModel {
                 hop_index,
                 hop.link().clone(),
                 virtual_network,
+                router_timing.as_ref().map(FabricRouterActivity::from),
                 packet.bytes(),
                 flits,
                 serialization_ticks,
                 queue_delay_ticks,
                 credit_delay_ticks,
                 ready_tick,
+                lane_ready_tick,
                 reservation.start_tick,
                 reservation.depart_tick,
                 reservation.arrival_tick,

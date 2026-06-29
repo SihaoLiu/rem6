@@ -29,9 +29,8 @@ mod topology;
 
 pub use qos::WorkloadQosError;
 pub use remote_traffic_mismatch::WorkloadParallelRemoteTrafficConsistencyMismatch;
-pub use topology::WorkloadSinicPciTopologyError;
+pub use topology::{WorkloadFabricRouteError, WorkloadSinicPciTopologyError};
 pub use {large_payload::*, parallel_partition::*};
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WorkloadError {
     Boot(BootError),
@@ -128,6 +127,7 @@ pub enum WorkloadError {
     ZeroFabricCreditDepth {
         link: String,
     },
+    FabricRoute(WorkloadFabricRouteError),
     ZeroTopologyPartitions,
     ZeroMinRemoteDelay,
     ZeroParallelWorkerLimit,
