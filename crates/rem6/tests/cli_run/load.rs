@@ -1466,6 +1466,7 @@ fn rem6_run_reports_elf_section_header_table_metadata() {
     assert!(stdout.contains(
         "\"section_header_table\":{\"file_offset\":160,\"entry_size\":64,\"entry_count\":4,\"string_table_index\":3}"
     ));
+    assert!(stdout.contains("\"section_name_table\":{\"file_offset\":132,\"bytes\":23}"));
     assert_stat(
         &stdout,
         "sim.elf.section_header.file_offset",
@@ -1492,6 +1493,20 @@ fn rem6_run_reports_elf_section_header_table_metadata() {
         "sim.elf.section_header.string_table_index",
         "Count",
         3,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_name_table.file_offset",
+        "Byte",
+        132,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_name_table.bytes",
+        "Byte",
+        23,
         "constant",
     );
 }

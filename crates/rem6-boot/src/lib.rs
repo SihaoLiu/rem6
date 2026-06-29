@@ -14,4 +14,5 @@ pub use image::{BootImage, BootLineWrite, BootLoadReport, BootSegment};
 pub use metadata::{
     BootElfDynamicPltRelocationKind, BootElfDynamicRelocationTable, BootElfDynamicTable,
     BootElfInterpreter, BootElfMetadata, BootElfProgramHeaderTable, BootElfSectionHeaderTable,
+    BootElfSectionNameTable,
 };

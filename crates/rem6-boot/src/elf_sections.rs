@@ -1,7 +1,7 @@
 use crate::elf::{BootElfClass, BootElfEndian, BootElfOperatingSystem};
 use crate::elf_counts::section_table_layout;
 use crate::error::{invalid_elf, BootElfError, BootError};
-use crate::metadata::BootElfSectionHeaderTable;
+use crate::metadata::{BootElfSectionHeaderTable, BootElfSectionNameTable};
 
 const SHT_NOTE: u32 = 7;
 const SHT_SYMTAB: u32 = 2;
@@ -20,6 +20,7 @@ pub(crate) struct ElfSectionSummary {
     function_symbol_count: u64,
     object_symbol_count: u64,
     section_header_table: BootElfSectionHeaderTable,
+    section_name_table: BootElfSectionNameTable,
 }
 
 impl ElfSectionSummary {
@@ -45,6 +46,10 @@ impl ElfSectionSummary {
 
     pub(crate) const fn section_header_table(self) -> BootElfSectionHeaderTable {
         self.section_header_table
+    }
+
+    pub(crate) const fn section_name_table(self) -> BootElfSectionNameTable {
+        self.section_name_table
     }
 }
 
@@ -114,6 +119,7 @@ fn elf64_section_summary(
             table.count,
             table.string_section,
         ),
+        section_name_table: BootElfSectionNameTable::new(string_header.offset, string_header.size),
         ..ElfSectionSummary::default()
     };
     for index in 1..table.count {
@@ -178,6 +184,7 @@ fn elf32_section_summary(
             table.count,
             table.string_section,
         ),
+        section_name_table: BootElfSectionNameTable::new(string_header.offset, string_header.size),
         ..ElfSectionSummary::default()
     };
     for index in 1..table.count {

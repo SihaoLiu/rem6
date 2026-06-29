@@ -349,6 +349,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         )
         .with_dynamic_table(dynamic_table)
         .with_section_header_table(section_summary.section_header_table())
+        .with_section_name_table(section_summary.section_name_table())
         .with_program_header_table(
             BootElfProgramHeaderTable::new(
                 program_header_offset,
@@ -543,6 +544,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         )
         .with_dynamic_table(dynamic_table)
         .with_section_header_table(section_summary.section_header_table())
+        .with_section_name_table(section_summary.section_name_table())
         .with_program_header_table(
             BootElfProgramHeaderTable::new(
                 program_header_offset,

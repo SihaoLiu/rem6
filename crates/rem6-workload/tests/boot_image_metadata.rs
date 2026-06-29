@@ -212,6 +212,15 @@ fn elf64_image_with_named_sections(machine: u16, section_names: &[&str]) -> Vec<
     bytes
 }
 
+fn grow_elf64_section_name_table(bytes: &mut [u8], extra_bytes: u64) {
+    let section_table_offset = read_u64(bytes, 40) as usize;
+    let section_header_size = usize::from(read_u16(bytes, 58));
+    let string_table_index = usize::from(read_u16(bytes, 62));
+    let byte_size_offset = section_table_offset + string_table_index * section_header_size + 32;
+    let byte_size = read_u64(bytes, byte_size_offset);
+    write_u64(bytes, byte_size_offset, byte_size + extra_bytes);
+}
+
 fn elf64_image_with_pt_tls(machine: u16) -> Vec<u8> {
     let mut bytes = elf64_image(machine);
     write_u16(&mut bytes, 56, 2);
@@ -1104,6 +1113,12 @@ fn workload_boot_image_preserves_elf_section_header_table_round_trip() {
     assert_eq!(table.entry_size(), 64);
     assert_eq!(table.entry_count(), 4);
     assert_eq!(table.string_table_index(), 3);
+
+    let name_table = round_trip_metadata.section_name_table();
+    let shstr_header = table.file_offset() as usize
+        + table.string_table_index() as usize * usize::from(table.entry_size());
+    assert_eq!(name_table.file_offset(), read_u64(&elf, shstr_header + 24));
+    assert_eq!(name_table.byte_size(), read_u64(&elf, shstr_header + 32));
 }
 
 #[test]
@@ -1696,6 +1711,49 @@ fn workload_manifest_identity_includes_elf_section_header_table() {
         .unwrap();
 
     assert_ne!(one_manifest.identity(), two_manifest.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_section_name_table() {
+    let baseline_source =
+        BootImage::from_elf64_le(&elf64_image_with_named_sections(243, &[".meta"])).unwrap();
+    let mut larger_names_elf = elf64_image_with_named_sections(243, &[".meta"]);
+    grow_elf64_section_name_table(&mut larger_names_elf, 1);
+    let larger_names_source = BootImage::from_elf64_le(&larger_names_elf).unwrap();
+
+    assert_eq!(baseline_source.entry(), larger_names_source.entry());
+    assert_eq!(baseline_source.segments(), larger_names_source.segments());
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_header_table(),
+        larger_names_source
+            .elf_metadata()
+            .unwrap()
+            .section_header_table(),
+    );
+    assert_ne!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_name_table()
+            .byte_size(),
+        larger_names_source
+            .elf_metadata()
+            .unwrap()
+            .section_name_table()
+            .byte_size(),
+    );
+
+    let baseline = WorkloadManifest::builder(id("same"), baseline_source)
+        .build()
+        .unwrap();
+    let larger_names = WorkloadManifest::builder(id("same"), larger_names_source)
+        .build()
+        .unwrap();
+
+    assert_ne!(baseline.identity(), larger_names.identity());
 }
 
 #[test]

@@ -1047,6 +1047,12 @@ fn boot_image_records_elf64_section_header_table_metadata() {
     assert_eq!(table.entry_size(), 64);
     assert_eq!(table.entry_count(), 4);
     assert_eq!(table.string_table_index(), 3);
+
+    let name_table = metadata.section_name_table();
+    let shstr_header = table.file_offset() as usize
+        + table.string_table_index() as usize * usize::from(table.entry_size());
+    assert_eq!(name_table.file_offset(), read_u64(&elf, shstr_header + 24));
+    assert_eq!(name_table.byte_size(), read_u64(&elf, shstr_header + 32));
 }
 
 #[test]
@@ -1091,6 +1097,18 @@ fn boot_image_records_elf32_section_header_table_metadata() {
     assert_eq!(table.entry_size(), 40);
     assert_eq!(table.entry_count(), 4);
     assert_eq!(table.string_table_index(), 3);
+
+    let name_table = metadata.section_name_table();
+    let shstr_header = table.file_offset() as usize
+        + table.string_table_index() as usize * usize::from(table.entry_size());
+    assert_eq!(
+        name_table.file_offset(),
+        u64::from(read_u32(&elf, shstr_header + 16))
+    );
+    assert_eq!(
+        name_table.byte_size(),
+        u64::from(read_u32(&elf, shstr_header + 20))
+    );
 }
 
 #[test]

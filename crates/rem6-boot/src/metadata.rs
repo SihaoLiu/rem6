@@ -112,6 +112,29 @@ impl BootElfSectionHeaderTable {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BootElfSectionNameTable {
+    file_offset: u64,
+    byte_size: u64,
+}
+
+impl BootElfSectionNameTable {
+    pub const fn new(file_offset: u64, byte_size: u64) -> Self {
+        Self {
+            file_offset,
+            byte_size,
+        }
+    }
+
+    pub const fn file_offset(self) -> u64 {
+        self.file_offset
+    }
+
+    pub const fn byte_size(self) -> u64 {
+        self.byte_size
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BootElfDynamicRelocationTable {
     virtual_address: Option<Address>,
     byte_size: u64,
@@ -651,6 +674,7 @@ pub struct BootElfMetadata {
     dynamic_table: BootElfDynamicTable,
     program_header_table: BootElfProgramHeaderTable,
     section_header_table: BootElfSectionHeaderTable,
+    section_name_table: BootElfSectionNameTable,
 }
 
 impl BootElfMetadata {
@@ -687,6 +711,7 @@ impl BootElfMetadata {
             dynamic_table: BootElfDynamicTable::new(),
             program_header_table: BootElfProgramHeaderTable::new(0, 0, 0),
             section_header_table: BootElfSectionHeaderTable::new(0, 0, 0, 0),
+            section_name_table: BootElfSectionNameTable::new(0, 0),
         }
     }
 
@@ -700,6 +725,11 @@ impl BootElfMetadata {
         table: BootElfSectionHeaderTable,
     ) -> Self {
         self.section_header_table = table;
+        self
+    }
+
+    pub(crate) const fn with_section_name_table(mut self, table: BootElfSectionNameTable) -> Self {
+        self.section_name_table = table;
         self
     }
 
@@ -856,5 +886,9 @@ impl BootElfMetadata {
 
     pub const fn section_header_table(&self) -> BootElfSectionHeaderTable {
         self.section_header_table
+    }
+
+    pub const fn section_name_table(&self) -> BootElfSectionNameTable {
+        self.section_name_table
     }
 }

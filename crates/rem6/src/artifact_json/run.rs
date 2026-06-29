@@ -1,6 +1,7 @@
 use rem6_boot::{
     BootElfDynamicPltRelocationKind, BootElfDynamicRelocationTable, BootElfDynamicTable,
     BootElfInterpreter, BootElfProgramHeaderTable, BootElfSectionHeaderTable,
+    BootElfSectionNameTable,
 };
 use rem6_fabric::FabricHopActivity;
 use rem6_memory::Address;
@@ -209,7 +210,7 @@ impl Rem6RunArtifact {
             self.metadata.note_file_size(),
         );
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"notes\":{},\"gnu_stack\":{},\"gnu_relro\":{},\"gnu_eh_frame\":{},\"gnu_property\":{},\"symbols\":{{\"total\":{},\"functions\":{},\"objects\":{}}},\"dynamic\":{},\"program_header_table\":{},\"section_header_table\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"notes\":{},\"gnu_stack\":{},\"gnu_relro\":{},\"gnu_eh_frame\":{},\"gnu_property\":{},\"symbols\":{{\"total\":{},\"functions\":{},\"objects\":{}}},\"dynamic\":{},\"program_header_table\":{},\"section_header_table\":{},\"section_name_table\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -245,6 +246,7 @@ impl Rem6RunArtifact {
             elf_dynamic_table_json(self.metadata.dynamic_table()),
             elf_program_header_table_json(self.metadata.program_header_table()),
             elf_section_header_table_json(self.metadata.section_header_table()),
+            elf_section_name_table_json(self.metadata.section_name_table()),
             interpreter,
             simulation,
             parallel,
@@ -527,6 +529,14 @@ fn elf_section_header_table_json(table: BootElfSectionHeaderTable) -> String {
         table.entry_size(),
         table.entry_count(),
         table.string_table_index(),
+    )
+}
+
+fn elf_section_name_table_json(table: BootElfSectionNameTable) -> String {
+    format!(
+        "{{\"file_offset\":{},\"bytes\":{}}}",
+        table.file_offset(),
+        table.byte_size(),
     )
 }
 
