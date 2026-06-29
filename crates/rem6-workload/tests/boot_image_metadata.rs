@@ -10,12 +10,17 @@ const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
+const DT_PLTGOT: u64 = 3;
 const DT_STRTAB: u64 = 5;
 const DT_SYMTAB: u64 = 6;
 const DT_STRSZ: u64 = 10;
 const DT_SYMENT: u64 = 11;
 const DT_INIT: u64 = 12;
 const DT_FINI: u64 = 13;
+const DT_SYMBOLIC: u64 = 16;
+const DT_DEBUG: u64 = 21;
+const DT_TEXTREL: u64 = 22;
+const DT_BIND_NOW: u64 = 24;
 const DT_INIT_ARRAY: u64 = 25;
 const DT_FINI_ARRAY: u64 = 26;
 const DT_INIT_ARRAYSZ: u64 = 27;
@@ -26,6 +31,8 @@ const DT_PREINIT_ARRAYSZ: u64 = 33;
 const DT_DEPAUDIT: u64 = 0x6fff_fefb;
 const DT_AUDIT: u64 = 0x6fff_fefc;
 const DT_VERSYM: u64 = 0x6fff_fff0;
+const DT_RELACOUNT: u64 = 0x6fff_fff9;
+const DT_RELCOUNT: u64 = 0x6fff_fffa;
 const DT_VERDEF: u64 = 0x6fff_fffc;
 const DT_VERDEFNUM: u64 = 0x6fff_fffd;
 const DT_VERNEED: u64 = 0x6fff_fffe;
@@ -33,6 +40,7 @@ const DT_VERNEEDNUM: u64 = 0x6fff_ffff;
 const DT_FLAGS_1: u64 = 0x6fff_fffb;
 const DT_AUXILIARY: u64 = 0x7fff_fffd;
 const DT_FILTER: u64 = 0x7fff_ffff;
+const DT_IGNORED_TEST_TAG: u64 = 0x6fff_ef00;
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
@@ -506,6 +514,83 @@ fn elf64_image_with_dynamic_versioning(
     write_u64(&mut bytes, 0x1d0, 0);
     write_u64(&mut bytes, 0x1d8, 0);
     bytes
+}
+
+fn elf64_image_with_dynamic_linker_metadata(
+    machine: u16,
+    plt_got: u64,
+    debug: u64,
+    rela_relative_count: u64,
+    rel_relative_count: u64,
+) -> Vec<u8> {
+    elf64_image_with_dynamic_linker_metadata_flags(
+        machine,
+        plt_got,
+        debug,
+        rela_relative_count,
+        rel_relative_count,
+        true,
+        true,
+        true,
+    )
+}
+
+fn elf64_image_with_dynamic_linker_metadata_flags(
+    machine: u16,
+    plt_got: u64,
+    debug: u64,
+    rela_relative_count: u64,
+    rel_relative_count: u64,
+    symbolic: bool,
+    textrel: bool,
+    bind_now: bool,
+) -> Vec<u8> {
+    let mut bytes = elf64_image_with_dynamic_table(machine, 0);
+    write_u64(&mut bytes, 152, 8 * 16);
+    write_u64(&mut bytes, 160, 8 * 16);
+    let mut entry = 0x180usize;
+    write_dynamic_entry(&mut bytes, &mut entry, DT_PLTGOT, plt_got);
+    write_dynamic_entry(&mut bytes, &mut entry, DT_DEBUG, debug);
+    write_dynamic_entry(
+        &mut bytes,
+        &mut entry,
+        if symbolic {
+            DT_SYMBOLIC
+        } else {
+            DT_IGNORED_TEST_TAG
+        },
+        0,
+    );
+    write_dynamic_entry(
+        &mut bytes,
+        &mut entry,
+        if textrel {
+            DT_TEXTREL
+        } else {
+            DT_IGNORED_TEST_TAG + 1
+        },
+        0,
+    );
+    write_dynamic_entry(
+        &mut bytes,
+        &mut entry,
+        if bind_now {
+            DT_BIND_NOW
+        } else {
+            DT_IGNORED_TEST_TAG + 2
+        },
+        0,
+    );
+    write_dynamic_entry(&mut bytes, &mut entry, DT_RELACOUNT, rela_relative_count);
+    write_dynamic_entry(&mut bytes, &mut entry, DT_RELCOUNT, rel_relative_count);
+    write_dynamic_entry(&mut bytes, &mut entry, 0, 0);
+    bytes
+}
+
+fn write_dynamic_entry(bytes: &mut [u8], entry: &mut usize, tag: u64, value: u64) {
+    write_u64(bytes, *entry, tag);
+    write_u64(bytes, *entry + 8, value);
+    *entry += 16;
 }
 
 fn elf64_image_with_dynamic_libraries(machine: u16, libraries: &[&str]) -> Vec<u8> {
@@ -1136,6 +1221,33 @@ fn workload_boot_image_preserves_elf_dynamic_versioning_metadata_round_trip() {
         Some(Address::new(0x82a0)),
     );
     assert_eq!(dynamic.version_needed_count(), Some(3));
+}
+
+#[test]
+fn workload_boot_image_preserves_elf_dynamic_linker_metadata_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_dynamic_linker_metadata(
+        243, 0x8220, 0x8260, 4, 5,
+    ))
+    .unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = round_trip_metadata.dynamic_table();
+
+    assert_eq!(
+        dynamic.plt_got_virtual_address(),
+        Some(Address::new(0x8220)),
+    );
+    assert_eq!(dynamic.debug_virtual_address(), Some(Address::new(0x8260)));
+    assert!(dynamic.has_symbolic_binding());
+    assert!(dynamic.has_text_relocations());
+    assert!(dynamic.bind_now());
+    assert_eq!(dynamic.rela_relative_count(), Some(4));
+    assert_eq!(dynamic.rel_relative_count(), Some(5));
 }
 
 #[test]
@@ -1890,6 +2002,158 @@ fn workload_manifest_identity_includes_elf_dynamic_versioning_metadata() {
     assert_ne!(
         baseline_manifest.identity(),
         verneed_count_manifest.identity()
+    );
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_dynamic_linker_metadata() {
+    let baseline_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_linker_metadata(
+        243, 0x8220, 0x8260, 4, 5,
+    ))
+    .unwrap();
+    let plt_got_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_linker_metadata(
+        243, 0x8230, 0x8260, 4, 5,
+    ))
+    .unwrap();
+    let debug_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_linker_metadata(
+        243, 0x8220, 0x8270, 4, 5,
+    ))
+    .unwrap();
+    let rela_count_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_linker_metadata(
+        243, 0x8220, 0x8260, 6, 5,
+    ))
+    .unwrap();
+    let rel_count_source = BootImage::from_elf64_le(&elf64_image_with_dynamic_linker_metadata(
+        243, 0x8220, 0x8260, 4, 7,
+    ))
+    .unwrap();
+    let no_symbolic_source =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_linker_metadata_flags(
+            243, 0x8220, 0x8260, 4, 5, false, true, true,
+        ))
+        .unwrap();
+    let no_textrel_source =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_linker_metadata_flags(
+            243, 0x8220, 0x8260, 4, 5, true, false, true,
+        ))
+        .unwrap();
+    let no_bind_now_source =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_linker_metadata_flags(
+            243, 0x8220, 0x8260, 4, 5, true, true, false,
+        ))
+        .unwrap();
+
+    assert!(baseline_source
+        .elf_metadata()
+        .unwrap()
+        .dynamic_table()
+        .bind_now());
+    assert!(!no_symbolic_source
+        .elf_metadata()
+        .unwrap()
+        .dynamic_table()
+        .has_symbolic_binding());
+    assert!(!no_textrel_source
+        .elf_metadata()
+        .unwrap()
+        .dynamic_table()
+        .has_text_relocations());
+    assert!(!no_bind_now_source
+        .elf_metadata()
+        .unwrap()
+        .dynamic_table()
+        .bind_now());
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .entry_count(),
+        no_symbolic_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .entry_count(),
+    );
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .entry_count(),
+        no_textrel_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .entry_count(),
+    );
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .entry_count(),
+        no_bind_now_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .entry_count(),
+    );
+    let baseline = boot_image_with_metadata(baseline_source.elf_metadata().unwrap());
+    let plt_got = boot_image_with_metadata(plt_got_source.elf_metadata().unwrap());
+    let debug = boot_image_with_metadata(debug_source.elf_metadata().unwrap());
+    let rela_count = boot_image_with_metadata(rela_count_source.elf_metadata().unwrap());
+    let rel_count = boot_image_with_metadata(rel_count_source.elf_metadata().unwrap());
+    let no_symbolic = boot_image_with_metadata(no_symbolic_source.elf_metadata().unwrap());
+    let no_textrel = boot_image_with_metadata(no_textrel_source.elf_metadata().unwrap());
+    let no_bind_now = boot_image_with_metadata(no_bind_now_source.elf_metadata().unwrap());
+
+    assert_eq!(baseline.entry(), plt_got.entry());
+    assert_eq!(baseline.segments(), plt_got.segments());
+    assert_eq!(baseline.segments(), debug.segments());
+    assert_eq!(baseline.segments(), rela_count.segments());
+    assert_eq!(baseline.segments(), rel_count.segments());
+    assert_eq!(baseline.segments(), no_symbolic.segments());
+    assert_eq!(baseline.segments(), no_textrel.segments());
+    assert_eq!(baseline.segments(), no_bind_now.segments());
+
+    let baseline_manifest = WorkloadManifest::builder(id("same"), baseline)
+        .build()
+        .unwrap();
+    let plt_got_manifest = WorkloadManifest::builder(id("same"), plt_got)
+        .build()
+        .unwrap();
+    let debug_manifest = WorkloadManifest::builder(id("same"), debug)
+        .build()
+        .unwrap();
+    let rela_count_manifest = WorkloadManifest::builder(id("same"), rela_count)
+        .build()
+        .unwrap();
+    let rel_count_manifest = WorkloadManifest::builder(id("same"), rel_count)
+        .build()
+        .unwrap();
+    let no_symbolic_manifest = WorkloadManifest::builder(id("same"), no_symbolic)
+        .build()
+        .unwrap();
+    let no_textrel_manifest = WorkloadManifest::builder(id("same"), no_textrel)
+        .build()
+        .unwrap();
+    let no_bind_now_manifest = WorkloadManifest::builder(id("same"), no_bind_now)
+        .build()
+        .unwrap();
+
+    assert_ne!(baseline_manifest.identity(), plt_got_manifest.identity());
+    assert_ne!(baseline_manifest.identity(), debug_manifest.identity());
+    assert_ne!(baseline_manifest.identity(), rela_count_manifest.identity());
+    assert_ne!(baseline_manifest.identity(), rel_count_manifest.identity());
+    assert_ne!(
+        baseline_manifest.identity(),
+        no_symbolic_manifest.identity()
+    );
+    assert_ne!(baseline_manifest.identity(), no_textrel_manifest.identity());
+    assert_ne!(
+        baseline_manifest.identity(),
+        no_bind_now_manifest.identity()
     );
 }
 

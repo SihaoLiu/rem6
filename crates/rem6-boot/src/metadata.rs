@@ -143,6 +143,13 @@ pub(crate) struct BootElfDynamicSegment {
     pub(crate) preinit_array_size: Option<u64>,
     pub(crate) flags: Option<u64>,
     pub(crate) flags_1: Option<u64>,
+    pub(crate) plt_got_virtual_address: Option<Address>,
+    pub(crate) debug_virtual_address: Option<Address>,
+    pub(crate) symbolic_binding: bool,
+    pub(crate) text_relocations: bool,
+    pub(crate) bind_now: bool,
+    pub(crate) rela_relative_count: Option<u64>,
+    pub(crate) rel_relative_count: Option<u64>,
     pub(crate) sysv_hash_virtual_address: Option<Address>,
     pub(crate) gnu_hash_virtual_address: Option<Address>,
     pub(crate) version_symbol_table_virtual_address: Option<Address>,
@@ -186,6 +193,13 @@ pub struct BootElfDynamicTable {
     preinit_array_size: Option<u64>,
     flags: Option<u64>,
     flags_1: Option<u64>,
+    plt_got_virtual_address: Option<Address>,
+    debug_virtual_address: Option<Address>,
+    symbolic_binding: bool,
+    text_relocations: bool,
+    bind_now: bool,
+    rela_relative_count: Option<u64>,
+    rel_relative_count: Option<u64>,
     sysv_hash_virtual_address: Option<Address>,
     gnu_hash_virtual_address: Option<Address>,
     version_symbol_table_virtual_address: Option<Address>,
@@ -230,6 +244,13 @@ impl BootElfDynamicTable {
             preinit_array_size: None,
             flags: None,
             flags_1: None,
+            plt_got_virtual_address: None,
+            debug_virtual_address: None,
+            symbolic_binding: false,
+            text_relocations: false,
+            bind_now: false,
+            rela_relative_count: None,
+            rel_relative_count: None,
             sysv_hash_virtual_address: None,
             gnu_hash_virtual_address: None,
             version_symbol_table_virtual_address: None,
@@ -274,6 +295,13 @@ impl BootElfDynamicTable {
             self.preinit_array_size = segment.preinit_array_size;
             self.flags = segment.flags;
             self.flags_1 = segment.flags_1;
+            self.plt_got_virtual_address = segment.plt_got_virtual_address;
+            self.debug_virtual_address = segment.debug_virtual_address;
+            self.symbolic_binding = segment.symbolic_binding;
+            self.text_relocations = segment.text_relocations;
+            self.bind_now = segment.bind_now;
+            self.rela_relative_count = segment.rela_relative_count;
+            self.rel_relative_count = segment.rel_relative_count;
             self.sysv_hash_virtual_address = segment.sysv_hash_virtual_address;
             self.gnu_hash_virtual_address = segment.gnu_hash_virtual_address;
             self.version_symbol_table_virtual_address =
@@ -449,6 +477,34 @@ impl BootElfDynamicTable {
 
     pub const fn flags_1(&self) -> Option<u64> {
         self.flags_1
+    }
+
+    pub const fn plt_got_virtual_address(&self) -> Option<Address> {
+        self.plt_got_virtual_address
+    }
+
+    pub const fn debug_virtual_address(&self) -> Option<Address> {
+        self.debug_virtual_address
+    }
+
+    pub const fn has_symbolic_binding(&self) -> bool {
+        self.symbolic_binding
+    }
+
+    pub const fn has_text_relocations(&self) -> bool {
+        self.text_relocations
+    }
+
+    pub const fn bind_now(&self) -> bool {
+        self.bind_now
+    }
+
+    pub const fn rela_relative_count(&self) -> Option<u64> {
+        self.rela_relative_count
+    }
+
+    pub const fn rel_relative_count(&self) -> Option<u64> {
+        self.rel_relative_count
     }
 
     pub const fn sysv_hash_virtual_address(&self) -> Option<Address> {

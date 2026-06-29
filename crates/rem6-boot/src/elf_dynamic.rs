@@ -5,6 +5,7 @@ const PT_LOAD: u32 = 1;
 const DT_NULL: u64 = 0;
 const DT_NEEDED: u64 = 1;
 const DT_PLTRELSZ: u64 = 2;
+const DT_PLTGOT: u64 = 3;
 const DT_HASH: u64 = 4;
 const DT_STRTAB: u64 = 5;
 const DT_SYMTAB: u64 = 6;
@@ -17,11 +18,15 @@ const DT_INIT: u64 = 12;
 const DT_FINI: u64 = 13;
 const DT_SONAME: u64 = 14;
 const DT_RPATH: u64 = 15;
+const DT_SYMBOLIC: u64 = 16;
 const DT_REL: u64 = 17;
 const DT_RELSZ: u64 = 18;
 const DT_RELENT: u64 = 19;
 const DT_PLTREL: u64 = 20;
+const DT_DEBUG: u64 = 21;
+const DT_TEXTREL: u64 = 22;
 const DT_JMPREL: u64 = 23;
+const DT_BIND_NOW: u64 = 24;
 const DT_INIT_ARRAY: u64 = 25;
 const DT_FINI_ARRAY: u64 = 26;
 const DT_INIT_ARRAYSZ: u64 = 27;
@@ -34,6 +39,8 @@ const DT_DEPAUDIT: u64 = 0x6fff_fefb;
 const DT_AUDIT: u64 = 0x6fff_fefc;
 const DT_GNU_HASH: u64 = 0x6fff_fef5;
 const DT_VERSYM: u64 = 0x6fff_fff0;
+const DT_RELACOUNT: u64 = 0x6fff_fff9;
+const DT_RELCOUNT: u64 = 0x6fff_fffa;
 const DT_FLAGS_1: u64 = 0x6fff_fffb;
 const DT_VERDEF: u64 = 0x6fff_fffc;
 const DT_VERDEFNUM: u64 = 0x6fff_fffd;
@@ -74,6 +81,13 @@ pub(crate) struct ElfDynamicTableSummary {
     pub(crate) preinit_array_size: Option<u64>,
     pub(crate) flags: Option<u64>,
     pub(crate) flags_1: Option<u64>,
+    pub(crate) plt_got_virtual_address: Option<u64>,
+    pub(crate) debug_virtual_address: Option<u64>,
+    pub(crate) symbolic_binding: bool,
+    pub(crate) text_relocations: bool,
+    pub(crate) bind_now: bool,
+    pub(crate) rela_relative_count: Option<u64>,
+    pub(crate) rel_relative_count: Option<u64>,
     pub(crate) sysv_hash_virtual_address: Option<u64>,
     pub(crate) gnu_hash_virtual_address: Option<u64>,
     pub(crate) version_symbol_table_virtual_address: Option<u64>,
@@ -213,6 +227,13 @@ pub(crate) fn dynamic_table_counts(
     let mut preinit_array_size = None;
     let mut flags = None;
     let mut flags_1 = None;
+    let mut plt_got_virtual_address = None;
+    let mut debug_virtual_address = None;
+    let mut symbolic_binding = false;
+    let mut text_relocations = false;
+    let mut bind_now = false;
+    let mut rela_relative_count = None;
+    let mut rel_relative_count = None;
     let mut sysv_hash_virtual_address = None;
     let mut gnu_hash_virtual_address = None;
     let mut version_symbol_table_virtual_address = None;
@@ -280,6 +301,13 @@ pub(crate) fn dynamic_table_counts(
                 preinit_array_size,
                 flags,
                 flags_1,
+                plt_got_virtual_address,
+                debug_virtual_address,
+                symbolic_binding,
+                text_relocations,
+                bind_now,
+                rela_relative_count,
+                rel_relative_count,
                 sysv_hash_virtual_address,
                 gnu_hash_virtual_address,
                 version_symbol_table_virtual_address,
@@ -295,6 +323,8 @@ pub(crate) fn dynamic_table_counts(
         }
         if tag == DT_NEEDED {
             needed_offsets.push(value);
+        } else if tag == DT_PLTGOT {
+            plt_got_virtual_address = Some(value);
         } else if tag == DT_HASH {
             sysv_hash_virtual_address = Some(value);
         } else if tag == DT_STRTAB {
@@ -343,6 +373,18 @@ pub(crate) fn dynamic_table_counts(
             flags = Some(value);
         } else if tag == DT_FLAGS_1 {
             flags_1 = Some(value);
+        } else if tag == DT_DEBUG {
+            debug_virtual_address = Some(value);
+        } else if tag == DT_SYMBOLIC {
+            symbolic_binding = true;
+        } else if tag == DT_TEXTREL {
+            text_relocations = true;
+        } else if tag == DT_BIND_NOW {
+            bind_now = true;
+        } else if tag == DT_RELACOUNT {
+            rela_relative_count = Some(value);
+        } else if tag == DT_RELCOUNT {
+            rel_relative_count = Some(value);
         } else if tag == DT_VERDEF {
             version_definition_table_virtual_address = Some(value);
         } else if tag == DT_VERDEFNUM {

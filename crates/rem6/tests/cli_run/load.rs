@@ -565,7 +565,7 @@ fn rem6_run_reports_elf_dynamic_table_summary() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"status\":\"loaded\""));
     assert!(stdout.contains(
-        "\"dynamic\":{\"segments\":1,\"file_offset\":384,\"virtual_address\":\"0x80000180\",\"entry_size\":16,\"entry_count\":17,\"needed\":2,\"needed_libraries\":[\"libc.so.6\",\"libm.so.6\"],\"soname\":\"librem6.so\",\"rpath\":[\"/opt/rem6/lib\"],\"runpath\":[\"$ORIGIN/lib\"],\"auxiliary\":[],\"filter\":[],\"audit\":[],\"dependency_audit\":[],\"tables\":{\"string\":{\"virtual_address\":\"0x80000380\",\"bytes\":58},\"symbol\":{\"virtual_address\":null,\"entry_size\":null}},\"lifecycle\":{\"init\":null,\"fini\":null,\"init_array\":{\"virtual_address\":null,\"bytes\":null},\"fini_array\":{\"virtual_address\":null,\"bytes\":null},\"preinit_array\":{\"virtual_address\":null,\"bytes\":null}},\"flags\":{\"dt_flags\":null,\"dt_flags_1\":null},\"hash\":{\"sysv\":null,\"gnu\":null},\"versioning\":{\"symbols\":null,\"definitions\":{\"virtual_address\":null,\"entries\":null},\"needed\":{\"virtual_address\":null,\"entries\":null}},\"relocations\":{\"rela\":{\"virtual_address\":\"0x80000300\",\"bytes\":48,\"entry_size\":24,\"entries\":2},\"rel\":{\"virtual_address\":\"0x80000340\",\"bytes\":16,\"entry_size\":16,\"entries\":1},\"plt\":{\"kind\":\"rela\",\"virtual_address\":\"0x80000360\",\"bytes\":24,\"entry_size\":24,\"entries\":1}}}"
+        "\"dynamic\":{\"segments\":1,\"file_offset\":384,\"virtual_address\":\"0x80000180\",\"entry_size\":16,\"entry_count\":17,\"needed\":2,\"needed_libraries\":[\"libc.so.6\",\"libm.so.6\"],\"soname\":\"librem6.so\",\"rpath\":[\"/opt/rem6/lib\"],\"runpath\":[\"$ORIGIN/lib\"],\"auxiliary\":[],\"filter\":[],\"audit\":[],\"dependency_audit\":[],\"tables\":{\"string\":{\"virtual_address\":\"0x80000380\",\"bytes\":58},\"symbol\":{\"virtual_address\":null,\"entry_size\":null}},\"lifecycle\":{\"init\":null,\"fini\":null,\"init_array\":{\"virtual_address\":null,\"bytes\":null},\"fini_array\":{\"virtual_address\":null,\"bytes\":null},\"preinit_array\":{\"virtual_address\":null,\"bytes\":null}},\"flags\":{\"dt_flags\":null,\"dt_flags_1\":null},\"linker\":{\"plt_got\":null,\"debug\":null,\"symbolic\":false,\"textrel\":false,\"bind_now\":false,\"relative_relocations\":{\"rela\":null,\"rel\":null}},\"hash\":{\"sysv\":null,\"gnu\":null},\"versioning\":{\"symbols\":null,\"definitions\":{\"virtual_address\":null,\"entries\":null},\"needed\":{\"virtual_address\":null,\"entries\":null}},\"relocations\":{\"rela\":{\"virtual_address\":\"0x80000300\",\"bytes\":48,\"entry_size\":24,\"entries\":2},\"rel\":{\"virtual_address\":\"0x80000340\",\"bytes\":16,\"entry_size\":16,\"entries\":1},\"plt\":{\"kind\":\"rela\",\"virtual_address\":\"0x80000360\",\"bytes\":24,\"entry_size\":24,\"entries\":1}}}"
     ));
     assert_stat(&stdout, "sim.elf.dynamic.segments", "Count", 1, "constant");
     assert_stat(
@@ -695,6 +695,37 @@ fn rem6_run_reports_elf_dynamic_table_summary() {
     assert_stat(
         &stdout,
         "sim.elf.dynamic.dt_flags_1.present",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.plt_got.present",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.debug.present",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(&stdout, "sim.elf.dynamic.symbolic", "Count", 0, "constant");
+    assert_stat(&stdout, "sim.elf.dynamic.textrel", "Count", 0, "constant");
+    assert_stat(&stdout, "sim.elf.dynamic.bind_now", "Count", 0, "constant");
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.relative_relocations.rela.present",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.relative_relocations.rel.present",
         "Count",
         0,
         "constant",
@@ -862,6 +893,97 @@ fn rem6_run_reports_elf_dynamic_versioning_metadata() {
         "sim.elf.dynamic.version.needed.entries",
         "Count",
         3,
+        "constant",
+    );
+}
+
+#[test]
+fn rem6_run_reports_elf_dynamic_linker_metadata() {
+    let elf = riscv64_elf_with_dynamic_linker_metadata(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("riscv-run-dynamic-linker-metadata", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"loaded\""));
+    assert!(stdout.contains(
+        "\"linker\":{\"plt_got\":\"0x800003a0\",\"debug\":\"0x800003c0\",\"symbolic\":true,\"textrel\":true,\"bind_now\":true,\"relative_relocations\":{\"rela\":4,\"rel\":5}}"
+    ));
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.plt_got.present",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.plt_got.virtual_address",
+        "Address",
+        0x8000_03a0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.debug.present",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.debug.virtual_address",
+        "Address",
+        0x8000_03c0,
+        "constant",
+    );
+    assert_stat(&stdout, "sim.elf.dynamic.symbolic", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.elf.dynamic.textrel", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.elf.dynamic.bind_now", "Count", 1, "constant");
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.relative_relocations.rela.present",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.relative_relocations.rela",
+        "Count",
+        4,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.relative_relocations.rel.present",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.dynamic.relative_relocations.rel",
+        "Count",
+        5,
         "constant",
     );
 }

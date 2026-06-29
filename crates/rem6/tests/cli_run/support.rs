@@ -10,10 +10,15 @@ const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
+const DT_PLTGOT: u64 = 3;
 const DT_SYMTAB: u64 = 6;
 const DT_SYMENT: u64 = 11;
 const DT_INIT: u64 = 12;
 const DT_FINI: u64 = 13;
+const DT_SYMBOLIC: u64 = 16;
+const DT_DEBUG: u64 = 21;
+const DT_TEXTREL: u64 = 22;
+const DT_BIND_NOW: u64 = 24;
 const DT_INIT_ARRAY: u64 = 25;
 const DT_FINI_ARRAY: u64 = 26;
 const DT_INIT_ARRAYSZ: u64 = 27;
@@ -24,6 +29,8 @@ const DT_PREINIT_ARRAYSZ: u64 = 33;
 const DT_DEPAUDIT: u64 = 0x6fff_fefb;
 const DT_AUDIT: u64 = 0x6fff_fefc;
 const DT_VERSYM: u64 = 0x6fff_fff0;
+const DT_RELACOUNT: u64 = 0x6fff_fff9;
+const DT_RELCOUNT: u64 = 0x6fff_fffa;
 const DT_FLAGS_1: u64 = 0x6fff_fffb;
 const DT_VERDEF: u64 = 0x6fff_fffc;
 const DT_VERDEFNUM: u64 = 0x6fff_fffd;
@@ -627,6 +634,35 @@ pub(crate) fn riscv64_elf_with_dynamic_loader_strings(
     write_u64(&mut bytes, loader_entry + 64, 0);
     write_u64(&mut bytes, loader_entry + 72, 0);
     bytes[strtab_offset..strtab_offset + strtab.len()].copy_from_slice(&strtab);
+    bytes
+}
+
+pub(crate) fn riscv64_elf_with_dynamic_linker_metadata(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut bytes = riscv64_elf_with_dynamic_table(entry, physical, payload);
+    let dynamic_offset = 0x180usize;
+    let linker_entry = dynamic_offset + 16 * 16;
+    write_u64(&mut bytes, 152, 24 * 16);
+    write_u64(&mut bytes, 160, 24 * 16);
+    write_u64(&mut bytes, linker_entry, DT_PLTGOT);
+    write_u64(&mut bytes, linker_entry + 8, physical + 0x3a0);
+    write_u64(&mut bytes, linker_entry + 16, DT_DEBUG);
+    write_u64(&mut bytes, linker_entry + 24, physical + 0x3c0);
+    write_u64(&mut bytes, linker_entry + 32, DT_SYMBOLIC);
+    write_u64(&mut bytes, linker_entry + 40, 0);
+    write_u64(&mut bytes, linker_entry + 48, DT_TEXTREL);
+    write_u64(&mut bytes, linker_entry + 56, 0);
+    write_u64(&mut bytes, linker_entry + 64, DT_BIND_NOW);
+    write_u64(&mut bytes, linker_entry + 72, 0);
+    write_u64(&mut bytes, linker_entry + 80, DT_RELACOUNT);
+    write_u64(&mut bytes, linker_entry + 88, 4);
+    write_u64(&mut bytes, linker_entry + 96, DT_RELCOUNT);
+    write_u64(&mut bytes, linker_entry + 104, 5);
+    write_u64(&mut bytes, linker_entry + 112, 0);
+    write_u64(&mut bytes, linker_entry + 120, 0);
     bytes
 }
 

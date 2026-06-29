@@ -276,6 +276,47 @@ fn emit_elf_dynamic_stats(
     increment_optional_value_stat(stats, "sim.elf.dynamic.dt_flags_1", dynamic_table.flags_1())?;
     increment_optional_address_stat(
         stats,
+        "sim.elf.dynamic.plt_got",
+        dynamic_table.plt_got_virtual_address(),
+    )?;
+    increment_optional_address_stat(
+        stats,
+        "sim.elf.dynamic.debug",
+        dynamic_table.debug_virtual_address(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.dynamic.symbolic",
+        "Count",
+        StatResetPolicy::Constant,
+        u64::from(dynamic_table.has_symbolic_binding()),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.dynamic.textrel",
+        "Count",
+        StatResetPolicy::Constant,
+        u64::from(dynamic_table.has_text_relocations()),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.dynamic.bind_now",
+        "Count",
+        StatResetPolicy::Constant,
+        u64::from(dynamic_table.bind_now()),
+    )?;
+    increment_optional_count_stat(
+        stats,
+        "sim.elf.dynamic.relative_relocations.rela",
+        dynamic_table.rela_relative_count(),
+    )?;
+    increment_optional_count_stat(
+        stats,
+        "sim.elf.dynamic.relative_relocations.rel",
+        dynamic_table.rel_relative_count(),
+    )?;
+    increment_optional_address_stat(
+        stats,
         "sim.elf.dynamic.init",
         dynamic_table.init_virtual_address(),
     )?;
@@ -506,6 +547,23 @@ pub(super) fn increment_optional_value_stat(
     path: &str,
     value: Option<u64>,
 ) -> Result<(), Rem6CliError> {
+    increment_optional_stat(stats, path, "Value", value)
+}
+
+fn increment_optional_count_stat(
+    stats: &mut StatsRegistry,
+    path: &str,
+    value: Option<u64>,
+) -> Result<(), Rem6CliError> {
+    increment_optional_stat(stats, path, "Count", value)
+}
+
+fn increment_optional_stat(
+    stats: &mut StatsRegistry,
+    path: &str,
+    unit: &str,
+    value: Option<u64>,
+) -> Result<(), Rem6CliError> {
     increment_stat(
         stats,
         &format!("{path}.present"),
@@ -514,7 +572,7 @@ pub(super) fn increment_optional_value_stat(
         u64::from(value.is_some()),
     )?;
     if let Some(value) = value {
-        increment_stat(stats, path, "Value", StatResetPolicy::Constant, value)?;
+        increment_stat(stats, path, unit, StatResetPolicy::Constant, value)?;
     }
     Ok(())
 }

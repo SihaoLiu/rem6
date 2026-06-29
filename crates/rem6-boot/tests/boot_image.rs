@@ -22,12 +22,17 @@ const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
+const DT_PLTGOT: u64 = 3;
 const DT_STRTAB: u64 = 5;
 const DT_SYMTAB: u64 = 6;
 const DT_STRSZ: u64 = 10;
 const DT_SYMENT: u64 = 11;
 const DT_INIT: u64 = 12;
 const DT_FINI: u64 = 13;
+const DT_SYMBOLIC: u64 = 16;
+const DT_DEBUG: u64 = 21;
+const DT_TEXTREL: u64 = 22;
+const DT_BIND_NOW: u64 = 24;
 const DT_INIT_ARRAY: u64 = 25;
 const DT_FINI_ARRAY: u64 = 26;
 const DT_INIT_ARRAYSZ: u64 = 27;
@@ -38,6 +43,8 @@ const DT_PREINIT_ARRAYSZ: u64 = 33;
 const DT_DEPAUDIT: u64 = 0x6fff_fefb;
 const DT_AUDIT: u64 = 0x6fff_fefc;
 const DT_VERSYM: u64 = 0x6fff_fff0;
+const DT_RELACOUNT: u64 = 0x6fff_fff9;
+const DT_RELCOUNT: u64 = 0x6fff_fffa;
 const DT_VERDEF: u64 = 0x6fff_fffc;
 const DT_VERDEFNUM: u64 = 0x6fff_fffd;
 const DT_VERNEED: u64 = 0x6fff_fffe;
@@ -1332,6 +1339,132 @@ fn boot_image_records_elf32_dynamic_versioning_metadata() {
         Some(Address::new(0x8000_02c0)),
     );
     assert_eq!(dynamic.version_needed_count(), Some(3));
+}
+
+#[test]
+fn boot_image_records_elf64_dynamic_linker_metadata() {
+    let dynamic = [
+        DT_PLTGOT.to_le_bytes(),
+        0x8000_0240u64.to_le_bytes(),
+        DT_DEBUG.to_le_bytes(),
+        0x8000_0280u64.to_le_bytes(),
+        DT_SYMBOLIC.to_le_bytes(),
+        0u64.to_le_bytes(),
+        DT_TEXTREL.to_le_bytes(),
+        0u64.to_le_bytes(),
+        DT_BIND_NOW.to_le_bytes(),
+        0u64.to_le_bytes(),
+        DT_RELACOUNT.to_le_bytes(),
+        4u64.to_le_bytes(),
+        DT_RELCOUNT.to_le_bytes(),
+        5u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf64_image(
+        0x8000_0200,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[(0x180, &dynamic), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(
+        dynamic.plt_got_virtual_address(),
+        Some(Address::new(0x8000_0240)),
+    );
+    assert_eq!(
+        dynamic.debug_virtual_address(),
+        Some(Address::new(0x8000_0280)),
+    );
+    assert!(dynamic.has_symbolic_binding());
+    assert!(dynamic.has_text_relocations());
+    assert!(dynamic.bind_now());
+    assert_eq!(dynamic.rela_relative_count(), Some(4));
+    assert_eq!(dynamic.rel_relative_count(), Some(5));
+}
+
+#[test]
+fn boot_image_records_elf32_dynamic_linker_metadata() {
+    let dynamic = [
+        (DT_PLTGOT as u32).to_le_bytes(),
+        0x8000_0240u32.to_le_bytes(),
+        (DT_DEBUG as u32).to_le_bytes(),
+        0x8000_0280u32.to_le_bytes(),
+        (DT_SYMBOLIC as u32).to_le_bytes(),
+        0u32.to_le_bytes(),
+        (DT_TEXTREL as u32).to_le_bytes(),
+        0u32.to_le_bytes(),
+        (DT_BIND_NOW as u32).to_le_bytes(),
+        0u32.to_le_bytes(),
+        (DT_RELACOUNT as u32).to_le_bytes(),
+        4u32.to_le_bytes(),
+        (DT_RELCOUNT as u32).to_le_bytes(),
+        5u32.to_le_bytes(),
+        0u32.to_le_bytes(),
+        0u32.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf32_image(
+        0x8000_0200,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0x200,
+                physical: 0x8000_0000,
+                file_size: 4,
+                memory_size: 4,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[(0x180, &dynamic), (0x200, &[0x13, 0, 0, 0])],
+    );
+
+    let metadata = BootImage::from_elf32_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(
+        dynamic.plt_got_virtual_address(),
+        Some(Address::new(0x8000_0240)),
+    );
+    assert_eq!(
+        dynamic.debug_virtual_address(),
+        Some(Address::new(0x8000_0280)),
+    );
+    assert!(dynamic.has_symbolic_binding());
+    assert!(dynamic.has_text_relocations());
+    assert!(dynamic.bind_now());
+    assert_eq!(dynamic.rela_relative_count(), Some(4));
+    assert_eq!(dynamic.rel_relative_count(), Some(5));
 }
 
 #[test]

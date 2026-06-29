@@ -154,6 +154,39 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                     hash_u64(hash, flags_1);
                 }
                 for (label, address) in [
+                    ("elf.dynamic.plt_got", dynamic.plt_got_virtual_address()),
+                    ("elf.dynamic.debug", dynamic.debug_virtual_address()),
+                ] {
+                    if let Some(address) = address {
+                        hash_str(hash, label);
+                        hash_u64(hash, address.get());
+                    }
+                }
+                for (label, enabled) in [
+                    ("elf.dynamic.symbolic", dynamic.has_symbolic_binding()),
+                    ("elf.dynamic.textrel", dynamic.has_text_relocations()),
+                    ("elf.dynamic.bind_now", dynamic.bind_now()),
+                ] {
+                    if enabled {
+                        hash_str(hash, label);
+                    }
+                }
+                for (label, count) in [
+                    (
+                        "elf.dynamic.relative_relocations.rela",
+                        dynamic.rela_relative_count(),
+                    ),
+                    (
+                        "elf.dynamic.relative_relocations.rel",
+                        dynamic.rel_relative_count(),
+                    ),
+                ] {
+                    if let Some(count) = count {
+                        hash_str(hash, label);
+                        hash_u64(hash, count);
+                    }
+                }
+                for (label, address) in [
                     ("elf.dynamic.hash.sysv", dynamic.sysv_hash_virtual_address()),
                     ("elf.dynamic.hash.gnu", dynamic.gnu_hash_virtual_address()),
                     (

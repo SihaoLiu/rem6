@@ -337,11 +337,12 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
     let tables = elf_dynamic_tables_json(table);
     let lifecycle = elf_dynamic_lifecycle_json(table);
     let flags = elf_dynamic_flags_json(table);
+    let linker = elf_dynamic_linker_json(table);
     let hash = elf_dynamic_hash_json(table);
     let versioning = elf_dynamic_versioning_json(table);
     let relocations = elf_dynamic_relocations_json(table);
     format!(
-        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":{},\"soname\":{},\"rpath\":{},\"runpath\":{},\"auxiliary\":{},\"filter\":{},\"audit\":{},\"dependency_audit\":{},\"tables\":{},\"lifecycle\":{},\"flags\":{},\"hash\":{},\"versioning\":{},\"relocations\":{}}}",
+        "{{\"segments\":{},\"file_offset\":{},\"virtual_address\":{},\"entry_size\":{},\"entry_count\":{},\"needed\":{},\"needed_libraries\":{},\"soname\":{},\"rpath\":{},\"runpath\":{},\"auxiliary\":{},\"filter\":{},\"audit\":{},\"dependency_audit\":{},\"tables\":{},\"lifecycle\":{},\"flags\":{},\"linker\":{},\"hash\":{},\"versioning\":{},\"relocations\":{}}}",
         table.segment_count(),
         file_offset,
         virtual_address,
@@ -359,6 +360,7 @@ fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {
         tables,
         lifecycle,
         flags,
+        linker,
         hash,
         versioning,
         relocations
@@ -402,6 +404,19 @@ fn elf_dynamic_flags_json(table: &BootElfDynamicTable) -> String {
         "{{\"dt_flags\":{},\"dt_flags_1\":{}}}",
         optional_value_json(table.flags()),
         optional_value_json(table.flags_1())
+    )
+}
+
+fn elf_dynamic_linker_json(table: &BootElfDynamicTable) -> String {
+    format!(
+        "{{\"plt_got\":{},\"debug\":{},\"symbolic\":{},\"textrel\":{},\"bind_now\":{},\"relative_relocations\":{{\"rela\":{},\"rel\":{}}}}}",
+        address_json(table.plt_got_virtual_address()),
+        address_json(table.debug_virtual_address()),
+        table.has_symbolic_binding(),
+        table.has_text_relocations(),
+        table.bind_now(),
+        optional_value_json(table.rela_relative_count()),
+        optional_value_json(table.rel_relative_count())
     )
 }
 
