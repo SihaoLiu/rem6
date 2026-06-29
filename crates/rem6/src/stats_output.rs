@@ -198,6 +198,12 @@ pub(super) fn run_stats_output(
         inputs.metadata.gnu_eh_frame_virtual_address(),
         inputs.metadata.gnu_eh_frame_memory_size(),
     )?;
+    increment_optional_address_bytes_stats(
+        &mut stats,
+        "sim.elf.gnu_property",
+        inputs.metadata.gnu_property_virtual_address(),
+        inputs.metadata.gnu_property_memory_size(),
+    )?;
     increment_stat(
         &mut stats,
         "sim.elf.symbols",

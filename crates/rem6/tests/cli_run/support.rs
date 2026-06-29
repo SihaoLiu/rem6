@@ -9,6 +9,7 @@ const PT_PHDR: u32 = 6;
 const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
+const PT_GNU_PROPERTY: u32 = 0x6474_e553;
 
 pub(crate) const GEM5_READ_REQ: u32 = 1;
 pub(crate) const GEM5_READ_RESP: u32 = 2;
@@ -177,6 +178,10 @@ pub(crate) fn riscv64_elf_with_gnu_relro(entry: u64, physical: u64, payload: &[u
 
 pub(crate) fn riscv64_elf_with_gnu_eh_frame(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
     riscv64_elf_with_extra_program_header(entry, physical, payload, PT_GNU_EH_FRAME, 4, 40)
+}
+
+pub(crate) fn riscv64_elf_with_gnu_property(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
+    riscv64_elf_with_extra_program_header(entry, physical, payload, PT_GNU_PROPERTY, 4, 48)
 }
 
 pub(crate) fn riscv64_elf_with_pt_phdr(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {

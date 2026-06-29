@@ -9,6 +9,7 @@ const PT_NOTE: u32 = 4;
 const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
+const PT_GNU_PROPERTY: u32 = 0x6474_e553;
 
 fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
     bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
@@ -175,6 +176,25 @@ fn elf64_image_with_gnu_eh_frame(
     let mut bytes = elf64_image(machine);
     write_u16(&mut bytes, 56, 2);
     write_u32(&mut bytes, 120, PT_GNU_EH_FRAME);
+    write_u32(&mut bytes, 124, 4);
+    write_u64(&mut bytes, 128, 0);
+    write_u64(&mut bytes, 136, virtual_address);
+    write_u64(&mut bytes, 144, physical_address);
+    write_u64(&mut bytes, 152, 0);
+    write_u64(&mut bytes, 160, memory_size);
+    write_u64(&mut bytes, 168, 8);
+    bytes
+}
+
+fn elf64_image_with_gnu_property(
+    machine: u16,
+    virtual_address: u64,
+    physical_address: u64,
+    memory_size: u64,
+) -> Vec<u8> {
+    let mut bytes = elf64_image(machine);
+    write_u16(&mut bytes, 56, 2);
+    write_u32(&mut bytes, 120, PT_GNU_PROPERTY);
     write_u32(&mut bytes, 124, 4);
     write_u64(&mut bytes, 128, 0);
     write_u64(&mut bytes, 136, virtual_address);
@@ -672,6 +692,31 @@ fn workload_boot_image_preserves_elf_gnu_eh_frame_metadata_round_trip() {
 }
 
 #[test]
+fn workload_boot_image_preserves_elf_gnu_property_metadata_round_trip() {
+    let image =
+        BootImage::from_elf64_le(&elf64_image_with_gnu_property(243, 0x9200, 0xa200, 48)).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let metadata = workload_image.elf_metadata().unwrap();
+
+    assert_eq!(
+        metadata.gnu_property_virtual_address(),
+        Some(Address::new(0x9200)),
+    );
+    assert_eq!(metadata.gnu_property_memory_size(), Some(48));
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    assert_eq!(
+        round_trip_metadata.gnu_property_virtual_address(),
+        Some(Address::new(0x9200)),
+    );
+    assert_eq!(round_trip_metadata.gnu_property_memory_size(), Some(48));
+}
+
+#[test]
 fn workload_boot_image_preserves_elf_note_segment_metadata_round_trip() {
     let image = BootImage::from_elf64_le(&elf64_image_with_note_segments(243, 12, 20)).unwrap();
 
@@ -978,6 +1023,46 @@ fn workload_manifest_identity_includes_elf_gnu_eh_frame_metadata() {
     assert_ne!(
         eh_frame_manifest.identity(),
         eh_frame_alt_manifest.identity()
+    );
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_gnu_property_metadata() {
+    let plain = BootImage::from_elf64_le(&elf64_image(243)).unwrap();
+    let property =
+        BootImage::from_elf64_le(&elf64_image_with_gnu_property(243, 0x9200, 0xa200, 48)).unwrap();
+    let property_alt =
+        BootImage::from_elf64_le(&elf64_image_with_gnu_property(243, 0xb200, 0xc200, 96)).unwrap();
+
+    assert_eq!(plain.entry(), property.entry());
+    assert_eq!(plain.segments(), property.segments());
+    assert_eq!(property.segments(), property_alt.segments());
+    assert_eq!(
+        plain.elf_metadata().unwrap().gnu_property_virtual_address(),
+        None
+    );
+    assert_eq!(
+        property
+            .elf_metadata()
+            .unwrap()
+            .gnu_property_virtual_address(),
+        Some(Address::new(0x9200)),
+    );
+
+    let plain_manifest = WorkloadManifest::builder(id("same"), plain)
+        .build()
+        .unwrap();
+    let property_manifest = WorkloadManifest::builder(id("same"), property)
+        .build()
+        .unwrap();
+    let property_alt_manifest = WorkloadManifest::builder(id("same"), property_alt)
+        .build()
+        .unwrap();
+
+    assert_ne!(plain_manifest.identity(), property_manifest.identity());
+    assert_ne!(
+        property_manifest.identity(),
+        property_alt_manifest.identity()
     );
 }
 

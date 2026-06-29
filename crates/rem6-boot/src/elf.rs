@@ -321,6 +321,8 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
     let gnu_relro_memory_size = header_metadata.gnu_relro_memory_size;
     let gnu_eh_frame_virtual_address = header_metadata.gnu_eh_frame_virtual_address;
     let gnu_eh_frame_memory_size = header_metadata.gnu_eh_frame_memory_size;
+    let gnu_property_virtual_address = header_metadata.gnu_property_virtual_address;
+    let gnu_property_memory_size = header_metadata.gnu_property_memory_size;
     let dynamic_table = header_metadata.dynamic_table;
     let interpreter = header_metadata.interpreter;
 
@@ -339,6 +341,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         .with_gnu_stack_executable(gnu_stack_executable)
         .with_gnu_relro(gnu_relro_virtual_address, gnu_relro_memory_size)
         .with_gnu_eh_frame(gnu_eh_frame_virtual_address, gnu_eh_frame_memory_size)
+        .with_gnu_property(gnu_property_virtual_address, gnu_property_memory_size)
         .with_symbol_summary(
             section_summary.symbol_count(),
             section_summary.function_symbol_count(),
@@ -511,6 +514,8 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
     let gnu_relro_memory_size = header_metadata.gnu_relro_memory_size;
     let gnu_eh_frame_virtual_address = header_metadata.gnu_eh_frame_virtual_address;
     let gnu_eh_frame_memory_size = header_metadata.gnu_eh_frame_memory_size;
+    let gnu_property_virtual_address = header_metadata.gnu_property_virtual_address;
+    let gnu_property_memory_size = header_metadata.gnu_property_memory_size;
     let dynamic_table = header_metadata.dynamic_table;
     let interpreter = header_metadata.interpreter;
 
@@ -529,6 +534,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         .with_gnu_stack_executable(gnu_stack_executable)
         .with_gnu_relro(gnu_relro_virtual_address, gnu_relro_memory_size)
         .with_gnu_eh_frame(gnu_eh_frame_virtual_address, gnu_eh_frame_memory_size)
+        .with_gnu_property(gnu_property_virtual_address, gnu_property_memory_size)
         .with_symbol_summary(
             section_summary.symbol_count(),
             section_summary.function_symbol_count(),

@@ -19,6 +19,7 @@ const PT_TLS: u32 = 7;
 const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
+const PT_GNU_PROPERTY: u32 = 0x6474_e553;
 const PF_X: u32 = 0x1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -38,6 +39,8 @@ pub(crate) struct ElfProgramHeaderMetadata {
     pub(crate) gnu_relro_memory_size: Option<u64>,
     pub(crate) gnu_eh_frame_virtual_address: Option<Address>,
     pub(crate) gnu_eh_frame_memory_size: Option<u64>,
+    pub(crate) gnu_property_virtual_address: Option<Address>,
+    pub(crate) gnu_property_memory_size: Option<u64>,
     pt_phdr_memory_address: Option<Address>,
     inferred_program_header_memory_address: Option<Address>,
 }
@@ -55,6 +58,8 @@ impl ElfProgramHeaderMetadata {
             gnu_relro_memory_size: None,
             gnu_eh_frame_virtual_address: None,
             gnu_eh_frame_memory_size: None,
+            gnu_property_virtual_address: None,
+            gnu_property_memory_size: None,
             pt_phdr_memory_address: None,
             inferred_program_header_memory_address: None,
         }
@@ -179,6 +184,18 @@ pub(crate) fn summarize_elf64_program_header(
             }
             Ok(ElfProgramHeaderAction::Skip)
         }
+        PT_GNU_PROPERTY => {
+            if metadata.gnu_property_virtual_address.is_none() {
+                metadata.gnu_property_virtual_address = Some(Address::new(read_u64_at_u64(
+                    bytes,
+                    header_offset + 16,
+                    endian,
+                )?));
+                metadata.gnu_property_memory_size =
+                    Some(read_u64_at_u64(bytes, header_offset + 40, endian)?);
+            }
+            Ok(ElfProgramHeaderAction::Skip)
+        }
         _ => Ok(ElfProgramHeaderAction::ConsiderLoad),
     }
 }
@@ -290,6 +307,19 @@ pub(crate) fn summarize_elf32_program_header(
                     read_u32_at_u64(bytes, header_offset + 8, endian)?,
                 )));
                 metadata.gnu_eh_frame_memory_size = Some(u64::from(read_u32_at_u64(
+                    bytes,
+                    header_offset + 20,
+                    endian,
+                )?));
+            }
+            Ok(ElfProgramHeaderAction::Skip)
+        }
+        PT_GNU_PROPERTY => {
+            if metadata.gnu_property_virtual_address.is_none() {
+                metadata.gnu_property_virtual_address = Some(Address::new(u64::from(
+                    read_u32_at_u64(bytes, header_offset + 8, endian)?,
+                )));
+                metadata.gnu_property_memory_size = Some(u64::from(read_u32_at_u64(
                     bytes,
                     header_offset + 20,
                     endian,
