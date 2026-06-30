@@ -33,6 +33,8 @@ use execution_mode_checkpoint::{
     manifest_has_execution_mode_checkpoint, EXECUTION_MODE_CHECKPOINT_CHUNK,
 };
 
+const EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX: &str = "execution-mode-switch-";
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutionModeSwitchStateTransfer {
     manifest_label: String,
@@ -1330,6 +1332,12 @@ impl SystemActionExecutor {
                 })
             }
             HostAction::Checkpoint { label } => {
+                if is_execution_mode_switch_state_transfer_label(label) {
+                    return Err(SystemError::ReservedCheckpointManifestLabel {
+                        label: label.clone(),
+                        prefix: EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX.to_string(),
+                    });
+                }
                 if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
                     scheduler_checkpoints
                         .validate_quiescent_capture()
@@ -1596,6 +1604,8 @@ impl SystemActionExecutor {
                 .capture_all_into(&mut staged_checkpoints)
                 .map_err(SystemError::Checkpoint)?;
         }
+        let execution_mode_registered =
+            self.capture_execution_modes_into(&mut staged_checkpoints)?;
 
         let manifest = staged_checkpoints
             .capture(
@@ -1604,6 +1614,9 @@ impl SystemActionExecutor {
             )
             .map_err(SystemError::Checkpoint)?;
         self.checkpoints = staged_checkpoints;
+        if execution_mode_registered {
+            self.execution_mode_checkpoint_registered = true;
+        }
         self.captured_manifests
             .insert(manifest.label().to_string(), manifest.clone());
 
@@ -1625,7 +1638,11 @@ fn execution_mode_switch_state_transfer_label(target: &ExecutionModeTarget, tick
             }
         })
         .collect::<String>();
-    format!("execution-mode-switch-{sanitized_target}-{tick}")
+    format!("{EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX}{sanitized_target}-{tick}")
+}
+
+fn is_execution_mode_switch_state_transfer_label(label: &str) -> bool {
+    label.starts_with(EXECUTION_MODE_SWITCH_STATE_TRANSFER_LABEL_PREFIX)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

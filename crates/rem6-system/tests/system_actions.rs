@@ -1740,6 +1740,106 @@ fn execution_mode_switches_are_checkpointed_and_restored() {
 }
 
 #[test]
+fn execution_mode_switch_transfer_labels_are_reserved_for_generated_manifests() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(14);
+    let target = ExecutionModeTarget::new("cpu0");
+    let component = CheckpointComponentId::new("memory0").unwrap();
+    let (store, _) = partitioned_memory_store();
+    let store = Arc::new(Mutex::new(store));
+    let bank = MemoryStoreCheckpointBank::new([MemoryStoreCheckpointPort::new(
+        component,
+        Arc::clone(&store),
+    )])
+    .unwrap();
+    let mut checkpoints = CheckpointRegistry::new();
+    bank.register_all(&mut checkpoints).unwrap();
+    let mut executor =
+        SystemActionExecutor::with_memory_checkpoint_bank(StatsRegistry::new(), checkpoints, bank);
+
+    executor
+        .apply(&HostActionRecord::new(
+            0,
+            guest,
+            host,
+            GuestEventId::new(24),
+            source,
+            HostAction::SwitchExecutionMode {
+                target: target.clone(),
+                mode: ExecutionMode::Timing,
+            },
+        ))
+        .unwrap();
+
+    let switch = executor
+        .apply(&HostActionRecord::new(
+            1,
+            guest,
+            host,
+            GuestEventId::new(25),
+            source,
+            HostAction::SwitchExecutionMode {
+                target: target.clone(),
+                mode: ExecutionMode::Functional,
+            },
+        ))
+        .unwrap();
+    let transfer_label = match switch {
+        SystemActionOutcome::ExecutionModeSwitched {
+            state_transfer: Some(transfer),
+            ..
+        } => transfer.manifest_label().to_string(),
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    let error = executor
+        .apply(&HostActionRecord::new(
+            2,
+            guest,
+            host,
+            GuestEventId::new(26),
+            source,
+            HostAction::Checkpoint {
+                label: transfer_label.clone(),
+            },
+        ))
+        .unwrap_err();
+
+    assert_eq!(
+        error,
+        SystemError::ReservedCheckpointManifestLabel {
+            label: transfer_label.clone(),
+            prefix: "execution-mode-switch-".to_string(),
+        }
+    );
+    assert_eq!(
+        executor
+            .apply(&HostActionRecord::new(
+                3,
+                guest,
+                host,
+                GuestEventId::new(27),
+                source,
+                HostAction::RestoreCheckpointByLabel {
+                    label: transfer_label.clone(),
+                },
+            ))
+            .unwrap(),
+        SystemActionOutcome::CheckpointRestored {
+            tick: 3,
+            event: GuestEventId::new(27),
+            source,
+            manifest: executor.checkpoints().capture(transfer_label, 1).unwrap(),
+        }
+    );
+    assert_eq!(
+        executor.execution_mode(&target),
+        Some(ExecutionMode::Timing)
+    );
+}
+
+#[test]
 fn failed_execution_mode_restore_does_not_register_checkpoint_component() {
     let guest = PartitionId::new(0);
     let host = PartitionId::new(1);

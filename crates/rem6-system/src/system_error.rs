@@ -28,6 +28,7 @@ pub enum SystemError {
     Stats(StatsError),
     Checkpoint(CheckpointError),
     MissingCheckpointManifest { label: String },
+    ReservedCheckpointManifestLabel { label: String, prefix: String },
     ExecutionModeCheckpoint(ExecutionModeCheckpointError),
     AcceleratorCheckpoint(AcceleratorCheckpointError),
     CpuLocalTimerCheckpoint(CpuLocalTimerCheckpointError),
@@ -77,6 +78,10 @@ impl fmt::Display for SystemError {
             Self::MissingCheckpointManifest { label } => {
                 write!(formatter, "checkpoint manifest {label} is not available")
             }
+            Self::ReservedCheckpointManifestLabel { label, prefix } => write!(
+                formatter,
+                "checkpoint manifest label {label} uses reserved prefix {prefix}"
+            ),
             Self::ExecutionModeCheckpoint(error) => write!(formatter, "{error}"),
             Self::AcceleratorCheckpoint(error) => write!(formatter, "{error}"),
             Self::CpuLocalTimerCheckpoint(error) => write!(formatter, "{error}"),
@@ -123,6 +128,7 @@ impl Error for SystemError {
             Self::Stats(error) => Some(error),
             Self::Checkpoint(error) => Some(error),
             Self::MissingCheckpointManifest { .. } => None,
+            Self::ReservedCheckpointManifestLabel { .. } => None,
             Self::ExecutionModeCheckpoint(error) => Some(error),
             Self::AcceleratorCheckpoint(error) => Some(error),
             Self::CpuLocalTimerCheckpoint(error) => Some(error),
