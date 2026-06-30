@@ -6,7 +6,8 @@ use crate::support::{
     b_type, find_riscv_tool, i_type, riscv64_elf, riscv64_program, temp_binary, temp_workspace,
 };
 
-const MODERN_KNOWN_NI_SYSCALLS: &[i32] = &[
+const RAW_KNOWN_NI_SYSCALLS: &[i32] = &[
+    220, // clone
     425, // io_uring_setup
     426, // io_uring_enter
     427, // io_uring_register
@@ -24,15 +25,11 @@ const MODERN_KNOWN_NI_SYSCALLS: &[i32] = &[
 #[test]
 fn rem6_run_riscv_se_runs_static_raw_known_ni_syscalls_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
-        eprintln!(
-            "skipping static RISC-V SE known no-implementation syscall smoke: riscv64-unknown-elf-gcc not found"
-        );
+        eprintln!("skipping static RISC-V SE known no-implementation syscall smoke: riscv64-unknown-elf-gcc not found");
         return;
     };
     let Some(qemu) = find_riscv_tool("qemu-riscv64") else {
-        eprintln!(
-            "skipping static RISC-V SE known no-implementation syscall smoke: qemu-riscv64 not found"
-        );
+        eprintln!("skipping static RISC-V SE known no-implementation syscall smoke: qemu-riscv64 not found");
         return;
     };
     let workspace = temp_workspace("riscv-se-known-ni");
@@ -172,10 +169,10 @@ void _start(void) {
 }
 
 #[test]
-fn rem6_run_riscv_se_runs_static_raw_modern_known_ni_syscalls() {
+fn rem6_run_riscv_se_runs_static_raw_known_ni_clone_and_probe_syscalls() {
     let mut words = vec![i_type(-38, 0, 0x0, 5, 0x13)]; // addi t0, x0, -ENOSYS
     let mut branch_indices = Vec::new();
-    for syscall in MODERN_KNOWN_NI_SYSCALLS {
+    for syscall in RAW_KNOWN_NI_SYSCALLS {
         words.push(i_type(*syscall, 0, 0x0, 17, 0x13)); // addi a7, x0, syscall
         words.push(0x0000_0073); // ecall
         branch_indices.push(words.len());
@@ -199,7 +196,7 @@ fn rem6_run_riscv_se_runs_static_raw_modern_known_ni_syscalls() {
 
     let program = riscv64_program(&words);
     let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
-    let path = temp_binary("riscv-se-modern-known-ni", &elf);
+    let path = temp_binary("riscv-se-known-ni-clone-probes", &elf);
 
     let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
         .args([

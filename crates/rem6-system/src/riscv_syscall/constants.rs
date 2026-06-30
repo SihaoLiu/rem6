@@ -23,6 +23,7 @@ pub(super) const RISCV_LINUX_UNAME: u64 = 160;
 pub(super) const RISCV_LINUX_SETRLIMIT: u64 = 164;
 pub(super) const RISCV_LINUX_FUTEX: u64 = 98;
 pub(super) const RISCV_LINUX_BRK: u64 = 214;
+pub(super) const RISCV_LINUX_CLONE: u64 = 220;
 pub(super) const RISCV_LINUX_MLOCKALL: u64 = 230;
 pub(super) const RISCV_LINUX_MUNLOCKALL: u64 = 231;
 pub(super) const RISCV_LINUX_IO_URING_SETUP: u64 = 425;

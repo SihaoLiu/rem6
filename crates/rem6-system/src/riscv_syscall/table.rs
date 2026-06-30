@@ -51,6 +51,7 @@ impl RiscvSyscallTable {
             }
             RISCV_LINUX_LOOKUP_DCOOKIE
             | RISCV_LINUX_NFSSERVCTL
+            | RISCV_LINUX_CLONE
             | RISCV_LINUX_IO_URING_SETUP
             | RISCV_LINUX_IO_URING_ENTER
             | RISCV_LINUX_IO_URING_REGISTER
