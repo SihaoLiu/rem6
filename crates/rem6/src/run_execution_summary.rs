@@ -252,6 +252,7 @@ pub(super) fn execution_summary(
             branch_predictor_lookups: branch_speculation_summary.lookup_branch_kinds(),
             branch_predictor_target_provider: branch_speculation_summary.target_provider(),
             branch_predictor_indirect_hits: branch_speculation_summary.indirect_hits(),
+            branch_predictor_ras: branch_speculation_summary.return_address_stack(),
             branch_predictor_committed: branch_speculation_summary.committed_branch_kinds(),
             branch_predictor_mispredicted: branch_speculation_summary.mispredicted_branch_kinds(),
             branch_predictor_corrected: branch_speculation_summary.corrected_branch_kinds(),

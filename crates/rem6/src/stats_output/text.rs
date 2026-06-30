@@ -230,6 +230,18 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 }
             }
         }
+        for name in ["pushes", "pops", "squashes", "used", "correct", "incorrect"] {
+            if let Some(value) = snapshot_value(
+                snapshot,
+                &format!("sim.cpu{cpu}.branch_predictor.ras.{name}"),
+            ) {
+                append_derived_count_stat(
+                    output,
+                    &format!("{alias_prefix}.branchPred.ras.{name}"),
+                    value,
+                );
+            }
+        }
         for provider in BranchTargetProvider::ALL {
             if let Some(target_provider) = snapshot_value(
                 snapshot,

@@ -89,7 +89,9 @@ pub use crate::return_address_stack::{
     ReturnAddressStackRepair, ReturnAddressStackSnapshot,
 };
 pub use crate::riscv_activity::RiscvCoreDriveActivity;
-pub use crate::riscv_branch_speculation::RiscvBranchSpeculationSummary;
+pub use crate::riscv_branch_speculation::{
+    RiscvBranchSpeculationSummary, RiscvReturnAddressStackStats,
+};
 pub use crate::riscv_checker::{RiscvCheckerMismatch, RiscvCheckerSnapshot};
 pub use crate::riscv_cluster::{
     RiscvCluster, RiscvClusterError, RiscvClusterHtmAbortOutcome, RiscvClusterHtmBeginOutcome,

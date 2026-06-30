@@ -8,11 +8,12 @@ use crate::{
     BiModeBranchPredictor, BranchPredictor, BranchSpeculationId, BranchTargetKind,
     BranchTargetPrediction, BranchTargetProvider, CpuFetchEvent, CpuFetchEventKind,
     GShareBranchPredictor, MultiperspectivePerceptron, MultiperspectivePerceptronThreadSnapshot,
-    ReturnAddressStackOperationId, RiscvBranchPredictorKind, RiscvCore, RiscvCoreState,
-    RiscvCpuError, RiscvSelectedBranchSpeculation, StatisticalCorrectorBranchKind,
-    TageScLBranchPredictor, TournamentBranchPredictor, RISCV_LOCAL_BIMODE_THREAD,
-    RISCV_LOCAL_GSHARE_THREAD, RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD,
-    RISCV_LOCAL_TAGE_SC_L_THREAD, RISCV_LOCAL_TOURNAMENT_THREAD,
+    ReturnAddressStackOperationId, ReturnAddressStackOperationKind, RiscvBranchPredictorKind,
+    RiscvCore, RiscvCoreState, RiscvCpuError, RiscvSelectedBranchSpeculation,
+    StatisticalCorrectorBranchKind, TageScLBranchPredictor, TournamentBranchPredictor,
+    RISCV_LOCAL_BIMODE_THREAD, RISCV_LOCAL_GSHARE_THREAD,
+    RISCV_LOCAL_MULTIPERSPECTIVE_PERCEPTRON_THREAD, RISCV_LOCAL_TAGE_SC_L_THREAD,
+    RISCV_LOCAL_TOURNAMENT_THREAD,
 };
 
 mod speculation;
@@ -652,21 +653,26 @@ fn record_return_address_stack_speculation(
     state: &mut RiscvCoreState,
     speculation: &RiscvFetchAheadSpeculation,
 ) -> Option<ReturnAddressStackOperationId> {
-    match speculation.return_address_stack_action? {
-        ReturnAddressStackAction::Push(return_address) => Some(
-            state
+    let (id, kind) = match speculation.return_address_stack_action? {
+        ReturnAddressStackAction::Push(return_address) => {
+            let operation = state.return_address_stack.push_speculative(return_address);
+            (operation.id(), ReturnAddressStackOperationKind::Push)
+        }
+        ReturnAddressStackAction::Pop => {
+            let operation = state.return_address_stack.pop_speculative();
+            (operation.id(), ReturnAddressStackOperationKind::Pop)
+        }
+        ReturnAddressStackAction::PopThenPush(return_address) => {
+            let operation = state
                 .return_address_stack
-                .push_speculative(return_address)
-                .id(),
-        ),
-        ReturnAddressStackAction::Pop => Some(state.return_address_stack.pop_speculative().id()),
-        ReturnAddressStackAction::PopThenPush(return_address) => Some(
-            state
-                .return_address_stack
-                .pop_then_push_speculative(return_address)
-                .id(),
-        ),
-    }
+                .pop_then_push_speculative(return_address);
+            (operation.id(), ReturnAddressStackOperationKind::PopThenPush)
+        }
+    };
+    state
+        .branch_speculation_summary
+        .record_return_address_stack_operation(kind);
+    Some(id)
 }
 
 #[cfg(test)]

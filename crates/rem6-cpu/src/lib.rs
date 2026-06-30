@@ -1246,13 +1246,17 @@ impl RiscvCoreState {
     fn commit_return_address_stack_speculation(
         &mut self,
         sequence: u64,
+        predicted_correctly: bool,
     ) -> Result<(), RiscvCpuError> {
         let Some(operation_id) = self.return_address_stack_operations.remove(&sequence) else {
             return Ok(());
         };
-        self.return_address_stack
+        let operation = self
+            .return_address_stack
             .commit_operation(operation_id)
             .map_err(RiscvCpuError::ReturnAddressStack)?;
+        self.branch_speculation_summary
+            .record_return_address_stack_commit(operation.kind(), predicted_correctly);
         Ok(())
     }
 
@@ -1267,6 +1271,12 @@ impl RiscvCoreState {
             .return_address_stack
             .squash_from(operation_id)
             .map_err(RiscvCpuError::ReturnAddressStack)?;
+        self.branch_speculation_summary
+            .record_return_address_stack_squash(repair.reverted().kind());
+        for operation in repair.removed_youngers() {
+            self.branch_speculation_summary
+                .record_return_address_stack_squash(operation.kind());
+        }
         let removed = repair
             .removed_youngers()
             .iter()

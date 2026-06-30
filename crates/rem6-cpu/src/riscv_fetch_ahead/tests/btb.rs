@@ -528,6 +528,38 @@ fn target_provider_counts_ras_when_coroutine_jalr_pops_then_pushes() {
 }
 
 #[test]
+fn ras_squash_stats_include_removed_younger_operations() {
+    let core = core_with_completed_fetches([
+        (0, 0x8000, j_type(8, 1).to_le_bytes().to_vec()),
+        (1, 0x8008, j_type(8, 1).to_le_bytes().to_vec()),
+    ]);
+    core.set_branch_lookahead(2);
+
+    let older = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(older.pc(), Address::new(0x8008));
+    record_fetch_ahead_speculation(&core, &older).unwrap();
+
+    let younger = core.next_fetch_ahead_before_retire().unwrap();
+    assert_eq!(younger.pc(), Address::new(0x8010));
+    record_fetch_ahead_speculation(&core, &younger).unwrap();
+
+    {
+        let mut state = core.state.lock().expect("riscv core lock");
+        assert_eq!(state.return_address_stack.pending_operation_count(), 2);
+        state.squash_return_address_stack_speculation(0).unwrap();
+        assert!(state.return_address_stack.stack_entries().is_empty());
+        assert_eq!(state.return_address_stack.pending_operation_count(), 0);
+        assert!(state.return_address_stack_operations.is_empty());
+    }
+
+    let ras = core.branch_speculation_summary().return_address_stack();
+    assert_eq!(ras.pushes(), 2);
+    assert_eq!(ras.pops(), 2);
+    assert_eq!(ras.squashes(), 2);
+    assert_eq!(ras.used(), 0);
+}
+
+#[test]
 fn btb_update_classifies_direct_link_jump_as_call_direct() {
     let jump = j_type(12, 1).to_le_bytes().to_vec();
     let core = core_with_completed_fetch(jump);

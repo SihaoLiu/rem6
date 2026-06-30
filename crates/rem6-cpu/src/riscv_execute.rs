@@ -1372,7 +1372,7 @@ fn resolve_branch_speculation(
     let predicted_correctly = predicted_taken == update.actual_taken()
         && (!predicted_taken || predicted_target == update.actual_target());
     if !predicted_correctly {
-        state.commit_return_address_stack_speculation(sequence)?;
+        state.commit_return_address_stack_speculation(sequence, predicted_correctly)?;
         let repair = state
             .branch_predictor
             .repair_speculation(speculation, update.actual_taken())
@@ -1382,7 +1382,7 @@ fn resolve_branch_speculation(
             .record_repair(repair.removed_youngers().len() as u64);
         remove_branch_speculation_mappings(state, repair.removed_youngers())?;
     } else {
-        state.commit_return_address_stack_speculation(sequence)?;
+        state.commit_return_address_stack_speculation(sequence, predicted_correctly)?;
     }
     state
         .branch_predictor

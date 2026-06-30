@@ -6545,7 +6545,38 @@ fn rem6_run_stats_emit_ras_target_provider_from_real_call_return_fetch() {
 
     let stdout = run("json");
     let ras_provider = stat_value(&stdout, "sim.cpu0.branch_predictor.target_provider.ras");
+    let ras_pushes = stat_value(&stdout, "sim.cpu0.branch_predictor.ras.pushes");
+    let ras_pops = stat_value(&stdout, "sim.cpu0.branch_predictor.ras.pops");
+    let ras_squashes = stat_value(&stdout, "sim.cpu0.branch_predictor.ras.squashes");
+    let ras_used = stat_value(&stdout, "sim.cpu0.branch_predictor.ras.used");
+    let ras_correct = stat_value(&stdout, "sim.cpu0.branch_predictor.ras.correct");
+    let ras_incorrect = stat_value(&stdout, "sim.cpu0.branch_predictor.ras.incorrect");
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
     assert!(ras_provider > 0, "{stdout}");
+    assert!(ras_pushes > 0, "{stdout}");
+    assert!(ras_pops > 0, "{stdout}");
+    assert_eq!(ras_squashes, 0, "{stdout}");
+    assert_eq!(ras_used, ras_correct + ras_incorrect, "{stdout}");
+    assert_eq!(ras_correct, ras_used, "{stdout}");
+    assert_eq!(ras_incorrect, 0, "{stdout}");
+    assert_eq!(
+        artifact
+            .pointer("/cores/0/branch_predictor/ras/pushes")
+            .and_then(Value::as_u64),
+        Some(ras_pushes)
+    );
+    assert_eq!(
+        artifact
+            .pointer("/cores/0/branch_predictor/ras/pops")
+            .and_then(Value::as_u64),
+        Some(ras_pops)
+    );
+    assert_eq!(
+        artifact
+            .pointer("/cores/0/branch_predictor/ras/used")
+            .and_then(Value::as_u64),
+        Some(ras_used)
+    );
     assert_eq!(
         stat_value(&stdout, "sim.cpu0.branch_predictor.target_provider.total"),
         stat_value(
@@ -6570,6 +6601,18 @@ fn rem6_run_stats_emit_ras_target_provider_from_real_call_return_fetch() {
     let stdout = run("text");
     let ras_provider = text_stat_value(&stdout, "sim.cpu0.branch_predictor.target_provider.ras");
     assert!(ras_provider > 0, "{stdout}");
+    for name in ["pushes", "pops", "squashes", "used", "correct", "incorrect"] {
+        let raw = text_stat_value(&stdout, &format!("sim.cpu0.branch_predictor.ras.{name}"));
+        assert_eq!(
+            text_stat_value(&stdout, &format!("system.cpu.branchPred.ras.{name}")),
+            raw
+        );
+        assert!(
+            text_stat_line(&stdout, &format!("system.cpu.branchPred.ras.{name}"))
+                .contains("unit=Count"),
+            "{stdout}"
+        );
+    }
     assert_eq!(
         text_stat_value(&stdout, "system.cpu.branchPred.targetProvider_0::RAS"),
         ras_provider
@@ -6629,12 +6672,55 @@ fn rem6_run_stats_emit_multicore_ras_target_provider_from_real_call_return_fetch
     };
 
     let stdout = run("json");
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
     for cpu in [0, 1] {
         let ras_provider = stat_value(
             &stdout,
             &format!("sim.cpu{cpu}.branch_predictor.target_provider.ras"),
         );
+        let ras_pushes = stat_value(
+            &stdout,
+            &format!("sim.cpu{cpu}.branch_predictor.ras.pushes"),
+        );
+        let ras_pops = stat_value(&stdout, &format!("sim.cpu{cpu}.branch_predictor.ras.pops"));
+        let ras_squashes = stat_value(
+            &stdout,
+            &format!("sim.cpu{cpu}.branch_predictor.ras.squashes"),
+        );
+        let ras_used = stat_value(&stdout, &format!("sim.cpu{cpu}.branch_predictor.ras.used"));
+        let ras_correct = stat_value(
+            &stdout,
+            &format!("sim.cpu{cpu}.branch_predictor.ras.correct"),
+        );
+        let ras_incorrect = stat_value(
+            &stdout,
+            &format!("sim.cpu{cpu}.branch_predictor.ras.incorrect"),
+        );
         assert!(ras_provider > 0, "{stdout}");
+        assert!(ras_pushes > 0, "{stdout}");
+        assert!(ras_pops > 0, "{stdout}");
+        assert_eq!(ras_squashes, 0, "{stdout}");
+        assert_eq!(ras_used, ras_correct + ras_incorrect, "{stdout}");
+        assert_eq!(ras_correct, ras_used, "{stdout}");
+        assert_eq!(ras_incorrect, 0, "{stdout}");
+        assert_eq!(
+            artifact
+                .pointer(&format!("/cores/{cpu}/branch_predictor/ras/pushes"))
+                .and_then(Value::as_u64),
+            Some(ras_pushes)
+        );
+        assert_eq!(
+            artifact
+                .pointer(&format!("/cores/{cpu}/branch_predictor/ras/pops"))
+                .and_then(Value::as_u64),
+            Some(ras_pops)
+        );
+        assert_eq!(
+            artifact
+                .pointer(&format!("/cores/{cpu}/branch_predictor/ras/used"))
+                .and_then(Value::as_u64),
+            Some(ras_used)
+        );
         assert_eq!(
             stat_value(
                 &stdout,
@@ -6653,7 +6739,6 @@ fn rem6_run_stats_emit_multicore_ras_target_provider_from_real_call_return_fetch
                 )
         );
     }
-    let artifact: Value = serde_json::from_str(&stdout).unwrap();
     for cpu in [0, 1] {
         assert_eq!(
             json_core_register(&artifact, cpu, "x5"),
@@ -6674,6 +6759,21 @@ fn rem6_run_stats_emit_multicore_ras_target_provider_from_real_call_return_fetch
             &format!("sim.cpu{cpu}.branch_predictor.target_provider.ras"),
         );
         assert!(ras_provider > 0, "{stdout}");
+        for name in ["pushes", "pops", "squashes", "used", "correct", "incorrect"] {
+            let raw = text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.ras.{name}"),
+            );
+            assert_eq!(
+                text_stat_value(&stdout, &format!("system.cpu{cpu}.branchPred.ras.{name}")),
+                raw
+            );
+            assert!(
+                text_stat_line(&stdout, &format!("system.cpu{cpu}.branchPred.ras.{name}"))
+                    .contains("unit=Count"),
+                "{stdout}"
+            );
+        }
         assert_eq!(
             text_stat_value(
                 &stdout,
@@ -6704,6 +6804,7 @@ fn rem6_run_stats_emit_multicore_ras_target_provider_from_real_call_return_fetch
         &stdout,
         "system.cpu.branchPred.targetProvider_0::RAS"
     ));
+    assert!(!has_text_stat(&stdout, "system.cpu.branchPred.ras.pushes"));
 }
 
 #[test]

@@ -444,6 +444,22 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.branch_predictor_indirect_hits,
         )?;
+        for (name, value) in [
+            ("pushes", core.branch_predictor_ras.pushes()),
+            ("pops", core.branch_predictor_ras.pops()),
+            ("squashes", core.branch_predictor_ras.squashes()),
+            ("used", core.branch_predictor_ras.used()),
+            ("correct", core.branch_predictor_ras.correct()),
+            ("incorrect", core.branch_predictor_ras.incorrect()),
+        ] {
+            increment_stat(
+                stats,
+                &format!("sim.cpu{}.branch_predictor.ras.{name}", core.cpu),
+                "Count",
+                StatResetPolicy::Monotonic,
+                value,
+            )?;
+        }
         for provider in BranchTargetProvider::ALL {
             increment_stat(
                 stats,

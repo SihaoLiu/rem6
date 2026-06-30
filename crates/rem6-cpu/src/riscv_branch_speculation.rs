@@ -2,7 +2,7 @@ use rem6_memory::Address;
 
 use crate::{
     BranchTargetKind, BranchTargetKindCounts, BranchTargetPrediction, BranchTargetProvider,
-    BranchTargetProviderCounts,
+    BranchTargetProviderCounts, ReturnAddressStackOperationKind,
 };
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -22,6 +22,89 @@ pub struct RiscvBranchSpeculationSummary {
     predicted_taken_btb_misses: u64,
     btb_mispredict_due_to_btb_miss: BranchTargetKindCounts,
     mispredict_due_to_predictor: BranchTargetKindCounts,
+    return_address_stack: RiscvReturnAddressStackStats,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct RiscvReturnAddressStackStats {
+    pushes: u64,
+    pops: u64,
+    squashes: u64,
+    used: u64,
+    correct: u64,
+    incorrect: u64,
+}
+
+impl RiscvReturnAddressStackStats {
+    pub const fn pushes(self) -> u64 {
+        self.pushes
+    }
+
+    pub const fn pops(self) -> u64 {
+        self.pops
+    }
+
+    pub const fn squashes(self) -> u64 {
+        self.squashes
+    }
+
+    pub const fn used(self) -> u64 {
+        self.used
+    }
+
+    pub const fn correct(self) -> u64 {
+        self.correct
+    }
+
+    pub const fn incorrect(self) -> u64 {
+        self.incorrect
+    }
+
+    fn record_operation(&mut self, kind: ReturnAddressStackOperationKind) {
+        match kind {
+            ReturnAddressStackOperationKind::Push => {
+                self.pushes = self.pushes.saturating_add(1);
+            }
+            ReturnAddressStackOperationKind::Pop => {
+                self.pops = self.pops.saturating_add(1);
+            }
+            ReturnAddressStackOperationKind::PopThenPush => {
+                self.pops = self.pops.saturating_add(1);
+                self.pushes = self.pushes.saturating_add(1);
+            }
+        }
+    }
+
+    fn record_squash(&mut self, kind: ReturnAddressStackOperationKind) {
+        self.squashes = self.squashes.saturating_add(1);
+        match kind {
+            ReturnAddressStackOperationKind::Push => {
+                self.pops = self.pops.saturating_add(1);
+            }
+            ReturnAddressStackOperationKind::Pop => {
+                self.pushes = self.pushes.saturating_add(1);
+            }
+            ReturnAddressStackOperationKind::PopThenPush => {
+                self.pops = self.pops.saturating_add(1);
+                self.pushes = self.pushes.saturating_add(1);
+            }
+        }
+    }
+
+    fn record_commit(&mut self, kind: ReturnAddressStackOperationKind, predicted_correctly: bool) {
+        if !matches!(
+            kind,
+            ReturnAddressStackOperationKind::Pop | ReturnAddressStackOperationKind::PopThenPush
+        ) {
+            return;
+        }
+        self.used = self.used.saturating_add(1);
+        if predicted_correctly {
+            self.correct = self.correct.saturating_add(1);
+        } else {
+            self.incorrect = self.incorrect.saturating_add(1);
+        }
+    }
 }
 
 impl RiscvBranchSpeculationSummary {
@@ -83,6 +166,33 @@ impl RiscvBranchSpeculationSummary {
 
     pub const fn mispredict_due_to_predictor(self) -> BranchTargetKindCounts {
         self.mispredict_due_to_predictor
+    }
+
+    pub const fn return_address_stack(self) -> RiscvReturnAddressStackStats {
+        self.return_address_stack
+    }
+
+    pub(crate) fn record_return_address_stack_operation(
+        &mut self,
+        kind: ReturnAddressStackOperationKind,
+    ) {
+        self.return_address_stack.record_operation(kind);
+    }
+
+    pub(crate) fn record_return_address_stack_squash(
+        &mut self,
+        kind: ReturnAddressStackOperationKind,
+    ) {
+        self.return_address_stack.record_squash(kind);
+    }
+
+    pub(crate) fn record_return_address_stack_commit(
+        &mut self,
+        kind: ReturnAddressStackOperationKind,
+        predicted_correctly: bool,
+    ) {
+        self.return_address_stack
+            .record_commit(kind, predicted_correctly);
     }
 
     pub(crate) fn record_prediction(
