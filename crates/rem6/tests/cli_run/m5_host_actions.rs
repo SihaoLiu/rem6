@@ -120,6 +120,57 @@ fn rem6_run_emits_m5_work_marker_host_actions_from_real_riscv_execution() {
 }
 
 #[test]
+fn rem6_run_text_stats_map_m5_work_markers_to_gem5_cpu_work_item_aliases() {
+    let program = riscv64_program(&[
+        i_type(11, 0, 0x0, 10, 0x13),
+        i_type(7, 0, 0x0, 11, 0x13),
+        m5op(M5_WORK_BEGIN),
+        i_type(11, 0, 0x0, 10, 0x13),
+        i_type(7, 0, 0x0, 11, 0x13),
+        m5op(M5_WORK_END),
+        i_type(12, 0, 0x0, 10, 0x13),
+        i_type(8, 0, 0x0, 11, 0x13),
+        m5op(M5_WORK_BEGIN),
+        i_type(12, 0, 0x0, 10, 0x13),
+        i_type(8, 0, 0x0, 11, 0x13),
+        m5op(M5_WORK_END),
+        m5op(M5_EXIT),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("m5-work-item-text-aliases", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert_text_count_stat(&stdout, "sim.host_actions.roi_begin", 2);
+    assert_text_count_stat(&stdout, "sim.host_actions.roi_end", 2);
+    assert_text_count_stat(&stdout, "system.cpu.numWorkItemsStarted", 2);
+    assert_text_count_stat(&stdout, "system.cpu.numWorkItemsCompleted", 2);
+}
+
+#[test]
 fn rem6_run_emits_m5_hypercall_host_action_detail_from_real_riscv_execution() {
     let program = riscv64_program(&[
         i_type(0x321, 0, 0x0, 10, 0x13),
@@ -1096,6 +1147,30 @@ fn assert_work_marker(
         Some(thread_id)
     );
     assert!(action.pointer("/tick").and_then(Value::as_u64).is_some());
+}
+
+fn assert_text_count_stat(stdout: &str, path: &str, value: u64) {
+    let line = stdout
+        .lines()
+        .find(|line| line.split_whitespace().next() == Some(path))
+        .unwrap_or_else(|| panic!("missing text stat {path} in stdout:\n{stdout}"));
+    let actual = line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse::<u64>().ok());
+    assert_eq!(
+        actual,
+        Some(value),
+        "unexpected text stat value for {path} in line: {line}"
+    );
+    assert!(
+        line.contains("unit=Count"),
+        "missing Count unit for {path} in line: {line}"
+    );
+    assert!(
+        line.contains("reset_policy=monotonic"),
+        "missing monotonic reset policy for {path} in line: {line}"
+    );
 }
 
 fn assert_execution_mode_switch(

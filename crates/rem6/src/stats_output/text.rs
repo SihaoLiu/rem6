@@ -47,6 +47,7 @@ fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) 
     append_gem5_dram_interface_ratio_stats(output, snapshot);
     append_gem5_dram_interface_latency_stats(output, snapshot);
     append_gem5_cpu_ratio_stats(output, snapshot);
+    append_gem5_work_item_alias_stats(output, snapshot);
     append_gem5_in_order_pipeline_alias_stats(output, snapshot);
     append_gem5_branch_prediction_alias_stats(output, snapshot);
     append_gem5_l1_cache_alias_stats(output, snapshot);
@@ -383,6 +384,29 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
             }
         }
     }
+}
+
+fn append_gem5_work_item_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
+    let Some(core_count) = snapshot_value(snapshot, "sim.cores") else {
+        return;
+    };
+    if core_count != 1 {
+        return;
+    }
+    append_derived_stat_from_snapshot(
+        output,
+        snapshot,
+        "sim.host_actions.roi_begin",
+        "system.cpu.numWorkItemsStarted",
+        "Count",
+    );
+    append_derived_stat_from_snapshot(
+        output,
+        snapshot,
+        "sim.host_actions.roi_end",
+        "system.cpu.numWorkItemsCompleted",
+        "Count",
+    );
 }
 
 fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
