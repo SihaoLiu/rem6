@@ -935,6 +935,116 @@ int main(void) {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_raw_priority_group_and_user_scopes() {
+    let mut words = Vec::new();
+    let mut branch_indices = Vec::new();
+    let mut expect_return = |words: &mut Vec<u32>, expected: i32| {
+        words.push(i_type(expected, 0, 0x0, 5, 0x13)); // addi t0, x0, expected
+        branch_indices.push(words.len());
+        words.push(0); // patched to bne a0, t0, fail
+    };
+
+    words.push(i_type(1, 0, 0x0, 10, 0x13)); // addi a0, x0, PRIO_PGRP
+    words.push(i_type(0, 0, 0x0, 11, 0x13)); // addi a1, x0, current group
+    words.push(i_type(141, 0, 0x0, 17, 0x13)); // addi a7, x0, getpriority
+    words.push(0x0000_0073); // ecall
+    expect_return(&mut words, 20);
+
+    words.push(i_type(2, 0, 0x0, 10, 0x13)); // addi a0, x0, PRIO_USER
+    words.push(i_type(0, 0, 0x0, 11, 0x13)); // addi a1, x0, current user
+    words.push(i_type(141, 0, 0x0, 17, 0x13)); // addi a7, x0, getpriority
+    words.push(0x0000_0073); // ecall
+    expect_return(&mut words, 20);
+
+    words.push(i_type(1, 0, 0x0, 10, 0x13)); // addi a0, x0, PRIO_PGRP
+    words.push(i_type(0, 0, 0x0, 11, 0x13)); // addi a1, x0, current group
+    words.push(i_type(9, 0, 0x0, 12, 0x13)); // addi a2, x0, nice
+    words.push(i_type(140, 0, 0x0, 17, 0x13)); // addi a7, x0, setpriority
+    words.push(0x0000_0073); // ecall
+    expect_return(&mut words, 0);
+
+    words.push(i_type(0, 0, 0x0, 10, 0x13)); // addi a0, x0, PRIO_PROCESS
+    words.push(i_type(0, 0, 0x0, 11, 0x13)); // addi a1, x0, current process
+    words.push(i_type(141, 0, 0x0, 17, 0x13)); // addi a7, x0, getpriority
+    words.push(0x0000_0073); // ecall
+    expect_return(&mut words, 11);
+
+    words.push(i_type(2, 0, 0x0, 10, 0x13)); // addi a0, x0, PRIO_USER
+    words.push(i_type(0, 0, 0x0, 11, 0x13)); // addi a1, x0, current user
+    words.push(i_type(12, 0, 0x0, 12, 0x13)); // addi a2, x0, nice
+    words.push(i_type(140, 0, 0x0, 17, 0x13)); // addi a7, x0, setpriority
+    words.push(0x0000_0073); // ecall
+    expect_return(&mut words, 0);
+
+    words.push(i_type(0, 0, 0x0, 10, 0x13)); // addi a0, x0, PRIO_PROCESS
+    words.push(i_type(0, 0, 0x0, 11, 0x13)); // addi a1, x0, current process
+    words.push(i_type(141, 0, 0x0, 17, 0x13)); // addi a7, x0, getpriority
+    words.push(0x0000_0073); // ecall
+    expect_return(&mut words, 8);
+
+    words.push(i_type(1, 0, 0x0, 10, 0x13)); // addi a0, x0, PRIO_PGRP
+    words.push(i_type(999, 0, 0x0, 11, 0x13)); // addi a1, x0, missing group
+    words.push(i_type(141, 0, 0x0, 17, 0x13)); // addi a7, x0, getpriority
+    words.push(0x0000_0073); // ecall
+    expect_return(&mut words, -3);
+
+    words.push(i_type(2, 0, 0x0, 10, 0x13)); // addi a0, x0, PRIO_USER
+    words.push(i_type(999, 0, 0x0, 11, 0x13)); // addi a1, x0, missing user
+    words.push(i_type(140, 0, 0x0, 17, 0x13)); // addi a7, x0, setpriority
+    words.push(0x0000_0073); // ecall
+    expect_return(&mut words, -3);
+
+    words.push(i_type(94, 0, 0x0, 10, 0x13)); // addi a0, x0, pass
+    words.push(i_type(93, 0, 0x0, 17, 0x13)); // addi a7, x0, exit
+    words.push(0x0000_0073); // ecall
+
+    let fail_index = words.len();
+    words.push(i_type(95, 0, 0x0, 10, 0x13)); // addi a0, x0, fail
+    words.push(i_type(93, 0, 0x0, 17, 0x13)); // addi a7, x0, exit
+    words.push(0x0000_0073); // ecall
+
+    let fail_pc = i32::try_from(fail_index * 4).unwrap();
+    for branch_index in branch_indices {
+        let branch_pc = i32::try_from(branch_index * 4).unwrap();
+        words[branch_index] = b_type(fail_pc - branch_pc, 5, 10, 0x1);
+    }
+
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-priority-group-user", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "900",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
+    assert!(stdout.contains("\"stop_code\":94"), "stdout: {stdout}");
+    assert!(stdout.contains("\"riscv_guest_writes\":[]"));
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 94, "constant");
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_sched_setters_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(

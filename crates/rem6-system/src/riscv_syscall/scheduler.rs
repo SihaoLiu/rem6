@@ -38,6 +38,8 @@ const RISCV_LINUX_IOPRIO_CLASS_RT: u64 = 1;
 const RISCV_LINUX_IOPRIO_CLASS_BE: u64 = 2;
 const RISCV_LINUX_IOPRIO_CLASS_IDLE: u64 = 3;
 const RISCV_LINUX_PRIO_PROCESS: i32 = 0;
+const RISCV_LINUX_PRIO_PGRP: i32 = 1;
+const RISCV_LINUX_PRIO_USER: i32 = 2;
 const RISCV_LINUX_RAW_PRIORITY_BASE: i32 = 20;
 const RISCV_LINUX_SCHED_RR_INTERVAL_NANOSECONDS: u64 = 2_000_000;
 const RISCV_LINUX_SCHED_ATTR_BYTES: u64 = 56;
@@ -479,17 +481,16 @@ fn ioprio_target(
 }
 
 fn priority_target(request: RiscvSyscallRequest, state: &RiscvSyscallState) -> Result<(), u64> {
+    let requested = linux_int_argument(request.argument(1));
     match linux_int_argument(request.argument(0)) {
         RISCV_LINUX_PRIO_PROCESS => {
-            let requested_pid = linux_int_argument(request.argument(1));
-            if requested_pid < 0 {
-                return Err(RISCV_LINUX_ESRCH);
-            }
-            if matches_current_process(requested_pid as u64, state) {
-                Ok(())
-            } else {
-                Err(RISCV_LINUX_ESRCH)
-            }
+            priority_scope_target(requested, |target| matches_current_process(target, state))
+        }
+        RISCV_LINUX_PRIO_PGRP => priority_scope_target(requested, |target| {
+            matches_current_process_group(target, state)
+        }),
+        RISCV_LINUX_PRIO_USER => {
+            priority_scope_target(requested, |target| matches_current_user(target, state))
         }
         _ => Err(RISCV_LINUX_EINVAL),
     }
@@ -511,6 +512,29 @@ fn matches_current_process(requested_pid: u64, state: &RiscvSyscallState) -> boo
     requested_pid == 0
         || requested_pid == state.identity().thread_id()
         || requested_pid == state.identity().thread_group_id()
+}
+
+fn matches_current_process_group(requested_process_group: u64, state: &RiscvSyscallState) -> bool {
+    requested_process_group == 0
+        || requested_process_group == u64::from(state.guest_wait.current_process_group().get())
+}
+
+fn matches_current_user(requested_user: u64, state: &RiscvSyscallState) -> bool {
+    requested_user == 0 || requested_user == state.identity().user_id()
+}
+
+fn priority_scope_target(
+    requested: i32,
+    matches_scope: impl FnOnce(u64) -> bool,
+) -> Result<(), u64> {
+    if requested < 0 {
+        return Err(RISCV_LINUX_ESRCH);
+    }
+    if matches_scope(requested as u64) {
+        Ok(())
+    } else {
+        Err(RISCV_LINUX_ESRCH)
+    }
 }
 
 fn linux_int_argument(argument: u64) -> i32 {
