@@ -76,6 +76,8 @@ mod posix_timer_tests;
 mod prctl_tests;
 #[path = "riscv_syscall_tests/process_tests.rs"]
 mod process_tests;
+#[path = "riscv_syscall_tests/process_vm_tests.rs"]
+mod process_vm_tests;
 #[path = "riscv_syscall_tests/random_tests.rs"]
 mod random_tests;
 #[path = "riscv_syscall_tests/readlink_tests.rs"]

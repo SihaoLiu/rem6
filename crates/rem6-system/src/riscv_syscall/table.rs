@@ -300,6 +300,11 @@ impl RiscvSyscallTable {
                     value: syscall_preadv2(request, state, reader, writer),
                 })
             }),
+            RISCV_LINUX_PROCESS_VM_READV => guest_memory_reader.and_then(|reader| {
+                guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
+                    value: syscall_process_vm_readv(request, state, reader, writer),
+                })
+            }),
             RISCV_LINUX_WRITE => guest_memory_reader.map(|guest_memory| {
                 match syscall_write(request, state, tick, guest_memory) {
                     Some(value) => RiscvSyscallOutcome::Return { value },
@@ -321,6 +326,11 @@ impl RiscvSyscallTable {
                     value: syscall_pwritev2(request, state, tick, guest_memory),
                 })
             }
+            RISCV_LINUX_PROCESS_VM_WRITEV => guest_memory_reader.and_then(|reader| {
+                guest_memory_writer.map(|writer| RiscvSyscallOutcome::Return {
+                    value: syscall_process_vm_writev(request, state, reader, writer),
+                })
+            }),
             RISCV_LINUX_SENDFILE => {
                 if request.argument(2) == 0 {
                     Some(RiscvSyscallOutcome::Return {

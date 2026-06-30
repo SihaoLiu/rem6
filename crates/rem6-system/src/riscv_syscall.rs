@@ -54,6 +54,7 @@ mod poll;
 mod positioned;
 mod posix_timer;
 mod process;
+mod process_vm;
 mod procfs;
 mod random;
 mod readv;
@@ -227,6 +228,10 @@ use process::{
     RISCV_LINUX_EXECVE, RISCV_LINUX_EXECVEAT, RISCV_LINUX_GETPGID, RISCV_LINUX_GETSID,
     RISCV_LINUX_PERSONALITY, RISCV_LINUX_PRCTL, RISCV_LINUX_SETPGID, RISCV_LINUX_SETSID,
     RISCV_LINUX_UNSHARE,
+};
+use process_vm::{
+    syscall_process_vm_readv, syscall_process_vm_writev, RISCV_LINUX_PROCESS_VM_READV,
+    RISCV_LINUX_PROCESS_VM_WRITEV,
 };
 use random::{invalid_getrandom_flags, syscall_getrandom, RISCV_LINUX_GETRANDOM};
 use readv::{
