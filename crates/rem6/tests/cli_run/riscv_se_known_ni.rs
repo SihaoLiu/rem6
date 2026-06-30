@@ -20,6 +20,16 @@ const RAW_KNOWN_NI_SYSCALLS: &[i32] = &[
     449, // futex_waitv
     450, // set_mempolicy_home_node
     451, // cachestat
+    453, // map_shadow_stack
+    454, // futex_wake
+    455, // futex_wait
+    456, // futex_requeue
+    457, // statmount
+    458, // listmount
+    459, // lsm_get_self_attr
+    460, // lsm_set_self_attr
+    461, // lsm_list_modules
+    462, // mseal
 ];
 
 #[test]
@@ -221,7 +231,22 @@ fn rem6_run_riscv_se_runs_static_raw_known_ni_clone_and_probe_syscalls() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("\"status\":\"stopped_by_host\""));
-    assert!(stdout.contains("\"stop_code\":91"), "stdout: {stdout}");
-    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/simulation/stop_code")
+            .and_then(Value::as_u64),
+        Some(91)
+    );
+    let unknown_syscalls = json
+        .pointer("/riscv_unknown_syscalls")
+        .and_then(Value::as_array)
+        .unwrap();
+    assert!(
+        unknown_syscalls.is_empty(),
+        "unexpected unknown syscalls: {unknown_syscalls:?}"
+    );
 }

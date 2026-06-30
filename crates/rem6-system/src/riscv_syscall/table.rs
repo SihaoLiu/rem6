@@ -63,7 +63,17 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_PROCESS_MRELEASE
             | RISCV_LINUX_FUTEX_WAITV
             | RISCV_LINUX_SET_MEMPOLICY_HOME_NODE
-            | RISCV_LINUX_CACHESTAT => Some(known_ni_syscall_outcome()),
+            | RISCV_LINUX_CACHESTAT
+            | RISCV_LINUX_MAP_SHADOW_STACK
+            | RISCV_LINUX_FUTEX_WAKE
+            | RISCV_LINUX_FUTEX_WAIT
+            | RISCV_LINUX_FUTEX_REQUEUE
+            | RISCV_LINUX_STATMOUNT
+            | RISCV_LINUX_LISTMOUNT
+            | RISCV_LINUX_LSM_GET_SELF_ATTR
+            | RISCV_LINUX_LSM_SET_SELF_ATTR
+            | RISCV_LINUX_LSM_LIST_MODULES
+            | RISCV_LINUX_MSEAL => Some(known_ni_syscall_outcome()),
             RISCV_LINUX_UMOUNT2 => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_umount2(request, guest_memory),
