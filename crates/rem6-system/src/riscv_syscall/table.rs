@@ -674,6 +674,14 @@ impl RiscvSyscallTable {
             }),
             RISCV_LINUX_ACCT => syscall_acct(request, guest_memory_reader)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
+            RISCV_LINUX_VHANGUP
+            | RISCV_LINUX_KEXEC_LOAD
+            | RISCV_LINUX_INIT_MODULE
+            | RISCV_LINUX_DELETE_MODULE
+            | RISCV_LINUX_FINIT_MODULE
+            | RISCV_LINUX_KEXEC_FILE_LOAD => Some(RiscvSyscallOutcome::Return {
+                value: syscall_privileged_admin_denial(),
+            }),
             RISCV_LINUX_UNSHARE => Some(RiscvSyscallOutcome::Return {
                 value: syscall_unshare(request),
             }),

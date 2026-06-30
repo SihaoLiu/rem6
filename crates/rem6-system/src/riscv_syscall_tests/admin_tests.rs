@@ -3,12 +3,18 @@ use super::*;
 const RISCV_LINUX_UMOUNT2_FOR_TEST: u64 = 39;
 const RISCV_LINUX_MOUNT_FOR_TEST: u64 = 40;
 const RISCV_LINUX_PIVOT_ROOT_FOR_TEST: u64 = 41;
+const RISCV_LINUX_VHANGUP_FOR_TEST: u64 = 58;
 const RISCV_LINUX_ACCT_FOR_TEST: u64 = 89;
+const RISCV_LINUX_KEXEC_LOAD_FOR_TEST: u64 = 104;
+const RISCV_LINUX_INIT_MODULE_FOR_TEST: u64 = 105;
+const RISCV_LINUX_DELETE_MODULE_FOR_TEST: u64 = 106;
 const RISCV_LINUX_REBOOT_FOR_TEST: u64 = 142;
 const RISCV_LINUX_SETHOSTNAME_FOR_TEST: u64 = 161;
 const RISCV_LINUX_SETDOMAINNAME_FOR_TEST: u64 = 162;
 const RISCV_LINUX_SWAPON_FOR_TEST: u64 = 224;
 const RISCV_LINUX_SWAPOFF_FOR_TEST: u64 = 225;
+const RISCV_LINUX_FINIT_MODULE_FOR_TEST: u64 = 273;
+const RISCV_LINUX_KEXEC_FILE_LOAD_FOR_TEST: u64 = 294;
 const RISCV_LINUX_EINVAL_FOR_TEST: u64 = 22;
 
 #[test]
@@ -142,6 +148,42 @@ fn linux_table_admin_syscalls_report_deterministic_errors_without_unknown_record
             0x803c,
             RISCV_LINUX_SWAPOFF_FOR_TEST,
             [0x9000, 0, 0, 0, 0, 0],
+            RISCV_LINUX_EPERM,
+        ),
+        (
+            0x8040,
+            RISCV_LINUX_VHANGUP_FOR_TEST,
+            [0, 0, 0, 0, 0, 0],
+            RISCV_LINUX_EPERM,
+        ),
+        (
+            0x8044,
+            RISCV_LINUX_KEXEC_LOAD_FOR_TEST,
+            [0, 0, 0, 0, 0, 0],
+            RISCV_LINUX_EPERM,
+        ),
+        (
+            0x8048,
+            RISCV_LINUX_INIT_MODULE_FOR_TEST,
+            [0, 0, 0, 0, 0, 0],
+            RISCV_LINUX_EPERM,
+        ),
+        (
+            0x804c,
+            RISCV_LINUX_DELETE_MODULE_FOR_TEST,
+            [0, 0, 0, 0, 0, 0],
+            RISCV_LINUX_EPERM,
+        ),
+        (
+            0x8050,
+            RISCV_LINUX_FINIT_MODULE_FOR_TEST,
+            [0, 0, 0, 0, 0, 0],
+            RISCV_LINUX_EPERM,
+        ),
+        (
+            0x8054,
+            RISCV_LINUX_KEXEC_FILE_LOAD_FOR_TEST,
+            [0, 0, 0, 0, 0, 0],
             RISCV_LINUX_EPERM,
         ),
     ] {

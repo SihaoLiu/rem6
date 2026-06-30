@@ -92,11 +92,13 @@ mod writev;
 mod xattr;
 
 use admin::{
-    syscall_acct, syscall_chroot, syscall_mount, syscall_pivot_root, syscall_reboot,
-    syscall_setdomainname, syscall_sethostname, syscall_swapoff, syscall_swapon, syscall_umount2,
-    RISCV_LINUX_ACCT, RISCV_LINUX_CHROOT, RISCV_LINUX_MOUNT, RISCV_LINUX_PIVOT_ROOT,
+    syscall_acct, syscall_chroot, syscall_mount, syscall_pivot_root,
+    syscall_privileged_admin_denial, syscall_reboot, syscall_setdomainname, syscall_sethostname,
+    syscall_swapoff, syscall_swapon, syscall_umount2, RISCV_LINUX_ACCT, RISCV_LINUX_CHROOT,
+    RISCV_LINUX_DELETE_MODULE, RISCV_LINUX_FINIT_MODULE, RISCV_LINUX_INIT_MODULE,
+    RISCV_LINUX_KEXEC_FILE_LOAD, RISCV_LINUX_KEXEC_LOAD, RISCV_LINUX_MOUNT, RISCV_LINUX_PIVOT_ROOT,
     RISCV_LINUX_REBOOT, RISCV_LINUX_SETDOMAINNAME, RISCV_LINUX_SETHOSTNAME, RISCV_LINUX_SWAPOFF,
-    RISCV_LINUX_SWAPON, RISCV_LINUX_UMOUNT2,
+    RISCV_LINUX_SWAPON, RISCV_LINUX_UMOUNT2, RISCV_LINUX_VHANGUP,
 };
 use advisory::{syscall_fadvise64, RISCV_LINUX_FADVISE64};
 use brk::syscall_brk;

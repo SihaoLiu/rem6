@@ -2,7 +2,18 @@ use std::{fs, process::Command};
 
 use serde_json::Value;
 
-use crate::support::{find_riscv_tool, temp_workspace};
+use crate::support::{
+    b_type, find_riscv_tool, i_type, riscv64_elf, riscv64_program, temp_binary, temp_workspace,
+};
+
+const RAW_PRIVILEGED_ADMIN_SYSCALLS: &[i32] = &[
+    58,  // vhangup
+    104, // kexec_load
+    105, // init_module
+    106, // delete_module
+    273, // finit_module
+    294, // kexec_file_load
+];
 
 #[test]
 fn rem6_run_riscv_se_runs_static_raw_admin_syscall_errors_against_qemu() {
@@ -278,5 +289,78 @@ void _start(void) {
             .and_then(Value::as_array)
             .map(Vec::len),
         Some(0)
+    );
+}
+
+#[test]
+fn rem6_run_riscv_se_runs_static_raw_privileged_admin_syscall_denials() {
+    let mut words = vec![i_type(-1, 0, 0x0, 5, 0x13)]; // addi t0, x0, -EPERM
+    let mut branch_indices = Vec::new();
+    for syscall in RAW_PRIVILEGED_ADMIN_SYSCALLS {
+        words.push(i_type(*syscall, 0, 0x0, 17, 0x13)); // addi a7, x0, syscall
+        words.push(0x0000_0073); // ecall
+        branch_indices.push(words.len());
+        words.push(0); // patched to bne a0, t0, fail
+    }
+
+    words.push(i_type(75, 0, 0x0, 10, 0x13)); // addi a0, x0, 75
+    words.push(i_type(93, 0, 0x0, 17, 0x13)); // addi a7, x0, exit
+    words.push(0x0000_0073); // ecall
+
+    let fail_index = words.len();
+    words.push(i_type(76, 0, 0x0, 10, 0x13)); // addi a0, x0, 76
+    words.push(i_type(93, 0, 0x0, 17, 0x13)); // addi a7, x0, exit
+    words.push(0x0000_0073); // ecall
+
+    let fail_pc = i32::try_from(fail_index * 4).unwrap();
+    for branch_index in branch_indices {
+        let branch_pc = i32::try_from(branch_index * 4).unwrap();
+        words[branch_index] = b_type(fail_pc - branch_pc, 5, 10, 0x1);
+    }
+
+    let program = riscv64_program(&words);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-privileged-admin", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "300",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    assert_eq!(
+        json.pointer("/simulation/stop_code")
+            .and_then(Value::as_u64),
+        Some(75)
+    );
+    let unknown_syscalls = json
+        .pointer("/riscv_unknown_syscalls")
+        .and_then(Value::as_array)
+        .unwrap();
+    assert!(
+        unknown_syscalls.is_empty(),
+        "unexpected unknown syscalls: {unknown_syscalls:?}"
     );
 }

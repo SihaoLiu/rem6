@@ -8,12 +8,18 @@ pub(super) const RISCV_LINUX_UMOUNT2: u64 = 39;
 pub(super) const RISCV_LINUX_MOUNT: u64 = 40;
 pub(super) const RISCV_LINUX_PIVOT_ROOT: u64 = 41;
 pub(super) const RISCV_LINUX_CHROOT: u64 = 51;
+pub(super) const RISCV_LINUX_VHANGUP: u64 = 58;
 pub(super) const RISCV_LINUX_ACCT: u64 = 89;
+pub(super) const RISCV_LINUX_KEXEC_LOAD: u64 = 104;
+pub(super) const RISCV_LINUX_INIT_MODULE: u64 = 105;
+pub(super) const RISCV_LINUX_DELETE_MODULE: u64 = 106;
 pub(super) const RISCV_LINUX_REBOOT: u64 = 142;
 pub(super) const RISCV_LINUX_SETHOSTNAME: u64 = 161;
 pub(super) const RISCV_LINUX_SETDOMAINNAME: u64 = 162;
 pub(super) const RISCV_LINUX_SWAPON: u64 = 224;
 pub(super) const RISCV_LINUX_SWAPOFF: u64 = 225;
+pub(super) const RISCV_LINUX_FINIT_MODULE: u64 = 273;
+pub(super) const RISCV_LINUX_KEXEC_FILE_LOAD: u64 = 294;
 
 const RISCV_LINUX_MNT_FORCE: u64 = 1;
 const RISCV_LINUX_MNT_DETACH: u64 = 2;
@@ -90,6 +96,10 @@ pub(super) fn syscall_acct(
 }
 
 pub(super) fn syscall_reboot() -> u64 {
+    linux_error(RISCV_LINUX_EPERM)
+}
+
+pub(super) fn syscall_privileged_admin_denial() -> u64 {
     linux_error(RISCV_LINUX_EPERM)
 }
 
