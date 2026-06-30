@@ -119,6 +119,36 @@ fn cli_source_files_stay_within_size_limit() {
 }
 
 #[test]
+fn cli_riscv_se_smoke_modules_stay_within_size_limit() {
+    let cli_run_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli_run");
+    let mut oversized = Vec::new();
+
+    for path in rust_source_files(&cli_run_dir) {
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if !file_name.starts_with("riscv_se_") {
+            continue;
+        }
+        let lines = line_count(&path);
+        if lines > MAX_SOURCE_LINES {
+            oversized.push(format!(
+                "{} has {lines} lines",
+                path.strip_prefix(env!("CARGO_MANIFEST_DIR"))
+                    .unwrap()
+                    .display()
+            ));
+        }
+    }
+
+    assert!(
+        oversized.is_empty(),
+        "RISC-V SE CLI smoke modules exceed {MAX_SOURCE_LINES} lines: {}",
+        oversized.join(", ")
+    );
+}
+
+#[test]
 fn cli_runtime_inputs_live_in_focused_modules() {
     let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     let lib_rs = fs::read_to_string(crate_dir.join("src/lib.rs")).unwrap();

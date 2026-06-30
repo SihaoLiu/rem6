@@ -92,6 +92,8 @@ mod riscv_se_permissions;
 mod riscv_se_pidfd;
 #[path = "cli_run/riscv_se_poll.rs"]
 mod riscv_se_poll;
+#[path = "cli_run/riscv_se_priority.rs"]
+mod riscv_se_priority;
 #[path = "cli_run/riscv_se_proc.rs"]
 mod riscv_se_proc;
 #[path = "cli_run/riscv_se_process.rs"]
@@ -120,6 +122,8 @@ mod riscv_se_splice;
 mod riscv_se_statx;
 #[path = "cli_run/riscv_se_stdio.rs"]
 mod riscv_se_stdio;
+#[path = "cli_run/riscv_se_stdio_resources.rs"]
+mod riscv_se_stdio_resources;
 #[path = "cli_run/riscv_se_sync.rs"]
 mod riscv_se_sync;
 #[path = "cli_run/riscv_se_sysinfo.rs"]
