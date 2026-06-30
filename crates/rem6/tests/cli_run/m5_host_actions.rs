@@ -301,7 +301,7 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
         host_actions.pointer("/stop_count").and_then(Value::as_u64),
         Some(1)
     );
-    let switch_tick = assert_execution_mode_switch(
+    let (switch_tick, switch_transfer_label) = assert_execution_mode_switch(
         host_actions,
         0,
         "cpu0",
@@ -309,7 +309,7 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
         "detailed",
         "execution-mode-switch-cpu0",
     );
-    let second_switch_tick = assert_execution_mode_switch(
+    let (second_switch_tick, second_switch_transfer_label) = assert_execution_mode_switch(
         host_actions,
         1,
         "cpu0",
@@ -324,6 +324,10 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
     assert!(
         second_switch_tick > switch_tick,
         "repeated m5_switch_cpu should record a later mode switch: {host_actions}"
+    );
+    assert_ne!(
+        second_switch_transfer_label, switch_transfer_label,
+        "repeated m5_switch_cpu should capture distinct transfer manifests: {host_actions}"
     );
     assert!(
         stop_tick > second_switch_tick,
@@ -819,7 +823,7 @@ fn assert_execution_mode_switch(
     previous_mode: Option<&str>,
     mode: &str,
     manifest_label_prefix: &str,
-) -> u64 {
+) -> (u64, String) {
     let action = host_actions
         .pointer(&format!("/execution_mode_switches/{index}"))
         .unwrap_or_else(|| panic!("missing execution mode switch action {index}"));
@@ -860,11 +864,12 @@ fn assert_execution_mode_switch(
         transfer.pointer("/captured").and_then(Value::as_bool) == Some(true),
         "execution mode switch transfer {index}: {transfer}"
     );
+    let manifest_label = transfer
+        .pointer("/manifest_label")
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| panic!("missing execution mode transfer manifest label {index}"));
     assert!(
-        transfer
-            .pointer("/manifest_label")
-            .and_then(Value::as_str)
-            .is_some_and(|label| label.starts_with(manifest_label_prefix)),
+        manifest_label.starts_with(manifest_label_prefix),
         "execution mode switch transfer {index}: {transfer}"
     );
     assert!(
@@ -909,10 +914,13 @@ fn assert_execution_mode_switch(
             .is_some_and(|checksum| checksum.starts_with("0x") && checksum.len() == 18),
         "execution mode switch transfer {index}: {transfer}"
     );
-    action
-        .pointer("/tick")
-        .and_then(Value::as_u64)
-        .expect("execution mode switch should record a tick")
+    (
+        action
+            .pointer("/tick")
+            .and_then(Value::as_u64)
+            .expect("execution mode switch should record a tick"),
+        manifest_label.to_string(),
+    )
 }
 
 fn assert_stats_reset(host_actions: &Value, index: usize, id: u64, tick: u64, epoch: u64) {
