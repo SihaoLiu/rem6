@@ -62,6 +62,10 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_MQ_TIMEDRECEIVE
             | RISCV_LINUX_MQ_NOTIFY
             | RISCV_LINUX_MQ_GETSETATTR
+            | RISCV_LINUX_MSGGET
+            | RISCV_LINUX_MSGCTL
+            | RISCV_LINUX_MSGRCV
+            | RISCV_LINUX_MSGSND
             | RISCV_LINUX_ADD_KEY
             | RISCV_LINUX_REQUEST_KEY
             | RISCV_LINUX_KEYCTL

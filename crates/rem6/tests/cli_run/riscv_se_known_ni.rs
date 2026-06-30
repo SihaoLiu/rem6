@@ -18,6 +18,10 @@ const RAW_KNOWN_NI_SYSCALLS: &[i32] = &[
     183, // mq_timedreceive
     184, // mq_notify
     185, // mq_getsetattr
+    186, // msgget
+    187, // msgctl
+    188, // msgrcv
+    189, // msgsnd
     217, // add_key
     218, // request_key
     219, // keyctl
