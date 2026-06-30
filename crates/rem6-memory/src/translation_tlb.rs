@@ -599,6 +599,13 @@ impl TranslationTlbEntry {
         Ok(entry_range(self.virtual_page, self.page_size)?.overlaps(range))
     }
 
+    fn overlaps_physical_range(
+        &self,
+        physical_range: AddressRange,
+    ) -> Result<bool, TranslationError> {
+        Ok(entry_range(self.physical_page, self.page_size)?.overlaps(physical_range))
+    }
+
     fn resolve(&self, request: &TranslationRequest) -> TranslationResolution {
         if !self.permissions.allows(request.access()) {
             return TranslationResolution::fault(TranslationFault::new(
@@ -801,6 +808,17 @@ impl TranslationTlb {
 
     pub fn demap_range_all_address_spaces(&mut self, virtual_range: AddressRange) -> usize {
         self.remove_matching_pages(|_, entry| entry.overlaps_range(virtual_range).unwrap_or(false))
+    }
+
+    pub fn demap_physical_range_all_address_spaces(
+        &mut self,
+        physical_range: AddressRange,
+    ) -> usize {
+        self.remove_matching_pages(|_, entry| {
+            entry
+                .overlaps_physical_range(physical_range)
+                .unwrap_or(false)
+        })
     }
 
     pub fn translate(

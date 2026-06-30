@@ -1081,10 +1081,15 @@ fn riscv_sbi_remote_sfence_vma_asid_preserves_other_address_spaces() {
     );
 }
 
-#[test]
-fn riscv_sbi_remote_sfence_vma_range_flushes_each_overlapping_page() {
+fn assert_remote_tlb_fence_range_flushes_each_overlapping_page(
+    function: u64,
+    source_id: u32,
+    event_base: u64,
+    range_start_page: u32,
+    range_size_pages: u32,
+) {
     let host = PartitionId::new(3);
-    let source = GuestSourceId::new(56);
+    let source = GuestSourceId::new(source_id);
     let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
     let mut transport = MemoryTransport::new();
     let cpu0_fetch = transport
@@ -1171,11 +1176,11 @@ fn riscv_sbi_remote_sfence_vma_range_flushes_each_overlapping_page() {
         &[
             (0x8000, lui(17, rfence_hi)),
             (0x8004, i_type(rfence_lo, 17, 0x0, 17, 0x13)),
-            (0x8008, i_type(1, 0, 0x0, 16, 0x13)),
+            (0x8008, i_type(function as i32, 0, 0x0, 16, 0x13)),
             (0x800c, i_type(2, 0, 0x0, 10, 0x13)),
             (0x8010, i_type(0, 0, 0x0, 11, 0x13)),
-            (0x8014, lui(12, 4)),
-            (0x8018, lui(13, 2)),
+            (0x8014, lui(12, range_start_page)),
+            (0x8018, lui(13, range_size_pages)),
             (0x801c, 0x0000_0073),
             (0x8020, i_type(0, 10, 0x0, 6, 0x13)),
             (0x8024, i_type(0, 11, 0x0, 7, 0x13)),
@@ -1325,11 +1330,16 @@ fn riscv_sbi_remote_sfence_vma_range_flushes_each_overlapping_page() {
                 move |delivery, _context| memory_response(&store, &delivery)
             },
             80,
-            |cpu| GuestEventId::new(190 + u64::from(cpu.get())),
+            |cpu| GuestEventId::new(event_base + u64::from(cpu.get())),
         )
         .unwrap();
 
-    let stop = StopRequest::new(run.final_tick().unwrap(), GuestEventId::new(190), source, 1);
+    let stop = StopRequest::new(
+        run.final_tick().unwrap(),
+        GuestEventId::new(event_base),
+        source,
+        1,
+    );
     assert_eq!(run.stop_reason(), RiscvSystemRunStopReason::HostStop(stop));
     assert_eq!(core0.read_register(reg(6)), 0);
     assert_eq!(core0.read_register(reg(7)), 0);
@@ -1354,6 +1364,28 @@ fn riscv_sbi_remote_sfence_vma_range_flushes_each_overlapping_page() {
             Address::new(0x7000)
         ),
         Some(true)
+    );
+}
+
+#[test]
+fn riscv_sbi_remote_sfence_vma_range_flushes_each_overlapping_page() {
+    assert_remote_tlb_fence_range_flushes_each_overlapping_page(
+        SBI_RFENCE_REMOTE_SFENCE_VMA,
+        56,
+        190,
+        4,
+        2,
+    );
+}
+
+#[test]
+fn riscv_sbi_remote_hfence_gvma_range_flushes_each_overlapping_physical_page() {
+    assert_remote_tlb_fence_range_flushes_each_overlapping_page(
+        SBI_RFENCE_REMOTE_HFENCE_GVMA,
+        58,
+        210,
+        9,
+        2,
     );
 }
 

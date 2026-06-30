@@ -1015,8 +1015,10 @@ impl RiscvSbiFirmware {
             source,
             targets,
             RiscvSbiRemoteDataTlbFlush::new(
-                virtual_range,
-                address_space,
+                RiscvSbiRemoteDataTlbFlushScope::Virtual {
+                    range: virtual_range,
+                    address_space,
+                },
                 rfence_completion_scope(request),
             ),
             parallel,
@@ -1041,7 +1043,7 @@ impl RiscvSbiFirmware {
         let Some(targets) = self.hart_mask_targets(request.arg0(), request.arg1()) else {
             return Ok(RiscvSbiOutcome::invalid_param());
         };
-        let Some((virtual_range, address_space)) = hfence_flush_scope(request) else {
+        let Some(flush_scope) = hfence_flush_scope(request) else {
             return Ok(RiscvSbiOutcome::invalid_address());
         };
 
@@ -1050,11 +1052,7 @@ impl RiscvSbiFirmware {
             scheduler,
             source,
             targets,
-            RiscvSbiRemoteDataTlbFlush::new(
-                virtual_range,
-                address_space,
-                rfence_completion_scope(request),
-            ),
+            RiscvSbiRemoteDataTlbFlush::new(flush_scope, rfence_completion_scope(request)),
             parallel,
         )?;
         self.record_rfence(source.id(), request, target_harts);
@@ -1228,28 +1226,43 @@ struct RiscvSbiRfenceCompletionScope {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct RiscvSbiRemoteDataTlbFlush {
-    virtual_range: Option<AddressRange>,
-    address_space: Option<TranslationAddressSpaceId>,
+    scope: RiscvSbiRemoteDataTlbFlushScope,
     completion_scope: RiscvSbiRfenceCompletionScope,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RiscvSbiRemoteDataTlbFlushScope {
+    Virtual {
+        range: Option<AddressRange>,
+        address_space: Option<TranslationAddressSpaceId>,
+    },
+    Physical {
+        range: Option<AddressRange>,
+    },
 }
 
 impl RiscvSbiRemoteDataTlbFlush {
     const fn new(
-        virtual_range: Option<AddressRange>,
-        address_space: Option<TranslationAddressSpaceId>,
+        scope: RiscvSbiRemoteDataTlbFlushScope,
         completion_scope: RiscvSbiRfenceCompletionScope,
     ) -> Self {
         Self {
-            virtual_range,
-            address_space,
+            scope,
             completion_scope,
         }
     }
 
     fn execute(self, target: &RiscvCore) -> Option<u64> {
-        target
-            .flush_data_translation_tlb_range(self.virtual_range, self.address_space)
-            .map(|entries| entries as u64)
+        match self.scope {
+            RiscvSbiRemoteDataTlbFlushScope::Virtual {
+                range,
+                address_space,
+            } => target.flush_data_translation_tlb_range(range, address_space),
+            RiscvSbiRemoteDataTlbFlushScope::Physical { range } => {
+                target.flush_data_translation_tlb_physical_range(range)
+            }
+        }
+        .map(|entries| entries as u64)
     }
 
     const fn completion_record(
@@ -1382,25 +1395,25 @@ fn valid_hfence_address_space(request: RiscvSbiRequest) -> bool {
     }
 }
 
-fn hfence_flush_scope(
-    request: RiscvSbiRequest,
-) -> Option<(Option<AddressRange>, Option<TranslationAddressSpaceId>)> {
+fn hfence_flush_scope(request: RiscvSbiRequest) -> Option<RiscvSbiRemoteDataTlbFlushScope> {
     match request.function() {
         SBI_RFENCE_REMOTE_HFENCE_GVMA | SBI_RFENCE_REMOTE_HFENCE_GVMA_VMID => {
-            rfence_virtual_range(request.arg2(), request.arg3())?;
-            // The modeled core TLB has ASID-tagged data translations but no
-            // VMID or G-stage address tag, so G-stage fences over-invalidate.
-            Some((None, None))
+            // HFENCE.GVMA start/size names a guest-physical range. The modeled
+            // TLB has no VMID tag, so VMID-scoped requests remain VMID-conservative.
+            Some(RiscvSbiRemoteDataTlbFlushScope::Physical {
+                range: rfence_virtual_range(request.arg2(), request.arg3())?,
+            })
         }
-        SBI_RFENCE_REMOTE_HFENCE_VVMA => {
-            Some((rfence_virtual_range(request.arg2(), request.arg3())?, None))
-        }
-        SBI_RFENCE_REMOTE_HFENCE_VVMA_ASID => Some((
-            rfence_virtual_range(request.arg2(), request.arg3())?,
-            Some(TranslationAddressSpaceId::new(
+        SBI_RFENCE_REMOTE_HFENCE_VVMA => Some(RiscvSbiRemoteDataTlbFlushScope::Virtual {
+            range: rfence_virtual_range(request.arg2(), request.arg3())?,
+            address_space: None,
+        }),
+        SBI_RFENCE_REMOTE_HFENCE_VVMA_ASID => Some(RiscvSbiRemoteDataTlbFlushScope::Virtual {
+            range: rfence_virtual_range(request.arg2(), request.arg3())?,
+            address_space: Some(TranslationAddressSpaceId::new(
                 u16::try_from(request.arg4()).ok()?,
             )),
-        )),
+        }),
         _ => None,
     }
 }

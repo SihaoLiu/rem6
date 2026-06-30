@@ -568,6 +568,21 @@ impl RiscvCoreState {
         })
     }
 
+    pub(super) fn flush_data_translation_tlb_physical_range(
+        &mut self,
+        physical_range: Option<AddressRange>,
+    ) -> Option<usize> {
+        let frontend = self.data_translation.as_mut()?;
+        let Some(tlb) = frontend.tlb_mut() else {
+            return Some(0);
+        };
+
+        Some(match physical_range {
+            None => tlb.flush_all(),
+            Some(physical_range) => tlb.demap_physical_range_all_address_spaces(physical_range),
+        })
+    }
+
     pub(super) fn next_unissued_data_access(
         &self,
     ) -> Option<(MemoryRequestId, rem6_isa_riscv::MemoryAccessKind)> {
@@ -950,6 +965,14 @@ impl RiscvCore {
     ) -> Option<usize> {
         let mut state = self.state.lock().expect("riscv core lock");
         state.flush_data_translation_tlb_range(virtual_range, address_space)
+    }
+
+    pub fn flush_data_translation_tlb_physical_range(
+        &self,
+        physical_range: Option<AddressRange>,
+    ) -> Option<usize> {
+        let mut state = self.state.lock().expect("riscv core lock");
+        state.flush_data_translation_tlb_physical_range(physical_range)
     }
 
     #[allow(clippy::too_many_arguments)]

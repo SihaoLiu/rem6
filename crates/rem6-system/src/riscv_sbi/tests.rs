@@ -748,12 +748,62 @@ fn remote_hfence_gvma_flushes_target_tlb_when_completion_event_runs() {
 }
 
 #[test]
-fn remote_hfence_gvma_vmid_conservatively_flushes_all_modeled_tlb_entries() {
-    let address_space11 = TranslationAddressSpaceId::new(11);
+fn remote_hfence_gvma_range_flushes_overlapping_physical_pages_only() {
     let (mut scheduler, transport, firmware, core0, core1) =
         registered_rfence_pair_with_tlb_entries(vec![
             rfence_tlb_entry(0x4000, 0x9000),
-            rfence_tlb_entry_in_address_space(address_space11, 0x7000, 0xb000),
+            rfence_tlb_entry(0x5000, 0xa000),
+            rfence_tlb_entry(0x7000, 0xc000),
+        ]);
+    assert_eq!(core1.data_translation_tlb_entry_count(), Some(3));
+
+    execute_rfence_ecall(
+        &mut scheduler,
+        &transport,
+        &core0,
+        rfence_request(SBI_RFENCE_REMOTE_HFENCE_GVMA, 0b10, 0, 0x9800, 0x1000, 0),
+    );
+
+    let outcome = firmware
+        .handle_pending_core_trap(&mut scheduler, &core0, false)
+        .expect("handled SBI trap")
+        .expect("SBI outcome");
+
+    assert_eq!(outcome, RiscvSbiOutcome::success(0));
+    scheduler.run_until_idle_conservative();
+
+    assert_eq!(core1.data_translation_tlb_entry_count(), Some(1));
+    assert_eq!(
+        core1.data_translation_tlb_contains_entry(
+            TranslationAddressSpaceId::global(),
+            Address::new(0x4000),
+        ),
+        Some(false)
+    );
+    assert_eq!(
+        core1.data_translation_tlb_contains_entry(
+            TranslationAddressSpaceId::global(),
+            Address::new(0x5000),
+        ),
+        Some(false)
+    );
+    assert_eq!(
+        core1.data_translation_tlb_contains_entry(
+            TranslationAddressSpaceId::global(),
+            Address::new(0x7000),
+        ),
+        Some(true)
+    );
+}
+
+#[test]
+fn remote_hfence_gvma_vmid_preserves_non_overlapping_physical_ranges_without_vmid_tag() {
+    let address_space11 = TranslationAddressSpaceId::new(11);
+    let address_space12 = TranslationAddressSpaceId::new(12);
+    let (mut scheduler, transport, firmware, core0, core1) =
+        registered_rfence_pair_with_tlb_entries(vec![
+            rfence_tlb_entry_in_address_space(address_space11, 0x4000, 0x9000),
+            rfence_tlb_entry_in_address_space(address_space12, 0x5000, 0xb000),
         ]);
     assert_eq!(core1.data_translation_tlb_entry_count(), Some(2));
 
@@ -765,7 +815,7 @@ fn remote_hfence_gvma_vmid_conservatively_flushes_all_modeled_tlb_entries() {
             SBI_RFENCE_REMOTE_HFENCE_GVMA_VMID,
             0b10,
             0,
-            0x4000,
+            0x9000,
             0x1000,
             7,
         ),
@@ -779,7 +829,15 @@ fn remote_hfence_gvma_vmid_conservatively_flushes_all_modeled_tlb_entries() {
     assert_eq!(outcome, RiscvSbiOutcome::success(0));
     scheduler.run_until_idle_conservative();
 
-    assert_eq!(core1.data_translation_tlb_entry_count(), Some(0));
+    assert_eq!(core1.data_translation_tlb_entry_count(), Some(1));
+    assert_eq!(
+        core1.data_translation_tlb_contains_entry(address_space11, Address::new(0x4000)),
+        Some(false)
+    );
+    assert_eq!(
+        core1.data_translation_tlb_contains_entry(address_space12, Address::new(0x5000)),
+        Some(true)
+    );
 }
 
 #[test]
