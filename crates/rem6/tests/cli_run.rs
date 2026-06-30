@@ -104,6 +104,8 @@ mod riscv_se_rename;
 mod riscv_se_resource;
 #[path = "cli_run/riscv_se_riscv.rs"]
 mod riscv_se_riscv;
+#[path = "cli_run/riscv_se_sched_attr.rs"]
+mod riscv_se_sched_attr;
 #[path = "cli_run/riscv_se_setns.rs"]
 mod riscv_se_setns;
 #[path = "cli_run/riscv_se_signal.rs"]

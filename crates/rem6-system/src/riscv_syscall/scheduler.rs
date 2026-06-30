@@ -2,8 +2,9 @@ use std::{cmp, mem};
 
 use super::{
     clock::write_riscv_linux_time_pair, linux_error, RiscvGuestMemoryReader,
-    RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EACCES,
-    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EPERM, RISCV_LINUX_ESRCH, RISCV_PAGE_BYTES,
+    RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_E2BIG,
+    RISCV_LINUX_EACCES, RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EPERM,
+    RISCV_LINUX_ESRCH, RISCV_PAGE_BYTES,
 };
 
 pub(super) const RISCV_LINUX_SCHED_GETSCHEDULER: u64 = 120;
@@ -15,6 +16,7 @@ pub(super) const RISCV_LINUX_SCHED_GETAFFINITY: u64 = 123;
 pub(super) const RISCV_LINUX_SCHED_GET_PRIORITY_MAX: u64 = 125;
 pub(super) const RISCV_LINUX_SCHED_GET_PRIORITY_MIN: u64 = 126;
 pub(super) const RISCV_LINUX_SCHED_RR_GET_INTERVAL: u64 = 127;
+pub(super) const RISCV_LINUX_SCHED_SETATTR: u64 = 274;
 pub(super) const RISCV_LINUX_SCHED_GETATTR: u64 = 275;
 pub(super) const RISCV_LINUX_IOPRIO_SET: u64 = 30;
 pub(super) const RISCV_LINUX_IOPRIO_GET: u64 = 31;
@@ -265,6 +267,65 @@ pub(super) fn syscall_sched_setaffinity(
     Some(0)
 }
 
+pub(super) fn syscall_sched_setattr(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> Option<u64> {
+    let requested_pid = linux_int_argument(request.argument(0));
+    let attr_address = request.argument(1);
+    if requested_pid < 0 || attr_address == 0 || request.argument(2) != 0 {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+
+    let guest_memory_reader = guest_memory_reader?;
+    let Some(size_bytes) = read_guest_exact(guest_memory_reader, attr_address, 4) else {
+        return Some(linux_error(RISCV_LINUX_EFAULT));
+    };
+    let requested_bytes = u32::from_le_bytes(size_bytes.as_slice().try_into().ok()?) as u64;
+    let copied_bytes = if requested_bytes == 0 {
+        RISCV_LINUX_SCHED_ATTR_BYTES_VER0
+    } else {
+        requested_bytes
+    };
+    if copied_bytes < RISCV_LINUX_SCHED_ATTR_BYTES_VER0 || copied_bytes > RISCV_PAGE_BYTES {
+        write_modeled_sched_attr_size(attr_address, guest_memory_writer);
+        return Some(linux_error(RISCV_LINUX_E2BIG));
+    }
+
+    let Some(attr) = read_guest_exact(guest_memory_reader, attr_address, copied_bytes as usize)
+    else {
+        return Some(linux_error(RISCV_LINUX_EFAULT));
+    };
+    if copied_bytes > RISCV_LINUX_SCHED_ATTR_BYTES
+        && attr[RISCV_LINUX_SCHED_ATTR_BYTES_USIZE..]
+            .iter()
+            .any(|byte| *byte != 0)
+    {
+        write_modeled_sched_attr_size(attr_address, guest_memory_writer);
+        return Some(linux_error(RISCV_LINUX_E2BIG));
+    }
+    if let Err(errno) = scheduler_target(request.argument(0), state) {
+        return Some(linux_error(errno));
+    }
+
+    let policy = read_sched_attr_policy(&attr);
+    let flags = read_sched_attr_flags(&attr);
+    let nice = read_sched_attr_nice(&attr).clamp(RISCV_LINUX_NICE_MIN, RISCV_LINUX_NICE_MAX);
+    let priority = read_sched_attr_priority(&attr);
+    if flags != 0 || !settable_scheduler_policy(policy) || priority != 0 {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+    if nice < state.process_nice() {
+        return Some(linux_error(RISCV_LINUX_EPERM));
+    }
+
+    state.set_sched_policy(policy);
+    state.set_process_nice(nice);
+    Some(0)
+}
+
 pub(super) fn syscall_sched_getaffinity(
     request: RiscvSyscallRequest,
     state: &RiscvSyscallState,
@@ -326,6 +387,18 @@ pub(super) fn syscall_sched_getattr(
     Some(0)
 }
 
+fn write_modeled_sched_attr_size(
+    attr_address: u64,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) {
+    if let Some(guest_memory_writer) = guest_memory_writer {
+        let _ = guest_memory_writer.write(
+            attr_address,
+            &(RISCV_LINUX_SCHED_ATTR_BYTES as u32).to_le_bytes(),
+        );
+    }
+}
+
 fn riscv_linux_sched_attr_bytes(
     state: &RiscvSyscallState,
     written_bytes: usize,
@@ -336,6 +409,22 @@ fn riscv_linux_sched_attr_bytes(
     bytes[16..20].copy_from_slice(&state.process_nice().to_le_bytes());
     bytes[20..24].copy_from_slice(&(RISCV_LINUX_DEFAULT_SCHED_PRIORITY as u32).to_le_bytes());
     bytes
+}
+
+fn read_sched_attr_policy(bytes: &[u8]) -> i32 {
+    u32::from_le_bytes(bytes[4..8].try_into().unwrap()) as i32
+}
+
+fn read_sched_attr_flags(bytes: &[u8]) -> u64 {
+    u64::from_le_bytes(bytes[8..16].try_into().unwrap())
+}
+
+fn read_sched_attr_nice(bytes: &[u8]) -> i32 {
+    i32::from_le_bytes(bytes[16..20].try_into().unwrap())
+}
+
+fn read_sched_attr_priority(bytes: &[u8]) -> u32 {
+    u32::from_le_bytes(bytes[20..24].try_into().unwrap())
 }
 
 impl RiscvSyscallState {

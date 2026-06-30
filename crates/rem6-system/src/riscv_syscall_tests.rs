@@ -84,6 +84,8 @@ mod rename_tests;
 mod robust_tests;
 #[path = "riscv_syscall_tests/scheduler_getattr_tests.rs"]
 mod scheduler_getattr_tests;
+#[path = "riscv_syscall_tests/scheduler_setattr_tests.rs"]
+mod scheduler_setattr_tests;
 #[path = "riscv_syscall_tests/scheduler_tests.rs"]
 mod scheduler_tests;
 #[path = "riscv_syscall_tests/sendfile_tests.rs"]

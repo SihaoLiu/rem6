@@ -737,6 +737,13 @@ impl RiscvSyscallTable {
                 scheduler::syscall_sched_setaffinity(request, state, guest_memory_reader)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
+            scheduler::RISCV_LINUX_SCHED_SETATTR => scheduler::syscall_sched_setattr(
+                request,
+                state,
+                guest_memory_reader,
+                guest_memory_writer,
+            )
+            .map(|value| RiscvSyscallOutcome::Return { value }),
             scheduler::RISCV_LINUX_SCHED_GETSCHEDULER => Some(RiscvSyscallOutcome::Return {
                 value: scheduler::syscall_sched_getscheduler(request, state),
             }),
