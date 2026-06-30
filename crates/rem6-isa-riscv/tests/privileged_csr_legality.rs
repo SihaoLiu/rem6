@@ -1,6 +1,6 @@
 use rem6_isa_riscv::{
-    Register, RegisterWrite, RiscvHartState, RiscvInstruction, RiscvPrivilegeMode, RiscvStatusWord,
-    RiscvTrap, RiscvTrapKind,
+    Register, RegisterWrite, RiscvCounterSnapshot, RiscvGdbXlen, RiscvHartState, RiscvInstruction,
+    RiscvPrivilegeMode, RiscvStatusWord, RiscvTrap, RiscvTrapKind,
 };
 
 fn reg(index: u8) -> Register {
@@ -123,6 +123,32 @@ fn hart_allows_supervisor_enabled_user_counter_csr_read() {
 }
 
 #[test]
+fn rv32_hart_allows_supervisor_enabled_user_counter_high_csr_read() {
+    let mut hart = RiscvHartState::new(0x7b10);
+    hart.set_xlen(RiscvGdbXlen::Rv32);
+    hart.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    hart.set_machine_counter_enable(1);
+    hart.restore_counter_snapshot(&RiscvCounterSnapshot::with_time(
+        0x1234_5678_9abc_def0,
+        0,
+        0,
+    ));
+
+    let record = hart
+        .execute(RiscvInstruction::decode(csr_read_type(0xc80, 5)).unwrap())
+        .unwrap();
+
+    assert_eq!(record.pc(), 0x7b10);
+    assert_eq!(record.next_pc(), 0x7b14);
+    assert_eq!(hart.privilege_mode(), RiscvPrivilegeMode::Supervisor);
+    assert_eq!(
+        record.register_writes(),
+        &[RegisterWrite::new(reg(5), 0x1234_5678)]
+    );
+    assert_eq!(record.trap(), None);
+}
+
+#[test]
 fn hart_traps_supervisor_disabled_user_counter_csr_read() {
     let mut hart = RiscvHartState::new(0x7b20);
     hart.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
@@ -141,6 +167,28 @@ fn hart_traps_supervisor_disabled_user_counter_csr_read() {
     assert_eq!(
         record.trap(),
         Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x7b20))
+    );
+    assert_eq!(record.register_writes(), &[]);
+    assert_eq!(hart.read(reg(5)), 0);
+}
+
+#[test]
+fn rv32_hart_traps_supervisor_disabled_user_counter_high_csr_read() {
+    let mut hart = RiscvHartState::new(0x7b30);
+    hart.set_xlen(RiscvGdbXlen::Rv32);
+    hart.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
+    hart.set_machine_trap_vector(0x9000);
+
+    let record = hart
+        .execute(RiscvInstruction::decode(csr_read_type(0xc80, 5)).unwrap())
+        .unwrap();
+
+    assert_eq!(record.pc(), 0x7b30);
+    assert_eq!(record.next_pc(), 0x9000);
+    assert_eq!(hart.privilege_mode(), RiscvPrivilegeMode::Machine);
+    assert_eq!(
+        record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x7b30))
     );
     assert_eq!(record.register_writes(), &[]);
     assert_eq!(hart.read(reg(5)), 0);
@@ -186,6 +234,52 @@ fn hart_allows_user_counter_csr_read_only_when_machine_and_supervisor_enable_bit
 }
 
 #[test]
+fn rv32_hart_allows_user_counter_high_csr_read_only_when_counter_enable_bits_are_set() {
+    let mut denied = RiscvHartState::new(0x7b70);
+    denied.set_xlen(RiscvGdbXlen::Rv32);
+    denied.set_privilege_mode(RiscvPrivilegeMode::User);
+    denied.set_machine_counter_enable(1 << 1);
+    denied.set_machine_trap_vector(0x9000);
+
+    let denied_record = denied
+        .execute(RiscvInstruction::decode(csr_read_type(0xc81, 5)).unwrap())
+        .unwrap();
+
+    assert_eq!(denied_record.pc(), 0x7b70);
+    assert_eq!(denied_record.next_pc(), 0x9000);
+    assert_eq!(denied.privilege_mode(), RiscvPrivilegeMode::Machine);
+    assert_eq!(
+        denied_record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x7b70))
+    );
+    assert_eq!(denied.read(reg(5)), 0);
+
+    let mut allowed = RiscvHartState::new(0x7b90);
+    allowed.set_xlen(RiscvGdbXlen::Rv32);
+    allowed.set_privilege_mode(RiscvPrivilegeMode::User);
+    allowed.set_machine_counter_enable(1 << 1);
+    allowed.set_supervisor_counter_enable(1 << 1);
+    allowed.restore_counter_snapshot(&RiscvCounterSnapshot::with_time(
+        0,
+        0x3456_789a_bcde_f001,
+        0,
+    ));
+
+    let allowed_record = allowed
+        .execute(RiscvInstruction::decode(csr_read_type(0xc81, 5)).unwrap())
+        .unwrap();
+
+    assert_eq!(allowed_record.pc(), 0x7b90);
+    assert_eq!(allowed_record.next_pc(), 0x7b94);
+    assert_eq!(allowed.privilege_mode(), RiscvPrivilegeMode::User);
+    assert_eq!(
+        allowed_record.register_writes(),
+        &[RegisterWrite::new(reg(5), 0x3456_789a)]
+    );
+    assert_eq!(allowed_record.trap(), None);
+}
+
+#[test]
 fn hart_traps_supervisor_machine_counter_csr_read() {
     let mut hart = RiscvHartState::new(0x7c00);
     hart.set_privilege_mode(RiscvPrivilegeMode::Supervisor);
@@ -209,6 +303,35 @@ fn hart_traps_supervisor_machine_counter_csr_read() {
     );
     assert_eq!(record.register_writes(), &[]);
     assert_eq!(hart.read(reg(5)), 0);
+}
+
+#[test]
+fn rv32_hart_traps_lower_privilege_machine_counter_high_csr_reads() {
+    let cases = [
+        (RiscvPrivilegeMode::Supervisor, 0xb80, 0x7c20),
+        (RiscvPrivilegeMode::User, 0xb82, 0x7c40),
+    ];
+
+    for (mode, csr, pc) in cases {
+        let mut hart = RiscvHartState::new(pc);
+        hart.set_xlen(RiscvGdbXlen::Rv32);
+        hart.set_privilege_mode(mode);
+        hart.set_machine_trap_vector(0x9000);
+
+        let record = hart
+            .execute(RiscvInstruction::decode(csr_read_type(csr, 5)).unwrap())
+            .unwrap();
+
+        assert_eq!(record.pc(), pc);
+        assert_eq!(record.next_pc(), 0x9000);
+        assert_eq!(hart.privilege_mode(), RiscvPrivilegeMode::Machine);
+        assert_eq!(
+            record.trap(),
+            Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, pc))
+        );
+        assert_eq!(record.register_writes(), &[]);
+        assert_eq!(hart.read(reg(5)), 0);
+    }
 }
 
 #[test]

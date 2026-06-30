@@ -1,6 +1,6 @@
 use rem6_isa_riscv::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryAccessKind, MemoryWidth, Register,
-    RegisterWrite, RiscvCounterBank, RiscvCounterCsr, RiscvCounterEnableCsr,
+    RegisterWrite, RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterEnableCsr,
     RiscvCounterEnableCsrInstruction, RiscvCounterSnapshot, RiscvCsrError, RiscvCsrOp,
     RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction, RiscvError,
     RiscvExecutionRecord, RiscvFenceSet, RiscvGdbXlen, RiscvHartState, RiscvInstruction,
@@ -599,6 +599,46 @@ fn hart_reads_cycle_and_instret_counter_csrs() {
     assert_eq!(hart.read(reg(5)), 1);
     assert_eq!(hart.read(reg(6)), 2);
     assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(3, 3));
+}
+
+#[test]
+fn rv64_hart_traps_rv32_counter_high_word_csrs() {
+    let user_high = RiscvInstruction::decode(csr_read_type(0xc80, 5)).unwrap();
+    let machine_high = RiscvInstruction::decode(csr_read_type(0xb80, 6)).unwrap();
+    assert_eq!(
+        user_high,
+        RiscvInstruction::ReadCounterCsrWord {
+            rd: reg(5),
+            csr: RiscvCounterCsrWord::CycleHigh,
+        }
+    );
+    assert_eq!(
+        machine_high,
+        RiscvInstruction::ReadMachineCounterCsrWord {
+            rd: reg(6),
+            csr: RiscvCounterCsrWord::CycleHigh,
+        }
+    );
+
+    let mut user_hart = RiscvHartState::new(0x2440);
+    user_hart.set_machine_trap_vector(0x9000);
+    let user_record = user_hart.execute(user_high).unwrap();
+    assert_eq!(
+        user_record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x2440))
+    );
+    assert_eq!(user_record.register_writes(), &[]);
+    assert_eq!(user_hart.read(reg(5)), 0);
+
+    let mut machine_hart = RiscvHartState::new(0x2480);
+    machine_hart.set_machine_trap_vector(0x9040);
+    let machine_record = machine_hart.execute(machine_high).unwrap();
+    assert_eq!(
+        machine_record.trap(),
+        Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, 0x2480))
+    );
+    assert_eq!(machine_record.register_writes(), &[]);
+    assert_eq!(machine_hart.read(reg(6)), 0);
 }
 
 #[test]

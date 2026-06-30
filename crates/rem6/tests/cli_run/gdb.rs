@@ -336,6 +336,95 @@ fn rem6_run_gdb_listen_writes_rv32_counter_enable_csrs_before_execution() {
 }
 
 #[test]
+fn rem6_run_gdb_listen_writes_rv32_counter_high_csrs_before_execution() {
+    let program = riscv64_program(&[
+        csr_read(0xb80, 5),  // csrr x5, mcycleh
+        csr_read(0xc81, 6),  // csrr x6, timeh
+        csr_read(0xb82, 7),  // csrr x7, minstreth
+        csr_read(0xc80, 28), // csrr x28, cycleh
+        csr_read(0xc82, 29), // csrr x29, instreth
+        0x0000_0073,         // ecall
+    ]);
+    let (child, mut stream) =
+        start_riscv32_gdb_run("gdb-listen-rv32-counter-high-csrs", program, 80);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    let mut csr_description = String::new();
+    for offset in (0..=0xb40).step_by(0xa0) {
+        let payload = format!("qXfer:features:read:riscv-32bit-csr.xml:{offset:x},a0");
+        csr_description.push_str(&String::from_utf8_lossy(&send_gdb_packet(
+            &mut stream,
+            payload.as_bytes(),
+        )));
+    }
+    for register in ["cycleh", "timeh", "instreth", "mcycleh", "minstreth"] {
+        assert!(
+            csr_description.contains(register),
+            "missing {register} in {csr_description}"
+        );
+    }
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"Pa1=12000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"Pa2=34000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"Pa3=56000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"Pa4=78000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"Pa5=9a000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"pa1"),
+        gdb_response(b"78000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"pa2"),
+        gdb_response(b"34000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"pa3"),
+        gdb_response(b"9a000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"pa4"),
+        gdb_response(b"78000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"pa5"),
+        gdb_response(b"9a000000")
+    );
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"architecture\":\"riscv32\""));
+    assert!(stdout.contains("\"x5\":\"0x78\""), "stdout: {stdout}");
+    assert!(stdout.contains("\"x6\":\"0x34\""), "stdout: {stdout}");
+    assert!(stdout.contains("\"x7\":\"0x9a\""), "stdout: {stdout}");
+    assert!(stdout.contains("\"x28\":\"0x78\""), "stdout: {stdout}");
+    assert!(stdout.contains("\"x29\":\"0x9a\""), "stdout: {stdout}");
+}
+
+#[test]
 fn rem6_run_gdb_listen_writes_rv32_mstatush_before_execution() {
     let program = riscv64_program(&[
         csr_read(0x310, 5), // csrr x5, mstatush

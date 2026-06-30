@@ -6,9 +6,9 @@ use rem6_debug::{
     DEFAULT_GDB_REMOTE_MAX_PAYLOAD_BYTES,
 };
 use rem6_isa_riscv::{
-    FloatRegister, Register, RiscvCounterCsr, RiscvCounterEnableCsr, RiscvCounterSnapshot,
-    RiscvEnvironmentConfigCsr, RiscvFloatCsr, RiscvGdbTargetDescription, RiscvGdbXlen,
-    RiscvHartState, RiscvInterruptCsr, RiscvMachineIdentityCsr, RiscvMachineIsaCsr,
+    FloatRegister, Register, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterEnableCsr,
+    RiscvCounterSnapshot, RiscvEnvironmentConfigCsr, RiscvFloatCsr, RiscvGdbTargetDescription,
+    RiscvGdbXlen, RiscvHartState, RiscvInterruptCsr, RiscvMachineIdentityCsr, RiscvMachineIsaCsr,
     RiscvMachineTrapCsr, RiscvPmpTable, RiscvStatusCsr, RiscvSupervisorTrapCsr,
     RiscvTranslationCsr, RiscvVectorConfig, RiscvVectorFixedPointCsr, VectorRegister,
     RISCV_VECTOR_REGISTER_BYTES,
@@ -43,6 +43,7 @@ enum RiscvGdbCsrRegister {
     EnvironmentConfig(RiscvEnvironmentConfigCsr),
     CounterEnable(RiscvCounterEnableCsr),
     Counter(RiscvCounterCsr),
+    CounterWord(RiscvCounterCsrWord),
     MachineIdentity(RiscvMachineIdentityCsr),
     MachineIsa(RiscvMachineIsaCsr),
     PmpConfig(usize),
@@ -1184,6 +1185,7 @@ fn read_hart_csr_register_value(xlen: RiscvGdbXlen, hart: &RiscvHartState, numbe
         RiscvGdbCsrRegister::EnvironmentConfig(csr) => read_hart_environment_config_csr(hart, csr),
         RiscvGdbCsrRegister::CounterEnable(csr) => read_hart_counter_enable_csr(hart, csr),
         RiscvGdbCsrRegister::Counter(csr) => read_hart_counter_csr(hart, csr),
+        RiscvGdbCsrRegister::CounterWord(csr) => read_hart_counter_word_csr(hart, csr),
         RiscvGdbCsrRegister::MachineIdentity(csr) => csr.read(hart.hart_id()),
         RiscvGdbCsrRegister::MachineIsa(csr) => csr.read_for_xlen_bits(riscv_gdb_xlen_bits(xlen)),
         RiscvGdbCsrRegister::PmpConfig(_) | RiscvGdbCsrRegister::PmpAddr(_) => 0,
@@ -1226,6 +1228,9 @@ fn write_hart_csr_register_value(
         }
         RiscvGdbCsrRegister::Counter(csr) => {
             write_hart_counter_csr(hart, csr, value);
+        }
+        RiscvGdbCsrRegister::CounterWord(csr) => {
+            write_hart_counter_word_csr(hart, csr, value);
         }
         RiscvGdbCsrRegister::MachineIdentity(_) => {}
         RiscvGdbCsrRegister::MachineIsa(_) => {}
@@ -1270,6 +1275,9 @@ fn write_core_csr_register_value(
         }
         RiscvGdbCsrRegister::Counter(csr) => {
             write_core_counter_csr(core, csr, value);
+        }
+        RiscvGdbCsrRegister::CounterWord(csr) => {
+            write_core_counter_word_csr(core, csr, value);
         }
         RiscvGdbCsrRegister::MachineIdentity(_) => {}
         RiscvGdbCsrRegister::MachineIsa(_) => {}
@@ -1336,6 +1344,26 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     }
     if xlen == RiscvGdbXlen::Rv32 && number == RISCV_GDB_RV32_STATUS_HIGH_REGISTER {
         return RiscvGdbCsrRegister::Status(RiscvStatusCsr::Mstatush);
+    }
+    if xlen == RiscvGdbXlen::Rv32 {
+        match number {
+            RISCV_GDB_RV32_COUNTER_CYCLE_HIGH_REGISTER => {
+                return RiscvGdbCsrRegister::CounterWord(RiscvCounterCsrWord::CycleHigh);
+            }
+            RISCV_GDB_RV32_COUNTER_TIME_HIGH_REGISTER => {
+                return RiscvGdbCsrRegister::CounterWord(RiscvCounterCsrWord::TimeHigh);
+            }
+            RISCV_GDB_RV32_COUNTER_INSTRET_HIGH_REGISTER => {
+                return RiscvGdbCsrRegister::CounterWord(RiscvCounterCsrWord::InstretHigh);
+            }
+            RISCV_GDB_RV32_MACHINE_COUNTER_CYCLE_HIGH_REGISTER => {
+                return RiscvGdbCsrRegister::CounterWord(RiscvCounterCsrWord::CycleHigh);
+            }
+            RISCV_GDB_RV32_MACHINE_COUNTER_INSTRET_HIGH_REGISTER => {
+                return RiscvGdbCsrRegister::CounterWord(RiscvCounterCsrWord::InstretHigh);
+            }
+            _ => {}
+        }
     }
     if number == RISCV_GDB_PMP_CONFIG0_REGISTER {
         return RiscvGdbCsrRegister::PmpConfig(0);
@@ -1480,8 +1508,22 @@ fn write_hart_counter_csr(hart: &mut RiscvHartState, csr: RiscvCounterCsr, value
     hart.restore_counter_snapshot(&snapshot);
 }
 
+fn read_hart_counter_word_csr(hart: &RiscvHartState, csr: RiscvCounterCsrWord) -> u64 {
+    read_counter_snapshot_word(hart.counter_snapshot(), csr)
+}
+
+fn write_hart_counter_word_csr(hart: &mut RiscvHartState, csr: RiscvCounterCsrWord, value: u64) {
+    let snapshot = counter_snapshot_with_word_value(hart.counter_snapshot(), csr, value);
+    hart.restore_counter_snapshot(&snapshot);
+}
+
 fn write_core_counter_csr(core: &RiscvCore, csr: RiscvCounterCsr, value: u64) {
     let snapshot = counter_snapshot_with_value(core.counter_snapshot(), csr, value);
+    core.restore_counter_snapshot(&snapshot);
+}
+
+fn write_core_counter_word_csr(core: &RiscvCore, csr: RiscvCounterCsrWord, value: u64) {
+    let snapshot = counter_snapshot_with_word_value(core.counter_snapshot(), csr, value);
     core.restore_counter_snapshot(&snapshot);
 }
 
@@ -1501,6 +1543,73 @@ fn counter_snapshot_with_value(
             RiscvCounterSnapshot::with_time(snapshot.cycle(), value, snapshot.instret())
         }
     }
+}
+
+fn read_counter_snapshot_word(snapshot: RiscvCounterSnapshot, csr: RiscvCounterCsrWord) -> u64 {
+    match csr {
+        RiscvCounterCsrWord::CycleLow => low_word(snapshot.cycle()),
+        RiscvCounterCsrWord::CycleHigh => high_word(snapshot.cycle()),
+        RiscvCounterCsrWord::TimeLow => low_word(snapshot.time()),
+        RiscvCounterCsrWord::TimeHigh => high_word(snapshot.time()),
+        RiscvCounterCsrWord::InstretLow => low_word(snapshot.instret()),
+        RiscvCounterCsrWord::InstretHigh => high_word(snapshot.instret()),
+    }
+}
+
+fn counter_snapshot_with_word_value(
+    snapshot: RiscvCounterSnapshot,
+    csr: RiscvCounterCsrWord,
+    value: u64,
+) -> RiscvCounterSnapshot {
+    let value = value & u64::from(u32::MAX);
+    match csr {
+        RiscvCounterCsrWord::CycleLow => RiscvCounterSnapshot::with_time(
+            with_low_word(snapshot.cycle(), value),
+            snapshot.time(),
+            snapshot.instret(),
+        ),
+        RiscvCounterCsrWord::CycleHigh => RiscvCounterSnapshot::with_time(
+            with_high_word(snapshot.cycle(), value),
+            snapshot.time(),
+            snapshot.instret(),
+        ),
+        RiscvCounterCsrWord::TimeLow => RiscvCounterSnapshot::with_time(
+            snapshot.cycle(),
+            with_low_word(snapshot.time(), value),
+            snapshot.instret(),
+        ),
+        RiscvCounterCsrWord::TimeHigh => RiscvCounterSnapshot::with_time(
+            snapshot.cycle(),
+            with_high_word(snapshot.time(), value),
+            snapshot.instret(),
+        ),
+        RiscvCounterCsrWord::InstretLow => RiscvCounterSnapshot::with_time(
+            snapshot.cycle(),
+            snapshot.time(),
+            with_low_word(snapshot.instret(), value),
+        ),
+        RiscvCounterCsrWord::InstretHigh => RiscvCounterSnapshot::with_time(
+            snapshot.cycle(),
+            snapshot.time(),
+            with_high_word(snapshot.instret(), value),
+        ),
+    }
+}
+
+fn low_word(value: u64) -> u64 {
+    value & u64::from(u32::MAX)
+}
+
+fn high_word(value: u64) -> u64 {
+    value >> 32
+}
+
+fn with_low_word(current: u64, value: u64) -> u64 {
+    (current & 0xffff_ffff_0000_0000) | value
+}
+
+fn with_high_word(current: u64, value: u64) -> u64 {
+    (current & u64::from(u32::MAX)) | (value << 32)
 }
 
 fn read_hart_environment_config_csr(hart: &RiscvHartState, csr: RiscvEnvironmentConfigCsr) -> u64 {

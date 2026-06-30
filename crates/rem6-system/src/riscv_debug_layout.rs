@@ -40,6 +40,11 @@ pub(super) const RISCV_GDB_RV64_MACHINE_COUNTER_ENABLE_REGISTER: u64 = 157;
 pub(super) const RISCV_GDB_RV32_SUPERVISOR_COUNTER_ENABLE_REGISTER: u64 = 158;
 pub(super) const RISCV_GDB_RV32_MACHINE_COUNTER_ENABLE_REGISTER: u64 = 159;
 pub(super) const RISCV_GDB_RV32_STATUS_HIGH_REGISTER: u64 = 160;
+pub(super) const RISCV_GDB_RV32_COUNTER_CYCLE_HIGH_REGISTER: u64 = 161;
+pub(super) const RISCV_GDB_RV32_COUNTER_TIME_HIGH_REGISTER: u64 = 162;
+pub(super) const RISCV_GDB_RV32_COUNTER_INSTRET_HIGH_REGISTER: u64 = 163;
+pub(super) const RISCV_GDB_RV32_MACHINE_COUNTER_CYCLE_HIGH_REGISTER: u64 = 164;
+pub(super) const RISCV_GDB_RV32_MACHINE_COUNTER_INSTRET_HIGH_REGISTER: u64 = 165;
 pub(super) const RISCV_GDB_SPARSE_CSR_REGISTER_COUNT: usize = 36;
 
 pub(super) fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
@@ -91,6 +96,17 @@ pub(super) fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<It
             xlen,
         )))
         .chain((xlen == RiscvGdbXlen::Rv32).then_some(RISCV_GDB_RV32_STATUS_HIGH_REGISTER))
+        .chain((xlen == RiscvGdbXlen::Rv32).then_some(RISCV_GDB_RV32_COUNTER_CYCLE_HIGH_REGISTER))
+        .chain((xlen == RiscvGdbXlen::Rv32).then_some(RISCV_GDB_RV32_COUNTER_TIME_HIGH_REGISTER))
+        .chain((xlen == RiscvGdbXlen::Rv32).then_some(RISCV_GDB_RV32_COUNTER_INSTRET_HIGH_REGISTER))
+        .chain(
+            (xlen == RiscvGdbXlen::Rv32)
+                .then_some(RISCV_GDB_RV32_MACHINE_COUNTER_CYCLE_HIGH_REGISTER),
+        )
+        .chain(
+            (xlen == RiscvGdbXlen::Rv32)
+                .then_some(RISCV_GDB_RV32_MACHINE_COUNTER_INSTRET_HIGH_REGISTER),
+        )
 }
 
 pub(super) fn register_count(xlen: RiscvGdbXlen) -> usize {
@@ -102,7 +118,7 @@ pub(super) fn register_count(xlen: RiscvGdbXlen) -> usize {
         + RISCV_GDB_CSR_REGISTER_COUNT as usize
         + RISCV_GDB_VECTOR_REGISTER_COUNT as usize
         + RISCV_GDB_SPARSE_CSR_REGISTER_COUNT
-        + if xlen == RiscvGdbXlen::Rv32 { 3 } else { 0 }
+        + if xlen == RiscvGdbXlen::Rv32 { 8 } else { 0 }
 }
 
 pub(super) fn register_set_byte_len(xlen: RiscvGdbXlen) -> usize {
@@ -188,6 +204,12 @@ pub(super) fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool
         || number == riscv_gdb_supervisor_counter_enable_register(xlen)
         || number == riscv_gdb_machine_counter_enable_register(xlen)
         || (xlen == RiscvGdbXlen::Rv32 && number == RISCV_GDB_RV32_STATUS_HIGH_REGISTER)
+        || (xlen == RiscvGdbXlen::Rv32
+            && (number == RISCV_GDB_RV32_COUNTER_CYCLE_HIGH_REGISTER
+                || number == RISCV_GDB_RV32_COUNTER_TIME_HIGH_REGISTER
+                || number == RISCV_GDB_RV32_COUNTER_INSTRET_HIGH_REGISTER
+                || number == RISCV_GDB_RV32_MACHINE_COUNTER_CYCLE_HIGH_REGISTER
+                || number == RISCV_GDB_RV32_MACHINE_COUNTER_INSTRET_HIGH_REGISTER))
         || number == RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER
         || number == RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER
 }

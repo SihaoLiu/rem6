@@ -432,6 +432,11 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "  <reg name=\"scounteren\" bitsize=\"32\" regnum=\"158\"/>\n",
             "  <reg name=\"mcounteren\" bitsize=\"32\" regnum=\"159\"/>\n",
             "  <reg name=\"mstatush\" bitsize=\"32\" regnum=\"160\"/>\n",
+            "  <reg name=\"cycleh\" bitsize=\"32\" regnum=\"161\"/>\n",
+            "  <reg name=\"timeh\" bitsize=\"32\" regnum=\"162\"/>\n",
+            "  <reg name=\"instreth\" bitsize=\"32\" regnum=\"163\"/>\n",
+            "  <reg name=\"mcycleh\" bitsize=\"32\" regnum=\"164\"/>\n",
+            "  <reg name=\"minstreth\" bitsize=\"32\" regnum=\"165\"/>\n",
             "</feature>\n",
         ),
     );
@@ -497,9 +502,14 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "scounteren",
             "mcounteren",
             "mstatush",
+            "cycleh",
+            "timeh",
+            "instreth",
+            "mcycleh",
+            "minstreth",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"32\"").count(), 59);
+    assert_eq!(csr.matches("bitsize=\"32\"").count(), 64);
 }
 
 #[test]

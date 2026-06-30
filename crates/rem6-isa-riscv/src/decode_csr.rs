@@ -1,8 +1,8 @@
 use crate::encoding::{csr, funct3, rd, rs1};
 use crate::{
-    RiscvCounterCsr, RiscvCounterEnableCsr, RiscvCounterEnableCsrInstruction, RiscvCsrOp,
-    RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction, RiscvError, RiscvFloatCsr,
-    RiscvInstruction, RiscvInterruptCsr, RiscvMachineInformationCsr,
+    RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterEnableCsr, RiscvCounterEnableCsrInstruction,
+    RiscvCsrOp, RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction, RiscvError,
+    RiscvFloatCsr, RiscvInstruction, RiscvInterruptCsr, RiscvMachineInformationCsr,
     RiscvMachineInformationCsrInstruction, RiscvMachineTrapCsr, RiscvStatusCsr,
     RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvTranslationCsrInstruction,
     RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction,
@@ -23,8 +23,17 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
                     .map(|csr| RiscvInstruction::ReadCounterCsr { rd: rd(raw), csr })
             })
             .or_else(|| {
+                RiscvCounterCsrWord::from_user_address(csr_address)
+                    .ok()
+                    .map(|csr| RiscvInstruction::ReadCounterCsrWord { rd: rd(raw), csr })
+            })
+            .or_else(|| {
                 machine_counter_csr(csr_address)
                     .map(|csr| RiscvInstruction::ReadMachineCounterCsr { rd: rd(raw), csr })
+            })
+            .or_else(|| {
+                machine_counter_csr_word(csr_address)
+                    .map(|csr| RiscvInstruction::ReadMachineCounterCsrWord { rd: rd(raw), csr })
             })
             .or_else(|| {
                 RiscvFloatCsr::from_address(csr_address)
@@ -545,4 +554,8 @@ fn decode_translation_csr_immediate(
 
 fn machine_counter_csr(address: u16) -> Option<RiscvCounterCsr> {
     RiscvCounterCsr::from_machine_address(address).ok()
+}
+
+fn machine_counter_csr_word(address: u16) -> Option<RiscvCounterCsrWord> {
+    RiscvCounterCsrWord::from_machine_address(address).ok()
 }

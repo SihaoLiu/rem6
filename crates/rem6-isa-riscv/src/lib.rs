@@ -259,7 +259,11 @@ impl RiscvHartState {
                 ));
             }
         }
-        if let RiscvInstruction::ReadCounterCsr { csr, .. } = instruction {
+        if let Some(csr) = match instruction {
+            RiscvInstruction::ReadCounterCsr { csr, .. } => Some(csr),
+            RiscvInstruction::ReadCounterCsrWord { csr, .. } => Some(csr.counter()),
+            _ => None,
+        } {
             if !counter_csr_read_allowed(self, csr) {
                 return Ok(enter_synchronous_trap(
                     self,
@@ -945,6 +949,14 @@ impl RiscvHartState {
                 let value = self.counters.read_machine(csr);
                 write_register(self, &mut register_writes, rd, value);
             }
+            #[rustfmt::skip]
+            RiscvInstruction::ReadCounterCsrWord { rd, csr } if self.xlen() == RiscvGdbXlen::Rv32 => { write_register(self, &mut register_writes, rd, u64::from(self.counters.read_user_word(csr))); }
+            #[rustfmt::skip]
+            RiscvInstruction::ReadCounterCsrWord { .. } => { return Ok(enter_synchronous_trap(self, instruction, instruction_bytes_u8, pc, RiscvTrapKind::IllegalInstruction)); }
+            #[rustfmt::skip]
+            RiscvInstruction::ReadMachineCounterCsrWord { rd, csr } if self.xlen() == RiscvGdbXlen::Rv32 && csr.machine_address().is_some() => { write_register(self, &mut register_writes, rd, u64::from(self.counters.read_machine_word(csr))); }
+            #[rustfmt::skip]
+            RiscvInstruction::ReadMachineCounterCsrWord { .. } => { return Ok(enter_synchronous_trap(self, instruction, instruction_bytes_u8, pc, RiscvTrapKind::IllegalInstruction)); }
             RiscvInstruction::WriteCounterCsr { rd, csr, rs1 } => {
                 if csr.machine_address().is_none() {
                     return Ok(enter_synchronous_trap(

@@ -413,4 +413,9 @@ const RV32_CSR_REGISTERS: &[CsrRegister] = &[
     CsrRegister::new("scounteren", Some(158)),
     CsrRegister::new("mcounteren", Some(159)),
     CsrRegister::new("mstatush", Some(160)),
+    CsrRegister::new("cycleh", Some(161)),
+    CsrRegister::new("timeh", Some(162)),
+    CsrRegister::new("instreth", Some(163)),
+    CsrRegister::new("mcycleh", Some(164)),
+    CsrRegister::new("minstreth", Some(165)),
 ];

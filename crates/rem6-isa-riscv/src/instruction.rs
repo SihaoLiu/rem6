@@ -1,8 +1,8 @@
 use crate::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryWidth, Register, RiscvCounterCsr,
-    RiscvEnvironmentConfigCsrInstruction, RiscvFenceSet, RiscvFloatCsr, RiscvFloatRoundingMode,
-    RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvPseudoOp, RiscvStatusCsr, RiscvSupervisorTrapCsr,
-    RiscvTranslationCsrInstruction, RiscvVectorMaskMode, VectorRegister,
+    RiscvCounterCsrWord, RiscvEnvironmentConfigCsrInstruction, RiscvFenceSet, RiscvFloatCsr,
+    RiscvFloatRoundingMode, RiscvInterruptCsr, RiscvMachineTrapCsr, RiscvPseudoOp, RiscvStatusCsr,
+    RiscvSupervisorTrapCsr, RiscvTranslationCsrInstruction, RiscvVectorMaskMode, VectorRegister,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1087,19 +1087,16 @@ pub enum RiscvInstruction {
     MachineInformationCsr(crate::csr::RiscvMachineInformationCsrInstruction),
     EnvironmentConfigCsr(RiscvEnvironmentConfigCsrInstruction),
     CounterEnableCsr(crate::csr::RiscvCounterEnableCsrInstruction),
-    ReadCounterCsr {
-        rd: Register,
-        csr: RiscvCounterCsr,
-    },
-    ReadMachineCounterCsr {
-        rd: Register,
-        csr: RiscvCounterCsr,
-    },
-    WriteCounterCsr {
-        rd: Register,
-        csr: RiscvCounterCsr,
-        rs1: Register,
-    },
+    #[rustfmt::skip]
+    ReadCounterCsr { rd: Register, csr: RiscvCounterCsr },
+    #[rustfmt::skip]
+    ReadMachineCounterCsr { rd: Register, csr: RiscvCounterCsr },
+    #[rustfmt::skip]
+    ReadCounterCsrWord { rd: Register, csr: RiscvCounterCsrWord },
+    #[rustfmt::skip]
+    ReadMachineCounterCsrWord { rd: Register, csr: RiscvCounterCsrWord },
+    #[rustfmt::skip]
+    WriteCounterCsr { rd: Register, csr: RiscvCounterCsr, rs1: Register },
     SetCounterCsr {
         rd: Register,
         csr: RiscvCounterCsr,
