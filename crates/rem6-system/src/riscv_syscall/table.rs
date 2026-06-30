@@ -66,6 +66,10 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_MSGCTL
             | RISCV_LINUX_MSGRCV
             | RISCV_LINUX_MSGSND
+            | RISCV_LINUX_SEMGET
+            | RISCV_LINUX_SEMCTL
+            | RISCV_LINUX_SEMTIMEDOP
+            | RISCV_LINUX_SEMOP
             | RISCV_LINUX_ADD_KEY
             | RISCV_LINUX_REQUEST_KEY
             | RISCV_LINUX_KEYCTL
