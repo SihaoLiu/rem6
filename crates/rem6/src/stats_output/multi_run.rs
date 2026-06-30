@@ -123,6 +123,48 @@ pub(crate) fn multi_run_stats_output(
         StatResetPolicy::Monotonic,
         inputs.total_checkpoint_restores,
     )?;
+    increment_stat(
+        &mut stats,
+        "sim.multi_run.checkpoint_components",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.total_checkpoint_component_count,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.multi_run.checkpoint_chunks",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.total_checkpoint_chunk_count,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.multi_run.checkpoint_payload_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        inputs.total_checkpoint_payload_bytes,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.multi_run.checkpoint_restored_components",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.total_checkpoint_restored_component_count,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.multi_run.checkpoint_restored_chunks",
+        "Count",
+        StatResetPolicy::Monotonic,
+        inputs.total_checkpoint_restored_chunk_count,
+    )?;
+    increment_stat(
+        &mut stats,
+        "sim.multi_run.checkpoint_restored_payload_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        inputs.total_checkpoint_restored_payload_bytes,
+    )?;
 
     let snapshot = stats.snapshot(0);
     Ok(Rem6StatsOutput {

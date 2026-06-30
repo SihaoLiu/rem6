@@ -326,6 +326,72 @@ config = "checkpoint.toml"
             .and_then(Value::as_u64),
         Some(0)
     );
+
+    let child_artifact = fs::read_to_string(workspace.join("artifacts/checkpoint-run.json"))
+        .unwrap_or_else(|error| panic!("missing child artifact: {error}"));
+    let child_json: Value = serde_json::from_str(&child_artifact).unwrap();
+    assert_eq!(
+        child_json
+            .pointer("/host_actions/checkpoint_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let checkpoint_components =
+        json_u64(&child_json, "/host_actions/checkpoints/0/component_count");
+    let checkpoint_chunks = json_u64(&child_json, "/host_actions/checkpoints/0/chunk_count");
+    let checkpoint_payload_bytes =
+        json_u64(&child_json, "/host_actions/checkpoints/0/payload_bytes");
+    assert_eq!(
+        json.get("total_checkpoint_component_count")
+            .and_then(Value::as_u64),
+        Some(checkpoint_components)
+    );
+    assert_eq!(
+        json.get("total_checkpoint_chunk_count")
+            .and_then(Value::as_u64),
+        Some(checkpoint_chunks)
+    );
+    assert_eq!(
+        json.get("total_checkpoint_payload_bytes")
+            .and_then(Value::as_u64),
+        Some(checkpoint_payload_bytes)
+    );
+    assert_eq!(
+        summary
+            .get("checkpoint_component_count")
+            .and_then(Value::as_u64),
+        Some(checkpoint_components)
+    );
+    assert_eq!(
+        summary
+            .get("checkpoint_chunk_count")
+            .and_then(Value::as_u64),
+        Some(checkpoint_chunks)
+    );
+    assert_eq!(
+        summary
+            .get("checkpoint_payload_bytes")
+            .and_then(Value::as_u64),
+        Some(checkpoint_payload_bytes)
+    );
+    assert_eq!(
+        summary
+            .get("checkpoint_restored_component_count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        summary
+            .get("checkpoint_restored_chunk_count")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        summary
+            .get("checkpoint_restored_payload_bytes")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
     assert_stat(
         &stdout,
         "sim.multi_run.checkpoints",
@@ -340,15 +406,26 @@ config = "checkpoint.toml"
         0,
         "monotonic",
     );
-
-    let child_artifact = fs::read_to_string(workspace.join("artifacts/checkpoint-run.json"))
-        .unwrap_or_else(|error| panic!("missing child artifact: {error}"));
-    let child_json: Value = serde_json::from_str(&child_artifact).unwrap();
-    assert_eq!(
-        child_json
-            .pointer("/host_actions/checkpoint_count")
-            .and_then(Value::as_u64),
-        Some(1)
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoint_components",
+        "Count",
+        checkpoint_components,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoint_chunks",
+        "Count",
+        checkpoint_chunks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoint_payload_bytes",
+        "Byte",
+        checkpoint_payload_bytes,
+        "monotonic",
     );
 }
 
@@ -447,20 +524,6 @@ config = "trace.toml"
             .and_then(Value::as_u64),
         Some(1)
     );
-    assert_stat(
-        &stdout,
-        "sim.multi_run.checkpoints",
-        "Count",
-        1,
-        "monotonic",
-    );
-    assert_stat(
-        &stdout,
-        "sim.multi_run.checkpoint_restores",
-        "Count",
-        1,
-        "monotonic",
-    );
 
     let child_artifact = fs::read_to_string(workspace.join("artifacts/trace-run.json"))
         .unwrap_or_else(|error| panic!("missing trace child artifact: {error}"));
@@ -486,6 +549,139 @@ config = "trace.toml"
     );
     assert_nonzero_json_u64(&child_json, "/simulation/checkpoint_restored_chunk_count");
     assert_nonzero_json_u64(&child_json, "/simulation/checkpoint_restored_payload_bytes");
+
+    let checkpoint_components = json_u64(&child_json, "/simulation/checkpoint_component_count");
+    let checkpoint_chunks = json_u64(&child_json, "/simulation/checkpoint_chunk_count");
+    let checkpoint_payload_bytes = json_u64(&child_json, "/simulation/checkpoint_payload_bytes");
+    let restored_components = json_u64(
+        &child_json,
+        "/simulation/checkpoint_restored_component_count",
+    );
+    let restored_chunks = json_u64(&child_json, "/simulation/checkpoint_restored_chunk_count");
+    let restored_payload_bytes =
+        json_u64(&child_json, "/simulation/checkpoint_restored_payload_bytes");
+    assert_eq!(
+        json.get("total_checkpoint_component_count")
+            .and_then(Value::as_u64),
+        Some(checkpoint_components)
+    );
+    assert_eq!(
+        json.get("total_checkpoint_chunk_count")
+            .and_then(Value::as_u64),
+        Some(checkpoint_chunks)
+    );
+    assert_eq!(
+        json.get("total_checkpoint_payload_bytes")
+            .and_then(Value::as_u64),
+        Some(checkpoint_payload_bytes)
+    );
+    assert_eq!(
+        json.get("total_checkpoint_restored_component_count")
+            .and_then(Value::as_u64),
+        Some(restored_components)
+    );
+    assert_eq!(
+        json.get("total_checkpoint_restored_chunk_count")
+            .and_then(Value::as_u64),
+        Some(restored_chunks)
+    );
+    assert_eq!(
+        json.get("total_checkpoint_restored_payload_bytes")
+            .and_then(Value::as_u64),
+        Some(restored_payload_bytes)
+    );
+    assert_eq!(
+        summary
+            .get("checkpoint_component_count")
+            .and_then(Value::as_u64),
+        Some(checkpoint_components)
+    );
+    assert_eq!(
+        summary
+            .get("checkpoint_chunk_count")
+            .and_then(Value::as_u64),
+        Some(checkpoint_chunks)
+    );
+    assert_eq!(
+        summary
+            .get("checkpoint_payload_bytes")
+            .and_then(Value::as_u64),
+        Some(checkpoint_payload_bytes)
+    );
+    assert_eq!(
+        summary
+            .get("checkpoint_restored_component_count")
+            .and_then(Value::as_u64),
+        Some(restored_components)
+    );
+    assert_eq!(
+        summary
+            .get("checkpoint_restored_chunk_count")
+            .and_then(Value::as_u64),
+        Some(restored_chunks)
+    );
+    assert_eq!(
+        summary
+            .get("checkpoint_restored_payload_bytes")
+            .and_then(Value::as_u64),
+        Some(restored_payload_bytes)
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoints",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoint_restores",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoint_components",
+        "Count",
+        checkpoint_components,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoint_chunks",
+        "Count",
+        checkpoint_chunks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoint_payload_bytes",
+        "Byte",
+        checkpoint_payload_bytes,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoint_restored_components",
+        "Count",
+        restored_components,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoint_restored_chunks",
+        "Count",
+        restored_chunks,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.multi_run.checkpoint_restored_payload_bytes",
+        "Byte",
+        restored_payload_bytes,
+        "monotonic",
+    );
 }
 
 #[test]
@@ -869,6 +1065,12 @@ fn assert_nonzero_json_u64(json: &Value, path: &str) {
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("missing nonzero JSON value {path}: {json}"));
     assert!(value > 0, "expected {path} to be nonzero in {json}");
+}
+
+fn json_u64(json: &Value, path: &str) -> u64 {
+    json.pointer(path)
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| panic!("missing JSON value {path}: {json}"))
 }
 
 #[test]

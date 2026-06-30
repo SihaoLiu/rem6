@@ -116,6 +116,12 @@ pub(super) struct Rem6MultiRunStatsInputs {
     pub(super) total_accelerator_completions: u64,
     pub(super) total_checkpoints: u64,
     pub(super) total_checkpoint_restores: u64,
+    pub(super) total_checkpoint_component_count: u64,
+    pub(super) total_checkpoint_chunk_count: u64,
+    pub(super) total_checkpoint_payload_bytes: u64,
+    pub(super) total_checkpoint_restored_component_count: u64,
+    pub(super) total_checkpoint_restored_chunk_count: u64,
+    pub(super) total_checkpoint_restored_payload_bytes: u64,
 }
 
 pub(super) fn run_stats_output(
