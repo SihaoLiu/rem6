@@ -43,7 +43,17 @@ pub struct ExecutionModeSwitchStateTransfer {
     component_count: u64,
     chunk_count: u64,
     payload_bytes: u64,
+    quiescence_gate: ExecutionModeSwitchQuiescenceGate,
     components: Vec<ExecutionModeSwitchStateTransferComponent>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionModeSwitchQuiescenceGate {
+    validated: bool,
+    target: ExecutionModeTarget,
+    captured_component_count: u64,
+    captured_chunk_count: u64,
+    captured_payload_bytes: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,7 +72,7 @@ pub struct ExecutionModeSwitchStateTransferChunk {
 }
 
 impl ExecutionModeSwitchStateTransfer {
-    fn from_manifest(manifest: &CheckpointManifest) -> Self {
+    fn from_manifest(manifest: &CheckpointManifest, target: &ExecutionModeTarget) -> Self {
         let summary = manifest.summary();
         let components = manifest
             .states()
@@ -75,6 +85,13 @@ impl ExecutionModeSwitchStateTransfer {
             component_count: summary.component_count() as u64,
             chunk_count: summary.chunk_count() as u64,
             payload_bytes: summary.payload_bytes() as u64,
+            quiescence_gate: ExecutionModeSwitchQuiescenceGate {
+                validated: true,
+                target: target.clone(),
+                captured_component_count: summary.component_count() as u64,
+                captured_chunk_count: summary.chunk_count() as u64,
+                captured_payload_bytes: summary.payload_bytes() as u64,
+            },
             components,
         }
     }
@@ -101,6 +118,32 @@ impl ExecutionModeSwitchStateTransfer {
 
     pub fn components(&self) -> &[ExecutionModeSwitchStateTransferComponent] {
         &self.components
+    }
+
+    pub const fn quiescence_gate(&self) -> &ExecutionModeSwitchQuiescenceGate {
+        &self.quiescence_gate
+    }
+}
+
+impl ExecutionModeSwitchQuiescenceGate {
+    pub const fn validated(&self) -> bool {
+        self.validated
+    }
+
+    pub const fn target(&self) -> &ExecutionModeTarget {
+        &self.target
+    }
+
+    pub const fn captured_component_count(&self) -> u64 {
+        self.captured_component_count
+    }
+
+    pub const fn captured_chunk_count(&self) -> u64 {
+        self.captured_chunk_count
+    }
+
+    pub const fn captured_payload_bytes(&self) -> u64 {
+        self.captured_payload_bytes
     }
 }
 

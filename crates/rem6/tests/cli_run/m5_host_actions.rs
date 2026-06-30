@@ -1042,6 +1042,42 @@ fn assert_execution_mode_switch(
             .is_some_and(|checksum| checksum.starts_with("0x") && checksum.len() == 18),
         "execution mode switch transfer {index}: {transfer}"
     );
+    let quiescence_gate = transfer
+        .pointer("/quiescence_gate")
+        .unwrap_or_else(|| panic!("missing execution mode switch quiescence gate {index}"));
+    assert_eq!(
+        quiescence_gate
+            .pointer("/validated")
+            .and_then(Value::as_bool),
+        Some(true),
+        "execution mode switch quiescence gate {index}: {quiescence_gate}"
+    );
+    assert_eq!(
+        quiescence_gate.pointer("/target").and_then(Value::as_str),
+        Some(target),
+        "execution mode switch quiescence gate {index}: {quiescence_gate}"
+    );
+    assert_eq!(
+        quiescence_gate
+            .pointer("/captured_component_count")
+            .and_then(Value::as_u64),
+        transfer.pointer("/component_count").and_then(Value::as_u64),
+        "execution mode switch quiescence gate {index}: {quiescence_gate}"
+    );
+    assert_eq!(
+        quiescence_gate
+            .pointer("/captured_chunk_count")
+            .and_then(Value::as_u64),
+        transfer.pointer("/chunk_count").and_then(Value::as_u64),
+        "execution mode switch quiescence gate {index}: {quiescence_gate}"
+    );
+    assert_eq!(
+        quiescence_gate
+            .pointer("/captured_payload_bytes")
+            .and_then(Value::as_u64),
+        transfer.pointer("/payload_bytes").and_then(Value::as_u64),
+        "execution mode switch quiescence gate {index}: {quiescence_gate}"
+    );
     (
         action
             .pointer("/tick")

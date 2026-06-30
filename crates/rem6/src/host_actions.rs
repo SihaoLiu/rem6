@@ -1,7 +1,7 @@
 use rem6_stats::{StatDumpRecord, StatsResetRecord};
 use rem6_system::{
-    ExecutionMode, ExecutionModeSwitchStateTransfer, ExecutionModeSwitchStateTransferComponent,
-    SystemActionOutcome,
+    ExecutionMode, ExecutionModeSwitchQuiescenceGate, ExecutionModeSwitchStateTransfer,
+    ExecutionModeSwitchStateTransferComponent, SystemActionOutcome,
 };
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -196,7 +196,17 @@ pub(crate) struct Rem6ExecutionModeStateTransferSummary {
     pub(crate) component_count: u64,
     pub(crate) chunk_count: u64,
     pub(crate) payload_bytes: u64,
+    pub(crate) quiescence_gate: Rem6ExecutionModeQuiescenceGateSummary,
     pub(crate) components: Vec<Rem6HostCheckpointComponentSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6ExecutionModeQuiescenceGateSummary {
+    pub(crate) validated: bool,
+    pub(crate) target: String,
+    pub(crate) captured_component_count: u64,
+    pub(crate) captured_chunk_count: u64,
+    pub(crate) captured_payload_bytes: u64,
 }
 
 impl Rem6ExecutionModeStateTransferSummary {
@@ -212,7 +222,22 @@ impl Rem6ExecutionModeStateTransferSummary {
             component_count: transfer.component_count(),
             chunk_count: transfer.chunk_count(),
             payload_bytes: transfer.payload_bytes(),
+            quiescence_gate: Rem6ExecutionModeQuiescenceGateSummary::from_gate(
+                transfer.quiescence_gate(),
+            ),
             components,
+        }
+    }
+}
+
+impl Rem6ExecutionModeQuiescenceGateSummary {
+    fn from_gate(gate: &ExecutionModeSwitchQuiescenceGate) -> Self {
+        Self {
+            validated: gate.validated(),
+            target: gate.target().as_str().to_string(),
+            captured_component_count: gate.captured_component_count(),
+            captured_chunk_count: gate.captured_chunk_count(),
+            captured_payload_bytes: gate.captured_payload_bytes(),
         }
     }
 }

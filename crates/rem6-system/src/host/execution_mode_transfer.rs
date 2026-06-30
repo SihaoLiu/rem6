@@ -37,7 +37,7 @@ impl SystemActionExecutor {
             .insert(manifest.label().to_string(), manifest.clone());
 
         Ok(Some(ExecutionModeSwitchStateTransfer::from_manifest(
-            &manifest,
+            &manifest, target,
         )))
     }
 

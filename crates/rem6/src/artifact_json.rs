@@ -1,9 +1,10 @@
 use super::formatting::{bytes_to_hex, json_escape};
 use super::{
     CliDataCacheSummary, Rem6CoreSummary, Rem6DataAccessProbeSummary,
-    Rem6ExecutionModeStateTransferSummary, Rem6ExecutionStop, Rem6ExecutionSummary,
-    Rem6GuestHostCallSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary, Rem6HostActionSummary,
-    Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary,
+    Rem6ExecutionModeQuiescenceGateSummary, Rem6ExecutionModeStateTransferSummary,
+    Rem6ExecutionStop, Rem6ExecutionSummary, Rem6GuestHostCallSummary, Rem6GupsArtifact,
+    Rem6GupsExecutionSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
+    Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary,
     Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary,
     Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
     Rem6InstructionProbeSummary, Rem6MemoryDump, Rem6ParallelFrontierSummary,
@@ -1573,14 +1574,29 @@ impl Rem6ExecutionModeStateTransferSummary {
             .map(Rem6HostCheckpointComponentSummary::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let quiescence_gate = self.quiescence_gate.to_json();
         format!(
-            "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"components\":[{}]}}",
+            "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"quiescence_gate\":{},\"components\":[{}]}}",
             json_escape(&self.manifest_label),
             self.manifest_tick,
             self.component_count,
             self.chunk_count,
             self.payload_bytes,
+            quiescence_gate,
             components,
+        )
+    }
+}
+
+impl Rem6ExecutionModeQuiescenceGateSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"validated\":{},\"target\":\"{}\",\"captured_component_count\":{},\"captured_chunk_count\":{},\"captured_payload_bytes\":{}}}",
+            self.validated,
+            json_escape(&self.target),
+            self.captured_component_count,
+            self.captured_chunk_count,
+            self.captured_payload_bytes,
         )
     }
 }
