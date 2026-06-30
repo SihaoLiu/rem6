@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1250;
 const MAX_SOURCE_LINES: usize = 1800;
+const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
 const MAX_ARCHITECTURE_OVERVIEW_LINES: usize = 600;
 const MAX_MIGRATION_LEDGER_LINES: usize = 1200;
 const MAX_ARCHITECTURE_README_LINES: usize = 80;
@@ -144,6 +145,34 @@ fn cli_riscv_se_smoke_modules_stay_within_size_limit() {
     assert!(
         oversized.is_empty(),
         "RISC-V SE CLI smoke modules exceed {MAX_SOURCE_LINES} lines: {}",
+        oversized.join(", ")
+    );
+}
+
+#[test]
+fn cli_riscv_sbi_smoke_modules_stay_within_size_limit() {
+    let cli_run_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/cli_run");
+    let mut oversized = Vec::new();
+
+    for path in rust_source_files(&cli_run_dir) {
+        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let relative = path.strip_prefix(env!("CARGO_MANIFEST_DIR")).unwrap();
+        if !file_name.starts_with("riscv_sbi")
+            && !relative.starts_with(Path::new("tests/cli_run/riscv_sbi"))
+        {
+            continue;
+        }
+        let lines = line_count(&path);
+        if lines > MAX_RISCV_SBI_SMOKE_LINES {
+            oversized.push(format!("{} has {lines} lines", relative.display()));
+        }
+    }
+
+    assert!(
+        oversized.is_empty(),
+        "RISC-V SBI CLI smoke modules exceed {MAX_RISCV_SBI_SMOKE_LINES} lines: {}",
         oversized.join(", ")
     );
 }
