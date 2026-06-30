@@ -1,5 +1,26 @@
 use super::*;
 
+const RISCV_LINUX_RESTART_SYSCALL_FOR_TEST: u64 = 128;
+const RISCV_LINUX_EINTR_FOR_TEST: u64 = 4;
+
+#[test]
+fn linux_table_restart_syscall_without_restart_block_returns_eintr() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle_at_tick(
+            RiscvSyscallRequest::new(0x8000, RISCV_LINUX_RESTART_SYSCALL_FOR_TEST, [0; 6],),
+            &mut state,
+            17,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EINTR_FOR_TEST)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
 #[test]
 fn linux_table_nanosleep_zero_duration_returns_without_guest_write() {
     let table = RiscvSyscallTable::new();

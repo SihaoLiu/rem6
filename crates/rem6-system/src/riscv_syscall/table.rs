@@ -702,6 +702,9 @@ impl RiscvSyscallTable {
                 syscall_clock_adjtime(request, tick, guest_memory_reader, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
+            RISCV_LINUX_RESTART_SYSCALL => Some(RiscvSyscallOutcome::Return {
+                value: syscall_restart_syscall(),
+            }),
             RISCV_LINUX_GETITIMER => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_getitimer(request, state, guest_memory),

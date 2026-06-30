@@ -1,12 +1,13 @@
 use super::time::read_timespec64;
 use super::{
     linux_error, RiscvGuestMemoryReader, RiscvSyscallRequest, RISCV_LINUX_EFAULT,
-    RISCV_LINUX_EINVAL, RISCV_LINUX_ENOTSUP,
+    RISCV_LINUX_EINTR, RISCV_LINUX_EINVAL, RISCV_LINUX_ENOTSUP,
 };
 use rem6_kernel::Tick;
 
 pub(super) const RISCV_LINUX_NANOSLEEP: u64 = 101;
 pub(super) const RISCV_LINUX_CLOCK_NANOSLEEP: u64 = 115;
+pub(super) const RISCV_LINUX_RESTART_SYSCALL: u64 = 128;
 const RISCV_LINUX_CLOCK_REALTIME: u64 = 0;
 const RISCV_LINUX_CLOCK_MONOTONIC: u64 = 1;
 const RISCV_LINUX_CLOCK_PROCESS_CPUTIME_ID: u64 = 2;
@@ -17,6 +18,10 @@ const RISCV_LINUX_CLOCK_MONOTONIC_COARSE: u64 = 6;
 const RISCV_LINUX_CLOCK_BOOTTIME: u64 = 7;
 const RISCV_LINUX_CLOCK_TAI: u64 = 11;
 const RISCV_LINUX_TIMER_ABSTIME: u64 = 1;
+
+pub(super) fn syscall_restart_syscall() -> u64 {
+    linux_error(RISCV_LINUX_EINTR)
+}
 
 pub(super) fn syscall_nanosleep(
     request: RiscvSyscallRequest,

@@ -105,6 +105,7 @@ pub(super) const RISCV_LINUX_STAT: u64 = 1038;
 pub(super) const RISCV_LINUX_EPERM: u64 = 1;
 pub(super) const RISCV_LINUX_ENOENT: u64 = 2;
 pub(super) const RISCV_LINUX_ESRCH: u64 = 3;
+pub(super) const RISCV_LINUX_EINTR: u64 = 4;
 pub(super) const RISCV_LINUX_E2BIG: u64 = 7;
 pub(super) const RISCV_LINUX_EBADF: u64 = 9;
 pub(super) const RISCV_LINUX_EAGAIN: u64 = 11;

@@ -254,7 +254,8 @@ use signal::{
 };
 use signalfd::{syscall_signalfd4, RiscvGuestSignalFd, RISCV_LINUX_SIGNALFD4};
 use sleep::{
-    syscall_clock_nanosleep, syscall_nanosleep, RISCV_LINUX_CLOCK_NANOSLEEP, RISCV_LINUX_NANOSLEEP,
+    syscall_clock_nanosleep, syscall_nanosleep, syscall_restart_syscall,
+    RISCV_LINUX_CLOCK_NANOSLEEP, RISCV_LINUX_NANOSLEEP, RISCV_LINUX_RESTART_SYSCALL,
 };
 use socket::{
     syscall_getpeername, syscall_getsockname, syscall_getsockopt, syscall_recvfrom,
