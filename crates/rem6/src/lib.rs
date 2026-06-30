@@ -865,7 +865,8 @@ fn execute_riscv(
         )
         .map_err(execute_error)?,
         GuestSourceId::new(1),
-    );
+    )
+    .with_m5_switch_cpu_mode(config.m5_switch_cpu_mode());
     let probe_config = StackDistProbeConfig::builder(line_layout.bytes(), line_layout.bytes())
         .build()
         .map_err(stats_error)?;

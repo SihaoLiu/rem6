@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rem6_cpu::RiscvBranchPredictorKind;
 use rem6_fabric::QosPriority;
 use rem6_stats::PcCountPair;
-use rem6_system::RiscvDataCacheProtocol;
+use rem6_system::{ExecutionMode, RiscvDataCacheProtocol};
 use rem6_workload::WorkloadDataCacheProtocol;
 use serde::Deserialize;
 
@@ -81,6 +81,7 @@ pub struct Rem6RunConfig {
     riscv_branch_lookahead: usize,
     riscv_branch_predictor: RiscvBranchPredictorKind,
     riscv_in_order_width: Option<usize>,
+    m5_switch_cpu_mode: Option<ExecutionMode>,
     max_instructions: Option<u64>,
     stats_format: StatsFormat,
     execute: bool,
@@ -221,6 +222,7 @@ struct Rem6RunFileConfig {
     riscv_branch_lookahead: Option<usize>,
     riscv_branch_predictor: Option<String>,
     riscv_in_order_width: Option<usize>,
+    m5_switch_cpu_mode: Option<String>,
     max_instructions: Option<u64>,
     stats_format: Option<String>,
     execute: Option<bool>,
@@ -390,6 +392,15 @@ fn validate_riscv_in_order_width(width: usize, value: String) -> Result<usize, R
     Ok(width)
 }
 
+fn parse_m5_switch_cpu_mode(value: &str) -> Option<ExecutionMode> {
+    match value {
+        "functional" => Some(ExecutionMode::Functional),
+        "timing" => Some(ExecutionMode::Timing),
+        "detailed" => Some(ExecutionMode::Detailed),
+        _ => None,
+    }
+}
+
 impl Rem6RunConfig {
     pub fn parse_args<I, S>(args: I) -> Result<Self, Rem6CliError>
     where
@@ -536,6 +547,17 @@ impl Rem6RunConfig {
         let mut riscv_in_order_width = file_config
             .riscv_in_order_width
             .map(|width| validate_riscv_in_order_width(width, width.to_string()))
+            .transpose()?;
+        let mut m5_switch_cpu_mode = file_config
+            .m5_switch_cpu_mode
+            .as_deref()
+            .map(|value| {
+                parse_m5_switch_cpu_mode(value).ok_or_else(|| {
+                    Rem6CliError::InvalidM5SwitchCpuMode {
+                        value: value.to_string(),
+                    }
+                })
+            })
             .transpose()?;
         let mut stats_format = file_config
             .stats_format
@@ -912,6 +934,15 @@ impl Rem6RunConfig {
                 "--riscv-in-order-width" => {
                     let value = required_value(&flag, args.next())?;
                     riscv_in_order_width = Some(parse_riscv_in_order_width(&value)?);
+                }
+                "--m5-switch-cpu-mode" => {
+                    let value = required_value(&flag, args.next())?;
+                    m5_switch_cpu_mode =
+                        Some(parse_m5_switch_cpu_mode(&value).ok_or_else(|| {
+                            Rem6CliError::InvalidM5SwitchCpuMode {
+                                value: value.clone(),
+                            }
+                        })?);
                 }
                 "--max-instructions" => {
                     let value = required_value(&flag, args.next())?;
@@ -1308,6 +1339,7 @@ impl Rem6RunConfig {
             riscv_branch_lookahead,
             riscv_branch_predictor,
             riscv_in_order_width,
+            m5_switch_cpu_mode,
             max_instructions,
             stats_format,
             execute,

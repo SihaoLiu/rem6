@@ -2,7 +2,7 @@ use std::path::Path;
 
 use rem6_cpu::RiscvBranchPredictorKind;
 use rem6_stats::PcCountPair;
-use rem6_system::RiscvDataCacheProtocol;
+use rem6_system::{ExecutionMode, RiscvDataCacheProtocol};
 
 use super::{
     CliCachePrefetcher, CliDebugFlag, CliDramLowPowerTiming, CliDramMemoryProfile,
@@ -104,6 +104,17 @@ impl Rem6RunConfig {
 
     pub const fn riscv_in_order_width_is_explicit(&self) -> bool {
         self.riscv_in_order_width.is_some()
+    }
+
+    pub const fn m5_switch_cpu_mode(&self) -> ExecutionMode {
+        match self.m5_switch_cpu_mode {
+            Some(mode) => mode,
+            None => ExecutionMode::Detailed,
+        }
+    }
+
+    pub const fn m5_switch_cpu_mode_is_explicit(&self) -> bool {
+        self.m5_switch_cpu_mode.is_some()
     }
 
     pub const fn max_instructions(&self) -> Option<u64> {

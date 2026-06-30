@@ -252,6 +252,9 @@ pub enum Rem6CliError {
     InvalidRunFabricQosQueuePolicy {
         value: String,
     },
+    InvalidM5SwitchCpuMode {
+        value: String,
+    },
     MemoryRouteDelayBelowMinRemoteDelay {
         memory_route_delay: u64,
         min_remote_delay: u64,
@@ -321,6 +324,7 @@ pub enum Rem6CliError {
     RiscvBranchLookaheadRequiresExecution,
     RiscvBranchPredictorRequiresExecution,
     RiscvInOrderWidthRequiresExecution,
+    M5SwitchCpuModeRequiresExecution,
     DebugFlagsRequireExecution,
     DebugFlagsRequireJsonStats,
     PowerOutputRequiresExecution,
@@ -350,6 +354,7 @@ pub enum Rem6CliError {
     RiscvBranchLookaheadRequiresRiscv,
     RiscvBranchPredictorRequiresRiscv,
     RiscvInOrderWidthRequiresRiscv,
+    M5SwitchCpuModeRequiresRiscv,
     CheckerCpuRequiresRiscv,
     RiscvSbiRequiresRiscv,
     RiscvSbiConflictsWithRiscvSe,
@@ -743,6 +748,9 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidRunFabricQosQueuePolicy { value } => {
                 write!(formatter, "invalid run fabric QoS queue policy {value}")
             }
+            Self::InvalidM5SwitchCpuMode { value } => {
+                write!(formatter, "invalid m5 switch CPU mode {value}")
+            }
             Self::MemoryRouteDelayBelowMinRemoteDelay {
                 memory_route_delay,
                 min_remote_delay,
@@ -866,6 +874,9 @@ impl fmt::Display for Rem6CliError {
             Self::RiscvInOrderWidthRequiresExecution => {
                 write!(formatter, "--riscv-in-order-width requires --execute")
             }
+            Self::M5SwitchCpuModeRequiresExecution => {
+                write!(formatter, "--m5-switch-cpu-mode requires --execute")
+            }
             Self::DebugFlagsRequireExecution => {
                 write!(formatter, "--debug-flags requires --execute")
             }
@@ -961,6 +972,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::RiscvInOrderWidthRequiresRiscv => {
                 write!(formatter, "--riscv-in-order-width requires --isa riscv")
+            }
+            Self::M5SwitchCpuModeRequiresRiscv => {
+                write!(formatter, "--m5-switch-cpu-mode requires --isa riscv")
             }
             Self::CheckerCpuRequiresRiscv => {
                 write!(formatter, "--checker-cpu requires --isa riscv")

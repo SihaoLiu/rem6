@@ -336,6 +336,66 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
 }
 
 #[test]
+fn rem6_run_executes_m5_switch_cpu_timing_mode_from_real_riscv_execution() {
+    let program = riscv64_program(&[m5op(M5_SWITCH_CPU), m5op(M5_EXIT)]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("m5-switch-cpu-timing-mode", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "80",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--m5-switch-cpu-mode",
+            "timing",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/execution_mode_switch_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    let (switch_tick, transfer_label) = assert_execution_mode_switch(
+        host_actions,
+        0,
+        "cpu0",
+        None,
+        "timing",
+        "execution-mode-switch-cpu0",
+    );
+    assert!(transfer_label.ends_with(&format!("-{switch_tick}")));
+    assert!(
+        host_actions
+            .pointer("/stops/0/tick")
+            .and_then(Value::as_u64)
+            .is_some_and(|stop_tick| stop_tick > switch_tick),
+        "m5_switch_cpu timing mode should continue to m5_exit: {host_actions}"
+    );
+}
+
+#[test]
 fn rem6_run_executes_m5_sum_return_value_from_real_riscv_execution() {
     let program = riscv64_program(&[
         i_type(1, 0, 0x0, 10, 0x13), // addi a0, x0, 1

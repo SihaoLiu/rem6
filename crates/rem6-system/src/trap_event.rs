@@ -317,11 +317,21 @@ impl ScheduledRiscvTrap {
 pub struct RiscvTrapEventPort {
     host: SystemHostEventPort,
     source: GuestSourceId,
+    m5_switch_cpu_mode: ExecutionMode,
 }
 
 impl RiscvTrapEventPort {
     pub const fn new(host: SystemHostEventPort, source: GuestSourceId) -> Self {
-        Self { host, source }
+        Self {
+            host,
+            source,
+            m5_switch_cpu_mode: ExecutionMode::Detailed,
+        }
+    }
+
+    pub const fn with_m5_switch_cpu_mode(mut self, mode: ExecutionMode) -> Self {
+        self.m5_switch_cpu_mode = mode;
+        self
     }
 
     pub const fn source(&self) -> GuestSourceId {
@@ -678,6 +688,7 @@ impl RiscvTrapEventPort {
             let Some(system_event) = guest_event_from_riscv_system_event(
                 event.cpu(),
                 execution.execution().system_event(),
+                self.m5_switch_cpu_mode,
             ) else {
                 continue;
             };
@@ -1090,6 +1101,7 @@ struct RiscvGuestEventSchedule {
 fn guest_event_from_riscv_system_event(
     cpu: CpuId,
     event: Option<&RiscvSystemEvent>,
+    m5_switch_cpu_mode: ExecutionMode,
 ) -> Option<RiscvGuestEventSchedule> {
     match event {
         Some(RiscvSystemEvent::Gem5Exit { delay, .. }) => Some(RiscvGuestEventSchedule {
@@ -1139,7 +1151,7 @@ fn guest_event_from_riscv_system_event(
             period: 0,
             kind: GuestEventKind::ExecutionModeSwitch {
                 target: execution_mode_target_for_cpu(cpu),
-                mode: ExecutionMode::Detailed,
+                mode: m5_switch_cpu_mode,
             },
         }),
         Some(RiscvSystemEvent::Gem5Hypercall {

@@ -26,6 +26,7 @@ pub(super) fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBu
             "--riscv-branch-lookahead",
             "--riscv-branch-predictor",
             "--riscv-in-order-width",
+            "--m5-switch-cpu-mode",
             "--max-instructions",
             "--stats-format",
             "--memory-system",

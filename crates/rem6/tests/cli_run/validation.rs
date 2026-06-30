@@ -173,6 +173,34 @@ fn rem6_run_rejects_riscv_in_order_width_without_execution() {
 }
 
 #[test]
+fn rem6_run_rejects_m5_switch_cpu_mode_without_execution() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("m5-switch-cpu-mode-without-execute", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+            "--m5-switch-cpu-mode",
+            "timing",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--m5-switch-cpu-mode requires --execute"));
+}
+
+#[test]
 fn rem6_run_rejects_riscv_branch_lookahead_without_riscv_isa() {
     let elf = x86_64_elf(0x1000_0000, 0x1000_0000, &[0x90]);
     let path = temp_binary("riscv-branch-lookahead-without-riscv", &elf);
@@ -257,6 +285,35 @@ fn rem6_run_rejects_riscv_in_order_width_without_riscv_isa() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("--riscv-in-order-width requires --isa riscv"));
+}
+
+#[test]
+fn rem6_run_rejects_m5_switch_cpu_mode_without_riscv_isa() {
+    let elf = x86_64_elf(0x1000_0000, 0x1000_0000, &[0x90]);
+    let path = temp_binary("m5-switch-cpu-mode-without-riscv", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "x86",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--execute",
+            "--stats-format",
+            "json",
+            "--m5-switch-cpu-mode",
+            "timing",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("--m5-switch-cpu-mode requires --isa riscv"));
 }
 
 #[test]
@@ -381,6 +438,35 @@ fn rem6_run_rejects_invalid_riscv_branch_predictor_values() {
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("invalid RISC-V branch predictor perceptron"));
+}
+
+#[test]
+fn rem6_run_rejects_invalid_m5_switch_cpu_mode_values() {
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("m5-switch-cpu-mode-invalid", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--execute",
+            "--stats-format",
+            "json",
+            "--m5-switch-cpu-mode",
+            "atomic",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("invalid m5 switch CPU mode atomic"));
 }
 
 #[test]
@@ -1648,6 +1734,30 @@ fn rem6_run_config_scan_treats_riscv_in_order_width_as_value_taking() {
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
         stderr.contains("invalid RISC-V in-order width --config"),
+        "stderr: {stderr}"
+    );
+    assert!(!stderr.contains(&format!("failed to read config {}", bogus_config.display())));
+}
+
+#[test]
+fn rem6_run_config_scan_treats_m5_switch_cpu_mode_as_value_taking() {
+    let bogus_config = temp_output("m5-switch-cpu-mode-prescan-bogus-config");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--m5-switch-cpu-mode",
+            "--config",
+            bogus_config.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("invalid m5 switch CPU mode --config"),
         "stderr: {stderr}"
     );
     assert!(!stderr.contains(&format!("failed to read config {}", bogus_config.display())));
