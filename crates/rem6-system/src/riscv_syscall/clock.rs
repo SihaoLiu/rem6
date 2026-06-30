@@ -14,6 +14,7 @@ pub(super) const RISCV_LINUX_CLOCK_GETRES: u64 = 114;
 pub(super) const RISCV_LINUX_TIMES: u64 = 153;
 pub(super) const RISCV_LINUX_GETTIMEOFDAY: u64 = 169;
 pub(super) const RISCV_LINUX_SETTIMEOFDAY: u64 = 170;
+pub(super) const RISCV_LINUX_ADJTIMEX: u64 = 171;
 pub(super) const RISCV_NEWLIB_CLOCK_GETTIME64: u64 = 403;
 pub(super) const RISCV_NEWLIB_LEGACY_TIME: u64 = 1062;
 const RISCV_LINUX_ITIMER_REAL: u64 = 0;
@@ -34,6 +35,35 @@ const RISCV_LINUX_NANOSECONDS_PER_MICROSECOND: u64 = 1_000;
 const RISCV_LINUX_MICROSECONDS_PER_SECOND: u64 = 1_000_000;
 const RISCV_LINUX_CLOCK_TICKS_PER_SECOND: u64 = 100;
 const RISCV_LINUX_TIMEZONE_BYTES: usize = 8;
+const RISCV_LINUX_TIMEX_BYTES: usize = 208;
+const RISCV_LINUX_TIMEX_MODES_OFFSET: usize = 0;
+const RISCV_LINUX_TIMEX_TIME_SECONDS_OFFSET: usize = 72;
+const RISCV_LINUX_TIMEX_TIME_MICROSECONDS_OFFSET: usize = 80;
+const RISCV_LINUX_TIMEX_TICK_OFFSET: usize = 88;
+const RISCV_LINUX_ADJ_OFFSET: u32 = 0x0001;
+const RISCV_LINUX_ADJ_FREQUENCY: u32 = 0x0002;
+const RISCV_LINUX_ADJ_MAXERROR: u32 = 0x0004;
+const RISCV_LINUX_ADJ_ESTERROR: u32 = 0x0008;
+const RISCV_LINUX_ADJ_STATUS: u32 = 0x0010;
+const RISCV_LINUX_ADJ_TIMECONST: u32 = 0x0020;
+const RISCV_LINUX_ADJ_TAI: u32 = 0x0080;
+const RISCV_LINUX_ADJ_SETOFFSET: u32 = 0x0100;
+const RISCV_LINUX_ADJ_MICRO: u32 = 0x1000;
+const RISCV_LINUX_ADJ_NANO: u32 = 0x2000;
+const RISCV_LINUX_ADJ_TICK: u32 = 0x4000;
+const RISCV_LINUX_ADJ_OFFSET_SINGLESHOT: u32 = 0x8001;
+const RISCV_LINUX_ADJ_OFFSET_SS_READ: u32 = 0xa001;
+const RISCV_LINUX_ADJ_VALID_MODE_MASK: u32 = RISCV_LINUX_ADJ_OFFSET
+    | RISCV_LINUX_ADJ_FREQUENCY
+    | RISCV_LINUX_ADJ_MAXERROR
+    | RISCV_LINUX_ADJ_ESTERROR
+    | RISCV_LINUX_ADJ_STATUS
+    | RISCV_LINUX_ADJ_TIMECONST
+    | RISCV_LINUX_ADJ_TAI
+    | RISCV_LINUX_ADJ_SETOFFSET
+    | RISCV_LINUX_ADJ_MICRO
+    | RISCV_LINUX_ADJ_NANO
+    | RISCV_LINUX_ADJ_TICK;
 const RISCV_LINUX_NANOSECONDS_PER_CLOCK_TICK: u64 =
     RISCV_LINUX_NANOSECONDS_PER_SECOND / RISCV_LINUX_CLOCK_TICKS_PER_SECOND;
 
@@ -216,6 +246,33 @@ pub(super) fn syscall_settimeofday(
     }
 
     Some(linux_error(RISCV_LINUX_EPERM))
+}
+
+pub(super) fn syscall_adjtimex(
+    request: RiscvSyscallRequest,
+    tick: Tick,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> Option<u64> {
+    let timex_address = request.argument(0);
+    let guest_memory_reader = guest_memory_reader?;
+    let modes = match read_riscv_linux_timex_modes(timex_address, guest_memory_reader) {
+        Ok(modes) => modes,
+        Err(error) => return Some(linux_error(error)),
+    };
+    if !valid_adjtimex_modes(modes) {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+    if modes != 0 {
+        return Some(linux_error(RISCV_LINUX_EPERM));
+    }
+
+    let guest_memory_writer = guest_memory_writer?;
+    Some(write_riscv_linux_timex_snapshot(
+        timex_address,
+        tick,
+        guest_memory_writer,
+    ))
 }
 
 pub(super) fn syscall_legacy_time(
@@ -408,6 +465,24 @@ fn read_riscv_linux_timezone(
         .ok_or(RISCV_LINUX_EFAULT)
 }
 
+fn read_riscv_linux_timex_modes(
+    address: u64,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> Result<u32, u64> {
+    if address == 0 {
+        return Err(RISCV_LINUX_EFAULT);
+    }
+    let bytes = guest_memory
+        .read(address, RISCV_LINUX_TIMEX_BYTES)
+        .filter(|bytes| bytes.len() == RISCV_LINUX_TIMEX_BYTES)
+        .ok_or(RISCV_LINUX_EFAULT)?;
+    Ok(u32::from_le_bytes(
+        bytes[RISCV_LINUX_TIMEX_MODES_OFFSET..RISCV_LINUX_TIMEX_MODES_OFFSET + 4]
+            .try_into()
+            .unwrap(),
+    ))
+}
+
 fn read_nonnegative_timeval_field(
     bytes: &[u8],
     offset: usize,
@@ -421,6 +496,39 @@ fn read_nonnegative_timeval_field(
         return Err(RISCV_LINUX_EINVAL);
     }
     Ok(value)
+}
+
+fn write_riscv_linux_timex_snapshot(
+    address: u64,
+    tick: Tick,
+    guest_memory: &RiscvGuestMemoryWriter,
+) -> u64 {
+    let mut bytes = [0; RISCV_LINUX_TIMEX_BYTES];
+    let seconds = (tick / RISCV_LINUX_NANOSECONDS_PER_SECOND) as i64;
+    let microseconds = ((tick % RISCV_LINUX_NANOSECONDS_PER_SECOND)
+        / RISCV_LINUX_NANOSECONDS_PER_MICROSECOND) as i64;
+    let tick_microseconds =
+        (RISCV_LINUX_MICROSECONDS_PER_SECOND / RISCV_LINUX_CLOCK_TICKS_PER_SECOND) as i64;
+    bytes[RISCV_LINUX_TIMEX_TIME_SECONDS_OFFSET..RISCV_LINUX_TIMEX_TIME_SECONDS_OFFSET + 8]
+        .copy_from_slice(&seconds.to_le_bytes());
+    bytes[RISCV_LINUX_TIMEX_TIME_MICROSECONDS_OFFSET
+        ..RISCV_LINUX_TIMEX_TIME_MICROSECONDS_OFFSET + 8]
+        .copy_from_slice(&microseconds.to_le_bytes());
+    bytes[RISCV_LINUX_TIMEX_TICK_OFFSET..RISCV_LINUX_TIMEX_TICK_OFFSET + 8]
+        .copy_from_slice(&tick_microseconds.to_le_bytes());
+    if write_riscv_linux_bytes(address, &bytes, guest_memory) {
+        0
+    } else {
+        linux_error(RISCV_LINUX_EFAULT)
+    }
+}
+
+fn valid_adjtimex_modes(modes: u32) -> bool {
+    modes & !RISCV_LINUX_ADJ_VALID_MODE_MASK == 0
+        || matches!(
+            modes,
+            RISCV_LINUX_ADJ_OFFSET_SINGLESHOT | RISCV_LINUX_ADJ_OFFSET_SS_READ
+        )
 }
 
 fn write_riscv_linux_itimerval(

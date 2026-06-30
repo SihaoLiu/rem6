@@ -3,6 +3,7 @@ use super::*;
 const RISCV_LINUX_CLOCK_GETRES_FOR_TEST: u64 = 114;
 const RISCV_LINUX_GETTIMEOFDAY_FOR_TEST: u64 = 169;
 const RISCV_LINUX_SETTIMEOFDAY_FOR_TEST: u64 = 170;
+const RISCV_LINUX_ADJTIMEX_FOR_TEST: u64 = 171;
 const RISCV_LINUX_GETITIMER_FOR_TEST: u64 = 102;
 const RISCV_LINUX_SETITIMER_FOR_TEST: u64 = 103;
 const RISCV_NEWLIB_CLOCK_GETTIME64_FOR_TEST: u64 = 403;
@@ -10,6 +11,8 @@ const RISCV_NEWLIB_LEGACY_TIME_FOR_TEST: u64 = 1062;
 const RISCV_LINUX_ITIMER_REAL_FOR_TEST: u64 = 0;
 const RISCV_LINUX_ITIMER_VIRTUAL_FOR_TEST: u64 = 1;
 const RISCV_LINUX_ITIMER_PROF_FOR_TEST: u64 = 2;
+const RISCV_LINUX_TIMEX_BYTES_FOR_TEST: usize = 208;
+const RISCV_LINUX_ADJ_OFFSET_FOR_TEST: u32 = 0x0001;
 
 #[test]
 fn linux_table_clock_gettime_accepts_tai_clock_id() {
@@ -415,6 +418,140 @@ fn linux_table_settimeofday_without_guest_reader_stays_unhandled_for_non_null_po
             &mut state,
             2_000_003_456,
             None,
+            None,
+        ),
+        None
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_adjtimex_query_writes_tick_derived_snapshot() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let timex_address = 0x9000;
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == timex_address && bytes == RISCV_LINUX_TIMEX_BYTES_FOR_TEST {
+            Some(timex_bytes(0))
+        } else {
+            None
+        }
+    });
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x801a,
+                RISCV_LINUX_ADJTIMEX_FOR_TEST,
+                [timex_address, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            2_000_003_456,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let writes = writes.lock().unwrap();
+    assert_eq!(
+        write_addresses(&writes),
+        (timex_address..timex_address + RISCV_LINUX_TIMEX_BYTES_FOR_TEST as u64)
+            .collect::<Vec<_>>()
+    );
+    let timex = collect_guest_writes(&writes, timex_address, RISCV_LINUX_TIMEX_BYTES_FOR_TEST);
+    assert_eq!(read_le_u32(&timex, 0), 0);
+    assert_eq!(read_le_i64(&timex, 72), 2);
+    assert_eq!(read_le_i64(&timex, 80), 3);
+    assert_eq!(read_le_i64(&timex, 88), 10_000);
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_adjtimex_reports_argument_errors() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let valid_adjustment_address = 0x9000;
+    let invalid_modes_address = 0x9100;
+    let query_address = 0x9200;
+    let fault_address = 0x9300;
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if bytes != RISCV_LINUX_TIMEX_BYTES_FOR_TEST {
+            return None;
+        }
+        if address == valid_adjustment_address {
+            Some(timex_bytes(RISCV_LINUX_ADJ_OFFSET_FOR_TEST))
+        } else if address == invalid_modes_address {
+            Some(timex_bytes(0x4000_0000))
+        } else if address == query_address {
+            Some(timex_bytes(0))
+        } else {
+            None
+        }
+    });
+    let faulting_writer = RiscvGuestMemoryWriter::new(move |address, _bytes| {
+        address != fault_address && address != query_address + 8
+    });
+
+    for (pc, argument, errno) in [
+        (0x801c, 0, RISCV_LINUX_EFAULT),
+        (0x8020, valid_adjustment_address, RISCV_LINUX_EPERM),
+        (0x8024, invalid_modes_address, RISCV_LINUX_EINVAL),
+        (0x8028, fault_address, RISCV_LINUX_EFAULT),
+        (0x802c, query_address, RISCV_LINUX_EFAULT),
+    ] {
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(
+                    pc,
+                    RISCV_LINUX_ADJTIMEX_FOR_TEST,
+                    [argument, 0, 0, 0, 0, 0],
+                ),
+                &mut state,
+                2_000_003_456,
+                Some(&guest_memory_reader),
+                Some(&faulting_writer),
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(errno)
+            })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_adjtimex_query_without_guest_writer_stays_unhandled() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let timex_address = 0x9000;
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == timex_address && bytes == RISCV_LINUX_TIMEX_BYTES_FOR_TEST {
+            Some(timex_bytes(0))
+        } else {
+            None
+        }
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8030,
+                RISCV_LINUX_ADJTIMEX_FOR_TEST,
+                [timex_address, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            2_000_003_456,
+            Some(&guest_memory_reader),
             None,
         ),
         None
@@ -941,6 +1078,16 @@ fn timeval_bytes(seconds: i64, microseconds: i64) -> Vec<u8> {
     bytes.extend_from_slice(&seconds.to_le_bytes());
     bytes.extend_from_slice(&microseconds.to_le_bytes());
     bytes
+}
+
+fn timex_bytes(modes: u32) -> Vec<u8> {
+    let mut bytes = vec![0; RISCV_LINUX_TIMEX_BYTES_FOR_TEST];
+    bytes[..4].copy_from_slice(&modes.to_le_bytes());
+    bytes
+}
+
+fn read_le_i64(bytes: &[u8], offset: usize) -> i64 {
+    i64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
 }
 
 fn writes_in_range(writes: &[(u64, Vec<u8>)], base: u64, len: usize) -> Vec<(u64, Vec<u8>)> {
