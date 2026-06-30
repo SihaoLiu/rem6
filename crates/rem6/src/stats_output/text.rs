@@ -418,7 +418,7 @@ fn append_gem5_work_item_duration_alias_stats(output: &mut String, snapshot: &St
         };
         let alias_path = format!("system.work_item_type{work_id}");
         output.push_str(&format!(
-            "{alias_path:<64} {:>20} # kind=derived unit={} reset_policy={}\n",
+            "{alias_path:<64} {:>20} # kind=histogram unit={} reset_policy={}\n",
             sample.value(),
             sample.unit(),
             sample.reset_policy()

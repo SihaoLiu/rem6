@@ -217,6 +217,7 @@ fn rem6_run_text_stats_emit_m5_work_item_duration_histogram_aliases() {
         "Tick",
         1,
     );
+    assert_text_histogram_sample(&stdout, "system.work_item_type11", "Tick", 1);
     assert_text_histogram_bucket(
         &stdout,
         "system.work_item_type11",
