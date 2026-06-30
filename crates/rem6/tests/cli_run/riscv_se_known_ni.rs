@@ -11,6 +11,12 @@ const RAW_KNOWN_NI_SYSCALLS: &[i32] = &[
     425, // io_uring_setup
     426, // io_uring_enter
     427, // io_uring_register
+    428, // open_tree
+    429, // move_mount
+    430, // fsopen
+    431, // fsconfig
+    432, // fsmount
+    433, // fspick
     435, // clone3
     440, // process_madvise
     444, // landlock_create_ruleset
@@ -216,7 +222,7 @@ fn rem6_run_riscv_se_runs_static_raw_known_ni_clone_and_probe_syscalls() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "300",
+            "600",
             "--stats-format",
             "json",
             "--execute",

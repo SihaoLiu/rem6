@@ -55,6 +55,12 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_IO_URING_SETUP
             | RISCV_LINUX_IO_URING_ENTER
             | RISCV_LINUX_IO_URING_REGISTER
+            | RISCV_LINUX_OPEN_TREE
+            | RISCV_LINUX_MOVE_MOUNT
+            | RISCV_LINUX_FSOPEN
+            | RISCV_LINUX_FSCONFIG
+            | RISCV_LINUX_FSMOUNT
+            | RISCV_LINUX_FSPICK
             | RISCV_LINUX_CLONE3
             | RISCV_LINUX_PROCESS_MADVISE
             | RISCV_LINUX_LANDLOCK_CREATE_RULESET
