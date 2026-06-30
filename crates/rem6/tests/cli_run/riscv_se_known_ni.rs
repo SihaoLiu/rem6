@@ -12,6 +12,9 @@ const RAW_KNOWN_NI_SYSCALLS: &[i32] = &[
     2,   // io_submit
     3,   // io_cancel
     4,   // io_getevents
+    217, // add_key
+    218, // request_key
+    219, // keyctl
     220, // clone
     241, // perf_event_open
     262, // fanotify_init
@@ -239,7 +242,7 @@ fn rem6_run_riscv_se_runs_static_raw_known_ni_clone_and_probe_syscalls() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "600",
+            "900",
             "--stats-format",
             "json",
             "--execute",

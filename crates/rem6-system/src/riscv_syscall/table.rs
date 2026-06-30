@@ -56,6 +56,9 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_IO_GETEVENTS
             | RISCV_LINUX_LOOKUP_DCOOKIE
             | RISCV_LINUX_NFSSERVCTL
+            | RISCV_LINUX_ADD_KEY
+            | RISCV_LINUX_REQUEST_KEY
+            | RISCV_LINUX_KEYCTL
             | RISCV_LINUX_CLONE
             | RISCV_LINUX_PERF_EVENT_OPEN
             | RISCV_LINUX_FANOTIFY_INIT
