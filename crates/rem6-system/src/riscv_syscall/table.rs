@@ -748,6 +748,10 @@ impl RiscvSyscallTable {
                 scheduler::syscall_sched_getaffinity(request, state, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
+            scheduler::RISCV_LINUX_SCHED_GETATTR => {
+                scheduler::syscall_sched_getattr(request, state, guest_memory_writer)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
             scheduler::RISCV_LINUX_SCHED_GET_PRIORITY_MAX => Some(RiscvSyscallOutcome::Return {
                 value: scheduler::syscall_sched_get_priority_max(request),
             }),

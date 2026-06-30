@@ -3,7 +3,7 @@ use std::{cmp, mem};
 use super::{
     clock::write_riscv_linux_time_pair, linux_error, RiscvGuestMemoryReader,
     RiscvGuestMemoryWriter, RiscvSyscallRequest, RiscvSyscallState, RISCV_LINUX_EACCES,
-    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EPERM, RISCV_LINUX_ESRCH,
+    RISCV_LINUX_EFAULT, RISCV_LINUX_EINVAL, RISCV_LINUX_EPERM, RISCV_LINUX_ESRCH, RISCV_PAGE_BYTES,
 };
 
 pub(super) const RISCV_LINUX_SCHED_GETSCHEDULER: u64 = 120;
@@ -15,6 +15,7 @@ pub(super) const RISCV_LINUX_SCHED_GETAFFINITY: u64 = 123;
 pub(super) const RISCV_LINUX_SCHED_GET_PRIORITY_MAX: u64 = 125;
 pub(super) const RISCV_LINUX_SCHED_GET_PRIORITY_MIN: u64 = 126;
 pub(super) const RISCV_LINUX_SCHED_RR_GET_INTERVAL: u64 = 127;
+pub(super) const RISCV_LINUX_SCHED_GETATTR: u64 = 275;
 pub(super) const RISCV_LINUX_IOPRIO_SET: u64 = 30;
 pub(super) const RISCV_LINUX_IOPRIO_GET: u64 = 31;
 pub(super) const RISCV_LINUX_SETPRIORITY: u64 = 140;
@@ -37,6 +38,9 @@ const RISCV_LINUX_IOPRIO_CLASS_IDLE: u64 = 3;
 const RISCV_LINUX_PRIO_PROCESS: i32 = 0;
 const RISCV_LINUX_RAW_PRIORITY_BASE: i32 = 20;
 const RISCV_LINUX_SCHED_RR_INTERVAL_NANOSECONDS: u64 = 2_000_000;
+const RISCV_LINUX_SCHED_ATTR_BYTES: u64 = 56;
+const RISCV_LINUX_SCHED_ATTR_BYTES_VER0: u64 = 48;
+const RISCV_LINUX_SCHED_ATTR_BYTES_USIZE: usize = RISCV_LINUX_SCHED_ATTR_BYTES as usize;
 const RISCV_LINUX_SCHED_OTHER: i32 = 0;
 const RISCV_LINUX_SCHED_FIFO: i32 = 1;
 const RISCV_LINUX_SCHED_RR: i32 = 2;
@@ -290,6 +294,48 @@ pub(super) fn syscall_sched_getaffinity(
     }
 
     Some(written_bytes)
+}
+
+pub(super) fn syscall_sched_getattr(
+    request: RiscvSyscallRequest,
+    state: &RiscvSyscallState,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> Option<u64> {
+    let requested_pid = linux_int_argument(request.argument(0));
+    let attr_address = request.argument(1);
+    let requested_bytes = request.argument(2);
+    if requested_pid < 0
+        || attr_address == 0
+        || requested_bytes < RISCV_LINUX_SCHED_ATTR_BYTES_VER0
+        || requested_bytes > RISCV_PAGE_BYTES
+        || request.argument(3) != 0
+    {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+    if !matches_current_process(requested_pid as u64, state) {
+        return Some(linux_error(RISCV_LINUX_ESRCH));
+    }
+
+    let guest_memory_writer = guest_memory_writer?;
+    let written_bytes = cmp::min(requested_bytes, RISCV_LINUX_SCHED_ATTR_BYTES) as usize;
+    let bytes = riscv_linux_sched_attr_bytes(state, written_bytes);
+    if !guest_memory_writer.write(attr_address, &bytes[..written_bytes]) {
+        return Some(linux_error(RISCV_LINUX_EFAULT));
+    }
+
+    Some(0)
+}
+
+fn riscv_linux_sched_attr_bytes(
+    state: &RiscvSyscallState,
+    written_bytes: usize,
+) -> [u8; RISCV_LINUX_SCHED_ATTR_BYTES_USIZE] {
+    let mut bytes = [0; RISCV_LINUX_SCHED_ATTR_BYTES_USIZE];
+    bytes[0..4].copy_from_slice(&(written_bytes as u32).to_le_bytes());
+    bytes[4..8].copy_from_slice(&(state.sched_policy() as u32).to_le_bytes());
+    bytes[16..20].copy_from_slice(&state.process_nice().to_le_bytes());
+    bytes[20..24].copy_from_slice(&(RISCV_LINUX_DEFAULT_SCHED_PRIORITY as u32).to_le_bytes());
+    bytes
 }
 
 impl RiscvSyscallState {
