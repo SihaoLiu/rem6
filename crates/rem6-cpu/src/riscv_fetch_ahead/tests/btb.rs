@@ -637,6 +637,7 @@ fn btb_mispredict_due_to_btb_miss_counts_indirect_call_target_change() {
         0
     );
     assert_eq!(summary.target_provider().total(), 1);
+    assert_eq!(summary.indirect_hits(), 1);
     assert_eq!(
         summary
             .btb_mispredict_due_to_btb_miss()
@@ -699,6 +700,7 @@ fn btb_mispredict_due_to_btb_miss_counts_return_target_change() {
         0
     );
     assert_eq!(summary.target_provider().total(), 1);
+    assert_eq!(summary.indirect_hits(), 0);
     assert_eq!(
         summary
             .btb_mispredict_due_to_btb_miss()

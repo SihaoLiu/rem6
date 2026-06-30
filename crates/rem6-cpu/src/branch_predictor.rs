@@ -1166,6 +1166,13 @@ impl BranchTargetKind {
             Self::IndirectUnconditional => "IndirectUncond",
         }
     }
+
+    pub const fn is_indirect_non_return(self) -> bool {
+        matches!(
+            self,
+            Self::CallIndirect | Self::IndirectConditional | Self::IndirectUnconditional
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

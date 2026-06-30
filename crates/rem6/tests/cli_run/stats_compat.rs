@@ -6758,7 +6758,12 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
                 &stdout,
                 &format!("sim.cpu{cpu}.branch_predictor.target_provider.indirect"),
             );
+            let indirect_hits = stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.indirect_hits"),
+            );
             assert!(indirect_provider > 0, "{stdout}");
+            assert_eq!(indirect_hits, indirect_provider);
             assert_eq!(
                 stat_value(
                     &stdout,
@@ -6796,6 +6801,10 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
                 &stdout,
                 &format!("sim.cpu{cpu}.branch_predictor.target_provider.indirect"),
             );
+            let indirect_hits = text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.indirect_hits"),
+            );
             let indirect_lookups = text_stat_value(
                 &stdout,
                 &format!("sim.cpu{cpu}.branch_predictor.lookups.indirect_conditional"),
@@ -6807,6 +6816,7 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
                 &format!("sim.cpu{cpu}.branch_predictor.lookups.call_indirect"),
             );
             assert!(indirect_provider > 0, "{stdout}");
+            assert_eq!(indirect_hits, indirect_provider);
             assert!(indirect_lookups > 0, "{stdout}");
             assert_eq!(
                 text_stat_value(
@@ -6814,6 +6824,17 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
                     &format!("{alias_prefix}.branchPred.indirectLookups")
                 ),
                 indirect_lookups
+            );
+            assert_eq!(
+                text_stat_value(&stdout, &format!("{alias_prefix}.branchPred.indirectHits")),
+                indirect_hits
+            );
+            assert_eq!(
+                text_stat_value(
+                    &stdout,
+                    &format!("{alias_prefix}.branchPred.indirectMisses")
+                ),
+                indirect_lookups - indirect_hits
             );
             assert_eq!(
                 text_stat_value(
@@ -6832,6 +6853,98 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
             );
         }
     }
+}
+
+#[test]
+fn rem6_run_stats_exclude_return_jalr_from_indirect_hit_aliases() {
+    let program = riscv64_program(&[
+        i_type(0, 11, 0x0, 1, 0x13), // addi x1, x11, 0
+        i_type(0, 1, 0x0, 0, 0x67),  // jalr x0, 0(x1)
+        i_type(1, 0, 0x0, 5, 0x13),  // skipped: addi x5, x0, 1
+        i_type(9, 0, 0x0, 5, 0x13),  // target: addi x5, x0, 9
+        0x0000_0073,                 // ecall
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-branch-return-provider-not-indirect-hit", &elf);
+
+    let run = |stats_format: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "120",
+                "--memory-route-delay",
+                "1",
+                "--riscv-branch-lookahead",
+                "2",
+                "--riscv-boot-a1",
+                "0x8000000c",
+                "--stats-format",
+                stats_format,
+                "--execute",
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+
+    let stdout = run("json");
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json_core_register(&artifact, 0, "x5"),
+        Some("0x9"),
+        "return-class jalr target path did not execute:\n{stdout}"
+    );
+    assert!(
+        stat_value(
+            &stdout,
+            "sim.cpu0.branch_predictor.target_provider.indirect"
+        ) > 0,
+        "{stdout}"
+    );
+    assert!(
+        stat_value(&stdout, "sim.cpu0.branch_predictor.lookups.return") > 0,
+        "{stdout}"
+    );
+    assert_eq!(
+        stat_value(&stdout, "sim.cpu0.branch_predictor.indirect_hits"),
+        0
+    );
+
+    let stdout = run("text");
+    assert!(
+        text_stat_value(
+            &stdout,
+            "sim.cpu0.branch_predictor.target_provider.indirect"
+        ) > 0,
+        "{stdout}"
+    );
+    assert!(
+        text_stat_value(&stdout, "sim.cpu0.branch_predictor.lookups.return") > 0,
+        "{stdout}"
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.indirectLookups"),
+        0
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.indirectHits"),
+        0
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.indirectMisses"),
+        0
+    );
 }
 
 #[test]

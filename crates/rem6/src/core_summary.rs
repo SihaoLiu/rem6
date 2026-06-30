@@ -58,6 +58,7 @@ pub struct Rem6CoreSummary {
     pub(crate) branch_target_buffer_mispredict_due_to_btb_miss: BranchTargetKindCounts,
     pub(crate) branch_predictor_lookups: BranchTargetKindCounts,
     pub(crate) branch_predictor_target_provider: BranchTargetProviderCounts,
+    pub(crate) branch_predictor_indirect_hits: u64,
     pub(crate) branch_predictor_committed: BranchTargetKindCounts,
     pub(crate) branch_predictor_mispredicted: BranchTargetKindCounts,
     pub(crate) branch_predictor_corrected: BranchTargetKindCounts,

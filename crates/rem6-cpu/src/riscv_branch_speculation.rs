@@ -13,6 +13,7 @@ pub struct RiscvBranchSpeculationSummary {
     max_pending: u64,
     lookup_branch_kinds: BranchTargetKindCounts,
     target_provider: BranchTargetProviderCounts,
+    indirect_hits: u64,
     committed_branch_kinds: BranchTargetKindCounts,
     mispredicted_branch_kinds: BranchTargetKindCounts,
     corrected_branch_kinds: BranchTargetKindCounts,
@@ -46,6 +47,10 @@ impl RiscvBranchSpeculationSummary {
 
     pub const fn target_provider(self) -> BranchTargetProviderCounts {
         self.target_provider
+    }
+
+    pub const fn indirect_hits(self) -> u64 {
+        self.indirect_hits
     }
 
     pub const fn committed_branch_kinds(self) -> BranchTargetKindCounts {
@@ -89,6 +94,11 @@ impl RiscvBranchSpeculationSummary {
         self.predictions = self.predictions.saturating_add(1);
         self.lookup_branch_kinds.increment(branch_kind);
         self.target_provider.increment(target_provider);
+        let indirect_hit = target_provider == BranchTargetProvider::Indirect
+            && branch_kind.is_indirect_non_return();
+        if indirect_hit {
+            self.indirect_hits = self.indirect_hits.saturating_add(1);
+        }
         self.max_pending = self.max_pending.max(pending);
     }
 

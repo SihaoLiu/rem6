@@ -437,6 +437,13 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.branch_predictor_lookups.total(),
         )?;
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.branch_predictor.indirect_hits", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.branch_predictor_indirect_hits,
+        )?;
         for provider in BranchTargetProvider::ALL {
             increment_stat(
                 stats,

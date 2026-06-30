@@ -212,6 +212,23 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 &format!("{alias_prefix}.branchPred.indirectLookups"),
                 lookups,
             );
+            if let Some(hits) = snapshot_value(
+                snapshot,
+                &format!("sim.cpu{cpu}.branch_predictor.indirect_hits"),
+            ) {
+                append_derived_count_stat(
+                    output,
+                    &format!("{alias_prefix}.branchPred.indirectHits"),
+                    hits,
+                );
+                if let Some(misses) = lookups.checked_sub(hits) {
+                    append_derived_count_stat(
+                        output,
+                        &format!("{alias_prefix}.branchPred.indirectMisses"),
+                        misses,
+                    );
+                }
+            }
         }
         for provider in BranchTargetProvider::ALL {
             if let Some(target_provider) = snapshot_value(
