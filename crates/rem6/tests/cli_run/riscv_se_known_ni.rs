@@ -28,6 +28,8 @@ const RAW_KNOWN_NI_SYSCALLS: &[i32] = &[
     433, // fspick
     435, // clone3
     440, // process_madvise
+    442, // mount_setattr
+    443, // quotactl_fd
     444, // landlock_create_ruleset
     445, // landlock_add_rule
     446, // landlock_restrict_self
