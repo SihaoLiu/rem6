@@ -233,8 +233,9 @@ use seek::{syscall_lseek, RISCV_LINUX_LSEEK};
 use sendfile::{syscall_sendfile, RISCV_LINUX_SENDFILE};
 use signal::{
     syscall_kill, syscall_rt_sigaction, syscall_rt_sigpending, syscall_rt_sigprocmask,
-    syscall_rt_sigqueueinfo, syscall_rt_sigsuspend, syscall_rt_sigtimedwait, syscall_sigaltstack,
-    syscall_tgkill, syscall_tkill, RiscvSignalAction, RiscvSignalAltStack, RISCV_LINUX_SIGALTSTACK,
+    syscall_rt_sigqueueinfo, syscall_rt_sigsuspend, syscall_rt_sigtimedwait,
+    syscall_rt_tgsigqueueinfo, syscall_sigaltstack, syscall_tgkill, syscall_tkill,
+    RiscvSignalAction, RiscvSignalAltStack, RISCV_LINUX_SIGALTSTACK,
 };
 use signalfd::{syscall_signalfd4, RiscvGuestSignalFd, RISCV_LINUX_SIGNALFD4};
 use sleep::{

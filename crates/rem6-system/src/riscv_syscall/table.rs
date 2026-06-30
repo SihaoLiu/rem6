@@ -794,6 +794,10 @@ impl RiscvSyscallTable {
                 syscall_rt_sigqueueinfo(request, state, tick, guest_memory_reader)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
+            RISCV_LINUX_RT_TGSIGQUEUEINFO => {
+                syscall_rt_tgsigqueueinfo(request, state, tick, guest_memory_reader)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
             RISCV_LINUX_RT_SIGSUSPEND => {
                 syscall_rt_sigsuspend(request, state, tick, guest_memory_reader)
             }

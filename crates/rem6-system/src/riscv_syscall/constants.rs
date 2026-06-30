@@ -18,6 +18,7 @@ pub(super) const RISCV_LINUX_RT_SIGPENDING: u64 = 136;
 pub(super) const RISCV_LINUX_RT_SIGTIMEDWAIT: u64 = 137;
 pub(super) const RISCV_LINUX_RT_SIGQUEUEINFO: u64 = 138;
 pub(super) const RISCV_LINUX_RT_SIGRETURN: u64 = 139;
+pub(super) const RISCV_LINUX_RT_TGSIGQUEUEINFO: u64 = 240;
 pub(super) const RISCV_LINUX_UNAME: u64 = 160;
 pub(super) const RISCV_LINUX_SETRLIMIT: u64 = 164;
 pub(super) const RISCV_LINUX_FUTEX: u64 = 98;

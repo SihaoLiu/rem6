@@ -397,6 +397,41 @@ pub(super) fn syscall_rt_sigqueueinfo(
     ))
 }
 
+pub(super) fn syscall_rt_tgsigqueueinfo(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    tick: rem6_kernel::Tick,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+) -> Option<u64> {
+    let guest_memory_reader = guest_memory_reader?;
+    let Some(si_code) = read_signal_info_code(guest_memory_reader, request.argument(3)) else {
+        return Some(linux_error(RISCV_LINUX_EFAULT));
+    };
+    if si_code >= 0 || si_code == RISCV_LINUX_SI_TKILL {
+        return Some(linux_error(RISCV_LINUX_EPERM));
+    }
+
+    let Some(thread_group_id) = positive_linux_pid_argument(request.argument(0)) else {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    };
+    let Some(thread_id) = positive_linux_pid_argument(request.argument(1)) else {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    };
+    let identity = state.identity();
+    if thread_group_id != identity.thread_group_id() || thread_id != identity.thread_id() {
+        return Some(linux_error(RISCV_LINUX_ESRCH));
+    }
+
+    let signal = linux_int_argument(request.argument(2));
+    if signal != 0 && !valid_signal_i32(signal) {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+
+    Some(signal_probe_or_unimplemented_delivery(
+        request, state, tick, signal,
+    ))
+}
+
 pub(super) fn syscall_sigaltstack(
     request: RiscvSyscallRequest,
     state: &mut RiscvSyscallState,
