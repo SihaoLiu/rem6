@@ -49,7 +49,20 @@ impl RiscvSyscallTable {
             5..=16 => {
                 xattr::syscall_xattr(request, state, guest_memory_reader, guest_memory_writer)
             }
-            RISCV_LINUX_LOOKUP_DCOOKIE | RISCV_LINUX_NFSSERVCTL => Some(known_ni_syscall_outcome()),
+            RISCV_LINUX_LOOKUP_DCOOKIE
+            | RISCV_LINUX_NFSSERVCTL
+            | RISCV_LINUX_IO_URING_SETUP
+            | RISCV_LINUX_IO_URING_ENTER
+            | RISCV_LINUX_IO_URING_REGISTER
+            | RISCV_LINUX_CLONE3
+            | RISCV_LINUX_PROCESS_MADVISE
+            | RISCV_LINUX_LANDLOCK_CREATE_RULESET
+            | RISCV_LINUX_LANDLOCK_ADD_RULE
+            | RISCV_LINUX_LANDLOCK_RESTRICT_SELF
+            | RISCV_LINUX_PROCESS_MRELEASE
+            | RISCV_LINUX_FUTEX_WAITV
+            | RISCV_LINUX_SET_MEMPOLICY_HOME_NODE
+            | RISCV_LINUX_CACHESTAT => Some(known_ni_syscall_outcome()),
             RISCV_LINUX_UMOUNT2 => {
                 guest_memory_reader.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_umount2(request, guest_memory),
