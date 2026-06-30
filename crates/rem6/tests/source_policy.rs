@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const MAX_FACADE_LINES: usize = 1250;
+const MAX_CONFIG_ROOT_LINES: usize = 1700;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
 const MAX_ARCHITECTURE_OVERVIEW_LINES: usize = 600;
@@ -201,6 +202,17 @@ fn cli_runtime_inputs_live_in_focused_modules() {
     assert!(
         !lib_rs.contains("fn build_cli_memory_store("),
         "src/lib.rs should delegate guest memory store construction to guest memory code"
+    );
+}
+
+#[test]
+fn cli_config_root_stays_focused() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/config.rs");
+    let lines = line_count(&path);
+
+    assert!(
+        lines <= MAX_CONFIG_ROOT_LINES,
+        "src/config.rs should remain a facade over focused config parsers, but it has {lines} lines"
     );
 }
 

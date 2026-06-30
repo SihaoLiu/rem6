@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use rem6_cpu::RiscvBranchPredictorKind;
 use rem6_fabric::QosPriority;
 use rem6_stats::PcCountPair;
-use rem6_system::{ExecutionMode, GuestHostCallResponse, RiscvDataCacheProtocol};
+use rem6_system::{ExecutionMode, RiscvDataCacheProtocol};
 use rem6_workload::WorkloadDataCacheProtocol;
 use serde::Deserialize;
 
@@ -18,6 +18,7 @@ mod debug;
 mod dram;
 mod fabric;
 mod file_scan;
+mod guest_host_call;
 mod isa;
 mod memory_system;
 mod output_format;
@@ -41,6 +42,8 @@ use fabric::{run_fabric_config_from_parts, RunFabricConfigParts};
 use file_scan::{
     gups_file_config_from_args, run_file_config_from_args, trace_replay_file_config_from_args,
 };
+use guest_host_call::parse_guest_host_call_response;
+pub(crate) use guest_host_call::GuestHostCallResponseConfig;
 pub use isa::RequestedIsa;
 pub use memory_system::RunMemorySystem;
 use memory_system::{apply_run_memory_system_preset, default_run_memory_system_for_execution};
@@ -113,26 +116,6 @@ pub struct Rem6RunConfig {
     stats_output: Option<PathBuf>,
     power_format: PowerAnalysisFormat,
     power_output: Option<PathBuf>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct GuestHostCallResponseConfig {
-    selector: u64,
-    response: GuestHostCallResponse,
-}
-
-impl GuestHostCallResponseConfig {
-    fn new(selector: u64, response: GuestHostCallResponse) -> Self {
-        Self { selector, response }
-    }
-
-    pub(crate) const fn selector(&self) -> u64 {
-        self.selector
-    }
-
-    pub(crate) const fn response(&self) -> &GuestHostCallResponse {
-        &self.response
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -420,127 +403,6 @@ fn parse_m5_switch_cpu_mode(value: &str) -> Option<ExecutionMode> {
         "timing" => Some(ExecutionMode::Timing),
         "detailed" => Some(ExecutionMode::Detailed),
         _ => None,
-    }
-}
-
-fn parse_guest_host_call_response(
-    value: &str,
-) -> Result<GuestHostCallResponseConfig, Rem6CliError> {
-    let mut selector = None;
-    let mut status = None;
-    let mut return_values = None;
-    let mut payload = None;
-    for field in value.split(',') {
-        let Some((key, field_value)) = field.split_once('=') else {
-            return Err(Rem6CliError::InvalidGuestHostCallResponse {
-                value: value.to_string(),
-            });
-        };
-        match key {
-            "selector" => {
-                if selector.is_some() {
-                    return Err(Rem6CliError::InvalidGuestHostCallResponse {
-                        value: value.to_string(),
-                    });
-                }
-                selector = Some(parse_number(field_value).ok_or_else(|| {
-                    Rem6CliError::InvalidGuestHostCallResponse {
-                        value: value.to_string(),
-                    }
-                })?);
-            }
-            "status" => {
-                if status.is_some() {
-                    return Err(Rem6CliError::InvalidGuestHostCallResponse {
-                        value: value.to_string(),
-                    });
-                }
-                status = Some(field_value.parse::<i32>().map_err(|_| {
-                    Rem6CliError::InvalidGuestHostCallResponse {
-                        value: value.to_string(),
-                    }
-                })?);
-            }
-            "returns" => {
-                if return_values.is_some() {
-                    return Err(Rem6CliError::InvalidGuestHostCallResponse {
-                        value: value.to_string(),
-                    });
-                }
-                return_values = Some(parse_guest_host_call_return_values(field_value, value)?);
-            }
-            "payload" => {
-                if payload.is_some() {
-                    return Err(Rem6CliError::InvalidGuestHostCallResponse {
-                        value: value.to_string(),
-                    });
-                }
-                payload = Some(parse_guest_host_call_payload(field_value, value)?);
-            }
-            _ => {
-                return Err(Rem6CliError::InvalidGuestHostCallResponse {
-                    value: value.to_string(),
-                });
-            }
-        }
-    }
-    let (Some(selector), Some(status), Some(return_values), Some(payload)) =
-        (selector, status, return_values, payload)
-    else {
-        return Err(Rem6CliError::InvalidGuestHostCallResponse {
-            value: value.to_string(),
-        });
-    };
-    Ok(GuestHostCallResponseConfig::new(
-        selector,
-        GuestHostCallResponse::new(status, return_values, payload),
-    ))
-}
-
-fn parse_guest_host_call_return_values(
-    field_value: &str,
-    full_value: &str,
-) -> Result<Vec<u64>, Rem6CliError> {
-    if field_value.is_empty() {
-        return Ok(Vec::new());
-    }
-    field_value
-        .split('|')
-        .map(|entry| {
-            parse_number(entry).ok_or_else(|| Rem6CliError::InvalidGuestHostCallResponse {
-                value: full_value.to_string(),
-            })
-        })
-        .collect()
-}
-
-fn parse_guest_host_call_payload(
-    field_value: &str,
-    full_value: &str,
-) -> Result<Vec<u8>, Rem6CliError> {
-    let hex = field_value.as_bytes();
-    if hex.len() % 2 != 0 {
-        return Err(Rem6CliError::InvalidGuestHostCallResponse {
-            value: full_value.to_string(),
-        });
-    }
-    let mut bytes = Vec::with_capacity(hex.len() / 2);
-    for pair in hex.chunks_exact(2) {
-        let high = hex_nibble(pair[0], full_value)?;
-        let low = hex_nibble(pair[1], full_value)?;
-        bytes.push((high << 4) | low);
-    }
-    Ok(bytes)
-}
-
-fn hex_nibble(byte: u8, full_value: &str) -> Result<u8, Rem6CliError> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        b'A'..=b'F' => Ok(byte - b'A' + 10),
-        _ => Err(Rem6CliError::InvalidGuestHostCallResponse {
-            value: full_value.to_string(),
-        }),
     }
 }
 
