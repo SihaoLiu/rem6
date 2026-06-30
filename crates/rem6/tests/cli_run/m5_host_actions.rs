@@ -368,6 +368,10 @@ fn rem6_run_executes_m5_switch_cpu_timing_mode_from_real_riscv_execution() {
     );
     let json: Value = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
     let host_actions = json
         .pointer("/host_actions")
         .expect("run JSON should include host action outcomes");
@@ -375,6 +379,10 @@ fn rem6_run_executes_m5_switch_cpu_timing_mode_from_real_riscv_execution() {
         host_actions
             .pointer("/execution_mode_switch_count")
             .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions.pointer("/stop_count").and_then(Value::as_u64),
         Some(1)
     );
     let (switch_tick, transfer_label) = assert_execution_mode_switch(
@@ -392,6 +400,66 @@ fn rem6_run_executes_m5_switch_cpu_timing_mode_from_real_riscv_execution() {
             .and_then(Value::as_u64)
             .is_some_and(|stop_tick| stop_tick > switch_tick),
         "m5_switch_cpu timing mode should continue to m5_exit: {host_actions}"
+    );
+}
+
+#[test]
+fn rem6_run_loads_m5_switch_cpu_mode_from_toml_config() {
+    let program = riscv64_program(&[m5op(M5_SWITCH_CPU), m5op(M5_EXIT)]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let binary = temp_binary("m5-switch-cpu-toml-mode", &elf);
+    let config = temp_config(
+        "m5-switch-cpu-toml-mode",
+        &format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 80\nstats_format = \"json\"\nexecute = true\nmemory_system = \"direct\"\nm5_switch_cpu_mode = \"functional\"\n",
+            binary.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    assert_eq!(
+        json.pointer("/simulation/status").and_then(Value::as_str),
+        Some("stopped_by_host")
+    );
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    assert_eq!(
+        host_actions
+            .pointer("/execution_mode_switch_count")
+            .and_then(Value::as_u64),
+        Some(1)
+    );
+    assert_eq!(
+        host_actions.pointer("/stop_count").and_then(Value::as_u64),
+        Some(1)
+    );
+    let (switch_tick, transfer_label) = assert_execution_mode_switch(
+        host_actions,
+        0,
+        "cpu0",
+        None,
+        "functional",
+        "execution-mode-switch-cpu0",
+    );
+    assert!(transfer_label.ends_with(&format!("-{switch_tick}")));
+    assert!(
+        host_actions
+            .pointer("/stops/0/tick")
+            .and_then(Value::as_u64)
+            .is_some_and(|stop_tick| stop_tick > switch_tick),
+        "TOML m5_switch_cpu mode should continue to m5_exit: {host_actions}"
     );
 }
 
