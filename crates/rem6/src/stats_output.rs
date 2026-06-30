@@ -772,6 +772,17 @@ fn emit_run_host_action_stats(
     stats: &mut StatsRegistry,
     summary: &Rem6HostActionSummary,
 ) -> Result<(), Rem6CliError> {
+    let mut guest_host_call_arguments = 0;
+    let mut guest_host_call_payload_bytes = 0;
+    let mut guest_host_call_response_return_values = 0;
+    let mut guest_host_call_response_payload_bytes = 0;
+    for call in &summary.guest_host_calls {
+        guest_host_call_arguments += call.argument_count;
+        guest_host_call_payload_bytes += call.payload_bytes;
+        guest_host_call_response_return_values += call.response_return_count;
+        guest_host_call_response_payload_bytes += call.response_payload_bytes;
+    }
+
     let mut switch_state_transfer_count = 0;
     let mut switch_state_transfer_components = 0;
     let mut switch_state_transfer_chunks = 0;
@@ -791,6 +802,11 @@ fn emit_run_host_action_stats(
         ("total", summary.total_action_count),
         ("injected_commands", summary.injected_command_count),
         ("guest_host_calls", summary.guest_host_calls.len() as u64),
+        ("guest_host_call_arguments", guest_host_call_arguments),
+        (
+            "guest_host_call_response_return_values",
+            guest_host_call_response_return_values,
+        ),
         ("roi_begin", summary.roi_begin.len() as u64),
         ("roi_end", summary.roi_end.len() as u64),
         ("stats_resets", summary.stats_resets.len() as u64),
@@ -824,6 +840,20 @@ fn emit_run_host_action_stats(
             value,
         )?;
     }
+    increment_stat(
+        stats,
+        "sim.host_actions.guest_host_call_payload_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        guest_host_call_payload_bytes,
+    )?;
+    increment_stat(
+        stats,
+        "sim.host_actions.guest_host_call_response_payload_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        guest_host_call_response_payload_bytes,
+    )?;
     increment_stat(
         stats,
         "sim.host_actions.execution_mode_switch_state_transfer_payload_bytes",

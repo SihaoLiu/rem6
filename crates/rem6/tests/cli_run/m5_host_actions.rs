@@ -225,6 +225,42 @@ fn rem6_run_emits_m5_hypercall_host_action_detail_from_real_riscv_execution() {
         Some(0)
     );
     assert!(call.pointer("/tick").and_then(Value::as_u64).is_some());
+    assert_json_stat(
+        &json,
+        "sim.host_actions.guest_host_call_arguments",
+        "Count",
+        call.pointer("/argument_count")
+            .and_then(Value::as_u64)
+            .expect("missing hypercall argument count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.guest_host_call_payload_bytes",
+        "Byte",
+        call.pointer("/payload_bytes")
+            .and_then(Value::as_u64)
+            .expect("missing hypercall payload byte count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.guest_host_call_response_return_values",
+        "Count",
+        call.pointer("/response_return_count")
+            .and_then(Value::as_u64)
+            .expect("missing hypercall response return count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.guest_host_call_response_payload_bytes",
+        "Byte",
+        call.pointer("/response_payload_bytes")
+            .and_then(Value::as_u64)
+            .expect("missing hypercall response payload byte count"),
+        "monotonic",
+    );
 }
 
 #[test]
