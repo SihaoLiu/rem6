@@ -48,6 +48,7 @@ fn append_gem5_derived_text_stats(output: &mut String, snapshot: &StatSnapshot) 
     append_gem5_dram_interface_latency_stats(output, snapshot);
     append_gem5_cpu_ratio_stats(output, snapshot);
     append_gem5_work_item_alias_stats(output, snapshot);
+    append_gem5_work_item_duration_alias_stats(output, snapshot);
     append_gem5_in_order_pipeline_alias_stats(output, snapshot);
     append_gem5_branch_prediction_alias_stats(output, snapshot);
     append_gem5_l1_cache_alias_stats(output, snapshot);
@@ -407,6 +408,39 @@ fn append_gem5_work_item_alias_stats(output: &mut String, snapshot: &StatSnapsho
         "system.cpu.numWorkItemsCompleted",
         "Count",
     );
+}
+
+fn append_gem5_work_item_duration_alias_stats(output: &mut String, snapshot: &StatSnapshot) {
+    for sample in snapshot.samples() {
+        let Some(work_id) = gem5_work_item_type_from_host_action_duration_path(sample.path())
+        else {
+            continue;
+        };
+        let alias_path = format!("system.work_item_type{work_id}");
+        output.push_str(&format!(
+            "{alias_path:<64} {:>20} # kind=derived unit={} reset_policy={}\n",
+            sample.value(),
+            sample.unit(),
+            sample.reset_policy()
+        ));
+        for bucket in sample.histogram_buckets() {
+            output.push_str(&format!(
+                "{:<64} {:>20} # histogram_bucket={} unit={} reset_policy={}\n",
+                format!("{alias_path}.bucket"),
+                bucket.count(),
+                bucket.bucket(),
+                sample.unit(),
+                sample.reset_policy()
+            ));
+        }
+    }
+}
+
+fn gem5_work_item_type_from_host_action_duration_path(path: &str) -> Option<&str> {
+    let work_id = path
+        .strip_prefix("sim.host_actions.roi_work_item_type")?
+        .strip_suffix(".duration_ticks")?;
+    (!work_id.is_empty() && work_id.bytes().all(|byte| byte.is_ascii_digit())).then_some(work_id)
 }
 
 fn append_gem5_in_order_pipeline_alias_stats(output: &mut String, snapshot: &StatSnapshot) {

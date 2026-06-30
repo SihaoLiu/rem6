@@ -171,6 +171,62 @@ fn rem6_run_text_stats_map_m5_work_markers_to_gem5_cpu_work_item_aliases() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_m5_work_item_duration_histogram_aliases() {
+    let program = riscv64_program(&[
+        i_type(11, 0, 0x0, 10, 0x13),
+        i_type(7, 0, 0x0, 11, 0x13),
+        m5op(M5_WORK_BEGIN),
+        i_type(1, 0, 0x0, 5, 0x13),
+        i_type(2, 5, 0x0, 5, 0x13),
+        i_type(11, 0, 0x0, 10, 0x13),
+        i_type(7, 0, 0x0, 11, 0x13),
+        m5op(M5_WORK_END),
+        m5op(M5_EXIT),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("m5-work-item-duration-text-aliases", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--stats-format",
+            "text",
+            "--execute",
+            "--memory-system",
+            "direct",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    let duration_bucket = assert_text_histogram_sample(
+        &stdout,
+        "sim.host_actions.roi_work_item_type11.duration_ticks",
+        "Tick",
+        1,
+    );
+    assert_text_histogram_bucket(
+        &stdout,
+        "system.work_item_type11",
+        "Tick",
+        duration_bucket,
+        1,
+    );
+}
+
+#[test]
 fn rem6_run_emits_m5_hypercall_host_action_detail_from_real_riscv_execution() {
     let program = riscv64_program(&[
         i_type(0x321, 0, 0x0, 10, 0x13),
@@ -1171,6 +1227,76 @@ fn assert_text_count_stat(stdout: &str, path: &str, value: u64) {
         line.contains("reset_policy=monotonic"),
         "missing monotonic reset policy for {path} in line: {line}"
     );
+}
+
+fn assert_text_histogram_sample(stdout: &str, path: &str, unit: &str, value: u64) -> u64 {
+    let line = text_stat_line(stdout, path);
+    let actual = line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|value| value.parse::<u64>().ok());
+    assert_eq!(
+        actual,
+        Some(value),
+        "unexpected text histogram sample count for {path} in line: {line}"
+    );
+    assert!(
+        line.contains("kind=histogram"),
+        "missing histogram kind for {path} in line: {line}"
+    );
+    assert!(
+        line.contains(&format!("unit={unit}")),
+        "missing {unit} unit for {path} in line: {line}"
+    );
+
+    text_histogram_bucket_lines(stdout, path)
+        .into_iter()
+        .find_map(|line| histogram_bucket_and_count(line).map(|(bucket, _)| bucket))
+        .unwrap_or_else(|| panic!("missing histogram bucket for {path} in stdout:\n{stdout}"))
+}
+
+fn assert_text_histogram_bucket(stdout: &str, path: &str, unit: &str, bucket: u64, count: u64) {
+    let bucket_lines = text_histogram_bucket_lines(stdout, path);
+    let line = bucket_lines
+        .iter()
+        .copied()
+        .find(|line| histogram_bucket_and_count(line) == Some((bucket, count)))
+        .unwrap_or_else(|| {
+            panic!("missing histogram bucket {bucket}={count} for {path} in stdout:\n{stdout}")
+        });
+    assert!(
+        line.contains(&format!("unit={unit}")),
+        "missing {unit} unit for {path} bucket in line: {line}"
+    );
+    assert!(
+        line.contains("reset_policy=monotonic"),
+        "missing monotonic reset policy for {path} bucket in line: {line}"
+    );
+}
+
+fn text_stat_line<'a>(stdout: &'a str, path: &str) -> &'a str {
+    stdout
+        .lines()
+        .find(|line| line.split_whitespace().next() == Some(path))
+        .unwrap_or_else(|| panic!("missing text stat {path} in stdout:\n{stdout}"))
+}
+
+fn text_histogram_bucket_lines<'a>(stdout: &'a str, path: &str) -> Vec<&'a str> {
+    let bucket_path = format!("{path}.bucket");
+    stdout
+        .lines()
+        .filter(|line| line.split_whitespace().next() == Some(bucket_path.as_str()))
+        .collect()
+}
+
+fn histogram_bucket_and_count(line: &str) -> Option<(u64, u64)> {
+    let count = line.split_whitespace().nth(1)?.parse().ok()?;
+    let bucket = line
+        .split_whitespace()
+        .find_map(|field| field.strip_prefix("histogram_bucket="))?
+        .parse()
+        .ok()?;
+    Some((bucket, count))
 }
 
 fn assert_execution_mode_switch(

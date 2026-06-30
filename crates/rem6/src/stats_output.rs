@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use rem6_boot::{BootElfInterpreter, BootElfMetadata};
 use rem6_stats::{StatResetPolicy, StatSnapshot, StatsRegistry};
 
@@ -861,7 +863,50 @@ fn emit_run_host_action_stats(
         StatResetPolicy::Monotonic,
         switch_state_transfer_payload_bytes,
     )?;
+    for (work_id, buckets) in roi_duration_histograms(summary) {
+        let buckets = buckets.into_iter().collect::<Vec<_>>();
+        emit_histogram_stat(
+            stats,
+            &format!("sim.host_actions.roi_work_item_type{work_id}.duration_ticks"),
+            "Tick",
+            StatResetPolicy::Monotonic,
+            &buckets,
+        )?;
+    }
     Ok(())
+}
+
+fn roi_duration_histograms(summary: &Rem6HostActionSummary) -> BTreeMap<u64, BTreeMap<u64, u64>> {
+    let mut events = Vec::with_capacity(summary.roi_begin.len() + summary.roi_end.len());
+    for marker in &summary.roi_begin {
+        events.push((marker.tick, marker.event, true, marker));
+    }
+    for marker in &summary.roi_end {
+        events.push((marker.tick, marker.event, false, marker));
+    }
+    events.sort_by_key(|(tick, event, is_begin, _)| (*tick, *event, !*is_begin));
+
+    let mut active = BTreeMap::new();
+    let mut durations: BTreeMap<u64, BTreeMap<u64, u64>> = BTreeMap::new();
+    for (_, _, is_begin, marker) in events {
+        let key = (marker.thread_id, marker.work_id);
+        if is_begin {
+            active.insert(key, marker.tick);
+            continue;
+        }
+        let Some(start_tick) = active.remove(&key) else {
+            continue;
+        };
+        let Some(duration) = marker.tick.checked_sub(start_tick) else {
+            continue;
+        };
+        *durations
+            .entry(marker.work_id)
+            .or_default()
+            .entry(duration)
+            .or_default() += 1;
+    }
+    durations
 }
 
 pub(super) fn increment_stat(
