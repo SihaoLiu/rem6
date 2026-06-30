@@ -258,14 +258,15 @@ use sleep::{
 };
 use socket::{
     syscall_getpeername, syscall_getsockname, syscall_getsockopt, syscall_recvfrom,
-    syscall_recvmsg, syscall_sendmmsg, syscall_sendmsg, syscall_sendto, syscall_setsockopt,
-    syscall_shutdown, syscall_socket, syscall_socket_accept, syscall_socket_bind,
-    syscall_socket_connect, syscall_socket_listen, syscall_socketpair, RiscvGuestSocketEndpoint,
-    RiscvGuestSocketListener, RiscvGuestSocketQueue, RiscvGuestSocketQueueId, RISCV_LINUX_ACCEPT,
-    RISCV_LINUX_ACCEPT4, RISCV_LINUX_BIND, RISCV_LINUX_CONNECT, RISCV_LINUX_GETPEERNAME,
-    RISCV_LINUX_GETSOCKNAME, RISCV_LINUX_GETSOCKOPT, RISCV_LINUX_LISTEN, RISCV_LINUX_RECVFROM,
-    RISCV_LINUX_RECVMSG, RISCV_LINUX_SENDMMSG, RISCV_LINUX_SENDMSG, RISCV_LINUX_SENDTO,
-    RISCV_LINUX_SETSOCKOPT, RISCV_LINUX_SHUTDOWN, RISCV_LINUX_SOCKET, RISCV_LINUX_SOCKETPAIR,
+    syscall_recvmmsg, syscall_recvmsg, syscall_sendmmsg, syscall_sendmsg, syscall_sendto,
+    syscall_setsockopt, syscall_shutdown, syscall_socket, syscall_socket_accept,
+    syscall_socket_bind, syscall_socket_connect, syscall_socket_listen, syscall_socketpair,
+    RiscvGuestSocketEndpoint, RiscvGuestSocketListener, RiscvGuestSocketQueue,
+    RiscvGuestSocketQueueId, RISCV_LINUX_ACCEPT, RISCV_LINUX_ACCEPT4, RISCV_LINUX_BIND,
+    RISCV_LINUX_CONNECT, RISCV_LINUX_GETPEERNAME, RISCV_LINUX_GETSOCKNAME, RISCV_LINUX_GETSOCKOPT,
+    RISCV_LINUX_LISTEN, RISCV_LINUX_RECVFROM, RISCV_LINUX_RECVMMSG, RISCV_LINUX_RECVMSG,
+    RISCV_LINUX_SENDMMSG, RISCV_LINUX_SENDMSG, RISCV_LINUX_SENDTO, RISCV_LINUX_SETSOCKOPT,
+    RISCV_LINUX_SHUTDOWN, RISCV_LINUX_SOCKET, RISCV_LINUX_SOCKETPAIR,
 };
 use splice::{syscall_splice, RISCV_LINUX_SPLICE};
 pub use startup::{

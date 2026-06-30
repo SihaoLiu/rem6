@@ -32,6 +32,7 @@ pub(super) const RISCV_LINUX_SHUTDOWN: u64 = 210;
 pub(super) const RISCV_LINUX_SENDMSG: u64 = 211;
 pub(super) const RISCV_LINUX_RECVMSG: u64 = 212;
 pub(super) const RISCV_LINUX_ACCEPT4: u64 = 242;
+pub(super) const RISCV_LINUX_RECVMMSG: u64 = 243;
 pub(super) const RISCV_LINUX_SENDMMSG: u64 = 269;
 
 const RISCV_LINUX_AF_UNIX: u64 = 1;
@@ -1730,6 +1731,61 @@ pub(super) fn syscall_recvmsg(
         Ok(RiscvGuestSocketRead::NotSocket) => Some(linux_error(RISCV_LINUX_ENOTSOCK)),
         Err(_) => Some(linux_error(RISCV_LINUX_EBADF)),
     }
+}
+
+pub(super) fn syscall_recvmmsg(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> Option<u64> {
+    if request.argument(4) != 0 {
+        return Some(linux_error(RISCV_LINUX_ENOTSUP));
+    }
+    let flags = request.argument(3);
+    let vlen = request.argument(2).min(RISCV_LINUX_IOV_MAX as u64);
+    let mut received = 0_u64;
+    for index in 0..vlen {
+        let Some(offset) = index.checked_mul(RISCV_LINUX_MMSGHDR_BYTES) else {
+            return Some(if received == 0 {
+                linux_error(RISCV_LINUX_EFAULT)
+            } else {
+                received
+            });
+        };
+        let Some(msg_address) = request.argument(1).checked_add(offset) else {
+            return Some(if received == 0 {
+                linux_error(RISCV_LINUX_EFAULT)
+            } else {
+                received
+            });
+        };
+        let value = match syscall_recvmsg(
+            RiscvSyscallRequest::new(
+                request.pc(),
+                RISCV_LINUX_RECVMSG,
+                [request.argument(0), msg_address, flags, 0, 0, 0],
+            ),
+            state,
+            guest_memory_reader,
+            guest_memory_writer,
+        ) {
+            Some(value) => value,
+            None => return if received == 0 { None } else { Some(received) },
+        };
+        if linux_return_is_error(value) {
+            return Some(if received == 0 { value } else { received });
+        }
+        if let Err(errno) = write_mmsg_len(guest_memory_writer, msg_address, value) {
+            return Some(if received == 0 {
+                linux_error(errno)
+            } else {
+                received
+            });
+        }
+        received += 1;
+    }
+    Some(received)
 }
 
 pub(super) fn socket_write_result(write: RiscvGuestSocketWrite) -> Option<u64> {

@@ -7,9 +7,11 @@ use std::{
 type GuestMemory = Arc<Mutex<BTreeMap<u64, u8>>>;
 
 const RISCV_LINUX_SOCKETPAIR_FOR_TEST: u64 = 199;
+const RISCV_LINUX_RECVMMSG_FOR_TEST: u64 = 243;
 const RISCV_LINUX_SENDMMSG_FOR_TEST: u64 = 269;
 const RISCV_LINUX_AF_UNIX_FOR_TEST: u64 = 1;
 const RISCV_LINUX_SOCK_STREAM_FOR_TEST: u64 = 1;
+const RISCV_LINUX_MSG_DONTWAIT_FOR_TEST: u64 = 0x40;
 const RISCV_LINUX_MSG_NOSIGNAL_FOR_TEST: u64 = 0x4000;
 
 #[test]
@@ -79,6 +81,78 @@ fn linux_table_sendmmsg_sends_single_message_and_writes_message_length() {
         Some(RiscvSyscallOutcome::Return { value: 7 })
     );
     assert_eq!(read_bytes(&memory, 0x9500, 7), b"batched");
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_recvmmsg_receives_single_message_and_writes_message_length() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let memory = Arc::new(Mutex::new(BTreeMap::new()));
+    let guest_memory_reader = guest_memory_reader(Arc::clone(&memory));
+    let guest_memory_writer = guest_memory_writer(Arc::clone(&memory));
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8010,
+                RISCV_LINUX_SOCKETPAIR_FOR_TEST,
+                [
+                    RISCV_LINUX_AF_UNIX_FOR_TEST,
+                    RISCV_LINUX_SOCK_STREAM_FOR_TEST,
+                    0,
+                    0xa000,
+                    0,
+                    0,
+                ],
+            ),
+            &mut state,
+            4,
+            None,
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    let fds = read_bytes(&memory, 0xa000, 8);
+    let left_fd = read_le_i32(&fds, 0) as u64;
+    let right_fd = read_le_i32(&fds, 4) as u64;
+
+    write_bytes(&memory, 0xa100, b"packet");
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(0x8014, RISCV_LINUX_WRITE, [left_fd, 0xa100, 6, 0, 0, 0]),
+            &mut state,
+            5,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 6 })
+    );
+
+    write_msghdr(&memory, 0xa200, 0xa300, 2);
+    write_iovec(&memory, 0xa300, 0xa400, 3);
+    write_iovec(&memory, 0xa310, 0xa500, 3);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8018,
+                RISCV_LINUX_RECVMMSG_FOR_TEST,
+                [right_fd, 0xa200, 1, RISCV_LINUX_MSG_DONTWAIT_FOR_TEST, 0, 0,],
+            ),
+            &mut state,
+            6,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 1 })
+    );
+    assert_eq!(read_bytes(&memory, 0xa400, 3), b"pac");
+    assert_eq!(read_bytes(&memory, 0xa500, 3), b"ket");
+    let msg_len = read_bytes(&memory, 0xa238, 4);
+    assert_eq!(read_le_u32(&msg_len, 0), 6);
+    let msg_flags = read_bytes(&memory, 0xa230, 4);
+    assert_eq!(read_le_i32(&msg_flags, 0), 0);
     assert!(state.unknown_syscalls().is_empty());
 }
 
