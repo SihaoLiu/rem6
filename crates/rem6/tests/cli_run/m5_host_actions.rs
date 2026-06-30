@@ -232,6 +232,8 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
     let program = riscv64_program(&[
         m5op(M5_SWITCH_CPU),
         i_type(0, 0, 0x0, 10, 0x13),
+        m5op(M5_SWITCH_CPU),
+        i_type(1, 0, 0x0, 10, 0x13),
         m5op(M5_EXIT),
         i_type(77, 0, 0x0, 11, 0x13),
         m5op(M5_FAIL),
@@ -281,7 +283,7 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
         host_actions
             .pointer("/total_action_count")
             .and_then(Value::as_u64),
-        Some(2)
+        Some(3)
     );
     assert_eq!(
         host_actions
@@ -293,7 +295,7 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
         host_actions
             .pointer("/execution_mode_switch_count")
             .and_then(Value::as_u64),
-        Some(1)
+        Some(2)
     );
     assert_eq!(
         host_actions.pointer("/stop_count").and_then(Value::as_u64),
@@ -303,6 +305,15 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
         host_actions,
         0,
         "cpu0",
+        None,
+        "detailed",
+        "execution-mode-switch-cpu0",
+    );
+    let second_switch_tick = assert_execution_mode_switch(
+        host_actions,
+        1,
+        "cpu0",
+        Some("detailed"),
         "detailed",
         "execution-mode-switch-cpu0",
     );
@@ -311,7 +322,11 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
         .and_then(Value::as_u64)
         .expect("m5_exit stop should be recorded after switch");
     assert!(
-        stop_tick > switch_tick,
+        second_switch_tick > switch_tick,
+        "repeated m5_switch_cpu should record a later mode switch: {host_actions}"
+    );
+    assert!(
+        stop_tick > second_switch_tick,
         "m5_switch_cpu should switch modes and continue to the later m5_exit: {host_actions}"
     );
 }
@@ -801,6 +816,7 @@ fn assert_execution_mode_switch(
     host_actions: &Value,
     index: usize,
     target: &str,
+    previous_mode: Option<&str>,
     mode: &str,
     manifest_label_prefix: &str,
 ) -> u64 {
@@ -812,10 +828,17 @@ fn assert_execution_mode_switch(
         Some(target)
     );
     assert_eq!(action.pointer("/mode").and_then(Value::as_str), Some(mode));
-    assert!(
-        action.pointer("/previous_mode").unwrap().is_null(),
-        "execution mode switch action {index}: {action}"
-    );
+    match previous_mode {
+        Some(previous_mode) => assert_eq!(
+            action.pointer("/previous_mode").and_then(Value::as_str),
+            Some(previous_mode),
+            "execution mode switch action {index}: {action}"
+        ),
+        None => assert!(
+            action.pointer("/previous_mode").is_some_and(Value::is_null),
+            "execution mode switch action {index}: {action}"
+        ),
+    }
     assert!(
         action
             .pointer("/stats_epoch")
