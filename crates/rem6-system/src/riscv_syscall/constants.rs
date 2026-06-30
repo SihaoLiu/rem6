@@ -7,6 +7,7 @@ pub(super) const RISCV_LINUX_GETCWD: u64 = 17;
 pub(super) const RISCV_LINUX_LOOKUP_DCOOKIE: u64 = 18;
 pub(super) const RISCV_LINUX_NFSSERVCTL: u64 = 42;
 pub(super) const RISCV_LINUX_OPENAT: u64 = 56;
+pub(super) const RISCV_LINUX_QUOTACTL: u64 = 60;
 pub(super) const RISCV_LINUX_READLINKAT: u64 = 78;
 pub(super) const RISCV_LINUX_NEWFSTATAT: u64 = 79;
 pub(super) const RISCV_LINUX_FSTAT: u64 = 80;
