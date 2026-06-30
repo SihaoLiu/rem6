@@ -1604,6 +1604,8 @@ impl SystemActionExecutor {
             )
             .map_err(SystemError::Checkpoint)?;
         self.checkpoints = staged_checkpoints;
+        self.captured_manifests
+            .insert(manifest.label().to_string(), manifest.clone());
 
         Ok(Some(ExecutionModeSwitchStateTransfer::from_manifest(
             &manifest,

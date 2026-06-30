@@ -1790,6 +1790,38 @@ fn replay_manifest_with_checkpointed_execution_mode() -> WorkloadManifest {
         .unwrap()
 }
 
+fn replay_manifest_with_execution_mode_transfer_restore() -> WorkloadManifest {
+    WorkloadManifest::builder(
+        workload_id("riscv-replay-mode-transfer-restore"),
+        boot_image(),
+    )
+    .with_topology(replay_topology())
+    .add_resource(kernel_resource())
+    .unwrap()
+    .add_required_resource(resource_id("kernel"))
+    .add_host_event(WorkloadHostEvent::new(
+        1,
+        HostEventIntent::SwitchExecutionMode {
+            target: "cpu0".to_string(),
+            mode: WorkloadExecutionMode::Functional,
+        },
+    ))
+    .add_host_event(WorkloadHostEvent::new(
+        2,
+        HostEventIntent::RestoreCheckpoint {
+            label: "execution-mode-switch-cpu0-1".to_string(),
+        },
+    ))
+    .add_host_event(WorkloadHostEvent::new(
+        0,
+        HostEventIntent::Stop {
+            reason: "host-stop".to_string(),
+        },
+    ))
+    .build()
+    .unwrap()
+}
+
 fn replay_manifest_with_planned_guest_host_call() -> WorkloadManifest {
     WorkloadManifest::builder(workload_id("riscv-replay-guest-host-call"), boot_image())
         .with_topology(replay_topology())
@@ -2486,6 +2518,42 @@ fn workload_replay_records_checkpoint_manifest_summaries() {
         outcome.result().restored_checkpoint_manifest_summaries(),
         &[expected]
     );
+    plan.verify_result(outcome.result()).unwrap();
+}
+
+#[test]
+fn workload_replay_restores_execution_mode_transfer_manifest_by_label() {
+    let manifest = replay_manifest_with_execution_mode_transfer_restore();
+    let plan = WorkloadReplayPlan::from_manifest(&manifest).unwrap();
+
+    let outcome = RiscvWorkloadReplay::new(plan.clone())
+        .with_max_turns(20)
+        .run_parallel()
+        .unwrap();
+
+    let transfer_label = "execution-mode-switch-cpu0-1".to_string();
+    assert_eq!(
+        outcome.result().restored_checkpoint_labels(),
+        &[transfer_label.clone()]
+    );
+    assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
+        event,
+        SystemActionOutcome::ExecutionModeSwitched {
+            tick,
+            state_transfer,
+            ..
+        } if *tick == 1
+            && state_transfer.as_ref().is_some_and(|transfer| {
+                transfer.manifest_label() == transfer_label
+                    && transfer.component_count() >= 1
+                    && transfer.payload_bytes() > 0
+            })
+    )));
+    assert!(outcome.host_action_outcomes().iter().any(|event| matches!(
+        event,
+        SystemActionOutcome::CheckpointRestored { tick, manifest, .. }
+            if *tick == 2 && manifest.label() == transfer_label
+    )));
     plan.verify_result(outcome.result()).unwrap();
 }
 
