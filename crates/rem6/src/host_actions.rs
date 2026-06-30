@@ -1,5 +1,8 @@
 use rem6_stats::{StatDumpRecord, StatsResetRecord};
-use rem6_system::{ExecutionMode, ExecutionModeSwitchStateTransfer, SystemActionOutcome};
+use rem6_system::{
+    ExecutionMode, ExecutionModeSwitchStateTransfer, ExecutionModeSwitchStateTransferComponent,
+    SystemActionOutcome,
+};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Rem6HostActionSummary {
@@ -193,16 +196,23 @@ pub(crate) struct Rem6ExecutionModeStateTransferSummary {
     pub(crate) component_count: u64,
     pub(crate) chunk_count: u64,
     pub(crate) payload_bytes: u64,
+    pub(crate) components: Vec<Rem6HostCheckpointComponentSummary>,
 }
 
 impl Rem6ExecutionModeStateTransferSummary {
     fn from_transfer(transfer: &ExecutionModeSwitchStateTransfer) -> Self {
+        let components = transfer
+            .components()
+            .iter()
+            .map(Rem6HostCheckpointComponentSummary::from_execution_mode_transfer_component)
+            .collect();
         Self {
             manifest_label: transfer.manifest_label().to_string(),
             manifest_tick: transfer.manifest_tick(),
             component_count: transfer.component_count(),
             chunk_count: transfer.chunk_count(),
             payload_bytes: transfer.payload_bytes(),
+            components,
         }
     }
 }
@@ -321,6 +331,25 @@ impl Rem6HostCheckpointComponentSummary {
             chunk_count: chunks.len() as u64,
             payload_bytes,
             chunks,
+        }
+    }
+
+    fn from_execution_mode_transfer_component(
+        component: &ExecutionModeSwitchStateTransferComponent,
+    ) -> Self {
+        Self {
+            component: component.component().to_string(),
+            chunk_count: component.chunk_count(),
+            payload_bytes: component.payload_bytes(),
+            chunks: component
+                .chunks()
+                .iter()
+                .map(|chunk| Rem6HostCheckpointChunkSummary {
+                    name: chunk.name().to_string(),
+                    payload_bytes: chunk.payload_bytes(),
+                    payload_checksum: chunk.payload_checksum(),
+                })
+                .collect(),
         }
     }
 }

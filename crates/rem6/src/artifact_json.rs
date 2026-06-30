@@ -1567,13 +1567,20 @@ impl Rem6HostExecutionModeSwitchSummary {
 
 impl Rem6ExecutionModeStateTransferSummary {
     fn to_json(&self) -> String {
+        let components = self
+            .components
+            .iter()
+            .map(Rem6HostCheckpointComponentSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         format!(
-            "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{}}}",
+            "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{},\"components\":[{}]}}",
             json_escape(&self.manifest_label),
             self.manifest_tick,
             self.component_count,
             self.chunk_count,
             self.payload_bytes,
+            components,
         )
     }
 }

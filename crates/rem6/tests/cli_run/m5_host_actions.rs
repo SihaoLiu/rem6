@@ -865,6 +865,27 @@ fn assert_execution_mode_switch(
             .is_some_and(|bytes| bytes > 0),
         "execution mode switch transfer {index}: {transfer}"
     );
+    assert!(
+        transfer
+            .pointer("/components")
+            .and_then(Value::as_array)
+            .is_some_and(|components| components.len() >= 2),
+        "execution mode switch transfer {index}: {transfer}"
+    );
+    assert!(
+        transfer
+            .pointer("/components/0/component")
+            .and_then(Value::as_str)
+            .is_some(),
+        "execution mode switch transfer {index}: {transfer}"
+    );
+    assert!(
+        transfer
+            .pointer("/components/0/chunks/0/payload_checksum")
+            .and_then(Value::as_str)
+            .is_some_and(|checksum| checksum.starts_with("0x") && checksum.len() == 18),
+        "execution mode switch transfer {index}: {transfer}"
+    );
     action
         .pointer("/tick")
         .and_then(Value::as_u64)

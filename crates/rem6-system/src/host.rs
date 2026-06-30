@@ -43,17 +43,39 @@ pub struct ExecutionModeSwitchStateTransfer {
     component_count: u64,
     chunk_count: u64,
     payload_bytes: u64,
+    components: Vec<ExecutionModeSwitchStateTransferComponent>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionModeSwitchStateTransferComponent {
+    component: String,
+    chunk_count: u64,
+    payload_bytes: u64,
+    chunks: Vec<ExecutionModeSwitchStateTransferChunk>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionModeSwitchStateTransferChunk {
+    name: String,
+    payload_bytes: u64,
+    payload_checksum: u64,
 }
 
 impl ExecutionModeSwitchStateTransfer {
     fn from_manifest(manifest: &CheckpointManifest) -> Self {
         let summary = manifest.summary();
+        let components = manifest
+            .states()
+            .iter()
+            .map(ExecutionModeSwitchStateTransferComponent::from_state)
+            .collect();
         Self {
             manifest_label: manifest.label().to_string(),
             manifest_tick: manifest.tick(),
             component_count: summary.component_count() as u64,
             chunk_count: summary.chunk_count() as u64,
             payload_bytes: summary.payload_bytes() as u64,
+            components,
         }
     }
 
@@ -76,6 +98,72 @@ impl ExecutionModeSwitchStateTransfer {
     pub const fn payload_bytes(&self) -> u64 {
         self.payload_bytes
     }
+
+    pub fn components(&self) -> &[ExecutionModeSwitchStateTransferComponent] {
+        &self.components
+    }
+}
+
+impl ExecutionModeSwitchStateTransferComponent {
+    fn from_state(state: &rem6_checkpoint::CheckpointState) -> Self {
+        let mut chunks = state
+            .chunks()
+            .iter()
+            .map(ExecutionModeSwitchStateTransferChunk::from_chunk)
+            .collect::<Vec<_>>();
+        chunks.sort_by(|left, right| left.name.cmp(&right.name));
+        let payload_bytes = chunks.iter().map(|chunk| chunk.payload_bytes).sum();
+        Self {
+            component: state.component().as_str().to_string(),
+            chunk_count: chunks.len() as u64,
+            payload_bytes,
+            chunks,
+        }
+    }
+
+    pub fn component(&self) -> &str {
+        &self.component
+    }
+
+    pub const fn chunk_count(&self) -> u64 {
+        self.chunk_count
+    }
+
+    pub const fn payload_bytes(&self) -> u64 {
+        self.payload_bytes
+    }
+
+    pub fn chunks(&self) -> &[ExecutionModeSwitchStateTransferChunk] {
+        &self.chunks
+    }
+}
+
+impl ExecutionModeSwitchStateTransferChunk {
+    fn from_chunk(chunk: &rem6_checkpoint::CheckpointChunk) -> Self {
+        Self {
+            name: chunk.name().to_string(),
+            payload_bytes: chunk.payload().len() as u64,
+            payload_checksum: checkpoint_payload_checksum(chunk.payload()),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub const fn payload_bytes(&self) -> u64 {
+        self.payload_bytes
+    }
+
+    pub const fn payload_checksum(&self) -> u64 {
+        self.payload_checksum
+    }
+}
+
+fn checkpoint_payload_checksum(payload: &[u8]) -> u64 {
+    payload.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
