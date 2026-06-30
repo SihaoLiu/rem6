@@ -70,6 +70,10 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_SEMCTL
             | RISCV_LINUX_SEMTIMEDOP
             | RISCV_LINUX_SEMOP
+            | RISCV_LINUX_SHMGET
+            | RISCV_LINUX_SHMCTL
+            | RISCV_LINUX_SHMAT
+            | RISCV_LINUX_SHMDT
             | RISCV_LINUX_ADD_KEY
             | RISCV_LINUX_REQUEST_KEY
             | RISCV_LINUX_KEYCTL

@@ -26,6 +26,10 @@ const RAW_KNOWN_NI_SYSCALLS: &[i32] = &[
     191, // semctl
     192, // semtimedop
     193, // semop
+    194, // shmget
+    195, // shmctl
+    196, // shmat
+    197, // shmdt
     217, // add_key
     218, // request_key
     219, // keyctl
