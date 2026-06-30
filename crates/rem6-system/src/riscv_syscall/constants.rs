@@ -40,6 +40,7 @@ pub(super) const RISCV_LINUX_KCMP: u64 = 272;
 pub(super) const RISCV_LINUX_SECCOMP: u64 = 277;
 pub(super) const RISCV_LINUX_BPF: u64 = 280;
 pub(super) const RISCV_LINUX_USERFAULTFD: u64 = 282;
+pub(super) const RISCV_LINUX_IO_PGETEVENTS: u64 = 292;
 pub(super) const RISCV_LINUX_IO_URING_SETUP: u64 = 425;
 pub(super) const RISCV_LINUX_IO_URING_ENTER: u64 = 426;
 pub(super) const RISCV_LINUX_IO_URING_REGISTER: u64 = 427;

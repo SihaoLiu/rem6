@@ -66,6 +66,7 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_SECCOMP
             | RISCV_LINUX_BPF
             | RISCV_LINUX_USERFAULTFD
+            | RISCV_LINUX_IO_PGETEVENTS
             | RISCV_LINUX_IO_URING_SETUP
             | RISCV_LINUX_IO_URING_ENTER
             | RISCV_LINUX_IO_URING_REGISTER
