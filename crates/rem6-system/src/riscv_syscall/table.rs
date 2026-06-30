@@ -52,6 +52,15 @@ impl RiscvSyscallTable {
             RISCV_LINUX_LOOKUP_DCOOKIE
             | RISCV_LINUX_NFSSERVCTL
             | RISCV_LINUX_CLONE
+            | RISCV_LINUX_PERF_EVENT_OPEN
+            | RISCV_LINUX_FANOTIFY_INIT
+            | RISCV_LINUX_FANOTIFY_MARK
+            | RISCV_LINUX_NAME_TO_HANDLE_AT
+            | RISCV_LINUX_OPEN_BY_HANDLE_AT
+            | RISCV_LINUX_KCMP
+            | RISCV_LINUX_SECCOMP
+            | RISCV_LINUX_BPF
+            | RISCV_LINUX_USERFAULTFD
             | RISCV_LINUX_IO_URING_SETUP
             | RISCV_LINUX_IO_URING_ENTER
             | RISCV_LINUX_IO_URING_REGISTER

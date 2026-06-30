@@ -8,6 +8,15 @@ use crate::support::{
 
 const RAW_KNOWN_NI_SYSCALLS: &[i32] = &[
     220, // clone
+    241, // perf_event_open
+    262, // fanotify_init
+    263, // fanotify_mark
+    264, // name_to_handle_at
+    265, // open_by_handle_at
+    272, // kcmp
+    277, // seccomp
+    280, // bpf
+    282, // userfaultfd
     425, // io_uring_setup
     426, // io_uring_enter
     427, // io_uring_register
