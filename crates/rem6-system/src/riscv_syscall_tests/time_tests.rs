@@ -4,6 +4,7 @@ const RISCV_LINUX_CLOCK_GETRES_FOR_TEST: u64 = 114;
 const RISCV_LINUX_GETTIMEOFDAY_FOR_TEST: u64 = 169;
 const RISCV_LINUX_SETTIMEOFDAY_FOR_TEST: u64 = 170;
 const RISCV_LINUX_ADJTIMEX_FOR_TEST: u64 = 171;
+const RISCV_LINUX_CLOCK_ADJTIME_FOR_TEST: u64 = 266;
 const RISCV_LINUX_GETITIMER_FOR_TEST: u64 = 102;
 const RISCV_LINUX_SETITIMER_FOR_TEST: u64 = 103;
 const RISCV_NEWLIB_CLOCK_GETTIME64_FOR_TEST: u64 = 403;
@@ -556,6 +557,106 @@ fn linux_table_adjtimex_query_without_guest_writer_stays_unhandled() {
         ),
         None
     );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_clock_adjtime_realtime_query_writes_tick_derived_snapshot() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let timex_address = 0x9400;
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == timex_address && bytes == RISCV_LINUX_TIMEX_BYTES_FOR_TEST {
+            Some(timex_bytes(0))
+        } else {
+            None
+        }
+    });
+    let writes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writes_for_writer = std::sync::Arc::clone(&writes);
+    let guest_memory_writer = RiscvGuestMemoryWriter::new(move |address, bytes| {
+        writes_for_writer
+            .lock()
+            .unwrap()
+            .push((address, bytes.to_vec()));
+        true
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8034,
+                RISCV_LINUX_CLOCK_ADJTIME_FOR_TEST,
+                [0, timex_address, 0, 0, 0, 0],
+            ),
+            &mut state,
+            2_000_003_456,
+            Some(&guest_memory_reader),
+            Some(&guest_memory_writer),
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+
+    let writes = writes.lock().unwrap();
+    assert_eq!(
+        write_addresses(&writes),
+        (timex_address..timex_address + RISCV_LINUX_TIMEX_BYTES_FOR_TEST as u64)
+            .collect::<Vec<_>>()
+    );
+    let timex = collect_guest_writes(&writes, timex_address, RISCV_LINUX_TIMEX_BYTES_FOR_TEST);
+    assert_eq!(read_le_u32(&timex, 0), 0);
+    assert_eq!(read_le_i64(&timex, 72), 2);
+    assert_eq!(read_le_i64(&timex, 80), 3);
+    assert_eq!(read_le_i64(&timex, 88), 10_000);
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_clock_adjtime_reports_clock_and_timex_errors() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let valid_adjustment_address = 0x9500;
+    let invalid_modes_address = 0x9600;
+    let fault_address = 0x9700;
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if bytes != RISCV_LINUX_TIMEX_BYTES_FOR_TEST {
+            return None;
+        }
+        if address == valid_adjustment_address {
+            Some(timex_bytes(RISCV_LINUX_ADJ_OFFSET_FOR_TEST))
+        } else if address == invalid_modes_address {
+            Some(timex_bytes(0x4000_0000))
+        } else {
+            None
+        }
+    });
+    let guest_memory_writer =
+        RiscvGuestMemoryWriter::new(move |_address, _bytes| panic!("error paths must not write"));
+
+    for (pc, clock_id, argument, errno) in [
+        (0x8038, 1, valid_adjustment_address, RISCV_LINUX_EINVAL),
+        (0x803c, 0, 0, RISCV_LINUX_EFAULT),
+        (0x8040, 0, valid_adjustment_address, RISCV_LINUX_EPERM),
+        (0x8044, 0, invalid_modes_address, RISCV_LINUX_EINVAL),
+        (0x8048, 0, fault_address, RISCV_LINUX_EFAULT),
+    ] {
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(
+                    pc,
+                    RISCV_LINUX_CLOCK_ADJTIME_FOR_TEST,
+                    [clock_id, argument, 0, 0, 0, 0],
+                ),
+                &mut state,
+                2_000_003_456,
+                Some(&guest_memory_reader),
+                Some(&guest_memory_writer),
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(errno)
+            })
+        );
+    }
     assert!(state.unknown_syscalls().is_empty());
 }
 

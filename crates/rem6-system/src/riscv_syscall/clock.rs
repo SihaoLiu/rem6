@@ -15,6 +15,7 @@ pub(super) const RISCV_LINUX_TIMES: u64 = 153;
 pub(super) const RISCV_LINUX_GETTIMEOFDAY: u64 = 169;
 pub(super) const RISCV_LINUX_SETTIMEOFDAY: u64 = 170;
 pub(super) const RISCV_LINUX_ADJTIMEX: u64 = 171;
+pub(super) const RISCV_LINUX_CLOCK_ADJTIME: u64 = 266;
 pub(super) const RISCV_NEWLIB_CLOCK_GETTIME64: u64 = 403;
 pub(super) const RISCV_NEWLIB_LEGACY_TIME: u64 = 1062;
 const RISCV_LINUX_ITIMER_REAL: u64 = 0;
@@ -254,7 +255,37 @@ pub(super) fn syscall_adjtimex(
     guest_memory_reader: Option<&RiscvGuestMemoryReader>,
     guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
 ) -> Option<u64> {
-    let timex_address = request.argument(0);
+    syscall_adjtimex_at_address(
+        request.argument(0),
+        tick,
+        guest_memory_reader,
+        guest_memory_writer,
+    )
+}
+
+pub(super) fn syscall_clock_adjtime(
+    request: RiscvSyscallRequest,
+    tick: Tick,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> Option<u64> {
+    if request.argument(0) != RISCV_LINUX_CLOCK_REALTIME {
+        return Some(linux_error(RISCV_LINUX_EINVAL));
+    }
+    syscall_adjtimex_at_address(
+        request.argument(1),
+        tick,
+        guest_memory_reader,
+        guest_memory_writer,
+    )
+}
+
+fn syscall_adjtimex_at_address(
+    timex_address: u64,
+    tick: Tick,
+    guest_memory_reader: Option<&RiscvGuestMemoryReader>,
+    guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
+) -> Option<u64> {
     let guest_memory_reader = guest_memory_reader?;
     let modes = match read_riscv_linux_timex_modes(timex_address, guest_memory_reader) {
         Ok(modes) => modes,

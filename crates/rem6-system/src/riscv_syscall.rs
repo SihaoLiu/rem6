@@ -105,8 +105,9 @@ use brk::syscall_brk;
 use cache::{syscall_riscv_flush_icache, RISCV_LINUX_RISCV_FLUSH_ICACHE};
 use capability::{syscall_capget, syscall_capset, RISCV_LINUX_CAPGET, RISCV_LINUX_CAPSET};
 use clock::{
-    syscall_adjtimex, syscall_clock, syscall_clock_settime, syscall_getitimer, syscall_setitimer,
-    syscall_settimeofday, RiscvLinuxItimerval, RISCV_LINUX_ADJTIMEX, RISCV_LINUX_CLOCK_GETRES,
+    syscall_adjtimex, syscall_clock, syscall_clock_adjtime, syscall_clock_settime,
+    syscall_getitimer, syscall_setitimer, syscall_settimeofday, RiscvLinuxItimerval,
+    RISCV_LINUX_ADJTIMEX, RISCV_LINUX_CLOCK_ADJTIME, RISCV_LINUX_CLOCK_GETRES,
     RISCV_LINUX_CLOCK_GETTIME, RISCV_LINUX_CLOCK_SETTIME, RISCV_LINUX_GETITIMER,
     RISCV_LINUX_GETTIMEOFDAY, RISCV_LINUX_SETITIMER, RISCV_LINUX_SETTIMEOFDAY, RISCV_LINUX_TIMES,
 };
