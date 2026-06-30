@@ -49,7 +49,12 @@ impl RiscvSyscallTable {
             5..=16 => {
                 xattr::syscall_xattr(request, state, guest_memory_reader, guest_memory_writer)
             }
-            RISCV_LINUX_LOOKUP_DCOOKIE
+            RISCV_LINUX_IO_SETUP
+            | RISCV_LINUX_IO_DESTROY
+            | RISCV_LINUX_IO_SUBMIT
+            | RISCV_LINUX_IO_CANCEL
+            | RISCV_LINUX_IO_GETEVENTS
+            | RISCV_LINUX_LOOKUP_DCOOKIE
             | RISCV_LINUX_NFSSERVCTL
             | RISCV_LINUX_CLONE
             | RISCV_LINUX_PERF_EVENT_OPEN

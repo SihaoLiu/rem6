@@ -7,6 +7,11 @@ use crate::support::{
 };
 
 const RAW_KNOWN_NI_SYSCALLS: &[i32] = &[
+    0,   // io_setup
+    1,   // io_destroy
+    2,   // io_submit
+    3,   // io_cancel
+    4,   // io_getevents
     220, // clone
     241, // perf_event_open
     262, // fanotify_init

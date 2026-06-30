@@ -1,3 +1,8 @@
+pub(super) const RISCV_LINUX_IO_SETUP: u64 = 0;
+pub(super) const RISCV_LINUX_IO_DESTROY: u64 = 1;
+pub(super) const RISCV_LINUX_IO_SUBMIT: u64 = 2;
+pub(super) const RISCV_LINUX_IO_CANCEL: u64 = 3;
+pub(super) const RISCV_LINUX_IO_GETEVENTS: u64 = 4;
 pub(super) const RISCV_LINUX_GETCWD: u64 = 17;
 pub(super) const RISCV_LINUX_LOOKUP_DCOOKIE: u64 = 18;
 pub(super) const RISCV_LINUX_NFSSERVCTL: u64 = 42;
