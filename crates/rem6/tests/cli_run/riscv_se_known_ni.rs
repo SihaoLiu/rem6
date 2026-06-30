@@ -46,6 +46,9 @@ const RAW_KNOWN_NI_SYSCALLS: &[i32] = &[
     277, // seccomp
     280, // bpf
     282, // userfaultfd
+    288, // pkey_mprotect
+    289, // pkey_alloc
+    290, // pkey_free
     292, // io_pgetevents
     425, // io_uring_setup
     426, // io_uring_enter
