@@ -6,10 +6,10 @@ use rem6_system::{ExecutionMode, RiscvDataCacheProtocol};
 
 use super::{
     CliCachePrefetcher, CliDebugFlag, CliDramLowPowerTiming, CliDramMemoryProfile,
-    CliDramRefreshTiming, CliDramTiming, KernelResourceSelector, LoadBlobRequest,
-    MemoryDumpRequest, PowerAnalysisFormat, ReadfileRequest, Rem6RunConfig, RequestedIsa,
-    RiscvSeFileRequest, RiscvSeInputSource, RunFabricConfig, RunMemorySystem, StatsFormat,
-    DEFAULT_RISCV_IN_ORDER_WIDTH,
+    CliDramRefreshTiming, CliDramTiming, GuestHostCallResponseConfig, KernelResourceSelector,
+    LoadBlobRequest, MemoryDumpRequest, PowerAnalysisFormat, ReadfileRequest, Rem6RunConfig,
+    RequestedIsa, RiscvSeFileRequest, RiscvSeInputSource, RunFabricConfig, RunMemorySystem,
+    StatsFormat, DEFAULT_RISCV_IN_ORDER_WIDTH,
 };
 
 impl Rem6RunConfig {
@@ -115,6 +115,10 @@ impl Rem6RunConfig {
 
     pub const fn m5_switch_cpu_mode_is_explicit(&self) -> bool {
         self.m5_switch_cpu_mode.is_some()
+    }
+
+    pub(crate) fn guest_host_call_responses(&self) -> &[GuestHostCallResponseConfig] {
+        &self.guest_host_call_responses
     }
 
     pub const fn max_instructions(&self) -> Option<u64> {

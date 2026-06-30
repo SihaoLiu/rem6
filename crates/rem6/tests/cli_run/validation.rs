@@ -1764,6 +1764,28 @@ fn rem6_run_config_scan_treats_m5_switch_cpu_mode_as_value_taking() {
 }
 
 #[test]
+fn rem6_run_rejects_non_ascii_guest_host_call_response_payload() {
+    let config = temp_config(
+        "non-ascii-guest-host-call-response-payload",
+        "[run]\nguest_host_call_responses = [\"selector=1,status=0,returns=,payload=\\u00e9\"]\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("invalid guest-host-call response"),
+        "stderr: {stderr}"
+    );
+    assert!(!stderr.contains("panicked"), "stderr: {stderr}");
+}
+
+#[test]
 fn rem6_run_config_scan_treats_dram_low_power_timing_as_value_taking() {
     let bogus_config = temp_output("dram-low-power-prescan-bogus-config");
 

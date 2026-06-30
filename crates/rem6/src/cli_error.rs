@@ -255,6 +255,9 @@ pub enum Rem6CliError {
     InvalidM5SwitchCpuMode {
         value: String,
     },
+    InvalidGuestHostCallResponse {
+        value: String,
+    },
     MemoryRouteDelayBelowMinRemoteDelay {
         memory_route_delay: u64,
         min_remote_delay: u64,
@@ -751,6 +754,10 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidM5SwitchCpuMode { value } => {
                 write!(formatter, "invalid m5 switch CPU mode {value}")
             }
+            Self::InvalidGuestHostCallResponse { value } => write!(
+                formatter,
+                "invalid guest-host-call response {value}; expected selector=<number>,status=<i32>,returns=<number>|...,payload=<hex-bytes>"
+            ),
             Self::MemoryRouteDelayBelowMinRemoteDelay {
                 memory_route_delay,
                 min_remote_delay,

@@ -856,6 +856,15 @@ fn execute_riscv(
         HostEventPolicy,
         StatsRegistry::new(),
     )));
+    {
+        let mut controller = controller.lock().unwrap();
+        for response in config.guest_host_call_responses() {
+            controller.executor_mut().register_guest_host_call_response(
+                response.selector(),
+                response.response().clone(),
+            );
+        }
+    }
     attach_cli_riscv_checkpoint_bank(&controller, &cluster)?;
     attach_cli_memory_checkpoint_bank(&controller, &memory)?;
     let trap_port = RiscvTrapEventPort::new(

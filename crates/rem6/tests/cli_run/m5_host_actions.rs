@@ -264,6 +264,95 @@ fn rem6_run_emits_m5_hypercall_host_action_detail_from_real_riscv_execution() {
 }
 
 #[test]
+fn rem6_run_applies_configured_m5_hypercall_response_from_toml_config() {
+    let program = riscv64_program(&[
+        i_type(0x321, 0, 0x0, 10, 0x13),
+        i_type(11, 0, 0x0, 11, 0x13),
+        i_type(12, 0, 0x0, 12, 0x13),
+        m5op(M5_HYPERCALL),
+        m5op(M5_EXIT),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let binary = temp_binary("m5-hypercall-response-toml", &elf);
+    let config = temp_config(
+        "m5-hypercall-response-toml",
+        &format!(
+            "[run]\nisa = \"riscv\"\nbinary = \"{}\"\nmax_tick = 80\nstats_format = \"json\"\nexecute = true\nmemory_system = \"direct\"\nguest_host_call_responses = [\"selector=0x321,status=0,returns=0x55|0x66,payload=deadbeef\"]\n",
+            binary.display()
+        ),
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args(["run", "--config", config.to_str().unwrap()])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
+    let host_actions = json
+        .pointer("/host_actions")
+        .expect("run JSON should include host action outcomes");
+    let call = host_actions
+        .pointer("/guest_host_calls/0")
+        .expect("missing guest-host-call detail");
+    assert_eq!(
+        call.pointer("/selector").and_then(Value::as_u64),
+        Some(0x321)
+    );
+    assert_eq!(
+        call.pointer("/argument_count").and_then(Value::as_u64),
+        Some(5)
+    );
+    assert_eq!(
+        call.pointer("/response_status").and_then(Value::as_i64),
+        Some(0)
+    );
+    assert_eq!(
+        call.pointer("/response_return_count")
+            .and_then(Value::as_u64),
+        Some(2)
+    );
+    assert_eq!(
+        call.pointer("/response_payload_bytes")
+            .and_then(Value::as_u64),
+        Some(4)
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.guest_host_call_arguments",
+        "Count",
+        5,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.guest_host_call_payload_bytes",
+        "Byte",
+        0,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.guest_host_call_response_return_values",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.guest_host_call_response_payload_bytes",
+        "Byte",
+        4,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
     let program = riscv64_program(&[
         m5op(M5_SWITCH_CPU),
