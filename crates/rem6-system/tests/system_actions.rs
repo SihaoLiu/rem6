@@ -1526,6 +1526,7 @@ fn system_run_controller_executes_delivered_execution_mode_switches() {
             mode: ExecutionMode::Functional,
             stats_epoch: 0,
             stats_reset_tick: 0,
+            state_transfer: None,
         }]
     );
     assert_eq!(
@@ -1563,6 +1564,7 @@ fn system_run_controller_executes_delivered_execution_mode_switches() {
             mode: ExecutionMode::Detailed,
             stats_epoch: 0,
             stats_reset_tick: 0,
+            state_transfer: None,
         }]
     );
     assert_eq!(
@@ -1581,6 +1583,7 @@ fn system_run_controller_executes_delivered_execution_mode_switches() {
                 mode: ExecutionMode::Functional,
                 stats_epoch: 0,
                 stats_reset_tick: 0,
+                state_transfer: None,
             },
             SystemActionOutcome::ExecutionModeSwitched {
                 tick: 60,
@@ -1591,6 +1594,7 @@ fn system_run_controller_executes_delivered_execution_mode_switches() {
                 mode: ExecutionMode::Detailed,
                 stats_epoch: 0,
                 stats_reset_tick: 0,
+                state_transfer: None,
             },
         ]
     );
@@ -1646,6 +1650,7 @@ fn execution_mode_switch_outcome_records_stats_scope() {
             mode: ExecutionMode::Timing,
             stats_epoch: 1,
             stats_reset_tick: 40,
+            state_transfer: None,
         }
     );
 }

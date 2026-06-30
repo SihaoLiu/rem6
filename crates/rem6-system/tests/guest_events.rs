@@ -1,7 +1,10 @@
 use std::sync::{Arc, Mutex};
 
 use rem6_boot::BootImage;
-use rem6_cpu::{CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvCore, RiscvCoreDriveAction};
+use rem6_cpu::{
+    CpuCore, CpuFetchConfig, CpuId, CpuResetState, RiscvClusterDriveEvent, RiscvClusterTurn,
+    RiscvCore, RiscvCoreDriveAction,
+};
 use rem6_isa_riscv::{RiscvTrap, RiscvTrapKind};
 use rem6_kernel::{PartitionId, PartitionedScheduler, SchedulerError};
 use rem6_memory::{
@@ -125,6 +128,10 @@ fn loaded_program_store(instructions: &[(u64, u32)]) -> Arc<Mutex<PartitionedMem
         .load_into_partitioned_store(&mut store, target)
         .unwrap();
     Arc::new(Mutex::new(store))
+}
+
+fn gem5_m5op_type(function: u32) -> u32 {
+    (function << 25) | 0x7b
 }
 
 fn cpu_route() -> (PartitionedScheduler, MemoryTransport, MemoryRouteId) {
@@ -1386,5 +1393,121 @@ fn riscv_trap_event_port_schedules_pending_traps_for_multiple_cores() {
                 1,
             )),
         ]
+    );
+}
+
+#[test]
+fn riscv_system_event_switch_cpu_targets_originating_core() {
+    let host = PartitionId::new(3);
+    let source = GuestSourceId::new(25);
+    let mut scheduler = PartitionedScheduler::with_min_remote_delay(4, 2).unwrap();
+    let mut transport = MemoryTransport::new();
+    let cpu0_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu0.ifetch"),
+                PartitionId::new(0),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let cpu1_route = transport
+        .add_route(
+            MemoryRoute::new(
+                endpoint("cpu1.ifetch"),
+                PartitionId::new(1),
+                endpoint("l1i"),
+                PartitionId::new(2),
+                2,
+                3,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let core0 = riscv_core_on(0, 0, 7, "cpu0.ifetch", cpu0_route, 0x8000);
+    let core1 = riscv_core_on(1, 1, 8, "cpu1.ifetch", cpu1_route, 0x9000);
+    let store = loaded_program_store(&[(0x8000, 0x0000_0073), (0x9000, gem5_m5op_type(0x52))]);
+
+    assert!(matches!(
+        drive_one_action(&core0, Arc::clone(&store), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    assert!(matches!(
+        drive_one_action(&core1, Arc::clone(&store), &mut scheduler, &transport),
+        Some(RiscvCoreDriveAction::FetchIssued { .. })
+    ));
+    scheduler.run_until_idle_conservative();
+    let core0_action = drive_one_action(&core0, Arc::clone(&store), &mut scheduler, &transport);
+    let core1_action = drive_one_action(&core1, store, &mut scheduler, &transport);
+    assert!(matches!(
+        core0_action,
+        Some(RiscvCoreDriveAction::InstructionExecuted(_))
+    ));
+    let Some(core1_action) = core1_action else {
+        panic!("expected cpu1 switchcpu instruction execution");
+    };
+    assert!(matches!(
+        core1_action,
+        RiscvCoreDriveAction::InstructionExecuted(_)
+    ));
+
+    let controller = Arc::new(Mutex::new(SystemHostController::new(
+        HostEventPolicy,
+        StatsRegistry::new(),
+    )));
+    let host_port = SystemHostEventPort::with_controller(host, 2, Arc::clone(&controller)).unwrap();
+    let trap_port = RiscvTrapEventPort::new(host_port, source);
+    let emit_tick = scheduler.now();
+    let scheduled = trap_port
+        .schedule_riscv_system_events_from_turn(
+            &mut scheduler,
+            &RiscvClusterTurn::core(vec![RiscvClusterDriveEvent::new(
+                CpuId::new(1),
+                core1_action,
+            )]),
+            |cpu| GuestEventId::new(80 + u64::from(cpu.get())),
+        )
+        .unwrap();
+
+    assert_eq!(scheduled.len(), 1);
+    assert_eq!(scheduled[0].partition(), PartitionId::new(1));
+    let summary = scheduler.run_until_idle();
+
+    assert_eq!(summary.executed_events(), 2);
+    assert_eq!(summary.final_tick(), emit_tick + 2);
+    let controller = controller.lock().unwrap();
+    assert_eq!(
+        controller.run().deliveries(),
+        &[GuestEventDelivery::new(
+            emit_tick + 2,
+            PartitionId::new(1),
+            host,
+            GuestEvent::new(
+                GuestEventId::new(81),
+                source,
+                GuestEventKind::ExecutionModeSwitch {
+                    target: ExecutionModeTarget::new("cpu1"),
+                    mode: ExecutionMode::Detailed,
+                },
+            ),
+        )]
+    );
+    assert_eq!(
+        controller.run().action_outcomes(),
+        &[SystemActionOutcome::ExecutionModeSwitched {
+            tick: emit_tick + 2,
+            event: GuestEventId::new(81),
+            source,
+            target: ExecutionModeTarget::new("cpu1"),
+            previous_mode: None,
+            mode: ExecutionMode::Detailed,
+            stats_epoch: 0,
+            stats_reset_tick: 0,
+            state_transfer: None,
+        }]
     );
 }

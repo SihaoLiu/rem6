@@ -97,10 +97,10 @@ pub use gpu_cli::{run_gpu_run_config, Rem6GpuRunArtifact, Rem6GpuRunConfig};
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob, Rem6LoadBlobSummary};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};
 pub(crate) use host_actions::{
-    Rem6GuestHostCallSummary, Rem6HostActionSummary, Rem6HostCheckpointChunkSummary,
-    Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary, Rem6HostInjectedCommandSummary,
-    Rem6HostStatsDumpSummary, Rem6HostStatsResetSummary, Rem6HostStopActionSummary,
-    Rem6HostWorkMarkerSummary,
+    Rem6ExecutionModeStateTransferSummary, Rem6GuestHostCallSummary, Rem6HostActionSummary,
+    Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary,
+    Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary,
+    Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
 };
 pub(crate) use instruction_probe_summary::{
     instruction_probe_summary, Rem6InstructionProbeSummary, Rem6PcCountPairSummary,

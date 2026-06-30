@@ -1,5 +1,5 @@
 use rem6_stats::{StatDumpRecord, StatsResetRecord};
-use rem6_system::SystemActionOutcome;
+use rem6_system::{ExecutionMode, ExecutionModeSwitchStateTransfer, SystemActionOutcome};
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Rem6HostActionSummary {
@@ -14,6 +14,7 @@ pub(crate) struct Rem6HostActionSummary {
     pub(crate) checkpoints: Vec<Rem6HostCheckpointSummary>,
     pub(crate) checkpoint_restored_count: u64,
     pub(crate) execution_mode_switch_count: u64,
+    pub(crate) execution_mode_switches: Vec<Rem6HostExecutionModeSwitchSummary>,
     pub(crate) stops: Vec<Rem6HostStopActionSummary>,
 }
 
@@ -130,8 +131,33 @@ impl Rem6HostActionSummary {
                 SystemActionOutcome::CheckpointRestored { .. } => {
                     summary.checkpoint_restored_count += 1;
                 }
-                SystemActionOutcome::ExecutionModeSwitched { .. } => {
+                SystemActionOutcome::ExecutionModeSwitched {
+                    tick,
+                    event,
+                    source,
+                    target,
+                    previous_mode,
+                    mode,
+                    stats_epoch,
+                    stats_reset_tick,
+                    state_transfer,
+                } => {
                     summary.execution_mode_switch_count += 1;
+                    summary
+                        .execution_mode_switches
+                        .push(Rem6HostExecutionModeSwitchSummary {
+                            tick: *tick,
+                            event: event.get(),
+                            source: source.get(),
+                            target: target.as_str().to_string(),
+                            previous_mode: previous_mode.map(execution_mode_name),
+                            mode: execution_mode_name(*mode),
+                            stats_epoch: *stats_epoch,
+                            stats_reset_tick: *stats_reset_tick,
+                            state_transfer: state_transfer
+                                .as_ref()
+                                .map(Rem6ExecutionModeStateTransferSummary::from_transfer),
+                        });
                 }
                 SystemActionOutcome::Stop(stop) => {
                     summary.stops.push(Rem6HostStopActionSummary {
@@ -144,6 +170,48 @@ impl Rem6HostActionSummary {
             }
         }
         summary
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6HostExecutionModeSwitchSummary {
+    pub(crate) tick: u64,
+    pub(crate) event: u64,
+    pub(crate) source: u32,
+    pub(crate) target: String,
+    pub(crate) previous_mode: Option<&'static str>,
+    pub(crate) mode: &'static str,
+    pub(crate) stats_epoch: u64,
+    pub(crate) stats_reset_tick: u64,
+    pub(crate) state_transfer: Option<Rem6ExecutionModeStateTransferSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6ExecutionModeStateTransferSummary {
+    pub(crate) manifest_label: String,
+    pub(crate) manifest_tick: u64,
+    pub(crate) component_count: u64,
+    pub(crate) chunk_count: u64,
+    pub(crate) payload_bytes: u64,
+}
+
+impl Rem6ExecutionModeStateTransferSummary {
+    fn from_transfer(transfer: &ExecutionModeSwitchStateTransfer) -> Self {
+        Self {
+            manifest_label: transfer.manifest_label().to_string(),
+            manifest_tick: transfer.manifest_tick(),
+            component_count: transfer.component_count(),
+            chunk_count: transfer.chunk_count(),
+            payload_bytes: transfer.payload_bytes(),
+        }
+    }
+}
+
+const fn execution_mode_name(mode: ExecutionMode) -> &'static str {
+    match mode {
+        ExecutionMode::Functional => "functional",
+        ExecutionMode::Timing => "timing",
+        ExecutionMode::Detailed => "detailed",
     }
 }
 

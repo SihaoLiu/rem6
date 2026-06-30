@@ -2419,6 +2419,7 @@ fn workload_replay_executes_planned_host_actions() {
             mode,
             stats_epoch,
             stats_reset_tick,
+            state_transfer,
         } if *tick == 2
             && event.get() == 10_005
             && source.get() == 51
@@ -2427,6 +2428,12 @@ fn workload_replay_executes_planned_host_actions() {
             && *mode == ExecutionMode::Functional
             && *stats_epoch == 1
             && *stats_reset_tick == 1
+            && state_transfer.as_ref().is_some_and(|transfer| {
+                transfer.manifest_label().starts_with("execution-mode-switch-cpu0-")
+                    && transfer.component_count() >= 1
+                    && transfer.chunk_count() >= 1
+                    && transfer.payload_bytes() > 0
+            })
     )));
     plan.verify_result(outcome.result()).unwrap();
 }

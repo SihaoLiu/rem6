@@ -1,9 +1,10 @@
 use super::formatting::{bytes_to_hex, json_escape};
 use super::{
-    CliDataCacheSummary, Rem6CoreSummary, Rem6DataAccessProbeSummary, Rem6ExecutionStop,
-    Rem6ExecutionSummary, Rem6GuestHostCallSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary,
-    Rem6HostActionSummary, Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary,
-    Rem6HostCheckpointSummary, Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary,
+    CliDataCacheSummary, Rem6CoreSummary, Rem6DataAccessProbeSummary,
+    Rem6ExecutionModeStateTransferSummary, Rem6ExecutionStop, Rem6ExecutionSummary,
+    Rem6GuestHostCallSummary, Rem6GupsArtifact, Rem6GupsExecutionSummary, Rem6HostActionSummary,
+    Rem6HostCheckpointChunkSummary, Rem6HostCheckpointComponentSummary, Rem6HostCheckpointSummary,
+    Rem6HostExecutionModeSwitchSummary, Rem6HostInjectedCommandSummary, Rem6HostStatsDumpSummary,
     Rem6HostStatsResetSummary, Rem6HostStopActionSummary, Rem6HostWorkMarkerSummary,
     Rem6InstructionProbeSummary, Rem6MemoryDump, Rem6ParallelFrontierSummary,
     Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary,
@@ -1385,6 +1386,12 @@ impl Rem6HostActionSummary {
             .map(Rem6HostCheckpointSummary::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let execution_mode_switches = self
+            .execution_mode_switches
+            .iter()
+            .map(Rem6HostExecutionModeSwitchSummary::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         let stops = self
             .stops
             .iter()
@@ -1392,7 +1399,7 @@ impl Rem6HostActionSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"total_action_count\":{},\"injected_command_count\":{},\"guest_host_call_count\":{},\"roi_begin_count\":{},\"roi_end_count\":{},\"stats_reset_count\":{},\"stats_dump_count\":{},\"checkpoint_count\":{},\"checkpoint_restored_count\":{},\"execution_mode_switch_count\":{},\"stop_count\":{},\"injected_commands\":[{}],\"guest_host_calls\":[{}],\"roi_begin\":[{}],\"roi_end\":[{}],\"stats_resets\":[{}],\"stats_dumps\":[{}],\"checkpoints\":[{}],\"stops\":[{}]}}",
+            "{{\"total_action_count\":{},\"injected_command_count\":{},\"guest_host_call_count\":{},\"roi_begin_count\":{},\"roi_end_count\":{},\"stats_reset_count\":{},\"stats_dump_count\":{},\"checkpoint_count\":{},\"checkpoint_restored_count\":{},\"execution_mode_switch_count\":{},\"stop_count\":{},\"injected_commands\":[{}],\"guest_host_calls\":[{}],\"roi_begin\":[{}],\"roi_end\":[{}],\"stats_resets\":[{}],\"stats_dumps\":[{}],\"checkpoints\":[{}],\"execution_mode_switches\":[{}],\"stops\":[{}]}}",
             self.total_action_count,
             self.injected_command_count,
             self.guest_host_calls.len(),
@@ -1411,6 +1418,7 @@ impl Rem6HostActionSummary {
             stats_resets,
             stats_dumps,
             checkpoints,
+            execution_mode_switches,
             stops,
         )
     }
@@ -1527,6 +1535,45 @@ impl Rem6HostCheckpointChunkSummary {
             json_escape(&self.name),
             self.payload_bytes,
             self.payload_checksum,
+        )
+    }
+}
+
+impl Rem6HostExecutionModeSwitchSummary {
+    fn to_json(&self) -> String {
+        let previous_mode = self
+            .previous_mode
+            .map(|mode| format!("\"{}\"", json_escape(mode)))
+            .unwrap_or_else(|| "null".to_string());
+        let state_transfer = self
+            .state_transfer
+            .as_ref()
+            .map(Rem6ExecutionModeStateTransferSummary::to_json)
+            .unwrap_or_else(|| "{\"captured\":false}".to_string());
+        format!(
+            "{{\"tick\":{},\"event\":{},\"source\":{},\"target\":\"{}\",\"previous_mode\":{},\"mode\":\"{}\",\"stats_epoch\":{},\"stats_reset_tick\":{},\"state_transfer\":{}}}",
+            self.tick,
+            self.event,
+            self.source,
+            json_escape(&self.target),
+            previous_mode,
+            json_escape(self.mode),
+            self.stats_epoch,
+            self.stats_reset_tick,
+            state_transfer,
+        )
+    }
+}
+
+impl Rem6ExecutionModeStateTransferSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"captured\":true,\"manifest_label\":\"{}\",\"manifest_tick\":{},\"component_count\":{},\"chunk_count\":{},\"payload_bytes\":{}}}",
+            json_escape(&self.manifest_label),
+            self.manifest_tick,
+            self.component_count,
+            self.chunk_count,
+            self.payload_bytes,
         )
     }
 }

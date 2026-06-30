@@ -8,14 +8,13 @@ use rem6_kernel::{
 };
 
 use crate::{
-    GuestEvent, GuestEventChannel, GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId,
-    GuestTrap, GuestTrapKind, HostEventPolicy, RiscvSbiFirmware, RiscvSbiOutcome,
-    RiscvSyscallEmulation, RiscvSyscallOutcome, SystemError, SystemHostController,
-    SystemRunController,
+    ExecutionMode, ExecutionModeTarget, GuestEvent, GuestEventChannel, GuestEventDelivery,
+    GuestEventId, GuestEventKind, GuestSourceId, GuestTrap, GuestTrapKind, HostEventPolicy,
+    RiscvSbiFirmware, RiscvSbiOutcome, RiscvSyscallEmulation, RiscvSyscallOutcome, SystemError,
+    SystemHostController, SystemRunController,
 };
 
 const GEM5_M5_CHECKPOINT_LABEL: &str = "gem5-m5-checkpoint";
-const GEM5_M5_SWITCH_CPU_COMMAND: &str = "switchcpu";
 
 #[derive(Clone, Debug)]
 pub struct SystemEventPort {
@@ -676,9 +675,10 @@ impl RiscvTrapEventPort {
             let RiscvCoreDriveAction::InstructionExecuted(execution) = event.action() else {
                 continue;
             };
-            let Some(system_event) =
-                guest_event_from_riscv_system_event(execution.execution().system_event())
-            else {
+            let Some(system_event) = guest_event_from_riscv_system_event(
+                event.cpu(),
+                execution.execution().system_event(),
+            ) else {
                 continue;
             };
             let source = execution.fetch().partition();
@@ -1088,6 +1088,7 @@ struct RiscvGuestEventSchedule {
 }
 
 fn guest_event_from_riscv_system_event(
+    cpu: CpuId,
     event: Option<&RiscvSystemEvent>,
 ) -> Option<RiscvGuestEventSchedule> {
     match event {
@@ -1136,9 +1137,9 @@ fn guest_event_from_riscv_system_event(
         Some(RiscvSystemEvent::Gem5SwitchCpu { .. }) => Some(RiscvGuestEventSchedule {
             delay: 0,
             period: 0,
-            kind: GuestEventKind::SimulationLoopExit {
-                cause: GEM5_M5_SWITCH_CPU_COMMAND.to_string(),
-                code: 0,
+            kind: GuestEventKind::ExecutionModeSwitch {
+                target: execution_mode_target_for_cpu(cpu),
+                mode: ExecutionMode::Detailed,
             },
         }),
         Some(RiscvSystemEvent::Gem5Hypercall {
@@ -1177,6 +1178,10 @@ fn guest_event_from_riscv_system_event(
         Some(RiscvSystemEvent::WaitForInterrupt { .. } | RiscvSystemEvent::SfenceVma { .. })
         | None => None,
     }
+}
+
+fn execution_mode_target_for_cpu(cpu: CpuId) -> ExecutionModeTarget {
+    ExecutionModeTarget::new(format!("cpu{}", cpu.get()))
 }
 
 fn gem5_fail_stop_code(code: u64) -> i32 {

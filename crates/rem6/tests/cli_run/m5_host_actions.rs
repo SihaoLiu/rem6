@@ -228,9 +228,11 @@ fn rem6_run_emits_m5_hypercall_host_action_detail_from_real_riscv_execution() {
 }
 
 #[test]
-fn rem6_run_emits_m5_switch_cpu_command_from_real_riscv_execution() {
+fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
     let program = riscv64_program(&[
         m5op(M5_SWITCH_CPU),
+        i_type(0, 0, 0x0, 10, 0x13),
+        m5op(M5_EXIT),
         i_type(77, 0, 0x0, 11, 0x13),
         m5op(M5_FAIL),
     ]);
@@ -285,13 +287,33 @@ fn rem6_run_emits_m5_switch_cpu_command_from_real_riscv_execution() {
         host_actions
             .pointer("/injected_command_count")
             .and_then(Value::as_u64),
+        Some(0)
+    );
+    assert_eq!(
+        host_actions
+            .pointer("/execution_mode_switch_count")
+            .and_then(Value::as_u64),
         Some(1)
     );
     assert_eq!(
         host_actions.pointer("/stop_count").and_then(Value::as_u64),
         Some(1)
     );
-    assert_injected_command(host_actions, 0, "switchcpu");
+    let switch_tick = assert_execution_mode_switch(
+        host_actions,
+        0,
+        "cpu0",
+        "detailed",
+        "execution-mode-switch-cpu0",
+    );
+    let stop_tick = host_actions
+        .pointer("/stops/0/tick")
+        .and_then(Value::as_u64)
+        .expect("m5_exit stop should be recorded after switch");
+    assert!(
+        stop_tick > switch_tick,
+        "m5_switch_cpu should switch modes and continue to the later m5_exit: {host_actions}"
+    );
 }
 
 #[test]
@@ -775,17 +797,78 @@ fn assert_work_marker(
     assert!(action.pointer("/tick").and_then(Value::as_u64).is_some());
 }
 
-fn assert_injected_command(host_actions: &Value, index: usize, command: &str) {
+fn assert_execution_mode_switch(
+    host_actions: &Value,
+    index: usize,
+    target: &str,
+    mode: &str,
+    manifest_label_prefix: &str,
+) -> u64 {
     let action = host_actions
-        .pointer(&format!("/injected_commands/{index}"))
-        .unwrap_or_else(|| panic!("missing injected command action {index}"));
+        .pointer(&format!("/execution_mode_switches/{index}"))
+        .unwrap_or_else(|| panic!("missing execution mode switch action {index}"));
     assert_eq!(
-        action.pointer("/command").and_then(Value::as_str),
-        Some(command)
+        action.pointer("/target").and_then(Value::as_str),
+        Some(target)
     );
-    assert!(action.pointer("/tick").and_then(Value::as_u64).is_some());
-    assert!(action.pointer("/event").and_then(Value::as_u64).is_some());
-    assert!(action.pointer("/source").and_then(Value::as_u64).is_some());
+    assert_eq!(action.pointer("/mode").and_then(Value::as_str), Some(mode));
+    assert!(
+        action.pointer("/previous_mode").unwrap().is_null(),
+        "execution mode switch action {index}: {action}"
+    );
+    assert!(
+        action
+            .pointer("/stats_epoch")
+            .and_then(Value::as_u64)
+            .is_some(),
+        "execution mode switch action {index}: {action}"
+    );
+    assert!(
+        action
+            .pointer("/stats_reset_tick")
+            .and_then(Value::as_u64)
+            .is_some(),
+        "execution mode switch action {index}: {action}"
+    );
+    let transfer = action
+        .pointer("/state_transfer")
+        .unwrap_or_else(|| panic!("missing execution mode state transfer {index}"));
+    assert!(
+        transfer.pointer("/captured").and_then(Value::as_bool) == Some(true),
+        "execution mode switch transfer {index}: {transfer}"
+    );
+    assert!(
+        transfer
+            .pointer("/manifest_label")
+            .and_then(Value::as_str)
+            .is_some_and(|label| label.starts_with(manifest_label_prefix)),
+        "execution mode switch transfer {index}: {transfer}"
+    );
+    assert!(
+        transfer
+            .pointer("/component_count")
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count >= 2),
+        "execution mode switch transfer {index}: {transfer}"
+    );
+    assert!(
+        transfer
+            .pointer("/chunk_count")
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count >= 2),
+        "execution mode switch transfer {index}: {transfer}"
+    );
+    assert!(
+        transfer
+            .pointer("/payload_bytes")
+            .and_then(Value::as_u64)
+            .is_some_and(|bytes| bytes > 0),
+        "execution mode switch transfer {index}: {transfer}"
+    );
+    action
+        .pointer("/tick")
+        .and_then(Value::as_u64)
+        .expect("execution mode switch should record a tick")
 }
 
 fn assert_stats_reset(host_actions: &Value, index: usize, id: u64, tick: u64, epoch: u64) {

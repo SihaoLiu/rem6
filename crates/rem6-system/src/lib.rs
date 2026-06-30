@@ -135,8 +135,8 @@ pub use heterogeneous_checkpoint::{
     GpuCheckpointRecord,
 };
 pub use host::{
-    ExecutionModeCheckpointError, SystemActionExecutor, SystemActionOutcome, SystemHostController,
-    SystemRunController,
+    ExecutionModeCheckpointError, ExecutionModeSwitchStateTransfer, SystemActionExecutor,
+    SystemActionOutcome, SystemHostController, SystemRunController,
 };
 pub use host_assist::{
     HostAssistedArchitecture, HostAssistedMemoryMode, HostAssistedPendingService,

@@ -1330,6 +1330,7 @@ impl RiscvWorkloadReplay {
                     mode,
                     stats_epoch,
                     stats_reset_tick,
+                    state_transfer: _,
                     ..
                 } => {
                     result = result.with_execution_mode_switch_stats_scope(

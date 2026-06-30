@@ -34,6 +34,48 @@ use execution_mode_checkpoint::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionModeSwitchStateTransfer {
+    manifest_label: String,
+    manifest_tick: Tick,
+    component_count: u64,
+    chunk_count: u64,
+    payload_bytes: u64,
+}
+
+impl ExecutionModeSwitchStateTransfer {
+    fn from_manifest(manifest: &CheckpointManifest) -> Self {
+        let summary = manifest.summary();
+        Self {
+            manifest_label: manifest.label().to_string(),
+            manifest_tick: manifest.tick(),
+            component_count: summary.component_count() as u64,
+            chunk_count: summary.chunk_count() as u64,
+            payload_bytes: summary.payload_bytes() as u64,
+        }
+    }
+
+    pub fn manifest_label(&self) -> &str {
+        &self.manifest_label
+    }
+
+    pub const fn manifest_tick(&self) -> Tick {
+        self.manifest_tick
+    }
+
+    pub const fn component_count(&self) -> u64 {
+        self.component_count
+    }
+
+    pub const fn chunk_count(&self) -> u64 {
+        self.chunk_count
+    }
+
+    pub const fn payload_bytes(&self) -> u64 {
+        self.payload_bytes
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SystemActionOutcome {
     InjectedCommand {
         tick: Tick,
@@ -87,6 +129,7 @@ pub enum SystemActionOutcome {
         mode: ExecutionMode,
         stats_epoch: u64,
         stats_reset_tick: Tick,
+        state_transfer: Option<ExecutionModeSwitchStateTransfer>,
     },
     Stop(StopRequest),
 }
@@ -1271,6 +1314,8 @@ impl SystemActionExecutor {
                 .map(SystemActionOutcome::StatsDump)
                 .map_err(SystemError::Stats),
             HostAction::SwitchExecutionMode { target, mode } => {
+                let state_transfer =
+                    self.capture_execution_mode_switch_state_transfer(record, target)?;
                 let previous_mode = self.execution_modes.insert(target.clone(), *mode);
                 Ok(SystemActionOutcome::ExecutionModeSwitched {
                     tick: record.tick(),
@@ -1281,6 +1326,7 @@ impl SystemActionExecutor {
                     mode: *mode,
                     stats_epoch: self.stats.epoch(),
                     stats_reset_tick: self.stats.reset_tick(),
+                    state_transfer,
                 })
             }
             HostAction::Checkpoint { label } => {
@@ -1515,6 +1561,69 @@ impl SystemActionExecutor {
             ))),
         }
     }
+
+    fn capture_execution_mode_switch_state_transfer(
+        &mut self,
+        record: &HostActionRecord,
+        target: &ExecutionModeTarget,
+    ) -> Result<Option<ExecutionModeSwitchStateTransfer>, SystemError> {
+        if self.riscv_checkpoints.is_none()
+            && self.memory_checkpoints.is_none()
+            && self.dram_memory_checkpoints.is_none()
+        {
+            return Ok(None);
+        }
+
+        if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
+            scheduler_checkpoints
+                .validate_quiescent_capture()
+                .map_err(SystemError::SchedulerCheckpoint)?;
+        }
+
+        let mut staged_checkpoints = self.checkpoints.clone();
+        if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
+            riscv_checkpoints
+                .capture_all_into(&mut staged_checkpoints)
+                .map_err(SystemError::Checkpoint)?;
+        }
+        if let Some(memory_checkpoints) = &self.memory_checkpoints {
+            memory_checkpoints
+                .capture_all_into(&mut staged_checkpoints)
+                .map_err(SystemError::Checkpoint)?;
+        }
+        if let Some(dram_memory_checkpoints) = &self.dram_memory_checkpoints {
+            dram_memory_checkpoints
+                .capture_all_into(&mut staged_checkpoints)
+                .map_err(SystemError::Checkpoint)?;
+        }
+
+        let manifest = staged_checkpoints
+            .capture(
+                execution_mode_switch_state_transfer_label(target, record.tick()),
+                record.tick(),
+            )
+            .map_err(SystemError::Checkpoint)?;
+        self.checkpoints = staged_checkpoints;
+
+        Ok(Some(ExecutionModeSwitchStateTransfer::from_manifest(
+            &manifest,
+        )))
+    }
+}
+
+fn execution_mode_switch_state_transfer_label(target: &ExecutionModeTarget, tick: Tick) -> String {
+    let sanitized_target = target
+        .as_str()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    format!("execution-mode-switch-{sanitized_target}-{tick}")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
