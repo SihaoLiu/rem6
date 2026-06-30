@@ -34,6 +34,9 @@ const RAW_KNOWN_NI_SYSCALLS: &[i32] = &[
     218, // request_key
     219, // keyctl
     220, // clone
+    234, // remap_file_pages
+    238, // migrate_pages
+    239, // move_pages
     241, // perf_event_open
     262, // fanotify_init
     263, // fanotify_mark

@@ -78,6 +78,9 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_REQUEST_KEY
             | RISCV_LINUX_KEYCTL
             | RISCV_LINUX_CLONE
+            | RISCV_LINUX_REMAP_FILE_PAGES
+            | RISCV_LINUX_MIGRATE_PAGES
+            | RISCV_LINUX_MOVE_PAGES
             | RISCV_LINUX_PERF_EVENT_OPEN
             | RISCV_LINUX_FANOTIFY_INIT
             | RISCV_LINUX_FANOTIFY_MARK
