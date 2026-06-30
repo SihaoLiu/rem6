@@ -56,6 +56,12 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_IO_GETEVENTS
             | RISCV_LINUX_LOOKUP_DCOOKIE
             | RISCV_LINUX_NFSSERVCTL
+            | RISCV_LINUX_MQ_OPEN
+            | RISCV_LINUX_MQ_UNLINK
+            | RISCV_LINUX_MQ_TIMEDSEND
+            | RISCV_LINUX_MQ_TIMEDRECEIVE
+            | RISCV_LINUX_MQ_NOTIFY
+            | RISCV_LINUX_MQ_GETSETATTR
             | RISCV_LINUX_ADD_KEY
             | RISCV_LINUX_REQUEST_KEY
             | RISCV_LINUX_KEYCTL

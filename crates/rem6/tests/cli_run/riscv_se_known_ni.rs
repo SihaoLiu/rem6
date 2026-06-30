@@ -12,6 +12,12 @@ const RAW_KNOWN_NI_SYSCALLS: &[i32] = &[
     2,   // io_submit
     3,   // io_cancel
     4,   // io_getevents
+    180, // mq_open
+    181, // mq_unlink
+    182, // mq_timedsend
+    183, // mq_timedreceive
+    184, // mq_notify
+    185, // mq_getsetattr
     217, // add_key
     218, // request_key
     219, // keyctl
@@ -242,7 +248,7 @@ fn rem6_run_riscv_se_runs_static_raw_known_ni_clone_and_probe_syscalls() {
             "--binary",
             path.to_str().unwrap(),
             "--max-tick",
-            "900",
+            "1200",
             "--stats-format",
             "json",
             "--execute",
