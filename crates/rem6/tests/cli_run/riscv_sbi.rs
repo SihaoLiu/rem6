@@ -4,6 +4,8 @@ use crate::support::*;
 
 #[path = "riscv_sbi/reset.rs"]
 mod reset;
+#[path = "riscv_sbi/resources.rs"]
+mod resources;
 #[path = "riscv_sbi/rfence_completion.rs"]
 mod rfence_completion;
 #[path = "riscv_sbi/validation.rs"]
@@ -28,6 +30,7 @@ const SBI_RESET_TYPE_COLD_REBOOT: i32 = 1;
 const SBI_RESET_TYPE_WARM_REBOOT: i32 = 2;
 const SBI_DEBUG_CONSOLE_EXTENSION: i32 = 0x4442_434e;
 const SBI_DEBUG_CONSOLE_WRITE: i32 = 0;
+const SBI_DEBUG_CONSOLE_READ: i32 = 1;
 const SBI_HSM_EXTENSION: i32 = 0x0048_534d;
 const SBI_HSM_HART_START: i32 = 0;
 const SBI_HSM_HART_STOP: i32 = 1;
@@ -386,6 +389,96 @@ fn rem6_run_riscv_sbi_legacy_console_getchar_reports_empty_input() {
     assert!(stdout.contains("\"x5\":\"0xffffffffffffffff\""));
     assert!(!stdout.contains("\"x6\":\""));
     assert!(stdout.contains("\"x7\":\"0x1\""));
+}
+
+#[test]
+fn rem6_run_riscv_sbi_console_input_feeds_legacy_getchar_and_dbcn_read() {
+    let mut words = Vec::new();
+    words.extend([
+        i_type(SBI_LEGACY_CONSOLE_GETCHAR, 0, 0x0, 17, 0x13),
+        0x0000_0073,
+        i_type(0, 10, 0x0, 5, 0x13),
+        i_type(2, 0, 0x0, 10, 0x13),
+    ]);
+    let buffer_auipc_index = words.len();
+    words.push(u_type(0, 11, 0x17));
+    words.push(i_type(0, 11, 0x0, 11, 0x13));
+    words.extend([
+        i_type(0, 11, 0x0, 18, 0x13),
+        i_type(0, 0, 0x0, 12, 0x13),
+        load_dbcn_extension(17)[0],
+        load_dbcn_extension(17)[1],
+        i_type(SBI_DEBUG_CONSOLE_READ, 0, 0x0, 16, 0x13),
+        0x0000_0073,
+        i_type(0, 10, 0x0, 6, 0x13),
+        i_type(0, 11, 0x0, 7, 0x13),
+        i_type(0, 18, 0x4, 8, 0x03),
+        i_type(1, 18, 0x4, 9, 0x03),
+        0x0010_0073,
+    ]);
+
+    let mut program = riscv64_program(&words);
+    let buffer_offset = program.len() as i32;
+    words[buffer_auipc_index + 1] = i_type(
+        buffer_offset - (buffer_auipc_index * 4) as i32,
+        11,
+        0x0,
+        11,
+        0x13,
+    );
+    program = riscv64_program(&words);
+    program.extend_from_slice(&[0, 0]);
+
+    let elf = riscv64_elf(RISCV_SBI_ENTRY, RISCV_SBI_ENTRY, &program);
+    let path = temp_binary("riscv-sbi-console-input", &elf);
+    let input = temp_binary("riscv-sbi-console-input-bytes", b"ABC");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "128",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-sbi",
+            "--riscv-sbi-console-input",
+            input.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"trap\":\"breakpoint\""));
+    assert!(stdout.contains("\"x5\":\"0x41\""));
+    assert!(stdout.contains("\"x7\":\"0x2\""));
+    assert!(stdout.contains("\"x8\":\"0x42\""));
+    assert!(stdout.contains("\"x9\":\"0x43\""));
+    assert!(stdout.contains("\"riscv_sbi_console\":{\"bytes\":0,\"text\":\"\",\"hex\":\"\"}"));
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.console.bytes",
+        "Byte",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.riscv.sbi.dbcn.console_bytes",
+        "Byte",
+        0,
+        "constant",
+    );
 }
 
 #[test]

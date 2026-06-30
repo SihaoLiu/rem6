@@ -56,6 +56,7 @@ pub(crate) fn attach_cli_riscv_sbi_firmware(
     instruction_cache: CliCacheHierarchy,
     data_cache: CliCacheHierarchy,
     line_layout: CacheLineLayout,
+    console_input: Option<Vec<u8>>,
 ) -> RiscvSystemRunDriver {
     if !config.riscv_sbi() {
         return driver;
@@ -65,7 +66,7 @@ pub(crate) fn attach_cli_riscv_sbi_firmware(
     let write_memory = memory.clone();
     let write_instruction_cache = instruction_cache.clone();
     let write_data_cache = data_cache.clone();
-    driver
+    let driver = driver
         .with_riscv_sbi_firmware()
         .with_riscv_sbi_firmware_and_functional_guest_memory_reader(move |address, bytes| {
             read_memory.read_guest_memory(address, bytes, line_layout)
@@ -79,7 +80,12 @@ pub(crate) fn attach_cli_riscv_sbi_firmware(
                 bytes,
                 line_layout,
             )
-        })
+        });
+    if let Some(input) = console_input {
+        driver.with_riscv_sbi_debug_console_input(input)
+    } else {
+        driver
+    }
 }
 
 pub(crate) fn collect_cli_riscv_sbi_output(

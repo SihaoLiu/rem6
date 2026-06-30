@@ -17,6 +17,7 @@ pub(super) fn run_file_config_from_args(args: &[String]) -> Result<Option<PathBu
             "--start-address",
             "--riscv-boot-a0",
             "--riscv-boot-a1",
+            "--riscv-sbi-console-input",
             "--riscv-se-arg",
             "--riscv-se-env",
             "--riscv-se-stdin",

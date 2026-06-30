@@ -281,6 +281,9 @@ pub enum Rem6CliError {
     InvalidReadfile {
         value: String,
     },
+    InvalidRiscvSbiConsoleInput {
+        value: String,
+    },
     InvalidRiscvSeStdin {
         value: String,
     },
@@ -323,6 +326,9 @@ pub enum Rem6CliError {
     PowerOutputRequiresExecution,
     TraceReplayExternalAdapterEndpointRequiresKind,
     RiscvSeInputRequiresRiscvSe {
+        input: &'static str,
+    },
+    RiscvSbiInputRequiresRiscvSbi {
         input: &'static str,
     },
     DataCacheProtocolRequiresRiscv,
@@ -393,6 +399,10 @@ pub enum Rem6CliError {
         error: String,
     },
     ReadRiscvSeStdin {
+        path: PathBuf,
+        error: String,
+    },
+    ReadRiscvSbiConsoleInput {
         path: PathBuf,
         error: String,
     },
@@ -766,6 +776,9 @@ impl fmt::Display for Rem6CliError {
             Self::InvalidReadfile { value } => {
                 write!(formatter, "invalid readfile {value}")
             }
+            Self::InvalidRiscvSbiConsoleInput { value } => {
+                write!(formatter, "invalid RISC-V SBI console input {value}")
+            }
             Self::InvalidRiscvSeStdin { value } => {
                 write!(formatter, "invalid RISC-V SE stdin {value}")
             }
@@ -870,6 +883,9 @@ impl fmt::Display for Rem6CliError {
             }
             Self::RiscvSeInputRequiresRiscvSe { input } => {
                 write!(formatter, "{input} requires --riscv-se")
+            }
+            Self::RiscvSbiInputRequiresRiscvSbi { input } => {
+                write!(formatter, "{input} requires --riscv-sbi")
             }
             Self::DataCacheProtocolRequiresRiscv => {
                 write!(formatter, "--data-cache-protocol requires --isa riscv")
@@ -1034,6 +1050,13 @@ impl fmt::Display for Rem6CliError {
                 write!(
                     formatter,
                     "failed to read RISC-V SE stdin {}: {error}",
+                    path.display()
+                )
+            }
+            Self::ReadRiscvSbiConsoleInput { path, error } => {
+                write!(
+                    formatter,
+                    "failed to read RISC-V SBI console input {}: {error}",
                     path.display()
                 )
             }

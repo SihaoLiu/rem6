@@ -16,6 +16,20 @@ pub(super) fn read_riscv_se_stdin(
     })
 }
 
+pub(super) fn read_riscv_sbi_console_input(
+    source: &RiscvSeInputSource,
+    resource_payloads: Option<&RunResourcePayloads>,
+) -> Result<Vec<u8>, Rem6CliError> {
+    read_input_source("RISC-V SBI console input", source, resource_payloads).map_err(|error| {
+        match error {
+            RiscvSeInputError::ReadPath { path, error } => {
+                Rem6CliError::ReadRiscvSbiConsoleInput { path, error }
+            }
+            RiscvSeInputError::Execute { error } => Rem6CliError::Execute { error },
+        }
+    })
+}
+
 pub(super) fn read_riscv_se_file(
     request: &RiscvSeFileRequest,
     resource_payloads: Option<&RunResourcePayloads>,

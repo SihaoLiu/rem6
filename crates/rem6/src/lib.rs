@@ -129,7 +129,7 @@ pub(crate) use riscv_guest_output::{
 };
 use riscv_run_driver::drive_cli_riscv_run;
 use riscv_sbi_runtime::{attach_cli_riscv_sbi_firmware, configure_cli_riscv_sbi_core};
-use riscv_se_inputs::{read_riscv_se_file, read_riscv_se_stdin};
+use riscv_se_inputs::{read_riscv_sbi_console_input, read_riscv_se_file, read_riscv_se_stdin};
 use run_execution_summary::{execution_summary, ExecutionSummaryInputs};
 pub(crate) use run_fabric::Rem6RunFabricSummary;
 use run_fabric::{run_fabric_path, run_memory_transport};
@@ -882,6 +882,10 @@ fn execute_riscv(
             RiscvDataAccessStats::with_stack_distance(probe_config)
                 .with_mem_footprint(footprint_config),
         );
+    let riscv_sbi_console_input = config
+        .riscv_sbi_console_input()
+        .map(|source| read_riscv_sbi_console_input(source, resource_payloads))
+        .transpose()?;
     driver = attach_cli_riscv_sbi_firmware(
         config,
         driver,
@@ -889,6 +893,7 @@ fn execute_riscv(
         instruction_cache_hierarchy.clone(),
         data_cache_hierarchy.clone(),
         line_layout,
+        riscv_sbi_console_input,
     );
     let mut riscv_se_path_file_writebacks = Vec::new();
     if config.riscv_se() {
