@@ -122,10 +122,10 @@ use riscv_checkpoint_runtime::{
     attach_cli_memory_checkpoint_bank, attach_cli_riscv_checkpoint_bank,
 };
 pub(crate) use riscv_guest_output::{
-    Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmSummary,
-    Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary,
-    Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
-    Rem6RiscvUnknownSyscallSummary,
+    Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmStatusSummary,
+    Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary,
+    Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary,
+    Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
 };
 use riscv_run_driver::drive_cli_riscv_run;
 use riscv_sbi_runtime::{attach_cli_riscv_sbi_firmware, configure_cli_riscv_sbi_core};
@@ -228,6 +228,7 @@ pub struct Rem6ExecutionSummary {
     riscv_sbi_timers: Vec<Rem6RiscvSbiTimerSummary>,
     riscv_sbi_hsm_events: Vec<Rem6RiscvSbiHsmSummary>,
     riscv_sbi_hsm_wakes: Vec<Rem6RiscvSbiHsmWakeSummary>,
+    riscv_sbi_hsm_statuses: Vec<Rem6RiscvSbiHsmStatusSummary>,
     riscv_sbi_ipis: Vec<Rem6RiscvSbiIpiSummary>,
     riscv_sbi_rfences: Vec<Rem6RiscvSbiRfenceSummary>,
     riscv_sbi_rfence_completions: Vec<Rem6RiscvSbiRfenceCompletionSummary>,
@@ -1062,6 +1063,7 @@ fn execute_riscv(
         riscv_sbi_timers: riscv_sbi_output.timers,
         riscv_sbi_hsm_events: riscv_sbi_output.hsm_events,
         riscv_sbi_hsm_wakes: riscv_sbi_output.hsm_wakes,
+        riscv_sbi_hsm_statuses: riscv_sbi_output.hsm_statuses,
         riscv_sbi_ipis: riscv_sbi_output.ipis,
         riscv_sbi_rfences: riscv_sbi_output.rfences,
         riscv_sbi_rfence_completions: riscv_sbi_output.rfence_completions,

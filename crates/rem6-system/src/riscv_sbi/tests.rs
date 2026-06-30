@@ -617,6 +617,31 @@ fn hsm_wake_records_are_ordered_for_reproducible_output() {
 }
 
 #[test]
+fn register_cluster_clears_hsm_status_records_for_next_run() {
+    let (_scheduler, _transport, firmware, core0, core1) = registered_hsm_pair();
+
+    assert_eq!(
+        firmware.hart_get_status(hsm_request(SBI_HSM_HART_GET_STATUS, 1, 0, 0)),
+        RiscvSbiOutcome::success(SBI_HSM_HART_STOPPED)
+    );
+    assert_eq!(
+        firmware.hsm_status_records(),
+        vec![RiscvSbiHsmStatusRecord::new(
+            CpuId::new(0),
+            1,
+            SBI_HSM_HART_STOPPED
+        )]
+    );
+
+    let cluster = RiscvCluster::new([core0, core1]).expect("valid cluster");
+    firmware
+        .register_cluster(&cluster)
+        .expect("re-registered cluster");
+
+    assert!(firmware.hsm_status_records().is_empty());
+}
+
+#[test]
 fn send_ipi_scheduler_error_leaves_no_partial_target_events() {
     let mut scheduler =
         PartitionedScheduler::with_min_remote_delay(2, 2).expect("valid test scheduler");

@@ -8,10 +8,11 @@ use super::{
     Rem6InstructionProbeSummary, Rem6MemoryDump, Rem6ParallelFrontierSummary,
     Rem6ParallelPartitionSummary, Rem6ParallelReadyPartitionSummary, Rem6PcCountPairSummary,
     Rem6PcCountTrackerSummary, Rem6RiscvGuestWriteSummary, Rem6RiscvSbiConsoleSummary,
-    Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary,
-    Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary,
-    Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary, Rem6TraceReplayArtifact,
-    Rem6TraceReplayExecutionSummary, Rem6TraceReplayExternalAdapterSummary, RunMemorySystem,
+    Rem6RiscvSbiHsmStatusSummary, Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary,
+    Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary,
+    Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
+    Rem6TraceReplayArtifact, Rem6TraceReplayExecutionSummary,
+    Rem6TraceReplayExternalAdapterSummary, RunMemorySystem,
 };
 
 use gups::gups_response_stats_json;
@@ -1085,6 +1086,17 @@ impl Rem6ExecutionSummary {
         )
     }
 
+    fn to_riscv_sbi_hsm_statuses_json(&self) -> String {
+        format!(
+            "[{}]",
+            self.riscv_sbi_hsm_statuses
+                .iter()
+                .map(Rem6RiscvSbiHsmStatusSummary::to_json)
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    }
+
     fn to_riscv_sbi_ipis_json(&self) -> String {
         format!(
             "[{}]",
@@ -1233,6 +1245,18 @@ impl Rem6RiscvSbiHsmWakeSummary {
             self.source_cpu(),
             self.target_hart(),
             self.interrupt_bits()
+        )
+    }
+}
+
+impl Rem6RiscvSbiHsmStatusSummary {
+    fn to_json(&self) -> String {
+        format!(
+            "{{\"source_cpu\":{},\"target_hart\":{},\"status\":{},\"status_name\":\"{}\"}}",
+            self.source_cpu(),
+            self.target_hart(),
+            self.status(),
+            self.status_name()
         )
     }
 }

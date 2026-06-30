@@ -30,11 +30,11 @@ use crate::{
     Rem6CoreSummary, Rem6DebugSummary, Rem6ExecutionStop, Rem6ExecutionSummary,
     Rem6HostActionSummary, Rem6MemoryResourceInputs, Rem6MemoryResourceSummary,
     Rem6MultiperspectivePerceptronCounterSummary, Rem6RiscvGuestWriteSummary,
-    Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary,
-    Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary,
-    Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary, Rem6RiscvUnknownSyscallSummary,
-    Rem6RunConfig, Rem6RunFabricSummary, Rem6TageScLBranchPredictorCounterSummary,
-    RISCV_DATA_PROBE_PAGE_BYTES,
+    Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmStatusSummary, Rem6RiscvSbiHsmSummary,
+    Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary,
+    Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
+    Rem6RiscvUnknownSyscallSummary, Rem6RunConfig, Rem6RunFabricSummary,
+    Rem6TageScLBranchPredictorCounterSummary, RISCV_DATA_PROBE_PAGE_BYTES,
 };
 
 pub(super) struct ExecutionSummaryInputs<'a> {
@@ -57,6 +57,7 @@ pub(super) struct ExecutionSummaryInputs<'a> {
     pub(super) riscv_sbi_timers: Vec<Rem6RiscvSbiTimerSummary>,
     pub(super) riscv_sbi_hsm_events: Vec<Rem6RiscvSbiHsmSummary>,
     pub(super) riscv_sbi_hsm_wakes: Vec<Rem6RiscvSbiHsmWakeSummary>,
+    pub(super) riscv_sbi_hsm_statuses: Vec<Rem6RiscvSbiHsmStatusSummary>,
     pub(super) riscv_sbi_ipis: Vec<Rem6RiscvSbiIpiSummary>,
     pub(super) riscv_sbi_rfences: Vec<Rem6RiscvSbiRfenceSummary>,
     pub(super) riscv_sbi_rfence_completions: Vec<Rem6RiscvSbiRfenceCompletionSummary>,
@@ -406,6 +407,7 @@ pub(super) fn execution_summary(
         riscv_sbi_timers: inputs.riscv_sbi_timers,
         riscv_sbi_hsm_events: inputs.riscv_sbi_hsm_events,
         riscv_sbi_hsm_wakes: inputs.riscv_sbi_hsm_wakes,
+        riscv_sbi_hsm_statuses: inputs.riscv_sbi_hsm_statuses,
         riscv_sbi_ipis: inputs.riscv_sbi_ipis,
         riscv_sbi_rfences: inputs.riscv_sbi_rfences,
         riscv_sbi_rfence_completions: inputs.riscv_sbi_rfence_completions,

@@ -6,9 +6,9 @@ use rem6_system::RiscvSystemRunDriver;
 use crate::config::Rem6RunConfig;
 use crate::data_cache_runtime::{write_guest_memory_with_cache_invalidation, CliCacheHierarchy};
 use crate::riscv_guest_output::{
-    Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmSummary, Rem6RiscvSbiHsmWakeSummary,
-    Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary, Rem6RiscvSbiRfenceCompletionSummary,
-    Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
+    Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmStatusSummary, Rem6RiscvSbiHsmSummary,
+    Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary,
+    Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
 };
 use crate::runtime_memory::CliMemoryRuntime;
 
@@ -24,6 +24,7 @@ pub(crate) struct CliRiscvSbiOutput {
     pub(crate) timers: Vec<Rem6RiscvSbiTimerSummary>,
     pub(crate) hsm_events: Vec<Rem6RiscvSbiHsmSummary>,
     pub(crate) hsm_wakes: Vec<Rem6RiscvSbiHsmWakeSummary>,
+    pub(crate) hsm_statuses: Vec<Rem6RiscvSbiHsmStatusSummary>,
     pub(crate) ipis: Vec<Rem6RiscvSbiIpiSummary>,
     pub(crate) rfences: Vec<Rem6RiscvSbiRfenceSummary>,
     pub(crate) rfence_completions: Vec<Rem6RiscvSbiRfenceCompletionSummary>,
@@ -98,6 +99,7 @@ pub(crate) fn collect_cli_riscv_sbi_output(
             timers: Vec::new(),
             hsm_events: Vec::new(),
             hsm_wakes: Vec::new(),
+            hsm_statuses: Vec::new(),
             ipis: Vec::new(),
             rfences: Vec::new(),
             rfence_completions: Vec::new(),
@@ -125,6 +127,11 @@ pub(crate) fn collect_cli_riscv_sbi_output(
         .iter()
         .map(Rem6RiscvSbiHsmWakeSummary::from_record)
         .collect();
+    let hsm_statuses = firmware
+        .hsm_status_records()
+        .iter()
+        .map(Rem6RiscvSbiHsmStatusSummary::from_record)
+        .collect();
     let ipis = firmware
         .ipi_records()
         .iter()
@@ -150,6 +157,7 @@ pub(crate) fn collect_cli_riscv_sbi_output(
         timers,
         hsm_events: hsm,
         hsm_wakes,
+        hsm_statuses,
         ipis,
         rfences,
         rfence_completions,

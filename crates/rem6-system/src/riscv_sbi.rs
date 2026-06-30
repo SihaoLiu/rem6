@@ -15,8 +15,8 @@ mod records;
 
 use records::RiscvSbiTimerState;
 pub use records::{
-    RiscvSbiHsmRecord, RiscvSbiHsmWakeRecord, RiscvSbiIpiRecord, RiscvSbiResetRecord,
-    RiscvSbiRfenceCompletionRecord, RiscvSbiRfenceRecord,
+    RiscvSbiHsmRecord, RiscvSbiHsmStatusRecord, RiscvSbiHsmWakeRecord, RiscvSbiIpiRecord,
+    RiscvSbiResetRecord, RiscvSbiRfenceCompletionRecord, RiscvSbiRfenceRecord,
 };
 
 const SBI_SUCCESS: u64 = 0;
@@ -85,6 +85,7 @@ pub struct RiscvSbiFirmware {
     timer: Arc<Mutex<RiscvSbiTimerState>>,
     hsm: Arc<Mutex<Vec<RiscvSbiHsmRecord>>>,
     hsm_wakes: Arc<Mutex<Vec<RiscvSbiHsmWakeRecord>>>,
+    hsm_statuses: Arc<Mutex<Vec<RiscvSbiHsmStatusRecord>>>,
     ipis: Arc<Mutex<Vec<RiscvSbiIpiRecord>>>,
     rfences: Arc<Mutex<Vec<RiscvSbiRfenceRecord>>>,
     rfence_completions: Arc<Mutex<Vec<RiscvSbiRfenceCompletionRecord>>>,
@@ -222,6 +223,7 @@ impl RiscvSbiFirmware {
             timer: Arc::new(Mutex::new(RiscvSbiTimerState::default())),
             hsm: Arc::new(Mutex::new(Vec::new())),
             hsm_wakes: Arc::new(Mutex::new(Vec::new())),
+            hsm_statuses: Arc::new(Mutex::new(Vec::new())),
             ipis: Arc::new(Mutex::new(Vec::new())),
             rfences: Arc::new(Mutex::new(Vec::new())),
             rfence_completions: Arc::new(Mutex::new(Vec::new())),
@@ -276,6 +278,10 @@ impl RiscvSbiFirmware {
         self.hsm_wakes
             .lock()
             .expect("RISC-V SBI HSM wake record lock")
+            .clear();
+        self.hsm_statuses
+            .lock()
+            .expect("RISC-V SBI HSM status record lock")
             .clear();
         self.ipis
             .lock()
@@ -352,6 +358,13 @@ impl RiscvSbiFirmware {
             )
         });
         records
+    }
+
+    pub fn hsm_status_records(&self) -> Vec<RiscvSbiHsmStatusRecord> {
+        self.hsm_statuses
+            .lock()
+            .expect("RISC-V SBI HSM status record lock")
+            .clone()
     }
 
     pub fn ipi_records(&self) -> Vec<RiscvSbiIpiRecord> {
@@ -458,7 +471,9 @@ impl RiscvSbiFirmware {
                 }
                 outcome
             }
-            (SBI_HSM_EXTENSION, SBI_HSM_HART_GET_STATUS) => self.hart_get_status(request),
+            (SBI_HSM_EXTENSION, SBI_HSM_HART_GET_STATUS) => {
+                self.hart_get_status_from(core.id(), request)
+            }
             (SBI_HSM_EXTENSION, SBI_HSM_HART_SUSPEND) => {
                 let outcome = self.hart_suspend(core, request);
                 if outcome == RiscvSbiOutcome::success(0)
@@ -726,6 +741,17 @@ impl RiscvSbiFirmware {
             ));
     }
 
+    fn record_hsm_status(&self, source_cpu: CpuId, target_hart: u64, status: u64) {
+        self.hsm_statuses
+            .lock()
+            .expect("RISC-V SBI HSM status record lock")
+            .push(RiscvSbiHsmStatusRecord::new(
+                source_cpu,
+                target_hart,
+                status,
+            ));
+    }
+
     fn schedule_remote_ipi(
         &self,
         scheduler: &mut PartitionedScheduler,
@@ -913,7 +939,12 @@ impl RiscvSbiFirmware {
         Ok(())
     }
 
+    #[cfg(test)]
     fn hart_get_status(&self, request: RiscvSbiRequest) -> RiscvSbiOutcome {
+        self.hart_get_status_from(CpuId::new(0), request)
+    }
+
+    fn hart_get_status_from(&self, source_cpu: CpuId, request: RiscvSbiRequest) -> RiscvSbiOutcome {
         let Some(target) = self
             .cores
             .lock()
@@ -923,7 +954,7 @@ impl RiscvSbiFirmware {
         else {
             return RiscvSbiOutcome::invalid_param();
         };
-        RiscvSbiOutcome::success(match target.hart_run_state() {
+        let status = match target.hart_run_state() {
             RiscvHartRunState::Started => SBI_HSM_HART_STARTED,
             RiscvHartRunState::StartPending => SBI_HSM_HART_START_PENDING,
             RiscvHartRunState::StopPending => SBI_HSM_HART_STOP_PENDING,
@@ -931,7 +962,9 @@ impl RiscvSbiFirmware {
             RiscvHartRunState::ResumePending => SBI_HSM_HART_RESUME_PENDING,
             RiscvHartRunState::Stopped => SBI_HSM_HART_STOPPED,
             RiscvHartRunState::Suspended => SBI_HSM_HART_SUSPENDED,
-        })
+        };
+        self.record_hsm_status(source_cpu, request.arg0(), status);
+        RiscvSbiOutcome::success(status)
     }
 
     fn remote_fence_i(

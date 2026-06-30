@@ -25,6 +25,13 @@ pub struct RiscvSbiHsmWakeRecord {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RiscvSbiHsmStatusRecord {
+    source_cpu: CpuId,
+    target_hart: u64,
+    status: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RiscvSbiIpiRecord {
     source_cpu: CpuId,
     hart_mask: u64,
@@ -175,6 +182,28 @@ impl RiscvSbiHsmWakeRecord {
 
     pub const fn interrupt_bits(&self) -> u64 {
         self.interrupt_bits
+    }
+}
+
+impl RiscvSbiHsmStatusRecord {
+    pub const fn new(source_cpu: CpuId, target_hart: u64, status: u64) -> Self {
+        Self {
+            source_cpu,
+            target_hart,
+            status,
+        }
+    }
+
+    pub const fn source_cpu(&self) -> CpuId {
+        self.source_cpu
+    }
+
+    pub const fn target_hart(&self) -> u64 {
+        self.target_hart
+    }
+
+    pub const fn status(&self) -> u64 {
+        self.status
     }
 }
 

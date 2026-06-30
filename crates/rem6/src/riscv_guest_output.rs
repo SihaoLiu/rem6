@@ -1,6 +1,6 @@
 use rem6_system::{
-    RiscvGuestWriteRecord, RiscvSbiHsmRecord, RiscvSbiHsmWakeRecord, RiscvSbiIpiRecord,
-    RiscvSbiResetRecord, RiscvSbiRfenceCompletionRecord, RiscvSbiRfenceRecord,
+    RiscvGuestWriteRecord, RiscvSbiHsmRecord, RiscvSbiHsmStatusRecord, RiscvSbiHsmWakeRecord,
+    RiscvSbiIpiRecord, RiscvSbiResetRecord, RiscvSbiRfenceCompletionRecord, RiscvSbiRfenceRecord,
     RiscvUnknownSyscallRecord,
 };
 
@@ -49,6 +49,13 @@ pub(crate) struct Rem6RiscvSbiHsmWakeSummary {
     source_cpu: u32,
     target_hart: u64,
     interrupt_bits: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Rem6RiscvSbiHsmStatusSummary {
+    source_cpu: u32,
+    target_hart: u64,
+    status: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -189,6 +196,45 @@ impl Rem6RiscvSbiHsmWakeSummary {
 
     pub(crate) const fn interrupt_bits(&self) -> u64 {
         self.interrupt_bits
+    }
+}
+
+impl Rem6RiscvSbiHsmStatusSummary {
+    pub(crate) fn from_record(record: &RiscvSbiHsmStatusRecord) -> Self {
+        Self {
+            source_cpu: record.source_cpu().get(),
+            target_hart: record.target_hart(),
+            status: record.status(),
+        }
+    }
+
+    pub(crate) const fn source_cpu(&self) -> u32 {
+        self.source_cpu
+    }
+
+    pub(crate) const fn target_hart(&self) -> u64 {
+        self.target_hart
+    }
+
+    pub(crate) const fn status(&self) -> u64 {
+        self.status
+    }
+
+    pub(crate) const fn status_name(&self) -> &'static str {
+        riscv_sbi_hsm_status_name(self.status)
+    }
+}
+
+pub(crate) const fn riscv_sbi_hsm_status_name(status: u64) -> &'static str {
+    match status {
+        0 => "started",
+        1 => "stopped",
+        2 => "start_pending",
+        3 => "stop_pending",
+        4 => "suspended",
+        5 => "suspend_pending",
+        6 => "resume_pending",
+        _ => "unknown",
     }
 }
 

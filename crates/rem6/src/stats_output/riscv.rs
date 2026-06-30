@@ -115,6 +115,35 @@ pub(super) fn emit_riscv_run_stats(
             )?;
             increment_stat(
                 stats,
+                "sim.riscv.sbi.hsm.status_queries",
+                "Count",
+                StatResetPolicy::Constant,
+                execution.riscv_sbi_hsm_statuses.len() as u64,
+            )?;
+            for status_name in [
+                "started",
+                "stopped",
+                "start_pending",
+                "stop_pending",
+                "suspended",
+                "suspend_pending",
+                "resume_pending",
+                "unknown",
+            ] {
+                increment_stat(
+                    stats,
+                    &format!("sim.riscv.sbi.hsm.status.{status_name}"),
+                    "Count",
+                    StatResetPolicy::Constant,
+                    execution
+                        .riscv_sbi_hsm_statuses
+                        .iter()
+                        .filter(|status| status.status_name() == status_name)
+                        .count() as u64,
+                )?;
+            }
+            increment_stat(
+                stats,
                 "sim.riscv.sbi.ipi.targets",
                 "Count",
                 StatResetPolicy::Constant,
