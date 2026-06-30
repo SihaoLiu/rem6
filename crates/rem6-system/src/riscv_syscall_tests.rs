@@ -70,6 +70,8 @@ mod pidfd_tests;
 mod poll_tests;
 #[path = "riscv_syscall_tests/positioned_io_tests.rs"]
 mod positioned_io_tests;
+#[path = "riscv_syscall_tests/posix_timer_tests.rs"]
+mod posix_timer_tests;
 #[path = "riscv_syscall_tests/prctl_tests.rs"]
 mod prctl_tests;
 #[path = "riscv_syscall_tests/process_tests.rs"]

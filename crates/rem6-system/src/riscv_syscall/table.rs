@@ -44,6 +44,7 @@ impl RiscvSyscallTable {
         guest_memory_writer: Option<&RiscvGuestMemoryWriter>,
     ) -> Option<RiscvSyscallOutcome> {
         state.refresh_guest_timerfds(tick);
+        state.refresh_guest_posix_timers(tick);
         match request.number() {
             5..=16 => {
                 xattr::syscall_xattr(request, state, guest_memory_reader, guest_memory_writer)
@@ -135,6 +136,28 @@ impl RiscvSyscallTable {
                 syscall_timerfd_gettime(request, state, tick, guest_memory_writer)
                     .map(|value| RiscvSyscallOutcome::Return { value })
             }
+            RISCV_LINUX_TIMER_CREATE => {
+                syscall_timer_create(request, state, guest_memory_reader, guest_memory_writer)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
+            RISCV_LINUX_TIMER_GETTIME => {
+                syscall_timer_gettime(request, state, tick, guest_memory_writer)
+                    .map(|value| RiscvSyscallOutcome::Return { value })
+            }
+            RISCV_LINUX_TIMER_GETOVERRUN => Some(RiscvSyscallOutcome::Return {
+                value: syscall_timer_getoverrun(request, state),
+            }),
+            RISCV_LINUX_TIMER_SETTIME => syscall_timer_settime(
+                request,
+                state,
+                tick,
+                guest_memory_reader,
+                guest_memory_writer,
+            )
+            .map(|value| RiscvSyscallOutcome::Return { value }),
+            RISCV_LINUX_TIMER_DELETE => Some(RiscvSyscallOutcome::Return {
+                value: syscall_timer_delete(request, state),
+            }),
             RISCV_LINUX_SIGNALFD4 => syscall_signalfd4(request, state, guest_memory_reader)
                 .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_MEMFD_CREATE => {

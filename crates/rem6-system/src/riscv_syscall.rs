@@ -52,6 +52,7 @@ mod pidfd;
 mod pipe;
 mod poll;
 mod positioned;
+mod posix_timer;
 mod process;
 mod procfs;
 mod random;
@@ -214,6 +215,12 @@ use pipe::{
     syscall_pipe2, RiscvGuestPipe, RiscvGuestPipeEndpoint, RiscvGuestPipeId, RISCV_LINUX_PIPE2,
 };
 use poll::{syscall_ppoll, syscall_pselect6, RISCV_LINUX_PPOLL, RISCV_LINUX_PSELECT6};
+use posix_timer::{
+    syscall_timer_create, syscall_timer_delete, syscall_timer_getoverrun, syscall_timer_gettime,
+    syscall_timer_settime, RiscvGuestPosixTimer, RISCV_LINUX_TIMER_CREATE,
+    RISCV_LINUX_TIMER_DELETE, RISCV_LINUX_TIMER_GETOVERRUN, RISCV_LINUX_TIMER_GETTIME,
+    RISCV_LINUX_TIMER_SETTIME,
+};
 use process::{
     syscall_execve_error_path, syscall_execveat_error_path, syscall_getpgid, syscall_getsid,
     syscall_personality, syscall_prctl, syscall_setpgid, syscall_setsid, syscall_unshare,
@@ -357,6 +364,8 @@ pub struct RiscvSyscallState {
     guest_socket_listeners: BTreeMap<GuestFileDescriptionId, RiscvGuestSocketListener>,
     guest_eventfds: BTreeMap<GuestFileDescriptionId, RiscvGuestEventFd>,
     guest_timerfds: BTreeMap<GuestFileDescriptionId, RiscvGuestTimerFd>,
+    guest_posix_timers: BTreeMap<u32, RiscvGuestPosixTimer>,
+    next_guest_posix_timer_id: u32,
     guest_signalfds: BTreeMap<GuestFileDescriptionId, RiscvGuestSignalFd>,
     guest_pidfds: BTreeMap<GuestFileDescriptionId, RiscvGuestPidFd>,
     guest_inotifies: BTreeMap<GuestFileDescriptionId, RiscvGuestInotify>,
@@ -472,6 +481,8 @@ impl RiscvSyscallState {
             guest_socket_listeners: BTreeMap::new(),
             guest_eventfds: BTreeMap::new(),
             guest_timerfds: BTreeMap::new(),
+            guest_posix_timers: BTreeMap::new(),
+            next_guest_posix_timer_id: 0,
             guest_signalfds: BTreeMap::new(),
             guest_pidfds: BTreeMap::new(),
             guest_inotifies: BTreeMap::new(),

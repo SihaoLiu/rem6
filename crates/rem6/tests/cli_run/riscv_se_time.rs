@@ -800,6 +800,105 @@ fn rem6_run_riscv_se_runs_static_raw_adjtimex() {
 }
 
 #[test]
+fn rem6_run_riscv_se_runs_static_raw_posix_timer_lifecycle() {
+    let mut program = riscv64_program(&[
+        i_type(1, 0, 0x0, 10, 0x13),      // addi a0, x0, CLOCK_MONOTONIC
+        i_type(0, 0, 0x0, 11, 0x13),      // addi a1, x0, NULL sigevent
+        u_type(0, 12, 0x17),              // auipc a2, 0
+        i_type(0x0f8, 12, 0x0, 12, 0x13), // addi a2, a2, timerid offset
+        i_type(107, 0, 0x0, 17, 0x13),    // addi a7, x0, timer_create
+        0x0000_0073,                      // ecall
+        b_type(140, 0, 10, 0x1),          // bne a0, x0, fail
+        u_type(0, 5, 0x17),               // auipc t0, 0
+        i_type(0x0e4, 5, 0x0, 5, 0x13),   // addi t0, t0, timerid offset
+        i_type(0, 5, 0x2, 10, 0x03),      // lw a0, 0(t0)
+        i_type(0, 0, 0x0, 11, 0x13),      // addi a1, x0, 0
+        u_type(0, 12, 0x17),              // auipc a2, 0
+        i_type(0x0f4, 12, 0x0, 12, 0x13), // addi a2, a2, itimerspec offset
+        i_type(0, 0, 0x0, 13, 0x13),      // addi a3, x0, NULL old_value
+        i_type(110, 0, 0x0, 17, 0x13),    // addi a7, x0, timer_settime
+        0x0000_0073,                      // ecall
+        b_type(100, 0, 10, 0x1),          // bne a0, x0, fail
+        i_type(0, 5, 0x2, 10, 0x03),      // lw a0, 0(t0)
+        u_type(0, 11, 0x17),              // auipc a1, 0
+        i_type(0x118, 11, 0x0, 11, 0x13), // addi a1, a1, current itimerspec offset
+        i_type(108, 0, 0x0, 17, 0x13),    // addi a7, x0, timer_gettime
+        0x0000_0073,                      // ecall
+        b_type(76, 0, 10, 0x1),           // bne a0, x0, fail
+        i_type(0, 5, 0x2, 10, 0x03),      // lw a0, 0(t0)
+        i_type(109, 0, 0x0, 17, 0x13),    // addi a7, x0, timer_getoverrun
+        0x0000_0073,                      // ecall
+        b_type(60, 0, 10, 0x1),           // bne a0, x0, fail
+        i_type(0, 5, 0x2, 10, 0x03),      // lw a0, 0(t0)
+        i_type(111, 0, 0x0, 17, 0x13),    // addi a7, x0, timer_delete
+        0x0000_0073,                      // ecall
+        b_type(44, 0, 10, 0x1),           // bne a0, x0, fail
+        i_type(0, 5, 0x2, 10, 0x03),      // lw a0, 0(t0)
+        u_type(0, 11, 0x17),              // auipc a1, 0
+        i_type(0x0e0, 11, 0x0, 11, 0x13), // addi a1, a1, current itimerspec offset
+        i_type(108, 0, 0x0, 17, 0x13),    // addi a7, x0, timer_gettime
+        0x0000_0073,                      // ecall
+        i_type(-22, 0, 0x0, 6, 0x13),     // addi t1, x0, -EINVAL
+        b_type(16, 6, 10, 0x1),           // bne a0, t1, fail
+        i_type(88, 0, 0x0, 10, 0x13),     // addi a0, x0, 88
+        i_type(93, 0, 0x0, 17, 0x13),     // addi a7, x0, exit
+        0x0000_0073,                      // ecall
+        i_type(89, 0, 0x0, 10, 0x13),     // addi a0, x0, 89
+        i_type(93, 0, 0x0, 17, 0x13),     // addi a7, x0, exit
+        0x0000_0073,                      // ecall
+    ]);
+    program.resize(0x100, 0);
+    program.extend_from_slice(&0_u32.to_le_bytes());
+    program.resize(0x120, 0);
+    program.extend_from_slice(&0_u64.to_le_bytes());
+    program.extend_from_slice(&0_u64.to_le_bytes());
+    program.extend_from_slice(&1_u64.to_le_bytes());
+    program.extend_from_slice(&0_u64.to_le_bytes());
+    program.resize(0x160 + 32, 0);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-posix-timer", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "360",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("\"status\":\"stopped_by_host\""),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("\"stop_code\":88"), "stdout: {stdout}");
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 88, "constant");
+    assert_stat(
+        &stdout,
+        "sim.riscv.unknown_syscalls",
+        "Count",
+        0,
+        "monotonic",
+    );
+}
+
+#[test]
 fn rem6_run_riscv_se_runs_static_raw_clock_nanosleep_against_qemu() {
     let Some(gcc) = find_riscv_tool("riscv64-unknown-elf-gcc") else {
         eprintln!(
