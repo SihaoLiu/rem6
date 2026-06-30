@@ -516,6 +516,14 @@ impl RiscvSyscallTable {
                     None => RiscvSyscallOutcome::Blocked,
                 })
             }
+            RISCV_LINUX_SENDMMSG => guest_memory_reader.and_then(|reader| {
+                guest_memory_writer.map(|writer| {
+                    match syscall_sendmmsg(request, state, reader, writer) {
+                        Some(value) => RiscvSyscallOutcome::Return { value },
+                        None => RiscvSyscallOutcome::Blocked,
+                    }
+                })
+            }),
             RISCV_LINUX_RECVMSG => guest_memory_reader.and_then(|reader| {
                 guest_memory_writer.map(|writer| {
                     match syscall_recvmsg(request, state, reader, writer) {

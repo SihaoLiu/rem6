@@ -32,6 +32,7 @@ pub(super) const RISCV_LINUX_SHUTDOWN: u64 = 210;
 pub(super) const RISCV_LINUX_SENDMSG: u64 = 211;
 pub(super) const RISCV_LINUX_RECVMSG: u64 = 212;
 pub(super) const RISCV_LINUX_ACCEPT4: u64 = 242;
+pub(super) const RISCV_LINUX_SENDMMSG: u64 = 269;
 
 const RISCV_LINUX_AF_UNIX: u64 = 1;
 const RISCV_LINUX_SOCK_STREAM: u64 = 1;
@@ -60,6 +61,8 @@ const RISCV_LINUX_MSGHDR_IOVLEN_OFFSET: usize = 24;
 const RISCV_LINUX_MSGHDR_CONTROL_OFFSET: usize = 32;
 const RISCV_LINUX_MSGHDR_CONTROLLEN_OFFSET: usize = 40;
 const RISCV_LINUX_MSGHDR_FLAGS_OFFSET: usize = 48;
+const RISCV_LINUX_MMSGHDR_BYTES: u64 = 64;
+const RISCV_LINUX_MMSGHDR_LEN_OFFSET: u64 = 56;
 const RISCV_LINUX_SOCKADDR_UN_MIN_BYTES: usize = 3;
 const RISCV_LINUX_SOCKADDR_UN_BYTES: usize = 110;
 const RISCV_LINUX_SHUT_RD: u64 = 0;
@@ -1528,24 +1531,11 @@ pub(super) fn syscall_sendmsg(
     state: &mut RiscvSyscallState,
     guest_memory: &RiscvGuestMemoryReader,
 ) -> Option<u64> {
-    let Some(fd) = guest_fd_argument(request.argument(0)) else {
-        return Some(linux_error(RISCV_LINUX_EBADF));
-    };
-    match state.guest_fd_is_socket(fd) {
-        Ok(true) => {}
-        Ok(false) => return Some(linux_error(RISCV_LINUX_ENOTSOCK)),
-        Err(_) => return Some(linux_error(RISCV_LINUX_EBADF)),
-    }
-    let Ok(status_flags) = state.guest_fds.status_flags(fd) else {
-        return Some(linux_error(RISCV_LINUX_EBADF));
-    };
-    if status_flags.bits() & (RISCV_LINUX_O_ACCMODE as u32) == RISCV_LINUX_O_RDONLY as u32 {
-        return Some(linux_error(RISCV_LINUX_EBADF));
-    }
     let flags = request.argument(2);
-    if flags & !RISCV_LINUX_SENDMSG_ALLOWED_FLAGS != 0 {
-        return Some(linux_error(RISCV_LINUX_ENOTSUP));
-    }
+    let fd = match validate_sendmsg_fd_and_flags(request.argument(0), flags, state) {
+        Ok(fd) => fd,
+        Err(errno) => return Some(linux_error(errno)),
+    };
 
     let msg = match RiscvLinuxMsgHdr::read(guest_memory, request.argument(1)) {
         Ok(msg) => msg,
@@ -1579,6 +1569,103 @@ pub(super) fn syscall_sendmsg(
         Ok(write) => socket_write_result(write),
         Err(_) => Some(linux_error(RISCV_LINUX_EBADF)),
     }
+}
+
+pub(super) fn syscall_sendmmsg(
+    request: RiscvSyscallRequest,
+    state: &mut RiscvSyscallState,
+    guest_memory_reader: &RiscvGuestMemoryReader,
+    guest_memory_writer: &RiscvGuestMemoryWriter,
+) -> Option<u64> {
+    let flags = request.argument(3);
+    if let Err(errno) = validate_sendmsg_fd_and_flags(request.argument(0), flags, state) {
+        return Some(linux_error(errno));
+    }
+
+    let vlen = request.argument(2).min(RISCV_LINUX_IOV_MAX as u64);
+    let mut sent = 0_u64;
+    for index in 0..vlen {
+        let Some(offset) = index.checked_mul(RISCV_LINUX_MMSGHDR_BYTES) else {
+            return Some(if sent == 0 {
+                linux_error(RISCV_LINUX_EFAULT)
+            } else {
+                sent
+            });
+        };
+        let Some(msg_address) = request.argument(1).checked_add(offset) else {
+            return Some(if sent == 0 {
+                linux_error(RISCV_LINUX_EFAULT)
+            } else {
+                sent
+            });
+        };
+        let value = match syscall_sendmsg(
+            RiscvSyscallRequest::new(
+                request.pc(),
+                RISCV_LINUX_SENDMSG,
+                [request.argument(0), msg_address, flags, 0, 0, 0],
+            ),
+            state,
+            guest_memory_reader,
+        ) {
+            Some(value) => value,
+            None => {
+                return if sent == 0 { None } else { Some(sent) };
+            }
+        };
+        if linux_return_is_error(value) {
+            return Some(if sent == 0 { value } else { sent });
+        }
+        if let Err(errno) = write_mmsg_len(guest_memory_writer, msg_address, value) {
+            return Some(if sent == 0 { linux_error(errno) } else { sent });
+        }
+        sent += 1;
+    }
+    Some(sent)
+}
+
+fn validate_sendmsg_fd_and_flags(
+    fd_argument: u64,
+    flags: u64,
+    state: &RiscvSyscallState,
+) -> Result<GuestFd, u64> {
+    let Some(fd) = guest_fd_argument(fd_argument) else {
+        return Err(RISCV_LINUX_EBADF);
+    };
+    match state.guest_fd_is_socket(fd) {
+        Ok(true) => {}
+        Ok(false) => return Err(RISCV_LINUX_ENOTSOCK),
+        Err(_) => return Err(RISCV_LINUX_EBADF),
+    }
+    let Ok(status_flags) = state.guest_fds.status_flags(fd) else {
+        return Err(RISCV_LINUX_EBADF);
+    };
+    if status_flags.bits() & (RISCV_LINUX_O_ACCMODE as u32) == RISCV_LINUX_O_RDONLY as u32 {
+        return Err(RISCV_LINUX_EBADF);
+    }
+    if flags & !RISCV_LINUX_SENDMSG_ALLOWED_FLAGS != 0 {
+        return Err(RISCV_LINUX_ENOTSUP);
+    }
+    Ok(fd)
+}
+
+fn write_mmsg_len(
+    guest_memory: &RiscvGuestMemoryWriter,
+    msg_address: u64,
+    len: u64,
+) -> Result<(), u64> {
+    let len = u32::try_from(len).map_err(|_| RISCV_LINUX_EINVAL)?;
+    let len_address = msg_address
+        .checked_add(RISCV_LINUX_MMSGHDR_LEN_OFFSET)
+        .ok_or(RISCV_LINUX_EFAULT)?;
+    if !guest_memory.write(len_address, &len.to_le_bytes()) {
+        return Err(RISCV_LINUX_EFAULT);
+    }
+    Ok(())
+}
+
+const fn linux_return_is_error(value: u64) -> bool {
+    (value as i64) < 0
 }
 
 pub(super) fn syscall_recvmsg(

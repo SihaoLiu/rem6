@@ -102,6 +102,8 @@ mod signal_pending_tests;
 mod signal_tests;
 #[path = "riscv_syscall_tests/signal_timedwait_tests.rs"]
 mod signal_timedwait_tests;
+#[path = "riscv_syscall_tests/socket_tests.rs"]
+mod socket_tests;
 #[path = "riscv_syscall_tests/splice_tests.rs"]
 mod splice_tests;
 #[path = "riscv_syscall_tests/startup_tests.rs"]

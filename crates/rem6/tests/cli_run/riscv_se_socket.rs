@@ -55,6 +55,11 @@ struct msghdr {
     int msg_flags;
 };
 
+struct mmsghdr {
+    struct msghdr msg_hdr;
+    unsigned int msg_len;
+};
+
 struct sockaddr_un_addr {
     unsigned short family;
     char path[14];
@@ -137,6 +142,7 @@ int main(void) {
     char received[16] = {0};
     char msg_received_left[8] = {0};
     char msg_received_right[8] = {0};
+    char mmsg_received[8] = {0};
     char solo_msg_received[4] = {0};
     struct sockaddr_un_addr name = {0};
     struct sockaddr_un_addr peer = {0};
@@ -172,6 +178,8 @@ int main(void) {
     const char *send_msg = "sendto";
     const char *sendmsg_left = "msg-";
     const char *sendmsg_right = "iov";
+    const char *sendmmsg_left = "mm";
+    const char *sendmmsg_right = "sg";
     struct iovec sendmsg_iov[2] = {
         {(void *)sendmsg_left, 4},
         {(void *)sendmsg_right, 3},
@@ -180,8 +188,15 @@ int main(void) {
         {msg_received_left, 4},
         {msg_received_right, 3},
     };
+    struct iovec sendmmsg_iov[2] = {
+        {(void *)sendmmsg_left, 2},
+        {(void *)sendmmsg_right, 2},
+    };
     struct msghdr send_hdr = {0, 0, sendmsg_iov, 2, 0, 0, 0};
     struct msghdr recv_hdr = {0, 0, recvmsg_iov, 2, 0, 0, -1};
+    struct mmsghdr sendmmsg_hdrs[1] = {
+        {{0, 0, sendmmsg_iov, 2, 0, 0, 0}, 0},
+    };
     struct iovec solo_sendmsg_iov[1] = {{(void *)left_msg, 1}};
     struct iovec solo_recvmsg_iov[1] = {{solo_msg_received, 1}};
     struct msghdr solo_send_hdr = {0, 0, solo_sendmsg_iov, 1, 0, 0, 0};
@@ -240,6 +255,8 @@ int main(void) {
     long recv_status = pair_status == 0 ? linux_syscall6(207, fds[1], (long)received, 6, MSG_DONTWAIT, 0, 0) : -1;
     long sendmsg_status = pair_status == 0 ? linux_syscall3(211, fds[0], (long)&send_hdr, MSG_NOSIGNAL) : -1;
     long recvmsg_status = pair_status == 0 ? linux_syscall3(212, fds[1], (long)&recv_hdr, MSG_DONTWAIT) : -1;
+    long sendmmsg_status = pair_status == 0 ? linux_syscall4(269, fds[0], (long)sendmmsg_hdrs, 1, MSG_NOSIGNAL) : -1;
+    long mmsg_read_status = pair_status == 0 ? linux_syscall3(63, fds[1], (long)mmsg_received, 4) : -1;
     long name_status = pair_status == 0 ? linux_syscall3(204, fds[0], (long)&name, (long)&name_len) : -1;
     long peer_status = pair_status == 0 ? linux_syscall3(205, fds[1], (long)&peer, (long)&peer_len) : -1;
     long socket_type_status = pair_status == 0 ? linux_syscall5(209, fds[0], SOL_SOCKET, SO_TYPE, (long)&socket_type, (long)&socket_type_len) : -1;
@@ -289,6 +306,9 @@ int main(void) {
         bytes_match(msg_received_left, sendmsg_left, 4) &&
         bytes_match(msg_received_right, sendmsg_right, 3) &&
         recv_hdr.msg_flags == 0 &&
+        sendmmsg_status == 1 && sendmmsg_hdrs[0].msg_len == 4 &&
+        mmsg_read_status == 4 &&
+        bytes_match(mmsg_received, "mmsg", 4) &&
         name_status == 0 && peer_status == 0 &&
         name_len == 2 && peer_len == 2 &&
         name.family == AF_UNIX && peer.family == AF_UNIX &&
