@@ -206,6 +206,13 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 lookups,
             );
         }
+        if let Some(lookups) = gem5_indirect_branch_lookups(snapshot, cpu) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.indirectLookups"),
+                lookups,
+            );
+        }
         for provider in BranchTargetProvider::ALL {
             if let Some(target_provider) = snapshot_value(
                 snapshot,
@@ -385,6 +392,25 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
             }
         }
     }
+}
+
+fn gem5_indirect_branch_lookups(snapshot: &StatSnapshot, cpu: u64) -> Option<u64> {
+    let mut lookups = 0_u64;
+    for kind in [
+        BranchTargetKind::IndirectConditional,
+        BranchTargetKind::IndirectUnconditional,
+        BranchTargetKind::CallIndirect,
+    ] {
+        let value = snapshot_value(
+            snapshot,
+            &format!(
+                "sim.cpu{cpu}.branch_predictor.lookups.{}",
+                kind.canonical_stat_name()
+            ),
+        )?;
+        lookups = lookups.saturating_add(value);
+    }
+    Some(lookups)
 }
 
 fn append_gem5_work_item_alias_stats(output: &mut String, snapshot: &StatSnapshot) {

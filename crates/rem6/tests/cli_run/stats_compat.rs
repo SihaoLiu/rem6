@@ -6796,7 +6796,25 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
                 &stdout,
                 &format!("sim.cpu{cpu}.branch_predictor.target_provider.indirect"),
             );
+            let indirect_lookups = text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.lookups.indirect_conditional"),
+            ) + text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.lookups.indirect_unconditional"),
+            ) + text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.lookups.call_indirect"),
+            );
             assert!(indirect_provider > 0, "{stdout}");
+            assert!(indirect_lookups > 0, "{stdout}");
+            assert_eq!(
+                text_stat_value(
+                    &stdout,
+                    &format!("{alias_prefix}.branchPred.indirectLookups")
+                ),
+                indirect_lookups
+            );
             assert_eq!(
                 text_stat_value(
                     &stdout,
