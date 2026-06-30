@@ -57,6 +57,7 @@ impl RiscvSyscallTable {
             | RISCV_LINUX_LOOKUP_DCOOKIE
             | RISCV_LINUX_NFSSERVCTL
             | RISCV_LINUX_QUOTACTL
+            | RISCV_LINUX_PTRACE
             | RISCV_LINUX_MQ_OPEN
             | RISCV_LINUX_MQ_UNLINK
             | RISCV_LINUX_MQ_TIMEDSEND

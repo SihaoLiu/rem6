@@ -13,6 +13,7 @@ const RAW_KNOWN_NI_SYSCALLS: &[i32] = &[
     3,   // io_cancel
     4,   // io_getevents
     60,  // quotactl
+    117, // ptrace
     180, // mq_open
     181, // mq_unlink
     182, // mq_timedsend

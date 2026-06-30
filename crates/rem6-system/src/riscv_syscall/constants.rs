@@ -13,6 +13,7 @@ pub(super) const RISCV_LINUX_NEWFSTATAT: u64 = 79;
 pub(super) const RISCV_LINUX_FSTAT: u64 = 80;
 pub(super) const RISCV_LINUX_SET_ROBUST_LIST: u64 = 99;
 pub(super) const RISCV_LINUX_GET_ROBUST_LIST: u64 = 100;
+pub(super) const RISCV_LINUX_PTRACE: u64 = 117;
 pub(super) const RISCV_LINUX_SCHED_YIELD: u64 = 124;
 pub(super) const RISCV_LINUX_KILL: u64 = 129;
 pub(super) const RISCV_LINUX_TKILL: u64 = 130;
