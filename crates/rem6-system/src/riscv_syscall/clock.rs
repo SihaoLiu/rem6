@@ -13,6 +13,7 @@ pub(super) const RISCV_LINUX_CLOCK_GETTIME: u64 = 113;
 pub(super) const RISCV_LINUX_CLOCK_GETRES: u64 = 114;
 pub(super) const RISCV_LINUX_TIMES: u64 = 153;
 pub(super) const RISCV_LINUX_GETTIMEOFDAY: u64 = 169;
+pub(super) const RISCV_LINUX_SETTIMEOFDAY: u64 = 170;
 pub(super) const RISCV_NEWLIB_CLOCK_GETTIME64: u64 = 403;
 pub(super) const RISCV_NEWLIB_LEGACY_TIME: u64 = 1062;
 const RISCV_LINUX_ITIMER_REAL: u64 = 0;
@@ -192,6 +193,31 @@ pub(super) fn syscall_gettimeofday(
     Some(0)
 }
 
+pub(super) fn syscall_settimeofday(
+    request: RiscvSyscallRequest,
+    guest_memory: Option<&RiscvGuestMemoryReader>,
+) -> Option<u64> {
+    let timeval_address = request.argument(0);
+    let timezone_address = request.argument(1);
+    if timeval_address == 0 && timezone_address == 0 {
+        return Some(0);
+    }
+
+    let guest_memory = guest_memory?;
+    if timeval_address != 0 {
+        if let Err(error) = read_riscv_linux_timeval(timeval_address, guest_memory) {
+            return Some(linux_error(error));
+        }
+    }
+    if timezone_address != 0 {
+        if let Err(error) = read_riscv_linux_timezone(timezone_address, guest_memory) {
+            return Some(linux_error(error));
+        }
+    }
+
+    Some(linux_error(RISCV_LINUX_EPERM))
+}
+
 pub(super) fn syscall_legacy_time(
     request: RiscvSyscallRequest,
     tick: Tick,
@@ -347,13 +373,39 @@ fn read_riscv_linux_timespec(
     address: u64,
     guest_memory: &RiscvGuestMemoryReader,
 ) -> Result<(), u64> {
+    read_riscv_linux_time_pair(address, guest_memory, RISCV_LINUX_NANOSECONDS_PER_SECOND)
+}
+
+fn read_riscv_linux_timeval(
+    address: u64,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> Result<(), u64> {
+    read_riscv_linux_time_pair(address, guest_memory, RISCV_LINUX_MICROSECONDS_PER_SECOND)
+}
+
+fn read_riscv_linux_time_pair(
+    address: u64,
+    guest_memory: &RiscvGuestMemoryReader,
+    fraction_exclusive_limit: u64,
+) -> Result<(), u64> {
     let bytes = guest_memory
         .read(address, 16)
         .filter(|bytes| bytes.len() == 16)
         .ok_or(RISCV_LINUX_EFAULT)?;
     read_nonnegative_timeval_field(&bytes, 0, None)?;
-    read_nonnegative_timeval_field(&bytes, 8, Some(RISCV_LINUX_NANOSECONDS_PER_SECOND))?;
+    read_nonnegative_timeval_field(&bytes, 8, Some(fraction_exclusive_limit))?;
     Ok(())
+}
+
+fn read_riscv_linux_timezone(
+    address: u64,
+    guest_memory: &RiscvGuestMemoryReader,
+) -> Result<(), u64> {
+    guest_memory
+        .read(address, RISCV_LINUX_TIMEZONE_BYTES)
+        .filter(|bytes| bytes.len() == RISCV_LINUX_TIMEZONE_BYTES)
+        .map(|_| ())
+        .ok_or(RISCV_LINUX_EFAULT)
 }
 
 fn read_nonnegative_timeval_field(

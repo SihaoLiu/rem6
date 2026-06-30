@@ -102,9 +102,9 @@ use cache::{syscall_riscv_flush_icache, RISCV_LINUX_RISCV_FLUSH_ICACHE};
 use capability::{syscall_capget, syscall_capset, RISCV_LINUX_CAPGET, RISCV_LINUX_CAPSET};
 use clock::{
     syscall_clock, syscall_clock_settime, syscall_getitimer, syscall_setitimer,
-    RiscvLinuxItimerval, RISCV_LINUX_CLOCK_GETRES, RISCV_LINUX_CLOCK_GETTIME,
+    syscall_settimeofday, RiscvLinuxItimerval, RISCV_LINUX_CLOCK_GETRES, RISCV_LINUX_CLOCK_GETTIME,
     RISCV_LINUX_CLOCK_SETTIME, RISCV_LINUX_GETITIMER, RISCV_LINUX_GETTIMEOFDAY,
-    RISCV_LINUX_SETITIMER, RISCV_LINUX_TIMES,
+    RISCV_LINUX_SETITIMER, RISCV_LINUX_SETTIMEOFDAY, RISCV_LINUX_TIMES,
 };
 use constants::*;
 use copy_file_range::{syscall_copy_file_range, RISCV_LINUX_COPY_FILE_RANGE};

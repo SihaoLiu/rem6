@@ -1,6 +1,6 @@
 use std::{fs, process::Command};
 
-use crate::support::{find_riscv_tool, temp_workspace};
+use crate::support::*;
 
 #[test]
 fn rem6_run_riscv_se_runs_static_newlib_times_against_qemu() {
@@ -660,6 +660,74 @@ int main(void) {
     assert!(stdout.contains("\"riscv_guest_writes\":[{\"fd\":1"));
     assert!(stdout.contains("\"text\":\"raw-clock-settime:-22:-22:-22:-14:-1\\n\""));
     assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+}
+
+#[test]
+fn rem6_run_riscv_se_runs_static_raw_settimeofday() {
+    let mut program = riscv64_program(&[
+        i_type(0, 0, 0x0, 10, 0x13),     // addi a0, x0, 0
+        i_type(0, 0, 0x0, 11, 0x13),     // addi a1, x0, 0
+        i_type(170, 0, 0x0, 17, 0x13),   // addi a7, x0, settimeofday
+        0x0000_0073,                     // ecall
+        b_type(44, 0, 10, 0x1),          // bne a0, x0, fail
+        u_type(0, 10, 0x17),             // auipc a0, 0
+        i_type(0xec, 10, 0x0, 10, 0x13), // addi a0, a0, timeval offset
+        i_type(0, 0, 0x0, 11, 0x13),     // addi a1, x0, 0
+        i_type(170, 0, 0x0, 17, 0x13),   // addi a7, x0, settimeofday
+        0x0000_0073,                     // ecall
+        i_type(-1, 0, 0x0, 5, 0x13),     // addi t0, x0, -EPERM
+        b_type(16, 5, 10, 0x1),          // bne a0, t0, fail
+        i_type(84, 0, 0x0, 10, 0x13),    // addi a0, x0, 84
+        i_type(93, 0, 0x0, 17, 0x13),    // addi a7, x0, exit
+        0x0000_0073,                     // ecall
+        i_type(85, 0, 0x0, 10, 0x13),    // addi a0, x0, 85
+        i_type(93, 0, 0x0, 17, 0x13),    // addi a7, x0, exit
+        0x0000_0073,                     // ecall
+    ]);
+    program.resize(0x100, 0);
+    program.extend_from_slice(&0_i64.to_le_bytes());
+    program.extend_from_slice(&0_i64.to_le_bytes());
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("riscv-se-settimeofday", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "240",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--riscv-se",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("\"status\":\"stopped_by_host\""),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("\"stop_code\":84"), "stdout: {stdout}");
+    assert!(stdout.contains("\"riscv_unknown_syscalls\":[]"));
+    assert_stat(&stdout, "sim.riscv.se", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.stop_code", "Count", 84, "constant");
+    assert_stat(
+        &stdout,
+        "sim.riscv.unknown_syscalls",
+        "Count",
+        0,
+        "monotonic",
+    );
 }
 
 #[test]

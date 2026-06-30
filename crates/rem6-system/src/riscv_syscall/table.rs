@@ -566,6 +566,8 @@ impl RiscvSyscallTable {
                     value: syscall_clock_settime(request, reader),
                 })
             }
+            RISCV_LINUX_SETTIMEOFDAY => syscall_settimeofday(request, guest_memory_reader)
+                .map(|value| RiscvSyscallOutcome::Return { value }),
             RISCV_LINUX_GETITIMER => {
                 guest_memory_writer.map(|guest_memory| RiscvSyscallOutcome::Return {
                     value: syscall_getitimer(request, state, guest_memory),

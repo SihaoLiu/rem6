@@ -2,6 +2,7 @@ use super::*;
 
 const RISCV_LINUX_CLOCK_GETRES_FOR_TEST: u64 = 114;
 const RISCV_LINUX_GETTIMEOFDAY_FOR_TEST: u64 = 169;
+const RISCV_LINUX_SETTIMEOFDAY_FOR_TEST: u64 = 170;
 const RISCV_LINUX_GETITIMER_FOR_TEST: u64 = 102;
 const RISCV_LINUX_SETITIMER_FOR_TEST: u64 = 103;
 const RISCV_NEWLIB_CLOCK_GETTIME64_FOR_TEST: u64 = 403;
@@ -277,6 +278,147 @@ fn linux_table_gettimeofday_reports_guest_write_faults() {
             })
         );
     }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_settimeofday_accepts_null_timeval_and_timezone_noop() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8000,
+                RISCV_LINUX_SETTIMEOFDAY_FOR_TEST,
+                [0, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            2_000_003_456,
+            None,
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return { value: 0 })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_settimeofday_validates_timeval_before_denial() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let valid_timeval_address = 0x9000;
+    let invalid_usec_address = 0x9020;
+    let negative_seconds_address = 0x9040;
+    let timezone_address = 0x9060;
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == valid_timeval_address && bytes == 16 {
+            Some(timeval_bytes(1, 999_999))
+        } else if address == invalid_usec_address && bytes == 16 {
+            Some(timeval_bytes(1, 1_000_000))
+        } else if address == negative_seconds_address && bytes == 16 {
+            Some(timeval_bytes(-1, 0))
+        } else if address == timezone_address && bytes == 8 {
+            Some(vec![0; 8])
+        } else {
+            None
+        }
+    });
+
+    for (pc, arguments, errno) in [
+        (
+            0x8004,
+            [valid_timeval_address, 0, 0, 0, 0, 0],
+            RISCV_LINUX_EPERM,
+        ),
+        (
+            0x8006,
+            [valid_timeval_address, timezone_address, 0, 0, 0, 0],
+            RISCV_LINUX_EPERM,
+        ),
+        (
+            0x8008,
+            [invalid_usec_address, 0, 0, 0, 0, 0],
+            RISCV_LINUX_EINVAL,
+        ),
+        (
+            0x800c,
+            [negative_seconds_address, 0, 0, 0, 0, 0],
+            RISCV_LINUX_EINVAL,
+        ),
+        (0x8010, [0, timezone_address, 0, 0, 0, 0], RISCV_LINUX_EPERM),
+        (0x8014, [0x9080, 0, 0, 0, 0, 0], RISCV_LINUX_EFAULT),
+    ] {
+        assert_eq!(
+            table.handle_with_guest_memory_io_at_tick(
+                RiscvSyscallRequest::new(pc, RISCV_LINUX_SETTIMEOFDAY_FOR_TEST, arguments),
+                &mut state,
+                2_000_003_456,
+                Some(&guest_memory_reader),
+                None,
+            ),
+            Some(RiscvSyscallOutcome::Return {
+                value: linux_error(errno)
+            })
+        );
+    }
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_settimeofday_reads_timezone_when_timeval_is_present() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+    let timeval_address = 0x9000;
+    let timezone_address = 0x9020;
+    let guest_memory_reader = RiscvGuestMemoryReader::new(move |address, bytes| {
+        if address == timeval_address && bytes == 16 {
+            Some(timeval_bytes(1, 999_999))
+        } else if address == timezone_address && bytes == 8 {
+            None
+        } else {
+            panic!("unexpected settimeofday read at 0x{address:x} for {bytes} bytes")
+        }
+    });
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8016,
+                RISCV_LINUX_SETTIMEOFDAY_FOR_TEST,
+                [timeval_address, timezone_address, 0, 0, 0, 0],
+            ),
+            &mut state,
+            2_000_003_456,
+            Some(&guest_memory_reader),
+            None,
+        ),
+        Some(RiscvSyscallOutcome::Return {
+            value: linux_error(RISCV_LINUX_EFAULT)
+        })
+    );
+    assert!(state.unknown_syscalls().is_empty());
+}
+
+#[test]
+fn linux_table_settimeofday_without_guest_reader_stays_unhandled_for_non_null_pointer() {
+    let table = RiscvSyscallTable::new();
+    let mut state = RiscvSyscallState::new(0);
+
+    assert_eq!(
+        table.handle_with_guest_memory_io_at_tick(
+            RiscvSyscallRequest::new(
+                0x8018,
+                RISCV_LINUX_SETTIMEOFDAY_FOR_TEST,
+                [0x9000, 0, 0, 0, 0, 0],
+            ),
+            &mut state,
+            2_000_003_456,
+            None,
+            None,
+        ),
+        None
+    );
     assert!(state.unknown_syscalls().is_empty());
 }
 
@@ -791,6 +933,13 @@ fn itimerval_bytes(
     bytes.extend_from_slice(&interval_microseconds.to_le_bytes());
     bytes.extend_from_slice(&value_seconds.to_le_bytes());
     bytes.extend_from_slice(&value_microseconds.to_le_bytes());
+    bytes
+}
+
+fn timeval_bytes(seconds: i64, microseconds: i64) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(16);
+    bytes.extend_from_slice(&seconds.to_le_bytes());
+    bytes.extend_from_slice(&microseconds.to_le_bytes());
     bytes
 }
 
