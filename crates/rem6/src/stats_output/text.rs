@@ -206,6 +206,16 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 lookups,
             );
         }
+        if let Some(squashes) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.branch_predictor.squashes.total"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.squashes_0::total"),
+                squashes,
+            );
+        }
         if let Some(lookups) = gem5_indirect_branch_lookups(snapshot, cpu) {
             append_derived_count_stat(
                 output,

@@ -439,6 +439,13 @@ pub(super) fn emit_cpu_run_stats(
         )?;
         increment_stat(
             stats,
+            &format!("sim.cpu{}.branch_predictor.squashes.total", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.branch_predictor_squashes_total,
+        )?;
+        increment_stat(
+            stats,
             &format!("sim.cpu{}.branch_predictor.indirect_hits", core.cpu),
             "Count",
             StatResetPolicy::Monotonic,

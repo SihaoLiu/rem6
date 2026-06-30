@@ -7166,6 +7166,8 @@ fn rem6_run_stats_emit_in_order_nested_branch_speculation_rollback() {
     let repairs = json_u64_field(&stdout, "\"branch_speculation_repairs\":");
     let removed_youngers = json_u64_field(&stdout, "\"branch_speculation_removed_youngers\":");
     let max_pending = json_u64_field(&stdout, "\"branch_speculation_max_pending\":");
+    let branch_predictor_squashes = stat_value(&stdout, "sim.cpu0.branch_predictor.squashes.total");
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
 
     assert_eq!(
         stat_value(
@@ -7188,6 +7190,13 @@ fn rem6_run_stats_emit_in_order_nested_branch_speculation_rollback() {
         ),
         removed_youngers
     );
+    assert_eq!(branch_predictor_squashes, removed_youngers);
+    assert_eq!(
+        artifact
+            .pointer("/cores/0/branch_predictor/squashes/total")
+            .and_then(Value::as_u64),
+        Some(removed_youngers)
+    );
     assert_eq!(
         stat_value(
             &stdout,
@@ -7202,6 +7211,41 @@ fn rem6_run_stats_emit_in_order_nested_branch_speculation_rollback() {
     assert!(stdout.contains("\"x5\":\"0x7\""));
     assert!(!stdout.contains("\"x6\":\"0x1\""));
     assert!(!stdout.contains("\"x7\":\"0x2\""));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "120",
+            "--memory-route-delay",
+            "1",
+            "--riscv-branch-lookahead",
+            "2",
+            "--stats-format",
+            "text",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.squashes_0::total"),
+        text_stat_value(&stdout, "sim.cpu0.branch_predictor.squashes.total")
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.branchPred.squashes_0::total").contains("unit=Count"),
+        "{stdout}"
+    );
 }
 
 #[test]

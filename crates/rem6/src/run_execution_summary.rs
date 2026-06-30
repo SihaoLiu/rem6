@@ -250,6 +250,7 @@ pub(super) fn execution_summary(
             branch_target_buffer_mispredict_due_to_btb_miss: branch_speculation_summary
                 .btb_mispredict_due_to_btb_miss(),
             branch_predictor_lookups: branch_speculation_summary.lookup_branch_kinds(),
+            branch_predictor_squashes_total: branch_speculation_summary.removed_youngers(),
             branch_predictor_target_provider: branch_speculation_summary.target_provider(),
             branch_predictor_indirect_hits: branch_speculation_summary.indirect_hits(),
             branch_predictor_ras: branch_speculation_summary.return_address_stack(),
