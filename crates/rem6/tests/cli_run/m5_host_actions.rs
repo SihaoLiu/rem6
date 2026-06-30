@@ -264,7 +264,8 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let json: Value = serde_json::from_slice(&output.stdout)
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout)
         .unwrap_or_else(|error| panic!("invalid stdout JSON: {error}"));
     assert_eq!(
         json.pointer("/simulation/status").and_then(Value::as_str),
@@ -332,6 +333,34 @@ fn rem6_run_executes_m5_switch_cpu_mode_transfer_from_real_riscv_execution() {
     assert!(
         stop_tick > second_switch_tick,
         "m5_switch_cpu should switch modes and continue to the later m5_exit: {host_actions}"
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfers",
+        "Count",
+        2,
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer_components",
+        "Count",
+        execution_mode_switch_transfer_total(host_actions, "component_count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer_chunks",
+        "Count",
+        execution_mode_switch_transfer_total(host_actions, "chunk_count"),
+        "monotonic",
+    );
+    assert_json_stat(
+        &json,
+        "sim.host_actions.execution_mode_switch_state_transfer_payload_bytes",
+        "Byte",
+        execution_mode_switch_transfer_total(host_actions, "payload_bytes"),
+        "monotonic",
     );
 }
 
@@ -1116,6 +1145,54 @@ fn action_ticks(host_actions: &Value, field: &str) -> Vec<u64> {
                 .unwrap_or_else(|| panic!("missing host action tick in {field}: {action}"))
         })
         .collect()
+}
+
+fn execution_mode_switch_transfer_total(host_actions: &Value, field: &str) -> u64 {
+    host_actions
+        .pointer("/execution_mode_switches")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing execution mode switch actions: {host_actions}"))
+        .iter()
+        .map(|action| {
+            action
+                .pointer(&format!("/state_transfer/{field}"))
+                .and_then(Value::as_u64)
+                .unwrap_or_else(|| panic!("missing switch transfer {field}: {action}"))
+        })
+        .sum()
+}
+
+fn assert_json_stat(json: &Value, path: &str, unit: &str, value: u64, reset_policy: &str) {
+    let stats = json
+        .pointer("/stats")
+        .and_then(Value::as_array)
+        .unwrap_or_else(|| panic!("missing stats array in run JSON: {json}"));
+    let matches = stats
+        .iter()
+        .filter(|sample| sample.pointer("/path").and_then(Value::as_str) == Some(path))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected one stat path {path}, found {} in {stats:?}",
+        matches.len()
+    );
+    let sample = matches[0];
+    assert_eq!(
+        sample.pointer("/unit").and_then(Value::as_str),
+        Some(unit),
+        "unexpected unit for {path}: {sample}"
+    );
+    assert_eq!(
+        sample.pointer("/value").and_then(Value::as_u64),
+        Some(value),
+        "unexpected value for {path}: {sample}"
+    );
+    assert_eq!(
+        sample.pointer("/reset_policy").and_then(Value::as_str),
+        Some(reset_policy),
+        "unexpected reset policy for {path}: {sample}"
+    );
 }
 
 fn assert_stats_dump(

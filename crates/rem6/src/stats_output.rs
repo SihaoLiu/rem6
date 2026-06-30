@@ -772,6 +772,21 @@ fn emit_run_host_action_stats(
     stats: &mut StatsRegistry,
     summary: &Rem6HostActionSummary,
 ) -> Result<(), Rem6CliError> {
+    let mut switch_state_transfer_count = 0;
+    let mut switch_state_transfer_components = 0;
+    let mut switch_state_transfer_chunks = 0;
+    let mut switch_state_transfer_payload_bytes = 0;
+    for transfer in summary
+        .execution_mode_switches
+        .iter()
+        .filter_map(|switch| switch.state_transfer.as_ref())
+    {
+        switch_state_transfer_count += 1;
+        switch_state_transfer_components += transfer.component_count;
+        switch_state_transfer_chunks += transfer.chunk_count;
+        switch_state_transfer_payload_bytes += transfer.payload_bytes;
+    }
+
     let samples = [
         ("total", summary.total_action_count),
         ("injected_commands", summary.injected_command_count),
@@ -786,6 +801,18 @@ fn emit_run_host_action_stats(
             "execution_mode_switches",
             summary.execution_mode_switch_count,
         ),
+        (
+            "execution_mode_switch_state_transfers",
+            switch_state_transfer_count,
+        ),
+        (
+            "execution_mode_switch_state_transfer_components",
+            switch_state_transfer_components,
+        ),
+        (
+            "execution_mode_switch_state_transfer_chunks",
+            switch_state_transfer_chunks,
+        ),
         ("stops", summary.stops.len() as u64),
     ];
     for (name, value) in samples {
@@ -797,6 +824,13 @@ fn emit_run_host_action_stats(
             value,
         )?;
     }
+    increment_stat(
+        stats,
+        "sim.host_actions.execution_mode_switch_state_transfer_payload_bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        switch_state_transfer_payload_bytes,
+    )?;
     Ok(())
 }
 
