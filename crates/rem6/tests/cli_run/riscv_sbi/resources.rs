@@ -1,6 +1,7 @@
 use std::{fs, process::Command};
 
 use crate::support::*;
+use serde_json::Value;
 
 use super::{RISCV_SBI_ENTRY, SBI_LEGACY_CONSOLE_GETCHAR};
 
@@ -73,6 +74,12 @@ artifact_digest = "sha256:riscv-sbi-console-input"
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/riscv_sbi_inputs/console_input/source")
+            .and_then(Value::as_str),
+        Some("resource:console")
+    );
     assert!(stdout.contains("\"status\":\"executed_until_trap\""));
     assert!(stdout.contains("\"binary\":\"resource-config:"));
     assert!(stdout.contains("\"x5\":\"0x5a\""));
@@ -113,6 +120,13 @@ fn rem6_run_riscv_sbi_console_input_toml_path_resolves_from_config_directory() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let expected_console = workspace.join("console.bin").display().to_string();
+    assert_eq!(
+        json.pointer("/riscv_sbi_inputs/console_input/source")
+            .and_then(Value::as_str),
+        Some(expected_console.as_str())
+    );
     assert!(stdout.contains("\"status\":\"executed_until_trap\""));
     assert!(stdout.contains("\"x5\":\"0x54\""));
     assert!(stdout.contains("\"riscv_sbi_console\":{\"bytes\":0,\"text\":\"\",\"hex\":\"\"}"));

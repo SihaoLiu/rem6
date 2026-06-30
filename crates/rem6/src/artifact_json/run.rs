@@ -157,11 +157,12 @@ impl Rem6RunArtifact {
             .join(",");
         let riscv_boot = if self.config.isa() == RequestedIsa::Riscv {
             format!(
-                ",\"riscv_boot\":{{\"a0\":\"0x{:x}\",\"a1\":\"0x{:x}\",\"sbi\":{},\"se\":{}}},\"riscv_se_inputs\":{}",
+                ",\"riscv_boot\":{{\"a0\":\"0x{:x}\",\"a1\":\"0x{:x}\",\"sbi\":{},\"se\":{}}},\"riscv_sbi_inputs\":{},\"riscv_se_inputs\":{}",
                 self.config.riscv_boot_a0(),
                 self.config.riscv_boot_a1(),
                 self.config.riscv_sbi(),
                 self.config.riscv_se(),
+                riscv_sbi_inputs_json(&self.config),
                 riscv_se_inputs_json(&self.config)
             )
         } else {
@@ -777,7 +778,7 @@ impl Rem6ReadfileSummary {
 fn riscv_se_inputs_json(config: &crate::Rem6RunConfig) -> String {
     let stdin = config
         .riscv_se_stdin()
-        .map(riscv_se_input_source_json)
+        .map(riscv_input_source_json)
         .unwrap_or_else(|| "null".to_string());
     let files = config
         .riscv_se_files()
@@ -794,7 +795,15 @@ fn riscv_se_inputs_json(config: &crate::Rem6RunConfig) -> String {
     format!("{{\"stdin\":{},\"files\":[{}]}}", stdin, files)
 }
 
-fn riscv_se_input_source_json(source: &crate::config::RiscvSeInputSource) -> String {
+fn riscv_sbi_inputs_json(config: &crate::Rem6RunConfig) -> String {
+    let console_input = config
+        .riscv_sbi_console_input()
+        .map(riscv_input_source_json)
+        .unwrap_or_else(|| "null".to_string());
+    format!("{{\"console_input\":{console_input}}}")
+}
+
+fn riscv_input_source_json(source: &crate::config::RiscvSeInputSource) -> String {
     format!("{{\"source\":\"{}\"}}", json_escape(&source.source_name()))
 }
 
