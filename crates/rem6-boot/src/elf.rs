@@ -184,18 +184,32 @@ struct ElfLoadSegmentSummary {
     memory_bytes: u64,
     writable_count: u64,
     executable_count: u64,
+    max_alignment: u64,
+    misaligned_alignment_count: u64,
 }
 
 impl ElfLoadSegmentSummary {
-    fn record(&mut self, flags: u32, file_size: u64, memory_size: u64) {
+    fn record(
+        &mut self,
+        flags: u32,
+        file_offset: u64,
+        virtual_address: u64,
+        file_size: u64,
+        memory_size: u64,
+        alignment: u64,
+    ) {
         self.count += 1;
         self.file_bytes = self.file_bytes.saturating_add(file_size);
         self.memory_bytes = self.memory_bytes.saturating_add(memory_size);
+        self.max_alignment = self.max_alignment.max(alignment);
         if flags & PF_W != 0 {
             self.writable_count += 1;
         }
         if flags & PF_X != 0 {
             self.executable_count += 1;
+        }
+        if alignment > 1 && virtual_address % alignment != file_offset % alignment {
+            self.misaligned_alignment_count += 1;
         }
     }
 
@@ -206,6 +220,8 @@ impl ElfLoadSegmentSummary {
             self.memory_bytes,
             self.writable_count,
             self.executable_count,
+            self.max_alignment,
+            self.misaligned_alignment_count,
         )
     }
 }
@@ -296,9 +312,11 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
 
         let segment_flags = read_u32_at_u64(bytes, header_offset + 4, endian)?;
         let file_offset = read_u64_at_u64(bytes, header_offset + 8, endian)?;
+        let virtual_address = read_u64_at_u64(bytes, header_offset + 16, endian)?;
         let physical = read_u64_at_u64(bytes, header_offset + 24, endian)?;
         let file_size = read_u64_at_u64(bytes, header_offset + 32, endian)?;
         let memory_size = read_u64_at_u64(bytes, header_offset + 40, endian)?;
+        let alignment = read_u64_at_u64(bytes, header_offset + 48, endian)?;
         if memory_size == 0 {
             continue;
         }
@@ -343,7 +361,14 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         ));
         let data = zeroed_segment_data(segment, memory_size, file_range)?;
         image = image.add_segment(Address::new(physical), data)?;
-        load_segment_summary.record(segment_flags, file_size, memory_size);
+        load_segment_summary.record(
+            segment_flags,
+            file_offset,
+            virtual_address,
+            file_size,
+            memory_size,
+            alignment,
+        );
         loaded_segments += 1;
     }
 
@@ -485,9 +510,11 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
 
         let segment_flags = read_u32_at_u64(bytes, header_offset + 24, endian)?;
         let file_offset = u64::from(read_u32_at_u64(bytes, header_offset + 4, endian)?);
+        let virtual_address = u64::from(read_u32_at_u64(bytes, header_offset + 8, endian)?);
         let physical = u64::from(read_u32_at_u64(bytes, header_offset + 12, endian)?);
         let file_size = u64::from(read_u32_at_u64(bytes, header_offset + 16, endian)?);
         let memory_size = u64::from(read_u32_at_u64(bytes, header_offset + 20, endian)?);
+        let alignment = u64::from(read_u32_at_u64(bytes, header_offset + 28, endian)?);
         if memory_size == 0 {
             continue;
         }
@@ -546,7 +573,14 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         ));
         let data = zeroed_segment_data(segment, memory_size, file_range)?;
         image = image.add_segment(Address::new(physical), data)?;
-        load_segment_summary.record(segment_flags, file_size, memory_size);
+        load_segment_summary.record(
+            segment_flags,
+            file_offset,
+            virtual_address,
+            file_size,
+            memory_size,
+            alignment,
+        );
         loaded_segments += 1;
     }
 

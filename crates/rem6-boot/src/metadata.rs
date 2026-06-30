@@ -616,7 +616,7 @@ impl BootElfMetadata {
             function_symbol_count: 0,
             object_symbol_count: 0,
             dynamic_table: BootElfDynamicTable::new(),
-            load_segments: BootElfLoadSegments::new(0, 0, 0, 0, 0),
+            load_segments: BootElfLoadSegments::new(0, 0, 0, 0, 0, 0, 0),
             program_header_table: BootElfProgramHeaderTable::new(0, 0, 0),
             section_header_table: BootElfSectionHeaderTable::new(0, 0, 0, 0),
             section_name_table: BootElfSectionNameTable::new(0, 0),

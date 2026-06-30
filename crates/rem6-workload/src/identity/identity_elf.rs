@@ -60,6 +60,8 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 hash_u64(hash, load_segments.memory_bytes());
                 hash_u64(hash, load_segments.writable_count());
                 hash_u64(hash, load_segments.executable_count());
+                hash_u64(hash, load_segments.max_alignment());
+                hash_u64(hash, load_segments.misaligned_alignment_count());
             }
             let section_header_table = metadata.section_header_table();
             if section_header_table.file_offset() != 0 || section_header_table.entry_count() != 0 {

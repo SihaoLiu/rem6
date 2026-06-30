@@ -300,12 +300,14 @@ fn elf_notes_json(segment_count: u64, file_size: u64) -> String {
 
 fn elf_load_segments_json(load_segments: BootElfLoadSegments) -> String {
     format!(
-        "{{\"count\":{},\"file_bytes\":{},\"memory_bytes\":{},\"writable\":{},\"executable\":{}}}",
+        "{{\"count\":{},\"file_bytes\":{},\"memory_bytes\":{},\"writable\":{},\"executable\":{},\"max_alignment\":{},\"misaligned_alignment\":{}}}",
         load_segments.count(),
         load_segments.file_bytes(),
         load_segments.memory_bytes(),
         load_segments.writable_count(),
         load_segments.executable_count(),
+        load_segments.max_alignment(),
+        load_segments.misaligned_alignment_count(),
     )
 }
 

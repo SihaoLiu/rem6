@@ -151,6 +151,16 @@ fn emit_elf_load_segment_stats(
             "Count",
             load_segments.executable_count(),
         ),
+        (
+            "sim.elf.load_segment.max_alignment",
+            "Byte",
+            load_segments.max_alignment(),
+        ),
+        (
+            "sim.elf.load_segment.misaligned_alignment",
+            "Count",
+            load_segments.misaligned_alignment_count(),
+        ),
     ] {
         increment_stat(stats, name, unit, StatResetPolicy::Constant, value)?;
     }

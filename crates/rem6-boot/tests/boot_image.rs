@@ -765,7 +765,9 @@ fn boot_image_loads_elf64_loadable_segments_with_zero_fill() {
         ],
     );
     write_u32(&mut elf, 64 + 4, 6);
+    write_u64(&mut elf, 64 + 16, 0x8100);
     write_u32(&mut elf, 64 + 2 * 56 + 4, 5);
+    write_u64(&mut elf, 64 + 2 * 56 + 48, 4);
 
     let image = BootImage::from_elf64_le(&elf).unwrap();
 
@@ -785,6 +787,8 @@ fn boot_image_loads_elf64_loadable_segments_with_zero_fill() {
     assert_eq!(load_segments.memory_bytes(), 11);
     assert_eq!(load_segments.writable_count(), 1);
     assert_eq!(load_segments.executable_count(), 1);
+    assert_eq!(load_segments.max_alignment(), 0x1000);
+    assert_eq!(load_segments.misaligned_alignment_count(), 1);
 }
 
 #[test]
@@ -821,7 +825,9 @@ fn boot_image_loads_elf32_loadable_segments_with_zero_fill() {
         ],
     );
     write_u32(&mut elf, 52 + 24, 6);
+    write_u32(&mut elf, 52 + 8, 0x8100);
     write_u32(&mut elf, 52 + 2 * 32 + 24, 5);
+    write_u32(&mut elf, 52 + 2 * 32 + 28, 4);
 
     let image = BootImage::from_elf32_le(&elf).unwrap();
 
@@ -841,6 +847,8 @@ fn boot_image_loads_elf32_loadable_segments_with_zero_fill() {
     assert_eq!(load_segments.memory_bytes(), 11);
     assert_eq!(load_segments.writable_count(), 1);
     assert_eq!(load_segments.executable_count(), 1);
+    assert_eq!(load_segments.max_alignment(), 0x1000);
+    assert_eq!(load_segments.misaligned_alignment_count(), 1);
 }
 
 #[test]

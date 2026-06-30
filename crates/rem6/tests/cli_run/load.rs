@@ -78,7 +78,7 @@ fn rem6_run_loads_riscv_elf_and_emits_json_stats_artifact() {
     assert!(stdout.contains("\"entry\":\"0x80000000\""));
     assert!(stdout.contains("\"start_address\":\"0x80000000\""));
     assert!(stdout.contains(
-        "\"load_segments\":{\"count\":1,\"file_bytes\":4,\"memory_bytes\":4,\"writable\":0,\"executable\":1}"
+        "\"load_segments\":{\"count\":1,\"file_bytes\":4,\"memory_bytes\":4,\"writable\":0,\"executable\":1,\"max_alignment\":4096,\"misaligned_alignment\":1}"
     ));
     assert!(stdout
         .contains("\"riscv_boot\":{\"a0\":\"0x0\",\"a1\":\"0x0\",\"sbi\":false,\"se\":false}"));
@@ -124,6 +124,20 @@ fn rem6_run_loads_riscv_elf_and_emits_json_stats_artifact() {
     assert_stat(
         &stdout,
         "sim.elf.load_segment.executable",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.load_segment.max_alignment",
+        "Byte",
+        4096,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.load_segment.misaligned_alignment",
         "Count",
         1,
         "constant",

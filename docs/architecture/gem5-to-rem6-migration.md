@@ -1175,7 +1175,7 @@ complete.
 - [ ] softfloat replacement breadth covers all FP rounding and exception paths.
 
 **Migrated:** Native Rust loader and DTB handoff slices, top-level ELF32/ELF64
-extended program-header-count (`PN_XNUM`) loading, `PT_LOAD` summary, `PT_PHDR`/`PT_NOTE` metadata,
+extended program-header-count (`PN_XNUM`) loading, `PT_LOAD` summary/alignment, `PT_PHDR`/`PT_NOTE` metadata,
 `PT_INTERP` interpreter reporting/rejection, `.tbss`/`PT_TLS` TLS metadata,
 `PT_GNU_STACK` stack-exec, `PT_GNU_RELRO`, `PT_GNU_EH_FRAME`, and `PT_GNU_PROPERTY` metadata,
 symbol/dynamic-symbol counts, section-header/name/flag/storage/address/alignment metadata, dynamic needed/path/loader-string/table/lifecycle-scalar/array/relocation/hash/version/linker/flag and ABI-note OS metadata,
@@ -1184,7 +1184,7 @@ plus RV64F/RV64D scalar FP slices.
 **Not migrated:** Complete `ext/libelf`, `ext/libfdt`, and `ext/softfloat` parity.
 
 **Evidence:** CLI static RISC-V smoke tests cover ELF64 extended program-header
-counts, `PT_LOAD` summary JSON/stats, `PT_PHDR`/`PT_NOTE` JSON/stats, `PT_INTERP` rejection/reporting, `.tbss`/`PT_TLS`
+counts, `PT_LOAD` summary/alignment JSON/stats, `PT_PHDR`/`PT_NOTE` JSON/stats, `PT_INTERP` rejection/reporting, `.tbss`/`PT_TLS`
 TLS metadata, `PT_GNU_STACK`, `PT_GNU_RELRO`, `PT_GNU_EH_FRAME`, and `PT_GNU_PROPERTY` metadata,
 symbol/dynamic-symbol counts, section-header/name/flag/storage/address/alignment JSON/stats, dynamic needed/path/loader-string/table/lifecycle-scalar/array/relocation/hash/version/linker/flag JSON/stats,
 ELF32 extended counts, ABI-note OS, DTB, and RV64F/RV64D tests.

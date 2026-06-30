@@ -962,6 +962,8 @@ fn workload_boot_image_preserves_elf_metadata_round_trip() {
     assert_eq!(load_segments.memory_bytes(), 4);
     assert_eq!(load_segments.writable_count(), 0);
     assert_eq!(load_segments.executable_count(), 1);
+    assert_eq!(load_segments.max_alignment(), 0x1000);
+    assert_eq!(load_segments.misaligned_alignment_count(), 1);
 }
 
 #[test]
@@ -1558,6 +1560,32 @@ fn workload_manifest_identity_includes_elf_load_segment_summary() {
         .unwrap();
 
     assert_ne!(executable.identity(), writable.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_load_segment_alignment() {
+    let mut aligned_elf = elf64_image(243);
+    write_u64(&mut aligned_elf, 80, 0x8100);
+    let aligned_source = BootImage::from_elf64_le(&aligned_elf).unwrap();
+    let mut unaligned_elf = aligned_elf.clone();
+    write_u64(&mut unaligned_elf, 80, 0x8000);
+    let unaligned_source = BootImage::from_elf64_le(&unaligned_elf).unwrap();
+
+    assert_eq!(aligned_source.entry(), unaligned_source.entry());
+    assert_eq!(aligned_source.segments(), unaligned_source.segments());
+    assert_ne!(
+        aligned_source.elf_metadata().unwrap().load_segments(),
+        unaligned_source.elf_metadata().unwrap().load_segments(),
+    );
+
+    let aligned = WorkloadManifest::builder(id("same"), aligned_source)
+        .build()
+        .unwrap();
+    let unaligned = WorkloadManifest::builder(id("same"), unaligned_source)
+        .build()
+        .unwrap();
+
+    assert_ne!(aligned.identity(), unaligned.identity());
 }
 
 #[test]

@@ -47,6 +47,8 @@ pub struct BootElfLoadSegments {
     memory_bytes: u64,
     writable_count: u64,
     executable_count: u64,
+    max_alignment: u64,
+    misaligned_alignment_count: u64,
 }
 
 impl BootElfLoadSegments {
@@ -56,6 +58,8 @@ impl BootElfLoadSegments {
         memory_bytes: u64,
         writable_count: u64,
         executable_count: u64,
+        max_alignment: u64,
+        misaligned_alignment_count: u64,
     ) -> Self {
         Self {
             count,
@@ -63,6 +67,8 @@ impl BootElfLoadSegments {
             memory_bytes,
             writable_count,
             executable_count,
+            max_alignment,
+            misaligned_alignment_count,
         }
     }
 
@@ -84,6 +90,14 @@ impl BootElfLoadSegments {
 
     pub const fn executable_count(self) -> u64 {
         self.executable_count
+    }
+
+    pub const fn max_alignment(self) -> u64 {
+        self.max_alignment
+    }
+
+    pub const fn misaligned_alignment_count(self) -> u64 {
+        self.misaligned_alignment_count
     }
 }
 
