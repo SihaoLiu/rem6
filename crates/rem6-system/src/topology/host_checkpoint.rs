@@ -5,12 +5,13 @@ use crate::{
     CpuLocalTimerCheckpointBank, CpuLocalTimerCheckpointPort, DramMemoryCheckpointBank,
     DramMemoryCheckpointPort, FabricCheckpointBank, FabricCheckpointPort, GpuCheckpointBank,
     GpuCheckpointPort, InterruptControllerCheckpointBank, InterruptControllerCheckpointPort,
-    MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, Pl011UartCheckpointBank,
-    Pl011UartCheckpointPort, Pl031CheckpointBank, Pl031CheckpointPort, PlicCheckpointBank,
-    PlicCheckpointPort, RiscvCoreCheckpointBank, RiscvCoreCheckpointPort, RtcCheckpointBank,
-    RtcCheckpointPort, SchedulerCheckpointBank, SchedulerCheckpointPort, Sp804CheckpointBank,
-    Sp804CheckpointPort, Sp805CheckpointBank, Sp805CheckpointPort, SystemError,
-    TimerCheckpointBank, TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
+    MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, MsiBankCheckpointBank,
+    MsiBankCheckpointPort, Pl011UartCheckpointBank, Pl011UartCheckpointPort, Pl031CheckpointBank,
+    Pl031CheckpointPort, PlicCheckpointBank, PlicCheckpointPort, RiscvCoreCheckpointBank,
+    RiscvCoreCheckpointPort, RtcCheckpointBank, RtcCheckpointPort, SchedulerCheckpointBank,
+    SchedulerCheckpointPort, Sp804CheckpointBank, Sp804CheckpointPort, Sp805CheckpointBank,
+    Sp805CheckpointPort, SystemError, TimerCheckpointBank, TimerCheckpointPort, UartCheckpointBank,
+    UartCheckpointPort,
 };
 
 use crate::{ReadfileCheckpointBank, ReadfileCheckpointPort};
@@ -18,13 +19,13 @@ use crate::{ReadfileCheckpointBank, ReadfileCheckpointPort};
 use super::{
     default_accelerator_checkpoint_component, default_clint_checkpoint_component,
     default_cpu_local_timer_checkpoint_component, default_gpu_checkpoint_component,
-    default_interrupt_checkpoint_component, default_pl011_uart_checkpoint_component,
-    default_pl031_checkpoint_component, default_plic_checkpoint_component,
-    default_readfile_checkpoint_component, default_riscv_checkpoint_component,
-    default_rtc_checkpoint_component, default_sp804_checkpoint_component,
-    default_sp805_checkpoint_component, default_timer_checkpoint_component,
-    default_uart_checkpoint_component, RiscvTopologyMemoryBackend, RiscvTopologySystem,
-    RiscvTopologySystemError,
+    default_interrupt_checkpoint_component, default_msi_bank_data_cache_checkpoint_component,
+    default_pl011_uart_checkpoint_component, default_pl031_checkpoint_component,
+    default_plic_checkpoint_component, default_readfile_checkpoint_component,
+    default_riscv_checkpoint_component, default_rtc_checkpoint_component,
+    default_sp804_checkpoint_component, default_sp805_checkpoint_component,
+    default_timer_checkpoint_component, default_uart_checkpoint_component,
+    RiscvTopologyMemoryBackend, RiscvTopologySystem, RiscvTopologySystemError,
 };
 
 impl RiscvTopologySystem {
@@ -114,6 +115,31 @@ impl RiscvTopologySystem {
                     .map_err(RiscvTopologySystemError::System)?;
             }
         }
+        Ok(())
+    }
+
+    pub(super) fn attach_msi_bank_data_cache_checkpoint_to_host(
+        &mut self,
+    ) -> Result<(), RiscvTopologySystemError> {
+        let Some(host) = self.host.as_ref() else {
+            return Ok(());
+        };
+        let Some(cache) = self.msi_bank_data_cache.as_ref() else {
+            return Ok(());
+        };
+        let bank = MsiBankCheckpointBank::new([MsiBankCheckpointPort::new(
+            default_msi_bank_data_cache_checkpoint_component(),
+            cache.harness(),
+        )])
+        .map_err(SystemError::Checkpoint)
+        .map_err(RiscvTopologySystemError::System)?;
+        host.controller
+            .lock()
+            .expect("topology host controller lock")
+            .executor_mut()
+            .attach_msi_bank_checkpoint_bank(bank)
+            .map_err(SystemError::Checkpoint)
+            .map_err(RiscvTopologySystemError::System)?;
         Ok(())
     }
 

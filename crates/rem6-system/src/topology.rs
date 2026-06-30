@@ -276,6 +276,11 @@ fn default_fabric_checkpoint_component() -> CheckpointComponentId {
     CheckpointComponentId::new("fabric0").expect("static fabric checkpoint component is nonempty")
 }
 
+fn default_msi_bank_data_cache_checkpoint_component() -> CheckpointComponentId {
+    CheckpointComponentId::new("msi-bank-data-cache0")
+        .expect("static MSI bank data-cache checkpoint component is nonempty")
+}
+
 #[derive(Clone, Debug)]
 enum RiscvTopologyMemoryBackend {
     Store {
@@ -710,6 +715,7 @@ impl RiscvTopologySystem {
         self.attach_riscv_checkpoint_to_host()?;
         self.attach_heterogeneous_checkpoint_to_host()?;
         self.attach_memory_checkpoint_to_host()?;
+        self.attach_msi_bank_data_cache_checkpoint_to_host()?;
         self.attach_storage_checkpoint_to_host()?;
         self.attach_sinic_checkpoint_to_host()?;
         self.attach_pci_checkpoint_to_host()?;

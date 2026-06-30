@@ -43,6 +43,7 @@ impl RiscvTopologySystem {
         harness: MsiBankDirectoryHarness,
     ) -> Result<Self, RiscvTopologySystemError> {
         self.msi_bank_data_cache = Some(RiscvTopologyMsiBankDataCache::new(harness));
+        self.attach_msi_bank_data_cache_checkpoint_to_host()?;
         Ok(self)
     }
 

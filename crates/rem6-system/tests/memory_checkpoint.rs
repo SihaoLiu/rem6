@@ -16,7 +16,7 @@ use rem6_system::{
 };
 
 const TEST_U64_BYTES: usize = 8;
-const TEST_DRAM_TARGET_MIN_RECORD_BYTES: usize = 232;
+const TEST_DRAM_TARGET_MIN_RECORD_BYTES: usize = 208;
 const TEST_DRAM_BANK_STATE_MIN_RECORD_BYTES: usize = TEST_U64_BYTES * 2;
 
 fn layout() -> CacheLineLayout {
@@ -686,6 +686,50 @@ fn dram_memory_checkpoint_captures_and_restores_controller() {
     assert!(row_hit.dram_access().row_hit());
     assert_eq!(row_hit.dram_access().command_cycle(), 10);
     assert_eq!(row_hit.ready_cycle(), 15);
+}
+
+#[test]
+fn dram_memory_checkpoint_restores_unaccessed_minimal_target() {
+    let target = MemoryTargetId::new(0);
+    let mut controller = DramMemoryController::new();
+    controller
+        .add_target(DramControllerConfig::new(
+            target,
+            CacheLineLayout::new(16).unwrap(),
+            DramGeometry::new(1, 128, 16).unwrap(),
+            DramTiming::new(5, 7, 11, 3, 2).unwrap(),
+        ))
+        .unwrap();
+    controller
+        .map_region(
+            target,
+            Address::new(0x8000),
+            AccessSize::new(0x2000).unwrap(),
+        )
+        .unwrap();
+    controller
+        .insert_line(target, Address::new(0x8000), vec![0x5a; 16])
+        .unwrap();
+    let expected = controller.snapshot();
+    let controller = Arc::new(Mutex::new(controller));
+    let component = CheckpointComponentId::new("dram_minimal").unwrap();
+    let port = DramMemoryCheckpointPort::new(component, Arc::clone(&controller));
+    let mut registry = CheckpointRegistry::new();
+
+    port.register(&mut registry).unwrap();
+    let captured = port.capture_into(&mut registry).unwrap();
+    {
+        let mut controller = controller.lock().unwrap();
+        controller
+            .insert_line(target, Address::new(0x8010), vec![0xa5; 16])
+            .unwrap();
+    }
+
+    let restored = port.restore_from(&registry).unwrap();
+
+    assert_eq!(captured.snapshot(), &expected);
+    assert_eq!(restored.snapshot(), &expected);
+    assert_eq!(controller.lock().unwrap().snapshot(), expected);
 }
 
 #[test]

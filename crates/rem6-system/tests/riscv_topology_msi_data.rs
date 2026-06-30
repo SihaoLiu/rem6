@@ -12,13 +12,17 @@ use rem6_cpu::{
 use rem6_dram::{DramControllerConfig, DramGeometry, DramMemoryController, DramTiming};
 use rem6_isa_riscv::Register;
 use rem6_kernel::{ClockDomain, PartitionId};
-use rem6_memory::{AccessSize, Address, AgentId, CacheLineLayout, MemoryOperation, MemoryTargetId};
+use rem6_memory::{
+    AccessSize, Address, AgentId, ByteMask, CacheLineLayout, MemoryOperation, MemoryRequest,
+    MemoryRequestId, MemoryTargetId,
+};
 use rem6_protocol_msi::MsiState;
 use rem6_stats::StatsRegistry;
 use rem6_system::{
-    GuestEventId, GuestSourceId, RiscvDataCacheProtocol, RiscvDataCacheRunHistoryRecord,
-    RiscvSystemRunStopReason, RiscvTopologyDramConfig, RiscvTopologyHostConfig,
-    RiscvTopologySystem, StopRequest,
+    ExecutionMode, ExecutionModeTarget, GuestEventId, GuestSourceId, HostAction, HostActionRecord,
+    RiscvDataCacheProtocol, RiscvDataCacheRunHistoryRecord, RiscvSystemRunStopReason,
+    RiscvTopologyDramConfig, RiscvTopologyHostConfig, RiscvTopologySystem, StopRequest,
+    SystemActionOutcome,
 };
 use rem6_topology::{
     ComponentId, ComponentKind, ComponentSpec, Endpoint, PortDirection, PortName, Topology,
@@ -55,6 +59,22 @@ fn agent(value: u32) -> AgentId {
 
 fn word(raw: u32) -> Vec<u8> {
     raw.to_le_bytes().to_vec()
+}
+
+fn request_id(agent_id: u32, sequence: u64) -> MemoryRequestId {
+    MemoryRequestId::new(agent(agent_id), sequence)
+}
+
+fn write_request(agent_id: u32, sequence: u64, address: u64, value: u64) -> MemoryRequest {
+    MemoryRequest::write(
+        request_id(agent_id, sequence),
+        Address::new(address),
+        AccessSize::new(8).unwrap(),
+        value.to_le_bytes().to_vec(),
+        ByteMask::full(AccessSize::new(8).unwrap()).unwrap(),
+        layout(),
+    )
+    .unwrap()
 }
 
 fn i_type(imm: i32, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -1000,6 +1020,129 @@ fn topology_system_routes_riscv_data_accesses_through_msi_cache_bank() {
         system.data_cache_parallel_run_history_for_protocol(RiscvDataCacheProtocol::Msi),
         cache_history,
     );
+}
+
+#[test]
+fn topology_switch_transfer_captures_msi_bank_data_cache() {
+    let topology = msi_topology();
+    let source = GuestSourceId::new(133);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology,
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 7, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_boot_image_dram_memory(code_dram_config(), &code_image())
+    .unwrap()
+    .with_msi_bank_data_cache(msi_bank_data_harness())
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(6), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap();
+
+    assert_msi_bank_switch_transfer_restores_cache(system, source, 1330);
+}
+
+#[test]
+fn topology_late_msi_bank_data_cache_switch_transfer_attaches_to_host() {
+    let topology = msi_topology();
+    let source = GuestSourceId::new(134);
+    let system = RiscvTopologySystem::with_min_remote_delay(
+        topology,
+        RiscvClusterTopologyConfig::new([core_config(0, 0, 7, 0x8000)]),
+        2,
+    )
+    .unwrap()
+    .with_boot_image_dram_memory(code_dram_config(), &code_image())
+    .unwrap()
+    .with_host_controller(
+        RiscvTopologyHostConfig::new(PartitionId::new(6), 2, source),
+        StatsRegistry::new(),
+    )
+    .unwrap()
+    .with_msi_bank_data_cache(msi_bank_data_harness())
+    .unwrap();
+
+    assert_msi_bank_switch_transfer_restores_cache(system, source, 1340);
+}
+
+fn assert_msi_bank_switch_transfer_restores_cache(
+    system: RiscvTopologySystem,
+    source: GuestSourceId,
+    event_base: u64,
+) {
+    let cache = system.msi_bank_data_cache().unwrap();
+    let expected = cache.lock().unwrap().snapshot();
+    let target = ExecutionModeTarget::new("cpu0");
+
+    let switch = system
+        .host_controller()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&HostActionRecord::new(
+            64,
+            PartitionId::new(0),
+            PartitionId::new(6),
+            GuestEventId::new(event_base),
+            source,
+            HostAction::SwitchExecutionMode {
+                target,
+                mode: ExecutionMode::Functional,
+            },
+        ))
+        .unwrap();
+    let transfer_label = match switch {
+        SystemActionOutcome::ExecutionModeSwitched {
+            state_transfer: Some(transfer),
+            ..
+        } => transfer.manifest_label().to_string(),
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    cache
+        .lock()
+        .unwrap()
+        .submit_cpu_request(
+            agent(7),
+            write_request(7, event_base + 3, 0x3000, 0xfeed_face_cafe_babe),
+        )
+        .unwrap();
+    assert_ne!(cache.lock().unwrap().snapshot(), expected);
+
+    let restored = system
+        .host_controller()
+        .unwrap()
+        .lock()
+        .unwrap()
+        .executor_mut()
+        .apply(&HostActionRecord::new(
+            80,
+            PartitionId::new(0),
+            PartitionId::new(6),
+            GuestEventId::new(event_base + 1),
+            source,
+            HostAction::RestoreCheckpointByLabel {
+                label: transfer_label.clone(),
+            },
+        ))
+        .unwrap();
+    let manifest = match restored {
+        SystemActionOutcome::CheckpointRestored { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    assert_eq!(manifest.label(), transfer_label);
+    assert!(manifest.states().iter().any(|state| {
+        state.component().as_str() == "msi-bank-data-cache0"
+            && state
+                .chunks()
+                .iter()
+                .any(|chunk| chunk.name() == "msi-bank" && !chunk.payload().is_empty())
+    }));
+    assert_eq!(cache.lock().unwrap().snapshot(), expected);
 }
 
 #[test]

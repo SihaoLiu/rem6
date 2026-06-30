@@ -8,8 +8,9 @@ use rem6_memory::{
 use rem6_protocol_msi::MsiState;
 use rem6_stats::StatsRegistry;
 use rem6_system::{
-    GuestEventId, GuestSourceId, HostAction, HostActionRecord, MsiBankCheckpointBank,
-    MsiBankCheckpointPort, MsiBankCheckpointRecord, SystemActionExecutor, SystemActionOutcome,
+    ExecutionMode, ExecutionModeTarget, GuestEventId, GuestSourceId, HostAction, HostActionRecord,
+    MsiBankCheckpointBank, MsiBankCheckpointPort, MsiBankCheckpointRecord, SystemActionExecutor,
+    SystemActionOutcome,
 };
 
 fn agent(value: u32) -> AgentId {
@@ -194,6 +195,84 @@ fn system_action_executor_checkpoints_and_restores_msi_bank() {
             manifest,
         }
     );
+    assert_eq!(live.lock().unwrap().snapshot(), expected);
+}
+
+#[test]
+fn execution_mode_switch_transfer_can_be_msi_bank_only() {
+    let mut live = harness();
+    warm_harness(&mut live);
+    let expected = live.snapshot();
+    let live = Arc::new(Mutex::new(live));
+    let component = CheckpointComponentId::new("l1d-msi").unwrap();
+    let bank = MsiBankCheckpointBank::new([MsiBankCheckpointPort::new(
+        component.clone(),
+        Arc::clone(&live),
+    )])
+    .unwrap();
+    let mut checkpoints = CheckpointRegistry::new();
+    bank.register_all(&mut checkpoints).unwrap();
+    let mut executor = SystemActionExecutor::with_msi_bank_checkpoint_bank(
+        StatsRegistry::new(),
+        checkpoints,
+        bank,
+    );
+    let target = ExecutionModeTarget::new("cpu0");
+    let guest = rem6_kernel::PartitionId::new(0);
+    let host = rem6_kernel::PartitionId::new(1);
+    let source = GuestSourceId::new(8);
+
+    let switch = executor
+        .apply(&HostActionRecord::new(
+            64,
+            guest,
+            host,
+            GuestEventId::new(3),
+            source,
+            HostAction::SwitchExecutionMode {
+                target,
+                mode: ExecutionMode::Functional,
+            },
+        ))
+        .unwrap();
+    let transfer_label = match switch {
+        SystemActionOutcome::ExecutionModeSwitched {
+            state_transfer: Some(transfer),
+            ..
+        } => {
+            assert_eq!(transfer.component_count(), 1);
+            assert!(transfer.payload_bytes() > 0);
+            transfer.manifest_label().to_string()
+        }
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    {
+        let mut live = live.lock().unwrap();
+        live.submit_cpu_request(agent(2), write(2, 90, 0x1004, vec![0xee; 8]))
+            .unwrap();
+        assert_ne!(live.snapshot(), expected);
+    }
+
+    let restore = executor
+        .apply(&HostActionRecord::new(
+            80,
+            guest,
+            host,
+            GuestEventId::new(4),
+            source,
+            HostAction::RestoreCheckpointByLabel {
+                label: transfer_label.clone(),
+            },
+        ))
+        .unwrap();
+
+    assert!(matches!(
+        restore,
+        SystemActionOutcome::CheckpointRestored { manifest, .. }
+            if manifest.label() == transfer_label
+                && manifest.states().iter().any(|state| state.component() == &component)
+    ));
     assert_eq!(live.lock().unwrap().snapshot(), expected);
 }
 
