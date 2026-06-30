@@ -1576,19 +1576,19 @@ impl SystemActionExecutor {
         target: &ExecutionModeTarget,
     ) -> Result<Option<ExecutionModeSwitchStateTransfer>, SystemError> {
         if self.riscv_checkpoints.is_none()
+            && self.scheduler_checkpoints.is_none()
             && self.memory_checkpoints.is_none()
             && self.dram_memory_checkpoints.is_none()
         {
             return Ok(None);
         }
 
+        let mut staged_checkpoints = self.checkpoints.clone();
         if let Some(scheduler_checkpoints) = &self.scheduler_checkpoints {
             scheduler_checkpoints
-                .validate_quiescent_capture()
+                .capture_all_into(&mut staged_checkpoints)
                 .map_err(SystemError::SchedulerCheckpoint)?;
         }
-
-        let mut staged_checkpoints = self.checkpoints.clone();
         if let Some(riscv_checkpoints) = &self.riscv_checkpoints {
             riscv_checkpoints
                 .capture_all_into(&mut staged_checkpoints)

@@ -25,7 +25,8 @@ use rem6_system::{
     GuestEventDelivery, GuestEventId, GuestEventKind, GuestSourceId, HostAction, HostActionRecord,
     HostEventPolicy, InterruptControllerCheckpointBank, InterruptControllerCheckpointPort,
     MemoryStoreCheckpointBank, MemoryStoreCheckpointPort, RiscvCoreCheckpointBank,
-    RiscvCoreCheckpointPort, StopRequest, SystemActionExecutor, SystemActionOutcome, SystemError,
+    RiscvCoreCheckpointPort, SchedulerCheckpointBank, SchedulerCheckpointError,
+    SchedulerCheckpointPort, StopRequest, SystemActionExecutor, SystemActionOutcome, SystemError,
     SystemHostController, SystemHostEventPort, SystemRunController, TimerCheckpointBank,
     TimerCheckpointPort, UartCheckpointBank, UartCheckpointPort,
 };
@@ -1837,6 +1838,211 @@ fn execution_mode_switch_transfer_labels_are_reserved_for_generated_manifests() 
         executor.execution_mode(&target),
         Some(ExecutionMode::Timing)
     );
+}
+
+#[test]
+fn execution_mode_switch_transfer_captures_quiescent_scheduler_checkpoint() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(15);
+    let target = ExecutionModeTarget::new("cpu0");
+    let memory_component = CheckpointComponentId::new("memory0").unwrap();
+    let scheduler_component = CheckpointComponentId::new("scheduler0").unwrap();
+    let (store, _) = partitioned_memory_store();
+    let store = Arc::new(Mutex::new(store));
+    let memory_bank = MemoryStoreCheckpointBank::new([MemoryStoreCheckpointPort::new(
+        memory_component,
+        Arc::clone(&store),
+    )])
+    .unwrap();
+    let scheduler = Arc::new(Mutex::new(PartitionedScheduler::new(1).unwrap()));
+    let scheduler_bank = SchedulerCheckpointBank::new([SchedulerCheckpointPort::new(
+        scheduler_component.clone(),
+        Arc::clone(&scheduler),
+    )])
+    .unwrap();
+    let mut checkpoints = CheckpointRegistry::new();
+    memory_bank.register_all(&mut checkpoints).unwrap();
+    let mut executor = SystemActionExecutor::with_memory_checkpoint_bank(
+        StatsRegistry::new(),
+        checkpoints,
+        memory_bank,
+    );
+    executor
+        .attach_scheduler_checkpoint_bank(scheduler_bank)
+        .unwrap();
+
+    executor
+        .apply(&HostActionRecord::new(
+            0,
+            guest,
+            host,
+            GuestEventId::new(28),
+            source,
+            HostAction::SwitchExecutionMode {
+                target: target.clone(),
+                mode: ExecutionMode::Timing,
+            },
+        ))
+        .unwrap();
+    let switch = executor
+        .apply(&HostActionRecord::new(
+            1,
+            guest,
+            host,
+            GuestEventId::new(29),
+            source,
+            HostAction::SwitchExecutionMode {
+                target: target.clone(),
+                mode: ExecutionMode::Functional,
+            },
+        ))
+        .unwrap();
+    let transfer_label = match switch {
+        SystemActionOutcome::ExecutionModeSwitched {
+            state_transfer: Some(transfer),
+            ..
+        } => transfer.manifest_label().to_string(),
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    let restored = executor
+        .apply(&HostActionRecord::new(
+            2,
+            guest,
+            host,
+            GuestEventId::new(30),
+            source,
+            HostAction::RestoreCheckpointByLabel {
+                label: transfer_label.clone(),
+            },
+        ))
+        .unwrap();
+    let manifest = match restored {
+        SystemActionOutcome::CheckpointRestored { manifest, .. } => manifest,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    let scheduler_state = manifest
+        .states()
+        .iter()
+        .find(|state| state.component() == &scheduler_component)
+        .unwrap();
+    assert!(scheduler_state
+        .chunks()
+        .iter()
+        .any(|chunk| chunk.name() == "scheduler" && !chunk.payload().is_empty()));
+    assert_eq!(manifest.label(), transfer_label);
+    assert_eq!(
+        executor.execution_mode(&target),
+        Some(ExecutionMode::Timing)
+    );
+}
+
+#[test]
+fn execution_mode_switch_transfer_can_be_scheduler_only() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(16);
+    let target = ExecutionModeTarget::new("cpu0");
+    let scheduler_component = CheckpointComponentId::new("scheduler0").unwrap();
+    let scheduler = Arc::new(Mutex::new(PartitionedScheduler::new(1).unwrap()));
+    let scheduler_bank = SchedulerCheckpointBank::new([SchedulerCheckpointPort::new(
+        scheduler_component.clone(),
+        Arc::clone(&scheduler),
+    )])
+    .unwrap();
+    let mut executor =
+        SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
+    executor
+        .attach_scheduler_checkpoint_bank(scheduler_bank)
+        .unwrap();
+
+    let switch = executor
+        .apply(&HostActionRecord::new(
+            1,
+            guest,
+            host,
+            GuestEventId::new(31),
+            source,
+            HostAction::SwitchExecutionMode {
+                target,
+                mode: ExecutionMode::Functional,
+            },
+        ))
+        .unwrap();
+    let transfer = match switch {
+        SystemActionOutcome::ExecutionModeSwitched {
+            state_transfer: Some(transfer),
+            ..
+        } => transfer,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+    let manifest = executor
+        .checkpoints()
+        .capture(
+            transfer.manifest_label().to_string(),
+            transfer.manifest_tick(),
+        )
+        .unwrap();
+
+    assert_eq!(transfer.component_count(), 1);
+    assert!(transfer.payload_bytes() > 0);
+    assert!(manifest.states().iter().any(|state| {
+        state.component() == &scheduler_component
+            && state
+                .chunks()
+                .iter()
+                .any(|chunk| chunk.name() == "scheduler" && !chunk.payload().is_empty())
+    }));
+}
+
+#[test]
+fn execution_mode_switch_transfer_rejects_non_quiescent_scheduler_only() {
+    let guest = PartitionId::new(0);
+    let host = PartitionId::new(1);
+    let source = GuestSourceId::new(17);
+    let target = ExecutionModeTarget::new("cpu0");
+    let scheduler_component = CheckpointComponentId::new("scheduler0").unwrap();
+    let scheduler = Arc::new(Mutex::new(PartitionedScheduler::new(1).unwrap()));
+    scheduler
+        .lock()
+        .unwrap()
+        .schedule_parallel_at(PartitionId::new(0), 4, |_| {})
+        .unwrap();
+    let scheduler_bank = SchedulerCheckpointBank::new([SchedulerCheckpointPort::new(
+        scheduler_component.clone(),
+        Arc::clone(&scheduler),
+    )])
+    .unwrap();
+    let mut executor =
+        SystemActionExecutor::with_checkpoint(StatsRegistry::new(), CheckpointRegistry::new());
+    executor
+        .attach_scheduler_checkpoint_bank(scheduler_bank)
+        .unwrap();
+
+    let error = executor
+        .apply(&HostActionRecord::new(
+            1,
+            guest,
+            host,
+            GuestEventId::new(32),
+            source,
+            HostAction::SwitchExecutionMode {
+                target: target.clone(),
+                mode: ExecutionMode::Functional,
+            },
+        ))
+        .unwrap_err();
+    let SystemError::SchedulerCheckpoint(SchedulerCheckpointError::NonQuiescent { report }) = error
+    else {
+        panic!("unexpected error: {error:?}");
+    };
+
+    assert_eq!(report.component(), &scheduler_component);
+    assert_eq!(report.pending_event_count(), 1);
+    assert_eq!(report.first_pending_tick(), Some(4));
+    assert_eq!(executor.execution_mode(&target), None);
 }
 
 #[test]
