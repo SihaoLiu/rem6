@@ -85,6 +85,7 @@ pub(super) const RISCV_LINUX_QUOTACTL_FD: u64 = 443;
 pub(super) const RISCV_LINUX_LANDLOCK_CREATE_RULESET: u64 = 444;
 pub(super) const RISCV_LINUX_LANDLOCK_ADD_RULE: u64 = 445;
 pub(super) const RISCV_LINUX_LANDLOCK_RESTRICT_SELF: u64 = 446;
+pub(super) const RISCV_LINUX_MEMFD_SECRET: u64 = 447;
 pub(super) const RISCV_LINUX_PROCESS_MRELEASE: u64 = 448;
 pub(super) const RISCV_LINUX_FUTEX_WAITV: u64 = 449;
 pub(super) const RISCV_LINUX_SET_MEMPOLICY_HOME_NODE: u64 = 450;
