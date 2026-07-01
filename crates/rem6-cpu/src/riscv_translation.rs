@@ -4,18 +4,17 @@ use std::fmt;
 use rem6_isa_riscv::{
     walk_sv39_page_table_with_context, RiscvCounterEnableCsr, RiscvCounterInhibitCsr,
     RiscvEnvironmentConfigCsr, RiscvMachineTrapCsr, RiscvPrivilegeMode, RiscvStatusWord,
-    RiscvSv39AccessContext, RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel,
-    RiscvSv39Pte, RiscvSv39VirtualAddress, RiscvSv39WalkAdvance as IsaSv39WalkAdvance,
-    RiscvSv39WalkState, RiscvSystemEvent, RiscvTrapKind, RiscvVectorFixedPointState,
+    RiscvSv39AccessContext, RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte,
+    RiscvSv39VirtualAddress, RiscvSv39WalkAdvance as IsaSv39WalkAdvance, RiscvSv39WalkState,
+    RiscvSystemEvent, RiscvVectorFixedPointState,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
 };
 use rem6_memory::{
-    AccessSize, Address, AddressRange, ByteMask, CacheLineLayout, MemoryError, MemoryRequest,
+    AccessSize, Address, AddressRange, CacheLineLayout, MemoryError, MemoryRequest,
     MemoryRequestId, MemoryResponse, ResponseStatus, TranslationAddressSpaceId, TranslationFault,
-    TranslationFaultKind, TranslationPageMap, TranslationRequestId, TranslationResolution,
-    TranslationTlbStats,
+    TranslationPageMap, TranslationRequestId, TranslationResolution, TranslationTlbStats,
 };
 use rem6_mmio::{MmioBus, MmioError};
 use rem6_transport::{
@@ -27,23 +26,28 @@ use crate::riscv_translation_state::DataTranslationCompletion;
 pub(crate) use crate::riscv_translation_state::{PendingDataTranslation, TranslatedDataAccess};
 
 use crate::riscv_data_issue::{
-    access_address, access_size, mmio_request, store_bytes, supports_cross_line_data_access,
-    OutstandingDataAccess, PreparedDataParallelAccess,
+    access_size, mmio_request, OutstandingDataAccess, PreparedDataParallelAccess,
 };
 use crate::{
-    riscv_checker, riscv_data_access, CpuDataConfig, CpuTranslatedMemoryOperation,
-    CpuTranslatedMemoryRequest, CpuTranslationFaultRecord, CpuTranslationFrontend,
+    riscv_checker, riscv_data_access, CpuDataConfig, CpuTranslationFrontend,
     CpuTranslationFrontendError, CpuTranslationOutcome, CpuTranslationRequest, RiscvCore,
     RiscvCoreDriveAction, RiscvCoreState, RiscvCpuError, RiscvCpuExecutionEvent,
-    RiscvDataAccessTarget, RiscvHartRunState,
+    RiscvDataAccessTarget,
 };
 
 mod csr;
+mod helpers;
 
 use csr::{
     read_counter_enable_csr, read_counter_inhibit_csr, read_environment_config_csr,
     read_machine_trap_csr, write_counter_enable_csr, write_counter_inhibit_csr,
     write_environment_config_csr, write_machine_trap_csr,
+};
+use helpers::{
+    cpu_translation_outcome_from_resolution, cpu_translation_request,
+    ready_translated_fetch_request, record_data_translation_fault_state,
+    supports_translated_cross_line_data_access, sv39_access_kind, sv39_translation_fault_kind,
+    translated_data_from_outcome, wake_suspended_hart_on_pending_interrupt,
 };
 
 const RISCV_SV39_PTE_ACCESS_BYTES: u64 = 8;
@@ -1560,266 +1564,6 @@ impl RiscvCore {
             physical_address: translated.physical_address,
             line_layout: Some(line_layout),
         })
-    }
-}
-
-fn supports_translated_cross_line_data_access(
-    access: &rem6_isa_riscv::MemoryAccessKind,
-    physical_address: rem6_memory::Address,
-    size: rem6_memory::AccessSize,
-    line_layout: rem6_memory::CacheLineLayout,
-) -> bool {
-    const RISCV_BASE_PAGE_BYTES: u64 = 4096;
-
-    if !supports_cross_line_data_access(access, physical_address, size, line_layout) {
-        return false;
-    }
-    let page_offset = access_address(access) & (RISCV_BASE_PAGE_BYTES - 1);
-    page_offset
-        .checked_add(size.bytes())
-        .is_some_and(|end| end <= RISCV_BASE_PAGE_BYTES)
-}
-
-fn wake_suspended_hart_on_pending_interrupt(state: &mut RiscvCoreState, pending: u64) {
-    if pending != 0
-        && matches!(
-            state.run_state,
-            RiscvHartRunState::Suspended | RiscvHartRunState::SuspendPending
-        )
-    {
-        state.run_state = RiscvHartRunState::Started;
-        state.run_state_explicit = true;
-    }
-}
-
-fn cpu_translation_request(
-    translation_id: TranslationRequestId,
-    memory_request_id: MemoryRequestId,
-    data: &CpuDataConfig,
-    access: &rem6_isa_riscv::MemoryAccessKind,
-    size: rem6_memory::AccessSize,
-) -> Result<CpuTranslationRequest, RiscvCpuError> {
-    match access {
-        rem6_isa_riscv::MemoryAccessKind::Load { address, .. }
-        | rem6_isa_riscv::MemoryAccessKind::FloatLoad { address, .. }
-        | rem6_isa_riscv::MemoryAccessKind::VectorLoadUnitStride { address, .. } => {
-            CpuTranslationRequest::load(
-                translation_id,
-                memory_request_id,
-                data.route(),
-                data.endpoint().clone(),
-                Address::new(*address),
-                size,
-            )
-        }
-        rem6_isa_riscv::MemoryAccessKind::LoadReserved { address, .. } => {
-            CpuTranslationRequest::load_locked(
-                translation_id,
-                memory_request_id,
-                data.route(),
-                data.endpoint().clone(),
-                Address::new(*address),
-                size,
-            )
-        }
-        rem6_isa_riscv::MemoryAccessKind::Store { address, value, .. }
-        | rem6_isa_riscv::MemoryAccessKind::FloatStore { address, value, .. } => {
-            CpuTranslationRequest::store(
-                translation_id,
-                memory_request_id,
-                data.route(),
-                data.endpoint().clone(),
-                Address::new(*address),
-                size,
-                store_bytes(*value, size),
-                ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
-            )
-        }
-        rem6_isa_riscv::MemoryAccessKind::VectorStoreUnitStride {
-            address,
-            data: bytes,
-            ..
-        } => CpuTranslationRequest::store(
-            translation_id,
-            memory_request_id,
-            data.route(),
-            data.endpoint().clone(),
-            Address::new(*address),
-            size,
-            bytes.clone(),
-            ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
-        ),
-        rem6_isa_riscv::MemoryAccessKind::StoreConditional { address, value, .. } => {
-            CpuTranslationRequest::store_conditional(
-                translation_id,
-                memory_request_id,
-                data.route(),
-                data.endpoint().clone(),
-                Address::new(*address),
-                size,
-                store_bytes(*value, size),
-                ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
-            )
-        }
-        rem6_isa_riscv::MemoryAccessKind::AtomicMemory {
-            address, value, op, ..
-        } => CpuTranslationRequest::atomic_with_op(
-            translation_id,
-            memory_request_id,
-            data.route(),
-            data.endpoint().clone(),
-            Address::new(*address),
-            size,
-            match op {
-                rem6_isa_riscv::AtomicMemoryOp::Swap => rem6_memory::MemoryAtomicOp::Swap,
-                rem6_isa_riscv::AtomicMemoryOp::Add => rem6_memory::MemoryAtomicOp::Add,
-                rem6_isa_riscv::AtomicMemoryOp::Xor => rem6_memory::MemoryAtomicOp::Xor,
-                rem6_isa_riscv::AtomicMemoryOp::Or => rem6_memory::MemoryAtomicOp::Or,
-                rem6_isa_riscv::AtomicMemoryOp::And => rem6_memory::MemoryAtomicOp::And,
-                rem6_isa_riscv::AtomicMemoryOp::MinSigned => rem6_memory::MemoryAtomicOp::MinSigned,
-                rem6_isa_riscv::AtomicMemoryOp::MaxSigned => rem6_memory::MemoryAtomicOp::MaxSigned,
-                rem6_isa_riscv::AtomicMemoryOp::MinUnsigned => {
-                    rem6_memory::MemoryAtomicOp::MinUnsigned
-                }
-                rem6_isa_riscv::AtomicMemoryOp::MaxUnsigned => {
-                    rem6_memory::MemoryAtomicOp::MaxUnsigned
-                }
-            },
-            store_bytes(*value, size),
-            ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
-        ),
-    }
-    .map_err(RiscvCpuError::DataTranslation)
-}
-
-fn ready_translated_fetch_request(state: &RiscvCoreState) -> Option<MemoryRequestId> {
-    state.events.iter().find_map(|event| {
-        let fetch_request = event.fetch().request_id();
-        if state.issued_data_for_fetches.contains(&fetch_request) {
-            return None;
-        }
-        state
-            .ready_translated_data
-            .contains_key(&fetch_request)
-            .then_some(fetch_request)
-    })
-}
-
-fn translated_data_from_outcome(
-    pending: PendingDataTranslation,
-    outcome: CpuTranslationOutcome,
-) -> DataTranslationCompletion {
-    match outcome {
-        CpuTranslationOutcome::Mapped(mapped) => {
-            debug_assert_eq!(mapped.memory_request_id(), pending.request_id);
-            debug_assert_eq!(mapped.size(), pending.size);
-            DataTranslationCompletion::Access(TranslatedDataAccess {
-                request_id: mapped.memory_request_id(),
-                fetch_request: pending.fetch_request,
-                access: pending.access,
-                size: mapped.size(),
-                physical_address: mapped.physical_address(),
-            })
-        }
-        CpuTranslationOutcome::Fault(fault) => DataTranslationCompletion::Fault {
-            fetch_request: pending.fetch_request,
-            fault,
-        },
-    }
-}
-
-fn record_data_translation_fault_state(
-    state: &mut RiscvCoreState,
-    fetch_request: MemoryRequestId,
-    fault: CpuTranslationFaultRecord,
-) -> Result<Address, RiscvCpuError> {
-    let original_index = state
-        .events
-        .iter()
-        .position(|event| event.fetch().request_id() == fetch_request)
-        .ok_or_else(|| RiscvCpuError::DataTranslationFault {
-            fetch: fetch_request,
-            fault: fault.fault().clone(),
-        })?;
-    let original = state.events[original_index].clone();
-    let trap_kind = data_translation_fault_trap_kind(&fault);
-    let execution = state.hart.enter_synchronous_trap(
-        original.instruction(),
-        original.execution().instruction_bytes(),
-        original.fetch_pc().get(),
-        trap_kind,
-    );
-    let event = RiscvCpuExecutionEvent::with_retired_instruction_counting(
-        original.fetch().clone(),
-        original.instruction(),
-        execution,
-        None,
-        false,
-    );
-    state.pending_trap = event.execution().trap().copied();
-    state.pending_trap_event = Some(event.clone());
-    state.issued_data_for_fetches.insert(fetch_request);
-    state.ready_translated_data.remove(&fetch_request);
-    state.events[original_index] = event;
-    riscv_checker::sync_checker_hart(state);
-    Ok(Address::new(state.hart.pc()))
-}
-
-fn data_translation_fault_trap_kind(fault: &CpuTranslationFaultRecord) -> RiscvTrapKind {
-    let address = fault.fault().virtual_address().get();
-    match fault.operation() {
-        CpuTranslatedMemoryOperation::InstructionFetch => {
-            RiscvTrapKind::InstructionPageFault { address }
-        }
-        CpuTranslatedMemoryOperation::Read | CpuTranslatedMemoryOperation::LoadLocked => {
-            RiscvTrapKind::LoadPageFault { address }
-        }
-        CpuTranslatedMemoryOperation::Write
-        | CpuTranslatedMemoryOperation::StoreConditional
-        | CpuTranslatedMemoryOperation::Atomic => RiscvTrapKind::StorePageFault { address },
-    }
-}
-
-fn sv39_access_kind(operation: CpuTranslatedMemoryOperation) -> RiscvSv39AccessKind {
-    match operation {
-        CpuTranslatedMemoryOperation::InstructionFetch => RiscvSv39AccessKind::InstructionFetch,
-        CpuTranslatedMemoryOperation::Read | CpuTranslatedMemoryOperation::LoadLocked => {
-            RiscvSv39AccessKind::Load
-        }
-        CpuTranslatedMemoryOperation::Write => RiscvSv39AccessKind::Store,
-        CpuTranslatedMemoryOperation::StoreConditional | CpuTranslatedMemoryOperation::Atomic => {
-            RiscvSv39AccessKind::Atomic
-        }
-    }
-}
-
-fn sv39_translation_fault_kind(fault: &RiscvSv39PageFault) -> TranslationFaultKind {
-    match fault {
-        RiscvSv39PageFault::PermissionDenied { .. } => TranslationFaultKind::PermissionFault,
-        _ => TranslationFaultKind::PageFault,
-    }
-}
-
-fn cpu_translation_outcome_from_resolution(
-    request: CpuTranslationRequest,
-    resolution: TranslationResolution,
-) -> CpuTranslationOutcome {
-    match resolution {
-        TranslationResolution::Mapped(physical_address) => CpuTranslationOutcome::Mapped(
-            CpuTranslatedMemoryRequest::new(request, physical_address),
-        ),
-        TranslationResolution::Fault(fault) => {
-            CpuTranslationOutcome::Fault(CpuTranslationFaultRecord::new(
-                request.translation_id(),
-                request.memory_request_id(),
-                request.route(),
-                request.endpoint().clone(),
-                request.virtual_address(),
-                request.size(),
-                request.operation(),
-                fault,
-            ))
-        }
     }
 }
 

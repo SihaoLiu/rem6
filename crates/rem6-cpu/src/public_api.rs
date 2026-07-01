@@ -14,6 +14,7 @@ pub use crate::branch_predictor::{
 };
 pub use crate::branch_predictor_checkpoint::BranchPredictorCheckpointPayload;
 pub use crate::cpu_cluster::CpuCluster;
+pub use crate::cpu_core::{is_fetch_request, CpuCore};
 pub use crate::cpu_identity::{CpuId, CpuResetState};
 pub use crate::data_config::CpuDataConfig;
 pub use crate::error::{CpuClusterError, CpuError, RiscvCpuError};
