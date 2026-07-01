@@ -448,6 +448,7 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 mispredictions,
             );
         }
+        append_gem5_branch_predictor_family_alias_stats(output, snapshot, cpu, &alias_prefix);
         if let (Some(hits), Some(lookups)) = (btb_hits, btb_lookups) {
             if lookups != 0 {
                 append_derived_ratio_stat(
@@ -457,6 +458,59 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                     lookups,
                 );
             }
+        }
+    }
+}
+
+fn append_gem5_branch_predictor_family_alias_stats(
+    output: &mut String,
+    snapshot: &StatSnapshot,
+    cpu: u64,
+    alias_prefix: &str,
+) {
+    for (family, fields) in [
+        (
+            "gshare",
+            &["lookups", "history_updates", "updates", "squashes"][..],
+        ),
+        (
+            "bimode",
+            &["lookups", "history_updates", "updates", "squashes"][..],
+        ),
+        (
+            "tournament",
+            &[
+                "lookups",
+                "history_updates",
+                "updates",
+                "squashes",
+                "local_predictions",
+                "global_predictions",
+            ][..],
+        ),
+        (
+            "tage_sc_l",
+            &[
+                "lookups",
+                "history_updates",
+                "updates",
+                "repairs",
+                "selected_rollbacks",
+            ][..],
+        ),
+        (
+            "multiperspective_perceptron",
+            &["lookups", "updates", "selected_rollbacks"][..],
+        ),
+    ] {
+        for field in fields {
+            append_derived_stat_from_snapshot(
+                output,
+                snapshot,
+                &format!("sim.cpu{cpu}.branch_predictor.{family}.{field}"),
+                &format!("{alias_prefix}.branchPred.{family}.{field}"),
+                "Count",
+            );
         }
     }
 }

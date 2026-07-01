@@ -7751,6 +7751,89 @@ fn rem6_run_stats_emit_branch_predictor_family_counters() {
 }
 
 #[test]
+fn rem6_run_text_stats_emit_branch_predictor_family_aliases() {
+    let program = selected_branch_predictor_program();
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-branch-predictor-family-text-aliases", &elf);
+
+    let stdout = selected_branch_predictor_stdout_with_format(&path, "gshare", "text", None);
+
+    for (family, fields) in [
+        (
+            "gshare",
+            &["lookups", "history_updates", "updates", "squashes"][..],
+        ),
+        (
+            "bimode",
+            &["lookups", "history_updates", "updates", "squashes"][..],
+        ),
+        (
+            "tournament",
+            &[
+                "lookups",
+                "history_updates",
+                "updates",
+                "squashes",
+                "local_predictions",
+                "global_predictions",
+            ][..],
+        ),
+        (
+            "tage_sc_l",
+            &[
+                "lookups",
+                "history_updates",
+                "updates",
+                "repairs",
+                "selected_rollbacks",
+            ][..],
+        ),
+        (
+            "multiperspective_perceptron",
+            &["lookups", "updates", "selected_rollbacks"][..],
+        ),
+    ] {
+        for field in fields {
+            let raw_path = format!("sim.cpu0.branch_predictor.{family}.{field}");
+            let alias_path = format!("system.cpu.branchPred.{family}.{field}");
+            assert_eq!(
+                text_stat_value(&stdout, &alias_path),
+                text_stat_value(&stdout, &raw_path),
+                "{alias_path} should mirror {raw_path}\n{stdout}"
+            );
+            assert!(
+                text_stat_line(&stdout, &alias_path).contains("unit=Count"),
+                "{stdout}"
+            );
+        }
+    }
+
+    assert!(
+        text_stat_value(&stdout, "system.cpu.branchPred.gshare.lookups") > 0,
+        "{stdout}"
+    );
+    assert!(
+        text_stat_value(&stdout, "system.cpu.branchPred.bimode.lookups") > 0,
+        "{stdout}"
+    );
+    assert!(
+        text_stat_value(&stdout, "system.cpu.branchPred.tournament.lookups") > 0,
+        "{stdout}"
+    );
+    assert!(
+        text_stat_value(&stdout, "system.cpu.branchPred.tage_sc_l.lookups") > 0,
+        "{stdout}"
+    );
+    assert!(
+        text_stat_value(
+            &stdout,
+            "system.cpu.branchPred.multiperspective_perceptron.lookups"
+        ) > 0,
+        "{stdout}"
+    );
+}
+
+#[test]
 fn rem6_run_stats_emit_selected_branch_predictor_family_rollback_counters() {
     let nested_program = nested_branch_speculation_program();
     let nested_elf = riscv64_elf(0x8000_0000, 0x8000_0000, &nested_program);
@@ -7962,9 +8045,10 @@ fn selected_branch_predictor_stdout(path: &std::path::Path, predictor: &str) -> 
     selected_branch_predictor_stdout_with_boot_a0(path, predictor, None)
 }
 
-fn selected_branch_predictor_stdout_with_boot_a0(
+fn selected_branch_predictor_stdout_with_format(
     path: &std::path::Path,
     predictor: &str,
+    stats_format: &str,
     boot_a0: Option<u64>,
 ) -> String {
     let boot_a0_value = boot_a0.map(|value| format!("0x{value:x}"));
@@ -7983,7 +8067,7 @@ fn selected_branch_predictor_stdout_with_boot_a0(
         "--riscv-branch-predictor",
         predictor,
         "--stats-format",
-        "json",
+        stats_format,
         "--execute",
     ];
     if let Some(value) = boot_a0_value.as_deref() {
@@ -8001,6 +8085,14 @@ fn selected_branch_predictor_stdout_with_boot_a0(
         String::from_utf8_lossy(&output.stderr)
     );
     String::from_utf8(output.stdout).unwrap()
+}
+
+fn selected_branch_predictor_stdout_with_boot_a0(
+    path: &std::path::Path,
+    predictor: &str,
+    boot_a0: Option<u64>,
+) -> String {
+    selected_branch_predictor_stdout_with_format(path, predictor, "json", boot_a0)
 }
 
 fn nested_branch_speculation_program() -> Vec<u8> {
