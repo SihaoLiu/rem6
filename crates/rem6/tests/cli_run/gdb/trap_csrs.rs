@@ -90,3 +90,88 @@ fn rem6_run_gdb_listen_writes_trap_csrs_before_execution() {
         assert!(stdout.contains(expected), "missing {expected} in {stdout}");
     }
 }
+
+#[test]
+fn rem6_run_gdb_listen_writes_rv32_trap_csrs_before_execution() {
+    let program = riscv64_program(&[
+        csr_read(0x105, 5),  // csrr x5, stvec
+        csr_read(0x141, 6),  // csrr x6, sepc
+        csr_read(0x142, 7),  // csrr x7, scause
+        csr_read(0x143, 28), // csrr x28, stval
+        csr_read(0x305, 29), // csrr x29, mtvec
+        csr_read(0x341, 30), // csrr x30, mepc
+        csr_read(0x342, 31), // csrr x31, mcause
+        csr_read(0x343, 8),  // csrr x8, mtval
+        0x0000_0073,         // ecall
+    ]);
+    let (child, mut stream) = start_riscv32_gdb_run("gdb-listen-rv32-trap-csrs", program, 80);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    let mut csr_description = String::new();
+    for offset in (0..=0x3c0).step_by(0xa0) {
+        let payload = format!("qXfer:features:read:riscv-32bit-csr.xml:{offset:x},a0");
+        csr_description.push_str(&String::from_utf8_lossy(&send_gdb_packet(
+            &mut stream,
+            payload.as_bytes(),
+        )));
+    }
+    for register in [
+        "stvec", "sepc", "scause", "stval", "mtvec", "mepc", "mcause", "mtval",
+    ] {
+        assert!(
+            csr_description.contains(register),
+            "missing {register} in {csr_description}"
+        );
+    }
+
+    for (packet, response) in [
+        (b"P47=00665544".as_slice(), b"OK".as_slice()),
+        (b"P49=10775544".as_slice(), b"OK".as_slice()),
+        (b"P4a=99000000".as_slice(), b"OK".as_slice()),
+        (b"P4b=30885544".as_slice(), b"OK".as_slice()),
+        (b"P51=00807766".as_slice(), b"OK".as_slice()),
+        (b"P53=10817766".as_slice(), b"OK".as_slice()),
+        (b"P54=aa000000".as_slice(), b"OK".as_slice()),
+        (b"P55=30837766".as_slice(), b"OK".as_slice()),
+        (b"p47".as_slice(), b"00665544".as_slice()),
+        (b"p49".as_slice(), b"10775544".as_slice()),
+        (b"p4a".as_slice(), b"99000000".as_slice()),
+        (b"p4b".as_slice(), b"30885544".as_slice()),
+        (b"p51".as_slice(), b"00807766".as_slice()),
+        (b"p53".as_slice(), b"10817766".as_slice()),
+        (b"p54".as_slice(), b"aa000000".as_slice()),
+        (b"p55".as_slice(), b"30837766".as_slice()),
+    ] {
+        assert_eq!(send_gdb_packet(&mut stream, packet), gdb_response(response));
+    }
+
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("\"status\":\"executed_until_trap\""),
+        "stdout: {stdout}"
+    );
+    assert!(stdout.contains("\"architecture\":\"riscv32\""));
+    for expected in [
+        "\"x5\":\"0x44556600\"",
+        "\"x6\":\"0x44557710\"",
+        "\"x7\":\"0x99\"",
+        "\"x8\":\"0x66778330\"",
+        "\"x28\":\"0x44558830\"",
+        "\"x29\":\"0x66778000\"",
+        "\"x30\":\"0x66778110\"",
+        "\"x31\":\"0xaa\"",
+    ] {
+        assert!(stdout.contains(expected), "missing {expected} in {stdout}");
+    }
+}

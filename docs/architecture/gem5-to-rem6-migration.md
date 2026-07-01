@@ -794,8 +794,8 @@ GDB-visible `cycle` and `time` state across CSR writes and single-step execution
 RV64 vector fixed-point and vector-configuration CSR register-cache paths for
 `vxsat`, `vxrm`, `vcsr`, `vl`, `vtype`, and `vlenb`, plus RV32D floating-point target descriptions and register-cache
 read/write paths for FP registers and `fflags`/`frm`/`fcsr`, plus RV32 CSR
-target descriptions and register-cache read/write paths for supervisor,
-machine, interrupt, translation, vector fixed-point CSRs, RV32 counter-high CSRs, and XLEN-mapped vector-configuration CSRs, plus RV32/RV64
+target descriptions and register-cache read/write paths for supervisor/machine
+trap, status, interrupt, translation, vector fixed-point CSRs, RV32 counter-high CSRs, and XLEN-mapped vector-configuration CSRs, plus RV32/RV64
 vector data register target descriptions and register-cache read/write paths
 for `v0` through `v31`,
 RISC-V software breakpoint
