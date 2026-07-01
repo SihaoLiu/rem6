@@ -29,6 +29,9 @@ const SHT_HASH: u32 = 5;
 const SHT_GNU_HASH: u32 = 0x6fff_fff6;
 const SHT_GROUP: u32 = 17;
 const SHT_RELR: u32 = 19;
+const SHT_GNU_VERDEF: u32 = 0x6fff_fffd;
+const SHT_GNU_VERNEED: u32 = 0x6fff_fffe;
+const SHT_GNU_VERSYM: u32 = 0x6fff_ffff;
 const SHT_NOBITS: u32 = 8;
 const SHN_UNDEF: u16 = 0;
 const SHN_ABS: u16 = 0xfff1;
@@ -359,6 +362,33 @@ fn add_elf64_symbol_unique_binding_table(bytes: &mut Vec<u8>) {
         ".strtab",
         STB_GNU_UNIQUE,
     );
+}
+
+fn add_elf64_version_sections(bytes: &mut Vec<u8>) {
+    add_elf64_sections(
+        bytes,
+        &[
+            ElfSectionSpec {
+                name: ".gnu.version",
+                kind: SHT_GNU_VERSYM,
+                data: &[1, 0, 2, 0, 3, 0],
+            },
+            ElfSectionSpec {
+                name: ".gnu.version_d",
+                kind: SHT_GNU_VERDEF,
+                data: &[0; 40],
+            },
+            ElfSectionSpec {
+                name: ".gnu.version_r",
+                kind: SHT_GNU_VERNEED,
+                data: &[0; 48],
+            },
+        ],
+    );
+    let section_table_offset = read_u64(bytes, 40) as usize;
+    write_u64(bytes, section_table_offset + 64 + 56, 2);
+    write_u32(bytes, section_table_offset + 128 + 44, 2);
+    write_u32(bytes, section_table_offset + 192 + 44, 3);
 }
 
 fn add_elf64_symbol_section_index_table(bytes: &mut Vec<u8>) {
@@ -1500,6 +1530,38 @@ fn boot_image_records_elf_section_hash_summary() {
     assert_eq!(hashes.sysv_bytes(), 16);
     assert_eq!(hashes.gnu_section_count(), 1);
     assert_eq!(hashes.gnu_bytes(), 20);
+}
+
+#[test]
+fn boot_image_records_elf_section_version_summary() {
+    let mut elf = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_version_sections(&mut elf);
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let versions = metadata.section_versions();
+
+    assert_eq!(versions.version_symbol_section_count(), 1);
+    assert_eq!(versions.version_symbol_bytes(), 6);
+    assert_eq!(versions.version_symbol_entry_count(), 3);
+    assert_eq!(versions.version_definition_section_count(), 1);
+    assert_eq!(versions.version_definition_bytes(), 40);
+    assert_eq!(versions.version_definition_entry_count(), 2);
+    assert_eq!(versions.version_needed_section_count(), 1);
+    assert_eq!(versions.version_needed_bytes(), 48);
+    assert_eq!(versions.version_needed_entry_count(), 3);
 }
 
 #[test]

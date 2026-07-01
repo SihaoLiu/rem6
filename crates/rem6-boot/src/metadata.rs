@@ -5,7 +5,7 @@ use crate::metadata_tables::{
     BootElfLoadSegments, BootElfProgramHeaderTable, BootElfSectionAddressRange,
     BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags, BootElfSectionGroups,
     BootElfSectionHashes, BootElfSectionHeaderTable, BootElfSectionNameTable,
-    BootElfSectionRelocations, BootElfSectionStorage, BootElfSymbolSummary,
+    BootElfSectionRelocations, BootElfSectionStorage, BootElfSectionVersions, BootElfSymbolSummary,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -591,6 +591,7 @@ pub struct BootElfMetadata {
     section_relocations: BootElfSectionRelocations,
     section_arrays: BootElfSectionArrays,
     section_hashes: BootElfSectionHashes,
+    section_versions: BootElfSectionVersions,
     section_groups: BootElfSectionGroups,
     section_address_range: BootElfSectionAddressRange,
     section_alignment: BootElfSectionAlignment,
@@ -637,6 +638,7 @@ impl BootElfMetadata {
             section_relocations: BootElfSectionRelocations::new(0, 0, 0, 0, 0, 0, 0, 0),
             section_arrays: BootElfSectionArrays::new(0, 0, 0, 0, 0, 0, 0, 0, 0),
             section_hashes: BootElfSectionHashes::new(0, 0, 0, 0),
+            section_versions: BootElfSectionVersions::new(0, 0, 0, 0, 0, 0, 0, 0, 0),
             section_groups: BootElfSectionGroups::new(0, 0, 0),
             section_address_range: BootElfSectionAddressRange::new(None, None),
             section_alignment: BootElfSectionAlignment::new(0, 0, 0),
@@ -662,6 +664,7 @@ impl BootElfMetadata {
         section_relocations: BootElfSectionRelocations,
         section_arrays: BootElfSectionArrays,
         section_hashes: BootElfSectionHashes,
+        section_versions: BootElfSectionVersions,
         section_groups: BootElfSectionGroups,
         section_address_range: BootElfSectionAddressRange,
         section_alignment: BootElfSectionAlignment,
@@ -673,6 +676,7 @@ impl BootElfMetadata {
         self.section_relocations = section_relocations;
         self.section_arrays = section_arrays;
         self.section_hashes = section_hashes;
+        self.section_versions = section_versions;
         self.section_groups = section_groups;
         self.section_address_range = section_address_range;
         self.section_alignment = section_alignment;
@@ -847,51 +851,42 @@ impl BootElfMetadata {
     pub const fn dynamic_table(&self) -> &BootElfDynamicTable {
         &self.dynamic_table
     }
-
     pub const fn load_segments(&self) -> BootElfLoadSegments {
         self.load_segments
     }
-
     pub const fn program_header_table(&self) -> BootElfProgramHeaderTable {
         self.program_header_table
     }
-
     pub const fn section_header_table(&self) -> BootElfSectionHeaderTable {
         self.section_header_table
     }
-
     pub const fn section_name_table(&self) -> BootElfSectionNameTable {
         self.section_name_table
     }
-
     pub const fn section_flags(&self) -> BootElfSectionFlags {
         self.section_flags
     }
-
     pub const fn section_storage(&self) -> BootElfSectionStorage {
         self.section_storage
     }
-
     pub const fn section_relocations(&self) -> BootElfSectionRelocations {
         self.section_relocations
     }
-
     pub const fn section_arrays(&self) -> BootElfSectionArrays {
         self.section_arrays
     }
-
     pub const fn section_hashes(&self) -> BootElfSectionHashes {
         self.section_hashes
     }
-
+    pub const fn section_versions(&self) -> BootElfSectionVersions {
+        self.section_versions
+    }
     pub const fn section_groups(&self) -> BootElfSectionGroups {
         self.section_groups
     }
-
     pub const fn section_address_range(&self) -> BootElfSectionAddressRange {
         self.section_address_range
     }
-
     pub const fn section_alignment(&self) -> BootElfSectionAlignment {
         self.section_alignment
     }

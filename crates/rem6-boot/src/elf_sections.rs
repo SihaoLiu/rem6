@@ -2,6 +2,7 @@ use rem6_memory::Address;
 
 use crate::elf::{BootElfClass, BootElfEndian, BootElfOperatingSystem};
 use crate::elf_counts::section_table_layout;
+use crate::elf_section_versions::ElfSectionVersionSummary;
 use crate::elf_symbols::{
     summarize_elf32_symbol_table as summarize_elf32_symbols,
     summarize_elf64_symbol_table as summarize_elf64_symbols, symbol_section, ElfSymbolStringTable,
@@ -10,7 +11,7 @@ use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::metadata_tables::{
     BootElfSectionAddressRange, BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags,
     BootElfSectionGroups, BootElfSectionHashes, BootElfSectionHeaderTable, BootElfSectionNameTable,
-    BootElfSectionRelocations, BootElfSectionStorage, BootElfSymbolSummary,
+    BootElfSectionRelocations, BootElfSectionStorage, BootElfSectionVersions, BootElfSymbolSummary,
 };
 
 const SHT_INIT_ARRAY: u32 = 14;
@@ -83,6 +84,7 @@ pub(crate) struct ElfSectionSummary {
     sysv_hash_bytes: u64,
     gnu_hash_section_count: u64,
     gnu_hash_bytes: u64,
+    section_versions: ElfSectionVersionSummary,
     group_section_count: u64,
     group_section_bytes: u64,
     group_entry_count: u64,
@@ -161,6 +163,9 @@ impl ElfSectionSummary {
             self.gnu_hash_bytes,
         )
     }
+    pub(crate) const fn section_versions(self) -> BootElfSectionVersions {
+        self.section_versions.into_metadata()
+    }
     pub(crate) const fn section_groups(self) -> BootElfSectionGroups {
         BootElfSectionGroups::new(
             self.group_section_count,
@@ -218,6 +223,7 @@ struct ElfSectionHeader {
     size: u64,
     alignment: u64,
     link: u32,
+    info: u32,
     entry_size: u64,
 }
 
@@ -486,6 +492,12 @@ fn summarize_common_section(
     }
     summarize_array_section(summary, section.kind, section.size, section.entry_size);
     summarize_hash_section(summary, section.kind, section.size);
+    summary.section_versions.record_section(
+        section.kind,
+        section.size,
+        section.entry_size,
+        section.info,
+    );
     summarize_group_section(summary, section.kind, section.size, section.entry_size);
     if section.kind == SHT_NOTE {
         summary.note_section_count += 1;
@@ -652,6 +664,7 @@ fn read_elf64_section_header(
         size: read_u64(bytes, base + 32, endian)?,
         alignment: read_u64(bytes, base + 48, endian)?,
         link: read_u32(bytes, base + 40, endian)?,
+        info: read_u32(bytes, base + 44, endian)?,
         entry_size: read_u64(bytes, base + 56, endian)?,
     })
 }
@@ -673,6 +686,7 @@ fn read_elf32_section_header(
         size: u64::from(read_u32(bytes, base + 20, endian)?),
         alignment: u64::from(read_u32(bytes, base + 32, endian)?),
         link: read_u32(bytes, base + 24, endian)?,
+        info: read_u32(bytes, base + 28, endian)?,
         entry_size: u64::from(read_u32(bytes, base + 36, endian)?),
     })
 }

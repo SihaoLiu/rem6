@@ -527,6 +527,81 @@ impl BootElfSectionGroups {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BootElfSectionVersions {
+    version_symbol_section_count: u64,
+    version_symbol_bytes: u64,
+    version_symbol_entry_count: u64,
+    version_definition_section_count: u64,
+    version_definition_bytes: u64,
+    version_definition_entry_count: u64,
+    version_needed_section_count: u64,
+    version_needed_bytes: u64,
+    version_needed_entry_count: u64,
+}
+
+impl BootElfSectionVersions {
+    pub const fn new(
+        version_symbol_section_count: u64,
+        version_symbol_bytes: u64,
+        version_symbol_entry_count: u64,
+        version_definition_section_count: u64,
+        version_definition_bytes: u64,
+        version_definition_entry_count: u64,
+        version_needed_section_count: u64,
+        version_needed_bytes: u64,
+        version_needed_entry_count: u64,
+    ) -> Self {
+        Self {
+            version_symbol_section_count,
+            version_symbol_bytes,
+            version_symbol_entry_count,
+            version_definition_section_count,
+            version_definition_bytes,
+            version_definition_entry_count,
+            version_needed_section_count,
+            version_needed_bytes,
+            version_needed_entry_count,
+        }
+    }
+
+    pub const fn version_symbol_section_count(self) -> u64 {
+        self.version_symbol_section_count
+    }
+
+    pub const fn version_symbol_bytes(self) -> u64 {
+        self.version_symbol_bytes
+    }
+
+    pub const fn version_symbol_entry_count(self) -> u64 {
+        self.version_symbol_entry_count
+    }
+
+    pub const fn version_definition_section_count(self) -> u64 {
+        self.version_definition_section_count
+    }
+
+    pub const fn version_definition_bytes(self) -> u64 {
+        self.version_definition_bytes
+    }
+
+    pub const fn version_definition_entry_count(self) -> u64 {
+        self.version_definition_entry_count
+    }
+
+    pub const fn version_needed_section_count(self) -> u64 {
+        self.version_needed_section_count
+    }
+
+    pub const fn version_needed_bytes(self) -> u64 {
+        self.version_needed_bytes
+    }
+
+    pub const fn version_needed_entry_count(self) -> u64 {
+        self.version_needed_entry_count
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BootElfSectionArrays {
     init_array_section_count: u64,
     init_array_bytes: u64,

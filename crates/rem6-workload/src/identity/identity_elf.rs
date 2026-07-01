@@ -183,6 +183,28 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 hash_u64(hash, section_hashes.gnu_section_count());
                 hash_u64(hash, section_hashes.gnu_bytes());
             }
+            let section_versions = metadata.section_versions();
+            if section_versions.version_symbol_section_count() != 0
+                || section_versions.version_symbol_bytes() != 0
+                || section_versions.version_symbol_entry_count() != 0
+                || section_versions.version_definition_section_count() != 0
+                || section_versions.version_definition_bytes() != 0
+                || section_versions.version_definition_entry_count() != 0
+                || section_versions.version_needed_section_count() != 0
+                || section_versions.version_needed_bytes() != 0
+                || section_versions.version_needed_entry_count() != 0
+            {
+                hash_str(hash, "elf.section_versions");
+                hash_u64(hash, section_versions.version_symbol_section_count());
+                hash_u64(hash, section_versions.version_symbol_bytes());
+                hash_u64(hash, section_versions.version_symbol_entry_count());
+                hash_u64(hash, section_versions.version_definition_section_count());
+                hash_u64(hash, section_versions.version_definition_bytes());
+                hash_u64(hash, section_versions.version_definition_entry_count());
+                hash_u64(hash, section_versions.version_needed_section_count());
+                hash_u64(hash, section_versions.version_needed_bytes());
+                hash_u64(hash, section_versions.version_needed_entry_count());
+            }
             let section_groups = metadata.section_groups();
             if section_groups.section_count() != 0
                 || section_groups.byte_size() != 0

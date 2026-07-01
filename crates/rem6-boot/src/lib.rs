@@ -3,6 +3,7 @@ mod elf_counts;
 mod elf_dynamic;
 mod elf_interpreter;
 mod elf_program_headers;
+mod elf_section_versions;
 mod elf_sections;
 mod elf_symbols;
 mod error;
@@ -21,5 +22,5 @@ pub use metadata_tables::{
     BootElfLoadSegments, BootElfProgramHeaderTable, BootElfSectionAddressRange,
     BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags, BootElfSectionGroups,
     BootElfSectionHashes, BootElfSectionHeaderTable, BootElfSectionNameTable,
-    BootElfSectionRelocations, BootElfSectionStorage, BootElfSymbolSummary,
+    BootElfSectionRelocations, BootElfSectionStorage, BootElfSectionVersions, BootElfSymbolSummary,
 };

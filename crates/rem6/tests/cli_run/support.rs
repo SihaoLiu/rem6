@@ -19,6 +19,9 @@ const SHT_GROUP: u32 = 17;
 const SHT_RELA: u32 = 4;
 const SHT_REL: u32 = 9;
 const SHT_RELR: u32 = 19;
+const SHT_GNU_VERDEF: u32 = 0x6fff_fffd;
+const SHT_GNU_VERNEED: u32 = 0x6fff_fffe;
+const SHT_GNU_VERSYM: u32 = 0x6fff_ffff;
 const SHN_UNDEF: u16 = 0;
 const SHN_ABS: u16 = 0xfff1;
 const SHN_COMMON: u16 = 0xfff2;
@@ -1173,6 +1176,62 @@ pub(crate) fn riscv64_elf_with_section_hashes(
     write_u32(&mut bytes, section_table_offset + 196, 3);
     write_u64(&mut bytes, section_table_offset + 216, shstr_offset as u64);
     write_u64(&mut bytes, section_table_offset + 224, names.len() as u64);
+    bytes
+}
+
+pub(crate) fn riscv64_elf_with_section_versions(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut bytes = riscv64_elf(entry, physical, payload);
+    let versym_offset = bytes.len();
+    bytes.resize(versym_offset + 6, 0);
+    let verdef_offset = bytes.len();
+    bytes.resize(verdef_offset + 40, 0);
+    let verneed_offset = bytes.len();
+    bytes.resize(verneed_offset + 48, 0);
+
+    let names = b"\0.gnu.version\0.gnu.version_d\0.gnu.version_r\0.shstrtab\0";
+    let shstr_offset = bytes.len();
+    bytes.extend_from_slice(names);
+    while bytes.len() % 8 != 0 {
+        bytes.push(0);
+    }
+
+    let section_table_offset = bytes.len();
+    write_u64(&mut bytes, 40, section_table_offset as u64);
+    write_u16(&mut bytes, 58, 64);
+    write_u16(&mut bytes, 60, 5);
+    write_u16(&mut bytes, 62, 4);
+    bytes.resize(section_table_offset + 5 * 64, 0);
+
+    write_u32(&mut bytes, section_table_offset + 64, 1);
+    write_u32(&mut bytes, section_table_offset + 68, SHT_GNU_VERSYM);
+    write_u64(&mut bytes, section_table_offset + 88, versym_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 96, 6);
+    write_u64(&mut bytes, section_table_offset + 120, 2);
+
+    write_u32(&mut bytes, section_table_offset + 128, 14);
+    write_u32(&mut bytes, section_table_offset + 132, SHT_GNU_VERDEF);
+    write_u32(&mut bytes, section_table_offset + 172, 2);
+    write_u64(&mut bytes, section_table_offset + 152, verdef_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 160, 40);
+
+    write_u32(&mut bytes, section_table_offset + 192, 29);
+    write_u32(&mut bytes, section_table_offset + 196, SHT_GNU_VERNEED);
+    write_u32(&mut bytes, section_table_offset + 236, 3);
+    write_u64(
+        &mut bytes,
+        section_table_offset + 216,
+        verneed_offset as u64,
+    );
+    write_u64(&mut bytes, section_table_offset + 224, 48);
+
+    write_u32(&mut bytes, section_table_offset + 256, 44);
+    write_u32(&mut bytes, section_table_offset + 260, 3);
+    write_u64(&mut bytes, section_table_offset + 280, shstr_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 288, names.len() as u64);
     bytes
 }
 

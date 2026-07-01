@@ -229,6 +229,7 @@ pub(super) fn emit_elf_run_stats(
     emit_elf_section_relocation_stats(stats, metadata)?;
     emit_elf_section_array_stats(stats, metadata)?;
     emit_elf_section_hash_stats(stats, metadata)?;
+    emit_elf_section_version_stats(stats, metadata)?;
     emit_elf_section_group_stats(stats, metadata)?;
     emit_elf_section_address_stats(stats, metadata)?;
     emit_elf_section_alignment_stats(stats, metadata)?;
@@ -875,6 +876,63 @@ fn emit_elf_section_hash_stats(
             "sim.elf.section_hashes.gnu.bytes",
             "Byte",
             hashes.gnu_bytes(),
+        ),
+    ] {
+        increment_stat(stats, name, unit, StatResetPolicy::Constant, value)?;
+    }
+    Ok(())
+}
+
+fn emit_elf_section_version_stats(
+    stats: &mut StatsRegistry,
+    metadata: &BootElfMetadata,
+) -> Result<(), Rem6CliError> {
+    let versions = metadata.section_versions();
+    for (name, unit, value) in [
+        (
+            "sim.elf.section_versions.symbols.sections",
+            "Count",
+            versions.version_symbol_section_count(),
+        ),
+        (
+            "sim.elf.section_versions.symbols.bytes",
+            "Byte",
+            versions.version_symbol_bytes(),
+        ),
+        (
+            "sim.elf.section_versions.symbols.entries",
+            "Count",
+            versions.version_symbol_entry_count(),
+        ),
+        (
+            "sim.elf.section_versions.definitions.sections",
+            "Count",
+            versions.version_definition_section_count(),
+        ),
+        (
+            "sim.elf.section_versions.definitions.bytes",
+            "Byte",
+            versions.version_definition_bytes(),
+        ),
+        (
+            "sim.elf.section_versions.definitions.entries",
+            "Count",
+            versions.version_definition_entry_count(),
+        ),
+        (
+            "sim.elf.section_versions.needed.sections",
+            "Count",
+            versions.version_needed_section_count(),
+        ),
+        (
+            "sim.elf.section_versions.needed.bytes",
+            "Byte",
+            versions.version_needed_bytes(),
+        ),
+        (
+            "sim.elf.section_versions.needed.entries",
+            "Count",
+            versions.version_needed_entry_count(),
         ),
     ] {
         increment_stat(stats, name, unit, StatResetPolicy::Constant, value)?;
