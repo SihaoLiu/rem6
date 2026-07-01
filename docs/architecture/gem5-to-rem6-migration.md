@@ -71,7 +71,7 @@ parity are not present.
 
 - [x] RV64 integer, atomic, CSR, trap, counter, WFI, fence, PMP/PMA slices have tests.
 - [x] RV64C integer/load-store/control-flow slices have tests.
-- [x] RV64F/RV64D scalar load/store, arithmetic, comparisons, conversions, legal FP arithmetic and integer-to-float rounding-mode decode, exact static non-RNE integer-to-float conversion execution, inexact integer-to-float accrued flag updates, rounding-insensitive static arithmetic execution, `fadd.s`/`fsub.s` exact-wide-sum directed rounding, `fmul.s` exact-product and `fmul.d` normal finite exact-product plus directed-overflow and directed-underflow subnormal rounding, `fdiv.s` and `fdiv.d` finite-quotient directed rounding with NX, `fmadd.s` exact-window directed rounding, narrow `fmadd.d` exact-window static/dynamic directed rounding slices, `fadd.s`/`fsub.s`/`fmul.s`/`fmadd.s` invalid, overflow, underflow, and inexact accrued flags, and NaN-boxing have tests.
+- [x] RV64F/RV64D scalar load/store, arithmetic, comparisons, conversions, legal FP arithmetic and integer-to-float rounding-mode decode, exact static non-RNE integer-to-float conversion execution, inexact integer-to-float accrued flag updates, rounding-insensitive static arithmetic execution, `fadd.s`/`fsub.s` exact-wide-sum directed rounding, `fmul.s` exact-product and `fmul.d` normal finite exact-product plus directed-overflow and directed-underflow subnormal rounding, `fdiv.s` and `fdiv.d` finite-quotient directed rounding with NX, `fcvt.s.d` directed rounding with NX, `fmadd.s` exact-window directed rounding, narrow `fmadd.d` exact-window static/dynamic directed rounding slices, `fadd.s`/`fsub.s`/`fmul.s`/`fmadd.s` invalid, overflow, underflow, and inexact accrued flags, and NaN-boxing have tests.
 - [x] RV64F/RV64D integer-to-float conversions execute inexact static directed rounding and valid dynamic `frm` modes with accrued inexact flags.
 - [x] RV64C double-precision FP load/store decode and compressed FP load/store CPU data-access slices have tests.
 - [x] RVV vector-configuration instruction family (`vsetvli`, `vsetivli`, `vsetvl`) decode, hart execution, and CPU fetch-stream execution have tests.
@@ -106,7 +106,7 @@ with NX accrual, `fmul.s` exact-product static directed rounding with NX,
 UF, and directed-boundary overflow accrual, `fmul.d` normal finite exact-product
 static directed rounding with NX, directed overflow boundaries with OF/NX, and
 directed subnormal underflow boundaries with UF/NX, `fdiv.s` and `fdiv.d`
-finite-quotient static directed rounding with NX accrual, `fmadd.s` exact-window
+finite-quotient static directed rounding with NX accrual, `fcvt.s.d` static/dynamic directed rounding with NX accrual, `fmadd.s` exact-window
 static/dynamic directed rounding with RMM tie-away, NX, and directed-boundary
 overflow accrual, narrow `fmadd.d`
 static RoundUp and dynamic RoundDown exact-window inexact rounding with
@@ -1179,7 +1179,7 @@ extended program-header-count (`PN_XNUM`) loading, `PT_LOAD` summary/alignment, 
 `PT_INTERP` interpreter reporting/rejection, `.tbss`/`PT_TLS` TLS metadata,
 `PT_GNU_STACK` stack-exec, `PT_GNU_RELRO`, `PT_GNU_EH_FRAME`, and `PT_GNU_PROPERTY` metadata,
 symbol/dynamic-symbol type and binding counts, section-header/name/flag/storage/string-table/array/hash/group/address/alignment plus `SHT_NOTE` and `SHT_REL`/`SHT_RELA` count/byte metadata, dynamic needed/path/loader-string/table/lifecycle-scalar/array/relocation/hash/version/linker/flag and ABI-note OS metadata,
-plus RV64F/RV64D scalar FP slices.
+plus RV64F/RV64D scalar FP slices including `fcvt.s.d` directed rounding/NX.
 
 **Not migrated:** Complete `ext/libelf`, `ext/libfdt`, and `ext/softfloat` parity.
 
@@ -1187,7 +1187,7 @@ plus RV64F/RV64D scalar FP slices.
 counts, `PT_LOAD` summary/alignment JSON/stats, `PT_PHDR`/`PT_NOTE` JSON/stats, `PT_INTERP` rejection/reporting, `.tbss`/`PT_TLS`
 TLS metadata, `PT_GNU_STACK`, `PT_GNU_RELRO`, `PT_GNU_EH_FRAME`, and `PT_GNU_PROPERTY` metadata,
 symbol/dynamic-symbol type and binding counts, section-header/name/flag/storage/string-table/array/hash/group/address/alignment plus `SHT_NOTE` and `SHT_REL`/`SHT_RELA` count/byte JSON/stats, dynamic needed/path/loader-string/table/lifecycle-scalar/array/relocation/hash/version/linker/flag JSON/stats,
-ELF32 extended counts, ABI-note OS, DTB, and RV64F/RV64D tests.
+ELF32 extended counts, ABI-note OS, DTB, and RV64F/RV64D `fcvt.s.d` tests.
 
 **Next evidence:** Expand loader breadth beyond current extended-numbering
 slices and soft-float parity.

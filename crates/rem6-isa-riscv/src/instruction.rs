@@ -892,6 +892,7 @@ pub enum RiscvInstruction {
     FloatConvertSFromD {
         rd: FloatRegister,
         rs1: FloatRegister,
+        rounding_mode: RiscvFloatRoundingMode,
     },
     FloatAddD {
         rd: FloatRegister,

@@ -6,6 +6,7 @@ use crate::{
 mod add_sub;
 mod constants;
 mod convert_flags;
+mod convert_precision;
 mod decode;
 mod div;
 mod double_exact;
@@ -13,6 +14,7 @@ mod fused;
 mod int_to_float;
 mod mul;
 mod ternary;
+mod unary;
 
 pub(crate) use constants::{
     DEFAULT_NAN_DOUBLE, DEFAULT_NAN_SINGLE, DEFAULT_NAN_SINGLE_BITS, DOUBLE_EXP_MASK,
@@ -33,6 +35,9 @@ pub(crate) use int_to_float::{
 pub(crate) use ternary::{
     float_register_write_ternary, ternary_exception_flags,
     ternary_register_rounding_mode_is_supported,
+};
+pub(crate) use unary::{
+    float_register_write_unary, unary_exception_flags, unary_register_rounding_mode_is_supported,
 };
 
 fn add_double(lhs: u64, rhs: u64) -> u64 {
@@ -65,7 +70,9 @@ pub(crate) fn float_register_write(
         RiscvInstruction::FloatMinD { rd, .. } => (rd, min_double(lhs, rhs)),
         RiscvInstruction::FloatMaxS { rd, .. } => (rd, max_single(lhs, rhs)),
         RiscvInstruction::FloatMaxD { rd, .. } => (rd, max_double(lhs, rhs)),
-        RiscvInstruction::FloatConvertSFromD { rd, .. } => (rd, convert_double_to_single(lhs)),
+        RiscvInstruction::FloatConvertSFromD { .. } => {
+            unreachable!("double-to-single conversion requires a resolved rounding mode")
+        }
         RiscvInstruction::FloatConvertDFromS { rd, .. } => (rd, convert_single_to_double(lhs)),
         _ => unreachable!("non-float-register instruction dispatched to float register write"),
     }
@@ -395,19 +402,6 @@ pub(crate) fn binary_register_rounding_mode_is_supported(
     }
 }
 
-pub(crate) fn unary_register_rounding_mode_is_supported(
-    instruction: RiscvInstruction,
-    frm: u64,
-    value: u64,
-) -> bool {
-    register_rounding_mode_is_supported(
-        instruction,
-        frm,
-        unary_result_is_rounding_insensitive(instruction, value),
-        false,
-    )
-}
-
 fn register_rounding_mode_is_supported(
     instruction: RiscvInstruction,
     frm: u64,
@@ -443,6 +437,7 @@ fn register_rounding_mode(instruction: RiscvInstruction) -> Option<RiscvFloatRou
         | RiscvInstruction::FloatDivD { rounding_mode, .. }
         | RiscvInstruction::FloatSqrtS { rounding_mode, .. }
         | RiscvInstruction::FloatSqrtD { rounding_mode, .. }
+        | RiscvInstruction::FloatConvertSFromD { rounding_mode, .. }
         | RiscvInstruction::FloatMultiplyAddS { rounding_mode, .. }
         | RiscvInstruction::FloatMultiplyAddD { rounding_mode, .. }
         | RiscvInstruction::FloatMultiplySubtractS { rounding_mode, .. }
@@ -491,14 +486,6 @@ fn binary_result_is_rounding_insensitive(
         RiscvInstruction::FloatMulD { .. } => multiply_double_is_identity(lhs, rhs),
         RiscvInstruction::FloatDivS { .. } => divide_single_is_identity(lhs, rhs),
         RiscvInstruction::FloatDivD { .. } => divide_double_is_identity(lhs, rhs),
-        _ => false,
-    }
-}
-
-fn unary_result_is_rounding_insensitive(instruction: RiscvInstruction, value: u64) -> bool {
-    match instruction {
-        RiscvInstruction::FloatSqrtS { .. } => sqrt_single_is_exact(value),
-        RiscvInstruction::FloatSqrtD { .. } => sqrt_double_is_exact(value),
         _ => false,
     }
 }
@@ -801,14 +788,6 @@ pub(crate) fn binary_exception_flags(
     }
 }
 
-pub(crate) fn unary_exception_flags(instruction: RiscvInstruction, value: u64) -> u64 {
-    match instruction {
-        RiscvInstruction::FloatSqrtS { .. } => sqrt_exception_flags_single(value),
-        RiscvInstruction::FloatSqrtD { .. } => sqrt_exception_flags_double(value),
-        _ => 0,
-    }
-}
-
 fn add_single(lhs: u64, rhs: u64) -> u64 {
     box_canonical_single(f32::from_bits(unbox_single(lhs)) + f32::from_bits(unbox_single(rhs)))
 }
@@ -912,10 +891,6 @@ fn sign_negate_single(value: u64) -> u64 {
 
 fn sign_negate_double(value: u64) -> u64 {
     value ^ DOUBLE_SIGN_BIT
-}
-
-fn convert_double_to_single(value: u64) -> u64 {
-    box_canonical_single(f64::from_bits(value) as f32)
 }
 
 fn convert_single_to_double(value: u64) -> u64 {

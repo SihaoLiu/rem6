@@ -459,6 +459,8 @@ fn decoder_accepts_rv64d_float_to_integer_rounding_modes() {
 fn decoder_rejects_rv64d_float_to_integer_reserved_rounding_modes() {
     assert!(RiscvInstruction::decode(r_type(0x61, 0, 2, 0x5, 5, 0x53)).is_err());
     assert!(RiscvInstruction::decode(r_type(0x61, 0, 2, 0x6, 5, 0x53)).is_err());
+    assert!(RiscvInstruction::decode(r_type(0x20, 1, 2, 0x5, 5, 0x53)).is_err());
+    assert!(RiscvInstruction::decode(r_type(0x20, 1, 2, 0x6, 5, 0x53)).is_err());
 }
 
 #[test]
@@ -469,6 +471,7 @@ fn decoder_accepts_rv64d_single_double_conversions() {
             RiscvInstruction::FloatConvertSFromD {
                 rd: freg(5),
                 rs1: freg(2),
+                rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
             },
         ),
         (
@@ -483,6 +486,23 @@ fn decoder_accepts_rv64d_single_double_conversions() {
     for (raw, expected) in cases {
         assert_eq!(RiscvInstruction::decode(raw).unwrap(), expected);
     }
+
+    assert_eq!(
+        RiscvInstruction::decode(r_type(0x20, 1, 2, 0x3, 5, 0x53)).unwrap(),
+        RiscvInstruction::FloatConvertSFromD {
+            rd: freg(5),
+            rs1: freg(2),
+            rounding_mode: RiscvFloatRoundingMode::RoundUp,
+        }
+    );
+    assert_eq!(
+        RiscvInstruction::decode(r_type(0x20, 1, 2, 0x7, 5, 0x53)).unwrap(),
+        RiscvInstruction::FloatConvertSFromD {
+            rd: freg(5),
+            rs1: freg(2),
+            rounding_mode: RiscvFloatRoundingMode::Dynamic,
+        }
+    );
 }
 
 #[test]
@@ -1529,6 +1549,7 @@ fn hart_executes_rv64d_single_double_conversions_with_nan_boxing() {
         .execute(RiscvInstruction::FloatConvertSFromD {
             rd: freg(2),
             rs1: freg(1),
+            rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
         })
         .unwrap();
     assert_eq!(hart.read_float(freg(2)), f32_box(1.5));
@@ -1546,6 +1567,7 @@ fn hart_executes_rv64d_single_double_conversions_with_nan_boxing() {
     hart.execute(RiscvInstruction::FloatConvertSFromD {
         rd: freg(4),
         rs1: freg(3),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
     })
     .unwrap();
     assert_eq!(hart.read_float(freg(4)), f32_box(lower));
@@ -1570,9 +1592,64 @@ fn hart_executes_rv64d_single_double_conversions_with_nan_boxing() {
     hart.execute(RiscvInstruction::FloatConvertSFromD {
         rd: freg(10),
         rs1: freg(9),
+        rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
     })
     .unwrap();
     assert_eq!(hart.read_float(freg(10)), box_single(0x7fc0_0000));
+}
+
+#[test]
+fn hart_executes_rv64d_double_to_single_directed_rounding_and_inexact_flag() {
+    let lower_bits = 0x3f80_0000;
+    let upper_bits = 0x3f80_0001;
+    let lower = f32::from_bits(lower_bits);
+    let upper = f32::from_bits(upper_bits);
+    let midpoint = ((f64::from(lower) + f64::from(upper)) / 2.0).to_bits();
+    let mut hart = RiscvHartState::new(0x8000);
+
+    hart.write_float(freg(1), midpoint);
+    hart.execute(RiscvInstruction::decode(r_type(0x20, 1, 1, 0x3, 2, 0x53)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read_float(freg(2)), box_single(upper_bits));
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INEXACT);
+
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(2 << 5));
+    hart.write_float(freg(3), midpoint);
+    hart.execute(RiscvInstruction::decode(r_type(0x20, 1, 3, 0x7, 4, 0x53)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read_float(freg(4)), box_single(lower_bits));
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INEXACT);
+}
+
+#[test]
+fn hart_executes_rv64d_double_to_single_directed_overflow_flags() {
+    let mut hart = RiscvHartState::new(0x8000);
+
+    hart.write_float(freg(5), 0x47ef_ffff_f000_0000);
+    hart.execute(RiscvInstruction::decode(r_type(0x20, 1, 5, 0x2, 6, 0x53)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read_float(freg(6)), box_single(f32::MAX.to_bits()));
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INEXACT);
+
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
+    hart.write_float(freg(1), (f64::from(f32::MAX) * 2.0).to_bits());
+    hart.execute(RiscvInstruction::decode(r_type(0x20, 1, 1, 0x2, 2, 0x53)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read_float(freg(2)), box_single(f32::MAX.to_bits()));
+    assert_eq!(
+        hart.float_status().fflags(),
+        FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
+    );
+
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
+    hart.write_float(freg(3), (f64::from(-f32::MAX) * 2.0).to_bits());
+    hart.execute(RiscvInstruction::decode(r_type(0x20, 1, 3, 0x3, 4, 0x53)).unwrap())
+        .unwrap();
+    assert_eq!(hart.read_float(freg(4)), box_single((-f32::MAX).to_bits()));
+    assert_eq!(
+        hart.float_status().fflags(),
+        FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
+    );
 }
 
 #[test]

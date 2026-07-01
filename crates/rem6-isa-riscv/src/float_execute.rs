@@ -78,8 +78,9 @@ pub(crate) fn execute_float_register_instruction(
             ) {
                 return Err(());
             }
-            let flags = float::unary_exception_flags(instruction, lhs);
-            let (rd, value) = float::float_register_write(instruction, lhs, 0);
+            let frm = hart.float_status().frm();
+            let flags = float::unary_exception_flags(instruction, lhs, frm);
+            let (rd, value) = float::float_register_write_unary(instruction, lhs, frm);
             hart.raise_float_exception_flags(flags);
             float::write_float_register(hart, writes, rd, value);
         }

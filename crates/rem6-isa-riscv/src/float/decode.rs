@@ -233,9 +233,10 @@ pub(crate) fn decode_float_op(raw: u32) -> Result<RiscvInstruction, RiscvError> 
             rs1: float_rs1(raw),
             rounding_mode: float_rounding_mode(raw)?,
         }),
-        (0x20, 0x0) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertSFromD {
+        (0x20, _) if rs2(raw).index() == 1 => Ok(RiscvInstruction::FloatConvertSFromD {
             rd: float_rd(raw),
             rs1: float_rs1(raw),
+            rounding_mode: float_rounding_mode(raw)?,
         }),
         (0x79, 0x0) if rs2(raw).is_zero() => Ok(RiscvInstruction::FloatMoveDFromX {
             rd: float_rd(raw),
