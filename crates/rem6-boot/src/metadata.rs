@@ -125,6 +125,7 @@ pub(crate) struct BootElfDynamicSegment {
     pub(crate) version_needed_count: Option<u64>,
     pub(crate) rela_relocations: BootElfDynamicRelocationTable,
     pub(crate) rel_relocations: BootElfDynamicRelocationTable,
+    pub(crate) relr_relocations: BootElfDynamicRelocationTable,
     pub(crate) plt_relocations: BootElfDynamicRelocationTable,
     pub(crate) plt_relocation_kind: Option<BootElfDynamicPltRelocationKind>,
 }
@@ -175,6 +176,7 @@ pub struct BootElfDynamicTable {
     version_needed_count: Option<u64>,
     rela_relocations: BootElfDynamicRelocationTable,
     rel_relocations: BootElfDynamicRelocationTable,
+    relr_relocations: BootElfDynamicRelocationTable,
     plt_relocations: BootElfDynamicRelocationTable,
     plt_relocation_kind: Option<BootElfDynamicPltRelocationKind>,
 }
@@ -226,6 +228,7 @@ impl BootElfDynamicTable {
             version_needed_count: None,
             rela_relocations: BootElfDynamicRelocationTable::default(),
             rel_relocations: BootElfDynamicRelocationTable::default(),
+            relr_relocations: BootElfDynamicRelocationTable::default(),
             plt_relocations: BootElfDynamicRelocationTable::default(),
             plt_relocation_kind: None,
         }
@@ -280,6 +283,7 @@ impl BootElfDynamicTable {
             self.version_needed_count = segment.version_needed_count;
             self.rela_relocations = segment.rela_relocations;
             self.rel_relocations = segment.rel_relocations;
+            self.relr_relocations = segment.relr_relocations;
             self.plt_relocations = segment.plt_relocations;
             self.plt_relocation_kind = segment.plt_relocation_kind;
         }
@@ -289,27 +293,21 @@ impl BootElfDynamicTable {
     pub const fn segment_count(&self) -> u64 {
         self.segment_count
     }
-
     pub const fn file_offset(&self) -> Option<u64> {
         self.file_offset
     }
-
     pub const fn virtual_address(&self) -> Option<Address> {
         self.virtual_address
     }
-
     pub const fn entry_size(&self) -> u16 {
         self.entry_size
     }
-
     pub const fn entry_count(&self) -> u64 {
         self.entry_count
     }
-
     pub const fn needed_count(&self) -> u64 {
         self.needed_count
     }
-
     pub fn needed_libraries(&self) -> &[String] {
         &self.needed_libraries
     }
@@ -324,15 +322,12 @@ impl BootElfDynamicTable {
     pub fn soname(&self) -> Option<&str> {
         self.soname.as_deref()
     }
-
     pub fn rpath(&self) -> &[String] {
         &self.rpath
     }
-
     pub fn runpath(&self) -> &[String] {
         &self.runpath
     }
-
     pub fn auxiliary_libraries(&self) -> &[String] {
         &self.auxiliary_libraries
     }
@@ -509,6 +504,10 @@ impl BootElfDynamicTable {
         self.rel_relocations
     }
 
+    pub const fn relr_relocations(&self) -> BootElfDynamicRelocationTable {
+        self.relr_relocations
+    }
+
     pub const fn plt_relocations(&self) -> BootElfDynamicRelocationTable {
         self.plt_relocations
     }
@@ -525,6 +524,10 @@ impl BootElfDynamicTable {
         self.rel_relocations.virtual_address()
     }
 
+    pub const fn relr_virtual_address(&self) -> Option<Address> {
+        self.relr_relocations.virtual_address()
+    }
+
     pub const fn plt_relocation_virtual_address(&self) -> Option<Address> {
         self.plt_relocations.virtual_address()
     }
@@ -535,6 +538,10 @@ impl BootElfDynamicTable {
 
     pub const fn rel_entry_count(&self) -> u64 {
         self.rel_relocations.entry_count()
+    }
+
+    pub const fn relr_entry_count(&self) -> u64 {
+        self.relr_relocations.entry_count()
     }
 
     pub const fn plt_rela_entry_count(&self) -> u64 {

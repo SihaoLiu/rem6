@@ -38,6 +38,9 @@ const DT_FINI_ARRAYSZ: u64 = 28;
 const DT_FLAGS: u64 = 30;
 const DT_PREINIT_ARRAY: u64 = 32;
 const DT_PREINIT_ARRAYSZ: u64 = 33;
+const DT_RELRSZ: u64 = 35;
+const DT_RELR: u64 = 36;
+const DT_RELRENT: u64 = 37;
 const DT_DEPAUDIT: u64 = 0x6fff_fefb;
 const DT_AUDIT: u64 = 0x6fff_fefc;
 const DT_VERSYM: u64 = 0x6fff_fff0;
@@ -652,6 +655,23 @@ pub(crate) fn riscv64_elf_with_dynamic_symbol_table(
     write_u64(&mut bytes, symbol_entry + 24, 24);
     write_u64(&mut bytes, symbol_entry + 32, 0);
     write_u64(&mut bytes, symbol_entry + 40, 0);
+    bytes
+}
+
+pub(crate) fn riscv64_elf_with_dynamic_relr(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = riscv64_elf_with_dynamic_table(entry, physical, payload);
+    let dynamic_offset = 0x180usize;
+    let relr_entry = dynamic_offset + 16 * 16;
+    write_u64(&mut bytes, 152, 20 * 16);
+    write_u64(&mut bytes, 160, 20 * 16);
+    write_u64(&mut bytes, relr_entry, DT_RELR);
+    write_u64(&mut bytes, relr_entry + 8, physical + 0x3a0);
+    write_u64(&mut bytes, relr_entry + 16, DT_RELRSZ);
+    write_u64(&mut bytes, relr_entry + 24, 16);
+    write_u64(&mut bytes, relr_entry + 32, DT_RELRENT);
+    write_u64(&mut bytes, relr_entry + 40, 8);
+    write_u64(&mut bytes, relr_entry + 48, 0);
+    write_u64(&mut bytes, relr_entry + 56, 0);
     bytes
 }
 

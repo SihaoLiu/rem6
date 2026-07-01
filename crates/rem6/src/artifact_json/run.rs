@@ -507,9 +507,10 @@ fn elf_dynamic_relocations_json(table: &BootElfDynamicTable) -> String {
         })
         .unwrap_or("null");
     format!(
-        "{{\"rela\":{},\"rel\":{},\"plt\":{{\"kind\":{},\"virtual_address\":{},\"bytes\":{},\"entry_size\":{},\"entries\":{}}}}}",
+        "{{\"rela\":{},\"rel\":{},\"relr\":{},\"plt\":{{\"kind\":{},\"virtual_address\":{},\"bytes\":{},\"entry_size\":{},\"entries\":{}}}}}",
         elf_dynamic_relocation_table_json(table.rela_relocations()),
         elf_dynamic_relocation_table_json(table.rel_relocations()),
+        elf_dynamic_relocation_table_json(table.relr_relocations()),
         kind,
         address_json(plt.virtual_address()),
         plt.byte_size(),

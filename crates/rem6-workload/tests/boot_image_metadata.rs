@@ -36,6 +36,9 @@ const DT_FINI_ARRAYSZ: u64 = 28;
 const DT_FLAGS: u64 = 30;
 const DT_PREINIT_ARRAY: u64 = 32;
 const DT_PREINIT_ARRAYSZ: u64 = 33;
+const DT_RELRSZ: u64 = 35;
+const DT_RELR: u64 = 36;
+const DT_RELRENT: u64 = 37;
 const DT_DEPAUDIT: u64 = 0x6fff_fefb;
 const DT_AUDIT: u64 = 0x6fff_fefc;
 const DT_VERSYM: u64 = 0x6fff_fff0;
@@ -708,6 +711,9 @@ struct DynamicRelocations {
     rel_address: u64,
     rel_size: u64,
     rel_entry_size: u64,
+    relr_address: Option<u64>,
+    relr_size: u64,
+    relr_entry_size: u64,
     plt_address: u64,
     plt_size: u64,
     plt_kind: u64,
@@ -721,6 +727,12 @@ impl DynamicRelocations {
 
     const fn rel_address(mut self, rel_address: u64) -> Self {
         self.rel_address = rel_address;
+        self
+    }
+
+    const fn relr_size(mut self, relr_size: u64) -> Self {
+        self.relr_address = Some(0x82e0);
+        self.relr_size = relr_size;
         self
     }
 
@@ -740,6 +752,9 @@ impl Default for DynamicRelocations {
             rel_address: 0x82a0,
             rel_size: 16,
             rel_entry_size: 16,
+            relr_address: None,
+            relr_size: 0,
+            relr_entry_size: 8,
             plt_address: 0x82c0,
             plt_size: 24,
             plt_kind: 7,
@@ -875,34 +890,47 @@ fn elf64_image_with_dynamic_strings_and_relocations(
     write_u64(&mut bytes, soname_entry + 24, rpath_offset);
     write_u64(&mut bytes, soname_entry + 32, 29);
     write_u64(&mut bytes, soname_entry + 40, runpath_offset);
-    let rela_entry = soname_entry + 48;
-    write_u64(&mut bytes, rela_entry, 7);
-    write_u64(&mut bytes, rela_entry + 8, relocations.rela_address);
-    write_u64(&mut bytes, rela_entry + 16, 8);
-    write_u64(&mut bytes, rela_entry + 24, relocations.rela_size);
-    write_u64(&mut bytes, rela_entry + 32, 9);
-    write_u64(&mut bytes, rela_entry + 40, relocations.rela_entry_size);
-    write_u64(&mut bytes, rela_entry + 48, 17);
-    write_u64(&mut bytes, rela_entry + 56, relocations.rel_address);
-    write_u64(&mut bytes, rela_entry + 64, 18);
-    write_u64(&mut bytes, rela_entry + 72, relocations.rel_size);
-    write_u64(&mut bytes, rela_entry + 80, 19);
-    write_u64(&mut bytes, rela_entry + 88, relocations.rel_entry_size);
-    write_u64(&mut bytes, rela_entry + 96, 23);
-    write_u64(&mut bytes, rela_entry + 104, relocations.plt_address);
-    write_u64(&mut bytes, rela_entry + 112, 2);
-    write_u64(&mut bytes, rela_entry + 120, relocations.plt_size);
-    write_u64(&mut bytes, rela_entry + 128, 20);
-    write_u64(&mut bytes, rela_entry + 136, relocations.plt_kind);
-    let strtab_entry = rela_entry + 144;
-    write_u64(&mut bytes, strtab_entry, 5);
-    write_u64(&mut bytes, strtab_entry + 8, 0x8100);
-    write_u64(&mut bytes, strtab_entry + 16, 10);
-    write_u64(&mut bytes, strtab_entry + 24, strtab.len() as u64);
-    write_u64(&mut bytes, strtab_entry + 32, 0);
-    write_u64(&mut bytes, strtab_entry + 40, 0);
-    write_u64(&mut bytes, 152, ((libraries.len() + 15) * 16) as u64);
-    write_u64(&mut bytes, 160, ((libraries.len() + 15) * 16) as u64);
+    let mut dynamic_entry = soname_entry + 48;
+    write_dynamic_entry(&mut bytes, &mut dynamic_entry, 7, relocations.rela_address);
+    write_dynamic_entry(&mut bytes, &mut dynamic_entry, 8, relocations.rela_size);
+    write_dynamic_entry(
+        &mut bytes,
+        &mut dynamic_entry,
+        9,
+        relocations.rela_entry_size,
+    );
+    write_dynamic_entry(&mut bytes, &mut dynamic_entry, 17, relocations.rel_address);
+    write_dynamic_entry(&mut bytes, &mut dynamic_entry, 18, relocations.rel_size);
+    write_dynamic_entry(
+        &mut bytes,
+        &mut dynamic_entry,
+        19,
+        relocations.rel_entry_size,
+    );
+    write_dynamic_entry(&mut bytes, &mut dynamic_entry, 23, relocations.plt_address);
+    write_dynamic_entry(&mut bytes, &mut dynamic_entry, 2, relocations.plt_size);
+    write_dynamic_entry(&mut bytes, &mut dynamic_entry, 20, relocations.plt_kind);
+    if let Some(relr_address) = relocations.relr_address {
+        write_dynamic_entry(&mut bytes, &mut dynamic_entry, DT_RELR, relr_address);
+        write_dynamic_entry(
+            &mut bytes,
+            &mut dynamic_entry,
+            DT_RELRSZ,
+            relocations.relr_size,
+        );
+        write_dynamic_entry(
+            &mut bytes,
+            &mut dynamic_entry,
+            DT_RELRENT,
+            relocations.relr_entry_size,
+        );
+    }
+    write_dynamic_entry(&mut bytes, &mut dynamic_entry, 5, 0x8100);
+    write_dynamic_entry(&mut bytes, &mut dynamic_entry, 10, strtab.len() as u64);
+    write_dynamic_entry(&mut bytes, &mut dynamic_entry, 0, 0);
+    let dynamic_size = (dynamic_entry - 0x180) as u64;
+    write_u64(&mut bytes, 152, dynamic_size);
+    write_u64(&mut bytes, 160, dynamic_size);
     bytes[strtab_offset..strtab_offset + strtab.len()].copy_from_slice(&strtab);
     bytes
 }
@@ -3096,6 +3124,7 @@ fn workload_manifest_identity_includes_elf_dynamic_loader_strings() {
 
 #[test]
 fn workload_manifest_identity_includes_elf_dynamic_relocation_metadata() {
+    let baseline_relocations = DynamicRelocations::default().relr_size(16);
     let baseline_source =
         BootImage::from_elf64_le(&elf64_image_with_dynamic_strings_and_relocations(
             243,
@@ -3103,7 +3132,7 @@ fn workload_manifest_identity_includes_elf_dynamic_relocation_metadata() {
             "librem6.so",
             "/opt/rem6/lib",
             "$ORIGIN/lib",
-            DynamicRelocations::default(),
+            baseline_relocations,
         ))
         .unwrap();
     let rela_size_source =
@@ -3113,7 +3142,7 @@ fn workload_manifest_identity_includes_elf_dynamic_relocation_metadata() {
             "librem6.so",
             "/opt/rem6/lib",
             "$ORIGIN/lib",
-            DynamicRelocations::default().rela_size(72),
+            baseline_relocations.rela_size(72),
         ))
         .unwrap();
     let rel_address_source =
@@ -3123,7 +3152,7 @@ fn workload_manifest_identity_includes_elf_dynamic_relocation_metadata() {
             "librem6.so",
             "/opt/rem6/lib",
             "$ORIGIN/lib",
-            DynamicRelocations::default().rel_address(0x82b0),
+            baseline_relocations.rel_address(0x82b0),
         ))
         .unwrap();
     let plt_rel_source =
@@ -3133,7 +3162,17 @@ fn workload_manifest_identity_includes_elf_dynamic_relocation_metadata() {
             "librem6.so",
             "/opt/rem6/lib",
             "$ORIGIN/lib",
-            DynamicRelocations::default().plt_kind(17, 16),
+            baseline_relocations.plt_kind(17, 16),
+        ))
+        .unwrap();
+    let relr_size_source =
+        BootImage::from_elf64_le(&elf64_image_with_dynamic_strings_and_relocations(
+            243,
+            &["libc.so.6", "libm.so.6"],
+            "librem6.so",
+            "/opt/rem6/lib",
+            "$ORIGIN/lib",
+            baseline_relocations.relr_size(24),
         ))
         .unwrap();
 
@@ -3171,16 +3210,26 @@ fn workload_manifest_identity_includes_elf_dynamic_relocation_metadata() {
             .plt_rel_entry_count(),
         1,
     );
+    assert_eq!(
+        relr_size_source
+            .elf_metadata()
+            .unwrap()
+            .dynamic_table()
+            .relr_entry_count(),
+        3,
+    );
 
     let baseline = boot_image_with_metadata(baseline_source.elf_metadata().unwrap());
     let rela_size = boot_image_with_metadata(rela_size_source.elf_metadata().unwrap());
     let rel_address = boot_image_with_metadata(rel_address_source.elf_metadata().unwrap());
     let plt_rel = boot_image_with_metadata(plt_rel_source.elf_metadata().unwrap());
+    let relr_size = boot_image_with_metadata(relr_size_source.elf_metadata().unwrap());
 
     assert_eq!(baseline.entry(), rela_size.entry());
     assert_eq!(baseline.segments(), rela_size.segments());
     assert_eq!(baseline.segments(), rel_address.segments());
     assert_eq!(baseline.segments(), plt_rel.segments());
+    assert_eq!(baseline.segments(), relr_size.segments());
 
     let baseline_manifest = WorkloadManifest::builder(id("same"), baseline)
         .build()
@@ -3194,6 +3243,9 @@ fn workload_manifest_identity_includes_elf_dynamic_relocation_metadata() {
     let plt_rel_manifest = WorkloadManifest::builder(id("same"), plt_rel)
         .build()
         .unwrap();
+    let relr_size_manifest = WorkloadManifest::builder(id("same"), relr_size)
+        .build()
+        .unwrap();
 
     assert_ne!(baseline_manifest.identity(), rela_size_manifest.identity());
     assert_ne!(
@@ -3201,6 +3253,7 @@ fn workload_manifest_identity_includes_elf_dynamic_relocation_metadata() {
         rel_address_manifest.identity()
     );
     assert_ne!(baseline_manifest.identity(), plt_rel_manifest.identity());
+    assert_ne!(baseline_manifest.identity(), relr_size_manifest.identity());
 }
 
 #[test]

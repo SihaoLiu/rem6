@@ -51,6 +51,9 @@ const DT_FINI_ARRAYSZ: u64 = 28;
 const DT_FLAGS: u64 = 30;
 const DT_PREINIT_ARRAY: u64 = 32;
 const DT_PREINIT_ARRAYSZ: u64 = 33;
+const DT_RELRSZ: u64 = 35;
+const DT_RELR: u64 = 36;
+const DT_RELRENT: u64 = 37;
 const DT_DEPAUDIT: u64 = 0x6fff_fefb;
 const DT_AUDIT: u64 = 0x6fff_fefc;
 const DT_VERSYM: u64 = 0x6fff_fff0;
@@ -2592,6 +2595,62 @@ fn boot_image_resolves_elf64_dynamic_needed_libraries() {
         dynamic.plt_relocation_virtual_address(),
         Some(Address::new(0x8000_02c0)),
     );
+}
+
+#[test]
+fn boot_image_records_elf64_dynamic_relr_relocations() {
+    let relr_offset = 0x280usize;
+    let relr = [0x8000_3000u64.to_le_bytes(), 3u64.to_le_bytes()].concat();
+    let load_file_size = (relr_offset + relr.len()) as u64;
+    let dynamic = [
+        DT_RELR.to_le_bytes(),
+        0x8000_0280u64.to_le_bytes(),
+        DT_RELRSZ.to_le_bytes(),
+        (relr.len() as u64).to_le_bytes(),
+        DT_RELRENT.to_le_bytes(),
+        8u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+        0u64.to_le_bytes(),
+    ]
+    .concat();
+    let elf = elf64_image(
+        0x8000_0200,
+        &[
+            ElfProgramHeaderSpec {
+                kind: 1,
+                offset: 0,
+                physical: 0x8000_0000,
+                file_size: load_file_size,
+                memory_size: load_file_size,
+            },
+            ElfProgramHeaderSpec {
+                kind: 2,
+                offset: 0x180,
+                physical: 0x8000_0180,
+                file_size: dynamic.len() as u64,
+                memory_size: dynamic.len() as u64,
+            },
+        ],
+        &[
+            (0x180, &dynamic),
+            (0x200, &[0x13, 0, 0, 0]),
+            (relr_offset, &relr),
+        ],
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let dynamic = metadata.dynamic_table();
+
+    assert_eq!(
+        dynamic.relr_virtual_address(),
+        Some(Address::new(0x8000_0280))
+    );
+    assert_eq!(dynamic.relr_relocations().byte_size(), 16);
+    assert_eq!(dynamic.relr_relocations().entry_size(), 8);
+    assert_eq!(dynamic.relr_entry_count(), 2);
 }
 
 #[test]

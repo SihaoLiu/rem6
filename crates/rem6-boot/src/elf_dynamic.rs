@@ -35,6 +35,9 @@ const DT_RUNPATH: u64 = 29;
 const DT_FLAGS: u64 = 30;
 const DT_PREINIT_ARRAY: u64 = 32;
 const DT_PREINIT_ARRAYSZ: u64 = 33;
+const DT_RELRSZ: u64 = 35;
+const DT_RELR: u64 = 36;
+const DT_RELRENT: u64 = 37;
 const DT_DEPAUDIT: u64 = 0x6fff_fefb;
 const DT_AUDIT: u64 = 0x6fff_fefc;
 const DT_GNU_HASH: u64 = 0x6fff_fef5;
@@ -97,6 +100,7 @@ pub(crate) struct ElfDynamicTableSummary {
     pub(crate) version_needed_count: Option<u64>,
     pub(crate) rela_relocations: ElfDynamicRelocationSummary,
     pub(crate) rel_relocations: ElfDynamicRelocationSummary,
+    pub(crate) relr_relocations: ElfDynamicRelocationSummary,
     pub(crate) plt_relocations: ElfDynamicRelocationSummary,
     pub(crate) plt_relocation_kind: Option<ElfDynamicPltRelocationKind>,
 }
@@ -245,6 +249,7 @@ pub(crate) fn dynamic_table_counts(
     let mut symbol_table_entry_size = None;
     let mut rela_relocations = ElfDynamicRelocationSummary::default();
     let mut rel_relocations = ElfDynamicRelocationSummary::default();
+    let mut relr_relocations = ElfDynamicRelocationSummary::default();
     let mut plt_relocations = ElfDynamicRelocationSummary::default();
     let mut plt_relocation_kind = None;
     let mut string_table = None;
@@ -317,6 +322,7 @@ pub(crate) fn dynamic_table_counts(
                 version_needed_count,
                 rela_relocations,
                 rel_relocations,
+                relr_relocations,
                 plt_relocations,
                 plt_relocation_kind,
             });
@@ -405,6 +411,12 @@ pub(crate) fn dynamic_table_counts(
             rel_relocations.byte_size = value;
         } else if tag == DT_RELENT {
             rel_relocations.entry_size = value;
+        } else if tag == DT_RELR {
+            relr_relocations.virtual_address = Some(value);
+        } else if tag == DT_RELRSZ {
+            relr_relocations.byte_size = value;
+        } else if tag == DT_RELRENT {
+            relr_relocations.entry_size = value;
         } else if tag == DT_JMPREL {
             plt_relocations.virtual_address = Some(value);
         } else if tag == DT_PLTRELSZ {

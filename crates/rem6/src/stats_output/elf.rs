@@ -490,6 +490,13 @@ fn emit_elf_dynamic_stats(
     )?;
     increment_stat(
         stats,
+        "sim.elf.dynamic.relr.entries",
+        "Count",
+        StatResetPolicy::Constant,
+        dynamic_table.relr_entry_count(),
+    )?;
+    increment_stat(
+        stats,
         "sim.elf.dynamic.plt_relocations.entries",
         "Count",
         StatResetPolicy::Constant,

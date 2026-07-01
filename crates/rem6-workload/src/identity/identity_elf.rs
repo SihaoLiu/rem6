@@ -352,6 +352,7 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 for (label, table) in [
                     ("elf.dynamic.rela", dynamic.rela_relocations()),
                     ("elf.dynamic.rel", dynamic.rel_relocations()),
+                    ("elf.dynamic.relr", dynamic.relr_relocations()),
                     ("elf.dynamic.plt", dynamic.plt_relocations()),
                 ] {
                     hash_str(hash, label);

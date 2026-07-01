@@ -166,6 +166,7 @@ pub(crate) fn summarize_elf64_program_header(
                     version_needed_count: summary.version_needed_count,
                     rela_relocations: relocation_table(summary.rela_relocations),
                     rel_relocations: relocation_table(summary.rel_relocations),
+                    relr_relocations: relocation_table(summary.relr_relocations),
                     plt_relocations: relocation_table(summary.plt_relocations),
                     plt_relocation_kind: plt_relocation_kind(summary.plt_relocation_kind),
                 });
@@ -338,6 +339,7 @@ pub(crate) fn summarize_elf32_program_header(
                     version_needed_count: summary.version_needed_count,
                     rela_relocations: relocation_table(summary.rela_relocations),
                     rel_relocations: relocation_table(summary.rel_relocations),
+                    relr_relocations: relocation_table(summary.relr_relocations),
                     plt_relocations: relocation_table(summary.plt_relocations),
                     plt_relocation_kind: plt_relocation_kind(summary.plt_relocation_kind),
                 });
