@@ -12,6 +12,7 @@ const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
 const SHT_INIT_ARRAY: u32 = 14;
 const SHT_HASH: u32 = 5;
+const SHT_GROUP: u32 = 17;
 const SHT_STRTAB: u32 = 3;
 const SHT_NOBITS: u32 = 8;
 const SHF_WRITE: u64 = 1;
@@ -2230,6 +2231,55 @@ fn workload_manifest_identity_includes_elf_section_hashes() {
         .unwrap();
 
     assert_ne!(baseline.identity(), hash.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_section_groups() {
+    let mut baseline_elf = elf64_image_with_named_sections(243, &[".group"]);
+    set_elf64_section_kind_flags(&mut baseline_elf, 1, 1, 0);
+    set_elf64_section_size(&mut baseline_elf, 1, 12);
+    set_elf64_section_entry_size(&mut baseline_elf, 1, 4);
+    let mut group_elf = elf64_image_with_named_sections(243, &[".group"]);
+    set_elf64_section_kind_flags(&mut group_elf, 1, SHT_GROUP, 0);
+    set_elf64_section_size(&mut group_elf, 1, 12);
+    set_elf64_section_entry_size(&mut group_elf, 1, 4);
+    let baseline_source = BootImage::from_elf64_le(&baseline_elf).unwrap();
+    let group_source = BootImage::from_elf64_le(&group_elf).unwrap();
+
+    assert_eq!(baseline_source.entry(), group_source.entry());
+    assert_eq!(baseline_source.segments(), group_source.segments());
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_header_table(),
+        group_source.elf_metadata().unwrap().section_header_table(),
+    );
+    assert_eq!(
+        baseline_source.elf_metadata().unwrap().section_storage(),
+        group_source.elf_metadata().unwrap().section_storage(),
+    );
+    assert_ne!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_groups()
+            .section_count(),
+        group_source
+            .elf_metadata()
+            .unwrap()
+            .section_groups()
+            .section_count(),
+    );
+
+    let baseline = WorkloadManifest::builder(id("same"), baseline_source)
+        .build()
+        .unwrap();
+    let group = WorkloadManifest::builder(id("same"), group_source)
+        .build()
+        .unwrap();
+
+    assert_ne!(baseline.identity(), group.identity());
 }
 
 #[test]

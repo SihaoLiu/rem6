@@ -15,6 +15,7 @@ const SHT_FINI_ARRAY: u32 = 15;
 const SHT_PREINIT_ARRAY: u32 = 16;
 const SHT_HASH: u32 = 5;
 const SHT_GNU_HASH: u32 = 0x6fff_fff6;
+const SHT_GROUP: u32 = 17;
 const SHT_RELA: u32 = 4;
 const SHT_REL: u32 = 9;
 const SHF_WRITE: u64 = 1;
@@ -951,6 +952,38 @@ pub(crate) fn riscv64_elf_with_section_hashes(
     write_u32(&mut bytes, section_table_offset + 196, 3);
     write_u64(&mut bytes, section_table_offset + 216, shstr_offset as u64);
     write_u64(&mut bytes, section_table_offset + 224, names.len() as u64);
+    bytes
+}
+
+pub(crate) fn riscv64_elf_with_section_group(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
+    let mut bytes = riscv64_elf(entry, physical, payload);
+    let group_offset = bytes.len();
+    bytes.resize(group_offset + 12, 0);
+
+    let names = b"\0.group\0.shstrtab\0";
+    let shstr_offset = bytes.len();
+    bytes.extend_from_slice(names);
+    while bytes.len() % 8 != 0 {
+        bytes.push(0);
+    }
+
+    let section_table_offset = bytes.len();
+    write_u64(&mut bytes, 40, section_table_offset as u64);
+    write_u16(&mut bytes, 58, 64);
+    write_u16(&mut bytes, 60, 3);
+    write_u16(&mut bytes, 62, 2);
+    bytes.resize(section_table_offset + 3 * 64, 0);
+
+    write_u32(&mut bytes, section_table_offset + 64, 1);
+    write_u32(&mut bytes, section_table_offset + 68, SHT_GROUP);
+    write_u64(&mut bytes, section_table_offset + 88, group_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 96, 12);
+    write_u64(&mut bytes, section_table_offset + 120, 4);
+
+    write_u32(&mut bytes, section_table_offset + 128, 8);
+    write_u32(&mut bytes, section_table_offset + 132, 3);
+    write_u64(&mut bytes, section_table_offset + 152, shstr_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 160, names.len() as u64);
     bytes
 }
 

@@ -421,6 +421,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
             section_summary.section_relocations(),
             section_summary.section_arrays(),
             section_summary.section_hashes(),
+            section_summary.section_groups(),
             section_summary.section_address_range(),
             section_summary.section_alignment(),
         )
@@ -638,6 +639,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
             section_summary.section_relocations(),
             section_summary.section_arrays(),
             section_summary.section_hashes(),
+            section_summary.section_groups(),
             section_summary.section_address_range(),
             section_summary.section_alignment(),
         )

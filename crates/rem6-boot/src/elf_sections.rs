@@ -5,7 +5,7 @@ use crate::elf_counts::section_table_layout;
 use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::metadata_tables::{
     BootElfSectionAddressRange, BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags,
-    BootElfSectionHashes, BootElfSectionHeaderTable, BootElfSectionNameTable,
+    BootElfSectionGroups, BootElfSectionHashes, BootElfSectionHeaderTable, BootElfSectionNameTable,
     BootElfSectionRelocations, BootElfSectionStorage, BootElfSymbolSummary,
 };
 
@@ -14,6 +14,7 @@ const SHT_FINI_ARRAY: u32 = 15;
 const SHT_PREINIT_ARRAY: u32 = 16;
 const SHT_HASH: u32 = 5;
 const SHT_GNU_HASH: u32 = 0x6fff_fff6;
+const SHT_GROUP: u32 = 17;
 const SHT_RELA: u32 = 4;
 const SHT_NOTE: u32 = 7;
 const SHT_NOBITS: u32 = 8;
@@ -72,6 +73,9 @@ pub(crate) struct ElfSectionSummary {
     sysv_hash_bytes: u64,
     gnu_hash_section_count: u64,
     gnu_hash_bytes: u64,
+    group_section_count: u64,
+    group_section_bytes: u64,
+    group_entry_count: u64,
     section_address_start: Option<u64>,
     section_address_end: Option<u64>,
     max_section_alignment: u64,
@@ -140,6 +144,14 @@ impl ElfSectionSummary {
             self.sysv_hash_bytes,
             self.gnu_hash_section_count,
             self.gnu_hash_bytes,
+        )
+    }
+
+    pub(crate) const fn section_groups(self) -> BootElfSectionGroups {
+        BootElfSectionGroups::new(
+            self.group_section_count,
+            self.group_section_bytes,
+            self.group_entry_count,
         )
     }
 
@@ -469,6 +481,7 @@ fn summarize_common_section(
     }
     summarize_array_section(summary, section.kind, section.size, section.entry_size);
     summarize_hash_section(summary, section.kind, section.size);
+    summarize_group_section(summary, section.kind, section.size, section.entry_size);
     if section.kind == SHT_NOTE {
         summary.note_section_count += 1;
         summary.note_section_file_size =
@@ -540,6 +553,16 @@ fn summarize_hash_section(summary: &mut ElfSectionSummary, kind: u32, size: u64)
             summary.gnu_hash_bytes = summary.gnu_hash_bytes.saturating_add(size);
         }
         _ => {}
+    }
+}
+
+fn summarize_group_section(summary: &mut ElfSectionSummary, kind: u32, size: u64, entry_size: u64) {
+    if kind == SHT_GROUP {
+        summary.group_section_count += 1;
+        summary.group_section_bytes = summary.group_section_bytes.saturating_add(size);
+        summary.group_entry_count = summary
+            .group_entry_count
+            .saturating_add(section_entry_count(size, entry_size));
     }
 }
 

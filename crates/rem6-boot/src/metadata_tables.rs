@@ -414,6 +414,35 @@ impl BootElfSectionHashes {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BootElfSectionGroups {
+    section_count: u64,
+    byte_size: u64,
+    entry_count: u64,
+}
+
+impl BootElfSectionGroups {
+    pub const fn new(section_count: u64, byte_size: u64, entry_count: u64) -> Self {
+        Self {
+            section_count,
+            byte_size,
+            entry_count,
+        }
+    }
+
+    pub const fn section_count(self) -> u64 {
+        self.section_count
+    }
+
+    pub const fn byte_size(self) -> u64 {
+        self.byte_size
+    }
+
+    pub const fn entry_count(self) -> u64 {
+        self.entry_count
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BootElfSectionArrays {
     init_array_section_count: u64,
     init_array_bytes: u64,

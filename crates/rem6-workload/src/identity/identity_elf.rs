@@ -169,6 +169,16 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 hash_u64(hash, section_hashes.gnu_section_count());
                 hash_u64(hash, section_hashes.gnu_bytes());
             }
+            let section_groups = metadata.section_groups();
+            if section_groups.section_count() != 0
+                || section_groups.byte_size() != 0
+                || section_groups.entry_count() != 0
+            {
+                hash_str(hash, "elf.section_groups");
+                hash_u64(hash, section_groups.section_count());
+                hash_u64(hash, section_groups.byte_size());
+                hash_u64(hash, section_groups.entry_count());
+            }
             let dynamic = metadata.dynamic_table();
             if dynamic.segment_count() != 0 {
                 let address = dynamic.virtual_address().map_or(u64::MAX, |a| a.get());
