@@ -111,6 +111,9 @@ pub struct BootElfSymbolSummary {
     local_count: u64,
     global_count: u64,
     weak_count: u64,
+    undefined_section_count: u64,
+    absolute_section_count: u64,
+    common_section_count: u64,
     default_visibility_count: u64,
     internal_visibility_count: u64,
     hidden_visibility_count: u64,
@@ -127,6 +130,9 @@ impl BootElfSymbolSummary {
         local_count: u64,
         global_count: u64,
         weak_count: u64,
+        undefined_section_count: u64,
+        absolute_section_count: u64,
+        common_section_count: u64,
         default_visibility_count: u64,
         internal_visibility_count: u64,
         hidden_visibility_count: u64,
@@ -141,6 +147,9 @@ impl BootElfSymbolSummary {
             local_count,
             global_count,
             weak_count,
+            undefined_section_count,
+            absolute_section_count,
+            common_section_count,
             default_visibility_count,
             internal_visibility_count,
             hidden_visibility_count,
@@ -178,6 +187,18 @@ impl BootElfSymbolSummary {
 
     pub const fn weak_count(self) -> u64 {
         self.weak_count
+    }
+
+    pub const fn undefined_section_count(self) -> u64 {
+        self.undefined_section_count
+    }
+
+    pub const fn absolute_section_count(self) -> u64 {
+        self.absolute_section_count
+    }
+
+    pub const fn common_section_count(self) -> u64 {
+        self.common_section_count
     }
 
     pub const fn default_visibility_count(self) -> u64 {

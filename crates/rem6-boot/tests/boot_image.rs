@@ -30,6 +30,9 @@ const SHT_GNU_HASH: u32 = 0x6fff_fff6;
 const SHT_GROUP: u32 = 17;
 const SHT_RELR: u32 = 19;
 const SHT_NOBITS: u32 = 8;
+const SHN_UNDEF: u16 = 0;
+const SHN_ABS: u16 = 0xfff1;
+const SHN_COMMON: u16 = 0xfff2;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
 const SHF_EXECINSTR: u64 = 4;
@@ -345,6 +348,63 @@ fn add_elf64_symbol_tls_table(bytes: &mut Vec<u8>) {
 
 fn add_elf64_symbol_ifunc_table(bytes: &mut Vec<u8>) {
     add_elf64_symbol_table_section_with_object_type(bytes, ".symtab", 2, ".strtab", STT_GNU_IFUNC);
+}
+
+fn add_elf64_symbol_section_index_table(bytes: &mut Vec<u8>) {
+    let symbol_names = b"\0entry_func\0undef_obj\0abs_obj\0common_obj\0";
+    let symbol_names_offset = bytes.len() as u64;
+    bytes.extend_from_slice(symbol_names);
+
+    let symbol_table_offset = bytes.len() as u64;
+    bytes.resize(bytes.len() + 5 * 24, 0);
+    let function_base = symbol_table_offset as usize + 24;
+    write_u32(bytes, function_base, 1);
+    bytes[function_base + 4] = 0x12;
+    write_u16(bytes, function_base + 6, 1);
+    write_u64(bytes, function_base + 8, 0x8004);
+    write_u64(bytes, function_base + 16, 4);
+    for (index, (name, section_index)) in [(12, SHN_UNDEF), (22, SHN_ABS), (30, SHN_COMMON)]
+        .into_iter()
+        .enumerate()
+    {
+        let base = symbol_table_offset as usize + (index + 2) * 24;
+        write_u32(bytes, base, name);
+        bytes[base + 4] = 0x11;
+        write_u16(bytes, base + 6, section_index);
+        write_u64(bytes, base + 8, 0x9000 + index as u64 * 0x100);
+        write_u64(bytes, base + 16, 8);
+    }
+
+    let section_names = b"\0.symtab\0.strtab\0.shstrtab\0";
+    let section_names_offset = bytes.len() as u64;
+    bytes.extend_from_slice(section_names);
+
+    let section_table_offset = bytes.len() as u64;
+    write_u64(bytes, 40, section_table_offset);
+    write_u16(bytes, 58, 64);
+    write_u16(bytes, 60, 4);
+    write_u16(bytes, 62, 3);
+    bytes.resize(bytes.len() + 4 * 64, 0);
+
+    let symtab_base = section_table_offset as usize + 64;
+    write_u32(bytes, symtab_base, 1);
+    write_u32(bytes, symtab_base + 4, 2);
+    write_u64(bytes, symtab_base + 24, symbol_table_offset);
+    write_u64(bytes, symtab_base + 32, 5 * 24);
+    write_u32(bytes, symtab_base + 40, 2);
+    write_u64(bytes, symtab_base + 56, 24);
+
+    let strtab_base = section_table_offset as usize + 128;
+    write_u32(bytes, strtab_base, 9);
+    write_u32(bytes, strtab_base + 4, 3);
+    write_u64(bytes, strtab_base + 24, symbol_names_offset);
+    write_u64(bytes, strtab_base + 32, symbol_names.len() as u64);
+
+    let shstrtab_base = section_table_offset as usize + 192;
+    write_u32(bytes, shstrtab_base, 17);
+    write_u32(bytes, shstrtab_base + 4, 3);
+    write_u64(bytes, shstrtab_base + 24, section_names_offset);
+    write_u64(bytes, shstrtab_base + 32, section_names.len() as u64);
 }
 
 fn add_elf64_dynamic_symbol_table(bytes: &mut Vec<u8>) {
@@ -3850,6 +3910,35 @@ fn boot_image_records_ifunc_symbol_summary() {
     assert_eq!(symbols.ifunc_count(), 1);
     assert_eq!(symbols.object_count(), 0);
     assert_eq!(symbols.tls_count(), 0);
+}
+
+#[test]
+fn boot_image_records_symbol_section_index_summary() {
+    let mut elf = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_symbol_section_index_table(&mut elf);
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let symbols = metadata.symbol_summary();
+
+    assert_eq!(symbols.total_count(), 4);
+    assert_eq!(symbols.function_count(), 1);
+    assert_eq!(symbols.object_count(), 3);
+    assert_eq!(symbols.undefined_section_count(), 1);
+    assert_eq!(symbols.absolute_section_count(), 1);
+    assert_eq!(symbols.common_section_count(), 1);
 }
 
 #[test]

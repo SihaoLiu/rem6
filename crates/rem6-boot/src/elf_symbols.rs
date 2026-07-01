@@ -1,8 +1,11 @@
-use crate::elf::{checked_file_range, read_u32_at_u64, BootElfEndian};
+use crate::elf::{checked_file_range, read_u16_at_u64, read_u32_at_u64, BootElfEndian};
 use crate::metadata_tables::BootElfSymbolSummary;
 
 const SHT_SYMTAB: u32 = 2;
 const SHT_DYNSYM: u32 = 11;
+const SHN_UNDEF: u16 = 0;
+const SHN_ABS: u16 = 0xfff1;
+const SHN_COMMON: u16 = 0xfff2;
 const STB_LOCAL: u8 = 0;
 const STB_GLOBAL: u8 = 1;
 const STB_WEAK: u8 = 2;
@@ -55,7 +58,7 @@ pub(crate) fn summarize_elf64_symbol_table(
     strings: ElfSymbolStringTable,
     endian: BootElfEndian,
 ) -> BootElfSymbolSummary {
-    summarize_symbol_table(bytes, section, strings, endian, 4, 5)
+    summarize_symbol_table(bytes, section, strings, endian, 4, 5, 6)
 }
 
 pub(crate) fn summarize_elf32_symbol_table(
@@ -64,7 +67,7 @@ pub(crate) fn summarize_elf32_symbol_table(
     strings: ElfSymbolStringTable,
     endian: BootElfEndian,
 ) -> BootElfSymbolSummary {
-    summarize_symbol_table(bytes, section, strings, endian, 12, 13)
+    summarize_symbol_table(bytes, section, strings, endian, 12, 13, 14)
 }
 
 fn summarize_symbol_table(
@@ -74,6 +77,7 @@ fn summarize_symbol_table(
     endian: BootElfEndian,
     info_offset: u64,
     visibility_offset: u64,
+    section_index_offset: u64,
 ) -> BootElfSymbolSummary {
     let Ok(symbols) = checked_file_range(bytes, section.offset, section.size) else {
         return BootElfSymbolSummary::default();
@@ -93,7 +97,11 @@ fn summarize_symbol_table(
         }
         let info = symbols[(offset + info_offset) as usize];
         let visibility = symbols[(offset + visibility_offset) as usize] & 0x3;
-        summary = summarize_symbol_type(summary, info >> 4, info & 0xf, visibility);
+        let Ok(section_index) = read_u16_at_u64(symbols, offset + section_index_offset, endian)
+        else {
+            continue;
+        };
+        summary = summarize_symbol_type(summary, info >> 4, info & 0xf, visibility, section_index);
     }
     summary
 }
@@ -103,6 +111,7 @@ fn summarize_symbol_type(
     binding: u8,
     kind: u8,
     visibility: u8,
+    section_index: u16,
 ) -> BootElfSymbolSummary {
     if !matches!(binding, STB_LOCAL | STB_GLOBAL | STB_WEAK) {
         return summary;
@@ -115,6 +124,9 @@ fn summarize_symbol_type(
     let mut locals = summary.local_count();
     let mut globals = summary.global_count();
     let mut weaks = summary.weak_count();
+    let mut undefined_sections = summary.undefined_section_count();
+    let mut absolute_sections = summary.absolute_section_count();
+    let mut common_sections = summary.common_section_count();
     let mut default_visibility = summary.default_visibility_count();
     let mut internal_visibility = summary.internal_visibility_count();
     let mut hidden_visibility = summary.hidden_visibility_count();
@@ -141,6 +153,12 @@ fn summarize_symbol_type(
         STV_PROTECTED => protected_visibility += 1,
         _ => {}
     }
+    match section_index {
+        SHN_UNDEF => undefined_sections += 1,
+        SHN_ABS => absolute_sections += 1,
+        SHN_COMMON => common_sections += 1,
+        _ => {}
+    }
     BootElfSymbolSummary::new(
         total,
         functions,
@@ -150,6 +168,9 @@ fn summarize_symbol_type(
         locals,
         globals,
         weaks,
+        undefined_sections,
+        absolute_sections,
+        common_sections,
         default_visibility,
         internal_visibility,
         hidden_visibility,

@@ -41,6 +41,9 @@ pub(crate) struct ElfSectionSummary {
     local_symbol_count: u64,
     global_symbol_count: u64,
     weak_symbol_count: u64,
+    undefined_symbol_section_count: u64,
+    absolute_symbol_section_count: u64,
+    common_symbol_section_count: u64,
     default_visibility_symbol_count: u64,
     internal_visibility_symbol_count: u64,
     hidden_visibility_symbol_count: u64,
@@ -108,6 +111,9 @@ impl ElfSectionSummary {
             self.local_symbol_count,
             self.global_symbol_count,
             self.weak_symbol_count,
+            self.undefined_symbol_section_count,
+            self.absolute_symbol_section_count,
+            self.common_symbol_section_count,
             self.default_visibility_symbol_count,
             self.internal_visibility_symbol_count,
             self.hidden_visibility_symbol_count,
@@ -756,6 +762,9 @@ fn add_symbol_summary(summary: &mut ElfSectionSummary, symbols: BootElfSymbolSum
     summary.local_symbol_count += symbols.local_count();
     summary.global_symbol_count += symbols.global_count();
     summary.weak_symbol_count += symbols.weak_count();
+    summary.undefined_symbol_section_count += symbols.undefined_section_count();
+    summary.absolute_symbol_section_count += symbols.absolute_section_count();
+    summary.common_symbol_section_count += symbols.common_section_count();
     summary.default_visibility_symbol_count += symbols.default_visibility_count();
     summary.internal_visibility_symbol_count += symbols.internal_visibility_count();
     summary.hidden_visibility_symbol_count += symbols.hidden_visibility_count();

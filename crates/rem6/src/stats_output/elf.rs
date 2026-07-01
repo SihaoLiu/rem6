@@ -107,6 +107,7 @@ pub(super) fn emit_elf_run_stats(
         metadata.gnu_property_virtual_address(),
         metadata.gnu_property_memory_size(),
     )?;
+    let symbols = metadata.symbol_summary();
     increment_stat(
         stats,
         "sim.elf.symbols",
@@ -140,7 +141,7 @@ pub(super) fn emit_elf_run_stats(
         "sim.elf.tls_symbols",
         "Count",
         StatResetPolicy::Constant,
-        metadata.symbol_summary().tls_count(),
+        symbols.tls_count(),
     )?;
     increment_stat(
         stats,
@@ -163,7 +164,27 @@ pub(super) fn emit_elf_run_stats(
         StatResetPolicy::Constant,
         metadata.weak_symbol_count(),
     )?;
-    let symbols = metadata.symbol_summary();
+    increment_stat(
+        stats,
+        "sim.elf.symbol_section.undefined",
+        "Count",
+        StatResetPolicy::Constant,
+        symbols.undefined_section_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.symbol_section.absolute",
+        "Count",
+        StatResetPolicy::Constant,
+        symbols.absolute_section_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.symbol_section.common",
+        "Count",
+        StatResetPolicy::Constant,
+        symbols.common_section_count(),
+    )?;
     increment_stat(
         stats,
         "sim.elf.symbol_visibility.default",

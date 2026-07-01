@@ -790,6 +790,22 @@ fn read_u32(bytes: &[u8], offset: usize, endian: BootElfEndian) -> Result<u32, B
     Ok(endian.read_u32([data[0], data[1], data[2], data[3]]))
 }
 
+pub(crate) fn read_u16_at_u64(
+    bytes: &[u8],
+    offset: u64,
+    endian: BootElfEndian,
+) -> Result<u16, BootError> {
+    let offset = usize::try_from(offset).map_err(|_| {
+        invalid_elf(BootElfError::TruncatedField {
+            offset,
+            size: 2,
+            image_size: bytes.len() as u64,
+        })
+    })?;
+    let data = read_exact(bytes, offset, 2)?;
+    Ok(endian.read_u16([data[0], data[1]]))
+}
+
 pub(crate) fn read_u32_at_u64(
     bytes: &[u8],
     offset: u64,
