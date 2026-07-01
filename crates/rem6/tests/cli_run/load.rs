@@ -1807,6 +1807,80 @@ fn rem6_run_loads_riscv32_elf_with_extended_program_header_count_metadata() {
 }
 
 #[test]
+fn rem6_run_reports_elf_relocation_section_metadata() {
+    let elf = riscv64_elf_with_relocation_sections(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("riscv-run-relocation-sections", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"loaded\""));
+    assert!(stdout.contains(
+        "\"section_relocations\":{\"sections\":2,\"bytes\":96,\"rela_sections\":1,\"rela_entries\":2,\"rel_sections\":1,\"rel_entries\":3}"
+    ));
+    assert_stat(
+        &stdout,
+        "sim.elf.section_relocations.sections",
+        "Count",
+        2,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_relocations.bytes",
+        "Byte",
+        96,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_relocations.rela.sections",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_relocations.rela.entries",
+        "Count",
+        2,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_relocations.rel.sections",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_relocations.rel.entries",
+        "Count",
+        3,
+        "constant",
+    );
+}
+
+#[test]
 fn rem6_run_derives_elf_os_from_extended_section_abi_note() {
     let elf = riscv64_elf_extended_section_note_os(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
     let section_table_offset = (elf.len() - 3 * 64) as u64;

@@ -134,6 +134,7 @@ pub(super) fn emit_elf_run_stats(
     emit_elf_section_name_stats(stats, metadata)?;
     emit_elf_section_flags_stats(stats, metadata)?;
     emit_elf_section_storage_stats(stats, metadata)?;
+    emit_elf_section_relocation_stats(stats, metadata)?;
     emit_elf_section_address_stats(stats, metadata)?;
     emit_elf_section_alignment_stats(stats, metadata)?;
     emit_elf_interpreter_stats(stats, interpreter)
@@ -619,6 +620,48 @@ fn emit_elf_section_storage_stats(
         ),
     ] {
         increment_stat(stats, path, "Byte", StatResetPolicy::Constant, value)?;
+    }
+    Ok(())
+}
+
+fn emit_elf_section_relocation_stats(
+    stats: &mut StatsRegistry,
+    metadata: &BootElfMetadata,
+) -> Result<(), Rem6CliError> {
+    let relocations = metadata.section_relocations();
+    for (name, unit, value) in [
+        (
+            "sim.elf.section_relocations.sections",
+            "Count",
+            relocations.section_count(),
+        ),
+        (
+            "sim.elf.section_relocations.bytes",
+            "Byte",
+            relocations.byte_size(),
+        ),
+        (
+            "sim.elf.section_relocations.rela.sections",
+            "Count",
+            relocations.rela_section_count(),
+        ),
+        (
+            "sim.elf.section_relocations.rela.entries",
+            "Count",
+            relocations.rela_entry_count(),
+        ),
+        (
+            "sim.elf.section_relocations.rel.sections",
+            "Count",
+            relocations.rel_section_count(),
+        ),
+        (
+            "sim.elf.section_relocations.rel.entries",
+            "Count",
+            relocations.rel_entry_count(),
+        ),
+    ] {
+        increment_stat(stats, name, unit, StatResetPolicy::Constant, value)?;
     }
     Ok(())
 }

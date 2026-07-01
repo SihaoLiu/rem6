@@ -421,6 +421,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         .with_section_name_table(section_summary.section_name_table())
         .with_section_flags(section_summary.section_flags())
         .with_section_storage(section_summary.section_storage())
+        .with_section_relocations(section_summary.section_relocations())
         .with_section_address_range(section_summary.section_address_range())
         .with_section_alignment(section_summary.section_alignment())
         .with_program_header_table(
@@ -637,6 +638,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         .with_section_name_table(section_summary.section_name_table())
         .with_section_flags(section_summary.section_flags())
         .with_section_storage(section_summary.section_storage())
+        .with_section_relocations(section_summary.section_relocations())
         .with_section_address_range(section_summary.section_address_range())
         .with_section_alignment(section_summary.section_alignment())
         .with_program_header_table(

@@ -5,11 +5,14 @@ use crate::elf_counts::section_table_layout;
 use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::metadata_tables::{
     BootElfSectionAddressRange, BootElfSectionAlignment, BootElfSectionFlags,
-    BootElfSectionHeaderTable, BootElfSectionNameTable, BootElfSectionStorage,
+    BootElfSectionHeaderTable, BootElfSectionNameTable, BootElfSectionRelocations,
+    BootElfSectionStorage,
 };
 
+const SHT_RELA: u32 = 4;
 const SHT_NOTE: u32 = 7;
 const SHT_NOBITS: u32 = 8;
+const SHT_REL: u32 = 9;
 const SHT_SYMTAB: u32 = 2;
 const SHT_DYNSYM: u32 = 11;
 const SHF_WRITE: u64 = 1;
@@ -33,12 +36,18 @@ pub(crate) struct ElfSectionSummary {
     executable_section_count: u64,
     nobits_section_count: u64,
     note_section_count: u64,
+    relocation_section_count: u64,
     file_backed_section_bytes: u64,
     allocated_section_bytes: u64,
     writable_section_bytes: u64,
     executable_section_bytes: u64,
     nobits_section_bytes: u64,
     note_section_file_size: u64,
+    relocation_section_file_size: u64,
+    rela_section_count: u64,
+    rela_entry_count: u64,
+    rel_section_count: u64,
+    rel_entry_count: u64,
     section_address_start: Option<u64>,
     section_address_end: Option<u64>,
     max_section_alignment: u64,
@@ -75,6 +84,17 @@ impl ElfSectionSummary {
 
     pub(crate) const fn note_section_file_size(self) -> u64 {
         self.note_section_file_size
+    }
+
+    pub(crate) const fn section_relocations(self) -> BootElfSectionRelocations {
+        BootElfSectionRelocations::new(
+            self.relocation_section_count,
+            self.relocation_section_file_size,
+            self.rela_section_count,
+            self.rela_entry_count,
+            self.rel_section_count,
+            self.rel_entry_count,
+        )
     }
 
     pub(crate) const fn section_header_table(self) -> BootElfSectionHeaderTable {
@@ -400,12 +420,59 @@ fn summarize_common_section(
         summary.note_section_file_size =
             summary.note_section_file_size.saturating_add(section.size);
     }
+    match section.kind {
+        SHT_RELA => summarize_relocation_section(
+            summary,
+            section.size,
+            section.entry_size,
+            RelocationSectionKind::Rela,
+        ),
+        SHT_REL => summarize_relocation_section(
+            summary,
+            section.size,
+            section.entry_size,
+            RelocationSectionKind::Rel,
+        ),
+        _ => {}
+    }
 
     if detect_operating_system && summary.operating_system.is_none() {
         summary.operating_system =
             detect_section_operating_system(bytes, string_table, section, endian)?;
     }
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum RelocationSectionKind {
+    Rela,
+    Rel,
+}
+
+fn summarize_relocation_section(
+    summary: &mut ElfSectionSummary,
+    size: u64,
+    entry_size: u64,
+    kind: RelocationSectionKind,
+) {
+    summary.relocation_section_count += 1;
+    summary.relocation_section_file_size =
+        summary.relocation_section_file_size.saturating_add(size);
+    let entry_count = if entry_size == 0 {
+        0
+    } else {
+        size / entry_size
+    };
+    match kind {
+        RelocationSectionKind::Rela => {
+            summary.rela_section_count += 1;
+            summary.rela_entry_count = summary.rela_entry_count.saturating_add(entry_count);
+        }
+        RelocationSectionKind::Rel => {
+            summary.rel_section_count += 1;
+            summary.rel_entry_count = summary.rel_entry_count.saturating_add(entry_count);
+        }
+    }
 }
 
 fn validate_section_table_range(

@@ -4,7 +4,7 @@ use crate::elf::{BootElfArchitecture, BootElfClass, BootElfEndian, BootElfOperat
 use crate::metadata_tables::{
     BootElfLoadSegments, BootElfProgramHeaderTable, BootElfSectionAddressRange,
     BootElfSectionAlignment, BootElfSectionFlags, BootElfSectionHeaderTable,
-    BootElfSectionNameTable, BootElfSectionStorage,
+    BootElfSectionNameTable, BootElfSectionRelocations, BootElfSectionStorage,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -582,6 +582,7 @@ pub struct BootElfMetadata {
     section_name_table: BootElfSectionNameTable,
     section_flags: BootElfSectionFlags,
     section_storage: BootElfSectionStorage,
+    section_relocations: BootElfSectionRelocations,
     section_address_range: BootElfSectionAddressRange,
     section_alignment: BootElfSectionAlignment,
 }
@@ -626,6 +627,7 @@ impl BootElfMetadata {
             section_name_table: BootElfSectionNameTable::new(0, 0),
             section_flags: BootElfSectionFlags::new(0, 0, 0, 0),
             section_storage: BootElfSectionStorage::new(0, 0, 0, 0, 0),
+            section_relocations: BootElfSectionRelocations::new(0, 0, 0, 0, 0, 0),
             section_address_range: BootElfSectionAddressRange::new(None, None),
             section_alignment: BootElfSectionAlignment::new(0, 0, 0),
         }
@@ -664,6 +666,14 @@ impl BootElfMetadata {
         section_storage: BootElfSectionStorage,
     ) -> Self {
         self.section_storage = section_storage;
+        self
+    }
+
+    pub(crate) const fn with_section_relocations(
+        mut self,
+        section_relocations: BootElfSectionRelocations,
+    ) -> Self {
+        self.section_relocations = section_relocations;
         self
     }
 
@@ -866,6 +876,10 @@ impl BootElfMetadata {
 
     pub const fn section_storage(&self) -> BootElfSectionStorage {
         self.section_storage
+    }
+
+    pub const fn section_relocations(&self) -> BootElfSectionRelocations {
+        self.section_relocations
     }
 
     pub const fn section_address_range(&self) -> BootElfSectionAddressRange {

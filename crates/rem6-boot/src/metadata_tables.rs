@@ -252,6 +252,60 @@ impl BootElfSectionStorage {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BootElfSectionRelocations {
+    section_count: u64,
+    byte_size: u64,
+    rela_section_count: u64,
+    rela_entry_count: u64,
+    rel_section_count: u64,
+    rel_entry_count: u64,
+}
+
+impl BootElfSectionRelocations {
+    pub const fn new(
+        section_count: u64,
+        byte_size: u64,
+        rela_section_count: u64,
+        rela_entry_count: u64,
+        rel_section_count: u64,
+        rel_entry_count: u64,
+    ) -> Self {
+        Self {
+            section_count,
+            byte_size,
+            rela_section_count,
+            rela_entry_count,
+            rel_section_count,
+            rel_entry_count,
+        }
+    }
+
+    pub const fn section_count(self) -> u64 {
+        self.section_count
+    }
+
+    pub const fn byte_size(self) -> u64 {
+        self.byte_size
+    }
+
+    pub const fn rela_section_count(self) -> u64 {
+        self.rela_section_count
+    }
+
+    pub const fn rela_entry_count(self) -> u64 {
+        self.rela_entry_count
+    }
+
+    pub const fn rel_section_count(self) -> u64 {
+        self.rel_section_count
+    }
+
+    pub const fn rel_entry_count(self) -> u64 {
+        self.rel_entry_count
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BootElfSectionAddressRange {
     start_address: Option<Address>,
     end_address: Option<Address>,

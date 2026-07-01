@@ -10,6 +10,8 @@ const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
+const SHT_RELA: u32 = 4;
+const SHT_REL: u32 = 9;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
 const SHF_EXECINSTR: u64 = 4;
@@ -725,6 +727,50 @@ pub(crate) fn riscv64_elf_with_section_header_table(
     write_u64(&mut bytes, section_table_offset + 176, 8);
 
     write_u32(&mut bytes, section_table_offset + 192, 13);
+    write_u32(&mut bytes, section_table_offset + 196, 3);
+    write_u64(&mut bytes, section_table_offset + 216, shstr_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 224, names.len() as u64);
+    bytes
+}
+
+pub(crate) fn riscv64_elf_with_relocation_sections(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut bytes = riscv64_elf(entry, physical, payload);
+    let rela_offset = bytes.len();
+    bytes.resize(rela_offset + 2 * 24, 0);
+    let rel_offset = bytes.len();
+    bytes.resize(rel_offset + 3 * 16, 0);
+
+    let names = b"\0.rela.text\0.rel.meta\0.shstrtab\0";
+    let shstr_offset = bytes.len();
+    bytes.extend_from_slice(names);
+    while bytes.len() % 8 != 0 {
+        bytes.push(0);
+    }
+
+    let section_table_offset = bytes.len();
+    write_u64(&mut bytes, 40, section_table_offset as u64);
+    write_u16(&mut bytes, 58, 64);
+    write_u16(&mut bytes, 60, 4);
+    write_u16(&mut bytes, 62, 3);
+    bytes.resize(section_table_offset + 4 * 64, 0);
+
+    write_u32(&mut bytes, section_table_offset + 64, 1);
+    write_u32(&mut bytes, section_table_offset + 68, SHT_RELA);
+    write_u64(&mut bytes, section_table_offset + 88, rela_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 96, 48);
+    write_u64(&mut bytes, section_table_offset + 120, 24);
+
+    write_u32(&mut bytes, section_table_offset + 128, 12);
+    write_u32(&mut bytes, section_table_offset + 132, SHT_REL);
+    write_u64(&mut bytes, section_table_offset + 152, rel_offset as u64);
+    write_u64(&mut bytes, section_table_offset + 160, 48);
+    write_u64(&mut bytes, section_table_offset + 184, 16);
+
+    write_u32(&mut bytes, section_table_offset + 192, 22);
     write_u32(&mut bytes, section_table_offset + 196, 3);
     write_u64(&mut bytes, section_table_offset + 216, shstr_offset as u64);
     write_u64(&mut bytes, section_table_offset + 224, names.len() as u64);
