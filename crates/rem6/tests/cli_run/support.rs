@@ -22,6 +22,8 @@ const SHT_RELR: u32 = 19;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
 const SHF_EXECINSTR: u64 = 4;
+const STT_TLS: u8 = 6;
+const STT_GNU_IFUNC: u8 = 10;
 const DT_PLTGOT: u64 = 3;
 const DT_SYMTAB: u64 = 6;
 const DT_SYMENT: u64 = 11;
@@ -332,7 +334,19 @@ pub(crate) fn riscv64_elf_with_symbols(entry: u64, physical: u64, payload: &[u8]
 
 pub(crate) fn riscv64_elf_with_tls_symbol(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
     riscv64_elf_with_symbol_section_and_object_type(
-        entry, physical, payload, ".symtab", 2, ".strtab", 6,
+        entry, physical, payload, ".symtab", 2, ".strtab", STT_TLS,
+    )
+}
+
+pub(crate) fn riscv64_elf_with_ifunc_symbol(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
+    riscv64_elf_with_symbol_section_and_object_type(
+        entry,
+        physical,
+        payload,
+        ".symtab",
+        2,
+        ".strtab",
+        STT_GNU_IFUNC,
     )
 }
 

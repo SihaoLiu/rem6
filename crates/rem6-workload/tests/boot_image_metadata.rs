@@ -18,6 +18,8 @@ const SHT_NOBITS: u32 = 8;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
 const SHF_EXECINSTR: u64 = 4;
+const STT_TLS: u8 = 6;
+const STT_GNU_IFUNC: u8 = 10;
 const DT_PLTGOT: u64 = 3;
 const DT_STRTAB: u64 = 5;
 const DT_SYMTAB: u64 = 6;
@@ -374,7 +376,11 @@ fn elf64_image_with_symbols(machine: u16) -> Vec<u8> {
 }
 
 fn elf64_image_with_tls_symbol(machine: u16) -> Vec<u8> {
-    elf64_image_with_symbol_section_and_object_type(machine, ".symtab", 2, ".strtab", 6)
+    elf64_image_with_symbol_section_and_object_type(machine, ".symtab", 2, ".strtab", STT_TLS)
+}
+
+fn elf64_image_with_ifunc_symbol(machine: u16) -> Vec<u8> {
+    elf64_image_with_symbol_section_and_object_type(machine, ".symtab", 2, ".strtab", STT_GNU_IFUNC)
 }
 
 fn elf64_image_with_extra_symbol_type(machine: u16, extra_type: u8) -> Vec<u8> {
@@ -1298,6 +1304,24 @@ fn workload_boot_image_preserves_elf_tls_symbol_summary_round_trip() {
 }
 
 #[test]
+fn workload_boot_image_preserves_elf_ifunc_symbol_summary_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_ifunc_symbol(243)).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+
+    assert_eq!(round_trip_metadata.symbol_count(), 2);
+    assert_eq!(round_trip_metadata.function_symbol_count(), 1);
+    assert_eq!(round_trip_metadata.symbol_summary().ifunc_count(), 1);
+    assert_eq!(round_trip_metadata.object_symbol_count(), 0);
+    assert_eq!(round_trip_metadata.symbol_summary().tls_count(), 0);
+}
+
+#[test]
 fn workload_boot_image_preserves_elf_section_header_table_round_trip() {
     let elf = elf64_image_with_named_sections(243, &[".meta", ".debug"]);
     let image = BootImage::from_elf64_le(&elf).unwrap();
@@ -1954,7 +1978,9 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
     let extra_symbols =
         BootImage::from_elf64_le(&elf64_image_with_extra_symbol_type(243, 0)).unwrap();
     let tls_symbols =
-        BootImage::from_elf64_le(&elf64_image_with_extra_symbol_type(243, 6)).unwrap();
+        BootImage::from_elf64_le(&elf64_image_with_extra_symbol_type(243, STT_TLS)).unwrap();
+    let ifunc_symbols =
+        BootImage::from_elf64_le(&elf64_image_with_extra_symbol_type(243, STT_GNU_IFUNC)).unwrap();
     let dynamic_symbols = BootImage::from_elf64_le(&elf64_image_with_dynamic_symbols(243)).unwrap();
     let visible_symbols =
         BootImage::from_elf64_le(&elf64_image_with_symbol_visibility(243)).unwrap();
@@ -1962,6 +1988,7 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
     assert_eq!(plain.entry(), symbols.entry());
     assert_eq!(plain.segments(), symbols.segments());
     assert_eq!(extra_symbols.segments(), tls_symbols.segments());
+    assert_eq!(extra_symbols.segments(), ifunc_symbols.segments());
     assert_eq!(plain.segments(), dynamic_symbols.segments());
     assert_eq!(symbols.segments(), visible_symbols.segments());
     assert_eq!(plain.elf_metadata().unwrap().symbol_count(), 0);
@@ -1991,12 +2018,40 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
             .elf_metadata()
             .unwrap()
             .symbol_summary()
+            .ifunc_count(),
+        0
+    );
+    assert_eq!(
+        ifunc_symbols
+            .elf_metadata()
+            .unwrap()
+            .symbol_summary()
+            .ifunc_count(),
+        1
+    );
+    assert_eq!(
+        extra_symbols
+            .elf_metadata()
+            .unwrap()
+            .symbol_summary()
             .object_count(),
         tls_symbols
             .elf_metadata()
             .unwrap()
             .symbol_summary()
             .object_count()
+    );
+    assert_eq!(
+        extra_symbols
+            .elf_metadata()
+            .unwrap()
+            .symbol_summary()
+            .tls_count(),
+        ifunc_symbols
+            .elf_metadata()
+            .unwrap()
+            .symbol_summary()
+            .tls_count()
     );
     assert_eq!(
         visible_symbols
@@ -2019,6 +2074,9 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
     let tls_symbol_manifest = WorkloadManifest::builder(id("same"), tls_symbols)
         .build()
         .unwrap();
+    let ifunc_symbol_manifest = WorkloadManifest::builder(id("same"), ifunc_symbols)
+        .build()
+        .unwrap();
     let dynamic_symbol_manifest = WorkloadManifest::builder(id("same"), dynamic_symbols)
         .build()
         .unwrap();
@@ -2030,6 +2088,10 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
     assert_ne!(
         extra_symbol_manifest.identity(),
         tls_symbol_manifest.identity()
+    );
+    assert_ne!(
+        extra_symbol_manifest.identity(),
+        ifunc_symbol_manifest.identity()
     );
     assert_ne!(
         plain_manifest.identity(),

@@ -47,6 +47,7 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
             let symbols = [
                 symbol_summary.total_count(),
                 symbol_summary.function_count(),
+                symbol_summary.ifunc_count(),
                 symbol_summary.object_count(),
                 symbol_summary.tls_count(),
                 symbol_summary.local_count(),

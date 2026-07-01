@@ -123,6 +123,13 @@ pub(super) fn emit_elf_run_stats(
     )?;
     increment_stat(
         stats,
+        "sim.elf.ifunc_symbols",
+        "Count",
+        StatResetPolicy::Constant,
+        metadata.ifunc_symbol_count(),
+    )?;
+    increment_stat(
+        stats,
         "sim.elf.object_symbols",
         "Count",
         StatResetPolicy::Constant,

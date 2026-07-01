@@ -35,6 +35,7 @@ pub(crate) struct ElfSectionSummary {
     has_tls: bool,
     symbol_count: u64,
     function_symbol_count: u64,
+    ifunc_symbol_count: u64,
     object_symbol_count: u64,
     tls_symbol_count: u64,
     local_symbol_count: u64,
@@ -101,6 +102,7 @@ impl ElfSectionSummary {
         BootElfSymbolSummary::new(
             self.symbol_count,
             self.function_symbol_count,
+            self.ifunc_symbol_count,
             self.object_symbol_count,
             self.tls_symbol_count,
             self.local_symbol_count,
@@ -748,6 +750,7 @@ fn summarize_elf32_symbol_table(
 fn add_symbol_summary(summary: &mut ElfSectionSummary, symbols: BootElfSymbolSummary) {
     summary.symbol_count += symbols.total_count();
     summary.function_symbol_count += symbols.function_count();
+    summary.ifunc_symbol_count += symbols.ifunc_count();
     summary.object_symbol_count += symbols.object_count();
     summary.tls_symbol_count += symbols.tls_count();
     summary.local_symbol_count += symbols.local_count();

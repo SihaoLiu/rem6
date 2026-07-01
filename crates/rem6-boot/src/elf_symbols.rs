@@ -9,6 +9,7 @@ const STB_WEAK: u8 = 2;
 const STT_OBJECT: u8 = 1;
 const STT_FUNC: u8 = 2;
 const STT_TLS: u8 = 6;
+const STT_GNU_IFUNC: u8 = 10;
 const STV_DEFAULT: u8 = 0;
 const STV_INTERNAL: u8 = 1;
 const STV_HIDDEN: u8 = 2;
@@ -108,6 +109,7 @@ fn summarize_symbol_type(
     }
     let total = summary.total_count() + 1;
     let mut functions = summary.function_count();
+    let mut ifuncs = summary.ifunc_count();
     let mut objects = summary.object_count();
     let mut tls = summary.tls_count();
     let mut locals = summary.local_count();
@@ -127,6 +129,7 @@ fn summarize_symbol_type(
     }
     match kind {
         STT_FUNC => functions += 1,
+        STT_GNU_IFUNC => ifuncs += 1,
         STT_OBJECT => objects += 1,
         STT_TLS => tls += 1,
         _ => {}
@@ -141,6 +144,7 @@ fn summarize_symbol_type(
     BootElfSymbolSummary::new(
         total,
         functions,
+        ifuncs,
         objects,
         tls,
         locals,

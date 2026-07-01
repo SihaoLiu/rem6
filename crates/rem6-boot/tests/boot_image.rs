@@ -33,6 +33,8 @@ const SHT_NOBITS: u32 = 8;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
 const SHF_EXECINSTR: u64 = 4;
+const STT_TLS: u8 = 6;
+const STT_GNU_IFUNC: u8 = 10;
 const DT_PLTGOT: u64 = 3;
 const DT_STRTAB: u64 = 5;
 const DT_SYMTAB: u64 = 6;
@@ -338,7 +340,11 @@ fn add_elf64_symbol_visibility_table(bytes: &mut Vec<u8>) {
 }
 
 fn add_elf64_symbol_tls_table(bytes: &mut Vec<u8>) {
-    add_elf64_symbol_table_section_with_object_type(bytes, ".symtab", 2, ".strtab", 6);
+    add_elf64_symbol_table_section_with_object_type(bytes, ".symtab", 2, ".strtab", STT_TLS);
+}
+
+fn add_elf64_symbol_ifunc_table(bytes: &mut Vec<u8>) {
+    add_elf64_symbol_table_section_with_object_type(bytes, ".symtab", 2, ".strtab", STT_GNU_IFUNC);
 }
 
 fn add_elf64_dynamic_symbol_table(bytes: &mut Vec<u8>) {
@@ -3816,6 +3822,34 @@ fn boot_image_records_tls_symbol_summary() {
     assert_eq!(symbols.function_count(), 1);
     assert_eq!(symbols.object_count(), 0);
     assert_eq!(symbols.tls_count(), 1);
+}
+
+#[test]
+fn boot_image_records_ifunc_symbol_summary() {
+    let mut elf = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_symbol_ifunc_table(&mut elf);
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let symbols = metadata.symbol_summary();
+
+    assert_eq!(symbols.total_count(), 2);
+    assert_eq!(symbols.function_count(), 1);
+    assert_eq!(symbols.ifunc_count(), 1);
+    assert_eq!(symbols.object_count(), 0);
+    assert_eq!(symbols.tls_count(), 0);
 }
 
 #[test]

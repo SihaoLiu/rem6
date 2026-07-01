@@ -358,9 +358,10 @@ fn elf_interpreter_json(interpreter: Option<&BootElfInterpreter>) -> String {
 
 fn elf_symbol_summary_json(symbols: BootElfSymbolSummary) -> String {
     format!(
-        "{{\"total\":{},\"functions\":{},\"objects\":{},\"tls\":{},\"local\":{},\"global\":{},\"weak\":{},\"visibility\":{{\"default\":{},\"internal\":{},\"hidden\":{},\"protected\":{}}}}}",
+        "{{\"total\":{},\"functions\":{},\"ifuncs\":{},\"objects\":{},\"tls\":{},\"local\":{},\"global\":{},\"weak\":{},\"visibility\":{{\"default\":{},\"internal\":{},\"hidden\":{},\"protected\":{}}}}}",
         symbols.total_count(),
         symbols.function_count(),
+        symbols.ifunc_count(),
         symbols.object_count(),
         symbols.tls_count(),
         symbols.local_count(),

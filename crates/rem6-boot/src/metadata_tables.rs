@@ -105,6 +105,7 @@ impl BootElfLoadSegments {
 pub struct BootElfSymbolSummary {
     total_count: u64,
     function_count: u64,
+    ifunc_count: u64,
     object_count: u64,
     tls_count: u64,
     local_count: u64,
@@ -120,6 +121,7 @@ impl BootElfSymbolSummary {
     pub const fn new(
         total_count: u64,
         function_count: u64,
+        ifunc_count: u64,
         object_count: u64,
         tls_count: u64,
         local_count: u64,
@@ -133,6 +135,7 @@ impl BootElfSymbolSummary {
         Self {
             total_count,
             function_count,
+            ifunc_count,
             object_count,
             tls_count,
             local_count,
@@ -151,6 +154,10 @@ impl BootElfSymbolSummary {
 
     pub const fn function_count(self) -> u64 {
         self.function_count
+    }
+
+    pub const fn ifunc_count(self) -> u64 {
+        self.ifunc_count
     }
 
     pub const fn object_count(self) -> u64 {
