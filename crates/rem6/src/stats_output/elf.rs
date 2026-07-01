@@ -63,6 +63,20 @@ pub(super) fn emit_elf_run_stats(
     )?;
     increment_stat(
         stats,
+        "sim.elf.notes.sections",
+        "Count",
+        StatResetPolicy::Constant,
+        metadata.note_section_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.notes.section_bytes",
+        "Byte",
+        StatResetPolicy::Constant,
+        metadata.note_section_file_size(),
+    )?;
+    increment_stat(
+        stats,
         "sim.elf.gnu_stack.present",
         "Count",
         StatResetPolicy::Constant,

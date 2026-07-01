@@ -32,11 +32,13 @@ pub(crate) struct ElfSectionSummary {
     writable_section_count: u64,
     executable_section_count: u64,
     nobits_section_count: u64,
+    note_section_count: u64,
     file_backed_section_bytes: u64,
     allocated_section_bytes: u64,
     writable_section_bytes: u64,
     executable_section_bytes: u64,
     nobits_section_bytes: u64,
+    note_section_file_size: u64,
     section_address_start: Option<u64>,
     section_address_end: Option<u64>,
     max_section_alignment: u64,
@@ -65,6 +67,14 @@ impl ElfSectionSummary {
 
     pub(crate) const fn object_symbol_count(self) -> u64 {
         self.object_symbol_count
+    }
+
+    pub(crate) const fn note_section_count(self) -> u64 {
+        self.note_section_count
+    }
+
+    pub(crate) const fn note_section_file_size(self) -> u64 {
+        self.note_section_file_size
     }
 
     pub(crate) const fn section_header_table(self) -> BootElfSectionHeaderTable {
@@ -384,6 +394,11 @@ fn summarize_common_section(
     if section.kind == SHT_NOBITS {
         summary.nobits_section_count += 1;
         summary.nobits_section_bytes = summary.nobits_section_bytes.saturating_add(section.size);
+    }
+    if section.kind == SHT_NOTE {
+        summary.note_section_count += 1;
+        summary.note_section_file_size =
+            summary.note_section_file_size.saturating_add(section.size);
     }
 
     if detect_operating_system && summary.operating_system.is_none() {

@@ -563,6 +563,8 @@ pub struct BootElfMetadata {
     has_tls: bool,
     note_segment_count: u64,
     note_file_size: u64,
+    note_section_count: u64,
+    note_section_file_size: u64,
     gnu_stack_executable: Option<bool>,
     gnu_relro_virtual_address: Option<Address>,
     gnu_relro_memory_size: Option<u64>,
@@ -605,6 +607,8 @@ impl BootElfMetadata {
             has_tls: false,
             note_segment_count: 0,
             note_file_size: 0,
+            note_section_count: 0,
+            note_section_file_size: 0,
             gnu_stack_executable: None,
             gnu_relro_virtual_address: None,
             gnu_relro_memory_size: None,
@@ -695,6 +699,12 @@ impl BootElfMetadata {
         self
     }
 
+    pub(crate) const fn with_note_sections(mut self, section_count: u64, file_size: u64) -> Self {
+        self.note_section_count = section_count;
+        self.note_section_file_size = file_size;
+        self
+    }
+
     pub(crate) const fn with_gnu_stack_executable(mut self, executable: Option<bool>) -> Self {
         self.gnu_stack_executable = executable;
         self
@@ -780,6 +790,14 @@ impl BootElfMetadata {
 
     pub const fn note_file_size(&self) -> u64 {
         self.note_file_size
+    }
+
+    pub const fn note_section_count(&self) -> u64 {
+        self.note_section_count
+    }
+
+    pub const fn note_section_file_size(&self) -> u64 {
+        self.note_section_file_size
     }
 
     pub const fn gnu_stack_executable(&self) -> Option<bool> {

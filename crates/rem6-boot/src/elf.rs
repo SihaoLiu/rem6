@@ -402,6 +402,10 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         )
         .with_tls(has_tls)
         .with_note_segments(note_segment_count, note_file_size)
+        .with_note_sections(
+            section_summary.note_section_count(),
+            section_summary.note_section_file_size(),
+        )
         .with_gnu_stack_executable(gnu_stack_executable)
         .with_gnu_relro(gnu_relro_virtual_address, gnu_relro_memory_size)
         .with_gnu_eh_frame(gnu_eh_frame_virtual_address, gnu_eh_frame_memory_size)
@@ -614,6 +618,10 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         )
         .with_tls(has_tls)
         .with_note_segments(note_segment_count, note_file_size)
+        .with_note_sections(
+            section_summary.note_section_count(),
+            section_summary.note_section_file_size(),
+        )
         .with_gnu_stack_executable(gnu_stack_executable)
         .with_gnu_relro(gnu_relro_virtual_address, gnu_relro_memory_size)
         .with_gnu_eh_frame(gnu_eh_frame_virtual_address, gnu_eh_frame_memory_size)
