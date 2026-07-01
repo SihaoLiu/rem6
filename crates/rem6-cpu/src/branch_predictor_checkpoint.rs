@@ -7,7 +7,7 @@ use crate::{
         BranchPrediction, BranchPredictorConfig, BranchPredictorError, BranchPredictorSnapshot,
         BranchSpeculation, BranchSpeculationId, BranchTargetBuffer, BranchTargetBufferConfig,
         BranchTargetBufferError, BranchTargetBufferSnapshot, BranchTargetEntry, BranchTargetKind,
-        BranchTargetPrediction,
+        BranchTargetKindCounts, BranchTargetPrediction,
     },
     return_address_stack::{
         ReturnAddressStack, ReturnAddressStackConfig, ReturnAddressStackOperation,
@@ -23,7 +23,8 @@ const LEGACY_CHECKPOINT_VERSION: u8 = 1;
 const V2_CHECKPOINT_VERSION: u8 = 2;
 const V3_CHECKPOINT_VERSION: u8 = 3;
 const V4_CHECKPOINT_VERSION: u8 = 4;
-const CHECKPOINT_VERSION: u8 = 5;
+const V5_CHECKPOINT_VERSION: u8 = 5;
+const CHECKPOINT_VERSION: u8 = 6;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 const CHECKPOINT_U32_MAX: usize = u32::MAX as usize;
@@ -31,7 +32,10 @@ const CHECKPOINT_HEADER_BYTES: usize =
     CHECKPOINT_MAGIC.len() + 1 + U32_BYTES + 1 + U64_BYTES * 4 + U32_BYTES * 2;
 const CHECKPOINT_COUNTER_BYTES: usize = 1;
 const CHECKPOINT_TARGET_BYTES: usize = 1 + U64_BYTES;
-const CHECKPOINT_BTB_HEADER_BYTES: usize = U32_BYTES * 2 + U64_BYTES * 6;
+const CHECKPOINT_BTB_LEGACY_HEADER_BYTES: usize = U32_BYTES * 2 + U64_BYTES * 6;
+const CHECKPOINT_BTB_KIND_COUNTER_BYTES: usize = U64_BYTES * BranchTargetKind::COUNT;
+const CHECKPOINT_BTB_HEADER_BYTES: usize =
+    CHECKPOINT_BTB_LEGACY_HEADER_BYTES + CHECKPOINT_BTB_KIND_COUNTER_BYTES * 4;
 const CHECKPOINT_BTB_ENTRY_BYTES: usize = 1 + U64_BYTES * 3 + 1;
 const CHECKPOINT_RAS_HEADER_BYTES: usize = U32_BYTES * 3 + U64_BYTES;
 const CHECKPOINT_RAS_OPERATION_FIXED_BYTES: usize =
@@ -346,6 +350,7 @@ impl BranchPredictorCheckpointPayload {
                 | V2_CHECKPOINT_VERSION
                 | V3_CHECKPOINT_VERSION
                 | V4_CHECKPOINT_VERSION
+                | V5_CHECKPOINT_VERSION
                 | CHECKPOINT_VERSION
         ) {
             return Err(BranchPredictorError::UnsupportedCheckpointVersion { version });
@@ -367,8 +372,10 @@ impl BranchPredictorCheckpointPayload {
             v3_checkpoint_payload_len(payload, table_entries, pending_count, active_count)?
         } else if version == V4_CHECKPOINT_VERSION {
             v4_checkpoint_payload_len(payload, table_entries, pending_count, active_count)?
-        } else {
+        } else if version == V5_CHECKPOINT_VERSION {
             v5_checkpoint_payload_len(payload, table_entries, pending_count, active_count)?
+        } else {
+            v6_checkpoint_payload_len(payload, table_entries, pending_count, active_count)?
         };
         if payload.len() != expected_len {
             return Err(BranchPredictorError::InvalidCheckpointPayloadSize {
@@ -385,20 +392,22 @@ impl BranchPredictorCheckpointPayload {
         let branch_target_buffer = if version == LEGACY_CHECKPOINT_VERSION {
             default_branch_target_buffer_snapshot()
         } else {
-            read_branch_target_buffer(payload, &mut offset)?
+            read_branch_target_buffer(payload, &mut offset, version)?
         };
-        let return_address_stack =
-            if version == V4_CHECKPOINT_VERSION || version == CHECKPOINT_VERSION {
-                read_return_address_stack(payload, &mut offset)?
-            } else {
-                default_return_address_stack_snapshot()
-            };
+        let return_address_stack = if version == V4_CHECKPOINT_VERSION
+            || version == V5_CHECKPOINT_VERSION
+            || version == CHECKPOINT_VERSION
+        {
+            read_return_address_stack(payload, &mut offset)?
+        } else {
+            default_return_address_stack_snapshot()
+        };
         let (
             active_speculations,
             active_branch_target_predictions,
             active_return_address_stack_operations,
             active_branch_kinds,
-        ) = if version == CHECKPOINT_VERSION {
+        ) = if version == V5_CHECKPOINT_VERSION || version == CHECKPOINT_VERSION {
             read_active_speculations_v5(payload, &mut offset, active_count)?
         } else if version == V4_CHECKPOINT_VERSION {
             let (
@@ -1023,6 +1032,10 @@ fn encode_branch_target_buffer(payload: &mut Vec<u8>, snapshot: &BranchTargetBuf
     payload.extend_from_slice(&snapshot.miss_count().to_le_bytes());
     payload.extend_from_slice(&snapshot.update_count().to_le_bytes());
     payload.extend_from_slice(&snapshot.eviction_count().to_le_bytes());
+    encode_branch_target_kind_counts(payload, snapshot.lookup_kind_counts());
+    encode_branch_target_kind_counts(payload, snapshot.hit_kind_counts());
+    encode_branch_target_kind_counts(payload, snapshot.miss_kind_counts());
+    encode_branch_target_kind_counts(payload, snapshot.update_kind_counts());
     for entry in snapshot.entries() {
         match entry {
             Some(entry) => {
@@ -1046,6 +1059,7 @@ fn encode_branch_target_buffer(payload: &mut Vec<u8>, snapshot: &BranchTargetBuf
 fn read_branch_target_buffer(
     payload: &[u8],
     offset: &mut usize,
+    version: u8,
 ) -> Result<BranchTargetBufferSnapshot, BranchPredictorError> {
     let entries = read_u32(payload, offset)? as usize;
     let associativity = read_u32(payload, offset)? as usize;
@@ -1055,6 +1069,22 @@ fn read_branch_target_buffer(
     let miss_count = read_u64(payload, offset)?;
     let update_count = read_u64(payload, offset)?;
     let eviction_count = read_u64(payload, offset)?;
+    let (lookup_kind_counts, hit_kind_counts, miss_kind_counts, update_kind_counts) =
+        if version == CHECKPOINT_VERSION {
+            (
+                read_branch_target_kind_counts(payload, offset)?,
+                read_branch_target_kind_counts(payload, offset)?,
+                read_branch_target_kind_counts(payload, offset)?,
+                read_branch_target_kind_counts(payload, offset)?,
+            )
+        } else {
+            (
+                BranchTargetKindCounts::default(),
+                BranchTargetKindCounts::default(),
+                BranchTargetKindCounts::default(),
+                BranchTargetKindCounts::default(),
+            )
+        };
     let config = BranchTargetBufferConfig::new(entries, associativity)
         .map_err(|error| BranchPredictorError::InvalidBranchTargetBufferCheckpoint { error })?;
 
@@ -1090,7 +1120,29 @@ fn read_branch_target_buffer(
         miss_count,
         update_count,
         eviction_count,
+        lookup_kind_counts,
+        hit_kind_counts,
+        miss_kind_counts,
+        update_kind_counts,
     })
+}
+
+fn encode_branch_target_kind_counts(payload: &mut Vec<u8>, counts: BranchTargetKindCounts) {
+    for kind in BranchTargetKind::ALL {
+        payload.extend_from_slice(&counts.value(kind).to_le_bytes());
+    }
+}
+
+fn read_branch_target_kind_counts(
+    payload: &[u8],
+    offset: &mut usize,
+) -> Result<BranchTargetKindCounts, BranchPredictorError> {
+    let mut counts = BranchTargetKindCounts::default();
+    for kind in BranchTargetKind::ALL {
+        let count = read_u64(payload, offset)?;
+        counts.set_for_checkpoint(kind, count);
+    }
+    Ok(counts)
 }
 
 fn validate_branch_target_buffer_snapshot(
@@ -1106,7 +1158,7 @@ fn validate_branch_target_buffer_snapshot(
         "branch-target-buffer-associativity",
         snapshot.config().associativity(),
     )?;
-    branch_target_buffer_checkpoint_len(snapshot.config().entries())?;
+    branch_target_buffer_checkpoint_len(snapshot.config().entries(), CHECKPOINT_VERSION)?;
     if snapshot.entries().len() != snapshot.config().entries() {
         return Err(BranchPredictorError::InvalidBranchTargetBufferCheckpoint {
             error: BranchTargetBufferError::SnapshotShapeMismatch {
@@ -1436,7 +1488,7 @@ fn checkpoint_payload_len(
 ) -> Result<usize, BranchPredictorError> {
     let len = legacy_checkpoint_payload_len(table_entries, pending_count, active_count)?;
     let branch_target_buffer_bytes =
-        branch_target_buffer_checkpoint_len(branch_target_buffer_entries)?;
+        branch_target_buffer_checkpoint_len(branch_target_buffer_entries, version)?;
     let len = checked_sum("payload-size", len, branch_target_buffer_bytes)?;
     if version == V3_CHECKPOINT_VERSION {
         let active_delta = checked_product(
@@ -1445,7 +1497,10 @@ fn checkpoint_payload_len(
             CHECKPOINT_ACTIVE_SPECULATION_V3_BYTES - CHECKPOINT_ACTIVE_SPECULATION_BYTES,
         )?;
         checked_sum("payload-size", len, active_delta)
-    } else if version == V4_CHECKPOINT_VERSION || version == CHECKPOINT_VERSION {
+    } else if version == V4_CHECKPOINT_VERSION
+        || version == V5_CHECKPOINT_VERSION
+        || version == CHECKPOINT_VERSION
+    {
         let return_address_stack_bytes = return_address_stack_checkpoint_len(return_address_stack)?;
         let len = checked_sum("payload-size", len, return_address_stack_bytes)?;
         let active_speculation_bytes = if version == V4_CHECKPOINT_VERSION {
@@ -1508,7 +1563,7 @@ fn v2_checkpoint_payload_len(
     let btb_offset = checked_sum("payload-size", CHECKPOINT_HEADER_BYTES, counter_bytes)?;
     let btb_offset = checked_sum("payload-size", btb_offset, target_bytes)?;
     let btb_offset = checked_sum("payload-size", btb_offset, pending_bytes)?;
-    let btb_header_end = checked_offset(btb_offset, CHECKPOINT_BTB_HEADER_BYTES)?;
+    let btb_header_end = checked_offset(btb_offset, CHECKPOINT_BTB_LEGACY_HEADER_BYTES)?;
     if payload.len() < btb_header_end {
         return Err(BranchPredictorError::InvalidCheckpointPayloadSize {
             expected: btb_header_end,
@@ -1518,7 +1573,7 @@ fn v2_checkpoint_payload_len(
     let mut btb_header = btb_offset;
     let branch_target_buffer_entries = read_u32(payload, &mut btb_header)? as usize;
     let branch_target_buffer_bytes =
-        branch_target_buffer_checkpoint_len(branch_target_buffer_entries)?;
+        branch_target_buffer_checkpoint_len(branch_target_buffer_entries, V2_CHECKPOINT_VERSION)?;
     let len = checked_sum("payload-size", btb_offset, branch_target_buffer_bytes)?;
     checked_sum("payload-size", len, active_bytes)
 }
@@ -1544,7 +1599,7 @@ fn v3_checkpoint_payload_len(
     let btb_offset = checked_sum("payload-size", CHECKPOINT_HEADER_BYTES, counter_bytes)?;
     let btb_offset = checked_sum("payload-size", btb_offset, target_bytes)?;
     let btb_offset = checked_sum("payload-size", btb_offset, pending_bytes)?;
-    let btb_header_end = checked_offset(btb_offset, CHECKPOINT_BTB_HEADER_BYTES)?;
+    let btb_header_end = checked_offset(btb_offset, CHECKPOINT_BTB_LEGACY_HEADER_BYTES)?;
     if payload.len() < btb_header_end {
         return Err(BranchPredictorError::InvalidCheckpointPayloadSize {
             expected: btb_header_end,
@@ -1554,7 +1609,7 @@ fn v3_checkpoint_payload_len(
     let mut btb_header = btb_offset;
     let branch_target_buffer_entries = read_u32(payload, &mut btb_header)? as usize;
     let branch_target_buffer_bytes =
-        branch_target_buffer_checkpoint_len(branch_target_buffer_entries)?;
+        branch_target_buffer_checkpoint_len(branch_target_buffer_entries, V3_CHECKPOINT_VERSION)?;
     let len = checked_sum("payload-size", btb_offset, branch_target_buffer_bytes)?;
     checked_sum("payload-size", len, active_bytes)
 }
@@ -1571,6 +1626,7 @@ fn v4_checkpoint_payload_len(
         pending_count,
         active_count,
         CHECKPOINT_ACTIVE_SPECULATION_V4_BYTES,
+        V4_CHECKPOINT_VERSION,
     )
 }
 
@@ -1586,6 +1642,23 @@ fn v5_checkpoint_payload_len(
         pending_count,
         active_count,
         CHECKPOINT_ACTIVE_SPECULATION_V5_BYTES,
+        V5_CHECKPOINT_VERSION,
+    )
+}
+
+fn v6_checkpoint_payload_len(
+    payload: &[u8],
+    table_entries: usize,
+    pending_count: usize,
+    active_count: usize,
+) -> Result<usize, BranchPredictorError> {
+    checkpoint_payload_len_with_return_address_stack(
+        payload,
+        table_entries,
+        pending_count,
+        active_count,
+        CHECKPOINT_ACTIVE_SPECULATION_V5_BYTES,
+        CHECKPOINT_VERSION,
     )
 }
 
@@ -1595,6 +1668,7 @@ fn checkpoint_payload_len_with_return_address_stack(
     pending_count: usize,
     active_count: usize,
     active_speculation_bytes: usize,
+    version: u8,
 ) -> Result<usize, BranchPredictorError> {
     let counter_bytes = checked_product("counter-table", table_entries, CHECKPOINT_COUNTER_BYTES)?;
     let target_bytes = checked_product("target-table", table_entries, CHECKPOINT_TARGET_BYTES)?;
@@ -1611,7 +1685,7 @@ fn checkpoint_payload_len_with_return_address_stack(
     let btb_offset = checked_sum("payload-size", CHECKPOINT_HEADER_BYTES, counter_bytes)?;
     let btb_offset = checked_sum("payload-size", btb_offset, target_bytes)?;
     let btb_offset = checked_sum("payload-size", btb_offset, pending_bytes)?;
-    let btb_header_end = checked_offset(btb_offset, CHECKPOINT_BTB_HEADER_BYTES)?;
+    let btb_header_end = checked_offset(btb_offset, btb_header_bytes(version))?;
     if payload.len() < btb_header_end {
         return Err(BranchPredictorError::InvalidCheckpointPayloadSize {
             expected: btb_header_end,
@@ -1621,7 +1695,7 @@ fn checkpoint_payload_len_with_return_address_stack(
     let mut btb_header = btb_offset;
     let branch_target_buffer_entries = read_u32(payload, &mut btb_header)? as usize;
     let branch_target_buffer_bytes =
-        branch_target_buffer_checkpoint_len(branch_target_buffer_entries)?;
+        branch_target_buffer_checkpoint_len(branch_target_buffer_entries, version)?;
     let ras_offset = checked_sum("payload-size", btb_offset, branch_target_buffer_bytes)?;
     let return_address_stack_bytes =
         return_address_stack_checkpoint_len_from_payload(payload, ras_offset)?;
@@ -1732,7 +1806,10 @@ fn return_address_stack_checkpoint_len_from_payload(
     Ok(ras_len)
 }
 
-fn branch_target_buffer_checkpoint_len(entries: usize) -> Result<usize, BranchPredictorError> {
+fn branch_target_buffer_checkpoint_len(
+    entries: usize,
+    version: u8,
+) -> Result<usize, BranchPredictorError> {
     let entry_bytes = checked_product(
         "branch-target-buffer-entries",
         entries,
@@ -1740,9 +1817,17 @@ fn branch_target_buffer_checkpoint_len(entries: usize) -> Result<usize, BranchPr
     )?;
     checked_sum(
         "branch-target-buffer-size",
-        CHECKPOINT_BTB_HEADER_BYTES,
+        btb_header_bytes(version),
         entry_bytes,
     )
+}
+
+const fn btb_header_bytes(version: u8) -> usize {
+    if version == CHECKPOINT_VERSION {
+        CHECKPOINT_BTB_HEADER_BYTES
+    } else {
+        CHECKPOINT_BTB_LEGACY_HEADER_BYTES
+    }
 }
 
 fn checked_product(

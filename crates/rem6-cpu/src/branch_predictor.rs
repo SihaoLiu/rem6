@@ -1199,6 +1199,10 @@ impl BranchTargetKindCounts {
         let value = &mut self.values[kind.index()];
         *value = value.saturating_add(1);
     }
+
+    pub(crate) fn set_for_checkpoint(&mut self, kind: BranchTargetKind, value: u64) {
+        self.values[kind.index()] = value;
+    }
 }
 
 impl Default for BranchTargetKindCounts {
@@ -1325,6 +1329,10 @@ pub struct BranchTargetBuffer {
     miss_count: u64,
     update_count: u64,
     eviction_count: u64,
+    lookup_kind_counts: BranchTargetKindCounts,
+    hit_kind_counts: BranchTargetKindCounts,
+    miss_kind_counts: BranchTargetKindCounts,
+    update_kind_counts: BranchTargetKindCounts,
 }
 
 impl BranchTargetBuffer {
@@ -1339,6 +1347,10 @@ impl BranchTargetBuffer {
             miss_count: 0,
             update_count: 0,
             eviction_count: 0,
+            lookup_kind_counts: BranchTargetKindCounts::default(),
+            hit_kind_counts: BranchTargetKindCounts::default(),
+            miss_kind_counts: BranchTargetKindCounts::default(),
+            update_kind_counts: BranchTargetKindCounts::default(),
         }
     }
 
@@ -1366,12 +1378,29 @@ impl BranchTargetBuffer {
         self.eviction_count
     }
 
+    pub const fn lookup_kind_counts(&self) -> BranchTargetKindCounts {
+        self.lookup_kind_counts
+    }
+
+    pub const fn hit_kind_counts(&self) -> BranchTargetKindCounts {
+        self.hit_kind_counts
+    }
+
+    pub const fn miss_kind_counts(&self) -> BranchTargetKindCounts {
+        self.miss_kind_counts
+    }
+
+    pub const fn update_kind_counts(&self) -> BranchTargetKindCounts {
+        self.update_kind_counts
+    }
+
     pub fn valid(&self, pc: Address) -> bool {
         self.find_entry(pc).is_some()
     }
 
     pub fn lookup(&mut self, pc: Address, kind: BranchTargetKind) -> BranchTargetLookup {
         self.lookup_count += 1;
+        self.lookup_kind_counts.increment(kind);
         let set = self.set_index(pc);
         let mut hit = None;
 
@@ -1389,6 +1418,7 @@ impl BranchTargetBuffer {
         match hit {
             Some((index, way)) => {
                 self.hit_count += 1;
+                self.hit_kind_counts.increment(kind);
                 let access_sequence = self.next_access_sequence();
                 let entry = self.entries[index]
                     .as_mut()
@@ -1408,6 +1438,7 @@ impl BranchTargetBuffer {
             }
             None => {
                 self.miss_count += 1;
+                self.miss_kind_counts.increment(kind);
                 BranchTargetLookup {
                     pc,
                     kind,
@@ -1429,6 +1460,7 @@ impl BranchTargetBuffer {
         kind: BranchTargetKind,
     ) -> BranchTargetUpdate {
         self.update_count += 1;
+        self.update_kind_counts.increment(kind);
         let set = self.set_index(pc);
         let access_sequence = self.next_access_sequence();
 
@@ -1492,6 +1524,10 @@ impl BranchTargetBuffer {
             miss_count: self.miss_count,
             update_count: self.update_count,
             eviction_count: self.eviction_count,
+            lookup_kind_counts: self.lookup_kind_counts,
+            hit_kind_counts: self.hit_kind_counts,
+            miss_kind_counts: self.miss_kind_counts,
+            update_kind_counts: self.update_kind_counts,
         }
     }
 
@@ -1517,6 +1553,10 @@ impl BranchTargetBuffer {
         self.miss_count = snapshot.miss_count;
         self.update_count = snapshot.update_count;
         self.eviction_count = snapshot.eviction_count;
+        self.lookup_kind_counts = snapshot.lookup_kind_counts;
+        self.hit_kind_counts = snapshot.hit_kind_counts;
+        self.miss_kind_counts = snapshot.miss_kind_counts;
+        self.update_kind_counts = snapshot.update_kind_counts;
         Ok(())
     }
 
@@ -1696,6 +1736,10 @@ pub struct BranchTargetBufferSnapshot {
     pub(crate) miss_count: u64,
     pub(crate) update_count: u64,
     pub(crate) eviction_count: u64,
+    pub(crate) lookup_kind_counts: BranchTargetKindCounts,
+    pub(crate) hit_kind_counts: BranchTargetKindCounts,
+    pub(crate) miss_kind_counts: BranchTargetKindCounts,
+    pub(crate) update_kind_counts: BranchTargetKindCounts,
 }
 
 impl BranchTargetBufferSnapshot {
@@ -1729,6 +1773,22 @@ impl BranchTargetBufferSnapshot {
 
     pub const fn eviction_count(&self) -> u64 {
         self.eviction_count
+    }
+
+    pub const fn lookup_kind_counts(&self) -> BranchTargetKindCounts {
+        self.lookup_kind_counts
+    }
+
+    pub const fn hit_kind_counts(&self) -> BranchTargetKindCounts {
+        self.hit_kind_counts
+    }
+
+    pub const fn miss_kind_counts(&self) -> BranchTargetKindCounts {
+        self.miss_kind_counts
+    }
+
+    pub const fn update_kind_counts(&self) -> BranchTargetKindCounts {
+        self.update_kind_counts
     }
 }
 

@@ -253,6 +253,10 @@ pub(super) fn execution_summary(
             branch_target_buffer_misses: branch_target_buffer.miss_count(),
             branch_target_buffer_updates: branch_target_buffer.update_count(),
             branch_target_buffer_evictions: branch_target_buffer.eviction_count(),
+            branch_target_buffer_lookup_kinds: branch_target_buffer.lookup_kind_counts(),
+            branch_target_buffer_hit_kinds: branch_target_buffer.hit_kind_counts(),
+            branch_target_buffer_miss_kinds: branch_target_buffer.miss_kind_counts(),
+            branch_target_buffer_update_kinds: branch_target_buffer.update_kind_counts(),
             branch_target_buffer_mispredictions: branch_speculation_summary.btb_mispredictions(),
             branch_target_buffer_predicted_taken_misses: branch_speculation_summary
                 .predicted_taken_btb_misses(),

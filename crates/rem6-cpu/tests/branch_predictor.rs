@@ -8,6 +8,16 @@ use rem6_cpu::{
 };
 use rem6_memory::Address;
 
+const CHECKPOINT_HEADER_BYTES: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4 * 2;
+const CHECKPOINT_TARGET_BYTES: usize = 1 + 8;
+const PENDING_SPECULATION_BYTES: usize = 49;
+const BTB_LEGACY_HEADER_BYTES: usize = 4 * 2 + 8 * 6;
+const BTB_KIND_COUNTER_BYTES: usize = 8 * 8 * 4;
+const BTB_HEADER_BYTES: usize = BTB_LEGACY_HEADER_BYTES + BTB_KIND_COUNTER_BYTES;
+const BTB_ENTRY_BYTES: usize = 1 + 8 + 8 + 1 + 8;
+const RAS_HEADER_BYTES: usize = 4 * 3 + 8;
+const ACTIVE_SPECULATION_CURRENT_BYTES: usize = 38;
+
 fn predictor(entries: usize) -> BranchPredictor {
     BranchPredictor::new(BranchPredictorConfig::new(entries).unwrap())
 }
@@ -21,13 +31,6 @@ fn btb(entries: usize, associativity: usize) -> BranchTargetBuffer {
 }
 
 fn single_pending_ras_checkpoint_payload() -> (Vec<u8>, ReturnAddressStackOperationId, usize) {
-    const HEADER_BYTES: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4 * 2;
-    const CHECKPOINT_TARGET_BYTES: usize = 1 + 8;
-    const PENDING_SPECULATION_BYTES: usize = 49;
-    const BTB_HEADER_BYTES: usize = 4 * 2 + 8 * 6;
-    const BTB_ENTRY_BYTES: usize = 1 + 8 + 8 + 1 + 8;
-    const RAS_HEADER_BYTES: usize = 4 * 3 + 8;
-
     let mut predictor = predictor(8);
     let speculation = predictor.predict_speculative(Address::new(0x1000));
     let mut return_address_stack = ras(4);
@@ -42,7 +45,7 @@ fn single_pending_ras_checkpoint_payload() -> (Vec<u8>, ReturnAddressStackOperat
     )
     .unwrap()
     .encode();
-    let operation_start = HEADER_BYTES
+    let operation_start = CHECKPOINT_HEADER_BYTES
         + 8
         + 8 * CHECKPOINT_TARGET_BYTES
         + PENDING_SPECULATION_BYTES
@@ -51,6 +54,23 @@ fn single_pending_ras_checkpoint_payload() -> (Vec<u8>, ReturnAddressStackOperat
         + RAS_HEADER_BYTES
         + 8;
     (payload, operation.id(), operation_start)
+}
+
+fn current_payload_prefix_without_btb_kind_counters(
+    encoded: &[u8],
+    table_entries: usize,
+    pending_count: usize,
+    end: usize,
+) -> Vec<u8> {
+    let btb_kind_counter_start = CHECKPOINT_HEADER_BYTES
+        + table_entries
+        + table_entries * CHECKPOINT_TARGET_BYTES
+        + pending_count * PENDING_SPECULATION_BYTES
+        + BTB_LEGACY_HEADER_BYTES;
+    let mut stripped = Vec::with_capacity(end - BTB_KIND_COUNTER_BYTES);
+    stripped.extend_from_slice(&encoded[..btb_kind_counter_start]);
+    stripped.extend_from_slice(&encoded[btb_kind_counter_start + BTB_KIND_COUNTER_BYTES..end]);
+    stripped
 }
 
 #[test]
@@ -544,7 +564,6 @@ fn checkpoint_payload_round_trips_return_address_stack_operation_id_gaps_after_s
 fn checkpoint_payload_decodes_v4_active_mapping_with_ras_without_branch_kinds() {
     const VERSION_OFFSET: usize = 4;
     const ACTIVE_SPECULATION_V4_BYTES: usize = 36;
-    const ACTIVE_SPECULATION_CURRENT_BYTES: usize = 38;
     let mut predictor =
         BranchPredictor::new(BranchPredictorConfig::with_history_bits(8, 3).unwrap());
     let first = predictor.predict_speculative(Address::new(0x1000));
@@ -569,7 +588,8 @@ fn checkpoint_payload_decodes_v4_active_mapping_with_ras_without_branch_kinds() 
     .unwrap();
     let encoded = payload.encode();
     let active_start = encoded.len() - ACTIVE_SPECULATION_CURRENT_BYTES * 2;
-    let mut v4_encoded = encoded[..active_start].to_vec();
+    let mut v4_encoded =
+        current_payload_prefix_without_btb_kind_counters(&encoded, 8, 2, active_start);
     v4_encoded[VERSION_OFFSET] = 4;
     for active_index in 0..2 {
         let entry_start = active_start + active_index * ACTIVE_SPECULATION_CURRENT_BYTES;
@@ -598,9 +618,7 @@ fn checkpoint_payload_decodes_v4_active_mapping_with_ras_without_branch_kinds() 
 #[test]
 fn checkpoint_payload_decodes_v2_active_mapping_without_branch_target_predictions() {
     const VERSION_OFFSET: usize = 4;
-    const RAS_HEADER_BYTES: usize = 4 * 3 + 8;
     const ACTIVE_SPECULATION_V2_BYTES: usize = 16;
-    const ACTIVE_SPECULATION_CURRENT_BYTES: usize = 38;
     let mut predictor =
         BranchPredictor::new(BranchPredictorConfig::with_history_bits(8, 3).unwrap());
     let first = predictor.predict_speculative(Address::new(0x1000));
@@ -612,7 +630,12 @@ fn checkpoint_payload_decodes_v2_active_mapping_without_branch_target_prediction
     .unwrap();
     let encoded = payload.encode();
     let active_start = encoded.len() - ACTIVE_SPECULATION_CURRENT_BYTES * 2;
-    let mut v2_encoded = encoded[..active_start - RAS_HEADER_BYTES].to_vec();
+    let mut v2_encoded = current_payload_prefix_without_btb_kind_counters(
+        &encoded,
+        8,
+        2,
+        active_start - RAS_HEADER_BYTES,
+    );
     v2_encoded[VERSION_OFFSET] = 2;
     for active_index in 0..2 {
         let entry_start = active_start + active_index * ACTIVE_SPECULATION_CURRENT_BYTES;
@@ -629,9 +652,7 @@ fn checkpoint_payload_decodes_v2_active_mapping_without_branch_target_prediction
 #[test]
 fn checkpoint_payload_decodes_v3_active_mapping_with_branch_target_predictions_without_ras() {
     const VERSION_OFFSET: usize = 4;
-    const RAS_HEADER_BYTES: usize = 4 * 3 + 8;
     const ACTIVE_SPECULATION_V3_BYTES: usize = 27;
-    const ACTIVE_SPECULATION_CURRENT_BYTES: usize = 38;
     let mut predictor =
         BranchPredictor::new(BranchPredictorConfig::with_history_bits(8, 3).unwrap());
     let first = predictor.predict_speculative(Address::new(0x1000));
@@ -651,7 +672,12 @@ fn checkpoint_payload_decodes_v3_active_mapping_with_branch_target_predictions_w
     .unwrap();
     let encoded = payload.encode();
     let active_start = encoded.len() - ACTIVE_SPECULATION_CURRENT_BYTES * 2;
-    let mut v3_encoded = encoded[..active_start - RAS_HEADER_BYTES].to_vec();
+    let mut v3_encoded = current_payload_prefix_without_btb_kind_counters(
+        &encoded,
+        8,
+        2,
+        active_start - RAS_HEADER_BYTES,
+    );
     v3_encoded[VERSION_OFFSET] = 3;
     for active_index in 0..2 {
         let entry_start = active_start + active_index * ACTIVE_SPECULATION_CURRENT_BYTES;
@@ -730,9 +756,6 @@ fn checkpoint_payload_rejects_btb_config_outside_decode_limits() {
 
 #[test]
 fn checkpoint_payload_rejects_btb_entry_in_wrong_serialized_set() {
-    const HEADER_BYTES: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4 * 2;
-    const CHECKPOINT_TARGET_BYTES: usize = 1 + 8;
-    const BTB_HEADER_BYTES: usize = 4 * 2 + 8 * 6;
     const BTB_ENTRY_VALID_BYTES: usize = 1;
     let mut branch_target_buffer = btb(8, 2);
     branch_target_buffer.update(
@@ -747,8 +770,11 @@ fn checkpoint_payload_rejects_btb_entry_in_wrong_serialized_set() {
     )
     .unwrap();
     let mut encoded = payload.encode();
-    let first_btb_entry_pc =
-        HEADER_BYTES + 8 + 8 * CHECKPOINT_TARGET_BYTES + BTB_HEADER_BYTES + BTB_ENTRY_VALID_BYTES;
+    let first_btb_entry_pc = CHECKPOINT_HEADER_BYTES
+        + 8
+        + 8 * CHECKPOINT_TARGET_BYTES
+        + BTB_HEADER_BYTES
+        + BTB_ENTRY_VALID_BYTES;
     encoded[first_btb_entry_pc..first_btb_entry_pc + 8].copy_from_slice(&0x1004_u64.to_le_bytes());
 
     assert!(matches!(
@@ -759,10 +785,6 @@ fn checkpoint_payload_rejects_btb_entry_in_wrong_serialized_set() {
 
 #[test]
 fn checkpoint_payload_rejects_duplicate_btb_entry_pc() {
-    const HEADER_BYTES: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4 * 2;
-    const CHECKPOINT_TARGET_BYTES: usize = 1 + 8;
-    const BTB_HEADER_BYTES: usize = 4 * 2 + 8 * 6;
-    const BTB_ENTRY_BYTES: usize = 1 + 8 + 8 + 1 + 8;
     let mut branch_target_buffer = btb(8, 2);
     branch_target_buffer.update(
         Address::new(0x1000),
@@ -776,7 +798,8 @@ fn checkpoint_payload_rejects_duplicate_btb_entry_pc() {
     )
     .unwrap();
     let mut encoded = payload.encode();
-    let first_btb_entry = HEADER_BYTES + 8 + 8 * CHECKPOINT_TARGET_BYTES + BTB_HEADER_BYTES;
+    let first_btb_entry =
+        CHECKPOINT_HEADER_BYTES + 8 + 8 * CHECKPOINT_TARGET_BYTES + BTB_HEADER_BYTES;
     let second_btb_entry = first_btb_entry + BTB_ENTRY_BYTES;
     encoded[second_btb_entry] = 1;
     encoded[second_btb_entry + 1..second_btb_entry + 9].copy_from_slice(&0x1000_u64.to_le_bytes());
@@ -792,12 +815,9 @@ fn checkpoint_payload_rejects_duplicate_btb_entry_pc() {
 
 #[test]
 fn checkpoint_payload_rejects_current_pending_count_before_allocation() {
-    const HEADER_BYTES: usize = 4 + 1 + 4 + 1 + 8 * 4 + 4 * 2;
     const PENDING_COUNT_OFFSET: usize = 4 + 1 + 4 + 1 + 8 * 4;
     const COUNTER_BYTES: usize = 8;
     const TARGET_BYTES: usize = 8 * (1 + 8);
-    const PENDING_SPECULATION_BYTES: usize = 49;
-    const BTB_HEADER_BYTES: usize = 4 * 2 + 8 * 6;
     let payload = BranchPredictorCheckpointPayload::from_snapshot(
         predictor(8).snapshot(),
         std::iter::empty::<(u64, BranchSpeculationId)>(),
@@ -805,7 +825,7 @@ fn checkpoint_payload_rejects_current_pending_count_before_allocation() {
     .unwrap();
     let mut encoded = payload.encode();
     let pending_count = 100_u32;
-    let expected = HEADER_BYTES
+    let expected = CHECKPOINT_HEADER_BYTES
         + COUNTER_BYTES
         + TARGET_BYTES
         + pending_count as usize * PENDING_SPECULATION_BYTES
@@ -1161,7 +1181,17 @@ fn branch_target_buffer_records_miss_update_hit_and_counters() {
     assert_eq!(miss.target(), None);
     assert_eq!(miss.kind(), BranchTargetKind::DirectConditional);
     assert_eq!(miss.lookup_count(), 1);
+    assert_eq!(
+        btb.lookup_kind_counts()
+            .value(BranchTargetKind::DirectConditional),
+        1
+    );
     assert_eq!(btb.miss_count(), 1);
+    assert_eq!(
+        btb.miss_kind_counts()
+            .value(BranchTargetKind::DirectConditional),
+        1
+    );
 
     let update = btb.update(pc, target, BranchTargetKind::DirectConditional);
 
@@ -1170,6 +1200,11 @@ fn branch_target_buffer_records_miss_update_hit_and_counters() {
     assert_eq!(update.kind(), BranchTargetKind::DirectConditional);
     assert_eq!(update.replaced(), None);
     assert_eq!(update.update_count(), 1);
+    assert_eq!(
+        btb.update_kind_counts()
+            .value(BranchTargetKind::DirectConditional),
+        1
+    );
     assert!(btb.valid(pc));
 
     let hit = btb.lookup(pc, BranchTargetKind::DirectConditional);
@@ -1183,7 +1218,16 @@ fn branch_target_buffer_records_miss_update_hit_and_counters() {
     );
     assert_eq!(btb.lookup_count(), 2);
     assert_eq!(btb.hit_count(), 1);
+    assert_eq!(
+        btb.hit_kind_counts()
+            .value(BranchTargetKind::DirectConditional),
+        1
+    );
     assert_eq!(btb.miss_count(), 1);
+    assert_eq!(btb.lookup_kind_counts().total(), btb.lookup_count());
+    assert_eq!(btb.hit_kind_counts().total(), btb.hit_count());
+    assert_eq!(btb.miss_kind_counts().total(), btb.miss_count());
+    assert_eq!(btb.update_kind_counts().total(), btb.update_count());
 }
 
 #[test]
@@ -1239,6 +1283,21 @@ fn branch_target_buffer_snapshot_restore_preserves_entries_and_counters() {
     );
     assert_eq!(btb.miss_count(), 1);
     assert_eq!(btb.update_count(), 1);
+    assert_eq!(
+        btb.lookup_kind_counts()
+            .value(BranchTargetKind::IndirectConditional),
+        2
+    );
+    assert_eq!(
+        btb.miss_kind_counts()
+            .value(BranchTargetKind::IndirectConditional),
+        1
+    );
+    assert_eq!(
+        btb.update_kind_counts()
+            .value(BranchTargetKind::IndirectConditional),
+        1
+    );
 }
 
 #[test]

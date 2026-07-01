@@ -122,6 +122,24 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 lookups,
             );
         }
+        for kind in BranchTargetKind::ALL {
+            if let Some(lookups) = snapshot_value(
+                snapshot,
+                &format!(
+                    "sim.cpu{cpu}.branch_predictor.btb.lookups.{}",
+                    kind.canonical_stat_name()
+                ),
+            ) {
+                append_derived_count_stat(
+                    output,
+                    &format!(
+                        "{alias_prefix}.branchPred.btb.lookups::{}",
+                        kind.gem5_branch_type_name()
+                    ),
+                    lookups,
+                );
+            }
+        }
         if let Some(hits) = btb_hits {
             append_derived_count_stat(output, &format!("{alias_prefix}.branchPred.BTBHits"), hits);
         }
@@ -134,6 +152,24 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 &format!("{alias_prefix}.branchPred.btb.misses::total"),
                 misses,
             );
+        }
+        for kind in BranchTargetKind::ALL {
+            if let Some(misses) = snapshot_value(
+                snapshot,
+                &format!(
+                    "sim.cpu{cpu}.branch_predictor.btb.misses.{}",
+                    kind.canonical_stat_name()
+                ),
+            ) {
+                append_derived_count_stat(
+                    output,
+                    &format!(
+                        "{alias_prefix}.branchPred.btb.misses::{}",
+                        kind.gem5_branch_type_name()
+                    ),
+                    misses,
+                );
+            }
         }
         if let Some(updates) = snapshot_value(
             snapshot,
@@ -149,6 +185,24 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 &format!("{alias_prefix}.branchPred.btb.updates::total"),
                 updates,
             );
+        }
+        for kind in BranchTargetKind::ALL {
+            if let Some(updates) = snapshot_value(
+                snapshot,
+                &format!(
+                    "sim.cpu{cpu}.branch_predictor.btb.updates.{}",
+                    kind.canonical_stat_name()
+                ),
+            ) {
+                append_derived_count_stat(
+                    output,
+                    &format!(
+                        "{alias_prefix}.branchPred.btb.updates::{}",
+                        kind.gem5_branch_type_name()
+                    ),
+                    updates,
+                );
+            }
         }
         if let Some(evictions) = snapshot_value(
             snapshot,

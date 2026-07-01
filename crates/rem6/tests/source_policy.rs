@@ -6,7 +6,7 @@ const MAX_CONFIG_ROOT_LINES: usize = 1700;
 const MAX_SOURCE_LINES: usize = 1800;
 const MAX_RISCV_SBI_SMOKE_LINES: usize = 1500;
 const MAX_ARCHITECTURE_OVERVIEW_LINES: usize = 600;
-const MAX_MIGRATION_LEDGER_LINES: usize = 1200;
+const REQUIRED_MIGRATION_LEDGER_LINES: usize = 1200;
 const MAX_ARCHITECTURE_README_LINES: usize = 80;
 const MIGRATION_SCORE_BUCKETS: &[MigrationScoreBucket] = &[
     MigrationScoreBucket {
@@ -323,9 +323,9 @@ fn architecture_docs_have_clear_boundaries() {
 
     let migration_contents = fs::read_to_string(&migration).unwrap();
     let migration_lines = migration_contents.lines().count();
-    assert!(
-        migration_lines <= MAX_MIGRATION_LEDGER_LINES,
-        "gem5-to-rem6-migration.md should stay a concise ledger, but it has {migration_lines} lines"
+    assert_eq!(
+        migration_lines, REQUIRED_MIGRATION_LEDGER_LINES,
+        "gem5-to-rem6-migration.md must stay exactly {REQUIRED_MIGRATION_LEDGER_LINES} lines, but it has {migration_lines} lines"
     );
     for required in [
         "## Document Boundary",
@@ -416,10 +416,16 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "system.cpu1.pipeline.inOrder.resourceBlocked",
         "system.cpu.branchPred.BTBLookups",
         "system.cpu.branchPred.btb.lookups::total",
+        "system.cpu.branchPred.btb.lookups::DirectCond",
+        "system.cpu.branchPred.btb.lookups::DirectUncond",
         "system.cpu.branchPred.BTBHits",
         "system.cpu.branchPred.btb.misses::total",
+        "system.cpu.branchPred.btb.misses::DirectCond",
+        "system.cpu.branchPred.btb.misses::DirectUncond",
         "system.cpu.branchPred.BTBUpdates",
         "system.cpu.branchPred.btb.updates::total",
+        "system.cpu.branchPred.btb.updates::DirectCond",
+        "system.cpu.branchPred.btb.updates::DirectUncond",
         "system.cpu.branchPred.btb.evictions",
         "system.cpu.branchPred.BTBHitRatio",
         "system.cpu.branchPred.BTBMispredicted",
@@ -455,10 +461,16 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "system.cpu.branchPred.targetProvider_0::total",
         "system.cpu0.branchPred.BTBLookups",
         "system.cpu0.branchPred.btb.lookups::total",
+        "system.cpu0.branchPred.btb.lookups::DirectCond",
+        "system.cpu0.branchPred.btb.lookups::DirectUncond",
         "system.cpu0.branchPred.BTBHits",
         "system.cpu0.branchPred.btb.misses::total",
+        "system.cpu0.branchPred.btb.misses::DirectCond",
+        "system.cpu0.branchPred.btb.misses::DirectUncond",
         "system.cpu0.branchPred.BTBUpdates",
         "system.cpu0.branchPred.btb.updates::total",
+        "system.cpu0.branchPred.btb.updates::DirectCond",
+        "system.cpu0.branchPred.btb.updates::DirectUncond",
         "system.cpu0.branchPred.btb.evictions",
         "system.cpu0.branchPred.BTBHitRatio",
         "system.cpu0.branchPred.BTBMispredicted",
@@ -490,10 +502,16 @@ fn gem5_migration_doc_tracks_core_test_anchors() {
         "system.cpu0.branchPred.targetProvider_0::total",
         "system.cpu1.branchPred.BTBLookups",
         "system.cpu1.branchPred.btb.lookups::total",
+        "system.cpu1.branchPred.btb.lookups::DirectCond",
+        "system.cpu1.branchPred.btb.lookups::DirectUncond",
         "system.cpu1.branchPred.BTBHits",
         "system.cpu1.branchPred.btb.misses::total",
+        "system.cpu1.branchPred.btb.misses::DirectCond",
+        "system.cpu1.branchPred.btb.misses::DirectUncond",
         "system.cpu1.branchPred.BTBUpdates",
         "system.cpu1.branchPred.btb.updates::total",
+        "system.cpu1.branchPred.btb.updates::DirectCond",
+        "system.cpu1.branchPred.btb.updates::DirectUncond",
         "system.cpu1.branchPred.btb.evictions",
         "system.cpu1.branchPred.BTBHitRatio",
         "system.cpu1.branchPred.BTBMispredicted",

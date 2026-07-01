@@ -348,6 +348,19 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.branch_target_buffer_lookups,
         )?;
+        for kind in BranchTargetKind::ALL {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.branch_predictor.btb.lookups.{}",
+                    core.cpu,
+                    kind.canonical_stat_name()
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.branch_target_buffer_lookup_kinds.value(kind),
+            )?;
+        }
         increment_stat(
             stats,
             &format!("sim.cpu{}.branch_predictor.btb.hits", core.cpu),
@@ -355,6 +368,19 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.branch_target_buffer_hits,
         )?;
+        for kind in BranchTargetKind::ALL {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.branch_predictor.btb.hits.{}",
+                    core.cpu,
+                    kind.canonical_stat_name()
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.branch_target_buffer_hit_kinds.value(kind),
+            )?;
+        }
         increment_stat(
             stats,
             &format!("sim.cpu{}.branch_predictor.btb.misses", core.cpu),
@@ -362,6 +388,19 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.branch_target_buffer_misses,
         )?;
+        for kind in BranchTargetKind::ALL {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.branch_predictor.btb.misses.{}",
+                    core.cpu,
+                    kind.canonical_stat_name()
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.branch_target_buffer_miss_kinds.value(kind),
+            )?;
+        }
         increment_stat(
             stats,
             &format!("sim.cpu{}.branch_predictor.btb.updates", core.cpu),
@@ -369,6 +408,19 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.branch_target_buffer_updates,
         )?;
+        for kind in BranchTargetKind::ALL {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.branch_predictor.btb.updates.{}",
+                    core.cpu,
+                    kind.canonical_stat_name()
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.branch_target_buffer_update_kinds.value(kind),
+            )?;
+        }
         increment_stat(
             stats,
             &format!("sim.cpu{}.branch_predictor.btb.evictions", core.cpu),
