@@ -6,7 +6,7 @@ use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::metadata_tables::{
     BootElfSectionAddressRange, BootElfSectionAlignment, BootElfSectionFlags,
     BootElfSectionHeaderTable, BootElfSectionNameTable, BootElfSectionRelocations,
-    BootElfSectionStorage,
+    BootElfSectionStorage, BootElfSymbolSummary,
 };
 
 const SHT_RELA: u32 = 4;
@@ -31,6 +31,9 @@ pub(crate) struct ElfSectionSummary {
     symbol_count: u64,
     function_symbol_count: u64,
     object_symbol_count: u64,
+    local_symbol_count: u64,
+    global_symbol_count: u64,
+    weak_symbol_count: u64,
     allocated_section_count: u64,
     writable_section_count: u64,
     executable_section_count: u64,
@@ -66,16 +69,15 @@ impl ElfSectionSummary {
         self.has_tls
     }
 
-    pub(crate) const fn symbol_count(self) -> u64 {
-        self.symbol_count
-    }
-
-    pub(crate) const fn function_symbol_count(self) -> u64 {
-        self.function_symbol_count
-    }
-
-    pub(crate) const fn object_symbol_count(self) -> u64 {
-        self.object_symbol_count
+    pub(crate) const fn symbol_summary(self) -> BootElfSymbolSummary {
+        BootElfSymbolSummary::new(
+            self.symbol_count,
+            self.function_symbol_count,
+            self.object_symbol_count,
+            self.local_symbol_count,
+            self.global_symbol_count,
+            self.weak_symbol_count,
+        )
     }
 
     pub(crate) const fn note_section_count(self) -> u64 {
@@ -635,6 +637,12 @@ fn summarize_symbol_type(summary: &mut ElfSectionSummary, binding: u8, kind: u8)
         return;
     }
     summary.symbol_count += 1;
+    match binding {
+        STB_LOCAL => summary.local_symbol_count += 1,
+        STB_GLOBAL => summary.global_symbol_count += 1,
+        STB_WEAK => summary.weak_symbol_count += 1,
+        _ => {}
+    }
     match kind {
         STT_FUNC => summary.function_symbol_count += 1,
         STT_OBJECT => summary.object_symbol_count += 1,

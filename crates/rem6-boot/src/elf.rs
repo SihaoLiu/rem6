@@ -410,11 +410,7 @@ fn parse_elf64(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         .with_gnu_relro(gnu_relro_virtual_address, gnu_relro_memory_size)
         .with_gnu_eh_frame(gnu_eh_frame_virtual_address, gnu_eh_frame_memory_size)
         .with_gnu_property(gnu_property_virtual_address, gnu_property_memory_size)
-        .with_symbol_summary(
-            section_summary.symbol_count(),
-            section_summary.function_symbol_count(),
-            section_summary.object_symbol_count(),
-        )
+        .with_symbol_summary(section_summary.symbol_summary())
         .with_load_segments(load_segment_summary.load_segments())
         .with_dynamic_table(dynamic_table)
         .with_section_header_table(section_summary.section_header_table())
@@ -627,11 +623,7 @@ fn parse_elf32(bytes: &[u8], endian: BootElfEndian) -> Result<BootImage, BootErr
         .with_gnu_relro(gnu_relro_virtual_address, gnu_relro_memory_size)
         .with_gnu_eh_frame(gnu_eh_frame_virtual_address, gnu_eh_frame_memory_size)
         .with_gnu_property(gnu_property_virtual_address, gnu_property_memory_size)
-        .with_symbol_summary(
-            section_summary.symbol_count(),
-            section_summary.function_symbol_count(),
-            section_summary.object_symbol_count(),
-        )
+        .with_symbol_summary(section_summary.symbol_summary())
         .with_load_segments(load_segment_summary.load_segments())
         .with_dynamic_table(dynamic_table)
         .with_section_header_table(section_summary.section_header_table())

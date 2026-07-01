@@ -102,6 +102,60 @@ impl BootElfLoadSegments {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BootElfSymbolSummary {
+    total_count: u64,
+    function_count: u64,
+    object_count: u64,
+    local_count: u64,
+    global_count: u64,
+    weak_count: u64,
+}
+
+impl BootElfSymbolSummary {
+    pub const fn new(
+        total_count: u64,
+        function_count: u64,
+        object_count: u64,
+        local_count: u64,
+        global_count: u64,
+        weak_count: u64,
+    ) -> Self {
+        Self {
+            total_count,
+            function_count,
+            object_count,
+            local_count,
+            global_count,
+            weak_count,
+        }
+    }
+
+    pub const fn total_count(self) -> u64 {
+        self.total_count
+    }
+
+    pub const fn function_count(self) -> u64 {
+        self.function_count
+    }
+
+    pub const fn object_count(self) -> u64 {
+        self.object_count
+    }
+
+    pub const fn local_count(self) -> u64 {
+        self.local_count
+    }
+
+    pub const fn global_count(self) -> u64 {
+        self.global_count
+    }
+
+    pub const fn weak_count(self) -> u64 {
+        self.weak_count
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BootElfSectionHeaderTable {
     file_offset: u64,
     entry_size: u16,

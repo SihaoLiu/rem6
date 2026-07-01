@@ -128,6 +128,27 @@ pub(super) fn emit_elf_run_stats(
         StatResetPolicy::Constant,
         metadata.object_symbol_count(),
     )?;
+    increment_stat(
+        stats,
+        "sim.elf.local_symbols",
+        "Count",
+        StatResetPolicy::Constant,
+        metadata.local_symbol_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.global_symbols",
+        "Count",
+        StatResetPolicy::Constant,
+        metadata.global_symbol_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.weak_symbols",
+        "Count",
+        StatResetPolicy::Constant,
+        metadata.weak_symbol_count(),
+    )?;
     emit_elf_dynamic_stats(stats, metadata.dynamic_table())?;
     emit_elf_program_header_stats(stats, metadata)?;
     emit_elf_section_header_stats(stats, metadata)?;

@@ -5,6 +5,7 @@ use crate::metadata_tables::{
     BootElfLoadSegments, BootElfProgramHeaderTable, BootElfSectionAddressRange,
     BootElfSectionAlignment, BootElfSectionFlags, BootElfSectionHeaderTable,
     BootElfSectionNameTable, BootElfSectionRelocations, BootElfSectionStorage,
+    BootElfSymbolSummary,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -572,9 +573,7 @@ pub struct BootElfMetadata {
     gnu_eh_frame_memory_size: Option<u64>,
     gnu_property_virtual_address: Option<Address>,
     gnu_property_memory_size: Option<u64>,
-    symbol_count: u64,
-    function_symbol_count: u64,
-    object_symbol_count: u64,
+    symbol_summary: BootElfSymbolSummary,
     dynamic_table: BootElfDynamicTable,
     load_segments: BootElfLoadSegments,
     program_header_table: BootElfProgramHeaderTable,
@@ -617,9 +616,7 @@ impl BootElfMetadata {
             gnu_eh_frame_memory_size: None,
             gnu_property_virtual_address: None,
             gnu_property_memory_size: None,
-            symbol_count: 0,
-            function_symbol_count: 0,
-            object_symbol_count: 0,
+            symbol_summary: BootElfSymbolSummary::new(0, 0, 0, 0, 0, 0),
             dynamic_table: BootElfDynamicTable::new(),
             load_segments: BootElfLoadSegments::new(0, 0, 0, 0, 0, 0, 0),
             program_header_table: BootElfProgramHeaderTable::new(0, 0, 0),
@@ -752,13 +749,9 @@ impl BootElfMetadata {
 
     pub(crate) const fn with_symbol_summary(
         mut self,
-        symbol_count: u64,
-        function_symbol_count: u64,
-        object_symbol_count: u64,
+        symbol_summary: BootElfSymbolSummary,
     ) -> Self {
-        self.symbol_count = symbol_count;
-        self.function_symbol_count = function_symbol_count;
-        self.object_symbol_count = object_symbol_count;
+        self.symbol_summary = symbol_summary;
         self
     }
 
@@ -839,15 +832,27 @@ impl BootElfMetadata {
     }
 
     pub const fn symbol_count(&self) -> u64 {
-        self.symbol_count
+        self.symbol_summary.total_count()
     }
 
     pub const fn function_symbol_count(&self) -> u64 {
-        self.function_symbol_count
+        self.symbol_summary.function_count()
     }
 
     pub const fn object_symbol_count(&self) -> u64 {
-        self.object_symbol_count
+        self.symbol_summary.object_count()
+    }
+
+    pub const fn local_symbol_count(&self) -> u64 {
+        self.symbol_summary.local_count()
+    }
+
+    pub const fn global_symbol_count(&self) -> u64 {
+        self.symbol_summary.global_count()
+    }
+
+    pub const fn weak_symbol_count(&self) -> u64 {
+        self.symbol_summary.weak_count()
     }
 
     pub const fn dynamic_table(&self) -> &BootElfDynamicTable {
