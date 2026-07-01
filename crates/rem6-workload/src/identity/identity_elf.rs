@@ -157,6 +157,18 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 hash_u64(hash, section_arrays.preinit_array_bytes());
                 hash_u64(hash, section_arrays.preinit_array_entry_count());
             }
+            let section_hashes = metadata.section_hashes();
+            if section_hashes.sysv_section_count() != 0
+                || section_hashes.sysv_bytes() != 0
+                || section_hashes.gnu_section_count() != 0
+                || section_hashes.gnu_bytes() != 0
+            {
+                hash_str(hash, "elf.section_hashes");
+                hash_u64(hash, section_hashes.sysv_section_count());
+                hash_u64(hash, section_hashes.sysv_bytes());
+                hash_u64(hash, section_hashes.gnu_section_count());
+                hash_u64(hash, section_hashes.gnu_bytes());
+            }
             let dynamic = metadata.dynamic_table();
             if dynamic.segment_count() != 0 {
                 let address = dynamic.virtual_address().map_or(u64::MAX, |a| a.get());

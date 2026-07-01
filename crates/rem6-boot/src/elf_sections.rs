@@ -5,13 +5,15 @@ use crate::elf_counts::section_table_layout;
 use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::metadata_tables::{
     BootElfSectionAddressRange, BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags,
-    BootElfSectionHeaderTable, BootElfSectionNameTable, BootElfSectionRelocations,
-    BootElfSectionStorage, BootElfSymbolSummary,
+    BootElfSectionHashes, BootElfSectionHeaderTable, BootElfSectionNameTable,
+    BootElfSectionRelocations, BootElfSectionStorage, BootElfSymbolSummary,
 };
 
 const SHT_INIT_ARRAY: u32 = 14;
 const SHT_FINI_ARRAY: u32 = 15;
 const SHT_PREINIT_ARRAY: u32 = 16;
+const SHT_HASH: u32 = 5;
+const SHT_GNU_HASH: u32 = 0x6fff_fff6;
 const SHT_RELA: u32 = 4;
 const SHT_NOTE: u32 = 7;
 const SHT_NOBITS: u32 = 8;
@@ -66,6 +68,10 @@ pub(crate) struct ElfSectionSummary {
     preinit_array_section_count: u64,
     preinit_array_bytes: u64,
     preinit_array_entry_count: u64,
+    sysv_hash_section_count: u64,
+    sysv_hash_bytes: u64,
+    gnu_hash_section_count: u64,
+    gnu_hash_bytes: u64,
     section_address_start: Option<u64>,
     section_address_end: Option<u64>,
     max_section_alignment: u64,
@@ -125,6 +131,15 @@ impl ElfSectionSummary {
             self.preinit_array_section_count,
             self.preinit_array_bytes,
             self.preinit_array_entry_count,
+        )
+    }
+
+    pub(crate) const fn section_hashes(self) -> BootElfSectionHashes {
+        BootElfSectionHashes::new(
+            self.sysv_hash_section_count,
+            self.sysv_hash_bytes,
+            self.gnu_hash_section_count,
+            self.gnu_hash_bytes,
         )
     }
 
@@ -453,6 +468,7 @@ fn summarize_common_section(
         summary.string_table_bytes = summary.string_table_bytes.saturating_add(section.size);
     }
     summarize_array_section(summary, section.kind, section.size, section.entry_size);
+    summarize_hash_section(summary, section.kind, section.size);
     if section.kind == SHT_NOTE {
         summary.note_section_count += 1;
         summary.note_section_file_size =
@@ -508,6 +524,20 @@ fn summarize_array_section(summary: &mut ElfSectionSummary, kind: u32, size: u64
             summary.preinit_array_entry_count = summary
                 .preinit_array_entry_count
                 .saturating_add(entry_count);
+        }
+        _ => {}
+    }
+}
+
+fn summarize_hash_section(summary: &mut ElfSectionSummary, kind: u32, size: u64) {
+    match kind {
+        SHT_HASH => {
+            summary.sysv_hash_section_count += 1;
+            summary.sysv_hash_bytes = summary.sysv_hash_bytes.saturating_add(size);
+        }
+        SHT_GNU_HASH => {
+            summary.gnu_hash_section_count += 1;
+            summary.gnu_hash_bytes = summary.gnu_hash_bytes.saturating_add(size);
         }
         _ => {}
     }

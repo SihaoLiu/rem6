@@ -157,6 +157,7 @@ pub(super) fn emit_elf_run_stats(
     emit_elf_section_storage_stats(stats, metadata)?;
     emit_elf_section_relocation_stats(stats, metadata)?;
     emit_elf_section_array_stats(stats, metadata)?;
+    emit_elf_section_hash_stats(stats, metadata)?;
     emit_elf_section_address_stats(stats, metadata)?;
     emit_elf_section_alignment_stats(stats, metadata)?;
     emit_elf_interpreter_stats(stats, interpreter)
@@ -753,6 +754,38 @@ fn emit_elf_section_array_stats(
             "sim.elf.section_arrays.preinit.entries",
             "Count",
             arrays.preinit_array_entry_count(),
+        ),
+    ] {
+        increment_stat(stats, name, unit, StatResetPolicy::Constant, value)?;
+    }
+    Ok(())
+}
+
+fn emit_elf_section_hash_stats(
+    stats: &mut StatsRegistry,
+    metadata: &BootElfMetadata,
+) -> Result<(), Rem6CliError> {
+    let hashes = metadata.section_hashes();
+    for (name, unit, value) in [
+        (
+            "sim.elf.section_hashes.sysv.sections",
+            "Count",
+            hashes.sysv_section_count(),
+        ),
+        (
+            "sim.elf.section_hashes.sysv.bytes",
+            "Byte",
+            hashes.sysv_bytes(),
+        ),
+        (
+            "sim.elf.section_hashes.gnu.sections",
+            "Count",
+            hashes.gnu_section_count(),
+        ),
+        (
+            "sim.elf.section_hashes.gnu.bytes",
+            "Byte",
+            hashes.gnu_bytes(),
         ),
     ] {
         increment_stat(stats, name, unit, StatResetPolicy::Constant, value)?;

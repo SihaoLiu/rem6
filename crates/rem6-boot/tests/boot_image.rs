@@ -25,6 +25,8 @@ const PT_GNU_PROPERTY: u32 = 0x6474_e553;
 const SHT_INIT_ARRAY: u32 = 14;
 const SHT_FINI_ARRAY: u32 = 15;
 const SHT_PREINIT_ARRAY: u32 = 16;
+const SHT_HASH: u32 = 5;
+const SHT_GNU_HASH: u32 = 0x6fff_fff6;
 const SHT_NOBITS: u32 = 8;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
@@ -1285,6 +1287,47 @@ fn boot_image_records_elf_section_array_summary() {
     assert_eq!(arrays.preinit_array_section_count(), 1);
     assert_eq!(arrays.preinit_array_bytes(), 8);
     assert_eq!(arrays.preinit_array_entry_count(), 1);
+}
+
+#[test]
+fn boot_image_records_elf_section_hash_summary() {
+    let mut elf = elf64_image(
+        0x8000_0100,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000_0000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_sections(
+        &mut elf,
+        &[
+            ElfSectionSpec {
+                name: ".hash",
+                kind: SHT_HASH,
+                data: &[0; 16],
+            },
+            ElfSectionSpec {
+                name: ".gnu.hash",
+                kind: SHT_GNU_HASH,
+                data: &[0; 20],
+            },
+        ],
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let hashes = metadata.section_hashes();
+
+    assert_eq!(hashes.sysv_section_count(), 1);
+    assert_eq!(hashes.sysv_bytes(), 16);
+    assert_eq!(hashes.gnu_section_count(), 1);
+    assert_eq!(hashes.gnu_bytes(), 20);
 }
 
 #[test]

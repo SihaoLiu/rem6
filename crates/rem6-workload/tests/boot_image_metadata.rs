@@ -11,6 +11,7 @@ const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
 const SHT_INIT_ARRAY: u32 = 14;
+const SHT_HASH: u32 = 5;
 const SHT_STRTAB: u32 = 3;
 const SHT_NOBITS: u32 = 8;
 const SHF_WRITE: u64 = 1;
@@ -2182,6 +2183,53 @@ fn workload_manifest_identity_includes_elf_section_arrays() {
         .unwrap();
 
     assert_ne!(baseline.identity(), array.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_section_hashes() {
+    let mut baseline_elf = elf64_image_with_named_sections(243, &[".hash"]);
+    set_elf64_section_kind_flags(&mut baseline_elf, 1, 1, 0);
+    set_elf64_section_size(&mut baseline_elf, 1, 16);
+    let mut hash_elf = elf64_image_with_named_sections(243, &[".hash"]);
+    set_elf64_section_kind_flags(&mut hash_elf, 1, SHT_HASH, 0);
+    set_elf64_section_size(&mut hash_elf, 1, 16);
+    let baseline_source = BootImage::from_elf64_le(&baseline_elf).unwrap();
+    let hash_source = BootImage::from_elf64_le(&hash_elf).unwrap();
+
+    assert_eq!(baseline_source.entry(), hash_source.entry());
+    assert_eq!(baseline_source.segments(), hash_source.segments());
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_header_table(),
+        hash_source.elf_metadata().unwrap().section_header_table(),
+    );
+    assert_eq!(
+        baseline_source.elf_metadata().unwrap().section_storage(),
+        hash_source.elf_metadata().unwrap().section_storage(),
+    );
+    assert_ne!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_hashes()
+            .sysv_section_count(),
+        hash_source
+            .elf_metadata()
+            .unwrap()
+            .section_hashes()
+            .sysv_section_count(),
+    );
+
+    let baseline = WorkloadManifest::builder(id("same"), baseline_source)
+        .build()
+        .unwrap();
+    let hash = WorkloadManifest::builder(id("same"), hash_source)
+        .build()
+        .unwrap();
+
+    assert_ne!(baseline.identity(), hash.identity());
 }
 
 #[test]

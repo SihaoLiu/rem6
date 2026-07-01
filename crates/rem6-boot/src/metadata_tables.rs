@@ -374,6 +374,46 @@ impl BootElfSectionRelocations {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BootElfSectionHashes {
+    sysv_section_count: u64,
+    sysv_bytes: u64,
+    gnu_section_count: u64,
+    gnu_bytes: u64,
+}
+
+impl BootElfSectionHashes {
+    pub const fn new(
+        sysv_section_count: u64,
+        sysv_bytes: u64,
+        gnu_section_count: u64,
+        gnu_bytes: u64,
+    ) -> Self {
+        Self {
+            sysv_section_count,
+            sysv_bytes,
+            gnu_section_count,
+            gnu_bytes,
+        }
+    }
+
+    pub const fn sysv_section_count(self) -> u64 {
+        self.sysv_section_count
+    }
+
+    pub const fn sysv_bytes(self) -> u64 {
+        self.sysv_bytes
+    }
+
+    pub const fn gnu_section_count(self) -> u64 {
+        self.gnu_section_count
+    }
+
+    pub const fn gnu_bytes(self) -> u64 {
+        self.gnu_bytes
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BootElfSectionArrays {
     init_array_section_count: u64,
     init_array_bytes: u64,
