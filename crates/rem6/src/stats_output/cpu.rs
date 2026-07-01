@@ -464,6 +464,13 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.branch_predictor_indirect_hits,
         )?;
+        increment_stat(
+            stats,
+            &format!("sim.cpu{}.branch_predictor.indirect_mispredicted", core.cpu),
+            "Count",
+            StatResetPolicy::Monotonic,
+            core.branch_predictor_indirect_mispredicted,
+        )?;
         for (name, value) in [
             ("pushes", core.branch_predictor_ras.pushes()),
             ("pops", core.branch_predictor_ras.pops()),

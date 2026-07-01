@@ -258,6 +258,16 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 }
             }
         }
+        if let Some(mispredicted) = snapshot_value(
+            snapshot,
+            &format!("sim.cpu{cpu}.branch_predictor.indirect_mispredicted"),
+        ) {
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.indirectMispredicted"),
+                mispredicted,
+            );
+        }
         for name in ["pushes", "pops", "squashes", "used", "correct", "incorrect"] {
             if let Some(value) = snapshot_value(
                 snapshot,

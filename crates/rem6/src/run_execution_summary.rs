@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use rem6_cpu::{CpuId, RiscvCluster, RiscvCoreDriveAction, TournamentPredictorSelection};
+use rem6_cpu::{
+    BranchTargetKind, CpuId, RiscvCluster, RiscvCoreDriveAction, TournamentPredictorSelection,
+};
 use rem6_isa_riscv::Register;
 use rem6_memory::CacheLineLayout;
 use rem6_system::{RiscvSyscallTraceRecord, RiscvSystemRun, RiscvSystemRunStopReason};
@@ -173,6 +175,13 @@ pub(super) fn execution_summary(
         let tournament_branch_predictor = core.tournament_branch_predictor_snapshot();
         let tage_sc_l_branch_predictor = core.tage_sc_l_branch_predictor_snapshot();
         let multiperspective_perceptron = core.multiperspective_perceptron_snapshot();
+        let mispredicted_branch_kinds = branch_speculation_summary.mispredicted_branch_kinds();
+        let branch_predictor_indirect_mispredicted = BranchTargetKind::ALL
+            .into_iter()
+            .filter(|kind| kind.is_indirect_non_return())
+            .fold(0_u64, |total, kind| {
+                total.saturating_add(mispredicted_branch_kinds.value(kind))
+            });
         let tournament_selection_counts = tournament_selection_counts
             .get(&cpu)
             .copied()
@@ -254,9 +263,10 @@ pub(super) fn execution_summary(
             branch_predictor_squashes_total: branch_speculation_summary.removed_youngers(),
             branch_predictor_target_provider: branch_speculation_summary.target_provider(),
             branch_predictor_indirect_hits: branch_speculation_summary.indirect_hits(),
+            branch_predictor_indirect_mispredicted,
             branch_predictor_ras: branch_speculation_summary.return_address_stack(),
             branch_predictor_committed: branch_speculation_summary.committed_branch_kinds(),
-            branch_predictor_mispredicted: branch_speculation_summary.mispredicted_branch_kinds(),
+            branch_predictor_mispredicted: mispredicted_branch_kinds,
             branch_predictor_corrected: branch_speculation_summary.corrected_branch_kinds(),
             branch_predictor_target_wrong: branch_speculation_summary.target_wrong_branch_kinds(),
             branch_predictor_mispredict_due_to_predictor: branch_speculation_summary

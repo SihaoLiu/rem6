@@ -6854,6 +6854,7 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
         };
 
         let stdout = run("json");
+        let artifact: Value = serde_json::from_str(&stdout).unwrap();
         for cpu in 0..cores {
             let indirect_provider = stat_value(
                 &stdout,
@@ -6863,8 +6864,31 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
                 &stdout,
                 &format!("sim.cpu{cpu}.branch_predictor.indirect_hits"),
             );
+            let indirect_mispredicted = stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.indirect_mispredicted"),
+            );
+            let expected_indirect_mispredicted = stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.mispredicted.indirect_conditional"),
+            ) + stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.mispredicted.indirect_unconditional"),
+            ) + stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.mispredicted.call_indirect"),
+            );
             assert!(indirect_provider > 0, "{stdout}");
             assert_eq!(indirect_hits, indirect_provider);
+            assert_eq!(indirect_mispredicted, expected_indirect_mispredicted);
+            assert_eq!(
+                artifact
+                    .pointer(&format!(
+                        "/cores/{cpu}/branch_predictor/indirect_mispredicted"
+                    ))
+                    .and_then(Value::as_u64),
+                Some(indirect_mispredicted)
+            );
             assert_eq!(
                 stat_value(
                     &stdout,
@@ -6882,7 +6906,6 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
                 ) + indirect_provider
             );
         }
-        let artifact: Value = serde_json::from_str(&stdout).unwrap();
         for cpu in 0..cores {
             assert_eq!(
                 json_core_register(&artifact, cpu, "x5"),
@@ -6906,6 +6929,20 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
                 &stdout,
                 &format!("sim.cpu{cpu}.branch_predictor.indirect_hits"),
             );
+            let indirect_mispredicted = text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.indirect_mispredicted"),
+            );
+            let expected_indirect_mispredicted = text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.mispredicted.indirect_conditional"),
+            ) + text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.mispredicted.indirect_unconditional"),
+            ) + text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.mispredicted.call_indirect"),
+            );
             let indirect_lookups = text_stat_value(
                 &stdout,
                 &format!("sim.cpu{cpu}.branch_predictor.lookups.indirect_conditional"),
@@ -6918,6 +6955,7 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
             );
             assert!(indirect_provider > 0, "{stdout}");
             assert_eq!(indirect_hits, indirect_provider);
+            assert_eq!(indirect_mispredicted, expected_indirect_mispredicted);
             assert!(indirect_lookups > 0, "{stdout}");
             assert_eq!(
                 text_stat_value(
@@ -6940,6 +6978,13 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
             assert_eq!(
                 text_stat_value(
                     &stdout,
+                    &format!("{alias_prefix}.branchPred.indirectMispredicted")
+                ),
+                indirect_mispredicted
+            );
+            assert_eq!(
+                text_stat_value(
+                    &stdout,
                     &format!("{alias_prefix}.branchPred.targetProvider_0::Indirect")
                 ),
                 indirect_provider
@@ -6948,6 +6993,14 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
                 text_stat_line(
                     &stdout,
                     &format!("{alias_prefix}.branchPred.targetProvider_0::Indirect")
+                )
+                .contains("unit=Count"),
+                "{stdout}"
+            );
+            assert!(
+                text_stat_line(
+                    &stdout,
+                    &format!("{alias_prefix}.branchPred.indirectMispredicted")
                 )
                 .contains("unit=Count"),
                 "{stdout}"
@@ -7021,6 +7074,16 @@ fn rem6_run_stats_exclude_return_jalr_from_indirect_hit_aliases() {
         stat_value(&stdout, "sim.cpu0.branch_predictor.indirect_hits"),
         0
     );
+    assert_eq!(
+        stat_value(&stdout, "sim.cpu0.branch_predictor.indirect_mispredicted"),
+        0
+    );
+    assert_eq!(
+        artifact
+            .pointer("/cores/0/branch_predictor/indirect_mispredicted")
+            .and_then(Value::as_u64),
+        Some(0)
+    );
 
     let stdout = run("text");
     assert!(
@@ -7044,6 +7107,14 @@ fn rem6_run_stats_exclude_return_jalr_from_indirect_hit_aliases() {
     );
     assert_eq!(
         text_stat_value(&stdout, "system.cpu.branchPred.indirectMisses"),
+        0
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "sim.cpu0.branch_predictor.indirect_mispredicted"),
+        0
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.indirectMispredicted"),
         0
     );
 }

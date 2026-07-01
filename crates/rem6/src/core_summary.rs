@@ -61,6 +61,7 @@ pub struct Rem6CoreSummary {
     pub(crate) branch_predictor_squashes_total: u64,
     pub(crate) branch_predictor_target_provider: BranchTargetProviderCounts,
     pub(crate) branch_predictor_indirect_hits: u64,
+    pub(crate) branch_predictor_indirect_mispredicted: u64,
     pub(crate) branch_predictor_ras: RiscvReturnAddressStackStats,
     pub(crate) branch_predictor_committed: BranchTargetKindCounts,
     pub(crate) branch_predictor_mispredicted: BranchTargetKindCounts,
