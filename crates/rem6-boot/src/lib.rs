@@ -4,6 +4,7 @@ mod elf_dynamic;
 mod elf_interpreter;
 mod elf_program_headers;
 mod elf_section_flags;
+mod elf_section_indexes;
 mod elf_section_versions;
 mod elf_sections;
 mod elf_symbols;
@@ -22,6 +23,7 @@ pub use metadata::{
 pub use metadata_tables::{
     BootElfLoadSegments, BootElfProgramHeaderTable, BootElfSectionAddressRange,
     BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags, BootElfSectionGroups,
-    BootElfSectionHashes, BootElfSectionHeaderTable, BootElfSectionNameTable,
-    BootElfSectionRelocations, BootElfSectionStorage, BootElfSectionVersions, BootElfSymbolSummary,
+    BootElfSectionHashes, BootElfSectionHeaderTable, BootElfSectionIndexTables,
+    BootElfSectionNameTable, BootElfSectionRelocations, BootElfSectionStorage,
+    BootElfSectionVersions, BootElfSymbolSummary,
 };

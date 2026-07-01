@@ -28,6 +28,7 @@ const SHT_PREINIT_ARRAY: u32 = 16;
 const SHT_HASH: u32 = 5;
 const SHT_GNU_HASH: u32 = 0x6fff_fff6;
 const SHT_GROUP: u32 = 17;
+const SHT_SYMTAB_SHNDX: u32 = 18;
 const SHT_RELR: u32 = 19;
 const SHT_GNU_VERDEF: u32 = 0x6fff_fffd;
 const SHT_GNU_VERNEED: u32 = 0x6fff_fffe;
@@ -1647,6 +1648,41 @@ fn boot_image_records_elf_section_version_summary() {
     assert_eq!(versions.version_needed_section_count(), 1);
     assert_eq!(versions.version_needed_bytes(), 48);
     assert_eq!(versions.version_needed_entry_count(), 3);
+}
+
+#[test]
+fn boot_image_records_elf_section_index_table_summary() {
+    let mut elf = elf64_image(
+        0x8000_0100,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000_0000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_sections(
+        &mut elf,
+        &[ElfSectionSpec {
+            name: ".symtab_shndx",
+            kind: SHT_SYMTAB_SHNDX,
+            data: &[0; 12],
+        }],
+    );
+    let section_table_offset = read_u64(&elf, 40) as usize;
+    write_u64(&mut elf, section_table_offset + 64 + 56, 4);
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let index_tables = metadata.section_index_tables();
+
+    assert_eq!(index_tables.section_count(), 1);
+    assert_eq!(index_tables.byte_size(), 12);
+    assert_eq!(index_tables.entry_count(), 3);
 }
 
 #[test]

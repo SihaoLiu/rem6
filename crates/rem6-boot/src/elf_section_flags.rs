@@ -1,3 +1,5 @@
+use crate::metadata_tables::BootElfSectionFlags;
+
 const SHF_MERGE: u64 = 1 << 4;
 const SHF_STRINGS: u64 = 1 << 5;
 const SHF_INFO_LINK: u64 = 1 << 6;
@@ -32,35 +34,26 @@ impl ElfSectionExtraFlagSummary {
         flags & SHF_TLS != 0
     }
 
-    pub(crate) const fn merge_count(self) -> u64 {
-        self.merge_count
-    }
-
-    pub(crate) const fn strings_count(self) -> u64 {
-        self.strings_count
-    }
-
-    pub(crate) const fn info_link_count(self) -> u64 {
-        self.info_link_count
-    }
-
-    pub(crate) const fn link_order_count(self) -> u64 {
-        self.link_order_count
-    }
-
-    pub(crate) const fn os_nonconforming_count(self) -> u64 {
-        self.os_nonconforming_count
-    }
-
-    pub(crate) const fn group_count(self) -> u64 {
-        self.group_count
-    }
-
-    pub(crate) const fn tls_count(self) -> u64 {
-        self.tls_count
-    }
-
-    pub(crate) const fn compressed_count(self) -> u64 {
-        self.compressed_count
+    pub(crate) const fn into_metadata(
+        self,
+        allocated_count: u64,
+        writable_count: u64,
+        executable_count: u64,
+        nobits_count: u64,
+    ) -> BootElfSectionFlags {
+        BootElfSectionFlags::with_extended_counts(
+            allocated_count,
+            writable_count,
+            executable_count,
+            nobits_count,
+            self.merge_count,
+            self.strings_count,
+            self.info_link_count,
+            self.link_order_count,
+            self.os_nonconforming_count,
+            self.group_count,
+            self.tls_count,
+            self.compressed_count,
+        )
     }
 }

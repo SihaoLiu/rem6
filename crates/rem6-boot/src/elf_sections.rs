@@ -3,6 +3,7 @@ use rem6_memory::Address;
 use crate::elf::{BootElfClass, BootElfEndian, BootElfOperatingSystem};
 use crate::elf_counts::section_table_layout;
 use crate::elf_section_flags::ElfSectionExtraFlagSummary;
+use crate::elf_section_indexes::ElfSectionIndexTableSummary;
 use crate::elf_section_versions::ElfSectionVersionSummary;
 use crate::elf_symbols::{
     summarize_elf32_symbol_table as summarize_elf32_symbols,
@@ -11,8 +12,9 @@ use crate::elf_symbols::{
 use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::metadata_tables::{
     BootElfSectionAddressRange, BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags,
-    BootElfSectionGroups, BootElfSectionHashes, BootElfSectionHeaderTable, BootElfSectionNameTable,
-    BootElfSectionRelocations, BootElfSectionStorage, BootElfSectionVersions, BootElfSymbolSummary,
+    BootElfSectionGroups, BootElfSectionHashes, BootElfSectionHeaderTable,
+    BootElfSectionIndexTables, BootElfSectionNameTable, BootElfSectionRelocations,
+    BootElfSectionStorage, BootElfSectionVersions, BootElfSymbolSummary,
 };
 
 const SHT_INIT_ARRAY: u32 = 14;
@@ -86,6 +88,7 @@ pub(crate) struct ElfSectionSummary {
     sysv_hash_bytes: u64,
     gnu_hash_section_count: u64,
     gnu_hash_bytes: u64,
+    section_index_tables: ElfSectionIndexTableSummary,
     section_versions: ElfSectionVersionSummary,
     group_section_count: u64,
     group_section_bytes: u64,
@@ -182,19 +185,11 @@ impl ElfSectionSummary {
         self.section_name_table
     }
     pub(crate) const fn section_flags(self) -> BootElfSectionFlags {
-        BootElfSectionFlags::with_extended_counts(
+        self.extra_flags.into_metadata(
             self.allocated_section_count,
             self.writable_section_count,
             self.executable_section_count,
             self.nobits_section_count,
-            self.extra_flags.merge_count(),
-            self.extra_flags.strings_count(),
-            self.extra_flags.info_link_count(),
-            self.extra_flags.link_order_count(),
-            self.extra_flags.os_nonconforming_count(),
-            self.extra_flags.group_count(),
-            self.extra_flags.tls_count(),
-            self.extra_flags.compressed_count(),
         )
     }
     pub(crate) const fn section_storage(self) -> BootElfSectionStorage {
@@ -220,6 +215,9 @@ impl ElfSectionSummary {
             self.allocated_max_section_alignment,
             self.misaligned_allocated_section_count,
         )
+    }
+    pub(crate) const fn section_index_tables(self) -> BootElfSectionIndexTables {
+        self.section_index_tables.into_metadata()
     }
 }
 
@@ -505,6 +503,9 @@ fn summarize_common_section(
     }
     summarize_array_section(summary, section.kind, section.size, section.entry_size);
     summarize_hash_section(summary, section.kind, section.size);
+    summary
+        .section_index_tables
+        .record(section.kind, section.size, section.entry_size);
     summary.section_versions.record_section(
         section.kind,
         section.size,

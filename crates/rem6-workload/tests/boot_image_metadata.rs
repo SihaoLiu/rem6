@@ -13,6 +13,7 @@ const PT_GNU_PROPERTY: u32 = 0x6474_e553;
 const SHT_INIT_ARRAY: u32 = 14;
 const SHT_HASH: u32 = 5;
 const SHT_GROUP: u32 = 17;
+const SHT_SYMTAB_SHNDX: u32 = 18;
 const SHT_GNU_VERDEF: u32 = 0x6fff_fffd;
 const SHT_GNU_VERNEED: u32 = 0x6fff_fffe;
 const SHT_GNU_VERSYM: u32 = 0x6fff_ffff;
@@ -306,6 +307,14 @@ fn elf64_image_with_section_versions(machine: u16) -> Vec<u8> {
     set_elf64_section_kind_flags(&mut elf, 3, SHT_GNU_VERNEED, 0);
     set_elf64_section_size(&mut elf, 3, 48);
     set_elf64_section_info(&mut elf, 3, 3);
+    elf
+}
+
+fn elf64_image_with_section_index_table(machine: u16) -> Vec<u8> {
+    let mut elf = elf64_image_with_named_sections(machine, &[".symtab_shndx"]);
+    set_elf64_section_kind_flags(&mut elf, 1, SHT_SYMTAB_SHNDX, 0);
+    set_elf64_section_size(&mut elf, 1, 12);
+    set_elf64_section_entry_size(&mut elf, 1, 4);
     elf
 }
 
@@ -1560,6 +1569,23 @@ fn workload_boot_image_preserves_elf_section_version_summary_round_trip() {
     assert_eq!(versions.version_needed_section_count(), 1);
     assert_eq!(versions.version_needed_bytes(), 48);
     assert_eq!(versions.version_needed_entry_count(), 3);
+}
+
+#[test]
+fn workload_boot_image_preserves_elf_section_index_table_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_section_index_table(243)).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let index_tables = round_trip_metadata.section_index_tables();
+
+    assert_eq!(index_tables.section_count(), 1);
+    assert_eq!(index_tables.byte_size(), 12);
+    assert_eq!(index_tables.entry_count(), 3);
 }
 
 #[test]
@@ -2876,6 +2902,51 @@ fn workload_manifest_identity_includes_elf_section_versions() {
         .unwrap();
 
     assert_ne!(baseline.identity(), version.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_section_index_tables() {
+    let mut baseline_elf = elf64_image_with_named_sections(243, &[".symtab_shndx"]);
+    set_elf64_section_size(&mut baseline_elf, 1, 12);
+    set_elf64_section_entry_size(&mut baseline_elf, 1, 4);
+    let index_elf = elf64_image_with_section_index_table(243);
+    let baseline_source = BootImage::from_elf64_le(&baseline_elf).unwrap();
+    let index_source = BootImage::from_elf64_le(&index_elf).unwrap();
+
+    assert_eq!(baseline_source.entry(), index_source.entry());
+    assert_eq!(baseline_source.segments(), index_source.segments());
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_header_table(),
+        index_source.elf_metadata().unwrap().section_header_table(),
+    );
+    assert_eq!(
+        baseline_source.elf_metadata().unwrap().section_storage(),
+        index_source.elf_metadata().unwrap().section_storage(),
+    );
+    assert_ne!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_index_tables()
+            .section_count(),
+        index_source
+            .elf_metadata()
+            .unwrap()
+            .section_index_tables()
+            .section_count(),
+    );
+
+    let baseline = WorkloadManifest::builder(id("same"), baseline_source)
+        .build()
+        .unwrap();
+    let index = WorkloadManifest::builder(id("same"), index_source)
+        .build()
+        .unwrap();
+
+    assert_ne!(baseline.identity(), index.identity());
 }
 
 #[test]

@@ -2,8 +2,9 @@ use rem6_boot::{
     BootElfDynamicPltRelocationKind, BootElfDynamicRelocationTable, BootElfDynamicTable,
     BootElfInterpreter, BootElfLoadSegments, BootElfProgramHeaderTable, BootElfSectionAddressRange,
     BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags, BootElfSectionGroups,
-    BootElfSectionHashes, BootElfSectionHeaderTable, BootElfSectionNameTable,
-    BootElfSectionRelocations, BootElfSectionStorage, BootElfSectionVersions, BootElfSymbolSummary,
+    BootElfSectionHashes, BootElfSectionHeaderTable, BootElfSectionIndexTables,
+    BootElfSectionNameTable, BootElfSectionRelocations, BootElfSectionStorage,
+    BootElfSectionVersions, BootElfSymbolSummary,
 };
 use rem6_fabric::FabricHopActivity;
 use rem6_memory::Address;
@@ -221,7 +222,7 @@ impl Rem6RunArtifact {
         );
         let symbols = elf_symbol_summary_json(self.metadata.symbol_summary());
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"load_segments\":{},\"notes\":{},\"gnu_stack\":{},\"gnu_relro\":{},\"gnu_eh_frame\":{},\"gnu_property\":{},\"symbols\":{},\"dynamic\":{},\"program_header_table\":{},\"section_header_table\":{},\"section_name_table\":{},\"section_flags\":{},\"section_storage\":{},\"section_relocations\":{},\"section_arrays\":{},\"section_hashes\":{},\"section_versions\":{},\"section_groups\":{},\"section_address_range\":{},\"section_alignment\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_hsm_statuses\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"load_segments\":{},\"notes\":{},\"gnu_stack\":{},\"gnu_relro\":{},\"gnu_eh_frame\":{},\"gnu_property\":{},\"symbols\":{},\"dynamic\":{},\"program_header_table\":{},\"section_header_table\":{},\"section_name_table\":{},\"section_flags\":{},\"section_storage\":{},\"section_relocations\":{},\"section_arrays\":{},\"section_hashes\":{},\"section_index_tables\":{},\"section_versions\":{},\"section_groups\":{},\"section_address_range\":{},\"section_alignment\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_hsm_statuses\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -262,6 +263,7 @@ impl Rem6RunArtifact {
             elf_section_relocations_json(self.metadata.section_relocations()),
             elf_section_arrays_json(self.metadata.section_arrays()),
             elf_section_hashes_json(self.metadata.section_hashes()),
+            elf_section_index_tables_json(self.metadata.section_index_tables()),
             elf_section_versions_json(self.metadata.section_versions()),
             elf_section_groups_json(self.metadata.section_groups()),
             elf_section_address_range_json(self.metadata.section_address_range()),
@@ -670,6 +672,15 @@ fn elf_section_hashes_json(hashes: BootElfSectionHashes) -> String {
         hashes.sysv_bytes(),
         hashes.gnu_section_count(),
         hashes.gnu_bytes(),
+    )
+}
+
+fn elf_section_index_tables_json(index_tables: BootElfSectionIndexTables) -> String {
+    format!(
+        "{{\"sections\":{},\"bytes\":{},\"entries\":{}}}",
+        index_tables.section_count(),
+        index_tables.byte_size(),
+        index_tables.entry_count(),
     )
 }
 

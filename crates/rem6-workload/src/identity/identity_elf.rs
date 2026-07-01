@@ -199,6 +199,16 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 hash_u64(hash, section_hashes.gnu_section_count());
                 hash_u64(hash, section_hashes.gnu_bytes());
             }
+            let section_index_tables = metadata.section_index_tables();
+            if section_index_tables.section_count() != 0
+                || section_index_tables.byte_size() != 0
+                || section_index_tables.entry_count() != 0
+            {
+                hash_str(hash, "elf.section_index_tables");
+                hash_u64(hash, section_index_tables.section_count());
+                hash_u64(hash, section_index_tables.byte_size());
+                hash_u64(hash, section_index_tables.entry_count());
+            }
             let section_versions = metadata.section_versions();
             if section_versions.version_symbol_section_count() != 0
                 || section_versions.version_symbol_bytes() != 0
