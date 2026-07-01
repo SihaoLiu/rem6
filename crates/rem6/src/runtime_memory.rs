@@ -1025,15 +1025,14 @@ fn cross_line_subrequest(
             let data = request.data()?;
             let end = chunk.data_offset.checked_add(chunk.size.bytes() as usize)?;
             let mask = request.byte_mask()?;
-            if !mask.bits()[chunk.data_offset..end].iter().all(|bit| *bit) {
-                return None;
-            }
+            let byte_mask =
+                ByteMask::from_bits(mask.bits()[chunk.data_offset..end].to_vec()).ok()?;
             MemoryRequest::write(
                 request.id(),
                 chunk.address,
                 chunk.size,
                 data[chunk.data_offset..end].to_vec(),
-                ByteMask::full(chunk.size).ok()?,
+                byte_mask,
                 request.line_layout(),
             )
             .ok()?

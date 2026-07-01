@@ -296,32 +296,50 @@ fn cross_line_cli_memory_response_applies_write_chunks() {
 }
 
 #[test]
-fn cross_line_cli_memory_response_prevalidates_write_mask() {
+fn cross_line_cli_memory_response_preserves_write_masks() {
     let layout = CacheLineLayout::new(16).unwrap();
+    let memory = memory_with_two_lines(layout);
     let size = AccessSize::new(24).unwrap();
     let mut mask = vec![true; 24];
+    mask[3] = false;
     mask[20] = false;
+    let data = (0x80_u8..0x98).collect::<Vec<_>>();
     let write = MemoryRequest::write(
         MemoryRequestId::new(AgentId::new(0), 3),
         Address::new(0x1008),
         size,
-        vec![0x5a; 24],
-        ByteMask::from_bits(mask).unwrap(),
+        data.clone(),
+        ByteMask::from_bits(mask.clone()).unwrap(),
         layout,
     )
     .unwrap();
 
-    let mut invoked = false;
-    let outcome = cli_cross_line_memory_response_with(&write, |_| {
-        invoked = true;
-        TargetOutcome::NoResponse
-    });
+    let mut seen_masks = Vec::new();
+    let outcome = cli_cross_line_memory_response_with(&write, |request| {
+        seen_masks.push(request.byte_mask().unwrap().bits().to_vec());
+        cli_memory_response_for_request(&memory, 13, request)
+    })
+    .expect("cross-line masked write should split into masked line requests");
 
-    assert!(outcome.is_none());
-    assert!(
-        !invoked,
-        "unsupported writes must not partially apply chunks"
-    );
+    let TargetOutcome::Respond(response) = outcome else {
+        panic!("store-backed cross-line masked write should respond immediately");
+    };
+    assert_eq!(response.status(), ResponseStatus::Completed);
+    assert_eq!(response.data(), None);
+    assert_eq!(seen_masks, vec![mask[..8].to_vec(), mask[8..].to_vec()]);
+
+    let expected = data
+        .iter()
+        .enumerate()
+        .map(|(index, byte)| {
+            if mask[index] {
+                *byte
+            } else {
+                (0x1008 + index as u64) as u8
+            }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(memory.read_guest_memory(0x1008, 24, layout), Some(expected));
 }
 
 fn memory_with_line(layout: CacheLineLayout) -> CliMemoryRuntime {
