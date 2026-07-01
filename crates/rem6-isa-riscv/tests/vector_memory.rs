@@ -37,9 +37,14 @@ fn lanes_u32(lanes: [u32; 4]) -> [u8; 16] {
 }
 
 fn e32_byte_mask(active_lanes: [bool; 4]) -> Vec<bool> {
+    element_byte_mask(&active_lanes, 4)
+}
+
+fn element_byte_mask(active_lanes: &[bool], element_bytes: usize) -> Vec<bool> {
     active_lanes
-        .into_iter()
-        .flat_map(|active| [active; 4])
+        .iter()
+        .copied()
+        .flat_map(|active| vec![active; element_bytes])
         .collect()
 }
 
@@ -117,12 +122,58 @@ fn hart_builds_masked_unit_stride_vector_memory_accesses() {
 }
 
 #[test]
-fn hart_rejects_masked_unit_stride_vector_memory_outside_e32_m1_slice() {
+fn hart_builds_masked_unit_stride_vector_memory_masks_for_all_m1_element_widths() {
+    for (vtype, width_bits, width, active_lanes, expected_bytes) in [
+        (
+            0xc0,
+            0b000,
+            MemoryWidth::Byte,
+            vec![true, false, true, false, true, false, true, false],
+            8,
+        ),
+        (
+            0xc8,
+            0b101,
+            MemoryWidth::Halfword,
+            vec![true, false, true, false],
+            8,
+        ),
+        (0xd8, 0b111, MemoryWidth::Doubleword, vec![true, false], 16),
+    ] {
+        let mut hart = RiscvHartState::new(0x8080);
+        hart.set_vector_config(RiscvVectorConfig::new(active_lanes.len() as u32, vtype));
+        hart.write(reg(14), 0x9000);
+        hart.write_vector(
+            vreg(0),
+            [0b0101_0101, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        );
+
+        let load = hart
+            .execute(
+                RiscvInstruction::decode(vector_unit_stride_load_type(false, width_bits, 14, 2))
+                    .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            load.memory_access(),
+            Some(&MemoryAccessKind::VectorLoadUnitStride {
+                vd: vreg(2),
+                address: 0x9000,
+                width,
+                byte_len: expected_bytes,
+                byte_mask: Some(element_byte_mask(&active_lanes, width.bytes())),
+                group_registers: 1,
+            })
+        );
+    }
+}
+
+#[test]
+fn hart_rejects_masked_unit_stride_vector_memory_outside_m1_slice() {
     assert_masked_memory_trap(0xd1, vector_unit_stride_load_type(false, 0b110, 14, 2)); // e32,m2
-    assert_masked_memory_trap(0xc8, vector_unit_stride_load_type(false, 0b101, 14, 2)); // e16,m1
-    assert_masked_memory_trap(0xd1, vector_unit_stride_store_type(false, 0b110, 14, 2)); // e32,m2
-    assert_masked_memory_trap(0xc8, vector_unit_stride_store_type(false, 0b101, 14, 2));
-    // e16,m1
+    assert_masked_memory_trap(0xd1, vector_unit_stride_store_type(false, 0b110, 14, 2));
+    // e32,m2
 }
 
 #[test]

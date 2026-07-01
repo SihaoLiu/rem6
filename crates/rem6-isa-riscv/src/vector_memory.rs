@@ -19,7 +19,7 @@ pub(crate) fn memory_access(
             mask,
         } => {
             let plan = unit_stride_access_plan(hart, vd, width).ok_or(())?;
-            if masked_unit_stride_unsupported(mask, width, &plan)
+            if masked_unit_stride_unsupported(mask, &plan)
                 || masked_load_overlaps_v0(mask, vd, plan.group_registers)
             {
                 return Err(());
@@ -51,7 +51,7 @@ pub(crate) fn memory_access(
             mask,
         } => {
             let plan = unit_stride_access_plan(hart, vs3, width).ok_or(())?;
-            if masked_unit_stride_unsupported(mask, width, &plan) {
+            if masked_unit_stride_unsupported(mask, &plan) {
                 return Err(());
             }
             let group = read_register_group(hart, vs3, plan.group_registers);
@@ -132,12 +132,8 @@ fn active_byte_mask(
     Some(byte_mask)
 }
 
-fn masked_unit_stride_unsupported(
-    mask: RiscvVectorMaskMode,
-    width: MemoryWidth,
-    plan: &UnitStrideAccessPlan,
-) -> bool {
-    mask.is_masked() && (width != MemoryWidth::Word || plan.group_registers != 1)
+fn masked_unit_stride_unsupported(mask: RiscvVectorMaskMode, plan: &UnitStrideAccessPlan) -> bool {
+    mask.is_masked() && plan.group_registers != 1
 }
 
 fn masked_load_overlaps_v0(
