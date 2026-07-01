@@ -28,6 +28,14 @@ const SHN_COMMON: u16 = 0xfff2;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
 const SHF_EXECINSTR: u64 = 4;
+const SHF_MERGE: u64 = 1 << 4;
+const SHF_STRINGS: u64 = 1 << 5;
+const SHF_INFO_LINK: u64 = 1 << 6;
+const SHF_LINK_ORDER: u64 = 1 << 7;
+const SHF_OS_NONCONFORMING: u64 = 1 << 8;
+const SHF_GROUP: u64 = 1 << 9;
+const SHF_TLS: u64 = 1 << 10;
+const SHF_COMPRESSED: u64 = 1 << 11;
 const STB_GNU_UNIQUE: u8 = 10;
 const STT_TLS: u8 = 6;
 const STT_GNU_IFUNC: u8 = 10;
@@ -1018,6 +1026,50 @@ pub(crate) fn riscv64_elf_with_section_header_table(
     write_u32(&mut bytes, section_table_offset + 196, 3);
     write_u64(&mut bytes, section_table_offset + 216, shstr_offset as u64);
     write_u64(&mut bytes, section_table_offset + 224, names.len() as u64);
+    bytes
+}
+
+pub(crate) fn riscv64_elf_with_extended_section_flags(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut bytes = riscv64_elf(entry, physical, payload);
+    let names = b"\0.rodata\0.rela.meta\0.grouped\0.tdata.z\0.shstrtab\0";
+    let shstr_offset = bytes.len();
+    bytes.extend_from_slice(names);
+    while bytes.len() % 8 != 0 {
+        bytes.push(0);
+    }
+
+    let section_table_offset = bytes.len();
+    write_u64(&mut bytes, 40, section_table_offset as u64);
+    write_u16(&mut bytes, 58, 64);
+    write_u16(&mut bytes, 60, 6);
+    write_u16(&mut bytes, 62, 5);
+    bytes.resize(section_table_offset + 6 * 64, 0);
+
+    for (index, (name, flags, size)) in [
+        (1, SHF_MERGE | SHF_STRINGS, 4),
+        (9, SHF_INFO_LINK | SHF_LINK_ORDER, 8),
+        (20, SHF_OS_NONCONFORMING | SHF_GROUP, 8),
+        (29, SHF_TLS | SHF_COMPRESSED, 12),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let base = section_table_offset + (index + 1) * 64;
+        write_u32(&mut bytes, base, name);
+        write_u32(&mut bytes, base + 4, 1);
+        write_u64(&mut bytes, base + 8, flags);
+        write_u64(&mut bytes, base + 32, size);
+    }
+
+    let shstr_base = section_table_offset + 5 * 64;
+    write_u32(&mut bytes, shstr_base, 38);
+    write_u32(&mut bytes, shstr_base + 4, 3);
+    write_u64(&mut bytes, shstr_base + 24, shstr_offset as u64);
+    write_u64(&mut bytes, shstr_base + 32, names.len() as u64);
     bytes
 }
 

@@ -294,6 +294,14 @@ pub struct BootElfSectionFlags {
     writable_count: u64,
     executable_count: u64,
     nobits_count: u64,
+    merge_count: u64,
+    strings_count: u64,
+    info_link_count: u64,
+    link_order_count: u64,
+    os_nonconforming_count: u64,
+    group_count: u64,
+    tls_count: u64,
+    compressed_count: u64,
 }
 
 impl BootElfSectionFlags {
@@ -303,11 +311,49 @@ impl BootElfSectionFlags {
         executable_count: u64,
         nobits_count: u64,
     ) -> Self {
+        Self::with_extended_counts(
+            allocated_count,
+            writable_count,
+            executable_count,
+            nobits_count,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+    }
+
+    pub(crate) const fn with_extended_counts(
+        allocated_count: u64,
+        writable_count: u64,
+        executable_count: u64,
+        nobits_count: u64,
+        merge_count: u64,
+        strings_count: u64,
+        info_link_count: u64,
+        link_order_count: u64,
+        os_nonconforming_count: u64,
+        group_count: u64,
+        tls_count: u64,
+        compressed_count: u64,
+    ) -> Self {
         Self {
             allocated_count,
             writable_count,
             executable_count,
             nobits_count,
+            merge_count,
+            strings_count,
+            info_link_count,
+            link_order_count,
+            os_nonconforming_count,
+            group_count,
+            tls_count,
+            compressed_count,
         }
     }
 
@@ -325,6 +371,38 @@ impl BootElfSectionFlags {
 
     pub const fn nobits_count(self) -> u64 {
         self.nobits_count
+    }
+
+    pub const fn merge_count(self) -> u64 {
+        self.merge_count
+    }
+
+    pub const fn strings_count(self) -> u64 {
+        self.strings_count
+    }
+
+    pub const fn info_link_count(self) -> u64 {
+        self.info_link_count
+    }
+
+    pub const fn link_order_count(self) -> u64 {
+        self.link_order_count
+    }
+
+    pub const fn os_nonconforming_count(self) -> u64 {
+        self.os_nonconforming_count
+    }
+
+    pub const fn group_count(self) -> u64 {
+        self.group_count
+    }
+
+    pub const fn tls_count(self) -> u64 {
+        self.tls_count
+    }
+
+    pub const fn compressed_count(self) -> u64 {
+        self.compressed_count
     }
 }
 

@@ -96,12 +96,28 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 || section_flags.writable_count() != 0
                 || section_flags.executable_count() != 0
                 || section_flags.nobits_count() != 0
+                || section_flags.merge_count() != 0
+                || section_flags.strings_count() != 0
+                || section_flags.info_link_count() != 0
+                || section_flags.link_order_count() != 0
+                || section_flags.os_nonconforming_count() != 0
+                || section_flags.group_count() != 0
+                || section_flags.tls_count() != 0
+                || section_flags.compressed_count() != 0
             {
                 hash_str(hash, "elf.section_flags");
                 hash_u64(hash, section_flags.allocated_count());
                 hash_u64(hash, section_flags.writable_count());
                 hash_u64(hash, section_flags.executable_count());
                 hash_u64(hash, section_flags.nobits_count());
+                hash_u64(hash, section_flags.merge_count());
+                hash_u64(hash, section_flags.strings_count());
+                hash_u64(hash, section_flags.info_link_count());
+                hash_u64(hash, section_flags.link_order_count());
+                hash_u64(hash, section_flags.os_nonconforming_count());
+                hash_u64(hash, section_flags.group_count());
+                hash_u64(hash, section_flags.tls_count());
+                hash_u64(hash, section_flags.compressed_count());
             }
             let section_storage = metadata.section_storage();
             if section_storage.file_backed_bytes() != 0

@@ -3,6 +3,7 @@ mod elf_counts;
 mod elf_dynamic;
 mod elf_interpreter;
 mod elf_program_headers;
+mod elf_section_flags;
 mod elf_section_versions;
 mod elf_sections;
 mod elf_symbols;

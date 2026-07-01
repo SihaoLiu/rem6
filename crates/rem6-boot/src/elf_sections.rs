@@ -2,6 +2,7 @@ use rem6_memory::Address;
 
 use crate::elf::{BootElfClass, BootElfEndian, BootElfOperatingSystem};
 use crate::elf_counts::section_table_layout;
+use crate::elf_section_flags::ElfSectionExtraFlagSummary;
 use crate::elf_section_versions::ElfSectionVersionSummary;
 use crate::elf_symbols::{
     summarize_elf32_symbol_table as summarize_elf32_symbols,
@@ -54,6 +55,7 @@ pub(crate) struct ElfSectionSummary {
     writable_section_count: u64,
     executable_section_count: u64,
     nobits_section_count: u64,
+    extra_flags: ElfSectionExtraFlagSummary,
     note_section_count: u64,
     relocation_section_count: u64,
     file_backed_section_bytes: u64,
@@ -180,11 +182,19 @@ impl ElfSectionSummary {
         self.section_name_table
     }
     pub(crate) const fn section_flags(self) -> BootElfSectionFlags {
-        BootElfSectionFlags::new(
+        BootElfSectionFlags::with_extended_counts(
             self.allocated_section_count,
             self.writable_section_count,
             self.executable_section_count,
             self.nobits_section_count,
+            self.extra_flags.merge_count(),
+            self.extra_flags.strings_count(),
+            self.extra_flags.info_link_count(),
+            self.extra_flags.link_order_count(),
+            self.extra_flags.os_nonconforming_count(),
+            self.extra_flags.group_count(),
+            self.extra_flags.tls_count(),
+            self.extra_flags.compressed_count(),
         )
     }
     pub(crate) const fn section_storage(self) -> BootElfSectionStorage {
@@ -439,6 +449,9 @@ fn summarize_common_section(
     summary: &mut ElfSectionSummary,
 ) -> Result<(), BootError> {
     if section_name_matches(string_table, section.name, b".tbss") {
+        summary.has_tls = true;
+    }
+    if summary.extra_flags.record(section.flags) {
         summary.has_tls = true;
     }
     if section.kind != SHT_NOBITS {

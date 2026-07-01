@@ -39,6 +39,14 @@ const SHN_COMMON: u16 = 0xfff2;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
 const SHF_EXECINSTR: u64 = 4;
+const SHF_MERGE: u64 = 1 << 4;
+const SHF_STRINGS: u64 = 1 << 5;
+const SHF_INFO_LINK: u64 = 1 << 6;
+const SHF_LINK_ORDER: u64 = 1 << 7;
+const SHF_OS_NONCONFORMING: u64 = 1 << 8;
+const SHF_GROUP: u64 = 1 << 9;
+const SHF_TLS: u64 = 1 << 10;
+const SHF_COMPRESSED: u64 = 1 << 11;
 const STB_GNU_UNIQUE: u8 = 10;
 const STT_TLS: u8 = 6;
 const STT_GNU_IFUNC: u8 = 10;
@@ -1434,6 +1442,83 @@ fn boot_image_records_elf_section_flags_summary() {
     assert_eq!(alignment.max_alignment(), 0x1000);
     assert_eq!(alignment.allocated_max_alignment(), 0x1000);
     assert_eq!(alignment.misaligned_allocated_count(), 1);
+}
+
+#[test]
+fn boot_image_records_elf_extended_section_flags_summary() {
+    let mut elf = elf64_image(
+        0x8000_0100,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000_0000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_sections(
+        &mut elf,
+        &[
+            ElfSectionSpec {
+                name: ".rodata",
+                kind: 1,
+                data: &[0, 1, 0, 2],
+            },
+            ElfSectionSpec {
+                name: ".rela.meta",
+                kind: 1,
+                data: &[0; 8],
+            },
+            ElfSectionSpec {
+                name: ".grouped",
+                kind: 1,
+                data: &[0; 8],
+            },
+            ElfSectionSpec {
+                name: ".tdata.z",
+                kind: 1,
+                data: &[0; 12],
+            },
+        ],
+    );
+    let section_table_offset = read_u64(&elf, 40) as usize;
+    write_u64(
+        &mut elf,
+        section_table_offset + 64 + 8,
+        SHF_MERGE | SHF_STRINGS,
+    );
+    write_u64(
+        &mut elf,
+        section_table_offset + 128 + 8,
+        SHF_INFO_LINK | SHF_LINK_ORDER,
+    );
+    write_u64(
+        &mut elf,
+        section_table_offset + 192 + 8,
+        SHF_OS_NONCONFORMING | SHF_GROUP,
+    );
+    write_u64(
+        &mut elf,
+        section_table_offset + 256 + 8,
+        SHF_TLS | SHF_COMPRESSED,
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let flags = metadata.section_flags();
+
+    assert!(metadata.has_tls());
+    assert_eq!(flags.merge_count(), 1);
+    assert_eq!(flags.strings_count(), 1);
+    assert_eq!(flags.info_link_count(), 1);
+    assert_eq!(flags.link_order_count(), 1);
+    assert_eq!(flags.os_nonconforming_count(), 1);
+    assert_eq!(flags.group_count(), 1);
+    assert_eq!(flags.tls_count(), 1);
+    assert_eq!(flags.compressed_count(), 1);
 }
 
 #[test]

@@ -1917,7 +1917,7 @@ fn rem6_run_reports_elf_section_header_table_metadata() {
     ));
     assert!(stdout.contains("\"section_name_table\":{\"file_offset\":132,\"bytes\":23}"));
     assert!(stdout.contains(
-        "\"section_flags\":{\"allocated\":2,\"writable\":1,\"executable\":1,\"nobits\":0}"
+        "\"section_flags\":{\"allocated\":2,\"writable\":1,\"executable\":1,\"nobits\":0,\"merge\":0,\"strings\":0,\"info_link\":0,\"link_order\":0,\"os_nonconforming\":0,\"group\":0,\"tls\":0,\"compressed\":0}"
     ));
     assert!(stdout.contains(
         "\"section_storage\":{\"file_bytes\":27,\"allocated_bytes\":4,\"writable_bytes\":0,\"executable_bytes\":4,\"nobits_bytes\":0,\"string_tables\":1,\"string_table_bytes\":23}"
@@ -1993,6 +1993,56 @@ fn rem6_run_reports_elf_section_header_table_metadata() {
     assert_stat(
         &stdout,
         "sim.elf.section_flags.nobits",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_flags.merge",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_flags.strings",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_flags.info_link",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_flags.link_order",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_flags.os_nonconforming",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_flags.group",
+        "Count",
+        0,
+        "constant",
+    );
+    assert_stat(&stdout, "sim.elf.section_flags.tls", "Count", 0, "constant");
+    assert_stat(
+        &stdout,
+        "sim.elf.section_flags.compressed",
         "Count",
         0,
         "constant",
@@ -2081,6 +2131,57 @@ fn rem6_run_reports_elf_section_header_table_metadata() {
         0,
         "constant",
     );
+}
+
+#[test]
+fn rem6_run_reports_elf_extended_section_flags_metadata() {
+    let elf = riscv64_elf_with_extended_section_flags(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("riscv-run-extended-section-flags", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"loaded\""));
+    assert!(stdout.contains("\"tls\":true"));
+    assert!(stdout.contains(
+        "\"section_flags\":{\"allocated\":0,\"writable\":0,\"executable\":0,\"nobits\":0,\"merge\":1,\"strings\":1,\"info_link\":1,\"link_order\":1,\"os_nonconforming\":1,\"group\":1,\"tls\":1,\"compressed\":1}"
+    ));
+    for name in [
+        "merge",
+        "strings",
+        "info_link",
+        "link_order",
+        "os_nonconforming",
+        "group",
+        "tls",
+        "compressed",
+    ] {
+        assert_stat(
+            &stdout,
+            &format!("sim.elf.section_flags.{name}"),
+            "Count",
+            1,
+            "constant",
+        );
+    }
 }
 
 #[test]

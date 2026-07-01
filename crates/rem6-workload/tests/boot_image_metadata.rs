@@ -23,6 +23,14 @@ const SHN_COMMON: u16 = 0xfff2;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
 const SHF_EXECINSTR: u64 = 4;
+const SHF_MERGE: u64 = 1 << 4;
+const SHF_STRINGS: u64 = 1 << 5;
+const SHF_INFO_LINK: u64 = 1 << 6;
+const SHF_LINK_ORDER: u64 = 1 << 7;
+const SHF_OS_NONCONFORMING: u64 = 1 << 8;
+const SHF_GROUP: u64 = 1 << 9;
+const SHF_TLS: u64 = 1 << 10;
+const SHF_COMPRESSED: u64 = 1 << 11;
 const STB_GLOBAL: u8 = 1;
 const STB_GNU_UNIQUE: u8 = 10;
 const STT_TLS: u8 = 6;
@@ -1503,6 +1511,35 @@ fn workload_boot_image_preserves_elf_section_flags_round_trip() {
 }
 
 #[test]
+fn workload_boot_image_preserves_elf_extended_section_flags_round_trip() {
+    let mut elf =
+        elf64_image_with_named_sections(243, &[".rodata", ".rela.meta", ".grouped", ".tdata.z"]);
+    set_elf64_section_kind_flags(&mut elf, 1, 1, SHF_MERGE | SHF_STRINGS);
+    set_elf64_section_kind_flags(&mut elf, 2, 1, SHF_INFO_LINK | SHF_LINK_ORDER);
+    set_elf64_section_kind_flags(&mut elf, 3, 1, SHF_OS_NONCONFORMING | SHF_GROUP);
+    set_elf64_section_kind_flags(&mut elf, 4, 1, SHF_TLS | SHF_COMPRESSED);
+    let image = BootImage::from_elf64_le(&elf).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let flags = round_trip_metadata.section_flags();
+
+    assert!(round_trip_metadata.has_tls());
+    assert_eq!(flags.merge_count(), 1);
+    assert_eq!(flags.strings_count(), 1);
+    assert_eq!(flags.info_link_count(), 1);
+    assert_eq!(flags.link_order_count(), 1);
+    assert_eq!(flags.os_nonconforming_count(), 1);
+    assert_eq!(flags.group_count(), 1);
+    assert_eq!(flags.tls_count(), 1);
+    assert_eq!(flags.compressed_count(), 1);
+}
+
+#[test]
 fn workload_boot_image_preserves_elf_section_version_summary_round_trip() {
     let image = BootImage::from_elf64_le(&elf64_image_with_section_versions(243)).unwrap();
 
@@ -2462,6 +2499,54 @@ fn workload_manifest_identity_includes_elf_section_flags() {
         .unwrap();
 
     assert_ne!(baseline.identity(), executable.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_extended_section_flags() {
+    let mut baseline_elf = elf64_image_with_named_sections(243, &[".data"]);
+    set_elf64_section_kind_flags(&mut baseline_elf, 1, 1, SHF_ALLOC);
+    set_elf64_section_size(&mut baseline_elf, 1, 8);
+    let mut compressed_elf = elf64_image_with_named_sections(243, &[".data"]);
+    set_elf64_section_kind_flags(&mut compressed_elf, 1, 1, SHF_ALLOC | SHF_COMPRESSED);
+    set_elf64_section_size(&mut compressed_elf, 1, 8);
+    let baseline_source = BootImage::from_elf64_le(&baseline_elf).unwrap();
+    let compressed_source = BootImage::from_elf64_le(&compressed_elf).unwrap();
+
+    assert_eq!(baseline_source.entry(), compressed_source.entry());
+    assert_eq!(baseline_source.segments(), compressed_source.segments());
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_flags()
+            .allocated_count(),
+        compressed_source
+            .elf_metadata()
+            .unwrap()
+            .section_flags()
+            .allocated_count(),
+    );
+    assert_ne!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_flags()
+            .compressed_count(),
+        compressed_source
+            .elf_metadata()
+            .unwrap()
+            .section_flags()
+            .compressed_count(),
+    );
+
+    let baseline = WorkloadManifest::builder(id("same"), baseline_source)
+        .build()
+        .unwrap();
+    let compressed = WorkloadManifest::builder(id("same"), compressed_source)
+        .build()
+        .unwrap();
+
+    assert_ne!(baseline.identity(), compressed.identity());
 }
 
 #[test]

@@ -1178,7 +1178,7 @@ complete.
 extended program-header-count (`PN_XNUM`) loading, `PT_LOAD` summary/alignment, `PT_PHDR`/`PT_NOTE` metadata,
 `PT_INTERP` interpreter reporting/rejection, `.tbss`/`PT_TLS` TLS metadata,
 `PT_GNU_STACK` stack-exec, `PT_GNU_RELRO`, `PT_GNU_EH_FRAME`, and `PT_GNU_PROPERTY` metadata,
-symbol type, binding, GNU-unique binding, visibility, section-index, TLS-type, and IFUNC-type counts plus dynamic-symbol type, binding, and visibility counts, section-header/name/flag/storage/string-table/array/hash/version/group/address/alignment plus `SHT_NOTE` and `SHT_REL`/`SHT_RELA`/`SHT_RELR` count/byte metadata, dynamic needed/path/loader-string/table/lifecycle-scalar/array/REL/RELA/RELR relocation/hash/version/linker/flag and ABI-note OS metadata,
+symbol type, binding, GNU-unique binding, visibility, section-index, TLS-type, and IFUNC-type counts plus dynamic-symbol type, binding, and visibility counts, section-header/name/basic and extended flag/storage/string-table/array/hash/version/group/address/alignment plus `SHT_NOTE` and `SHT_REL`/`SHT_RELA`/`SHT_RELR` count/byte metadata, dynamic needed/path/loader-string/table/lifecycle-scalar/array/REL/RELA/RELR relocation/hash/version/linker/flag and ABI-note OS metadata,
 plus RV64F/RV64D scalar FP slices including `fcvt.s.d` directed rounding/NX and `fcvt.d.s` signaling-NaN invalid accrual.
 
 **Not migrated:** Complete `ext/libelf`, `ext/libfdt`, and `ext/softfloat` parity.
@@ -1186,7 +1186,7 @@ plus RV64F/RV64D scalar FP slices including `fcvt.s.d` directed rounding/NX and 
 **Evidence:** CLI static RISC-V smoke tests cover ELF64 extended program-header
 counts, `PT_LOAD` summary/alignment JSON/stats, `PT_PHDR`/`PT_NOTE` JSON/stats, `PT_INTERP` rejection/reporting, `.tbss`/`PT_TLS`
 TLS metadata, `PT_GNU_STACK`, `PT_GNU_RELRO`, `PT_GNU_EH_FRAME`, and `PT_GNU_PROPERTY` metadata,
-symbol type, binding, GNU-unique binding, visibility, section-index, TLS-type, and IFUNC-type counts plus dynamic-symbol type, binding, and visibility counts, section-header/name/flag/storage/string-table/array/hash/version/group/address/alignment plus `SHT_NOTE` and `SHT_REL`/`SHT_RELA`/`SHT_RELR` count/byte JSON/stats, dynamic needed/path/loader-string/table/lifecycle-scalar/array/REL/RELA/RELR relocation/hash/version/linker/flag JSON/stats,
+symbol type, binding, GNU-unique binding, visibility, section-index, TLS-type, and IFUNC-type counts plus dynamic-symbol type, binding, and visibility counts, section-header/name/basic and extended flag/storage/string-table/array/hash/version/group/address/alignment plus `SHT_NOTE` and `SHT_REL`/`SHT_RELA`/`SHT_RELR` count/byte JSON/stats, dynamic needed/path/loader-string/table/lifecycle-scalar/array/REL/RELA/RELR relocation/hash/version/linker/flag JSON/stats,
 ELF32 extended counts, ABI-note OS, DTB, and RV64F/RV64D `fcvt.s.d`/`fcvt.d.s` tests.
 
 **Next evidence:** Expand loader breadth beyond current extended-numbering

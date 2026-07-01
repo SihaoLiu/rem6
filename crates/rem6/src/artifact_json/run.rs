@@ -605,11 +605,19 @@ fn elf_section_name_table_json(table: BootElfSectionNameTable) -> String {
 
 fn elf_section_flags_json(flags: BootElfSectionFlags) -> String {
     format!(
-        "{{\"allocated\":{},\"writable\":{},\"executable\":{},\"nobits\":{}}}",
+        "{{\"allocated\":{},\"writable\":{},\"executable\":{},\"nobits\":{},\"merge\":{},\"strings\":{},\"info_link\":{},\"link_order\":{},\"os_nonconforming\":{},\"group\":{},\"tls\":{},\"compressed\":{}}}",
         flags.allocated_count(),
         flags.writable_count(),
         flags.executable_count(),
         flags.nobits_count(),
+        flags.merge_count(),
+        flags.strings_count(),
+        flags.info_link_count(),
+        flags.link_order_count(),
+        flags.os_nonconforming_count(),
+        flags.group_count(),
+        flags.tls_count(),
+        flags.compressed_count(),
     )
 }
 

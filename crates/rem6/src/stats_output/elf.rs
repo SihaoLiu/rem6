@@ -689,6 +689,29 @@ fn emit_elf_section_flags_stats(
             section_flags.executable_count(),
         ),
         ("sim.elf.section_flags.nobits", section_flags.nobits_count()),
+        ("sim.elf.section_flags.merge", section_flags.merge_count()),
+        (
+            "sim.elf.section_flags.strings",
+            section_flags.strings_count(),
+        ),
+        (
+            "sim.elf.section_flags.info_link",
+            section_flags.info_link_count(),
+        ),
+        (
+            "sim.elf.section_flags.link_order",
+            section_flags.link_order_count(),
+        ),
+        (
+            "sim.elf.section_flags.os_nonconforming",
+            section_flags.os_nonconforming_count(),
+        ),
+        ("sim.elf.section_flags.group", section_flags.group_count()),
+        ("sim.elf.section_flags.tls", section_flags.tls_count()),
+        (
+            "sim.elf.section_flags.compressed",
+            section_flags.compressed_count(),
+        ),
     ] {
         increment_stat(stats, path, "Count", StatResetPolicy::Constant, value)?;
     }
