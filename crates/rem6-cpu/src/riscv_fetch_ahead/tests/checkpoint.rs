@@ -16,13 +16,22 @@ fn checkpoint_payload_restores_live_fetch_ahead_branch_speculation() {
 
     record_fetch_ahead_speculation(&core, &decision).unwrap();
     let captured = core.branch_predictor_checkpoint_payload();
+    assert_eq!(
+        captured.active_branch_kinds(),
+        &[(0, BranchTargetKind::DirectConditional)]
+    );
     {
         let mut state = core.state.lock().expect("riscv core lock");
         assert_eq!(state.branch_speculations.len(), 1);
+        assert_eq!(
+            state.branch_speculation_kinds.get(&0),
+            Some(&BranchTargetKind::DirectConditional)
+        );
         assert_eq!(state.branch_target_predictions.len(), 1);
         assert_eq!(state.branch_predictor.pending_speculation_count(), 1);
         state.discard_branch_speculations();
         assert!(state.branch_speculations.is_empty());
+        assert!(state.branch_speculation_kinds.is_empty());
         assert!(state.branch_target_predictions.is_empty());
         assert!(state.branch_predictor.pending_speculations().is_empty());
     }
@@ -36,6 +45,14 @@ fn checkpoint_payload_restores_live_fetch_ahead_branch_speculation() {
             .branch_target_predictions
             .len(),
         1
+    );
+    let restored_branch_kind = {
+        let state = core.state.lock().expect("riscv core lock");
+        state.branch_speculation_kinds.get(&0).copied()
+    };
+    assert_eq!(
+        restored_branch_kind,
+        Some(BranchTargetKind::DirectConditional)
     );
 
     assert!(core

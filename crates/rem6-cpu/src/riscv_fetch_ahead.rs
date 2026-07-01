@@ -156,6 +156,9 @@ impl PreparedRiscvFetchAheadSpeculation {
         state
             .branch_speculations
             .insert(speculation.sequence, prediction.id());
+        state
+            .branch_speculation_kinds
+            .insert(speculation.sequence, speculation.branch_kind);
         if let Some(branch_target_prediction) = speculation.branch_target_prediction {
             state
                 .branch_target_predictions
@@ -857,6 +860,7 @@ fn discard_branch_speculation_mapping(
     let Some(speculation) = state.branch_speculations.remove(&sequence) else {
         return Ok(());
     };
+    state.branch_speculation_kinds.remove(&sequence);
     state.branch_target_predictions.remove(&sequence);
     state.squash_return_address_stack_speculation(sequence)?;
     let discard = state
@@ -876,6 +880,9 @@ fn discard_branch_speculation_mapping(
         .collect::<std::collections::BTreeSet<_>>();
     state
         .branch_target_predictions
+        .retain(|sequence, _| active_sequences.contains(sequence));
+    state
+        .branch_speculation_kinds
         .retain(|sequence, _| active_sequences.contains(sequence));
     state.squash_inactive_return_address_stack_speculations(&active_sequences)?;
     state.rollback_inactive_selected_branch_speculations(&active_sequences)?;

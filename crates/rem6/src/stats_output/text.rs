@@ -206,6 +206,24 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 lookups,
             );
         }
+        for kind in BranchTargetKind::ALL {
+            if let Some(squashes) = snapshot_value(
+                snapshot,
+                &format!(
+                    "sim.cpu{cpu}.branch_predictor.squashes.{}",
+                    kind.canonical_stat_name()
+                ),
+            ) {
+                append_derived_count_stat(
+                    output,
+                    &format!(
+                        "{alias_prefix}.branchPred.squashes_0::{}",
+                        kind.gem5_branch_type_name()
+                    ),
+                    squashes,
+                );
+            }
+        }
         if let Some(squashes) = snapshot_value(
             snapshot,
             &format!("sim.cpu{cpu}.branch_predictor.squashes.total"),

@@ -22,7 +22,8 @@ const CHECKPOINT_MAGIC: [u8; 4] = *b"RIBP";
 const LEGACY_CHECKPOINT_VERSION: u8 = 1;
 const V2_CHECKPOINT_VERSION: u8 = 2;
 const V3_CHECKPOINT_VERSION: u8 = 3;
-const CHECKPOINT_VERSION: u8 = 4;
+const V4_CHECKPOINT_VERSION: u8 = 4;
+const CHECKPOINT_VERSION: u8 = 5;
 const U32_BYTES: usize = 4;
 const U64_BYTES: usize = 8;
 const CHECKPOINT_U32_MAX: usize = u32::MAX as usize;
@@ -42,6 +43,7 @@ const CHECKPOINT_ACTIVE_SPECULATION_V3_BYTES: usize =
     CHECKPOINT_ACTIVE_SPECULATION_BYTES + 1 + 1 + CHECKPOINT_TARGET_BYTES;
 const CHECKPOINT_ACTIVE_SPECULATION_V4_BYTES: usize =
     CHECKPOINT_ACTIVE_SPECULATION_V3_BYTES + 1 + U64_BYTES;
+const CHECKPOINT_ACTIVE_SPECULATION_V5_BYTES: usize = CHECKPOINT_ACTIVE_SPECULATION_V4_BYTES + 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BranchPredictorCheckpointPayload {
@@ -51,6 +53,7 @@ pub struct BranchPredictorCheckpointPayload {
     active_speculations: Vec<(u64, BranchSpeculationId)>,
     active_branch_target_predictions: Vec<(u64, BranchTargetPrediction)>,
     active_return_address_stack_operations: Vec<(u64, ReturnAddressStackOperationId)>,
+    active_branch_kinds: Vec<(u64, BranchTargetKind)>,
 }
 
 impl BranchPredictorCheckpointPayload {
@@ -94,13 +97,14 @@ impl BranchPredictorCheckpointPayload {
         I: IntoIterator<Item = (u64, BranchSpeculationId)>,
         P: IntoIterator<Item = (u64, BranchTargetPrediction)>,
     {
-        Self::from_snapshots_with_branch_target_predictions_and_return_address_stack(
+        Self::from_snapshots_with_branch_target_predictions_and_return_address_stack_and_branch_kinds(
             snapshot,
             branch_target_buffer,
             active_speculations,
             active_branch_target_predictions,
             default_return_address_stack_snapshot(),
             std::iter::empty::<(u64, ReturnAddressStackOperationId)>(),
+            std::iter::empty::<(u64, BranchTargetKind)>(),
         )
     }
 
@@ -117,6 +121,37 @@ impl BranchPredictorCheckpointPayload {
         P: IntoIterator<Item = (u64, BranchTargetPrediction)>,
         R: IntoIterator<Item = (u64, ReturnAddressStackOperationId)>,
     {
+        Self::from_snapshots_with_branch_target_predictions_and_return_address_stack_and_branch_kinds(
+            snapshot,
+            branch_target_buffer,
+            active_speculations,
+            active_branch_target_predictions,
+            return_address_stack,
+            active_return_address_stack_operations,
+            std::iter::empty::<(u64, BranchTargetKind)>(),
+        )
+    }
+
+    pub fn from_snapshots_with_branch_target_predictions_and_return_address_stack_and_branch_kinds<
+        I,
+        P,
+        R,
+        K,
+    >(
+        snapshot: BranchPredictorSnapshot,
+        branch_target_buffer: BranchTargetBufferSnapshot,
+        active_speculations: I,
+        active_branch_target_predictions: P,
+        return_address_stack: ReturnAddressStackSnapshot,
+        active_return_address_stack_operations: R,
+        active_branch_kinds: K,
+    ) -> Result<Self, BranchPredictorError>
+    where
+        I: IntoIterator<Item = (u64, BranchSpeculationId)>,
+        P: IntoIterator<Item = (u64, BranchTargetPrediction)>,
+        R: IntoIterator<Item = (u64, ReturnAddressStackOperationId)>,
+        K: IntoIterator<Item = (u64, BranchTargetKind)>,
+    {
         let mut active_speculations = active_speculations.into_iter().collect::<Vec<_>>();
         active_speculations.sort_by_key(|(sequence, id)| (*sequence, id.get()));
         let mut active_branch_target_predictions = active_branch_target_predictions
@@ -127,6 +162,8 @@ impl BranchPredictorCheckpointPayload {
             .into_iter()
             .collect::<Vec<_>>();
         active_return_address_stack_operations.sort_by_key(|(sequence, id)| (*sequence, id.get()));
+        let mut active_branch_kinds = active_branch_kinds.into_iter().collect::<Vec<_>>();
+        active_branch_kinds.sort_by_key(|(sequence, _)| *sequence);
         validate_checkpoint_snapshot(
             &snapshot,
             &branch_target_buffer,
@@ -134,6 +171,7 @@ impl BranchPredictorCheckpointPayload {
             &active_speculations,
             &active_branch_target_predictions,
             &active_return_address_stack_operations,
+            &active_branch_kinds,
         )?;
         Ok(Self {
             snapshot,
@@ -142,6 +180,7 @@ impl BranchPredictorCheckpointPayload {
             active_speculations,
             active_branch_target_predictions,
             active_return_address_stack_operations,
+            active_branch_kinds,
         })
     }
 
@@ -171,6 +210,10 @@ impl BranchPredictorCheckpointPayload {
         &self.active_return_address_stack_operations
     }
 
+    pub fn active_branch_kinds(&self) -> &[(u64, BranchTargetKind)] {
+        &self.active_branch_kinds
+    }
+
     pub fn into_parts(
         self,
     ) -> (
@@ -194,6 +237,7 @@ impl BranchPredictorCheckpointPayload {
         Vec<(u64, BranchSpeculationId)>,
         Vec<(u64, BranchTargetPrediction)>,
         Vec<(u64, ReturnAddressStackOperationId)>,
+        Vec<(u64, BranchTargetKind)>,
     ) {
         (
             self.snapshot,
@@ -202,6 +246,7 @@ impl BranchPredictorCheckpointPayload {
             self.active_speculations,
             self.active_branch_target_predictions,
             self.active_return_address_stack_operations,
+            self.active_branch_kinds,
         )
     }
 
@@ -265,6 +310,17 @@ impl BranchPredictorCheckpointPayload {
                 payload.push(0);
                 payload.extend_from_slice(&0_u64.to_le_bytes());
             }
+            if let Some((_, branch_kind)) = self
+                .active_branch_kinds
+                .iter()
+                .find(|(kind_sequence, _)| kind_sequence == sequence)
+            {
+                payload.push(1);
+                payload.push(encode_branch_target_kind(*branch_kind));
+            } else {
+                payload.push(0);
+                payload.push(encode_branch_target_kind(BranchTargetKind::NoBranch));
+            }
         }
 
         debug_assert_eq!(payload.len(), expected_len);
@@ -289,6 +345,7 @@ impl BranchPredictorCheckpointPayload {
             LEGACY_CHECKPOINT_VERSION
                 | V2_CHECKPOINT_VERSION
                 | V3_CHECKPOINT_VERSION
+                | V4_CHECKPOINT_VERSION
                 | CHECKPOINT_VERSION
         ) {
             return Err(BranchPredictorError::UnsupportedCheckpointVersion { version });
@@ -308,8 +365,10 @@ impl BranchPredictorCheckpointPayload {
             v2_checkpoint_payload_len(payload, table_entries, pending_count, active_count)?
         } else if version == V3_CHECKPOINT_VERSION {
             v3_checkpoint_payload_len(payload, table_entries, pending_count, active_count)?
-        } else {
+        } else if version == V4_CHECKPOINT_VERSION {
             v4_checkpoint_payload_len(payload, table_entries, pending_count, active_count)?
+        } else {
+            v5_checkpoint_payload_len(payload, table_entries, pending_count, active_count)?
         };
         if payload.len() != expected_len {
             return Err(BranchPredictorError::InvalidCheckpointPayloadSize {
@@ -328,17 +387,31 @@ impl BranchPredictorCheckpointPayload {
         } else {
             read_branch_target_buffer(payload, &mut offset)?
         };
-        let return_address_stack = if version == CHECKPOINT_VERSION {
-            read_return_address_stack(payload, &mut offset)?
-        } else {
-            default_return_address_stack_snapshot()
-        };
+        let return_address_stack =
+            if version == V4_CHECKPOINT_VERSION || version == CHECKPOINT_VERSION {
+                read_return_address_stack(payload, &mut offset)?
+            } else {
+                default_return_address_stack_snapshot()
+            };
         let (
             active_speculations,
             active_branch_target_predictions,
             active_return_address_stack_operations,
+            active_branch_kinds,
         ) = if version == CHECKPOINT_VERSION {
-            read_active_speculations_v4(payload, &mut offset, active_count)?
+            read_active_speculations_v5(payload, &mut offset, active_count)?
+        } else if version == V4_CHECKPOINT_VERSION {
+            let (
+                active_speculations,
+                active_branch_target_predictions,
+                active_return_address_stack_operations,
+            ) = read_active_speculations_v4(payload, &mut offset, active_count)?;
+            (
+                active_speculations,
+                active_branch_target_predictions,
+                active_return_address_stack_operations,
+                Vec::new(),
+            )
         } else if version == V3_CHECKPOINT_VERSION {
             let (active_speculations, active_branch_target_predictions) =
                 read_active_speculations_v3(payload, &mut offset, active_count)?;
@@ -346,10 +419,12 @@ impl BranchPredictorCheckpointPayload {
                 active_speculations,
                 active_branch_target_predictions,
                 Vec::new(),
+                Vec::new(),
             )
         } else {
             (
                 read_active_speculations(payload, &mut offset, active_count)?,
+                Vec::new(),
                 Vec::new(),
                 Vec::new(),
             )
@@ -361,7 +436,7 @@ impl BranchPredictorCheckpointPayload {
             });
         }
 
-        Self::from_snapshots_with_branch_target_predictions_and_return_address_stack(
+        Self::from_snapshots_with_branch_target_predictions_and_return_address_stack_and_branch_kinds(
             BranchPredictorSnapshot {
                 config,
                 counters,
@@ -377,6 +452,7 @@ impl BranchPredictorCheckpointPayload {
             active_branch_target_predictions,
             return_address_stack,
             active_return_address_stack_operations,
+            active_branch_kinds,
         )
     }
 }
@@ -407,6 +483,7 @@ fn validate_checkpoint_snapshot(
     active_speculations: &[(u64, BranchSpeculationId)],
     active_branch_target_predictions: &[(u64, BranchTargetPrediction)],
     active_return_address_stack_operations: &[(u64, ReturnAddressStackOperationId)],
+    active_branch_kinds: &[(u64, BranchTargetKind)],
 ) -> Result<(), BranchPredictorError> {
     let table_entries = snapshot.config.table_entries();
     require_u32("table-entries", table_entries)?;
@@ -488,6 +565,23 @@ fn validate_checkpoint_snapshot(
     let mut branch_target_prediction_sequences = BTreeSet::new();
     for (sequence, _prediction) in active_branch_target_predictions {
         if !branch_target_prediction_sequences.insert(*sequence) {
+            return Err(
+                BranchPredictorError::DuplicateCheckpointSpeculationSequence {
+                    sequence: *sequence,
+                },
+            );
+        }
+        if !active_sequences.contains(sequence) {
+            return Err(
+                BranchPredictorError::DuplicateCheckpointSpeculationSequence {
+                    sequence: *sequence,
+                },
+            );
+        }
+    }
+    let mut branch_kind_sequences = BTreeSet::new();
+    for (sequence, _branch_kind) in active_branch_kinds {
+        if !branch_kind_sequences.insert(*sequence) {
             return Err(
                 BranchPredictorError::DuplicateCheckpointSpeculationSequence {
                     sequence: *sequence,
@@ -779,6 +873,53 @@ fn read_active_speculations_v4(
         active_speculations,
         active_branch_target_predictions,
         active_return_address_stack_operations,
+    ))
+}
+
+fn read_active_speculations_v5(
+    payload: &[u8],
+    offset: &mut usize,
+    count: usize,
+) -> Result<
+    (
+        Vec<(u64, BranchSpeculationId)>,
+        Vec<(u64, BranchTargetPrediction)>,
+        Vec<(u64, ReturnAddressStackOperationId)>,
+        Vec<(u64, BranchTargetKind)>,
+    ),
+    BranchPredictorError,
+> {
+    let mut active_speculations = Vec::with_capacity(count);
+    let mut active_branch_target_predictions = Vec::new();
+    let mut active_return_address_stack_operations = Vec::new();
+    let mut active_branch_kinds = Vec::new();
+    for _ in 0..count {
+        let sequence = read_u64(payload, offset)?;
+        let id = BranchSpeculationId::new(read_u64(payload, offset)?);
+        let has_prediction = read_bool(payload, offset, "branch-target-prediction")?;
+        let hit = read_bool(payload, offset, "branch-target-hit")?;
+        let target = read_address_option(payload, offset, "branch-target")?;
+        let has_ras_operation = read_bool(payload, offset, "return-address-stack-operation")?;
+        let ras_operation = ReturnAddressStackOperationId::new(read_u64(payload, offset)?);
+        let has_branch_kind = read_bool(payload, offset, "active-branch-kind")?;
+        let branch_kind = read_branch_target_kind(payload, offset)?;
+        active_speculations.push((sequence, id));
+        if has_prediction {
+            active_branch_target_predictions
+                .push((sequence, BranchTargetPrediction::new(hit, target)));
+        }
+        if has_ras_operation {
+            active_return_address_stack_operations.push((sequence, ras_operation));
+        }
+        if has_branch_kind {
+            active_branch_kinds.push((sequence, branch_kind));
+        }
+    }
+    Ok((
+        active_speculations,
+        active_branch_target_predictions,
+        active_return_address_stack_operations,
+        active_branch_kinds,
     ))
 }
 
@@ -1304,13 +1445,18 @@ fn checkpoint_payload_len(
             CHECKPOINT_ACTIVE_SPECULATION_V3_BYTES - CHECKPOINT_ACTIVE_SPECULATION_BYTES,
         )?;
         checked_sum("payload-size", len, active_delta)
-    } else if version == CHECKPOINT_VERSION {
+    } else if version == V4_CHECKPOINT_VERSION || version == CHECKPOINT_VERSION {
         let return_address_stack_bytes = return_address_stack_checkpoint_len(return_address_stack)?;
         let len = checked_sum("payload-size", len, return_address_stack_bytes)?;
+        let active_speculation_bytes = if version == V4_CHECKPOINT_VERSION {
+            CHECKPOINT_ACTIVE_SPECULATION_V4_BYTES
+        } else {
+            CHECKPOINT_ACTIVE_SPECULATION_V5_BYTES
+        };
         let active_delta = checked_product(
             "active-speculations",
             active_count,
-            CHECKPOINT_ACTIVE_SPECULATION_V4_BYTES - CHECKPOINT_ACTIVE_SPECULATION_BYTES,
+            active_speculation_bytes - CHECKPOINT_ACTIVE_SPECULATION_BYTES,
         )?;
         checked_sum("payload-size", len, active_delta)
     } else {
@@ -1419,6 +1565,37 @@ fn v4_checkpoint_payload_len(
     pending_count: usize,
     active_count: usize,
 ) -> Result<usize, BranchPredictorError> {
+    checkpoint_payload_len_with_return_address_stack(
+        payload,
+        table_entries,
+        pending_count,
+        active_count,
+        CHECKPOINT_ACTIVE_SPECULATION_V4_BYTES,
+    )
+}
+
+fn v5_checkpoint_payload_len(
+    payload: &[u8],
+    table_entries: usize,
+    pending_count: usize,
+    active_count: usize,
+) -> Result<usize, BranchPredictorError> {
+    checkpoint_payload_len_with_return_address_stack(
+        payload,
+        table_entries,
+        pending_count,
+        active_count,
+        CHECKPOINT_ACTIVE_SPECULATION_V5_BYTES,
+    )
+}
+
+fn checkpoint_payload_len_with_return_address_stack(
+    payload: &[u8],
+    table_entries: usize,
+    pending_count: usize,
+    active_count: usize,
+    active_speculation_bytes: usize,
+) -> Result<usize, BranchPredictorError> {
     let counter_bytes = checked_product("counter-table", table_entries, CHECKPOINT_COUNTER_BYTES)?;
     let target_bytes = checked_product("target-table", table_entries, CHECKPOINT_TARGET_BYTES)?;
     let pending_bytes = checked_product(
@@ -1429,7 +1606,7 @@ fn v4_checkpoint_payload_len(
     let active_bytes = checked_product(
         "active-speculations",
         active_count,
-        CHECKPOINT_ACTIVE_SPECULATION_V4_BYTES,
+        active_speculation_bytes,
     )?;
     let btb_offset = checked_sum("payload-size", CHECKPOINT_HEADER_BYTES, counter_bytes)?;
     let btb_offset = checked_sum("payload-size", btb_offset, target_bytes)?;

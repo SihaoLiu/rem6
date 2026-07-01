@@ -864,7 +864,7 @@ impl RiscvCore {
 
     pub fn branch_predictor_checkpoint_payload(&self) -> BranchPredictorCheckpointPayload {
         let state = self.state.lock().expect("riscv core lock");
-        BranchPredictorCheckpointPayload::from_snapshots_with_branch_target_predictions_and_return_address_stack(
+        BranchPredictorCheckpointPayload::from_snapshots_with_branch_target_predictions_and_return_address_stack_and_branch_kinds(
             state.branch_predictor.snapshot(),
             state.branch_target_buffer.snapshot(),
             state
@@ -880,6 +880,10 @@ impl RiscvCore {
                 .return_address_stack_operations
                 .iter()
                 .map(|(sequence, operation)| (*sequence, *operation)),
+            state
+                .branch_speculation_kinds
+                .iter()
+                .map(|(sequence, kind)| (*sequence, *kind)),
         )
         .expect("captured RISC-V branch predictor checkpoint is internally consistent")
     }
@@ -915,6 +919,7 @@ impl RiscvCore {
             active_speculations,
             active_branch_target_predictions,
             active_return_address_stack_operations,
+            active_branch_kinds,
         ) = payload.into_parts_with_branch_target_predictions();
         let mut state = self.state.lock().expect("riscv core lock");
         let mut restored_branch_predictor = state.branch_predictor.clone();
@@ -943,6 +948,8 @@ impl RiscvCore {
         state
             .return_address_stack_operations
             .extend(active_return_address_stack_operations);
+        state.branch_speculation_kinds.clear();
+        state.branch_speculation_kinds.extend(active_branch_kinds);
         Ok(())
     }
 
@@ -1114,6 +1121,7 @@ struct RiscvCoreState {
     branch_target_buffer: BranchTargetBuffer,
     return_address_stack: ReturnAddressStack,
     branch_speculations: BTreeMap<u64, BranchSpeculationId>,
+    branch_speculation_kinds: BTreeMap<u64, BranchTargetKind>,
     return_address_stack_operations: BTreeMap<u64, ReturnAddressStackOperationId>,
     selected_branch_speculations: BTreeMap<u64, RiscvSelectedBranchSpeculation>,
     selected_tage_sc_l_branch_predictor_rollbacks: u64,
@@ -1173,6 +1181,7 @@ impl RiscvCoreState {
                     .expect("default RISC-V return-address stack config is valid"),
             ),
             branch_speculations: BTreeMap::new(),
+            branch_speculation_kinds: BTreeMap::new(),
             return_address_stack_operations: BTreeMap::new(),
             selected_branch_speculations: BTreeMap::new(),
             selected_tage_sc_l_branch_predictor_rollbacks: 0,
@@ -1226,6 +1235,7 @@ impl RiscvCoreState {
         self.discard_return_address_stack_speculations();
         self.branch_predictor.discard_all_speculations();
         self.branch_speculations.clear();
+        self.branch_speculation_kinds.clear();
         self.branch_target_predictions.clear();
     }
 

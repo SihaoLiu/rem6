@@ -1346,6 +1346,7 @@ fn resolve_branch_speculation(
     let Some(speculation) = state.branch_speculations.remove(&sequence) else {
         return Ok(None);
     };
+    state.branch_speculation_kinds.remove(&sequence);
 
     let pending = state
         .branch_predictor
@@ -1380,7 +1381,7 @@ fn resolve_branch_speculation(
         state
             .branch_speculation_summary
             .record_repair(repair.removed_youngers().len() as u64);
-        remove_branch_speculation_mappings(state, repair.removed_youngers())?;
+        remove_branch_speculation_mappings(state, repair.removed_youngers(), true)?;
     } else {
         state.commit_return_address_stack_speculation(sequence, predicted_correctly)?;
     }
@@ -1398,6 +1399,7 @@ fn discard_branch_speculation(
     let Some(speculation) = state.branch_speculations.remove(&sequence) else {
         return Ok(());
     };
+    state.branch_speculation_kinds.remove(&sequence);
     state.branch_target_predictions.remove(&sequence);
     state.squash_return_address_stack_speculation(sequence)?;
 
@@ -1405,19 +1407,36 @@ fn discard_branch_speculation(
         .branch_predictor
         .discard_speculation(speculation)
         .map_err(RiscvCpuError::BranchPredictor)?;
-    remove_branch_speculation_mappings(state, discard.removed_youngers())?;
+    remove_branch_speculation_mappings(state, discard.removed_youngers(), false)?;
     Ok(())
 }
 
 fn remove_branch_speculation_mappings(
     state: &mut RiscvCoreState,
     removed: &[crate::BranchSpeculation],
+    record_squashes: bool,
 ) -> Result<(), RiscvCpuError> {
-    state.branch_speculations.retain(|_, pending| {
-        !removed
+    let removed_ids = removed
+        .iter()
+        .map(|removed_speculation| removed_speculation.id())
+        .collect::<BTreeSet<_>>();
+    if record_squashes {
+        let squashed_sequences = state
+            .branch_speculations
             .iter()
-            .any(|removed_speculation| removed_speculation.id() == *pending)
-    });
+            .filter_map(|(sequence, pending)| removed_ids.contains(pending).then_some(*sequence))
+            .collect::<Vec<_>>();
+        for sequence in squashed_sequences {
+            if let Some(branch_kind) = state.branch_speculation_kinds.remove(&sequence) {
+                state
+                    .branch_speculation_summary
+                    .record_squashed_branch_kind(branch_kind);
+            }
+        }
+    }
+    state
+        .branch_speculations
+        .retain(|_, pending| !removed_ids.contains(pending));
     let active_sequences = state
         .branch_speculations
         .keys()
@@ -1425,6 +1444,9 @@ fn remove_branch_speculation_mappings(
         .collect::<BTreeSet<_>>();
     state
         .branch_target_predictions
+        .retain(|sequence, _| active_sequences.contains(sequence));
+    state
+        .branch_speculation_kinds
         .retain(|sequence, _| active_sequences.contains(sequence));
     state.squash_inactive_return_address_stack_speculations(&active_sequences)?;
     state.rollback_inactive_selected_branch_speculations(&active_sequences)

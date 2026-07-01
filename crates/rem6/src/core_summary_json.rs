@@ -5,11 +5,15 @@ use rem6_cpu::{
 use crate::{pipeline_stats::Rem6InOrderPipelineStageSummary, Rem6CoreSummary};
 
 fn branch_target_kind_counts_json(counts: BranchTargetKindCounts) -> String {
+    branch_target_kind_counts_json_with_total(counts, counts.total())
+}
+
+fn branch_target_kind_counts_json_with_total(counts: BranchTargetKindCounts, total: u64) -> String {
     let mut fields = BranchTargetKind::ALL
         .into_iter()
         .map(|kind| format!("\"{}\":{}", kind.canonical_stat_name(), counts.value(kind)))
         .collect::<Vec<_>>();
-    fields.push(format!("\"total\":{}", counts.total()));
+    fields.push(format!("\"total\":{total}"));
     format!("{{{}}}", fields.join(","))
 }
 
@@ -67,7 +71,10 @@ impl Rem6CoreSummary {
         let btb_mispredict_due_to_btb_miss =
             branch_target_kind_counts_json(self.branch_target_buffer_mispredict_due_to_btb_miss);
         let lookups = branch_target_kind_counts_json(self.branch_predictor_lookups);
-        let squashes = format!("{{\"total\":{}}}", self.branch_predictor_squashes_total);
+        let squashes = branch_target_kind_counts_json_with_total(
+            self.branch_predictor_squashes,
+            self.branch_predictor_squashes_total,
+        );
         let target_provider =
             branch_target_provider_counts_json(self.branch_predictor_target_provider);
         let committed = branch_target_kind_counts_json(self.branch_predictor_committed);

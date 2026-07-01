@@ -7167,6 +7167,10 @@ fn rem6_run_stats_emit_in_order_nested_branch_speculation_rollback() {
     let removed_youngers = json_u64_field(&stdout, "\"branch_speculation_removed_youngers\":");
     let max_pending = json_u64_field(&stdout, "\"branch_speculation_max_pending\":");
     let branch_predictor_squashes = stat_value(&stdout, "sim.cpu0.branch_predictor.squashes.total");
+    let direct_conditional_squashes = stat_value(
+        &stdout,
+        "sim.cpu0.branch_predictor.squashes.direct_conditional",
+    );
     let artifact: Value = serde_json::from_str(&stdout).unwrap();
 
     assert_eq!(
@@ -7191,9 +7195,16 @@ fn rem6_run_stats_emit_in_order_nested_branch_speculation_rollback() {
         removed_youngers
     );
     assert_eq!(branch_predictor_squashes, removed_youngers);
+    assert_eq!(direct_conditional_squashes, removed_youngers);
     assert_eq!(
         artifact
             .pointer("/cores/0/branch_predictor/squashes/total")
+            .and_then(Value::as_u64),
+        Some(removed_youngers)
+    );
+    assert_eq!(
+        artifact
+            .pointer("/cores/0/branch_predictor/squashes/direct_conditional")
             .and_then(Value::as_u64),
         Some(removed_youngers)
     );
@@ -7242,8 +7253,20 @@ fn rem6_run_stats_emit_in_order_nested_branch_speculation_rollback() {
         text_stat_value(&stdout, "system.cpu.branchPred.squashes_0::total"),
         text_stat_value(&stdout, "sim.cpu0.branch_predictor.squashes.total")
     );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.squashes_0::DirectCond"),
+        text_stat_value(
+            &stdout,
+            "sim.cpu0.branch_predictor.squashes.direct_conditional"
+        )
+    );
     assert!(
         text_stat_line(&stdout, "system.cpu.branchPred.squashes_0::total").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.branchPred.squashes_0::DirectCond")
+            .contains("unit=Count"),
         "{stdout}"
     );
 }

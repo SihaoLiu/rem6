@@ -12,6 +12,7 @@ pub struct RiscvBranchSpeculationSummary {
     removed_youngers: u64,
     max_pending: u64,
     lookup_branch_kinds: BranchTargetKindCounts,
+    squashed_branch_kinds: BranchTargetKindCounts,
     target_provider: BranchTargetProviderCounts,
     indirect_hits: u64,
     committed_branch_kinds: BranchTargetKindCounts,
@@ -128,6 +129,10 @@ impl RiscvBranchSpeculationSummary {
         self.lookup_branch_kinds
     }
 
+    pub const fn squashed_branch_kinds(self) -> BranchTargetKindCounts {
+        self.squashed_branch_kinds
+    }
+
     pub const fn target_provider(self) -> BranchTargetProviderCounts {
         self.target_provider
     }
@@ -215,6 +220,10 @@ impl RiscvBranchSpeculationSummary {
     pub(crate) fn record_repair(&mut self, removed_youngers: u64) {
         self.repairs = self.repairs.saturating_add(1);
         self.removed_youngers = self.removed_youngers.saturating_add(removed_youngers);
+    }
+
+    pub(crate) fn record_squashed_branch_kind(&mut self, branch_kind: BranchTargetKind) {
+        self.squashed_branch_kinds.increment(branch_kind);
     }
 
     pub(crate) fn record_btb_resolution(

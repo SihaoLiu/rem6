@@ -437,6 +437,19 @@ pub(super) fn emit_cpu_run_stats(
             StatResetPolicy::Monotonic,
             core.branch_predictor_lookups.total(),
         )?;
+        for kind in BranchTargetKind::ALL {
+            increment_stat(
+                stats,
+                &format!(
+                    "sim.cpu{}.branch_predictor.squashes.{}",
+                    core.cpu,
+                    kind.canonical_stat_name()
+                ),
+                "Count",
+                StatResetPolicy::Monotonic,
+                core.branch_predictor_squashes.value(kind),
+            )?;
+        }
         increment_stat(
             stats,
             &format!("sim.cpu{}.branch_predictor.squashes.total", core.cpu),
