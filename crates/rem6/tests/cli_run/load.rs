@@ -595,14 +595,51 @@ fn rem6_run_reports_elf_symbol_summary() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"status\":\"loaded\""));
     assert!(stdout.contains(
-        "\"symbols\":{\"total\":2,\"functions\":1,\"objects\":1,\"local\":0,\"global\":2,\"weak\":0,\"visibility\":{\"default\":2,\"internal\":0,\"hidden\":0,\"protected\":0}}"
+        "\"symbols\":{\"total\":2,\"functions\":1,\"objects\":1,\"tls\":0,\"local\":0,\"global\":2,\"weak\":0,\"visibility\":{\"default\":2,\"internal\":0,\"hidden\":0,\"protected\":0}}"
     ));
     assert_stat(&stdout, "sim.elf.symbols", "Count", 2, "constant");
     assert_stat(&stdout, "sim.elf.function_symbols", "Count", 1, "constant");
     assert_stat(&stdout, "sim.elf.object_symbols", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.elf.tls_symbols", "Count", 0, "constant");
     assert_stat(&stdout, "sim.elf.local_symbols", "Count", 0, "constant");
     assert_stat(&stdout, "sim.elf.global_symbols", "Count", 2, "constant");
     assert_stat(&stdout, "sim.elf.weak_symbols", "Count", 0, "constant");
+}
+
+#[test]
+fn rem6_run_reports_elf_tls_symbol_summary() {
+    let elf = riscv64_elf_with_tls_symbol(0x8000_0000, 0x8000_0000, &[0x13, 0, 0, 0]);
+    let path = temp_binary("riscv-run-tls-symbols", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "40",
+            "--stats-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"loaded\""));
+    assert!(stdout.contains(
+        "\"symbols\":{\"total\":2,\"functions\":1,\"objects\":0,\"tls\":1,\"local\":0,\"global\":2,\"weak\":0"
+    ));
+    assert_stat(&stdout, "sim.elf.symbols", "Count", 2, "constant");
+    assert_stat(&stdout, "sim.elf.function_symbols", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.elf.object_symbols", "Count", 0, "constant");
+    assert_stat(&stdout, "sim.elf.tls_symbols", "Count", 1, "constant");
 }
 
 #[test]
@@ -633,11 +670,12 @@ fn rem6_run_reports_elf_dynamic_symbol_summary() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"status\":\"loaded\""));
     assert!(stdout.contains(
-        "\"symbols\":{\"total\":2,\"functions\":1,\"objects\":1,\"local\":0,\"global\":2,\"weak\":0,\"visibility\":{\"default\":2,\"internal\":0,\"hidden\":0,\"protected\":0}}"
+        "\"symbols\":{\"total\":2,\"functions\":1,\"objects\":1,\"tls\":0,\"local\":0,\"global\":2,\"weak\":0,\"visibility\":{\"default\":2,\"internal\":0,\"hidden\":0,\"protected\":0}}"
     ));
     assert_stat(&stdout, "sim.elf.symbols", "Count", 2, "constant");
     assert_stat(&stdout, "sim.elf.function_symbols", "Count", 1, "constant");
     assert_stat(&stdout, "sim.elf.object_symbols", "Count", 1, "constant");
+    assert_stat(&stdout, "sim.elf.tls_symbols", "Count", 0, "constant");
     assert_stat(&stdout, "sim.elf.local_symbols", "Count", 0, "constant");
     assert_stat(&stdout, "sim.elf.global_symbols", "Count", 2, "constant");
     assert_stat(&stdout, "sim.elf.weak_symbols", "Count", 0, "constant");
@@ -671,11 +709,12 @@ fn rem6_run_reports_elf_symbol_binding_summary() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"status\":\"loaded\""));
     assert!(stdout.contains(
-        "\"symbols\":{\"total\":3,\"functions\":1,\"objects\":2,\"local\":1,\"global\":1,\"weak\":1,\"visibility\":{\"default\":3,\"internal\":0,\"hidden\":0,\"protected\":0}}"
+        "\"symbols\":{\"total\":3,\"functions\":1,\"objects\":2,\"tls\":0,\"local\":1,\"global\":1,\"weak\":1,\"visibility\":{\"default\":3,\"internal\":0,\"hidden\":0,\"protected\":0}}"
     ));
     assert_stat(&stdout, "sim.elf.symbols", "Count", 3, "constant");
     assert_stat(&stdout, "sim.elf.function_symbols", "Count", 1, "constant");
     assert_stat(&stdout, "sim.elf.object_symbols", "Count", 2, "constant");
+    assert_stat(&stdout, "sim.elf.tls_symbols", "Count", 0, "constant");
     assert_stat(&stdout, "sim.elf.local_symbols", "Count", 1, "constant");
     assert_stat(&stdout, "sim.elf.global_symbols", "Count", 1, "constant");
     assert_stat(&stdout, "sim.elf.weak_symbols", "Count", 1, "constant");

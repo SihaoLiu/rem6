@@ -106,6 +106,7 @@ pub struct BootElfSymbolSummary {
     total_count: u64,
     function_count: u64,
     object_count: u64,
+    tls_count: u64,
     local_count: u64,
     global_count: u64,
     weak_count: u64,
@@ -120,6 +121,7 @@ impl BootElfSymbolSummary {
         total_count: u64,
         function_count: u64,
         object_count: u64,
+        tls_count: u64,
         local_count: u64,
         global_count: u64,
         weak_count: u64,
@@ -132,6 +134,7 @@ impl BootElfSymbolSummary {
             total_count,
             function_count,
             object_count,
+            tls_count,
             local_count,
             global_count,
             weak_count,
@@ -152,6 +155,10 @@ impl BootElfSymbolSummary {
 
     pub const fn object_count(self) -> u64 {
         self.object_count
+    }
+
+    pub const fn tls_count(self) -> u64 {
+        self.tls_count
     }
 
     pub const fn local_count(self) -> u64 {

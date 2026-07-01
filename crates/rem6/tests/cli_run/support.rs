@@ -330,6 +330,12 @@ pub(crate) fn riscv64_elf_with_symbols(entry: u64, physical: u64, payload: &[u8]
     riscv64_elf_with_symbol_section(entry, physical, payload, ".symtab", 2, ".strtab")
 }
 
+pub(crate) fn riscv64_elf_with_tls_symbol(entry: u64, physical: u64, payload: &[u8]) -> Vec<u8> {
+    riscv64_elf_with_symbol_section_and_object_type(
+        entry, physical, payload, ".symtab", 2, ".strtab", 6,
+    )
+}
+
 pub(crate) fn riscv64_elf_with_dynamic_symbols(
     entry: u64,
     physical: u64,
@@ -434,6 +440,26 @@ fn riscv64_elf_with_symbol_section(
     symbol_section_kind: u32,
     string_section_name: &str,
 ) -> Vec<u8> {
+    riscv64_elf_with_symbol_section_and_object_type(
+        entry,
+        physical,
+        payload,
+        symbol_section_name,
+        symbol_section_kind,
+        string_section_name,
+        1,
+    )
+}
+
+fn riscv64_elf_with_symbol_section_and_object_type(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+    symbol_section_name: &str,
+    symbol_section_kind: u32,
+    string_section_name: &str,
+    object_type: u8,
+) -> Vec<u8> {
     let mut bytes = riscv64_elf(entry, physical, payload);
     let symbol_names = b"\0entry_func\0data_obj\0";
     let symbol_names_offset = bytes.len();
@@ -449,7 +475,7 @@ fn riscv64_elf_with_symbol_section(
     write_u64(&mut bytes, function_base + 16, payload.len() as u64);
     let object_base = symbol_table_offset + 48;
     write_u32(&mut bytes, object_base, 12);
-    bytes[object_base + 4] = 0x11;
+    bytes[object_base + 4] = 0x10 | object_type;
     write_u16(&mut bytes, object_base + 6, 1);
     write_u64(&mut bytes, object_base + 8, physical + 0x1000);
     write_u64(&mut bytes, object_base + 16, 8);

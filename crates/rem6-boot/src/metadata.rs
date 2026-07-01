@@ -626,7 +626,7 @@ impl BootElfMetadata {
             gnu_eh_frame_memory_size: None,
             gnu_property_virtual_address: None,
             gnu_property_memory_size: None,
-            symbol_summary: BootElfSymbolSummary::new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
+            symbol_summary: BootElfSymbolSummary::new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
             dynamic_table: BootElfDynamicTable::new(),
             load_segments: BootElfLoadSegments::new(0, 0, 0, 0, 0, 0, 0),
             program_header_table: BootElfProgramHeaderTable::new(0, 0, 0),

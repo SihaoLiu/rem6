@@ -373,8 +373,25 @@ fn elf64_image_with_symbols(machine: u16) -> Vec<u8> {
     elf64_image_with_symbol_section(machine, ".symtab", 2, ".strtab")
 }
 
+fn elf64_image_with_tls_symbol(machine: u16) -> Vec<u8> {
+    elf64_image_with_symbol_section_and_object_type(machine, ".symtab", 2, ".strtab", 6)
+}
+
+fn elf64_image_with_extra_symbol_type(machine: u16, extra_type: u8) -> Vec<u8> {
+    elf64_image_with_symbol_section_options(
+        machine,
+        ".symtab",
+        2,
+        ".strtab",
+        1,
+        0,
+        0,
+        Some(extra_type),
+    )
+}
+
 fn elf64_image_with_symbol_visibility(machine: u16) -> Vec<u8> {
-    elf64_image_with_symbol_section_and_visibility(machine, ".symtab", 2, ".strtab", 2, 3)
+    elf64_image_with_symbol_section_and_visibility(machine, ".symtab", 2, ".strtab", 1, 2, 3)
 }
 
 fn elf64_image_with_dynamic_symbols(machine: u16) -> Vec<u8> {
@@ -392,6 +409,25 @@ fn elf64_image_with_symbol_section(
         symbol_section_name,
         symbol_section_kind,
         string_section_name,
+        1,
+        0,
+        0,
+    )
+}
+
+fn elf64_image_with_symbol_section_and_object_type(
+    machine: u16,
+    symbol_section_name: &str,
+    symbol_section_kind: u32,
+    string_section_name: &str,
+    object_type: u8,
+) -> Vec<u8> {
+    elf64_image_with_symbol_section_and_visibility(
+        machine,
+        symbol_section_name,
+        symbol_section_kind,
+        string_section_name,
+        object_type,
         0,
         0,
     )
@@ -402,16 +438,45 @@ fn elf64_image_with_symbol_section_and_visibility(
     symbol_section_name: &str,
     symbol_section_kind: u32,
     string_section_name: &str,
+    object_type: u8,
     function_visibility: u8,
     object_visibility: u8,
 ) -> Vec<u8> {
+    elf64_image_with_symbol_section_options(
+        machine,
+        symbol_section_name,
+        symbol_section_kind,
+        string_section_name,
+        object_type,
+        function_visibility,
+        object_visibility,
+        None,
+    )
+}
+
+fn elf64_image_with_symbol_section_options(
+    machine: u16,
+    symbol_section_name: &str,
+    symbol_section_kind: u32,
+    string_section_name: &str,
+    object_type: u8,
+    function_visibility: u8,
+    object_visibility: u8,
+    extra_type: Option<u8>,
+) -> Vec<u8> {
     let mut bytes = elf64_image(machine);
-    let symbol_names = b"\0entry_func\0data_obj\0";
+    let mut symbol_names = b"\0entry_func\0data_obj\0".to_vec();
+    let extra_name_offset = extra_type.map(|_| {
+        let offset = symbol_names.len() as u32;
+        symbol_names.extend_from_slice(b"extra_sym\0");
+        offset
+    });
     let symbol_names_offset = bytes.len();
-    bytes.extend_from_slice(symbol_names);
+    bytes.extend_from_slice(&symbol_names);
 
     let symbol_table_offset = bytes.len();
-    bytes.resize(bytes.len() + 3 * 24, 0);
+    let symbol_entry_count = if extra_type.is_some() { 4 } else { 3 };
+    bytes.resize(bytes.len() + symbol_entry_count * 24, 0);
     let function_base = symbol_table_offset + 24;
     write_u32(&mut bytes, function_base, 1);
     bytes[function_base + 4] = 0x12;
@@ -421,11 +486,19 @@ fn elf64_image_with_symbol_section_and_visibility(
     write_u64(&mut bytes, function_base + 16, 4);
     let object_base = symbol_table_offset + 48;
     write_u32(&mut bytes, object_base, 12);
-    bytes[object_base + 4] = 0x11;
+    bytes[object_base + 4] = 0x10 | object_type;
     bytes[object_base + 5] = object_visibility;
     write_u16(&mut bytes, object_base + 6, 1);
     write_u64(&mut bytes, object_base + 8, 0x9000);
     write_u64(&mut bytes, object_base + 16, 8);
+    if let (Some(extra_name_offset), Some(extra_type)) = (extra_name_offset, extra_type) {
+        let extra_base = symbol_table_offset + 72;
+        write_u32(&mut bytes, extra_base, extra_name_offset);
+        bytes[extra_base + 4] = 0x10 | extra_type;
+        write_u16(&mut bytes, extra_base + 6, 1);
+        write_u64(&mut bytes, extra_base + 8, 0xa000);
+        write_u64(&mut bytes, extra_base + 16, 8);
+    }
 
     let symbol_section_name_offset = 1;
     let string_section_name_offset =
@@ -446,7 +519,11 @@ fn elf64_image_with_symbol_section_and_visibility(
     write_u32(&mut bytes, symtab_base, symbol_section_name_offset);
     write_u32(&mut bytes, symtab_base + 4, symbol_section_kind);
     write_u64(&mut bytes, symtab_base + 24, symbol_table_offset as u64);
-    write_u64(&mut bytes, symtab_base + 32, 3 * 24);
+    write_u64(
+        &mut bytes,
+        symtab_base + 32,
+        (symbol_entry_count * 24) as u64,
+    );
     write_u32(&mut bytes, symtab_base + 40, 2);
     write_u64(&mut bytes, symtab_base + 56, 24);
 
@@ -1200,6 +1277,24 @@ fn workload_boot_image_preserves_elf_symbol_summary_round_trip() {
     assert_eq!(round_trip_metadata.symbol_count(), 2);
     assert_eq!(round_trip_metadata.function_symbol_count(), 1);
     assert_eq!(round_trip_metadata.object_symbol_count(), 1);
+    assert_eq!(round_trip_metadata.symbol_summary().tls_count(), 0);
+}
+
+#[test]
+fn workload_boot_image_preserves_elf_tls_symbol_summary_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_tls_symbol(243)).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+
+    assert_eq!(round_trip_metadata.symbol_count(), 2);
+    assert_eq!(round_trip_metadata.function_symbol_count(), 1);
+    assert_eq!(round_trip_metadata.object_symbol_count(), 0);
+    assert_eq!(round_trip_metadata.symbol_summary().tls_count(), 1);
 }
 
 #[test]
@@ -1856,12 +1951,17 @@ fn workload_manifest_identity_includes_elf_note_segment_metadata() {
 fn workload_manifest_identity_includes_elf_symbol_summary() {
     let plain = BootImage::from_elf64_le(&elf64_image(243)).unwrap();
     let symbols = BootImage::from_elf64_le(&elf64_image_with_symbols(243)).unwrap();
+    let extra_symbols =
+        BootImage::from_elf64_le(&elf64_image_with_extra_symbol_type(243, 0)).unwrap();
+    let tls_symbols =
+        BootImage::from_elf64_le(&elf64_image_with_extra_symbol_type(243, 6)).unwrap();
     let dynamic_symbols = BootImage::from_elf64_le(&elf64_image_with_dynamic_symbols(243)).unwrap();
     let visible_symbols =
         BootImage::from_elf64_le(&elf64_image_with_symbol_visibility(243)).unwrap();
 
     assert_eq!(plain.entry(), symbols.entry());
     assert_eq!(plain.segments(), symbols.segments());
+    assert_eq!(extra_symbols.segments(), tls_symbols.segments());
     assert_eq!(plain.segments(), dynamic_symbols.segments());
     assert_eq!(symbols.segments(), visible_symbols.segments());
     assert_eq!(plain.elf_metadata().unwrap().symbol_count(), 0);
@@ -1869,6 +1969,34 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
     assert_eq!(
         dynamic_symbols.elf_metadata().unwrap().symbol_count(),
         symbols.elf_metadata().unwrap().symbol_count()
+    );
+    assert_eq!(
+        extra_symbols
+            .elf_metadata()
+            .unwrap()
+            .symbol_summary()
+            .tls_count(),
+        0
+    );
+    assert_eq!(
+        tls_symbols
+            .elf_metadata()
+            .unwrap()
+            .symbol_summary()
+            .tls_count(),
+        1
+    );
+    assert_eq!(
+        extra_symbols
+            .elf_metadata()
+            .unwrap()
+            .symbol_summary()
+            .object_count(),
+        tls_symbols
+            .elf_metadata()
+            .unwrap()
+            .symbol_summary()
+            .object_count()
     );
     assert_eq!(
         visible_symbols
@@ -1885,6 +2013,12 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
     let symbol_manifest = WorkloadManifest::builder(id("same"), symbols)
         .build()
         .unwrap();
+    let extra_symbol_manifest = WorkloadManifest::builder(id("same"), extra_symbols)
+        .build()
+        .unwrap();
+    let tls_symbol_manifest = WorkloadManifest::builder(id("same"), tls_symbols)
+        .build()
+        .unwrap();
     let dynamic_symbol_manifest = WorkloadManifest::builder(id("same"), dynamic_symbols)
         .build()
         .unwrap();
@@ -1893,6 +2027,10 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
         .unwrap();
 
     assert_ne!(plain_manifest.identity(), symbol_manifest.identity());
+    assert_ne!(
+        extra_symbol_manifest.identity(),
+        tls_symbol_manifest.identity()
+    );
     assert_ne!(
         plain_manifest.identity(),
         dynamic_symbol_manifest.identity()

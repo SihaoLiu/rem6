@@ -4,6 +4,7 @@ mod elf_dynamic;
 mod elf_interpreter;
 mod elf_program_headers;
 mod elf_sections;
+mod elf_symbols;
 mod error;
 mod image;
 mod metadata;

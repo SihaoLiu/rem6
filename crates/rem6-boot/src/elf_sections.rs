@@ -2,6 +2,10 @@ use rem6_memory::Address;
 
 use crate::elf::{BootElfClass, BootElfEndian, BootElfOperatingSystem};
 use crate::elf_counts::section_table_layout;
+use crate::elf_symbols::{
+    summarize_elf32_symbol_table as summarize_elf32_symbols,
+    summarize_elf64_symbol_table as summarize_elf64_symbols, symbol_section, ElfSymbolStringTable,
+};
 use crate::error::{invalid_elf, BootElfError, BootError};
 use crate::metadata_tables::{
     BootElfSectionAddressRange, BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags,
@@ -21,20 +25,9 @@ const SHT_NOBITS: u32 = 8;
 const SHT_REL: u32 = 9;
 const SHT_RELR: u32 = 19;
 const SHT_STRTAB: u32 = 3;
-const SHT_SYMTAB: u32 = 2;
-const SHT_DYNSYM: u32 = 11;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
 const SHF_EXECINSTR: u64 = 4;
-const STB_LOCAL: u8 = 0;
-const STB_GLOBAL: u8 = 1;
-const STB_WEAK: u8 = 2;
-const STT_OBJECT: u8 = 1;
-const STT_FUNC: u8 = 2;
-const STV_DEFAULT: u8 = 0;
-const STV_INTERNAL: u8 = 1;
-const STV_HIDDEN: u8 = 2;
-const STV_PROTECTED: u8 = 3;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ElfSectionSummary {
@@ -43,6 +36,7 @@ pub(crate) struct ElfSectionSummary {
     symbol_count: u64,
     function_symbol_count: u64,
     object_symbol_count: u64,
+    tls_symbol_count: u64,
     local_symbol_count: u64,
     global_symbol_count: u64,
     weak_symbol_count: u64,
@@ -108,6 +102,7 @@ impl ElfSectionSummary {
             self.symbol_count,
             self.function_symbol_count,
             self.object_symbol_count,
+            self.tls_symbol_count,
             self.local_symbol_count,
             self.global_symbol_count,
             self.weak_symbol_count,
@@ -681,13 +676,15 @@ fn summarize_elf64_symbol_table(
     endian: BootElfEndian,
     summary: &mut ElfSectionSummary,
 ) {
-    if !matches!(section.kind, SHT_SYMTAB | SHT_DYNSYM)
-        || section.entry_size < 24
-        || u64::from(section.link) >= section_count
-    {
-        return;
-    }
-    let Ok(symbols) = checked_file_range(bytes, section.offset, section.size) else {
+    let Some(section) = symbol_section(
+        section.kind,
+        section.offset,
+        section.size,
+        section.link,
+        section.entry_size,
+        24,
+        section_count,
+    ) else {
         return;
     };
     let Ok(strings_header) = read_elf64_section_header(
@@ -699,23 +696,14 @@ fn summarize_elf64_symbol_table(
     ) else {
         return;
     };
-    let Ok(strings) = checked_file_range(bytes, strings_header.offset, strings_header.size) else {
-        return;
+    let strings = ElfSymbolStringTable {
+        offset: strings_header.offset,
+        size: strings_header.size,
     };
-
-    let count = section.size / section.entry_size;
-    for index in 0..count {
-        let offset = index * section.entry_size;
-        let Ok(name) = read_u32(symbols, offset, endian) else {
-            continue;
-        };
-        if !symbol_name_allowed(strings, name) {
-            continue;
-        }
-        let info = symbols[offset as usize + 4];
-        let visibility = symbols[offset as usize + 5] & 0x3;
-        summarize_symbol_type(summary, info >> 4, info & 0xf, visibility);
-    }
+    add_symbol_summary(
+        summary,
+        summarize_elf64_symbols(bytes, section, strings, endian),
+    );
 }
 
 fn summarize_elf32_symbol_table(
@@ -727,13 +715,15 @@ fn summarize_elf32_symbol_table(
     endian: BootElfEndian,
     summary: &mut ElfSectionSummary,
 ) {
-    if !matches!(section.kind, SHT_SYMTAB | SHT_DYNSYM)
-        || section.entry_size < 16
-        || u64::from(section.link) >= section_count
-    {
-        return;
-    }
-    let Ok(symbols) = checked_file_range(bytes, section.offset, section.size) else {
+    let Some(section) = symbol_section(
+        section.kind,
+        section.offset,
+        section.size,
+        section.link,
+        section.entry_size,
+        16,
+        section_count,
+    ) else {
         return;
     };
     let Ok(strings_header) = read_elf32_section_header(
@@ -745,48 +735,28 @@ fn summarize_elf32_symbol_table(
     ) else {
         return;
     };
-    let Ok(strings) = checked_file_range(bytes, strings_header.offset, strings_header.size) else {
-        return;
+    let strings = ElfSymbolStringTable {
+        offset: strings_header.offset,
+        size: strings_header.size,
     };
-
-    let count = section.size / section.entry_size;
-    for index in 0..count {
-        let offset = index * section.entry_size;
-        let Ok(name) = read_u32(symbols, offset, endian) else {
-            continue;
-        };
-        if !symbol_name_allowed(strings, name) {
-            continue;
-        }
-        let info = symbols[offset as usize + 12];
-        let visibility = symbols[offset as usize + 13] & 0x3;
-        summarize_symbol_type(summary, info >> 4, info & 0xf, visibility);
-    }
+    add_symbol_summary(
+        summary,
+        summarize_elf32_symbols(bytes, section, strings, endian),
+    );
 }
 
-fn summarize_symbol_type(summary: &mut ElfSectionSummary, binding: u8, kind: u8, visibility: u8) {
-    if !matches!(binding, STB_LOCAL | STB_GLOBAL | STB_WEAK) {
-        return;
-    }
-    summary.symbol_count += 1;
-    match binding {
-        STB_LOCAL => summary.local_symbol_count += 1,
-        STB_GLOBAL => summary.global_symbol_count += 1,
-        STB_WEAK => summary.weak_symbol_count += 1,
-        _ => {}
-    }
-    match kind {
-        STT_FUNC => summary.function_symbol_count += 1,
-        STT_OBJECT => summary.object_symbol_count += 1,
-        _ => {}
-    }
-    match visibility {
-        STV_DEFAULT => summary.default_visibility_symbol_count += 1,
-        STV_INTERNAL => summary.internal_visibility_symbol_count += 1,
-        STV_HIDDEN => summary.hidden_visibility_symbol_count += 1,
-        STV_PROTECTED => summary.protected_visibility_symbol_count += 1,
-        _ => {}
-    }
+fn add_symbol_summary(summary: &mut ElfSectionSummary, symbols: BootElfSymbolSummary) {
+    summary.symbol_count += symbols.total_count();
+    summary.function_symbol_count += symbols.function_count();
+    summary.object_symbol_count += symbols.object_count();
+    summary.tls_symbol_count += symbols.tls_count();
+    summary.local_symbol_count += symbols.local_count();
+    summary.global_symbol_count += symbols.global_count();
+    summary.weak_symbol_count += symbols.weak_count();
+    summary.default_visibility_symbol_count += symbols.default_visibility_count();
+    summary.internal_visibility_symbol_count += symbols.internal_visibility_count();
+    summary.hidden_visibility_symbol_count += symbols.hidden_visibility_count();
+    summary.protected_visibility_symbol_count += symbols.protected_visibility_count();
 }
 
 fn detect_section_operating_system(
@@ -838,20 +808,6 @@ fn section_name_matches(string_table: &[u8], name_offset: u32, expected: &[u8]) 
         .position(|byte| *byte == 0)
         .unwrap_or(rest.len());
     &rest[..end] == expected
-}
-
-fn symbol_name_allowed(string_table: &[u8], name_offset: u32) -> bool {
-    let Ok(start) = usize::try_from(name_offset) else {
-        return false;
-    };
-    let Some(rest) = string_table.get(start..) else {
-        return false;
-    };
-    let end = rest
-        .iter()
-        .position(|byte| *byte == 0)
-        .unwrap_or(rest.len());
-    end != 0 && rest[0] != b'$'
 }
 
 fn read_u16(bytes: &[u8], offset: u64, endian: BootElfEndian) -> Result<u16, BootError> {

@@ -334,7 +334,11 @@ fn add_elf64_symbol_table(bytes: &mut Vec<u8>) {
 }
 
 fn add_elf64_symbol_visibility_table(bytes: &mut Vec<u8>) {
-    add_elf64_symbol_table_section_with_visibility(bytes, ".symtab", 2, ".strtab", 2, 3);
+    add_elf64_symbol_table_section_with_visibility(bytes, ".symtab", 2, ".strtab", 1, 2, 3);
+}
+
+fn add_elf64_symbol_tls_table(bytes: &mut Vec<u8>) {
+    add_elf64_symbol_table_section_with_object_type(bytes, ".symtab", 2, ".strtab", 6);
 }
 
 fn add_elf64_dynamic_symbol_table(bytes: &mut Vec<u8>) {
@@ -352,6 +356,25 @@ fn add_elf64_symbol_table_section(
         symbol_section_name,
         symbol_section_kind,
         string_section_name,
+        1,
+        0,
+        0,
+    );
+}
+
+fn add_elf64_symbol_table_section_with_object_type(
+    bytes: &mut Vec<u8>,
+    symbol_section_name: &str,
+    symbol_section_kind: u32,
+    string_section_name: &str,
+    object_type: u8,
+) {
+    add_elf64_symbol_table_section_with_visibility(
+        bytes,
+        symbol_section_name,
+        symbol_section_kind,
+        string_section_name,
+        object_type,
         0,
         0,
     );
@@ -362,6 +385,7 @@ fn add_elf64_symbol_table_section_with_visibility(
     symbol_section_name: &str,
     symbol_section_kind: u32,
     string_section_name: &str,
+    object_type: u8,
     function_visibility: u8,
     object_visibility: u8,
 ) {
@@ -380,7 +404,7 @@ fn add_elf64_symbol_table_section_with_visibility(
     write_u64(bytes, function_base + 16, 4);
     let object_base = symbol_table_offset as usize + 48;
     write_u32(bytes, object_base, 12);
-    bytes[object_base + 4] = 0x11;
+    bytes[object_base + 4] = 0x10 | object_type;
     bytes[object_base + 5] = object_visibility;
     write_u16(bytes, object_base + 6, 1);
     write_u64(bytes, object_base + 8, 0x9000);
@@ -3765,6 +3789,33 @@ fn boot_image_records_symbol_visibility_summary() {
     assert_eq!(symbols.internal_visibility_count(), 0);
     assert_eq!(symbols.hidden_visibility_count(), 1);
     assert_eq!(symbols.protected_visibility_count(), 1);
+}
+
+#[test]
+fn boot_image_records_tls_symbol_summary() {
+    let mut elf = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_symbol_tls_table(&mut elf);
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let symbols = metadata.symbol_summary();
+
+    assert_eq!(symbols.total_count(), 2);
+    assert_eq!(symbols.function_count(), 1);
+    assert_eq!(symbols.object_count(), 0);
+    assert_eq!(symbols.tls_count(), 1);
 }
 
 #[test]

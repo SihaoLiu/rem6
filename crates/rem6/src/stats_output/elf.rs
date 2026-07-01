@@ -130,6 +130,13 @@ pub(super) fn emit_elf_run_stats(
     )?;
     increment_stat(
         stats,
+        "sim.elf.tls_symbols",
+        "Count",
+        StatResetPolicy::Constant,
+        metadata.symbol_summary().tls_count(),
+    )?;
+    increment_stat(
+        stats,
         "sim.elf.local_symbols",
         "Count",
         StatResetPolicy::Constant,
