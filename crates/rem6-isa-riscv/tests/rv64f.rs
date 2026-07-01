@@ -1583,14 +1583,15 @@ fn hart_executes_rv64f_static_rounding_when_result_is_rounding_insensitive() {
 }
 
 #[test]
-fn hart_traps_rv64f_static_rounding_when_result_may_depend_on_rounding() {
+fn hart_executes_rv64f_sqrt_static_rounding_and_traps_unsupported_static_rounding() {
     let mut sqrt_hart = RiscvHartState::new(0x8300);
     sqrt_hart.write_float(freg(1), box_single(0x5780_0002));
     let sqrt = sqrt_hart
         .execute(RiscvInstruction::decode(r_type(0x2c, 0, 1, 0x2, 2, 0x53)).unwrap())
         .unwrap();
-    assert!(sqrt.trap().is_some());
-    assert_eq!(sqrt_hart.read_float(freg(2)), 0);
+    assert_eq!(sqrt.trap(), None);
+    assert_eq!(sqrt_hart.read_float(freg(2)), box_single(0x4b80_0000));
+    assert_eq!(sqrt_hart.float_status().fflags(), FLOAT_FLAG_INEXACT);
 
     let mut invalid_hart = RiscvHartState::new(0x8500);
     invalid_hart.write_float(freg(1), box_single(0x7fa0_0001));

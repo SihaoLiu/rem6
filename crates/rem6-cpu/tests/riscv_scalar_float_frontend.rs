@@ -56,6 +56,10 @@ fn fmul_d_round_up(rs2: u8, rs1: u8, rd: u8) -> u32 {
     r_type(0x09, rs2, rs1, 0x3, rd, 0x53)
 }
 
+fn fsqrt_d_round_up(rs1: u8, rd: u8) -> u32 {
+    r_type(0x2d, 0, rs1, 0x3, rd, 0x53)
+}
+
 fn core(route: MemoryRouteId, entry: u64) -> RiscvCore {
     RiscvCore::new(
         CpuCore::new(
@@ -293,4 +297,25 @@ fn riscv_core_driver_executes_fmul_d_underflow_round_up_from_fetch_stream() {
         core.float_status().fflags(),
         FLOAT_FLAG_UNDERFLOW | FLOAT_FLAG_INEXACT
     );
+}
+
+#[test]
+fn riscv_core_driver_executes_fsqrt_d_round_up_from_fetch_stream() {
+    let (mut scheduler, transport, route) = fetch_route();
+    let core = core(route, 0x8000);
+    core.write_float_register(freg(1), 3.0f64.to_bits());
+    let store = loaded_program(0x8000, &[fsqrt_d_round_up(1, 2)]);
+
+    let instruction = drive_until_execution(&core, store, &mut scheduler, &transport);
+
+    assert_eq!(
+        instruction,
+        RiscvInstruction::FloatSqrtD {
+            rd: freg(2),
+            rs1: freg(1),
+            rounding_mode: RiscvFloatRoundingMode::RoundUp,
+        }
+    );
+    assert_eq!(core.read_float_register(freg(2)), 0x3ffb_b67a_e858_4cab);
+    assert_eq!(core.float_status().fflags(), FLOAT_FLAG_INEXACT);
 }

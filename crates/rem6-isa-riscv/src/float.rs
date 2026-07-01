@@ -557,22 +557,6 @@ fn sqrt_single_is_exact_bits(value: u32) -> bool {
         })
 }
 
-fn sqrt_double_is_exact(value: u64) -> bool {
-    let value = f64::from_bits(value);
-    value.is_finite()
-        && value >= 0.0
-        && value.fract() == 0.0
-        && value <= 9_007_199_254_740_992.0
-        && is_square_u64(value as u64)
-}
-
-fn is_square_u64(value: u64) -> bool {
-    let root = (value as f64).sqrt() as u64;
-    [root.saturating_sub(1), root, root.saturating_add(1)]
-        .into_iter()
-        .any(|candidate| candidate.checked_mul(candidate) == Some(value))
-}
-
 pub(crate) fn integer_register_write(
     instruction: RiscvInstruction,
     lhs: u64,

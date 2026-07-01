@@ -1393,6 +1393,42 @@ fn hart_executes_rv64d_sqrt_and_integer_to_double_conversions() {
 }
 
 #[test]
+fn hart_executes_rv64d_sqrt_round_up_when_inexact() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.write_float(freg(1), 3.0f64.to_bits());
+
+    let sqrt = hart
+        .execute(RiscvInstruction::FloatSqrtD {
+            rd: freg(2),
+            rs1: freg(1),
+            rounding_mode: RiscvFloatRoundingMode::RoundUp,
+        })
+        .unwrap();
+
+    assert_eq!(sqrt.trap(), None);
+    assert_eq!(hart.read_float(freg(2)), 0x3ffb_b67a_e858_4cab);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INEXACT);
+}
+
+#[test]
+fn hart_executes_rv64d_sqrt_exact_fraction_without_inexact_flag() {
+    let mut hart = RiscvHartState::new(0x8000);
+    hart.write_float(freg(1), 0.25f64.to_bits());
+
+    let sqrt = hart
+        .execute(RiscvInstruction::FloatSqrtD {
+            rd: freg(2),
+            rs1: freg(1),
+            rounding_mode: RiscvFloatRoundingMode::RoundUp,
+        })
+        .unwrap();
+
+    assert_eq!(sqrt.trap(), None);
+    assert_eq!(hart.read_float(freg(2)), 0.5f64.to_bits());
+    assert_eq!(hart.float_status().fflags(), 0);
+}
+
+#[test]
 fn hart_executes_rv64d_integer_to_double_static_rounding_when_exact() {
     let mut hart = RiscvHartState::new(0x8600);
     hart.write(reg(1), 16);
@@ -1925,14 +1961,15 @@ fn hart_executes_rv64d_static_rounding_when_result_is_rounding_insensitive() {
 }
 
 #[test]
-fn hart_traps_rv64d_static_rounding_when_result_may_depend_on_rounding() {
+fn hart_executes_rv64d_sqrt_static_rounding_and_traps_unsupported_static_rounding() {
     let mut sqrt_hart = RiscvHartState::new(0x8300);
     sqrt_hart.write_float(freg(1), 0x4690_0000_0000_0002);
     let sqrt = sqrt_hart
         .execute(RiscvInstruction::decode(r_type(0x2d, 0, 1, 0x2, 2, 0x53)).unwrap())
         .unwrap();
-    assert!(sqrt.trap().is_some());
-    assert_eq!(sqrt_hart.read_float(freg(2)), 0);
+    assert_eq!(sqrt.trap(), None);
+    assert_eq!(sqrt_hart.read_float(freg(2)), 0x4340_0000_0000_0000);
+    assert_eq!(sqrt_hart.float_status().fflags(), FLOAT_FLAG_INEXACT);
 
     let mut invalid_hart = RiscvHartState::new(0x8500);
     invalid_hart.write_float(freg(1), 0x7ff0_0000_0000_0001);
