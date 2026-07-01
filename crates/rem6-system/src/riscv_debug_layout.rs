@@ -39,6 +39,7 @@ pub(super) const RISCV_GDB_RV64_SUPERVISOR_COUNTER_ENABLE_REGISTER: u64 = 156;
 pub(super) const RISCV_GDB_RV64_MACHINE_COUNTER_ENABLE_REGISTER: u64 = 157;
 pub(super) const RISCV_GDB_RV64_MACHINE_ENVIRONMENT_CONFIG_REGISTER: u64 = 158;
 pub(super) const RISCV_GDB_RV64_MACHINE_CONFIG_POINTER_REGISTER: u64 = 159;
+pub(super) const RISCV_GDB_RV64_MACHINE_COUNTER_INHIBIT_REGISTER: u64 = 160;
 pub(super) const RISCV_GDB_RV32_SUPERVISOR_COUNTER_ENABLE_REGISTER: u64 = 158;
 pub(super) const RISCV_GDB_RV32_MACHINE_COUNTER_ENABLE_REGISTER: u64 = 159;
 pub(super) const RISCV_GDB_RV32_STATUS_HIGH_REGISTER: u64 = 160;
@@ -48,6 +49,7 @@ pub(super) const RISCV_GDB_RV32_COUNTER_INSTRET_HIGH_REGISTER: u64 = 163;
 pub(super) const RISCV_GDB_RV32_MACHINE_COUNTER_CYCLE_HIGH_REGISTER: u64 = 164;
 pub(super) const RISCV_GDB_RV32_MACHINE_COUNTER_INSTRET_HIGH_REGISTER: u64 = 165;
 pub(super) const RISCV_GDB_RV32_MACHINE_CONFIG_POINTER_REGISTER: u64 = 166;
+pub(super) const RISCV_GDB_RV32_MACHINE_COUNTER_INHIBIT_REGISTER: u64 = 167;
 pub(super) fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<Item = u64> {
     let float_count = u64::from(RISCV_GDB_FLOAT_REGISTER_COUNT);
     let float_csr_count = u64::from(RISCV_GDB_FLOAT_CSR_REGISTER_COUNT);
@@ -103,6 +105,9 @@ pub(super) fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<It
         .chain(
             (xlen == RiscvGdbXlen::Rv64).then_some(RISCV_GDB_RV64_MACHINE_CONFIG_POINTER_REGISTER),
         )
+        .chain(
+            (xlen == RiscvGdbXlen::Rv64).then_some(RISCV_GDB_RV64_MACHINE_COUNTER_INHIBIT_REGISTER),
+        )
         .chain((xlen == RiscvGdbXlen::Rv32).then_some(RISCV_GDB_RV32_STATUS_HIGH_REGISTER))
         .chain((xlen == RiscvGdbXlen::Rv32).then_some(RISCV_GDB_RV32_COUNTER_CYCLE_HIGH_REGISTER))
         .chain((xlen == RiscvGdbXlen::Rv32).then_some(RISCV_GDB_RV32_COUNTER_TIME_HIGH_REGISTER))
@@ -117,6 +122,9 @@ pub(super) fn riscv_gdb_register_numbers(xlen: RiscvGdbXlen) -> impl Iterator<It
         )
         .chain(
             (xlen == RiscvGdbXlen::Rv32).then_some(RISCV_GDB_RV32_MACHINE_CONFIG_POINTER_REGISTER),
+        )
+        .chain(
+            (xlen == RiscvGdbXlen::Rv32).then_some(RISCV_GDB_RV32_MACHINE_COUNTER_INHIBIT_REGISTER),
         )
 }
 
@@ -209,6 +217,7 @@ pub(super) fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool
         || (xlen == RiscvGdbXlen::Rv64
             && number == RISCV_GDB_RV64_MACHINE_ENVIRONMENT_CONFIG_REGISTER)
         || (xlen == RiscvGdbXlen::Rv64 && number == RISCV_GDB_RV64_MACHINE_CONFIG_POINTER_REGISTER)
+        || (xlen == RiscvGdbXlen::Rv64 && number == RISCV_GDB_RV64_MACHINE_COUNTER_INHIBIT_REGISTER)
         || (xlen == RiscvGdbXlen::Rv32 && number == RISCV_GDB_RV32_STATUS_HIGH_REGISTER)
         || (xlen == RiscvGdbXlen::Rv32
             && (number == RISCV_GDB_RV32_COUNTER_CYCLE_HIGH_REGISTER
@@ -216,7 +225,8 @@ pub(super) fn is_riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> bool
                 || number == RISCV_GDB_RV32_COUNTER_INSTRET_HIGH_REGISTER
                 || number == RISCV_GDB_RV32_MACHINE_COUNTER_CYCLE_HIGH_REGISTER
                 || number == RISCV_GDB_RV32_MACHINE_COUNTER_INSTRET_HIGH_REGISTER
-                || number == RISCV_GDB_RV32_MACHINE_CONFIG_POINTER_REGISTER))
+                || number == RISCV_GDB_RV32_MACHINE_CONFIG_POINTER_REGISTER
+                || number == RISCV_GDB_RV32_MACHINE_COUNTER_INHIBIT_REGISTER))
         || number == RISCV_GDB_MACHINE_COUNTER_CYCLE_REGISTER
         || number == RISCV_GDB_MACHINE_COUNTER_INSTRET_REGISTER
 }

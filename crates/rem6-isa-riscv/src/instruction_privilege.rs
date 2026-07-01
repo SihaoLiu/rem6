@@ -12,6 +12,9 @@ impl RiscvInstruction {
             Self::CounterEnableCsr(instruction) => {
                 Some(required_csr_privilege(instruction.csr().address()))
             }
+            Self::CounterInhibitCsr(instruction) => {
+                Some(required_csr_privilege(instruction.csr().address()))
+            }
             Self::ReadCounterCsr { .. } | Self::ReadCounterCsrWord { .. } => {
                 Some(RiscvPrivilegeMode::User)
             }

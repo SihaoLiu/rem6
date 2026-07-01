@@ -7,11 +7,11 @@ use rem6_debug::{
 };
 use rem6_isa_riscv::{
     FloatRegister, Register, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterEnableCsr,
-    RiscvCounterSnapshot, RiscvEnvironmentConfigCsr, RiscvFloatCsr, RiscvGdbTargetDescription,
-    RiscvGdbXlen, RiscvHartState, RiscvInterruptCsr, RiscvMachineIdentityCsr, RiscvMachineIsaCsr,
-    RiscvMachineTrapCsr, RiscvPmpTable, RiscvStatusCsr, RiscvSupervisorTrapCsr,
-    RiscvTranslationCsr, RiscvVectorConfig, RiscvVectorFixedPointCsr, VectorRegister,
-    RISCV_VECTOR_REGISTER_BYTES,
+    RiscvCounterInhibitCsr, RiscvCounterSnapshot, RiscvEnvironmentConfigCsr, RiscvFloatCsr,
+    RiscvGdbTargetDescription, RiscvGdbXlen, RiscvHartState, RiscvInterruptCsr,
+    RiscvMachineIdentityCsr, RiscvMachineIsaCsr, RiscvMachineTrapCsr, RiscvPmpTable,
+    RiscvStatusCsr, RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvVectorConfig,
+    RiscvVectorFixedPointCsr, VectorRegister, RISCV_VECTOR_REGISTER_BYTES,
 };
 use rem6_memory::{
     AccessSize, Address, AgentId, ByteMask, MemoryError, MemoryRequest, MemoryRequestId,
@@ -42,6 +42,7 @@ enum RiscvGdbCsrRegister {
     VectorConfig(RiscvVectorConfigCsr),
     EnvironmentConfig(RiscvEnvironmentConfigCsr),
     CounterEnable(RiscvCounterEnableCsr),
+    CounterInhibit(RiscvCounterInhibitCsr),
     Counter(RiscvCounterCsr),
     CounterWord(RiscvCounterCsrWord),
     MachineIdentity(RiscvMachineIdentityCsr),
@@ -843,6 +844,9 @@ fn riscv_gdb_hart_snapshot_from_core(core: &RiscvCore) -> RiscvHartState {
     );
     hart.set_supervisor_counter_enable(core.counter_enable_csr(RiscvCounterEnableCsr::Scounteren));
     hart.set_machine_counter_enable(core.counter_enable_csr(RiscvCounterEnableCsr::Mcounteren));
+    hart.set_machine_counter_inhibit(
+        core.counter_inhibit_csr(RiscvCounterInhibitCsr::Mcountinhibit),
+    );
     hart.set_translation_satp(core.translation_satp());
     hart.set_vector_fixed_point(core.vector_fixed_point());
     hart.set_vector_config(core.vector_config());
@@ -1187,6 +1191,7 @@ fn read_hart_csr_register_value(xlen: RiscvGdbXlen, hart: &RiscvHartState, numbe
         }
         RiscvGdbCsrRegister::EnvironmentConfig(csr) => read_hart_environment_config_csr(hart, csr),
         RiscvGdbCsrRegister::CounterEnable(csr) => read_hart_counter_enable_csr(hart, csr),
+        RiscvGdbCsrRegister::CounterInhibit(csr) => read_hart_counter_inhibit_csr(hart, csr),
         RiscvGdbCsrRegister::Counter(csr) => read_hart_counter_csr(hart, csr),
         RiscvGdbCsrRegister::CounterWord(csr) => read_hart_counter_word_csr(hart, csr),
         RiscvGdbCsrRegister::MachineIdentity(csr) => csr.read(hart.hart_id()),
@@ -1228,6 +1233,9 @@ fn write_hart_csr_register_value(
         }
         RiscvGdbCsrRegister::CounterEnable(csr) => {
             write_hart_counter_enable_csr(hart, csr, value);
+        }
+        RiscvGdbCsrRegister::CounterInhibit(csr) => {
+            write_hart_counter_inhibit_csr(hart, csr, value);
         }
         RiscvGdbCsrRegister::Counter(csr) => {
             write_hart_counter_csr(hart, csr, value);
@@ -1275,6 +1283,9 @@ fn write_core_csr_register_value(
         }
         RiscvGdbCsrRegister::CounterEnable(csr) => {
             core.set_counter_enable_csr(csr, value);
+        }
+        RiscvGdbCsrRegister::CounterInhibit(csr) => {
+            core.set_counter_inhibit_csr(csr, value);
         }
         RiscvGdbCsrRegister::Counter(csr) => {
             write_core_counter_csr(core, csr, value);
@@ -1351,6 +1362,9 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     if xlen == RiscvGdbXlen::Rv64 && number == RISCV_GDB_RV64_MACHINE_CONFIG_POINTER_REGISTER {
         return RiscvGdbCsrRegister::MachineIdentity(RiscvMachineIdentityCsr::ConfigPointer);
     }
+    if xlen == RiscvGdbXlen::Rv64 && number == RISCV_GDB_RV64_MACHINE_COUNTER_INHIBIT_REGISTER {
+        return RiscvGdbCsrRegister::CounterInhibit(RiscvCounterInhibitCsr::Mcountinhibit);
+    }
     if xlen == RiscvGdbXlen::Rv32 && number == RISCV_GDB_RV32_STATUS_HIGH_REGISTER {
         return RiscvGdbCsrRegister::Status(RiscvStatusCsr::Mstatush);
     }
@@ -1375,6 +1389,9 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
                 return RiscvGdbCsrRegister::MachineIdentity(
                     RiscvMachineIdentityCsr::ConfigPointer,
                 );
+            }
+            RISCV_GDB_RV32_MACHINE_COUNTER_INHIBIT_REGISTER => {
+                return RiscvGdbCsrRegister::CounterInhibit(RiscvCounterInhibitCsr::Mcountinhibit);
             }
             _ => {}
         }
@@ -1659,6 +1676,22 @@ fn write_hart_counter_enable_csr(
     match csr {
         RiscvCounterEnableCsr::Scounteren => hart.set_supervisor_counter_enable(value),
         RiscvCounterEnableCsr::Mcounteren => hart.set_machine_counter_enable(value),
+    }
+}
+
+fn read_hart_counter_inhibit_csr(hart: &RiscvHartState, csr: RiscvCounterInhibitCsr) -> u64 {
+    match csr {
+        RiscvCounterInhibitCsr::Mcountinhibit => hart.machine_counter_inhibit(),
+    }
+}
+
+fn write_hart_counter_inhibit_csr(
+    hart: &mut RiscvHartState,
+    csr: RiscvCounterInhibitCsr,
+    value: u64,
+) {
+    match csr {
+        RiscvCounterInhibitCsr::Mcountinhibit => hart.set_machine_counter_inhibit(value),
     }
 }
 

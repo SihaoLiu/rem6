@@ -1092,6 +1092,57 @@ fn rem6_run_gdb_listen_writes_counter_enable_csrs_before_execution() {
 }
 
 #[test]
+fn rem6_run_gdb_listen_writes_mcountinhibit_before_execution() {
+    let program = riscv64_program(&[
+        csr_read(0x320, 5),         // csrr x5, mcountinhibit
+        csr_read(0xc00, 7),         // csrr x7, cycle
+        csr_read(0xc02, 8),         // csrr x8, instret
+        i_type(1, 7, 0x0, 7, 0x13), // addi x7, x7, 1
+        i_type(2, 8, 0x0, 8, 0x13), // addi x8, x8, 2
+        0x0000_0073,                // ecall
+    ]);
+    let (child, mut stream) = start_riscv_gdb_run("gdb-listen-mcountinhibit", program, 80);
+
+    assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
+    let mut csr_description = String::new();
+    for offset in (0..=0xb40).step_by(0xa0) {
+        let payload = format!("qXfer:features:read:riscv-64bit-csr.xml:{offset:x},a0");
+        csr_description.push_str(&String::from_utf8_lossy(&send_gdb_packet(
+            &mut stream,
+            payload.as_bytes(),
+        )));
+    }
+    assert!(
+        csr_description.contains("mcountinhibit"),
+        "missing mcountinhibit in {csr_description}"
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"Pa0=0500000000000000"),
+        gdb_response(b"OK")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"pa0"),
+        gdb_response(b"0500000000000000")
+    );
+    stream.write_all(&gdb_packet(b"c")).unwrap();
+    read_gdb_ack(&mut stream);
+    assert_eq!(read_gdb_response(&mut stream), gdb_packet(b"S05"));
+    assert_eq!(send_gdb_packet(&mut stream, b"D"), gdb_response(b"OK"));
+
+    let output = wait_with_output_timeout(child, Duration::from_secs(5));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"status\":\"executed_until_trap\""));
+    assert!(stdout.contains("\"x5\":\"0x5\""), "stdout: {stdout}");
+    assert!(stdout.contains("\"x7\":\"0x1\""), "stdout: {stdout}");
+    assert!(stdout.contains("\"x8\":\"0x2\""), "stdout: {stdout}");
+}
+
+#[test]
 fn rem6_run_gdb_listen_writes_senvcfg_before_execution() {
     let program = riscv64_program(&[
         csr_read(0x10a, 5), // csrr x5, senvcfg

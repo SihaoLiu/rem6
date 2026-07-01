@@ -1,5 +1,6 @@
 use rem6_isa_riscv::{
-    RiscvCounterEnableCsr, RiscvEnvironmentConfigCsr, RiscvHartState, RiscvMachineTrapCsr,
+    RiscvCounterEnableCsr, RiscvCounterInhibitCsr, RiscvEnvironmentConfigCsr, RiscvHartState,
+    RiscvMachineTrapCsr,
 };
 
 pub(super) fn read_machine_trap_csr(hart: &RiscvHartState, csr: RiscvMachineTrapCsr) -> u64 {
@@ -66,5 +67,21 @@ pub(super) fn write_counter_enable_csr(
     match csr {
         RiscvCounterEnableCsr::Scounteren => hart.set_supervisor_counter_enable(value),
         RiscvCounterEnableCsr::Mcounteren => hart.set_machine_counter_enable(value),
+    }
+}
+
+pub(super) fn read_counter_inhibit_csr(hart: &RiscvHartState, csr: RiscvCounterInhibitCsr) -> u64 {
+    match csr {
+        RiscvCounterInhibitCsr::Mcountinhibit => hart.machine_counter_inhibit(),
+    }
+}
+
+pub(super) fn write_counter_inhibit_csr(
+    hart: &mut RiscvHartState,
+    csr: RiscvCounterInhibitCsr,
+    value: u64,
+) {
+    match csr {
+        RiscvCounterInhibitCsr::Mcountinhibit => hart.set_machine_counter_inhibit(value),
     }
 }

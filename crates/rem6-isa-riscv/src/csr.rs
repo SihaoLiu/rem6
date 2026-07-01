@@ -426,6 +426,111 @@ impl RiscvFloatRoundingMode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum RiscvCounterInhibitCsr {
+    Mcountinhibit,
+}
+
+impl RiscvCounterInhibitCsr {
+    const CY: u64 = 1 << 0;
+    const IR: u64 = 1 << 2;
+    const SUPPORTED_MASK: u64 = Self::CY | Self::IR;
+
+    pub const fn address(self) -> u16 {
+        match self {
+            Self::Mcountinhibit => 0x320,
+        }
+    }
+
+    pub const fn from_address(address: u16) -> Option<Self> {
+        match address {
+            0x320 => Some(Self::Mcountinhibit),
+            _ => None,
+        }
+    }
+
+    pub const fn normalize(self, value: u64) -> u64 {
+        match self {
+            Self::Mcountinhibit => value & Self::SUPPORTED_MASK,
+        }
+    }
+
+    pub const fn inhibits_cycle(self, value: u64) -> bool {
+        match self {
+            Self::Mcountinhibit => value & Self::CY != 0,
+        }
+    }
+
+    pub const fn inhibits_instret(self, value: u64) -> bool {
+        match self {
+            Self::Mcountinhibit => value & Self::IR != 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RiscvCounterInhibitCsrInstruction {
+    rd: Register,
+    csr: RiscvCounterInhibitCsr,
+    op: RiscvCsrOp,
+    operand: RiscvCsrOperand,
+}
+
+impl RiscvCounterInhibitCsrInstruction {
+    pub const fn read(rd: Register, csr: RiscvCounterInhibitCsr) -> Self {
+        Self {
+            rd,
+            csr,
+            op: RiscvCsrOp::Read,
+            operand: RiscvCsrOperand::Immediate(0),
+        }
+    }
+
+    pub const fn register(
+        rd: Register,
+        csr: RiscvCounterInhibitCsr,
+        op: RiscvCsrOp,
+        rs1: Register,
+    ) -> Self {
+        Self {
+            rd,
+            csr,
+            op,
+            operand: RiscvCsrOperand::Register(rs1),
+        }
+    }
+
+    pub const fn immediate(
+        rd: Register,
+        csr: RiscvCounterInhibitCsr,
+        op: RiscvCsrOp,
+        zimm: u8,
+    ) -> Self {
+        Self {
+            rd,
+            csr,
+            op,
+            operand: RiscvCsrOperand::Immediate(zimm),
+        }
+    }
+
+    pub const fn rd(self) -> Register {
+        self.rd
+    }
+
+    pub const fn csr(self) -> RiscvCounterInhibitCsr {
+        self.csr
+    }
+
+    pub const fn op(self) -> RiscvCsrOp {
+        self.op
+    }
+
+    pub const fn operand(self) -> RiscvCsrOperand {
+        self.operand
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RiscvCounterCsr {
     Cycle,
     Time,
@@ -1226,8 +1331,21 @@ impl RiscvCounterBank {
         self.time = self.time.wrapping_add(cycles);
     }
 
+    pub fn add_cycles_with_inhibit(&mut self, cycles: u64, inhibit_cycle: bool) {
+        if !inhibit_cycle {
+            self.cycle = self.cycle.wrapping_add(cycles);
+        }
+        self.time = self.time.wrapping_add(cycles);
+    }
+
     pub fn retire_instructions(&mut self, instructions: u64) {
         self.instret = self.instret.wrapping_add(instructions);
+    }
+
+    pub fn retire_instructions_with_inhibit(&mut self, instructions: u64, inhibit_instret: bool) {
+        if !inhibit_instret {
+            self.instret = self.instret.wrapping_add(instructions);
+        }
     }
 
     pub const fn snapshot(&self) -> RiscvCounterSnapshot {

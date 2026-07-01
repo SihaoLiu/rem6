@@ -29,6 +29,7 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_advertised_rv64_csr_register
     hart.set_machine_interrupt_pending(0x1111_3333_5555_7777);
     hart.set_supervisor_environment_config(0x0101_2020_3030_4040);
     hart.set_machine_environment_config(0x0a0b_0c0d_0e0f_1011);
+    hart.set_machine_counter_inhibit(0x01);
     let mut vector_fixed_point =
         RiscvVectorFixedPointState::new(RiscvVectorFixedRoundingMode::RoundToOdd);
     vector_fixed_point.write_vxsat_bit(true);
@@ -210,6 +211,18 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_advertised_rv64_csr_register
                 RiscvGdbXlen::Rv64,
                 &mut session,
                 &mut hart,
+                &GdbRemotePacket::new(b"pa0".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"0100000000000000",
+    );
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &mut hart,
                 &GdbRemotePacket::new(b"P83=0000000000000000".to_vec()).unwrap(),
             )
             .unwrap(),
@@ -339,6 +352,19 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_advertised_rv64_csr_register
         b"OK",
     );
     assert_eq!(hart.machine_environment_config(), 0xeeff_0011_2233_4455);
+    assert_eq!(
+        packet_payload(
+            handle_riscv_gdb_remote_packet(
+                RiscvGdbXlen::Rv64,
+                &mut session,
+                &mut hart,
+                &GdbRemotePacket::new(b"Pa0=0500000000000000".to_vec()).unwrap(),
+            )
+            .unwrap(),
+        ),
+        b"OK",
+    );
+    assert_eq!(hart.machine_counter_inhibit(), 0x05);
     assert_eq!(
         packet_payload(
             handle_riscv_gdb_remote_packet(
@@ -512,7 +538,7 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_advertised_rv64_csr_register
         )
         .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(160));
+    assert_eq!(registers.len(), rv64_register_hex_offset(161));
     assert_eq!(&registers[rv64_register_hex_range(70)], b"0000080000000000");
     assert_eq!(&registers[rv64_register_hex_range(71)], b"8877665544332211");
     assert_eq!(&registers[rv64_register_hex_range(72)], b"8877665544332211");
@@ -525,6 +551,10 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_advertised_rv64_csr_register
     assert_eq!(&registers[rv64_register_hex_range(87)], b"0100000000000000");
     assert_eq!(&registers[rv64_register_hex_range(88)], b"0200000000000000");
     assert_eq!(&registers[rv64_register_hex_range(89)], b"0500000000000000");
+    assert_eq!(
+        &registers[rv64_register_hex_range(160)],
+        b"0500000000000000"
+    );
     assert_eq!(
         &registers[rv64_register_hex_range(122)],
         b"8808000000000000"
@@ -978,7 +1008,7 @@ fn riscv_gdb_remote_core_packet_handler_reads_and_writes_pmp_csrs() {
         )
         .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(160));
+    assert_eq!(registers.len(), rv64_register_hex_offset(161));
     assert_eq!(
         &registers[rv64_register_hex_range(136)],
         b"0f88888888888888"
@@ -1195,7 +1225,7 @@ fn rv64_register_hex_offset(number: u64) -> usize {
         66..=69 => (33 * 8) + (32 * 8) + ((number - 66) * 4),
         70..=89 => (33 * 8) + (32 * 8) + (4 * 4) + ((number - 70) * 8),
         90..=121 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + ((number - 90) * 16),
-        122..=160 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
+        122..=161 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
         _ => panic!("unexpected RV64 GDB register number {number}"),
     };
     byte_offset as usize * 2

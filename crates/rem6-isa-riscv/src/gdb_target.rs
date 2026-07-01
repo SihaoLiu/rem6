@@ -407,6 +407,7 @@ const RV64_CSR_REGISTERS: &[CsrRegister] = &[
     CsrRegister::new("mcounteren", Some(157)),
     CsrRegister::new("menvcfg", Some(158)),
     CsrRegister::new("mconfigptr", Some(159)),
+    CsrRegister::new("mcountinhibit", Some(160)),
 ];
 
 const RV32_CSR_REGISTERS: &[CsrRegister] = &[
@@ -421,4 +422,5 @@ const RV32_CSR_REGISTERS: &[CsrRegister] = &[
     CsrRegister::new("mcycleh", Some(164)),
     CsrRegister::new("minstreth", Some(165)),
     CsrRegister::new("mconfigptr", Some(166)),
+    CsrRegister::new("mcountinhibit", Some(167)),
 ];

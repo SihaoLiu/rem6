@@ -1,8 +1,8 @@
 use crate::{
     FloatRegister, Register, RiscvControlFlowSnapshot, RiscvControlFlowUpdate, RiscvCounterBank,
-    RiscvCounterEnableCsr, RiscvCounterSnapshot, RiscvFloatStatus, RiscvGdbXlen, RiscvInterruptCsr,
-    RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext, RiscvVectorConfig,
-    RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, VectorRegister,
+    RiscvCounterEnableCsr, RiscvCounterInhibitCsr, RiscvCounterSnapshot, RiscvFloatStatus,
+    RiscvGdbXlen, RiscvInterruptCsr, RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext,
+    RiscvVectorConfig, RiscvVectorFixedPointState, RiscvVectorFixedRoundingMode, VectorRegister,
     RISCV_VECTOR_REGISTER_BYTES,
 };
 
@@ -23,6 +23,7 @@ pub struct RiscvHartState {
     pub(crate) machine_exception_delegation: u64,
     pub(crate) machine_interrupt_delegation: u64,
     pub(crate) machine_counter_enable: u64,
+    pub(crate) machine_counter_inhibit: u64,
     pub(crate) machine_interrupt_enable: u64,
     pub(crate) machine_interrupt_pending: u64,
     pub(crate) machine_trap_vector: u64,
@@ -63,6 +64,7 @@ impl RiscvHartState {
             machine_exception_delegation: 0,
             machine_interrupt_delegation: 0,
             machine_counter_enable: 0,
+            machine_counter_inhibit: 0,
             machine_interrupt_enable: 0,
             machine_interrupt_pending: 0,
             machine_trap_vector: 0,
@@ -162,6 +164,10 @@ impl RiscvHartState {
 
     pub const fn machine_counter_enable(&self) -> u64 {
         self.machine_counter_enable
+    }
+
+    pub const fn machine_counter_inhibit(&self) -> u64 {
+        self.machine_counter_inhibit
     }
 
     pub const fn machine_trap_vector(&self) -> u64 {
@@ -275,6 +281,10 @@ impl RiscvHartState {
         self.machine_counter_enable = enable;
     }
 
+    pub fn set_machine_counter_inhibit(&mut self, inhibit: u64) {
+        self.machine_counter_inhibit = RiscvCounterInhibitCsr::Mcountinhibit.normalize(inhibit);
+    }
+
     pub(crate) const fn read_counter_enable_csr(&self, csr: RiscvCounterEnableCsr) -> u64 {
         match csr {
             RiscvCounterEnableCsr::Scounteren => self.supervisor_counter_enable,
@@ -286,6 +296,20 @@ impl RiscvHartState {
         match csr {
             RiscvCounterEnableCsr::Scounteren => self.supervisor_counter_enable = value,
             RiscvCounterEnableCsr::Mcounteren => self.machine_counter_enable = value,
+        }
+    }
+
+    pub(crate) const fn read_counter_inhibit_csr(&self, csr: RiscvCounterInhibitCsr) -> u64 {
+        match csr {
+            RiscvCounterInhibitCsr::Mcountinhibit => self.machine_counter_inhibit,
+        }
+    }
+
+    pub(crate) fn write_counter_inhibit_csr(&mut self, csr: RiscvCounterInhibitCsr, value: u64) {
+        match csr {
+            RiscvCounterInhibitCsr::Mcountinhibit => {
+                self.machine_counter_inhibit = csr.normalize(value);
+            }
         }
     }
 

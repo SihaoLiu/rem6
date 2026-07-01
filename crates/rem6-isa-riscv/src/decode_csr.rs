@@ -1,8 +1,9 @@
 use crate::encoding::{csr, funct3, rd, rs1};
 use crate::{
     RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterEnableCsr, RiscvCounterEnableCsrInstruction,
-    RiscvCsrOp, RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction, RiscvError,
-    RiscvFloatCsr, RiscvInstruction, RiscvInterruptCsr, RiscvMachineInformationCsr,
+    RiscvCounterInhibitCsr, RiscvCounterInhibitCsrInstruction, RiscvCsrOp,
+    RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction, RiscvError, RiscvFloatCsr,
+    RiscvInstruction, RiscvInterruptCsr, RiscvMachineInformationCsr,
     RiscvMachineInformationCsrInstruction, RiscvMachineTrapCsr, RiscvStatusCsr,
     RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvTranslationCsrInstruction,
     RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction,
@@ -60,6 +61,14 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
             .or_else(|| {
                 RiscvCounterEnableCsr::from_address(csr_address).map(|csr| {
                     RiscvInstruction::CounterEnableCsr(RiscvCounterEnableCsrInstruction::read(
+                        rd(raw),
+                        csr,
+                    ))
+                })
+            })
+            .or_else(|| {
+                RiscvCounterInhibitCsr::from_address(csr_address).map(|csr| {
+                    RiscvInstruction::CounterInhibitCsr(RiscvCounterInhibitCsrInstruction::read(
                         rd(raw),
                         csr,
                     ))
@@ -328,6 +337,30 @@ pub(crate) fn decode_csr(raw: u32) -> Result<RiscvInstruction, RiscvError> {
         };
     }
 
+    if let Some(csr) = RiscvCounterInhibitCsr::from_address(csr_address) {
+        return match funct3(raw) {
+            0x1 => Ok(decode_counter_inhibit_csr(raw, csr, RiscvCsrOp::Write)),
+            0x2 => Ok(decode_counter_inhibit_csr(raw, csr, RiscvCsrOp::Set)),
+            0x3 => Ok(decode_counter_inhibit_csr(raw, csr, RiscvCsrOp::Clear)),
+            0x5 => Ok(decode_counter_inhibit_csr_immediate(
+                raw,
+                csr,
+                RiscvCsrOp::Write,
+            )),
+            0x6 => Ok(decode_counter_inhibit_csr_immediate(
+                raw,
+                csr,
+                RiscvCsrOp::Set,
+            )),
+            0x7 => Ok(decode_counter_inhibit_csr_immediate(
+                raw,
+                csr,
+                RiscvCsrOp::Clear,
+            )),
+            _ => Err(RiscvError::UnknownEncoding { raw }),
+        };
+    }
+
     if let Some(csr) = RiscvMachineTrapCsr::from_address(csr_address) {
         return match funct3(raw) {
             0x1 => Ok(RiscvInstruction::WriteMachineTrapCsr {
@@ -523,6 +556,32 @@ fn decode_counter_enable_csr_immediate(
     op: RiscvCsrOp,
 ) -> RiscvInstruction {
     RiscvInstruction::CounterEnableCsr(RiscvCounterEnableCsrInstruction::immediate(
+        rd(raw),
+        csr,
+        op,
+        rs1(raw).index(),
+    ))
+}
+
+fn decode_counter_inhibit_csr(
+    raw: u32,
+    csr: RiscvCounterInhibitCsr,
+    op: RiscvCsrOp,
+) -> RiscvInstruction {
+    RiscvInstruction::CounterInhibitCsr(RiscvCounterInhibitCsrInstruction::register(
+        rd(raw),
+        csr,
+        op,
+        rs1(raw),
+    ))
+}
+
+fn decode_counter_inhibit_csr_immediate(
+    raw: u32,
+    csr: RiscvCounterInhibitCsr,
+    op: RiscvCsrOp,
+) -> RiscvInstruction {
+    RiscvInstruction::CounterInhibitCsr(RiscvCounterInhibitCsrInstruction::immediate(
         rd(raw),
         csr,
         op,

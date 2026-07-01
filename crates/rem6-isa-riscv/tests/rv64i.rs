@@ -1,14 +1,14 @@
 use rem6_isa_riscv::{
     AtomicMemoryOp, FloatRegister, Immediate, MemoryAccessKind, MemoryWidth, Register,
     RegisterWrite, RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterEnableCsr,
-    RiscvCounterEnableCsrInstruction, RiscvCounterSnapshot, RiscvCsrError, RiscvCsrOp,
-    RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction, RiscvError,
-    RiscvExecutionRecord, RiscvFenceSet, RiscvGdbXlen, RiscvHartState, RiscvInstruction,
-    RiscvMachineIdentityCsr, RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction,
-    RiscvMachineIsaCsr, RiscvMachineTrapCsr, RiscvMemoryOrdering, RiscvPrivilegeMode,
-    RiscvPseudoOp, RiscvStatusCsr, RiscvStatusWord, RiscvSupervisorTrapCsr, RiscvSv39AccessContext,
-    RiscvSystemEvent, RiscvTranslationCsr, RiscvTranslationCsrInstruction, RiscvTrap,
-    RiscvTrapKind,
+    RiscvCounterEnableCsrInstruction, RiscvCounterInhibitCsr, RiscvCounterInhibitCsrInstruction,
+    RiscvCounterSnapshot, RiscvCsrError, RiscvCsrOp, RiscvEnvironmentConfigCsr,
+    RiscvEnvironmentConfigCsrInstruction, RiscvError, RiscvExecutionRecord, RiscvFenceSet,
+    RiscvGdbXlen, RiscvHartState, RiscvInstruction, RiscvMachineIdentityCsr,
+    RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction, RiscvMachineIsaCsr,
+    RiscvMachineTrapCsr, RiscvMemoryOrdering, RiscvPrivilegeMode, RiscvPseudoOp, RiscvStatusCsr,
+    RiscvStatusWord, RiscvSupervisorTrapCsr, RiscvSv39AccessContext, RiscvSystemEvent,
+    RiscvTranslationCsr, RiscvTranslationCsrInstruction, RiscvTrap, RiscvTrapKind,
 };
 
 fn r_type(funct7: u32, rs2: u8, rs1: u8, funct3: u32, rd: u8, opcode: u32) -> u32 {
@@ -1019,6 +1019,74 @@ fn hart_executes_counter_enable_csr_read_modify_write_operations() {
     hart.execute(clear_scounteren_imm).unwrap();
     assert_eq!(hart.read(reg(11)), 0x7);
     assert_eq!(hart.supervisor_counter_enable(), 0x6);
+}
+
+#[test]
+fn hart_executes_counter_inhibit_csr_and_gates_cycle_instret() {
+    let write_inhibit = RiscvInstruction::decode(csr_type(0x320, 5, 0x5, 5)).unwrap();
+    let clear_instret = RiscvInstruction::decode(csr_type(0x320, 4, 0x7, 6)).unwrap();
+    let clear_cycle = RiscvInstruction::decode(csr_type(0x320, 1, 0x7, 7)).unwrap();
+    let read_inhibit = RiscvInstruction::decode(csr_read_type(0x320, 8)).unwrap();
+    let nop = RiscvInstruction::decode(i_type(0, 0, 0x0, 0, 0x13)).unwrap();
+
+    assert_eq!(
+        read_inhibit,
+        RiscvInstruction::CounterInhibitCsr(RiscvCounterInhibitCsrInstruction::read(
+            reg(8),
+            RiscvCounterInhibitCsr::Mcountinhibit,
+        ))
+    );
+    assert_eq!(
+        write_inhibit,
+        RiscvInstruction::CounterInhibitCsr(RiscvCounterInhibitCsrInstruction::immediate(
+            reg(5),
+            RiscvCounterInhibitCsr::Mcountinhibit,
+            RiscvCsrOp::Write,
+            5,
+        ))
+    );
+
+    let mut hart = RiscvHartState::new(0x3200);
+
+    hart.execute(write_inhibit).unwrap();
+    assert_eq!(hart.read(reg(5)), 0);
+    assert_eq!(hart.machine_counter_inhibit(), 0x5);
+    assert_eq!(hart.counter_snapshot(), RiscvCounterSnapshot::new(1, 1));
+
+    hart.execute(nop).unwrap();
+    assert_eq!(
+        hart.counter_snapshot(),
+        RiscvCounterSnapshot::with_time(1, 2, 1)
+    );
+
+    hart.execute(clear_instret).unwrap();
+    assert_eq!(hart.read(reg(6)), 0x5);
+    assert_eq!(hart.machine_counter_inhibit(), 0x1);
+    assert_eq!(
+        hart.counter_snapshot(),
+        RiscvCounterSnapshot::with_time(1, 3, 1)
+    );
+
+    hart.execute(nop).unwrap();
+    assert_eq!(
+        hart.counter_snapshot(),
+        RiscvCounterSnapshot::with_time(1, 4, 2)
+    );
+
+    hart.execute(clear_cycle).unwrap();
+    assert_eq!(hart.read(reg(7)), 0x1);
+    assert_eq!(hart.machine_counter_inhibit(), 0);
+    assert_eq!(
+        hart.counter_snapshot(),
+        RiscvCounterSnapshot::with_time(1, 5, 3)
+    );
+
+    hart.execute(read_inhibit).unwrap();
+    assert_eq!(hart.read(reg(8)), 0);
+    assert_eq!(
+        hart.counter_snapshot(),
+        RiscvCounterSnapshot::with_time(2, 6, 4)
+    );
 }
 
 #[test]

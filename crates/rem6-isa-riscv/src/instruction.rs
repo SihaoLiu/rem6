@@ -1087,6 +1087,7 @@ pub enum RiscvInstruction {
     MachineInformationCsr(crate::csr::RiscvMachineInformationCsrInstruction),
     EnvironmentConfigCsr(RiscvEnvironmentConfigCsrInstruction),
     CounterEnableCsr(crate::csr::RiscvCounterEnableCsrInstruction),
+    CounterInhibitCsr(crate::csr::RiscvCounterInhibitCsrInstruction),
     #[rustfmt::skip]
     ReadCounterCsr { rd: Register, csr: RiscvCounterCsr },
     #[rustfmt::skip]

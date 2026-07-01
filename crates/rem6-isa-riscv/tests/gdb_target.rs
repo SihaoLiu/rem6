@@ -106,6 +106,7 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "  <reg name=\"mcounteren\" bitsize=\"64\" regnum=\"157\"/>\n",
             "  <reg name=\"menvcfg\" bitsize=\"64\" regnum=\"158\"/>\n",
             "  <reg name=\"mconfigptr\" bitsize=\"64\" regnum=\"159\"/>\n",
+            "  <reg name=\"mcountinhibit\" bitsize=\"64\" regnum=\"160\"/>\n",
             "</feature>\n",
         ),
     );
@@ -170,9 +171,10 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "mcounteren",
             "menvcfg",
             "mconfigptr",
+            "mcountinhibit",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 58);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 59);
 }
 
 #[test]
@@ -442,6 +444,7 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "  <reg name=\"mcycleh\" bitsize=\"32\" regnum=\"164\"/>\n",
             "  <reg name=\"minstreth\" bitsize=\"32\" regnum=\"165\"/>\n",
             "  <reg name=\"mconfigptr\" bitsize=\"32\" regnum=\"166\"/>\n",
+            "  <reg name=\"mcountinhibit\" bitsize=\"32\" regnum=\"167\"/>\n",
             "</feature>\n",
         ),
     );
@@ -513,9 +516,10 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "mcycleh",
             "minstreth",
             "mconfigptr",
+            "mcountinhibit",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"32\"").count(), 65);
+    assert_eq!(csr.matches("bitsize=\"32\"").count(), 66);
 }
 
 #[test]

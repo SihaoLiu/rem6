@@ -306,6 +306,45 @@ fn hart_traps_supervisor_machine_counter_csr_read() {
 }
 
 #[test]
+fn hart_traps_lower_privilege_machine_counter_inhibit_csr_accesses() {
+    let cases = [
+        (
+            RiscvPrivilegeMode::Supervisor,
+            csr_read_type(0x320, 5),
+            0x7c10,
+        ),
+        (RiscvPrivilegeMode::User, csr_type(0x320, 1, 0x1, 5), 0x7c18),
+    ];
+
+    for (mode, raw, pc) in cases {
+        let mut hart = RiscvHartState::new(pc);
+        hart.set_privilege_mode(mode);
+        hart.set_machine_trap_vector(0x9000);
+        hart.write(reg(1), 0x5);
+
+        let record = hart
+            .execute(RiscvInstruction::decode(raw).unwrap())
+            .unwrap();
+
+        assert_eq!(record.pc(), pc);
+        assert_eq!(record.next_pc(), 0x9000);
+        assert_eq!(hart.pc(), 0x9000);
+        assert_eq!(hart.privilege_mode(), RiscvPrivilegeMode::Machine);
+        assert_eq!(hart.machine_exception_pc(), pc);
+        assert_eq!(hart.machine_trap_cause(), 2);
+        assert_eq!(hart.machine_trap_value(), 0);
+        assert_eq!(hart.status().mpp(), mode);
+        assert_eq!(
+            record.trap(),
+            Some(&RiscvTrap::new(RiscvTrapKind::IllegalInstruction, pc))
+        );
+        assert_eq!(record.register_writes(), &[]);
+        assert_eq!(hart.machine_counter_inhibit(), 0);
+        assert_eq!(hart.read(reg(5)), 0);
+    }
+}
+
+#[test]
 fn rv32_hart_traps_lower_privilege_machine_counter_high_csr_reads() {
     let cases = [
         (RiscvPrivilegeMode::Supervisor, 0xb80, 0x7c20),

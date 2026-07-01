@@ -2,11 +2,11 @@ use std::error::Error;
 use std::fmt;
 
 use rem6_isa_riscv::{
-    walk_sv39_page_table_with_context, RiscvCounterEnableCsr, RiscvEnvironmentConfigCsr,
-    RiscvMachineTrapCsr, RiscvPrivilegeMode, RiscvStatusWord, RiscvSv39AccessContext,
-    RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel, RiscvSv39Pte,
-    RiscvSv39VirtualAddress, RiscvSv39WalkAdvance as IsaSv39WalkAdvance, RiscvSv39WalkState,
-    RiscvSystemEvent, RiscvTrapKind, RiscvVectorFixedPointState,
+    walk_sv39_page_table_with_context, RiscvCounterEnableCsr, RiscvCounterInhibitCsr,
+    RiscvEnvironmentConfigCsr, RiscvMachineTrapCsr, RiscvPrivilegeMode, RiscvStatusWord,
+    RiscvSv39AccessContext, RiscvSv39AccessKind, RiscvSv39PageFault, RiscvSv39PageTableLevel,
+    RiscvSv39Pte, RiscvSv39VirtualAddress, RiscvSv39WalkAdvance as IsaSv39WalkAdvance,
+    RiscvSv39WalkState, RiscvSystemEvent, RiscvTrapKind, RiscvVectorFixedPointState,
 };
 use rem6_kernel::{
     ParallelSchedulerContext, PartitionEventId, PartitionedScheduler, SchedulerContext, Tick,
@@ -41,8 +41,9 @@ use crate::{
 mod csr;
 
 use csr::{
-    read_counter_enable_csr, read_environment_config_csr, read_machine_trap_csr,
-    write_counter_enable_csr, write_environment_config_csr, write_machine_trap_csr,
+    read_counter_enable_csr, read_counter_inhibit_csr, read_environment_config_csr,
+    read_machine_trap_csr, write_counter_enable_csr, write_counter_inhibit_csr,
+    write_environment_config_csr, write_machine_trap_csr,
 };
 
 const RISCV_SV39_PTE_ACCESS_BYTES: u64 = 8;
@@ -741,6 +742,17 @@ impl RiscvCore {
     pub fn set_counter_enable_csr(&self, csr: RiscvCounterEnableCsr, value: u64) {
         let mut state = self.state.lock().expect("riscv core lock");
         write_counter_enable_csr(&mut state.hart, csr, value);
+        riscv_checker::sync_checker_hart(&mut state);
+    }
+
+    pub fn counter_inhibit_csr(&self, csr: RiscvCounterInhibitCsr) -> u64 {
+        let state = self.state.lock().expect("riscv core lock");
+        read_counter_inhibit_csr(&state.hart, csr)
+    }
+
+    pub fn set_counter_inhibit_csr(&self, csr: RiscvCounterInhibitCsr, value: u64) {
+        let mut state = self.state.lock().expect("riscv core lock");
+        write_counter_inhibit_csr(&mut state.hart, csr, value);
         riscv_checker::sync_checker_hart(&mut state);
     }
 

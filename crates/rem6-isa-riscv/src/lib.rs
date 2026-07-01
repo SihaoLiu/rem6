@@ -2,6 +2,7 @@ mod atomic;
 mod compressed;
 mod control_flow;
 mod counter_enable_csr;
+mod counter_inhibit_csr;
 mod csr;
 mod decode;
 mod decode_csr;
@@ -69,13 +70,13 @@ pub use control_flow::{
 };
 pub use csr::{
     RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterEnableCsr,
-    RiscvCounterEnableCsrInstruction, RiscvCounterSnapshot, RiscvCsrOp, RiscvCsrOperand,
-    RiscvEnvironmentConfigCsr, RiscvEnvironmentConfigCsrInstruction, RiscvFloatCsr,
-    RiscvFloatRoundingMode, RiscvFloatStatus, RiscvInterruptCsr, RiscvMachineIdentityCsr,
-    RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction, RiscvMachineIsaCsr,
-    RiscvMachineTrapCsr, RiscvStatusCsr, RiscvStatusWord, RiscvSupervisorTrapCsr,
-    RiscvTranslationCsr, RiscvTranslationCsrInstruction, RiscvVectorFixedPointCsr,
-    RiscvVectorFixedPointCsrInstruction,
+    RiscvCounterEnableCsrInstruction, RiscvCounterInhibitCsr, RiscvCounterInhibitCsrInstruction,
+    RiscvCounterSnapshot, RiscvCsrOp, RiscvCsrOperand, RiscvEnvironmentConfigCsr,
+    RiscvEnvironmentConfigCsrInstruction, RiscvFloatCsr, RiscvFloatRoundingMode, RiscvFloatStatus,
+    RiscvInterruptCsr, RiscvMachineIdentityCsr, RiscvMachineInformationCsr,
+    RiscvMachineInformationCsrInstruction, RiscvMachineIsaCsr, RiscvMachineTrapCsr, RiscvStatusCsr,
+    RiscvStatusWord, RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvTranslationCsrInstruction,
+    RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction,
 };
 pub use error::{RiscvCsrError, RiscvError};
 pub use gdb_target::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
@@ -259,6 +260,7 @@ impl RiscvHartState {
                 ));
             }
         }
+        let counter_inhibit = self.machine_counter_inhibit();
         if let Some(csr) = match instruction {
             RiscvInstruction::ReadCounterCsr { csr, .. } => Some(csr),
             RiscvInstruction::ReadCounterCsrWord { csr, .. } => Some(csr.counter()),
@@ -1068,6 +1070,9 @@ impl RiscvHartState {
             RiscvInstruction::CounterEnableCsr(instruction) => {
                 counter_enable_csr::execute(self, &mut register_writes, instruction);
             }
+            RiscvInstruction::CounterInhibitCsr(instruction) => {
+                counter_inhibit_csr::execute(self, &mut register_writes, instruction);
+            }
             RiscvInstruction::ReadStatusCsr { rd, csr } => {
                 write_register(self, &mut register_writes, rd, status_csr::read(self, csr));
             }
@@ -1202,8 +1207,14 @@ impl RiscvHartState {
         }
 
         self.pc = next_pc;
-        self.counters.add_cycles(1);
-        self.counters.retire_instructions(1);
+        self.counters.add_cycles_with_inhibit(
+            1,
+            RiscvCounterInhibitCsr::Mcountinhibit.inhibits_cycle(counter_inhibit),
+        );
+        self.counters.retire_instructions_with_inhibit(
+            1,
+            RiscvCounterInhibitCsr::Mcountinhibit.inhibits_instret(counter_inhibit),
+        );
         match system_event {
             Some(system_event) => {
                 debug_assert!(memory_access.is_none());
