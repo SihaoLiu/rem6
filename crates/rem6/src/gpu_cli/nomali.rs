@@ -24,6 +24,8 @@ const GPU_IRQ_CLEAR: u32 = 0x024;
 const GPU_IRQ_MASK: u32 = 0x028;
 const GPU_IRQ_STATUS: u32 = 0x02c;
 const GPU_COMMAND: u32 = 0x030;
+const CYCLE_COUNT_LO: u32 = 0x090;
+const CYCLE_COUNT_HI: u32 = 0x094;
 const THREAD_MAX_THREADS: u32 = 0x0a0;
 const THREAD_MAX_WORKGROUP_SIZE: u32 = 0x0a4;
 const THREAD_MAX_BARRIER_SIZE: u32 = 0x0a8;
@@ -143,129 +145,30 @@ const JS_CONFIG_JOB_CHAIN_FLAG: u32 = 1 << 11;
 const NOMALI_REGISTER_FAULT_OUT_OF_RANGE_WRITE_OFFSET: u32 = NOMALI_REGISTER_WINDOW_BYTES as u32;
 const NOMALI_REGISTER_FAULT_WRITE_VALUE: u32 = 0x1234_5678;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct NoMaliRegister {
-    name: &'static str,
-    offset: u32,
-    value: u32,
-}
-
-const NOMALI_T760_RESET_REGISTERS: &[NoMaliRegister] = &[
-    NoMaliRegister {
-        name: "gpu_id",
-        offset: GPU_ID,
-        value: 0x0750_0000,
-    },
-    NoMaliRegister {
-        name: "l2_features",
-        offset: L2_FEATURES,
-        value: 0x0713_0206,
-    },
-    NoMaliRegister {
-        name: "tiler_features",
-        offset: TILER_FEATURES,
-        value: 0x0000_0809,
-    },
-    NoMaliRegister {
-        name: "mem_features",
-        offset: MEM_FEATURES,
-        value: 0x0000_0001,
-    },
-    NoMaliRegister {
-        name: "mmu_features",
-        offset: MMU_FEATURES,
-        value: 0x0000_2830,
-    },
-    NoMaliRegister {
-        name: "as_present",
-        offset: AS_PRESENT,
-        value: 0x0000_00ff,
-    },
-    NoMaliRegister {
-        name: "js_present",
-        offset: JS_PRESENT,
-        value: 0x0000_0007,
-    },
-    NoMaliRegister {
-        name: "thread_max_threads",
-        offset: THREAD_MAX_THREADS,
-        value: 0x0000_0100,
-    },
-    NoMaliRegister {
-        name: "thread_max_workgroup_size",
-        offset: THREAD_MAX_WORKGROUP_SIZE,
-        value: 0x0000_0100,
-    },
-    NoMaliRegister {
-        name: "thread_max_barrier_size",
-        offset: THREAD_MAX_BARRIER_SIZE,
-        value: 0x0000_0100,
-    },
-    NoMaliRegister {
-        name: "thread_features",
-        offset: THREAD_FEATURES,
-        value: 0x0a04_0400,
-    },
-    NoMaliRegister {
-        name: "texture_features_0",
-        offset: TEXTURE_FEATURES_0,
-        value: 0x00fe_001e,
-    },
-    NoMaliRegister {
-        name: "texture_features_1",
-        offset: TEXTURE_FEATURES_1,
-        value: 0x0000_ffff,
-    },
-    NoMaliRegister {
-        name: "texture_features_2",
-        offset: TEXTURE_FEATURES_2,
-        value: 0x9f81_ffff,
-    },
-    NoMaliRegister {
-        name: "js0_features",
-        offset: JS0_FEATURES,
-        value: 0x0000_020e,
-    },
-    NoMaliRegister {
-        name: "js1_features",
-        offset: JS1_FEATURES,
-        value: 0x0000_01fe,
-    },
-    NoMaliRegister {
-        name: "js2_features",
-        offset: JS2_FEATURES,
-        value: 0x0000_007e,
-    },
-    NoMaliRegister {
-        name: "shader_present_lo",
-        offset: SHADER_PRESENT_LO,
-        value: 0x0000_000f,
-    },
-    NoMaliRegister {
-        name: "shader_present_hi",
-        offset: SHADER_PRESENT_HI,
-        value: 0x0000_0000,
-    },
-    NoMaliRegister {
-        name: "tiler_present_lo",
-        offset: TILER_PRESENT_LO,
-        value: 0x0000_0001,
-    },
-    NoMaliRegister {
-        name: "tiler_present_hi",
-        offset: TILER_PRESENT_HI,
-        value: 0x0000_0000,
-    },
-    NoMaliRegister {
-        name: "l2_present_lo",
-        offset: L2_PRESENT_LO,
-        value: 0x0000_0001,
-    },
-    NoMaliRegister {
-        name: "l2_present_hi",
-        offset: L2_PRESENT_HI,
-        value: 0x0000_0000,
-    },
+const NOMALI_T760_RESET_REGISTERS: &[(u32, u32)] = &[
+    (GPU_ID, 0x0750_0000),
+    (L2_FEATURES, 0x0713_0206),
+    (TILER_FEATURES, 0x0000_0809),
+    (MEM_FEATURES, 0x0000_0001),
+    (MMU_FEATURES, 0x0000_2830),
+    (AS_PRESENT, 0x0000_00ff),
+    (JS_PRESENT, 0x0000_0007),
+    (THREAD_MAX_THREADS, 0x0000_0100),
+    (THREAD_MAX_WORKGROUP_SIZE, 0x0000_0100),
+    (THREAD_MAX_BARRIER_SIZE, 0x0000_0100),
+    (THREAD_FEATURES, 0x0a04_0400),
+    (TEXTURE_FEATURES_0, 0x00fe_001e),
+    (TEXTURE_FEATURES_1, 0x0000_ffff),
+    (TEXTURE_FEATURES_2, 0x9f81_ffff),
+    (JS0_FEATURES, 0x0000_020e),
+    (JS1_FEATURES, 0x0000_01fe),
+    (JS2_FEATURES, 0x0000_007e),
+    (SHADER_PRESENT_LO, 0x0000_000f),
+    (SHADER_PRESENT_HI, 0x0000_0000),
+    (TILER_PRESENT_LO, 0x0000_0001),
+    (TILER_PRESENT_HI, 0x0000_0000),
+    (L2_PRESENT_LO, 0x0000_0001),
+    (L2_PRESENT_HI, 0x0000_0000),
 ];
 
 const NOMALI_OBSERVED_PIO_READS: &[(&str, u32)] = &[
@@ -527,6 +430,11 @@ struct NoMaliRegisterFault {
 struct NoMaliT760RegisterFile {
     registers: Vec<u32>,
     reset_count: u64,
+    cycle_counter_source_tick: u64,
+    cycle_counter_running: bool,
+    cycle_counter_start_tick: u64,
+    cycle_counter_stop_tick: u64,
+    cycle_counter_elapsed_ticks: u64,
     command_writes: Vec<NoMaliCommandWrite>,
     address_space_command_writes: Vec<NoMaliAddressSpaceCommandWrite>,
     address_space_writes: Vec<NoMaliAddressSpaceWrite>,
@@ -547,6 +455,11 @@ impl NoMaliT760RegisterFile {
         Self {
             registers: vec![0; NOMALI_REGISTER_WINDOW_WORDS],
             reset_count: 0,
+            cycle_counter_source_tick: 0,
+            cycle_counter_running: false,
+            cycle_counter_start_tick: 0,
+            cycle_counter_stop_tick: 0,
+            cycle_counter_elapsed_ticks: 0,
             command_writes: Vec::new(),
             address_space_command_writes: Vec::new(),
             address_space_writes: Vec::new(),
@@ -565,10 +478,18 @@ impl NoMaliT760RegisterFile {
 
     fn reset(&mut self) {
         self.registers.fill(0);
-        for register in NOMALI_T760_RESET_REGISTERS {
-            self.write_raw(register.offset, register.value);
+        self.cycle_counter_running = false;
+        self.cycle_counter_start_tick = 0;
+        self.cycle_counter_stop_tick = 0;
+        self.cycle_counter_elapsed_ticks = 0;
+        for &(offset, value) in NOMALI_T760_RESET_REGISTERS {
+            self.write_raw(offset, value);
         }
         self.reset_count += 1;
+    }
+
+    fn set_cycle_counter_source_tick(&mut self, tick: u64) {
+        self.cycle_counter_source_tick = tick;
     }
 
     fn read_raw(&self, offset: u32) -> u32 {
@@ -764,10 +685,10 @@ impl NoMaliT760RegisterFile {
             }
             GPU_COMMAND_PRFCNT_CLEAR => self.gpu_command_no_effect(value, "perf_counter_clear"),
             GPU_COMMAND_CYCLE_COUNT_START => {
-                self.gpu_command_no_effect(value, "cycle_count_start");
+                self.start_cycle_counter(value);
             }
             GPU_COMMAND_CYCLE_COUNT_STOP => {
-                self.gpu_command_no_effect(value, "cycle_count_stop");
+                self.stop_cycle_counter(value);
             }
             _ => {
                 self.command_writes.push(NoMaliCommandWrite {
@@ -789,6 +710,42 @@ impl NoMaliT760RegisterFile {
             command,
             effect: "no_effect",
         });
+    }
+
+    fn start_cycle_counter(&mut self, value: u32) {
+        self.cycle_counter_running = true;
+        self.cycle_counter_start_tick = 0;
+        self.cycle_counter_stop_tick = 0;
+        self.cycle_counter_elapsed_ticks = 0;
+        self.write_cycle_counter_registers(0);
+        self.command_writes.push(NoMaliCommandWrite {
+            name: "gpu_command",
+            offset: GPU_COMMAND,
+            value,
+            command: "cycle_count_start",
+            effect: "cycle_counter_started",
+        });
+    }
+
+    fn stop_cycle_counter(&mut self, value: u32) {
+        self.cycle_counter_stop_tick = self.cycle_counter_source_tick;
+        self.cycle_counter_elapsed_ticks = self
+            .cycle_counter_stop_tick
+            .saturating_sub(self.cycle_counter_start_tick);
+        self.cycle_counter_running = false;
+        self.write_cycle_counter_registers(self.cycle_counter_elapsed_ticks);
+        self.command_writes.push(NoMaliCommandWrite {
+            name: "gpu_command",
+            offset: GPU_COMMAND,
+            value,
+            command: "cycle_count_stop",
+            effect: "cycle_counter_stopped",
+        });
+    }
+
+    fn write_cycle_counter_registers(&mut self, elapsed_ticks: u64) {
+        self.write_raw(CYCLE_COUNT_LO, elapsed_ticks as u32);
+        self.write_raw(CYCLE_COUNT_HI, (elapsed_ticks >> 32) as u32);
     }
 
     fn job_slot_command_next(&mut self, slot: u8, offset: u32, value: u32) {
@@ -1186,6 +1143,7 @@ pub(crate) fn gpu_run_nomali_adapter_artifact(
         .collect::<Vec<_>>()
         .join(",");
     let mut pio = NoMaliT760RegisterFile::new();
+    pio.set_cycle_counter_source_tick(execution.final_tick());
     pio.reset();
     pio.write_reg(GPU_COMMAND, GPU_COMMAND_HARD_RESET);
     pio.write_reg(GPU_COMMAND, GPU_COMMAND_UNSUPPORTED_PROBE);
@@ -1643,7 +1601,7 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile, irq_status_reads: (u32, u32)) -
         .collect::<Vec<_>>()
         .join(",");
     format!(
-        "{{\"register_window_bytes\":{},\"reset_count\":{},\"register_fault_count\":{},\"command_writes\":[{}],\"address_space_command_writes\":[{}],\"address_space_writes\":[{}],\"job_slot_command_writes\":[{}],\"job_slot_writes\":[{}],\"irq_writes\":[{}],\"power_writes\":[{}],\"irq_snapshots\":[{}],\"interrupt_block_snapshots\":[{}],\"interrupt_callbacks\":[{}],\"address_space_snapshots\":[{}],\"job_slot_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}],\"register_faults\":[{}]}}",
+        "{{\"register_window_bytes\":{},\"reset_count\":{},\"register_fault_count\":{},\"command_writes\":[{}],\"address_space_command_writes\":[{}],\"address_space_writes\":[{}],\"job_slot_command_writes\":[{}],\"job_slot_writes\":[{}],\"irq_writes\":[{}],\"power_writes\":[{}],\"irq_snapshots\":[{}],\"interrupt_block_snapshots\":[{}],\"interrupt_callbacks\":[{}],\"address_space_snapshots\":[{}],\"job_slot_snapshots\":[{}],\"irq\":{{\"rawstat\":\"{}\",\"mask\":\"{}\",\"status\":\"{}\",\"asserted\":{}}},\"cycle_counter\":{{\"running\":{},\"start_tick\":{},\"stop_tick\":{},\"elapsed_ticks\":{},\"lo_offset\":\"0x{:03x}\",\"hi_offset\":\"0x{:03x}\",\"lo\":\"{}\",\"hi\":\"{}\"}},\"checkpoint\":{{\"word_count\":{}}},\"register_reads\":[{}],\"register_faults\":[{}]}}",
         NOMALI_REGISTER_WINDOW_BYTES,
         pio.reset_count,
         pio.register_faults.len(),
@@ -1663,6 +1621,14 @@ fn nomali_pio_json(pio: &NoMaliT760RegisterFile, irq_status_reads: (u32, u32)) -
         register_hex(pio.read_raw(GPU_IRQ_MASK)),
         register_hex(pio.irq_status()),
         pio.irq_asserted(),
+        pio.cycle_counter_running,
+        pio.cycle_counter_start_tick,
+        pio.cycle_counter_stop_tick,
+        pio.cycle_counter_elapsed_ticks,
+        CYCLE_COUNT_LO,
+        CYCLE_COUNT_HI,
+        register_hex(pio.read_raw(CYCLE_COUNT_LO)),
+        register_hex(pio.read_raw(CYCLE_COUNT_HI)),
         pio.checkpoint_word_count(),
         register_reads,
         register_faults,
