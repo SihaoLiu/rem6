@@ -149,6 +149,38 @@ pub(super) fn emit_debug_stats(
             "sim.debug.host_action_trace.stops",
             debug.host_action_stop_trace_count(),
         ),
+        ("sim.debug.sbi_trace.records", debug.sbi_trace_count()),
+        (
+            "sim.debug.sbi_trace.console",
+            debug.sbi_console_trace_count(),
+        ),
+        ("sim.debug.sbi_trace.timers", debug.sbi_timer_trace_count()),
+        (
+            "sim.debug.sbi_trace.hsm_events",
+            debug.sbi_hsm_event_trace_count(),
+        ),
+        (
+            "sim.debug.sbi_trace.hsm_wakes",
+            debug.sbi_hsm_wake_trace_count(),
+        ),
+        (
+            "sim.debug.sbi_trace.hsm_statuses",
+            debug.sbi_hsm_status_trace_count(),
+        ),
+        ("sim.debug.sbi_trace.ipis", debug.sbi_ipi_trace_count()),
+        (
+            "sim.debug.sbi_trace.rfences",
+            debug.sbi_rfence_trace_count(),
+        ),
+        (
+            "sim.debug.sbi_trace.rfence_completions",
+            debug.sbi_rfence_completion_trace_count(),
+        ),
+        ("sim.debug.sbi_trace.resets", debug.sbi_reset_trace_count()),
+        (
+            "sim.debug.sbi_trace.targets",
+            debug.sbi_target_trace_count(),
+        ),
         ("sim.debug.data_trace.records", debug.data_trace_count()),
         ("sim.debug.data_trace.loads", debug.data_load_trace_count()),
         (
@@ -466,6 +498,13 @@ pub(super) fn emit_debug_stats(
         "Byte",
         StatResetPolicy::Monotonic,
         debug.data_atomic_trace_byte_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.debug.sbi_trace.console.bytes",
+        "Byte",
+        StatResetPolicy::Monotonic,
+        debug.sbi_console_trace_byte_count(),
     )?;
     increment_stat(
         stats,

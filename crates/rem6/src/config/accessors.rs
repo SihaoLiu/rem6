@@ -249,6 +249,10 @@ impl Rem6RunConfig {
         self.debug_flags.contains(&CliDebugFlag::Power)
     }
 
+    pub fn debug_sbi_enabled(&self) -> bool {
+        self.debug_flags.contains(&CliDebugFlag::Sbi)
+    }
+
     pub fn debug_syscall_enabled(&self) -> bool {
         self.debug_flags.contains(&CliDebugFlag::Syscall)
     }

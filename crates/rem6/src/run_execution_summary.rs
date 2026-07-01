@@ -35,7 +35,7 @@ use crate::{
     Rem6RiscvSbiConsoleSummary, Rem6RiscvSbiHsmStatusSummary, Rem6RiscvSbiHsmSummary,
     Rem6RiscvSbiHsmWakeSummary, Rem6RiscvSbiIpiSummary, Rem6RiscvSbiResetSummary,
     Rem6RiscvSbiRfenceCompletionSummary, Rem6RiscvSbiRfenceSummary, Rem6RiscvSbiTimerSummary,
-    Rem6RiscvUnknownSyscallSummary, Rem6RunConfig, Rem6RunFabricSummary,
+    Rem6RiscvUnknownSyscallSummary, Rem6RunConfig, Rem6RunFabricSummary, Rem6SbiTraceInputs,
     Rem6TageScLBranchPredictorCounterSummary, RISCV_DATA_PROBE_PAGE_BYTES,
 };
 
@@ -355,6 +355,17 @@ pub(super) fn execution_summary(
         &power_records,
         &inputs.riscv_syscall_trace,
         &inputs.host_actions,
+        Rem6SbiTraceInputs {
+            console: &inputs.riscv_sbi_console,
+            timers: &inputs.riscv_sbi_timers,
+            hsm_events: &inputs.riscv_sbi_hsm_events,
+            hsm_wakes: &inputs.riscv_sbi_hsm_wakes,
+            hsm_statuses: &inputs.riscv_sbi_hsm_statuses,
+            ipis: &inputs.riscv_sbi_ipis,
+            rfences: &inputs.riscv_sbi_rfences,
+            rfence_completions: &inputs.riscv_sbi_rfence_completions,
+            resets: &inputs.riscv_sbi_resets,
+        },
     );
 
     Ok(Rem6ExecutionSummary {

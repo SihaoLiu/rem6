@@ -13,6 +13,7 @@ mod fabric;
 mod host_action;
 mod memory;
 mod pipeline;
+mod sbi;
 mod trace_stats;
 
 use crate::formatting::{bytes_to_hex, json_escape};
@@ -36,6 +37,8 @@ use memory::{
     Rem6MemoryTraceStat,
 };
 use pipeline::{pipeline_trace_records, Rem6PipelineTraceRecord};
+pub(crate) use sbi::Rem6SbiTraceInputs;
+use sbi::{sbi_trace_records, Rem6SbiTraceRecord};
 use trace_stats::{
     branch_trace_stats, data_trace_stats, exec_trace_stats, fetch_trace_stats, pipeline_trace_stats,
 };
@@ -58,6 +61,7 @@ pub(crate) struct Rem6DebugSummary {
     fabric_trace: Vec<Rem6FabricTraceRecord>,
     memory_trace: Vec<Rem6MemoryTraceRecord>,
     power_trace: Vec<Rem6PowerTraceRecord>,
+    sbi_trace: Vec<Rem6SbiTraceRecord>,
     syscall_trace: Vec<Rem6SyscallTraceRecord>,
 }
 
@@ -159,6 +163,7 @@ impl Rem6DebugSummary {
         power_records: &[PowerAnalysisRecord],
         syscall_trace: &[RiscvSyscallTraceRecord],
         host_actions: &Rem6HostActionSummary,
+        sbi: Rem6SbiTraceInputs<'_>,
     ) -> Self {
         let flags = config.debug_flags().to_vec();
         let branch_trace = if config.debug_branch_enabled() {
@@ -216,6 +221,11 @@ impl Rem6DebugSummary {
         } else {
             Vec::new()
         };
+        let sbi_trace = if config.debug_sbi_enabled() {
+            sbi_trace_records(sbi)
+        } else {
+            Vec::new()
+        };
         let syscall_trace = if config.debug_syscall_enabled() {
             syscall_trace_records(syscall_trace)
         } else {
@@ -234,6 +244,7 @@ impl Rem6DebugSummary {
             fabric_trace,
             memory_trace,
             power_trace,
+            sbi_trace,
             syscall_trace,
         }
     }
@@ -275,6 +286,7 @@ impl Rem6DebugSummary {
             self.data_atomic_trace_byte_count(),
             dram_trace_payload_byte_count(&self.dram_trace),
             fabric_trace_payload_byte_count(&self.fabric_trace),
+            self.sbi_console_trace_byte_count(),
         ]
         .into_iter()
         .fold(0u64, |acc, value| acc.saturating_add(value))
@@ -803,6 +815,58 @@ impl Rem6DebugSummary {
             .unwrap_or(0)
     }
 
+    pub(crate) fn sbi_trace_count(&self) -> u64 {
+        self.sbi_trace.len() as u64
+    }
+
+    pub(crate) fn sbi_console_trace_count(&self) -> u64 {
+        self.sbi_kind_trace_count("console")
+    }
+
+    pub(crate) fn sbi_timer_trace_count(&self) -> u64 {
+        self.sbi_kind_trace_count("timer")
+    }
+
+    pub(crate) fn sbi_hsm_event_trace_count(&self) -> u64 {
+        self.sbi_kind_trace_count("hsm_event")
+    }
+
+    pub(crate) fn sbi_hsm_wake_trace_count(&self) -> u64 {
+        self.sbi_kind_trace_count("hsm_wake")
+    }
+
+    pub(crate) fn sbi_hsm_status_trace_count(&self) -> u64 {
+        self.sbi_kind_trace_count("hsm_status")
+    }
+
+    pub(crate) fn sbi_ipi_trace_count(&self) -> u64 {
+        self.sbi_kind_trace_count("ipi")
+    }
+
+    pub(crate) fn sbi_rfence_trace_count(&self) -> u64 {
+        self.sbi_kind_trace_count("rfence")
+    }
+
+    pub(crate) fn sbi_rfence_completion_trace_count(&self) -> u64 {
+        self.sbi_kind_trace_count("rfence_completion")
+    }
+
+    pub(crate) fn sbi_reset_trace_count(&self) -> u64 {
+        self.sbi_kind_trace_count("reset")
+    }
+
+    pub(crate) fn sbi_console_trace_byte_count(&self) -> u64 {
+        self.sbi_trace.iter().fold(0u64, |acc, record| {
+            acc.saturating_add(record.console_byte_count())
+        })
+    }
+
+    pub(crate) fn sbi_target_trace_count(&self) -> u64 {
+        self.sbi_trace.iter().fold(0u64, |acc, record| {
+            acc.saturating_add(record.target_count())
+        })
+    }
+
     pub(crate) fn syscall_trace_count(&self) -> u64 {
         self.syscall_trace.len() as u64
     }
@@ -945,6 +1009,12 @@ impl Rem6DebugSummary {
             .map(Rem6PowerTraceRecord::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let sbi_trace = self
+            .sbi_trace
+            .iter()
+            .map(Rem6SbiTraceRecord::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         let syscall_trace = self
             .syscall_trace
             .iter()
@@ -952,7 +1022,7 @@ impl Rem6DebugSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"flags\":[{}],\"branch_trace\":[{}],\"pipeline_trace\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"host_action_trace\":[{}],\"data_trace\":[{}],\"cache_trace\":[{}],\"dram_trace\":[{}],\"fabric_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"syscall_trace\":[{}]}}",
+            "{{\"flags\":[{}],\"branch_trace\":[{}],\"pipeline_trace\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"host_action_trace\":[{}],\"data_trace\":[{}],\"cache_trace\":[{}],\"dram_trace\":[{}],\"fabric_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"sbi_trace\":[{}],\"syscall_trace\":[{}]}}",
             flags,
             branch_trace,
             pipeline_trace,
@@ -965,6 +1035,7 @@ impl Rem6DebugSummary {
             fabric_trace,
             memory_trace,
             power_trace,
+            sbi_trace,
             syscall_trace
         )
     }
@@ -1033,6 +1104,13 @@ impl Rem6DebugSummary {
             .count() as u64
     }
 
+    fn sbi_kind_trace_count(&self, kind: &str) -> u64 {
+        self.sbi_trace
+            .iter()
+            .filter(|record| record.kind() == kind)
+            .count() as u64
+    }
+
     fn dram_kind_trace_count(&self, kind: &str) -> u64 {
         self.dram_trace
             .iter()
@@ -1050,7 +1128,7 @@ impl Rem6DebugSummary {
             .count() as u64
     }
 
-    fn trace_counts(&self) -> [u64; 12] {
+    fn trace_counts(&self) -> [u64; 13] {
         [
             self.branch_trace_count(),
             self.pipeline_trace_count(),
@@ -1063,6 +1141,7 @@ impl Rem6DebugSummary {
             self.fabric_trace_count(),
             self.memory_trace_count(),
             self.power_trace_count(),
+            self.sbi_trace_count(),
             self.syscall_trace_count(),
         ]
     }
@@ -1080,6 +1159,7 @@ impl Rem6DebugSummary {
             CliDebugFlag::Memory => self.memory_trace_count(),
             CliDebugFlag::Pipeline => self.pipeline_trace_count(),
             CliDebugFlag::Power => self.power_trace_count(),
+            CliDebugFlag::Sbi => self.sbi_trace_count(),
             CliDebugFlag::Syscall => self.syscall_trace_count(),
         }
     }

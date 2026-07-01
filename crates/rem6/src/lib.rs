@@ -92,7 +92,7 @@ use data_cache_runtime::{
     cli_cache_runtime_with_prefetcher, with_riscv_syscall_data_cache_memory_io, CliCacheHierarchy,
     CliDataCacheSummary,
 };
-use debug_output::Rem6DebugSummary;
+use debug_output::{Rem6DebugSummary, Rem6SbiTraceInputs};
 pub use gpu_cli::{run_gpu_run_config, Rem6GpuRunArtifact, Rem6GpuRunConfig};
 use guest_memory::{build_cli_memory_store, read_load_blobs, LoadedBlob, Rem6LoadBlobSummary};
 pub use gups_cli::{run_gups_config, Rem6GupsArtifact, Rem6GupsExecutionSummary};

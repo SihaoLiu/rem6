@@ -13,6 +13,7 @@ pub enum CliDebugFlag {
     Memory,
     Pipeline,
     Power,
+    Sbi,
     Syscall,
 }
 
@@ -33,6 +34,7 @@ impl CliDebugFlag {
             "Memory" => Ok(Self::Memory),
             "Pipeline" => Ok(Self::Pipeline),
             "Power" => Ok(Self::Power),
+            "Sbi" => Ok(Self::Sbi),
             "Syscall" => Ok(Self::Syscall),
             _ => Err(Rem6CliError::UnsupportedDebugFlag {
                 flag: value.to_string(),
@@ -53,6 +55,7 @@ impl CliDebugFlag {
             Self::Memory => "Memory",
             Self::Pipeline => "Pipeline",
             Self::Power => "Power",
+            Self::Sbi => "Sbi",
             Self::Syscall => "Syscall",
         }
     }
