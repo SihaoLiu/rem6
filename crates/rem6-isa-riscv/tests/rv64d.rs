@@ -874,6 +874,49 @@ fn hart_executes_rv64d_fadd_directed_rounding_on_overflow_boundary() {
 }
 
 #[test]
+fn hart_executes_rv64d_nearest_even_when_overflow_rounds_to_max_finite() {
+    let mut add_hart = RiscvHartState::new(0x8000);
+    add_hart.write_float(freg(1), 0x7fef_ffff_ffff_ffff);
+    add_hart.write_float(freg(2), 0x7b50_0000_0000_0000);
+
+    let add = add_hart
+        .execute(RiscvInstruction::FloatAddD {
+            rd: freg(3),
+            rs1: freg(1),
+            rs2: freg(2),
+            rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
+        })
+        .unwrap();
+
+    assert_eq!(add.trap(), None);
+    assert_eq!(add_hart.read_float(freg(3)), 0x7fef_ffff_ffff_ffff);
+    assert_eq!(
+        add_hart.float_status().fflags(),
+        FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
+    );
+
+    let mut sub_hart = RiscvHartState::new(0x8000);
+    sub_hart.write_float(freg(1), 0x7fef_ffff_ffff_ffff);
+    sub_hart.write_float(freg(2), 0xfb50_0000_0000_0000);
+
+    let sub = sub_hart
+        .execute(RiscvInstruction::FloatSubD {
+            rd: freg(3),
+            rs1: freg(1),
+            rs2: freg(2),
+            rounding_mode: RiscvFloatRoundingMode::RoundNearestEven,
+        })
+        .unwrap();
+
+    assert_eq!(sub.trap(), None);
+    assert_eq!(sub_hart.read_float(freg(3)), 0x7fef_ffff_ffff_ffff);
+    assert_eq!(
+        sub_hart.float_status().fflags(),
+        FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
+    );
+}
+
+#[test]
 fn hart_executes_rv64d_fsub_directed_rounding_when_inexact() {
     for (rounding_mode, expected_bits) in [
         (
@@ -915,6 +958,140 @@ fn hart_executes_rv64d_fsub_directed_rounding_on_overflow_boundary() {
         let mut hart = RiscvHartState::new(0x8000);
         hart.write_float(freg(1), 0x7fef_ffff_ffff_ffff);
         hart.write_float(freg(2), 0xfb50_0000_0000_0000);
+
+        let sub = hart
+            .execute(RiscvInstruction::FloatSubD {
+                rd: freg(3),
+                rs1: freg(1),
+                rs2: freg(2),
+                rounding_mode,
+            })
+            .unwrap();
+
+        assert_eq!(sub.trap(), None);
+        assert_eq!(hart.read_float(freg(3)), expected_bits);
+        assert_eq!(
+            hart.float_status().fflags(),
+            FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
+        );
+    }
+}
+
+#[test]
+fn hart_executes_rv64d_fadd_directed_rounding_when_native_overflows() {
+    for (rounding_mode, expected_bits) in [
+        (
+            RiscvFloatRoundingMode::RoundTowardZero,
+            0x7fef_ffff_ffff_ffff,
+        ),
+        (RiscvFloatRoundingMode::RoundDown, 0x7fef_ffff_ffff_ffff),
+        (RiscvFloatRoundingMode::RoundUp, f64::INFINITY.to_bits()),
+    ] {
+        let mut hart = RiscvHartState::new(0x8000);
+        hart.write_float(freg(1), 0x7fef_ffff_ffff_ffff);
+        hart.write_float(freg(2), 0x7fef_ffff_ffff_ffff);
+
+        let add = hart
+            .execute(RiscvInstruction::FloatAddD {
+                rd: freg(3),
+                rs1: freg(1),
+                rs2: freg(2),
+                rounding_mode,
+            })
+            .unwrap();
+
+        assert_eq!(add.trap(), None);
+        assert_eq!(hart.read_float(freg(3)), expected_bits);
+        assert_eq!(
+            hart.float_status().fflags(),
+            FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
+        );
+    }
+}
+
+#[test]
+fn hart_executes_rv64d_fadd_directed_rounding_when_negative_native_overflows() {
+    for (rounding_mode, expected_bits) in [
+        (
+            RiscvFloatRoundingMode::RoundTowardZero,
+            0xffef_ffff_ffff_ffff,
+        ),
+        (
+            RiscvFloatRoundingMode::RoundDown,
+            f64::NEG_INFINITY.to_bits(),
+        ),
+        (RiscvFloatRoundingMode::RoundUp, 0xffef_ffff_ffff_ffff),
+    ] {
+        let mut hart = RiscvHartState::new(0x8000);
+        hart.write_float(freg(1), 0xffef_ffff_ffff_ffff);
+        hart.write_float(freg(2), 0xffef_ffff_ffff_ffff);
+
+        let add = hart
+            .execute(RiscvInstruction::FloatAddD {
+                rd: freg(3),
+                rs1: freg(1),
+                rs2: freg(2),
+                rounding_mode,
+            })
+            .unwrap();
+
+        assert_eq!(add.trap(), None);
+        assert_eq!(hart.read_float(freg(3)), expected_bits);
+        assert_eq!(
+            hart.float_status().fflags(),
+            FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
+        );
+    }
+}
+
+#[test]
+fn hart_executes_rv64d_fsub_directed_rounding_when_native_overflows() {
+    for (rounding_mode, expected_bits) in [
+        (
+            RiscvFloatRoundingMode::RoundTowardZero,
+            0x7fef_ffff_ffff_ffff,
+        ),
+        (RiscvFloatRoundingMode::RoundDown, 0x7fef_ffff_ffff_ffff),
+        (RiscvFloatRoundingMode::RoundUp, f64::INFINITY.to_bits()),
+    ] {
+        let mut hart = RiscvHartState::new(0x8000);
+        hart.write_float(freg(1), 0x7fef_ffff_ffff_ffff);
+        hart.write_float(freg(2), 0xffef_ffff_ffff_ffff);
+
+        let sub = hart
+            .execute(RiscvInstruction::FloatSubD {
+                rd: freg(3),
+                rs1: freg(1),
+                rs2: freg(2),
+                rounding_mode,
+            })
+            .unwrap();
+
+        assert_eq!(sub.trap(), None);
+        assert_eq!(hart.read_float(freg(3)), expected_bits);
+        assert_eq!(
+            hart.float_status().fflags(),
+            FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
+        );
+    }
+}
+
+#[test]
+fn hart_executes_rv64d_fsub_directed_rounding_when_negative_native_overflows() {
+    for (rounding_mode, expected_bits) in [
+        (
+            RiscvFloatRoundingMode::RoundTowardZero,
+            0xffef_ffff_ffff_ffff,
+        ),
+        (
+            RiscvFloatRoundingMode::RoundDown,
+            f64::NEG_INFINITY.to_bits(),
+        ),
+        (RiscvFloatRoundingMode::RoundUp, 0xffef_ffff_ffff_ffff),
+    ] {
+        let mut hart = RiscvHartState::new(0x8000);
+        hart.write_float(freg(1), 0xffef_ffff_ffff_ffff);
+        hart.write_float(freg(2), 0x7fef_ffff_ffff_ffff);
 
         let sub = hart
             .execute(RiscvInstruction::FloatSubD {

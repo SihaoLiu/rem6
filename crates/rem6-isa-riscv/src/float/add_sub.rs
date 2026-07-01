@@ -141,6 +141,9 @@ fn register_write_double(
             sum.native_bits
         };
     }
+    if is_infinity_double(sum.native_bits) && double_sum_overflows(sum) {
+        return double_overflow_bits(sum.exact, rounding_mode);
+    }
     let Some(ordering) = compare_double_to_exact_sum(sum.native_bits, sum.exact, sum.shift) else {
         return sum.native_bits;
     };
@@ -417,15 +420,13 @@ fn double_sum_value(lhs: u64, rhs: u64, subtract: bool) -> Option<DoubleSum> {
     let rhs_scaled = rhs.signed_mantissa(shift)?;
     let exact = lhs_scaled.checked_add(rhs_scaled)?;
     let native_bits = (lhs.value() + rhs.value()).to_bits();
-    f64::from_bits(native_bits)
-        .is_finite()
-        .then_some(DoubleSum {
-            lhs,
-            rhs,
-            exact,
-            shift,
-            native_bits,
-        })
+    Some(DoubleSum {
+        lhs,
+        rhs,
+        exact,
+        shift,
+        native_bits,
+    })
 }
 
 fn compare_double_to_exact_sum(candidate: u64, exact: i128, exact_shift: i32) -> Option<Ordering> {
@@ -453,6 +454,24 @@ fn double_sum_overflows(sum: DoubleSum) -> bool {
         )
     } else {
         false
+    }
+}
+
+fn double_overflow_bits(exact: i128, rounding_mode: RiscvFloatRoundingMode) -> u64 {
+    if exact < 0 {
+        match rounding_mode {
+            RiscvFloatRoundingMode::RoundTowardZero | RiscvFloatRoundingMode::RoundUp => {
+                DOUBLE_SIGN_BIT | DOUBLE_MAX_FINITE_BITS
+            }
+            _ => f64::NEG_INFINITY.to_bits(),
+        }
+    } else {
+        match rounding_mode {
+            RiscvFloatRoundingMode::RoundTowardZero | RiscvFloatRoundingMode::RoundDown => {
+                DOUBLE_MAX_FINITE_BITS
+            }
+            _ => f64::INFINITY.to_bits(),
+        }
     }
 }
 

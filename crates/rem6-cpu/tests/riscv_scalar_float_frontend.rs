@@ -279,6 +279,32 @@ fn riscv_core_driver_executes_fsub_d_round_down_from_fetch_stream() {
 }
 
 #[test]
+fn riscv_core_driver_executes_fsub_d_overflow_round_down_from_fetch_stream() {
+    let (mut scheduler, transport, route) = fetch_route();
+    let core = core(route, 0x8000);
+    core.write_float_register(freg(1), 0x7fef_ffff_ffff_ffff);
+    core.write_float_register(freg(2), 0xffef_ffff_ffff_ffff);
+    let store = loaded_program(0x8000, &[fsub_d_round_down(2, 1, 3)]);
+
+    let instruction = drive_until_execution(&core, store, &mut scheduler, &transport);
+
+    assert_eq!(
+        instruction,
+        RiscvInstruction::FloatSubD {
+            rd: freg(3),
+            rs1: freg(1),
+            rs2: freg(2),
+            rounding_mode: RiscvFloatRoundingMode::RoundDown,
+        }
+    );
+    assert_eq!(core.read_float_register(freg(3)), 0x7fef_ffff_ffff_ffff);
+    assert_eq!(
+        core.float_status().fflags(),
+        FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
+    );
+}
+
+#[test]
 fn riscv_core_driver_executes_fmul_d_round_up_from_fetch_stream() {
     let (mut scheduler, transport, route) = fetch_route();
     let core = core(route, 0x8000);
