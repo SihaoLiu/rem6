@@ -6,10 +6,12 @@ mod counter_inhibit_csr;
 mod csr;
 mod decode;
 mod decode_csr;
+mod decode_frontend;
 mod encoding;
 mod environment_config_csr;
 mod error;
 mod float;
+mod float_csr;
 mod float_execute;
 mod gdb_target;
 mod hart;
@@ -52,7 +54,6 @@ mod vector_saturating;
 mod vector_scalar_move_execute;
 mod vector_slide_execute;
 mod vector_widening_integer;
-use encoding::{j_imm, rd, u_imm};
 use instruction_privilege::csr_privilege_allowed;
 use integer::{
     add_signed, div_signed, div_signed_word, div_unsigned, div_unsigned_word, mulh_signed,
@@ -72,13 +73,14 @@ pub use csr::{
     RiscvCounterBank, RiscvCounterCsr, RiscvCounterCsrWord, RiscvCounterEnableCsr,
     RiscvCounterEnableCsrInstruction, RiscvCounterInhibitCsr, RiscvCounterInhibitCsrInstruction,
     RiscvCounterSnapshot, RiscvCsrOp, RiscvCsrOperand, RiscvEnvironmentConfigCsr,
-    RiscvEnvironmentConfigCsrInstruction, RiscvFloatCsr, RiscvFloatRoundingMode, RiscvFloatStatus,
-    RiscvInterruptCsr, RiscvMachineIdentityCsr, RiscvMachineInformationCsr,
-    RiscvMachineInformationCsrInstruction, RiscvMachineIsaCsr, RiscvMachineTrapCsr, RiscvStatusCsr,
-    RiscvStatusWord, RiscvSupervisorTrapCsr, RiscvTranslationCsr, RiscvTranslationCsrInstruction,
-    RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction,
+    RiscvEnvironmentConfigCsrInstruction, RiscvInterruptCsr, RiscvMachineIdentityCsr,
+    RiscvMachineInformationCsr, RiscvMachineInformationCsrInstruction, RiscvMachineIsaCsr,
+    RiscvMachineTrapCsr, RiscvStatusCsr, RiscvStatusWord, RiscvSupervisorTrapCsr,
+    RiscvTranslationCsr, RiscvTranslationCsrInstruction,
 };
+pub use decode_frontend::RiscvDecodedInstruction;
 pub use error::{RiscvCsrError, RiscvError};
+pub use float_csr::{RiscvFloatCsr, RiscvFloatRoundingMode, RiscvFloatStatus};
 pub use gdb_target::{RiscvGdbTargetDescription, RiscvGdbTargetDocument, RiscvGdbXlen};
 pub use hart::RiscvHartState;
 pub use instruction::RiscvInstruction;
@@ -114,6 +116,7 @@ pub use vector::{
     RiscvVectorTailPolicy, RiscvVectorWholeMoveInstruction,
 };
 pub use vector_averaging::RiscvVectorAveragingInstruction;
+pub use vector_fixed_point_csr::{RiscvVectorFixedPointCsr, RiscvVectorFixedPointCsrInstruction};
 pub use vector_fixed_point_shift::RiscvVectorFixedPointShiftInstruction;
 pub use vector_fixed_point_shift::RiscvVectorFixedPointShiftOperation;
 pub use vector_integer_carry_borrow::RiscvVectorIntegerCarryBorrowInstruction;
@@ -122,84 +125,6 @@ pub use vector_mask_mode::RiscvVectorMaskMode;
 pub use vector_reduction::{RiscvVectorReductionInstruction, RiscvVectorReductionOperation};
 pub use vector_saturating::RiscvVectorSaturatingInstruction;
 pub use vector_widening_integer::RiscvVectorWideningIntegerInstruction;
-impl RiscvInstruction {
-    pub fn decode(raw: u32) -> Result<Self, RiscvError> {
-        if raw & 0x3 != 0x3 {
-            return Err(RiscvError::CompressedNotSupported { raw });
-        }
-        Self::decode_with_length(raw).map(RiscvDecodedInstruction::instruction)
-    }
-
-    pub fn decode_with_length(raw: u32) -> Result<RiscvDecodedInstruction, RiscvError> {
-        if raw & 0x3 != 0x3 {
-            return Ok(RiscvDecodedInstruction::new(
-                compressed::decode_compressed(raw)?,
-                2,
-            ));
-        }
-
-        let opcode = raw & 0x7f;
-        let instruction = match opcode {
-            0x03 => load_store::decode_integer_load(raw),
-            0x07 if load_store::opcode_uses_vector_memory(raw) => {
-                load_store::decode_vector_load(raw)
-            }
-            0x07 => float::decode_float_load(raw),
-            0x0f => decode::decode_fence(raw),
-            0x13 => decode::decode_op_imm(raw),
-            0x17 => Ok(Self::Auipc {
-                rd: rd(raw),
-                imm: Immediate::new(u_imm(raw)),
-            }),
-            0x1b => decode::decode_op_imm_32(raw),
-            0x23 => load_store::decode_integer_store(raw),
-            0x27 if load_store::opcode_uses_vector_memory(raw) => {
-                load_store::decode_vector_store(raw)
-            }
-            0x27 => float::decode_float_store(raw),
-            0x2f => atomic::decode_atomic(raw),
-            0x33 => decode::decode_op(raw),
-            0x3b => decode::decode_op_32(raw),
-            0x37 => Ok(Self::Lui {
-                rd: rd(raw),
-                imm: Immediate::new(u_imm(raw)),
-            }),
-            0x63 => decode::decode_branch(raw),
-            0x67 => decode::decode_jalr(raw),
-            0x6f => Ok(Self::Jal {
-                rd: rd(raw),
-                offset: Immediate::new(j_imm(raw)),
-            }),
-            0x73 => decode::decode_system(raw),
-            0x43 | 0x47 | 0x4b | 0x4f => float::decode_float_multiply_add(raw),
-            0x53 => float::decode_float_op(raw),
-            0x57 => decode::decode_vector(raw),
-            0x7b => pseudo::decode_gem5_pseudo_op(raw),
-            _ => Err(RiscvError::UnknownEncoding { raw }),
-        }?;
-        Ok(RiscvDecodedInstruction::new(instruction, 4))
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RiscvDecodedInstruction {
-    instruction: RiscvInstruction,
-    bytes: u8,
-}
-
-impl RiscvDecodedInstruction {
-    pub(crate) const fn new(instruction: RiscvInstruction, bytes: u8) -> Self {
-        Self { instruction, bytes }
-    }
-
-    pub const fn instruction(self) -> RiscvInstruction {
-        self.instruction
-    }
-
-    pub const fn bytes(self) -> u8 {
-        self.bytes
-    }
-}
 
 impl RiscvHartState {
     pub fn enter_synchronous_trap(
