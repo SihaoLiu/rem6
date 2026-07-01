@@ -623,7 +623,7 @@ impl BootElfMetadata {
             section_header_table: BootElfSectionHeaderTable::new(0, 0, 0, 0),
             section_name_table: BootElfSectionNameTable::new(0, 0),
             section_flags: BootElfSectionFlags::new(0, 0, 0, 0),
-            section_storage: BootElfSectionStorage::new(0, 0, 0, 0, 0),
+            section_storage: BootElfSectionStorage::new(0, 0, 0, 0, 0, 0, 0),
             section_relocations: BootElfSectionRelocations::new(0, 0, 0, 0, 0, 0),
             section_address_range: BootElfSectionAddressRange::new(None, None),
             section_alignment: BootElfSectionAlignment::new(0, 0, 0),

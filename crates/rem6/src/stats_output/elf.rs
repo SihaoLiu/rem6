@@ -618,29 +618,44 @@ fn emit_elf_section_storage_stats(
     metadata: &BootElfMetadata,
 ) -> Result<(), Rem6CliError> {
     let section_storage = metadata.section_storage();
-    for (path, value) in [
+    for (path, value, unit) in [
         (
             "sim.elf.section_storage.file_bytes",
             section_storage.file_backed_bytes(),
+            "Byte",
         ),
         (
             "sim.elf.section_storage.allocated_bytes",
             section_storage.allocated_bytes(),
+            "Byte",
         ),
         (
             "sim.elf.section_storage.writable_bytes",
             section_storage.writable_bytes(),
+            "Byte",
         ),
         (
             "sim.elf.section_storage.executable_bytes",
             section_storage.executable_bytes(),
+            "Byte",
         ),
         (
             "sim.elf.section_storage.nobits_bytes",
             section_storage.nobits_bytes(),
+            "Byte",
+        ),
+        (
+            "sim.elf.section_storage.string_tables",
+            section_storage.string_table_count(),
+            "Count",
+        ),
+        (
+            "sim.elf.section_storage.string_table_bytes",
+            section_storage.string_table_bytes(),
+            "Byte",
         ),
     ] {
-        increment_stat(stats, path, "Byte", StatResetPolicy::Constant, value)?;
+        increment_stat(stats, path, unit, StatResetPolicy::Constant, value)?;
     }
     Ok(())
 }

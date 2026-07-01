@@ -591,12 +591,14 @@ fn elf_section_flags_json(flags: BootElfSectionFlags) -> String {
 
 fn elf_section_storage_json(storage: BootElfSectionStorage) -> String {
     format!(
-        "{{\"file_bytes\":{},\"allocated_bytes\":{},\"writable_bytes\":{},\"executable_bytes\":{},\"nobits_bytes\":{}}}",
+        "{{\"file_bytes\":{},\"allocated_bytes\":{},\"writable_bytes\":{},\"executable_bytes\":{},\"nobits_bytes\":{},\"string_tables\":{},\"string_table_bytes\":{}}}",
         storage.file_backed_bytes(),
         storage.allocated_bytes(),
         storage.writable_bytes(),
         storage.executable_bytes(),
         storage.nobits_bytes(),
+        storage.string_table_count(),
+        storage.string_table_bytes(),
     )
 }
 

@@ -10,6 +10,7 @@ const PT_GNU_EH_FRAME: u32 = 0x6474_e550;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const PT_GNU_RELRO: u32 = 0x6474_e552;
 const PT_GNU_PROPERTY: u32 = 0x6474_e553;
+const SHT_STRTAB: u32 = 3;
 const SHT_NOBITS: u32 = 8;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
@@ -1988,6 +1989,142 @@ fn workload_manifest_identity_includes_elf_section_storage() {
         .unwrap();
 
     assert_ne!(small.identity(), large.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_section_string_table_storage() {
+    let baseline_elf = elf64_image_with_named_sections(243, &[".meta"]);
+    let mut string_table_elf = elf64_image_with_named_sections(243, &[".meta"]);
+    set_elf64_section_kind_flags(&mut string_table_elf, 1, SHT_STRTAB, 0);
+    let baseline_source = BootImage::from_elf64_le(&baseline_elf).unwrap();
+    let string_table_source = BootImage::from_elf64_le(&string_table_elf).unwrap();
+
+    assert_eq!(baseline_source.entry(), string_table_source.entry());
+    assert_eq!(baseline_source.segments(), string_table_source.segments());
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_header_table(),
+        string_table_source
+            .elf_metadata()
+            .unwrap()
+            .section_header_table(),
+    );
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_storage()
+            .file_backed_bytes(),
+        string_table_source
+            .elf_metadata()
+            .unwrap()
+            .section_storage()
+            .file_backed_bytes(),
+    );
+    assert_ne!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_storage()
+            .string_table_count(),
+        string_table_source
+            .elf_metadata()
+            .unwrap()
+            .section_storage()
+            .string_table_count(),
+    );
+
+    let baseline = WorkloadManifest::builder(id("same"), baseline_source)
+        .build()
+        .unwrap();
+    let string_table = WorkloadManifest::builder(id("same"), string_table_source)
+        .build()
+        .unwrap();
+
+    assert_ne!(baseline.identity(), string_table.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_section_string_table_bytes() {
+    let mut small_string_elf = elf64_image_with_named_sections(243, &[".data", ".str"]);
+    set_elf64_section_kind_flags(&mut small_string_elf, 1, 1, 0);
+    set_elf64_section_kind_flags(&mut small_string_elf, 2, SHT_STRTAB, 0);
+    set_elf64_section_size(&mut small_string_elf, 1, 8);
+    set_elf64_section_size(&mut small_string_elf, 2, 4);
+    let mut large_string_elf = elf64_image_with_named_sections(243, &[".data", ".str"]);
+    set_elf64_section_kind_flags(&mut large_string_elf, 1, 1, 0);
+    set_elf64_section_kind_flags(&mut large_string_elf, 2, SHT_STRTAB, 0);
+    set_elf64_section_size(&mut large_string_elf, 1, 4);
+    set_elf64_section_size(&mut large_string_elf, 2, 8);
+    let small_string_source = BootImage::from_elf64_le(&small_string_elf).unwrap();
+    let large_string_source = BootImage::from_elf64_le(&large_string_elf).unwrap();
+
+    assert_eq!(small_string_source.entry(), large_string_source.entry());
+    assert_eq!(
+        small_string_source.segments(),
+        large_string_source.segments()
+    );
+    assert_eq!(
+        small_string_source
+            .elf_metadata()
+            .unwrap()
+            .section_header_table(),
+        large_string_source
+            .elf_metadata()
+            .unwrap()
+            .section_header_table(),
+    );
+    assert_eq!(
+        small_string_source.elf_metadata().unwrap().section_flags(),
+        large_string_source.elf_metadata().unwrap().section_flags(),
+    );
+    assert_eq!(
+        small_string_source
+            .elf_metadata()
+            .unwrap()
+            .section_storage()
+            .file_backed_bytes(),
+        large_string_source
+            .elf_metadata()
+            .unwrap()
+            .section_storage()
+            .file_backed_bytes(),
+    );
+    assert_eq!(
+        small_string_source
+            .elf_metadata()
+            .unwrap()
+            .section_storage()
+            .string_table_count(),
+        large_string_source
+            .elf_metadata()
+            .unwrap()
+            .section_storage()
+            .string_table_count(),
+    );
+    assert_ne!(
+        small_string_source
+            .elf_metadata()
+            .unwrap()
+            .section_storage()
+            .string_table_bytes(),
+        large_string_source
+            .elf_metadata()
+            .unwrap()
+            .section_storage()
+            .string_table_bytes(),
+    );
+
+    let small_string = WorkloadManifest::builder(id("same"), small_string_source)
+        .build()
+        .unwrap();
+    let large_string = WorkloadManifest::builder(id("same"), large_string_source)
+        .build()
+        .unwrap();
+
+    assert_ne!(small_string.identity(), large_string.identity());
 }
 
 #[test]

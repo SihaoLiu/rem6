@@ -13,6 +13,7 @@ const SHT_RELA: u32 = 4;
 const SHT_NOTE: u32 = 7;
 const SHT_NOBITS: u32 = 8;
 const SHT_REL: u32 = 9;
+const SHT_STRTAB: u32 = 3;
 const SHT_SYMTAB: u32 = 2;
 const SHT_DYNSYM: u32 = 11;
 const SHF_WRITE: u64 = 1;
@@ -45,6 +46,8 @@ pub(crate) struct ElfSectionSummary {
     writable_section_bytes: u64,
     executable_section_bytes: u64,
     nobits_section_bytes: u64,
+    string_table_count: u64,
+    string_table_bytes: u64,
     note_section_file_size: u64,
     relocation_section_file_size: u64,
     rela_section_count: u64,
@@ -123,6 +126,8 @@ impl ElfSectionSummary {
             self.writable_section_bytes,
             self.executable_section_bytes,
             self.nobits_section_bytes,
+            self.string_table_count,
+            self.string_table_bytes,
         )
     }
 
@@ -416,6 +421,10 @@ fn summarize_common_section(
     if section.kind == SHT_NOBITS {
         summary.nobits_section_count += 1;
         summary.nobits_section_bytes = summary.nobits_section_bytes.saturating_add(section.size);
+    }
+    if section.kind == SHT_STRTAB {
+        summary.string_table_count += 1;
+        summary.string_table_bytes = summary.string_table_bytes.saturating_add(section.size);
     }
     if section.kind == SHT_NOTE {
         summary.note_section_count += 1;

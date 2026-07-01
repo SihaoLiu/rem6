@@ -265,6 +265,8 @@ pub struct BootElfSectionStorage {
     writable_bytes: u64,
     executable_bytes: u64,
     nobits_bytes: u64,
+    string_table_count: u64,
+    string_table_bytes: u64,
 }
 
 impl BootElfSectionStorage {
@@ -274,6 +276,8 @@ impl BootElfSectionStorage {
         writable_bytes: u64,
         executable_bytes: u64,
         nobits_bytes: u64,
+        string_table_count: u64,
+        string_table_bytes: u64,
     ) -> Self {
         Self {
             file_backed_bytes,
@@ -281,6 +285,8 @@ impl BootElfSectionStorage {
             writable_bytes,
             executable_bytes,
             nobits_bytes,
+            string_table_count,
+            string_table_bytes,
         }
     }
 
@@ -302,6 +308,14 @@ impl BootElfSectionStorage {
 
     pub const fn nobits_bytes(self) -> u64 {
         self.nobits_bytes
+    }
+
+    pub const fn string_table_count(self) -> u64 {
+        self.string_table_count
+    }
+
+    pub const fn string_table_bytes(self) -> u64 {
+        self.string_table_bytes
     }
 }
 

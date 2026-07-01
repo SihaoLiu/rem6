@@ -95,6 +95,8 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 || section_storage.writable_bytes() != 0
                 || section_storage.executable_bytes() != 0
                 || section_storage.nobits_bytes() != 0
+                || section_storage.string_table_count() != 0
+                || section_storage.string_table_bytes() != 0
             {
                 hash_str(hash, "elf.section_storage");
                 hash_u64(hash, section_storage.file_backed_bytes());
@@ -102,6 +104,8 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 hash_u64(hash, section_storage.writable_bytes());
                 hash_u64(hash, section_storage.executable_bytes());
                 hash_u64(hash, section_storage.nobits_bytes());
+                hash_u64(hash, section_storage.string_table_count());
+                hash_u64(hash, section_storage.string_table_bytes());
             }
             let section_address_range = metadata.section_address_range();
             if section_address_range.start_address().is_some()
