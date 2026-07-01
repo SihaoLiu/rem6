@@ -23,6 +23,9 @@ const SHT_RELR: u32 = 19;
 const SHT_GNU_VERDEF: u32 = 0x6fff_fffd;
 const SHT_GNU_VERNEED: u32 = 0x6fff_fffe;
 const SHT_GNU_VERSYM: u32 = 0x6fff_ffff;
+const SHT_GNU_ATTRIBUTES: u32 = 0x6fff_fff5;
+const SHT_ARM_ATTRIBUTES: u32 = 0x7000_0003;
+const SHT_LOUSER: u32 = 0x8000_0000;
 const SHN_UNDEF: u16 = 0;
 const SHN_ABS: u16 = 0xfff1;
 const SHN_COMMON: u16 = 0xfff2;
@@ -1325,6 +1328,56 @@ pub(crate) fn riscv64_elf_with_section_index_table(
     write_u32(&mut bytes, section_table_offset + 132, 3);
     write_u64(&mut bytes, section_table_offset + 152, shstr_offset as u64);
     write_u64(&mut bytes, section_table_offset + 160, names.len() as u64);
+    bytes
+}
+
+pub(crate) fn riscv64_elf_with_section_type_ranges(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut bytes = riscv64_elf(entry, physical, payload);
+    let os_offset = bytes.len();
+    bytes.resize(os_offset + 4, 0);
+    let processor_offset = bytes.len();
+    bytes.resize(processor_offset + 8, 0);
+    let application_offset = bytes.len();
+    bytes.resize(application_offset + 12, 0);
+
+    let names = b"\0.gnu.attributes\0.ARM.attributes\0.app.meta\0.shstrtab\0";
+    let shstr_offset = bytes.len();
+    bytes.extend_from_slice(names);
+    while bytes.len() % 8 != 0 {
+        bytes.push(0);
+    }
+
+    let section_table_offset = bytes.len();
+    write_u64(&mut bytes, 40, section_table_offset as u64);
+    write_u16(&mut bytes, 58, 64);
+    write_u16(&mut bytes, 60, 5);
+    write_u16(&mut bytes, 62, 4);
+    bytes.resize(section_table_offset + 5 * 64, 0);
+
+    for (index, (name, kind, offset, size)) in [
+        (1, SHT_GNU_ATTRIBUTES, os_offset, 4),
+        (17, SHT_ARM_ATTRIBUTES, processor_offset, 8),
+        (33, SHT_LOUSER + 1, application_offset, 12),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let base = section_table_offset + (index + 1) * 64;
+        write_u32(&mut bytes, base, name);
+        write_u32(&mut bytes, base + 4, kind);
+        write_u64(&mut bytes, base + 24, offset as u64);
+        write_u64(&mut bytes, base + 32, size);
+    }
+
+    let shstr_base = section_table_offset + 4 * 64;
+    write_u32(&mut bytes, shstr_base, 43);
+    write_u32(&mut bytes, shstr_base + 4, 3);
+    write_u64(&mut bytes, shstr_base + 24, shstr_offset as u64);
+    write_u64(&mut bytes, shstr_base + 32, names.len() as u64);
     bytes
 }
 

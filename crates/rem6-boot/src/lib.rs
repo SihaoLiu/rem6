@@ -5,6 +5,7 @@ mod elf_interpreter;
 mod elf_program_headers;
 mod elf_section_flags;
 mod elf_section_indexes;
+mod elf_section_type_ranges;
 mod elf_section_versions;
 mod elf_sections;
 mod elf_symbols;
@@ -25,5 +26,5 @@ pub use metadata_tables::{
     BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags, BootElfSectionGroups,
     BootElfSectionHashes, BootElfSectionHeaderTable, BootElfSectionIndexTables,
     BootElfSectionNameTable, BootElfSectionRelocations, BootElfSectionStorage,
-    BootElfSectionVersions, BootElfSymbolSummary,
+    BootElfSectionTypeRanges, BootElfSectionVersions, BootElfSymbolSummary,
 };

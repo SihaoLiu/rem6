@@ -6,7 +6,7 @@ use crate::metadata_tables::{
     BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags, BootElfSectionGroups,
     BootElfSectionHashes, BootElfSectionHeaderTable, BootElfSectionIndexTables,
     BootElfSectionNameTable, BootElfSectionRelocations, BootElfSectionStorage,
-    BootElfSectionVersions, BootElfSymbolSummary,
+    BootElfSectionTypeRanges, BootElfSectionVersions, BootElfSymbolSummary,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -593,6 +593,7 @@ pub struct BootElfMetadata {
     section_arrays: BootElfSectionArrays,
     section_hashes: BootElfSectionHashes,
     section_index_tables: BootElfSectionIndexTables,
+    section_type_ranges: BootElfSectionTypeRanges,
     section_versions: BootElfSectionVersions,
     section_groups: BootElfSectionGroups,
     section_address_range: BootElfSectionAddressRange,
@@ -641,18 +642,17 @@ impl BootElfMetadata {
             section_arrays: BootElfSectionArrays::new(0, 0, 0, 0, 0, 0, 0, 0, 0),
             section_hashes: BootElfSectionHashes::new(0, 0, 0, 0),
             section_index_tables: BootElfSectionIndexTables::new(0, 0, 0),
+            section_type_ranges: BootElfSectionTypeRanges::new(0, 0, 0, 0, 0, 0),
             section_versions: BootElfSectionVersions::new(0, 0, 0, 0, 0, 0, 0, 0, 0),
             section_groups: BootElfSectionGroups::new(0, 0, 0),
             section_address_range: BootElfSectionAddressRange::new(None, None),
             section_alignment: BootElfSectionAlignment::new(0, 0, 0),
         }
     }
-
     pub(crate) fn with_program_header_table(mut self, table: BootElfProgramHeaderTable) -> Self {
         self.program_header_table = table;
         self
     }
-
     pub(crate) const fn with_load_segments(mut self, load_segments: BootElfLoadSegments) -> Self {
         self.load_segments = load_segments;
         self
@@ -668,6 +668,7 @@ impl BootElfMetadata {
         section_arrays: BootElfSectionArrays,
         section_hashes: BootElfSectionHashes,
         section_index_tables: BootElfSectionIndexTables,
+        section_type_ranges: BootElfSectionTypeRanges,
         section_versions: BootElfSectionVersions,
         section_groups: BootElfSectionGroups,
         section_address_range: BootElfSectionAddressRange,
@@ -681,6 +682,7 @@ impl BootElfMetadata {
         self.section_arrays = section_arrays;
         self.section_hashes = section_hashes;
         self.section_index_tables = section_index_tables;
+        self.section_type_ranges = section_type_ranges;
         self.section_versions = section_versions;
         self.section_groups = section_groups;
         self.section_address_range = section_address_range;
@@ -705,12 +707,10 @@ impl BootElfMetadata {
         self.note_section_file_size = file_size;
         self
     }
-
     pub(crate) const fn with_gnu_stack_executable(mut self, executable: Option<bool>) -> Self {
         self.gnu_stack_executable = executable;
         self
     }
-
     pub(crate) const fn with_gnu_relro(
         mut self,
         virtual_address: Option<Address>,
@@ -720,7 +720,6 @@ impl BootElfMetadata {
         self.gnu_relro_memory_size = memory_size;
         self
     }
-
     pub(crate) const fn with_gnu_eh_frame(
         mut self,
         virtual_address: Option<Address>,
@@ -730,7 +729,6 @@ impl BootElfMetadata {
         self.gnu_eh_frame_memory_size = memory_size;
         self
     }
-
     pub(crate) const fn with_gnu_property(
         mut self,
         virtual_address: Option<Address>,
@@ -740,7 +738,6 @@ impl BootElfMetadata {
         self.gnu_property_memory_size = memory_size;
         self
     }
-
     pub(crate) const fn with_symbol_summary(
         mut self,
         symbol_summary: BootElfSymbolSummary,
@@ -748,11 +745,9 @@ impl BootElfMetadata {
         self.symbol_summary = symbol_summary;
         self
     }
-
     pub const fn class(&self) -> BootElfClass {
         self.class
     }
-
     pub const fn endian(&self) -> BootElfEndian {
         self.endian
     }
@@ -881,6 +876,9 @@ impl BootElfMetadata {
     }
     pub const fn section_index_tables(&self) -> BootElfSectionIndexTables {
         self.section_index_tables
+    }
+    pub const fn section_type_ranges(&self) -> BootElfSectionTypeRanges {
+        self.section_type_ranges
     }
     pub const fn section_versions(&self) -> BootElfSectionVersions {
         self.section_versions

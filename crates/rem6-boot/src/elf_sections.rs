@@ -4,6 +4,7 @@ use crate::elf::{BootElfClass, BootElfEndian, BootElfOperatingSystem};
 use crate::elf_counts::section_table_layout;
 use crate::elf_section_flags::ElfSectionExtraFlagSummary;
 use crate::elf_section_indexes::ElfSectionIndexTableSummary;
+use crate::elf_section_type_ranges::ElfSectionTypeRangeSummary;
 use crate::elf_section_versions::ElfSectionVersionSummary;
 use crate::elf_symbols::{
     summarize_elf32_symbol_table as summarize_elf32_symbols,
@@ -14,7 +15,7 @@ use crate::metadata_tables::{
     BootElfSectionAddressRange, BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags,
     BootElfSectionGroups, BootElfSectionHashes, BootElfSectionHeaderTable,
     BootElfSectionIndexTables, BootElfSectionNameTable, BootElfSectionRelocations,
-    BootElfSectionStorage, BootElfSectionVersions, BootElfSymbolSummary,
+    BootElfSectionStorage, BootElfSectionTypeRanges, BootElfSectionVersions, BootElfSymbolSummary,
 };
 
 const SHT_INIT_ARRAY: u32 = 14;
@@ -89,6 +90,7 @@ pub(crate) struct ElfSectionSummary {
     gnu_hash_section_count: u64,
     gnu_hash_bytes: u64,
     section_index_tables: ElfSectionIndexTableSummary,
+    section_type_ranges: ElfSectionTypeRangeSummary,
     section_versions: ElfSectionVersionSummary,
     group_section_count: u64,
     group_section_bytes: u64,
@@ -219,8 +221,10 @@ impl ElfSectionSummary {
     pub(crate) const fn section_index_tables(self) -> BootElfSectionIndexTables {
         self.section_index_tables.into_metadata()
     }
+    pub(crate) const fn section_type_ranges(self) -> BootElfSectionTypeRanges {
+        self.section_type_ranges.into_metadata()
+    }
 }
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct ElfSectionHeader {
     name: u32,
@@ -506,6 +510,9 @@ fn summarize_common_section(
     summary
         .section_index_tables
         .record(section.kind, section.size, section.entry_size);
+    summary
+        .section_type_ranges
+        .record(section.kind, section.size);
     summary.section_versions.record_section(
         section.kind,
         section.size,
@@ -546,14 +553,12 @@ fn summarize_common_section(
     }
     Ok(())
 }
-
 #[derive(Clone, Copy)]
 enum RelocationSectionKind {
     Rela,
     Rel,
     Relr,
 }
-
 fn summarize_array_section(summary: &mut ElfSectionSummary, kind: u32, size: u64, entry_size: u64) {
     let entry_count = section_entry_count(size, entry_size);
     match kind {
@@ -579,7 +584,6 @@ fn summarize_array_section(summary: &mut ElfSectionSummary, kind: u32, size: u64
         _ => {}
     }
 }
-
 fn summarize_hash_section(summary: &mut ElfSectionSummary, kind: u32, size: u64) {
     match kind {
         SHT_HASH => {
@@ -593,7 +597,6 @@ fn summarize_hash_section(summary: &mut ElfSectionSummary, kind: u32, size: u64)
         _ => {}
     }
 }
-
 fn summarize_group_section(summary: &mut ElfSectionSummary, kind: u32, size: u64, entry_size: u64) {
     if kind == SHT_GROUP {
         summary.group_section_count += 1;
@@ -603,7 +606,6 @@ fn summarize_group_section(summary: &mut ElfSectionSummary, kind: u32, size: u64
             .saturating_add(section_entry_count(size, entry_size));
     }
 }
-
 fn summarize_relocation_section(
     summary: &mut ElfSectionSummary,
     size: u64,
@@ -629,7 +631,6 @@ fn summarize_relocation_section(
         }
     }
 }
-
 fn section_entry_count(size: u64, entry_size: u64) -> u64 {
     if entry_size == 0 {
         0
@@ -637,7 +638,6 @@ fn section_entry_count(size: u64, entry_size: u64) -> u64 {
         size / entry_size
     }
 }
-
 fn validate_section_table_range(
     bytes: &[u8],
     offset: u64,

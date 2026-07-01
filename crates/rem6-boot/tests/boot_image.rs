@@ -33,6 +33,9 @@ const SHT_RELR: u32 = 19;
 const SHT_GNU_VERDEF: u32 = 0x6fff_fffd;
 const SHT_GNU_VERNEED: u32 = 0x6fff_fffe;
 const SHT_GNU_VERSYM: u32 = 0x6fff_ffff;
+const SHT_GNU_ATTRIBUTES: u32 = 0x6fff_fff5;
+const SHT_ARM_ATTRIBUTES: u32 = 0x7000_0003;
+const SHT_LOUSER: u32 = 0x8000_0000;
 const SHT_NOBITS: u32 = 8;
 const SHN_UNDEF: u16 = 0;
 const SHN_ABS: u16 = 0xfff1;
@@ -1683,6 +1686,54 @@ fn boot_image_records_elf_section_index_table_summary() {
     assert_eq!(index_tables.section_count(), 1);
     assert_eq!(index_tables.byte_size(), 12);
     assert_eq!(index_tables.entry_count(), 3);
+}
+
+#[test]
+fn boot_image_records_elf_section_type_range_summary() {
+    let mut elf = elf64_image(
+        0x8000_0100,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000_0000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_sections(
+        &mut elf,
+        &[
+            ElfSectionSpec {
+                name: ".gnu.attributes",
+                kind: SHT_GNU_ATTRIBUTES,
+                data: &[0; 4],
+            },
+            ElfSectionSpec {
+                name: ".ARM.attributes",
+                kind: SHT_ARM_ATTRIBUTES,
+                data: &[0; 8],
+            },
+            ElfSectionSpec {
+                name: ".app.meta",
+                kind: SHT_LOUSER + 1,
+                data: &[0; 12],
+            },
+        ],
+    );
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let ranges = metadata.section_type_ranges();
+
+    assert_eq!(ranges.os_specific_count(), 1);
+    assert_eq!(ranges.os_specific_bytes(), 4);
+    assert_eq!(ranges.processor_specific_count(), 1);
+    assert_eq!(ranges.processor_specific_bytes(), 8);
+    assert_eq!(ranges.application_specific_count(), 1);
+    assert_eq!(ranges.application_specific_bytes(), 12);
 }
 
 #[test]

@@ -230,6 +230,7 @@ pub(super) fn emit_elf_run_stats(
     emit_elf_section_array_stats(stats, metadata)?;
     emit_elf_section_hash_stats(stats, metadata)?;
     emit_elf_section_index_table_stats(stats, metadata)?;
+    emit_elf_section_type_range_stats(stats, metadata)?;
     emit_elf_section_version_stats(stats, metadata)?;
     emit_elf_section_group_stats(stats, metadata)?;
     emit_elf_section_address_stats(stats, metadata)?;
@@ -927,6 +928,48 @@ fn emit_elf_section_index_table_stats(
             "sim.elf.section_index_tables.entries",
             "Count",
             index_tables.entry_count(),
+        ),
+    ] {
+        increment_stat(stats, name, unit, StatResetPolicy::Constant, value)?;
+    }
+    Ok(())
+}
+
+fn emit_elf_section_type_range_stats(
+    stats: &mut StatsRegistry,
+    metadata: &BootElfMetadata,
+) -> Result<(), Rem6CliError> {
+    let ranges = metadata.section_type_ranges();
+    for (name, unit, value) in [
+        (
+            "sim.elf.section_type_ranges.os.sections",
+            "Count",
+            ranges.os_specific_count(),
+        ),
+        (
+            "sim.elf.section_type_ranges.os.bytes",
+            "Byte",
+            ranges.os_specific_bytes(),
+        ),
+        (
+            "sim.elf.section_type_ranges.processor.sections",
+            "Count",
+            ranges.processor_specific_count(),
+        ),
+        (
+            "sim.elf.section_type_ranges.processor.bytes",
+            "Byte",
+            ranges.processor_specific_bytes(),
+        ),
+        (
+            "sim.elf.section_type_ranges.application.sections",
+            "Count",
+            ranges.application_specific_count(),
+        ),
+        (
+            "sim.elf.section_type_ranges.application.bytes",
+            "Byte",
+            ranges.application_specific_bytes(),
         ),
     ] {
         increment_stat(stats, name, unit, StatResetPolicy::Constant, value)?;

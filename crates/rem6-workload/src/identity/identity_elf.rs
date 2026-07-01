@@ -209,6 +209,22 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 hash_u64(hash, section_index_tables.byte_size());
                 hash_u64(hash, section_index_tables.entry_count());
             }
+            let section_type_ranges = metadata.section_type_ranges();
+            if section_type_ranges.os_specific_count() != 0
+                || section_type_ranges.os_specific_bytes() != 0
+                || section_type_ranges.processor_specific_count() != 0
+                || section_type_ranges.processor_specific_bytes() != 0
+                || section_type_ranges.application_specific_count() != 0
+                || section_type_ranges.application_specific_bytes() != 0
+            {
+                hash_str(hash, "elf.section_type_ranges");
+                hash_u64(hash, section_type_ranges.os_specific_count());
+                hash_u64(hash, section_type_ranges.os_specific_bytes());
+                hash_u64(hash, section_type_ranges.processor_specific_count());
+                hash_u64(hash, section_type_ranges.processor_specific_bytes());
+                hash_u64(hash, section_type_ranges.application_specific_count());
+                hash_u64(hash, section_type_ranges.application_specific_bytes());
+            }
             let section_versions = metadata.section_versions();
             if section_versions.version_symbol_section_count() != 0
                 || section_versions.version_symbol_bytes() != 0

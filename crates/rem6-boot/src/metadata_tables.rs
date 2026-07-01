@@ -605,6 +605,60 @@ impl BootElfSectionIndexTables {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BootElfSectionTypeRanges {
+    os_specific_count: u64,
+    os_specific_bytes: u64,
+    processor_specific_count: u64,
+    processor_specific_bytes: u64,
+    application_specific_count: u64,
+    application_specific_bytes: u64,
+}
+
+impl BootElfSectionTypeRanges {
+    pub const fn new(
+        os_specific_count: u64,
+        os_specific_bytes: u64,
+        processor_specific_count: u64,
+        processor_specific_bytes: u64,
+        application_specific_count: u64,
+        application_specific_bytes: u64,
+    ) -> Self {
+        Self {
+            os_specific_count,
+            os_specific_bytes,
+            processor_specific_count,
+            processor_specific_bytes,
+            application_specific_count,
+            application_specific_bytes,
+        }
+    }
+
+    pub const fn os_specific_count(self) -> u64 {
+        self.os_specific_count
+    }
+
+    pub const fn os_specific_bytes(self) -> u64 {
+        self.os_specific_bytes
+    }
+
+    pub const fn processor_specific_count(self) -> u64 {
+        self.processor_specific_count
+    }
+
+    pub const fn processor_specific_bytes(self) -> u64 {
+        self.processor_specific_bytes
+    }
+
+    pub const fn application_specific_count(self) -> u64 {
+        self.application_specific_count
+    }
+
+    pub const fn application_specific_bytes(self) -> u64 {
+        self.application_specific_bytes
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct BootElfSectionGroups {
     section_count: u64,
     byte_size: u64,

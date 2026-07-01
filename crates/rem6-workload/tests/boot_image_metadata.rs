@@ -17,6 +17,9 @@ const SHT_SYMTAB_SHNDX: u32 = 18;
 const SHT_GNU_VERDEF: u32 = 0x6fff_fffd;
 const SHT_GNU_VERNEED: u32 = 0x6fff_fffe;
 const SHT_GNU_VERSYM: u32 = 0x6fff_ffff;
+const SHT_GNU_ATTRIBUTES: u32 = 0x6fff_fff5;
+const SHT_ARM_ATTRIBUTES: u32 = 0x7000_0003;
+const SHT_LOUSER: u32 = 0x8000_0000;
 const SHT_STRTAB: u32 = 3;
 const SHT_NOBITS: u32 = 8;
 const SHN_ABS: u16 = 0xfff1;
@@ -315,6 +318,20 @@ fn elf64_image_with_section_index_table(machine: u16) -> Vec<u8> {
     set_elf64_section_kind_flags(&mut elf, 1, SHT_SYMTAB_SHNDX, 0);
     set_elf64_section_size(&mut elf, 1, 12);
     set_elf64_section_entry_size(&mut elf, 1, 4);
+    elf
+}
+
+fn elf64_image_with_section_type_ranges(machine: u16) -> Vec<u8> {
+    let mut elf = elf64_image_with_named_sections(
+        machine,
+        &[".gnu.attributes", ".ARM.attributes", ".app.meta"],
+    );
+    set_elf64_section_kind_flags(&mut elf, 1, SHT_GNU_ATTRIBUTES, 0);
+    set_elf64_section_size(&mut elf, 1, 4);
+    set_elf64_section_kind_flags(&mut elf, 2, SHT_ARM_ATTRIBUTES, 0);
+    set_elf64_section_size(&mut elf, 2, 8);
+    set_elf64_section_kind_flags(&mut elf, 3, SHT_LOUSER + 1, 0);
+    set_elf64_section_size(&mut elf, 3, 12);
     elf
 }
 
@@ -1586,6 +1603,26 @@ fn workload_boot_image_preserves_elf_section_index_table_round_trip() {
     assert_eq!(index_tables.section_count(), 1);
     assert_eq!(index_tables.byte_size(), 12);
     assert_eq!(index_tables.entry_count(), 3);
+}
+
+#[test]
+fn workload_boot_image_preserves_elf_section_type_ranges_round_trip() {
+    let image = BootImage::from_elf64_le(&elf64_image_with_section_type_ranges(243)).unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let ranges = round_trip_metadata.section_type_ranges();
+
+    assert_eq!(ranges.os_specific_count(), 1);
+    assert_eq!(ranges.os_specific_bytes(), 4);
+    assert_eq!(ranges.processor_specific_count(), 1);
+    assert_eq!(ranges.processor_specific_bytes(), 8);
+    assert_eq!(ranges.application_specific_count(), 1);
+    assert_eq!(ranges.application_specific_bytes(), 12);
 }
 
 #[test]
@@ -2947,6 +2984,53 @@ fn workload_manifest_identity_includes_elf_section_index_tables() {
         .unwrap();
 
     assert_ne!(baseline.identity(), index.identity());
+}
+
+#[test]
+fn workload_manifest_identity_includes_elf_section_type_ranges() {
+    let mut baseline_elf =
+        elf64_image_with_named_sections(243, &[".gnu.attributes", ".ARM.attributes", ".app.meta"]);
+    set_elf64_section_size(&mut baseline_elf, 1, 4);
+    set_elf64_section_size(&mut baseline_elf, 2, 8);
+    set_elf64_section_size(&mut baseline_elf, 3, 12);
+    let range_elf = elf64_image_with_section_type_ranges(243);
+    let baseline_source = BootImage::from_elf64_le(&baseline_elf).unwrap();
+    let range_source = BootImage::from_elf64_le(&range_elf).unwrap();
+
+    assert_eq!(baseline_source.entry(), range_source.entry());
+    assert_eq!(baseline_source.segments(), range_source.segments());
+    assert_eq!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_header_table(),
+        range_source.elf_metadata().unwrap().section_header_table(),
+    );
+    assert_eq!(
+        baseline_source.elf_metadata().unwrap().section_storage(),
+        range_source.elf_metadata().unwrap().section_storage(),
+    );
+    assert_ne!(
+        baseline_source
+            .elf_metadata()
+            .unwrap()
+            .section_type_ranges()
+            .os_specific_count(),
+        range_source
+            .elf_metadata()
+            .unwrap()
+            .section_type_ranges()
+            .os_specific_count(),
+    );
+
+    let baseline = WorkloadManifest::builder(id("same"), baseline_source)
+        .build()
+        .unwrap();
+    let range = WorkloadManifest::builder(id("same"), range_source)
+        .build()
+        .unwrap();
+
+    assert_ne!(baseline.identity(), range.identity());
 }
 
 #[test]
