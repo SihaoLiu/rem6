@@ -116,6 +116,11 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 &format!("{alias_prefix}.branchPred.BTBLookups"),
                 lookups,
             );
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.btb.lookups::total"),
+                lookups,
+            );
         }
         if let Some(hits) = btb_hits {
             append_derived_count_stat(output, &format!("{alias_prefix}.branchPred.BTBHits"), hits);
@@ -139,6 +144,11 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
                 &format!("{alias_prefix}.branchPred.BTBUpdates"),
                 updates,
             );
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.btb.updates::total"),
+                updates,
+            );
         }
         if let Some(evictions) = snapshot_value(
             snapshot,
@@ -157,6 +167,11 @@ fn append_gem5_branch_prediction_alias_stats(output: &mut String, snapshot: &Sta
             append_derived_count_stat(
                 output,
                 &format!("{alias_prefix}.branchPred.BTBMispredicted"),
+                mispredictions,
+            );
+            append_derived_count_stat(
+                output,
+                &format!("{alias_prefix}.branchPred.btb.mispredict::total"),
                 mispredictions,
             );
         }
