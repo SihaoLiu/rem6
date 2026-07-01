@@ -1348,6 +1348,9 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     if xlen == RiscvGdbXlen::Rv64 && number == RISCV_GDB_RV64_MACHINE_ENVIRONMENT_CONFIG_REGISTER {
         return RiscvGdbCsrRegister::EnvironmentConfig(RiscvEnvironmentConfigCsr::Menvcfg);
     }
+    if xlen == RiscvGdbXlen::Rv64 && number == RISCV_GDB_RV64_MACHINE_CONFIG_POINTER_REGISTER {
+        return RiscvGdbCsrRegister::MachineIdentity(RiscvMachineIdentityCsr::ConfigPointer);
+    }
     if xlen == RiscvGdbXlen::Rv32 && number == RISCV_GDB_RV32_STATUS_HIGH_REGISTER {
         return RiscvGdbCsrRegister::Status(RiscvStatusCsr::Mstatush);
     }
@@ -1367,6 +1370,11 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
             }
             RISCV_GDB_RV32_MACHINE_COUNTER_INSTRET_HIGH_REGISTER => {
                 return RiscvGdbCsrRegister::CounterWord(RiscvCounterCsrWord::InstretHigh);
+            }
+            RISCV_GDB_RV32_MACHINE_CONFIG_POINTER_REGISTER => {
+                return RiscvGdbCsrRegister::MachineIdentity(
+                    RiscvMachineIdentityCsr::ConfigPointer,
+                );
             }
             _ => {}
         }

@@ -105,6 +105,7 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "  <reg name=\"scounteren\" bitsize=\"64\" regnum=\"156\"/>\n",
             "  <reg name=\"mcounteren\" bitsize=\"64\" regnum=\"157\"/>\n",
             "  <reg name=\"menvcfg\" bitsize=\"64\" regnum=\"158\"/>\n",
+            "  <reg name=\"mconfigptr\" bitsize=\"64\" regnum=\"159\"/>\n",
             "</feature>\n",
         ),
     );
@@ -168,9 +169,10 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "scounteren",
             "mcounteren",
             "menvcfg",
+            "mconfigptr",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 57);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 58);
 }
 
 #[test]
@@ -439,6 +441,7 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "  <reg name=\"instreth\" bitsize=\"32\" regnum=\"163\"/>\n",
             "  <reg name=\"mcycleh\" bitsize=\"32\" regnum=\"164\"/>\n",
             "  <reg name=\"minstreth\" bitsize=\"32\" regnum=\"165\"/>\n",
+            "  <reg name=\"mconfigptr\" bitsize=\"32\" regnum=\"166\"/>\n",
             "</feature>\n",
         ),
     );
@@ -509,9 +512,10 @@ fn riscv_gdb_target_description_reports_rv32_csr_document() {
             "instreth",
             "mcycleh",
             "minstreth",
+            "mconfigptr",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"32\"").count(), 64);
+    assert_eq!(csr.matches("bitsize=\"32\"").count(), 65);
 }
 
 #[test]

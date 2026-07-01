@@ -481,6 +481,7 @@ pub enum RiscvMachineIdentityCsr {
     ArchitectureId,
     ImplementationId,
     HartId,
+    ConfigPointer,
 }
 
 impl RiscvMachineIdentityCsr {
@@ -490,6 +491,7 @@ impl RiscvMachineIdentityCsr {
             Self::ArchitectureId => 0xf12,
             Self::ImplementationId => 0xf13,
             Self::HartId => 0xf14,
+            Self::ConfigPointer => 0xf15,
         }
     }
 
@@ -499,13 +501,17 @@ impl RiscvMachineIdentityCsr {
             0xf12 => Some(Self::ArchitectureId),
             0xf13 => Some(Self::ImplementationId),
             0xf14 => Some(Self::HartId),
+            0xf15 => Some(Self::ConfigPointer),
             _ => None,
         }
     }
 
     pub const fn read(self, hart_id: u64) -> u64 {
         match self {
-            Self::VendorId | Self::ArchitectureId | Self::ImplementationId => 0,
+            Self::VendorId
+            | Self::ArchitectureId
+            | Self::ImplementationId
+            | Self::ConfigPointer => 0,
             Self::HartId => hart_id,
         }
     }

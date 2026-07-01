@@ -425,16 +425,27 @@ fn hart_reads_machine_identity_csrs() {
     let vendor_id = RiscvInstruction::decode(csr_read_type(0xf11, 5)).unwrap();
     let architecture_id = RiscvInstruction::decode(csr_read_type(0xf12, 6)).unwrap();
     let implementation_id = RiscvInstruction::decode(csr_read_type(0xf13, 7)).unwrap();
+    let config_pointer = RiscvInstruction::decode(csr_read_type(0xf15, 8)).unwrap();
+
+    assert_eq!(
+        config_pointer,
+        RiscvInstruction::MachineInformationCsr(RiscvMachineInformationCsrInstruction::read(
+            reg(8),
+            machine_identity(RiscvMachineIdentityCsr::ConfigPointer),
+        ))
+    );
 
     let mut hart = RiscvHartState::with_hart_id(0x2200, 7);
     hart.execute(vendor_id).unwrap();
     hart.execute(architecture_id).unwrap();
-    let record = hart.execute(implementation_id).unwrap();
+    hart.execute(implementation_id).unwrap();
+    let record = hart.execute(config_pointer).unwrap();
 
     assert_eq!(hart.read(reg(5)), 0);
     assert_eq!(hart.read(reg(6)), 0);
     assert_eq!(hart.read(reg(7)), 0);
-    assert_eq!(record.next_pc(), 0x220c);
+    assert_eq!(hart.read(reg(8)), 0);
+    assert_eq!(record.next_pc(), 0x2210);
 }
 
 #[test]

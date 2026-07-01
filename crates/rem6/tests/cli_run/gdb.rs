@@ -741,32 +741,25 @@ fn rem6_run_gdb_listen_reads_machine_identity_csrs_before_execution() {
         csr_read(0xf11, 5),         // csrr x5, mvendorid
         csr_read(0xf12, 6),         // csrr x6, marchid
         csr_read(0xf13, 7),         // csrr x7, mimpid
+        csr_read(0xf15, 8),         // csrr x8, mconfigptr
         i_type(1, 5, 0x0, 5, 0x13), // addi x5, x5, 1
         i_type(2, 6, 0x0, 6, 0x13), // addi x6, x6, 2
         i_type(3, 7, 0x0, 7, 0x13), // addi x7, x7, 3
+        i_type(4, 8, 0x0, 8, 0x13), // addi x8, x8, 4
         0x0000_0073,                // ecall
     ]);
     let (child, mut stream) = start_riscv_gdb_run("gdb-listen-machine-identity", program, 80);
 
     assert_eq!(send_gdb_packet(&mut stream, b"?"), gdb_response(b"S05"));
     let mut csr_description = String::new();
-    for payload in [
-        b"qXfer:features:read:riscv-64bit-csr.xml:0,a0".as_slice(),
-        b"qXfer:features:read:riscv-64bit-csr.xml:a0,a0".as_slice(),
-        b"qXfer:features:read:riscv-64bit-csr.xml:140,a0".as_slice(),
-        b"qXfer:features:read:riscv-64bit-csr.xml:1e0,a0".as_slice(),
-        b"qXfer:features:read:riscv-64bit-csr.xml:280,a0".as_slice(),
-        b"qXfer:features:read:riscv-64bit-csr.xml:320,a0".as_slice(),
-        b"qXfer:features:read:riscv-64bit-csr.xml:3c0,a0".as_slice(),
-        b"qXfer:features:read:riscv-64bit-csr.xml:460,a0".as_slice(),
-        b"qXfer:features:read:riscv-64bit-csr.xml:500,a0".as_slice(),
-    ] {
+    for offset in (0..=0xaa0).step_by(0xa0) {
+        let payload = format!("qXfer:features:read:riscv-64bit-csr.xml:{offset:x},a0");
         csr_description.push_str(&String::from_utf8_lossy(&send_gdb_packet(
             &mut stream,
-            payload,
+            payload.as_bytes(),
         )));
     }
-    for register in ["mvendorid", "marchid", "mimpid"] {
+    for register in ["mvendorid", "marchid", "mimpid", "mconfigptr"] {
         assert!(
             csr_description.contains(register),
             "missing {register} in {csr_description}"
@@ -782,6 +775,10 @@ fn rem6_run_gdb_listen_reads_machine_identity_csrs_before_execution() {
     );
     assert_eq!(
         send_gdb_packet(&mut stream, b"p82"),
+        gdb_response(b"0000000000000000")
+    );
+    assert_eq!(
+        send_gdb_packet(&mut stream, b"p9f"),
         gdb_response(b"0000000000000000")
     );
     stream.write_all(&gdb_packet(b"c")).unwrap();
@@ -803,6 +800,7 @@ fn rem6_run_gdb_listen_reads_machine_identity_csrs_before_execution() {
     assert!(stdout.contains("\"x5\":\"0x1\""), "stdout: {stdout}");
     assert!(stdout.contains("\"x6\":\"0x2\""), "stdout: {stdout}");
     assert!(stdout.contains("\"x7\":\"0x3\""), "stdout: {stdout}");
+    assert!(stdout.contains("\"x8\":\"0x4\""), "stdout: {stdout}");
 }
 
 #[test]

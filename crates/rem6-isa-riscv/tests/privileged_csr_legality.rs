@@ -341,6 +341,7 @@ fn hart_traps_lower_privilege_machine_identity_csr_reads() {
         (RiscvPrivilegeMode::User, 0xf12, 0x7d10),
         (RiscvPrivilegeMode::Supervisor, 0xf13, 0x7d20),
         (RiscvPrivilegeMode::User, 0xf14, 0x7d30),
+        (RiscvPrivilegeMode::Supervisor, 0xf15, 0x7d40),
     ];
 
     for (mode, csr, pc) in cases {
@@ -409,7 +410,7 @@ fn hart_traps_lower_privilege_machine_isa_csr_accesses() {
 
 #[test]
 fn hart_traps_machine_identity_csr_write_attempts() {
-    let identity_csrs = [0xf11, 0xf12, 0xf13, 0xf14];
+    let identity_csrs = [0xf11, 0xf12, 0xf13, 0xf14, 0xf15];
     let write_forms = [(1, 0x1), (1, 0x2), (1, 0x3), (1, 0x5), (1, 0x6), (1, 0x7)];
     let mut pc = 0x7e00;
 

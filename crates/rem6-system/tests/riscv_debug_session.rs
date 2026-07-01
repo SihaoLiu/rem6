@@ -88,7 +88,7 @@ fn riscv_gdb_remote_packet_handler_reads_and_writes_rv64d_float_registers() {
         )
         .unwrap(),
     );
-    assert_eq!(registers.len(), rv64_register_hex_offset(159));
+    assert_eq!(registers.len(), rv64_register_hex_offset(160));
     assert_eq!(&registers[rv64_register_hex_range(33)], b"8877665544332211");
     assert_eq!(&registers[rv64_register_hex_range(64)], b"1032547698badcfe");
     assert_eq!(
@@ -296,7 +296,7 @@ fn riscv_gdb_remote_register_write_reports_invalid_requests() {
             &GdbRemoteCommand::WriteRegisters { bytes: vec![0; 8] },
         ),
         Err(RiscvGdbRegisterWriteError::InvalidRegisterSetBytes {
-            expected: 33 * 4 + 32 * 8 + 4 * 4 + 20 * 4 + 32 * 16 + 44 * 4,
+            expected: 33 * 4 + 32 * 8 + 4 * 4 + 20 * 4 + 32 * 16 + 45 * 4,
             actual: 8,
         }),
     );
@@ -2180,7 +2180,7 @@ fn rv64_register_hex_offset(number: u64) -> usize {
         66..=69 => (33 * 8) + (32 * 8) + ((number - 66) * 4),
         70..=89 => (33 * 8) + (32 * 8) + (4 * 4) + ((number - 70) * 8),
         90..=121 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + ((number - 90) * 16),
-        122..=159 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
+        122..=160 => (33 * 8) + (32 * 8) + (4 * 4) + (20 * 8) + (32 * 16) + ((number - 122) * 8),
         _ => panic!("unsupported RV64 GDB register number"),
     };
     byte_offset as usize * 2
@@ -2285,6 +2285,7 @@ fn rv64_register_set_write_bytes() -> Vec<u8> {
     bytes.extend_from_slice(&0x67_u64.to_le_bytes());
     bytes.extend_from_slice(&0x05_u64.to_le_bytes());
     bytes.extend_from_slice(&0x55_u64.to_le_bytes());
+    bytes.extend_from_slice(&0_u64.to_le_bytes());
     bytes
 }
 
