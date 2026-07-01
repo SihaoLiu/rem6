@@ -37,6 +37,7 @@ fn vector_load_unit_stride(address: u64) -> MemoryAccessKind {
         address,
         width: MemoryWidth::Word,
         byte_len: 32,
+        byte_mask: None,
         group_registers: 2,
     }
 }

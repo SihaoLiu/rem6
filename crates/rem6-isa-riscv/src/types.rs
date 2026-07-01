@@ -273,6 +273,7 @@ pub enum MemoryAccessKind {
         address: u64,
         width: MemoryWidth,
         byte_len: usize,
+        byte_mask: Option<Vec<bool>>,
         group_registers: usize,
     },
     LoadReserved {
@@ -313,6 +314,7 @@ pub enum MemoryAccessKind {
         address: u64,
         width: MemoryWidth,
         data: Vec<u8>,
+        byte_mask: Option<Vec<bool>>,
         group_registers: usize,
     },
 }

@@ -697,12 +697,14 @@ impl OutstandingDataAccess {
                 )
                 .map_err(RiscvCpuError::Memory)
             }
-            MemoryAccessKind::VectorStoreUnitStride { data, .. } => MemoryRequest::write(
+            MemoryAccessKind::VectorStoreUnitStride {
+                data, byte_mask, ..
+            } => MemoryRequest::write(
                 self.request_id,
                 self.physical_address,
                 self.size,
                 data.clone(),
-                ByteMask::full(self.size).map_err(RiscvCpuError::Memory)?,
+                store_byte_mask(self.size, byte_mask.as_deref())?,
                 line_layout,
             )
             .map_err(RiscvCpuError::Memory),
@@ -851,13 +853,27 @@ fn record_load_completion(
         MemoryAccessKind::VectorLoadUnitStride {
             vd,
             byte_len,
+            byte_mask,
             group_registers,
             ..
         } => {
             let data = data.expect(missing_data);
             assert_eq!(*byte_len, data.len(), "vector load response payload width");
             let mut destination = read_vector_register_group(&state.hart, *vd, *group_registers);
-            destination[..*byte_len].copy_from_slice(data);
+            if let Some(byte_mask) = byte_mask {
+                assert_eq!(
+                    *byte_len,
+                    byte_mask.len(),
+                    "vector load byte mask payload width"
+                );
+                for (index, active) in byte_mask.iter().copied().enumerate() {
+                    if active {
+                        destination[index] = data[index];
+                    }
+                }
+            } else {
+                destination[..*byte_len].copy_from_slice(data);
+            }
             write_vector_register_group(&mut state.hart, *vd, *group_registers, &destination);
         }
         MemoryAccessKind::Store { .. }
@@ -1022,6 +1038,16 @@ pub(crate) fn store_bytes(value: u64, size: AccessSize) -> Vec<u8> {
     value.to_le_bytes()[..size.bytes() as usize].to_vec()
 }
 
+pub(crate) fn store_byte_mask(
+    size: AccessSize,
+    byte_mask: Option<&[bool]>,
+) -> Result<ByteMask, RiscvCpuError> {
+    match byte_mask {
+        Some(mask) => ByteMask::from_bits(mask.to_vec()).map_err(RiscvCpuError::Memory),
+        None => ByteMask::full(size).map_err(RiscvCpuError::Memory),
+    }
+}
+
 pub(crate) fn mmio_request(
     request: MemoryRequestId,
     access: &MemoryAccessKind,
@@ -1047,11 +1073,13 @@ pub(crate) fn mmio_request(
             ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
         )
         .map_err(RiscvCpuError::Mmio),
-        MemoryAccessKind::VectorStoreUnitStride { data, .. } => MmioRequest::write(
+        MemoryAccessKind::VectorStoreUnitStride {
+            data, byte_mask, ..
+        } => MmioRequest::write(
             mmio_request_id(request),
             address,
             data.clone(),
-            ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
+            store_byte_mask(size, byte_mask.as_deref())?,
         )
         .map_err(RiscvCpuError::Mmio),
     }
@@ -1100,6 +1128,7 @@ mod tests {
             address,
             width: MemoryWidth::Word,
             byte_len: 32,
+            byte_mask: None,
             group_registers: 2,
         }
     }

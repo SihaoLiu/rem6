@@ -6,7 +6,9 @@ use rem6_memory::{
     TranslationFaultKind, TranslationRequestId, TranslationResolution,
 };
 
-use crate::riscv_data_issue::{access_address, store_bytes, supports_cross_line_data_access};
+use crate::riscv_data_issue::{
+    access_address, store_byte_mask, store_bytes, supports_cross_line_data_access,
+};
 use crate::riscv_translation_state::{
     DataTranslationCompletion, PendingDataTranslation, TranslatedDataAccess,
 };
@@ -85,6 +87,7 @@ pub(super) fn cpu_translation_request(
         MemoryAccessKind::VectorStoreUnitStride {
             address,
             data: bytes,
+            byte_mask,
             ..
         } => CpuTranslationRequest::store(
             translation_id,
@@ -94,7 +97,7 @@ pub(super) fn cpu_translation_request(
             Address::new(*address),
             size,
             bytes.clone(),
-            ByteMask::full(size).map_err(RiscvCpuError::Memory)?,
+            store_byte_mask(size, byte_mask.as_deref())?,
         ),
         MemoryAccessKind::StoreConditional { address, value, .. } => {
             CpuTranslationRequest::store_conditional(

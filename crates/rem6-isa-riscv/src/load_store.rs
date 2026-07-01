@@ -1,7 +1,7 @@
 use crate::encoding::{funct3, i_imm, rd, rs1, rs2, s_imm};
 use crate::{
-    Immediate, MemoryWidth, RiscvError, RiscvInstruction, RiscvVectorMemoryInstruction,
-    VectorRegister,
+    Immediate, MemoryWidth, RiscvError, RiscvInstruction, RiscvVectorMaskMode,
+    RiscvVectorMemoryInstruction, VectorRegister,
 };
 
 pub(crate) fn decode_integer_load(raw: u32) -> Result<RiscvInstruction, RiscvError> {
@@ -47,7 +47,7 @@ pub(crate) fn opcode_uses_vector_memory(raw: u32) -> bool {
 }
 
 pub(crate) fn decode_vector_load(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    if !is_unmasked_unit_stride_vector_memory(raw) {
+    if !is_unit_stride_vector_memory(raw) {
         return Err(RiscvError::UnknownEncoding { raw });
     }
     let width = vector_memory_width(raw).ok_or(RiscvError::UnknownEncoding { raw })?;
@@ -57,12 +57,13 @@ pub(crate) fn decode_vector_load(raw: u32) -> Result<RiscvInstruction, RiscvErro
             vd: vector_register(raw, 7),
             rs1: rs1(raw),
             width,
+            mask: vector_memory_mask_mode(raw),
         },
     ))
 }
 
 pub(crate) fn decode_vector_store(raw: u32) -> Result<RiscvInstruction, RiscvError> {
-    if !is_unmasked_unit_stride_vector_memory(raw) {
+    if !is_unit_stride_vector_memory(raw) {
         return Err(RiscvError::UnknownEncoding { raw });
     }
     let width = vector_memory_width(raw).ok_or(RiscvError::UnknownEncoding { raw })?;
@@ -72,16 +73,16 @@ pub(crate) fn decode_vector_store(raw: u32) -> Result<RiscvInstruction, RiscvErr
             vs3: vector_register(raw, 7),
             rs1: rs1(raw),
             width,
+            mask: vector_memory_mask_mode(raw),
         },
     ))
 }
 
-fn is_unmasked_unit_stride_vector_memory(raw: u32) -> bool {
-    let vm_unmasked = (raw & (1 << 25)) != 0;
+fn is_unit_stride_vector_memory(raw: u32) -> bool {
     let mop = (raw >> 26) & 0x3;
     let lumop_or_sumop = (raw >> 20) & 0x1f;
     let mew_and_nf = (raw >> 28) & 0xf;
-    vm_unmasked && mop == 0 && lumop_or_sumop == 0 && mew_and_nf == 0
+    mop == 0 && lumop_or_sumop == 0 && mew_and_nf == 0
 }
 
 fn vector_memory_width(raw: u32) -> Option<MemoryWidth> {
@@ -96,4 +97,8 @@ fn vector_memory_width(raw: u32) -> Option<MemoryWidth> {
 
 fn vector_register(raw: u32, shift: u32) -> VectorRegister {
     VectorRegister::from_field((raw >> shift) & 0x1f)
+}
+
+fn vector_memory_mask_mode(raw: u32) -> RiscvVectorMaskMode {
+    RiscvVectorMaskMode::from_vm_bit((raw & (1 << 25)) != 0)
 }
