@@ -71,7 +71,7 @@ parity are not present.
 
 - [x] RV64 integer, atomic, CSR, trap, counter, WFI, fence, PMP/PMA slices have tests.
 - [x] RV64C integer/load-store/control-flow slices have tests.
-- [x] RV64F/RV64D scalar load/store, arithmetic, comparisons, conversions, legal FP arithmetic and integer-to-float rounding-mode decode, exact static non-RNE integer-to-float conversion execution, inexact integer-to-float accrued flag updates, rounding-insensitive static arithmetic execution, `fadd.s`/`fsub.s` exact-wide-sum directed rounding, `fadd.d`/`fsub.d` finite directed rounding with NX and directed overflow flags, `fmul.s` exact-product and `fmul.d` normal finite exact-product plus directed-overflow and directed-underflow subnormal rounding, `fdiv.s` and `fdiv.d` finite-quotient directed rounding with NX, `fsqrt.s` and `fsqrt.d` directed rounding with NX, `fcvt.s.d` directed rounding with NX, `fcvt.d.s` signaling-NaN invalid accrual, `fmadd.s` exact-window directed rounding, narrow `fmadd.d` exact-window static/dynamic directed rounding slices, `fadd.s`/`fsub.s`/`fmul.s`/`fmadd.s` invalid, overflow, underflow, and inexact accrued flags, and NaN-boxing have tests.
+- [x] RV64F/RV64D scalar load/store, arithmetic, comparisons, conversions, legal FP arithmetic and integer-to-float rounding-mode decode, exact static non-RNE integer-to-float conversion execution, inexact integer-to-float accrued flag updates, rounding-insensitive static arithmetic execution, `fadd.s`/`fsub.s` exact-wide-sum directed rounding, `fadd.d`/`fsub.d` finite directed rounding with NX and directed overflow flags, `fmul.s` exact-product and `fmul.d` normal finite exact-product plus directed-overflow and directed-underflow subnormal rounding, `fdiv.s` and `fdiv.d` finite-quotient directed rounding with NX, `fsqrt.s` and `fsqrt.d` directed rounding with NX, `fcvt.s.d` directed rounding with NX, `fcvt.d.s` signaling-NaN invalid accrual, `fmadd.s` exact-window directed rounding, narrow `fmadd.d` exact-window and product-overflow directed rounding slices, `fadd.s`/`fsub.s`/`fmul.s`/`fmadd.s` invalid, overflow, underflow, and inexact accrued flags, and NaN-boxing have tests.
 - [x] RV64F/RV64D integer-to-float conversions execute inexact static directed rounding and valid dynamic `frm` modes with accrued inexact flags.
 - [x] RV64C double-precision FP load/store decode and compressed FP load/store CPU data-access slices have tests.
 - [x] RVV vector-configuration instruction family (`vsetvli`, `vsetivli`, `vsetvl`) decode, hart execution, and CPU fetch-stream execution have tests.
@@ -109,7 +109,7 @@ directed subnormal underflow boundaries with UF/NX, `fdiv.s` and `fdiv.d`
 finite-quotient static directed rounding with NX accrual, `fsqrt.s` and `fsqrt.d` static directed rounding with NX accrual, `fcvt.s.d` static/dynamic directed rounding with NX accrual, `fcvt.d.s` signaling-NaN invalid accrual, `fmadd.s` exact-window
 static/dynamic directed rounding with RMM tie-away, NX, and directed-boundary
 overflow accrual, narrow `fmadd.d`
-static RoundUp and dynamic RoundDown exact-window inexact rounding with
+static RoundUp and dynamic RoundDown exact-window plus product-overflow directed rounding with
 directed zero-sign and overflow-flag boundary slices, plus
 `fadd.s`/`fsub.s` signaling-NaN, infinity invalid, overflow, and wider finite
 NX flag slices, compressed double FP load/store decoding, compressed FP load/store
@@ -1179,7 +1179,7 @@ extended program-header-count (`PN_XNUM`) loading, `PT_LOAD` summary/alignment, 
 `PT_INTERP` interpreter reporting/rejection, `.tbss`/`PT_TLS` TLS metadata,
 `PT_GNU_STACK` stack-exec, `PT_GNU_RELRO`, `PT_GNU_EH_FRAME`, and `PT_GNU_PROPERTY` metadata,
 symbol type, binding, GNU-unique binding, visibility, section-index, TLS-type, and IFUNC-type counts plus dynamic-symbol type, binding, and visibility counts, section-header/name/basic and extended flag/storage/string-table/array/hash/index-table/type-range/version/group/address/alignment plus `SHT_NOTE` and `SHT_REL`/`SHT_RELA`/`SHT_RELR` count/byte metadata, dynamic needed/path/loader-string/table/lifecycle-scalar/array/REL/RELA/RELR relocation/hash/version/linker/flag and ABI-note OS metadata,
-plus RV64D `fadd.d` RoundUp, `fsub.d` RoundDown directed overflow, and `fsqrt.d` directed rounding/NX ELF smokes and RV64F/RV64D scalar FP slices including `fcvt.s.d` directed rounding/NX and `fcvt.d.s` signaling-NaN invalid accrual.
+plus RV64D `fadd.d` RoundUp, `fsub.d` RoundDown directed overflow, `fmadd.d` product-overflow, and `fsqrt.d` directed rounding/NX ELF smokes and RV64F/RV64D scalar FP slices including `fcvt.s.d` directed rounding/NX and `fcvt.d.s` signaling-NaN invalid accrual.
 
 **Not migrated:** Complete `ext/libelf`, `ext/libfdt`, and `ext/softfloat` parity.
 
@@ -1187,7 +1187,7 @@ plus RV64D `fadd.d` RoundUp, `fsub.d` RoundDown directed overflow, and `fsqrt.d`
 counts, `PT_LOAD` summary/alignment JSON/stats, `PT_PHDR`/`PT_NOTE` JSON/stats, `PT_INTERP` rejection/reporting, `.tbss`/`PT_TLS`
 TLS metadata, `PT_GNU_STACK`, `PT_GNU_RELRO`, `PT_GNU_EH_FRAME`, and `PT_GNU_PROPERTY` metadata,
 symbol type, binding, GNU-unique binding, visibility, section-index, TLS-type, and IFUNC-type counts plus dynamic-symbol type, binding, and visibility counts, section-header/name/basic and extended flag/storage/string-table/array/hash/index-table/type-range/version/group/address/alignment plus `SHT_NOTE` and `SHT_REL`/`SHT_RELA`/`SHT_RELR` count/byte JSON/stats, dynamic needed/path/loader-string/table/lifecycle-scalar/array/REL/RELA/RELR relocation/hash/version/linker/flag JSON/stats,
-ELF32 extended counts, ABI-note OS, DTB, RV64D `fadd.d` RoundUp, `fsub.d` RoundDown, and `fsqrt.d` ELF smokes, and RV64F/RV64D `fcvt.s.d`/`fcvt.d.s` tests.
+ELF32 extended counts, ABI-note OS, DTB, RV64D `fadd.d` RoundUp, `fsub.d` RoundDown, `fmadd.d` product-overflow, and `fsqrt.d` ELF smokes, and RV64F/RV64D `fcvt.s.d`/`fcvt.d.s` tests.
 
 **Next evidence:** Expand loader breadth beyond current extended-numbering
 slices and soft-float parity.

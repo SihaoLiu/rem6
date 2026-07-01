@@ -172,3 +172,83 @@ fn hart_rv64d_fmadd_raises_overflow_when_directed_result_is_max_finite() {
         assert_eq!(hart.float_status().fflags(), expected_flags);
     }
 }
+
+#[test]
+fn hart_rv64d_fmadd_directed_rounding_when_product_native_overflows() {
+    let max_finite = f64::from_bits(0x7fef_ffff_ffff_ffff);
+    let expected_flags = FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT;
+    for (rounding_mode, expected_bits) in [
+        (
+            RiscvFloatRoundingMode::RoundTowardZero,
+            max_finite.to_bits(),
+        ),
+        (RiscvFloatRoundingMode::RoundDown, max_finite.to_bits()),
+        (RiscvFloatRoundingMode::RoundUp, f64::INFINITY.to_bits()),
+        (
+            RiscvFloatRoundingMode::RoundNearestMaxMagnitude,
+            f64::INFINITY.to_bits(),
+        ),
+    ] {
+        let mut hart = RiscvHartState::new(0xb1c0);
+        hart.write_float(freg(1), max_finite.to_bits());
+        hart.write_float(freg(2), max_finite.to_bits());
+        hart.write_float(freg(3), 0x0000_0000_0000_0001);
+
+        let fused = hart
+            .execute(RiscvInstruction::FloatMultiplyAddD {
+                rd: freg(4),
+                rs1: freg(1),
+                rs2: freg(2),
+                rs3: freg(3),
+                rounding_mode,
+            })
+            .unwrap();
+
+        assert_eq!(fused.trap(), None);
+        assert_eq!(hart.read_float(freg(4)), expected_bits);
+        assert_eq!(hart.float_status().fflags(), expected_flags);
+    }
+}
+
+#[test]
+fn hart_rv64d_fmadd_directed_rounding_when_negative_product_native_overflows() {
+    let negative_max_finite = f64::from_bits(0xffef_ffff_ffff_ffff);
+    let expected_flags = FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT;
+    for (rounding_mode, expected_bits) in [
+        (
+            RiscvFloatRoundingMode::RoundTowardZero,
+            negative_max_finite.to_bits(),
+        ),
+        (
+            RiscvFloatRoundingMode::RoundDown,
+            f64::NEG_INFINITY.to_bits(),
+        ),
+        (
+            RiscvFloatRoundingMode::RoundUp,
+            negative_max_finite.to_bits(),
+        ),
+        (
+            RiscvFloatRoundingMode::RoundNearestMaxMagnitude,
+            f64::NEG_INFINITY.to_bits(),
+        ),
+    ] {
+        let mut hart = RiscvHartState::new(0xb200);
+        hart.write_float(freg(1), negative_max_finite.to_bits());
+        hart.write_float(freg(2), 0x7fef_ffff_ffff_ffff);
+        hart.write_float(freg(3), 0x0000_0000_0000_0001);
+
+        let fused = hart
+            .execute(RiscvInstruction::FloatMultiplyAddD {
+                rd: freg(4),
+                rs1: freg(1),
+                rs2: freg(2),
+                rs3: freg(3),
+                rounding_mode,
+            })
+            .unwrap();
+
+        assert_eq!(fused.trap(), None);
+        assert_eq!(hart.read_float(freg(4)), expected_bits);
+        assert_eq!(hart.float_status().fflags(), expected_flags);
+    }
+}

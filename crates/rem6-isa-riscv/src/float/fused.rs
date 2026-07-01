@@ -19,6 +19,7 @@ pub(super) fn single_directed_rounding_is_supported(lhs: u64, rhs: u64, addend: 
 
 pub(super) fn double_directed_rounding_is_supported(lhs: u64, rhs: u64, addend: u64) -> bool {
     exact_double_value(lhs, rhs, addend).is_some()
+        || native_double_overflow_is_negative(lhs, rhs, addend).is_some()
 }
 
 pub(super) fn single_register_write(
@@ -44,7 +45,10 @@ pub(super) fn double_register_write(
 ) -> u64 {
     match exact_double_value(lhs, rhs, addend) {
         Some(exact) => round_exact_double(lhs, rhs, addend, exact, rounding_mode),
-        None => native_double_register_write(lhs, rhs, addend),
+        None => match native_double_overflow_is_negative(lhs, rhs, addend) {
+            Some(negative) => overflow_bits_double(negative, rounding_mode),
+            None => native_double_register_write(lhs, rhs, addend),
+        },
     }
 }
 
@@ -285,10 +289,16 @@ fn double_overflows(
 ) -> bool {
     match exact_double_value(lhs, rhs, addend) {
         Some(exact) => exact_overflows_double(exact, rounding_mode),
-        None => f64::from_bits(lhs)
-            .mul_add(f64::from_bits(rhs), f64::from_bits(addend))
-            .is_infinite(),
+        None => native_double_overflow_is_negative(lhs, rhs, addend).is_some(),
     }
+}
+
+fn native_double_overflow_is_negative(lhs: u64, rhs: u64, addend: u64) -> Option<bool> {
+    if !is_finite_double(lhs) || !is_finite_double(rhs) || !is_finite_double(addend) {
+        return None;
+    }
+    let native_bits = native_double_register_write(lhs, rhs, addend);
+    is_infinity_double(native_bits).then(|| has_double_sign(native_bits))
 }
 
 fn single_is_exact(lhs: u32, rhs: u32, addend: u32) -> bool {
