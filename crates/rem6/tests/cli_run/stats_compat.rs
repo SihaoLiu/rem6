@@ -389,10 +389,30 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
             text_stat_value(&stdout, &format!("sim.cpu{cpu}.branch_predictor.btb.hits"))
         );
         assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.btb.misses::total")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.btb.misses")
+            )
+        );
+        assert_eq!(
             text_stat_value(&stdout, &format!("system.cpu{cpu}.branchPred.BTBUpdates")),
             text_stat_value(
                 &stdout,
                 &format!("sim.cpu{cpu}.branch_predictor.btb.updates")
+            )
+        );
+        assert_eq!(
+            text_stat_value(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.btb.evictions")
+            ),
+            text_stat_value(
+                &stdout,
+                &format!("sim.cpu{cpu}.branch_predictor.btb.evictions")
             )
         );
         assert_eq!(
@@ -661,8 +681,24 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
             "{stdout}"
         );
         assert!(
+            text_stat_line(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.btb.misses::total")
+            )
+            .contains("unit=Count"),
+            "{stdout}"
+        );
+        assert!(
             text_stat_line(&stdout, &format!("system.cpu{cpu}.branchPred.BTBUpdates"))
                 .contains("unit=Count"),
+            "{stdout}"
+        );
+        assert!(
+            text_stat_line(
+                &stdout,
+                &format!("system.cpu{cpu}.branchPred.btb.evictions")
+            )
+            .contains("unit=Count"),
             "{stdout}"
         );
         assert!(
@@ -840,7 +876,15 @@ fn rem6_run_text_stats_emit_gem5_multicore_cpu_aliases_and_rates_without_ambiguo
     ));
     assert!(!has_text_stat(&stdout, "system.cpu.branchPred.BTBLookups"));
     assert!(!has_text_stat(&stdout, "system.cpu.branchPred.BTBHits"));
+    assert!(!has_text_stat(
+        &stdout,
+        "system.cpu.branchPred.btb.misses::total"
+    ));
     assert!(!has_text_stat(&stdout, "system.cpu.branchPred.BTBUpdates"));
+    assert!(!has_text_stat(
+        &stdout,
+        "system.cpu.branchPred.btb.evictions"
+    ));
     assert!(!has_text_stat(&stdout, "system.cpu.branchPred.BTBHitRatio"));
     assert!(!has_text_stat(
         &stdout,
@@ -6056,7 +6100,9 @@ fn rem6_run_stats_emit_conditional_branch_predicted_taken_from_execution() {
     assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.condPredictedTaken\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.BTBLookups\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.BTBHits\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.btb.misses::total\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.BTBUpdates\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.btb.evictions\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.BTBHitRatio\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.BTBMispredicted\""));
     assert!(!stdout.contains("\"path\":\"system.cpu.branchPred.predTakenBTBMiss\""));
@@ -6074,7 +6120,9 @@ fn rem6_run_stats_emit_conditional_branch_predicted_taken_from_execution() {
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.condPredictedTaken\""));
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.BTBLookups\""));
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.BTBHits\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.btb.misses::total\""));
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.BTBUpdates\""));
+    assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.btb.evictions\""));
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.BTBHitRatio\""));
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.BTBMispredicted\""));
     assert!(!stdout.contains("\"path\":\"system.cpu0.branchPred.predTakenBTBMiss\""));
@@ -6126,7 +6174,9 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
     );
     let btb_lookups = text_stat_value(&stdout, "sim.cpu0.branch_predictor.btb.lookups");
     let btb_hits = text_stat_value(&stdout, "sim.cpu0.branch_predictor.btb.hits");
+    let btb_misses = text_stat_value(&stdout, "sim.cpu0.branch_predictor.btb.misses");
     let btb_updates = text_stat_value(&stdout, "sim.cpu0.branch_predictor.btb.updates");
+    let btb_evictions = text_stat_value(&stdout, "sim.cpu0.branch_predictor.btb.evictions");
     let btb_mispredictions =
         text_stat_value(&stdout, "sim.cpu0.branch_predictor.btb.mispredictions");
     let btb_predicted_taken_misses = text_stat_value(
@@ -6210,8 +6260,16 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
         btb_hits
     );
     assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.btb.misses::total"),
+        btb_misses
+    );
+    assert_eq!(
         text_stat_value(&stdout, "system.cpu.branchPred.BTBUpdates"),
         btb_updates
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.btb.evictions"),
+        btb_evictions
     );
     assert_eq!(
         text_stat_decimal(&stdout, "system.cpu.branchPred.BTBHitRatio"),
@@ -6360,7 +6418,9 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
     assert!(branch_predicted_taken > 0, "{stdout}");
     assert!(btb_lookups > 0, "{stdout}");
     assert!(btb_hits > 0, "{stdout}");
+    assert!(btb_misses > 0, "{stdout}");
     assert!(btb_updates > 0, "{stdout}");
+    assert!(btb_evictions <= btb_updates);
     assert!(btb_mispredictions > 0, "{stdout}");
     assert!(btb_predicted_taken_misses > 0, "{stdout}");
     assert!(
@@ -6413,6 +6473,7 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
     );
     assert!(mispredict_due_to_predictor_direct_conditional <= branch_mispredictions);
     assert!(btb_hits <= btb_lookups);
+    assert_eq!(btb_hits + btb_misses, btb_lookups);
     assert!(
         text_stat_line(&stdout, "system.cpu.branchPred.condPredicted").contains("unit=Count"),
         "{stdout}"
@@ -6434,7 +6495,15 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
         "{stdout}"
     );
     assert!(
+        text_stat_line(&stdout, "system.cpu.branchPred.btb.misses::total").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
         text_stat_line(&stdout, "system.cpu.branchPred.BTBUpdates").contains("unit=Count"),
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.branchPred.btb.evictions").contains("unit=Count"),
         "{stdout}"
     );
     assert!(
@@ -6498,6 +6567,60 @@ fn rem6_run_text_stats_emit_gem5_branch_prediction_aliases() {
     assert!(
         text_stat_line(&stdout, "system.cpu.branchPred.targetProvider_0::BTB")
             .contains("unit=Count"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn rem6_run_text_stats_emit_positive_btb_eviction_alias() {
+    let mut words = vec![0x0000_0013; 162]; // addi x0, x0, 0
+    for index in [0, 32, 64, 96, 128] {
+        words[index] = j_type(128, 0);
+    }
+    words[160] = 0x0070_0293; // addi x5, x0, 7
+    words[161] = 0x0000_0073; // ecall
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &riscv64_program(&words));
+    let path = temp_binary("in-order-branch-prediction-btb-eviction-alias", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "900",
+            "--memory-route-delay",
+            "1",
+            "--riscv-branch-lookahead",
+            "2",
+            "--stats-format",
+            "text",
+            "--execute",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let btb_evictions = text_stat_value(&stdout, "sim.cpu0.branch_predictor.btb.evictions");
+
+    assert!(btb_evictions > 0, "{stdout}");
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.btb.evictions"),
+        btb_evictions
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.btb.misses::total"),
+        text_stat_value(&stdout, "sim.cpu0.branch_predictor.btb.misses")
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.branchPred.btb.evictions").contains("unit=Count"),
         "{stdout}"
     );
 }
