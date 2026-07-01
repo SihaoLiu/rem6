@@ -107,6 +107,16 @@ pub(crate) fn float_register_write_binary(
                 resolve_binary_rounding(rounding_mode, frm),
             ),
         ),
+        RiscvInstruction::FloatSubD {
+            rd, rounding_mode, ..
+        } => (
+            rd,
+            add_sub::sub_register_write_double(
+                lhs,
+                rhs,
+                resolve_binary_rounding(rounding_mode, frm),
+            ),
+        ),
         RiscvInstruction::FloatMulS {
             rd, rounding_mode, ..
         } => (
@@ -454,6 +464,9 @@ fn binary_rounding_mode_is_implemented(
         RiscvInstruction::FloatAddD { .. } => {
             add_sub::add_double_directed_rounding_is_supported(lhs, rhs, rounding_mode)
         }
+        RiscvInstruction::FloatSubD { .. } => {
+            add_sub::sub_double_directed_rounding_is_supported(lhs, rhs, rounding_mode)
+        }
         RiscvInstruction::FloatMulS { .. } => mul::directed_rounding_is_supported(lhs, rhs),
         RiscvInstruction::FloatMulD { .. } => {
             mul::double_directed_rounding_is_supported(lhs, rhs, rounding_mode)
@@ -721,6 +734,11 @@ pub(crate) fn binary_exception_flags(
             add_sub::sub_exception_flags(lhs, rhs, resolve_binary_rounding(rounding_mode, frm))
         }
         RiscvInstruction::FloatAddD { rounding_mode, .. } => add_sub::add_exception_flags_double(
+            lhs,
+            rhs,
+            resolve_binary_rounding(rounding_mode, frm),
+        ),
+        RiscvInstruction::FloatSubD { rounding_mode, .. } => add_sub::sub_exception_flags_double(
             lhs,
             rhs,
             resolve_binary_rounding(rounding_mode, frm),
