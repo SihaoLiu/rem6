@@ -7010,6 +7010,205 @@ fn rem6_run_stats_emit_indirect_target_provider_from_real_jalr_fetch() {
 }
 
 #[test]
+fn rem6_run_stats_emit_indirect_call_branch_kind_from_real_jalr_fetch() {
+    let program = riscv64_program(&[
+        i_type(0, 10, 0x0, 1, 0x67), // jalr x1, 0(x10)
+        i_type(7, 0, 0x0, 5, 0x13),  // return: addi x5, x0, 7
+        0x0000_0073,                 // ecall
+        i_type(1, 0, 0x0, 6, 0x13),  // function: addi x6, x0, 1
+        i_type(0, 1, 0x0, 0, 0x67),  // jalr x0, 0(x1)
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("in-order-branch-indirect-call-kind", &elf);
+
+    let run = |stats_format: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+            .args([
+                "run",
+                "--isa",
+                "riscv",
+                "--binary",
+                path.to_str().unwrap(),
+                "--max-tick",
+                "160",
+                "--memory-route-delay",
+                "1",
+                "--riscv-branch-lookahead",
+                "2",
+                "--riscv-boot-a0",
+                "0x8000000c",
+                "--stats-format",
+                stats_format,
+                "--execute",
+            ])
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap()
+    };
+
+    let stdout = run("json");
+    let artifact: Value = serde_json::from_str(&stdout).unwrap();
+    let call_indirect_lookups =
+        stat_value(&stdout, "sim.cpu0.branch_predictor.lookups.call_indirect");
+    let call_indirect_committed =
+        stat_value(&stdout, "sim.cpu0.branch_predictor.committed.call_indirect");
+    let call_indirect_mispredicted = stat_value(
+        &stdout,
+        "sim.cpu0.branch_predictor.mispredicted.call_indirect",
+    );
+    let call_indirect_corrected =
+        stat_value(&stdout, "sim.cpu0.branch_predictor.corrected.call_indirect");
+    let call_indirect_target_wrong = stat_value(
+        &stdout,
+        "sim.cpu0.branch_predictor.target_wrong.call_indirect",
+    );
+    let call_indirect_btb_miss = stat_value(
+        &stdout,
+        "sim.cpu0.branch_predictor.btb.mispredict_due_to_btb_miss.call_indirect",
+    );
+    assert!(call_indirect_lookups > 0, "{stdout}");
+    assert!(call_indirect_committed > 0, "{stdout}");
+    assert_eq!(call_indirect_mispredicted, 0, "{stdout}");
+    assert_eq!(call_indirect_corrected, call_indirect_mispredicted);
+    assert_eq!(call_indirect_target_wrong, call_indirect_mispredicted);
+    assert_eq!(call_indirect_btb_miss, call_indirect_mispredicted);
+    assert!(
+        stat_value(&stdout, "sim.cpu0.branch_predictor.btb.mispredictions") > 0,
+        "{stdout}"
+    );
+    assert!(
+        stat_value(
+            &stdout,
+            "sim.cpu0.branch_predictor.target_provider.indirect"
+        ) > 0,
+        "{stdout}"
+    );
+    assert_eq!(
+        stat_value(&stdout, "sim.cpu0.branch_predictor.indirect_hits"),
+        stat_value(
+            &stdout,
+            "sim.cpu0.branch_predictor.target_provider.indirect"
+        )
+    );
+    assert_eq!(
+        stat_value(&stdout, "sim.cpu0.branch_predictor.indirect_mispredicted"),
+        call_indirect_mispredicted
+    );
+    assert!(
+        stat_value(&stdout, "sim.cpu0.branch_predictor.lookups.return") > 0,
+        "{stdout}"
+    );
+    assert!(
+        stat_value(&stdout, "sim.cpu0.branch_predictor.committed.return") > 0,
+        "{stdout}"
+    );
+    assert_eq!(
+        artifact
+            .pointer("/cores/0/branch_predictor/lookups/call_indirect")
+            .and_then(Value::as_u64),
+        Some(call_indirect_lookups)
+    );
+    assert_eq!(
+        artifact
+            .pointer("/cores/0/branch_predictor/mispredicted/call_indirect")
+            .and_then(Value::as_u64),
+        Some(call_indirect_mispredicted)
+    );
+    assert_eq!(
+        artifact
+            .pointer("/cores/0/branch_predictor/corrected/call_indirect")
+            .and_then(Value::as_u64),
+        Some(call_indirect_corrected)
+    );
+    assert_eq!(
+        artifact
+            .pointer("/cores/0/branch_predictor/target_wrong/call_indirect")
+            .and_then(Value::as_u64),
+        Some(call_indirect_target_wrong)
+    );
+    assert_eq!(
+        artifact
+            .pointer("/cores/0/branch_predictor/btb/mispredict_due_to_btb_miss/call_indirect")
+            .and_then(Value::as_u64),
+        Some(call_indirect_btb_miss)
+    );
+    assert_eq!(json_core_register(&artifact, 0, "x5"), Some("0x7"));
+    assert_eq!(json_core_register(&artifact, 0, "x6"), Some("0x1"));
+
+    let stdout = run("text");
+    let call_indirect_lookups =
+        text_stat_value(&stdout, "sim.cpu0.branch_predictor.lookups.call_indirect");
+    let call_indirect_committed =
+        text_stat_value(&stdout, "sim.cpu0.branch_predictor.committed.call_indirect");
+    let call_indirect_mispredicted = text_stat_value(
+        &stdout,
+        "sim.cpu0.branch_predictor.mispredicted.call_indirect",
+    );
+    let call_indirect_corrected =
+        text_stat_value(&stdout, "sim.cpu0.branch_predictor.corrected.call_indirect");
+    let call_indirect_target_wrong = text_stat_value(
+        &stdout,
+        "sim.cpu0.branch_predictor.target_wrong.call_indirect",
+    );
+    let call_indirect_btb_miss = text_stat_value(
+        &stdout,
+        "sim.cpu0.branch_predictor.btb.mispredict_due_to_btb_miss.call_indirect",
+    );
+    assert!(call_indirect_lookups > 0, "{stdout}");
+    assert!(call_indirect_committed > 0, "{stdout}");
+    assert_eq!(call_indirect_mispredicted, 0, "{stdout}");
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.lookups_0::CallIndirect"),
+        call_indirect_lookups
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.committed_0::CallIndirect"),
+        call_indirect_committed
+    );
+    assert_eq!(
+        text_stat_value(
+            &stdout,
+            "system.cpu.branchPred.mispredicted_0::CallIndirect"
+        ),
+        call_indirect_mispredicted
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.corrected_0::CallIndirect"),
+        call_indirect_corrected
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.targetWrong_0::CallIndirect"),
+        call_indirect_target_wrong
+    );
+    assert_eq!(
+        text_stat_value(
+            &stdout,
+            "system.cpu.branchPred.mispredictDueToBTBMiss_0::CallIndirect"
+        ),
+        call_indirect_btb_miss
+    );
+    assert_eq!(
+        text_stat_value(&stdout, "system.cpu.branchPred.indirectMispredicted"),
+        call_indirect_mispredicted
+    );
+    assert!(
+        text_stat_value(&stdout, "system.cpu.branchPred.BTBMispredicted") > 0,
+        "{stdout}"
+    );
+    assert!(
+        text_stat_line(&stdout, "system.cpu.branchPred.lookups_0::CallIndirect")
+            .contains("unit=Count"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn rem6_run_stats_exclude_return_jalr_from_indirect_hit_aliases() {
     let program = riscv64_program(&[
         i_type(0, 11, 0x0, 1, 0x13), // addi x1, x11, 0
