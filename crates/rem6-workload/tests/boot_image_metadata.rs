@@ -20,6 +20,8 @@ const SHN_COMMON: u16 = 0xfff2;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
 const SHF_EXECINSTR: u64 = 4;
+const STB_GLOBAL: u8 = 1;
+const STB_GNU_UNIQUE: u8 = 10;
 const STT_TLS: u8 = 6;
 const STT_GNU_IFUNC: u8 = 10;
 const DT_PLTGOT: u64 = 3;
@@ -394,7 +396,20 @@ fn elf64_image_with_extra_symbol_type(machine: u16, extra_type: u8) -> Vec<u8> {
         1,
         0,
         0,
-        Some((extra_type, 1)),
+        Some((STB_GLOBAL, extra_type, 1)),
+    )
+}
+
+fn elf64_image_with_extra_symbol_binding(machine: u16, extra_binding: u8) -> Vec<u8> {
+    elf64_image_with_symbol_section_options(
+        machine,
+        ".symtab",
+        2,
+        ".strtab",
+        1,
+        0,
+        0,
+        Some((extra_binding, 1, 1)),
     )
 }
 
@@ -407,7 +422,7 @@ fn elf64_image_with_extra_symbol_section_index(machine: u16, extra_section_index
         1,
         0,
         0,
-        Some((0, extra_section_index)),
+        Some((STB_GLOBAL, 0, extra_section_index)),
     )
 }
 
@@ -483,7 +498,7 @@ fn elf64_image_with_symbol_section_options(
     object_type: u8,
     function_visibility: u8,
     object_visibility: u8,
-    extra_symbol: Option<(u8, u16)>,
+    extra_symbol: Option<(u8, u8, u16)>,
 ) -> Vec<u8> {
     let mut bytes = elf64_image(machine);
     let mut symbol_names = b"\0entry_func\0data_obj\0".to_vec();
@@ -512,12 +527,12 @@ fn elf64_image_with_symbol_section_options(
     write_u16(&mut bytes, object_base + 6, 1);
     write_u64(&mut bytes, object_base + 8, 0x9000);
     write_u64(&mut bytes, object_base + 16, 8);
-    if let (Some(extra_name_offset), Some((extra_type, extra_section_index))) =
+    if let (Some(extra_name_offset), Some((extra_binding, extra_type, extra_section_index))) =
         (extra_name_offset, extra_symbol)
     {
         let extra_base = symbol_table_offset + 72;
         write_u32(&mut bytes, extra_base, extra_name_offset);
-        bytes[extra_base + 4] = 0x10 | extra_type;
+        bytes[extra_base + 4] = (extra_binding << 4) | extra_type;
         write_u16(&mut bytes, extra_base + 6, extra_section_index);
         write_u64(&mut bytes, extra_base + 8, 0xa000);
         write_u64(&mut bytes, extra_base + 16, 8);
@@ -1339,6 +1354,27 @@ fn workload_boot_image_preserves_elf_ifunc_symbol_summary_round_trip() {
 }
 
 #[test]
+fn workload_boot_image_preserves_elf_unique_symbol_summary_round_trip() {
+    let image =
+        BootImage::from_elf64_le(&elf64_image_with_extra_symbol_binding(243, STB_GNU_UNIQUE))
+            .unwrap();
+
+    let workload_image = WorkloadBootImage::from_boot_image(&image);
+    let round_trip_metadata = workload_image
+        .to_boot_image()
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let symbols = round_trip_metadata.symbol_summary();
+
+    assert_eq!(round_trip_metadata.symbol_count(), 3);
+    assert_eq!(round_trip_metadata.function_symbol_count(), 1);
+    assert_eq!(round_trip_metadata.object_symbol_count(), 2);
+    assert_eq!(symbols.global_count(), 2);
+    assert_eq!(symbols.unique_count(), 1);
+}
+
+#[test]
 fn workload_boot_image_preserves_elf_symbol_section_index_summary_round_trip() {
     let image = BootImage::from_elf64_le(&elf64_image_with_extra_symbol_section_index(
         243, SHN_COMMON,
@@ -2030,6 +2066,11 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
     let absolute_symbols =
         BootImage::from_elf64_le(&elf64_image_with_extra_symbol_section_index(243, SHN_ABS))
             .unwrap();
+    let global_binding_symbols =
+        BootImage::from_elf64_le(&elf64_image_with_extra_symbol_binding(243, STB_GLOBAL)).unwrap();
+    let unique_binding_symbols =
+        BootImage::from_elf64_le(&elf64_image_with_extra_symbol_binding(243, STB_GNU_UNIQUE))
+            .unwrap();
     let dynamic_symbols = BootImage::from_elf64_le(&elf64_image_with_dynamic_symbols(243)).unwrap();
     let visible_symbols =
         BootImage::from_elf64_le(&elf64_image_with_symbol_visibility(243)).unwrap();
@@ -2040,6 +2081,10 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
     assert_eq!(extra_symbols.segments(), ifunc_symbols.segments());
     assert_eq!(defined_symbols.segments(), common_symbols.segments());
     assert_eq!(defined_symbols.segments(), absolute_symbols.segments());
+    assert_eq!(
+        global_binding_symbols.segments(),
+        unique_binding_symbols.segments()
+    );
     assert_eq!(plain.segments(), dynamic_symbols.segments());
     assert_eq!(symbols.segments(), visible_symbols.segments());
     assert_eq!(plain.elf_metadata().unwrap().symbol_count(), 0);
@@ -2141,6 +2186,34 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
             .total_count()
     );
     assert_eq!(
+        global_binding_symbols
+            .elf_metadata()
+            .unwrap()
+            .symbol_summary()
+            .unique_count(),
+        0
+    );
+    assert_eq!(
+        unique_binding_symbols
+            .elf_metadata()
+            .unwrap()
+            .symbol_summary()
+            .unique_count(),
+        1
+    );
+    assert_eq!(
+        global_binding_symbols
+            .elf_metadata()
+            .unwrap()
+            .symbol_summary()
+            .object_count(),
+        unique_binding_symbols
+            .elf_metadata()
+            .unwrap()
+            .symbol_summary()
+            .object_count()
+    );
+    assert_eq!(
         visible_symbols
             .elf_metadata()
             .unwrap()
@@ -2173,6 +2246,12 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
     let absolute_symbol_manifest = WorkloadManifest::builder(id("same"), absolute_symbols)
         .build()
         .unwrap();
+    let global_binding_manifest = WorkloadManifest::builder(id("same"), global_binding_symbols)
+        .build()
+        .unwrap();
+    let unique_binding_manifest = WorkloadManifest::builder(id("same"), unique_binding_symbols)
+        .build()
+        .unwrap();
     let dynamic_symbol_manifest = WorkloadManifest::builder(id("same"), dynamic_symbols)
         .build()
         .unwrap();
@@ -2196,6 +2275,10 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
     assert_ne!(
         defined_symbol_manifest.identity(),
         absolute_symbol_manifest.identity()
+    );
+    assert_ne!(
+        global_binding_manifest.identity(),
+        unique_binding_manifest.identity()
     );
     assert_ne!(
         plain_manifest.identity(),

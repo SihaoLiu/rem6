@@ -166,6 +166,13 @@ pub(super) fn emit_elf_run_stats(
     )?;
     increment_stat(
         stats,
+        "sim.elf.unique_symbols",
+        "Count",
+        StatResetPolicy::Constant,
+        symbols.unique_count(),
+    )?;
+    increment_stat(
+        stats,
         "sim.elf.symbol_section.undefined",
         "Count",
         StatResetPolicy::Constant,

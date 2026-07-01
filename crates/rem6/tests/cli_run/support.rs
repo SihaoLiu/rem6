@@ -25,6 +25,7 @@ const SHN_COMMON: u16 = 0xfff2;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
 const SHF_EXECINSTR: u64 = 4;
+const STB_GNU_UNIQUE: u8 = 10;
 const STT_TLS: u8 = 6;
 const STT_GNU_IFUNC: u8 = 10;
 const DT_PLTGOT: u64 = 3;
@@ -353,6 +354,22 @@ pub(crate) fn riscv64_elf_with_ifunc_symbol(entry: u64, physical: u64, payload: 
     )
 }
 
+pub(crate) fn riscv64_elf_with_unique_symbol_binding(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+) -> Vec<u8> {
+    riscv64_elf_with_symbol_section_and_object_binding(
+        entry,
+        physical,
+        payload,
+        ".symtab",
+        2,
+        ".strtab",
+        STB_GNU_UNIQUE,
+    )
+}
+
 pub(crate) fn riscv64_elf_with_symbol_section_indexes(
     entry: u64,
     physical: u64,
@@ -544,6 +561,49 @@ fn riscv64_elf_with_symbol_section_and_object_type(
     string_section_name: &str,
     object_type: u8,
 ) -> Vec<u8> {
+    riscv64_elf_with_symbol_section_options(
+        entry,
+        physical,
+        payload,
+        symbol_section_name,
+        symbol_section_kind,
+        string_section_name,
+        1,
+        object_type,
+    )
+}
+
+fn riscv64_elf_with_symbol_section_and_object_binding(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+    symbol_section_name: &str,
+    symbol_section_kind: u32,
+    string_section_name: &str,
+    object_binding: u8,
+) -> Vec<u8> {
+    riscv64_elf_with_symbol_section_options(
+        entry,
+        physical,
+        payload,
+        symbol_section_name,
+        symbol_section_kind,
+        string_section_name,
+        object_binding,
+        1,
+    )
+}
+
+fn riscv64_elf_with_symbol_section_options(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+    symbol_section_name: &str,
+    symbol_section_kind: u32,
+    string_section_name: &str,
+    object_binding: u8,
+    object_type: u8,
+) -> Vec<u8> {
     let mut bytes = riscv64_elf(entry, physical, payload);
     let symbol_names = b"\0entry_func\0data_obj\0";
     let symbol_names_offset = bytes.len();
@@ -559,7 +619,7 @@ fn riscv64_elf_with_symbol_section_and_object_type(
     write_u64(&mut bytes, function_base + 16, payload.len() as u64);
     let object_base = symbol_table_offset + 48;
     write_u32(&mut bytes, object_base, 12);
-    bytes[object_base + 4] = 0x10 | object_type;
+    bytes[object_base + 4] = (object_binding << 4) | object_type;
     write_u16(&mut bytes, object_base + 6, 1);
     write_u64(&mut bytes, object_base + 8, physical + 0x1000);
     write_u64(&mut bytes, object_base + 16, 8);

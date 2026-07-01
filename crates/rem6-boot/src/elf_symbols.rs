@@ -9,6 +9,7 @@ const SHN_COMMON: u16 = 0xfff2;
 const STB_LOCAL: u8 = 0;
 const STB_GLOBAL: u8 = 1;
 const STB_WEAK: u8 = 2;
+const STB_GNU_UNIQUE: u8 = 10;
 const STT_OBJECT: u8 = 1;
 const STT_FUNC: u8 = 2;
 const STT_TLS: u8 = 6;
@@ -113,7 +114,7 @@ fn summarize_symbol_type(
     visibility: u8,
     section_index: u16,
 ) -> BootElfSymbolSummary {
-    if !matches!(binding, STB_LOCAL | STB_GLOBAL | STB_WEAK) {
+    if !matches!(binding, STB_LOCAL | STB_GLOBAL | STB_WEAK | STB_GNU_UNIQUE) {
         return summary;
     }
     let total = summary.total_count() + 1;
@@ -124,6 +125,7 @@ fn summarize_symbol_type(
     let mut locals = summary.local_count();
     let mut globals = summary.global_count();
     let mut weaks = summary.weak_count();
+    let mut uniques = summary.unique_count();
     let mut undefined_sections = summary.undefined_section_count();
     let mut absolute_sections = summary.absolute_section_count();
     let mut common_sections = summary.common_section_count();
@@ -136,8 +138,10 @@ fn summarize_symbol_type(
         locals += 1;
     } else if binding == STB_GLOBAL {
         globals += 1;
-    } else {
+    } else if binding == STB_WEAK {
         weaks += 1;
+    } else {
+        uniques += 1;
     }
     match kind {
         STT_FUNC => functions += 1,
@@ -168,6 +172,7 @@ fn summarize_symbol_type(
         locals,
         globals,
         weaks,
+        uniques,
         undefined_sections,
         absolute_sections,
         common_sections,

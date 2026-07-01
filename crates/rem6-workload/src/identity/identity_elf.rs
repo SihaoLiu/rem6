@@ -53,6 +53,7 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 symbol_summary.local_count(),
                 symbol_summary.global_count(),
                 symbol_summary.weak_count(),
+                symbol_summary.unique_count(),
                 symbol_summary.undefined_section_count(),
                 symbol_summary.absolute_section_count(),
                 symbol_summary.common_section_count(),

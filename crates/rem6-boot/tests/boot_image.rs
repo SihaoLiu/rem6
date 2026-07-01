@@ -36,6 +36,7 @@ const SHN_COMMON: u16 = 0xfff2;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
 const SHF_EXECINSTR: u64 = 4;
+const STB_GNU_UNIQUE: u8 = 10;
 const STT_TLS: u8 = 6;
 const STT_GNU_IFUNC: u8 = 10;
 const DT_PLTGOT: u64 = 3;
@@ -350,6 +351,16 @@ fn add_elf64_symbol_ifunc_table(bytes: &mut Vec<u8>) {
     add_elf64_symbol_table_section_with_object_type(bytes, ".symtab", 2, ".strtab", STT_GNU_IFUNC);
 }
 
+fn add_elf64_symbol_unique_binding_table(bytes: &mut Vec<u8>) {
+    add_elf64_symbol_table_section_with_object_binding(
+        bytes,
+        ".symtab",
+        2,
+        ".strtab",
+        STB_GNU_UNIQUE,
+    );
+}
+
 fn add_elf64_symbol_section_index_table(bytes: &mut Vec<u8>) {
     let symbol_names = b"\0entry_func\0undef_obj\0abs_obj\0common_obj\0";
     let symbol_names_offset = bytes.len() as u64;
@@ -435,12 +446,32 @@ fn add_elf64_symbol_table_section_with_object_type(
     string_section_name: &str,
     object_type: u8,
 ) {
-    add_elf64_symbol_table_section_with_visibility(
+    add_elf64_symbol_table_section_with_options(
         bytes,
         symbol_section_name,
         symbol_section_kind,
         string_section_name,
+        1,
         object_type,
+        0,
+        0,
+    );
+}
+
+fn add_elf64_symbol_table_section_with_object_binding(
+    bytes: &mut Vec<u8>,
+    symbol_section_name: &str,
+    symbol_section_kind: u32,
+    string_section_name: &str,
+    object_binding: u8,
+) {
+    add_elf64_symbol_table_section_with_options(
+        bytes,
+        symbol_section_name,
+        symbol_section_kind,
+        string_section_name,
+        object_binding,
+        1,
         0,
         0,
     );
@@ -451,6 +482,28 @@ fn add_elf64_symbol_table_section_with_visibility(
     symbol_section_name: &str,
     symbol_section_kind: u32,
     string_section_name: &str,
+    object_type: u8,
+    function_visibility: u8,
+    object_visibility: u8,
+) {
+    add_elf64_symbol_table_section_with_options(
+        bytes,
+        symbol_section_name,
+        symbol_section_kind,
+        string_section_name,
+        1,
+        object_type,
+        function_visibility,
+        object_visibility,
+    );
+}
+
+fn add_elf64_symbol_table_section_with_options(
+    bytes: &mut Vec<u8>,
+    symbol_section_name: &str,
+    symbol_section_kind: u32,
+    string_section_name: &str,
+    object_binding: u8,
     object_type: u8,
     function_visibility: u8,
     object_visibility: u8,
@@ -470,7 +523,7 @@ fn add_elf64_symbol_table_section_with_visibility(
     write_u64(bytes, function_base + 16, 4);
     let object_base = symbol_table_offset as usize + 48;
     write_u32(bytes, object_base, 12);
-    bytes[object_base + 4] = 0x10 | object_type;
+    bytes[object_base + 4] = (object_binding << 4) | object_type;
     bytes[object_base + 5] = object_visibility;
     write_u16(bytes, object_base + 6, 1);
     write_u64(bytes, object_base + 8, 0x9000);
@@ -3910,6 +3963,33 @@ fn boot_image_records_ifunc_symbol_summary() {
     assert_eq!(symbols.ifunc_count(), 1);
     assert_eq!(symbols.object_count(), 0);
     assert_eq!(symbols.tls_count(), 0);
+}
+
+#[test]
+fn boot_image_records_unique_symbol_binding_summary() {
+    let mut elf = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_symbol_unique_binding_table(&mut elf);
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let symbols = metadata.symbol_summary();
+
+    assert_eq!(symbols.total_count(), 2);
+    assert_eq!(symbols.global_count(), 1);
+    assert_eq!(symbols.unique_count(), 1);
+    assert_eq!(symbols.object_count(), 1);
 }
 
 #[test]
