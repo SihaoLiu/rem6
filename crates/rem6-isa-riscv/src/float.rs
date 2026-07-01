@@ -89,73 +89,47 @@ pub(crate) fn float_register_write_binary(
             rd, rounding_mode, ..
         } => (
             rd,
-            add_sub::add_register_write(
-                lhs,
-                rhs,
-                rounding_mode
-                    .resolve(frm)
-                    .expect("binary float rounding mode is valid"),
-            ),
+            add_sub::add_register_write(lhs, rhs, resolve_binary_rounding(rounding_mode, frm)),
         ),
         RiscvInstruction::FloatSubS {
             rd, rounding_mode, ..
         } => (
             rd,
-            add_sub::sub_register_write(
+            add_sub::sub_register_write(lhs, rhs, resolve_binary_rounding(rounding_mode, frm)),
+        ),
+        RiscvInstruction::FloatAddD {
+            rd, rounding_mode, ..
+        } => (
+            rd,
+            add_sub::add_register_write_double(
                 lhs,
                 rhs,
-                rounding_mode
-                    .resolve(frm)
-                    .expect("binary float rounding mode is valid"),
+                resolve_binary_rounding(rounding_mode, frm),
             ),
         ),
         RiscvInstruction::FloatMulS {
             rd, rounding_mode, ..
         } => (
             rd,
-            mul::register_write(
-                lhs,
-                rhs,
-                rounding_mode
-                    .resolve(frm)
-                    .expect("binary float rounding mode is valid"),
-            ),
+            mul::register_write(lhs, rhs, resolve_binary_rounding(rounding_mode, frm)),
         ),
         RiscvInstruction::FloatMulD {
             rd, rounding_mode, ..
         } => (
             rd,
-            mul::register_write_double(
-                lhs,
-                rhs,
-                rounding_mode
-                    .resolve(frm)
-                    .expect("binary float rounding mode is valid"),
-            ),
+            mul::register_write_double(lhs, rhs, resolve_binary_rounding(rounding_mode, frm)),
         ),
         RiscvInstruction::FloatDivS {
             rd, rounding_mode, ..
         } => (
             rd,
-            div::register_write(
-                lhs,
-                rhs,
-                rounding_mode
-                    .resolve(frm)
-                    .expect("binary float rounding mode is valid"),
-            ),
+            div::register_write(lhs, rhs, resolve_binary_rounding(rounding_mode, frm)),
         ),
         RiscvInstruction::FloatDivD {
             rd, rounding_mode, ..
         } => (
             rd,
-            div::register_write_double(
-                lhs,
-                rhs,
-                rounding_mode
-                    .resolve(frm)
-                    .expect("binary float rounding mode is valid"),
-            ),
+            div::register_write_double(lhs, rhs, resolve_binary_rounding(rounding_mode, frm)),
         ),
         _ => float_register_write(instruction, lhs, rhs),
     }
@@ -168,6 +142,15 @@ pub(crate) fn exact_finite_single_add_sub_bits(
     subtract: bool,
 ) -> Option<u32> {
     add_sub::exact_finite_single_bits(lhs, rhs, rounding_mode, subtract)
+}
+
+fn resolve_binary_rounding(
+    rounding_mode: RiscvFloatRoundingMode,
+    frm: u64,
+) -> RiscvFloatRoundingMode {
+    rounding_mode
+        .resolve(frm)
+        .expect("binary float rounding mode is valid")
 }
 
 pub(crate) fn exact_finite_double_add_sub_bits(
@@ -468,6 +451,9 @@ fn binary_rounding_mode_is_implemented(
     match instruction {
         RiscvInstruction::FloatAddS { .. } => add_sub::add_directed_rounding_is_supported(lhs, rhs),
         RiscvInstruction::FloatSubS { .. } => add_sub::sub_directed_rounding_is_supported(lhs, rhs),
+        RiscvInstruction::FloatAddD { .. } => {
+            add_sub::add_double_directed_rounding_is_supported(lhs, rhs, rounding_mode)
+        }
         RiscvInstruction::FloatMulS { .. } => mul::directed_rounding_is_supported(lhs, rhs),
         RiscvInstruction::FloatMulD { .. } => {
             mul::double_directed_rounding_is_supported(lhs, rhs, rounding_mode)
@@ -728,48 +714,29 @@ pub(crate) fn binary_exception_flags(
     frm: u64,
 ) -> u64 {
     match instruction {
-        RiscvInstruction::FloatAddS { rounding_mode, .. } => add_sub::add_exception_flags(
+        RiscvInstruction::FloatAddS { rounding_mode, .. } => {
+            add_sub::add_exception_flags(lhs, rhs, resolve_binary_rounding(rounding_mode, frm))
+        }
+        RiscvInstruction::FloatSubS { rounding_mode, .. } => {
+            add_sub::sub_exception_flags(lhs, rhs, resolve_binary_rounding(rounding_mode, frm))
+        }
+        RiscvInstruction::FloatAddD { rounding_mode, .. } => add_sub::add_exception_flags_double(
             lhs,
             rhs,
-            rounding_mode
-                .resolve(frm)
-                .expect("binary float rounding mode is valid"),
+            resolve_binary_rounding(rounding_mode, frm),
         ),
-        RiscvInstruction::FloatSubS { rounding_mode, .. } => add_sub::sub_exception_flags(
-            lhs,
-            rhs,
-            rounding_mode
-                .resolve(frm)
-                .expect("binary float rounding mode is valid"),
-        ),
-        RiscvInstruction::FloatDivS { rounding_mode, .. } => div::exception_flags(
-            lhs,
-            rhs,
-            rounding_mode
-                .resolve(frm)
-                .expect("binary float rounding mode is valid"),
-        ),
-        RiscvInstruction::FloatDivD { rounding_mode, .. } => div::exception_flags_double(
-            lhs,
-            rhs,
-            rounding_mode
-                .resolve(frm)
-                .expect("binary float rounding mode is valid"),
-        ),
-        RiscvInstruction::FloatMulD { rounding_mode, .. } => mul::exception_flags_double(
-            lhs,
-            rhs,
-            rounding_mode
-                .resolve(frm)
-                .expect("binary float rounding mode is valid"),
-        ),
-        RiscvInstruction::FloatMulS { rounding_mode, .. } => mul::exception_flags(
-            lhs,
-            rhs,
-            rounding_mode
-                .resolve(frm)
-                .expect("binary float rounding mode is valid"),
-        ),
+        RiscvInstruction::FloatDivS { rounding_mode, .. } => {
+            div::exception_flags(lhs, rhs, resolve_binary_rounding(rounding_mode, frm))
+        }
+        RiscvInstruction::FloatDivD { rounding_mode, .. } => {
+            div::exception_flags_double(lhs, rhs, resolve_binary_rounding(rounding_mode, frm))
+        }
+        RiscvInstruction::FloatMulD { rounding_mode, .. } => {
+            mul::exception_flags_double(lhs, rhs, resolve_binary_rounding(rounding_mode, frm))
+        }
+        RiscvInstruction::FloatMulS { rounding_mode, .. } => {
+            mul::exception_flags(lhs, rhs, resolve_binary_rounding(rounding_mode, frm))
+        }
         RiscvInstruction::FloatMinS { .. } | RiscvInstruction::FloatMaxS { .. } => {
             minmax_exception_flags_single(lhs, rhs)
         }

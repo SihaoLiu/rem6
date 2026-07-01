@@ -1,9 +1,12 @@
+use std::cmp::Ordering;
+
 use crate::RiscvFloatRoundingMode;
 
 use super::{
-    box_canonical_single, has_single_sign, is_infinity_single, is_signaling_nan_single,
-    is_zero_single, unbox_single, FLOAT_FLAG_INEXACT, FLOAT_FLAG_INVALID, FLOAT_FLAG_OVERFLOW,
-    SINGLE_EXP_MASK, SINGLE_FRACTION_MASK, SINGLE_SIGN_BIT,
+    box_canonical_single, has_single_sign, is_infinity_double, is_infinity_single,
+    is_signaling_nan_double, is_signaling_nan_single, is_zero_single, unbox_single,
+    DOUBLE_EXP_MASK, DOUBLE_FRACTION_MASK, DOUBLE_SIGN_BIT, FLOAT_FLAG_INEXACT, FLOAT_FLAG_INVALID,
+    FLOAT_FLAG_OVERFLOW, SINGLE_EXP_MASK, SINGLE_FRACTION_MASK, SINGLE_SIGN_BIT,
 };
 
 const SINGLE_HIDDEN_BIT: u32 = 1 << 23;
@@ -19,12 +22,28 @@ pub(super) fn sub_directed_rounding_is_supported(lhs: u64, rhs: u64) -> bool {
     wide_sum_value(lhs, rhs, true).is_some()
 }
 
+pub(super) fn add_double_directed_rounding_is_supported(
+    lhs: u64,
+    rhs: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> bool {
+    double_directed_rounding_is_supported(lhs, rhs, rounding_mode)
+}
+
 pub(super) fn add_register_write(lhs: u64, rhs: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
     register_write(lhs, rhs, rounding_mode, false)
 }
 
 pub(super) fn sub_register_write(lhs: u64, rhs: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
     register_write(lhs, rhs, rounding_mode, true)
+}
+
+pub(super) fn add_register_write_double(
+    lhs: u64,
+    rhs: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> u64 {
+    register_write_double(lhs, rhs, rounding_mode)
 }
 
 pub(super) fn add_exception_flags(
@@ -41,6 +60,14 @@ pub(super) fn sub_exception_flags(
     rounding_mode: RiscvFloatRoundingMode,
 ) -> u64 {
     exception_flags(lhs, rhs, rounding_mode, true)
+}
+
+pub(super) fn add_exception_flags_double(
+    lhs: u64,
+    rhs: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> u64 {
+    exception_flags_double(lhs, rhs, rounding_mode)
 }
 
 pub(super) fn exact_finite_single_bits(
@@ -71,6 +98,59 @@ fn register_write(
     }
 }
 
+fn register_write_double(lhs: u64, rhs: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
+    let Some(sum) = double_sum_value(lhs, rhs) else {
+        return native_register_write_double(lhs, rhs);
+    };
+    if sum.exact == 0 {
+        return if rounding_mode == RiscvFloatRoundingMode::RoundDown
+            && sum.lhs.negative != sum.rhs.negative
+        {
+            DOUBLE_SIGN_BIT
+        } else {
+            sum.native_bits
+        };
+    }
+    let Some(ordering) = compare_double_to_exact_sum(sum.native_bits, sum.exact, sum.shift) else {
+        return sum.native_bits;
+    };
+    if ordering == Ordering::Equal {
+        return sum.native_bits;
+    }
+
+    let nearest = f64::from_bits(sum.native_bits);
+    match rounding_mode {
+        RiscvFloatRoundingMode::RoundNearestEven => sum.native_bits,
+        RiscvFloatRoundingMode::RoundTowardZero => {
+            let adjusted = if sum.exact > 0 && ordering == Ordering::Greater {
+                nearest.next_down()
+            } else if sum.exact < 0 && ordering == Ordering::Less {
+                nearest.next_up()
+            } else {
+                nearest
+            };
+            adjusted.to_bits()
+        }
+        RiscvFloatRoundingMode::RoundDown => {
+            if ordering == Ordering::Greater {
+                nearest.next_down().to_bits()
+            } else {
+                sum.native_bits
+            }
+        }
+        RiscvFloatRoundingMode::RoundUp => {
+            if ordering == Ordering::Less {
+                nearest.next_up().to_bits()
+            } else {
+                sum.native_bits
+            }
+        }
+        RiscvFloatRoundingMode::RoundNearestMaxMagnitude | RiscvFloatRoundingMode::Dynamic => {
+            sum.native_bits
+        }
+    }
+}
+
 fn exception_flags(
     lhs: u64,
     rhs: u64,
@@ -93,6 +173,30 @@ fn exception_flags(
         FLOAT_FLAG_INEXACT
     } else {
         0
+    }
+}
+
+fn exception_flags_double(lhs: u64, rhs: u64, rounding_mode: RiscvFloatRoundingMode) -> u64 {
+    if is_signaling_nan_double(lhs)
+        || is_signaling_nan_double(rhs)
+        || opposite_infinities_double(lhs, rhs)
+    {
+        return FLOAT_FLAG_INVALID;
+    }
+    if !is_finite_double(lhs) || !is_finite_double(rhs) {
+        return 0;
+    }
+    if is_zero_double(lhs) || is_zero_double(rhs) {
+        return 0;
+    }
+    if is_infinity_double(register_write_double(lhs, rhs, rounding_mode)) {
+        return FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT;
+    }
+    match double_sum_value(lhs, rhs)
+        .and_then(|sum| compare_double_to_exact_sum(sum.native_bits, sum.exact, sum.shift))
+    {
+        Some(Ordering::Equal) => 0,
+        _ => FLOAT_FLAG_INEXACT,
     }
 }
 
@@ -222,6 +326,10 @@ fn native_register_write(lhs: u32, rhs: u32) -> u64 {
     box_canonical_single(f32::from_bits(lhs) + f32::from_bits(rhs))
 }
 
+fn native_register_write_double(lhs: u64, rhs: u64) -> u64 {
+    (f64::from_bits(lhs) + f64::from_bits(rhs)).to_bits()
+}
+
 fn step_toward_exact(nearest: f32, exact: f64) -> f32 {
     if exact.is_sign_positive() {
         nearest.next_down()
@@ -242,6 +350,138 @@ fn round_nearest_max_magnitude(exact: f64, nearest: f32) -> f32 {
         other
     } else {
         nearest
+    }
+}
+
+fn double_directed_rounding_is_supported(
+    lhs: u64,
+    rhs: u64,
+    rounding_mode: RiscvFloatRoundingMode,
+) -> bool {
+    matches!(
+        rounding_mode,
+        RiscvFloatRoundingMode::RoundTowardZero
+            | RiscvFloatRoundingMode::RoundDown
+            | RiscvFloatRoundingMode::RoundUp
+    ) && double_sum_value(lhs, rhs).is_some()
+}
+
+fn double_sum_value(lhs: u64, rhs: u64) -> Option<DoubleSum> {
+    let lhs = double_components(lhs)?;
+    let rhs = double_components(rhs)?;
+    let shift = lhs.shift.min(rhs.shift);
+    let lhs_scaled = lhs.signed_mantissa(shift)?;
+    let rhs_scaled = rhs.signed_mantissa(shift)?;
+    let exact = lhs_scaled.checked_add(rhs_scaled)?;
+    let native_bits = (lhs.value() + rhs.value()).to_bits();
+    f64::from_bits(native_bits)
+        .is_finite()
+        .then_some(DoubleSum {
+            lhs,
+            rhs,
+            exact,
+            shift,
+            native_bits,
+        })
+}
+
+fn compare_double_to_exact_sum(candidate: u64, exact: i128, exact_shift: i32) -> Option<Ordering> {
+    let candidate = double_components(candidate)?;
+    let target_shift = candidate.shift.min(exact_shift);
+    let candidate_scaled = candidate.signed_mantissa(target_shift)?;
+    let exact_scaled = scale_signed_mantissa(exact, exact_shift, target_shift)?;
+    Some(candidate_scaled.cmp(&exact_scaled))
+}
+
+fn scale_signed_mantissa(value: i128, shift: i32, target_shift: i32) -> Option<i128> {
+    let delta: u32 = shift.checked_sub(target_shift)?.try_into().ok()?;
+    let magnitude = if value < 0 {
+        value.checked_neg()? as u128
+    } else {
+        value as u128
+    };
+    let magnitude = magnitude.checked_shl(delta)?;
+    if magnitude > i128::MAX as u128 {
+        return None;
+    }
+    let magnitude = magnitude as i128;
+    Some(if value < 0 { -magnitude } else { magnitude })
+}
+
+fn double_components(value: u64) -> Option<DoubleComponents> {
+    if !is_finite_double(value) {
+        return None;
+    }
+    let negative = value & DOUBLE_SIGN_BIT != 0;
+    let exponent = (value & DOUBLE_EXP_MASK) >> 52;
+    let fraction = value & DOUBLE_FRACTION_MASK;
+    if exponent == 0 {
+        return Some(DoubleComponents {
+            negative,
+            significand: u128::from(fraction),
+            shift: -1074,
+        });
+    }
+    Some(DoubleComponents {
+        negative,
+        significand: u128::from((1_u64 << 52) | fraction),
+        shift: exponent as i32 - 1023 - 52,
+    })
+}
+
+fn opposite_infinities_double(lhs: u64, rhs: u64) -> bool {
+    is_infinity_double(lhs) && is_infinity_double(rhs) && (lhs ^ rhs) & DOUBLE_SIGN_BIT != 0
+}
+
+fn is_finite_double(value: u64) -> bool {
+    !is_infinity_double(value) && value & DOUBLE_EXP_MASK != DOUBLE_EXP_MASK
+}
+
+fn is_zero_double(value: u64) -> bool {
+    value & !DOUBLE_SIGN_BIT == 0
+}
+
+#[derive(Clone, Copy)]
+struct DoubleSum {
+    lhs: DoubleComponents,
+    rhs: DoubleComponents,
+    exact: i128,
+    shift: i32,
+    native_bits: u64,
+}
+
+#[derive(Clone, Copy)]
+struct DoubleComponents {
+    negative: bool,
+    significand: u128,
+    shift: i32,
+}
+
+impl DoubleComponents {
+    fn signed_mantissa(self, target_shift: i32) -> Option<i128> {
+        let delta: u32 = self.shift.checked_sub(target_shift)?.try_into().ok()?;
+        let magnitude = self.significand.checked_shl(delta)?;
+        if magnitude > i128::MAX as u128 {
+            return None;
+        }
+        let magnitude = magnitude as i128;
+        Some(if self.negative { -magnitude } else { magnitude })
+    }
+
+    fn value(self) -> f64 {
+        let sign = if self.negative { DOUBLE_SIGN_BIT } else { 0 };
+        if self.significand == 0 {
+            return f64::from_bits(sign);
+        }
+        f64::from_bits(sign | self.raw_magnitude_bits())
+    }
+
+    fn raw_magnitude_bits(self) -> u64 {
+        if self.shift == -1074 {
+            return self.significand as u64;
+        }
+        let exponent = self.shift + 1023 + 52;
+        ((exponent as u64) << 52) | ((self.significand as u64) & DOUBLE_FRACTION_MASK)
     }
 }
 
