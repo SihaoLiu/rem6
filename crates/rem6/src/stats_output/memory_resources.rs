@@ -257,6 +257,10 @@ fn emit_cache_resource_stats(
     for (suffix, value) in [
         ("activity", summary.activity),
         ("active", summary.active),
+        ("msi.runs", summary.msi_runs),
+        ("mesi.runs", summary.mesi_runs),
+        ("moesi.runs", summary.moesi_runs),
+        ("chi.runs", summary.chi_runs),
         ("cpu_responses", summary.cpu_responses),
         ("directory_decisions", summary.directory_decisions),
         ("dram_accesses", summary.dram_accesses),

@@ -250,9 +250,13 @@ fn cache_resource_json(summary: &Rem6CacheResourceSummary) -> String {
 
 fn cache_resource_fields_json(summary: &Rem6CacheResourceSummary) -> String {
     format!(
-        "\"activity\":{},\"active\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{},\"prefetch_identified\":{},\"prefetch_issued\":{},\"prefetch_useful\":{},\"prefetch_useful_but_miss\":{},\"prefetch_unused\":{},\"prefetch_demand_mshr_misses\":{},\"prefetch_hit_in_cache\":{},\"prefetch_hit_in_mshr\":{},\"prefetch_hit_in_write_buffer\":{},\"prefetch_late\":{},\"prefetch_accuracy_ppm\":{},\"prefetch_coverage_ppm\":{},\"prefetch_span_page\":{},\"prefetch_useful_span_page\":{},\"prefetch_in_cache\":{},\"prefetch_fills\":{},\"prefetch_queue_enqueued\":{},\"prefetch_queue_issued\":{},\"prefetch_queue_dropped\":{},\"prefetch_translation_queue_enqueued\":{},\"prefetch_translation_queue_issued\":{},\"prefetch_translation_queue_translated\":{},\"prefetch_translation_queue_dropped\":{}",
+        "\"activity\":{},\"active\":{},\"msi_runs\":{},\"mesi_runs\":{},\"moesi_runs\":{},\"chi_runs\":{},\"cpu_responses\":{},\"directory_decisions\":{},\"dram_accesses\":{},\"bank_accepted\":{},\"bank_immediate_hits\":{},\"bank_scheduled_misses\":{},\"bank_coalesced_misses\":{},\"prefetch_identified\":{},\"prefetch_issued\":{},\"prefetch_useful\":{},\"prefetch_useful_but_miss\":{},\"prefetch_unused\":{},\"prefetch_demand_mshr_misses\":{},\"prefetch_hit_in_cache\":{},\"prefetch_hit_in_mshr\":{},\"prefetch_hit_in_write_buffer\":{},\"prefetch_late\":{},\"prefetch_accuracy_ppm\":{},\"prefetch_coverage_ppm\":{},\"prefetch_span_page\":{},\"prefetch_useful_span_page\":{},\"prefetch_in_cache\":{},\"prefetch_fills\":{},\"prefetch_queue_enqueued\":{},\"prefetch_queue_issued\":{},\"prefetch_queue_dropped\":{},\"prefetch_translation_queue_enqueued\":{},\"prefetch_translation_queue_issued\":{},\"prefetch_translation_queue_translated\":{},\"prefetch_translation_queue_dropped\":{}",
         summary.activity,
         summary.active,
+        summary.msi_runs,
+        summary.mesi_runs,
+        summary.moesi_runs,
+        summary.chi_runs,
         summary.cpu_responses,
         summary.directory_decisions,
         summary.dram_accesses,

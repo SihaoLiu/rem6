@@ -3332,6 +3332,10 @@ fn rem6_run_cache_dram_path_emits_unified_resource_activity_stats() {
     let cache_bank_immediate_hits = json_u64(resources, "/cache/bank_immediate_hits");
     let cache_bank_scheduled_misses = json_u64(resources, "/cache/bank_scheduled_misses");
     let cache_bank_coalesced_misses = json_u64(resources, "/cache/bank_coalesced_misses");
+    let cache_msi_runs = json_u64(resources, "/cache/msi_runs");
+    let cache_mesi_runs = json_u64(resources, "/cache/mesi_runs");
+    let cache_moesi_runs = json_u64(resources, "/cache/moesi_runs");
+    let cache_chi_runs = json_u64(resources, "/cache/chi_runs");
     let transport_activity = json_u64(resources, "/transport/activity");
     let active_transports = json_u64(resources, "/transport/active");
     let dram_activity = json_u64(resources, "/dram/activity");
@@ -3441,6 +3445,23 @@ fn rem6_run_cache_dram_path_emits_unified_resource_activity_stats() {
         json_u64(&json, "/simulation/instruction_cache_bank_coalesced_misses")
             + json_u64(&json, "/simulation/data_cache_bank_coalesced_misses")
     );
+    assert_eq!(
+        cache_msi_runs,
+        json_u64(&json, "/simulation/instruction_cache_msi_runs")
+            + json_u64(&json, "/simulation/data_cache_msi_runs")
+    );
+    assert_eq!(cache_msi_runs, json_u64(resources, "/cache/l1/msi_runs"));
+    assert_eq!(
+        json_u64(resources, "/cache/instruction/msi_runs"),
+        json_u64(&json, "/simulation/instruction_cache_msi_runs")
+    );
+    assert_eq!(
+        json_u64(resources, "/cache/data/msi_runs"),
+        json_u64(&json, "/simulation/data_cache_msi_runs")
+    );
+    assert_eq!(cache_mesi_runs, 0);
+    assert_eq!(cache_moesi_runs, 0);
+    assert_eq!(cache_chi_runs, 0);
     assert!(transport_activity > 0);
     assert!(dram_activity > 0);
 
@@ -3486,6 +3507,26 @@ fn rem6_run_cache_dram_path_emits_unified_resource_activity_stats() {
         &stdout,
         "sim.memory.resources.cache.bank.coalesced_misses",
         cache_bank_coalesced_misses,
+    );
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.cache.msi.runs",
+        cache_msi_runs,
+    );
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.cache.l1.msi.runs",
+        cache_msi_runs,
+    );
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.cache.instruction.msi.runs",
+        json_u64(resources, "/cache/instruction/msi_runs"),
+    );
+    assert_resource_stat_matches_json(
+        &stdout,
+        "sim.memory.resources.cache.data.msi.runs",
+        json_u64(resources, "/cache/data/msi_runs"),
     );
     assert_resource_stat_matches_json(
         &stdout,

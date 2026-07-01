@@ -29,6 +29,10 @@ pub(crate) struct Rem6MemoryResourceSummary {
 pub(crate) struct Rem6CacheResourceSummary {
     pub(crate) activity: u64,
     pub(crate) active: u64,
+    pub(crate) msi_runs: u64,
+    pub(crate) mesi_runs: u64,
+    pub(crate) moesi_runs: u64,
+    pub(crate) chi_runs: u64,
     pub(crate) cpu_responses: u64,
     pub(crate) directory_decisions: u64,
     pub(crate) dram_accesses: u64,
@@ -159,6 +163,10 @@ impl Rem6CacheResourceSummary {
             .fold(Self::default(), |mut summary, cache| {
                 summary.activity = summary.activity.saturating_add(cache.runs);
                 summary.active += u64::from(cache.runs != 0);
+                summary.msi_runs = summary.msi_runs.saturating_add(cache.msi_runs);
+                summary.mesi_runs = summary.mesi_runs.saturating_add(cache.mesi_runs);
+                summary.moesi_runs = summary.moesi_runs.saturating_add(cache.moesi_runs);
+                summary.chi_runs = summary.chi_runs.saturating_add(cache.chi_runs);
                 summary.cpu_responses = summary.cpu_responses.saturating_add(cache.cpu_responses);
                 summary.directory_decisions = summary
                     .directory_decisions

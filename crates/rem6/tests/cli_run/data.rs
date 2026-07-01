@@ -3334,6 +3334,7 @@ fn rem6_run_riscv_se_data_cache_observes_guest_memory_writes() {
             String::from_utf8_lossy(&output.stderr)
         );
         let stdout = String::from_utf8(output.stdout).unwrap();
+        let json: Value = serde_json::from_str(&stdout).unwrap();
         assert!(stdout.contains("\"status\":\"stopped_by_host\""));
         assert!(stdout.contains("\"stop_code\":66"), "{protocol}: {stdout}");
         assert!(stdout.contains("\"x6\":\"0x11\""));
@@ -3358,6 +3359,7 @@ fn rem6_run_riscv_se_data_cache_observes_guest_memory_writes() {
             2,
             "monotonic",
         );
+        assert_cache_resource_protocol_runs(&stdout, &json, "data", protocol, 2);
     }
 }
 
@@ -3418,6 +3420,7 @@ fn rem6_run_riscv_se_data_cache_observes_fixed_mmap_replacement() {
             String::from_utf8_lossy(&output.stderr)
         );
         let stdout = String::from_utf8(output.stdout).unwrap();
+        let json: Value = serde_json::from_str(&stdout).unwrap();
         assert!(stdout.contains("\"status\":\"stopped_by_host\""));
         assert!(stdout.contains("\"stop_code\":0"), "{protocol}: {stdout}");
         assert!(stdout.contains("\"x6\":\"0x11\""));
@@ -3440,6 +3443,7 @@ fn rem6_run_riscv_se_data_cache_observes_fixed_mmap_replacement() {
             2,
             "monotonic",
         );
+        assert_cache_resource_protocol_runs(&stdout, &json, "data", protocol, 2);
     }
 }
 
@@ -4347,6 +4351,29 @@ fn json_u64(json: &Value, pointer: &str) -> u64 {
     json.pointer(pointer)
         .and_then(Value::as_u64)
         .unwrap_or_else(|| panic!("missing u64 JSON field {pointer}"))
+}
+
+fn assert_cache_resource_protocol_runs(
+    stdout: &str,
+    json: &Value,
+    cache_kind: &str,
+    protocol: &str,
+    expected_runs: u64,
+) {
+    assert_eq!(
+        json_u64(
+            json,
+            &format!("/memory_resources/cache/{cache_kind}/{protocol}_runs")
+        ),
+        expected_runs
+    );
+    assert_stat(
+        stdout,
+        &format!("sim.memory.resources.cache.{cache_kind}.{protocol}.runs"),
+        "Count",
+        expected_runs,
+        "monotonic",
+    );
 }
 
 fn assert_run_fabric_virtual_network_stats(
