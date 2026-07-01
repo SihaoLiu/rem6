@@ -149,6 +149,35 @@ pub(super) fn emit_elf_run_stats(
         StatResetPolicy::Constant,
         metadata.weak_symbol_count(),
     )?;
+    let symbols = metadata.symbol_summary();
+    increment_stat(
+        stats,
+        "sim.elf.symbol_visibility.default",
+        "Count",
+        StatResetPolicy::Constant,
+        symbols.default_visibility_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.symbol_visibility.internal",
+        "Count",
+        StatResetPolicy::Constant,
+        symbols.internal_visibility_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.symbol_visibility.hidden",
+        "Count",
+        StatResetPolicy::Constant,
+        symbols.hidden_visibility_count(),
+    )?;
+    increment_stat(
+        stats,
+        "sim.elf.symbol_visibility.protected",
+        "Count",
+        StatResetPolicy::Constant,
+        symbols.protected_visibility_count(),
+    )?;
     emit_elf_dynamic_stats(stats, metadata.dynamic_table())?;
     emit_elf_program_header_stats(stats, metadata)?;
     emit_elf_section_header_stats(stats, metadata)?;

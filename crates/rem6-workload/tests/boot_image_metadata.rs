@@ -373,6 +373,10 @@ fn elf64_image_with_symbols(machine: u16) -> Vec<u8> {
     elf64_image_with_symbol_section(machine, ".symtab", 2, ".strtab")
 }
 
+fn elf64_image_with_symbol_visibility(machine: u16) -> Vec<u8> {
+    elf64_image_with_symbol_section_and_visibility(machine, ".symtab", 2, ".strtab", 2, 3)
+}
+
 fn elf64_image_with_dynamic_symbols(machine: u16) -> Vec<u8> {
     elf64_image_with_symbol_section(machine, ".dynsym", 11, ".dynstr")
 }
@@ -382,6 +386,24 @@ fn elf64_image_with_symbol_section(
     symbol_section_name: &str,
     symbol_section_kind: u32,
     string_section_name: &str,
+) -> Vec<u8> {
+    elf64_image_with_symbol_section_and_visibility(
+        machine,
+        symbol_section_name,
+        symbol_section_kind,
+        string_section_name,
+        0,
+        0,
+    )
+}
+
+fn elf64_image_with_symbol_section_and_visibility(
+    machine: u16,
+    symbol_section_name: &str,
+    symbol_section_kind: u32,
+    string_section_name: &str,
+    function_visibility: u8,
+    object_visibility: u8,
 ) -> Vec<u8> {
     let mut bytes = elf64_image(machine);
     let symbol_names = b"\0entry_func\0data_obj\0";
@@ -393,12 +415,14 @@ fn elf64_image_with_symbol_section(
     let function_base = symbol_table_offset + 24;
     write_u32(&mut bytes, function_base, 1);
     bytes[function_base + 4] = 0x12;
+    bytes[function_base + 5] = function_visibility;
     write_u16(&mut bytes, function_base + 6, 1);
     write_u64(&mut bytes, function_base + 8, 0x8004);
     write_u64(&mut bytes, function_base + 16, 4);
     let object_base = symbol_table_offset + 48;
     write_u32(&mut bytes, object_base, 12);
     bytes[object_base + 4] = 0x11;
+    bytes[object_base + 5] = object_visibility;
     write_u16(&mut bytes, object_base + 6, 1);
     write_u64(&mut bytes, object_base + 8, 0x9000);
     write_u64(&mut bytes, object_base + 16, 8);
@@ -1833,15 +1857,26 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
     let plain = BootImage::from_elf64_le(&elf64_image(243)).unwrap();
     let symbols = BootImage::from_elf64_le(&elf64_image_with_symbols(243)).unwrap();
     let dynamic_symbols = BootImage::from_elf64_le(&elf64_image_with_dynamic_symbols(243)).unwrap();
+    let visible_symbols =
+        BootImage::from_elf64_le(&elf64_image_with_symbol_visibility(243)).unwrap();
 
     assert_eq!(plain.entry(), symbols.entry());
     assert_eq!(plain.segments(), symbols.segments());
     assert_eq!(plain.segments(), dynamic_symbols.segments());
+    assert_eq!(symbols.segments(), visible_symbols.segments());
     assert_eq!(plain.elf_metadata().unwrap().symbol_count(), 0);
     assert_eq!(symbols.elf_metadata().unwrap().symbol_count(), 2);
     assert_eq!(
         dynamic_symbols.elf_metadata().unwrap().symbol_count(),
         symbols.elf_metadata().unwrap().symbol_count()
+    );
+    assert_eq!(
+        visible_symbols
+            .elf_metadata()
+            .unwrap()
+            .symbol_summary()
+            .hidden_visibility_count(),
+        1
     );
 
     let plain_manifest = WorkloadManifest::builder(id("same"), plain)
@@ -1853,11 +1888,18 @@ fn workload_manifest_identity_includes_elf_symbol_summary() {
     let dynamic_symbol_manifest = WorkloadManifest::builder(id("same"), dynamic_symbols)
         .build()
         .unwrap();
+    let visible_symbol_manifest = WorkloadManifest::builder(id("same"), visible_symbols)
+        .build()
+        .unwrap();
 
     assert_ne!(plain_manifest.identity(), symbol_manifest.identity());
     assert_ne!(
         plain_manifest.identity(),
         dynamic_symbol_manifest.identity()
+    );
+    assert_ne!(
+        symbol_manifest.identity(),
+        visible_symbol_manifest.identity()
     );
 }
 

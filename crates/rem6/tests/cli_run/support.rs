@@ -343,6 +343,25 @@ pub(crate) fn riscv64_elf_with_symbol_bindings(
     physical: u64,
     payload: &[u8],
 ) -> Vec<u8> {
+    riscv64_elf_with_symbol_bindings_and_visibility(entry, physical, payload, 0, 0, 0)
+}
+
+pub(crate) fn riscv64_elf_with_symbol_visibility(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+) -> Vec<u8> {
+    riscv64_elf_with_symbol_bindings_and_visibility(entry, physical, payload, 2, 1, 3)
+}
+
+fn riscv64_elf_with_symbol_bindings_and_visibility(
+    entry: u64,
+    physical: u64,
+    payload: &[u8],
+    function_visibility: u8,
+    local_visibility: u8,
+    weak_visibility: u8,
+) -> Vec<u8> {
     let mut bytes = riscv64_elf(entry, physical, payload);
     let symbol_names = b"\0entry_func\0local_data\0weak_data\0";
     let symbol_names_offset = bytes.len();
@@ -353,6 +372,7 @@ pub(crate) fn riscv64_elf_with_symbol_bindings(
     let function_base = symbol_table_offset + 24;
     write_u32(&mut bytes, function_base, 1);
     bytes[function_base + 4] = 0x12;
+    bytes[function_base + 5] = function_visibility;
     write_u16(&mut bytes, function_base + 6, 1);
     write_u64(&mut bytes, function_base + 8, entry);
     write_u64(&mut bytes, function_base + 16, payload.len() as u64);
@@ -360,6 +380,7 @@ pub(crate) fn riscv64_elf_with_symbol_bindings(
     let local_base = symbol_table_offset + 48;
     write_u32(&mut bytes, local_base, 12);
     bytes[local_base + 4] = 0x01;
+    bytes[local_base + 5] = local_visibility;
     write_u16(&mut bytes, local_base + 6, 1);
     write_u64(&mut bytes, local_base + 8, physical + 0x1000);
     write_u64(&mut bytes, local_base + 16, 8);
@@ -367,6 +388,7 @@ pub(crate) fn riscv64_elf_with_symbol_bindings(
     let weak_base = symbol_table_offset + 72;
     write_u32(&mut bytes, weak_base, 23);
     bytes[weak_base + 4] = 0x21;
+    bytes[weak_base + 5] = weak_visibility;
     write_u16(&mut bytes, weak_base + 6, 1);
     write_u64(&mut bytes, weak_base + 8, physical + 0x2000);
     write_u64(&mut bytes, weak_base + 16, 16);

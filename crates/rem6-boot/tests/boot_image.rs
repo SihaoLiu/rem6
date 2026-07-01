@@ -333,6 +333,10 @@ fn add_elf64_symbol_table(bytes: &mut Vec<u8>) {
     add_elf64_symbol_table_section(bytes, ".symtab", 2, ".strtab");
 }
 
+fn add_elf64_symbol_visibility_table(bytes: &mut Vec<u8>) {
+    add_elf64_symbol_table_section_with_visibility(bytes, ".symtab", 2, ".strtab", 2, 3);
+}
+
 fn add_elf64_dynamic_symbol_table(bytes: &mut Vec<u8>) {
     add_elf64_symbol_table_section(bytes, ".dynsym", 11, ".dynstr");
 }
@@ -343,6 +347,24 @@ fn add_elf64_symbol_table_section(
     symbol_section_kind: u32,
     string_section_name: &str,
 ) {
+    add_elf64_symbol_table_section_with_visibility(
+        bytes,
+        symbol_section_name,
+        symbol_section_kind,
+        string_section_name,
+        0,
+        0,
+    );
+}
+
+fn add_elf64_symbol_table_section_with_visibility(
+    bytes: &mut Vec<u8>,
+    symbol_section_name: &str,
+    symbol_section_kind: u32,
+    string_section_name: &str,
+    function_visibility: u8,
+    object_visibility: u8,
+) {
     let symbol_names = b"\0entry_func\0data_obj\0";
     let symbol_names_offset = bytes.len() as u64;
     bytes.extend_from_slice(symbol_names);
@@ -352,12 +374,14 @@ fn add_elf64_symbol_table_section(
     let function_base = symbol_table_offset as usize + 24;
     write_u32(bytes, function_base, 1);
     bytes[function_base + 4] = 0x12;
+    bytes[function_base + 5] = function_visibility;
     write_u16(bytes, function_base + 6, 1);
     write_u64(bytes, function_base + 8, 0x8004);
     write_u64(bytes, function_base + 16, 4);
     let object_base = symbol_table_offset as usize + 48;
     write_u32(bytes, object_base, 12);
     bytes[object_base + 4] = 0x11;
+    bytes[object_base + 5] = object_visibility;
     write_u16(bytes, object_base + 6, 1);
     write_u64(bytes, object_base + 8, 0x9000);
     write_u64(bytes, object_base + 16, 8);
@@ -3714,6 +3738,33 @@ fn boot_image_records_symbol_table_summary() {
     assert_eq!(metadata.symbol_count(), 2);
     assert_eq!(metadata.function_symbol_count(), 1);
     assert_eq!(metadata.object_symbol_count(), 1);
+}
+
+#[test]
+fn boot_image_records_symbol_visibility_summary() {
+    let mut elf = elf64_image(
+        0x8004,
+        &[ElfProgramHeaderSpec {
+            kind: 1,
+            offset: 0x100,
+            physical: 0x8000,
+            file_size: 4,
+            memory_size: 4,
+        }],
+        &[(0x100, &[0x13, 0x05, 0x00, 0x00])],
+    );
+    add_elf64_symbol_visibility_table(&mut elf);
+
+    let metadata = BootImage::from_elf64_le(&elf)
+        .unwrap()
+        .elf_metadata()
+        .unwrap();
+    let symbols = metadata.symbol_summary();
+
+    assert_eq!(symbols.default_visibility_count(), 0);
+    assert_eq!(symbols.internal_visibility_count(), 0);
+    assert_eq!(symbols.hidden_visibility_count(), 1);
+    assert_eq!(symbols.protected_visibility_count(), 1);
 }
 
 #[test]

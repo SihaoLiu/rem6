@@ -31,6 +31,10 @@ const STB_GLOBAL: u8 = 1;
 const STB_WEAK: u8 = 2;
 const STT_OBJECT: u8 = 1;
 const STT_FUNC: u8 = 2;
+const STV_DEFAULT: u8 = 0;
+const STV_INTERNAL: u8 = 1;
+const STV_HIDDEN: u8 = 2;
+const STV_PROTECTED: u8 = 3;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ElfSectionSummary {
@@ -42,6 +46,10 @@ pub(crate) struct ElfSectionSummary {
     local_symbol_count: u64,
     global_symbol_count: u64,
     weak_symbol_count: u64,
+    default_visibility_symbol_count: u64,
+    internal_visibility_symbol_count: u64,
+    hidden_visibility_symbol_count: u64,
+    protected_visibility_symbol_count: u64,
     allocated_section_count: u64,
     writable_section_count: u64,
     executable_section_count: u64,
@@ -92,11 +100,9 @@ impl ElfSectionSummary {
     pub(crate) const fn operating_system(self) -> Option<BootElfOperatingSystem> {
         self.operating_system
     }
-
     pub(crate) const fn has_tls(self) -> bool {
         self.has_tls
     }
-
     pub(crate) const fn symbol_summary(self) -> BootElfSymbolSummary {
         BootElfSymbolSummary::new(
             self.symbol_count,
@@ -105,17 +111,18 @@ impl ElfSectionSummary {
             self.local_symbol_count,
             self.global_symbol_count,
             self.weak_symbol_count,
+            self.default_visibility_symbol_count,
+            self.internal_visibility_symbol_count,
+            self.hidden_visibility_symbol_count,
+            self.protected_visibility_symbol_count,
         )
     }
-
     pub(crate) const fn note_section_count(self) -> u64 {
         self.note_section_count
     }
-
     pub(crate) const fn note_section_file_size(self) -> u64 {
         self.note_section_file_size
     }
-
     pub(crate) const fn section_relocations(self) -> BootElfSectionRelocations {
         BootElfSectionRelocations::new(
             self.relocation_section_count,
@@ -128,7 +135,6 @@ impl ElfSectionSummary {
             self.relr_entry_count,
         )
     }
-
     pub(crate) const fn section_arrays(self) -> BootElfSectionArrays {
         BootElfSectionArrays::new(
             self.init_array_section_count,
@@ -142,7 +148,6 @@ impl ElfSectionSummary {
             self.preinit_array_entry_count,
         )
     }
-
     pub(crate) const fn section_hashes(self) -> BootElfSectionHashes {
         BootElfSectionHashes::new(
             self.sysv_hash_section_count,
@@ -151,7 +156,6 @@ impl ElfSectionSummary {
             self.gnu_hash_bytes,
         )
     }
-
     pub(crate) const fn section_groups(self) -> BootElfSectionGroups {
         BootElfSectionGroups::new(
             self.group_section_count,
@@ -159,15 +163,12 @@ impl ElfSectionSummary {
             self.group_entry_count,
         )
     }
-
     pub(crate) const fn section_header_table(self) -> BootElfSectionHeaderTable {
         self.section_header_table
     }
-
     pub(crate) const fn section_name_table(self) -> BootElfSectionNameTable {
         self.section_name_table
     }
-
     pub(crate) const fn section_flags(self) -> BootElfSectionFlags {
         BootElfSectionFlags::new(
             self.allocated_section_count,
@@ -176,7 +177,6 @@ impl ElfSectionSummary {
             self.nobits_section_count,
         )
     }
-
     pub(crate) const fn section_storage(self) -> BootElfSectionStorage {
         BootElfSectionStorage::new(
             self.file_backed_section_bytes,
@@ -188,14 +188,12 @@ impl ElfSectionSummary {
             self.string_table_bytes,
         )
     }
-
     pub(crate) fn section_address_range(self) -> BootElfSectionAddressRange {
         BootElfSectionAddressRange::new(
             self.section_address_start.map(Address::new),
             self.section_address_end.map(Address::new),
         )
     }
-
     pub(crate) const fn section_alignment(self) -> BootElfSectionAlignment {
         BootElfSectionAlignment::new(
             self.max_section_alignment,
@@ -249,7 +247,6 @@ fn elf64_section_summary(
     else {
         return Ok(ElfSectionSummary::default());
     };
-
     validate_section_table_range(bytes, table.offset, table.header_size, table.count)?;
     let string_header = read_elf64_section_header(
         bytes,
@@ -266,7 +263,6 @@ fn elf64_section_summary(
                 image_size: bytes.len() as u64,
             })
         })?;
-
     let mut summary = ElfSectionSummary {
         section_header_table: BootElfSectionHeaderTable::new(
             table.offset,
@@ -314,7 +310,6 @@ fn elf32_section_summary(
     else {
         return Ok(ElfSectionSummary::default());
     };
-
     validate_section_table_range(bytes, table.offset, table.header_size, table.count)?;
     let string_header = read_elf32_section_header(
         bytes,
@@ -718,7 +713,8 @@ fn summarize_elf64_symbol_table(
             continue;
         }
         let info = symbols[offset as usize + 4];
-        summarize_symbol_type(summary, info >> 4, info & 0xf);
+        let visibility = symbols[offset as usize + 5] & 0x3;
+        summarize_symbol_type(summary, info >> 4, info & 0xf, visibility);
     }
 }
 
@@ -763,11 +759,12 @@ fn summarize_elf32_symbol_table(
             continue;
         }
         let info = symbols[offset as usize + 12];
-        summarize_symbol_type(summary, info >> 4, info & 0xf);
+        let visibility = symbols[offset as usize + 13] & 0x3;
+        summarize_symbol_type(summary, info >> 4, info & 0xf, visibility);
     }
 }
 
-fn summarize_symbol_type(summary: &mut ElfSectionSummary, binding: u8, kind: u8) {
+fn summarize_symbol_type(summary: &mut ElfSectionSummary, binding: u8, kind: u8, visibility: u8) {
     if !matches!(binding, STB_LOCAL | STB_GLOBAL | STB_WEAK) {
         return;
     }
@@ -781,6 +778,13 @@ fn summarize_symbol_type(summary: &mut ElfSectionSummary, binding: u8, kind: u8)
     match kind {
         STT_FUNC => summary.function_symbol_count += 1,
         STT_OBJECT => summary.object_symbol_count += 1,
+        _ => {}
+    }
+    match visibility {
+        STV_DEFAULT => summary.default_visibility_symbol_count += 1,
+        STV_INTERNAL => summary.internal_visibility_symbol_count += 1,
+        STV_HIDDEN => summary.hidden_visibility_symbol_count += 1,
+        STV_PROTECTED => summary.protected_visibility_symbol_count += 1,
         _ => {}
     }
 }

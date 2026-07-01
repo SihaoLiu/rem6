@@ -20,5 +20,5 @@ pub use metadata_tables::{
     BootElfLoadSegments, BootElfProgramHeaderTable, BootElfSectionAddressRange,
     BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags, BootElfSectionGroups,
     BootElfSectionHashes, BootElfSectionHeaderTable, BootElfSectionNameTable,
-    BootElfSectionRelocations, BootElfSectionStorage,
+    BootElfSectionRelocations, BootElfSectionStorage, BootElfSymbolSummary,
 };

@@ -3,7 +3,7 @@ use rem6_boot::{
     BootElfInterpreter, BootElfLoadSegments, BootElfProgramHeaderTable, BootElfSectionAddressRange,
     BootElfSectionAlignment, BootElfSectionArrays, BootElfSectionFlags, BootElfSectionGroups,
     BootElfSectionHashes, BootElfSectionHeaderTable, BootElfSectionNameTable,
-    BootElfSectionRelocations, BootElfSectionStorage,
+    BootElfSectionRelocations, BootElfSectionStorage, BootElfSymbolSummary,
 };
 use rem6_fabric::FabricHopActivity;
 use rem6_memory::Address;
@@ -219,8 +219,9 @@ impl Rem6RunArtifact {
             self.metadata.note_section_count(),
             self.metadata.note_section_file_size(),
         );
+        let symbols = elf_symbol_summary_json(self.metadata.symbol_summary());
         format!(
-            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"load_segments\":{},\"notes\":{},\"gnu_stack\":{},\"gnu_relro\":{},\"gnu_eh_frame\":{},\"gnu_property\":{},\"symbols\":{{\"total\":{},\"functions\":{},\"objects\":{},\"local\":{},\"global\":{},\"weak\":{}}},\"dynamic\":{},\"program_header_table\":{},\"section_header_table\":{},\"section_name_table\":{},\"section_flags\":{},\"section_storage\":{},\"section_relocations\":{},\"section_arrays\":{},\"section_hashes\":{},\"section_groups\":{},\"section_address_range\":{},\"section_alignment\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_hsm_statuses\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
+            "{{\"schema\":\"{}\",\"isa\":\"{}\",\"binary\":\"{}\",\"kernel_resource\":{},\"entry\":\"0x{:x}\",\"start_address\":\"0x{:x}\"{},\"instruction_cache_protocol\":{},\"instruction_cache_l2_protocol\":{},\"instruction_cache_l3_protocol\":{},\"instruction_cache_prefetcher\":{},\"data_cache_protocol\":{},\"data_cache_l2_protocol\":{},\"data_cache_l3_protocol\":{},\"data_cache_prefetcher\":{},\"load_blobs\":[{}],\"readfiles\":[{}],\"elf\":{{\"class\":\"{}\",\"endian\":\"{}\",\"architecture\":\"{}\",\"os\":\"{}\",\"machine\":{},\"flags\":{},\"tls\":{},\"load_segments\":{},\"notes\":{},\"gnu_stack\":{},\"gnu_relro\":{},\"gnu_eh_frame\":{},\"gnu_property\":{},\"symbols\":{},\"dynamic\":{},\"program_header_table\":{},\"section_header_table\":{},\"section_name_table\":{},\"section_flags\":{},\"section_storage\":{},\"section_relocations\":{},\"section_arrays\":{},\"section_hashes\":{},\"section_groups\":{},\"section_address_range\":{},\"section_alignment\":{},\"interpreter\":{}}},\"simulation\":{},\"parallel\":{},\"cores\":{},\"memory\":{},\"memory_resources\":{},\"riscv_guest_writes\":{},\"riscv_unknown_syscalls\":{},\"riscv_sbi_console\":{},\"riscv_sbi_timers\":{},\"riscv_sbi_hsm_events\":{},\"riscv_sbi_hsm_wakes\":{},\"riscv_sbi_hsm_statuses\":{},\"riscv_sbi_ipis\":{},\"riscv_sbi_rfences\":{},\"riscv_sbi_rfence_completions\":{},\"riscv_sbi_resets\":{},\"host_actions\":{},\"dram\":{},\"transport\":{},\"fabric\":{}{},\"stats\":{}{}}}\n",
             self.schema,
             self.config.isa().as_str(),
             json_escape(&self.config.binary().display().to_string()),
@@ -251,12 +252,7 @@ impl Rem6RunArtifact {
             gnu_relro,
             gnu_eh_frame,
             gnu_property,
-            self.metadata.symbol_count(),
-            self.metadata.function_symbol_count(),
-            self.metadata.object_symbol_count(),
-            self.metadata.local_symbol_count(),
-            self.metadata.global_symbol_count(),
-            self.metadata.weak_symbol_count(),
+            symbols,
             elf_dynamic_table_json(self.metadata.dynamic_table()),
             elf_program_header_table_json(self.metadata.program_header_table()),
             elf_section_header_table_json(self.metadata.section_header_table()),
@@ -358,6 +354,22 @@ fn elf_interpreter_json(interpreter: Option<&BootElfInterpreter>) -> String {
             )
         })
         .unwrap_or_else(|| "null".to_string())
+}
+
+fn elf_symbol_summary_json(symbols: BootElfSymbolSummary) -> String {
+    format!(
+        "{{\"total\":{},\"functions\":{},\"objects\":{},\"local\":{},\"global\":{},\"weak\":{},\"visibility\":{{\"default\":{},\"internal\":{},\"hidden\":{},\"protected\":{}}}}}",
+        symbols.total_count(),
+        symbols.function_count(),
+        symbols.object_count(),
+        symbols.local_count(),
+        symbols.global_count(),
+        symbols.weak_count(),
+        symbols.default_visibility_count(),
+        symbols.internal_visibility_count(),
+        symbols.hidden_visibility_count(),
+        symbols.protected_visibility_count()
+    )
 }
 
 fn elf_dynamic_table_json(table: &BootElfDynamicTable) -> String {

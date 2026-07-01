@@ -43,10 +43,18 @@ pub(super) fn hash_elf_metadata(hash: &mut u64, metadata: Option<&BootElfMetadat
                 hash_u64(hash, address.get());
                 hash_u64(hash, metadata.gnu_property_memory_size().unwrap_or(0));
             }
+            let symbol_summary = metadata.symbol_summary();
             let symbols = [
-                metadata.symbol_count(),
-                metadata.function_symbol_count(),
-                metadata.object_symbol_count(),
+                symbol_summary.total_count(),
+                symbol_summary.function_count(),
+                symbol_summary.object_count(),
+                symbol_summary.local_count(),
+                symbol_summary.global_count(),
+                symbol_summary.weak_count(),
+                symbol_summary.default_visibility_count(),
+                symbol_summary.internal_visibility_count(),
+                symbol_summary.hidden_visibility_count(),
+                symbol_summary.protected_visibility_count(),
             ];
             if symbols.iter().any(|value| *value != 0) {
                 hash_str(hash, "elf.symbols");

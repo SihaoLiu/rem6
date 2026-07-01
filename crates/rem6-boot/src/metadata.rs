@@ -626,7 +626,7 @@ impl BootElfMetadata {
             gnu_eh_frame_memory_size: None,
             gnu_property_virtual_address: None,
             gnu_property_memory_size: None,
-            symbol_summary: BootElfSymbolSummary::new(0, 0, 0, 0, 0, 0),
+            symbol_summary: BootElfSymbolSummary::new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
             dynamic_table: BootElfDynamicTable::new(),
             load_segments: BootElfLoadSegments::new(0, 0, 0, 0, 0, 0, 0),
             program_header_table: BootElfProgramHeaderTable::new(0, 0, 0),
@@ -823,27 +823,24 @@ impl BootElfMetadata {
     pub const fn symbol_count(&self) -> u64 {
         self.symbol_summary.total_count()
     }
-
     pub const fn function_symbol_count(&self) -> u64 {
         self.symbol_summary.function_count()
     }
-
     pub const fn object_symbol_count(&self) -> u64 {
         self.symbol_summary.object_count()
     }
-
     pub const fn local_symbol_count(&self) -> u64 {
         self.symbol_summary.local_count()
     }
-
     pub const fn global_symbol_count(&self) -> u64 {
         self.symbol_summary.global_count()
     }
-
     pub const fn weak_symbol_count(&self) -> u64 {
         self.symbol_summary.weak_count()
     }
-
+    pub const fn symbol_summary(&self) -> BootElfSymbolSummary {
+        self.symbol_summary
+    }
     pub const fn dynamic_table(&self) -> &BootElfDynamicTable {
         &self.dynamic_table
     }
