@@ -287,6 +287,14 @@ pub(crate) fn sqrt_exception_flags_single_bits(value: u32) -> u64 {
     }
 }
 
+pub(crate) fn single_to_double_exception_flags(value: u64) -> u64 {
+    if is_signaling_nan_single(unbox_single(value)) {
+        FLOAT_FLAG_INVALID
+    } else {
+        0
+    }
+}
+
 pub(crate) fn sqrt_single_rounding_insensitive_bits(value: u32) -> bool {
     sqrt_single_is_exact_bits(value)
 }

@@ -2,8 +2,8 @@ use crate::{FloatRegister, RiscvInstruction};
 
 use super::{
     convert_precision, float_register_write, register_rounding_mode_is_supported,
-    sqrt_double_is_exact, sqrt_exception_flags_double, sqrt_exception_flags_single,
-    sqrt_single_is_exact,
+    single_to_double_exception_flags, sqrt_double_is_exact, sqrt_exception_flags_double,
+    sqrt_exception_flags_single, sqrt_single_is_exact,
 };
 
 pub(crate) fn float_register_write_unary(
@@ -44,6 +44,7 @@ pub(crate) fn unary_exception_flags(instruction: RiscvInstruction, value: u64, f
     match instruction {
         RiscvInstruction::FloatSqrtS { .. } => sqrt_exception_flags_single(value),
         RiscvInstruction::FloatSqrtD { .. } => sqrt_exception_flags_double(value),
+        RiscvInstruction::FloatConvertDFromS { .. } => single_to_double_exception_flags(value),
         RiscvInstruction::FloatConvertSFromD { rounding_mode, .. } => {
             rounding_mode.resolve(frm).map_or(0, |mode| {
                 convert_precision::double_to_single_exception_flags(value, mode)

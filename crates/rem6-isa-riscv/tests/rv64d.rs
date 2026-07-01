@@ -1580,6 +1580,7 @@ fn hart_executes_rv64d_single_double_conversions_with_nan_boxing() {
     .unwrap();
     assert_eq!(hart.read_float(freg(6)), (-2.25f64).to_bits());
 
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
     hart.write_float(freg(7), 1.0f32.to_bits().into());
     hart.execute(RiscvInstruction::FloatConvertDFromS {
         rd: freg(8),
@@ -1587,6 +1588,7 @@ fn hart_executes_rv64d_single_double_conversions_with_nan_boxing() {
     })
     .unwrap();
     assert_eq!(hart.read_float(freg(8)), 0x7ff8_0000_0000_0000);
+    assert_eq!(hart.float_status().fflags(), 0);
 
     hart.write_float(freg(9), f64::NAN.to_bits());
     hart.execute(RiscvInstruction::FloatConvertSFromD {
@@ -1596,6 +1598,30 @@ fn hart_executes_rv64d_single_double_conversions_with_nan_boxing() {
     })
     .unwrap();
     assert_eq!(hart.read_float(freg(10)), box_single(0x7fc0_0000));
+}
+
+#[test]
+fn hart_executes_rv64d_single_to_double_nan_conversion_flags() {
+    let mut hart = RiscvHartState::new(0x8000);
+
+    hart.write_float(freg(1), box_single(0x7fa0_0001));
+    hart.execute(RiscvInstruction::FloatConvertDFromS {
+        rd: freg(2),
+        rs1: freg(1),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(2)), 0x7ff8_0000_0000_0000);
+    assert_eq!(hart.float_status().fflags(), FLOAT_FLAG_INVALID);
+
+    hart.set_float_status(rem6_isa_riscv::RiscvFloatStatus::new(0));
+    hart.write_float(freg(3), box_single(0x7fc0_0001));
+    hart.execute(RiscvInstruction::FloatConvertDFromS {
+        rd: freg(4),
+        rs1: freg(3),
+    })
+    .unwrap();
+    assert_eq!(hart.read_float(freg(4)), 0x7ff8_0000_0000_0000);
+    assert_eq!(hart.float_status().fflags(), 0);
 }
 
 #[test]
