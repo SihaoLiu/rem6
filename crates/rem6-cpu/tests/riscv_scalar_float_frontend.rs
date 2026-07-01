@@ -78,6 +78,10 @@ fn fmadd_d_round_down(rs3: u8, rs2: u8, rs1: u8, rd: u8) -> u32 {
     r4_type(rs3, 0x1, rs2, rs1, 0x2, rd, 0x43)
 }
 
+fn fmadd_d_round_up(rs3: u8, rs2: u8, rs1: u8, rd: u8) -> u32 {
+    r4_type(rs3, 0x1, rs2, rs1, 0x3, rd, 0x43)
+}
+
 fn fsqrt_d_round_up(rs1: u8, rd: u8) -> u32 {
     r_type(0x2d, 0, rs1, 0x3, rd, 0x53)
 }
@@ -415,6 +419,34 @@ fn riscv_core_driver_executes_fmadd_d_product_overflow_round_down_from_fetch_str
         }
     );
     assert_eq!(core.read_float_register(freg(4)), 0x7fef_ffff_ffff_ffff);
+    assert_eq!(
+        core.float_status().fflags(),
+        FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT
+    );
+}
+
+#[test]
+fn riscv_core_driver_executes_fmadd_d_max_boundary_overflow_from_fetch_stream() {
+    let (mut scheduler, transport, route) = fetch_route();
+    let core = core(route, 0x8000);
+    core.write_float_register(freg(1), 0x7fef_ffff_ffff_ffff);
+    core.write_float_register(freg(2), 1.0f64.to_bits());
+    core.write_float_register(freg(3), 0x0000_0000_0000_0001);
+    let store = loaded_program(0x8000, &[fmadd_d_round_up(3, 2, 1, 4)]);
+
+    let instruction = drive_until_execution(&core, store, &mut scheduler, &transport);
+
+    assert_eq!(
+        instruction,
+        RiscvInstruction::FloatMultiplyAddD {
+            rd: freg(4),
+            rs1: freg(1),
+            rs2: freg(2),
+            rs3: freg(3),
+            rounding_mode: RiscvFloatRoundingMode::RoundUp,
+        }
+    );
+    assert_eq!(core.read_float_register(freg(4)), f64::INFINITY.to_bits());
     assert_eq!(
         core.float_status().fflags(),
         FLOAT_FLAG_OVERFLOW | FLOAT_FLAG_INEXACT

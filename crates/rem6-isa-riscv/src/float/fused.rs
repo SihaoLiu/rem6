@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use crate::RiscvFloatRoundingMode;
 
 use super::{
@@ -11,6 +13,7 @@ use super::{
 const SINGLE_HIDDEN_BIT: u128 = 1 << 23;
 const SINGLE_MIN_NORMAL_SHIFT: i32 = -149;
 const DOUBLE_HIDDEN_BIT: u128 = 1 << 52;
+const DOUBLE_MAX_FINITE_BITS: u64 = (DOUBLE_EXP_MASK - (1 << 52)) | DOUBLE_FRACTION_MASK;
 const DOUBLE_MIN_NORMAL_SHIFT: i32 = -1074;
 
 pub(super) fn single_directed_rounding_is_supported(lhs: u64, rhs: u64, addend: u64) -> bool {
@@ -19,7 +22,7 @@ pub(super) fn single_directed_rounding_is_supported(lhs: u64, rhs: u64, addend: 
 
 pub(super) fn double_directed_rounding_is_supported(lhs: u64, rhs: u64, addend: u64) -> bool {
     exact_double_value(lhs, rhs, addend).is_some()
-        || native_double_overflow_is_negative(lhs, rhs, addend).is_some()
+        || native_double_overflow(lhs, rhs, addend).is_some()
 }
 
 pub(super) fn single_register_write(
@@ -45,8 +48,8 @@ pub(super) fn double_register_write(
 ) -> u64 {
     match exact_double_value(lhs, rhs, addend) {
         Some(exact) => round_exact_double(lhs, rhs, addend, exact, rounding_mode),
-        None => match native_double_overflow_is_negative(lhs, rhs, addend) {
-            Some(negative) => overflow_bits_double(negative, rounding_mode),
+        None => match native_double_overflow(lhs, rhs, addend) {
+            Some(overflow) => overflow.rounded_bits(rounding_mode),
             None => native_double_register_write(lhs, rhs, addend),
         },
     }
@@ -289,16 +292,84 @@ fn double_overflows(
 ) -> bool {
     match exact_double_value(lhs, rhs, addend) {
         Some(exact) => exact_overflows_double(exact, rounding_mode),
-        None => native_double_overflow_is_negative(lhs, rhs, addend).is_some(),
+        None => native_double_overflow(lhs, rhs, addend)
+            .is_some_and(|overflow| overflow.raises_overflow(rounding_mode)),
     }
 }
 
-fn native_double_overflow_is_negative(lhs: u64, rhs: u64, addend: u64) -> Option<bool> {
+fn native_double_overflow(lhs: u64, rhs: u64, addend: u64) -> Option<NativeDoubleOverflow> {
     if !is_finite_double(lhs) || !is_finite_double(rhs) || !is_finite_double(addend) {
         return None;
     }
     let native_bits = native_double_register_write(lhs, rhs, addend);
-    is_infinity_double(native_bits).then(|| has_double_sign(native_bits))
+    if is_infinity_double(native_bits) {
+        return Some(NativeDoubleOverflow {
+            negative: has_double_sign(native_bits),
+            native_bits,
+            finite_boundary: false,
+        });
+    }
+    if native_bits & !DOUBLE_SIGN_BIT == DOUBLE_MAX_FINITE_BITS
+        && exact_product_reaches_double_boundary(lhs, rhs, addend, has_double_sign(native_bits))
+    {
+        return Some(NativeDoubleOverflow {
+            negative: has_double_sign(native_bits),
+            native_bits,
+            finite_boundary: true,
+        });
+    }
+    None
+}
+
+fn exact_product_reaches_double_boundary(lhs: u64, rhs: u64, addend: u64, negative: bool) -> bool {
+    let Some(product) = product_term_double(lhs, rhs) else {
+        return false;
+    };
+    if product.mantissa == 0 || product.negative != negative {
+        return false;
+    }
+    let Some(max_finite) = double_term(DOUBLE_MAX_FINITE_BITS) else {
+        return false;
+    };
+    match compare_term_magnitude(product, max_finite) {
+        Some(Ordering::Greater) => {
+            let Some(addend) = double_term(addend) else {
+                return false;
+            };
+            addend.mantissa == 0 || addend.negative == product.negative
+        }
+        Some(Ordering::Equal) => double_term(addend)
+            .is_some_and(|addend| addend.mantissa != 0 && addend.negative == product.negative),
+        _ => false,
+    }
+}
+
+fn compare_term_magnitude(lhs: ExactTerm, rhs: ExactTerm) -> Option<Ordering> {
+    let lhs_exponent = term_exponent(lhs);
+    let rhs_exponent = term_exponent(rhs);
+    match (lhs_exponent, rhs_exponent) {
+        (None, None) => return Some(Ordering::Equal),
+        (None, Some(_)) => return Some(Ordering::Less),
+        (Some(_), None) => return Some(Ordering::Greater),
+        (Some(lhs_exponent), Some(rhs_exponent)) if lhs_exponent != rhs_exponent => {
+            return Some(lhs_exponent.cmp(&rhs_exponent));
+        }
+        _ => {}
+    }
+
+    let target_shift = lhs.shift.min(rhs.shift);
+    let lhs_scaled = scale_term_magnitude(lhs, target_shift)?;
+    let rhs_scaled = scale_term_magnitude(rhs, target_shift)?;
+    Some(lhs_scaled.cmp(&rhs_scaled))
+}
+
+fn term_exponent(term: ExactTerm) -> Option<i32> {
+    (term.mantissa != 0).then(|| term.shift + bit_length(term.mantissa) as i32 - 1)
+}
+
+fn scale_term_magnitude(term: ExactTerm, target_shift: i32) -> Option<u128> {
+    let delta = (term.shift - target_shift).try_into().ok()?;
+    term.mantissa.checked_shl(delta)
 }
 
 fn single_is_exact(lhs: u32, rhs: u32, addend: u32) -> bool {
@@ -771,6 +842,33 @@ fn is_finite(value: u32) -> bool {
 
 fn is_finite_double(value: u64) -> bool {
     value & DOUBLE_EXP_MASK != DOUBLE_EXP_MASK
+}
+
+#[derive(Clone, Copy)]
+struct NativeDoubleOverflow {
+    negative: bool,
+    native_bits: u64,
+    finite_boundary: bool,
+}
+
+impl NativeDoubleOverflow {
+    fn raises_overflow(self, rounding_mode: RiscvFloatRoundingMode) -> bool {
+        !self.finite_boundary || is_infinity_double(self.rounded_bits(rounding_mode))
+    }
+
+    fn rounded_bits(self, rounding_mode: RiscvFloatRoundingMode) -> u64 {
+        if self.finite_boundary
+            && matches!(
+                rounding_mode,
+                RiscvFloatRoundingMode::RoundNearestEven
+                    | RiscvFloatRoundingMode::RoundNearestMaxMagnitude
+            )
+        {
+            self.native_bits
+        } else {
+            overflow_bits_double(self.negative, rounding_mode)
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
