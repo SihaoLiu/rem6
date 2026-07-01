@@ -10,13 +10,15 @@ mod branch;
 mod cache;
 mod dram;
 mod fabric;
+mod host_action;
 mod memory;
 mod pipeline;
 mod trace_stats;
 
 use crate::formatting::{bytes_to_hex, json_escape};
 use crate::{
-    CliDebugFlag, Rem6DramSummary, Rem6MemoryResourceSummary, Rem6RunConfig, Rem6RunFabricSummary,
+    CliDebugFlag, Rem6DramSummary, Rem6HostActionSummary, Rem6MemoryResourceSummary, Rem6RunConfig,
+    Rem6RunFabricSummary,
 };
 use branch::{branch_trace_records, Rem6BranchTraceRecord};
 use cache::{cache_trace_records, cache_trace_stats, Rem6CacheTraceRecord, Rem6CacheTraceStat};
@@ -28,6 +30,7 @@ use fabric::{
     fabric_trace_payload_byte_count, fabric_trace_records, fabric_trace_stats,
     Rem6FabricTraceRecord, Rem6FabricTraceStat,
 };
+use host_action::{host_action_trace_records, Rem6HostActionTraceRecord};
 use memory::{
     memory_trace_channel_matches, memory_trace_records, memory_trace_stats, Rem6MemoryTraceRecord,
     Rem6MemoryTraceStat,
@@ -48,6 +51,7 @@ pub(crate) struct Rem6DebugSummary {
     pipeline_trace: Vec<Rem6PipelineTraceRecord>,
     exec_trace: Vec<Rem6ExecTraceRecord>,
     fetch_trace: Vec<Rem6FetchTraceRecord>,
+    host_action_trace: Vec<Rem6HostActionTraceRecord>,
     data_trace: Vec<Rem6DataTraceRecord>,
     cache_trace: Vec<Rem6CacheTraceRecord>,
     dram_trace: Vec<Rem6DramTraceRecord>,
@@ -154,6 +158,7 @@ impl Rem6DebugSummary {
         memory_resources: &Rem6MemoryResourceSummary,
         power_records: &[PowerAnalysisRecord],
         syscall_trace: &[RiscvSyscallTraceRecord],
+        host_actions: &Rem6HostActionSummary,
     ) -> Self {
         let flags = config.debug_flags().to_vec();
         let branch_trace = if config.debug_branch_enabled() {
@@ -173,6 +178,11 @@ impl Rem6DebugSummary {
         };
         let fetch_trace = if config.debug_fetch_enabled() {
             fetch_trace_records(cluster, config.cores() as u32)
+        } else {
+            Vec::new()
+        };
+        let host_action_trace = if config.debug_host_action_enabled() {
+            host_action_trace_records(host_actions)
         } else {
             Vec::new()
         };
@@ -217,6 +227,7 @@ impl Rem6DebugSummary {
             pipeline_trace,
             exec_trace,
             fetch_trace,
+            host_action_trace,
             data_trace,
             cache_trace,
             dram_trace,
@@ -461,6 +472,46 @@ impl Rem6DebugSummary {
         stat_path_segment: impl Fn(&str) -> String,
     ) -> Vec<Rem6FetchTraceStat> {
         fetch_trace_stats(&self.fetch_trace, stat_path_segment)
+    }
+
+    pub(crate) fn host_action_trace_count(&self) -> u64 {
+        self.host_action_trace.len() as u64
+    }
+
+    pub(crate) fn host_action_injected_command_trace_count(&self) -> u64 {
+        self.host_action_kind_trace_count("injected_command")
+    }
+
+    pub(crate) fn host_action_guest_host_call_trace_count(&self) -> u64 {
+        self.host_action_kind_trace_count("guest_host_call")
+    }
+
+    pub(crate) fn host_action_roi_begin_trace_count(&self) -> u64 {
+        self.host_action_kind_trace_count("roi_begin")
+    }
+
+    pub(crate) fn host_action_roi_end_trace_count(&self) -> u64 {
+        self.host_action_kind_trace_count("roi_end")
+    }
+
+    pub(crate) fn host_action_stats_reset_trace_count(&self) -> u64 {
+        self.host_action_kind_trace_count("stats_reset")
+    }
+
+    pub(crate) fn host_action_stats_dump_trace_count(&self) -> u64 {
+        self.host_action_kind_trace_count("stats_dump")
+    }
+
+    pub(crate) fn host_action_checkpoint_trace_count(&self) -> u64 {
+        self.host_action_kind_trace_count("checkpoint")
+    }
+
+    pub(crate) fn host_action_execution_mode_switch_trace_count(&self) -> u64 {
+        self.host_action_kind_trace_count("execution_mode_switch")
+    }
+
+    pub(crate) fn host_action_stop_trace_count(&self) -> u64 {
+        self.host_action_kind_trace_count("stop")
     }
 
     pub(crate) fn data_trace_count(&self) -> u64 {
@@ -851,6 +902,12 @@ impl Rem6DebugSummary {
             .map(Rem6FetchTraceRecord::to_json)
             .collect::<Vec<_>>()
             .join(",");
+        let host_action_trace = self
+            .host_action_trace
+            .iter()
+            .map(Rem6HostActionTraceRecord::to_json)
+            .collect::<Vec<_>>()
+            .join(",");
         let data_trace = self
             .data_trace
             .iter()
@@ -895,8 +952,20 @@ impl Rem6DebugSummary {
             .collect::<Vec<_>>()
             .join(",");
         format!(
-            "{{\"flags\":[{}],\"branch_trace\":[{}],\"pipeline_trace\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"data_trace\":[{}],\"cache_trace\":[{}],\"dram_trace\":[{}],\"fabric_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"syscall_trace\":[{}]}}",
-            flags, branch_trace, pipeline_trace, exec_trace, fetch_trace, data_trace, cache_trace, dram_trace, fabric_trace, memory_trace, power_trace, syscall_trace
+            "{{\"flags\":[{}],\"branch_trace\":[{}],\"pipeline_trace\":[{}],\"exec_trace\":[{}],\"fetch_trace\":[{}],\"host_action_trace\":[{}],\"data_trace\":[{}],\"cache_trace\":[{}],\"dram_trace\":[{}],\"fabric_trace\":[{}],\"memory_trace\":[{}],\"power_trace\":[{}],\"syscall_trace\":[{}]}}",
+            flags,
+            branch_trace,
+            pipeline_trace,
+            exec_trace,
+            fetch_trace,
+            host_action_trace,
+            data_trace,
+            cache_trace,
+            dram_trace,
+            fabric_trace,
+            memory_trace,
+            power_trace,
+            syscall_trace
         )
     }
 
@@ -957,6 +1026,13 @@ impl Rem6DebugSummary {
             .fold(0u64, |acc, record| acc.saturating_add(record.size))
     }
 
+    fn host_action_kind_trace_count(&self, kind: &str) -> u64 {
+        self.host_action_trace
+            .iter()
+            .filter(|record| record.kind() == kind)
+            .count() as u64
+    }
+
     fn dram_kind_trace_count(&self, kind: &str) -> u64 {
         self.dram_trace
             .iter()
@@ -974,12 +1050,13 @@ impl Rem6DebugSummary {
             .count() as u64
     }
 
-    fn trace_counts(&self) -> [u64; 11] {
+    fn trace_counts(&self) -> [u64; 12] {
         [
             self.branch_trace_count(),
             self.pipeline_trace_count(),
             self.exec_trace_count(),
             self.fetch_trace_count(),
+            self.host_action_trace_count(),
             self.data_trace_count(),
             self.cache_trace_count(),
             self.dram_trace_count(),
@@ -999,6 +1076,7 @@ impl Rem6DebugSummary {
             CliDebugFlag::Exec => self.exec_trace_count(),
             CliDebugFlag::Fabric => self.fabric_trace_count(),
             CliDebugFlag::Fetch => self.fetch_trace_count(),
+            CliDebugFlag::HostAction => self.host_action_trace_count(),
             CliDebugFlag::Memory => self.memory_trace_count(),
             CliDebugFlag::Pipeline => self.pipeline_trace_count(),
             CliDebugFlag::Power => self.power_trace_count(),

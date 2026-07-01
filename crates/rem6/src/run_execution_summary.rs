@@ -354,6 +354,7 @@ pub(super) fn execution_summary(
         &memory_resources,
         &power_records,
         &inputs.riscv_syscall_trace,
+        &inputs.host_actions,
     );
 
     Ok(Rem6ExecutionSummary {

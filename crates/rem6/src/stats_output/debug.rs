@@ -109,6 +109,46 @@ pub(super) fn emit_debug_stats(
             debug.exec_retired_trace_count(),
         ),
         ("sim.debug.fetch_trace.records", debug.fetch_trace_count()),
+        (
+            "sim.debug.host_action_trace.records",
+            debug.host_action_trace_count(),
+        ),
+        (
+            "sim.debug.host_action_trace.injected_commands",
+            debug.host_action_injected_command_trace_count(),
+        ),
+        (
+            "sim.debug.host_action_trace.guest_host_calls",
+            debug.host_action_guest_host_call_trace_count(),
+        ),
+        (
+            "sim.debug.host_action_trace.roi_begin",
+            debug.host_action_roi_begin_trace_count(),
+        ),
+        (
+            "sim.debug.host_action_trace.roi_end",
+            debug.host_action_roi_end_trace_count(),
+        ),
+        (
+            "sim.debug.host_action_trace.stats_resets",
+            debug.host_action_stats_reset_trace_count(),
+        ),
+        (
+            "sim.debug.host_action_trace.stats_dumps",
+            debug.host_action_stats_dump_trace_count(),
+        ),
+        (
+            "sim.debug.host_action_trace.checkpoints",
+            debug.host_action_checkpoint_trace_count(),
+        ),
+        (
+            "sim.debug.host_action_trace.execution_mode_switches",
+            debug.host_action_execution_mode_switch_trace_count(),
+        ),
+        (
+            "sim.debug.host_action_trace.stops",
+            debug.host_action_stop_trace_count(),
+        ),
         ("sim.debug.data_trace.records", debug.data_trace_count()),
         ("sim.debug.data_trace.loads", debug.data_load_trace_count()),
         (

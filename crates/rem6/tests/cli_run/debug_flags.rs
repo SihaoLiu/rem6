@@ -9,6 +9,16 @@ use serde_json::Value;
 
 use crate::support::*;
 
+const M5_EXIT: u32 = 0x21;
+const M5_RESET_STATS: u32 = 0x40;
+const M5_DUMP_STATS: u32 = 0x41;
+const M5_DUMP_RESET_STATS: u32 = 0x42;
+const M5_CHECKPOINT: u32 = 0x43;
+const M5_SWITCH_CPU: u32 = 0x52;
+const M5_WORK_BEGIN: u32 = 0x5a;
+const M5_WORK_END: u32 = 0x5b;
+const M5_HYPERCALL: u32 = 0x71;
+
 #[test]
 fn rem6_run_exec_debug_flag_emits_real_instruction_trace() {
     let program = riscv64_program(&[
@@ -2287,6 +2297,55 @@ fn rem6_run_syscall_debug_flag_emits_real_riscv_se_syscall_trace() {
     assert_syscall_trace_hierarchy_stats(&stdout, trace);
 }
 
+fn m5op(function: u32) -> u32 {
+    (function << 25) | 0x7b
+}
+
+fn host_action_trace_ticks_are_ordered(trace: &[Value]) -> bool {
+    trace
+        .windows(2)
+        .all(|pair| host_action_trace_tick(&pair[0]) <= host_action_trace_tick(&pair[1]))
+}
+
+fn host_action_trace_kind_count(trace: &[Value], kind: &str) -> usize {
+    trace
+        .iter()
+        .filter(|record| record.get("kind").and_then(Value::as_str) == Some(kind))
+        .count()
+}
+
+fn host_action_trace_record<'a>(trace: &'a [Value], kind: &str) -> &'a Value {
+    trace
+        .iter()
+        .find(|record| record.get("kind").and_then(Value::as_str) == Some(kind))
+        .unwrap_or_else(|| panic!("missing host action trace kind {kind}: {trace:?}"))
+}
+
+fn assert_dump_reset_trace_order(trace: &[Value]) {
+    let ordered = trace.windows(2).any(|pair| {
+        pair[0].get("kind").and_then(Value::as_str) == Some("stats_dump")
+            && pair[1].get("kind").and_then(Value::as_str) == Some("stats_reset")
+            && pair[0].get("tick").and_then(Value::as_u64)
+                == pair[1].get("tick").and_then(Value::as_u64)
+            && pair[0].get("epoch").and_then(Value::as_u64)
+                == pair[1]
+                    .get("epoch")
+                    .and_then(Value::as_u64)
+                    .and_then(|epoch| epoch.checked_sub(1))
+    });
+    assert!(
+        ordered,
+        "missing same-tick dump-before-reset trace: {trace:?}"
+    );
+}
+
+fn host_action_trace_tick(record: &Value) -> u64 {
+    record
+        .get("tick")
+        .and_then(Value::as_u64)
+        .expect("host action trace tick")
+}
+
 fn debug_trace_sum(trace: &[Value], kind: &str, field: &str) -> u64 {
     trace
         .iter()
@@ -3836,6 +3895,342 @@ fn rem6_run_power_debug_flag_emits_activity_power_trace() {
         "sim.debug.power_trace.max_temperature_millicelsius",
         "MilliCelsius",
         max_temperature_millicelsius,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_host_action_debug_flag_emits_real_m5_host_action_trace() {
+    let program = riscv64_program(&[
+        i_type(21, 0, 0x0, 10, 0x13),
+        i_type(3, 0, 0x0, 11, 0x13),
+        m5op(M5_WORK_BEGIN),
+        i_type(0, 0, 0x0, 10, 0x13),
+        i_type(0, 0, 0x0, 11, 0x13),
+        m5op(M5_RESET_STATS),
+        m5op(M5_DUMP_STATS),
+        m5op(M5_DUMP_RESET_STATS),
+        i_type(21, 0, 0x0, 10, 0x13),
+        i_type(3, 0, 0x0, 11, 0x13),
+        m5op(M5_WORK_END),
+        m5op(M5_EXIT),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-host-action", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "140",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "HostAction",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        json.pointer("/debug/flags").and_then(Value::as_array),
+        Some(&vec![Value::String("HostAction".to_string())])
+    );
+    let trace = json
+        .pointer("/debug/host_action_trace")
+        .and_then(Value::as_array)
+        .expect("debug host action trace array");
+    assert!(
+        host_action_trace_ticks_are_ordered(trace),
+        "trace: {trace:?}"
+    );
+    assert_eq!(host_action_trace_kind_count(trace, "roi_begin"), 1);
+    assert_eq!(host_action_trace_kind_count(trace, "roi_end"), 1);
+    assert_eq!(host_action_trace_kind_count(trace, "stats_reset"), 3);
+    assert_eq!(host_action_trace_kind_count(trace, "stats_dump"), 3);
+    assert_eq!(host_action_trace_kind_count(trace, "stop"), 1);
+    assert_eq!(trace.len(), 9);
+    assert_dump_reset_trace_order(trace);
+    let roi_begin = trace
+        .iter()
+        .find(|record| record.get("kind").and_then(Value::as_str) == Some("roi_begin"))
+        .expect("roi begin trace");
+    assert_eq!(
+        roi_begin.pointer("/work_id").and_then(Value::as_u64),
+        Some(21)
+    );
+    assert_eq!(
+        roi_begin.pointer("/thread_id").and_then(Value::as_u64),
+        Some(3)
+    );
+    let stats_dump = trace
+        .iter()
+        .find(|record| record.get("kind").and_then(Value::as_str) == Some("stats_dump"))
+        .expect("stats dump trace");
+    assert!(
+        stats_dump
+            .pointer("/epoch")
+            .and_then(Value::as_u64)
+            .is_some_and(|epoch| epoch > 0),
+        "stats dump trace: {stats_dump:?}"
+    );
+    assert!(
+        stats_dump
+            .pointer("/reset_tick")
+            .and_then(Value::as_u64)
+            .zip(stats_dump.pointer("/tick").and_then(Value::as_u64))
+            .is_some_and(|(reset_tick, tick)| reset_tick <= tick),
+        "stats dump trace: {stats_dump:?}"
+    );
+    assert_eq!(
+        trace
+            .last()
+            .and_then(|record| record.pointer("/code"))
+            .and_then(Value::as_i64),
+        Some(0)
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.records",
+        "Count",
+        trace.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.roi_begin",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.roi_end",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.stats_resets",
+        "Count",
+        3,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.stats_dumps",
+        "Count",
+        3,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.stops",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.trace.records",
+        "Count",
+        trace.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.trace.categories",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.trace.active_flags",
+        "Count",
+        1,
+        "monotonic",
+    );
+}
+
+#[test]
+fn rem6_run_host_action_debug_flag_emits_m5_hypercall_checkpoint_and_switch_trace() {
+    let program = riscv64_program(&[
+        i_type(0x321, 0, 0x0, 10, 0x13),
+        i_type(11, 0, 0x0, 11, 0x13),
+        i_type(12, 0, 0x0, 12, 0x13),
+        i_type(13, 0, 0x0, 13, 0x13),
+        i_type(14, 0, 0x0, 14, 0x13),
+        i_type(15, 0, 0x0, 15, 0x13),
+        m5op(M5_HYPERCALL),
+        m5op(M5_CHECKPOINT),
+        m5op(M5_SWITCH_CPU),
+        m5op(M5_EXIT),
+    ]);
+    let elf = riscv64_elf(0x8000_0000, 0x8000_0000, &program);
+    let path = temp_binary("debug-flags-host-action-m5-detail", &elf);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_rem6"))
+        .args([
+            "run",
+            "--isa",
+            "riscv",
+            "--binary",
+            path.to_str().unwrap(),
+            "--max-tick",
+            "140",
+            "--stats-format",
+            "json",
+            "--execute",
+            "--memory-system",
+            "direct",
+            "--debug-flags",
+            "HostAction",
+        ])
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let json: Value = serde_json::from_str(&stdout).unwrap();
+    let trace = json
+        .pointer("/debug/host_action_trace")
+        .and_then(Value::as_array)
+        .expect("debug host action trace array");
+    assert!(
+        host_action_trace_ticks_are_ordered(trace),
+        "trace: {trace:?}"
+    );
+    assert_eq!(host_action_trace_kind_count(trace, "injected_command"), 0);
+    assert_eq!(host_action_trace_kind_count(trace, "guest_host_call"), 1);
+    assert_eq!(host_action_trace_kind_count(trace, "checkpoint"), 1);
+    assert_eq!(
+        host_action_trace_kind_count(trace, "execution_mode_switch"),
+        1
+    );
+    assert_eq!(host_action_trace_kind_count(trace, "stop"), 1);
+    assert_eq!(trace.len(), 4);
+
+    let call = host_action_trace_record(trace, "guest_host_call");
+    assert_eq!(
+        call.pointer("/selector").and_then(Value::as_u64),
+        Some(0x321)
+    );
+    assert_eq!(
+        call.pointer("/argument_count").and_then(Value::as_u64),
+        Some(5)
+    );
+    assert_eq!(
+        call.pointer("/response_status").and_then(Value::as_i64),
+        Some(-1)
+    );
+    let checkpoint = host_action_trace_record(trace, "checkpoint");
+    assert_eq!(
+        checkpoint.pointer("/label").and_then(Value::as_str),
+        Some("gem5-m5-checkpoint")
+    );
+    assert!(
+        checkpoint
+            .pointer("/component_count")
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count >= 2),
+        "checkpoint trace: {checkpoint:?}"
+    );
+    assert!(
+        checkpoint
+            .pointer("/payload_bytes")
+            .and_then(Value::as_u64)
+            .is_some_and(|bytes| bytes > 0),
+        "checkpoint trace: {checkpoint:?}"
+    );
+    let switch = host_action_trace_record(trace, "execution_mode_switch");
+    assert_eq!(
+        switch.pointer("/target").and_then(Value::as_str),
+        Some("cpu0")
+    );
+    assert_eq!(
+        switch.pointer("/mode").and_then(Value::as_str),
+        Some("detailed")
+    );
+    assert_eq!(
+        switch
+            .pointer("/state_transfer_captured")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert!(
+        switch
+            .pointer("/state_transfer_components")
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count > 0),
+        "switch trace: {switch:?}"
+    );
+    assert_eq!(
+        trace
+            .last()
+            .and_then(|record| record.pointer("/code"))
+            .and_then(Value::as_i64),
+        Some(0)
+    );
+
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.records",
+        "Count",
+        trace.len() as u64,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.injected_commands",
+        "Count",
+        0,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.guest_host_calls",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.checkpoints",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.execution_mode_switches",
+        "Count",
+        1,
+        "monotonic",
+    );
+    assert_stat(
+        &stdout,
+        "sim.debug.host_action_trace.stops",
+        "Count",
+        1,
         "monotonic",
     );
 }

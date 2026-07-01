@@ -225,6 +225,10 @@ impl Rem6RunConfig {
         self.debug_flags.contains(&CliDebugFlag::Fetch)
     }
 
+    pub fn debug_host_action_enabled(&self) -> bool {
+        self.debug_flags.contains(&CliDebugFlag::HostAction)
+    }
+
     pub fn debug_data_enabled(&self) -> bool {
         self.debug_flags.contains(&CliDebugFlag::Data)
     }
