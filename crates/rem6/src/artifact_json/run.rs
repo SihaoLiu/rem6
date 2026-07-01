@@ -608,13 +608,15 @@ fn elf_section_storage_json(storage: BootElfSectionStorage) -> String {
 
 fn elf_section_relocations_json(relocations: BootElfSectionRelocations) -> String {
     format!(
-        "{{\"sections\":{},\"bytes\":{},\"rela_sections\":{},\"rela_entries\":{},\"rel_sections\":{},\"rel_entries\":{}}}",
+        "{{\"sections\":{},\"bytes\":{},\"rela_sections\":{},\"rela_entries\":{},\"rel_sections\":{},\"rel_entries\":{},\"relr_sections\":{},\"relr_entries\":{}}}",
         relocations.section_count(),
         relocations.byte_size(),
         relocations.rela_section_count(),
         relocations.rela_entry_count(),
         relocations.rel_section_count(),
         relocations.rel_entry_count(),
+        relocations.relr_section_count(),
+        relocations.relr_entry_count(),
     )
 }
 

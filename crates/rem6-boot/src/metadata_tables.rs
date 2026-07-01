@@ -327,6 +327,8 @@ pub struct BootElfSectionRelocations {
     rela_entry_count: u64,
     rel_section_count: u64,
     rel_entry_count: u64,
+    relr_section_count: u64,
+    relr_entry_count: u64,
 }
 
 impl BootElfSectionRelocations {
@@ -337,6 +339,8 @@ impl BootElfSectionRelocations {
         rela_entry_count: u64,
         rel_section_count: u64,
         rel_entry_count: u64,
+        relr_section_count: u64,
+        relr_entry_count: u64,
     ) -> Self {
         Self {
             section_count,
@@ -345,6 +349,8 @@ impl BootElfSectionRelocations {
             rela_entry_count,
             rel_section_count,
             rel_entry_count,
+            relr_section_count,
+            relr_entry_count,
         }
     }
 
@@ -370,6 +376,14 @@ impl BootElfSectionRelocations {
 
     pub const fn rel_entry_count(self) -> u64 {
         self.rel_entry_count
+    }
+
+    pub const fn relr_section_count(self) -> u64 {
+        self.relr_section_count
+    }
+
+    pub const fn relr_entry_count(self) -> u64 {
+        self.relr_entry_count
     }
 }
 

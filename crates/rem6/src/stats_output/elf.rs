@@ -699,6 +699,16 @@ fn emit_elf_section_relocation_stats(
             "Count",
             relocations.rel_entry_count(),
         ),
+        (
+            "sim.elf.section_relocations.relr.sections",
+            "Count",
+            relocations.relr_section_count(),
+        ),
+        (
+            "sim.elf.section_relocations.relr.entries",
+            "Count",
+            relocations.relr_entry_count(),
+        ),
     ] {
         increment_stat(stats, name, unit, StatResetPolicy::Constant, value)?;
     }

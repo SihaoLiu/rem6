@@ -2148,20 +2148,20 @@ fn rem6_run_reports_elf_relocation_section_metadata() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"status\":\"loaded\""));
     assert!(stdout.contains(
-        "\"section_relocations\":{\"sections\":2,\"bytes\":96,\"rela_sections\":1,\"rela_entries\":2,\"rel_sections\":1,\"rel_entries\":3}"
+        "\"section_relocations\":{\"sections\":3,\"bytes\":112,\"rela_sections\":1,\"rela_entries\":2,\"rel_sections\":1,\"rel_entries\":3,\"relr_sections\":1,\"relr_entries\":2}"
     ));
     assert_stat(
         &stdout,
         "sim.elf.section_relocations.sections",
         "Count",
-        2,
+        3,
         "constant",
     );
     assert_stat(
         &stdout,
         "sim.elf.section_relocations.bytes",
         "Byte",
-        96,
+        112,
         "constant",
     );
     assert_stat(
@@ -2190,6 +2190,20 @@ fn rem6_run_reports_elf_relocation_section_metadata() {
         "sim.elf.section_relocations.rel.entries",
         "Count",
         3,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_relocations.relr.sections",
+        "Count",
+        1,
+        "constant",
+    );
+    assert_stat(
+        &stdout,
+        "sim.elf.section_relocations.relr.entries",
+        "Count",
+        2,
         "constant",
     );
 }

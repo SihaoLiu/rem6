@@ -627,7 +627,7 @@ impl BootElfMetadata {
             section_name_table: BootElfSectionNameTable::new(0, 0),
             section_flags: BootElfSectionFlags::new(0, 0, 0, 0),
             section_storage: BootElfSectionStorage::new(0, 0, 0, 0, 0, 0, 0),
-            section_relocations: BootElfSectionRelocations::new(0, 0, 0, 0, 0, 0),
+            section_relocations: BootElfSectionRelocations::new(0, 0, 0, 0, 0, 0, 0, 0),
             section_arrays: BootElfSectionArrays::new(0, 0, 0, 0, 0, 0, 0, 0, 0),
             section_hashes: BootElfSectionHashes::new(0, 0, 0, 0),
             section_groups: BootElfSectionGroups::new(0, 0, 0),

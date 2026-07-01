@@ -19,6 +19,7 @@ const SHT_RELA: u32 = 4;
 const SHT_NOTE: u32 = 7;
 const SHT_NOBITS: u32 = 8;
 const SHT_REL: u32 = 9;
+const SHT_RELR: u32 = 19;
 const SHT_STRTAB: u32 = 3;
 const SHT_SYMTAB: u32 = 2;
 const SHT_DYNSYM: u32 = 11;
@@ -60,6 +61,8 @@ pub(crate) struct ElfSectionSummary {
     rela_entry_count: u64,
     rel_section_count: u64,
     rel_entry_count: u64,
+    relr_section_count: u64,
+    relr_entry_count: u64,
     init_array_section_count: u64,
     init_array_bytes: u64,
     init_array_entry_count: u64,
@@ -121,6 +124,8 @@ impl ElfSectionSummary {
             self.rela_entry_count,
             self.rel_section_count,
             self.rel_entry_count,
+            self.relr_section_count,
+            self.relr_entry_count,
         )
     }
 
@@ -500,6 +505,12 @@ fn summarize_common_section(
             section.entry_size,
             RelocationSectionKind::Rel,
         ),
+        SHT_RELR => summarize_relocation_section(
+            summary,
+            section.size,
+            section.entry_size,
+            RelocationSectionKind::Relr,
+        ),
         _ => {}
     }
 
@@ -514,6 +525,7 @@ fn summarize_common_section(
 enum RelocationSectionKind {
     Rela,
     Rel,
+    Relr,
 }
 
 fn summarize_array_section(summary: &mut ElfSectionSummary, kind: u32, size: u64, entry_size: u64) {
@@ -584,6 +596,10 @@ fn summarize_relocation_section(
         RelocationSectionKind::Rel => {
             summary.rel_section_count += 1;
             summary.rel_entry_count = summary.rel_entry_count.saturating_add(entry_count);
+        }
+        RelocationSectionKind::Relr => {
+            summary.relr_section_count += 1;
+            summary.relr_entry_count = summary.relr_entry_count.saturating_add(entry_count);
         }
     }
 }
