@@ -36,6 +36,7 @@ pub(super) fn read_environment_config_csr(
 ) -> u64 {
     match csr {
         RiscvEnvironmentConfigCsr::Senvcfg => hart.supervisor_environment_config(),
+        RiscvEnvironmentConfigCsr::Menvcfg => hart.machine_environment_config(),
     }
 }
 
@@ -46,6 +47,7 @@ pub(super) fn write_environment_config_csr(
 ) {
     match csr {
         RiscvEnvironmentConfigCsr::Senvcfg => hart.set_supervisor_environment_config(value),
+        RiscvEnvironmentConfigCsr::Menvcfg => hart.set_machine_environment_config(value),
     }
 }
 

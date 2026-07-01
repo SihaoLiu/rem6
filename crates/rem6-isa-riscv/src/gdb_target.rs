@@ -405,6 +405,7 @@ const COMMON_CSR_REGISTERS: &[CsrRegister] = &[
 const RV64_CSR_REGISTERS: &[CsrRegister] = &[
     CsrRegister::new("scounteren", Some(156)),
     CsrRegister::new("mcounteren", Some(157)),
+    CsrRegister::new("menvcfg", Some(158)),
 ];
 
 const RV32_CSR_REGISTERS: &[CsrRegister] = &[

@@ -108,18 +108,21 @@ pub enum RiscvCsrOperand {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum RiscvEnvironmentConfigCsr {
     Senvcfg,
+    Menvcfg,
 }
 
 impl RiscvEnvironmentConfigCsr {
     pub const fn address(self) -> u16 {
         match self {
             Self::Senvcfg => 0x10a,
+            Self::Menvcfg => 0x30a,
         }
     }
 
     pub const fn from_address(address: u16) -> Option<Self> {
         match address {
             0x10a => Some(Self::Senvcfg),
+            0x30a => Some(Self::Menvcfg),
             _ => None,
         }
     }

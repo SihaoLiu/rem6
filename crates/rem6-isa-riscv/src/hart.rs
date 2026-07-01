@@ -19,6 +19,7 @@ pub struct RiscvHartState {
     pub(crate) supervisor_trap_value: u64,
     pub(crate) supervisor_environment_config: u64,
     pub(crate) supervisor_counter_enable: u64,
+    pub(crate) machine_environment_config: u64,
     pub(crate) machine_exception_delegation: u64,
     pub(crate) machine_interrupt_delegation: u64,
     pub(crate) machine_counter_enable: u64,
@@ -58,6 +59,7 @@ impl RiscvHartState {
             supervisor_trap_value: 0,
             supervisor_environment_config: 0,
             supervisor_counter_enable: 0,
+            machine_environment_config: 0,
             machine_exception_delegation: 0,
             machine_interrupt_delegation: 0,
             machine_counter_enable: 0,
@@ -152,6 +154,10 @@ impl RiscvHartState {
 
     pub const fn supervisor_counter_enable(&self) -> u64 {
         self.supervisor_counter_enable
+    }
+
+    pub const fn machine_environment_config(&self) -> u64 {
+        self.machine_environment_config
     }
 
     pub const fn machine_counter_enable(&self) -> u64 {
@@ -259,6 +265,10 @@ impl RiscvHartState {
 
     pub fn set_supervisor_counter_enable(&mut self, enable: u64) {
         self.supervisor_counter_enable = enable;
+    }
+
+    pub fn set_machine_environment_config(&mut self, value: u64) {
+        self.machine_environment_config = value;
     }
 
     pub fn set_machine_counter_enable(&mut self, enable: u64) {

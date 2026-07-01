@@ -838,6 +838,9 @@ fn riscv_gdb_hart_snapshot_from_core(core: &RiscvCore) -> RiscvHartState {
     hart.set_supervisor_environment_config(
         core.environment_config_csr(RiscvEnvironmentConfigCsr::Senvcfg),
     );
+    hart.set_machine_environment_config(
+        core.environment_config_csr(RiscvEnvironmentConfigCsr::Menvcfg),
+    );
     hart.set_supervisor_counter_enable(core.counter_enable_csr(RiscvCounterEnableCsr::Scounteren));
     hart.set_machine_counter_enable(core.counter_enable_csr(RiscvCounterEnableCsr::Mcounteren));
     hart.set_translation_satp(core.translation_satp());
@@ -1342,6 +1345,9 @@ fn riscv_gdb_csr_register(xlen: RiscvGdbXlen, number: u64) -> RiscvGdbCsrRegiste
     if number == riscv_gdb_machine_counter_enable_register(xlen) {
         return RiscvGdbCsrRegister::CounterEnable(RiscvCounterEnableCsr::Mcounteren);
     }
+    if xlen == RiscvGdbXlen::Rv64 && number == RISCV_GDB_RV64_MACHINE_ENVIRONMENT_CONFIG_REGISTER {
+        return RiscvGdbCsrRegister::EnvironmentConfig(RiscvEnvironmentConfigCsr::Menvcfg);
+    }
     if xlen == RiscvGdbXlen::Rv32 && number == RISCV_GDB_RV32_STATUS_HIGH_REGISTER {
         return RiscvGdbCsrRegister::Status(RiscvStatusCsr::Mstatush);
     }
@@ -1615,6 +1621,7 @@ fn with_high_word(current: u64, value: u64) -> u64 {
 fn read_hart_environment_config_csr(hart: &RiscvHartState, csr: RiscvEnvironmentConfigCsr) -> u64 {
     match csr {
         RiscvEnvironmentConfigCsr::Senvcfg => hart.supervisor_environment_config(),
+        RiscvEnvironmentConfigCsr::Menvcfg => hart.machine_environment_config(),
     }
 }
 
@@ -1625,6 +1632,7 @@ fn write_hart_environment_config_csr(
 ) {
     match csr {
         RiscvEnvironmentConfigCsr::Senvcfg => hart.set_supervisor_environment_config(value),
+        RiscvEnvironmentConfigCsr::Menvcfg => hart.set_machine_environment_config(value),
     }
 }
 

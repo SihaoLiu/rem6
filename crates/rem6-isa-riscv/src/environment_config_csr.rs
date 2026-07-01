@@ -38,6 +38,7 @@ pub(crate) fn execute(
 fn read(hart: &RiscvHartState, csr: RiscvEnvironmentConfigCsr) -> u64 {
     match csr {
         RiscvEnvironmentConfigCsr::Senvcfg => hart.supervisor_environment_config(),
+        RiscvEnvironmentConfigCsr::Menvcfg => hart.machine_environment_config(),
     }
 }
 
@@ -52,6 +53,7 @@ fn write(
     write_register(hart, writes, register, old_value);
     match csr {
         RiscvEnvironmentConfigCsr::Senvcfg => hart.set_supervisor_environment_config(value),
+        RiscvEnvironmentConfigCsr::Menvcfg => hart.set_machine_environment_config(value),
     }
 }
 

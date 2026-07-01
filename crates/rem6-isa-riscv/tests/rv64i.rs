@@ -1382,6 +1382,7 @@ fn hart_decodes_and_executes_environment_config_csrs() {
     let clear_read_only = RiscvInstruction::decode(csr_type(0x10a, 0, 0x3, 13)).unwrap();
     let set_immediate_read_only = RiscvInstruction::decode(csr_type(0x10a, 0, 0x6, 14)).unwrap();
     let clear_immediate_read_only = RiscvInstruction::decode(csr_type(0x10a, 0, 0x7, 15)).unwrap();
+    let read_menvcfg = RiscvInstruction::decode(csr_read_type(0x30a, 16)).unwrap();
 
     assert_eq!(
         read,
@@ -1427,6 +1428,13 @@ fn hart_decodes_and_executes_environment_config_csrs() {
             RiscvEnvironmentConfigCsr::Senvcfg
         ))
     );
+    assert_eq!(
+        read_menvcfg,
+        RiscvInstruction::EnvironmentConfigCsr(RiscvEnvironmentConfigCsrInstruction::read(
+            reg(16),
+            RiscvEnvironmentConfigCsr::Menvcfg
+        ))
+    );
 
     hart.execute(read).unwrap();
     assert_eq!(hart.read(reg(5)), 0x1200);
@@ -1470,6 +1478,11 @@ fn hart_decodes_and_executes_environment_config_csrs() {
     assert_eq!(hart.read(reg(13)), 0x1e);
     assert_eq!(hart.read(reg(14)), 0x1e);
     assert_eq!(hart.read(reg(15)), 0x1e);
+
+    hart.set_machine_environment_config(0x3400);
+    hart.execute(read_menvcfg).unwrap();
+    assert_eq!(hart.read(reg(16)), 0x3400);
+    assert_eq!(hart.machine_environment_config(), 0x3400);
 }
 
 #[test]

@@ -104,6 +104,7 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "  <reg name=\"pmpaddr15\" bitsize=\"64\" regnum=\"155\"/>\n",
             "  <reg name=\"scounteren\" bitsize=\"64\" regnum=\"156\"/>\n",
             "  <reg name=\"mcounteren\" bitsize=\"64\" regnum=\"157\"/>\n",
+            "  <reg name=\"menvcfg\" bitsize=\"64\" regnum=\"158\"/>\n",
             "</feature>\n",
         ),
     );
@@ -166,9 +167,10 @@ fn riscv_gdb_target_description_reports_rv64_csr_document() {
             "pmpaddr15",
             "scounteren",
             "mcounteren",
+            "menvcfg",
         ],
     );
-    assert_eq!(csr.matches("bitsize=\"64\"").count(), 56);
+    assert_eq!(csr.matches("bitsize=\"64\"").count(), 57);
 }
 
 #[test]
